@@ -36,7 +36,6 @@ export {
 	getDataQuality,
 	getDataSources,
 	getSourceSymbols,
-	fetchYahooData,
 	uploadCSV,
 	previewCSV,
 	getDataQualityExtended,

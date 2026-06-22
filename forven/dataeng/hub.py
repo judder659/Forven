@@ -177,7 +177,13 @@ class DataHub:
                     }
                 )
 
+        try:
+            engine_enabled = bool(load_data_engine_settings().enabled)
+        except Exception:
+            engine_enabled = False
+
         return {
+            "enabled": engine_enabled,
             "coverage": coverage,
             "streams": stream_states,
             "sources": source_health,

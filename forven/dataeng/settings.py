@@ -20,26 +20,15 @@ class DataEngineSettings(BaseModel):
             "macro": ["binance"],
         }
     )
-    streams: list[str] = Field(default_factory=lambda: ["candles", "funding", "oi"])
-    symbol_universe_scope: Literal["active", "watchlist", "custom"] = "active"
-    custom_symbols: list[str] = Field(default_factory=list)
     onchain_provider: str = ""
     onchain_api_key: str = ""
-    backfill_aggressiveness: Literal["conservative", "balanced", "aggressive"] = "balanced"
-    max_history_days: int = 3650
     stream_reconnect_initial_seconds: float = 1.0
     stream_reconnect_max_seconds: float = 60.0
-    stream_buffer_limit: int = 10_000
-    microstructure_raw_window_days: int = 14
-    microstructure_retention_mode: Literal["rollup", "discard"] = "rollup"
     point_in_time_mode: Literal["latest", "as_of_pin"] = "latest"
     # ISO-8601 pin consumed by backtests when point_in_time_mode == "as_of_pin":
     # reads reconstruct the values in force at this time from the revision log
     # (T1.6 reproducibility). Empty => latest. Backtest-scoped; live reads ignore it.
     point_in_time_as_of: str = ""
-    validation_policy: Literal["off", "flag", "median", "priority", "flag_priority"] = "flag_priority"
-    gap_auto_repair: bool = True
-    max_auto_backfill_days: int = 30
     # Scheduled catch-up. A background job (forven-data-engine-catchup) drains the
     # CatchUpPlanner backlog every few minutes so the WHOLE catalog stays current —
     # not just the active set the OHLCV keep-alive refreshes — without manual
@@ -47,7 +36,6 @@ class DataEngineSettings(BaseModel):
     # (staleness is handled by the planner; current series aren't re-fetched).
     auto_catchup_enabled: bool = True
     auto_catchup_batch: int = 12
-    default_enrichments: list[str] = Field(default_factory=lambda: ["funding", "oi"])
     staleness_thresholds: dict[str, int] = Field(
         default_factory=lambda: {
             "candles_minutes": 90,

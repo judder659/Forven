@@ -113,14 +113,14 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     defaults = load_data_engine_settings()
     assert defaults.enabled is False
     assert defaults.enabled_exchanges == ["binance"]
-    assert defaults.microstructure_raw_window_days == 14
+    assert defaults.auto_catchup_batch == 12
 
     api_core.put_settings_section(
         "data-engine",
         {
             "enabled": True,
             "enabled_exchanges": ["binance", "okx"],
-            "microstructure_raw_window_days": 21,
+            "auto_catchup_batch": 21,
             "source_priority": {"candles": ["okx", "binance"]},
         },
     )
@@ -128,7 +128,7 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     loaded = load_data_engine_settings()
     assert loaded.enabled is True
     assert loaded.enabled_exchanges == ["binance", "okx"]
-    assert loaded.microstructure_raw_window_days == 21
+    assert loaded.auto_catchup_batch == 21
     assert loaded.source_priority["candles"] == ["okx", "binance"]
     assert loaded.source_priority["funding"] == ["binance"]
 

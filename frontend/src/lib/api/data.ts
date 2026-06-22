@@ -480,20 +480,6 @@ export async function getSourceSymbols(
 	}
 }
 
-// Fetch data from Yahoo Finance
-export async function fetchYahooData(
-	symbol: string,
-	timeframe: string = '1d',
-	period: string = '1y',
-	signal?: AbortSignal
-): Promise<Dataset> {
-	const params = new URLSearchParams();
-	params.set('symbol', symbol);
-	params.set('timeframe', timeframe);
-	params.set('period', period);
-	return fetchApi(`/fetch/yahoo?${params}`, { method: 'POST', signal: signal ?? AbortSignal.timeout(LONG_TIMEOUT_MS) });
-}
-
 // Upload CSV data
 export async function uploadCSV(
 	file: File,
@@ -574,6 +560,7 @@ export interface DataHealth {
 }
 
 export interface DataEngineStatus {
+	enabled?: boolean;
 	coverage: Array<Record<string, unknown>>;
 	streams: Array<{
 		source: string;

@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import {
-		fetchData, fetchYahooData, uploadCSV, previewCSV,
+		fetchData, uploadCSV, previewCSV,
 		shouldUseBackgroundIngestion,
-		getDataSources, getSourceSymbols,
+		getDataSources,
 		getStreamHealth, triggerCollect,
 		triggerBackfill, getBackfillStatus,
 	} from '$lib/api';
-	import type { Dataset, DataQualityExtended, DataSource, SourceSymbol, CSVPreview, StreamsResponse, BackfillStatus } from '$lib/api';
+	import type { Dataset, DataQualityExtended, DataSource, CSVPreview, StreamsResponse, BackfillStatus } from '$lib/api';
 	import SymbolSearch from '$lib/components/research/SymbolSearch.svelte';
 	import { ORDERED_TIMEFRAME_VALUES } from '$lib/config/timeframes';
 	import {
@@ -151,12 +151,6 @@
 	let fetchAllAvailable = false;
 	let fetchAllTimeframes = false;
 
-	// Yahoo State
-	let yahooSymbol = 'AAPL';
-	let yahooTimeframe = '1d';
-	let yahooPeriod = '1y';
-	let yahooSymbols: SourceSymbol[] = [];
-
 	// CSV State
 	let csvFile: File | null = null;
 	let csvSymbol = '';
@@ -173,10 +167,11 @@
 	function applyDatasetToFetchForm(ds: Dataset): void {
 		const market = String(ds.market_type ?? ds.asset_class ?? '').toLowerCase();
 		const src = String(ds.source ?? '').toLowerCase();
-		const isEquity = market === 'equity' || market === 'stock' || market === 'etf' || src === 'yahoo';
+		const isEquity = market === 'equity' || market === 'stock' || market === 'etf' || src === 'polygon';
 		if (isEquity) {
-			selectedSource = 'yahoo';
-			yahooSymbol = ds.symbol;
+			selectedSource = 'polygon';
+			fetchSymbol = ds.symbol;
+			if (ds.timeframe && timeframes.includes(ds.timeframe)) fetchTimeframe = ds.timeframe;
 		} else {
 			selectedSource = 'ccxt';
 			if (exchanges.includes(src)) fetchExchange = src;
@@ -201,7 +196,9 @@
 	onMount(async () => {
 		const saved = getDataFetchFormConfig();
 		if (saved) {
-			selectedSource = saved.source;
+			// 'yahoo' is no longer a supported source; fall back so a stale saved
+			// config can't select a tab that doesn't render.
+			selectedSource = saved.source === 'yahoo' ? 'ccxt' : saved.source;
 			fetchSymbol = saved.symbol;
 			fetchTimeframe = saved.timeframe;
 			fetchExchange = saved.exchange;
@@ -214,9 +211,6 @@
 
 		try {
 			dataSources = await getDataSources();
-			if (dataSources.find(s => s.id === 'yahoo' && s.available)) {
-				yahooSymbols = await getSourceSymbols('yahoo');
-			}
 		} catch (e) {
 			console.error(e);
 		}
@@ -293,15 +287,13 @@
 				until: fetchUntil, allAvailable: fetchAllAvailable,
 				allTimeframes: fetchAllTimeframes,
 			});
-			startDataFetchTask(src === 'yahoo' ? yahooSymbol : (csvSymbol || 'CSV'));
+			startDataFetchTask(csvSymbol || 'CSV');
 			updateDataFetchProgress(`Downloading from ${src}...`);
 
 			(async () => {
 				try {
 					let result: Dataset;
-					if (src === 'yahoo') {
-						result = await fetchYahooData(yahooSymbol, yahooTimeframe, yahooPeriod);
-					} else if (src === 'csv') {
+					if (src === 'csv') {
 						if (!csvFile || !csvSymbol) throw new Error('Invalid CSV input');
 						result = await uploadCSV(csvFile, csvSymbol, csvTimeframe);
 					} else {
@@ -416,21 +408,6 @@
 								</div>
 							</div>
 						{/if}
-					</div>
-				{:else if selectedSource === 'yahoo'}
-					<div class="space-y-3">
-						<div>
-							<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-yahoo-symbol">Symbol</label>
-							<input id="data-inspector-yahoo-symbol" bind:value={yahooSymbol} class="terminal-input" placeholder="AAPL" />
-						</div>
-						<div>
-							<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-yahoo-period">Period</label>
-							<select id="data-inspector-yahoo-period" bind:value={yahooPeriod} class="terminal-select">
-								<option value="1mo">1 Month</option>
-								<option value="1y">1 Year</option>
-								<option value="max">Max</option>
-							</select>
-						</div>
 					</div>
 				{:else if selectedSource === 'csv'}
 					<div class="space-y-3">

@@ -609,6 +609,12 @@
 		{#if dataEngineError}
 			<div class="px-3 py-2 text-xs text-red-300 border-b border-red-900/40 bg-red-950/20">{dataEngineError}</div>
 		{/if}
+		{#if dataEngineStatus && dataEngineStatus.enabled === false}
+			<div class="px-3 py-2 text-[11px] text-amber-200/90 border-b border-amber-900/40 bg-amber-950/20">
+				The Data Engine is <span class="font-semibold">disabled</span> (this is optional). The standard local data path works without it — enable it in
+				<a href="/settings#data" class="underline hover:text-amber-100">Settings → Data</a> to use catalog streaming and automatic catch-up. The counts below stay at zero until it's on.
+			</div>
+		{/if}
 		<div class="grid grid-cols-1 lg:grid-cols-3">
 			<div class="p-3 border-b lg:border-b-0 lg:border-r border-[#171717]">
 				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Source Health</div>

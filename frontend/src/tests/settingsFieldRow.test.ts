@@ -240,8 +240,8 @@ describe('SettingsFieldRow', () => {
 		instance = mount(SettingsFieldRow, {
 			target,
 			props: {
-				id: 'data-engine.streams',
-				label: 'Streams to collect',
+				id: 'test.csv_field',
+				label: 'CSV field',
 				description: '.',
 				defaultValue: ['candles'],
 				value: ['oi', 'candles'],
@@ -263,7 +263,7 @@ describe('SettingsFieldRow', () => {
 		checkboxes[1].dispatchEvent(new Event('change', { bubbles: true }));
 		await flush();
 
-		expect(spy).toHaveBeenCalledWith('data-engine.streams', ['candles', 'funding', 'oi']);
+		expect(spy).toHaveBeenCalledWith('test.csv_field', ['candles', 'funding', 'oi']);
 		spy.mockRestore();
 	});
 
