@@ -49,6 +49,11 @@
 	let viewportMode: 'initial' | 'manual' = autoScroll ? 'initial' : 'manual';
 	let appliedFitContentToken = fitContentToken;
 	let suppressVisibleRangeEvents = 0;
+	// Becomes true the first time the chart is laid out with a non-zero width. The chart
+	// can mount inside a flex child that measures 0px on the first layout pass, and any
+	// viewport reset done at that point positions against a zero-width time scale and is
+	// effectively lost. We re-anchor on the first real width to recover from that.
+	let hasRealWidth = false;
 
 	$: strategyParamEntries = Object.entries(strategyParams || {});
 	$: hasSubIndicators = subIndicators && subIndicators.length > 0;
@@ -103,11 +108,18 @@
 	const handleVisibleRangeChange = () => {
 		if (!data || data.length === 0) return;
 		if (suppressVisibleRangeEvents > 0) return;
+		// A range change that isn't one of our own programmatic resets means the user
+		// panned/zoomed. Stop following real time so live updates and resizes leave
+		// their chosen view alone.
 		viewportMode = 'manual';
 	};
 
 	function queueVisibleRangeSuppressionRelease(): void {
-		Promise.resolve().then(() => {
+		// lightweight-charts applies setVisibleRange()/fitContent() and fires the
+		// resulting visible-range event on a requestAnimationFrame, NOT synchronously.
+		// Releasing the guard on a microtask would drop it before that event fires, so
+		// our own reset would be misread as a user pan. Release after the next frame.
+		requestAnimationFrame(() => {
 			suppressVisibleRangeEvents = Math.max(0, suppressVisibleRangeEvents - 1);
 		});
 	}
@@ -136,6 +148,10 @@
 		if (!chartContainer) return;
 
 		chart = createChart(chartContainer, {
+			// Seed with the container's measured size so the first viewport reset has a
+			// real width to position against whenever layout is already settled.
+			...(chartContainer.clientWidth > 0 ? { width: chartContainer.clientWidth } : {}),
+			...(chartContainer.clientHeight > 0 ? { height: chartContainer.clientHeight } : {}),
 			layout: {
 				background: { color: '#000000' },
 				textColor: '#666',
@@ -195,6 +211,19 @@
 			if (chart && entries.length > 0) {
 				const { width, height } = entries[0].contentRect;
 				chart.applyOptions({ width, height });
+				if (width > 0) {
+					const firstRealWidth = !hasRealWidth;
+					hasRealWidth = true;
+					// First real width: recover from a zero-width mount by forcing the
+					// most-recent frame (the user can't have panned a zero-width chart).
+					// Afterwards keep re-framing only while we're still following.
+					if (firstRealWidth && autoScroll) {
+						viewportMode = 'initial';
+						resetViewport(true);
+					} else if (viewportMode === 'initial') {
+						resetViewport(false);
+					}
+				}
 			}
 		});
 		resizeObserver.observe(chartContainer);
@@ -217,11 +246,10 @@
 	$: if (chart && drawings) updateDrawings();
 	$: if (chart && fitContentToken !== appliedFitContentToken) {
 		appliedFitContentToken = fitContentToken;
+		// "Reset View" / session switch: resume following the most-recent window until
+		// the user pans again.
 		viewportMode = 'initial';
 		resetViewport(true);
-		if (latestCandleData.length > 0) {
-			viewportMode = 'manual';
-		}
 	}
 
 	function updateChartLayout() {
@@ -286,9 +314,14 @@
 		updateIndicators();
 		updateDrawings();
 
+		// While following (initial mode), re-anchor to the most-recent window on every
+		// data update. This keeps the chart pinned to the current timeframe as bars
+		// stream in and self-heals an initial reset that landed before real layout —
+		// without fighting the user, who switches to 'manual' the moment they pan/zoom.
+		// Don't force price autoscale here: it runs on every live poll and would undo a
+		// manual price-axis zoom (autoScale stays on by default anyway).
 		if (candleData.length > 0 && viewportMode === 'initial') {
-			resetViewport(true);
-			viewportMode = 'manual';
+			resetViewport(false);
 		}
 	}
 
