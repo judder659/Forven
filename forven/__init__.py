@@ -3,7 +3,7 @@
 
 """Forven — Algorithmic trading operations framework."""
 
-__version__ = "0.1.33"
+__version__ = "0.1.34"
 
 
 def _install_ta_import_tripwire() -> None:
