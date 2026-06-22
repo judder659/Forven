@@ -3129,42 +3129,6 @@ def _run_migrations(conn: sqlite3.Connection):
         END
     """)
 
-    # Hermes-inspired Phase 2 (P2-T01): sandbox_runs operational telemetry.
-    # NOT memory — this is run-history for AST scans and subprocess executions
-    # of AI-generated strategy code. Linked to agent_tasks/brain_decisions via
-    # strategy_id rather than referenced from the Brain memory body.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sandbox_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            strategy_id TEXT,
-            kind TEXT NOT NULL CHECK (kind IN ('scan','run')),
-            child_pid INTEGER,
-            started_at TEXT NOT NULL,
-            ended_at TEXT,
-            exit_code INTEGER,
-            memory_peak_mb INTEGER,
-            cpu_seconds REAL,
-            wall_seconds REAL,
-            timed_out INTEGER NOT NULL DEFAULT 0,
-            ast_findings_json TEXT,
-            security_events_json TEXT,
-            error TEXT,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
-        )
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sandbox_runs_strategy "
-        "ON sandbox_runs (strategy_id, created_at DESC)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sandbox_runs_kind "
-        "ON sandbox_runs (kind, created_at DESC)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sandbox_runs_timed_out "
-        "ON sandbox_runs (timed_out) WHERE timed_out = 1"
-    )
-
     # Hermes-inspired Phase 3 (P3-T01): quant skill versioning + outcome closure
     # + brain lessons. Brain-only persistence layer.
     #

@@ -17,7 +17,7 @@
 		type BacktestingRunSummary,
 	} from '$lib/api';
 	import { fetchApi } from '$lib/api/core';
-	import { scanStrategy, type AstReport } from '$lib/api/sandbox';
+	import { scanStrategy, type AstReport } from '$lib/api/strategyGuard';
 
 	const SESSION_STORAGE_KEY = 'forven:ai-dropzone:active-session-id';
 	const REFRESH_MS = 5000;

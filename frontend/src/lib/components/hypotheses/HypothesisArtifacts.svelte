@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { HypothesisArtifact } from '$lib/api';
+	import { safeHref } from '$lib/utils/url';
 
 	export let artifacts: HypothesisArtifact[] = [];
 	export let includeContent = false;
@@ -48,7 +49,7 @@
 				<div class="px-5 py-4">
 					<div class="flex flex-wrap items-center gap-2">
 						<span class="rounded-full border border-[#262626] bg-black/60 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">{artifact.source_type}</span>
-						<a href={artifact.source_ref} target="_blank" rel="noreferrer" class="text-sm font-semibold text-cyan-300 transition hover:text-cyan-200">
+						<a href={safeHref(artifact.source_ref)} target="_blank" rel="noreferrer noopener" class="text-sm font-semibold text-cyan-300 transition hover:text-cyan-200">
 							{artifact.source_title}
 						</a>
 						{#if artifact.cached_content_hash}

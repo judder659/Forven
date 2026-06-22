@@ -281,11 +281,14 @@ def _run_post_pull(command: str, repo_path: str) -> str:
 
 @router.get("/api/webhooks/github/health")
 def github_webhook_health():
+    # SECURITY (audit 2026-06-22, L11): this endpoint is auth-exempt (the webhook
+    # prefix is unauthenticated by design). Do NOT disclose the absolute repo
+    # path / remote / branch here — that is filesystem reconnaissance for an
+    # unauthenticated caller. Return only booleans.
     return {
         "status": "ok",
-        "repo_path": _target_repo_path(),
-        "remote": _target_remote(),
-        "branch": _target_branch(),
+        "branch_configured": bool(_target_branch()),
+        "remote_configured": bool(_target_remote()),
         "post_pull_configured": bool(_post_pull_command()),
         "secret_configured": bool(_webhook_secret()),
     }

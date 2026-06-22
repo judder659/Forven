@@ -67,7 +67,7 @@ from forven.routers.gauntlet import router as gauntlet_router
 from forven.routers.lab_regime import router as lab_regime_router
 from forven.routers.bot_factory import router as bot_factory_router
 from forven.routers.brain import router as brain_router
-from forven.routers.sandbox import router as sandbox_router
+from forven.routers.strategy_guard import router as strategy_guard_router
 from forven.routers.skills import router as skills_router
 from forven.routers.health import router as health_router
 from forven.routers.hypotheses import router as hypotheses_router, data_gap_router
@@ -615,7 +615,7 @@ if regime_lab_enabled():
     app.include_router(lab_regime_router)
 app.include_router(bot_factory_router)
 app.include_router(brain_router)
-app.include_router(sandbox_router)
+app.include_router(strategy_guard_router)
 app.include_router(skills_router)
 app.include_router(health_router)
 app.include_router(mcp_router)
@@ -737,9 +737,13 @@ if __name__ == "__main__":
         sys.stderr.write(f"ERROR: port {port} is already in use\n")
         sys.exit(2)
     # Bind to loopback by default so the API isn't reachable from the LAN.
-    # FORVEN_BIND_HOST can be set for dev/ops scenarios; if it exposes the API
-    # beyond localhost, an API key is required (see assert_safe_bind_host).
-    bind_host = os.environ.get("FORVEN_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    # FORVEN_BIND_HOST (or the FORVEN_HOST launcher alias) can be set for dev/ops
+    # scenarios; if it exposes the API beyond localhost, an API key is required
+    # (see assert_safe_bind_host). resolved_bind_host() mirrors launcher precedence
+    # so this entry point and the guard never diverge (M6).
+    from forven.api_security import resolved_bind_host
+
+    bind_host = resolved_bind_host()
     # Fail closed: never expose an unauthenticated API beyond loopback.
     assert_safe_bind_host(bind_host)
     uvicorn.run(app, host=bind_host, port=port, workers=1)

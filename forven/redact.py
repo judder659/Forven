@@ -57,6 +57,30 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
         REDACTED_MARKER,
     ),
+    # Hyperliquid / EVM wallet PRIVATE KEY: 0x + exactly 64 hex. The {64}\b bound
+    # deliberately does NOT match a 40-hex public address (0x + 40), which is not
+    # secret. This is the funds-controlling key — the most important to scrub.
+    (
+        re.compile(r"\b0x[a-fA-F0-9]{64}\b"),
+        REDACTED_MARKER,
+    ),
+    # Discord "Bot <token>" / "Bearer" already covered above; the Authorization
+    # scheme Discord uses for bots.
+    (
+        re.compile(r"(?i)\b(Bot)\s+[A-Za-z0-9._\-]{24,}\b"),
+        r"\1 " + REDACTED_MARKER,
+    ),
+    # Discord webhook URL — redact the secret token segment, keep the routable id.
+    (
+        re.compile(r"(https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\d+/)[A-Za-z0-9_\-]{20,}"),
+        r"\1" + REDACTED_MARKER,
+    ),
+    # Discord bot token (3 dot-separated base64url segments). Structure keeps the
+    # false-positive rate low.
+    (
+        re.compile(r"\b[A-Za-z0-9_\-]{23,28}\.[A-Za-z0-9_\-]{6,7}\.[A-Za-z0-9_\-]{27,}\b"),
+        REDACTED_MARKER,
+    ),
     # Env-var leak in shell-style assignment: KEY=value, KEY="value", KEY='value'.
     # Preserves the var name, replaces value.
     (

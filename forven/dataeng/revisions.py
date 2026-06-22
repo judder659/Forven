@@ -53,28 +53,28 @@ def revision_path(symbol: str, timeframe: str) -> Path:
 def _read_parquet_frame(path: Path) -> pd.DataFrame | None:
     if not path.exists():
         return None
+    # SECURITY (audit 2026-06-22, L7): never fall back to pd.read_pickle. A
+    # planted/corrupted file in the revision lake would otherwise deserialize
+    # arbitrary pickled code (RCE). pyarrow is a hard dependency, so a read
+    # failure means a genuinely bad/foreign file — return None, do not pickle.
     try:
         import pyarrow.parquet as pq
 
         return pq.read_table(path).to_pandas()
     except Exception:
-        try:
-            return pd.read_pickle(path)
-        except Exception:
-            return None
+        return None
 
 
 def _write_parquet_frame(path: Path, frame: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(path) + ".tmp")
-    try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
+    # SECURITY (audit 2026-06-22, L7): write parquet only, never pickle, so the
+    # reader never has a reason to deserialize a pickle. pyarrow is a hard dep.
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
-        table = pa.Table.from_pandas(frame, preserve_index=False)
-        pq.write_table(table, tmp, compression="zstd")
-    except Exception:
-        frame.to_pickle(tmp)
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    pq.write_table(table, tmp, compression="zstd")
     os.replace(str(tmp), str(path))
 
 

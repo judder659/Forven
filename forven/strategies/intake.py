@@ -233,6 +233,22 @@ def scan_custom_strategies(*, register: bool = False) -> dict:
             ))
             continue
 
+        # SECURITY (audit 2026-06-22, C1): AST-scan BEFORE importing in-process.
+        # This bulk scan loop previously imported every custom/*.py with only the
+        # `ta` banned-import gate — strictly weaker than every sibling importer
+        # (register_custom_strategy_file, _load_custom_strategy_module, optimizer),
+        # which all run the static guard first. A planted module's top-level code
+        # would otherwise execute in the host API process.
+        try:
+            registry.assert_custom_module_safe(modname)
+        except Exception as exc:
+            report.errors.append(IntakeError(
+                module_name=modname,
+                error=f"Rejected by security scan: {exc}",
+                file_name=file_name,
+            ))
+            continue
+
         # Try importing
         try:
             mod = importlib.import_module(fqn)

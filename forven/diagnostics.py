@@ -334,124 +334,6 @@ def check_forven_home() -> CheckResult:
         return CheckResult("forven_home", FAIL, f"check failed: {exc}", {"error": str(exc)})
 
 
-def check_sandbox_status(sample_size: int = 50) -> CheckResult:
-    """Sandbox: enabled flag, recent error rate, timeout rate, runner import.
-
-    Branches:
-
-    * **WARN** if `sandbox_enabled=False` (operator hasn't opted in yet).
-    * **FAIL** if `sandbox_enabled=True` AND the subprocess_runner import
-      itself blows up (means sandbox calls would crash on first use).
-    * **WARN** if `sandbox_enabled=True` AND >20% of recent runs hit
-      `timed_out=true` (probably mis-tuned wall_s caps).
-    * **WARN** if `sandbox_enabled=True` AND <80% of the last `sample_size`
-      runs have a successful exit code (i.e. exit_code 0, kind='run').
-    * **PASS** otherwise (including the "enabled but no runs yet" case).
-    """
-    try:
-        from forven.sandbox.strategy_adapter import get_sandbox_config
-        cfg = get_sandbox_config()
-    except Exception as exc:
-        return CheckResult(
-            "sandbox_status",
-            FAIL,
-            f"config unreadable: {exc}",
-            {"error": str(exc)},
-        )
-
-    if not cfg["enabled"]:
-        return CheckResult(
-            "sandbox_status",
-            WARN,
-            "sandbox disabled — AI-generated strategies run un-isolated",
-            {"enabled": False, **cfg},
-        )
-
-    # Enabled — make sure the runner is importable. If not, calling code
-    # would raise at the first .evaluate(), so treat as FAIL.
-    try:
-        from forven.sandbox.subprocess_runner import (  # noqa: F401
-            run_strategy_in_subprocess,
-        )
-    except Exception as exc:
-        return CheckResult(
-            "sandbox_status",
-            FAIL,
-            f"runner import failed: {exc}",
-            {"enabled": True, "error": str(exc)},
-        )
-
-    try:
-        from forven.db import get_db_best_effort
-        with get_db_best_effort(timeout_seconds=1.0) as conn:
-            rows = conn.execute(
-                """SELECT exit_code, timed_out, kind
-                   FROM sandbox_runs
-                   ORDER BY id DESC
-                   LIMIT ?""",
-                (sample_size,),
-            ).fetchall()
-    except Exception as exc:
-        return CheckResult(
-            "sandbox_status",
-            FAIL,
-            f"telemetry query failed: {exc}",
-            {"enabled": True, "error": str(exc)},
-        )
-
-    total = len(rows)
-    if total == 0:
-        return CheckResult(
-            "sandbox_status",
-            PASS,
-            "sandbox enabled (no runs yet)",
-            {"enabled": True, "sample_size": 0, **{k: cfg[k] for k in ("mem_mb", "cpu_s", "wall_s")}},
-        )
-
-    timed_out = sum(1 for r in rows if int(r["timed_out"] or 0) == 1)
-    # Don't use ``or`` here — exit_code 0 is success but falsy.
-    successes = sum(
-        1 for r in rows
-        if r["kind"] == "run"
-        and r["exit_code"] is not None
-        and int(r["exit_code"]) == 0
-    )
-
-    timeout_rate = timed_out / total
-    success_rate = successes / total
-
-    detail = {
-        "enabled": True,
-        "sample_size": total,
-        "timeout_rate": round(timeout_rate, 3),
-        "success_rate": round(success_rate, 3),
-        "mem_mb": cfg["mem_mb"],
-        "cpu_s": cfg["cpu_s"],
-        "wall_s": cfg["wall_s"],
-    }
-
-    if timeout_rate > 0.20:
-        return CheckResult(
-            "sandbox_status",
-            WARN,
-            f"{timeout_rate:.0%} of last {total} runs timed out — wall_s may be too low",
-            detail,
-        )
-    if success_rate < 0.80:
-        return CheckResult(
-            "sandbox_status",
-            WARN,
-            f"{success_rate:.0%} success across last {total} runs",
-            detail,
-        )
-    return CheckResult(
-        "sandbox_status",
-        PASS,
-        f"sandbox healthy ({success_rate:.0%} success across last {total} runs)",
-        detail,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Aggregate snapshot
 # ---------------------------------------------------------------------------
@@ -466,7 +348,6 @@ ALL_CHECKS = (
     check_recent_truncations,
     check_brain_cache_hit_rate,
     check_brain_fence_strips,
-    check_sandbox_status,
 )
 
 
@@ -554,7 +435,6 @@ __all__ = [
     "check_recent_truncations",
     "check_brain_cache_hit_rate",
     "check_brain_fence_strips",
-    "check_sandbox_status",
     "run_all_checks",
     "snapshot",
 ]

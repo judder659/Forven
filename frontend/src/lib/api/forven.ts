@@ -1179,6 +1179,25 @@ export async function setKillSwitchEnabled(enabled: boolean): Promise<KillSwitch
 	});
 }
 
+function resolveWsApiKey(): string {
+	// Mirror buildAuthHeaders() in core.ts: env first, then localStorage. Browsers
+	// can't set WS handshake headers, so the key rides as a query param instead.
+	try {
+		const fromEnv = String((import.meta as { env?: Record<string, unknown> }).env?.VITE_FORVEN_API_KEY ?? '').trim();
+		if (fromEnv) return fromEnv;
+	} catch {
+		/* ignore */
+	}
+	try {
+		if (typeof window !== 'undefined') {
+			return (window.localStorage.getItem('forven_api_key') ?? '').trim();
+		}
+	} catch {
+		/* ignore */
+	}
+	return '';
+}
+
 function toLiveWsUrl(base: string): string {
 	let wsBase = base.replace('http://', 'ws://').replace('https://', 'wss://');
 	if (base.startsWith('/')) {
@@ -1188,7 +1207,12 @@ function toLiveWsUrl(base: string): string {
 			: '127.0.0.1:8003';
 		wsBase = `${protocol}//${host}${base}`;
 	}
-	return `${wsBase}/ws/live`;
+	// SECURITY (audit 2026-06-22, L3): when an API key is configured, pass it so
+	// the WS handshake authorizes. Omitted entirely when no key is set, so the
+	// default localhost URL stays clean.
+	const apiKey = resolveWsApiKey();
+	const query = apiKey ? `?key=${encodeURIComponent(apiKey)}` : '';
+	return `${wsBase}/ws/live${query}`;
 }
 
 export function getForvenLiveWebSocketUrls(): string[] {

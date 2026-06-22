@@ -69,6 +69,10 @@ def _build_assistant_tools(allow_actions: bool) -> list[dict]:
     _ensure_tools_imported()
     from forven.agents.tool_registry import _REGISTRY
 
+    # When actions are off, only the auto-tier (read + draft create/backtest) is
+    # offered. assistant_register_strategy_file is no longer in the auto tier
+    # (moved to confirm-gated, audit 2026-06-22 H2), so it is excluded here and
+    # only surfaces — behind a confirm card — when allow_actions is True.
     allowed = CHAT_ASSISTANT_TOOL_NAMES if allow_actions else CHAT_AUTO_TOOL_NAMES
     out: list[dict] = []
     for tool in _REGISTRY.values():
@@ -232,6 +236,9 @@ def _summarize_action(name: str, tool_input: dict) -> str:
         agent = tool_input.get("agent_id") or "an agent"
         title = tool_input.get("title") or tool_input.get("task_type") or "a task"
         return f"Assign {agent}: {title}"
+    if name == "assistant_register_strategy_file":
+        fp = tool_input.get("file_path") or tool_input.get("module_name") or "a custom strategy file"
+        return f"Register and import custom strategy code from {fp}"
     return f"Run {name}"
 
 

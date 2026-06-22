@@ -95,6 +95,23 @@ def is_loopback_host(host: str) -> bool:
     return h in {"127.0.0.1", "::1", "localhost", ""} or h.startswith("127.")
 
 
+def resolved_bind_host() -> str:
+    """The host uvicorn will actually bind to, mirroring the launcher precedence.
+
+    SECURITY (audit 2026-06-22, M6): both start_all.sh and start_all.ps1 accept
+    ``FORVEN_HOST`` as a ``--host`` fallback, but the fail-closed guard used to
+    read only ``FORVEN_BIND_HOST`` — so ``FORVEN_HOST=0.0.0.0`` with no API key
+    would boot an unauthenticated API on a public interface, guard none the wiser.
+    Resolve the same way the launchers do so the guard can never diverge from the
+    actual bind.
+    """
+    for name in ("FORVEN_BIND_HOST", "FORVEN_HOST"):
+        value = _normalize_secret(os.environ.get(name))
+        if value:
+            return value
+    return "127.0.0.1"
+
+
 def assert_safe_bind_host(bind_host: str) -> None:
     """Refuse to start an UNAUTHENTICATED API on a non-loopback interface.
 
@@ -140,8 +157,10 @@ def assert_auth_keys_configured() -> None:
             "FORVEN_OPERATOR_KEY is unset — operator endpoints are unauthenticated. "
             "Set FORVEN_AUTH_REQUIRED=true to refuse start without keys."
         )
-    # Fail closed if the API is exposed beyond loopback without a key.
-    assert_safe_bind_host(os.environ.get("FORVEN_BIND_HOST", "127.0.0.1"))
+    # Fail closed if the API is exposed beyond loopback without a key. Use the
+    # launcher-aware resolver (FORVEN_BIND_HOST → FORVEN_HOST → 127.0.0.1) so the
+    # FORVEN_HOST alias cannot smuggle a public bind past the guard (M6).
+    assert_safe_bind_host(resolved_bind_host())
 
 
 def require_api_access(request: HTTPConnection) -> None:
@@ -165,6 +184,48 @@ def require_operator_access(request: HTTPConnection) -> None:
     if _request_secret_matches(request, expected_operator_key, header_names=(_OPERATOR_KEY_HEADER,)):
         return
     raise HTTPException(status_code=401, detail="Invalid or missing operator key")
+
+
+async def require_api_access_ws(ws: HTTPConnection) -> bool:
+    """Authorize a WebSocket handshake (audit 2026-06-22, L3).
+
+    Starlette's BaseHTTPMiddleware only sees ``http`` scopes, so the live WS
+    endpoints bypass ApiKeyMiddleware entirely. This restores parity: fail-open
+    when no FORVEN_API_KEY is set (the default localhost setup), but when a key
+    IS configured, require it via a ``?key=``/``?api_key=`` query param, the
+    ``x-api-key`` header, or a Bearer token. Returns True if allowed; on mismatch
+    it closes the socket (1008) and returns False so the caller just returns.
+    """
+    expected = _read_env_secret("FORVEN_API_KEY")
+    if not expected:
+        return True
+
+    candidates: list[str] = []
+    try:
+        params = ws.query_params
+        for name in ("key", "api_key", "apikey"):
+            value = _normalize_secret(params.get(name))
+            if value:
+                candidates.append(value)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        header_value = _normalize_secret(ws.headers.get(_API_KEY_HEADER))
+        if header_value:
+            candidates.append(header_value)
+        bearer = _read_authorization_token(ws)
+        if bearer:
+            candidates.append(bearer)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if any(secrets.compare_digest(candidate, expected) for candidate in candidates):
+        return True
+    try:
+        await ws.close(code=1008)
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):

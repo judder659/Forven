@@ -884,6 +884,13 @@ def add_hypothesis_artifact(
 ) -> dict[str, Any]:
     now_iso = _now()
 
+    # SECURITY (audit 2026-06-22, M4): source_ref is later bound to an <a href> in
+    # the UI. Reject XSS-capable schemes at write time (the frontend safeHref()
+    # guards render too — defense in depth). http/https/relative refs are allowed.
+    _collapsed_ref = "".join(ch for ch in str(source_ref or "") if ord(ch) > 0x20).lower()
+    if _collapsed_ref.startswith(("javascript:", "data:", "vbscript:", "file:")):
+        raise ValueError("source_ref uses a disallowed URL scheme")
+
     truncated_content: str | None = None
     content_hash: str | None = None
     content_bytes: int | None = None

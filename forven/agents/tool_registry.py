@@ -106,12 +106,14 @@ _CONTEXT_DEFAULT_DENY: dict[str, frozenset[str]] = {
     # rate limits and side effects. Catastrophic tools (factory_reset) have no
     # legitimate autonomous use: a prompt-injected string in any agent output
     # the brain reads must never be able to wipe the pipeline DB.
-    "scheduled": frozenset({"research", "catastrophic"}),
+    "scheduled": frozenset({"research", "catastrophic", "codegen"}),
     # Recovery context (post-failure retry) should not run destructive tools
     # like archive/delete.
-    "recovery": frozenset({"destructive", "catastrophic"}),
-    # Research context: ingests the most untrusted content; never catastrophic.
-    "research": frozenset({"catastrophic"}),
+    "recovery": frozenset({"destructive", "catastrophic", "codegen"}),
+    # Research context: ingests the most untrusted content; never catastrophic,
+    # and never arbitrary code execution (audit 2026-06-22, H4) — a prompt-injected
+    # research page must not be able to reach run_code / raw-code writes.
+    "research": frozenset({"catastrophic", "codegen"}),
 }
 
 VALID_CONTEXTS: tuple[str, ...] = ("scheduled", "interactive", "recovery", "research")
@@ -544,6 +546,13 @@ _DEFAULT_CATEGORY_PATTERNS: list[tuple[str, str]] = [
     ("get_market_data", "exchange"),
     ("get_ohlcv", "exchange"),
     ("get_ticker", "exchange"),
+    # Codegen: arbitrary-code-execution / raw-code-write tools (audit 2026-06-22,
+    # H4). Denied in research/scheduled/recovery so untrusted-content-driven
+    # agents cannot reach an arbitrary-Python primitive. register_strategy is
+    # deliberately NOT here — its own develop_candidate gate already blocks the
+    # research path, and tagging it would break the autonomous strategy-dev flow.
+    ("run_code", "codegen"),
+    ("deepdive_write_strategy_code", "codegen"),
     # Catastrophic: tools with NO legitimate autonomous use. factory_reset
     # wipes the entire pipeline DB (strategies, trades, settings, logs) — it
     # must only ever run from an operator-interactive context. Kept separate

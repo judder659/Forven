@@ -3,6 +3,7 @@
 import logging
 
 from forven.sandbox import lint_code, run_code
+from forven.sandbox.ast_guard import scan_source
 
 log = logging.getLogger("forven.selfheal")
 
@@ -53,6 +54,36 @@ def validate_strategy_code(code: str) -> dict:
             break
 
     final_lint = lint_code(current_code)
+
+    # SECURITY: static-scan the strategy with the AST guard BEFORE executing it.
+    # run_code already isolates (secret-stripped env + resource caps), but every
+    # other importer (registry/intake/optimizer) runs the guard first; doing the
+    # same here removes the one agent path where code reached execution without a
+    # scan, and rejects obviously-hostile modules (os/eval/file reads/aliased
+    # builtins) before they run at all. We scan the raw strategy, not the wrapped
+    # harness (the harness legitimately imports sys/inspect/pandas).
+    ast_report = scan_source(current_code)
+    if not ast_report.ok:
+        findings = "; ".join(
+            f"line {f.lineno}: {f.message}" for f in ast_report.findings[:5]
+        )
+        log.warning("Self-heal validation rejected by AST guard: %s", findings)
+        return {
+            "valid": False,
+            "code": current_code,
+            "lint_issues": all_issues,
+            "lint_passed": final_lint["passed"],
+            "ast_findings": [
+                {"lineno": f.lineno, "col": f.col, "kind": f.kind, "message": f.message}
+                for f in ast_report.findings
+            ],
+            "execution_result": {
+                "returncode": -1,
+                "stdout": "",
+                "stderr": f"AST guard blocked execution: {findings}",
+                "timed_out": False,
+            },
+        }
 
     test_code = _wrap_with_test_harness(current_code)
     exec_result = run_code(test_code, timeout=30, max_memory_mb=256)

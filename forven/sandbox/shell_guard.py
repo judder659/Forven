@@ -15,9 +15,8 @@ Design contract:
 * **Fail-closed for critical** (always — even with strict=false). These
   are unambiguously destructive: ``rm -rf /``, fork bombs, ``mkfs``, raw
   device writes.
-* **Warn-but-allow** for high/medium/low when strict=false. Findings get
-  logged to ``sandbox_runs.security_events_json`` for after-the-fact
-  review.
+* **Warn-but-allow** for high/medium/low when strict=false. Findings are
+  returned to the caller (``run_shell``) and logged for after-the-fact review.
 * **Fail-open** if the scanner module itself raises (regex compile error,
   etc.) — log a WARN and let ``run_shell`` proceed. Better to run a shell
   command unprotected than to brick the platform.
@@ -161,8 +160,8 @@ def evaluate_for_run_shell(cmd: str | list[str]) -> tuple[bool, ShellReport]:
     """Convenience for run_shell wiring: returns (allowed, report).
 
     *allowed* is False iff the report is critical OR strict mode is on
-    AND any finding exists. Findings of any severity should be persisted
-    to ``sandbox_runs.security_events_json`` regardless of allow/block.
+    AND any finding exists. The caller surfaces findings of any severity to
+    the operator regardless of allow/block.
     """
     report = scan_command(cmd)
     if not report.ok:

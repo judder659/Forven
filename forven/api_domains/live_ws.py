@@ -109,6 +109,14 @@ async def websocket_endpoint(ws: WebSocket):
             core.log.debug("WebSocket receive loop aborted", exc_info=True)
             return None
 
+    # SECURITY (audit 2026-06-22, L3): WS handshakes bypass ApiKeyMiddleware
+    # (non-http scope), so authorize here. Fail-open when no key is set (default
+    # localhost); enforce the key once one is configured (e.g. exposed bind).
+    from forven.api_security import require_api_access_ws
+
+    if not await require_api_access_ws(ws):
+        return
+
     await ws_manager.connect(ws)
     client = getattr(ws, "client", None)
     client_label = f"{getattr(client, 'host', 'unknown')}:{getattr(client, 'port', '')}".rstrip(":")

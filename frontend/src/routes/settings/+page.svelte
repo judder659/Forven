@@ -19,7 +19,6 @@
 	import SettingsModels from '$lib/components/settings/sections/SettingsModels.svelte';
 	import SettingsNotifications from '$lib/components/settings/sections/SettingsNotifications.svelte';
 	import SettingsSystem from '$lib/components/settings/sections/SettingsSystem.svelte';
-	import SettingsSandbox from '$lib/components/settings/sections/SettingsSandbox.svelte';
 	import SettingsDangerZone from '$lib/components/settings/sections/SettingsDangerZone.svelte';
 
 	const VALID_AREAS: ReadonlySet<string> = new Set(SETTINGS_AREAS.map((a) => a.id));
@@ -168,8 +167,6 @@
 					<SettingsNotifications {settings} />
 				{:else if activeArea === 'system'}
 					<SettingsSystem {settings} />
-				{:else if activeArea === 'sandbox'}
-					<SettingsSandbox {settings} />
 				{:else if activeArea === 'danger'}
 					<SettingsDangerZone {settings} />
 				{/if}

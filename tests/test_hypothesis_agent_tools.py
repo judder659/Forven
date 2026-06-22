@@ -752,7 +752,12 @@ def test_extrapolate_strategy_spec_tool_reconstructs_from_cached_artifact(forven
         "claimed_edge": "RSI(2) reverts",
     }))
 
-    res = json.loads(_tool_extrapolate_strategy_spec({"hypothesis_id": hyp["id"]}))
+    # SECURITY (audit 2026-06-22, M1): the success payload is derived from cached
+    # third-party content, so the tool now wraps it in an <untrusted_content>
+    # envelope. The body is still the same JSON, just fenced.
+    _raw = _tool_extrapolate_strategy_spec({"hypothesis_id": hyp["id"]})
+    assert "<untrusted_content" in _raw
+    res = json.loads(_raw[_raw.index("{"): _raw.rindex("}") + 1])
     assert res["ok"] is True
     assert res["hypothesis_id"] == hyp["id"]
     assert str(res["artifact_id"]).startswith("HAT-")
@@ -763,7 +768,8 @@ def test_extrapolate_strategy_spec_tool_reconstructs_from_cached_artifact(forven
     assert len(list_hypothesis_data_gaps(hyp["id"])) >= 1
 
     # record_gaps=False skips gap recording (no recorded_gaps key).
-    res2 = json.loads(_tool_extrapolate_strategy_spec({"hypothesis_id": hyp["id"], "record_gaps": False}))
+    _raw2 = _tool_extrapolate_strategy_spec({"hypothesis_id": hyp["id"], "record_gaps": False})
+    res2 = json.loads(_raw2[_raw2.index("{"): _raw2.rindex("}") + 1])
     assert res2["ok"] is True
     assert "recorded_gaps" not in res2
 

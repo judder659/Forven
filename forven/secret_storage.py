@@ -15,6 +15,37 @@ log = logging.getLogger("forven.secret_storage")
 _ENCRYPTION_PREFIX = "fernet:"
 _KEY_FILE_NAME = ".forven_key"
 
+
+def _restrict_to_owner(path: Path) -> None:
+    """Restrict a secret file to the current user only (audit 2026-06-22, L1).
+
+    POSIX: chmod 0600. Windows: ``os.chmod`` only toggles the read-only bit and
+    does NOT restrict ACLs, so on a multi-user/shared box the Fernet master key
+    could be world-readable. Use icacls to drop inherited ACEs and grant the
+    current user full control. Best-effort — never raises (a failure leaves the
+    default ACL, which on a stock single-user box is already owner/SYSTEM/Admins).
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    if not sys.platform.startswith("win"):
+        return
+    user = os.environ.get("USERNAME") or os.environ.get("USER")
+    if not user:
+        return
+    try:
+        import subprocess
+
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+            check=False,
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort hardening
+        log.debug("icacls hardening skipped for %s: %s", path, exc)
+
 _CACHED_FERNET: Fernet | None = None
 _CACHED_KEY_BYTES: bytes | None = None
 
@@ -69,10 +100,7 @@ def _migrate_legacy_key_if_needed() -> None:
     try:
         preferred.parent.mkdir(parents=True, exist_ok=True)
         preferred.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
-        try:
-            os.chmod(preferred, 0o600)
-        except OSError:
-            pass
+        _restrict_to_owner(preferred)
         log.info("Migrated encryption key from %s to %s", legacy, preferred)
     except Exception as exc:
         log.warning("Could not migrate encryption key to %s: %s", preferred, exc)
@@ -126,10 +154,7 @@ def _load_fernet_key() -> bytes:
         try:
             live_path.parent.mkdir(parents=True, exist_ok=True)
             live_path.write_text(_CACHED_KEY_BYTES.decode("utf-8") + "\n", encoding="utf-8")
-            try:
-                os.chmod(live_path, 0o600)
-            except OSError:
-                pass
+            _restrict_to_owner(live_path)
         except Exception as exc:
             log.warning("Could not restore key file at %s: %s", live_path, exc)
         return _CACHED_KEY_BYTES
@@ -158,10 +183,7 @@ def _load_fernet_key() -> bytes:
             )
         generated = Fernet.generate_key()
         preferred.write_text(generated.decode("utf-8") + "\n", encoding="utf-8")
-        try:
-            os.chmod(preferred, 0o600)
-        except OSError:
-            pass
+        _restrict_to_owner(preferred)
         log.info("Generated local encryption key at %s", preferred)
         return generated
 

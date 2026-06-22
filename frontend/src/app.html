@@ -5,36 +5,10 @@
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>Forven</title>
-		<script>
-			// Packaged-build auth bootstrap. The Tauri shell hands us the per-launch
-			// API + operator keys as URL-fragment params (#__fk=...&__fo=...) because
-			// fragments don't hit the server or the access log. We mirror them into
-			// localStorage where the existing $lib/api/core.ts auth builder already
-			// reads from ("forven_api_key" / "forven_operator_key"), then scrub the
-			// fragment so the keys don't linger in the address bar or get captured by
-			// a copy-link action. Runs inline-synchronously BEFORE the SvelteKit
-			// bundle so the first fetchApi() call already has the header wired up.
-			(function () {
-				try {
-					var h = (window.location.hash || '').slice(1);
-					if (!h || h.indexOf('__fk=') === -1) return;
-					var params = new URLSearchParams(h);
-					var fk = params.get('__fk');
-					var fo = params.get('__fo');
-					if (fk) window.localStorage.setItem('forven_api_key', fk);
-					if (fo) window.localStorage.setItem('forven_operator_key', fo);
-					history.replaceState(
-						null,
-						'',
-						window.location.pathname + window.location.search
-					);
-				} catch (e) {
-					// localStorage disabled / private-mode / etc. We surface as an
-					// unauthenticated API error on the first fetch rather than
-					// blocking boot on a harder-to-diagnose crash.
-				}
-			})();
-		</script>
+		<!-- The Tauri per-launch fragment-key auth bootstrap was removed with the
+		     desktop build (audit 2026-06-22, M5): it was a no-op on the web build and
+		     an inline <script> conflicts with the strict script-src CSP. Web installs
+		     supply the API key via VITE_FORVEN_API_KEY or the Settings UI. -->
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover" class="bg-gray-900 text-gray-100">

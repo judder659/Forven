@@ -1293,16 +1293,10 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     "remote_engine_url": "http://127.0.0.1:9050",
     "remote_engine_data_root": "",
     "setup_wizard_completed_at": None,
-    # Hermes-inspired Phase 2 (P2-T08): sandbox config. Default ON (D1): one-shot
-    # strategy validation/execution that consults this flag runs in the isolated
-    # subprocess sandbox. NOTE: the in-process runtime load path (registry/optimizer/
-    # backtest, which must import the class to call generate_signal per candle) is
-    # NOT gated by this flag — it is protected unconditionally by the static AST
-    # guard (assert_custom_module_safe), since per-tick subprocessing is not viable.
-    "sandbox_enabled": True,
-    "sandbox_mem_mb": 256,
-    "sandbox_cpu_s": 30,
-    "sandbox_wall_s": 60,
+    # Strict mode for the agent run_shell command guard (forven.sandbox.shell_guard).
+    # Off by default; run_shell itself is also disabled by default. When True,
+    # non-critical findings (high/medium/low) fail closed instead of warn-allow.
+    # Backend-only — there is no UI control for this.
     "sandbox_shell_guard_strict": False,
     "updated_at": _now(),
 }
@@ -2506,37 +2500,6 @@ def _apply_settings_section(section: str, payload: dict) -> dict:
                     status_code=400,
                     detail="setup_wizard_completed_at must be a string or null",
                 )
-
-    elif section == "sandbox":
-        # Consumed by forven.sandbox.strategy_adapter.get_sandbox_config(), which
-        # reads these keys straight from get_settings(). Without this branch the
-        # PUT 400s, so the sandbox could never be enabled or tuned from the UI.
-        if "sandbox_enabled" in payload:
-            updates["sandbox_enabled"] = _coerce_bool(
-                payload.get("sandbox_enabled"),
-                bool(updates.get("sandbox_enabled", False)),
-            )
-        if "sandbox_mem_mb" in payload:
-            updates["sandbox_mem_mb"] = _coerce_bounded_int(
-                payload.get("sandbox_mem_mb"),
-                _coerce_bounded_int(updates.get("sandbox_mem_mb"), 256, 64, 8192),
-                64,
-                8192,
-            )
-        if "sandbox_cpu_s" in payload:
-            updates["sandbox_cpu_s"] = _coerce_bounded_int(
-                payload.get("sandbox_cpu_s"),
-                _coerce_bounded_int(updates.get("sandbox_cpu_s"), 30, 1, 600),
-                1,
-                600,
-            )
-        if "sandbox_wall_s" in payload:
-            updates["sandbox_wall_s"] = _coerce_bounded_int(
-                payload.get("sandbox_wall_s"),
-                _coerce_bounded_int(updates.get("sandbox_wall_s"), 60, 1, 3600),
-                1,
-                3600,
-            )
 
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported settings section: {section}")
@@ -3980,6 +3943,12 @@ def _result_artifact_candidate_ids(result_id: str, meta: dict, result_type: str)
         candidate = str(candidate or "").strip()
         if not candidate:
             return
+        # SECURITY (audit 2026-06-22, L4): sanitize BEFORE the value is joined into
+        # an artifact filename. An unsanitized result_id like '..\\..\\secrets'
+        # would escape data/results via os.path.join on Windows (the route regex
+        # matches backslashes) → arbitrary-file read. Mirror the write side's
+        # _safe_result_artifact_key so legit ids are unchanged but separators/.. die.
+        candidate = _safe_result_artifact_key(candidate)
         if candidate not in candidates:
             candidates.append(candidate)
 

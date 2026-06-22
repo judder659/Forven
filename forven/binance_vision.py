@@ -20,6 +20,23 @@ _BV_BASE = "https://data.binance.vision/data/futures/um"
 _BV_START_YEAR = 2019
 _BV_START_MONTH = 9  # September 2019
 
+# SECURITY (audit 2026-06-22, L8): caps against memory exhaustion / zip-bombs.
+# A monthly klines ZIP is a few MB; these ceilings are generous but bound a
+# compromised/MITM'd CDN response. The decompressed cap is the real zip-bomb
+# defense (a tiny ZIP can inflate to gigabytes).
+_MAX_ZIP_BYTES = 256 * 1024 * 1024          # 256 MB compressed download cap
+_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024  # 1 GB per-member decompressed cap
+
+
+def _read_zip_member_capped(zf: "zipfile.ZipFile", name: str) -> bytes:
+    """Read a ZIP member only after checking its declared uncompressed size, so a
+    zip-bomb can't be expanded into memory. Raises ValueError if over the cap."""
+    info = zf.getinfo(name)
+    if info.file_size > _MAX_UNCOMPRESSED_BYTES:
+        raise ValueError(f"zip member {name!r} too large uncompressed: {info.file_size} bytes")
+    return zf.read(name)
+
+
 # Per-symbol cache: bv_symbol:stream:timeframe -> (year, month) of first available data, or None
 _bv_start_cache: dict[str, tuple[int, int] | None] = {}
 
@@ -85,7 +102,21 @@ class BinanceVisionClient:
             if response.status_code == 404:
                 return None
             response.raise_for_status()
-            return response.content  # raw ZIP bytes — parse methods handle extraction
+            # L8: reject an over-cap download (honest Content-Length first, then the
+            # actual body length as a backstop). Defensive int() guard keeps mocked
+            # responses (MagicMock headers) working.
+            try:
+                declared = response.headers.get("content-length")
+                if declared is not None and int(declared) > _MAX_ZIP_BYTES:
+                    log.warning("BV download exceeds size cap (declared %s bytes): %s", declared, url)
+                    return None
+            except (TypeError, ValueError):
+                pass
+            data = response.content  # raw ZIP bytes — parse methods handle extraction
+            if len(data) > _MAX_ZIP_BYTES:
+                log.warning("BV download exceeds size cap (%d bytes): %s", len(data), url)
+                return None
+            return data
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return None
@@ -110,7 +141,7 @@ class BinanceVisionClient:
                 csv_name = next((n for n in zf.namelist() if n.endswith(".csv")), None)
                 if csv_name is None:
                     return None
-                raw = zf.read(csv_name)
+                raw = _read_zip_member_capped(zf, csv_name)
             df = pd.read_csv(
                 io.BytesIO(raw),
                 usecols=["open_time", "open", "high", "low", "close", "volume"],
@@ -134,7 +165,7 @@ class BinanceVisionClient:
                 csv_name = next((n for n in zf.namelist() if n.endswith(".csv")), None)
                 if csv_name is None:
                     return None
-                raw = zf.read(csv_name)
+                raw = _read_zip_member_capped(zf, csv_name)
             df = pd.read_csv(
                 io.BytesIO(raw),
                 usecols=["calc_time", "last_funding_rate"],
@@ -161,7 +192,7 @@ class BinanceVisionClient:
                 csv_name = next((n for n in zf.namelist() if n.endswith(".csv")), None)
                 if csv_name is None:
                     return None
-                raw = zf.read(csv_name)
+                raw = _read_zip_member_capped(zf, csv_name)
             df = pd.read_csv(
                 io.BytesIO(raw),
                 usecols=["create_time", "sum_open_interest"],

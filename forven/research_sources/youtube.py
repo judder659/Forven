@@ -16,10 +16,34 @@ _DEFAULT_HEADERS = {
 }
 
 
+def _is_allowed_youtube_request_host(host: str) -> bool:
+    """Hosts YouTube legitimately serves / redirects to (consent, CDN)."""
+    host = (host or "").strip().lower()
+    suffixes = ("youtube.com", "youtu.be", "google.com", "googlevideo.com", "ytimg.com", "gstatic.com")
+    return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
+def _guard_request_host(request: "httpx.Request") -> None:
+    """SECURITY (audit 2026-06-22, L5): with follow_redirects=True a YouTube
+    response could (in theory) redirect the client at an arbitrary/internal host.
+    This httpx request event-hook fires before EVERY request — including every
+    redirect hop — and refuses any host outside the YouTube/Google allowlist, so
+    a redirect can never steer the fetch at an RFC1918/loopback/metadata address.
+    """
+    from forven.security.url_safety import UnsafeUrlError
+
+    host = (request.url.host or "").lower()
+    if not _is_allowed_youtube_request_host(host):
+        raise UnsafeUrlError(f"YouTube fetch redirected to a non-allowed host: {host!r}")
+
+
+_REQUEST_GUARD_HOOKS = {"request": [_guard_request_host]}
+
+
 def search_youtube_videos(query: str, max_results: int = 5) -> dict[str, Any]:
     """Search YouTube and return normalized candidate video metadata."""
     search_url = f"{_BASE_URL}/results?search_query={quote_plus(query)}"
-    with httpx.Client(timeout=_DEFAULT_TIMEOUT, headers=_DEFAULT_HEADERS, follow_redirects=True) as client:
+    with httpx.Client(timeout=_DEFAULT_TIMEOUT, headers=_DEFAULT_HEADERS, follow_redirects=True, event_hooks=_REQUEST_GUARD_HOOKS) as client:
         response = client.request("GET", search_url)
         response.raise_for_status()
         initial_data = _extract_yt_initial_data(response.text)
@@ -86,7 +110,7 @@ def _inspect_via_scraper(url: str) -> dict[str, Any]:
             "url": url,
         }
     video_id = _extract_video_id(normalized_url)
-    with httpx.Client(timeout=_DEFAULT_TIMEOUT, headers=_DEFAULT_HEADERS, follow_redirects=True) as client:
+    with httpx.Client(timeout=_DEFAULT_TIMEOUT, headers=_DEFAULT_HEADERS, follow_redirects=True, event_hooks=_REQUEST_GUARD_HOOKS) as client:
         html_text = _fetch_watch_page(client, normalized_url)
         player_response = _extract_yt_initial_player_response(html_text)
         video_details = player_response.get("videoDetails") or {}

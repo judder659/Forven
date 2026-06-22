@@ -194,22 +194,34 @@ CHAT_ACT_TOOL_NAMES: frozenset[str] = CHAT_ASK_TOOL_NAMES | frozenset({
 # (place_order/close_position/factory_reset/write_file/run_shell/update_trade/...).
 # ---------------------------------------------------------------------------
 
-CHAT_AUTO_TOOL_NAMES: frozenset[str] = CHAT_ASK_TOOL_NAMES | frozenset({
-    # New read/grounding tools for page-awareness across the app.
+# Read-only grounding tools auto-offered even in read-only chat (allow_actions
+# False). NOTHING here writes/creates/registers/mutates.
+CHAT_AUTO_READONLY_TOOL_NAMES: frozenset[str] = CHAT_ASK_TOOL_NAMES | frozenset({
     "get_portfolio_status",
     "get_pipeline_status",
     "get_market_regime",
     "get_strategy_detail",
-    # Operator-authorized direct actions (create + backtest + drop-zone loop).
+})
+
+# Auto-executed WRITE tools — only offered when allow_actions is True. They
+# create DRAFT candidates / run sims; nothing touches money or promotes.
+# NOTE: assistant_register_strategy_file is intentionally NOT here — it triggers
+# an in-process import of a custom .py, so it is confirm-gated (audit 2026-06-22,
+# H2) to keep injected content from auto-importing code with no human gate.
+CHAT_AUTO_WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "assistant_create_strategy",
     "assistant_run_backtest",
-    "assistant_register_strategy_file",
     "assistant_enqueue_candidate",
 })
+
+CHAT_AUTO_TOOL_NAMES: frozenset[str] = CHAT_AUTO_READONLY_TOOL_NAMES | CHAT_AUTO_WRITE_TOOL_NAMES
 
 CHAT_CONFIRM_TOOL_NAMES: frozenset[str] = frozenset({
     "promote_strategy",
     "assign_agent_task",
+    # Triggers an in-process import of a custom strategy module — always require
+    # an explicit operator confirm card before it runs (audit 2026-06-22, H2).
+    "assistant_register_strategy_file",
 })
 
 # Full set the assistant model can see when actions are allowed.

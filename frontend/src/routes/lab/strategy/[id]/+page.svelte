@@ -67,7 +67,6 @@
 	import { buildTradingViewExport } from '$lib/utils/tradingViewExport';
 	import BrainStrategyDecisionsCard from '$lib/components/brain/BrainStrategyDecisionsCard.svelte';
 	import TradingViewExportModal from '$lib/components/strategy/TradingViewExportModal.svelte';
-	import SandboxBadge from '$lib/components/sandbox/SandboxBadge.svelte';
 	import { openDeepdive } from '$lib/stores/deepdiveStore';
 
 	// TabKey identifiers predate the current UI labels. Mapping (code -> visible label):
@@ -2691,9 +2690,7 @@
 					⮐ Parent {container.strategy.parent_strategy_id}
 				</a>
 			{/if}
-			<span class="ml-auto">
-				<SandboxBadge strategyId={container.strategy.id} strategyPath={null} />
-			</span>
+			<span class="ml-auto"></span>
 			<button
 				type="button"
 				data-testid="export-tradingview-button"

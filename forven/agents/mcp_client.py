@@ -311,7 +311,7 @@ async def connect(config: MCPServerConfig) -> MCPSession:
             # only when FORVEN_ALLOW_LOCAL_MCP=1 (developer opt-in).
             from forven.security.url_safety import (
                 UnsafeUrlError,
-                validate_public_url_static,
+                validate_public_url,
             )
             allow_local = bool(os.environ.get("FORVEN_ALLOW_LOCAL_MCP", "").strip())
             try:
@@ -336,7 +336,12 @@ async def connect(config: MCPServerConfig) -> MCPSession:
                             "cloud metadata endpoint is forbidden"
                         )
                 else:
-                    validate_public_url_static(config.url)
+                    # SECURITY (audit 2026-06-22, L6): resolve DNS too, so a
+                    # hostname that resolves to an RFC1918/loopback address (or a
+                    # DNS-rebinding record) is rejected — static-only validation
+                    # missed that. validate_public_url_static remains imported for
+                    # the allow_local diagnostics path above.
+                    validate_public_url(config.url)
             except UnsafeUrlError as exc:
                 raise MCPProtocolError(f"refused unsafe MCP URL: {exc}") from exc
             session.http_client = httpx.AsyncClient(timeout=init_timeout)

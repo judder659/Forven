@@ -37,8 +37,12 @@ The most security-relevant configuration choices are documented in
 - **Live/mainnet trading is unsupported and off by default.** Reaching a
   real-money order requires multiple deliberate opt-ins; see
   [`DISCLAIMER.md`](DISCLAIMER.md).
-- **AI-generated strategy code** is statically screened before import, but a
-  static guard is not a complete sandbox. Treat custom strategy code as you would
-  any code you run on your machine.
+- **AI-generated and custom strategy code runs in-process**, with the same
+  privileges as the app — including access to your local database and any API
+  credentials in the environment. Before import it is statically screened by an
+  AST guard that blocks the obvious dangerous constructs (OS/network/subprocess
+  imports, `eval`/`exec`/`compile`, file reads, and aliased builtins), but a
+  static denylist is **not a sandbox** and not a complete trust boundary. Only
+  register strategy code you trust, and keep the API on localhost.
 
 Thank you for helping keep Forven and its users safe.

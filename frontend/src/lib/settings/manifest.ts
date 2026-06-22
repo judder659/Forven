@@ -7,7 +7,6 @@ export type SettingsAreaId =
   | 'models'
   | 'notifications'
   | 'system'
-  | 'sandbox'
   | 'danger';
 
 export interface SettingsArea {
@@ -61,7 +60,6 @@ export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'models', label: 'Models', description: 'Auxiliary LLM picks for compression, recall, skill extraction, post-mortem.', deepLinks: [] },
   { id: 'notifications', label: 'Notifications', description: 'Discord transport, event subscriptions, delivery level.', deepLinks: [] },
   { id: 'system', label: 'System', description: 'API keys, remote engine, bot operations, health & telemetry.', deepLinks: [] },
-  { id: 'sandbox', label: 'Sandbox', description: 'Subprocess isolation for AI-generated strategies — caps and master switch.', deepLinks: [{ label: 'Sandbox runs', href: '/sandbox' }] },
   { id: 'danger', label: 'Danger Zone', description: 'Factory reset, credential purge.', deepLinks: [], danger: true },
 ];
 
@@ -105,9 +103,6 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'system-resource-tuning', area: 'system', label: 'Resource tuning', description: 'Worker counts, claim limits, drain mode, and other backpressure knobs.', advanced: true },
   { id: 'system-telemetry', area: 'system', label: 'Health & telemetry', description: 'Health checks, alert thresholds, and regime detection flags.' },
   { id: 'system-db-maintenance', area: 'system', label: 'Database maintenance', description: 'Retention windows for log/result tables and the optional daily VACUUM job.' },
-
-  // Sandbox
-  { id: 'sandbox-config', area: 'sandbox', label: 'Sandbox runtime', description: 'Master switch and resource caps for the strategy sandbox.', deepLinkTo: '/sandbox' },
 
   // Danger
   { id: 'danger-factory-reset', area: 'danger', label: 'Factory reset', description: 'Wipe databases and credentials to restore a clean slate.' },
@@ -2092,60 +2087,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendPath: 'maintenance_vacuum_enabled',
     description: 'Run VACUUM during the daily DB maintenance job to reclaim disk space. Heavy operation — off by default.',
     usedBy: ['forven.maintenance', 'forven.api_core'],
-  },
-
-  // -------------------- SANDBOX --------------------
-  {
-    id: 'sandbox.sandbox_enabled',
-    label: 'Sandbox enabled',
-    default: true,
-    type: 'toggle',
-    area: 'sandbox',
-    subsection: 'sandbox-config',
-    backendSection: 'sandbox',
-    backendPath: 'sandbox_enabled',
-    description: 'Runs one-shot strategy validation/execution in an isolated subprocess. The in-process runtime load path is always protected by the static AST guard regardless of this switch.',
-    usedBy: ['forven.sandbox.strategy_adapter', 'forven.routers.sandbox'],
-    deepLinkTo: '/sandbox',
-  },
-  {
-    id: 'sandbox.sandbox_mem_mb',
-    label: 'Memory cap',
-    unit: 'MB',
-    default: 256,
-    type: 'number',
-    area: 'sandbox',
-    subsection: 'sandbox-config',
-    backendSection: 'sandbox',
-    backendPath: 'sandbox_mem_mb',
-    description: 'Per-subprocess memory ceiling enforced via Job Object (Windows) or RLIMIT_AS (POSIX).',
-    usedBy: ['forven.sandbox.subprocess_runner'],
-  },
-  {
-    id: 'sandbox.sandbox_cpu_s',
-    label: 'CPU time cap',
-    unit: 'seconds',
-    default: 30,
-    type: 'number',
-    area: 'sandbox',
-    subsection: 'sandbox-config',
-    backendSection: 'sandbox',
-    backendPath: 'sandbox_cpu_s',
-    description: 'Soft CPU-time ceiling. Subprocess gets SIGXCPU / job kill on overrun.',
-    usedBy: ['forven.sandbox.subprocess_runner'],
-  },
-  {
-    id: 'sandbox.sandbox_wall_s',
-    label: 'Wall-clock cap',
-    unit: 'seconds',
-    default: 60,
-    type: 'number',
-    area: 'sandbox',
-    subsection: 'sandbox-config',
-    backendSection: 'sandbox',
-    backendPath: 'sandbox_wall_s',
-    description: 'Hard wall-clock kill timer. Stops runaway loops the CPU cap can\u2019t catch.',
-    usedBy: ['forven.sandbox.subprocess_runner'],
   },
 
   // -------------------- DANGER --------------------

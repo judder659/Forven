@@ -66,6 +66,16 @@ def _write_strategy_code(*, new_source: str, rationale: str, thread_id: str) -> 
     sid = _require_strategy_id()
     # Validate syntax first — raise BEFORE writing
     _ast.parse(new_source)
+    # SECURITY (audit 2026-06-22, H3): this file lands in the custom-strategy
+    # auto-import dir, so it must clear the same static guard as every other code
+    # ingress (register_custom_strategy_file). A syntax check alone let an
+    # injected agent plant unscanned code for a later in-process import.
+    from forven.sandbox.ast_guard import scan_source
+
+    _report = scan_source(new_source)
+    if not _report.ok:
+        _findings = "; ".join(f"line {f.lineno}: {f.message}" for f in _report.findings[:10])
+        raise ValueError(f"strategy code rejected by the security scan: {_findings}")
     path = _custom_dir() / f"{sid}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(new_source, encoding="utf-8")

@@ -721,7 +721,14 @@ class ForvenBot(commands.Bot):
         self._agent_data: dict | None = None
         intents.message_content = True
         intents.members = True
-        super().__init__(command_prefix="!", intents=intents)
+        # SECURITY (audit 2026-06-22, L10): suppress @everyone/@here/role pings
+        # bot-wide. LLM-generated message text could otherwise mass-ping the
+        # operator's server. Applies to every .send() unless explicitly overridden.
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
         self._ready_event = asyncio.Event()
         # Conversation history per channel (last N messages for context)
         self._history: dict[str, list[dict]] = {}

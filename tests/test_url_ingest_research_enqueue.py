@@ -166,7 +166,12 @@ def test_list_hypothesis_artifacts_tool_returns_cached_content(forven_db):
         implementation_summary="Pending agent review.",
         cached_content="FULL TRANSCRIPT BODY WITH DETAILS ABOUT ORDER BLOCKS",
     )
-    out = json.loads(_tool_list_hypothesis_artifacts({"hypothesis_id": hyp["id"]}))
+    raw = _tool_list_hypothesis_artifacts({"hypothesis_id": hyp["id"]})
+    # SECURITY (audit 2026-06-22, M1): cached_content is fetched from third-party
+    # URLs, so the tool now fences it in an <untrusted_content> envelope. The body
+    # is still the same JSON payload, just wrapped.
+    assert "<untrusted_content" in raw
+    out = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
     assert out["ok"] is True
     assert len(out["artifacts"]) == 1
     art = out["artifacts"][0]
