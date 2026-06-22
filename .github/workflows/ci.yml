@@ -26,6 +26,22 @@ jobs:
           fi
           echo "OK: no real-identity leakage detected."
 
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # Full history so a secret committed in any past commit is caught,
+          # not just the latest diff.
+          fetch-depth: 0
+
+      - name: Scan for committed secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 25
