@@ -1620,6 +1620,86 @@ def place_protective_stop(
     return payload
 
 
+def place_take_profit(
+    asset: str,
+    position_direction: str,
+    size: float,
+    take_profit_price: float,
+    *,
+    testnet: bool = True,
+    vault_address: str | None = None,
+) -> dict:
+    """Place a reduce-only take-profit trigger for an existing position.
+
+    Mirror of ``place_protective_stop`` with ``tpsl="tp"``. Both a long's stop and
+    its TP are reduce-only SELL triggers (is_buy False); a short's are BUY triggers.
+    The post-trigger fill cap is widened past the trigger (LOE-1) so the market
+    leg fills in a fast move; the trigger itself stays at the true TP price.
+    """
+    from forven.sim.clock import is_sim_active
+    if is_sim_active():
+        return {
+            "status": "ok",
+            "take_profit": float(take_profit_price),
+            "take_profit_order_id": f"sim-tp-{int(time.time() * 1000)}",
+            "source": "sim",
+        }
+
+    try:
+        normalized_size = abs(float(size or 0))
+    except (TypeError, ValueError):
+        normalized_size = 0.0
+    try:
+        normalized_tp = float(take_profit_price or 0)
+    except (TypeError, ValueError):
+        normalized_tp = 0.0
+    if normalized_size <= 0:
+        return {"error": "Take-profit requires a positive size"}
+    if normalized_tp <= 0:
+        return {"error": "Take-profit requires a positive price"}
+
+    _assert_execution_allowed(testnet)
+    exchange, info, address = _exchange_for_trading(testnet, vault_address=vault_address)
+    asset = asset.upper()
+    _raw_tp_size = normalized_size
+    normalized_size = quantize_size(asset, normalized_size, _resolve_exchange_url(exchange))
+    if normalized_size <= 0:
+        if _raw_tp_size and _raw_tp_size > 0:
+            log.warning("take-profit %s: szDecimals unknown; attempting raw size %s", asset, _raw_tp_size)
+            normalized_size = _raw_tp_size
+        else:
+            return {"error": f"take-profit size for {asset} is non-positive"}
+    direction = str(position_direction or "").strip().lower()
+    is_buy = direction == "short"
+    tp_px = round_to_tick(normalized_tp, asset, _resolve_exchange_url(exchange))
+    cap_px = round_to_tick(
+        tp_px * (1 + _PROTECTIVE_STOP_SLIP_FRAC) if is_buy else tp_px * (1 - _PROTECTIVE_STOP_SLIP_FRAC),
+        asset, _resolve_exchange_url(exchange),
+    )
+
+    result = _submit(
+        "place_order",
+        hl_trade_breaker,
+        exchange.order,
+        asset,
+        is_buy,
+        normalized_size,
+        cap_px,
+        {"trigger": {"triggerPx": tp_px, "isMarket": True, "tpsl": "tp"}},
+        reduce_only=True,
+    )
+    order_ids = _extract_bulk_order_ids(result, ["take_profit"])
+    payload = {
+        **result,
+        "take_profit": tp_px,
+        "order_ids": order_ids,
+    }
+    if "take_profit" in order_ids:
+        payload["take_profit_order_id"] = order_ids["take_profit"]
+        payload.setdefault("order_id", order_ids["take_profit"])
+    return payload
+
+
 def configured_margin_is_cross() -> bool:
     """Margin mode for live orders. Default ISOLATED (False) so each position's
     loss is bounded to its own margin and can't drain the rest of the book.

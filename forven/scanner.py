@@ -392,6 +392,31 @@ def _risk_exit_reason(
     return None
 
 
+def _manual_price_exit_reason(current_price, direction: str, signal_data: dict) -> str | None:
+    """Exit reason from operator-set ABSOLUTE stop-loss / take-profit levels.
+
+    Manual-control endpoints write absolute prices into signal_data
+    (``stop_loss_price`` / ``take_profit_price``); the strategy's pct-based engine
+    (``_risk_exit_reason``) only reads pct levels from params and cannot see them.
+    Honoring the manual levels here is what makes a manual stop actually stop the
+    position out. Returns 'stop_loss' / 'take_profit' on breach, else None.
+    """
+    price = _coerce_positive_float(current_price)
+    if price is None:
+        return None
+    sd = signal_data if isinstance(signal_data, dict) else {}
+    stop_price = _coerce_positive_float(sd.get("stop_loss_price"))
+    take_price = _coerce_positive_float(sd.get("take_profit_price"))
+    is_long = str(direction or "long").strip().lower() != "short"
+    if stop_price is not None:
+        if (is_long and price <= stop_price) or (not is_long and price >= stop_price):
+            return "stop_loss"
+    if take_price is not None:
+        if (is_long and price >= take_price) or (not is_long and price <= take_price):
+            return "take_profit"
+    return None
+
+
 # Hyperliquid rejects orders below ~$10 notional. Used as a live preflight so a
 # capital slice that's too thin (Approach C books) surfaces a clear alert.
 _MIN_LIVE_ORDER_NOTIONAL_USD = 10.0
@@ -3832,6 +3857,15 @@ def manage_positions(
 
     # Check exits
     for trade in open_trades:
+        trade_signal_data = parse_trade_signal_data(trade.get("signal_data"))
+        if trade_signal_data.get("manual_pause"):
+            # Full detach: the operator paused auto-management for this position, so
+            # the scanner must not exit it, re-apply SL/TP, or otherwise touch it.
+            strategy_diag["execution_decision"] = "manual_paused"
+            actions.append(f"PAUSED {trade['asset']} — manual auto-management off")
+            continue
+        manual_owned = str(trade_signal_data.get("source") or "").strip().lower() == "manual"
+
         if _trade_pending_close_reconcile(trade):
             strategy_diag["execution_decision"] = "close_pending_reconcile"
             actions.append(f"PENDING close {trade['asset']} reconcile")
@@ -3861,7 +3895,21 @@ def manage_positions(
             take_profit_pct=take_profit_pct,
         )
 
-        if not signal.get("exit_signal") and risk_reason is None and not reversal_requested:
+        # Operator-set absolute SL/TP (manual-control endpoints) supplement — and for
+        # manually-owned positions, solely govern — the strategy's pct-based exits.
+        manual_exit_reason = _manual_price_exit_reason(exit_price, trade_direction, trade_signal_data)
+        if manual_exit_reason and risk_reason is None:
+            risk_reason = manual_exit_reason
+
+        if manual_owned:
+            # The operator owns this position (manually opened or taken over): only an
+            # absolute SL/TP breach may close it — never the strategy's own exit or
+            # reversal signal. (manual_pause, handled above, detaches it entirely.)
+            if manual_exit_reason is None:
+                continue
+            reversal_requested = False
+            risk_reason = manual_exit_reason
+        elif not signal.get("exit_signal") and risk_reason is None and not reversal_requested:
             continue
 
         pnl_pct = ((exit_price - entry_price) / entry_price) * signed * trade_leverage

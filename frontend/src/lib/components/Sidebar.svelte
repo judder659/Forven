@@ -48,14 +48,9 @@
 			icon: 'M12 2L4 5v5c0 4.63 3.2 8.94 8 10 4.8-1.06 8-5.37 8-10V5l-8-3zm-1 11l-2.5-2.5 1.41-1.41L11 10.17l3.09-3.08 1.41 1.41L11 13z'
 		},
 		{
-			label: 'Paper Trades',
-			href: '/paper-trades',
+			label: 'Trades',
+			href: '/trading',
 			icon: 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z'
-		},
-		{
-			label: 'Live Trading',
-			href: '/trades',
-			icon: 'M7 4h2v16H7V4zm8 0h2v16h-2V4zM3 9h2v6H3V9zm8 2h2v9h-2v-9zm8-6h2v14h-2V5z'
 		},
 		{
 			label: 'All Trades',

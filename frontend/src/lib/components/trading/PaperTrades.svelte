@@ -12,6 +12,13 @@
 		getSessionIndicators,
 		getTradeMarkers,
 		getPaperTrades,
+		closePaperPosition,
+		partialClosePaperPosition,
+		openManualPaperPosition,
+		adjustPaperStopLoss,
+		adjustPaperTakeProfit,
+		flipPaperPosition,
+		setPaperAutoManagement,
 		listLifecycleStrategies,
 		getLifecycleStrategy
 	} from '$lib/api';
@@ -26,6 +33,7 @@
 		SessionIndicatorsResponse,
 		TradeMarker,
 		TradeMarkersResponse,
+		OpenManualPaperPositionOptions,
 		LifecycleStrategy,
 		LifecycleEvent,
 		ForvenDashboardResponse
@@ -91,6 +99,29 @@
 	let error: string | null = null;
 	let highActivityTestEnabled = false;
 	let highActivityToggleBusy = false;
+
+	// ── Manual position controls ────────────────────────────────────────────
+	// requestInFlight locks every control button (and gates the 10s poller) while
+	// a mutation is outstanding, so rapid clicks and stale polls can't clobber it.
+	let requestInFlight = false;
+	let slInput = '';
+	let tpInput = '';
+	let partialPctInput = '';
+	let openDirection: 'long' | 'short' = 'long';
+	let openSizeMode: 'size' | 'risk' = 'risk';
+	let openSizeInput = '';
+	let openRiskPctInput = '1';
+	let openLeverageInput = '1';
+	let openSlInput = '';
+	let openTpInput = '';
+	let pendingConfirm: { label: string; detail: string; run: () => Promise<PaperTradingSession> } | null = null;
+	const MANUAL_INPUT_CLASS =
+		'bg-[#0a0a0a] border border-[#333] text-white px-1 py-0.5 text-[10px] focus:outline-none focus:border-gray-500';
+	const MANUAL_BTN_CLASS =
+		'border border-[#333] text-gray-300 hover:text-white hover:border-gray-500 px-1.5 py-0.5 text-[10px] uppercase disabled:opacity-40 disabled:cursor-not-allowed';
+	const MANUAL_BTN_ACCENT_CLASS =
+		'border border-emerald-700 text-emerald-400 hover:text-emerald-200 hover:border-emerald-500 px-2 py-0.5 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed';
+	const MANUAL_SEG_CLASS = 'px-2 py-0.5 text-[10px] uppercase text-gray-400';
 	let archivedDetailLoading = false;
 	let selectedArchivedStrategy: LifecycleStrategy | null = null;
 	let selectedArchivedEvents: LifecycleEvent[] = [];
@@ -225,6 +256,18 @@
 		const kind = String((session as Record<string, unknown> | null | undefined)?.compat_kind ?? '').toLowerCase();
 		return kind === 'deployed';
 	}
+
+	// Manual controls are enabled for every compat session — paper AND deployed/live.
+	// On a deployed session the backend routes actions to REAL Hyperliquid orders
+	// (close = reduce-only, open = market + resting SL/TP). The backend re-checks
+	// server-side and gates live opens — the UI gate is convenience, not the boundary.
+	function supportsManualControl(session: PaperTradingSession | null | undefined): boolean {
+		return isCompatSession(session);
+	}
+
+	// True when the selected session is a deployed/live strategy — drives the
+	// real-money warnings on the manual controls and confirm modal.
+	$: isLiveSelected = isDeployedCompatSession(selectedSession);
 
 	function toPaperTrade(row: unknown): PaperTrade {
 		return row as PaperTrade;
@@ -737,6 +780,9 @@
 
 	async function refreshSelectedSessionSnapshot() {
 		if (!selectedSession || selectedSession.mode === 'replay') return;
+		// Don't let a background poll overwrite fresh state while a manual action
+		// (close/open/flip/adjust) is mid-flight — the action returns the truth.
+		if (requestInFlight) return;
 		const sessionId = selectedSession.id;
 		const previousTradeCount = selectedSession.total_trades ?? 0;
 		try {
@@ -1087,9 +1133,143 @@
 		showUnsupportedPaperControlMessage();
 	}
 
-	async function handleClosePosition() {
+	// ── Manual control action runner ────────────────────────────────────────
+	async function runManualAction(fn: () => Promise<PaperTradingSession>): Promise<void> {
+		if (requestInFlight) return;
+		requestInFlight = true;
+		error = null;
+		try {
+			const updated = await fn();
+			updateSession(updated);
+			applyLatestRealtimeSnapshot();
+			void loadSessionTrades(updated.id);
+			if (showVisualReplay) scheduleLiveChartRefresh(250);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Manual action failed.';
+		} finally {
+			requestInFlight = false;
+		}
+	}
+
+	function confirmAction(label: string, detail: string, run: () => Promise<PaperTradingSession>): void {
+		pendingConfirm = { label, detail, run };
+	}
+
+	async function executeConfirm(): Promise<void> {
+		const pending = pendingConfirm;
+		pendingConfirm = null;
+		if (pending) await runManualAction(pending.run);
+	}
+
+	function cancelConfirm(): void {
+		pendingConfirm = null;
+	}
+
+	function positionPnlText(): string {
+		const pos = selectedSession?.position;
+		if (!pos) return '';
+		return `${formatDollarPnl(pos.unrealized_pnl)} (${formatPercent(pos.unrealized_pnl_pct)})`;
+	}
+
+	function handleClosePosition(): void {
+		const pos = selectedSession?.position;
+		if (!selectedSession || !pos) return;
+		confirmAction(
+			'Close position',
+			`Close ${pos.side.toUpperCase()} ${formatQty(pos.size)} @ ~${formatPrice(selectedSession.current_price)} · est P&L ${positionPnlText()}`,
+			() => closePaperPosition(selectedSession!.id),
+		);
+	}
+
+	function handleFlipPosition(): void {
+		const pos = selectedSession?.position;
+		if (!selectedSession || !pos) return;
+		const opposite = pos.side === 'long' ? 'SHORT' : 'LONG';
+		confirmAction(
+			'Flip position',
+			`Close ${pos.side.toUpperCase()} and open ${opposite} ${formatQty(pos.size)} @ ~${formatPrice(selectedSession.current_price)}`,
+			() => flipPaperPosition(selectedSession!.id),
+		);
+	}
+
+	function handlePartialClose(): void {
+		const pos = selectedSession?.position;
+		if (!selectedSession || !pos) return;
+		const pct = Number(partialPctInput);
+		if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+			error = 'Enter a partial percent in (0, 100].';
+			return;
+		}
+		confirmAction(
+			'Partial close',
+			`Close ${pct}% of ${pos.side.toUpperCase()} (${formatQty((pos.size * pct) / 100)}) @ ~${formatPrice(selectedSession.current_price)}`,
+			async () => {
+				const updated = await partialClosePaperPosition(selectedSession!.id, { pct });
+				partialPctInput = '';
+				return updated;
+			},
+		);
+	}
+
+	function handleToggleAutoManagement(): void {
+		const pos = selectedSession?.position;
+		if (!selectedSession || !pos) return;
+		const paused = !pos.manual_pause;
+		void runManualAction(() => setPaperAutoManagement(selectedSession!.id, paused));
+	}
+
+	function handleAdjustLevel(kind: 'sl' | 'tp', clear = false): void {
+		if (!selectedSession?.position) return;
+		let price: number | null = null;
+		if (!clear) {
+			price = Number(kind === 'sl' ? slInput : tpInput);
+			if (!Number.isFinite(price) || price <= 0) {
+				error = 'Enter a price > 0 (or use Clear).';
+				return;
+			}
+		}
+		const submit = kind === 'sl' ? adjustPaperStopLoss : adjustPaperTakeProfit;
+		void runManualAction(async () => {
+			const updated = await submit(selectedSession!.id, price);
+			if (kind === 'sl') slInput = '';
+			else tpInput = '';
+			return updated;
+		});
+	}
+
+	function handleOpenManual(): void {
 		if (!selectedSession) return;
-		showUnsupportedPaperControlMessage();
+		const leverage = Number(openLeverageInput) || 1;
+		const options: OpenManualPaperPositionOptions = { direction: openDirection, leverage };
+		if (openSizeMode === 'size') {
+			const size = Number(openSizeInput);
+			if (!Number.isFinite(size) || size <= 0) {
+				error = 'Enter a size > 0.';
+				return;
+			}
+			options.size = size;
+		} else {
+			const riskPct = Number(openRiskPctInput);
+			if (!Number.isFinite(riskPct) || riskPct <= 0 || riskPct > 100) {
+				error = 'Enter risk % in (0, 100].';
+				return;
+			}
+			options.riskPct = riskPct;
+		}
+		if (openSlInput) options.stopLossPrice = Number(openSlInput);
+		if (openTpInput) options.takeProfitPrice = Number(openTpInput);
+		const sizeText = openSizeMode === 'size' ? `${formatQty(options.size!)} units` : `${options.riskPct}% risk`;
+		confirmAction(
+			'Open position',
+			`Open ${openDirection.toUpperCase()} ${sizeText} @ ~${formatPrice(selectedSession.current_price)} · ${leverage}x`,
+			async () => {
+				const updated = await openManualPaperPosition(selectedSession!.id, options);
+				openSizeInput = '';
+				openSlInput = '';
+				openTpInput = '';
+				return updated;
+			},
+		);
 	}
 
 	async function hydrateVisualReplayForSession(session: PaperTradingSession) {
@@ -2515,11 +2695,27 @@
 								<span class="text-white font-bold ml-1">{formatQty(selectedSession.position.size)} {selectedSession.symbol.split('/')[0]}</span>
 								<span class="text-gray-400 ml-1">({formatPrice(selectedSession.position.size * (selectedSession.position.current_price || selectedSession.current_price))})</span>
 							</span>
-								<button
-									class="text-red-500 hover:text-red-300 ml-2 text-[10px] uppercase font-bold"
-									disabled={!supportsStandalonePaperSessions || isCompatSession(selectedSession)}
-									on:click={handleClosePosition}
-								>Close</button>
+								<span class="inline-flex items-center gap-2 ml-2">
+									<button
+										class="text-red-500 hover:text-red-300 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										disabled={!supportsManualControl(selectedSession) || requestInFlight}
+										on:click={handleClosePosition}
+									>Close</button>
+									<button
+										class="text-amber-400 hover:text-amber-200 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										disabled={!supportsManualControl(selectedSession) || requestInFlight}
+										on:click={handleFlipPosition}
+									>Flip</button>
+									<button
+										class="text-sky-400 hover:text-sky-200 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										disabled={!supportsManualControl(selectedSession) || requestInFlight}
+										on:click={handleToggleAutoManagement}
+										title={selectedSession.position.manual_pause ? 'Resume scanner auto-management' : 'Pause scanner auto-management (you own this position)'}
+									>{selectedSession.position.manual_pause ? 'Resume' : 'Pause'}</button>
+									{#if selectedSession.position.manual_pause}
+										<span class="text-[9px] uppercase tracking-wider text-sky-400 border border-sky-700 rounded px-1">Manual</span>
+									{/if}
+								</span>
 							</span>
 						{/if}
 						<span class="ml-auto flex items-center gap-2 flex-shrink-0">
@@ -2539,8 +2735,11 @@
 					</span>
 					</div>
 					{#if isDeployedCompatSession(selectedSession)}
-						<div class="mt-2 text-[10px] text-yellow-500">
-							Read-only compatibility session sourced from running strategy state and live trade records.
+						<div class="mt-2 text-[10px] text-red-400 font-bold">
+							⚠ LIVE session — manual actions place REAL reduce-only / market orders on Hyperliquid.
+							{#if selectedSession.position?.book && selectedSession.position.book !== 'main'}
+								<span class="ml-1 text-amber-300">Routed to the {selectedSession.position.book} book (sub-account).</span>
+							{/if}
 						</div>
 					{/if}
 
@@ -2586,8 +2785,85 @@
 							<div class="text-gray-600">Current {formatPrice(selectedSession.current_price)}</div>
 						</div>
 					</div>
+
+					{#if supportsManualControl(selectedSession)}
+						<div class="mt-2 pt-2 border-t border-[#222] flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px]">
+							<span class="uppercase tracking-wider {isLiveSelected ? 'text-red-400 font-bold' : 'text-gray-500'}">{isLiveSelected ? 'Manual · LIVE' : 'Manual'}</span>
+							<span class="inline-flex items-center gap-1">
+								<span class="text-gray-500">Partial</span>
+								<input class="{MANUAL_INPUT_CLASS} w-14" type="number" min="0" max="100" step="1" placeholder="%" bind:value={partialPctInput} disabled={requestInFlight} />
+								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={handlePartialClose}>Close %</button>
+							</span>
+							<span class="inline-flex items-center gap-1">
+								<span class="text-gray-500">SL</span>
+								<input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder={stopPrice !== null ? formatPrice(stopPrice) : 'price'} bind:value={slInput} disabled={requestInFlight} />
+								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('sl')}>Set</button>
+								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('sl', true)}>Clear</button>
+							</span>
+							<span class="inline-flex items-center gap-1">
+								<span class="text-gray-500">TP</span>
+								<input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder={takePrice !== null ? formatPrice(takePrice) : 'price'} bind:value={tpInput} disabled={requestInFlight} />
+								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('tp')}>Set</button>
+								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('tp', true)}>Clear</button>
+							</span>
+							{#if requestInFlight}<span class="text-gray-500">working…</span>{/if}
+						</div>
+					{/if}
+				{/if}
+
+				{#if !selectedSession.position && supportsManualControl(selectedSession)}
+					<div class="mt-2 pt-2 border-t border-[#222] flex flex-wrap items-end gap-x-3 gap-y-2 text-[10px]">
+						<span class="uppercase tracking-wider self-center {isLiveSelected ? 'text-red-400 font-bold' : 'text-gray-500'}">{isLiveSelected ? 'Open LIVE' : 'Open manual'}</span>
+						<span class="inline-flex rounded overflow-hidden border border-[#333]">
+							<button class="{MANUAL_SEG_CLASS} {openDirection === 'long' ? 'bg-[#111] text-emerald-400' : ''}" on:click={() => (openDirection = 'long')}>Long</button>
+							<button class="{MANUAL_SEG_CLASS} {openDirection === 'short' ? 'bg-[#111] text-red-400' : ''}" on:click={() => (openDirection = 'short')}>Short</button>
+						</span>
+						<span class="inline-flex rounded overflow-hidden border border-[#333]">
+							<button class="{MANUAL_SEG_CLASS} {openSizeMode === 'risk' ? 'bg-[#111] text-white' : ''}" on:click={() => (openSizeMode = 'risk')}>Risk %</button>
+							<button class="{MANUAL_SEG_CLASS} {openSizeMode === 'size' ? 'bg-[#111] text-white' : ''}" on:click={() => (openSizeMode = 'size')}>Size</button>
+						</span>
+						{#if openSizeMode === 'risk'}
+							<label class="inline-flex items-center gap-1"><span class="text-gray-500">Risk %</span><input class="{MANUAL_INPUT_CLASS} w-14" type="number" min="0" max="100" step="0.1" bind:value={openRiskPctInput} /></label>
+						{:else}
+							<label class="inline-flex items-center gap-1"><span class="text-gray-500">Size</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" bind:value={openSizeInput} /></label>
+						{/if}
+						<label class="inline-flex items-center gap-1"><span class="text-gray-500">Lev</span><input class="{MANUAL_INPUT_CLASS} w-12" type="number" min="1" step="0.5" bind:value={openLeverageInput} /></label>
+						<label class="inline-flex items-center gap-1"><span class="text-gray-500">SL</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder="opt" bind:value={openSlInput} /></label>
+						<label class="inline-flex items-center gap-1"><span class="text-gray-500">TP</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder="opt" bind:value={openTpInput} /></label>
+						<button class={MANUAL_BTN_ACCENT_CLASS} disabled={requestInFlight} on:click={handleOpenManual}>Open</button>
+					</div>
 				{/if}
 			</div>
+
+			{#if pendingConfirm}
+				<div
+					class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center"
+					role="presentation"
+					on:click={(e) => { if (e.target === e.currentTarget) cancelConfirm(); }}
+				>
+					<div
+						class="bg-[#0a0a0a] border border-[#333] rounded p-4 max-w-sm w-full mx-4"
+						role="dialog"
+						aria-modal="true"
+						tabindex="-1"
+					>
+						<div class="text-[11px] font-bold uppercase tracking-wider text-white mb-2">{pendingConfirm.label}</div>
+						{#if isLiveSelected}
+							<div class="text-[11px] font-bold text-red-400 mb-2">⚠ LIVE — this places a REAL order on Hyperliquid with real money.</div>
+						{/if}
+						<div class="text-[11px] text-gray-300 mb-3">{pendingConfirm.detail}</div>
+						{#if isLiveSelected}
+							<div class="text-[10px] text-gray-500 mb-3">Routed to Hyperliquid on the configured network; fill price is the exchange's, not this estimate.</div>
+						{:else}
+							<div class="text-[10px] text-gray-500 mb-3">Paper fill at the current mid — no slippage or fees modeled.</div>
+						{/if}
+						<div class="flex justify-end gap-2">
+							<button class={MANUAL_BTN_CLASS} on:click={cancelConfirm}>Cancel</button>
+							<button class={MANUAL_BTN_ACCENT_CLASS} disabled={requestInFlight} on:click={executeConfirm}>Confirm</button>
+						</div>
+					</div>
+				</div>
+			{/if}
 
 			<!-- Strategy Parameters Panel -->
 			{#if showParams && selectedSession}

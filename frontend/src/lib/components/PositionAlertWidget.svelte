@@ -244,7 +244,7 @@
 				<div class="text-gray-300 text-right">{formatDateTime(activeAlert.openedAt)}</div>
 			</div>
 			<a
-				href="/paper-trades"
+				href="/trading"
 				class="mt-3 inline-block text-[10px] uppercase tracking-wider text-white border border-white px-2 py-1 hover:bg-white hover:text-black transition-colors"
 				on:click={() => openSessionFromAlert(activeAlert.sessionId)}
 			>

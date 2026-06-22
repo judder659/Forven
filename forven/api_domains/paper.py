@@ -128,10 +128,27 @@ def _build_session_position_view(
             "current_price": current_price,
             "unrealized_pnl": unrealized_pnl,
             "unrealized_pnl_pct": unrealized_pnl_pct,
-            "stop_loss_price": trading_domain._coerce_optional_float(active_trade_signal_data.get("stop_loss")),
-            "take_profit_price": trading_domain._coerce_optional_float(active_trade_signal_data.get("take_profit")),
+            # Prefer the absolute *_price keys (written by manual SL/TP edits and the
+            # scanner's auto-trigger) over the legacy stop_loss/take_profit keys.
+            "stop_loss_price": trading_domain._coerce_optional_float(
+                active_trade_signal_data.get("stop_loss_price")
+                if active_trade_signal_data.get("stop_loss_price") is not None
+                else active_trade_signal_data.get("stop_loss")
+            ),
+            "take_profit_price": trading_domain._coerce_optional_float(
+                active_trade_signal_data.get("take_profit_price")
+                if active_trade_signal_data.get("take_profit_price") is not None
+                else active_trade_signal_data.get("take_profit")
+            ),
             "stop_loss_source": str(active_trade_signal_data.get("stop_loss_source") or "").strip() or None,
             "take_profit_source": str(active_trade_signal_data.get("take_profit_source") or "").strip() or None,
+            # Manual-control surface: lets the UI show pause state and gate controls.
+            "manual_pause": bool(active_trade_signal_data.get("manual_pause")),
+            "source": str(
+                active_trade_signal_data.get("source") or active_trade.get("source") or ""
+            ).strip() or None,
+            # Direction book (Approach C sub-account) a live position routes to.
+            "book": str(active_trade.get("book") or "").strip() or None,
         },
         unrealized_pnl,
     )

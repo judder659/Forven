@@ -59,9 +59,8 @@
 	const TITLE_OVERRIDES: Record<string, string> = {
 		'/': 'Dashboard',
 		'/data': 'Data',
-		'/trades': 'Live Trading',
 		'/all-trades': 'All Trades',
-		'/paper-trades': 'Paper Trades',
+		'/trading': 'Trades',
 		'/risk': 'Risk',
 		'/lab': 'The Forge',
 		'/hypotheses': 'Crucibles',
@@ -78,9 +77,8 @@
 	const DESCRIPTION_OVERRIDES: Record<string, string> = {
 		'/': 'Live trading command center with telemetry, strategy health, and portfolio signals.',
 		'/data': 'Inspect datasets and data-quality health for supported markets.',
-		'/trades': 'Monitor and manage live HyperLiquid testnet scanner positions and closed trade history.',
 		'/all-trades': 'Full trade ledger across all statuses (open, closed, failed) with filtering and manual cleanup of phantom trades.',
-		'/paper-trades': 'Run live and replay paper sessions with chart overlays, signals, and execution history.',
+		'/trading': 'Manage paper and live positions with manual controls, chart overlays, signals, and execution history.',
 		'/risk': 'Monitor drawdown, kill-switch state, and live portfolio risk guardrails.',
 		'/lab': 'Build, scan, and run the 24/7 autopilot lifecycle for strategy development.',
 		'/hypotheses': 'Track market theses, linked strategies, source artifacts, and the missing data that blocks them.',

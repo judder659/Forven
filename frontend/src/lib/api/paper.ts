@@ -19,6 +19,12 @@ export interface PaperPosition {
 	take_profit_price?: number | null;
 	stop_loss_source?: string | null;
 	take_profit_source?: string | null;
+	/** True when the operator paused scanner auto-management for this position. */
+	manual_pause?: boolean;
+	/** Provenance of the position ("manual" for hand-opened/taken-over trades). */
+	source?: string | null;
+	/** Direction book (Approach C sub-account) a live position routes to. */
+	book?: string | null;
 }
 
 export interface PaperNetPosition {
@@ -288,9 +294,95 @@ export async function deletePaperSession(sessionId: string): Promise<{ status: s
 	return unsupportedPaperControl('deletePaperSession');
 }
 
-// Close current position in a session
-export async function closePaperPosition(sessionId: string): Promise<PaperTradingSession> {
-	return unsupportedPaperControl('closePaperPosition');
+// ============== Manual Position Controls (paper) ==============
+// Each posts a light mutation and returns the refreshed session so the UI can
+// update in one round-trip. Backend enforces operator auth + paper-only.
+
+export interface OpenManualPaperPositionOptions {
+	direction: 'long' | 'short';
+	size?: number;
+	riskPct?: number;
+	leverage?: number;
+	stopLossPrice?: number | null;
+	takeProfitPrice?: number | null;
+}
+
+// Close the current position at the paper mid
+export async function closePaperPosition(
+	sessionId: string,
+	reason?: string
+): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/close-position`, {
+		method: 'POST',
+		body: JSON.stringify({ reason: reason ?? null }),
+	});
+}
+
+// Close part of the position (by quantity or percent); residual stays open
+export async function partialClosePaperPosition(
+	sessionId: string,
+	args: { qty?: number; pct?: number }
+): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/partial-close`, {
+		method: 'POST',
+		body: JSON.stringify({ qty: args.qty ?? null, pct: args.pct ?? null }),
+	});
+}
+
+// Open a brand-new position by hand (one per strategy/asset)
+export async function openManualPaperPosition(
+	sessionId: string,
+	options: OpenManualPaperPositionOptions
+): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/open-position`, {
+		method: 'POST',
+		body: JSON.stringify({
+			direction: options.direction,
+			size: options.size ?? null,
+			risk_pct: options.riskPct ?? null,
+			leverage: options.leverage ?? 1,
+			stop_loss_price: options.stopLossPrice ?? null,
+			take_profit_price: options.takeProfitPrice ?? null,
+		}),
+	});
+}
+
+// Set/clear (price=null) the absolute stop-loss on the open position
+export async function adjustPaperStopLoss(
+	sessionId: string,
+	price: number | null
+): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/position/stop-loss`, {
+		method: 'POST',
+		body: JSON.stringify({ price }),
+	});
+}
+
+// Set/clear (price=null) the absolute take-profit on the open position
+export async function adjustPaperTakeProfit(
+	sessionId: string,
+	price: number | null
+): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/position/take-profit`, {
+		method: 'POST',
+		body: JSON.stringify({ price }),
+	});
+}
+
+// Close the position and re-open the opposite side at the same size
+export async function flipPaperPosition(sessionId: string): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/flip`, { method: 'POST' });
+}
+
+// Pause/resume scanner auto-management for the open position (full detach)
+export async function setPaperAutoManagement(
+	sessionId: string,
+	paused: boolean
+): Promise<PaperTradingSession> {
+	return fetchApi(`/paper/sessions/${sessionId}/position/auto-management`, {
+		method: 'POST',
+		body: JSON.stringify({ paused }),
+	});
 }
 
 // ============== Replay Controls ==============
