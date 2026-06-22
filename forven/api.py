@@ -58,6 +58,7 @@ from forven.routers.quant_factory import router as quant_factory_router
 from forven.routers.routines import router as routines_router
 from forven.routers.profile import router as profile_router
 from forven.routers.webhooks import router as webhooks_router
+from forven.routers.updates import router as updates_router
 from forven.routers.backtesting import router as backtesting_router
 from forven.routers.lifecycle import router as lifecycle_router
 from forven.routers.simulation import router as simulation_router, simulation_api_enabled
@@ -587,6 +588,7 @@ app.include_router(paper_router)
 app.include_router(jobs_router)
 app.include_router(legacy_router)
 app.include_router(system_router)
+app.include_router(updates_router)
 app.include_router(auth_router)
 app.include_router(agents_router)
 app.include_router(agent_toolsets_router)

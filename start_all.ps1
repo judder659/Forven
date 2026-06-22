@@ -1246,6 +1246,31 @@ try {
     while ($true) {
         Start-Sleep -Seconds $watchdogInterval
 
+        # In-app self-update: the "Update & restart" action fast-forwards the
+        # checkout and drops this sentinel. Bounce the backend so it reloads the
+        # pulled code, then clear the sentinel. (The frontend is served by Vite,
+        # which hot-reloads source changes on its own.)
+        $restartSentinel = Join-Path $script:RepoRoot ".tmp\restart.request"
+        if (Test-Path $restartSentinel) {
+            Write-Info "Self-update restart requested - bouncing backend to load new code..."
+            try { Remove-Item -Force $restartSentinel -ErrorAction Stop } catch { Write-WarnMessage "Could not remove restart sentinel: $($_.Exception.Message)" }
+            try {
+                Stop-StartedProcessIfRunning -Process $backendProc
+                Stop-PortListeners -Port $backendPort
+                $backendProc = Start-BackendService
+                $script:ServiceState["backend"].lastRestart = [DateTime]::Now
+                $script:ServiceState["backend"].unhealthyChecks = 0
+                if ($null -ne $backendProc) {
+                    Write-Info "Backend restarted (self-update) as PID $($backendProc.Id)"
+                } else {
+                    Write-Info "Backend healthy after self-update restart."
+                }
+            } catch {
+                Write-WarnMessage "Self-update restart failed: $($_.Exception.Message)"
+            }
+            continue
+        }
+
         # Watchdog: Backend (critical - check HTTP health)
         $backendHealthy = Test-HttpHealthy -Url $backendHealth
         $backendExited = (($null -ne $backendProc) -and $backendProc.HasExited)

@@ -15,6 +15,7 @@
 	import LaunchBanner from '$lib/components/LaunchBanner.svelte';
 	import RiskDisclaimerBanner from '$lib/components/RiskDisclaimerBanner.svelte';
 	import AgentProviderBanner from '$lib/components/AgentProviderBanner.svelte';
+	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import PositionAlertWidget from '$lib/components/PositionAlertWidget.svelte';
 	import AIChatPanel from '$lib/components/AIChatPanel.svelte';
 	import { chatUnreadCount } from '$lib/stores/chatStore';
@@ -260,6 +261,7 @@
 	<!-- Main Content -->
 	<main class="flex-1 min-w-0 bg-black flex flex-col relative z-0">
 		<RiskDisclaimerBanner />
+		<UpdateBanner />
 		<AgentProviderBanner />
 		<LaunchBanner />
 		<GlobalControlStrip />

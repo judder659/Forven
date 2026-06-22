@@ -8,6 +8,7 @@
 	import SettingsSubsection from '$lib/components/settings/primitives/SettingsSubsection.svelte';
 	import SettingsFieldRow from '$lib/components/settings/primitives/SettingsFieldRow.svelte';
 	import SettingsAdvancedHeader from '$lib/components/settings/primitives/SettingsAdvancedHeader.svelte';
+	import UpdatePanel from '$lib/components/settings/UpdatePanel.svelte';
 	import { originalValues, pendingValues } from '$lib/settings/dirty';
 
 	export let settings: Record<string, unknown>;
@@ -69,6 +70,9 @@
 </script>
 
 <div class="space-y-6">
+	{#if variant !== 'wizard'}
+		<UpdatePanel />
+	{/if}
 	{#each subs as sub (sub.id)}
 		{@const entries = entriesBySub[sub.id] ?? []}
 		{@const usedBy = [...new Set(entries.flatMap((e) => e.usedBy))]}

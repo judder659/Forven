@@ -5,6 +5,16 @@ export {
 	checkHealth,
 } from './core';
 
+export {
+	getUpdateStatus,
+	applyUpdate,
+} from './updates';
+export type {
+	UpdateStatus,
+	ApplyUpdateResult,
+	ApplyUpdateStatus,
+} from './updates';
+
 export type {
 	Strategy,
 	ParamSpec,

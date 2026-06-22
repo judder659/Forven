@@ -324,6 +324,24 @@ info "  Backend:  http://127.0.0.1:${BACKEND_PORT}"
 info "Press Ctrl+C to stop all started services."
 
 while true; do
+	# In-app self-update: the "Update & restart" action fast-forwards the
+	# checkout and drops this sentinel. Bounce the backend so it reloads the
+	# pulled code. (The frontend dev server hot-reloads source changes itself.)
+	if [[ -f "$DIR/.tmp/restart.request" ]]; then
+		info "Self-update restart requested - bouncing backend to load new code..."
+		rm -f "$DIR/.tmp/restart.request" 2>/dev/null || true
+		kill_port_listener "$BACKEND_PORT"
+		python3 -m uvicorn --app-dir "$UVICORN_APP_DIR" "$BACKEND_MODULE" --host "$BACKEND_HOST" --port "$BACKEND_PORT" --workers "$BACKEND_WORKERS" > "$BACKEND_LOG" 2>&1 &
+		BACKEND_PID=$!
+		PIDS+=("$BACKEND_PID")
+		if wait_for_http "$BACKEND_HEALTH_URL" "Backend"; then
+			info "Backend restarted (self-update) as PID ${BACKEND_PID}"
+		else
+			warn "Backend did not pass health check after self-update restart; see ${BACKEND_LOG}"
+		fi
+		sleep 2
+		continue
+	fi
 	if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
 		die "Backend process exited unexpectedly. See ${BACKEND_LOG}"
 	fi
