@@ -836,6 +836,145 @@ def get_data_quality(symbol: str, timeframe: str, remote_skip: bool = False):
     return payload
 
 
+# Data-quality leaderboard. The frontend used to have NO backend route for this
+# (it called /data/quality/reports, got a 404, and fell back to firing up to
+# ~100 CONCURRENT /api/data/quality requests — one full parquet scan each). That
+# fan-out saturated the worker threadpool, starved the asyncio event loop, and
+# dropped the live websocket every time the Data page's Overview tab mounted.
+# Computing the reports server-side in ONE sequential, TTL-cached pass keeps the
+# heavy work off that fan-out so it can never again starve the loop.
+_QUALITY_REPORTS_TTL_SECONDS = 120.0
+# Keyed on (data root, limit) so distinct lakes (e.g. per-test tmp dirs) never
+# share an entry.
+_quality_reports_cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
+_quality_reports_lock = threading.Lock()
+
+
+def _quality_score(q: dict) -> float:
+    """Mirror of the frontend's computeFallbackQualityScore so the leaderboard
+    score is identical whether it comes from this route or the legacy fallback."""
+    row_count = max(1, int(q.get("row_count") or 0))
+    total_cells = max(1, row_count * 5)
+    integrity = q.get("integrity") or {}
+    outliers = q.get("outliers") or {}
+    freshness = q.get("freshness") or {}
+    score = 100.0
+    score -= min(30.0, (int(q.get("gaps") or 0) / row_count) * 1000)
+    score -= min(20.0, (int(q.get("null_values") or 0) / total_cells) * 1000)
+    score -= min(10.0, int(integrity.get("invalid_high_low") or 0) * 2)
+    score -= min(10.0, int(integrity.get("invalid_close_range") or 0) * 2)
+    if freshness.get("is_stale"):
+        score -= 10.0
+    outlier_ratio = (int(outliers.get("close") or 0) + int(outliers.get("volume") or 0)) / row_count
+    score -= min(10.0, outlier_ratio * 500)
+    return max(0.0, min(100.0, round(score * 10) / 10))
+
+
+def _quality_report_from(ds: dict, q: dict, idx: int) -> dict:
+    integrity = q.get("integrity") or {}
+    outliers = q.get("outliers") or {}
+    freshness = q.get("freshness") or {}
+    price = q.get("price_range") or {}
+    vol = q.get("volume_stats") or {}
+    symbol = _to_ui_symbol(q.get("symbol") or ds.get("symbol"))
+    timeframe = str(q.get("timeframe") or ds.get("timeframe") or "")
+    return {
+        "id": f"quality-{idx}-{symbol}-{timeframe}",
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "row_count": int(q.get("row_count") or 0),
+        "start_ts": q.get("start"),
+        "end_ts": q.get("end"),
+        "duration_days": float(q.get("duration_days") or 0.0),
+        "gaps": int(q.get("gaps") or 0),
+        "gap_details": q.get("gap_details") or [],
+        "null_values": int(q.get("null_values") or 0),
+        "price_range_min": float(price.get("min") or 0.0),
+        "price_range_max": float(price.get("max") or 0.0),
+        "volume_min": float(vol.get("min") or 0.0),
+        "volume_max": float(vol.get("max") or 0.0),
+        "volume_avg": float(vol.get("avg") or 0.0),
+        "outliers_close": int(outliers.get("close") or 0),
+        "outliers_volume": int(outliers.get("volume") or 0),
+        "invalid_high_low": int(integrity.get("invalid_high_low") or 0),
+        "invalid_close_range": int(integrity.get("invalid_close_range") or 0),
+        "freshness_hours": float(freshness.get("hours_ago") or 0.0),
+        "is_stale": bool(freshness.get("is_stale") or False),
+        "quality_score": _quality_score(q),
+        "computed_at": _now(),
+    }
+
+
+def _compute_quality_reports(limit: int) -> list[dict]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from forven.data import compute_data_quality
+
+    datasets = get_datasets_stub(remote_skip=True)
+    datasets = sorted(
+        (d for d in datasets if isinstance(d, dict)),
+        key=lambda d: core._to_datetime_sort_key(d.get("end_ts") or d.get("start_ts")),
+        reverse=True,
+    )[:limit]
+
+    def _one(ds: dict) -> tuple[dict, dict] | None:
+        symbol = str(ds.get("symbol") or "").strip()
+        timeframe = str(ds.get("timeframe") or "").strip()
+        if not symbol or not timeframe:
+            return None
+        try:
+            q = compute_data_quality(symbol, timeframe)
+        except Exception:
+            # A single unreadable/missing series must not sink the whole report.
+            return None
+        return (ds, q) if isinstance(q, dict) else None
+
+    # Bounded parallelism: parquet reads release the GIL, so a few workers cut the
+    # cold-cache build time without the 100-wide saturation that started all this.
+    reports: list[dict] = []
+    if not datasets:
+        return reports
+    with ThreadPoolExecutor(max_workers=min(4, len(datasets))) as pool:
+        for pair in pool.map(_one, datasets):  # map preserves recency order
+            if pair is None:
+                continue
+            ds, q = pair
+            reports.append(_quality_report_from(ds, q, len(reports)))
+    return reports
+
+
+def get_quality_reports(limit: int = 100) -> list[dict]:
+    """Server-side data-quality leaderboard, computed once and cached briefly.
+
+    Remote data mode owns its own catalog, so we don't scan the local lake there
+    — return an empty list (the UI shows "no reports yet") rather than proxying a
+    slow per-series fan-out.
+    """
+    remote_enabled, _ = _remote_data_engine_config()
+    if remote_enabled:
+        return []
+
+    from forven.data import DATA_DIR
+
+    cache_limit = max(1, min(int(limit or 100), 500))
+    cache_key = (str(DATA_DIR), cache_limit)
+    now = time.time()
+    cached = _quality_reports_cache.get(cache_key)
+    if cached and (now - cached[0]) < _QUALITY_REPORTS_TTL_SECONDS:
+        return cached[1]
+
+    # Serialize recomputation so a burst of concurrent callers shares one pass
+    # instead of each launching its own full-lake scan.
+    with _quality_reports_lock:
+        cached = _quality_reports_cache.get(cache_key)
+        now = time.time()
+        if cached and (now - cached[0]) < _QUALITY_REPORTS_TTL_SECONDS:
+            return cached[1]
+        reports = _compute_quality_reports(cache_limit)
+        _quality_reports_cache[cache_key] = (time.time(), reports)
+        return reports
+
+
 def get_data_health():
     """Return merged DB/parquet health + per-stream freshness snapshot.
 
@@ -1837,6 +1976,7 @@ __all__ = [
     "get_data_ingestion_run",
     "get_data_ingestion_runs",
     "get_data_quality",
+    "get_quality_reports",
     "get_data_sources_stub",
     "get_dataset_detail_stub",
     "get_dataset_export",

@@ -121,10 +121,21 @@ class DataHub:
         from forven.dataeng.source import get_source_registry
         from forven.dataeng.stream import get_stream_manager
 
+        try:
+            engine_enabled = bool(load_data_engine_settings().enabled)
+        except Exception:
+            engine_enabled = False
+
         coverage: list[dict[str, object]]
         try:
             catalog = Catalog()
-            catalog.scan_lake()
+            # The engine is opt-in / default-off. A full lake rescan opens a fresh
+            # DuckDB connection per parquet, so only pay for it when the engine is
+            # actually enabled; otherwise serve the last-persisted coverage. This
+            # endpoint runs on EVERY Data-page load, so an unconditional scan piled
+            # onto the load that was starving the event loop and dropping the WS.
+            if engine_enabled:
+                catalog.scan_lake()
             coverage = catalog.list_coverage()
         except Exception:
             coverage = []
@@ -176,11 +187,6 @@ class DataHub:
                         "message": health.message,
                     }
                 )
-
-        try:
-            engine_enabled = bool(load_data_engine_settings().enabled)
-        except Exception:
-            engine_enabled = False
 
         return {
             "enabled": engine_enabled,

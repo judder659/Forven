@@ -860,6 +860,29 @@ export async function getDatasetVersions(opts?: {
 	}
 }
 
+// Run an async mapper over `items` with at most `limit` in flight at once. The
+// quality-report fallback below MUST NOT fan out one request per dataset — an
+// unbounded Promise.all over ~100 datasets saturated the backend threadpool and
+// the browser's per-host connection pool, starving the live websocket. Bounding
+// concurrency keeps the fallback safe even against a legacy backend.
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let cursor = 0;
+	const workerCount = Math.max(1, Math.min(limit, items.length));
+	async function worker(): Promise<void> {
+		while (cursor < items.length) {
+			const idx = cursor++;
+			results[idx] = await fn(items[idx], idx);
+		}
+	}
+	await Promise.all(Array.from({ length: workerCount }, () => worker()));
+	return results;
+}
+
 export async function getQualityReports(limit?: number): Promise<QualityReport[]> {
 	const params = new URLSearchParams();
 	if (limit) params.set('limit', limit.toString());
@@ -869,16 +892,14 @@ export async function getQualityReports(limit?: number): Promise<QualityReport[]
 	} catch (error) {
 		if (!isNotFoundError(error)) throw error;
 		const datasets = sortDatasetsByRecent(await getDatasets()).slice(0, limit ?? 100);
-		const reports = await Promise.all(
-			datasets.map(async (ds, idx) => {
-				try {
-					const quality = await getDataQualityExtended(ds.symbol, ds.timeframe);
-					return toQualityReport(ds, quality, idx);
-				} catch {
-					return null;
-				}
-			})
-		);
+		const reports = await mapWithConcurrency(datasets, 4, async (ds, idx) => {
+			try {
+				const quality = await getDataQualityExtended(ds.symbol, ds.timeframe);
+				return toQualityReport(ds, quality, idx);
+			} catch {
+				return null;
+			}
+		});
 		return reports.filter((r): r is QualityReport => r !== null);
 	}
 }

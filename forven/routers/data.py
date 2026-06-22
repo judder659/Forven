@@ -137,6 +137,14 @@ def get_data_quality(symbol: str, timeframe: str, remote_skip: bool = False):
     return data_domain.get_data_quality(symbol=symbol, timeframe=timeframe, remote_skip=remote_skip)
 
 
+@router.get("/api/data/quality/reports")
+def get_quality_reports(limit: int = 100):
+    """Data-quality leaderboard, built server-side in one cached pass. Without
+    this route the frontend 404s here and fans out ~100 concurrent per-series
+    quality scans, which starves the event loop and drops the live websocket."""
+    return data_domain.get_quality_reports(limit=limit)
+
+
 @router.get("/api/data/health")
 def get_data_health():
     return data_domain.get_data_health()

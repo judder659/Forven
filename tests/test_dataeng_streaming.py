@@ -144,6 +144,6 @@ def test_data_engine_status_and_backfill_plan_api_domain(tmp_path):
     status = data_domain.get_data_engine_status()
     plan = data_domain.post_data_engine_backfill_plan()
 
-    assert set(status) == {"coverage", "streams", "sources"}
+    assert set(status) == {"enabled", "coverage", "streams", "sources"}
     assert "task_count" in plan
     assert "tasks" in plan

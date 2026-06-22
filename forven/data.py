@@ -1558,18 +1558,25 @@ def dataset_ohlcv(symbol: str, timeframe: str, limit: int = 100) -> dict[str, An
 def _gap_details(timestamps: pd.Series, timeframe_ms: int) -> tuple[int, list[dict[str, str]]]:
     if len(timestamps) < 2:
         return 0, []
-    diffs = timestamps.diff().dt.total_seconds().mul(1000).fillna(0).astype(int)
+    # Vectorized gap detection. The previous implementation iterated EVERY row
+    # in pure Python with .iloc indexing, so a near-complete multi-million-row
+    # 1m series ran millions of slow Python ops while holding the GIL. Computing
+    # the per-bar diffs vectorially and only walking the (few) gap positions
+    # keeps this fast — under load the old loop starved the asyncio event loop
+    # and dropped the live websocket. Output semantics are preserved exactly:
+    # the same per-gap "missing" math and the same 200-detail cap.
+    timestamps = timestamps.reset_index(drop=True)
+    diffs_ms = timestamps.diff().dt.total_seconds().mul(1000).fillna(0)
+    gap_positions = diffs_ms.index[diffs_ms > timeframe_ms]
     total_missing = 0
     details: list[dict[str, str]] = []
-    for idx in range(1, len(timestamps)):
-        diff_ms = int(diffs.iloc[idx])
-        if diff_ms <= timeframe_ms:
-            continue
+    for idx in gap_positions:
+        diff_ms = int(diffs_ms.iat[idx])
         missing = max(1, int(round(diff_ms / timeframe_ms)) - 1)
         total_missing += missing
         details.append(
             {
-                "timestamp": _to_iso(timestamps.iloc[idx - 1] + pd.Timedelta(milliseconds=timeframe_ms)) or "",
+                "timestamp": _to_iso(timestamps.iat[idx - 1] + pd.Timedelta(milliseconds=timeframe_ms)) or "",
                 "gap_size": f"{missing} bars",
             }
         )
