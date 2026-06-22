@@ -6,6 +6,7 @@
 		transitionStage,
 		type TaskContainer,
 	} from '$lib/api';
+	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
 	import { createEventDispatcher } from 'svelte';
 
 	const dispatch = createEventDispatcher();
@@ -209,13 +210,16 @@
 				{STAGE_ICONS[stage] || '📦'} {STAGE_LABELS[stage] || stage}
 			</div>
 		</div>
-		<button
-			type="button"
-			class="text-xs border border-[#333] px-2 py-1 rounded text-gray-300 hover:text-white transition-colors"
-			on:click={closeDrawer}
-		>
-			Close
-		</button>
+		<div class="flex items-center gap-2">
+			<StrategyExportMenu strategyId={strategyId} displayId={displayId} name={strategyName} compact />
+			<button
+				type="button"
+				class="text-xs border border-[#333] px-2 py-1 rounded text-gray-300 hover:text-white transition-colors"
+				on:click={closeDrawer}
+			>
+				Close
+			</button>
+		</div>
 	</div>
 
 	{#if showTransitions}

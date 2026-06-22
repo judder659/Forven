@@ -67,7 +67,19 @@
 	import { buildTradingViewExport } from '$lib/utils/tradingViewExport';
 	import BrainStrategyDecisionsCard from '$lib/components/brain/BrainStrategyDecisionsCard.svelte';
 	import TradingViewExportModal from '$lib/components/strategy/TradingViewExportModal.svelte';
+	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
+	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
+	import type { StrategyImportResult } from '$lib/api';
 	import { openDeepdive } from '$lib/stores/deepdiveStore';
+
+	let showImportDialog = false;
+
+	function onStrategyImported(result: StrategyImportResult): void {
+		showImportDialog = false;
+		if (result.ok && result.strategy_id) {
+			void goto(`/lab/strategy/${encodeURIComponent(result.strategy_id)}`);
+		}
+	}
 
 	// TabKey identifiers predate the current UI labels. Mapping (code -> visible label):
 	//   'backtests'      -> "Gauntlet History" (the "Run the Gauntlet" button submits a backtest)
@@ -2691,6 +2703,16 @@
 				</a>
 			{/if}
 			<span class="ml-auto"></span>
+			<StrategyExportMenu strategyId={container.strategy.id} displayId={container.strategy.display_id || container.strategy.id} name={container.strategy.name} />
+			<button
+				type="button"
+				data-testid="import-strategy-button"
+				class="rounded border border-[#2b2b2b] bg-black px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-300 transition hover:text-white"
+				title="Import a strategy export as a new quick_screen container"
+				on:click={() => (showImportDialog = true)}
+			>
+				⤒ Import
+			</button>
 			<button
 				type="button"
 				data-testid="export-tradingview-button"
@@ -3982,5 +4004,12 @@
 		warnings={tradingViewExportWarnings}
 		toastLink={`/lab/strategy/${encodeURIComponent(strategyId)}`}
 		on:close={closeTradingViewExport}
+	/>
+{/if}
+
+{#if showImportDialog}
+	<StrategyImportDialog
+		on:close={() => (showImportDialog = false)}
+		on:imported={(e) => onStrategyImported(e.detail)}
 	/>
 {/if}

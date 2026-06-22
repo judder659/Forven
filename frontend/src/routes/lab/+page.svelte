@@ -25,8 +25,11 @@
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
 	import StrategyLink from '$lib/components/ui/StrategyLink.svelte';
 	import SortableTh from '$lib/components/ui/SortableTh.svelte';
+	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
+	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
 	import { getHealthStatus } from '$lib/api/forven';
 	import type { HealthStatusResponse } from '$lib/api/types';
+	import type { StrategyImportResult } from '$lib/api';
 
 	type Bucket = 'active' | 'parked' | 'trash';
 	type SortField = 'created' | 'cagr' | 'in_sample_cagr' | 'out_of_sample_cagr' | 'return' | 'sharpe' | 'in_sample_sharpe' | 'out_of_sample_sharpe' | 'robustness' | 'drawdown' | 'win_rate' | 'trades' | 'profit_factor';
@@ -369,6 +372,15 @@
 
 	function openContainer(row: ManagerRow) {
 		goto(`/lab/strategy/${encodeURIComponent(row.id)}?returnTo=${encodeURIComponent('/lab')}`);
+	}
+
+	let showImportDialog = false;
+
+	function onStrategyImported(result: StrategyImportResult) {
+		showImportDialog = false;
+		if (result.ok && result.strategy_id) {
+			openContainer({ id: result.strategy_id } as ManagerRow);
+		}
 	}
 
 	function healthStateLabel(state: string | null | undefined): string {
@@ -848,13 +860,23 @@
 					{rowsInView.length} in view · Pipeline {pipelineActiveCount} · Research-only {researchOnlyCount}
 				</p>
 			</div>
-			<button
-				type="button"
-				on:click={refreshAll}
-				class="self-start md:self-auto text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
-			>
-				Refresh
-			</button>
+			<div class="flex items-center gap-2 self-start md:self-auto">
+				<button
+					type="button"
+					data-testid="forge-import-strategy"
+					on:click={() => (showImportDialog = true)}
+					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+				>
+					⤒ Import
+				</button>
+				<button
+					type="button"
+					on:click={refreshAll}
+					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+				>
+					Refresh
+				</button>
+			</div>
 		</div>
 	</div>
 
@@ -1249,6 +1271,7 @@
 													<option value="deployed">Deployed</option>
 													<option value="rejected">Rejected</option>
 												</select>
+												<StrategyExportMenu strategyId={row.id} displayId={row.id} name={row.name} compact />
 												<button type="button" class="text-cyan-300 hover:text-cyan-200" on:click={() => openContainer(row)}>Details</button>
 												<button type="button" class="text-yellow-300 hover:text-yellow-200" on:click={() => trashOne(row.id)}>Graveyard</button>
 												<button type="button" class="text-red-400 hover:text-red-300" on:click={() => deleteOne(row.id)}>Delete</button>
@@ -1418,6 +1441,13 @@
 		</div>
 	</section>
 </div>
+
+{#if showImportDialog}
+	<StrategyImportDialog
+		on:close={() => (showImportDialog = false)}
+		on:imported={(e) => onStrategyImported(e.detail)}
+	/>
+{/if}
 
 <style>
 	tr.strategy-row-highlight {

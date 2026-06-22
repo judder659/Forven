@@ -34,6 +34,8 @@
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
 	import ChartWorkspace from '$lib/components/chart/ChartWorkspace.svelte';
 	import StrategyBuilder from '$lib/components/strategy/StrategyBuilder.svelte';
+	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
+	import type { StrategyImportResult } from '$lib/api';
 	import { STRATEGY_TEMPLATES, type RuleSpec } from '$lib/components/strategy/templates';
 
 	const BAR_CAP = 100_000;
@@ -296,6 +298,15 @@ TYPE_NAME = "my_strategy"
 		if (key !== previewKey) {
 			previewKey = key;
 			schedulePreview();
+		}
+	}
+
+	// Import (creates a new lifecycle container from an export envelope)
+	let showImportDialog = false;
+	function onStrategyImported(result: StrategyImportResult) {
+		showImportDialog = false;
+		if (result.ok && result.strategy_id) {
+			void goto(`/lab/strategy/${encodeURIComponent(result.strategy_id)}`);
 		}
 	}
 
@@ -664,6 +675,11 @@ TYPE_NAME = "my_strategy"
 						class="rounded-lg border border-[#2b2b2b] bg-[#111] px-3 py-2 text-[12px] text-gray-300 transition hover:border-gray-600 hover:text-white">
 						My Strategies ({library.length})
 					</button>
+					<button type="button" data-testid="creator-import-strategy" on:click={() => (showImportDialog = true)}
+						title="Import a strategy export as a new quick_screen container"
+						class="rounded-lg border border-[#2b2b2b] bg-[#111] px-3 py-2 text-[12px] text-gray-300 transition hover:border-gray-600 hover:text-white">
+						⤒ Import
+					</button>
 				</div>
 			</div>
 		</div>
@@ -978,3 +994,10 @@ TYPE_NAME = "my_strategy"
 		</div>
 	{/if}
 </div>
+
+{#if showImportDialog}
+	<StrategyImportDialog
+		on:close={() => (showImportDialog = false)}
+		on:imported={(e) => onStrategyImported(e.detail)}
+	/>
+{/if}

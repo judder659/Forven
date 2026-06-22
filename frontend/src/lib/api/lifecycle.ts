@@ -325,6 +325,47 @@ export async function getStrategyContainer(
 	};
 }
 
+// ── Strategy container portability (import / export) ─────────────────────────
+
+export interface StrategyExportMeta {
+	kind: string;
+	version: string;
+	exported_at: string;
+	source_strategy_id: string;
+	source_display_id: string;
+}
+
+/**
+ * Raw export envelope: the full container snapshot plus a `forven_export` meta
+ * block. Kept as the verbatim server JSON (not reshaped) so it round-trips on
+ * re-import with full fidelity.
+ */
+export type StrategyExportEnvelope = Record<string, unknown> & {
+	forven_export?: Partial<StrategyExportMeta>;
+};
+
+export interface StrategyImportResult {
+	ok: boolean;
+	strategy_id?: string | null;
+	display_id?: string | null;
+	stage?: string | null;
+	state?: string | null;
+	warnings?: string[];
+	source_strategy_id?: string | null;
+	error?: string | null;
+}
+
+export async function exportStrategyContainer(strategyId: string): Promise<StrategyExportEnvelope> {
+	return fetchApi<StrategyExportEnvelope>(`/strategies/${encodeURIComponent(strategyId)}/export`);
+}
+
+export async function importStrategyContainer(envelope: unknown): Promise<StrategyImportResult> {
+	return fetchApi<StrategyImportResult>('/strategies/import', {
+		method: 'POST',
+		body: JSON.stringify(envelope),
+	});
+}
+
 export async function createLifecycleStrategy(body: LifecycleCreateRequest): Promise<LifecycleStrategy> {
 	const created = await fetchApi<LifecycleStrategy>('/lifecycle/strategies', {
 		method: 'POST',

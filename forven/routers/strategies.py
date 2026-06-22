@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from fastapi.responses import ORJSONResponse
 from pydantic import BaseModel, Field
 from forven import api_core as core
@@ -371,6 +371,18 @@ def get_strategy_container(strategy_id: str, result_limit: int = 200, trade_limi
     result_limit = max(1, min(int(result_limit), 1000))
     trade_limit = max(1, min(int(trade_limit), 20000))
     return lifecycle.get_strategy_container(strategy_id, result_limit=result_limit, trade_limit=trade_limit)
+
+
+@router.get("/api/strategies/{strategy_id}/export")
+def export_strategy_container(strategy_id: str):
+    """Full container snapshot wrapped in a versioned, portable envelope (for import elsewhere)."""
+    return lifecycle.build_container_export(strategy_id)
+
+
+@router.post("/api/strategies/import")
+def import_strategy_container(payload: dict = Body(...)):
+    """Recreate a strategy from an export envelope as a fresh quick_screen container."""
+    return lifecycle.import_strategy_container(payload)
 
 
 class BatchTransitionBody(BaseModel):

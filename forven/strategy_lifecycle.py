@@ -68,6 +68,10 @@ class LifecycleCreateBody(BaseModel):
     source_ref: str | None = Field(default=None, max_length=140)
     symbol: str | None = Field(default=None, max_length=24)
     timeframe: str | None = Field(default="1h", max_length=16)
+    # Optional explicit runtime/family type. When omitted the type is inferred
+    # from the definition/name (legacy behavior); callers that already know the
+    # authoritative type (e.g. import) pass it so it survives the round-trip.
+    type: str | None = Field(default=None, max_length=64)
     definition_json: dict | str | None = None
     research_only: bool = Field(default=False)
     model: str | None = Field(default=None, max_length=64)
@@ -1399,7 +1403,7 @@ def create_lifecycle_strategy(body: LifecycleCreateBody):
     from forven.api_core import _resolve_backtesting_strategy_type
 
     strategy_type = _resolve_backtesting_strategy_type(
-        explicit_type=None,
+        explicit_type=body.type,
         strategy_name=body.name,
         params=strategy_params,
         payload=params_value,
@@ -1471,6 +1475,140 @@ def create_lifecycle_strategy(body: LifecycleCreateBody):
                 strategy_id,
             )
     return strategy_payload
+
+
+# ── Strategy container portability (import / export) ────────────────────────
+# Versioned envelope so a container can be serialized on one machine and
+# re-imported on another. Export is a full snapshot (strategy + configuration +
+# history + execution + events); import only consumes `configuration` to mint a
+# fresh quick_screen container — history/trades/events ride along for archival
+# but are never replayed (they belong to the source container's lifecycle).
+EXPORT_KIND = "strategy_container"
+EXPORT_VERSION = "1.0"
+SUPPORTED_EXPORT_VERSIONS = {"1.0"}
+
+
+def build_container_export(strategy_id: str, exported_at: str | None = None) -> dict:
+    """Wrap the full container snapshot in a versioned, portable envelope."""
+    container = get_strategy_container(strategy_id, result_limit=1000, trade_limit=20000)
+    strat = container.get("strategy") if isinstance(container.get("strategy"), dict) else {}
+    source_id = str((strat or {}).get("id") or strategy_id).strip()
+    source_display = str((strat or {}).get("display_id") or source_id).strip()
+    return {
+        "forven_export": {
+            "kind": EXPORT_KIND,
+            "version": EXPORT_VERSION,
+            "exported_at": exported_at or _now(),
+            "source_strategy_id": source_id,
+            "source_display_id": source_display,
+        },
+        **container,
+    }
+
+
+def import_strategy_container(payload: object) -> dict:
+    """Recreate a strategy from an export envelope as a new quick_screen container.
+
+    Validates the envelope, extracts the portable `configuration`, and routes it
+    through the same certify → create path the lifecycle "create" endpoint uses
+    (uncertified params land in research_only; an unregistered code-class runtime
+    type is rejected outright). Never overwrites an existing container.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="import payload must be a JSON object")
+
+    meta = payload.get("forven_export")
+    if not isinstance(meta, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="missing forven_export metadata — this is not a Forven strategy export",
+        )
+    kind = str(meta.get("kind") or "").strip()
+    if kind != EXPORT_KIND:
+        raise HTTPException(status_code=400, detail=f"unsupported export kind: {kind or '(none)'}")
+    version = str(meta.get("version") or "").strip()
+    if version not in SUPPORTED_EXPORT_VERSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported export version: {version or '(none)'} (supported: {', '.join(sorted(SUPPORTED_EXPORT_VERSIONS))})",
+        )
+
+    config = payload.get("configuration") if isinstance(payload.get("configuration"), dict) else {}
+    strat = payload.get("strategy") if isinstance(payload.get("strategy"), dict) else {}
+
+    params = config.get("params")
+    if not isinstance(params, dict):
+        params = _parse_strategy_params_blob(strat.get("definition_json"))
+    if not isinstance(params, dict):
+        params = {}
+
+    symbol = str(config.get("symbol") or strat.get("symbol") or "").strip()
+    timeframe = str(config.get("timeframe") or strat.get("timeframe") or "1h").strip() or "1h"
+    name = str(strat.get("name") or config.get("name") or "").strip()
+    strategy_type = str(config.get("type") or strat.get("type") or "").strip()
+    source_id = str(meta.get("source_strategy_id") or strat.get("id") or "").strip()
+
+    warnings: list[str] = []
+    if payload.get("history") or payload.get("execution") or payload.get("events"):
+        warnings.append(
+            "Backtest history, trades, and lifecycle events were not imported — "
+            "only the strategy definition was recreated."
+        )
+
+    body = LifecycleCreateBody(
+        name=name or None,
+        source="import",
+        source_ref=None,
+        symbol=symbol or None,
+        timeframe=timeframe,
+        type=strategy_type or None,
+        definition_json={"params": params},
+    )
+    result = create_lifecycle_strategy(body)
+
+    if isinstance(result, dict) and result.get("ok") is False:
+        # Certification rejected the definition (e.g. an unregistered code-class
+        # runtime type that cannot be reconstructed from params alone).
+        return {
+            "ok": False,
+            "error": result.get("error") or "import rejected",
+            "warnings": warnings,
+            "source_strategy_id": source_id or None,
+        }
+
+    new_id = str((result or {}).get("id") or "").strip()
+    if not new_id:
+        return {
+            "ok": False,
+            "error": "failed to create strategy from import",
+            "warnings": warnings,
+            "source_strategy_id": source_id or None,
+        }
+
+    # Persist import attribution + keep any research-only reason create_lifecycle_strategy set.
+    stage = None
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT notes, stage FROM strategies WHERE id = ?", (new_id,)
+        ).fetchone()
+        base_note = (existing["notes"] if existing else "") or ""
+        stage = existing["stage"] if existing else None
+        import_line = f"Imported from {source_id}" if source_id else "Imported strategy"
+        merged_notes = (import_line + (("\n" + base_note) if base_note else "")).strip()
+        conn.execute(
+            "UPDATE strategies SET source = ?, source_ref = ?, notes = ?, updated_at = ? WHERE id = ?",
+            ("import", source_id or None, merged_notes or None, _now(), new_id),
+        )
+
+    return {
+        "ok": True,
+        "strategy_id": new_id,
+        "display_id": (result or {}).get("display_id") or new_id,
+        "stage": stage,
+        "state": (result or {}).get("state"),
+        "warnings": warnings,
+        "source_strategy_id": source_id or None,
+    }
 
 
 def transition_lifecycle_strategy(body: LifecycleTransitionBody):
