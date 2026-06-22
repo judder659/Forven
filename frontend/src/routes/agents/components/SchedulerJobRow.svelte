@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ForvenSchedulerJob } from '$lib/api';
+	import { msToMinutes, minutesToMs, formatIntervalMs } from '$lib/utils/schedule';
 
 	export let job: ForvenSchedulerJob;
 	export let onSave: (jobId: string | number, scheduleType: string, scheduleExpr: string, enabled: boolean) => Promise<void>;
@@ -15,14 +16,24 @@
 
 	const scheduleTypeOptions = [
 		{ value: 'cron', label: 'cron' },
-		{ value: 'interval', label: 'interval' }
+		{ value: 'interval', label: 'interval (min)' }
 	] as const;
 
 	$: normalizedType = job.schedule_type === 'interval' || job.schedule_type === 'cron' ? job.schedule_type : 'cron';
 	$: normalizedExpr = (job.schedule_expr ?? '').trim();
 	$: if (!isEditing) {
 		draftType = normalizedType === 'interval' ? 'interval' : 'cron';
-		draftExpr = normalizedExpr;
+		draftExpr = toDisplayExpr(normalizedExpr, draftType);
+	}
+
+	// Interval schedules are stored as a millisecond string but shown/edited in
+	// minutes; cron schedules pass through unchanged.
+	function toDisplayExpr(expr: string, type: 'cron' | 'interval'): string {
+		return type === 'interval' ? msToMinutes(expr) : expr;
+	}
+
+	function toStoredExpr(expr: string, type: 'cron' | 'interval'): string {
+		return type === 'interval' ? minutesToMs(expr) : expr.trim();
 	}
 
 	function canSave(): boolean {
@@ -46,24 +57,9 @@
 		return `${Math.floor(minutes / (24 * 60))}d`;
 	}
 
-	function formatInterval(expr: string): string {
-		const raw = Number(expr);
-		if (!Number.isFinite(raw) || raw <= 0) return expr || '--';
-		const minutes = Math.floor(raw / 60000);
-		if (minutes >= 60 * 24) {
-			const days = Math.round(minutes / (60 * 24));
-			return `every ${days}d`;
-		}
-		if (minutes >= 60) {
-			const hours = Math.round(minutes / 60);
-			return `every ${hours}h`;
-		}
-		return `every ${minutes}m`;
-	}
-
 	function displaySchedule(): string {
 		if (!normalizedExpr) return '--';
-		if (normalizedType === 'interval') return formatInterval(normalizedExpr);
+		if (normalizedType === 'interval') return formatIntervalMs(normalizedExpr);
 		return normalizedExpr;
 	}
 
@@ -79,25 +75,12 @@
 		return 'border-gray-700 text-gray-500';
 	}
 
-	function normalizeExprForSave(expr: string, scheduleType: 'cron' | 'interval'): string {
-		const trimmed = expr.trim();
-		if (scheduleType === 'interval') {
-			const parsed = Number(trimmed);
-			if (!Number.isFinite(parsed) || parsed <= 0) return '';
-			return String(parsed);
-		}
-		return trimmed;
-	}
-
-	function resolveExpr(value: string): string {
-		return normalizeExprForSave(value, draftType) || value.trim();
-	}
-
 	async function handleSave() {
 		errorMessage = '';
-		const payload = normalizeExprForSave(draftExpr, draftType);
+		const payload = toStoredExpr(draftExpr, draftType);
 		if (!payload) {
-			errorMessage = 'Schedule expression is required';
+			errorMessage =
+				draftType === 'interval' ? 'Enter a positive number of minutes' : 'Schedule expression is required';
 			return;
 		}
 		if (!hasJobId(job.id)) {
@@ -107,7 +90,7 @@
 		saving = true;
 		try {
 			await onSave(job.id, draftType, payload, Boolean(job.enabled));
-			draftExpr = payload;
+			draftExpr = toDisplayExpr(payload, draftType);
 			isEditing = false;
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to save job';
@@ -118,14 +101,14 @@
 
 	function handleCancel() {
 		draftType = normalizedType === 'interval' ? 'interval' : 'cron';
-		draftExpr = normalizedExpr;
+		draftExpr = toDisplayExpr(normalizedExpr, draftType);
 		errorMessage = '';
 		isEditing = false;
 	}
 
 	function startEdit() {
 		draftType = normalizedType === 'interval' ? 'interval' : 'cron';
-		draftExpr = normalizedExpr;
+		draftExpr = toDisplayExpr(normalizedExpr, draftType);
 		errorMessage = '';
 		isEditing = true;
 	}
@@ -138,7 +121,9 @@
 		const checked = (event.currentTarget as HTMLInputElement).checked;
 		errorMessage = '';
 		try {
-			await onSave(job.id, draftType, resolveExpr(draftExpr), checked);
+			// Toggling enabled must not reinterpret the schedule, so send the
+			// job's existing stored value as-is.
+			await onSave(job.id, normalizedType, normalizedExpr, checked);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to toggle job';
 		}
@@ -178,12 +163,33 @@
 	<td class="px-4 py-2 text-gray-500">
 		{#if isEditing}
 			<div class="flex items-center gap-2">
-				<select class="terminal-select !w-28 py-1" bind:value={draftType}>
+				<select
+					class="terminal-select !w-28 py-1"
+					bind:value={draftType}
+					on:change={() => (draftExpr = '')}
+				>
 					{#each scheduleTypeOptions as option}
 						<option value={option.value}>{option.label}</option>
 					{/each}
 				</select>
-				<input class="terminal-input py-1" type="text" placeholder="Schedule" bind:value={draftExpr} />
+				{#if draftType === 'interval'}
+					<input
+						class="terminal-input py-1 !w-24"
+						type="number"
+						min="1"
+						step="1"
+						placeholder="minutes"
+						value={draftExpr}
+						on:input={(e) => (draftExpr = e.currentTarget.value)}
+					/>
+				{:else}
+					<input
+						class="terminal-input py-1"
+						type="text"
+						placeholder="cron e.g. 0 9 * * *"
+						bind:value={draftExpr}
+					/>
+				{/if}
 				<div class="flex items-center gap-1">
 					<button
 						type="button"
@@ -205,9 +211,6 @@
 			</div>
 		{:else}
 			<div>{displaySchedule()}</div>
-			{#if normalizedType === 'interval'}
-				<div class="text-[10px] text-gray-600 uppercase tracking-wider">{formatInterval(normalizedExpr)}</div>
-			{/if}
 		{/if}
 	</td>
 	<td class="px-4 py-2 text-gray-400">{parseNextRun(job.next_run_at ?? null)}</td>

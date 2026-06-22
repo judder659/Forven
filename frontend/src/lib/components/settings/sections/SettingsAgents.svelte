@@ -25,6 +25,7 @@
 		type ForvenAuthProviderOAuthStartResponse,
 	} from '$lib/api';
 	import { openExternal } from '$lib/external-open';
+	import { msToMinutes, minutesToMs, formatIntervalMs } from '$lib/utils/schedule';
 
 	export let settings: Record<string, unknown> = {};
 	export let variant: 'default' | 'wizard' = 'default';
@@ -1151,21 +1152,38 @@
 								Type
 								<select
 									bind:value={job.schedule_type}
+									on:change={() => (job.schedule_expr = '')}
 									class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
 								>
 									<option value="cron">Cron</option>
-									<option value="interval">Interval (ms)</option>
+									<option value="interval">Interval (minutes)</option>
 								</select>
 							</label>
-							<label class="block text-xs text-gray-400">
-								Expression
-								<input
-									type="text"
-									bind:value={job.schedule_expr}
-									placeholder="e.g. 0 9 * * * or 3600000"
-									class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
-								/>
-							</label>
+							{#if job.schedule_type === 'interval'}
+								<label class="block text-xs text-gray-400">
+									Run every (minutes)
+									<input
+										type="number"
+										min="1"
+										step="1"
+										value={msToMinutes(job.schedule_expr)}
+										on:input={(e) =>
+											(job.schedule_expr = minutesToMs(e.currentTarget.value))}
+										placeholder="e.g. 60"
+										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+									/>
+								</label>
+							{:else}
+								<label class="block text-xs text-gray-400">
+									Expression (cron)
+									<input
+										type="text"
+										bind:value={job.schedule_expr}
+										placeholder="e.g. 0 9 * * *"
+										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+									/>
+								</label>
+							{/if}
 							<button
 								type="button"
 								on:click={() => saveSchedulerJob(job)}
@@ -1177,6 +1195,9 @@
 						</div>
 
 						<div class="flex gap-4 text-xs text-gray-400">
+							{#if job.schedule_type === 'interval' && job.schedule_expr}
+								<span>Schedule: <span class="text-gray-300">{formatIntervalMs(job.schedule_expr)}</span></span>
+							{/if}
 							{#if job.next_run_at}
 								<span>Next run: <span class="text-gray-300">{formatDate(job.next_run_at)}</span></span>
 							{/if}

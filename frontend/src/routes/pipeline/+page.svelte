@@ -11,6 +11,7 @@
 	} from '$lib/api';
 	import { activeProcesses, type TrackedProcess } from '$lib/stores/processTracker';
 	import { createRealtimeRefresh } from '$lib/utils/realtime';
+	import { formatIntervalMs } from '$lib/utils/schedule';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { fetchApi } from '$lib/api/core';
@@ -451,7 +452,7 @@
 										<span class="w-2 h-2 rounded-full inline-block {job.enabled ? 'bg-green-400' : 'bg-gray-600'}"></span>
 									</td>
 									<td class="px-4 py-2 text-gray-300 whitespace-nowrap">{job.name || '-'}</td>
-									<td class="px-4 py-2 text-gray-500 font-mono text-[11px]">{job.schedule_expr || '-'}</td>
+									<td class="px-4 py-2 text-gray-500 font-mono text-[11px]">{job.schedule_type === 'interval' ? formatIntervalMs(job.schedule_expr) : job.schedule_expr || '-'}</td>
 									<td class="px-4 py-2 text-right text-gray-400 tabular-nums">{timeAgo(job.next_run_at)}</td>
 									<td class="px-4 py-2 text-right text-gray-400 tabular-nums">{timeAgo(job.last_run_at)}</td>
 									<td class="px-4 py-2 text-right font-bold uppercase {schedulerStatusColor(job.last_status)}">{job.last_status || '-'}</td>
