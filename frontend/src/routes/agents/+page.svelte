@@ -255,7 +255,11 @@
 			value === 'openai' ||
 			value === 'lmstudio' ||
 			value === 'zai' ||
-			value === 'openrouter'
+			value === 'openrouter' ||
+			value === 'anthropic' ||
+			value === 'deepseek' ||
+			value === 'groq' ||
+			value === 'gemini'
 		);
 	}
 
@@ -264,6 +268,10 @@
 		if (provider === 'minimax') return 'MiniMax';
 		if (provider === 'zai') return 'Z.AI';
 		if (provider === 'openrouter') return 'OpenRouter';
+		if (provider === 'anthropic') return 'Anthropic';
+		if (provider === 'deepseek') return 'DeepSeek';
+		if (provider === 'groq') return 'Groq';
+		if (provider === 'gemini') return 'Google Gemini';
 		return 'LM Studio';
 	}
 
@@ -299,7 +307,7 @@
 
 	function buildDefaultModelPresets() {
 		const resolved = new Map<string, AgentModelPreset>();
-		for (const provider of ['openai', 'minimax', 'lmstudio', 'zai', 'openrouter'] as AgentProvider[]) {
+		for (const provider of ['openai', 'minimax', 'lmstudio', 'zai', 'openrouter', 'anthropic', 'deepseek', 'groq', 'gemini'] as AgentProvider[]) {
 			const defaultPreset = resolveDefaultModelPreset(provider);
 			if (defaultPreset) {
 				resolved.set(defaultPreset.key, defaultPreset);
