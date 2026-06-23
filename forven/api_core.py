@@ -323,6 +323,17 @@ _MODEL_DISCOVERY_HEADERS = {
         "Authorization": "Bearer {token}",
     },
 }
+
+# Endpoints used by the connection "Test" to verify a key is actually valid
+# (not just present). Defaults to the model-discovery endpoints/headers above;
+# overrides here cover providers whose /models route is unauthenticated and so
+# can't distinguish a good key from a bad one (e.g. OpenRouter).
+_AUTH_TEST_ENDPOINT_OVERRIDES = {
+    "openrouter": ["https://openrouter.ai/api/v1/key"],
+}
+_AUTH_TEST_HEADER_OVERRIDES = {
+    "openrouter": {"Authorization": "Bearer {token}"},
+}
 _MODEL_PROVIDER_DISPLAY_NAMES = {
     "openai": "OpenAI",
     "minimax": "MiniMax",
@@ -7018,12 +7029,69 @@ def test_auth_provider(provider: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not token:
         raise HTTPException(status_code=400, detail=f"{normalized_provider} token missing after load")
-    return {
-        "ok": True,
-        "provider": normalized_provider,
-        "status": _build_auth_provider_payload(normalized_provider)["status"],
-        "message": "Token loaded successfully",
-    }
+
+    # Verify the key against the provider — a present-but-invalid key must fail.
+    endpoints = (
+        _AUTH_TEST_ENDPOINT_OVERRIDES.get(normalized_provider)
+        or _MODEL_DISCOVERY_ALT_ENDPOINTS.get(normalized_provider, [])
+    )
+    headers_template = (
+        _AUTH_TEST_HEADER_OVERRIDES.get(normalized_provider)
+        or _MODEL_DISCOVERY_HEADERS.get(normalized_provider, {})
+    )
+    if not (endpoints and headers_template):
+        # No way to verify this provider remotely — surface that honestly rather
+        # than implying the key was checked.
+        return {
+            "ok": True,
+            "provider": normalized_provider,
+            "status": _build_auth_provider_payload(normalized_provider)["status"],
+            "message": "Token saved (not verified against provider)",
+        }
+
+    header = {key: value.format(token=token) for key, value in headers_template.items()}
+    last_error: str | None = None
+    for endpoint in endpoints:
+        try:
+            with httpx.Client(timeout=15) as client:
+                response = client.get(endpoint, headers=header)
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+        code = response.status_code
+        if code == 200:
+            try:
+                models = _extract_discovery_models(response.json(), normalized_provider)
+                count_note = f" ({len(models)} models available)" if models else ""
+            except Exception:
+                count_note = ""
+            return {
+                "ok": True,
+                "provider": normalized_provider,
+                "status": _build_auth_provider_payload(normalized_provider)["status"],
+                "message": f"Connected{count_note}",
+            }
+        if code == 429:
+            # Authenticated but rate-limited — the key itself is valid.
+            return {
+                "ok": True,
+                "provider": normalized_provider,
+                "status": _build_auth_provider_payload(normalized_provider)["status"],
+                "message": "Key valid (rate-limited at test time)",
+            }
+        if code in (400, 401, 403):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{normalized_provider}: invalid API key (HTTP {code})",
+            )
+        # 404 (wrong path — try the next endpoint) / 5xx / other transient.
+        last_error = f"HTTP {code}"
+        continue
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"{normalized_provider}: could not verify key ({last_error or 'no endpoint responded'})",
+    )
 
 
 def get_auth_providers():

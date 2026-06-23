@@ -63,6 +63,73 @@ def test_lmstudio_test_provider_calls_local_models_endpoint(monkeypatch):
     assert "2 models discovered" in str(result["message"])
 
 
+def _make_fake_client(status: int, json_body: dict | None = None):
+    """Return an httpx.Client stand-in whose GET yields a fixed status/body."""
+
+    class _FakeClient:
+        def __init__(self, timeout: float | None = None):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str, headers: dict | None = None):
+            return httpx.Response(
+                status,
+                json=json_body if json_body is not None else {},
+                request=httpx.Request("GET", url),
+            )
+
+    return _FakeClient
+
+
+def test_test_provider_accepts_valid_key(monkeypatch):
+    monkeypatch.setattr(api_core, "get_profile", lambda provider: {"api_key": "gsk-real"})
+    monkeypatch.setattr(api_core, "get_token", lambda provider: "gsk-real")
+    monkeypatch.setattr(
+        api_core.httpx,
+        "Client",
+        _make_fake_client(200, {"data": [{"id": "llama-3.3-70b-versatile"}]}),
+    )
+
+    result = api_core.test_auth_provider("groq")
+
+    assert result["ok"] is True
+    assert result["provider"] == "groq"
+    assert "Connected" in str(result["message"])
+
+
+def test_test_provider_rejects_invalid_key_401(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(api_core, "get_profile", lambda provider: {"api_key": "garbage"})
+    monkeypatch.setattr(api_core, "get_token", lambda provider: "garbage")
+    monkeypatch.setattr(api_core.httpx, "Client", _make_fake_client(401))
+
+    with pytest.raises(HTTPException) as excinfo:
+        api_core.test_auth_provider("groq")
+    assert excinfo.value.status_code == 400
+    assert "invalid api key" in str(excinfo.value.detail).lower()
+
+
+def test_test_provider_rejects_invalid_key_400(monkeypatch):
+    """Gemini returns HTTP 400 for a bad key — must still fail the test."""
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(api_core, "get_profile", lambda provider: {"api_key": "garbage"})
+    monkeypatch.setattr(api_core, "get_token", lambda provider: "garbage")
+    monkeypatch.setattr(api_core.httpx, "Client", _make_fake_client(400))
+
+    with pytest.raises(HTTPException) as excinfo:
+        api_core.test_auth_provider("gemini")
+    assert excinfo.value.status_code == 400
+
+
 def test_normalize_provider_and_model_preserves_lmstudio_provider():
     provider, model = ai.normalize_provider_and_model("lmstudio", "qwen-local")
 
