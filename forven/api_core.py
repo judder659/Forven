@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 
 from forven.ai import normalize_provider_and_model
+from forven.codex_responses import is_openai_oauth_token
 from forven.model_routing import (
     get_default_model_for_provider,
     get_model_routing_snapshot,
@@ -930,6 +931,16 @@ def _discover_provider_models(provider: str, force_refresh: bool = False) -> tup
 
     if used_configured_profile:
         source = "provider-api"
+
+    # A ChatGPT OAuth token authenticates against the Codex backend, not the
+    # platform ``/v1/models`` endpoint (which 401s for it). Probing there would
+    # discard the curated codex catalog behind a scary auth error, so skip the
+    # probe and serve the curated list directly.
+    if provider == "openai" and is_openai_oauth_token(token):
+        _AGENT_MODEL_LIST_CACHE[provider] = {
+            "fetched_at": now, "models": fallback, "error": None, "source": "codex-oauth",
+        }
+        return fallback, None
 
     header = {
         key: value.format(token=token)
@@ -7319,6 +7330,14 @@ def _verify_provider_key(provider: str, token: str) -> tuple[str, str]:
     key (HTTP 400/401/403) — that is a real "bad key" signal, distinct from a
     transient failure callers may choose to tolerate.
     """
+    # A ChatGPT OAuth token is valid against the Codex backend but always 401s
+    # against api.openai.com/v1/models — probing there would misreport a working
+    # OAuth connection as a bad key. The token was minted via the TLS OAuth
+    # exchange and get_token() already refreshed it if expired, so treat a
+    # well-formed OAuth token as connected.
+    if provider == "openai" and is_openai_oauth_token(token):
+        return "ok", "Connected (ChatGPT OAuth)"
+
     endpoints = (
         _AUTH_TEST_ENDPOINT_OVERRIDES.get(provider)
         or _MODEL_DISCOVERY_ALT_ENDPOINTS.get(provider, [])

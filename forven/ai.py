@@ -16,6 +16,7 @@ import httpx
 from forven.model_routing import get_model_routing_snapshot
 
 from forven.auth.store import get_profile, get_token
+from forven.codex_responses import is_openai_oauth_token
 from forven.model_routing import (
     get_default_model_for_provider,
     get_fallback_chain,
@@ -1010,6 +1011,24 @@ async def _call_openai(
     Also serves OpenRouter (same protocol) — pass ``endpoint``/``provider_label``
     to redirect to another OpenAI-compatible gateway.
     """
+    # First-party OpenAI only: a ChatGPT OAuth token is rejected by the platform
+    # Chat Completions endpoint and must use the Codex Responses backend instead.
+    # (OpenAI-compatible gateways reuse this caller with a different
+    # provider_label and never carry an OpenAI OAuth token, so they're skipped.)
+    if provider_label == "openai" and is_openai_oauth_token(token):
+        from forven.codex_responses import call_codex
+
+        result = await call_codex(
+            token,
+            model,
+            instructions=system,
+            messages=messages,
+            tools=None,
+            response_schema=response_schema,
+            response_schema_name=response_schema_name,
+        )
+        return str(result.get("text") or "")
+
     url = endpoint or ENDPOINTS["openai"]
     headers = {
         "Authorization": f"Bearer {token}",

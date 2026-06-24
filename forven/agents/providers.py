@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 from forven.ai import build_provider_timeout
 from forven.auth.store import get_profile
+from forven.codex_responses import call_codex, is_openai_oauth_token, stream_codex
 
 log = logging.getLogger("forven.agents.providers")
 
@@ -505,6 +506,99 @@ class OpenAIProvider(ToolCallProvider):
                 "tool_call_id": tid,
                 "content": content,
             })
+
+
+class CodexProvider(OpenAIProvider):
+    """OpenAI ChatGPT-OAuth path — the Responses API on the Codex backend.
+
+    ChatGPT subscription OAuth tokens (minted by ``forven.auth.openai``) are
+    rejected by ``api.openai.com/v1/chat/completions`` — they authenticate only
+    against ``chatgpt.com/backend-api/codex/responses`` via the OpenAI Responses
+    API, with Cloudflare-bypass + account-id headers. Mirrors hermes-agent's
+    ``openai-codex`` provider.
+
+    Inherits ``append_assistant`` / ``append_tool_results`` from
+    :class:`OpenAIProvider`: both speak the same Chat-Completions-shaped history
+    (``assistant.tool_calls`` + ``role:"tool"``), which
+    ``forven.codex_responses`` converts to Responses ``input`` items. The raw
+    assistant message additionally carries ``_codex_reasoning`` so encrypted
+    reasoning replays across tool rounds.
+    """
+
+    def _to_response(self, result: dict) -> ProviderResponse:
+        tool_calls = [
+            ToolCall(id=str(tc["id"]), name=str(tc["name"]), input=tc["input"])
+            for tc in (result.get("tool_calls") or [])
+        ]
+        text = str(result.get("text") or "").strip()
+        raw_msg: dict = {"role": "assistant", "content": text}
+        raw_fcs = result.get("raw_function_calls") or []
+        if raw_fcs:
+            raw_msg["tool_calls"] = [
+                {
+                    "id": fc["id"],
+                    "type": "function",
+                    "function": {"name": fc["name"], "arguments": fc["arguments"]},
+                }
+                for fc in raw_fcs
+            ]
+        if result.get("reasoning_items"):
+            raw_msg["_codex_reasoning"] = result["reasoning_items"]
+        return ProviderResponse(
+            text=text,
+            tool_calls=tool_calls,
+            stop=(not tool_calls),
+            raw_assistant_message=raw_msg,
+            usage=result.get("usage") or {},
+        )
+
+    async def call(self, model_id, messages, system, tools, token):
+        result = await call_codex(
+            token, model_id, instructions=system, messages=messages, tools=tools,
+        )
+        return self._to_response(result)
+
+    async def stream(self, model_id, messages, system, tools, token):
+        final: dict | None = None
+        async for event in stream_codex(
+            token, model_id, instructions=system, messages=messages, tools=tools,
+        ):
+            if event.get("type") == "text":
+                if event.get("text"):
+                    yield {"type": "text", "text": event["text"]}
+            elif event.get("type") == "done":
+                final = event
+        yield {"type": "done", "response": self._to_response(final or {})}
+
+
+class OpenAIAutoProvider(OpenAIProvider):
+    """First-party ``openai`` provider — picks the surface that fits the credential.
+
+    ChatGPT OAuth tokens go to the Codex Responses backend
+    (:class:`CodexProvider`); ``sk-`` API keys keep the Chat Completions path.
+    This is what makes a single connected ``openai`` credential work whether the
+    operator authenticated via the in-app OAuth login or pasted an API key.
+
+    Both paths produce Chat-Completions-shaped assistant/tool history, so the
+    inherited ``append_assistant`` / ``append_tool_results`` serve either route.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._codex = CodexProvider()
+
+    async def call(self, model_id, messages, system, tools, token):
+        if is_openai_oauth_token(token):
+            return await self._codex.call(model_id, messages, system, tools, token)
+        return await super().call(model_id, messages, system, tools, token)
+
+    async def stream(self, model_id, messages, system, tools, token):
+        if is_openai_oauth_token(token):
+            async for event in self._codex.stream(model_id, messages, system, tools, token):
+                yield event
+            return
+        async for event in super().stream(model_id, messages, system, tools, token):
+            yield event
 
 
 class LMStudioProvider(ToolCallProvider):
@@ -1155,7 +1249,10 @@ def _construct_provider(name: str) -> ToolCallProvider:
     if name == "opencode-go":
         return OpenCodeGoProvider()
     if name in ("openai", "codex", "openai-codex"):
-        return OpenAIProvider()
+        # Auth-aware: ChatGPT OAuth tokens route to the Codex Responses backend,
+        # API keys to Chat Completions. A bare OpenAIProvider would send OAuth
+        # tokens to api.openai.com and 401.
+        return OpenAIAutoProvider()
     # Refuse to silently default an unknown provider to OpenAI — that is a
     # fail-open path that can spend on a provider the operator never chose.
     raise ValueError(
