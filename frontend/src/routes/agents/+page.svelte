@@ -311,6 +311,7 @@
 	let logs: AgentLogEntry[] = [];
 	let agentLogs: AgentLogEntry[] = [];
 	let terminalLogs: AgentLogEntry[] = [];
+	let terminalCalls: any[] = [];
 	let loading = true;
 	let selectedAgent: string | null = null;
 	let terminalMemory = '';
@@ -1032,6 +1033,30 @@
 		}
 	}
 
+	function parseCallData(call: any): { request: string; response: string; trace: any[]; errorDetail: string } {
+		let request = '', response = '', errorDetail = '';
+		let trace: any[] = [];
+		try {
+			const out = call?.output_data ? JSON.parse(call.output_data) : {};
+			const req = out?.request;
+			if (typeof req === 'string') request = req;
+			else if (req && Array.isArray(req.messages)) {
+				const sys = req.system ? `SYSTEM:\n${req.system}\n\n` : '';
+				request = sys + req.messages
+					.map((m: any) => `${String(m.role || '').toUpperCase()}:\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+					.join('\n\n');
+			} else if (req) {
+				request = JSON.stringify(req, null, 2);
+			}
+			if (typeof out?.response === 'string') response = out.response;
+			if (Array.isArray(out?.ai_trace)) trace = out.ai_trace;
+			if (out?.error_detail) errorDetail = String(out.error_detail);
+		} catch {
+			/* output_data may be absent or non-JSON */
+		}
+		return { request, response, trace, errorDetail };
+	}
+
 	async function fetchTerminal() {
 		if (!selectedAgent) return;
 		const agentId = selectedAgent;
@@ -1039,10 +1064,12 @@
 		terminalLogsLoaded = false;
 		terminalMemory = '';
 		terminalLogs = [];
+		terminalCalls = [];
 		try {
 			const data = await getForvenAgentTerminal(agentId);
 			if (selectedAgent !== agentId) return;
 			terminalMemory = typeof data.memory === 'string' ? data.memory : '';
+			terminalCalls = Array.isArray((data as any).calls) ? (data as any).calls : [];
 			const rawLogs = Array.isArray(data.logs) ? data.logs : [];
 			const normalized = rawLogs
 				.map(normalizeTerminalLog)
@@ -1341,6 +1368,8 @@
 			? terminalLogs
 			: getFallbackAgentLogs(selectedAgent)
 		: [];
+
+	$: agentCalls = selectedAgent && terminalLogsLoaded ? terminalCalls : [];
 
 	$: agentDefs = mergeAgentCards(agents, agentTasks, logs);
 	$: displayedAgentDefs = agentDefs.filter(
@@ -1949,6 +1978,42 @@
 						<div class="text-gray-500">No memory found for today.</div>
 					{/if}
 				{:else}
+					{#if agentCalls.length > 0}
+						<div class="mb-2 text-[11px] uppercase tracking-wider text-gray-500">Recent calls · request → response</div>
+						{#each agentCalls as call}
+							{@const parsed = parseCallData(call)}
+							<details class="mb-1 border border-[#222] rounded">
+								<summary class="cursor-pointer px-2 py-1 text-xs flex items-center justify-between hover:bg-[#1a1a1a] gap-2">
+									<span class="truncate">
+										<span class={call.status === 'failed' ? 'text-red-500' : (call.status === 'done' || call.status === 'reviewed') ? 'text-green-500' : 'text-gray-400'}>[{call.status}]</span>
+										<span class="text-gray-300"> {call.title || ('#' + call.id)}</span>
+										{#if call.provider}<span class="text-gray-600"> · {call.provider}{call.model_id ? ':' + call.model_id : ''}</span>{/if}
+									</span>
+									<span class="text-gray-600 whitespace-nowrap">{formatDateTime(call.created_at)}</span>
+								</summary>
+								<div class="px-2 py-2 space-y-2 text-xs border-t border-[#222]">
+									{#if parsed.request}
+										<div><div class="text-gray-500 mb-0.5">REQUEST</div><pre class="whitespace-pre-wrap break-words text-gray-400 max-h-48 overflow-auto">{parsed.request}</pre></div>
+									{/if}
+									{#if parsed.trace.length > 0}
+										<div>
+											<div class="text-gray-500 mb-0.5">PROVIDER ATTEMPTS</div>
+											{#each parsed.trace as att}
+												<div class={att.ok ? 'text-green-500' : 'text-red-400'}>{att.ok ? '✓' : '✗'} {att.provider}:{att.model}{att.error ? ' — ' + att.error : ''}</div>
+											{/each}
+										</div>
+									{/if}
+									{#if parsed.response}
+										<div><div class="text-gray-500 mb-0.5">RESPONSE</div><pre class="whitespace-pre-wrap break-words text-gray-300 max-h-64 overflow-auto">{parsed.response}</pre></div>
+									{/if}
+									{#if call.error || parsed.errorDetail}
+										<div><div class="text-gray-500 mb-0.5">ERROR</div><pre class="whitespace-pre-wrap break-words text-red-400 max-h-48 overflow-auto">{parsed.errorDetail || call.error}</pre></div>
+									{/if}
+								</div>
+							</details>
+						{/each}
+						<div class="mt-3 mb-2 text-[11px] uppercase tracking-wider text-gray-500">Activity</div>
+					{/if}
 					{#each agentLogs as log}
 						<div class="mb-1 hover:bg-[#222] -mx-2 px-2 py-0.5 rounded transition-colors">
 							<span class="text-gray-500">[{formatDateTime(log.created_at)}]</span>

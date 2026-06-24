@@ -7709,12 +7709,27 @@ def get_agent_terminal(agent_id: str):
             (source_prefix, source_like),
         ).fetchall()
         logs_payload = [dict(log_row) for log_row in logs]
+        # Recent task "calls": the request + model response + per-provider attempt
+        # trace (with error bodies) so the Logs tab can show the full request->response
+        # back-and-forth and exactly WHY a provider failed (incl. masked fallback hops).
+        try:
+            call_rows = conn.execute(
+                "SELECT id, title, status, provider, model_id, output_data, error, "
+                "created_at, completed_at "
+                "FROM agent_tasks WHERE agent_id = ? "
+                "ORDER BY id DESC LIMIT 25",
+                (agent_id,),
+            ).fetchall()
+            calls_payload = [dict(r) for r in call_rows]
+        except Exception:
+            calls_payload = []
     details = inspect_agent(agent_id)
     return {
         "memory": docs.get("soul"),
         "documents": docs,
         "agent": details,
         "logs": logs_payload,
+        "calls": calls_payload,
     }
 
 
