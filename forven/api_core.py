@@ -1547,6 +1547,14 @@ _SETTINGS_SECRET_STORAGE_KEY = "forven:settings:secrets"
 _SETTINGS_API_KEYS_STORAGE_KEY = "forven:settings:api-keys"
 _SETTINGS_PIPELINE_STORAGE_KEY = "forven:pipeline:settings"
 
+# Single source of truth for the default backtest window (calendar days). This ONE
+# setting governs every automatic backtest that doesn't carry an explicit start/end:
+# quick-screen, gauntlet timeframe-sweep/optimization/confirmation, walk-forward,
+# the cost-stress rerun, and the evolution/crucible validation matrix. Every fallback
+# below references this so a missing key can never silently shrink the window (the old
+# scattered 365/30 fallbacks did exactly that, contradicting the saved 730 default).
+DEFAULT_BACKTEST_DURATION_DAYS = 730
+
 _DEFAULT_SETTINGS_PAYLOAD = {
     "exchange": "hyperliquid",
     "trading_mode": "paper",
@@ -1658,10 +1666,24 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     "backtest_slippage_bps": 2.0,
     "backtest_timeframe": "1h",
     "backtest_symbol": "BTC/USDT",
-    # Default backtest/WFA window. Raised 365->730 so slower timeframes (4h) reach a
-    # meaningful trade sample and the WFA OOS folds span >1 market regime, not just
-    # the most recent ~12 months. Tunable from Settings (Lab > Gauntlet duration).
-    "backtest_duration_days": 730,
+    # DEFAULT backtest window (calendar days, ending now). Used directly by ad-hoc /
+    # manual backtests, and as the fallback any PER-STAGE window below inherits when it
+    # is left at 0. 730d so slower timeframes (4h) reach a meaningful trade sample and
+    # the WFA OOS folds span >1 market regime. Settings > Lab > "Default backtest window".
+    "backtest_duration_days": DEFAULT_BACKTEST_DURATION_DAYS,
+    # PER-STAGE backtest windows (calendar days). Each automated pipeline stage that
+    # runs a backtest has its OWN tunable window so e.g. quick-screen can be short while
+    # walk-forward spans years. Resolved via stage_backtest_duration_days(). Default 0 =
+    # "inherit the Default backtest window" above — so out of the box every stage tracks
+    # whatever backtest_duration_days is set to (behaviour-preserving). Set a positive
+    # number of days to give that stage its own independent horizon.
+    "quick_screen_duration_days": 0,
+    "timeframe_sweep_duration_days": 0,
+    "optimization_duration_days": 0,
+    "confirmation_duration_days": 0,
+    "walk_forward_duration_days": 0,
+    "cost_stress_duration_days": 0,
+    "evolution_duration_days": 0,
     # When enabled, backtests deduct cumulative perp funding from each trade's
     # PnL and refuse to promote strategies whose funding data was incomplete.
     "backtest_include_funding": True,
@@ -2817,7 +2839,21 @@ def _apply_settings_section(section: str, payload: dict) -> dict:
         if "backtest_symbol" in payload:
             updates["backtest_symbol"] = str(payload.get("backtest_symbol") or "BTC/USDT").strip()
         if "backtest_duration_days" in payload:
-            updates["backtest_duration_days"] = _coerce_optional_int(payload.get("backtest_duration_days"), updates.get("backtest_duration_days", 365))
+            updates["backtest_duration_days"] = _coerce_optional_int(payload.get("backtest_duration_days"), updates.get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS))
+        # Per-stage backtest windows; 0 = inherit the global default above.
+        for _stage_key in (
+            "quick_screen_duration_days",
+            "timeframe_sweep_duration_days",
+            "optimization_duration_days",
+            "confirmation_duration_days",
+            "walk_forward_duration_days",
+            "cost_stress_duration_days",
+            "evolution_duration_days",
+        ):
+            if _stage_key in payload:
+                updates[_stage_key] = _coerce_optional_int(
+                    payload.get(_stage_key), updates.get(_stage_key, 0)
+                )
         if "rolling_backtest_days" in payload:
             updates["rolling_backtest_days"] = _coerce_optional_int(payload.get("rolling_backtest_days"), updates.get("rolling_backtest_days", 30))
         if "walkforward_months" in payload:
@@ -3153,6 +3189,11 @@ class BacktestSubmitBody(BaseModel):
     end: str | None = None
     params: dict | None = None
     definition_json: dict | None = None
+    # Per-stage window override (calendar days). When set (and start/end are absent),
+    # the default rolling window uses this instead of the global backtest_duration_days
+    # — lets a gauntlet stage run its OWN configured window. <=0/None falls back to the
+    # global default.
+    duration_days: int | None = Field(default=None, ge=0, le=36500)
     # Numeric controls carry sane bounds so absurd/negative values are rejected
     # server-side (the form also validates, but the API is the trust boundary).
     initial_capital: float | None = Field(default=None, gt=0, le=1e12)
@@ -3186,6 +3227,8 @@ class OptimizationSubmitBody(BaseModel):
     parameter_ranges: dict | None = None
     start: str | None = None
     end: str | None = None
+    # Per-stage window override (calendar days); see BacktestSubmitBody.duration_days.
+    duration_days: int | None = Field(default=None, ge=0, le=36500)
     definition_json: dict | None = None
     fee_bps: float | None = Field(default=None, ge=0, le=1000)
     slippage_bps: float | None = Field(default=None, ge=0, le=1000)
@@ -8677,9 +8720,59 @@ def _should_auto_trash_backtest_result(
     return False, ""
 
 
-def _estimate_backtest_bars(start: str | None, end: str | None, timeframe: str | None) -> int:
+# Each automated pipeline stage that runs a backtest maps to its own window setting.
+# stage_backtest_duration_days() resolves the effective window for a stage, treating a
+# stored value of 0/blank as "inherit the global Default backtest window".
+_STAGE_DURATION_SETTING_KEYS = {
+    "quick_screen": "quick_screen_duration_days",
+    "timeframe_sweep": "timeframe_sweep_duration_days",
+    "optimization": "optimization_duration_days",
+    "confirmation": "confirmation_duration_days",
+    "walk_forward": "walk_forward_duration_days",
+    "cost_stress": "cost_stress_duration_days",
+    "evolution": "evolution_duration_days",
+}
+
+
+def stage_backtest_duration_days(stage_key: str, settings: dict | None = None) -> int:
+    """Resolve the backtest window (calendar days) for a pipeline STAGE.
+
+    Each stage has its own tunable knob (e.g. quick_screen_duration_days). A stored
+    value of 0 / blank means "inherit the global Default backtest window"
+    (backtest_duration_days). Always returns a positive int.
+    """
+    s = settings if isinstance(settings, dict) else get_settings()
+    try:
+        global_default = int(
+            s.get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS)
+            or DEFAULT_BACKTEST_DURATION_DAYS
+        )
+    except (TypeError, ValueError):
+        global_default = DEFAULT_BACKTEST_DURATION_DAYS
+    key = _STAGE_DURATION_SETTING_KEYS.get(str(stage_key or "").strip())
+    if key is not None:
+        raw = s.get(key)
+        if raw not in (None, "", 0, "0"):
+            try:
+                stage_val = int(raw)
+            except (TypeError, ValueError):
+                stage_val = 0
+            if stage_val > 0:
+                return stage_val
+    return max(1, global_default)
+
+
+def _estimate_backtest_bars(
+    start: str | None,
+    end: str | None,
+    timeframe: str | None,
+    duration_days_override: int | None = None,
+) -> int:
     settings = get_settings()
-    duration_days = int(settings["backtest_duration_days"])
+    if duration_days_override and int(duration_days_override) > 0:
+        duration_days = int(duration_days_override)
+    else:
+        duration_days = int(settings.get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS) or DEFAULT_BACKTEST_DURATION_DAYS)
     minutes_per_bar = max(_timeframe_to_minutes(timeframe), 1)
     default_bars = (duration_days * 24 * 60) // minutes_per_bar
 
@@ -9567,9 +9660,9 @@ def _persist_completed_backtest_run(
         submit_end = now_iso
     if not submit_start:
         try:
-            duration_days = int(settings.get("backtest_duration_days", 365) or 365)
+            duration_days = int(settings.get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS) or DEFAULT_BACKTEST_DURATION_DAYS)
         except Exception:
-            duration_days = 365
+            duration_days = DEFAULT_BACKTEST_DURATION_DAYS
         try:
             submit_end_dt = datetime.fromisoformat(submit_end.replace("Z", "+00:00"))
         except Exception:
@@ -10212,9 +10305,9 @@ def _is_canonical_backtest_submit(
     # spans ~backtest_duration_days. Anything else (short or back-shifted
     # windows) is a custom run.
     try:
-        duration_days = float(settings.get("backtest_duration_days", 365) or 365)
+        duration_days = float(settings.get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS) or DEFAULT_BACKTEST_DURATION_DAYS)
     except (TypeError, ValueError):
-        duration_days = 365.0
+        duration_days = float(DEFAULT_BACKTEST_DURATION_DAYS)
     now = datetime.now(timezone.utc)
 
     def _parse_window_ts(value: str) -> datetime:
@@ -10315,7 +10408,7 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
     default_backtest_timeframe = str(settings.get("backtest_timeframe") or "1h").strip() or "1h"
     asset = _extract_base_asset_symbol(body.symbol, resolved_symbol)
     timeframe = str(body.timeframe or resolved_timeframe or default_backtest_timeframe or "1h").strip() or "1h"
-    bars = _estimate_backtest_bars(body.start, body.end, timeframe)
+    bars = _estimate_backtest_bars(body.start, body.end, timeframe, duration_days_override=body.duration_days)
     # Validate only the strategy's own params for genuinely-unenforced risk
     # fields. The body-level execution controls (stops/sizing) are now honoured
     # by the engine via execution_controls, so they must NOT be flagged here —
@@ -10415,9 +10508,9 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
         submit_end = now_iso
     if not submit_start:
         try:
-            duration_days = int(settings.get("backtest_duration_days", 365) or 365)
+            duration_days = int(body.duration_days) if body.duration_days and int(body.duration_days) > 0 else int(settings.get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS) or DEFAULT_BACKTEST_DURATION_DAYS)
         except Exception:
-            duration_days = 365
+            duration_days = DEFAULT_BACKTEST_DURATION_DAYS
         try:
             submit_end_dt = datetime.fromisoformat(submit_end.replace("Z", "+00:00"))
         except Exception:
@@ -10639,7 +10732,7 @@ def post_optimization_submit(body: OptimizationSubmitBody):
 
     asset = _extract_base_asset_symbol(body.symbol, resolved_symbol)
     timeframe = str(body.timeframe or resolved_timeframe or "1h").strip() or "1h"
-    bars = _estimate_backtest_bars(body.start, body.end, timeframe)
+    bars = _estimate_backtest_bars(body.start, body.end, timeframe, duration_days_override=body.duration_days)
 
     # Generate IDs up front so we can return immediately.
     job_id = f"opt_{uuid4().hex[:12]}"
@@ -10651,9 +10744,9 @@ def post_optimization_submit(body: OptimizationSubmitBody):
     opt_end_placeholder = str(body.end or "").strip() or now_iso
     if not opt_start_placeholder:
         try:
-            duration_days = int(get_settings().get("backtest_duration_days", 365) or 365)
+            duration_days = int(body.duration_days) if body.duration_days and int(body.duration_days) > 0 else int(get_settings().get("backtest_duration_days", DEFAULT_BACKTEST_DURATION_DAYS) or DEFAULT_BACKTEST_DURATION_DAYS)
         except Exception:
-            duration_days = 365
+            duration_days = DEFAULT_BACKTEST_DURATION_DAYS
         try:
             end_dt = datetime.fromisoformat(opt_end_placeholder.replace("Z", "+00:00"))
         except Exception:

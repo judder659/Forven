@@ -6,6 +6,8 @@
 	export let label: string;
 	export let description: string;
 	export let unit: string | undefined = undefined;
+	// Opt-in live helper: 'years' shows "≈ N.Ny" next to a day-valued number input.
+	export let valueHint: 'years' | undefined = undefined;
 	export let defaultValue: unknown;
 	export let value: unknown;
 	export let type: 'number' | 'text' | 'toggle' | 'select' | 'secret' | 'csv' = 'text';
@@ -19,6 +21,10 @@
 	$: dirty = $dirtyFields.has(id);
 	$: showSavedBadge = type === 'secret' && configured && !dirty;
 	$: selectedValues = arrayValue(value);
+	$: yearHint =
+		valueHint === 'years' && type === 'number' && value != null && Number(value) > 0
+			? `≈ ${(Number(value) / 365).toFixed(Number(value) / 365 >= 1 ? 1 : 2)}y`
+			: '';
 
 	onMount(() => {
 		if (
@@ -196,6 +202,7 @@
 				/>
 			{/if}
 			{#if unit}<span class="text-xs text-gray-500">{unit}</span>{/if}
+			{#if yearHint}<span class="text-xs text-gray-500" data-testid="value-hint-{id}">{yearHint}</span>{/if}
 		</div>
 	</div>
 	<p class="text-xs text-gray-400">{description}</p>

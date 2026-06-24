@@ -596,13 +596,11 @@ export async function getModelPerformance(): Promise<ModelPerformance[]> {
 export interface PipelineThresholds {
 	testing_mode?: boolean;
 	quick_screen: {
-		lookback_days: number;
 		min_total_return_pct: number;
 		max_drawdown_pct: number;
 		min_sharpe: number;
 	};
 	gauntlet: {
-		optimization_years: number;
 		min_robustness_score: number;
 		min_trades: number;
 		min_sharpe: number;

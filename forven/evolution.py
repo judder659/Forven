@@ -397,18 +397,48 @@ def _normalize_timeframe(value: str | None, fallback: str = "1h") -> str:
     return fallback
 
 
+# Per-context compute bounds for the evolution/crucible validation matrix (N backtests
+# across symbols x timeframes, run via a thread pool). The MAX fits ~3.4y @1h so the
+# common multi-year windows pass un-truncated; fine timeframes (5m/1m) clamp here so a
+# single context can't request ~1M bars. The COARSE floor keeps 1d+ strategies tradeable.
+_VALIDATION_MIN_BARS = 200
+_VALIDATION_MAX_BARS = 30_000
+_VALIDATION_COARSE_FLOOR_BARS = 1095
+
+
 def _bars_for_validation_timeframe(timeframe: str) -> int:
     minutes_per_bar = max(_parse_timeframe_minutes(timeframe), 1)
-    # Keep a roughly 1-year horizon while avoiding runaway bar requests.
-    bars = int(round((365 * 24 * 60) / minutes_per_bar))
-    # Coarse timeframes (>= 12h/bar, i.e. 1d and up) get too few bars in a 1-year
-    # window: a daily strategy lands ~365 bars, and after the backtester's ~210-bar
-    # warmup floor and 70/30 in-sample split that leaves <50 usable IS bars —
-    # manufacturing false "zero trades" archivals. Extend the horizon for coarse
-    # timeframes so the in-sample window is actually tradeable (~3y of daily bars).
+    # Evolution/crucible discovery has its OWN per-stage window knob
+    # (evolution_duration_days), which falls back to the global Default backtest window
+    # when left at 0 — so the validation matrix can run a different horizon than the
+    # gauntlet if the operator wants. Falls back to the canonical default if unreadable.
+    try:
+        from forven.api_core import stage_backtest_duration_days
+
+        duration_days = stage_backtest_duration_days("evolution")
+    except Exception:
+        duration_days = 730
+    duration_days = max(1, duration_days)
+    raw_bars = int(round((duration_days * 24 * 60) / minutes_per_bar))
+    bars = raw_bars
+    # Coarse timeframes (>= 12h/bar, i.e. 1d and up) get too few bars in a short
+    # window: a daily strategy lands ~1 bar/day, and after the backtester's ~210-bar
+    # warmup floor and 70/30 in-sample split that can leave <50 usable IS bars —
+    # manufacturing false "zero trades" archivals. Hold a ~3y floor for coarse
+    # timeframes so the in-sample window is actually tradeable.
     if minutes_per_bar >= 12 * 60:
-        bars = max(bars, 1095)
-    return max(200, min(20000, bars))
+        bars = max(bars, _VALIDATION_COARSE_FLOOR_BARS)
+    bars = max(_VALIDATION_MIN_BARS, min(_VALIDATION_MAX_BARS, bars))
+    # Surface the compute clamp instead of silently shrinking the window — the validation
+    # matrix would otherwise evaluate over a different horizon than the baseline backtest
+    # (which honors the full window) with no operator visibility.
+    if raw_bars > _VALIDATION_MAX_BARS:
+        log.warning(
+            "evolution validation window truncated for %s: %d bars (%dd configured) -> %d "
+            "(per-context compute cap; the gauntlet evaluation still uses the full window)",
+            timeframe, raw_bars, duration_days, _VALIDATION_MAX_BARS,
+        )
+    return bars
 
 
 def _collect_validation_symbols(primary_symbol: str, params: dict | None = None) -> list[str]:

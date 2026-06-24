@@ -22,7 +22,12 @@ DEFAULT_PIPELINE_CONFIG = {
     "pipeline_preset": "default",
     "testing_mode": False,
     "quick_screen": {
-        "lookback_days": 365,
+        # NOTE: the quick-screen backtest WINDOW is not set here. Every automatic
+        # backtest (quick-screen, gauntlet optimize/confirm, walk-forward, cost-stress,
+        # evolution validation) shares ONE window: the app setting
+        # `backtest_duration_days` (Settings > Lab > "Backtest window"). The old
+        # quick_screen.lookback_days knob was read by nothing — removed so the config
+        # stops implying a per-stage window that never existed.
         "min_total_return_pct": 0.0,
         "max_drawdown_pct": 0.30,
         "min_sharpe": 0.0,
@@ -64,7 +69,9 @@ DEFAULT_PIPELINE_CONFIG = {
         "max_plausible_profit_factor": 8.0,
     },
     "gauntlet": {
-        "optimization_years": 2,
+        # NOTE: the optimize/confirm WINDOW = the global `backtest_duration_days`
+        # setting (see quick_screen note above). The old gauntlet.optimization_years
+        # knob was read by nothing — removed.
         # "strict live, achievable paper": the gauntlet->paper gate stays
         # reachable in adverse regimes (so the funnel is visibly active) while
         # still rejecting clear losers — min_total_return stays >= 0, PF >= 1.05,

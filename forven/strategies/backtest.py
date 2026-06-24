@@ -7330,7 +7330,10 @@ def backtest_strategy(
     if bars is None:
 
 
-        duration_days = int(settings.get("backtest_duration_days", 30))
+        # Fallback only fires if the settings key is absent; canonical default is
+        # api_core.DEFAULT_BACKTEST_DURATION_DAYS (730). The old 30 fallback could
+        # silently produce a ~1-month backtest instead of the configured window.
+        duration_days = int(settings.get("backtest_duration_days", 730))
 
 
         # Approximate bars based on timeframe
@@ -9617,8 +9620,11 @@ def walk_forward(
         # math). The old `days*24` heuristic made "N bars" mean N hours on EVERY
         # timeframe, so 365 days = ~365 calendar days on 1h but ~1460 days on 4h —
         # the WFA and quick_screen gates silently evaluated different windows.
-        from forven.api_core import _timeframe_to_minutes
-        duration_days = int(settings.get("backtest_duration_days", 30))
+        from forven.api_core import _timeframe_to_minutes, stage_backtest_duration_days
+        # Walk-forward has its OWN per-stage window knob (walk_forward_duration_days),
+        # which falls back to the global Default backtest window when left at 0. Resolved
+        # here so every WFA caller (gauntlet run_walk_forward passes no window) honors it.
+        duration_days = stage_backtest_duration_days("walk_forward", settings)
         minutes_per_bar = max(_timeframe_to_minutes(resolved_timeframe), 1)
         total_bars = (duration_days * 24 * 60) // minutes_per_bar
 

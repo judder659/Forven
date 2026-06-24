@@ -436,6 +436,7 @@
 						label={entry.label}
 						description={entry.description}
 						unit={entry.unit}
+						valueHint={entry.valueHint}
 						defaultValue={entry.default}
 						value={currentValues[entry.id]}
 						type={entry.type}

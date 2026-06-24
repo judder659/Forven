@@ -292,10 +292,14 @@ def test_plain_rerun_keeps_strategy_state_sync(captured):
 
 
 def test_default_rolling_window_keeps_strategy_state_sync(captured):
+    # The "default rolling window" is the global backtest window setting
+    # (DEFAULT_BACKTEST_DURATION_DAYS), so a run spanning exactly that many days
+    # is canonical and keeps the metrics sync. (Derive it from the constant so this
+    # stays correct if the default window is retuned.)
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     core.post_backtest_submit(_plain_submit(
-        start=(now - timedelta(days=365)).isoformat(),
+        start=(now - timedelta(days=core.DEFAULT_BACKTEST_DURATION_DAYS)).isoformat(),
         end=now.isoformat(),
     ))
     assert captured["kwargs"]["sync_strategy_state"] is True

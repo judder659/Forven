@@ -390,7 +390,7 @@ def _tool_assistant_run_backtest(
 # ---------------------------------------------------------------------------
 
 # Quick-screen gate thresholds (judged on BOTH the IS and OOS windows of a
-# 365-day canonical backtest). Mirrors forven/agent/client.py.
+# canonical backtest over the configured Backtest window). Mirrors forven/agent/client.py.
 _QUICK_SCREEN = {
     "min_profit_factor": 1.05, "min_sharpe": 0.0, "max_sharpe": 5.0,
     "max_drawdown_pct": 0.30, "min_trades_oos": 15, "min_trades_is": 20,
@@ -473,7 +473,8 @@ def _tool_assistant_register_strategy_file(file_path: str, session_id: str | Non
     name="assistant_enqueue_candidate",
     description=(
         "Submit a quick_screen strategy into the GAUNTLET (the automated 12-step "
-        "evaluation) after a quick pre-screen. Runs a canonical 365-day backtest, "
+        "evaluation) after a quick pre-screen. Runs a canonical backtest over the "
+        "configured Backtest window (Settings > Lab), "
         "checks BOTH the in-sample and out-of-sample windows against the quick-screen "
         "gate, and — only if it passes — advances the strategy to the 'gauntlet' stage "
         "so the background Advancer evaluates it toward paper. This enters EVALUATION "

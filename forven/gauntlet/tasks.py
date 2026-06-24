@@ -239,7 +239,7 @@ def run_quick_screen(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
         params = {}
 
     try:
-        from forven.api_core import BacktestSubmitBody
+        from forven.api_core import BacktestSubmitBody, stage_backtest_duration_days
 
         response = _submit_backtest(
             BacktestSubmitBody(
@@ -248,6 +248,7 @@ def run_quick_screen(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
                 symbol=row.get("symbol") or "BTC/USDT",
                 timeframe=row.get("timeframe") or "1h",
                 params=params,
+                duration_days=stage_backtest_duration_days("quick_screen"),
             ),
             skip_auto_trash=True,
         )
@@ -413,7 +414,9 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
     skipped: list[str] = []
     errors: list[dict[str, str]] = []
 
-    from forven.api_core import BacktestSubmitBody
+    from forven.api_core import BacktestSubmitBody, stage_backtest_duration_days
+
+    sweep_duration_days = stage_backtest_duration_days("timeframe_sweep")
 
     for timeframe in sweep_timeframes:
         tf = str(timeframe or "").strip()
@@ -430,6 +433,7 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
                     symbol=row.get("symbol") or "BTC/USDT",
                     timeframe=tf,
                     params=params,
+                    duration_days=sweep_duration_days,
                 ),
                 skip_auto_trash=True,
             )
@@ -550,7 +554,7 @@ def run_validation_optimization(workflow: dict[str, Any], step: dict[str, Any]) 
     timeframe = _best_sweep_timeframe(str(row["id"]), str(row.get("timeframe") or "1h"))
 
     try:
-        from forven.api_core import OptimizationSubmitBody
+        from forven.api_core import OptimizationSubmitBody, stage_backtest_duration_days
 
         response = _submit_optimization(
             OptimizationSubmitBody(
@@ -558,6 +562,7 @@ def run_validation_optimization(workflow: dict[str, Any], step: dict[str, Any]) 
                 strategy_name=row.get("name"),
                 symbol=row.get("symbol") or "BTC/USDT",
                 timeframe=timeframe,
+                duration_days=stage_backtest_duration_days("optimization"),
             )
         )
     except Exception as exc:
@@ -680,7 +685,7 @@ def run_confirmation_backtest(workflow: dict[str, Any], step: dict[str, Any]) ->
         params = {}
 
     try:
-        from forven.api_core import BacktestSubmitBody
+        from forven.api_core import BacktestSubmitBody, stage_backtest_duration_days
 
         response = _submit_backtest(
             BacktestSubmitBody(
@@ -689,6 +694,7 @@ def run_confirmation_backtest(workflow: dict[str, Any], step: dict[str, Any]) ->
                 symbol=row.get("symbol") or "BTC/USDT",
                 timeframe=row.get("timeframe") or "1h",
                 params=params,
+                duration_days=stage_backtest_duration_days("confirmation"),
             ),
             skip_auto_trash=True,
         )

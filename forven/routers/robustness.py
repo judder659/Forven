@@ -603,11 +603,14 @@ def _raise_zero_trade_prerequisite(label: str) -> None:
     )
 
 
-# Upper bound on bars loaded for a robustness RERUN (cost_stress / param_jitter).
-# ~1 year of hourly data: large enough to capture trades for low-frequency 1h/4h
-# strategies (the old fixed 720-bar ~30-day window false-failed strategies that
-# don't trade in the most recent month, e.g. range-bound regimes), and below the
-# non-vectorized matrix cap (10k) so reruns stay bounded on every timeframe.
+# DEFAULT upper bound on bars loaded for a robustness RERUN, used only when a caller
+# passes no max_bars. param_jitter overrides it with its own configurable cap
+# (robustness_thresholds.param_jitter_max_bars), and cost_stress overrides it with the
+# global "Backtest window" setting (backtest_duration_days) so it evaluates over the
+# same horizon as the rest of the pipeline rather than a fixed ~1y slice. ~1 year of
+# hourly data: large enough to capture trades for low-frequency 1h/4h strategies (the
+# old fixed 720-bar ~30-day window false-failed strategies that don't trade in the
+# most recent month), and below the non-vectorized matrix cap (10k).
 _RERUN_MAX_BARS = 8760
 
 
@@ -1227,8 +1230,29 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
     if (not win_start or not win_end) and baseline_ctx is not None:
         win_start = win_start or baseline_ctx.get("start_date")
         win_end = win_end or baseline_ctx.get("end_date")
+    # Honor the ONE global backtest window (Settings > Lab > "Backtest window") so
+    # cost-stress evaluates over the same horizon as the baseline backtest instead of
+    # a fixed ~1y slice. Bound the bar count for compute safety: _estimate_backtest_bars
+    # with no explicit start/end is UNCAPPED, so on fine timeframes the global window
+    # explodes (730d @1m = ~1.05M bars, a memory/step-timeout risk). Cap at the
+    # walk-forward ceiling (50k bars) — coarser timeframes (1h+) still get the full
+    # window; sub-hourly reruns are bounded. Falls back to the module default on error.
+    try:
+        from forven.api_core import _estimate_backtest_bars, stage_backtest_duration_days
+
+        cost_stress_days = stage_backtest_duration_days("cost_stress")
+        cost_stress_max_bars = min(
+            _estimate_backtest_bars(None, None, body.timeframe, duration_days_override=cost_stress_days),
+            50_000,
+        )
+    except Exception:
+        cost_stress_max_bars = _RERUN_MAX_BARS
     candles = _load_rerun_candles(
-        body.symbol, body.timeframe, start_date=win_start, end_date=win_end
+        body.symbol,
+        body.timeframe,
+        start_date=win_start,
+        end_date=win_end,
+        max_bars=cost_stress_max_bars,
     )
     if candles.empty:
         raise HTTPException(400, "No candle data available for cost-stress reruns.")
