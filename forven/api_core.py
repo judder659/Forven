@@ -1705,7 +1705,12 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     "updated_at": _now(),
 }
 
-_DEFAULT_API_KEY_SOURCES = ("tiingo", "fred", "coingecko", "polygon", "alpaca")
+# Only Polygon is wired to a consumer (forven.config.get_polygon_api_key ->
+# polygon_client / data layer). The Tiingo/FRED/CoinGecko/Alpaca key fields were
+# never read by any code, so they were removed from the Settings UI and dropped
+# here too. Any previously-stored keys still round-trip via get_settings_api_keys'
+# fallback loop, so nothing is lost.
+_DEFAULT_API_KEY_SOURCES = ("polygon",)
 
 _PIPELINE_STAGE_WIP_CAPS = {
     "paper": {

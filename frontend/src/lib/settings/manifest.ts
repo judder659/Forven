@@ -99,7 +99,7 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'notif-delivery', area: 'notifications', label: 'Delivery policy', description: 'Overall notification level and noise control.' },
 
   // System
-  { id: 'system-api-keys', area: 'system', label: 'Data source API keys', description: 'Tiingo, FRED, CoinGecko, Polygon, Alpaca keys.' },
+  { id: 'system-api-keys', area: 'system', label: 'Data source API keys', description: 'Polygon.io market-data key.' },
   { id: 'system-remote-engine', area: 'system', label: 'Remote engine', description: 'Offload backtests to a remote engine process.' },
   { id: 'system-throughput', area: 'system', label: 'Throughput', description: 'Agent cadences and pipeline throughput presets.', advanced: true },
   { id: 'system-resource-tuning', area: 'system', label: 'Resource tuning', description: 'Worker counts, claim limits, drain mode, and other backpressure knobs.', advanced: true },
@@ -2202,42 +2202,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
 
   // -------------------- SYSTEM: API KEYS --------------------
   {
-    id: 'api-keys.tiingo',
-    label: 'Tiingo API key',
-    default: '',
-    type: 'secret',
-    area: 'system',
-    subsection: 'system-api-keys',
-    backendSection: 'api-keys',
-    backendPath: 'tiingo',
-    description: 'API key for Tiingo market-data endpoints.',
-    usedBy: ['forven.data_manager', 'forven.api_core'],
-  },
-  {
-    id: 'api-keys.fred',
-    label: 'FRED API key',
-    default: '',
-    type: 'secret',
-    area: 'system',
-    subsection: 'system-api-keys',
-    backendSection: 'api-keys',
-    backendPath: 'fred',
-    description: 'API key for FRED macroeconomic series.',
-    usedBy: ['forven.data_manager', 'forven.api_core'],
-  },
-  {
-    id: 'api-keys.coingecko',
-    label: 'CoinGecko API key',
-    default: '',
-    type: 'secret',
-    area: 'system',
-    subsection: 'system-api-keys',
-    backendSection: 'api-keys',
-    backendPath: 'coingecko',
-    description: 'API key for CoinGecko data.',
-    usedBy: ['forven.data_manager', 'forven.api_core'],
-  },
-  {
     id: 'api-keys.polygon',
     label: 'Polygon API key',
     default: '',
@@ -2247,19 +2211,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendSection: 'api-keys',
     backendPath: 'polygon',
     description: 'API key for Polygon.io market data.',
-    usedBy: ['forven.data_manager', 'forven.api_core'],
-  },
-  {
-    id: 'api-keys.alpaca',
-    label: 'Alpaca API key',
-    default: '',
-    type: 'secret',
-    area: 'system',
-    subsection: 'system-api-keys',
-    backendSection: 'api-keys',
-    backendPath: 'alpaca',
-    description: 'API key for Alpaca broker/data endpoints.',
-    usedBy: ['forven.data_manager', 'forven.api_core'],
+    usedBy: ['forven.polygon_client', 'forven.data', 'forven.api_core'],
   },
 
   // -------------------- SYSTEM: TELEMETRY --------------------
