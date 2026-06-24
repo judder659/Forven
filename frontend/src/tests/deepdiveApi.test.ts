@@ -4,9 +4,7 @@ import * as api from '../lib/api';
 import {
 	archiveDeepdiveThread,
 	createOrGetDeepdiveThread,
-	getDeepdiveCostCap,
 	listDeepdiveMessages,
-	setDeepdiveCostCap,
 	streamDeepdiveSend,
 	type DeepdiveMessage,
 	type DeepdiveStreamEvent,
@@ -29,8 +27,6 @@ describe('deepdive api client', () => {
 		expect(typeof api.archiveDeepdiveThread).toBe('function');
 		expect(typeof api.listDeepdiveMessages).toBe('function');
 		expect(typeof api.streamDeepdiveSend).toBe('function');
-		expect(typeof api.getDeepdiveCostCap).toBe('function');
-		expect(typeof api.setDeepdiveCostCap).toBe('function');
 	});
 
 	it('createOrGetDeepdiveThread posts strategy_id', async () => {
@@ -69,26 +65,6 @@ describe('deepdive api client', () => {
 		});
 		const got = await listDeepdiveMessages('dd_1');
 		expect(got).toEqual(mock);
-	});
-
-	it('getDeepdiveCostCap reads cap_usd', async () => {
-		mockFetch.mockResolvedValueOnce({
-			ok: true, json: () => Promise.resolve({ cap_usd: 5.0 }),
-		});
-		const v = await getDeepdiveCostCap();
-		expect(v).toBe(5.0);
-	});
-
-	it('setDeepdiveCostCap writes cap_usd', async () => {
-		mockFetch.mockResolvedValueOnce({
-			ok: true, json: () => Promise.resolve({ cap_usd: 7.5 }),
-		});
-		const v = await setDeepdiveCostCap(7.5);
-		expect(v).toBe(7.5);
-		const [url, init] = mockFetch.mock.calls[0];
-		expect(String(url)).toContain('/api/deepdive/cost-cap');
-		expect((init as RequestInit).method).toBe('PUT');
-		expect(JSON.parse(String((init as RequestInit).body))).toEqual({ cap_usd: 7.5 });
 	});
 
 	it('streamDeepdiveSend parses SSE chunks and invokes callback per event', async () => {

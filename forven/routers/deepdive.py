@@ -66,22 +66,3 @@ async def send(thread_id: str, body: SendBody):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
-
-
-class CapBody(BaseModel):
-    cap_usd: float
-
-
-@router.get("/api/deepdive/cost-cap")
-def get_cost_cap():
-    from forven.deepdive_session import _cost_cap_usd
-    return {"cap_usd": _cost_cap_usd()}
-
-
-@router.put("/api/deepdive/cost-cap")
-def set_cost_cap(body: CapBody):
-    if body.cap_usd < 0:
-        raise HTTPException(status_code=400, detail="cap must be >= 0")
-    from forven.db import kv_set
-    kv_set("deepdive.cost_cap_usd", body.cap_usd)
-    return {"cap_usd": body.cap_usd}

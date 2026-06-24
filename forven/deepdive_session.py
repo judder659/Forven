@@ -5,12 +5,11 @@ import logging
 from typing import AsyncIterator
 
 from forven.agents.tools_deepdive import set_deepdive_strategy, clear_deepdive_strategy
-from forven.db import get_db, kv_get
+from forven.db import get_db
 from forven.deepdive_db import (
     append_message,
     get_thread,
     list_messages,
-    thread_cost_total,
 )
 
 log = logging.getLogger("forven.deepdive")
@@ -19,14 +18,6 @@ MAX_TOOL_ROUNDS = 8
 
 # Providers that accept Anthropic Messages format (tool_use / tool_result blocks).
 _ANTHROPIC_FORMAT_PROVIDERS = {"anthropic", "minimax"}
-
-
-def _cost_cap_usd() -> float:
-    raw = kv_get("deepdive.cost_cap_usd")
-    try:
-        return float(raw) if raw is not None else 5.0
-    except (TypeError, ValueError):
-        return 5.0
 
 
 def _build_system_prompt(strategy_id: str) -> str:
@@ -318,16 +309,6 @@ async def run_turn(thread_id: str, *, user_text: str) -> AsyncIterator[dict]:
         yield {"type": "error", "code": "archived", "message": "thread is archived"}
         return
 
-    cap = _cost_cap_usd()
-    spent = thread_cost_total(thread_id)
-    if spent >= cap:
-        yield {
-            "type": "error",
-            "code": "cost_cap",
-            "message": f"thread cost ${spent:.2f} >= cap ${cap:.2f}",
-        }
-        return
-
     append_message(thread_id, role="user", content=user_text)
     yield {"type": "user_persisted"}
 
@@ -370,14 +351,6 @@ async def run_turn(thread_id: str, *, user_text: str) -> AsyncIterator[dict]:
 
             if not tool_calls:
                 yield {"type": "done", "message_id": assistant_msg["id"]}
-                return
-
-            if thread_cost_total(thread_id) >= _cost_cap_usd():
-                yield {
-                    "type": "error",
-                    "code": "cost_cap",
-                    "message": "cost cap reached mid-turn",
-                }
                 return
 
             for tc in tool_calls:

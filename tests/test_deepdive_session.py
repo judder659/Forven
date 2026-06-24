@@ -50,21 +50,6 @@ def test_run_turn_persists_user_and_assistant(thread, monkeypatch):
     assert any(e["type"] == "assistant_token" for e in events)
 
 
-def test_cost_cap_blocks_turn(thread, monkeypatch):
-    from forven import deepdive_session
-    monkeypatch.setattr(deepdive_session, "_cost_cap_usd", lambda: 0.0)
-
-    events = []
-    async def collect():
-        async for ev in deepdive_session.run_turn(thread["id"], user_text="hi"):
-            events.append(ev)
-    asyncio.run(collect())
-
-    assert any(e["type"] == "error" and e.get("code") == "cost_cap" for e in events)
-    msgs = list_messages(thread["id"])
-    assert msgs == []  # nothing persisted when cap hits
-
-
 def test_unknown_thread_emits_error(forven_db, monkeypatch):
     from forven import deepdive_session
     events = []

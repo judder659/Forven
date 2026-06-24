@@ -55,19 +55,6 @@ export async function listDeepdiveMessages(threadId: string): Promise<DeepdiveMe
 	return resp.messages;
 }
 
-export async function getDeepdiveCostCap(): Promise<number> {
-	const r = await fetchApi<{ cap_usd: number }>('/deepdive/cost-cap');
-	return r.cap_usd;
-}
-
-export async function setDeepdiveCostCap(capUsd: number): Promise<number> {
-	const r = await fetchApi<{ cap_usd: number }>('/deepdive/cost-cap', {
-		method: 'PUT',
-		body: JSON.stringify({ cap_usd: capUsd }),
-	});
-	return r.cap_usd;
-}
-
 function resolveStreamBase(): string {
 	// In test env ACTIVE_API_BASE is '/api'; in browser it's a discovered absolute URL.
 	// fetchApi uses ACTIVE_API_BASE for its requests; mirror that so SSE URLs match what tests expect.

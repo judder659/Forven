@@ -92,33 +92,6 @@ def test_max_rounds_emits_error(thread, monkeypatch):
     assert any(e["type"] == "error" and e.get("code") == "max_rounds" for e in events)
 
 
-def test_cost_cap_mid_loop_aborts(thread, monkeypatch):
-    from forven import deepdive_session
-
-    async def fake_invoke(messages, strategy_id):
-        return {
-            "content": "expensive",
-            "tool_calls": [{"name": "deepdive_read_strategy_code", "input": {}, "id": "x"}],
-            "cost_usd": 99.0,
-            "model": "stub",
-        }
-
-    async def fake_dispatch(name, tool_input):
-        return "ok"
-
-    monkeypatch.setattr(deepdive_session, "_invoke_llm", fake_invoke)
-    monkeypatch.setattr(deepdive_session, "_dispatch_tool", fake_dispatch)
-    monkeypatch.setattr(deepdive_session, "_cost_cap_usd", lambda: 5.0)
-
-    events = []
-    async def collect():
-        async for ev in deepdive_session.run_turn(thread["id"], user_text="go"):
-            events.append(ev)
-    asyncio.run(collect())
-
-    assert any(e["type"] == "error" and e.get("code") == "cost_cap" for e in events)
-
-
 def test_dispatch_rejects_non_deepdive_tool(forven_db):
     """Security boundary: only tools with 'deepdive' in permissions can be dispatched."""
     from forven.deepdive_session import _dispatch_tool
