@@ -24,7 +24,6 @@ from forven.async_utils import spawn
 from forven.context import build_agent_context
 from forven.cost_pricing import estimate_cost_usd
 from forven.db import claim_pending_agent_tasks, create_pending_task, format_prefixed_id, get_db, get_task_tool_calls, init_db, is_user_active, kv_get, kv_set, log_activity
-from forven.model_routing import get_fallback_chain
 from forven.provider_runtime_health import (
     record_call_failure,
     record_provider_event,

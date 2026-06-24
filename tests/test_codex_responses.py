@@ -9,7 +9,6 @@ Completions — mirroring hermes-agent's ``openai-codex`` provider.
 from __future__ import annotations
 
 import asyncio
-import json
 
 import jwt
 import pytest

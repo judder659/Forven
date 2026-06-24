@@ -67,7 +67,7 @@ describe('Settings page shell', () => {
 		expect(text).toContain('Home');
 		expect(text).toContain('Lab');
 		expect(text).toContain('Trading');
-		expect(text).toContain('Agents');
+		expect(text).toContain('Data');
 		expect(text).toContain('Notifications');
 		expect(text).toContain('System');
 		expect(text).toContain('Danger Zone');

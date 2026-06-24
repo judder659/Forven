@@ -13,8 +13,6 @@ which does not reach the `from forven.config import WORKSPACE_DIR` aliases that
 
 from contextlib import contextmanager
 
-import pytest
-
 
 @contextmanager
 def _pin_workspace_dir(home):
