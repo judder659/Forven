@@ -149,9 +149,12 @@ def test_ohlcv_collector_does_not_hold_dataset_lock_during_fetch():
             if acquired:
                 dataset_lock.release()
 
-    existing = _make_ohlcv(2)
+    # Last stored bar opens at 2024-01-01T01:00Z, read from the parquet footer
+    # (no full load). It is far in the past, so a new closed bar is due and the
+    # fetch path runs (the cheap "is a bar due?" gate does not short-circuit).
+    last_ms = int(pd.Timestamp("2024-01-01T01:00:00Z").timestamp() * 1000)
     with patch("forven.data.fetch_ohlcv_chunked", side_effect=_fake_fetch):
-        with patch("forven.data.load_parquet", return_value=existing):
+        with patch("forven.data.dataset_last_timestamp_ms", return_value=last_ms):
             with patch("forven.data._get_dataset_lock", return_value=dataset_lock):
                 result = collector.collect("BTC-USDT", "1h")
 
@@ -165,9 +168,12 @@ def test_ohlcv_collector_raises_on_failure():
     """Collectors must re-raise (B-19): swallowing made an all-fail run look
     like a quiet green bar. Orchestrators catch per symbol and tally."""
     collector = OHLCVCollector()
-    with patch("forven.data.load_parquet", side_effect=RuntimeError("db error")):
-        with pytest.raises(RuntimeError, match="db error"):
-            collector.collect("BTC-USDT", "1h")
+    # No stored bar -> the gate doesn't short-circuit and the fetch path runs;
+    # a fetch/IO failure must propagate, not be swallowed into a quiet 0.
+    with patch("forven.data.dataset_last_timestamp_ms", return_value=None):
+        with patch("forven.data.fetch_ohlcv_chunked", side_effect=RuntimeError("db error")):
+            with pytest.raises(RuntimeError, match="db error"):
+                collector.collect("BTC-USDT", "1h")
 
 
 # ---------------------------------------------------------------------------

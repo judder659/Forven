@@ -614,22 +614,36 @@ class OHLCVCollector:
         """Fetch gap since last stored bar and append. Returns rows added."""
         try:
             from forven.data import (
-                load_parquet,
                 fetch_ohlcv_chunked,
                 symbol_to_fs,
+                dataset_last_timestamp_ms,
+                _timeframe_to_ms,
             )
 
-            existing = load_parquet(symbol, timeframe)
-            last_ms = _last_timestamp(existing)
-            # Add one bar-width gap to avoid re-fetching the last closed bar.
-            if last_ms is not None:
-                from forven.data import _timeframe_to_ms
-                last_ms += _timeframe_to_ms(timeframe)
+            tf_ms = _timeframe_to_ms(timeframe)
+            # Last stored bar's open time, read from the parquet FOOTER only (no
+            # full column load — see dataset_last_timestamp_ms). This replaces a
+            # full load_parquet that was used solely to derive the fetch cursor.
+            last_ms = dataset_last_timestamp_ms(symbol, timeframe)
+
+            # Cheap "is a new CLOSED bar even due?" gate. The last stored bar covers
+            # [last_ms, last_ms+tf); the NEXT bar only closes at last_ms+2*tf. Until
+            # then the keep-alive would fetch nothing yet still pay a full read + a
+            # whole-file rewrite. For a 15-min keep-alive on 1h/4h/1d series that
+            # repeated rewrite is the dominant cost (and the single-worker WS
+            # starvation). Skip when provably nothing new can exist yet.
+            if last_ms is not None and tf_ms > 0:
+                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                if now_ms < last_ms + 2 * tf_ms:
+                    return 0
+
+            # One bar-width gap so we don't re-fetch the last (closed) bar.
+            since_ms = (last_ms + tf_ms) if last_ms is not None else None
 
             result = fetch_ohlcv_chunked(
                 symbol=symbol_to_fs(symbol),
                 timeframe=timeframe,
-                since_ms=last_ms,
+                since_ms=since_ms,
             )
             if isinstance(result, dict):
                 return max(0, int(result.get("bars_new") or 0))

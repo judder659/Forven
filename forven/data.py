@@ -447,6 +447,50 @@ def _capture_ohlcv_revisions(symbol: str, timeframe: str, new_frame: pd.DataFram
         log.debug("revision capture skipped for %s/%s: %s", symbol, timeframe, exc)
 
 
+def dataset_last_timestamp_ms(symbol: str, timeframe: str) -> int | None:
+    """Last stored bar's timestamp (ms since epoch), read from the parquet FOOTER
+    only — row-group column statistics, never a full column load. Returns None
+    when the file is missing, empty, or unreadable.
+
+    Lets the OHLCV keep-alive cheaply decide whether a new closed bar is even due
+    before paying for a full read + whole-file rewrite (the dominant cost behind
+    single-worker WS starvation). Mirrors the footer-stats approach in
+    ``_coverage_entry_uncached``.
+    """
+    path = parquet_path(symbol, timeframe)
+    if not path.exists():
+        return None
+    try:
+        if _using_pyarrow():
+            metadata = pq.read_metadata(path)
+            if int(metadata.num_rows or 0) == 0:
+                return None
+            names = list(metadata.schema.names)
+            if "timestamp" in names:
+                ts_idx = names.index("timestamp")
+                maxes: list[Any] = []
+                for rg in range(metadata.num_row_groups):
+                    stats = getattr(metadata.row_group(rg).column(ts_idx), "statistics", None)
+                    if stats is None or not getattr(stats, "has_min_max", False):
+                        maxes = []
+                        break
+                    maxes.append(stats.max)
+                if maxes:
+                    max_ts = _as_utc_timestamp(pd.Series(maxes)).dropna().sort_values()
+                    if len(max_ts):
+                        return int(max_ts.iloc[-1].timestamp() * 1000)
+            # Statistics absent — single-column load (still far cheaper than a full read).
+            series = pq.read_table(path, columns=["timestamp"]).to_pandas()["timestamp"]
+        else:
+            series = pd.read_pickle(path)["timestamp"]
+        ts = _as_utc_timestamp(pd.Series(series)).dropna().sort_values()
+        if len(ts):
+            return int(ts.iloc[-1].timestamp() * 1000)
+    except Exception:
+        return None
+    return None
+
+
 def merge_and_dedup(existing: pd.DataFrame | None, new: pd.DataFrame | None) -> pd.DataFrame:
     if existing is None and new is None:
         return _normalize_ohlcv_frame(pd.DataFrame())
