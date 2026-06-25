@@ -2708,8 +2708,94 @@ def _recompute_daily_halt_from_equity(account_equity: float) -> bool:
     return False
 
 
+# Equity-sample sanity guard. A physically-impossible equity reading (a bad
+# books-aggregate computation once produced ~4.3e23) must never become the
+# high-water mark: the next good tick then computes a ~100% drawdown against the
+# garbage peak and latches a permanent FALSE kill-switch (all trading halted on a
+# phantom loss). We reject such samples up front and self-heal a corrupted stored
+# HWM on the next good tick.
+_MAX_PLAUSIBLE_EQUITY = 1e12  # $1T — no real or testnet account reaches this
+_EQUITY_JUMP_REJECT_MULT = 100.0  # a single-tick 100x jump from the last good equity is suspect
+_EQUITY_JUMP_MAX_CONSECUTIVE_REJECTS = 5  # ...unless it persists this many ticks (a real deposit/regime change)
+
+
+def _validate_equity_sample(account_equity: object, state: dict) -> tuple[bool, str]:
+    """Return ``(ok, reason)`` for an incoming equity sample.
+
+    Rejects non-numeric / NaN / non-positive / above the absolute plausibility
+    ceiling, and a single-tick jump > ``_EQUITY_JUMP_REJECT_MULT`` x the last good
+    equity. The relative-jump check self-heals: it tracks
+    ``state['equity_reject_streak']`` and, once a suspect value persists for
+    ``_EQUITY_JUMP_MAX_CONSECUTIVE_REJECTS`` ticks, accepts it as a genuine change
+    (e.g. a large deposit) rather than rejecting forever. Hard rejects
+    (NaN/non-positive/ceiling) never heal.
+    """
+    try:
+        eq = float(account_equity)
+    except (TypeError, ValueError):
+        return False, "non-numeric equity"
+    if eq != eq:  # NaN (no `math` import in this module)
+        return False, "NaN equity"
+    if eq <= 0:
+        return False, "non-positive equity"
+    if eq > _MAX_PLAUSIBLE_EQUITY:
+        return False, f"equity ${eq:,.0f} exceeds the ${_MAX_PLAUSIBLE_EQUITY:,.0f} plausibility ceiling"
+    try:
+        last = float(state.get("last_equity") or 0.0)
+    except (TypeError, ValueError):
+        last = 0.0
+    if last > 0 and eq > last * _EQUITY_JUMP_REJECT_MULT:
+        streak = int(state.get("equity_reject_streak", 0) or 0) + 1
+        state["equity_reject_streak"] = streak
+        if streak <= _EQUITY_JUMP_MAX_CONSECUTIVE_REJECTS:
+            return False, (
+                f"equity ${eq:,.2f} is {eq / last:.0f}x the last good ${last:,.2f} "
+                f"(suspect; tick {streak}/{_EQUITY_JUMP_MAX_CONSECUTIVE_REJECTS})"
+            )
+        log.warning(
+            "Equity $%.2f sustained >%.0fx above last good $%.2f for %d ticks — accepting as a real change.",
+            eq, _EQUITY_JUMP_REJECT_MULT, last, streak,
+        )
+    state["equity_reject_streak"] = 0
+    return True, "ok"
+
+
+def _rejected_equity_result(state: dict, reason: str) -> dict:
+    """Risk-check result for a rejected sample: report the last GOOD state and take
+    no new action (never a fresh kill-switch/halt fire off garbage)."""
+    return {
+        "equity": state.get("last_equity"),
+        "high_water_mark": state.get("high_water_mark", 0.0),
+        "drawdown_pct": state.get("drawdown_pct", 0.0),
+        "daily_pnl_pct": 0.0,
+        "kill_switch": bool(state.get("kill_switch_active", False)),
+        "daily_halt": bool(state.get("daily_loss_halt", False)),
+        "action": None,
+        "rejected": True,
+        "reject_reason": reason,
+    }
+
+
 def _update_equity_locked(account_equity: float, source: str) -> dict:
     state = _get_risk_state()
+
+    # Sanity guard: never let an implausible equity reading mutate the risk state
+    # (high-water mark / kill-switch). A garbage sample is ignored and the next
+    # good tick proceeds normally; the reject-streak counter is persisted so the
+    # relative-jump guard can self-heal a sustained real change.
+    ok, reason = _validate_equity_sample(account_equity, state)
+    if not ok:
+        log.error(
+            "Ignoring implausible equity sample (source=%s): %s — risk state unchanged.",
+            source, reason,
+        )
+        log_activity(
+            "warning", "risk",
+            f"Ignored an implausible equity reading: {reason}. Kill-switch and high-water mark unchanged.",
+        )
+        _save_risk_state(state, best_effort=True)
+        return _rejected_equity_result(state, reason)
+
     limits = _get_risk_limits()
     max_drawdown = float(limits["max_drawdown"])
     daily_loss_limit = float(limits["daily_loss_limit"])
@@ -2748,6 +2834,22 @@ def _update_equity_locked(account_equity: float, source: str) -> dict:
             {"date": today, "start_equity": account_equity},
             timeout_seconds=_RISK_WRITE_TIMEOUT_SECONDS,
         )
+
+    # Self-heal a corrupted high-water mark: an implausible HWM latched by a bad
+    # sample (e.g. before this guard existed, or from any other writer) would
+    # compute a ~100% drawdown against every good equity and arm a permanent false
+    # kill-switch. Re-baseline it to the current (validated) equity instead.
+    if hwm > _MAX_PLAUSIBLE_EQUITY:
+        log.error(
+            "Corrupted high-water mark $%.3e detected — re-baselining to current equity $%.2f.",
+            hwm, account_equity,
+        )
+        log_activity(
+            "warning", "risk",
+            f"Re-baselined a corrupted high-water mark (${hwm:.3e}) to ${account_equity:,.2f}.",
+        )
+        hwm = account_equity
+        state["high_water_mark"] = hwm
 
     if account_equity > hwm:
         hwm = account_equity
