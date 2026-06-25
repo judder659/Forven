@@ -54,6 +54,26 @@ def test_quick_screen_runtime_error_blocks_without_rejecting_strategy(forven_db,
     assert row["status"] == "quick_screen"
 
 
+def test_trade_mode_unsupported_is_terminal_not_retryable():
+    """A strategy type that can't run the requested trade_mode is a fixed
+    config<->code mismatch — classify it failed_gate (terminal), never a retryable
+    blocked_runtime, so the advancer drains it instead of re-queuing every cycle."""
+    from forven.gauntlet.tasks import _classify_exception
+
+    for msg in (
+        "Strategy 'donchian_regime_short' does not support trade_mode='short_only'",
+        "Strategy 'rsi_momentum' does not support trade_mode='both'",
+    ):
+        verdict = _classify_exception(ValueError(msg))
+        assert verdict["status"] == "failed_gate", msg
+        assert verdict["retryable"] is False, msg
+
+    # Control: a genuine transient runtime error stays retryable.
+    transient = _classify_exception(RuntimeError("backtest engine unavailable"))
+    assert transient["status"] == "blocked_runtime"
+    assert transient["retryable"] is True
+
+
 def test_quick_screen_pass_advances_to_gate(forven_db, monkeypatch):
     kv_set("forven:pipeline:settings", {"gauntlet_auto_quick_screen_enabled": True})
     created = create_lifecycle_strategy(

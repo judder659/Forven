@@ -176,6 +176,11 @@ _DETERMINISTIC_ERROR_TOKENS = (
     "invalid transition",
     "cannot convert float nan",
     "truth value of an array",
+    # A strategy type that can't run the requested trade_mode (e.g. a long-only
+    # archetype asked for short_only/both) is a fixed config<->code mismatch — no
+    # number of retries makes it run. Fail fast so the workflow drains instead of
+    # the advancer re-queuing it every cycle (it's flagged retryable otherwise).
+    "does not support trade_mode",
 )
 
 
