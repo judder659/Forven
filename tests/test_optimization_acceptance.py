@@ -102,6 +102,56 @@ def test_baseline_retained_when_drawdown_worsens():
     assert decision.rule_results["oos_drawdown"]["passed"] is False
 
 
+def test_bakeoff_sources_and_shares_one_execution_profile():
+    """The gate sources the execution profile from the baseline and judges BOTH
+    legs on the SAME one (the optimizer never sweeps execution controls)."""
+    ctx, mock = _patch_walk_forward(_wfa([0.5, 0.5, 0.5]), _wfa([1.1, 1.0, 1.2]))
+    with ctx:
+        evaluate_optimization_candidate(
+            strategy_id="S", asset="BTC", strategy_type="rsi_momentum",
+            current_params={
+                "rsi_entry": 30,
+                "execution_profile": {"sizing_mode": "fraction", "risk_per_trade": 0.02, "stop_loss_pct": 1.5},
+            },
+            candidate_params={"rsi_entry": 35},
+            optimization_metrics=_OK_OPT,
+        )
+    ecs = [c.kwargs.get("execution_controls") for c in mock.call_args_list]
+    assert len(ecs) == 2, "baseline + candidate walk_forward runs"
+    assert ecs[0] == ecs[1], "both legs judged on the identical profile"
+    assert ecs[0] == {"sizing_mode": "fraction", "risk_per_trade": 0.02, "stop_loss_pct": 1.5}
+
+
+def test_resolver_does_not_source_legacy_top_level_fields():
+    """REGRESSION GUARD (critical): pre-existing strategies carry INERT honored
+    fields (stop_loss_pct, take_profit_pct, risk_per_trade, ...) at the top level
+    of params. The resolver must NOT activate a profile from them — that would
+    silently re-baseline ~74 strategies. Only an explicit params['execution_profile']
+    sources a profile."""
+    from forven.strategies.backtest import execution_controls_from_params as resolve
+
+    assert resolve({"stop_loss_pct": 3.0, "take_profit_pct": 6.0, "rsi_period": 14}) == {}
+    assert resolve({"rsi_period": 14}) == {}
+    assert resolve(None) == {}
+    assert resolve({"execution_profile": {"sizing_mode": "fraction", "stop_loss_pct": 2.0}}) == {
+        "sizing_mode": "fraction", "stop_loss_pct": 2.0,
+    }
+
+
+def test_bakeoff_legacy_profile_passes_empty_controls():
+    """A strategy with no execution profile passes an empty/no-op profile (which
+    the engine normalizes back to the legacy full-notional path)."""
+    ctx, mock = _patch_walk_forward(_wfa([0.5, 0.5, 0.5]), _wfa([1.1, 1.0, 1.2]))
+    with ctx:
+        evaluate_optimization_candidate(
+            strategy_id="S", asset="BTC", strategy_type="rsi_momentum",
+            current_params={"rsi_entry": 30}, candidate_params={"rsi_entry": 35},
+            optimization_metrics=_OK_OPT,
+        )
+    ecs = [c.kwargs.get("execution_controls") for c in mock.call_args_list]
+    assert ecs == [{}, {}]
+
+
 def test_precheck_blocks_unvalidated_without_running_bakeoff():
     ctx, mock = _patch_walk_forward(_wfa([1.0]), _wfa([2.0]))
     with ctx:

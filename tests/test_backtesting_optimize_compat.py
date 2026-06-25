@@ -499,7 +499,7 @@ def test_backtesting_client_sends_forven_api_and_operator_keys(monkeypatch):
 def test_optimize_strategy_uses_explicit_parameter_ranges(monkeypatch):
     captured: dict[str, object] = {}
 
-    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, bars=None, leverage=3.0, timeframe=None):
+    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, bars=None, leverage=3.0, timeframe=None, execution_controls=None):
         captured["param_space"] = param_space
         return [
             {
@@ -534,7 +534,7 @@ def test_optimize_strategy_uses_explicit_parameter_ranges(monkeypatch):
 def test_optimize_strategy_normalizes_frontend_parameter_range_dicts(monkeypatch):
     captured: dict[str, object] = {}
 
-    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, bars=None, leverage=3.0, timeframe=None):
+    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, bars=None, leverage=3.0, timeframe=None, execution_controls=None):
         captured["param_space"] = param_space
         return [
             {
@@ -635,7 +635,7 @@ def test_optimize_strategy_explicit_risk_axes_survive(monkeypatch):
     # deliberate request — it must reach grid_search and best_params untouched.
     captured: dict[str, object] = {}
 
-    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, bars=None, leverage=3.0, timeframe=None):
+    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, bars=None, leverage=3.0, timeframe=None, execution_controls=None):
         captured["param_space"] = param_space
         return [
             {

@@ -153,6 +153,7 @@ def grid_search(
     leverage: float = 3.0,
     timeframe: str | None = None,
     regime_gate: bool = True,
+    execution_controls: dict | None = None,
 ) -> list[dict]:
     """Exhaustive grid search over parameter ranges.
 
@@ -238,6 +239,7 @@ def grid_search(
                 candles_df=shared_candles,  # noqa: F821 (closure var; `del` below confuses ruff)
                 persist_legacy_run=False,
                 regime_gate=regime_gate,
+                execution_controls=execution_controls,
             )
             if bt.get("error"):
                 return None
@@ -373,11 +375,25 @@ def optimize_strategy(
 
     log.info("Optimizing %s (%s on %s)", strategy_id, strategy_type, asset)
 
+    # Source the strategy's execution profile so the grid + WFA judge on the real
+    # deployment sizing/stops instead of legacy full-notional. An empty/no-op
+    # profile normalizes back to the legacy path inside the engine.
+    from forven.strategies.backtest import execution_controls_from_params
+
+    _profile_params = base_params
+    if not _profile_params:
+        try:
+            _, _, _profile_params = _resolve_strategy(strategy_id)
+        except Exception:
+            _profile_params = {}
+    exec_controls = execution_controls_from_params(_profile_params)
+
     # Step 1: Grid search
     try:
         grid_results = grid_search(
             strategy_id, asset, strategy_type, resolved_param_space, bars=bars,
             timeframe=timeframe,
+            execution_controls=exec_controls,
         )
     except TimeoutError as exc:
         detail = str(exc).strip() or f"Grid search timed out after {GRID_TIMEOUT_SECONDS}s"
@@ -398,6 +414,7 @@ def optimize_strategy(
             strategy_type=strategy_type,
             params=best["params"],
             total_bars=wfa_bars,
+            execution_controls=exec_controls,
         )
     except TimeoutError as exc:
         detail = str(exc).strip() or "Walk-forward validation timed out"

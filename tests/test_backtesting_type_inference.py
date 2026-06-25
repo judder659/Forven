@@ -264,7 +264,7 @@ def test_post_backtesting_run_local_resolves_decorated_strategy_name(forven_db):
     assert captured.get("strategy_type") == "rsi_momentum"
 
 
-def test_post_backtesting_run_local_rejects_unsupported_execution_controls(forven_db, monkeypatch):
+def test_post_backtesting_run_local_forwards_body_execution_controls(forven_db, monkeypatch):
     from forven.api_core import post_backtesting_run
     import forven.backtesting as backtesting_mod
     import forven.strategies.backtest as bt_mod
@@ -291,11 +291,21 @@ def test_post_backtesting_run_local_rejects_unsupported_execution_controls(forve
         )
 
     monkeypatch.setattr(backtesting_mod, "get_client", lambda: None)
-    monkeypatch.setattr(
-        bt_mod,
-        "backtest_strategy",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("backtest_strategy should not run")),
-    )
+    captured: dict = {}
+
+    def _fake_backtest_strategy(**kwargs):
+        captured.update(kwargs)
+        return {
+            "start_date": "2025-01-01T00:00:00+00:00",
+            "end_date": "2025-02-01T00:00:00+00:00",
+            "metrics": {"total_return_pct": 0.0, "sharpe": 0.0, "max_drawdown_pct": 0.0, "total_trades": 0},
+            "trades": [],
+        }
+
+    monkeypatch.setattr(bt_mod, "backtest_strategy", _fake_backtest_strategy)
+    monkeypatch.setattr("forven.api_core._write_backtest_result_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forven.api_core.auto_assign_best_symbol", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("forven.vectordb.store_backtest_result", lambda **_kwargs: None)
 
     with patch("forven.api_core.kv_get", return_value={"remote_engine_enabled": False}):
         response = post_backtesting_run(
@@ -303,11 +313,23 @@ def test_post_backtesting_run_local_rejects_unsupported_execution_controls(forve
                 "strategy_id": "S00140",
                 "dataset_id": "dataset-11-BTC/USDT-1h",
                 "stop_loss_pct": 2.0,
+                "sizing_mode": "fraction",
+                "risk_per_trade": 0.02,
+                "initial_capital": 25000,
+                "fee_bps": 7.5,
+                "slippage_bps": 3.0,
             }
         )
 
-    assert response.get("ok") is False
-    assert "stop_loss_pct" in str(response.get("error") or "")
+    assert response.get("error") is None
+    assert captured["initial_capital"] == 25000
+    assert captured["fee_bps"] == 7.5
+    assert captured["slippage_bps"] == 3.0
+    assert captured["execution_controls"] == {
+        "sizing_mode": "fraction",
+        "risk_per_trade": 0.02,
+        "stop_loss_pct": 2.0,
+    }
 
 
 def test_post_backtesting_run_local_persists_result_rows_for_agent_flow(forven_db, monkeypatch):

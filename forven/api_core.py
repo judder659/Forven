@@ -10175,6 +10175,88 @@ def _collect_backtest_execution_controls(payload: object) -> dict[str, object]:
     return controls
 
 
+def _collect_honored_backtest_execution_controls(payload: object) -> dict[str, object]:
+    fields = (
+        "sizing_mode",
+        "fixed_size",
+        "risk_per_trade",
+        "atr_stop_multiplier",
+        "kelly_multiplier",
+        "kelly_lookback",
+        "stop_loss_pct",
+        "take_profit_pct",
+        "trailing_stop_pct",
+        "time_stop_bars",
+    )
+    controls: dict[str, object] = {}
+    for field_name in fields:
+        if isinstance(payload, dict):
+            value = payload.get(field_name)
+        else:
+            value = getattr(payload, field_name, None)
+        if value is not None:
+            controls[field_name] = value
+    return controls
+
+
+def _execution_profile_parity_warnings(controls: dict | None, leverage: float | None = None) -> list[str]:
+    """Warn when a backtest's execution profile cannot be reproduced by the live
+    (paper/live) risk path, so its returns won't translate to deployment.
+
+    Near-zero false positives: it evaluates parity ONLY when an execution profile
+    is explicitly set, and stays silent when the profile genuinely matches live —
+    risk-budget sizing (fraction/atr) within the live per-trade cap, no
+    live-unsupported exits, sane leverage. Live limits are resolved live so an
+    operator who raised their per-trade cap isn't warned with a stale threshold.
+    """
+    controls = controls if isinstance(controls, dict) else {}
+    # A default backtest carries NO execution profile (empty controls) — that is
+    # the known legacy full-notional default, not an operator choice, so warning on
+    # it every time (and persisting it to every history row) is pure noise. Only an
+    # explicitly-set profile is worth a parity check.
+    if not controls:
+        return []
+    warnings: list[str] = []
+    try:
+        from forven.exchange.risk import _get_risk_limits
+
+        limits = _get_risk_limits()
+        # The live HARD cap is max_risk_per_trade (can_open rejects above it and
+        # otherwise honors the requested risk in full); per_strategy_max is only a
+        # default, so comparing against it false-positives at the common 1-2% risk.
+        per_trade_cap = float(limits.get("max_risk_per_trade", 0.02) or 0.02)
+    except Exception:
+        per_trade_cap = 0.02
+
+    sizing_mode = str(controls.get("sizing_mode") or "full").strip().lower() or "full"
+    if sizing_mode not in ("fraction", "atr"):
+        warnings.append(
+            f"Backtest sizing '{sizing_mode}' is not used live — the live path sizes by risk budget "
+            f"over the stop distance, so these returns may not be achievable live."
+        )
+    else:
+        try:
+            effective_risk = float(controls.get("risk_per_trade") or 0.02)
+        except (TypeError, ValueError):
+            effective_risk = 0.02
+        if effective_risk > per_trade_cap + 1e-9:
+            warnings.append(
+                f"Backtest risk/trade (~{effective_risk:.1%}) exceeds the live per-trade cap ({per_trade_cap:.1%}) — "
+                f"live will reject or shrink it, understating drawdown and overstating returns."
+            )
+    if controls.get("trailing_stop_pct") is not None:
+        warnings.append("Trailing stop has no live equivalent (the scanner takes its stop from the signal); the live edge may differ.")
+    if controls.get("time_stop_bars") is not None:
+        warnings.append("Time-stop (N-bar exit) has no live equivalent in the scanner; the live edge may differ.")
+    try:
+        lev = float(leverage) if leverage is not None else None
+    except (TypeError, ValueError):
+        lev = None
+    if lev is not None and lev > 10:
+        warnings.append(f"Backtest leverage {lev:g}x is far above what the live risk budget can deploy; high-leverage sim returns won't translate.")
+    return warnings
+
+
 def _validate_local_backtest_risk_controls(
     params: dict | None,
     *,
@@ -10558,6 +10640,12 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
         "preserve_result": bool(body.preserve_result),
     }
     compact_config = {k: v for k, v in config_payload.items() if v is not None}
+    # Flag when this backtest's execution profile can't be reproduced live, so the
+    # operator sees it on submit AND on every history row (persisted in config).
+    execution_profile_warnings = _execution_profile_parity_warnings(manual_execution_controls, leverage=body.leverage)
+    if execution_profile_warnings:
+        _existing = compact_config.get("warnings")
+        compact_config["warnings"] = (list(_existing) if isinstance(_existing, list) else []) + execution_profile_warnings
 
     lifecycle_tag = str(body.lifecycle_id).strip() if body.lifecycle_id else strategy_id
 
@@ -10676,6 +10764,8 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
     response: dict = {"job_id": job_id, "status": "succeeded", "result_id": result_id}
     if risk_parity_warning:
         response["warning"] = risk_parity_warning
+    if execution_profile_warnings:
+        response["execution_profile_warning"] = execution_profile_warnings
     return response
 
 
@@ -11314,13 +11404,13 @@ def post_backtesting_run(body: dict):
                 # Use certified params (canonicalized) instead of raw merged_params
                 merged_params = certified_params
                 
-                # Risk-control parity is informational — don't block.
-                risk_control_error = _validate_local_backtest_risk_controls(
-                    merged_params,
-                    extra_controls=_collect_backtest_execution_controls(body),
-                )
+                # Strategy-param risk controls are still inert and must be
+                # guarded, but body-level execution controls are now honoured
+                # below through execution_controls just like POST /api/backtests.
+                risk_control_error = _validate_local_backtest_risk_controls(merged_params)
                 if risk_control_error:
                     return {"ok": False, "error": risk_control_error}
+                manual_execution_controls = _collect_honored_backtest_execution_controls(body)
 
                 # Bracket the synchronous backtest in an agent_tasks row so the
                 # Now Working panel surfaces API/tool backtests with provenance.
@@ -11353,6 +11443,10 @@ def post_backtesting_run(body: dict):
                         persist_legacy_run=False,
                         trade_mode=body.get("trade_mode"),
                         allow_shorting=body.get("allow_shorting"),
+                        fee_bps=body.get("fee_bps"),
+                        slippage_bps=body.get("slippage_bps"),
+                        initial_capital=body.get("initial_capital"),
+                        execution_controls=manual_execution_controls or None,
                     )
                     if isinstance(result, dict) and not result.get("error"):
                         persisted = _persist_completed_backtest_run(
@@ -11416,7 +11510,11 @@ def post_backtesting_run(body: dict):
                 dataset_id=body["dataset_id"],
                 timeframe=body.get("timeframe"),
                 parameters=body.get("parameters"),
+                fee_bps=body.get("fee_bps", settings_obj.get("backtest_fee_bps", 4.5)),
                 slippage_bps=body.get("slippage_bps", settings_obj.get("backtest_slippage_bps", 2.0)),
+                initial_capital=body.get("initial_capital"),
+                leverage=body.get("leverage"),
+                execution_controls=_collect_honored_backtest_execution_controls(body),
                 objective=body.get("objective", "sharpe_ratio"),
                 trade_mode=body.get("trade_mode"),
             ))

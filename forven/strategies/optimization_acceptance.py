@@ -273,7 +273,7 @@ def _decide(baseline_wfa: dict, candidate_wfa: dict) -> AcceptanceDecision:
     )
 
 
-def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timeframe, total_bars, leverage):
+def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timeframe, total_bars, leverage, execution_controls=None):
     """Run a walk_forward over a fixed context; returns the result dict or None."""
     from forven.strategies.backtest import walk_forward
 
@@ -290,6 +290,7 @@ def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timefra
             params=run_params,
             total_bars=total_bars,
             leverage=leverage,
+            execution_controls=execution_controls,
         )
     except Exception as exc:  # noqa: BLE001 - any failure -> can't prove better -> retain
         log.warning("acceptance bake-off walk_forward crashed for %s: %s", strategy_id, exc)
@@ -314,6 +315,7 @@ def evaluate_optimization_candidate(
     eval_timeframe: str | None = None,
     total_bars: int | None = None,
     leverage: float | None = None,
+    execution_controls: dict | None = None,
 ) -> AcceptanceDecision:
     """Decide whether ``candidate_params`` should replace ``current_params``.
 
@@ -353,13 +355,28 @@ def evaluate_optimization_candidate(
     )
     resolved_leverage = float(leverage if leverage is not None else (current_params.get("leverage") or 3.0) or 3.0)
 
+    # Source ONE execution profile from the live baseline (the deployment context)
+    # and judge BOTH sides on it. The optimizer never sweeps execution controls,
+    # so the profile is a fixed context; using each side's own profile would break
+    # the "candidate better OOS" invariant. An empty/no-op profile normalizes to
+    # the legacy full-notional path inside walk_forward.
+    from forven.strategies.backtest import execution_controls_from_params
+
+    shared_ec = (
+        execution_controls
+        if isinstance(execution_controls, dict)
+        else execution_controls_from_params(current_params)
+    )
+
     baseline_wfa = _run_walk_forward(
         strategy_id, asset, strategy_type, current_params,
         eval_timeframe=resolved_tf, total_bars=total_bars, leverage=resolved_leverage,
+        execution_controls=shared_ec,
     )
     candidate_wfa = _run_walk_forward(
         strategy_id, asset, strategy_type, candidate_params,
         eval_timeframe=resolved_tf, total_bars=total_bars, leverage=resolved_leverage,
+        execution_controls=shared_ec,
     )
     if baseline_wfa is None or candidate_wfa is None:
         return AcceptanceDecision(
@@ -391,6 +408,7 @@ def apply_optimized_params_if_accepted(
     eval_timeframe: str | None = None,
     total_bars: int | None = None,
     leverage: float | None = None,
+    execution_controls: dict | None = None,
 ) -> dict:
     """Gate, then conditionally apply optimizer params via ``write_fn``.
 
@@ -429,6 +447,7 @@ def apply_optimized_params_if_accepted(
         eval_timeframe=eval_timeframe,
         total_bars=total_bars,
         leverage=leverage,
+        execution_controls=execution_controls,
     )
 
     if not decision.accepted:

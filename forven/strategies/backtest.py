@@ -362,8 +362,16 @@ def _isolated_walk_forward_worker(
     resolved_in_sample_pct: float,
     trade_mode: str = "long_only",  # default for daemon backward-compat
     include_funding: bool = True,
+    execution_controls: dict | None = None,
+    initial_capital: float = 10000.0,
 ) -> dict:
-    """Run walk-forward splits in an isolated child process."""
+    """Run walk-forward splits in an isolated child process.
+
+    ``execution_controls`` (already normalized by the caller, so it is either a
+    plain picklable dict or None) lets the walk-forward folds honor the
+    strategy's execution profile — stops/sizing — instead of legacy full-notional
+    sizing. None preserves the byte-identical legacy path.
+    """
     try:
         from forven.strategies.registry import discover
         discover()
@@ -407,6 +415,7 @@ def _isolated_walk_forward_worker(
                 strategy_obj, strategy_type=family_strategy_type,
                 fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=regime_gate,
                 trade_mode=trade_mode,
+                execution_controls=execution_controls, initial_capital=initial_capital,
             )
             if include_funding:
                 is_trades, _ = _apply_funding_to_trades(
@@ -430,6 +439,7 @@ def _isolated_walk_forward_worker(
                     strategy_obj, strategy_type=family_strategy_type,
                     fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=regime_gate,
                     trade_mode=trade_mode,
+                    execution_controls=execution_controls, initial_capital=initial_capital,
                 ),
                 oos_boundary,
             )
@@ -6310,6 +6320,51 @@ def _kelly_fraction(closed_gross: list[float], lookback: int) -> float:
     return max(0.0, win_rate - (1.0 - win_rate) / payoff)
 
 
+# The execution-control fields the engine actually simulates (the "honored"
+# profile). Mirrors api_core._collect_honored_backtest_execution_controls but
+# lives here so the optimizer/gauntlet/acceptance paths can source a strategy's
+# profile without importing the heavy api_core module.
+HONORED_EXECUTION_CONTROL_FIELDS = (
+    "sizing_mode",
+    "fixed_size",
+    "risk_per_trade",
+    "atr_stop_multiplier",
+    "kelly_multiplier",
+    "kelly_lookback",
+    "stop_loss_pct",
+    "take_profit_pct",
+    "trailing_stop_pct",
+    "time_stop_bars",
+)
+
+
+def execution_controls_from_params(params: dict | None) -> dict:
+    """Extract a strategy's execution profile from its persisted ``params`` blob.
+
+    The ONLY source is the explicit nested ``params['execution_profile']`` dict
+    that the Gauntlet Parameters pane writes. There is deliberately NO fallback to
+    honored field names at the TOP LEVEL of ``params``: many pre-existing
+    strategies carry inert ``stop_loss_pct`` / ``take_profit_pct`` /
+    ``risk_per_trade`` etc. in their params (the engine ignores them there — that
+    is precisely why ``optimizer._NEVER_SIMULATED_RISK_AXES`` exists — and those
+    values use inconsistent units, e.g. ``3.0`` percent-points vs ``0.025``
+    fractions). Activating them would silently evaluate a *different* strategy and
+    re-baseline it. A strategy with no explicit ``execution_profile`` therefore
+    returns ``{}`` -> normalized to ``None`` -> the byte-identical legacy path.
+    """
+    if not isinstance(params, dict):
+        return {}
+    source = params.get("execution_profile")
+    if not isinstance(source, dict):
+        return {}
+    out: dict = {}
+    for field in HONORED_EXECUTION_CONTROL_FIELDS:
+        value = source.get(field)
+        if value is not None:
+            out[field] = value
+    return out
+
+
 def _normalize_execution_controls(controls: dict | None) -> dict | None:
     """Normalise manual execution controls; return None when nothing is active.
 
@@ -9442,6 +9497,8 @@ def walk_forward(
 
 
     allow_shorting: bool | None = None,
+    execution_controls: dict | None = None,
+    initial_capital: float = 10000.0,
 
 
 ) -> dict:
@@ -9674,6 +9731,9 @@ def walk_forward(
     )
 
     resolved_include_funding = bool(settings.get("backtest_include_funding", True))
+    # Normalize the execution profile ONCE; None preserves the byte-identical
+    # legacy full-notional path, so strategies without a profile never re-baseline.
+    normalized_ec = _normalize_execution_controls(execution_controls)
 
     # P25-1: Log resolved WFA config for auditability
     log.info(
@@ -9854,6 +9914,8 @@ def walk_forward(
                 resolved_in_sample_pct,
                 resolved_trade_mode,
                 resolved_include_funding,
+                normalized_ec,
+                float(initial_capital),
             )
             try:
                 worker_result = future.result(timeout=walk_forward_timeout)
@@ -9888,6 +9950,8 @@ def walk_forward(
             resolved_in_sample_pct,
             resolved_trade_mode,
             resolved_include_funding,
+            normalized_ec,
+            float(initial_capital),
         )
 
     if "error" in worker_result:
@@ -10376,6 +10440,20 @@ def _run_signal_walk(checker, df, params: dict, warmup: int, leverage: float,
 
 
 
+
+    # The deterministic slow path below does NOT apply execution controls — it
+    # computes full-notional PnL with no stops/sizing. If an active profile was
+    # supplied, surface it loudly so a non-vectorizable strategy's result is not
+    # mistaken for a profile-honoring run (the vectorized/fast paths above DO honor
+    # it). Sourcing only fires for an explicit params['execution_profile'], so this
+    # only affects an operator-set profile on a slow-path strategy.
+    if _normalize_execution_controls(execution_controls) is not None:
+        log.warning(
+            "Execution profile NOT applied for %s: this non-vectorizable strategy runs the "
+            "deterministic slow path (full-notional, no stops). Its backtest/WFA results ignore "
+            "the configured execution profile.",
+            strategy_type or "strategy",
+        )
 
     # Limit the window passed to generate_signal to avoid O(n²) behaviour.
     # Strategies only need recent bars for indicators; passing the full

@@ -35,6 +35,38 @@ def _restore_event_loop_policy():
 
 
 @pytest.fixture(autouse=True)
+def _preserve_native_duckdb_modules():
+    """Re-seed duckdb's native ``sys.modules`` entries after each test.
+
+    Several tests mock a module via ``patch.dict(sys.modules, {...})``. On exit
+    ``patch.dict`` clears+restores the ENTIRE ``sys.modules`` to its enter-time
+    snapshot — silently evicting any module imported *during* the context,
+    including duckdb's native submodules (e.g. ``_duckdb._sqltypes``). ``_duckdb``
+    is a single ``.pyd`` (not a package), so once those entries are evicted they
+    cannot be re-imported ("'_duckdb' is not a package"), and every later test
+    that touches duckdb fails with that error. This was a cross-file,
+    order-dependent suite failure. We snapshot the duckdb-family entries before
+    the test and restore any that got evicted afterwards.
+    """
+    import sys
+
+    try:
+        import duckdb  # noqa: F401 — registers the native submodules in sys.modules
+    except Exception:
+        yield
+        return
+
+    snapshot = {
+        name: mod
+        for name, mod in sys.modules.items()
+        if name == "duckdb" or name.startswith("duckdb.") or name == "_duckdb" or name.startswith("_duckdb.")
+    }
+    yield
+    for name, mod in snapshot.items():
+        sys.modules.setdefault(name, mod)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_forven_home(tmp_path):
     """Point FORVEN_HOME to a temp dir so tests don't touch ~/.forven.
 

@@ -313,6 +313,9 @@ class BacktestingClient:
         parameters: dict = None,
         fee_bps: float = 4.5,
         slippage_bps: float = 2.0,
+        initial_capital: float | None = None,
+        leverage: float | None = None,
+        execution_controls: dict | None = None,
         objective: str = "sharpe_ratio",
         timeframe: str = "1h",
         trade_mode: str | None = None,
@@ -331,6 +334,14 @@ class BacktestingClient:
         }
         if parameters:
             payload["parameters"] = parameters
+        if initial_capital is not None:
+            payload["initial_capital"] = initial_capital
+        if leverage is not None:
+            payload["leverage"] = leverage
+        if isinstance(execution_controls, dict):
+            for key, value in execution_controls.items():
+                if value is not None:
+                    payload[key] = value
         if trade_mode:
             payload["trade_mode"] = trade_mode
         if request_source:
