@@ -59,3 +59,59 @@ def test_missing_file_is_noop(monkeypatch, tmp_path):
     _point_custom_dir(monkeypatch, tmp_path)
     # No file on disk (namespace/pkg style) — nothing to scan, must not raise.
     registry.assert_custom_module_safe("does_not_exist")
+
+
+def _count_scans(monkeypatch):
+    """Wrap scan_source so we can count how many times it actually parses."""
+    import forven.sandbox.ast_guard as guard
+
+    calls = {"n": 0}
+    real_scan = guard.scan_source
+
+    def _spy(src, *args, **kwargs):
+        calls["n"] += 1
+        return real_scan(src, *args, **kwargs)
+
+    monkeypatch.setattr("forven.sandbox.ast_guard.scan_source", _spy)
+    return calls
+
+
+def test_unchanged_module_is_scanned_once(monkeypatch, tmp_path):
+    """Re-entry (every backtest/optimization) must hit the verdict cache, not
+    re-read + re-parse the unchanged source — the ~16% CPU win."""
+    d = _point_custom_dir(monkeypatch, tmp_path)
+    (d / "cached_mod.py").write_text(_SAFE, encoding="utf-8")
+    registry._SCAN_VERDICT_CACHE.clear()
+    calls = _count_scans(monkeypatch)
+
+    for _ in range(3):
+        registry.assert_custom_module_safe("cached_mod")  # must not raise
+    assert calls["n"] == 1  # scanned once, then served from cache
+
+
+def test_file_edit_invalidates_cache(monkeypatch, tmp_path):
+    """A changed file (different mtime/size) must force a fresh scan so the
+    security guarantee is preserved."""
+    d = _point_custom_dir(monkeypatch, tmp_path)
+    f = d / "edit_mod.py"
+    f.write_text(_SAFE, encoding="utf-8")
+    registry._SCAN_VERDICT_CACHE.clear()
+    calls = _count_scans(monkeypatch)
+
+    registry.assert_custom_module_safe("edit_mod")
+    f.write_text(_SAFE + "# changed (different size)\n", encoding="utf-8")
+    registry.assert_custom_module_safe("edit_mod")
+    assert calls["n"] == 2
+
+
+def test_cached_rejection_still_raises(monkeypatch, tmp_path):
+    """A rejected module served from the cache must still raise — the cache
+    never weakens the guard."""
+    d = _point_custom_dir(monkeypatch, tmp_path)
+    (d / "evil_cached.py").write_text(_FORBIDDEN_IMPORT, encoding="utf-8")
+    registry._SCAN_VERDICT_CACHE.clear()
+
+    with pytest.raises(ImportError):
+        registry.assert_custom_module_safe("evil_cached")
+    with pytest.raises(ImportError):  # served from cached (rejected) verdict
+        registry.assert_custom_module_safe("evil_cached")

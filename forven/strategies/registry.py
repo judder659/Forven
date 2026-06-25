@@ -390,6 +390,18 @@ def _register_module_type_tolerant(module, *, raise_on_skip: bool = False) -> No
     register_type(type_name, cls, raise_on_skip=raise_on_skip)
 
 
+# AST-guard verdict cache. assert_custom_module_safe is re-entered on EVERY
+# backtest, optimization, and archived-runtime-type resolution (backtest.py /
+# optimizer.py call it per run), each time re-reading and re-parsing the same
+# source through the guard — a profile showed this at ~16% of single-worker CPU
+# under a busy gauntlet. Cache the verdict keyed by (path, mtime_ns, size): an
+# unchanged file is scanned once; ANY edit changes mtime_ns/size and forces a
+# fresh scan, so the security guarantee is preserved exactly. Dict get/set is
+# atomic under the GIL, so a cold-miss race just rescans once (harmless) — no
+# lock needed on this hot path.
+_SCAN_VERDICT_CACHE: dict[tuple[str, int, int], tuple[bool, str]] = {}
+
+
 def assert_custom_module_safe(modname: str) -> None:
     """C-1: statically AST-scan a custom strategy module BEFORE it is imported
     into the live process.
@@ -416,6 +428,23 @@ def assert_custom_module_safe(modname: str) -> None:
             break
     if source_path is None:
         return
+
+    # Footer-cheap freshness key; a cache hit skips the read + AST parse entirely.
+    try:
+        st = source_path.stat()
+        cache_key: tuple[str, int, int] | None = (str(source_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        cache_key = None
+    if cache_key is not None:
+        cached = _SCAN_VERDICT_CACHE.get(cache_key)
+        if cached is not None:
+            ok, findings = cached
+            if ok:
+                return
+            raise ImportError(
+                f"custom.{modname} rejected by the AST security guard: {findings}"
+            )
+
     try:
         from forven.sandbox.ast_guard import scan_source
 
@@ -426,9 +455,13 @@ def assert_custom_module_safe(modname: str) -> None:
         findings = "; ".join(
             f"line {f.lineno}: {f.message}" for f in report.findings[:5]
         )
+        if cache_key is not None:
+            _SCAN_VERDICT_CACHE[cache_key] = (False, findings)
         raise ImportError(
             f"custom.{modname} rejected by the AST security guard: {findings}"
         )
+    if cache_key is not None:
+        _SCAN_VERDICT_CACHE[cache_key] = (True, "")
 
 
 def _load_custom_strategy_module(modname: str) -> None:
@@ -753,6 +786,7 @@ def reset():
     _ARCHIVED_CUSTOM_MODULES.clear()
     _FAILED_CUSTOM_MODULES.clear()
     _FAILED_CUSTOM_LOGGED.clear()
+    _SCAN_VERDICT_CACHE.clear()
     _builtin_discovered = False
     _custom_discovered = False
     _discovered = False
