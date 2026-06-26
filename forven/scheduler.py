@@ -635,6 +635,40 @@ def migrate_legacy_scanner_cadence() -> bool:
     return True
 
 
+def migrate_data_engine_catchup_cadence() -> bool:
+    """Upgrade the Data Engine catch-up cadence from 10m to 30m on EXISTING installs.
+
+    The fresh-seed default is now 1800000 (30m) in seed_forven_jobs, but that path
+    only runs on an empty DB — an already-seeded deployment (the live single-worker
+    box this cadence change exists to protect from WS starvation) keeps the old
+    600000 (10m) row forever. This in-place migration brings it in line, gated on
+    the row STILL matching the old seeded default so operator-customized schedules
+    are left untouched. Mirrors migrate_legacy_scanner_cadence.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT schedule_type, schedule_expr, timezone FROM scheduler_jobs WHERE id = ?",
+            ("forven-data-engine-catchup",),
+        ).fetchone()
+        if not row:
+            return False
+
+        schedule_type = str(row["schedule_type"] or "").strip().lower()
+        schedule_expr = str(row["schedule_expr"] or "").strip()
+        timezone_str = str(row["timezone"] or "UTC").strip() or "UTC"
+
+        if schedule_type != "interval" or schedule_expr != "600000":
+            return False
+
+        next_run = _compute_next_run("interval", "1800000", timezone_str)
+        conn.execute(
+            "UPDATE scheduler_jobs SET schedule_expr = ?, next_run_at = ? WHERE id = ?",
+            ("1800000", next_run, "forven-data-engine-catchup"),
+        )
+    log.info("Migrated Data Engine catch-up cadence from 10m to 30m (forven-data-engine-catchup)")
+    return True
+
+
 def get_jobs() -> list[dict]:
     """Get all scheduler jobs."""
     with get_db() as conn:
