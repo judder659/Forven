@@ -290,12 +290,14 @@ describe('Strategy detail promotion readiness routing', () => {
 		expect(target.textContent).toContain('Robustness Panel Stub');
 	});
 
-	it('passes four derived quick screen rows into PromotionReadiness', async () => {
+	it('passes three derived quick screen rows into PromotionReadiness', async () => {
 		app = mount(StrategyDetailPage, { target });
 		await waitForCondition(() => target.querySelector('[data-testid="promotion-readiness-stub"]') !== null);
 
 		expect(apiMocks.getPipelineSettings).toHaveBeenCalledTimes(1);
-		expect(target.querySelector('[data-testid="stub-quick-screen-row-count"]')?.textContent).toBe('4');
+		// The validation-coverage row was dropped from quick-screen readiness
+		// (commit c86a782), so buildQuickScreenEvidenceRows now derives 3 rows.
+		expect(target.querySelector('[data-testid="stub-quick-screen-row-count"]')?.textContent).toBe('3');
 		expect(target.querySelector('[data-testid="stub-quick-screen-first-label"]')?.textContent).toBe(
 			'IS Sharpe Ratio'
 		);
