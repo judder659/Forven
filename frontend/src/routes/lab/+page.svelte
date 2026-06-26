@@ -861,6 +861,12 @@
 				</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">
+				<a
+					href="/lab/backtests"
+					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+				>
+					View All Backtests
+				</a>
 				<button
 					type="button"
 					data-testid="forge-import-strategy"
