@@ -394,12 +394,17 @@ def _register_module_type_tolerant(module, *, raise_on_skip: bool = False) -> No
 # backtest, optimization, and archived-runtime-type resolution (backtest.py /
 # optimizer.py call it per run), each time re-reading and re-parsing the same
 # source through the guard — a profile showed this at ~16% of single-worker CPU
-# under a busy gauntlet. Cache the verdict keyed by (path, mtime_ns, size): an
-# unchanged file is scanned once; ANY edit changes mtime_ns/size and forces a
-# fresh scan, so the security guarantee is preserved exactly. Dict get/set is
-# atomic under the GIL, so a cold-miss race just rescans once (harmless) — no
+# under a busy gauntlet. Cache the verdict keyed by (path, mtime_ns, ctime_ns,
+# size): a touched/rewritten file changes mtime_ns (and, on POSIX, ctime_ns on
+# ANY write) or size, forcing a fresh scan. NOTE: this trusts stat metadata, not
+# content — an actor who can write the file AND preserve all of mtime_ns,
+# ctime_ns and size (e.g. os.utime after a same-size swap) could evade the
+# re-scan. That is acceptable defense-in-depth here (writing the operator's own
+# strategy file already implies host access; the guard's primary job is the
+# code-ingress path), but it is NOT a content-integrity guarantee. Dict get/set
+# is atomic under the GIL, so a cold-miss race just rescans once (harmless) — no
 # lock needed on this hot path.
-_SCAN_VERDICT_CACHE: dict[tuple[str, int, int], tuple[bool, str]] = {}
+_SCAN_VERDICT_CACHE: dict[tuple[str, int, int, int], tuple[bool, str]] = {}
 
 
 def assert_custom_module_safe(modname: str) -> None:
@@ -429,10 +434,12 @@ def assert_custom_module_safe(modname: str) -> None:
     if source_path is None:
         return
 
-    # Footer-cheap freshness key; a cache hit skips the read + AST parse entirely.
+    # Stat-cheap freshness key; a cache hit skips the read + AST parse entirely.
     try:
         st = source_path.stat()
-        cache_key: tuple[str, int, int] | None = (str(source_path), st.st_mtime_ns, st.st_size)
+        cache_key: tuple[str, int, int, int] | None = (
+            str(source_path), st.st_mtime_ns, st.st_ctime_ns, st.st_size,
+        )
     except OSError:
         cache_key = None
     if cache_key is not None:

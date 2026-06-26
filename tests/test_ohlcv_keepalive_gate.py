@@ -64,6 +64,32 @@ def test_collect_skips_when_no_new_bar_due(monkeypatch, tmp_path):
     assert calls == []  # the expensive read+fetch+rewrite path was skipped entirely
 
 
+def test_collect_refuses_to_overwrite_a_corrupt_present_file(monkeypatch, tmp_path):
+    """A present-but-unreadable lake file (footer read yields no timestamp) must
+    NOT be treated as first-time — refetching with a None cursor would overwrite
+    the file with a short window and silently drop history. Surface it instead."""
+    if not d._using_pyarrow():
+        pytest.skip("pyarrow required")
+    monkeypatch.setattr(d, "DATA_DIR", tmp_path)
+    now_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+    _save_series("BTC-USDT", ((now_ms // _TF_MS) - 10) * _TF_MS)  # a real file exists on disk
+
+    # Simulate a corrupt/unreadable footer while the file is present.
+    monkeypatch.setattr(d, "dataset_last_timestamp_ms", lambda *a, **k: None)
+
+    calls: list[dict] = []
+
+    def _spy(**kwargs):
+        calls.append(kwargs)
+        return {"bars_new": 99}
+
+    monkeypatch.setattr(d, "fetch_ohlcv_chunked", _spy)
+
+    with pytest.raises(RuntimeError, match="corrupt"):
+        OHLCVCollector().collect("BTC-USDT", "1h")
+    assert calls == []  # never refetched over the present file
+
+
 def test_collect_fetches_when_bar_is_due(monkeypatch, tmp_path):
     if not d._using_pyarrow():
         pytest.skip("pyarrow required")

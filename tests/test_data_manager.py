@@ -168,12 +168,16 @@ def test_ohlcv_collector_raises_on_failure():
     """Collectors must re-raise (B-19): swallowing made an all-fail run look
     like a quiet green bar. Orchestrators catch per symbol and tally."""
     collector = OHLCVCollector()
-    # No stored bar -> the gate doesn't short-circuit and the fetch path runs;
-    # a fetch/IO failure must propagate, not be swallowed into a quiet 0.
+    # First-time collection (no stored file) -> the corrupt-file guard is skipped
+    # and the fetch path runs; a fetch/IO failure must propagate, not be swallowed
+    # into a quiet 0. parquet_path is patched to a non-existent path so the guard
+    # (which raises only when the lake file is present-but-unreadable) doesn't fire.
+    from pathlib import Path as _NoFile
     with patch("forven.data.dataset_last_timestamp_ms", return_value=None):
-        with patch("forven.data.fetch_ohlcv_chunked", side_effect=RuntimeError("db error")):
-            with pytest.raises(RuntimeError, match="db error"):
-                collector.collect("BTC-USDT", "1h")
+        with patch("forven.data.parquet_path", return_value=_NoFile("first-time-no-file.parquet")):
+            with patch("forven.data.fetch_ohlcv_chunked", side_effect=RuntimeError("db error")):
+                with pytest.raises(RuntimeError, match="db error"):
+                    collector.collect("BTC-USDT", "1h")
 
 
 # ---------------------------------------------------------------------------

@@ -617,6 +617,7 @@ class OHLCVCollector:
                 fetch_ohlcv_chunked,
                 symbol_to_fs,
                 dataset_last_timestamp_ms,
+                parquet_path,
                 _timeframe_to_ms,
             )
 
@@ -625,6 +626,17 @@ class OHLCVCollector:
             # full column load — see dataset_last_timestamp_ms). This replaces a
             # full load_parquet that was used solely to derive the fetch cursor.
             last_ms = dataset_last_timestamp_ms(symbol, timeframe)
+
+            # A present-but-unreadable lake file must NOT be treated as first-time:
+            # dataset_last_timestamp_ms returns None for BOTH a missing file and a
+            # corrupt/unreadable one, and a None cursor refetches from scratch and
+            # overwrites the file with a short window — silently dropping history.
+            # The old load_parquet path raised on a corrupt file; preserve that.
+            if last_ms is None and parquet_path(symbol, timeframe).exists():
+                raise RuntimeError(
+                    f"OHLCV lake file for {symbol}/{timeframe} exists but yielded no "
+                    f"readable last timestamp (corrupt?); refusing to refetch over it"
+                )
 
             # Cheap "is a new CLOSED bar even due?" gate. The last stored bar covers
             # [last_ms, last_ms+tf); the NEXT bar only closes at last_ms+2*tf. Until
