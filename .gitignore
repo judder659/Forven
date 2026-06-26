@@ -183,3 +183,9 @@ frontend/vite.config.ts.timestamp-*.mjs
 packaging/cache/
 packaging/staging/
 packaging/dist/
+
+# Claude Code local scratch (workflow scripts, scheduled-task locks)
+.claude/
+
+# Local scratch data files
+btc_4h.csv
