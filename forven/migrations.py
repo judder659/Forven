@@ -392,6 +392,60 @@ def _m_2026_06_user_strategy_library(conn: sqlite3.Connection) -> None:
     )
 
 
+# The literal of forven.scanner.PAPER_BOOK_RESET_KV_KEY. Duplicated here (not imported) so
+# the boot migration path never pulls in the heavy scan stack; a unit test asserts the two
+# stay in sync.
+_PAPER_BOOK_RESET_KV_KEY = "paper:book_reset_at"
+
+
+def _m_2026_06_paper_book_go_live_stamp(conn: sqlite3.Connection) -> None:
+    """Anchor the kernel paper-recording GO-LIVE at upgrade time for existing installs.
+
+    The kernel paper engine records trades from a go-live cutoff =
+    ``max(stage_changed_at, paper-book reset stamp)``. A strategy promoted to paper BEFORE
+    the kernel engine shipped has an OLD ``stage_changed_at`` and no reset stamp, so the
+    first kernel scan after upgrade would backfill the kernel's ENTIRE would-be history
+    since then — flooding the book with synthetic trades and double-counting paper equity
+    (the existing-install upgrade hazard the operator reset script otherwise has to prevent
+    by hand).
+
+    Stamp the paper-book reset = now (the SAME key ``scripts/reset_paper_trades.py`` writes)
+    when it is unset, so the kernel records from upgrade FORWARD instead of replaying
+    history. Stored exactly like ``kv_set`` (json-encoded value) so ``kv_get`` /
+    ``_resolve_paper_go_live`` read it back. Any strategy promoted LATER keeps its own
+    (later) ``stage_changed_at`` because go-live = max(stage_changed_at, stamp).
+
+    Only stamps installs with an actual kernel-recordable book to protect — an existing paper
+    trade, or a strategy already promoted to paper/live (whose old ``stage_changed_at`` would
+    otherwise make the first scan replay history). A pristine install (no such strategy/trade,
+    including every test's fresh DB) is left unstamped: there go-live = stage_changed_at =
+    promotion time already handles recording with no flood, so the migration stays a true
+    no-op and never perturbs scanner tests. Idempotent: no-ops once the key exists (operator
+    reset, or a prior run) and is recorded once in schema_migrations.
+    """
+    if conn.execute(
+        "SELECT 1 FROM kv WHERE key = ? LIMIT 1", (_PAPER_BOOK_RESET_KV_KEY,)
+    ).fetchone() is not None:
+        return  # already stamped (operator reset, or this migration already ran) → leave it
+    has_book = conn.execute(
+        "SELECT 1 FROM trades WHERE COALESCE(execution_type, 'paper') = 'paper' LIMIT 1"
+    ).fetchone()
+    if has_book is None:
+        has_book = conn.execute(
+            "SELECT 1 FROM strategies "
+            "WHERE lower(COALESCE(stage, '')) IN "
+            "('paper', 'paper_trading', 'live', 'graduated', 'deployed') LIMIT 1"
+        ).fetchone()
+    if has_book is None:
+        return  # pristine install (nothing promoted/traded yet) → nothing to protect
+    now_iso = conn.execute("SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')").fetchone()[0]
+    conn.execute(
+        "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
+        (_PAPER_BOOK_RESET_KV_KEY, json.dumps(now_iso), now_iso),
+    )
+    log.info("Stamped paper-book go-live = %s (kernel records forward; no pre-upgrade replay)", now_iso)
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -419,6 +473,10 @@ MIGRATIONS: list[Migration] = [
     Migration(
         name="2026_06_user_strategy_library",
         up=_m_2026_06_user_strategy_library,
+    ),
+    Migration(
+        name="2026_06_paper_book_go_live_stamp",
+        up=_m_2026_06_paper_book_go_live_stamp,
     ),
 ]
 
