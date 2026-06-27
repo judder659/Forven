@@ -5923,11 +5923,14 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     window_start = str(df.index[min(KERNEL_WARMUP + 1, len(df) - 1)]) if len(df) else None
     last_close = float(df["close"].iloc[-1]) if len(df) else 0.0
     last_time = str(df.index[-1]) if len(df) else ""
-    # Late "hop-in": when a kernel position is still held but its entry predates the
-    # recording window (a still-active signal missed while the system was off), take the
-    # position NOW at the current price instead of leaving it as a chart-only trigger.
-    # Paper-only + operator-gateable; the live path stays conservative (no auto hop-in).
-    late_entry_enabled = (not is_live) and _scanner_bool_setting("paper_kernel_late_entry", True)
+    # Late "hop-in" is DISABLED. Auto-entering a still-held-but-stale kernel signal at the
+    # current price produced chase entries with no real basis — the kernel "still holds" a
+    # position only because it never hit a stop, so a signal from days/weeks ago (e.g. a
+    # 46-day-old short, or a long entered well above its signal price) got taken NOW, far
+    # from the original signal, looking detached from the chart. A stale signal now stays a
+    # chart trigger only (the pre-feature behaviour) and is NEVER auto-entered. Hard-off (not
+    # operator-gateable) so a persisted setting can't silently re-arm the chase entries.
+    late_entry_enabled = False
     actions_plan = reconcile(
         res, _kernel_recorded_trades(strat_id), recent_cutoff=recent_cutoff, window_start=window_start,
         late_entry=late_entry_enabled,
