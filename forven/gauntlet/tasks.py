@@ -238,6 +238,28 @@ def _quick_screen_failures(metrics: dict[str, Any], cfg: dict[str, Any]) -> list
     return failures
 
 
+def _persist_strategy_symbol(strategy_id: str, symbol: str) -> None:
+    """Persist a canonicalized market symbol onto the strategy row so the gauntlet,
+    confirmation, and the paper/live runtime all resolve the SAME liquid, full-history
+    dataset (bare ``ETH`` → ``ETH/USDT``). Best-effort: never block the screen."""
+    sym = str(symbol or "").strip()
+    if not strategy_id or not sym:
+        return
+    try:
+        from datetime import datetime, timezone
+
+        from forven.db import get_db
+
+        now = datetime.now(timezone.utc).isoformat()
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE strategies SET symbol = ?, updated_at = ? WHERE id = ?",
+                (sym, now, strategy_id),
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("quick_screen: failed to persist canonical symbol for %s: %s", strategy_id, exc)
+
+
 def run_quick_screen(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
     row = _strategy_row(str(workflow.get("strategy_id") or ""))
     if not row:
@@ -250,14 +272,40 @@ def run_quick_screen(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
     try:
         from forven.api_core import BacktestSubmitBody, stage_backtest_duration_days
 
+        required_days = stage_backtest_duration_days("quick_screen")
+        raw_symbol = row.get("symbol") or "BTC/USDT"
+        timeframe = row.get("timeframe") or "1h"
+
+        # Self-healing data coverage: canonicalize the symbol (bare ETH → ETH/USDT, the
+        # liquid full-history dataset) and ensure enough OHLCV history exists for the
+        # screen window. A genuinely-missing series triggers an async backfill and the
+        # step defers (awaiting_data_backfill — drain-exempt) until the data lands, so a
+        # strategy is never rejected for "too few trades" on a stunted or empty window.
+        from forven.dataeng.coverage import ensure_coverage
+
+        coverage = ensure_coverage(raw_symbol, timeframe, required_days)
+        if coverage.get("status") == "backfilling":
+            return {
+                "status": "blocked_data",
+                "message": (
+                    f"backfilling {coverage.get('symbol')} {timeframe} history "
+                    f"(have {float(coverage.get('coverage_days') or 0):.0f}d, need {required_days}d)"
+                ),
+                "retryable": True,
+                "reason_code": "awaiting_data_backfill",
+            }
+        symbol = str(coverage.get("symbol") or raw_symbol)
+        if symbol != raw_symbol:
+            _persist_strategy_symbol(str(row["id"]), symbol)
+
         response = _submit_backtest(
             BacktestSubmitBody(
                 strategy_id=row["id"],
                 strategy_name=row.get("name"),
-                symbol=row.get("symbol") or "BTC/USDT",
-                timeframe=row.get("timeframe") or "1h",
+                symbol=symbol,
+                timeframe=timeframe,
                 params=params,
-                duration_days=stage_backtest_duration_days("quick_screen"),
+                duration_days=required_days,
             ),
             skip_auto_trash=True,
         )
@@ -295,9 +343,38 @@ def _quick_screen_defer_to_optimization() -> bool:
 def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
     settings = _workflow_settings(workflow)
     quick_cfg = settings.get("quick_screen") if isinstance(settings.get("quick_screen"), dict) else {}
+    strategy_id = str(workflow.get("strategy_id") or "")
     detail = _detail_for_workflow(str(workflow.get("id") or ""))
     quick_output = _step_output(detail, "quick_screen")
-    metrics = quick_output.get("metrics") if isinstance(quick_output.get("metrics"), dict) else {}
+    screen_metrics = quick_output.get("metrics") if isinstance(quick_output.get("metrics"), dict) else {}
+
+    # Best-of-N timeframe selection (definition v3): timeframe_sweep now runs BEFORE
+    # this gate, so judge the strategy on the timeframe where its edge actually lives
+    # rather than the single author-declared/default timeframe — a 4h edge no longer
+    # dies at a 1h screen. This does NOT relax any threshold: the SAME gate (Layer-A
+    # profitability + the brain's overfitting guardrails) runs, on the strategy's best
+    # REAL evidence. When no sweep evidence exists yet (in-flight older-version
+    # workflows, direct callers), fall back to the quick_screen result and change
+    # nothing. Best-of-N is an enhancement layered on the gate: if its lookup fails,
+    # degrade to the quick_screen result rather than crash the verdict.
+    metrics = screen_metrics
+    try:
+        row = _strategy_row(strategy_id)
+        fallback_tf = str(row.get("timeframe") or "") if row else ""
+        best_tf, _best_result_id, best_metrics = _best_sweep_result(strategy_id, fallback_tf or "1h")
+        if best_metrics:
+            metrics = best_metrics
+            # Promote the winning timeframe + its metrics onto the strategy row so the
+            # brain guardrails (which read strategies.metrics) judge the best timeframe,
+            # and every downstream step (optimization/confirmation/paper) runs on it.
+            _persist_quick_screen_winner(strategy_id, best_tf, best_metrics)
+    except Exception as exc:  # noqa: BLE001 - enhancement must never break the gate
+        log.warning(
+            "quick_screen_gate: best-of-N selection failed for %s, using quick_screen result: %s",
+            strategy_id, exc,
+        )
+        metrics = screen_metrics
+
     failures = _quick_screen_failures(metrics, quick_cfg)
     deferred_note: str | None = None
     if failures:
@@ -327,7 +404,7 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
         # the full sweep/optimization/robustness pipeline on a strategy still sitting
         # in quick_screen, then errored at the paper gate with an invalid transition).
         transition = transition_stage(
-            strategy_id=str(workflow.get("strategy_id") or ""),
+            strategy_id=strategy_id,
             target_stage="gauntlet",
             reason="Gauntlet workflow quick-screen gate passed",
             actor="gauntlet_workflow",
@@ -466,13 +543,23 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
     }
 
 
-def _best_sweep_timeframe(strategy_id: str, fallback: str) -> str:
+def _best_sweep_result(strategy_id: str, fallback_tf: str) -> tuple[str, str | None, dict[str, Any]]:
+    """Return ``(best_timeframe, best_result_id, best_metrics)`` across all persisted
+    plain backtests for the strategy, scored sharpe-first with tie-breaks on trade
+    count and return.
+
+    This is the best-of-N timeframe selection: it lets a caller judge / optimize the
+    strategy on the timeframe where its edge actually lives rather than the single
+    author-declared/default timeframe. ``run_quick_screen_gate`` uses it (since the
+    timeframe_sweep now runs before the gate, definition v3) and so does
+    ``run_validation_optimization``. Rows with empty metrics are ignored; if none are
+    usable the fallback timeframe is returned with no result and empty metrics."""
     from forven.db import get_db
 
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT timeframe, metrics_json
+            SELECT result_id, timeframe, metrics_json
             FROM backtest_results
             WHERE strategy_id = ?
               AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
@@ -481,11 +568,13 @@ def _best_sweep_timeframe(strategy_id: str, fallback: str) -> str:
             (strategy_id,),
         ).fetchall()
 
-    best_tf = str(fallback or "1h").strip() or "1h"
+    best_tf = str(fallback_tf or "1h").strip() or "1h"
+    best_result_id: str | None = None
+    best_metrics: dict[str, Any] = {}
     best_score = float("-inf")
     for row in rows:
         metrics = _loads(row["metrics_json"], {})
-        if not isinstance(metrics, dict):
+        if not isinstance(metrics, dict) or not metrics:
             continue
         trades = _metric(metrics, "total_trades", default=0.0)
         sharpe = _metric(metrics, "sharpe_ratio", "sharpe", default=0.0)
@@ -494,7 +583,41 @@ def _best_sweep_timeframe(strategy_id: str, fallback: str) -> str:
         if score > best_score:
             best_score = score
             best_tf = str(row["timeframe"] or best_tf).strip() or best_tf
+            best_result_id = str(row["result_id"]) if row["result_id"] else None
+            best_metrics = metrics
+    return best_tf, best_result_id, best_metrics
+
+
+def _best_sweep_timeframe(strategy_id: str, fallback: str) -> str:
+    best_tf, _result_id, _metrics = _best_sweep_result(strategy_id, fallback)
     return best_tf
+
+
+def _persist_quick_screen_winner(strategy_id: str, timeframe: str, metrics: dict[str, Any]) -> None:
+    """Persist the best-of-N winning timeframe + its metrics onto the strategy row.
+
+    The brain's quick-screen overfitting guardrails read ``strategies.metrics`` (not a
+    specific backtest row), so to judge the BEST timeframe honestly — under the same
+    thresholds — we promote that timeframe's real metrics here before transitioning.
+    The timeframe is also persisted so every downstream step (optimization,
+    confirmation, walk-forward, paper) runs on the timeframe the strategy was judged on.
+    Best-effort: a persistence hiccup must never block the gate."""
+    tf = str(timeframe or "").strip()
+    if not strategy_id or not tf or not isinstance(metrics, dict) or not metrics:
+        return
+    try:
+        from datetime import datetime, timezone
+
+        from forven.db import get_db
+
+        now = datetime.now(timezone.utc).isoformat()
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE strategies SET timeframe = ?, metrics = ?, updated_at = ? WHERE id = ?",
+                (tf, json.dumps(metrics), now, strategy_id),
+            )
+    except Exception as exc:  # noqa: BLE001 - never block the gate on a metrics write
+        log.warning("quick_screen_gate: failed to persist best-of-N winner for %s: %s", strategy_id, exc)
 
 
 def _best_params_from_optimization_payload(payload: dict[str, Any]) -> dict[str, Any]:

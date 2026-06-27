@@ -87,7 +87,9 @@ def test_quick_screen_pass_advances_to_gate(forven_db, monkeypatch):
     # M-13: quick_screen_gate no longer force-bypasses (the force was silently
     # downgraded anyway) and now honours a blocked transition. Give the strategy
     # genuine evidence so the brain-side guardrails + canonical-backtest guard pass:
-    # guardrail-passing metrics (>=30 trades) and a persisted backtest row.
+    # guardrail-passing metrics (>=30 trades) and a persisted backtest row. v3: the
+    # gate runs AFTER timeframe_sweep and judges best-of-N over the persisted
+    # backtest_results, so the row metrics carry full profitability fields.
     with get_db() as conn:
         conn.execute(
             "UPDATE strategies SET metrics = ? WHERE id = ?",
@@ -98,7 +100,7 @@ def test_quick_screen_pass_advances_to_gate(forven_db, monkeypatch):
             INSERT INTO backtest_results (
                 result_id, strategy_id, result_type, symbol, timeframe, metrics_json, config_json, created_at
             )
-            VALUES ('B-quick-pass', ?, 'backtest', 'BTC/USDT', '1h', '{"sharpe_ratio": 1.2, "total_trades": 40}', '{}', '2026-06-01T00:00:00+00:00')
+            VALUES ('B-quick-pass', ?, 'backtest', 'BTC/USDT', '1h', '{"sharpe_ratio": 1.2, "total_trades": 40, "profit_factor": 1.3, "win_rate": 0.56}', '{}', '2026-06-01T00:00:00+00:00')
             """,
             (created["id"],),
         )
@@ -119,13 +121,21 @@ def test_quick_screen_pass_advances_to_gate(forven_db, monkeypatch):
 
     monkeypatch.setattr("forven.gauntlet.tasks._submit_backtest", _fake_submit)
 
-    result = resume_workflow(created["gauntlet_workflow_id"], max_steps=2)
+    # v3 order: quick_screen -> timeframe_sweep -> quick_screen_gate. Run all three so
+    # the gate (best-of-N over the persisted backtest) admits the strategy to gauntlet.
+    result = resume_workflow(created["gauntlet_workflow_id"], max_steps=3)
     status = get_strategy_gauntlet_status(created["id"])
 
-    assert result["steps_run"] == 2
-    assert status["steps"][0]["status"] == "passed"
-    assert status["steps"][1]["status"] == "passed"
-    assert status["current_step"] == "timeframe_sweep"
+    assert result["steps_run"] == 3
+    assert status["steps"][0]["status"] == "passed"  # quick_screen
+    assert status["steps"][1]["status"] == "passed"  # timeframe_sweep
+    assert status["steps"][2]["status"] == "passed"  # quick_screen_gate
+    assert status["current_step"] == "validation_optimization"
+    with get_db() as conn:
+        stage = conn.execute(
+            "SELECT stage FROM strategies WHERE id = ?", (created["id"],)
+        ).fetchone()["stage"]
+    assert stage == "gauntlet"
 
 
 def _created_strategy_for_workflow() -> str:
@@ -243,6 +253,48 @@ def test_validation_optimization_uses_best_sweep_timeframe(forven_db, monkeypatc
     assert outcome["status"] == "passed"
     assert outcome["result_id"] == "OPT-4H"
     assert seen["timeframe"] == "4h"
+
+
+def test_quick_screen_gate_rescues_strategy_on_best_timeframe(forven_db):
+    """Best-of-N (definition v3): a strategy that would FAIL the gate on its default
+    timeframe but PASSES on a swept timeframe is admitted to gauntlet. The gate judges
+    the timeframe where the edge lives WITHOUT relaxing any threshold, and persists the
+    winning timeframe so downstream steps run on it."""
+    from forven.gauntlet.tasks import run_quick_screen_gate
+
+    strategy_id = _created_strategy_for_workflow()  # created at timeframe 1h
+    workflow = create_or_get_workflow(
+        strategy_id=strategy_id, created_by="pytest", settings_snapshot=build_settings_snapshot()
+    )
+    detail = get_workflow_detail(workflow["id"])
+    gate_step = next(s for s in detail["steps"] if s["step_key"] == "quick_screen_gate")
+
+    # 1h: only 8 trades -> rejected by the brain's min-trades guardrail. 4h: 35 trades
+    # with a healthy edge -> passes. best-of-N must pick 4h (higher sharpe-first score).
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO backtest_results
+                (result_id, strategy_id, result_type, symbol, timeframe, metrics_json, config_json, created_at)
+            VALUES
+              ('BT-1H', ?, 'backtest', 'BTC/USDT', '1h', ?, '{}', '2026-04-23T00:00:00+00:00'),
+              ('BT-4H', ?, 'backtest', 'BTC/USDT', '4h', ?, '{}', '2026-04-23T00:01:00+00:00')
+            """,
+            (
+                strategy_id, '{"sharpe_ratio": 0.2, "total_trades": 8, "profit_factor": 1.05, "win_rate": 0.5}',
+                strategy_id, '{"sharpe_ratio": 1.4, "total_trades": 35, "profit_factor": 1.6, "win_rate": 0.55}',
+            ),
+        )
+
+    outcome = run_quick_screen_gate(workflow, gate_step)
+
+    assert outcome["status"] == "passed"
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT stage, timeframe FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+    assert row["stage"] == "gauntlet"
+    assert row["timeframe"] == "4h"  # winning timeframe persisted for downstream steps
 
 
 def test_apply_optimized_defaults_updates_strategy_params_and_records_artifact(forven_db, monkeypatch):

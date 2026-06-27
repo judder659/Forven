@@ -1237,6 +1237,19 @@ def execute_data_engine_catchup(
     threads), leaving a zombie thread that holds the scheduler lock.
     """
     job_start = time.monotonic()
+
+    # Self-healing coverage: ensure the generation universe (scan symbols × screen and
+    # sweep timeframes) has enough history for the screen window, triggering async
+    # backfills for any shortfall. The planner below only keeps EXISTING catalog series
+    # current — it never adds history a generated strategy needs. Cheap when already
+    # covered; non-blocking (submit_ingestion is async). Never fail the drain on it.
+    try:
+        from forven.dataeng.coverage import ensure_universe_coverage
+
+        ensure_universe_coverage()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Data Engine catch-up: universe coverage ensure skipped: %s", exc)
+
     from forven.dataeng.catalog import Catalog
     from forven.dataeng.catchup import CatchUpPlanner
 

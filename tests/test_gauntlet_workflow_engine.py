@@ -48,7 +48,8 @@ def test_claim_next_step_respects_dependencies(forven_db):
 
     assert first["step_key"] == "quick_screen"
     assert second_before_complete is None
-    assert second_after_complete["step_key"] == "quick_screen_gate"
+    # v3: timeframe_sweep runs before quick_screen_gate (best-of-N before the verdict).
+    assert second_after_complete["step_key"] == "timeframe_sweep"
     assert second_after_complete["attempt_count"] == 1
 
 
@@ -226,6 +227,36 @@ def test_tick_isolates_per_workflow_failures(forven_db):
     # The good workflow's step really did pass — DB reflects it.
     detail = get_workflow_detail(good["id"])
     assert detail["steps"][0]["status"] == "passed"
+
+
+def test_tick_parallel_drain_advances_all_and_isolates_failures(forven_db, monkeypatch):
+    """Opt-in bounded parallel drain (FORVEN_GAUNTLET_DRAIN_WORKERS) advances every
+    workflow and isolates per-workflow failures, exactly like the serial path."""
+    monkeypatch.setenv("FORVEN_GAUNTLET_DRAIN_WORKERS", "3")
+    workflows = [
+        create_or_get_workflow(
+            strategy_id=_strategy(),
+            created_by="pytest",
+            settings_snapshot=build_settings_snapshot(),
+        )
+        for _ in range(5)
+    ]
+    bad_id = workflows[2]["id"]
+
+    def _runner(workflow, step):
+        if workflow["id"] == bad_id:
+            raise RuntimeError("synthetic step failure")
+        return {"status": "passed"}
+
+    summary = tick_active_gauntlet_workflows(max_workflows=10, runner=_runner)
+
+    # Four good workflows advanced concurrently; the bad one is isolated as an error.
+    assert summary["advanced"] == 4
+    assert any(err["workflow_id"] == bad_id for err in summary["errors"])
+    for wf in workflows:
+        if wf["id"] == bad_id:
+            continue
+        assert get_workflow_detail(wf["id"])["steps"][0]["status"] == "passed"
 
 
 # --- transient-block retry economics (B-24, 2026-06-09 audit) -----------------

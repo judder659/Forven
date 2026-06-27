@@ -254,6 +254,33 @@ def _kill_executor_processes(executor):
         pass
 
 
+def _resolve_worker_strategy_class(original_strategy_type: str, family_strategy_type: str):
+    """Resolve a strategy class inside an isolated worker, importing the MINIMUM
+    registry slice needed.
+
+    Full ``discover()`` imports AND AST-security-scans every active custom strategy
+    module — measured at ~12s on EVERY spawn — which the optimizer grid and
+    parameter_jitter pay dozens-to-hundreds of times per run, dwarfing the actual
+    simulation. A BUILT-IN strategy (a vectorized/checker type) is never backed by a
+    custom module, so builtin-only discovery (~0.07s) resolves it identically. Custom
+    or unrecognized types fall back to full discovery, so their resolution is
+    byte-identical to before — throughput is never traded for correctness.
+    """
+    norm = str(original_strategy_type or "").strip().lower()
+    if norm in _VECTORIZABLE_TYPES or norm in SIGNAL_CHECKERS:
+        # Built-in original: builtin discovery alone resolves the class (or leaves it
+        # None for pure checker/vectorized types, which run via the checker path).
+        try:
+            from forven.strategies.registry import _TYPE_MAP, discover
+
+            discover(include_custom=False)
+            return _TYPE_MAP.get(norm)
+        except (ImportError, AttributeError, SyntaxError):
+            return None
+    # Custom or unrecognized type: full discovery (today's exact resolution).
+    return _resolve_strategy_class(original_strategy_type)
+
+
 def _isolated_backtest_worker(
     strategy_id: str,
     original_strategy_type: str,
@@ -277,15 +304,11 @@ def _isolated_backtest_worker(
     re-discovers strategy classes inside the child process so that
     module-level state is cleanly initialised.
     """
-    try:
-        from forven.strategies.registry import discover
-        discover()
-    except (ImportError, AttributeError, SyntaxError):
-        pass
-
     strategy_obj = None
     checker = SIGNAL_CHECKERS.get(family_strategy_type)
-    cls = _resolve_strategy_class(original_strategy_type)
+    # Load only the registry slice this backtest needs: built-in strategies skip the
+    # ~12s custom-module import+AST-scan that full discover() pays on every spawn.
+    cls = _resolve_worker_strategy_class(original_strategy_type, family_strategy_type)
     if cls:
         try:
             strategy_obj = cls(strategy_id, params)
@@ -380,15 +403,11 @@ def _isolated_walk_forward_worker(
     strategy's execution profile — stops/sizing — instead of legacy full-notional
     sizing. None preserves the byte-identical legacy path.
     """
-    try:
-        from forven.strategies.registry import discover
-        discover()
-    except (ImportError, AttributeError, SyntaxError):
-        pass
-
     strategy_obj = None
     checker = SIGNAL_CHECKERS.get(family_strategy_type)
-    cls = _resolve_strategy_class(original_strategy_type)
+    # Load only the registry slice this walk-forward needs: built-in strategies skip
+    # the ~12s custom-module import+AST-scan that full discover() pays on every spawn.
+    cls = _resolve_worker_strategy_class(original_strategy_type, family_strategy_type)
     if cls:
         try:
             strategy_obj = cls(strategy_id, params)

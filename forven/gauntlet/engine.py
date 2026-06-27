@@ -36,7 +36,12 @@ _REQUEUE_BACKOFF_BASE_MINUTES = 2.0
 _REQUEUE_BACKOFF_CAP_MINUTES = 30.0
 _GATE_CONTENTION_BACKOFF_MINUTES = 10.0
 # Blocks that must NEVER be drained to a terminal failed_gate (retried forever).
-_NO_DRAIN_REASON_CODES = {"gate_contention"}
+#   * ``gate_contention`` — a fully-passing strategy waiting for a capital slot.
+#   * ``awaiting_data_backfill`` — the screen needs more OHLCV history than is
+#     ingested; an async backfill is in flight (dataeng.coverage.ensure_coverage).
+#     Draining here would archive a strategy for a transient DATA gap, not a quality
+#     verdict. It self-resolves once the data lands (ensure_coverage returns "ready").
+_NO_DRAIN_REASON_CODES = {"gate_contention", "awaiting_data_backfill"}
 
 # --- Quality-aware visitation -------------------------------------------------
 # When there are MORE active workflows than a tick's visit budget (the common
@@ -1176,6 +1181,27 @@ def drain_exhausted_blocked_steps(*, limit: int = 50) -> int:
     return drained
 
 
+def _resolve_gauntlet_drain_workers() -> int:
+    """Number of gauntlet workflows to advance CONCURRENTLY per tick.
+
+    Default 1 = the historical serial drain (lowest, most predictable memory). Opt in
+    to a bounded parallel drain with ``FORVEN_GAUNTLET_DRAIN_WORKERS=N`` on hardware
+    with RAM headroom. Each concurrent workflow may spawn a backtest subprocess, so
+    PEAK MEMORY scales with N — the same pressure that led parameter_jitter
+    parallelism to default off (see strategies/robustness.py). Hard-capped at 8. The
+    DB (WAL + 60s busy_timeout) serializes the concurrent per-step writes safely.
+    """
+    import os
+
+    raw = str(os.getenv("FORVEN_GAUNTLET_DRAIN_WORKERS", "") or "").strip()
+    if not raw:
+        return 1
+    try:
+        return max(1, min(int(raw), 8))
+    except ValueError:
+        return 1
+
+
 def tick_active_gauntlet_workflows(
     *,
     max_workflows: int = 20,
@@ -1232,38 +1258,87 @@ def tick_active_gauntlet_workflows(
     import time as _time
 
     _loop_start = _time.monotonic()
-    for idx, wf_id in enumerate(workflow_ids):
-        # Wall-clock budget: stop claiming NEW workflows once the tick has used its
-        # budget, so a slow late step can't overrun the scheduler job timeout and
-        # orphan a worker thread. The skipped workflows are the freshest-updated; the
-        # next tick (FIFO by updated_at) picks up the oldest-waiting ones first.
-        if deadline_seconds and (_time.monotonic() - _loop_start) > float(deadline_seconds):
-            summary["deadline_hit"] = True
-            summary["skipped_for_deadline"] = len(workflow_ids) - idx
-            log.warning(
-                "Gauntlet tick: hit %.0fs budget after %d/%d workflows — %d deferred to next tick",
-                float(deadline_seconds), idx, len(workflow_ids), summary["skipped_for_deadline"],
-            )
-            break
-        try:
-            outcome = resume_workflow(
-                wf_id,
-                max_steps=max_steps_per_workflow,
-                runner=runner,
-                deadline_monotonic=(_loop_start + float(deadline_seconds)) if deadline_seconds else None,
-            )
-            steps_run = int(outcome.get("steps_run") or 0)
-            if steps_run > 0:
-                summary["advanced"] += 1
-            else:
-                summary["no_progress"] += 1
-        except Exception as exc:
-            log.exception(
-                "tick_active_gauntlet_workflows: workflow %s failed to advance: %s",
-                wf_id,
-                exc,
-            )
-            summary["errors"].append({"workflow_id": wf_id, "error": str(exc)})
+    _deadline_monotonic = (_loop_start + float(deadline_seconds)) if deadline_seconds else None
+
+    def _advance_workflow(wf_id: str) -> dict[str, Any]:
+        return resume_workflow(
+            wf_id,
+            max_steps=max_steps_per_workflow,
+            runner=runner,
+            deadline_monotonic=_deadline_monotonic,
+        )
+
+    def _record_outcome(outcome: dict[str, Any]) -> None:
+        if int((outcome or {}).get("steps_run") or 0) > 0:
+            summary["advanced"] += 1
+        else:
+            summary["no_progress"] += 1
+
+    def _record_error(wf_id: str, exc: BaseException) -> None:
+        log.exception(
+            "tick_active_gauntlet_workflows: workflow %s failed to advance: %s",
+            wf_id,
+            exc,
+        )
+        summary["errors"].append({"workflow_id": wf_id, "error": str(exc)})
+
+    drain_workers = _resolve_gauntlet_drain_workers()
+    if drain_workers > 1 and len(workflow_ids) > 1:
+        # OPT-IN bounded parallel drain (FORVEN_GAUNTLET_DRAIN_WORKERS). The DB is
+        # WAL + 60s busy_timeout, so concurrent per-step writes serialize safely.
+        # Default is the serial path below: each concurrent workflow may run a backtest
+        # subprocess, so peak memory scales with the worker count (the same pressure
+        # that disabled parameter_jitter parallelism). In-flight is bounded to
+        # drain_workers and submission is deadline-gated, so a backlog can neither
+        # over-subscribe memory nor overrun the tick budget; in-flight workflows finish
+        # (each self-limited by deadline_monotonic) and the rest defer to the next tick.
+        import concurrent.futures as _cf
+
+        in_flight: dict[Any, str] = {}
+        pending = list(workflow_ids)
+        with _cf.ThreadPoolExecutor(
+            max_workers=drain_workers, thread_name_prefix="gauntlet-drain"
+        ) as pool:
+            while pending or in_flight:
+                while pending and len(in_flight) < drain_workers:
+                    if _deadline_monotonic and _time.monotonic() > _deadline_monotonic:
+                        summary["deadline_hit"] = True
+                        summary["skipped_for_deadline"] = len(pending)
+                        log.warning(
+                            "Gauntlet tick: hit %.0fs budget with %d in flight — %d deferred to next tick",
+                            float(deadline_seconds or 0.0), len(in_flight), len(pending),
+                        )
+                        pending = []
+                        break
+                    next_id = pending.pop(0)
+                    in_flight[pool.submit(_advance_workflow, next_id)] = next_id
+                if not in_flight:
+                    break
+                done, _ = _cf.wait(in_flight, return_when=_cf.FIRST_COMPLETED)
+                for fut in done:
+                    done_id = in_flight.pop(fut)
+                    try:
+                        _record_outcome(fut.result())
+                    except Exception as exc:  # noqa: BLE001 - isolate per-workflow failures
+                        _record_error(done_id, exc)
+    else:
+        for idx, wf_id in enumerate(workflow_ids):
+            # Wall-clock budget: stop claiming NEW workflows once the tick has used its
+            # budget, so a slow late step can't overrun the scheduler job timeout and
+            # orphan a worker thread. The skipped workflows are the freshest-updated; the
+            # next tick (FIFO by updated_at) picks up the oldest-waiting ones first.
+            if _deadline_monotonic and (_time.monotonic() > _deadline_monotonic):
+                summary["deadline_hit"] = True
+                summary["skipped_for_deadline"] = len(workflow_ids) - idx
+                log.warning(
+                    "Gauntlet tick: hit %.0fs budget after %d/%d workflows — %d deferred to next tick",
+                    float(deadline_seconds), idx, len(workflow_ids), summary["skipped_for_deadline"],
+                )
+                break
+            try:
+                _record_outcome(_advance_workflow(wf_id))
+            except Exception as exc:
+                _record_error(wf_id, exc)
     if summary["advanced"] or summary["errors"]:
         log.info(
             "Gauntlet tick: seen=%d advanced=%d no_progress=%d errors=%d",
