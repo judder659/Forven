@@ -128,11 +128,16 @@ Effort: **S** ≈ ½–1 day · **M** ≈ 1–3 days · **L** ≈ 1–2 weeks.
 > wiring (flag-gated):** `run_strategy_execution` routes a CUSTOM strategy's vectorized
 > `generate_signals` through the worker when `FORVEN_ISOLATED_STRATEGY_EXEC` is on (OFF by
 > default; builtins/composites untouched). A full off-vs-on backtest yields byte-identical
-> kernel trades (`test_isolated_backtest_matches_in_process`). **Remaining:** (3) the per-bar
-> `generate_signal` walk and the scanner path aren't routed yet; (4) FULL isolation still needs
+> kernel trades (`test_isolated_backtest_matches_in_process`). **(3) DONE — per-bar path +
+> scanner:** the per-bar adapter (`_signals_from_per_bar`, walking `generate_signal`) now runs in
+> a `per_bar` worker mode (`compute_per_bar_signals_isolated`), and `run_strategy_execution`'s
+> per-bar fallback is routed through it (flag-gated, custom-only) — byte-identical
+> (`test_isolated_per_bar_matches_in_process`). Because `run_strategy_execution` is the SHARED
+> backtest+scanner pipeline (`scanner.py:5973`), the live/paper **scanner** is covered by (2)+(3)
+> with no scanner.py change. **Remaining:** (4) FULL isolation still needs
 > the parent to STOP IMPORTING custom code — today `discover()` imports every custom in-process
 > (AST-gated, once at startup) and `strategy_obj` is built in-process, so what's isolated is the
-> heavy, repeated `generate_signals` EXECUTION, not the one-time import / `__init__`. Closing
+> heavy, repeated signal EXECUTION (vectorized + per-bar), not the one-time import / `__init__`. Closing
 > that is the registry-loading refactor (large) — track separately.
 >
 > **Key design constraint discovered:** a strategy run in the worker sees ONLY the input

@@ -7158,7 +7158,17 @@ def run_strategy_execution(
         # routes each entry/exit by the signal's direction (one both-mode kernel run, no
         # long+short straddle). Backtest reaches this BEFORE _run_signal_walk's 'both'
         # split (run_strategy_execution is tried first), so backtest+scanner agree.
-        vectorized = _signals_from_per_bar(strategy_obj, df, warmup=warmup, trade_mode=trade_mode)
+        if _isolated_strategy_exec_enabled() and _strategy_should_isolate(strategy_obj):
+            # Walk the untrusted custom strategy's per-bar generate_signal OUT-OF-PROCESS
+            # too — byte-identical (same _signals_from_per_bar runs in the worker).
+            from forven.sandbox.strategy_worker import compute_per_bar_signals_isolated
+            _iso_type = getattr(strategy_obj, "strategy_type", None) or strategy_type
+            vectorized = compute_per_bar_signals_isolated(
+                df, str(_iso_type), dict(getattr(strategy_obj, "params", {}) or {}),
+                warmup=warmup, trade_mode=trade_mode,
+            )
+        else:
+            vectorized = _signals_from_per_bar(strategy_obj, df, warmup=warmup, trade_mode=trade_mode)
     if vectorized is None:
         return None  # no vectorized AND no per-bar signals → caller uses the slow path
     if len(df) < warmup + 2:

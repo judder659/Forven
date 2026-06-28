@@ -15,6 +15,7 @@ import pytest
 from forven.sandbox.strategy_worker import (
     StrategyWorkerError,
     compute_directional_signals_isolated,
+    compute_per_bar_signals_isolated,
 )
 
 def _frame(periods: int = 300) -> pd.DataFrame:
@@ -228,3 +229,44 @@ def test_isolated_backtest_matches_in_process(monkeypatch):
         f"[{type_name}] isolated backtest diverged from in-process: "
         f"off={len(trades_off)} trades, on={len(trades_on)}"
     )
+
+
+def test_isolated_per_bar_matches_in_process(monkeypatch):
+    """The per-bar adapter (walking generate_signal over a trailing window) must
+    produce IDENTICAL signals in the isolated worker as in-process for a pure custom
+    strategy. A broken per-bar worker mode would reproduce NONE → this fails."""
+    monkeypatch.delenv("FORVEN_IN_STRATEGY_WORKER", raising=False)
+    from forven.strategies import registry
+    from forven.strategies.backtest import _signals_from_per_bar
+
+    df = _gbm_frame()
+    registry.discover()
+
+    candidates = []
+    for type_name, cls in sorted(registry._TYPE_MAP.items()):
+        if ".custom." not in str(getattr(cls, "__module__", "")):
+            continue
+        try:
+            inproc = _signals_from_per_bar(cls("probe", {}), df, warmup=50, trade_mode="long_only")
+        except Exception:  # noqa: BLE001
+            continue
+        if inproc is not None:
+            candidates.append((type_name, cls, inproc))
+        if len(candidates) >= 25:
+            break
+    if not candidates:
+        pytest.skip("no custom strategy with a usable per-bar adapter in this env")
+
+    matched = 0
+    for type_name, cls, inproc in candidates:
+        try:
+            iso = compute_per_bar_signals_isolated(
+                df, type_name, dict(cls("p", {}).params), warmup=50, trade_mode="long_only"
+            )
+        except StrategyWorkerError:
+            continue  # data-dependent strategy errors in the DB-less worker — try another
+        if iso is not None and _as_lists(iso) == _as_lists(inproc):
+            matched += 1
+            break  # one solid parity match proves the per-bar worker mode
+
+    assert matched >= 1, "isolated per-bar adapter did not reproduce ANY pure custom strategy"

@@ -122,7 +122,10 @@ def _compute_signals(workdir: Path) -> bool:
     (payload None) — the parent then falls back to the per-bar path, exactly as the
     in-process ``_resolve_strategy_vectorized_signals`` returning None does."""
     from forven.strategies import registry
-    from forven.strategies.backtest import _normalize_directional_signal_payload
+    from forven.strategies.backtest import (
+        _normalize_directional_signal_payload,
+        _signals_from_per_bar,
+    )
 
     request = json.loads((workdir / "request.json").read_text(encoding="utf-8"))
     df = pd.read_parquet(workdir / "in.parquet")
@@ -132,15 +135,27 @@ def _compute_signals(workdir: Path) -> bool:
     if cls is None:
         raise StrategyWorkerError(f"unknown strategy type {strategy_type!r}")
     strat = cls("isolated", dict(request.get("params") or {}))
-    payload = strat.generate_signals(df)
-    if payload is None:
-        return False
-    signals = _normalize_directional_signal_payload(
-        payload,
-        df.index,
-        trade_mode=str(request.get("trade_mode") or "long_only"),
-        default_direction=str(request.get("default_direction") or "long"),
-    )
+    trade_mode = str(request.get("trade_mode") or "long_only")
+
+    if str(request.get("mode") or "vectorized") == "per_bar":
+        # Walk the strategy's per-bar generate_signal in isolation, with the SAME
+        # purity guard + bounded trailing window the in-process adapter uses.
+        signals = _signals_from_per_bar(
+            strat, df, warmup=int(request.get("warmup") or 0), trade_mode=trade_mode
+        )
+        if signals is None:
+            return False
+    else:
+        payload = strat.generate_signals(df)
+        if payload is None:
+            return False
+        signals = _normalize_directional_signal_payload(
+            payload,
+            df.index,
+            trade_mode=trade_mode,
+            default_direction=str(request.get("default_direction") or "long"),
+        )
+
     out = pd.DataFrame(
         {
             "long_entries": signals.long_entries.astype(bool).to_numpy(),
@@ -175,8 +190,8 @@ def _run_worker(workdir: Path) -> int:
     status_path = workdir / "status.json"
     try:
         _prepare_worker_runtime()
-        vectorized = _compute_signals(workdir)
-        status_path.write_text(json.dumps({"ok": True, "vectorized": vectorized}), encoding="utf-8")
+        produced = _compute_signals(workdir)
+        status_path.write_text(json.dumps({"ok": True, "produced": produced}), encoding="utf-8")
         return 0
     except BaseException as exc:  # noqa: BLE001 — report ANY failure as structured status
         try:
@@ -204,9 +219,9 @@ def _serve() -> int:
         try:
             msg = json.loads(line)
             workdir = Path(msg["workdir"])
-            vectorized = _compute_signals(workdir)
-            (workdir / "status.json").write_text(json.dumps({"ok": True, "vectorized": vectorized}), encoding="utf-8")
-            ack = {"ok": True, "vectorized": vectorized}
+            produced = _compute_signals(workdir)
+            (workdir / "status.json").write_text(json.dumps({"ok": True, "produced": produced}), encoding="utf-8")
+            ack = {"ok": True, "produced": produced}
         except BaseException as exc:  # noqa: BLE001 — a bad request must not kill the worker
             ack = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:2000]}
         sys.stdout.write(json.dumps(ack) + "\n")
@@ -356,43 +371,21 @@ def _get_worker() -> "_PersistentWorker":
 atexit.register(_reset_worker)
 
 
-def compute_directional_signals_isolated(
-    df: pd.DataFrame,
-    strategy_type: str,
-    params: dict,
-    *,
-    trade_mode: str,
-    default_direction: str = "long",
-    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+def _request_signals(
+    df: pd.DataFrame, request: dict, strategy_type: str, timeout: int
 ) -> "DirectionalSignals | None":
-    """Build the strategy and run its ``generate_signals(df)`` in an isolated,
-    secret-free, network-denied subprocess, returning normalized DirectionalSignals
-    — or ``None`` when the strategy has no vectorized ``generate_signals`` (so the
-    caller falls back to the per-bar path, exactly as the in-process resolver does).
-
-    Uses a persistent per-process worker (spawned lazily, reused across calls). Output
-    is identical to building the same strategy in-process and normalizing its
-    ``generate_signals`` payload — only the trust boundary differs. Raises
-    :class:`StrategyWorkerError` on timeout, worker error, or malformed output; the
-    caller does NOT silently fall back to in-process execution (fail closed).
-    """
+    """Send one signal-gen request to the persistent worker and return validated,
+    schema-checked DirectionalSignals — or ``None`` when the worker produced none for
+    this mode (the strategy has no signals there → caller falls back). Raises
+    :class:`StrategyWorkerError` on timeout / worker death / malformed output (fail
+    closed — never a silent in-process fallback, which would defeat the isolation)."""
     with tempfile.TemporaryDirectory(prefix="forven_strat_") as tmp:
         workdir = Path(tmp)
         try:
             df.to_parquet(workdir / "in.parquet")
         except Exception as exc:  # a non-serializable frame is a programming error
             raise StrategyWorkerError(f"failed to serialize input frame: {exc}") from exc
-        (workdir / "request.json").write_text(
-            json.dumps(
-                {
-                    "strategy_type": strategy_type,
-                    "params": params or {},
-                    "trade_mode": trade_mode,
-                    "default_direction": default_direction,
-                }
-            ),
-            encoding="utf-8",
-        )
+        (workdir / "request.json").write_text(json.dumps(request), encoding="utf-8")
 
         with _worker_lock:
             try:
@@ -408,21 +401,74 @@ def compute_directional_signals_isolated(
                 tail = _worker.stderr_tail() if _worker is not None else ""
                 _reset_worker()
                 raise StrategyWorkerError(
-                    f"isolated worker for {strategy_type!r} died"
-                    + (f": {tail}" if tail else "")
+                    f"isolated worker for {strategy_type!r} died" + (f": {tail}" if tail else "")
                 )
 
         if not ack.get("ok"):
             detail = ack.get("error") or _read_status_error(workdir) or "unknown error"
             raise StrategyWorkerError(f"isolated signal generation for {strategy_type!r} failed: {detail}")
-
-        if not ack.get("vectorized", True):
-            return None  # no vectorized generate_signals → caller uses the per-bar path
+        if not ack.get("produced", True):
+            return None  # strategy produced no signals for this mode → caller falls back
 
         out_path = workdir / "out.parquet"
         if not out_path.exists():
             raise StrategyWorkerError(f"isolated worker for {strategy_type!r} produced no output")
         return _read_and_validate_signals(out_path, df.index, strategy_type)
+
+
+def compute_directional_signals_isolated(
+    df: pd.DataFrame,
+    strategy_type: str,
+    params: dict,
+    *,
+    trade_mode: str,
+    default_direction: str = "long",
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> "DirectionalSignals | None":
+    """Run the strategy's VECTORIZED ``generate_signals(df)`` in the isolated worker.
+    Returns normalized DirectionalSignals, or ``None`` when the strategy has no
+    vectorized ``generate_signals`` (caller falls back to the per-bar path). Output is
+    byte-identical to building the strategy in-process and normalizing its payload."""
+    return _request_signals(
+        df,
+        {
+            "mode": "vectorized",
+            "strategy_type": strategy_type,
+            "params": params or {},
+            "trade_mode": trade_mode,
+            "default_direction": default_direction,
+        },
+        strategy_type,
+        timeout,
+    )
+
+
+def compute_per_bar_signals_isolated(
+    df: pd.DataFrame,
+    strategy_type: str,
+    params: dict,
+    *,
+    warmup: int,
+    trade_mode: str,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> "DirectionalSignals | None":
+    """Run the per-bar adapter (``_signals_from_per_bar`` — walks ``generate_signal``
+    over a trailing window) in the isolated worker, for a strategy with NO vectorized
+    ``generate_signals``. Returns the DirectionalSignals, or ``None`` when the strategy
+    has no usable/pure per-bar method (caller falls back to the legacy slow path),
+    byte-identical to the in-process adapter."""
+    return _request_signals(
+        df,
+        {
+            "mode": "per_bar",
+            "strategy_type": strategy_type,
+            "params": params or {},
+            "trade_mode": trade_mode,
+            "warmup": int(warmup),
+        },
+        strategy_type,
+        timeout,
+    )
 
 
 def _read_status_error(workdir: Path) -> str:
