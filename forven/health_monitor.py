@@ -12,7 +12,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -454,6 +454,123 @@ def check_scheduler() -> ComponentStatus:
             name="scheduler", state=State.RED,
             message=f"Check failed: {exc}",
         )
+
+
+def check_scanner_execution() -> ComponentStatus:
+    """FREEZE-1: detect a hung position-managing scanner.
+
+    The scanner job (kind=scanner_run) fires exits / stops / time-stops for OPEN
+    paper AND live positions. If a run hangs, the scheduler keeps the job lock and
+    never re-runs it, while nothing else watches the EXECUTION scan's freshness — so
+    signal/time exits silently stop firing while the dashboard stays green. Go RED
+    when execution is active (open positions or execution enabled) but no execution
+    scan has completed within the scanner job's cadence.
+    """
+    try:
+        from forven.db import kv_get
+
+        state = kv_get("scanner_state", {}) or {}
+        open_n = int(state.get("open_positions") or 0)
+        execution_active = bool(state.get("execution_allowed")) or open_n > 0
+        last_exec = _parse_iso(state.get("last_execution_scan"))
+        if not execution_active:
+            return ComponentStatus(
+                name="scanner_execution", state=State.GREEN, last_seen=last_exec,
+                message="Execution idle (no open positions, execution disabled)",
+            )
+        # Expected cadence: the scanner EXECUTION job's interval (not the signal-only
+        # job), else a conservative 1h default.
+        expected = 3600.0
+        try:
+            from forven.scheduler import get_enabled_jobs
+            cadences = [
+                _job_interval_seconds(j)
+                for j in (get_enabled_jobs() or [])
+                if "scanner" in str(j.get("id") or "").lower() and "signal" not in str(j.get("id") or "").lower()
+            ]
+            cadences = [c for c in cadences if c and c > 0]
+            if cadences:
+                expected = min(cadences)
+        except Exception:
+            pass
+        st = compute_state(last_exec, expected)
+        if st == State.RED:
+            return ComponentStatus(
+                name="scanner_execution", state=State.RED, last_seen=last_exec,
+                message=(
+                    f"Execution scan STALE (> {int(expected * HEALTH_RED_MULTIPLIER)}s) — "
+                    f"{open_n} open position(s) are not being managed; signal/time exits may not be firing"
+                ),
+            )
+        if st == State.AMBER:
+            return ComponentStatus(
+                name="scanner_execution", state=State.AMBER, last_seen=last_exec,
+                message=f"Execution scan overdue ({open_n} open)",
+            )
+        return ComponentStatus(
+            name="scanner_execution", state=State.GREEN, last_seen=last_exec,
+            message=f"Execution scan healthy ({open_n} open)",
+        )
+    except Exception as exc:
+        log.warning("Scanner execution health check failed: %s", exc)
+        return ComponentStatus(name="scanner_execution", state=State.AMBER, message=f"Check failed: {exc}")
+
+
+def check_daemon_liveness() -> ComponentStatus:
+    """FREEZE-3: detect an alive-but-FROZEN daemon.
+
+    The daemon runs the live liquidation-distance monitor + periodic exchange
+    reconcile and writes ``daemon_state.last_tick_ts`` every market-loop iteration.
+    The only existing staleness gate flips ``running`` False solely when the OS
+    process is DEAD; a process that is alive but wedged (event loop stuck, ticks
+    hours old) keeps ``running`` True and every UI reports it healthy while
+    liquidation monitoring has silently stopped. Go RED when the daemon is marked
+    running and its process is alive (or unknown) but its tick is stale.
+    """
+    try:
+        from forven.runtime_health import normalize_daemon_state
+
+        ds = normalize_daemon_state(write_back=False)
+        if not bool(ds.get("running")):
+            return ComponentStatus(name="daemon", state=State.GREEN, message="Daemon not running")
+        age = ds.get("age_seconds")
+        process_alive = ds.get("process_alive")
+        last_seen = datetime.now(timezone.utc) - timedelta(seconds=float(age)) if age is not None else None
+        if age is None:
+            return ComponentStatus(
+                name="daemon", state=State.GREEN, last_seen=last_seen,
+                message="Daemon running (no tick telemetry yet)",
+            )
+        if process_alive is False:
+            return ComponentStatus(
+                name="daemon", state=State.RED, last_seen=last_seen,
+                message=f"Daemon process not alive (last tick {int(age)}s ago)",
+            )
+        try:
+            from forven.db import kv_get
+            max_stale = float((kv_get("forven:settings", {}) or {}).get("daemon_tick_max_stale_seconds", 600) or 600)
+        except Exception:
+            max_stale = 600.0
+        if age > max_stale:
+            return ComponentStatus(
+                name="daemon", state=State.RED, last_seen=last_seen,
+                message=(
+                    f"Daemon FROZEN: no market tick for {int(age)}s (> {int(max_stale)}s) — "
+                    "liquidation monitor + exchange reconcile have stalled"
+                ),
+            )
+        if age > max_stale / 2:
+            return ComponentStatus(
+                name="daemon", state=State.AMBER, last_seen=last_seen,
+                message=f"Daemon tick overdue ({int(age)}s)",
+            )
+        return ComponentStatus(
+            name="daemon", state=State.GREEN, last_seen=last_seen,
+            message=f"Daemon healthy (tick {int(age)}s ago)",
+        )
+    except Exception as exc:
+        log.warning("Daemon liveness health check failed: %s", exc)
+        return ComponentStatus(name="daemon", state=State.AMBER, message=f"Check failed: {exc}")
 
 
 def check_brain_workers() -> ComponentStatus:
@@ -1396,6 +1513,8 @@ class HealthMonitor:
                 # Run all checks, catching individual failures
                 for check_fn in (
                     check_scheduler,
+                    check_scanner_execution,
+                    check_daemon_liveness,
                     check_brain_workers,
                     check_data_collector,
                     check_data_freshness,
