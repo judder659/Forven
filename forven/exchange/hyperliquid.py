@@ -1882,7 +1882,16 @@ def cancel_all_orders(asset: str | None = None, testnet: bool = True, vault_addr
 
     _assert_execution_allowed(testnet)
     exchange, info, address = _exchange_for_trading(testnet, vault_address=vault_address)
-    orders = info.open_orders(address)
+    # HL-5: read open orders through the breaker/retry wrapper (like every other account
+    # read) so a transient 502/timeout is retried instead of aborting the whole flatten /
+    # cancel sweep on the first blip. On a hard failure, surface an error marker rather
+    # than raising uncaught.
+    try:
+        orders = _with_breaker("account", hl_account_breaker, info.open_orders, address)
+    except Exception as exc:
+        log.error("cancel_all_orders %s: open-orders read failed (%s); aborting cancel sweep (will retry).",
+                  asset or "ALL", exc)
+        return [{"error": f"open_orders read failed: {exc}"}]
     results = []
     for order in orders:
         coin = order.get("coin", "")
