@@ -113,3 +113,31 @@ def test_worker_rejects_unknown_strategy(monkeypatch):
     monkeypatch.delenv("FORVEN_IN_STRATEGY_WORKER", raising=False)
     with pytest.raises(StrategyWorkerError):
         compute_directional_signals_isolated(_frame(), "no_such_strategy_xyz", {}, trade_mode="long_only")
+
+
+def test_persistent_worker_is_reused_across_calls(monkeypatch):
+    """The worker imports + discover()s ONCE and serves many requests — the same
+    subprocess must handle repeated calls correctly (perf: discover() amortized)."""
+    monkeypatch.delenv("FORVEN_IN_STRATEGY_WORKER", raising=False)
+    import forven.sandbox.strategy_worker as sw
+
+    df = _frame()
+    strategy_type, inproc = _pick_vectorized_type(df)
+    if strategy_type is None:
+        pytest.skip("no registered pure strategy with a usable generate_signals in this env")
+
+    sig1 = compute_directional_signals_isolated(df, strategy_type, {}, trade_mode="long_only")
+    worker_after_first = sw._worker
+    assert worker_after_first is not None and worker_after_first.alive()
+
+    # A handled per-request error (unknown type) must NOT kill the worker.
+    with pytest.raises(StrategyWorkerError):
+        compute_directional_signals_isolated(df, "no_such_strategy_xyz", {}, trade_mode="long_only")
+
+    sig2 = compute_directional_signals_isolated(df, strategy_type, {}, trade_mode="long_only")
+    sig3 = compute_directional_signals_isolated(_frame(250), strategy_type, {}, trade_mode="long_only")
+
+    assert sw._worker is worker_after_first, "persistent worker was not reused across calls"
+    assert _as_lists(sig1) == _as_lists(inproc)
+    assert _as_lists(sig2) == _as_lists(inproc)
+    assert len(sig3.long_entries) == 250

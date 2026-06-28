@@ -121,12 +121,16 @@ Effort: **S** ≈ ½–1 day · **M** ≈ 1–3 days · **L** ≈ 1–2 weeks.
 > (AST guard runs there), never the trusted parent. A first wiring attempt was reverted
 > after discovering the real boundary is the *strategy object's* `generate_signals` /
 > `generate_signal` (built from the registry), NOT the builtin `_vectorized_directional_signals`
-> path. **Remaining (the bulk):** (1) a persistent worker pool — the worker currently does a
-> full `registry.discover()` per call (~15s), unacceptable on the hot path; (2) the per-bar
-> `generate_signal` walk (`_run_signal_walk`), intertwined with the kernel, isn't isolated
-> yet; (3) refactor backtest + scanner to delegate strategy build+execution to the worker so
-> the parent stops importing custom code. Recommend doing (1)–(3) in a worktree — it touches
-> the trading core.
+> path. **(1) DONE — persistent worker:** `strategy_worker.py` now has a `--serve` mode that
+> imports + `discover()`s ONCE then loops on stdin requests; a reusable client (reader thread +
+> queue + respawn-on-death/timeout) keeps the `compute_directional_signals_isolated` API and
+> amortizes the ~15s startup across calls (parity + reuse tests green). **Remaining (the
+> bulk):** (2) the per-bar `generate_signal` walk (`_run_signal_walk`), intertwined with the
+> kernel, isn't isolated yet; (3) the real integration — refactor backtest + scanner so the
+> parent **stops importing custom code** for the signal path (get strategy metadata from the DB
+> row, delegate build+execution to the worker). (3) is the trading-core-sensitive part: routing
+> only `generate_signals` is insufficient because the untrusted module's TOP-LEVEL code already
+> ran at in-process build time — the parent must avoid the import entirely.
 >
 > **Key design constraint discovered:** a strategy run in the worker sees ONLY the input
 > frame — no DB, no network. So **all data a strategy needs must be enriched onto the df by
