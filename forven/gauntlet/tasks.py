@@ -248,14 +248,19 @@ def _persist_strategy_symbol(strategy_id: str, symbol: str) -> None:
     try:
         from datetime import datetime, timezone
 
-        from forven.db import get_db
+        from forven.db import block_cross_asset_symbol_rehome, get_db
 
         now = datetime.now(timezone.utc).isoformat()
         with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET symbol = ?, updated_at = ? WHERE id = ?",
-                (sym, now, strategy_id),
-            )
+            # Traded-asset freeze: never re-home a running paper/live strategy onto a
+            # different asset (a no-op for the pre-capital stages quick_screen runs in).
+            if not block_cross_asset_symbol_rehome(
+                conn, strategy_id, sym, source="gauntlet_quick_screen"
+            ):
+                conn.execute(
+                    "UPDATE strategies SET symbol = ?, updated_at = ? WHERE id = ?",
+                    (sym, now, strategy_id),
+                )
     except Exception as exc:  # noqa: BLE001
         log.warning("quick_screen: failed to persist canonical symbol for %s: %s", strategy_id, exc)
 

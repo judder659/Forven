@@ -6553,6 +6553,132 @@ def resolve_best_symbol(strategy_id: str) -> tuple[str | None, float, dict]:
     return symbol, fitness, metrics
 
 
+# ---------------------------------------------------------------------------
+# Capital-adjacent traded-asset freeze
+# ---------------------------------------------------------------------------
+# The paper scanner and live engine read strategies.symbol LIVE on every cycle to
+# decide which asset to trade. Re-homing a strategy that is ALREADY paper/live to a
+# different asset — e.g. an auto-assign or pinned-backtest sync picking a higher-
+# scoring cross-asset sweep result — makes a RUNNING strategy trade the wrong coin
+# and open cross-asset phantom positions (the 2026-06-29 incident: BTC strategies
+# S04667/S04736 were flipped to SOL mid-flight and opened phantom SOL paper trades).
+# Once a strategy reaches a capital-adjacent stage its traded asset is FROZEN: cross-
+# asset symbol re-homes are refused and audited so they are never again silent.
+CAPITAL_ADJACENT_STAGES: frozenset = frozenset(
+    {"paper", "paper_trading", "live", "live_graduated", "deployed", "active"}
+)
+
+
+def _symbol_asset_key(symbol: object) -> str:
+    """Reduce a symbol/pair to its bare asset key for cross-asset comparison
+    (``SOL/USDT`` -> ``SOL``, ``BTC`` -> ``BTC``). Kept local to db.py to avoid a
+    circular import of the scanner's equivalent normalizer."""
+    raw = str(symbol or "").strip().upper()
+    if not raw:
+        return ""
+    token = raw
+    for sep in ("/", ":", "-", "_", " "):
+        if sep in token:
+            token = token.split(sep, 1)[0]
+            break
+    for quote in ("USDT", "USD", "PERP"):
+        if token.endswith(quote) and len(token) > len(quote):
+            token = token[: -len(quote)]
+            break
+    return token.strip()
+
+
+def block_cross_asset_symbol_rehome(
+    conn: sqlite3.Connection,
+    strategy_id: str,
+    new_symbol: object,
+    *,
+    source: str,
+) -> bool:
+    """Enforce the capital-adjacent traded-asset freeze for a pending symbol write.
+
+    Returns True when a re-home of ``strategy_id`` to ``new_symbol`` MUST be skipped
+    because the strategy is already paper/live/deployed and ``new_symbol`` is a
+    DIFFERENT asset than its current symbol — flipping it would make a running
+    strategy trade the wrong coin. A same-asset change (``BTC`` -> ``BTC/USDT``) or a
+    pre-capital stage is never blocked. On a block it warn-logs and records an
+    audited same-stage strategy_event ON THE PASSED CONNECTION (no nested get_db, so
+    it is safe to call mid-transaction) — closing the silent-flip visibility gap.
+    """
+    row = conn.execute(
+        "SELECT stage, status, symbol FROM strategies WHERE id = ?",
+        (str(strategy_id),),
+    ).fetchone()
+    if row is None:
+        return False
+    stage = (str(row["stage"] or "").strip() or str(row["status"] or "").strip()).lower()
+    if stage not in CAPITAL_ADJACENT_STAGES:
+        return False
+    current_symbol = str(row["symbol"] or "")
+    current_key = _symbol_asset_key(current_symbol)
+    new_key = _symbol_asset_key(new_symbol)
+    # Allow when there is no real cross-asset CHANGE: no new asset, no current asset
+    # (initial assignment), or the same asset (e.g. BTC -> BTC/USDT canonicalization).
+    if not new_key or not current_key or new_key == current_key:
+        return False
+
+    log.warning(
+        "Refused cross-asset symbol re-home of capital-adjacent strategy %s (%s): "
+        "%s -> %s via %s; a running paper/live strategy's traded asset is frozen.",
+        strategy_id, stage, current_symbol, new_symbol, source,
+    )
+    try:
+        conn.execute(
+            """INSERT INTO strategy_events
+            (strategy_id, from_state, to_state, actor, reason, owner_from, owner_to,
+             idempotency_key, details_json, created_at)
+            VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)""",
+            (
+                str(strategy_id),
+                stage,
+                stage,
+                source,
+                "cross-asset symbol re-home blocked (capital-adjacent traded asset is frozen)",
+                _serialize_json_value(
+                    {
+                        "current_symbol": current_symbol,
+                        "blocked_symbol": str(new_symbol),
+                        "source": source,
+                    }
+                ),
+                _now(),
+            ),
+        )
+    except Exception:  # noqa: BLE001 — audit is best-effort, never blocks the guard
+        pass
+    return True
+
+
+def capital_adjacent_pin_asset_conflict(
+    conn: sqlite3.Connection, strategy_id: str, pin_symbol: object
+) -> tuple[bool, str | None, str | None]:
+    """Return ``(conflict, stage, current_symbol)``. ``conflict`` is True when
+    ``strategy_id`` is capital-adjacent (paper/live/deployed) AND ``pin_symbol`` is a
+    DIFFERENT asset than its current symbol — pinning that backtest would imply
+    re-homing a running, frozen-asset strategy, so it is refused at the API boundary.
+    Pure read; the caller decides how to surface the conflict."""
+    row = conn.execute(
+        "SELECT stage, status, symbol FROM strategies WHERE id = ?",
+        (str(strategy_id),),
+    ).fetchone()
+    if row is None:
+        return False, None, None
+    stage = (str(row["stage"] or "").strip() or str(row["status"] or "").strip()).lower()
+    current_symbol = str(row["symbol"] or "")
+    if stage not in CAPITAL_ADJACENT_STAGES:
+        return False, stage, current_symbol
+    pin_key = _symbol_asset_key(pin_symbol)
+    cur_key = _symbol_asset_key(current_symbol)
+    if not pin_key or not cur_key or pin_key == cur_key:
+        return False, stage, current_symbol
+    return True, stage, current_symbol
+
+
 def auto_assign_best_symbol_timeframe(strategy_id: str) -> tuple[str, str] | None:
     """Assign the best symbol/timeframe context from stored backtest results."""
     best_symbol, best_timeframe, fitness, _ = resolve_best_symbol_timeframe(strategy_id)
@@ -6571,6 +6697,13 @@ def auto_assign_best_symbol_timeframe(strategy_id: str) -> tuple[str, str] | Non
         old_timeframe = str(row["timeframe"] or "").strip().lower() or "1h"
         if old_symbol == best_symbol and old_timeframe == best_timeframe:
             return best_symbol, best_timeframe
+
+        # Traded-asset freeze: never re-home a running paper/live strategy onto a
+        # higher-scoring cross-asset sweep result — keep its promoted asset.
+        if block_cross_asset_symbol_rehome(
+            conn, strategy_id, best_symbol, source="auto_assign_best_symbol_timeframe"
+        ):
+            return old_symbol, old_timeframe
 
         new_name = build_strategy_container_name(
             symbol=best_symbol,

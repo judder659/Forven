@@ -8125,6 +8125,39 @@ def update_strategy_default_params(
     if certification_error:
         raise HTTPException(status_code=422, detail=certification_error)
 
+    # Refuse a cross-asset pin onto a capital-adjacent strategy fail-fast, BEFORE any
+    # write: its traded asset is frozen, so pinning a different-asset backtest is
+    # meaningless and would mislead the operator (the symbol sync would no-op anyway).
+    if pinned_backtest_id:
+        _pin_id = pinned_backtest_id.strip() if isinstance(pinned_backtest_id, str) else ""
+        if _pin_id:
+            from forven.db import capital_adjacent_pin_asset_conflict
+            from forven.strategy_lifecycle import _extract_symbol_timeframe_from_config
+
+            with get_db() as conn:
+                _pin_row = conn.execute(
+                    "SELECT symbol, config_json FROM backtest_results "
+                    "WHERE result_id = ? AND strategy_id = ?",
+                    (_pin_id, strategy_id),
+                ).fetchone()
+                if _pin_row is not None:
+                    _cfg_symbol, _ = _extract_symbol_timeframe_from_config(_pin_row["config_json"])
+                    _pin_symbol = _cfg_symbol or (
+                        str(_pin_row["symbol"]).strip() if _pin_row["symbol"] else None
+                    )
+                    conflict, _stage, _cur = capital_adjacent_pin_asset_conflict(
+                        conn, strategy_id, _pin_symbol
+                    )
+                    if conflict:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"Cannot pin a {_pin_symbol} backtest to {strategy_id}: it is "
+                                f"{_stage} and its traded asset ({_cur}) is frozen. Pin a "
+                                "same-asset backtest, or re-home the strategy before promotion."
+                            ),
+                        )
+
     canonical_params = dict(certification.canonical_params)
     update_strategy_params(strategy_id, canonical_params, actor=actor)
 
@@ -8180,8 +8213,16 @@ def update_strategy_default_params(
                         sync_cols.append("timeframe = ?")
                         sync_vals.append(pin_timeframe)
                     if pin_symbol:
-                        sync_cols.append("symbol = ?")
-                        sync_vals.append(pin_symbol)
+                        # Traded-asset freeze: a pinned backtest on a different asset
+                        # must not flip a running paper/live strategy's traded coin.
+                        # (Timeframe still syncs above — only the asset is frozen.)
+                        from forven.db import block_cross_asset_symbol_rehome
+
+                        if not block_cross_asset_symbol_rehome(
+                            conn, strategy_id, pin_symbol, source="pinned_backtest_sync"
+                        ):
+                            sync_cols.append("symbol = ?")
+                            sync_vals.append(pin_symbol)
                     if sync_cols:
                         sync_vals.append(strategy_id)
                         conn.execute(

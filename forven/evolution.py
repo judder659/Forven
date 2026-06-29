@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from forven.brain import assign_task, transition_stage
 from forven.db import (
     append_strategy_event,
+    block_cross_asset_symbol_rehome,
     build_strategy_container_name,
     get_db,
     get_strategies,
@@ -1983,17 +1984,32 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
                     strategy_id=strat_id,
                 )
                 with get_db() as conn:
-                    conn.execute(
-                        "UPDATE strategies SET metrics = ?, symbol = ?, timeframe = ?, name = ?, updated_at = ? WHERE id = ?",
-                        (
-                            json.dumps(merged_metrics),
-                            selected_symbol,
-                            selected_timeframe,
-                            updated_name,
-                            datetime.now(timezone.utc).isoformat(),
-                            strat_id,
-                        ),
-                    )
+                    # Traded-asset freeze: if this strategy is already paper/live, keep
+                    # its promoted asset — still refresh metrics, but do not re-home it
+                    # onto a higher-scoring cross-asset context.
+                    if block_cross_asset_symbol_rehome(
+                        conn, strat_id, selected_symbol, source="evolution_context_select"
+                    ):
+                        conn.execute(
+                            "UPDATE strategies SET metrics = ?, updated_at = ? WHERE id = ?",
+                            (
+                                json.dumps(merged_metrics),
+                                datetime.now(timezone.utc).isoformat(),
+                                strat_id,
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE strategies SET metrics = ?, symbol = ?, timeframe = ?, name = ?, updated_at = ? WHERE id = ?",
+                            (
+                                json.dumps(merged_metrics),
+                                selected_symbol,
+                                selected_timeframe,
+                                updated_name,
+                                datetime.now(timezone.utc).isoformat(),
+                                strat_id,
+                            ),
+                        )
 
                 promoted_now = False
                 gate_reason = "No gate evaluation recorded"

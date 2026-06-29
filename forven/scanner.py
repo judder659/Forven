@@ -986,6 +986,28 @@ def _guard_open_trade_execution_intent(
     if not allowed:
         raise ValueError(f"trading blocked for trade {trade_id}: {reason}")
 
+    # Entry-side traded-asset assertion: a strategy may only open a position on the
+    # asset recorded in its (frozen) strategies.symbol. If the open intent's asset
+    # diverges — a stale in-memory mapping or a symbol flip via some unguarded path —
+    # refuse it here so a strategy never opens a foreign-asset position. Complements
+    # the reconcile-side cross-asset guard (9a4b780) with an entry-side check.
+    try:
+        with get_db() as _conn:
+            _srow = _conn.execute(
+                "SELECT symbol FROM strategies WHERE id = ?", (strategy_id,)
+            ).fetchone()
+    except Exception:
+        _srow = None
+    if _srow is not None:
+        expected_asset = _normalize_strategy_asset(_srow["symbol"], fallback="")
+        intent_asset = str(asset or "").strip().upper()
+        if expected_asset and intent_asset and expected_asset != intent_asset:
+            raise ValueError(
+                f"trade {trade_id} cross-asset open blocked: strategy {strategy_id} "
+                f"trades {expected_asset}, but the open intent is for {intent_asset} "
+                f"(symbol={_srow['symbol']!r}) — refusing a foreign-asset position."
+            )
+
     signal_data = parse_trade_signal_data(trade.get("signal_data"))
     # The scanner sizes paper/live by mirroring the backtest's execution profile
     # and stamps the result here. When present, this guard trusts that
