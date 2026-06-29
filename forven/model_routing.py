@@ -27,6 +27,7 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
     "together",
     "opencode-zen",
     "opencode-go",
+    "claude-cli",
 )
 _MODEL_ROUTING_STORAGE_KEY = "forven:model-routing"
 _LEGACY_MODEL_ALIASES: dict[str, dict[str, str]] = {}
@@ -123,6 +124,7 @@ _DEFAULT_MODEL_ROUTING = {
         "together": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "opencode-zen": "grok-code",
         "opencode-go": "glm-5.2",
+        "claude-cli": "sonnet",
     },
     # Every default chain is SELF-ONLY (fail-closed): a slot NEVER silently falls
     # back to a provider the operator didn't choose for it. A throttled/failed
@@ -173,6 +175,9 @@ _DEFAULT_MODEL_ROUTING = {
         ],
         "opencode-go": [
             {"provider": "opencode-go", "model_id": "glm-5.2"},
+        ],
+        "claude-cli": [
+            {"provider": "claude-cli", "model_id": "sonnet"},
         ],
     },
     "auxiliary": copy.deepcopy(_DEFAULT_AUXILIARY_ROUTING),

@@ -185,6 +185,7 @@ _PROVIDER_ALIAS = {
 _KNOWN_PROVIDER_PREFIXES: frozenset[str] = frozenset({
     "openai", "minimax", "lmstudio", "zai", "openrouter", "groq", "gemini",
     "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go",
+    "claude-cli",
     "codex", "openai-codex", "local", "lm-studio", "z.ai", "z-ai",
     "open-router", "open_router",
 })
@@ -201,6 +202,7 @@ _KNOWN_PROVIDER_PREFIXES: frozenset[str] = frozenset({
 _PROVIDER_PASSTHROUGH: frozenset[str] = frozenset({
     "openrouter", "anthropic", "deepseek", "groq", "gemini",
     "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go",
+    "claude-cli",
 })
 
 
@@ -978,6 +980,18 @@ async def _call_single(
             endpoint=ENDPOINTS["openrouter"],
             provider_label="openrouter",
         )
+    elif provider == "claude-cli":
+        # Local Claude Code CLI as a text-only LLM backend (keyless, uses the
+        # operator's local session/subscription instead of an HTTP API).
+        return await _call_claude_cli(
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            system,
+            response_schema=response_schema,
+            response_schema_name=response_schema_name,
+        )
     elif provider in ("groq", "gemini", "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go"):
         # All expose OpenAI-compatible Chat Completions endpoints, so route
         # through the shared OpenAI caller with the provider's endpoint/label.
@@ -1268,6 +1282,38 @@ async def _call_lmstudio(
     if last_error is not None:
         raise last_error
     raise RuntimeError("LM Studio request failed without raising an explicit error")
+
+
+async def _call_claude_cli(
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    temperature: float,
+    system: str | None,
+    response_schema: dict | None = None,
+    response_schema_name: str = "structured_response",
+) -> str:
+    """Call the local Claude Code CLI as a text completion backend.
+
+    ``max_tokens``/``temperature`` are not exposed by ``claude -p`` print mode,
+    so they are accepted for interface parity but not forwarded (the CLI uses
+    the model's defaults).
+    """
+    from forven.claude_cli import flatten_messages, run_claude_cli
+
+    prompt = flatten_messages(messages)
+    system_prompt = str(system or "").strip() or None
+    if response_schema:
+        schema_instruction = (
+            "Return only valid JSON that matches this schema exactly: "
+            f"{json.dumps(response_schema, ensure_ascii=True, separators=(',', ':'))}"
+        )
+        system_prompt = (
+            f"{system_prompt}\n\n{schema_instruction}" if system_prompt else schema_instruction
+        )
+
+    text, _usage = await run_claude_cli(prompt=prompt, system=system_prompt, model=model)
+    return text
 
 
 async def _call_zai(

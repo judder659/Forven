@@ -143,7 +143,7 @@ def unmark_provider_connected(provider: str) -> None:
 # returns "" by design and there is no spend to authorize. For these a
 # configured profile (a base URL) is enough to be usable — requiring a bearer
 # token would make them permanently unconnectable AND uncallable.
-_KEYLESS_PROVIDERS = {"lmstudio"}
+_KEYLESS_PROVIDERS = {"lmstudio", "claude-cli"}
 
 
 def _provider_has_token(provider: str) -> bool:

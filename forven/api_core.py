@@ -277,7 +277,7 @@ def _parse_int_query(value: str | None, default: int = 0) -> int:
         return default
 
 
-_SUPPORTED_AUTH_PROVIDERS: list[str] = ["openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go"]
+_SUPPORTED_AUTH_PROVIDERS: list[str] = ["openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go", "claude-cli"]
 _AUTH_PROVIDER_ENV_VARS = {
     "openai": "OPENAI_API_KEY",
     "minimax": "MINIMAX_API_KEY",
@@ -294,6 +294,7 @@ _AUTH_PROVIDER_ENV_VARS = {
     "together": "TOGETHER_API_KEY",
     "opencode-zen": "OPENCODE_ZEN_API_KEY",
     "opencode-go": "OPENCODE_GO_API_KEY",
+    "claude-cli": "CLAUDE_CLI_BIN",
 }
 _AUTH_OAUTH_SESSIONS: dict[str, dict[str, dict[str, object]]] = {}
 _AUTH_OAUTH_CALLBACKS: dict[str, dict[str, str]] = {}
@@ -405,6 +406,7 @@ _MODEL_PROVIDER_DISPLAY_NAMES = {
     "together": "Together AI",
     "opencode-zen": "OpenCode Zen",
     "opencode-go": "OpenCode GO",
+    "claude-cli": "Claude CLI (local)",
 }
 _LOCAL_PROVIDER_DEFAULT_BASE_URLS = {
     "lmstudio": "http://127.0.0.1:1234",
@@ -441,6 +443,9 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "minimax", "model_id": "MiniMax-M2.1-highspeed", "label": "MiniMax M2.1 Highspeed"},
     {"provider": "minimax", "model_id": "MiniMax-M2", "label": "MiniMax M2"},
     {"provider": "lmstudio", "model_id": "local-model", "label": "LM Studio Local Model"},
+    {"provider": "claude-cli", "model_id": "sonnet", "label": "Claude CLI — Sonnet (local)"},
+    {"provider": "claude-cli", "model_id": "opus", "label": "Claude CLI — Opus (local)"},
+    {"provider": "claude-cli", "model_id": "haiku", "label": "Claude CLI — Haiku (local)"},
     {"provider": "zai", "model_id": "glm-5.1", "label": "Z.AI GLM-5.1"},
     {"provider": "zai", "model_id": "glm-5", "label": "Z.AI GLM-5"},
     {"provider": "zai", "model_id": "glm-5-turbo", "label": "Z.AI GLM-5 Turbo"},
