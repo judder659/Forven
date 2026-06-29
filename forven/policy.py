@@ -606,12 +606,19 @@ def validate_backtest_metrics(metrics: dict) -> tuple[bool, float, str]:
     oos_sharpe = metrics.get("oos_sharpe")
     
     if is_sharpe is not None and oos_sharpe is not None:
-        gap = is_sharpe - oos_sharpe
+        # The IS/OOS Sharpe gap is a DIVERGENCE magnitude — instability is bad in BOTH
+        # directions: classic overfit (IS >> OOS) AND lucky-OOS noise (OOS >> IS, e.g.
+        # IS -1.58 / OOS +2.34 on a handful of trades). The old SIGNED `is - oos` only
+        # caught IS >> OOS, so a lucky-OOS context (signed value negative) sailed under
+        # the threshold, scored high on its OOS-weighted fitness, won the cross-asset
+        # "best" selection, got the strategy re-homed onto the wrong asset, and was then
+        # rejected by the promotion gate — archiving good strategies. abs() catches both.
+        gap = abs(is_sharpe - oos_sharpe)
         if gap > 1.5:
             rejection_reason = f"IS/OOS Sharpe gap too large: {gap:.2f} > 1.5 (is_sharpe={is_sharpe:.2f}, oos_sharpe={oos_sharpe:.2f})"
             log.warning(f"Strategy rejected: {rejection_reason}")
             return False, 0.0, rejection_reason
-        
+
         # Robustness penalty: IS/OOS gap > 0.50
         if gap > 0.50:
             penalty += 20.0
