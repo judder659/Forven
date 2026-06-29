@@ -1595,6 +1595,14 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
                                   OR se.reason LIKE 'Duplicate with active strategy%'
                               )
                               AND se.reason NOT LIKE '%canonical backtest%'
+                              -- Only count a gate failure EARNED in the strategy's
+                              -- CURRENT stage tenure. A failure that predates this
+                              -- stage entry is stale: a freshly revived/recovered
+                              -- strategy must get a fresh verdict, not be archived on
+                              -- the pre-revival reason that killed it last time.
+                              AND se.created_at >= COALESCE(
+                                  s.stage_changed_at, s.created_at, '1970-01-01T00:00:00+00:00'
+                              )
                             ORDER BY se.created_at DESC, se.id DESC
                             LIMIT 1
                           ) AS latest_gate_reason
