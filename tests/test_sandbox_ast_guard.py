@@ -198,14 +198,29 @@ def test_scan_file_round_trip(tmp_path: Path):
     assert report.file_size_bytes > 0
 
 
-def test_scan_file_handles_latin1(tmp_path: Path):
-    """latin-1 fallback so the guard never raises UnicodeDecodeError."""
+def test_scan_file_rejects_non_utf8_bytes(tmp_path: Path):
+    """Non-UTF-8 source is REJECTED (fail-closed), never silently re-decoded.
+
+    The old guard fell back to latin-1, scanning a *different* program than the one
+    CPython would actually compile (a non-UTF-8 file without a coding cookie is a
+    SyntaxError at import). The hardened guard refuses it outright rather than
+    reinterpreting the bytes (audit R4)."""
     p = tmp_path / "strat_latin1.py"
     # 0xff is invalid UTF-8 but valid latin-1
     p.write_bytes(b"# header \xff\nimport os\n")
     report = scan_file(p)
     assert report.ok is False
-    assert any(f.kind == "forbidden_import" for f in report.findings)
+    assert any(f.kind == "forbidden_encoding" for f in report.findings)
+
+
+def test_scan_file_rejects_utf7_coding_cookie(tmp_path: Path):
+    """A PEP 263 coding cookie that is not utf-8/ascii is rejected at the byte
+    level — the scan/compile encoding differential was a confirmed in-process RCE."""
+    p = tmp_path / "strat_cookie.py"
+    p.write_bytes(b"# coding: utf-7\nimport pandas as pd\n")
+    report = scan_file(p)
+    assert report.ok is False
+    assert any(f.kind == "forbidden_encoding" for f in report.findings)
 
 
 def test_clean_strategy_via_scan_file(tmp_path: Path):

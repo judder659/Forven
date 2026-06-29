@@ -68,6 +68,28 @@ _SIGNAL_COLUMNS = ("long_entries", "long_exits", "short_entries", "short_exits")
 DEFAULT_TIMEOUT_SECONDS = 120  # per-request, on an already-warm worker
 READY_TIMEOUT_SECONDS = 90  # startup: import forven + registry.discover()
 PERSISTENT_MAX_MEMORY_MB = 2048  # worker-lifetime cap (set once at spawn)
+VALIDATE_TIMEOUT_SECONDS = 60  # one-shot import+probe+certify+lookahead of one module
+
+
+def _coerce_json(o):  # noqa: ANN001, ANN201
+    for attr in ("item", "tolist"):
+        fn = getattr(o, attr, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+    return str(o)
+
+
+def _json_safe(value):  # noqa: ANN001, ANN201
+    """Coerce probe metadata (which may hold numpy scalars / other non-JSON types)
+    into a plain JSON-serializable structure for transport back to the parent as
+    DATA. Never returns a live Python object across the trust boundary."""
+    try:
+        return json.loads(json.dumps(value, default=_coerce_json))
+    except Exception:
+        return {}
 
 
 class StrategyWorkerError(RuntimeError):
@@ -169,6 +191,80 @@ def _compute_signals(workdir: Path) -> bool:
     return True
 
 
+def _validate_custom_module(workdir: Path) -> dict:
+    """Import + probe + certify + lookahead-scan one CUSTOM strategy module entirely
+    inside the locked-down child, returning ONLY JSON metadata.
+
+    This is the lifecycle the audit (docs/strategy-share-security-audit-2026-06-29.md)
+    found unguarded: ``register_custom_strategy_file`` runs the untrusted module's
+    top-level code (importlib.import_module), its ``__init__`` (probe construction)
+    and ``generate_signals`` (lookahead probe) IN THE TRUSTED PARENT. Here the same
+    steps run in a subprocess with a secret-free env, network denied, FS confined,
+    and resource-capped — so a guard bypass cannot reach host credentials. Only the
+    resulting metadata (type/params/asset/certified/lookahead) crosses back, as data."""
+    request = json.loads((workdir / "request.json").read_text(encoding="utf-8"))
+    module_name = str(request["module_name"])
+
+    import importlib
+
+    from forven.strategies import registry
+    from forven.strategies.certification import certify_execution_strategy
+    from forven.strategies.lookahead_probe import detect_lookahead
+
+    # Belt-and-suspenders re-scan in the child (the parent already scanned before
+    # write; re-checking here means the worker never imports an unscanned module).
+    registry.assert_custom_module_safe(module_name)
+
+    module = importlib.import_module(f"forven.strategies.custom.{module_name}")
+
+    strategy_cls = getattr(module, "STRATEGY_CLASS", None)
+    if isinstance(strategy_cls, str):
+        strategy_cls = getattr(module, strategy_cls, None)
+    if not isinstance(strategy_cls, type):
+        subclasses = [
+            obj
+            for obj in vars(module).values()
+            if isinstance(obj, type)
+            and issubclass(obj, registry.BaseStrategy)
+            and obj is not registry.BaseStrategy
+            and getattr(obj, "__module__", None) == module.__name__
+        ]
+        if len(subclasses) == 1:
+            strategy_cls = subclasses[0]
+
+    type_name = getattr(module, "TYPE_NAME", None)
+    if not type_name and strategy_cls is not None:
+        type_name = getattr(strategy_cls, "TYPE_NAME", None)
+
+    if not strategy_cls:
+        return {"ok": False, "error": "missing STRATEGY_CLASS"}
+    if not type_name:
+        return {"ok": False, "error": "missing TYPE_NAME"}
+
+    validation_errors = registry._registry_type_validation_errors(strategy_cls)
+    if validation_errors:
+        return {"ok": False, "error": "class validation: " + "; ".join(validation_errors)}
+
+    probe = strategy_cls("__probe__", {})
+    default_params = probe.default_params
+    asset = probe.asset if hasattr(probe, "asset") else "BTC"
+
+    cert = certify_execution_strategy(str(type_name), default_params)
+    lookahead_reason = detect_lookahead(probe)
+
+    return {
+        "ok": True,
+        "type_name": str(type_name),
+        "default_params": _json_safe(default_params),
+        "canonical_params": _json_safe(getattr(cert, "canonical_params", None)),
+        "asset": str(asset).strip() or "BTC",
+        "certified": bool(cert.certified),
+        "cert_error": cert.primary_blocking_reason(),
+        "lookahead_blocked": bool(lookahead_reason),
+        "lookahead_reason": lookahead_reason,
+    }
+
+
 def _prepare_worker_runtime():
     """Import the trusted forven modules, deny network, then discover() the registry
     (which imports strategy modules — custom top-level code runs HERE, under the
@@ -202,6 +298,22 @@ def _run_worker(workdir: Path) -> int:
         except Exception:
             pass
         return 1
+
+
+def _run_validate(workdir: Path) -> int:
+    """One-shot entry point: network-deny, validate one custom module, write
+    result.json, exit. Does NOT discover() the whole registry — it imports only the
+    single target module (its top-level code runs here, contained)."""
+    try:
+        _install_network_deny()
+        result = _validate_custom_module(workdir)
+    except BaseException as exc:  # noqa: BLE001 — report ANY failure as structured data
+        result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:2000]}
+    try:
+        (workdir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    except Exception:
+        pass
+    return 0 if result.get("ok") else 1
 
 
 def _serve() -> int:
@@ -471,6 +583,68 @@ def compute_per_bar_signals_isolated(
     )
 
 
+def validate_custom_module_isolated(
+    module_name: str, *, timeout: int = VALIDATE_TIMEOUT_SECONDS
+) -> dict:
+    """Validate a custom strategy module OUT-OF-PROCESS and return its metadata dict.
+
+    Spawns a one-shot, secret-free, network-denied, FS-confined, resource-capped child
+    that imports the module, builds the probe, certifies, and lookahead-scans it — so
+    none of that untrusted code runs in the trusted parent. Returns
+    ``{ok, type_name, default_params, canonical_params, asset, certified, cert_error,
+    lookahead_blocked, lookahead_reason}`` on success, or ``{ok: False, error}``.
+    Raises :class:`StrategyWorkerError` on timeout / no result (fail closed)."""
+    with tempfile.TemporaryDirectory(prefix="forven_validate_") as tmp:
+        workdir = Path(tmp)
+        (workdir / "request.json").write_text(
+            json.dumps({"module_name": str(module_name)}), encoding="utf-8"
+        )
+        env = _build_worker_env()
+        proc = subprocess.Popen(
+            [PYTHON_EXE, "-m", "forven.sandbox.strategy_worker", "--validate", str(workdir)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=str(REPO_ROOT),
+            preexec_fn=(None if IS_WINDOWS else _build_posix_preexec(PERSISTENT_MAX_MEMORY_MB)),
+        )
+        job = kernel32 = None
+        if IS_WINDOWS:
+            job, kernel32 = _create_windows_job_object(PERSISTENT_MAX_MEMORY_MB)
+            if job and kernel32:
+                _assign_pid_to_job(job, kernel32, proc.pid)
+        try:
+            _, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
+            _close_job(job, kernel32)
+            raise StrategyWorkerError(
+                f"isolated validation of {module_name!r} timed out after {timeout}s"
+            )
+        finally:
+            _close_job(job, kernel32)
+
+        result_path = workdir / "result.json"
+        if not result_path.exists():
+            tail = (stderr or "").strip()[-1500:]
+            raise StrategyWorkerError(
+                f"isolated validation of {module_name!r} produced no result"
+                + (f": {tail}" if tail else "")
+            )
+        try:
+            return json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise StrategyWorkerError(
+                f"isolated validation of {module_name!r} returned malformed result: {exc}"
+            ) from exc
+
+
 def _read_status_error(workdir: Path) -> str:
     try:
         status = json.loads((workdir / "status.json").read_text(encoding="utf-8"))
@@ -506,5 +680,7 @@ def _read_and_validate_signals(out_path: Path, index: pd.Index, strategy_type: s
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--serve":
         raise SystemExit(_serve())
+    if len(sys.argv) > 2 and sys.argv[1] == "--validate":
+        raise SystemExit(_run_validate(Path(sys.argv[2])))
     _wd = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
     raise SystemExit(_run_worker(_wd))

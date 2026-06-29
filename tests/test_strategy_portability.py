@@ -244,22 +244,20 @@ def test_code_class_round_trip_registers_on_fresh_machine(forven_db, monkeypatch
     importlib.invalidate_caches()
     assert not strategy_file.exists()
 
+    # SECURITY (2026-06-29 audit, R1): code-bundled import is DISABLED until the
+    # untrusted lifecycle runs out-of-process. Importing must reject WITHOUT writing
+    # the file or executing the author's code, not recreate the container.
     result = lifecycle.import_strategy_container(env)
 
-    assert result["ok"] is True, result.get("error")
-    new_id = result["strategy_id"]
-    assert new_id and new_id != source_id
-    assert result["stage"] == "quick_screen"
-    # The source file was rewritten and the container recreated.
-    assert strategy_file.exists()
+    assert result["ok"] is False
+    assert result.get("requires_code_execution") is True
+    assert "disabled" in result["error"].lower()
+    assert not strategy_file.exists()  # nothing written, nothing executed
     with get_db() as conn:
         row = conn.execute(
-            "SELECT type, source, stage FROM strategies WHERE id = ?", (new_id,)
+            "SELECT COUNT(*) AS c FROM strategies WHERE type = ?", (type_name,)
         ).fetchone()
-    assert row is not None
-    assert row["type"] == type_name
-    assert row["source"] == "import"
-    assert row["stage"] == "quick_screen"
+    assert row["c"] == 0
 
 
 def test_code_class_round_trip_handles_string_strategy_class(forven_db, monkeypatch, tmp_path):
@@ -290,20 +288,19 @@ def test_code_class_round_trip_handles_string_strategy_class(forven_db, monkeypa
     sys.modules.pop(f"forven.strategies.custom.{type_name}", None)
     importlib.invalidate_caches()
 
+    # The string-STRATEGY_CLASS slip is now moot: code-bundled import is rejected
+    # before the file is ever written or parsed (R1).
     result = lifecycle.import_strategy_container(env)
 
-    assert result["ok"] is True, result.get("error")
-    assert result["stage"] == "quick_screen"
-    assert strategy_file.exists()
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT type, source FROM strategies WHERE id = ?", (result["strategy_id"],)
-        ).fetchone()
-    assert row["type"] == type_name
-    assert row["source"] == "import"
+    assert result["ok"] is False
+    assert result.get("requires_code_execution") is True
+    assert not strategy_file.exists()
 
 
-def test_code_class_import_rejects_unsafe_source(forven_db, monkeypatch, tmp_path):
+def test_code_class_import_rejected_until_sandbox(forven_db, monkeypatch, tmp_path):
+    # R1: ANY code-bundled import is refused (the code never runs / is never even
+    # written), regardless of whether the bundled source is "obviously" unsafe — the
+    # AST guard is not the boundary, so we do not execute author code at all yet.
     _isolate_custom_dir(monkeypatch, tmp_path)
     env = {
         "forven_export": {"kind": "strategy_container", "version": "1.0", "source_strategy_id": "S1"},
@@ -315,9 +312,9 @@ def test_code_class_import_rejects_unsafe_source(forven_db, monkeypatch, tmp_pat
         },
     }
 
-    with pytest.raises(HTTPException) as exc:
-        lifecycle.import_strategy_container(env)
+    result = lifecycle.import_strategy_container(env)
 
-    assert exc.value.status_code == 400
-    # Nothing unsafe should have been written to the custom dir.
+    assert result["ok"] is False
+    assert result.get("requires_code_execution") is True
+    # Nothing was written to the custom dir and nothing executed.
     assert not (tmp_path / "custom" / "evil_strat.py").exists()

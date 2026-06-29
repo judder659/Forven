@@ -1683,13 +1683,45 @@ def import_strategy_container(payload: object) -> dict:
             "only the strategy definition was recreated."
         )
 
-    # Code-class strategies bundle their source file. Re-register it through the
-    # intake security pipeline (AST scan + banned-import gate + lookahead probe)
-    # so the runtime class exists on this machine; param-family strategies skip
-    # this and are recreated from params alone.
+    # Code-class strategies bundle their source file.
+    #
+    # SECURITY (2026-06-29 strategy-import-RCE audit, R1): importing a strategy that
+    # bundles custom Python runs the AUTHOR'S code in this trusted process — module
+    # top-level + __init__ + the lookahead probe all execute in-process during
+    # registration, with os.environ secrets, the decrypted Fernet key, exchange
+    # creds, and the DB reachable. The AST guard (hardened in the same audit) is
+    # defense-in-depth, NOT a trust boundary, and the confused-deputy channel
+    # (allowlisted forven.scanner/data/data_manager) needs no guard bypass at all.
+    # Until that lifecycle runs OUT-OF-PROCESS (docs/strategy-share-security-audit-
+    # 2026-06-29.md, R2), refuse to execute shared code. Param/registry-type
+    # strategies are reconstructed from their definition below and are unaffected.
     source_code = payload.get("source_code") if isinstance(payload.get("source_code"), dict) else None
     if source_code and str(source_code.get("content") or "").strip():
-        return _import_code_strategy(source_code, source_id, warnings)
+        try:
+            log_activity(
+                "warning",
+                "strategy_import",
+                "Rejected a code-bundled strategy import — code execution is disabled "
+                "until sandboxed execution ships",
+                {
+                    "source_strategy_id": source_id or None,
+                    "module": str(source_code.get("module_name") or ""),
+                },
+            )
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "error": (
+                "This export bundles custom strategy code, which can't be imported "
+                "safely yet: importing it would run the author's Python on your "
+                "machine. Code-bundled import is disabled until sandboxed execution "
+                "ships. Param/registry-type strategies still import normally."
+            ),
+            "warnings": warnings,
+            "source_strategy_id": source_id or None,
+            "requires_code_execution": True,
+        }
 
     body = LifecycleCreateBody(
         name=name or None,

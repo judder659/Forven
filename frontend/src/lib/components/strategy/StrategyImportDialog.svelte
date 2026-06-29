@@ -208,8 +208,11 @@
 							</div>
 						</div>
 						{#if parsed.summary.hasCode}
-							<div class="mt-2 text-[10px] text-emerald-300/80">
-								Bundled custom code will be security-scanned and registered before the container is created.
+							<div class="mt-2 rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1.5 text-[10px] text-amber-300/90">
+								<span class="font-semibold">Code-bundled import is disabled (security).</span>
+								Importing a strategy that carries custom code would run the author's Python
+								on your machine. This is blocked until sandboxed execution ships — only
+								param/registry-type strategies can be imported for now.
 							</div>
 						{/if}
 						{#if parsed.summary.backtests > 0 || parsed.summary.trades > 0 || parsed.summary.events > 0}
@@ -234,10 +237,13 @@
 					type="button"
 					data-testid="strategy-import-submit"
 					class="rounded border border-sky-700 bg-sky-950/30 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200 transition hover:bg-sky-900/40 disabled:opacity-40"
-					disabled={!parsed || importing}
+					disabled={!parsed || importing || parsed.summary.hasCode}
+					title={parsed?.summary.hasCode
+						? 'Code-bundled import is disabled until sandboxed execution ships'
+						: undefined}
 					on:click={() => void runImport()}
 				>
-					{importing ? 'Importing…' : 'Import as new container'}
+					{importing ? 'Importing…' : parsed?.summary.hasCode ? 'Code import disabled' : 'Import as new container'}
 				</button>
 			</div>
 		{/if}

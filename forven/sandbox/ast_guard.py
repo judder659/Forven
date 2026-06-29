@@ -23,9 +23,30 @@ execution (Phase 2, see docs/security-hardening-plan.md).
 from __future__ import annotations
 
 import ast
+import codecs
+import io
+import re
+import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+# OHLCV column names a strategy legitimately indexes/getattrs (``df['open']``,
+# ``getattr(row, 'close')``). They are carved OUT of the dynamic-access denylists
+# below so the new subscript/getattr hardening never false-flags real strategies.
+_OHLCV_NAMES: frozenset[str] = frozenset(
+    {"open", "high", "low", "close", "volume", "vwap", "funding", "oi"}
+)
+
+# PEP 263 source-encoding cookie. Mirrors CPython's tokenizer regex
+# (Lib/tokenize.py ``cookie_re``) so the guard rejects every cookie the
+# interpreter would actually honor. The scan/compile differential (the guard
+# parses a decoded ``str`` where ``ast.parse`` IGNORES the cookie, while
+# importlib compiles the on-disk BYTES and HONORS it) was a confirmed in-process
+# RCE — utf-7/unicode_escape re-decode a benign-looking comment into live code.
+# Fix: refuse any source whose declared encoding is not a plain utf-8/ascii.
+_CODING_COOKIE_RE = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
+_SAFE_SOURCE_ENCODINGS: frozenset[str] = frozenset({"utf-8", "utf-8-sig", "ascii"})
 
 # Hard caps. Configurable via forven.config.sandbox in a later phase.
 MAX_FILE_BYTES: int = 100 * 1024  # 100 KB
@@ -117,7 +138,33 @@ _TRAVERSAL_BLOCK: frozenset[str] = frozenset(
         "pty",
         "multiprocessing",
         "popen",
+        # Native-FFI / build / shell submodules that live INSIDE allowlisted libs
+        # (numpy.ctypeslib -> ctypes.CDLL; numpy.distutils.exec_command -> shell;
+        # numpy.f2py.compile -> native build). The import allowlist only checks the
+        # top package, and these are reachable as plain attributes (``np.ctypeslib``)
+        # — block both the attribute hop and the dotted import (see _DENY_SUBMODULES).
+        "ctypeslib",
+        "distutils",
+        "f2py",
     }
+)
+
+# Dotted submodules of an ALLOWLISTED top package that are still forbidden: they
+# wrap native-code loaders, shell helpers, or pickle/IO that an OHLCV strategy
+# never needs. The import gate checks the top package only, so reject these by
+# full dotted prefix as well (confirmed gadgets: numpy.distutils.exec_command,
+# numpy.ctypeslib.load_library, numpy.f2py.compile).
+_DENY_SUBMODULES: tuple[str, ...] = (
+    "numpy.distutils",
+    "numpy.f2py",
+    "numpy.ctypeslib",
+    "numpy.testing",
+    "numpy.core",
+    "scipy.io",
+    "scipy.weave",
+    "scipy.misc",
+    "sklearn.externals",
+    "pandas.io.clipboard",
 )
 
 
@@ -128,7 +175,14 @@ def _module_import_allowed(dotted: str) -> bool:
         return False
     if name.split(".")[0] == "forven":
         return any(name == p or name.startswith(p + ".") for p in ALLOWED_FORVEN_PREFIXES)
-    return name.split(".")[0] in ALLOWED_IMPORTS
+    if name.split(".")[0] not in ALLOWED_IMPORTS:
+        return False
+    # Top package is allowlisted, but a dangerous submodule is not (the gate must
+    # validate the FULL dotted path, not just split('.')[0]).
+    for bad in _DENY_SUBMODULES:
+        if name == bad or name.startswith(bad + "."):
+            return False
+    return True
 
 FORBIDDEN_CALLS: frozenset[str] = frozenset(
     {
@@ -169,6 +223,37 @@ FORBIDDEN_ATTRS: frozenset[str] = frozenset(
         "__import__",
         "__loader__",
         "__self__",
+        # Frame / generator / coroutine / async-gen / traceback introspection.
+        # A confirmed bypass reached the live builtins via
+        # ``(x for x in [1]).gi_frame.f_builtins['exec']`` and read the trusted
+        # PARENT frame's secrets via ``err.__traceback__.tb_frame.f_back.f_locals``.
+        # None of these are touched by an honest indicator strategy.
+        "gi_frame",
+        "gi_code",
+        "cr_frame",
+        "cr_code",
+        "ag_frame",
+        "ag_code",
+        "tb_frame",
+        "tb_next",
+        "f_back",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "f_code",
+        "__traceback__",
+        # Reflection dunders that reach class internals / re-create callables /
+        # unwrap decorators / expose function defaults — all gadget-chain hops a
+        # pure-computation strategy never needs. (``__dict__`` is intentionally NOT
+        # blocked: real strategies read ``StrategyParams().__dict__`` for defaults,
+        # and it is not load-bearing for any confirmed escape now that the frame
+        # attrs + __globals__/__builtins__ hops are blocked.)
+        "__reduce__",
+        "__reduce_ex__",
+        "__wrapped__",
+        "__func__",
+        "__defaults__",
+        "__kwdefaults__",
     }
 )
 
@@ -228,6 +313,21 @@ FORBIDDEN_CALL_ATTRS: frozenset[str] = frozenset(
         "posix_spawnp",
         "getenv",
         "putenv",
+        # Native-code loaders / FFI / build-shell gadgets reachable off allowlisted
+        # numeric libs (numpy.ctypeslib.load_library, ctypes.CDLL via ctypeslib,
+        # numpy.distutils.exec_command, numpy.f2py.compile). An honest strategy
+        # never loads a shared library or shells out a compiler.
+        "load_library",
+        "LoadLibrary",
+        "CDLL",
+        "WinDLL",
+        "OleDLL",
+        "PyDLL",
+        "cdll",
+        "windll",
+        "oledll",
+        "dlopen",
+        "exec_command",
     }
 )
 
@@ -269,6 +369,22 @@ FORBIDDEN_METHOD_NAMES: frozenset[str] = frozenset(
         "memmap",
         "savetxt",
         "fromregex",
+        # WRITE serializers the old denylist forgot. ndarray.tofile gives byte-exact
+        # arbitrary file write; the pandas to_* text writers all accept a path. A
+        # confirmed finding overwrote the never-scanned custom/__init__.py via
+        # ``np.frombuffer(...).tofile(__file__...)`` -> persistent RCE on restart. A
+        # strategy operates on the frame it is GIVEN; it never serializes to disk.
+        "to_csv",
+        "to_json",
+        "to_html",
+        "to_markdown",
+        "to_latex",
+        "to_xml",
+        "to_excel",
+        "save",
+        "savez",
+        "savez_compressed",
+        "tofile",
     }
 )
 
@@ -301,13 +417,62 @@ FORBIDDEN_NAME_LOADS: frozenset[str] = frozenset(
     }
 )
 
+# String constants that must never be the key of a getattr/setattr/delattr/hasattr.
+# The old check only blocked dunders in FORBIDDEN_ATTRS, so getattr(m, 'os') /
+# getattr(m, 'subprocess') / getattr(m, 'system') / getattr(m, 'environ') all
+# passed and reached the real module/builtin (confirmed bypass). Now reject every
+# dangerous name, MINUS the OHLCV column names a strategy legitimately getattrs.
+_FORBIDDEN_GETATTR_STR: frozenset[str] = frozenset(
+    (
+        FORBIDDEN_ATTRS
+        | _TRAVERSAL_BLOCK
+        | FORBIDDEN_CALL_ATTRS
+        | FORBIDDEN_METHOD_NAMES
+        | FORBIDDEN_NAMES
+        | {"__builtins__", "environ", "modules", "builtins"}
+    )
+    - _OHLCV_NAMES
+)
+
+# String constants that are never a legitimate subscript key (``d['__globals__']``,
+# ``builtins_dict['exec']``). Kept DELIBERATELY narrow — only dunder-form keys and
+# the three pure-exec builtins — so it can never collide with an OHLCV/data column
+# name like ``df['open']`` or ``df['close']``. Defense-in-depth behind the frame-attr
+# and __builtins__-name blocks, which already kill the known chains.
+_DANGEROUS_SUBSCRIPT_KEYS: frozenset[str] = frozenset({"exec", "eval", "compile"})
+
 FindingKind = Literal[
     "forbidden_import",
     "dynamic_exec",
+    "forbidden_encoding",
     "file_too_large",
     "too_many_lines",
     "syntax_error",
 ]
+
+
+def _offending_source_encoding(source: str) -> str | None:
+    """Return the declared NON-utf8/ascii source encoding (PEP 263 cookie), or None.
+
+    CPython's tokenizer honors a ``# coding: <enc>`` cookie on line 1 or 2 (and a
+    UTF-8 BOM); ``ast.parse`` on an already-decoded ``str`` does NOT. So a guard
+    that scans the decoded str sees a benign comment while importlib re-decodes the
+    file bytes under the cookie and runs different code. Honest strategy files are
+    plain utf-8/ascii, so any other declared codec is rejected outright.
+    """
+    body = source[1:] if source[:1] == "\ufeff" else source
+    for line in body.split("\n", 2)[:2]:
+        match = _CODING_COOKIE_RE.match(line)
+        if not match:
+            continue
+        declared = match.group(1)
+        try:
+            normalized = codecs.lookup(declared).name.replace("_", "-").lower()
+        except Exception:
+            return declared  # unknown codec — reject (the loader would too)
+        if normalized not in _SAFE_SOURCE_ENCODINGS:
+            return declared
+    return None
 
 
 @dataclass
@@ -440,6 +605,19 @@ class _GuardVisitor(ast.NodeVisitor):
                     ):
                         self._add(node, "Forbidden call: '.load(..., allow_pickle=...)' (pickle deserialization)")
                         break
+            elif func.attr == "query":
+                # pandas DataFrame.query(engine='python') routes an attacker string
+                # through the python evaluator (attribute reads + method calls), a
+                # confirmed RCE gadget hidden in an opaque string the AST can't see.
+                # (.eval is already blocked as a FORBIDDEN_CALL_ATTR.)
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "engine"
+                        and isinstance(kw.value, ast.Constant)
+                        and kw.value.value == "python"
+                    ):
+                        self._add(node, "Forbidden call: '.query(..., engine=\"python\")' (python-engine eval)")
+                        break
 
         # Bare getattr/setattr/delattr with a NON-constant attribute key is the
         # dynamic-attribute escape primitive (e.g. getattr(b, 'ev'+'al')). The
@@ -517,7 +695,7 @@ class _GuardVisitor(ast.NodeVisitor):
                 if (
                     isinstance(_arg, ast.Constant)
                     and isinstance(_arg.value, str)
-                    and (_arg.value in FORBIDDEN_ATTRS or _arg.value == "__builtins__")
+                    and _arg.value in _FORBIDDEN_GETATTR_STR
                 ):
                     self.findings.append(
                         Finding(
@@ -561,6 +739,24 @@ class _GuardVisitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        # A constant dunder/exec-name subscript key is builtins-dict access reached
+        # without a blocked Name/Attribute (``some_dict['exec'](...)``). Narrowly
+        # scoped (dunder-form or exec/eval/compile) so it never collides with an
+        # OHLCV column key like ``df['open']``. Defense-in-depth behind the
+        # f_builtins / __builtins__ blocks.
+        key = node.slice
+        if (
+            isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+            and (
+                (key.value.startswith("__") and key.value.endswith("__"))
+                or key.value in _DANGEROUS_SUBSCRIPT_KEYS
+            )
+        ):
+            self._add(node, f"Forbidden subscript key: [{key.value!r}] (builtins/dunder access)")
+        self.generic_visit(node)
+
 
 def scan_source(source: str, file_size_bytes: int = 0) -> AstReport:
     """Scan a Python source string. *file_size_bytes* is reported as-given;
@@ -573,6 +769,26 @@ def scan_source(source: str, file_size_bytes: int = 0) -> AstReport:
     )
 
     findings: list[Finding] = []
+
+    # PEP 263 coding-cookie / BOM smuggling: the interpreter compiles the file
+    # BYTES under the declared codec, but this guard parses the decoded str (which
+    # ignores the cookie). Refuse any non-utf8/ascii source encoding so the program
+    # we scan is the program that runs (confirmed utf-7/unicode_escape RCE).
+    offending_enc = _offending_source_encoding(source)
+    if offending_enc is not None:
+        findings.append(
+            Finding(
+                kind="forbidden_encoding",
+                lineno=1,
+                col=0,
+                message=(
+                    f"Forbidden source-encoding declaration: '{offending_enc}'. "
+                    "Only utf-8/ascii is allowed (a coding cookie lets the "
+                    "interpreter compile different bytes than were scanned)."
+                ),
+                node_repr="",
+            )
+        )
 
     if file_size_bytes > MAX_FILE_BYTES:
         findings.append(
@@ -642,12 +858,44 @@ def scan_source(source: str, file_size_bytes: int = 0) -> AstReport:
 
 
 def scan_file(path: Path | str) -> AstReport:
-    """Read *path* and scan it. UTF-8 with latin-1 fallback so we never
-    raise UnicodeDecodeError out of the guard."""
+    """Read *path* and scan EXACTLY the bytes the interpreter would compile.
+
+    Detect the source encoding from the raw bytes the same way CPython's loader
+    does (``tokenize.detect_encoding`` honors the PEP 263 cookie + BOM), reject any
+    non-utf8/ascii encoding, then decode under the detected codec so the scanned
+    program equals the compiled program. No silent latin-1 fallback — an
+    undecodable file is rejected, not reinterpreted."""
     p = Path(path)
     raw = p.read_bytes()
     try:
-        source = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        source = raw.decode("latin-1")
+        detected, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+    except SyntaxError as exc:
+        return AstReport(
+            ok=False,
+            findings=[Finding("forbidden_encoding", 1, 0, f"Undecodable source: {exc}", "")],
+            file_size_bytes=len(raw),
+        )
+    normalized = detected.replace("_", "-").lower()
+    if normalized not in _SAFE_SOURCE_ENCODINGS:
+        return AstReport(
+            ok=False,
+            findings=[
+                Finding(
+                    "forbidden_encoding",
+                    1,
+                    0,
+                    f"Forbidden source encoding '{detected}' — only utf-8/ascii allowed.",
+                    "",
+                )
+            ],
+            file_size_bytes=len(raw),
+        )
+    try:
+        source = raw.decode(detected)
+    except UnicodeDecodeError as exc:
+        return AstReport(
+            ok=False,
+            findings=[Finding("forbidden_encoding", 1, 0, f"Undecodable source: {exc}", "")],
+            file_size_bytes=len(raw),
+        )
     return scan_source(source, file_size_bytes=len(raw))

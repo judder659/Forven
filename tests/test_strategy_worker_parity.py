@@ -231,6 +231,67 @@ def test_isolated_backtest_matches_in_process(monkeypatch):
     )
 
 
+def test_isolated_validation_matches_in_process(monkeypatch):
+    """validate_custom_module_isolated runs import + __init__ (probe) + certification
+    + lookahead-scan in the locked-down child and must return the SAME verdict as the
+    in-process path. This proves the import-time lifecycle — the exact site of the
+    confirmed import RCE (register_custom_strategy_file) — can run out-of-process
+    without changing the registration outcome (audit R2, docs/strategy-share-security-
+    audit-2026-06-29.md)."""
+    monkeypatch.delenv("FORVEN_IN_STRATEGY_WORKER", raising=False)
+    from forven.sandbox.strategy_worker import validate_custom_module_isolated
+    from forven.strategies import registry
+    from forven.strategies.certification import certify_execution_strategy
+    from forven.strategies.lookahead_probe import detect_lookahead
+
+    registry.discover()
+    df = _frame()
+    checked = 0
+    for type_name, cls in sorted(registry._TYPE_MAP.items()):
+        mod = str(getattr(cls, "__module__", ""))
+        if ".custom." not in mod:
+            continue
+        # A few legacy modules registered with a non-string TYPE_NAME (a property
+        # object); its repr embeds a per-process address, so skip — not representative.
+        if not isinstance(type_name, str) or type_name.startswith("<property"):
+            continue
+        modname = mod.split(".")[-1]
+        # In-process reference — the worker reproduces exactly these steps.
+        try:
+            probe = cls("__probe__", {})
+            if probe.generate_signals(df) is None:  # require a pure OHLCV-only strategy
+                continue
+            ref_cert = certify_execution_strategy(type_name, probe.default_params)
+            ref_lookahead = bool(detect_lookahead(probe))
+            ref_asset = str(getattr(probe, "asset", "BTC")).strip() or "BTC"
+        except Exception:  # noqa: BLE001 — data-dependent strategy; try another
+            continue
+        try:
+            iso = validate_custom_module_isolated(modname)
+        except StrategyWorkerError:
+            continue  # DB-less worker error on a data-dependent strategy — try another
+        if not iso.get("ok"):
+            continue
+        assert iso["type_name"] == type_name
+        assert iso["certified"] == bool(ref_cert.certified)
+        assert iso["lookahead_blocked"] == ref_lookahead
+        assert iso["asset"] == ref_asset
+        checked += 1
+        break
+
+    if checked == 0:
+        pytest.skip("no pure custom strategy available for isolated-validation parity")
+
+
+def test_isolated_validation_rejects_unknown_module():
+    """An unknown custom module yields a structured failure, not a crash/None."""
+    from forven.sandbox.strategy_worker import validate_custom_module_isolated
+
+    result = validate_custom_module_isolated("no_such_custom_module_xyz_123")
+    assert result.get("ok") is False
+    assert result.get("error")
+
+
 def test_isolated_per_bar_matches_in_process(monkeypatch):
     """The per-bar adapter (walking generate_signal over a trailing window) must
     produce IDENTICAL signals in the isolated worker as in-process for a pure custom

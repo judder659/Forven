@@ -62,6 +62,47 @@ BYPASS_PAYLOADS = {
     "forven_db_blocked": "from forven.db import get_db\n",
     "forven_secret_blocked": "from forven.secret_storage import decrypt_secret\n",
     "forven_config_blocked": "import forven.config\n",
+    # ------------------------------------------------------------------
+    # 2026-06-29 strategy-import-RCE audit: confirmed bypasses reproduced
+    # against the real guard. Each PASSED scan_source before the hardening
+    # and then reached RCE / secret-read / file-write on the import path.
+    # ------------------------------------------------------------------
+    # CRIT-1: PEP 263 source-encoding cookie (scan/compile byte-view split).
+    "coding_cookie_utf7": "# coding: utf-7\nimport pandas as pd\n",
+    "coding_cookie_unicode_escape": "# -*- coding: unicode_escape -*-\nimport pandas as pd\n",
+    "coding_cookie_raw_unicode_escape": "#!/usr/bin/env python\n# coding: raw_unicode_escape\nimport numpy as np\n",
+    "coding_cookie_fileencoding_alias": "# vim: set fileencoding=utf-7 :\nimport pandas as pd\n",
+    "coding_cookie_utf16": "# coding: utf-16\nimport pandas as pd\n",
+    # CRIT-3: frame / generator / coroutine / traceback introspection -> builtins.
+    "gi_frame_f_builtins_exec": "g = (x for x in [1])\ng.gi_frame.f_builtins['exec']('x=1')\n",
+    "gi_frame_f_globals": "g = (x for x in [1])\n_ = g.gi_frame.f_globals\n",
+    "tb_frame_f_back_locals": (
+        "try:\n    raise ValueError()\n"
+        "except ValueError as e:\n    _ = e.__traceback__.tb_frame.f_back.f_locals\n"
+    ),
+    # CRIT-4: getattr constant-string indirection past the dunder-only check.
+    "getattr_builtins_exec": "import dataclasses\ngetattr(getattr(dataclasses, 'builtins'), 'exec')('x=1')\n",
+    "getattr_sklearn_os_system": "import sklearn\ngetattr(getattr(sklearn, 'os'), 'system')('id')\n",
+    "getattr_os_environ": "import sklearn\n_ = getattr(getattr(sklearn, 'os'), 'environ')\n",
+    "getattr_sys_modules": "import statistics\n_ = getattr(statistics, 'sys').modules\n",
+    "getattr_const_subprocess": "import pandas as pd\ngetattr(pd._config.localization, 'subprocess')\n",
+    # CRIT-5: allowlisted-library native gadgets / full-dotted-path import.
+    "numpy_distutils_exec_command": "import numpy.distutils.exec_command as h\nh.exec_command('id')\n",
+    "numpy_ctypeslib_import": "from numpy.ctypeslib import load_library\n",
+    "numpy_ctypeslib_attr": "import numpy as np\nnp.ctypeslib.load_library('m', '.')\n",
+    "numpy_f2py_import": "import numpy.f2py\n",
+    "pandas_query_python_engine": (
+        "import pandas as pd\n"
+        "def g(df):\n    return df.query('a.__class__', engine='python')\n"
+    ),
+    # CRIT-6: write-serializer file-write primitives (-> overwrite __init__.py).
+    "ndarray_tofile_self": "import numpy as np\nnp.frombuffer(b'x', np.uint8).tofile(__file__)\n",
+    "df_to_csv": "def g(df):\n    df.to_csv('x.csv')\n",
+    "df_to_json_path": "def g(df):\n    df.to_json('x.json')\n",
+    "np_save": "import numpy as np\nnp.save('x.npy', np.zeros(3))\n",
+    # Builtins-dict subscript callee.
+    "subscript_dunder_globals": "d = {}\n_ = d['__globals__']\n",
+    "subscript_exec_key": "d = {}\n_ = d['exec']\n",
 }
 
 LEGIT_PAYLOADS = {
@@ -108,6 +149,19 @@ LEGIT_PAYLOADS = {
     "forven_base_ok": "from forven.strategies.base import BaseStrategy, Signal\n",
     "forven_marketdata_ok": "from forven.market_data_view import get_ohlcv\n",
     "forven_scanner_helper_ok": "from forven.scanner import compute_atr\n",
+    # 2026-06-29 hardening must NOT regress these real corpus idioms.
+    "ohlcv_subscript_open": "def g(df):\n    return df['open'] + df['close'] - df['low']\n",
+    "dataclass_params_dict": (
+        "from dataclasses import dataclass\n"
+        "@dataclass\n"
+        "class StrategyParams:\n    span: int = 14\n"
+        "def defaults():\n    return StrategyParams().__dict__\n"
+    ),
+    "getattr_const_column_ok": "def pick(row):\n    return getattr(row, 'close')\n",
+    "utf8_coding_cookie_ok": "# -*- coding: utf-8 -*-\nimport pandas as pd\n",
+    "numpy_random_submodule_ok": "import numpy as np\n_ = np.random.default_rng(0)\n",
+    "scipy_signal_submodule_ok": "from scipy import signal\n_ = signal.argrelextrema\n",
+    "to_dict_in_memory_ok": "def g(df):\n    return df.tail().to_dict()\n",
 }
 
 
