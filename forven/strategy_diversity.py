@@ -49,16 +49,6 @@ FAMILY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("cross_asset", ("cross_asset", "cross-asset", "dominance", "relative_value", "relative value", "rotation")),
 )
 
-NON_RSI_SUGGESTIONS = (
-    "funding/carry dislocations",
-    "breakout/range expansion",
-    "volume or order-flow confirmation",
-    "cross-asset relative value",
-    "volatility compression/expansion",
-    "VWAP or execution microstructure",
-)
-
-
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -179,13 +169,12 @@ def render_strategy_diversity_guard(
         pct = round(float(item["share"]) * 100)
         lines.append(f"- {item['label']}: {item['count']}/{item['total']} recent strategies ({pct}%).")
 
-    saturated_families = {str(item["family"]) for item in saturated}
-    if "rsi" in saturated_families:
-        lines.append("- RSI is cooled down. Do not create another RSI/RSI-composite strategy unless the task explicitly requires RSI.")
-        lines.append("- Prefer non-RSI families: " + ", ".join(NON_RSI_SUGGESTIONS) + ".")
-    else:
-        labels = [str(item["label"]) for item in saturated[:3]]
-        lines.append("- Prefer families outside the saturated set: " + ", ".join(labels) + ".")
+    # Family-agnostic guidance: steer away from whichever families are saturated on
+    # THIS instance. (The old RSI-specific carve-out was a fossil from a past RSI
+    # flood and unfairly singled out one family — removed so every family is treated
+    # the same, driven purely by this instance's own saturation.)
+    labels = [str(item["label"]) for item in saturated[:3]]
+    lines.append("- Prefer families outside the saturated set: " + ", ".join(labels) + ".")
 
     if _normalize_text(task_description):
         lines.append(f"- Apply this guard while working on: {_normalize_text(task_description)[:240]}")

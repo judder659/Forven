@@ -34,8 +34,12 @@ def test_strategy_diversity_guard_detects_rsi_saturation(forven_db):
 
     assert stats["counts"]["rsi"] == 7
     assert "# STRATEGY DIVERSITY GUARD" in guard
-    assert "RSI is cooled down" in guard
-    assert "Do not create another RSI" in guard
+    # Family-agnostic: the guard still flags the saturated family (RSI here) and steers
+    # away from it, but the old hardcoded RSI-specific prohibition was removed so every
+    # family is treated identically, driven purely by this instance's own saturation.
+    assert "RSI / oscillator momentum" in guard
+    assert "Prefer families outside the saturated set" in guard
+    assert "Do not create another RSI" not in guard
 
 
 def test_strategy_diversity_guard_stays_quiet_when_balanced(forven_db):

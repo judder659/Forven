@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger("forven.agents.tools_research")
 
 
 # Every inspect_*/discover_* tool below eventually serializes bytes an LLM is
@@ -526,6 +529,57 @@ def _tool_create_hypothesis(params: dict) -> str:
                     "re-testing the same idea in the same regime will reach the same verdict."
                 ),
             })
+
+        # Graveyard-aware novelty: the title dedup above is literal, so it misses
+        # semantically-equivalent re-treads (the 30+ disproven SOL+EMA crucibles with
+        # differing titles). Discount the LLM's self-reported novelty by how many times
+        # this idea-cluster (family x asset) has already been DISPROVEN so a settled
+        # idea-space loses the novelty-ranked dispatch queue; optionally hard-block past
+        # a configurable threshold. Autonomous-only (operators are ungated); fail-open.
+        try:
+            from forven.hypotheses import (
+                disproven_cluster_count,
+                graveyard_novelty_factor,
+                total_hypothesis_count,
+            )
+
+            _disc = get_hypothesis_discipline_settings()
+            if total_hypothesis_count() >= int(_disc["novelty_graveyard_min_total"]):
+                _dcount = disproven_cluster_count(
+                    title=str(params.get("title") or ""),
+                    market_thesis=str(params.get("market_thesis") or ""),
+                    mechanism=str(params.get("mechanism") or ""),
+                    target_assets=params.get("target_assets") or [],
+                )
+                _hard = int(_disc["novelty_graveyard_hard_block"])
+                if _hard > 0 and _dcount >= _hard:
+                    return json.dumps({
+                        "ok": False,
+                        "error_code": "disproven_cluster_saturated",
+                        "error": (
+                            f"This idea-cluster (family x asset) has already been disproven "
+                            f"{_dcount} times (>= novelty_graveyard_hard_block={_hard}). "
+                            "Re-testing it in the same regime will reach the same verdict."
+                        ),
+                        "disproven_cluster_count": _dcount,
+                        "guidance": (
+                            "Propose a materially different mechanism, or a different asset/regime, "
+                            "or pass derived_from_hypothesis_id to deliberately refine a named parent."
+                        ),
+                    })
+                _factor = graveyard_novelty_factor(
+                    _dcount, scale=float(_disc["novelty_graveyard_scale"])
+                )
+                if _factor < 1.0:
+                    _raw_nov = float(params.get("novelty_score", 0.0) or 0.0)
+                    params = {**params, "novelty_score": round(_raw_nov * _factor, 4)}
+                    logger.info(
+                        "hypothesis novelty graveyard-discounted %.3f -> %.3f "
+                        "(cluster disproven=%d, factor=%.3f)",
+                        _raw_nov, _raw_nov * _factor, _dcount, _factor,
+                    )
+        except Exception:
+            pass  # fail-open — never block creation on the graveyard check
 
         max_unrefined = int(get_hypothesis_discipline_settings()["max_unrefined_active"])
         unrefined = count_unstarted_active_hypotheses()

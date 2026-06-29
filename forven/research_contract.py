@@ -120,6 +120,20 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
         # within this many days — stops the re-mint/re-disprove churn loop. 0
         # disables the disproven-cooldown arm (active-pool dedup is always on).
         "disproven_dedup_lookback_days": 30,
+        # Graveyard-aware novelty (autonomous-only). The title dedup above is literal;
+        # it misses semantically-equivalent re-treads (e.g. the 30+ disproven SOL+EMA
+        # crucibles with differing titles). These discount the LLM's self-reported
+        # novelty by how many times the proposed idea-cluster (family x asset) has
+        # already been DISPROVEN, so a settled idea-space stops being scored novel and
+        # loses the dispatch queue. SOFT by default (downgrade); hard-block disabled.
+        #   scale: disproven count at which the novelty factor reaches 0.5.
+        #   min_total: don't penalize until the instance has this many hypotheses
+        #     (so small/new instances are never throttled).
+        #   hard_block: refuse the autonomous mint once the cluster has >= this many
+        #     disproven members; 0 disables the hard arm (soft downgrade only).
+        "novelty_graveyard_scale": 4.0,
+        "novelty_graveyard_min_total": 40,
+        "novelty_graveyard_hard_block": 0,
     },
 }
 
@@ -135,6 +149,9 @@ _HYPOTHESIS_DISCIPLINE_RANGES: dict[str, tuple[int | float, int | float]] = {
     "unstarted_ageout_days": (1, 365),
     "refine_in_flight_budget": (0, 10),
     "disproven_dedup_lookback_days": (0, 365),
+    "novelty_graveyard_scale": (1.0, 100.0),
+    "novelty_graveyard_min_total": (0, 5000),
+    "novelty_graveyard_hard_block": (0, 500),
 }
 
 

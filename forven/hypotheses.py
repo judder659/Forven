@@ -416,6 +416,87 @@ def _token_set_ratio(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / len(a | b)
 
 
+def total_hypothesis_count() -> int:
+    """Total hypotheses on this instance (any status). Used as the scale floor for
+    the graveyard-novelty penalty so a small/new instance is never penalized."""
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT COUNT(*) AS n FROM hypotheses").fetchone()
+        return int(row["n"] or 0)
+    except Exception:
+        return 0
+
+
+def disproven_cluster_count(
+    *,
+    title: str | None,
+    market_thesis: str | None = None,
+    mechanism: str | None = None,
+    target_assets: list[str] | None = None,
+    lookback_days: int | None = None,
+) -> int:
+    """Count DISPROVEN hypotheses in the same idea-cluster as a proposed one.
+
+    Cluster = (inferred strategy family) x (overlapping target asset) — coarse but
+    family-agnostic and graveyard-aware, so it catches semantically-equivalent
+    re-treads the title-token dedup misses (e.g. "SOL EMA Cross" vs "SOL EMA Pullback
+    (Refined)"; both are the SOL+EMA idea). Drives the autonomous novelty discount so
+    an idea-space disproven N times stops being scored as novel. Timeframe is NOT part
+    of the cluster — that's a parameter the crucible explores, not a separate idea.
+
+    Returns 0 when the family can't be inferred or no target asset is given (we can't
+    place it in a cluster). Fail-OPEN on any error — must never block creation.
+    """
+    try:
+        from forven.strategy_diversity import infer_strategy_family
+
+        family = infer_strategy_family(title, market_thesis, mechanism)
+        if family in ("", "other"):
+            return 0
+        assets = [str(a).strip().upper() for a in (target_assets or []) if str(a).strip()]
+        if not assets:
+            return 0  # no asset -> can't cluster; don't penalize
+        if lookback_days is None:
+            lookback_days = int(get_hypothesis_discipline_settings()["disproven_dedup_lookback_days"])
+
+        clauses = ["status = 'disproven'"]
+        sql_params: list[Any] = []
+        if int(lookback_days) > 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=int(lookback_days))).isoformat()
+            clauses.append("COALESCE(verdict_memo_at, updated_at, created_at) >= ?")
+            sql_params.append(cutoff)
+        asset_or = " OR ".join("UPPER(COALESCE(target_assets, '')) LIKE ?" for _ in assets)
+        clauses.append(f"({asset_or})")
+        sql_params.extend(f"%{a}%" for a in assets)
+        where = " AND ".join(clauses)
+        with get_db() as conn:
+            rows = conn.execute(
+                f"SELECT title, market_thesis, mechanism FROM hypotheses WHERE {where}",
+                tuple(sql_params),
+            ).fetchall()
+        return sum(
+            1
+            for r in rows
+            if infer_strategy_family(r["title"], r["market_thesis"], r["mechanism"]) == family
+        )
+    except Exception:
+        return 0
+
+
+def graveyard_novelty_factor(disproven_count: int, *, scale: float) -> float:
+    """Multiplicative novelty discount for a proposed hypothesis given how many times
+    its idea-cluster has already been disproven. 0 disproven -> 1.0 (no penalty); the
+    factor falls off and saturates: factor = 1 / (1 + count/scale) (count==scale ->
+    0.5). Soft by design — a discounted score just loses the novelty-ranked dispatch
+    queue and gets evicted by pool pressure, rather than being hard-refused."""
+    try:
+        d = max(0, int(disproven_count))
+        s = max(1e-9, float(scale))
+        return 1.0 / (1.0 + d / s)
+    except Exception:
+        return 1.0
+
+
 def find_duplicate_hypothesis(
     title: str,
     *,
