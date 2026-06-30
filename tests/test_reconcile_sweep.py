@@ -330,6 +330,69 @@ def test_local_only_paper_trade_closed_as_local_paper_close(monkeypatch, forven_
     assert sd["close_incomplete"] is False
 
 
+def test_local_paper_trade_without_price_closes_at_mark_not_incomplete(monkeypatch, forven_db):
+    """The E0006-E0016 bug: a local paper trade marked pending-close with NO usable exit price
+    (an exchange-close path was attempted but returned no fill, so every pending price key and
+    the signal_exit_price are None) was closed INCOMPLETE — status CLOSED with no exit_price/pnl,
+    dropping it from the equity curve and the promotion gate. The fix prices it at the current
+    mark (a local paper trade never reached an exchange, so it can always be priced) → a real,
+    COMPLETE close. Exchange must never be consulted for a local-only paper trade."""
+    _insert_trade(
+        "T-PAPER-NOPRICE",
+        asset="BTC",
+        direction="long",
+        execution_type="paper",
+        entry_price=100.0,
+        signal_exit_price=None,          # nothing recorded to fall back to
+        signal_data=_aged_pending(),
+    )
+    monkeypatch.setattr(scanner_mod, "_load_live_price_cache", lambda: ({"BTC": 110.0}, 1.0))
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("exchange must not be consulted for local-only paper trades")
+
+    monkeypatch.setattr(hl_mod, "get_positions", _boom)
+    monkeypatch.setattr(hl_mod, "close_position", _boom)
+
+    summary = scanner_mod.sweep_pending_close_reconcile()
+
+    assert summary["results"][0]["outcome"] == "closed_locally_paper_local"
+    trade = _get_trade("T-PAPER-NOPRICE")
+    assert trade["status"] == "CLOSED"
+    sd = json.loads(trade["signal_data"])
+    assert sd["close_incomplete"] is False               # the fix: COMPLETE, not incomplete
+    assert trade["exit_price"] == 110.0                  # priced at the current (live-cache) mark
+    assert trade["pnl_pct"] is not None                  # real PnL, not dropped from the gate
+
+
+def test_local_paper_trade_without_price_or_mark_closes_at_entry(monkeypatch, forven_db):
+    """No pending price, no signal_exit, and no live mark → close at the recorded entry
+    (a neutral, COMPLETE 0-PnL close) rather than incomplete. A paper trade can always be priced."""
+    _insert_trade(
+        "T-PAPER-ENTRY",
+        asset="BTC",
+        execution_type="paper",
+        entry_price=100.0,
+        signal_exit_price=None,
+        signal_data=_aged_pending(),
+    )
+    monkeypatch.setattr(scanner_mod, "_load_live_price_cache", lambda: ({}, None))
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("exchange must not be consulted for local-only paper trades")
+
+    monkeypatch.setattr(hl_mod, "get_positions", _boom)
+    monkeypatch.setattr(hl_mod, "close_position", _boom)
+
+    summary = scanner_mod.sweep_pending_close_reconcile()
+
+    trade = _get_trade("T-PAPER-ENTRY")
+    assert trade["status"] == "CLOSED"
+    sd = json.loads(trade["signal_data"])
+    assert sd["close_incomplete"] is False               # COMPLETE, never stranded
+    assert trade["exit_price"] == 100.0                  # entry → neutral 0-PnL close
+
+
 def test_paper_trade_with_exchange_order_id_is_reconciled_normally(monkeypatch, forven_db):
     """A paper trade that DID reach the exchange (carries an order id) is not
     local-only and goes through normal exchange reconciliation."""

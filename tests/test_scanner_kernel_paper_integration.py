@@ -1,11 +1,17 @@
-"""Integration: the live scanner's kernel-driven paper path persists trades that
-match the backtest.
+"""Integration: the live scanner's kernel-driven paper path FILLS NOW (mirrors live).
 
 Drives ``scanner.manage_positions_via_kernel`` bar-by-bar against a REAL (temp) DB —
-exactly how the scan loop calls it — and asserts the recorded paper trades equal the
-backtest's, including the net PnL stored on each closed trade. This verifies the whole
-wiring on top of the already-proven parity logic: config resolution, candle fetch,
-reconcile, persistence (open/close/fill), and the net-PnL override.
+exactly how the scan loop calls it — and asserts the recorded paper trades are FILL-NOW
+entries: opened at the current mark + wall-clock now (strictly AFTER the kernel's historical
+signal bar, never back-stamped onto it), each mapping to a real backtest signal bar, with
+CLOSED trades flagged equity-fraction so the promotion gate counts them. Verifies the whole
+wiring: config resolution, candle fetch, reconcile (freshness-bounded fill-now), persistence
+(open/close/fill), and the gate-eligible net-PnL override.
+
+(Paper no longer reproduces the backtest trade-for-trade: a real order fills at the live mark
+when the signal is detected, not at the historical next-bar open — see
+paper-backstamp-vs-live-fillnow. The pure-kernel BACKTEST parity stays covered by
+tests/test_execution_parity.py and tests/test_per_bar_kernel_adapter.py.)
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ def _frame(n: int = 420, seed: int = 4) -> pd.DataFrame:
     )
 
 
-def test_kernel_paper_path_persists_trades_matching_backtest(forven_db, monkeypatch):
+def test_kernel_paper_path_fills_now_not_backstamped(forven_db, monkeypatch):
     import forven.scanner as scanner
 
     strat_id = "PAPER-RSI-1"
@@ -62,16 +68,22 @@ def test_kernel_paper_path_persists_trades_matching_backtest(forven_db, monkeypa
 
     df = _frame()
 
-    # Drive the scanner's candle fetch from a growing prefix (one new closed bar per
-    # cycle), and keep enrich/trim as identity so the kernel sees exactly our frame.
+    # Drive the scanner's candle fetch from a growing prefix (one new closed bar per cycle),
+    # keep enrich/trim identity, and ANCHOR get_now to just after the latest closed bar so a
+    # fill-now open is stamped contemporaneously with the data (production-faithful). Against
+    # real wall-clock these 2024 candles would all sit in the past, putting every fill-now
+    # open far in the future (the re-anchored monitor could never act); the anchor mirrors live.
     state = {"i": len(df)}
     monkeypatch.setattr(scanner, "fetch_candles", lambda coin, bars=300, interval="1h": df.iloc[: state["i"]].copy())
     monkeypatch.setattr(scanner, "_enrich_scan_frame", lambda d, *a, **k: d)
     monkeypatch.setattr(scanner, "_trim_unclosed_latest_candle", lambda d, *a, **k: d)
     monkeypatch.setattr(scanner, "register", lambda *a, **k: None)
     monkeypatch.setattr("forven.strategies.registry.get_active", lambda: {strat_id: strategy})
+    monkeypatch.setattr(scanner, "get_now",
+                        lambda: (df.index[state["i"] - 1] + pd.Timedelta(hours=1)).to_pydatetime())
 
-    # Backtest reference, using the SAME config the scanner resolves.
+    # Backtest reference (SAME config) — only to prove the strategy signals and to give the set
+    # of legitimate entry-bar timestamps a fill-now entry must map to.
     _, fee_bps, slip_bps = scanner._resolve_trade_assumptions(params)
     leverage = float(params["leverage"])
     ec = bt.execution_controls_from_params(params)
@@ -83,43 +95,42 @@ def test_kernel_paper_path_persists_trades_matching_backtest(forven_db, monkeypa
     )
     drag = ek.round_trip_drag(fee_bps, slip_bps, leverage)
     bt_trades = ek.force_close(ref, df, leverage=leverage, round_trip_drag=drag, trade_mode="long_only")
-    bt_closed = sorted([t for t in bt_trades if not t.get("open_at_end")], key=lambda t: t["entry_bar"])
-    bt_open = [t for t in bt_trades if t.get("open_at_end")]
+    assert [t for t in bt_trades if not t.get("open_at_end")], "backtest produced no trades — test is vacuous"
+    bt_entry_times = {str(t["entry_time"]) for t in bt_trades}
 
-    # Bar-by-bar scanner cycles.
+    # Bar-by-bar scanner cycles (the real scan-loop call).
     for i in range(202, len(df) + 1):
         state["i"] = i
         scanner.manage_positions_via_kernel(strat_id, strat, account_equity=10000.0)
 
-    # Read what the scanner persisted.
     from forven.db import get_db
     with get_db() as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM trades WHERE COALESCE(strategy_id, strategy) = ?", (strat_id,)
         ).fetchall()]
+    assert rows, "scanner persisted no trades"
 
-    def _kbar(r):
-        return int(parse_trade_signal_data(r.get("signal_data")).get("kernel_entry_bar") or 0)
+    def _ts(s):
+        return pd.Timestamp(str(s).replace(" ", "T"))
 
-    closed = sorted([r for r in rows if str(r["status"]).upper() == "CLOSED"], key=_kbar)
-    open_rows = [r for r in rows if str(r["status"]).upper() == "OPEN"]
-
-    assert len(closed) == len(bt_closed), f"closed count paper={len(closed)} backtest={len(bt_closed)}"
-    for b, r in zip(bt_closed, closed):
+    closed_seen = 0
+    for r in rows:
         sd = parse_trade_signal_data(r.get("signal_data"))
-        assert r["direction"] == b["direction"]
-        assert sd.get("kernel_entry_time") == b["entry_time"]
-        assert float(r["entry_price"]) == pytest.approx(b["entry_price"])
-        assert float(r["exit_price"]) == pytest.approx(b["exit_price"])
-        # The stored pnl_pct must be the kernel's NET equity-fraction pnl.
-        assert float(r["pnl_pct"]) == pytest.approx(b["pnl_pct"], abs=1e-6)
-        assert sd.get("close_reason") == b["exit_reason"]
-        assert round(float(sd.get("kernel_size_fraction")), 4) == b["size_fraction"]
-
-    # The scanner leaves the final position open; the backtest force-closed it.
-    assert len(open_rows) == len(bt_open)
-    for b, r in zip(bt_open, open_rows):
-        sd = parse_trade_signal_data(r.get("signal_data"))
-        assert r["direction"] == b["direction"]
-        assert sd.get("kernel_entry_time") == b["entry_time"]
-        assert float(r["entry_price"]) == pytest.approx(b["entry_price"])
+        ket = str(sd.get("kernel_entry_time"))
+        # FILL-NOW, not back-stamped:
+        assert str(sd.get("source")) == "scanner.kernel.fill_now"
+        assert sd.get("late_entry") is True
+        assert ket in bt_entry_times, f"paper entry {ket} is not a backtest signal bar"
+        # opened_at is the wall-clock fill moment, strictly AFTER the historical signal bar —
+        # the back-stamp bug made these EQUAL (opened_at == the kernel's historical bar).
+        assert _ts(r["opened_at"]) > _ts(ket)
+        # the recorded entry is the current mark; the kernel's historical entry is preserved
+        # separately for bookkeeping (and differs from the recorded fill).
+        assert float(r["entry_price"]) > 0
+        assert sd.get("kernel_historical_entry_price") not in (None, 0)
+        # a CLOSED fill-now trade carries the equity-fraction parity flag (gate-eligible).
+        if str(r["status"]).upper() == "CLOSED":
+            closed_seen += 1
+            assert sd.get("pnl_is_equity_fraction") is True
+            assert r["pnl_pct"] is not None
+    assert closed_seen > 0, "expected at least one closed fill-now trade (gate-eligible)"

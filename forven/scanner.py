@@ -5527,7 +5527,7 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
         "stop_loss_price": stop_price,
         "take_profit": target_price,
         "take_profit_price": target_price,
-        "source": "scanner.kernel" if not late else "scanner.kernel.late_entry",
+        "source": "scanner.kernel" if not late else "scanner.kernel.fill_now",
         # Tag late hop-ins so the close path keeps the entry-based PnL (the recorded entry
         # differs from the kernel's historical entry) and the refresh path leaves the
         # re-anchored stop/target alone.
@@ -5549,7 +5549,7 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
     except Exception:
         pass
     _update_trade_fill(trade_id=trade_id, fill_price=entry_price, fill_kind="entry", signal_price=entry_price)
-    return f"KERNEL-OPEN{' (late hop-in)' if late else ''} {asset} {direction} @ {entry_price:.6g} size={units}"
+    return f"KERNEL-OPEN{' (fill-now)' if late else ''} {asset} {direction} @ {entry_price:.6g} size={units}"
 
 
 def _kernel_close_recorded(strat_id: str, strat: dict, row: dict, trade: dict, direction: str) -> str | None:
@@ -5567,21 +5567,40 @@ def _kernel_close_recorded(strat_id: str, strat: dict, row: dict, trade: dict, d
     _exit_time = trade.get("exit_time")
     _closed_at = str(_exit_time).replace(" ", "T") if _exit_time else None
     if late:
-        # LATE hop-in: the recorded entry is the (later) hop-in price, NOT the kernel's
-        # historical entry — so close_trade_record's entry-based (margin) PnL is the correct
-        # one for this position; do NOT override it with the kernel's historical-entry net,
-        # and do NOT flag it equity-fraction (it stays out of the promotion gate). One atomic
-        # close stamps the kernel exit-bar time. (Display pnl computed from the recorded entry.)
+        # FILL-NOW entry: the recorded entry is the current-mark fill price, NOT the kernel's
+        # historical entry — so the kernel's historical-entry pnl_pct does NOT describe this
+        # position. Recompute the NET equity-fraction PnL from OUR actual entry, using the
+        # kernel's own convention ((price_return*sign*lev - round_trip_drag) * size_fraction),
+        # and write it equity-fraction-flagged via pnl_override so this close is COUNTED by the
+        # promotion gate (which filters on pnl_is_equity_fraction). Omitting the flag — as the
+        # old late path did — would silently drop EVERY fill-now close from the gate, leaving
+        # nothing to promote on. Funding over the holding period is not yet charged here (small
+        # vs the fill-price correction; Phase-2 follow-up). One atomic close stamps the kernel
+        # exit-bar time.
+        _our_entry = _coerce_positive_float(
+            row.get("fill_entry_price") or row.get("entry_price") or row.get("signal_entry_price")
+        ) or 0.0
+        _lev = float(row.get("leverage") or 1.0)
+        _sgn = 1.0 if str(direction).strip().lower() == "long" else -1.0
+        _size_frac = _coerce_positive_float(sd.get("kernel_size_fraction")) or 1.0
+        _fee_bps = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
+        _slip_bps = max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)
+        _drag = 2.0 * (_fee_bps + _slip_bps) / 10000.0 * max(_lev, 0.0)
+        if _our_entry > 0:
+            _pnl_eq = (((exit_price - _our_entry) / _our_entry) * _sgn * _lev - _drag) * _size_frac
+        else:
+            _pnl_eq = 0.0
+        _pnl_usd_eq = round(float(equity_at_entry) * _pnl_eq, 4)
         close_trade_record(
             trade_id, signal_exit_price=exit_price, exit_price=exit_price,
             close_reason=exit_reason, close_price_source="kernel", closed_at=_closed_at,
             extra_signal_data={"kernel_exit_time": trade.get("exit_time"), "kernel_managed": True},
+            pnl_override={
+                "pnl_pct": round(_pnl_eq, 8), "net_pnl_pct": round(_pnl_eq, 8),
+                "pnl_usd": _pnl_usd_eq, "equity_fraction": True,
+            },
         )
-        _our_entry = _coerce_positive_float(row.get("entry_price") or row.get("signal_entry_price")) or 0.0
-        _lev = float(row.get("leverage") or 1.0)
-        _sgn = 1.0 if str(direction).strip().lower() == "long" else -1.0
-        disp_pnl = ((exit_price - _our_entry) / _our_entry * _sgn * _lev) if _our_entry > 0 else 0.0
-        return f"KERNEL-CLOSE (late) {strat.get('asset')} {direction} @ {exit_price:.6g} pnl={disp_pnl * 100:.2f}% ({exit_reason})"
+        return f"KERNEL-CLOSE (fill-now) {strat.get('asset')} {direction} @ {exit_price:.6g} pnl={_pnl_eq * 100:.2f}% ({exit_reason})"
     # Faithful kernel trade: write the kernel's NET equity-fraction values (the kernel
     # pnl_pct is net-of-drag, size-scaled equity impact — close_trade_record's own pnl is a
     # gross MARGIN return). DB-1 / SCANAPPLY-2 + PROMOTION-GATE-PARITY-2/3: pass them via
@@ -6226,14 +6245,19 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     window_start = str(df.index[min(KERNEL_WARMUP + 1, len(df) - 1)]) if len(df) else None
     last_close = float(df["close"].iloc[-1]) if len(df) else 0.0
     last_time = str(df.index[-1]) if len(df) else ""
-    # Late "hop-in" is DISABLED. Auto-entering a still-held-but-stale kernel signal at the
-    # current price produced chase entries with no real basis — the kernel "still holds" a
-    # position only because it never hit a stop, so a signal from days/weeks ago (e.g. a
-    # 46-day-old short, or a long entered well above its signal price) got taken NOW, far
-    # from the original signal, looking detached from the chart. A stale signal now stays a
-    # chart trigger only (the pre-feature behaviour) and is NEVER auto-entered. Hard-off (not
-    # operator-gateable) so a persisted setting can't silently re-arm the chase entries.
-    late_entry_enabled = False
+    # FILL-NOW window — how stale a kernel entry may be and still be OPENED, and the way it's
+    # opened. A FRESH entry (on/after fresh_cutoff) is filled at the CURRENT mark + wall-clock
+    # now, re-anchoring stop/target, exactly as a real market order placed the moment the
+    # signal is detected (this is what the live path already does, so paper now MIRRORS live
+    # instead of back-stamping the trade onto the historical fill bar — the "opened an hour
+    # ago at the low" artifact). A recent-but-older still-held entry (a scan-gap catch-up, or
+    # a long-held signal) is NOT opened — it stays a chart trigger only, so we never
+    # retroactively stamp an hours-old OPEN position or chase a stale signal at the current
+    # price (the failure that got the old auto-"hop-in" disabled). Default 1 = only the entry
+    # on the bar that just closed; operator-tunable up for scan-gap tolerance. The bound
+    # applies to live too (the shared reconciler), so live also stops chasing stale signals.
+    _fill_now_max_bars = max(int(_scanner_float_setting("paper_kernel_fill_now_max_bars", 1)), 1)
+    fresh_cutoff = str(df.index[-min(_fill_now_max_bars, len(df))]) if len(df) else None
     # Cross-asset guard: a recorded OPEN whose asset != the strategy's CURRENT asset is a
     # leftover from a symbol/asset flip while a position was open. The reconciler matches
     # only on (direction, entry_time) and would splice the new asset's stop/target onto the
@@ -6259,7 +6283,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
             same_asset_recorded.append(_rec)
     actions_plan = reconcile(
         res, same_asset_recorded, recent_cutoff=recent_cutoff, window_start=window_start,
-        late_entry=late_entry_enabled,
+        fresh_cutoff=fresh_cutoff,
     )
     # Converge-close (orphan rescue) is paper-only and operator-gateable. Drop those
     # actions when disabled or on the live path (the gated live path handles its own).
@@ -6296,19 +6320,20 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                 strat_id, label, timeframe, _age_since_close, _max_bars,
             )
 
-    # A LATE hop-in must enter at the REAL current price/time — NOT the last CLOSED bar,
-    # whose close is the price as of its END (up to a full timeframe stale: a 4h bar closed
-    # at 16:00 is ~hours old by an 18:45 scan) and whose open timestamp would mis-place the
-    # marker on an old candle. Use the live-price cache (the same mark the dashboard shows)
-    # + wall-clock now; fall back to the closed-bar close only if the live mark is
-    # missing/stale. (Faithful kernel opens ignore these; only late entries use them.)
-    hop_price, hop_time = last_close, last_time
+    # A FILL-NOW entry opens at the REAL current price + wall-clock NOW (a market order placed
+    # the moment we detect the signal), NOT the historical fill bar — that's the whole point
+    # (paper mirrors live instead of back-stamping the trade onto an old candle). The TIME is
+    # ALWAYS now; the PRICE is the live-cache mark (the same mark the dashboard shows) when
+    # fresh, falling back to the last CLOSED bar's close only when the live mark is
+    # missing/stale — never the bar's OPEN timestamp (that's what produced the "opened an hour
+    # ago at the low" artifact). Faithful back-stamp opens (fresh_cutoff None) never reach here.
+    hop_price, hop_time = last_close, get_now().isoformat()
     if any(a.kind == "open" and getattr(a, "late_entry", False) for a in actions_plan):
         try:
             _lp_prices, _lp_age = _load_live_price_cache()
             _lp = _coerce_positive_float((_lp_prices or {}).get(asset))
             if _lp and (_lp_age is None or _lp_age <= _PRICE_CACHE_STALE_SECONDS):
-                hop_price, hop_time = _lp, get_now().isoformat()
+                hop_price = _lp
         except Exception:
             pass
 
@@ -7314,6 +7339,27 @@ def run_signal_scan() -> dict:
 _RECONCILE_MAX_AGE_MINUTES = 30  # Max age before auto-remediation
 
 
+def _resolve_local_paper_close_price(asset: str, trade: dict, signal_data: dict) -> float | None:
+    """Best-available CURRENT close price for a LOCAL paper trade the sweep must finalize, so
+    it never writes an INCOMPLETE close (status CLOSED with no exit_price/pnl — which drops the
+    trade from the equity curve AND the promotion gate; the E0006-E0016 "long closed with no
+    PnL" rows). A local paper trade never reached an exchange, so there's no fill to wait for:
+    price it at the live-cache mark, else the recorded entry (a neutral, COMPLETE 0-PnL close).
+    Returns None only when even the entry is unknown (genuinely nothing to price with)."""
+    a = str(asset or "").strip().upper()
+    try:
+        prices, age = _load_live_price_cache()
+        mark = _coerce_positive_float((prices or {}).get(a))
+        if mark and (age is None or age <= _PRICE_CACHE_STALE_SECONDS):
+            return float(mark)
+    except Exception:
+        pass
+    return (
+        _coerce_positive_float(trade.get("entry_price"))
+        or _coerce_positive_float((signal_data or {}).get("price"))
+    )
+
+
 def sweep_pending_close_reconcile() -> dict:
     """P1-11: Sweep aged pending_close_reconcile trades and auto-remediate.
 
@@ -7398,6 +7444,7 @@ def sweep_pending_close_reconcile() -> dict:
         # Find OPEN trades with pending_close_reconcile flag
         trades = conn.execute(
             """SELECT id, asset, direction, size, execution_type, signal_data, opened_at,
+                      signal_exit_price, entry_price,
                       COALESCE(strategy_id, strategy) as strategy_id
                FROM trades
                WHERE status = 'OPEN'
@@ -7445,12 +7492,21 @@ def sweep_pending_close_reconcile() -> dict:
                 sweep_exit_price = _coerce_optional_float(signal_data.get(_exit_key))
                 if sweep_exit_price is not None:
                     break
+            _local_price_source = "reconcile_sweep_paper_local"
+            if sweep_exit_price is None and _coerce_optional_float(trade.get("signal_exit_price")) is None:
+                # No pending price AND no recorded signal_exit_price → close_trade_record would
+                # write an INCOMPLETE close (status CLOSED, no exit_price/pnl — the E0006-E0016
+                # "long closed with no PnL" rows, which also drop from the promotion gate). A
+                # local paper trade never reached an exchange, so it can always be priced: use
+                # the current mark (live cache), else the entry (a neutral, COMPLETE close).
+                sweep_exit_price = _resolve_local_paper_close_price(asset, trade, signal_data)
+                _local_price_source = "reconcile_sweep_paper_local_mark"
             close_trade_record(
                 trade_id,
                 signal_exit_price=sweep_exit_price,
                 exit_price=sweep_exit_price,
                 close_reason="reconcile_sweep_paper_local_close",
-                close_price_source="reconcile_sweep_paper_local",
+                close_price_source=_local_price_source,
                 only_if_open=True,
             )
             outcome = "closed_locally_paper_local"

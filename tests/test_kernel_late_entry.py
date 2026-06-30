@@ -1,13 +1,17 @@
-"""Late "hop-in": when the kernel still HOLDS a position whose entry predates the recording
-window (a still-active signal the scanner missed while the system was off), the paper path
-should TAKE that position now — at the current price/time, re-anchoring the stop/target —
-instead of leaving it as a chart-only trigger.
+"""FILL-NOW opens: a paper entry fills at the CURRENT mark + wall-clock now (a real market
+order placed the moment the signal is detected), re-anchoring stop/target — NOT back-stamped
+onto the kernel's historical fill bar. The scanner opens a FRESH kernel entry (on/after the
+fill-now window) this way; a recent-but-stale entry is left as a chart trigger only.
 
-Covers all four touch points:
-  * reconcile emits a `late_entry` open for a stale-but-held position (only when enabled);
+The fill-now open reuses the (repurposed) hop-in machinery, so the `late_entry` action/flag
+name is retained internally. Covers:
+  * reconcile emits a fill-now (`late_entry=True`) open for a FRESH entry, and SKIPS a
+    recent-but-stale one (fresh_cutoff bounds it); fresh_cutoff None = faithful back-stamp;
   * the scanner opens at the CURRENT price with a re-anchored stop and the historical
     kernel_entry_time (so later scans REFRESH, not duplicate);
-  * the close computes PnL from the recorded (late) entry, not the kernel's historical one;
+  * the close recomputes a NET equity-fraction PnL from the recorded (current-mark) entry and
+    FLAGS it equity-fraction, so fill-now closes are counted by the promotion gate;
+  * the re-anchored stop/target is enforced intrabar by the monitor;
   * a refresh does not clobber the re-anchored stop with the kernel's historical level.
 """
 
@@ -45,26 +49,47 @@ def _expected_short_stop(cur):
 
 # ── reconcile ────────────────────────────────────────────────────────────────────────
 
-def test_stale_open_suppressed_when_late_entry_disabled():
-    acts = reconcile(_kr(open_pos={"short": _stale_short_pos()}), [], recent_cutoff=CUTOFF, window_start=WINDOW)
-    assert [a for a in acts if a.kind == "open"] == []  # default: stale entry is NOT opened
+FRESH_CUTOFF = "2026-06-27 11:00:00+00:00"          # the fill-now window edge (Nth-from-last bar)
+FRESH_ENTRY = "2026-06-27 12:00:00+00:00"           # on/after fresh_cutoff → fill-now
+RECENT_STALE_ENTRY = "2026-06-27 08:00:00+00:00"    # >= recent_cutoff but < fresh_cutoff → skipped
 
 
-def test_stale_open_emits_late_entry_when_enabled():
+def test_pre_golive_open_is_never_opened():
+    # An entry BEFORE recent_cutoff (pre go-live) is never opened — chart trigger only.
     acts = reconcile(_kr(open_pos={"short": _stale_short_pos()}), [],
-                     recent_cutoff=CUTOFF, window_start=WINDOW, late_entry=True)
+                     recent_cutoff=CUTOFF, window_start=WINDOW, fresh_cutoff=FRESH_CUTOFF)
+    assert [a for a in acts if a.kind == "open"] == []
+
+
+def test_fresh_open_emits_fill_now():
+    # A FRESH entry (on/after fresh_cutoff) → a fill-now open the scanner fills at the current
+    # mark + now. Keyed by the historical entry_time so the next scan refreshes (not re-opens).
+    pos = dict(_stale_short_pos(), entry_time=FRESH_ENTRY)
+    acts = reconcile(_kr(open_pos={"short": pos}), [],
+                     recent_cutoff=CUTOFF, window_start=WINDOW, fresh_cutoff=FRESH_CUTOFF)
     opens = [a for a in acts if a.kind == "open"]
     assert len(opens) == 1
     assert opens[0].late_entry is True
     assert opens[0].direction == "short"
-    assert opens[0].entry_time == STALE_ENTRY  # historical, so the next scan refreshes it
+    assert opens[0].entry_time == FRESH_ENTRY
 
 
-def test_recent_open_is_never_late_even_when_enabled():
-    pos = dict(_stale_short_pos(), entry_time="2026-06-27 08:00:00+00:00")  # within the window
-    acts = reconcile(_kr(open_pos={"short": pos}), [], recent_cutoff=CUTOFF, window_start=WINDOW, late_entry=True)
+def test_recent_but_stale_open_is_skipped():
+    # RECENT (>= go-live) but OLDER than the fill-now window → NOT opened (a scan-gap catch-up
+    # or long-held signal). Never back-stamped into an OPEN position, never chased.
+    pos = dict(_stale_short_pos(), entry_time=RECENT_STALE_ENTRY)
+    acts = reconcile(_kr(open_pos={"short": pos}), [],
+                     recent_cutoff=CUTOFF, window_start=WINDOW, fresh_cutoff=FRESH_CUTOFF)
+    assert [a for a in acts if a.kind == "open"] == []
+
+
+def test_no_fresh_cutoff_is_faithful_backstamp():
+    # fresh_cutoff None (full-replay parity path) → a recent entry opens FAITHFULLY at the
+    # kernel's historical entry (late_entry False), not fill-now.
+    pos = dict(_stale_short_pos(), entry_time=RECENT_STALE_ENTRY)
+    acts = reconcile(_kr(open_pos={"short": pos}), [], recent_cutoff=CUTOFF, window_start=WINDOW)
     opens = [a for a in acts if a.kind == "open"]
-    assert len(opens) == 1 and opens[0].late_entry is False  # recent → faithful kernel open
+    assert len(opens) == 1 and opens[0].late_entry is False
 
 
 # ── scanner open (hop in at current price) ─────────────────────────────────────────────
@@ -73,7 +98,7 @@ def _open_late(forven_db, current_price=1590.0, current_time="2026-06-27 12:00:0
     action = ReconcileAction("open", "short", STALE_ENTRY, position=_stale_short_pos(), late_entry=True)
     msg = sc._kernel_open_paper_trade("S-LATE", STRAT, action, sizing_equity=10000.0, leverage=1.0,
                                       current_price=current_price, current_time=current_time)
-    assert msg and "late hop-in" in msg  # the applier returns a log message, not the id
+    assert msg and "fill-now" in msg  # the applier returns a log message, not the id
     with get_db() as c:
         row = dict(c.execute(
             "SELECT * FROM trades WHERE COALESCE(strategy_id, strategy)='S-LATE' AND status='OPEN' "
@@ -92,19 +117,28 @@ def test_late_entry_opens_at_current_price_with_reanchored_stop(forven_db):
     assert sd["stop_loss_price"] < 1700.0                             # re-anchored near 1623, not 2450
 
 
-def test_late_entry_close_uses_recorded_entry_not_kernel_pnl(forven_db):
+def test_fill_now_close_recomputes_equity_fraction_pnl_and_flags_it(forven_db):
     tid, row = _open_late(forven_db)
-    # The kernel's historical short (from 2400) would show a huge +30% at exit 1500; our late
-    # short entered at 1590, so its real PnL is only (1590-1500)/1590 ≈ +5.66%.
+    # The kernel's historical short (from 2400) would show +30% at exit 1500; our fill-now
+    # short entered at 1590 with size_fraction 0.5, so the correct NET equity-fraction PnL is
+    # ((1590-1500)/1590 - drag) * 0.5 — and it MUST be flagged equity-fraction so the promotion
+    # gate counts it (the old late path left it unflagged → every fill-now close silently
+    # dropped from the gate).
     kernel_trade = {"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "signal",
                     "exit_time": "2026-06-27 16:00:00+00:00"}
     sc._kernel_close_recorded("S-LATE", STRAT, row, kernel_trade, "short")
     with get_db() as c:
-        out = dict(c.execute("SELECT status, pnl_pct, closed_at FROM trades WHERE id=?", (tid,)).fetchone())
+        out = dict(c.execute(
+            "SELECT status, pnl_pct, net_pnl_pct, closed_at, signal_data FROM trades WHERE id=?",
+            (tid,)).fetchone())
+    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
+    expected_eq = ((1590.0 - 1500.0) / 1590.0 - drag) * 0.5          # net, scaled by size_fraction
     assert out["status"] == "CLOSED"
     assert out["closed_at"] == "2026-06-27T16:00:00+00:00"           # kernel exit-bar time
-    assert out["pnl_pct"] == pytest.approx((1590.0 - 1500.0) / 1590.0, rel=0.02)  # from OUR entry
+    assert out["pnl_pct"] == pytest.approx(expected_eq, rel=0.02)    # from OUR entry, equity-fraction
+    assert out["net_pnl_pct"] == pytest.approx(expected_eq, rel=0.02)
     assert out["pnl_pct"] < 0.10                                      # NOT the kernel's 0.30
+    assert json.loads(out["signal_data"]).get("pnl_is_equity_fraction") is True  # gate-eligible
 
 
 def test_refresh_does_not_clobber_late_entry_reanchored_stop(forven_db):
@@ -146,7 +180,7 @@ def _open_late_long(forven_db, current_price=1590.0, current_time="2026-06-27 12
     action = ReconcileAction("open", "long", STALE_ENTRY, position=_long_pos(), late_entry=True)
     msg = sc._kernel_open_paper_trade("S-LATEL", STRAT, action, sizing_equity=10000.0, leverage=1.0,
                                       current_price=current_price, current_time=current_time)
-    assert msg and "late hop-in" in msg
+    assert msg and "fill-now" in msg
     with get_db() as c:
         row = dict(c.execute(
             "SELECT * FROM trades WHERE COALESCE(strategy_id, strategy)='S-LATEL' AND status='OPEN' "
@@ -242,7 +276,7 @@ def test_kernel_close_honors_late_signal_exit(forven_db):
                "exit_time": "2026-06-27 16:00:00+00:00"},
     )
     msg = sc._kernel_close_paper_trade("S-LATE", STRAT, action)
-    assert msg and "late" in msg.lower()
+    assert msg and "fill-now" in msg.lower()
     with get_db() as c:
         out = dict(c.execute("SELECT status, closed_at FROM trades WHERE id=?", (tid,)).fetchone())
     assert out["status"] == "CLOSED"
@@ -260,12 +294,13 @@ def test_orphan_close_skips_late_entry(forven_db):
 
 
 def test_no_rehop_after_reanchored_stop_close():
-    """Once a hop-in is recorded (even CLOSED at its re-anchored stop) the reconciler must
-    NOT open a second one while the kernel still holds the wider historical position."""
-    recorded = [{"direction": "short", "entry_time": STALE_ENTRY, "status": "closed"}]
-    acts = reconcile(_kr(open_pos={"short": _stale_short_pos()}), recorded,
-                     recent_cutoff=CUTOFF, window_start=WINDOW, late_entry=True)
-    assert [a for a in acts if a.kind == "open"] == []  # no re-hop
+    """Once a fill-now entry is recorded (even CLOSED at its re-anchored stop) the reconciler
+    must NOT open a second one while the kernel still holds the historical position."""
+    pos = dict(_stale_short_pos(), entry_time=FRESH_ENTRY)
+    recorded = [{"direction": "short", "entry_time": FRESH_ENTRY, "status": "closed"}]
+    acts = reconcile(_kr(open_pos={"short": pos}), recorded,
+                     recent_cutoff=CUTOFF, window_start=WINDOW, fresh_cutoff=FRESH_CUTOFF)
+    assert [a for a in acts if a.kind == "open"] == []  # no re-open
 
 
 # ── MANUAL CLOSE / FLIP IS NOT REVERTED (a CLOSED record for a still-held kernel position) ──
