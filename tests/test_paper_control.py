@@ -95,6 +95,21 @@ def _set_mid(asset: str, price: float) -> None:
     kv_set("daemon_state", {"last_prices": {asset: price}})
 
 
+@pytest.fixture(autouse=True)
+def _force_cached_mid_in_manual_fills(monkeypatch):
+    """Manual fills now read the venue DIRECTLY (_fresh_manual_mark) so a hand open/close lands at
+    the live price, not the cached daemon mid. These cases pin the price via _set_mid
+    (daemon_state['last_prices']), so disable the live read and let the helper fall back to that
+    mid. The direct-read path itself is covered by tests/test_manual_fill_freshness.py."""
+    import forven.market_data as md
+
+    def _venue_unavailable(*args, **kwargs):
+        raise RuntimeError("live venue read disabled in tests")
+
+    monkeypatch.setattr(md, "fetch_binance_prices", _venue_unavailable)
+    monkeypatch.setattr(md, "resolve_market_data_source", lambda: "binance")
+
+
 def _get_trade(trade_id: str) -> dict | None:
     from forven.db import get_db
 

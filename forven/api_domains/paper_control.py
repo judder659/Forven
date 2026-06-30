@@ -139,6 +139,37 @@ def _paper_mid(session: dict, trade: dict | None = None) -> float:
     return float(mid)
 
 
+def _fresh_manual_mark(session: dict, trade: dict | None = None) -> float:
+    """The price a MANUAL fill uses — a FRESH direct read at click time, so a hand open/close
+    lands where the operator sees the price.
+
+    NOT the cached daemon mid (_paper_mid): its updated_at is the daemon's PUBLISH time, blind to
+    a stale VALUE (see paper-backstamp-vs-live-fillnow), so when price is moving a manual entry
+    landed off the candle it opened on (below the low). One direct venue read per click is fine
+    for a user action (unlike the hot close/refresh paths, which stay on the cached mid). Falls
+    back to the cached mid when the venue read is unavailable."""
+    symbol = str(session.get("symbol") or "").strip().upper()
+    asset = (trading_domain._normalize_asset_key(symbol) or symbol.split("/", 1)[0]).strip().upper()
+    if asset:
+        try:
+            from forven.market_data import resolve_market_data_source
+
+            if resolve_market_data_source() == "binance":
+                from forven.market_data import fetch_binance_prices
+
+                prices = fetch_binance_prices([asset])
+            else:
+                from forven.exchange.hyperliquid import get_all_mids
+
+                prices = get_all_mids()
+            p = _coerce_optional_float((prices or {}).get(asset))
+            if p and p > 0:
+                return float(p)
+        except Exception:
+            pass
+    return _paper_mid(session, trade)
+
+
 def _refresh(session_id: str) -> dict:
     """Return the refreshed compat session so the client updates in one round-trip."""
     return paper_domain.get_paper_session(session_id)
@@ -221,7 +252,7 @@ def close_paper_position(session_id: str, reason: str | None = None) -> dict:
     if _trade_is_live(trade):
         _live_close_trade(trade, close_reason="manual_close", note=note)
     else:
-        mid = _paper_mid(session, trade)
+        mid = _fresh_manual_mark(session, trade)
         closed = close_trade_record(
             str(trade["id"]),
             signal_exit_price=mid,
@@ -339,7 +370,7 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
     if _trade_is_live(trade):
         fill = _live_reduce(trade, close_qty)
     else:
-        fill = _paper_mid(session, trade)
+        fill = _fresh_manual_mark(session, trade)
 
     entry = (
         _coerce_optional_float(trade.get("fill_entry_price"))
@@ -468,7 +499,7 @@ def open_manual_position(
     symbol = str(session.get("symbol") or "").strip().upper()
     asset = trading_domain._normalize_asset_key(symbol) or symbol.split("/", 1)[0]
 
-    mid = _paper_mid(session)
+    mid = _fresh_manual_mark(session)
     lev = _coerce_optional_float(leverage) or 1.0
     if lev <= 0:
         lev = 1.0
