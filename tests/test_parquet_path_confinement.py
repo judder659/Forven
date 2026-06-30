@@ -50,3 +50,13 @@ def test_legitimate_dataset_paths_resolve_under_data_dir(symbol, timeframe):
 def test_traversal_attempts_are_rejected(symbol, timeframe):
     with pytest.raises(ValueError):
         parquet_path(symbol, timeframe)
+
+
+def test_lake_io_refuses_insecure_pickle_fallback():
+    """P3.5: the OHLCV lake must never deserialize a pickle (arbitrary code execution).
+    pyarrow is a hard dependency; the no-pyarrow branch fails closed instead of falling
+    back to pd.read_pickle / to_pickle."""
+    from forven import data as data_mod
+
+    with pytest.raises(RuntimeError, match="pyarrow"):
+        data_mod._require_pyarrow_for_lake()
