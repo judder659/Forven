@@ -6969,6 +6969,25 @@ def _certify_per_bar_pure(strategy_obj, df: "pd.DataFrame", warmup: int) -> bool
     return verdict
 
 
+def per_bar_strategy_is_impure(strategy_obj, df: "pd.DataFrame", warmup: int) -> bool:
+    """True iff ``strategy_obj`` exposes a per-bar checker AND the purity guard refuses it
+    (non-deterministic / stateful).
+
+    KCOPY-3: when the kernel declines a strategy it returns None — indistinguishable from
+    a genuinely non-vectorizable one, which the scanner is allowed to trade on the legacy
+    per-bar engine. An IMPURE strategy is untrustworthy on EVERY engine, so the scanner
+    uses this to fail closed (quarantine, never legacy-fall-back) instead. Cheap: the
+    verdict was already cached by ``_certify_per_bar_pure`` during the kernel run. Any
+    error (e.g. probing a sandbox-only proxy whose generate_signal refuses in-parent) is
+    treated as 'not impure' so the caller keeps its normal None handling."""
+    try:
+        if _per_bar_checker(strategy_obj) is None:
+            return False
+        return not _certify_per_bar_pure(strategy_obj, df, warmup)
+    except Exception:
+        return False
+
+
 def _signals_from_per_bar(
     strategy_obj, df: "pd.DataFrame", *, warmup: int, trade_mode: str = "long_only",
 ) -> "DirectionalSignals | None":

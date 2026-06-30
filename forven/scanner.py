@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from forven.db import format_prefixed_id, get_db, init_db, kv_get, kv_set, log_activity, next_container_id
+from forven.db import get_db, init_db, kv_get, kv_set, log_activity, next_container_id
 from forven.exchange.risk import (
     calculate_position_size,
     cancel_reduce_only_orders_for_asset,
@@ -5244,6 +5244,13 @@ def _blocked_scan_row(
 # is distinct from None, which means the strategy is genuinely non-vectorizable.
 KERNEL_SKIP_SCAN = object()
 
+# KCOPY-3: the purity guard REFUSED the strategy (its per-bar generate_signal is
+# non-deterministic / stateful). Unlike KERNEL_SKIP_SCAN (a transient, retry-next-scan
+# condition) and None (genuinely non-vectorizable, legacy fallback permitted), an impure
+# strategy is untrustworthy on EVERY engine — the caller must NEVER downgrade it to the
+# legacy per-bar engine (paper OR live). It is quarantined: skipped and surfaced.
+KERNEL_IMPURE_REFUSED = object()
+
 # The kernel's intrabar PRICE exits. For a faithful kernel trade these close the recorded
 # paper trade directly; for a LATE hop-in they are the HISTORICAL position's levels (the
 # original entry's geometry), NOT the hop-in's re-anchored ones, so they're deferred to
@@ -6149,6 +6156,29 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
         log.warning("[%s] kernel paper: run_strategy_execution failed (%s); SKIP scan (no legacy)", strat_id, exc)
         return _skip(f"run_strategy_execution failed: {exc}")
     if res is None:
+        # KCOPY-3: distinguish a genuinely non-vectorizable strategy (legacy fallback is
+        # acceptable) from one the purity guard REFUSED as non-deterministic/stateful. An
+        # impure strategy is untrustworthy on ANY engine — it must NEVER be silently
+        # downgraded to the legacy per-bar engine and traded on non-reproducible signals
+        # (paper OR live). Quarantine it instead. Sandbox-only strategies run in the worker
+        # (their in-parent proxy refuses), so don't probe them here.
+        from forven.strategies.sandbox_proxy import is_sandbox_only_type as _is_sbx
+        if not _is_sbx(strategy_type or "") and _bt.per_bar_strategy_is_impure(
+            strategy_instance, df, KERNEL_WARMUP
+        ):
+            if diagnostics is not None:
+                diagnostics[strat_id] = {
+                    "strategy_id": strat_id,
+                    "execution_decision": "impure_refused",
+                    "reason": "generate_signal is non-deterministic/stateful — refused on every "
+                              "engine; not traded (fix or archive it)",
+                    "runtime_type": str(strat.get("runtime_type") or strat.get("type") or ""),
+                }
+            log.warning(
+                "[%s] kernel: impure/non-deterministic strategy — NOT traded on any engine (no legacy)",
+                strat_id,
+            )
+            return KERNEL_IMPURE_REFUSED
         return None  # genuinely non-vectorizable → caller decides (flag vs legacy)
 
     # Net-costs parity: charge perp funding into the kernel trades' pnl_pct exactly
@@ -6813,6 +6843,14 @@ def _apply_execution_actions(signal_rows: list[dict], diagnostics_out: dict[str,
                     strat_id, strat, account_equity=account_equity, execution_type="live", diagnostics=diagnostics_out,
                 )
 
+            if actions is KERNEL_IMPURE_REFUSED:
+                # KCOPY-3: the purity guard refused this strategy as non-deterministic/
+                # stateful. It is untrustworthy on ANY engine — never downgrade it to the
+                # legacy per-bar engine (paper OR live), regardless of the legacy-fallback
+                # flag. Quarantine: skip. (manage_positions_via_kernel already logged +
+                # set the diagnostic; _signals_from_per_bar emits the one-shot log_activity
+                # so the operator sees it once.)
+                continue
             if actions is KERNEL_SKIP_SCAN:
                 # Transient kernel failure — skip this strategy this scan. Do NOT fall
                 # through to the legacy engine, whose entry timing / exit model / PnL

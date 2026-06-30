@@ -107,6 +107,30 @@ def test_default_synthesizes_atr_stop_distance():
     assert floor == pytest.approx(sizing.DEFAULT_STOP_LOSS_PCT_FLOOR / 100.0)
 
 
+def test_size1_selectable_atr_profile_keeps_stop_floor_when_atr_unavailable():
+    """SIZE-1: the `atr` candidate profiles execution_selection actually assigns carry
+    NO stop_loss_pct (only default_controls did). When ATR is 0/unavailable those
+    profiles must STILL inherit the DEFAULT_STOP_LOSS_PCT_FLOOR — otherwise the stop is
+    None and size_fraction collapses to flat risk_per_trade notional."""
+    # Shaped exactly like execution_selection.candidate_profiles: atr mode, risk, mult,
+    # and crucially NO stop_loss_pct / trailing_stop_pct.
+    prof = {"sizing_mode": "atr", "risk_per_trade": 0.02, "atr_stop_multiplier": 2.0}
+    # ATR available → atr-derived stop.
+    assert sizing.entry_stop_dist_pct(prof, entry_price=100.0, atr_value=2.0) == pytest.approx(0.04)
+    # ATR=0 or None → the floor, NEVER None (was the SIZE-1 bug).
+    floor = sizing.DEFAULT_STOP_LOSS_PCT_FLOOR / 100.0
+    assert sizing.entry_stop_dist_pct(prof, entry_price=100.0, atr_value=0.0) == pytest.approx(floor)
+    assert sizing.entry_stop_dist_pct(prof, entry_price=100.0, atr_value=None) == pytest.approx(floor)
+    # …and size is risk-targeted off that floor, not collapsed to flat 0.02 notional.
+    sf = sizing.size_fraction(prof, floor, leverage=1.0, initial_capital=10000)
+    assert sf == pytest.approx(0.02 / floor)  # risk / stop, not the flat 0.02
+    assert sf > prof["risk_per_trade"]
+    # A NON-atr profile with no stop still returns None (unchanged) — the floor is
+    # atr-mode-specific.
+    none_prof = {"sizing_mode": "fraction", "risk_per_trade": 0.02}
+    assert sizing.entry_stop_dist_pct(none_prof, entry_price=100.0, atr_value=None) is None
+
+
 def test_default_sizing_is_not_piddly():
     # The S02324 scenario: $9,977.86 sandbox, 1% default risk over a 3% stop at 1x.
     # Should risk ~1% ($100) → ~$3.3k notional, NOT a $212 piddly position.

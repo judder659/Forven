@@ -206,6 +206,14 @@ def entry_stop_dist_pct(ec: dict, *, entry_price: float, atr_value: float | None
         return ec["stop_loss_pct"] / 100.0
     if ec.get("trailing_stop_pct") is not None:
         return ec["trailing_stop_pct"] / 100.0
+    # SIZE-1: an atr-mode profile that carries NO explicit stop_loss_pct (the selectable
+    # `atr` candidates from execution_selection don't) must STILL keep a protective floor
+    # when ATR is unavailable — otherwise size_fraction collapses to flat risk_per_trade
+    # notional AND the kernel places no stop, contradicting the "atr-sizing never
+    # collapses to flat notional" invariant. Inherit the same DEFAULT_STOP_LOSS_PCT_FLOOR
+    # default_controls uses, so the floor lives in ONE place for every atr profile.
+    if ec.get("sizing_mode") == "atr":
+        return DEFAULT_STOP_LOSS_PCT_FLOOR / 100.0
     return None
 
 

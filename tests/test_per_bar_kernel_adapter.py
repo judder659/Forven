@@ -279,3 +279,46 @@ def test_adapter_signals_are_prefix_stable(forven_db):
     b_x = trunc.long_exits.iloc[WARMUP:300].to_numpy()
     assert (a_e == b_e).all(), "future bars changed past long-entry signals (not prefix-stable)"
     assert (a_x == b_x).all(), "future bars changed past long-exit signals (not prefix-stable)"
+
+
+# ── KCOPY-3: an impure strategy must FAIL CLOSED, never fall back to the legacy engine ──
+
+def test_per_bar_strategy_is_impure_oracle(forven_db):
+    """The oracle that drives the scanner's fail-closed decision: impure per-bar
+    strategies report True; a pure one reports False."""
+    df = _frame()
+    assert bt.per_bar_strategy_is_impure(_RandomPerBar("RND", {}), df, WARMUP) is True
+    assert bt.per_bar_strategy_is_impure(_StatefulPerBar("STF", {}), df, WARMUP) is True
+    assert bt.per_bar_strategy_is_impure(_PerBarSMA("PUR", {}), df, WARMUP) is False
+
+
+def test_kernel_refuses_impure_strategy_with_no_legacy_fallback(forven_db, monkeypatch):
+    """KCOPY-3: when the kernel run yields None for an IMPURE strategy,
+    manage_positions_via_kernel returns KERNEL_IMPURE_REFUSED — a distinct sentinel the
+    scan loop quarantines (never downgrades to the legacy per-bar engine, paper OR live).
+    A PURE per-bar strategy is unaffected (it trades on the kernel)."""
+    import forven.scanner as scanner
+
+    df = _frame()
+    monkeypatch.setattr(scanner, "fetch_candles", lambda coin, bars=300, interval="1h": df.copy())
+    monkeypatch.setattr(scanner, "_enrich_scan_frame", lambda d, *a, **k: d)
+    monkeypatch.setattr(scanner, "_trim_unclosed_latest_candle", lambda d, *a, **k: d)
+    monkeypatch.setattr(scanner, "register", lambda *a, **k: None)
+
+    impure = _RandomPerBar("KCOPY3-IMPURE", {"k": K, "trade_mode": "long_only"})
+    strat = {
+        "id": impure.strategy_id, "asset": "BTC", "type": "rand_test",
+        "runtime_type": "rand_test", "timeframe": "1h", "stage": "paper",
+        "params": dict(impure.params),
+    }
+    monkeypatch.setattr("forven.strategies.registry.get_active", lambda: {impure.strategy_id: impure})
+    actions = scanner.manage_positions_via_kernel(impure.strategy_id, strat, account_equity=10000.0)
+    assert actions is scanner.KERNEL_IMPURE_REFUSED  # fail-closed, NOT None (would legacy-fall-back)
+
+    # A pure per-bar strategy is NOT quarantined — it still runs on the kernel.
+    pure = _PerBarSMA("KCOPY3-PURE", {"k": K, "trade_mode": "long_only"})
+    strat_pure = dict(strat, id=pure.strategy_id, type="perbar_sma_test", runtime_type="perbar_sma_test",
+                      params=dict(pure.params))
+    monkeypatch.setattr("forven.strategies.registry.get_active", lambda: {pure.strategy_id: pure})
+    actions_pure = scanner.manage_positions_via_kernel(pure.strategy_id, strat_pure, account_equity=10000.0)
+    assert actions_pure is not scanner.KERNEL_IMPURE_REFUSED
