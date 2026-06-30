@@ -1,6 +1,6 @@
 import json
 
-from forven.db import get_db
+from forven.db import get_db_immediate
 from forven.sim.clock import get_now
 
 
@@ -83,7 +83,10 @@ def mark_trade_pending_close_reconcile(
         return None
 
     resolved_requested_at = str(requested_at or get_now().isoformat())
-    with get_db() as conn:
+    # H-D4: BEGIN IMMEDIATE upfront so a concurrent close_trade_record (or a second
+    # pending-close request) can't read this row as OPEN between this read and the
+    # write below — it blocks until this transaction commits, then sees the result.
+    with get_db_immediate() as conn:
         row = conn.execute("SELECT * FROM trades WHERE id = ?", (normalized_trade_id,)).fetchone()
         if not row:
             return None
@@ -180,7 +183,12 @@ def close_trade_record(
         return None
 
     resolved_closed_at = str(closed_at or get_now().isoformat())
-    with get_db() as conn:
+    # H-D4: BEGIN IMMEDIATE upfront, not just on the eventual UPDATE — a manual close
+    # racing a kernel/auto close on the same trade must not both pass the `status ==
+    # OPEN` check below: the second caller blocks here until the first commits, then
+    # its own read sees status='CLOSED' and takes the no-op branch instead of
+    # clobbering the first close's exit_price/pnl with a stale recomputation.
+    with get_db_immediate() as conn:
         row = conn.execute("SELECT * FROM trades WHERE id = ?", (normalized_trade_id,)).fetchone()
         if not row:
             return None

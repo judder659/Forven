@@ -14,6 +14,7 @@ from forven.scanner import (
     check_s012_signal,
     fetch_candles,
     rsi,
+    _fill_now_mark,
 )
 
 
@@ -136,6 +137,56 @@ def test_fetch_candles_uses_stale_cache_when_direct_fetch_disabled(monkeypatch):
     df = fetch_candles("BTC", bars=1)
     assert len(df) == 1
     assert float(df["close"].iloc[-1]) == 11.0
+
+
+def test_fetch_candles_max_cache_age_overrides_shared_threshold(monkeypatch):
+    """A caller-supplied max_cache_age_seconds is tighter than the shared 180s default —
+    a cache entry within 180s but past the tighter bound must trigger a direct fetch
+    (the _fill_now_mark gap: a shared 180s cache let a fill-now read land up to 3
+    candles stale instead of the intended <=1 bar)."""
+    cached_rows = [
+        {"t": "2026-02-25T00:00:00+00:00", "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10},
+    ]
+    fresh_rows = [
+        {"t": "2026-02-25T00:01:00+00:00", "open": 2, "high": 3, "low": 1.5, "close": 2.5, "volume": 10},
+    ]
+
+    # 90s old: within the shared 180s default, but past a 60s caller-supplied bound.
+    monkeypatch.setattr(scanner_mod, "load_candle_snapshot", lambda asset, interval="1h": (cached_rows, 90.0))
+    monkeypatch.setattr(scanner_mod, "_scanner_bool_setting", lambda name, default: True)
+    monkeypatch.setattr(scanner_mod, "kv_get", lambda _key, default=None: default)
+
+    def _direct_fetch(asset, bars=300, interval="1h", clean=True):
+        return pd.DataFrame(
+            {"open": [2], "high": [3], "low": [1.5], "close": [2.5]},
+            index=pd.to_datetime(["2026-02-25T00:01:00+00:00"], utc=True),
+        )
+
+    monkeypatch.setattr(scanner_mod, "fetch_market_candles", _direct_fetch)
+    monkeypatch.setattr(scanner_mod, "publish_candle_snapshot", lambda *a, **kw: None)
+
+    # Default threshold: the 90s-old cache is still "fresh" → served straight from cache.
+    df_default = fetch_candles("BTC", bars=1, interval="1m")
+    assert float(df_default["close"].iloc[-1]) == 1.5
+
+    # Tightened threshold: the same 90s-old cache is now stale → falls through to a direct fetch.
+    df_tight = fetch_candles("BTC", bars=1, interval="1m", max_cache_age_seconds=60)
+    assert float(df_tight["close"].iloc[-1]) == 2.5
+
+
+def test_fill_now_mark_uses_60s_cache_bound(monkeypatch):
+    """_fill_now_mark must pass a tight (60s) max_cache_age_seconds to fetch_candles, not the
+    shared 180s default, so two fill-now opens on the same asset within 180s can't reuse the
+    same up-to-3-candles-stale cached read."""
+    captured = {}
+
+    def _fake_fetch_candles(asset, bars=2, interval="1m", max_cache_age_seconds=None):
+        captured["max_cache_age_seconds"] = max_cache_age_seconds
+        return pd.DataFrame({"close": [123.45]}, index=pd.to_datetime(["2026-02-25T00:01:00+00:00"], utc=True))
+
+    monkeypatch.setattr(scanner_mod, "fetch_candles", _fake_fetch_candles)
+    assert _fill_now_mark("BTC", last_close=100.0) == 123.45
+    assert captured["max_cache_age_seconds"] == 60
 
 
 def test_account_equity_reads_sim_state_when_sim_active(monkeypatch):

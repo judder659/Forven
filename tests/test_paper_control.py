@@ -392,6 +392,90 @@ def test_live_open_requires_protective_stop(forven_db, monkeypatch):
     assert "protective stop" in exc.value.detail.lower()
 
 
+def test_live_flip_reverses_with_a_stop_not_stranded_flat(forven_db, monkeypatch):
+    # #1 regression: the live flip used to call _live_open(stop_loss_price=None), which 400s
+    # on the RISK-3 stop guard AFTER the close already executed — leaving the account FLAT
+    # instead of reversed. The flip must derive a re-anchored protective stop for the reversed
+    # side (from the execution profile, floored) and pass it, so the position actually flips.
+    _insert_paper_strategy()
+    _insert_live_trade("L200", direction="long", size=1.0, entry_price=100.0)
+    _set_mid("BTC", 100.0)
+    monkeypatch.setattr(pc.risk_mod, "can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(pc.books_mod, "resolve_open_book", lambda direction: (None, None))
+
+    captured: dict = {}
+    monkeypatch.setattr(pc, "_live_close_trade", lambda trade, **k: captured.update(closed=True))
+
+    def _capture_open(session_id, strategy_id, asset, direction, **kw):
+        captured["open"] = {"direction": direction, **kw}
+
+    monkeypatch.setattr(pc, "_live_open", _capture_open)
+
+    pc.flip_position(STRATEGY_ID)
+
+    assert captured.get("closed") is True                 # closed first
+    assert captured["open"]["direction"] == "short"        # reversed
+    sl = captured["open"]["stop_loss_price"]
+    assert sl is not None and sl > 0                       # NOT None — would have 400'd/stranded
+    assert sl > 100.0                                      # a short's stop is ABOVE the mark
+
+
+def test_live_stop_replace_keeps_old_stop_when_new_placement_fails(forven_db, monkeypatch):
+    # #3: place-before-cancel. If the NEW stop placement is rejected, the OLD resting stop must
+    # NOT be cancelled (the position stays protected) and the DB must not record the un-placed stop.
+    from fastapi import HTTPException
+
+    _insert_paper_strategy()
+    _insert_live_trade("L300", direction="long", entry_price=100.0, size=1.0)
+    pc._update_open_trade_signal_data("L300", {"exchange_stop_order_id": "OLD-STOP", "stop_loss_price": 95.0})
+
+    cancelled: list = []
+    monkeypatch.setattr(pc, "_cancel_live_order", lambda asset, oid, vault=None: cancelled.append(oid))
+
+    def _fail_place(kind, trade, price, vault=None):
+        raise HTTPException(status_code=502, detail="rejected")
+
+    monkeypatch.setattr(pc, "_place_live_protective", _fail_place)
+
+    pc._apply_levels_to_open_trade(_get_trade("L300"), {"stop_loss": 96.0, "take_profit": None, "trailing_stop_pct": None})
+
+    assert cancelled == []                                     # old stop NOT cancelled -> still protected
+    sd = json.loads(_get_trade("L300")["signal_data"])
+    assert sd.get("stop_loss_replace_failed") is True
+    assert sd.get("exchange_stop_order_id") == "OLD-STOP"      # unchanged
+    assert sd.get("stop_loss_price") == pytest.approx(95.0)    # NOT updated to the un-placed 96.0
+
+
+def test_manual_live_open_flags_rejected_stop_leg_not_recorded_protected(forven_db, monkeypatch):
+    # #4: entry FILLED but the bracket stop leg was REJECTED (protective_leg_failed). The manual
+    # open must re-arm the stop; if re-arm also fails, flag the trade unarmed + pending reconcile
+    # (mirroring the scanner) — never record it as a cleanly-protected position.
+    import forven.exchange.hyperliquid as hl
+    from forven.db import get_db
+
+    _insert_paper_strategy()
+    _set_mid("BTC", 100.0)
+    monkeypatch.setattr(pc, "_session_is_live", lambda s: True)
+    monkeypatch.setattr(pc, "_live_testnet", lambda: True)
+    monkeypatch.setattr(pc.risk_mod, "can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(pc.risk_mod, "register", lambda *a, **k: None)
+    monkeypatch.setattr(hl, "market_order", lambda *a, **k: {
+        "entry_price": 100.0, "filled_size": 1.0, "order_id": "E-OID",
+        "protective_leg_failed": ["stop"], "stop_order_id": None,
+    })
+    monkeypatch.setattr(hl, "place_protective_stop", lambda *a, **k: {"error": "rejected again"})
+
+    pc.open_manual_position(STRATEGY_ID, direction="long", size=1.0, stop_loss_price=95.0)
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT signal_data FROM trades WHERE strategy_id = ? AND status = 'OPEN'", (STRATEGY_ID,)
+        ).fetchone()
+    sd = json.loads(dict(row)["signal_data"])
+    assert sd.get("protective_stop_unarmed") is True
+    assert sd.get("pending_open_reconcile") is True
+
+
 def test_live_open_places_market_order_and_registers(forven_db, monkeypatch):
     import forven.exchange.hyperliquid as hl
 

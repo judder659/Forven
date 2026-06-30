@@ -141,6 +141,112 @@ def test_fill_now_close_recomputes_equity_fraction_pnl_and_flags_it(forven_db):
     assert json.loads(out["signal_data"]).get("pnl_is_equity_fraction") is True  # gate-eligible
 
 
+def _funding_df(rows):
+    """rows = [(iso_time, funding_rate), ...] -> a DataFrame with a funding_rate column."""
+    idx = pd.to_datetime([r[0] for r in rows], utc=True)
+    return pd.DataFrame({"funding_rate": [r[1] for r in rows]}, index=idx)
+
+
+def test_late_trade_funding_pct_long_pays_short_receives():
+    """Mirrors the backtest's _apply_funding_to_trades sign convention: a long PAYS positive
+    funding, a short RECEIVES it."""
+    df = _funding_df([
+        ("2026-06-27 12:00:00+00:00", 0.01),
+        ("2026-06-27 13:00:00+00:00", 0.02),
+    ])
+    long_funding = sc._late_trade_funding_pct(
+        df, "long", "2026-06-27 12:00:00+00:00", "2026-06-27 14:00:00+00:00", 1.0, 1.0, "1h",
+    )
+    short_funding = sc._late_trade_funding_pct(
+        df, "short", "2026-06-27 12:00:00+00:00", "2026-06-27 14:00:00+00:00", 1.0, 1.0, "1h",
+    )
+    assert long_funding == pytest.approx(-0.03)
+    assert short_funding == pytest.approx(0.03)
+
+
+def test_late_trade_funding_pct_excludes_bar_at_or_after_close():
+    """The window is [opened_at, closed_at) — a bar AT the close time accrued no funding
+    while we held the position, so it must not be counted."""
+    df = _funding_df([
+        ("2026-06-27 12:00:00+00:00", 0.01),
+        ("2026-06-27 14:00:00+00:00", 999.0),  # at closed_at — excluded
+    ])
+    funding = sc._late_trade_funding_pct(
+        df, "short", "2026-06-27 12:00:00+00:00", "2026-06-27 14:00:00+00:00", 1.0, 1.0, "1h",
+    )
+    assert funding == pytest.approx(0.01)
+
+
+def test_late_trade_funding_pct_zero_without_funding_data():
+    assert sc._late_trade_funding_pct(
+        None, "long", "2026-06-27 12:00:00+00:00", "2026-06-27 14:00:00+00:00", 1.0, 1.0, "1h",
+    ) == 0.0
+    no_funding_col = pd.DataFrame(
+        {"close": [1.0]}, index=pd.to_datetime(["2026-06-27 12:00:00+00:00"], utc=True),
+    )
+    assert sc._late_trade_funding_pct(
+        no_funding_col, "long", "2026-06-27 12:00:00+00:00", "2026-06-27 14:00:00+00:00", 1.0, 1.0, "1h",
+    ) == 0.0
+
+
+def test_late_trade_funding_pct_zero_duration_is_zero():
+    df = _funding_df([("2026-06-27 12:00:00+00:00", 0.01)])
+    assert sc._late_trade_funding_pct(
+        df, "long", "2026-06-27 12:00:00+00:00", "2026-06-27 12:00:00+00:00", 1.0, 1.0, "1h",
+    ) == 0.0
+
+
+def test_fill_now_close_charges_funding_over_actual_holding_window(forven_db):
+    """A fill-now SIGNAL exit must charge funding over the trade's ACTUAL [opened_at, closed_at)
+    window — not the kernel's own historical bar range, which doesn't describe a late hop-in's
+    real (current-mark) entry/exit."""
+    tid, row = _open_late(forven_db)  # short @1590, opened_at 2026-06-27T12:00:00+00:00, size_fraction 0.5
+    funding_df = _funding_df([
+        ("2026-06-27 12:00:00+00:00", 0.01),
+        ("2026-06-27 13:00:00+00:00", 0.01),
+        ("2026-06-27 14:00:00+00:00", 999.0),  # at/after closed_at — must be excluded
+    ])
+    kernel_trade = {"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "signal",
+                    "exit_time": "2026-06-27 16:00:00+00:00"}
+    sc._kernel_close_recorded(
+        "S-LATE", STRAT, row, kernel_trade, "short",
+        current_price=1550.0, current_time="2026-06-27 14:00:00+00:00",
+        funding_df=funding_df, timeframe="1h",
+    )
+    with get_db() as c:
+        out = dict(c.execute("SELECT pnl_pct, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
+    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
+    price_leg = ((1590.0 - 1550.0) / 1590.0 - drag) * 0.5
+    expected_funding = 0.02 * 1.0 * 1.0 * 0.5  # funding_sum(0.01+0.01) * hours(1h) * lev(1) * size_fraction(0.5)
+    assert out["pnl_pct"] == pytest.approx(price_leg + expected_funding, rel=1e-4)
+    sd = json.loads(out["signal_data"])
+    assert sd["funding_cost_pct"] == pytest.approx(expected_funding, rel=1e-4)
+
+
+def test_fill_now_close_funding_gated_by_setting(forven_db, monkeypatch):
+    """backtest_include_funding=False must mean the SAME thing for a fill-now close as it does
+    for a faithful one — no funding term applied."""
+    monkeypatch.setattr(sc, "_paper_include_funding_enabled", lambda: False)
+    tid, row = _open_late(forven_db)
+    funding_df = _funding_df([
+        ("2026-06-27 12:00:00+00:00", 0.01),
+        ("2026-06-27 13:00:00+00:00", 0.01),
+    ])
+    kernel_trade = {"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "signal",
+                    "exit_time": "2026-06-27 16:00:00+00:00"}
+    sc._kernel_close_recorded(
+        "S-LATE", STRAT, row, kernel_trade, "short",
+        current_price=1550.0, current_time="2026-06-27 14:00:00+00:00",
+        funding_df=funding_df, timeframe="1h",
+    )
+    with get_db() as c:
+        out = dict(c.execute("SELECT pnl_pct, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
+    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
+    price_leg = ((1590.0 - 1550.0) / 1590.0 - drag) * 0.5
+    assert out["pnl_pct"] == pytest.approx(price_leg, rel=1e-4)
+    assert json.loads(out["signal_data"])["funding_cost_pct"] == 0.0
+
+
 def test_refresh_does_not_clobber_late_entry_reanchored_stop(forven_db):
     tid, row = _open_late(forven_db)
     # The kernel pos still carries the HISTORICAL stop (2450); a refresh must leave the
@@ -205,6 +311,31 @@ def test_monitor_closes_short_at_reanchored_stop(forven_db):
     assert out["closed_at"] == "2026-06-27T14:00:00+00:00"        # the breach bar, not scan time
     assert out["fill_exit_price"] == pytest.approx(_expected_short_stop(1590.0), rel=1e-4)  # at the stop
     assert out["pnl_pct"] < 0                                      # short stopped out above entry → loss
+
+
+def test_monitor_price_exit_also_charges_funding(forven_db):
+    """The re-anchored stop/target monitor's closes go through the SAME _kernel_close_recorded
+    late branch as a signal exit — funding over the actual holding window must be charged there
+    too, not just on signal/time-stop exits."""
+    tid, _ = _open_late(forven_db)  # short @1590, opened_at 12:00, re-anchored stop ~1623.125
+    df = _make_df([
+        ("2026-06-27 12:00:00+00:00", 1590, 1595, 1585, 1592),  # entry bar — excluded
+        ("2026-06-27 13:00:00+00:00", 1600, 1610, 1595, 1605),  # no breach
+        ("2026-06-27 14:00:00+00:00", 1620, 1630, 1615, 1628),  # STOP
+    ])
+    df["funding_rate"] = [0.01, 0.01, 0.01]
+    msgs = sc._kernel_handle_late_entry_exits("S-LATE", STRAT, df, "1h")
+    assert msgs
+    with get_db() as c:
+        out = dict(c.execute(
+            "SELECT pnl_pct, fill_exit_price, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
+    stop_price = _expected_short_stop(1590.0)
+    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
+    price_leg = ((1590.0 - stop_price) / 1590.0 - drag) * 0.5
+    # window [12:00, 14:00) covers the 12:00 and 13:00 bars (0.02 total funding rate)
+    expected_funding = 0.02 * 1.0 * 1.0 * 0.5
+    assert out["pnl_pct"] == pytest.approx(price_leg + expected_funding, rel=1e-4)
+    assert json.loads(out["signal_data"])["funding_cost_pct"] == pytest.approx(expected_funding, rel=1e-4)
 
 
 def test_monitor_holds_when_reanchored_stop_not_touched(forven_db):
@@ -392,6 +523,85 @@ def test_trailing_only_late_hopin_price_exit_is_not_deferred(forven_db):
         assert dict(c.execute("SELECT status FROM trades WHERE id=?", (tid,)).fetchone())["status"] == "CLOSED"
 
 
+def test_fill_now_close_uses_current_mark_for_signal_exit(forven_db):
+    """A SIGNAL exit on a fill-now trade fills at the CURRENT mark/time passed in, not the
+    kernel's historical exit bar — mirrors the fill-now ENTRY's philosophy on the exit side
+    (the kernel only just detected the exit on the most-recently-closed bar)."""
+    tid, row = _open_late(forven_db)  # short @1590
+    kernel_trade = {"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "signal",
+                    "exit_time": "2026-06-27 16:00:00+00:00"}
+    sc._kernel_close_recorded(
+        "S-LATE", STRAT, row, kernel_trade, "short",
+        current_price=1550.0, current_time="2026-06-27 12:05:00+00:00",
+    )
+    with get_db() as c:
+        out = dict(c.execute(
+            "SELECT status, pnl_pct, closed_at, fill_exit_price, signal_data FROM trades WHERE id=?",
+            (tid,)).fetchone())
+    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
+    expected_eq = ((1590.0 - 1550.0) / 1590.0 - drag) * 0.5
+    assert out["status"] == "CLOSED"
+    assert out["closed_at"] == "2026-06-27T12:05:00+00:00"            # current time, NOT kernel's 16:00
+    assert out["fill_exit_price"] == pytest.approx(1550.0)            # current mark, NOT kernel's 1500
+    assert out["pnl_pct"] == pytest.approx(expected_eq, rel=0.02)
+    sd = json.loads(out["signal_data"])
+    assert sd["close_fill_now"] is True
+    assert sd["kernel_exit_time"] == "2026-06-27 16:00:00+00:00"      # historical decision time preserved
+
+
+def test_fill_now_close_keeps_kernel_price_for_price_exit_reason(forven_db):
+    """A PRICE exit (stop/target/trailing) must NOT be overridden by current_price — those are
+    owned by the re-anchored intrabar monitor, which already fills realistically bar-by-bar."""
+    tid, row = _open_late(forven_db)
+    kernel_trade = {"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "stop_loss",
+                    "exit_time": "2026-06-27 16:00:00+00:00"}
+    sc._kernel_close_recorded(
+        "S-LATE", STRAT, row, kernel_trade, "short",
+        current_price=1550.0, current_time="2026-06-27 12:05:00+00:00",
+    )
+    with get_db() as c:
+        out = dict(c.execute(
+            "SELECT closed_at, fill_exit_price, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
+    assert out["fill_exit_price"] == pytest.approx(1500.0)   # kernel's price-exit level, unchanged
+    assert out["closed_at"] == "2026-06-27T16:00:00+00:00"
+    assert json.loads(out["signal_data"]).get("close_fill_now") is False
+
+
+def test_kernel_close_paper_trade_threads_current_price_to_signal_exit(forven_db):
+    """The scanner dispatch passes current_price/current_time through to a fill-now SIGNAL
+    close, not just a fresh OPEN — _kernel_close_paper_trade must forward them unchanged."""
+    tid, row = _open_late(forven_db)
+    action = ReconcileAction(
+        "close", "short", STALE_ENTRY, recorded={"_row": row},
+        trade={"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "signal",
+               "exit_time": "2026-06-27 16:00:00+00:00"},
+    )
+    msg = sc._kernel_close_paper_trade(
+        "S-LATE", STRAT, action, current_price=1550.0, current_time="2026-06-27 12:05:00+00:00",
+    )
+    assert msg and "fill-now" in msg.lower()
+    with get_db() as c:
+        out = dict(c.execute("SELECT closed_at, fill_exit_price FROM trades WHERE id=?", (tid,)).fetchone())
+    assert out["closed_at"] == "2026-06-27T12:05:00+00:00"
+    assert out["fill_exit_price"] == pytest.approx(1550.0)
+
+
+def test_kernel_close_paper_trade_without_current_price_keeps_old_behavior(forven_db):
+    """Backward compatibility: a caller that does not pass current_price (e.g. a future direct
+    caller) still gets the faithful kernel exit bar — the override is strictly opt-in."""
+    tid, row = _open_late(forven_db)
+    action = ReconcileAction(
+        "close", "short", STALE_ENTRY, recorded={"_row": row},
+        trade={"exit_price": 1500.0, "pnl_pct": 0.30, "exit_reason": "signal",
+               "exit_time": "2026-06-27 16:00:00+00:00"},
+    )
+    sc._kernel_close_paper_trade("S-LATE", STRAT, action)
+    with get_db() as c:
+        out = dict(c.execute("SELECT closed_at, fill_exit_price FROM trades WHERE id=?", (tid,)).fetchone())
+    assert out["closed_at"] == "2026-06-27T16:00:00+00:00"
+    assert out["fill_exit_price"] == pytest.approx(1500.0)
+
+
 def test_late_hopin_exit_at_or_before_entry_closes_clamped_not_stranded(forven_db):
     """A kernel signal/time exit that lands AT/BEFORE the fill-now entry (exit_time <= opened_at)
     must NOT be deferred forever. For a fast-exit (~1-bar-hold) strategy the kernel exit_time is
@@ -427,12 +637,12 @@ def _m1(closes, lows, highs):
 
 def test_fill_now_mark_uses_latest_1m_close_not_snapshot(monkeypatch):
     m1 = _m1([58497.0, 58474.0], [58466.0, 58450.0], [58506.0, 58478.0])
-    monkeypatch.setattr(sc, "fetch_candles", lambda a, bars=2, interval="1m": m1)
+    monkeypatch.setattr(sc, "fetch_candles", lambda a, bars=2, interval="1m", max_cache_age_seconds=None: m1)
     # a stale-but-timestamp-fresh snapshot ($80 above the candle) must be IGNORED
     monkeypatch.setattr(sc, "_load_live_price_cache", lambda: ({"BTC": 58553.99}, 3.0))
     assert sc._fill_now_mark("BTC", last_close=58497.65) == 58474.0  # the latest 1m close
 
 
 def test_fill_now_mark_falls_back_to_last_close_without_1m(monkeypatch):
-    monkeypatch.setattr(sc, "fetch_candles", lambda a, bars=2, interval="1m": None)
+    monkeypatch.setattr(sc, "fetch_candles", lambda a, bars=2, interval="1m", max_cache_age_seconds=None: None)
     assert sc._fill_now_mark("BTC", last_close=58497.65) == 58497.65

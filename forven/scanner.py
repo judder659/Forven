@@ -695,7 +695,10 @@ def _fill_now_mark(asset: str, last_close: float) -> float:
     close when 1m candles are unavailable."""
     a = str(asset or "").strip().upper()
     try:
-        m1 = fetch_candles(a, bars=2, interval="1m")
+        # Bound the cache to one 1m bar (60s), not the shared 180s default: two
+        # fill-now opens on the same asset within 180s would otherwise be able to
+        # reuse the same up-to-3-candles-stale cached read.
+        m1 = fetch_candles(a, bars=2, interval="1m", max_cache_age_seconds=60)
         if m1 is not None and not getattr(m1, "empty", True) and len(m1):
             close = _coerce_positive_float(m1["close"].iloc[-1])
             if close is not None:
@@ -1643,8 +1646,16 @@ STRATEGIES = {
 
 # ─── Data Fetching ────────────────────────────────────────────────────────────
 
-def fetch_candles(coin: str, bars: int = 300, interval: str = "1h") -> pd.DataFrame:
-    """Load OHLCV candles (cache-first) for strategy evaluation."""
+def fetch_candles(
+    coin: str, bars: int = 300, interval: str = "1h", max_cache_age_seconds: float | None = None
+) -> pd.DataFrame:
+    """Load OHLCV candles (cache-first) for strategy evaluation.
+
+    ``max_cache_age_seconds`` overrides the shared ``_CANDLE_CACHE_STALE_SECONDS``
+    threshold for callers that need a tighter freshness bound than the default
+    180s (e.g. a 1m fill-now read, where the shared cache's 180s window would let
+    a fill land up to 3 candles stale instead of the intended <=1 bar).
+    """
     normalized_coin = str(coin or "").strip().upper()
     required_bars = max(int(bars), 1)
     resolved_interval = str(interval or "1h").strip().lower() or "1h"
@@ -1679,7 +1690,10 @@ def fetch_candles(coin: str, bars: int = 300, interval: str = "1h") -> pd.DataFr
     # kernel exit enforcement (a zombie that can ride past its stop / time-stop). When
     # the cache is too short, direct-fetch the FULL window below and republish a cache
     # that covers it.
-    cache_fresh = cache_age is None or cache_age <= _CANDLE_CACHE_STALE_SECONDS
+    stale_threshold = (
+        _CANDLE_CACHE_STALE_SECONDS if max_cache_age_seconds is None else max(float(max_cache_age_seconds), 0.0)
+    )
+    cache_fresh = cache_age is None or cache_age <= stale_threshold
     cache_covers = (not cached_df.empty) and len(cached_df) >= required_bars
     if cache_covers and cache_fresh:
         return cached_df.tail(required_bars)
@@ -5582,9 +5596,54 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
     return f"KERNEL-OPEN{' (fill-now)' if late else ''} {asset} {direction} @ {entry_price:.6g} size={units}"
 
 
+def _late_trade_funding_pct(
+    df: "pd.DataFrame | None", direction: str, opened_at, closed_at, leverage: float, size_fraction: float,
+    timeframe: str,
+) -> float:
+    """Perp funding accrued over a FILL-NOW trade's ACTUAL holding window [opened_at, closed_at).
+
+    The kernel's own funding pass (``_apply_funding_to_trades``, applied to ``res.closed_trades``
+    in ``manage_positions_via_kernel``) sums over the KERNEL's historical entry_bar/bars_held
+    window — which does not describe a late hop-in's real (current-mark) entry/exit. Without
+    this, a fill-now position's recomputed PnL was funding-free while every other kernel trade is
+    net-of-funding (the gap noted in the original fill-now work). Mirrors the same per-bar-rate *
+    hours-per-bar * leverage * size_fraction convention, applied to a TIME-bounded slice of the
+    same ``df`` instead of a bar-index slice. Fails closed (0.0) on any missing data — a missed
+    funding charge is a smaller error than a fabricated one."""
+    if df is None or getattr(df, "empty", True) or "funding_rate" not in getattr(df, "columns", []):
+        return 0.0
+    try:
+        start = pd.Timestamp(opened_at)
+        if start.tzinfo is None:
+            start = start.tz_localize("UTC")
+        end = pd.Timestamp(closed_at)
+        if end.tzinfo is None:
+            end = end.tz_localize("UTC")
+    except Exception:
+        return 0.0
+    if end <= start:
+        return 0.0  # zero/negative-duration hold — no funding interval crossed
+    try:
+        mask = (df.index >= start) & (df.index < end)
+        window = df["funding_rate"][mask]
+        if not len(window):
+            return 0.0
+        funding_sum = float(window.fillna(0.0).sum())
+        from forven.strategies import backtest as _bt
+
+        hours = _bt._hours_per_bar(timeframe)
+        sign = 1.0 if str(direction).strip().lower() == "long" else -1.0
+        lev = max(float(leverage), 0.0)
+        return round(-sign * funding_sum * hours * lev * max(float(size_fraction), 0.0), 6)
+    except Exception:
+        return 0.0
+
+
 def _kernel_close_recorded(
     strat_id: str, strat: dict, row: dict, trade: dict, direction: str,
     *, closed_at_override: str | None = None,
+    current_price: float | None = None, current_time: str | None = None,
+    funding_df: "pd.DataFrame | None" = None, timeframe: str | None = None,
 ) -> str | None:
     trade_id = str(row.get("id"))
     sd = parse_trade_signal_data(row.get("signal_data"))
@@ -5594,6 +5653,19 @@ def _kernel_close_recorded(
     equity_at_entry = _coerce_positive_float(sd.get("kernel_equity_at_entry")) or _PAPER_SANDBOX_INITIAL_CAPITAL
     pnl_usd = round(float(equity_at_entry) * pnl_pct_net, 4)
     exit_reason = str(trade.get("exit_reason") or "signal")
+    # FILL-NOW exit: a late hop-in's SIGNAL/time-stop exit is a decision the kernel just
+    # made on the most-recently-closed bar — fill it at the CURRENT mark/time, exactly like
+    # its fill-now ENTRY, instead of the kernel's historical exit-bar price (which can be
+    # delayed up to ~1 bar by the backtest's own fill convention). PRICE exits (stop/target/
+    # trailing) are excluded: those are owned by the re-anchored intrabar monitor
+    # (_kernel_handle_late_entry_exits), which already fills realistically bar-by-bar and
+    # never passes current_price here.
+    fresh_exit = (
+        late and exit_reason not in _KERNEL_PRICE_EXIT_REASONS
+        and current_price is not None and float(current_price) > 0
+    )
+    if fresh_exit:
+        exit_price = float(current_price)
     _update_trade_fill(trade_id=trade_id, fill_price=exit_price, fill_kind="exit", signal_price=exit_price)
     # closed_at = the kernel's actual EXIT-bar time (the trade really closed on the bar the
     # kernel exited on, not the scan moment). close_trade_record stamps it directly.
@@ -5601,6 +5673,8 @@ def _kernel_close_recorded(
     # so the trade is never negative-duration while still realizing the kernel exit PRICE.
     _exit_time = trade.get("exit_time")
     _closed_at = str(_exit_time).replace(" ", "T") if _exit_time else None
+    if fresh_exit and current_time:
+        _closed_at = str(current_time).replace(" ", "T")
     if closed_at_override:
         _closed_at = str(closed_at_override).replace(" ", "T")
     if late:
@@ -5611,9 +5685,7 @@ def _kernel_close_recorded(
         # and write it equity-fraction-flagged via pnl_override so this close is COUNTED by the
         # promotion gate (which filters on pnl_is_equity_fraction). Omitting the flag — as the
         # old late path did — would silently drop EVERY fill-now close from the gate, leaving
-        # nothing to promote on. Funding over the holding period is not yet charged here (small
-        # vs the fill-price correction; Phase-2 follow-up). One atomic close stamps the kernel
-        # exit-bar time.
+        # nothing to promote on. One atomic close stamps the kernel exit-bar time.
         _our_entry = _coerce_positive_float(
             row.get("fill_entry_price") or row.get("entry_price") or row.get("signal_entry_price")
         ) or 0.0
@@ -5623,21 +5695,34 @@ def _kernel_close_recorded(
         _fee_bps = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
         _slip_bps = max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)
         _drag = 2.0 * (_fee_bps + _slip_bps) / 10000.0 * max(_lev, 0.0)
+        # Funding over the ACTUAL holding window — the kernel's own funding pass
+        # (_apply_funding_to_trades) only covers a FAITHFUL trade's historical bar range,
+        # which doesn't describe a fill-now position's real (current-mark) entry/exit.
+        _funding_pct = 0.0
+        if _paper_include_funding_enabled():
+            _funding_pct = _late_trade_funding_pct(
+                funding_df, direction, row.get("opened_at"), _closed_at, _lev, _size_frac,
+                timeframe or "1h",
+            )
         if _our_entry > 0:
-            _pnl_eq = (((exit_price - _our_entry) / _our_entry) * _sgn * _lev - _drag) * _size_frac
+            _pnl_eq = (((exit_price - _our_entry) / _our_entry) * _sgn * _lev - _drag) * _size_frac + _funding_pct
         else:
             _pnl_eq = 0.0
         _pnl_usd_eq = round(float(equity_at_entry) * _pnl_eq, 4)
         close_trade_record(
             trade_id, signal_exit_price=exit_price, exit_price=exit_price,
             close_reason=exit_reason, close_price_source="kernel", closed_at=_closed_at,
-            extra_signal_data={"kernel_exit_time": trade.get("exit_time"), "kernel_managed": True},
+            extra_signal_data={
+                "kernel_exit_time": trade.get("exit_time"), "kernel_managed": True,
+                "close_fill_now": fresh_exit, "funding_cost_pct": _funding_pct,
+            },
             pnl_override={
                 "pnl_pct": round(_pnl_eq, 8), "net_pnl_pct": round(_pnl_eq, 8),
                 "pnl_usd": _pnl_usd_eq, "equity_fraction": True,
             },
         )
-        return f"KERNEL-CLOSE (fill-now) {strat.get('asset')} {direction} @ {exit_price:.6g} pnl={_pnl_eq * 100:.2f}% ({exit_reason})"
+        _tag = "fill-now" if fresh_exit else "fill-now entry, historical exit"
+        return f"KERNEL-CLOSE ({_tag}) {strat.get('asset')} {direction} @ {exit_price:.6g} pnl={_pnl_eq * 100:.2f}% ({exit_reason})"
     # Faithful kernel trade: write the kernel's NET equity-fraction values (the kernel
     # pnl_pct is net-of-drag, size-scaled equity impact — close_trade_record's own pnl is a
     # gross MARGIN return). DB-1 / SCANAPPLY-2 + PROMOTION-GATE-PARITY-2/3: pass them via
@@ -5656,7 +5741,11 @@ def _kernel_close_recorded(
     return f"KERNEL-CLOSE {strat.get('asset')} {direction} @ {exit_price:.6g} pnl={pnl_pct_net * 100:.2f}% ({exit_reason})"
 
 
-def _kernel_close_paper_trade(strat_id: str, strat: dict, action) -> str | None:
+def _kernel_close_paper_trade(
+    strat_id: str, strat: dict, action,
+    *, current_price: float | None = None, current_time: str | None = None,
+    funding_df: "pd.DataFrame | None" = None, timeframe: str | None = None,
+) -> str | None:
     trade = action.trade or {}
     if action.recorded and action.recorded.get("_row"):
         row = action.recorded["_row"]
@@ -5681,6 +5770,7 @@ def _kernel_close_paper_trade(strat_id: str, strat: dict, action) -> str | None:
                 return _kernel_close_recorded(
                     strat_id, strat, row, trade, action.direction,
                     closed_at_override=row.get("opened_at"),
+                    funding_df=funding_df, timeframe=timeframe,
                 )
             # A LATE hop-in's PRICE exits are owned by its RE-ANCHORED stop/target (enforced
             # intrabar by _kernel_handle_late_entry_exits), NOT by the kernel's historical
@@ -5693,7 +5783,11 @@ def _kernel_close_paper_trade(strat_id: str, strat: dict, action) -> str | None:
             _has_reanchor = sd.get("stop_loss_price") is not None or sd.get("take_profit_price") is not None
             if _has_reanchor and str(trade.get("exit_reason") or "") in _KERNEL_PRICE_EXIT_REASONS:
                 return None
-        return _kernel_close_recorded(strat_id, strat, row, trade, action.direction)
+        return _kernel_close_recorded(
+            strat_id, strat, row, trade, action.direction,
+            current_price=current_price, current_time=current_time,
+            funding_df=funding_df, timeframe=timeframe,
+        )
     # Backfill: opened AND closed between scans — record the completed trade. Guard against
     # re-recording one already booked: if ANY trade already carries this kernel_entry_time,
     # it IS recorded (just absent from the capped reconciler snapshot) — skip, so a busy book
@@ -5848,7 +5942,9 @@ def _kernel_handle_manual_exits(strat_id: str, current_price: float) -> list[str
     return out
 
 
-def _kernel_handle_late_entry_exits(strat_id: str, strat: dict, df: "pd.DataFrame") -> list[str]:
+def _kernel_handle_late_entry_exits(
+    strat_id: str, strat: dict, df: "pd.DataFrame", timeframe: str | None = None,
+) -> list[str]:
     """Enforce a LATE hop-in's RE-ANCHORED stop / take-profit — the live-faithful exit.
 
     A late hop-in (see late-entry-hop-in) enters at the CURRENT price with its stop and
@@ -5871,6 +5967,9 @@ def _kernel_handle_late_entry_exits(strat_id: str, strat: dict, df: "pd.DataFram
     out: list[str] = []
     if df is None or getattr(df, "empty", True) or len(df) == 0:
         return out
+    resolved_timeframe = timeframe or str(
+        strat.get("timeframe") or (strat.get("params") or {}).get("timeframe") or "1h"
+    ).strip().lower() or "1h"
     try:
         idx = df.index
         opens = df["open"].astype(float)
@@ -5936,7 +6035,10 @@ def _kernel_handle_late_entry_exits(strat_id: str, strat: dict, df: "pd.DataFram
             "exit_reason": exit_reason,
             "exit_time": exit_time,
         }
-        msg = _kernel_close_recorded(strat_id, strat, dict(trade), synthetic, direction)
+        msg = _kernel_close_recorded(
+            strat_id, strat, dict(trade), synthetic, direction,
+            funding_df=df, timeframe=resolved_timeframe,
+        )
         if msg:
             out.append(msg)
     return out
@@ -6062,10 +6164,20 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     return f"LIVE-KERNEL-OPEN {asset} {direction} x{units}{_book_tag}"
 
 
-def _kernel_close_live_trade(strat_id: str, strat: dict, action) -> str | None:
+def _kernel_close_live_trade(
+    strat_id: str, strat: dict, action,
+    *, current_price: float | None = None, current_time: str | None = None,
+    funding_df: "pd.DataFrame | None" = None, timeframe: str | None = None,
+) -> str | None:
     """Close a live position on a kernel 'close' decision via a REAL reduce-only order,
     then finalize like the legacy path (pnl from the real fill, retire protection
-    orders, release the risk slot)."""
+    orders, release the risk slot).
+
+    ``current_price``/``current_time``/``funding_df``/``timeframe`` are accepted only for
+    call-site uniformity with the paper applier — a real exchange close always fills at
+    whatever the exchange gives it right now and the exchange charges/credits real funding
+    automatically, so there is nothing to simulate here (late hop-ins never occur on the
+    live path)."""
     row = (action.recorded or {}).get("_row")
     if row is None:
         return None  # backfill of a live trade we never recorded — cannot replay a real order
@@ -6370,9 +6482,18 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # REJECTS a lagging live-price snapshot — the snapshot's updated_at is its PUBLISH time, so a
     # stale price VALUE passes the 120s age gate (the ~6-min lag that put a short's fill ~$80
     # above the candle it opened on). Faithful back-stamp opens (fresh_cutoff None) never reach here.
+    # A SIGNAL/time-stop close of a late (fill-now) trade needs the same fresh mark — see
+    # _kernel_close_recorded's fresh_exit branch — so also compute it for that case, not just
+    # for fresh opens.
     hop_time = get_now().isoformat()
     hop_price = last_close
-    if any(a.kind == "open" and getattr(a, "late_entry", False) for a in actions_plan):
+    _has_fresh_open = any(a.kind == "open" and getattr(a, "late_entry", False) for a in actions_plan)
+    _has_late_close = any(
+        a.kind == "close" and a.recorded and a.recorded.get("_row")
+        and parse_trade_signal_data(a.recorded["_row"].get("signal_data")).get("late_entry")
+        for a in actions_plan
+    )
+    if _has_fresh_open or _has_late_close:
         hop_price = _fill_now_mark(asset, last_close)
 
     out: list[str] = []
@@ -6426,7 +6547,10 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                 msg = open_applier(strat_id, strat, a, sizing_equity=sizing_equity, leverage=leverage,
                                    current_price=hop_price, current_time=hop_time)
             elif a.kind in ("close", "backfill"):
-                msg = close_applier(strat_id, strat, a)
+                msg = close_applier(
+                    strat_id, strat, a, current_price=hop_price, current_time=hop_time,
+                    funding_df=df, timeframe=timeframe,
+                )
             elif a.kind == "refresh":
                 msg = _kernel_refresh_paper_trade(a)
             elif a.kind == "orphan_close":
@@ -6451,7 +6575,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
         # The kernel only reproduces the HISTORICAL position's geometry, so a hop-in's own
         # stop/target must be checked here, intrabar, against the bars since the hop-in.
         try:
-            out.extend(_kernel_handle_late_entry_exits(strat_id, strat, df))
+            out.extend(_kernel_handle_late_entry_exits(strat_id, strat, df, timeframe))
         except Exception as exc:
             log.error("[%s] kernel paper late-entry stop check failed: %s", strat_id, exc, exc_info=True)
 

@@ -147,10 +147,13 @@ def _fresh_manual_mark(session: dict, trade: dict | None = None) -> float:
     a stale VALUE (see paper-backstamp-vs-live-fillnow), so when price is moving a manual entry
     landed off the candle it opened on (below the low). One direct venue read per click is fine
     for a user action (unlike the hot close/refresh paths, which stay on the cached mid). Falls
-    back to the cached mid when the venue read is unavailable."""
+    back to the cached mid when the venue read is unavailable — logged, since a silent fallback
+    looks identical to a fresh fill from the caller's side."""
     symbol = str(session.get("symbol") or "").strip().upper()
     asset = (trading_domain._normalize_asset_key(symbol) or symbol.split("/", 1)[0]).strip().upper()
+    fallback_reason = "no asset resolved from symbol"
     if asset:
+        fallback_reason = None
         try:
             from forven.market_data import resolve_market_data_source
 
@@ -159,14 +162,26 @@ def _fresh_manual_mark(session: dict, trade: dict | None = None) -> float:
 
                 prices = fetch_binance_prices([asset])
             else:
+                from forven.circuit_breaker import hl_price_breaker
                 from forven.exchange.hyperliquid import get_all_mids
 
+                # get_all_mids() itself silently serves the SAME cached daemon mid
+                # _paper_mid reads whenever the breaker is open — without raising. Catch
+                # that case explicitly here, else a degraded exchange would be reported
+                # as a "fresh" fill instead of a fallback.
+                if not hl_price_breaker.can_execute():
+                    raise RuntimeError("hl_price_breaker is open — venue read unavailable")
                 prices = get_all_mids()
             p = _coerce_optional_float((prices or {}).get(asset))
             if p and p > 0:
                 return float(p)
-        except Exception:
-            pass
+            fallback_reason = f"{asset} missing from venue price read"
+        except Exception as exc:  # noqa: BLE001 - any venue-read failure falls back to the cached mid
+            fallback_reason = f"venue read failed: {exc}"
+    log.warning(
+        "manual fill: fresh venue price unavailable for %s (%s) — falling back to cached mid",
+        asset or symbol, fallback_reason,
+    )
     return _paper_mid(session, trade)
 
 
@@ -613,7 +628,7 @@ def _live_open(
             raise HTTPException(status_code=502, detail=f"Could not read live equity for sizing: {exc}") from exc
         if equity <= 0:
             raise HTTPException(status_code=502, detail="Live account equity is zero; cannot size by risk %.")
-        mid = _paper_mid(_resolve_session(session_id))
+        mid = _fresh_manual_mark(_resolve_session(session_id))
         resolved_size, _ = risk_mod.calculate_position_size(
             asset=asset, direction=direction, entry_price=mid,
             stop_loss_price=stop_loss_price, account_equity=equity,
@@ -641,7 +656,7 @@ def _live_open(
     if isinstance(result, dict) and result.get("error"):
         raise HTTPException(status_code=502, detail=str(result["error"]))
 
-    fill = _coerce_optional_float(result.get("entry_price")) or _paper_mid(_resolve_session(session_id))
+    fill = _coerce_optional_float(result.get("entry_price")) or _fresh_manual_mark(_resolve_session(session_id))
     filled_size = _coerce_optional_float(result.get("filled_size")) or float(resolved_size)
     entry_oid = result.get("entry_order_id") or result.get("order_id")
     stop_oid = result.get("stop_order_id")
@@ -688,6 +703,18 @@ def _live_open(
         )
     except Exception:  # noqa: BLE001
         log.warning("manual live open %s: risk register failed", trade_id, exc_info=True)
+    # #4: a protective leg the exchange REJECTED on the bracket entry (entry filled, stop
+    # bounced) must not be recorded as a normally-protected position. Re-arm it immediately
+    # (and alert if the stop still can't be armed) — mirroring the scanner's open path.
+    from forven.sim.clock import is_sim_active
+
+    _failed_legs = result.get("protective_leg_failed") or []
+    if _failed_legs and not is_sim_active():
+        _arm_failed_protective_legs(
+            trade_id, asset, direction, float(filled_size), _failed_legs,
+            stop_loss_price=stop_loss_price, take_profit_price=take_profit_price,
+            testnet=testnet, vault=vault,
+        )
     log.info("Manual LIVE open %s %s %s size=%s @ %s", trade_id, direction, asset, filled_size, fill)
 
 
@@ -802,6 +829,65 @@ def _place_live_protective(kind: str, trade: dict, price: float, vault_address: 
     return result.get("stop_order_id") or result.get("take_profit_order_id") or result.get("order_id")
 
 
+def _arm_failed_protective_legs(
+    trade_id: str, asset: str, direction: str, size: float, failed_legs: list,
+    *, stop_loss_price: float | None, take_profit_price: float | None,
+    testnet: bool, vault: str | None,
+) -> None:
+    """#4: a bracket entry FILLED but a protective leg was REJECTED
+    (result.protective_leg_failed) — the position is open but, for the stop, UNPROTECTED.
+    Mirror the scanner's open path: re-arm the failed leg immediately; if the STOP cannot be
+    armed, flag it unarmed + queue a reconcile repair and raise a CRITICAL operator alert so a
+    hand-opened position is never silently recorded as protected when its stop bounced."""
+    from forven.exchange.hyperliquid import place_protective_stop, place_take_profit
+
+    kw: dict = {"testnet": testnet}
+    if vault:
+        kw["vault_address"] = vault
+
+    if "stop" in failed_legs and stop_loss_price:
+        try:
+            ps = place_protective_stop(asset, direction, size, float(stop_loss_price), **kw)
+        except Exception as exc:  # noqa: BLE001
+            ps = {"error": str(exc)}
+        if isinstance(ps, dict) and not ps.get("error") and ps.get("stop_order_id"):
+            _update_open_trade_signal_data(trade_id, {
+                "exchange_stop_order_id": str(ps["stop_order_id"]), "protective_stop_rearmed": True,
+            })
+        else:
+            err = (ps or {}).get("error") if isinstance(ps, dict) else None
+            _update_open_trade_signal_data(trade_id, {
+                "protective_stop_unarmed": True,
+                "pending_open_reconcile": True, "pending_open_reconcile_at": _iso_now(),
+            })
+            log.error(
+                "manual live open %s: entry FILLED but stop leg rejected AND re-arm failed: %s — "
+                "reconcile will retry", trade_id, err,
+            )
+            try:
+                from forven.notifications import emit_notification
+                emit_notification(
+                    "trade_protective_unarmed", severity="critical", source="manual",
+                    title=f"Live position temporarily UNPROTECTED ({asset})",
+                    summary=f"{asset} {direction} manual entry filled but the protective stop could "
+                            "not be armed; reconcile will retry.",
+                    body=f"trade={trade_id}: {err}",
+                    dedupe_key=f"protective_unarmed:{trade_id}",
+                )
+            except Exception:
+                pass
+
+    if "take_profit" in failed_legs and take_profit_price:
+        try:
+            tp = place_take_profit(asset, direction, size, float(take_profit_price), **kw)
+        except Exception:  # noqa: BLE001
+            tp = None
+        if isinstance(tp, dict) and not tp.get("error") and tp.get("take_profit_order_id"):
+            _update_open_trade_signal_data(trade_id, {
+                "exchange_take_profit_order_id": str(tp["take_profit_order_id"]), "protective_tp_rearmed": True,
+            })
+
+
 # --------------------------------------------------------------------------- #
 # Flip
 # --------------------------------------------------------------------------- #
@@ -832,16 +918,35 @@ def flip_position(session_id: str) -> dict:
         )
         if not allowed:
             raise HTTPException(status_code=409, detail=f"Flip blocked by risk gate: {reason}")
+        # _live_open REQUIRES a protective stop (RISK-3): a bare None stop 400s AFTER the
+        # close and strands the account FLAT instead of reversing. Derive a re-anchored
+        # stop/target for the REVERSED side from the strategy's execution profile at the
+        # current mark, computed BEFORE closing — so a non-derivable stop refuses the flip
+        # rather than closing and then failing the re-open.
+        rev_mark = _fresh_manual_mark(session, trade)
+        rev_levels = _profile_levels_for_trade(
+            {"entry_price": rev_mark, "direction": opposite, "asset": asset,
+             "entry_time": _iso_now(), "created_at": _iso_now()},
+            _strategy_execution_controls(strategy_id), _strategy_timeframe(strategy_id),
+        )
+        rev_stop = _coerce_optional_float(rev_levels.get("stop_loss"))
+        if rev_stop is None or rev_stop <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Flip blocked: could not derive a protective stop for the reversed "
+                       "position; not closing (a live position must carry a stop).",
+            )
         _live_close_trade(trade, close_reason="manual_flip_close")
         _live_open(
             session_id, strategy_id, asset, opposite,
             size=size, risk_pct=None, leverage=leverage,
-            stop_loss_price=None, take_profit_price=None,
+            stop_loss_price=rev_stop,
+            take_profit_price=_coerce_optional_float(rev_levels.get("take_profit")),
         )
         return _refresh(session_id)
 
     # ── Paper flip ──
-    mid = _paper_mid(session, trade)
+    mid = _fresh_manual_mark(session, trade)
     closed = close_trade_record(
         old_id, signal_exit_price=mid, exit_price=mid,
         close_reason="manual_flip_close", close_price_source="manual_market", closed_at=_iso_now(),
@@ -890,6 +995,24 @@ def _strategy_timeframe(strategy_id: str) -> str:
         return tf or "1h"
     except Exception:
         return "1h"
+
+
+def _strategy_execution_controls(strategy_id: str) -> dict:
+    """The strategy's normalized execution controls from its stored execution_profile,
+    falling back to default_controls() — which always carries DEFAULT_STOP_LOSS_PCT_FLOOR,
+    so a protective stop is always derivable (used to re-anchor the reversed side on a flip)."""
+    from forven.strategies import sizing as _sizing
+
+    params: dict = {}
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT params FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        raw = dict(row).get("params") if row is not None else None
+        if raw:
+            params = json.loads(raw) or {}
+    except Exception:
+        params = {}
+    return _sizing.normalize_execution_controls(_sizing.extract_execution_profile(params)) or _sizing.default_controls()
 
 
 def _atr_at_entry(asset: str, timeframe: str, entry_time, period: int) -> float | None:
@@ -962,31 +1085,54 @@ def _apply_levels_to_open_trade(trade: dict, levels: dict) -> dict:
 
     updates: dict = {}
     if new_sl is not None and new_sl > 0:
+        applied = True
         if live:
             old_oid = sd.get("exchange_stop_order_id")
-            if old_oid:
-                _cancel_live_order(asset, old_oid, vault)
-            new_oid = _place_live_protective("stop_loss", trade, float(new_sl), vault)
-            if new_oid is not None:
+            # PLACE-BEFORE-CANCEL: confirm the NEW resting stop on the exchange BEFORE
+            # cancelling the old one. If the replacement is rejected (returns None or raises),
+            # KEEP the old stop — never leave the position unprotected on a failed re-place —
+            # and surface the failure instead of recording a stop the exchange doesn't have.
+            new_oid = None
+            try:
+                new_oid = _place_live_protective("stop_loss", trade, float(new_sl), vault)
+            except HTTPException as exc:
+                log.warning("[%s] live stop replace rejected (%s); keeping the existing stop", trade_id, exc.detail)
+            if new_oid is None:
+                applied = False
+                updates["stop_loss_replace_failed"] = True
+                updates["stop_loss_replace_failed_at"] = _iso_now()
+            else:
+                if old_oid:
+                    _cancel_live_order(asset, old_oid, vault)
                 updates["exchange_stop_order_id"] = str(new_oid)
-            updates["exchange_stop_requested"] = True
-        updates["stop_loss"] = float(new_sl)
-        updates["stop_loss_price"] = float(new_sl)
-        updates["stop_loss_source"] = "execution_profile"
-        updates["sl_adjusted_at"] = _iso_now()
+                updates["exchange_stop_requested"] = True
+        if applied:
+            updates["stop_loss"] = float(new_sl)
+            updates["stop_loss_price"] = float(new_sl)
+            updates["stop_loss_source"] = "execution_profile"
+            updates["sl_adjusted_at"] = _iso_now()
 
     if new_tp is not None and new_tp > 0:
+        applied_tp = True
         if live:
             old_oid = sd.get("exchange_take_profit_order_id")
-            if old_oid:
-                _cancel_live_order(asset, old_oid, vault)
-            new_oid = _place_live_protective("take_profit", trade, float(new_tp), vault)
-            if new_oid is not None:
+            # Same place-before-cancel ordering for the take-profit leg.
+            new_oid = None
+            try:
+                new_oid = _place_live_protective("take_profit", trade, float(new_tp), vault)
+            except HTTPException as exc:
+                log.warning("[%s] live take-profit replace rejected (%s); keeping the existing TP", trade_id, exc.detail)
+            if new_oid is None:
+                applied_tp = False
+            else:
+                if old_oid:
+                    _cancel_live_order(asset, old_oid, vault)
                 updates["exchange_take_profit_order_id"] = str(new_oid)
-        updates["take_profit"] = float(new_tp)
-        updates["take_profit_price"] = float(new_tp)
-        updates["take_profit_source"] = "execution_profile"
-        updates["tp_adjusted_at"] = _iso_now()
+        if applied_tp:
+            updates["take_profit"] = float(new_tp)
+            updates["take_profit_price"] = float(new_tp)
+            updates["take_profit_source"] = "execution_profile"
+            updates["tp_adjusted_at"] = _iso_now()
 
     if new_trail is not None and new_trail > 0:
         updates["trailing_stop_pct"] = float(new_trail)
