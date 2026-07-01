@@ -11,6 +11,7 @@ from __future__ import annotations
 import forven.ai as ai
 from forven import api_core as ac
 from forven import model_routing as mr
+from forven.auth import store as auth_store
 from forven.agents.providers import (
     NvidiaProvider,
     OpenAIProvider,
@@ -31,6 +32,25 @@ def test_endpoint_and_routing_defaults():
     assert "nvidia" in ai._PROVIDER_PASSTHROUGH
     assert "nvidia" in mr._SUPPORTED_PROVIDERS
     assert mr.get_default_model_for_provider("nvidia") == "meta/llama-3.3-70b-instruct"
+
+
+def test_nvidia_persisted_by_auth_store():
+    # The auth store keeps its OWN allowlist; load_auth() silently DROPS any
+    # profile whose provider isn't in it. If nvidia is missing here, the token
+    # saves (POST 200, "Connected" flash) but is stripped on the next read, so
+    # the provider reverts to "Not connected" and is never actually callable.
+    assert "nvidia" in auth_store._SUPPORTED_AUTH_PROVIDERS
+    assert auth_store._ENV_ACCESS_TOKEN_KEYS["nvidia"] == ("NVIDIA_API_KEY",)
+
+
+def test_auth_store_allowlist_covers_every_connectable_provider():
+    # Invariant guarding the class of bug above: every provider api_core lets an
+    # operator connect MUST be persistable by the auth store, else its token is
+    # written then dropped on the next load_auth(). Store ⊇ api_core, always.
+    api_core_providers = set(ac._SUPPORTED_AUTH_PROVIDERS)
+    store_providers = set(auth_store._SUPPORTED_AUTH_PROVIDERS)
+    missing = api_core_providers - store_providers
+    assert not missing, f"providers connectable but not persistable: {sorted(missing)}"
 
 
 def test_registered_in_api_core():
