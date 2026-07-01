@@ -714,6 +714,50 @@ class LMStudioProvider(ToolCallProvider):
             })
 
 
+class ClaudeCLIProvider(ToolCallProvider):
+    """Local Claude Code CLI as a text-only LLM backend.
+
+    The ``claude`` CLI is itself an agent that runs its own internal tool loop,
+    so it cannot hand Forven's runner a list of ``tool_calls`` to execute. This
+    adapter runs it with all tools disabled and returns a single final-text
+    turn (``stop=True``). Agents wired to Forven-side tools therefore get a
+    direct answer instead of a tool-using loop — acceptable for narrative and
+    analysis tasks, not for tool-dependent ones.
+    """
+
+    async def call(self, model_id, messages, system, tools, token):
+        from forven.claude_cli import flatten_messages, run_claude_cli
+
+        prompt = flatten_messages(messages)
+        text, usage = await run_claude_cli(
+            prompt=prompt,
+            system=str(system or "").strip() or None,
+            model=model_id,
+        )
+        text = text.strip()
+        return ProviderResponse(
+            text=text,
+            tool_calls=[],
+            stop=True,
+            raw_assistant_message={"role": "assistant", "content": text},
+            usage={
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+            },
+        )
+
+    def append_assistant(self, messages, response):
+        messages.append(response.raw_assistant_message)
+
+    def append_tool_results(self, messages, results):
+        for tid, content in results:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tid,
+                "content": content,
+            })
+
+
 class ZAIProvider(ToolCallProvider):
     """Z.AI tool-call adapter supporting OpenAI- and Anthropic-compatible endpoints."""
 
@@ -1224,6 +1268,8 @@ def _construct_provider(name: str) -> ToolCallProvider:
         return MiniMaxProvider()
     if name == "lmstudio":
         return LMStudioProvider()
+    if name == "claude-cli":
+        return ClaudeCLIProvider()
     if name == "zai":
         return ZAIProvider()
     if name == "openrouter":

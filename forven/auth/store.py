@@ -20,7 +20,7 @@ log = logging.getLogger("forven.auth.store")
 
 LOCK_PATH = AUTH_FILE.with_suffix(".lock")
 REFRESH_BUFFER_MS = 5 * 60 * 1000  # 5 minutes before expiry
-_SUPPORTED_AUTH_PROVIDERS = {"openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go"}
+_SUPPORTED_AUTH_PROVIDERS = {"openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "opencode-zen", "opencode-go", "claude-cli"}
 _AUTH_SECRET_FIELDS = {"access", "refresh", "token", "id_token", "api_key", "api_secret"}
 
 # Runtime-only marker attached to a profile whose ciphertext could not be
@@ -64,6 +64,8 @@ _ENV_BASE_URL_KEYS = {
     "together": ("TOGETHER_BASE_URL",),
     "opencode-zen": ("OPENCODE_ZEN_BASE_URL",),
     "opencode-go": ("OPENCODE_GO_BASE_URL",),
+    # claude-cli stores the binary path under "base_url" (keyless local CLI).
+    "claude-cli": ("CLAUDE_CLI_BIN",),
 }
 
 
@@ -338,6 +340,21 @@ def get_profile(provider: str) -> dict | None:
     store = load_auth()
     stored = store["profiles"].get(f"{provider}:default")
     env_override = _env_profile(provider)
+
+    # claude-cli is a keyless local provider: it is "connected" whenever the
+    # `claude` binary is reachable, with no UI step. Synthesize a default
+    # profile (binary path under base_url) so connection/selection checks pass.
+    if str(provider or "").strip().lower() == "claude-cli" and not stored:
+        try:
+            from forven.claude_cli import _default_binary, binary_available
+
+            if binary_available():
+                synthetic = {"provider": "claude-cli", "base_url": _default_binary()}
+                if env_override:
+                    synthetic.update(env_override)
+                return synthetic
+        except Exception:
+            pass
     if is_profile_opaque(stored):
         if env_override:
             env_override["provider"] = str(provider or "").strip().lower()
@@ -439,6 +456,11 @@ def get_token(provider: str) -> str:
             or ""
         ).strip()
 
+    if provider == "claude-cli":
+        # Keyless: the local CLI authenticates via the operator's own Claude
+        # Code session; there is no token to hand back.
+        return ""
+
     if _is_expired(profile):
         refresher = REFRESHERS.get(provider)
         if refresher and profile.get("refresh"):
@@ -508,6 +530,16 @@ def credential_status(provider: str) -> str:
     # An explicit env-var credential always counts as usable.
     if _env_profile(prov):
         return "ok"
+    # Keyless local CLI: usable whenever the `claude` binary resolves; it has no
+    # stored credential, so the profile-based checks below would wrongly call it
+    # "missing".
+    if prov == "claude-cli":
+        try:
+            from forven.claude_cli import binary_available
+
+            return "ok" if binary_available() else "missing"
+        except Exception:
+            return "missing"
     store = load_auth()
     stored = store.get("profiles", {}).get(f"{prov}:default")
     if stored is None:
