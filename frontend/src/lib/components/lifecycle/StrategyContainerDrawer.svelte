@@ -187,7 +187,7 @@
 </script>
 
 <div
-	class="fixed inset-0 bg-black/40 z-[1000]"
+	class="fixed inset-0 bg-black/80 z-[1000]"
 	role="button"
 	tabindex="0"
 	aria-label="Close detail drawer"
@@ -200,11 +200,11 @@
 	}}
 ></div>
 
-<aside class="fixed top-0 right-0 h-full w-full max-w-[520px] bg-[#0c0c0c] border-l border-[#2a2a2a] z-[1001] overflow-y-auto p-5 space-y-4 shadow-2xl">
+<aside class="fixed top-0 right-0 h-full w-full max-w-[520px] bg-[#050505] border-l border-[#222] z-[1001] overflow-y-auto p-5 space-y-4">
 	<div class="flex items-start justify-between gap-3">
 		<div>
 			<div class="text-[10px] uppercase tracking-wider text-gray-500">Strategy container</div>
-			<div class="text-2xl font-bold text-gray-100">{displayId}</div>
+			<div class="text-2xl font-bold uppercase tracking-widest text-white">{displayId}</div>
 			<div class="text-sm text-gray-300 mt-1">{strategyName}</div>
 			<div class="text-[11px] text-gray-500 mt-1">
 				{STAGE_ICONS[stage] || '📦'} {STAGE_LABELS[stage] || stage}
@@ -214,7 +214,7 @@
 			<StrategyExportMenu strategyId={strategyId} displayId={displayId} name={strategyName} compact />
 			<button
 				type="button"
-				class="text-xs border border-[#333] px-2 py-1 rounded text-gray-300 hover:text-white transition-colors"
+				class="terminal-button px-2 py-1 text-[10px]"
 				on:click={closeDrawer}
 			>
 				Close
@@ -229,7 +229,7 @@
 				{#each (VALID_TRANSITIONS[stage] || []) as target}
 					<button
 						type="button"
-						class="text-[10px] border border-cyan-800 text-cyan-300 px-2 py-1 rounded hover:bg-cyan-900/20 transition-colors"
+						class="text-[10px] uppercase tracking-wide border border-[#333] text-[#888] px-2 py-1 hover:border-[#555] hover:text-white transition-colors"
 						on:click={() => handleTransition(target)}
 					>
 						{STAGE_LABELS[target] || target}
@@ -264,10 +264,10 @@
 				{#each selectedTasks as task}
 					<button
 						type="button"
-						class={`w-full text-left border rounded p-2 transition-colors ${
+						class={`w-full text-left border p-2 transition-colors ${
 							selectedTaskDetail && getTaskDisplayId(selectedTaskDetail) === getTaskDisplayId(task)
-								? 'border-cyan-700 bg-cyan-950/20'
-								: 'border-[#2b2b2b] hover:border-cyan-800/60 hover:bg-[#141414]'
+								? 'border-[#555] bg-[#111]'
+								: 'border-[#222] hover:border-[#555] hover:bg-[#111]'
 						}`}
 						on:click={() => openTaskContainerDetail(task)}
 					>
@@ -287,7 +287,7 @@
 		<div class="border border-[#262626] bg-[#111] rounded p-3 space-y-3">
 			<div class="flex items-center justify-between gap-2">
 				<div class="text-[10px] uppercase tracking-wider text-gray-500">Task Container Detail</div>
-				<div class="text-[10px] text-cyan-300 font-bold">{getTaskDisplayId(selectedTaskDetail)}</div>
+				<div class="text-[10px] text-[#aaa] font-bold">{getTaskDisplayId(selectedTaskDetail)}</div>
 			</div>
 
 			<div class="grid grid-cols-2 gap-y-1 text-xs">

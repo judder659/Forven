@@ -22,13 +22,13 @@
 
 	function statusTone(status: string): string {
 		const s = status.toLowerCase();
-		if (s === 'running') return 'border-blue-500/50 bg-blue-950/40 text-blue-100';
-		if (s === 'pending') return 'border-amber-500/40 bg-amber-950/30 text-amber-100';
+		if (s === 'running') return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
+		if (s === 'pending') return 'border-yellow-900 bg-yellow-500/10 text-yellow-400';
 		if (s === 'completed' || s === 'success' || s === 'approved')
-			return 'border-green-600/50 bg-green-950/40 text-green-100';
+			return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
 		if (s === 'failed' || s === 'error' || s === 'denied')
-			return 'border-rose-600/50 bg-rose-950/40 text-rose-100';
-		return 'border-[#2d2d2d] bg-[#0b0b0b] text-gray-300';
+			return 'border-red-900 bg-red-500/10 text-red-400';
+		return 'border-[#333] text-[#888]';
 	}
 
 	function formatStamp(value: string | null | undefined): string {
@@ -54,48 +54,48 @@
 	}
 </script>
 
-<section class="border border-[#222] bg-[#090909]">
-	<header class="flex items-center justify-between border-b border-[#222] px-4 py-3">
+<section class="terminal-card">
+	<header class="flex items-center justify-between border-b border-[#1a1a1a] px-4 py-2">
 		<div>
-			<h2 class="text-xs font-semibold uppercase tracking-[0.24em] text-slate-200">Agent Activity</h2>
-			<p class="mt-1 text-[11px] text-slate-500">Research tasks the strategy-developer has run against this crucible.</p>
+			<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Agent Activity</h2>
+			<p class="mt-1 text-[11px] text-[#666]">Research tasks the strategy-developer has run against this crucible.</p>
 		</div>
-		<span class="text-[10px] uppercase tracking-[0.18em] text-slate-500">{activity.length} task{activity.length === 1 ? '' : 's'}</span>
+		<span class="text-[10px] uppercase tracking-wider text-[#666]">{activity.length} task{activity.length === 1 ? '' : 's'}</span>
 	</header>
 
 	{#if activity.length === 0}
-		<div class="px-4 py-6 text-sm text-slate-500">
-			No agent task history yet. Click <em class="not-italic text-slate-300">Re-research</em> to queue one.
+		<div class="px-4 py-6 text-sm text-[#666]">
+			No agent task history yet. Click <em class="not-italic text-[#888]">Re-research</em> to queue one.
 		</div>
 	{:else}
 		<ul class="divide-y divide-[#1a1a1a]">
 			{#each activity as entry (entry.task_id)}
-				<li class="px-4 py-3 text-sm text-slate-200">
+				<li class="px-4 py-3 text-sm text-[#888]">
 					<div class="flex w-full items-start justify-between gap-3">
 						<div class="min-w-0 flex-1">
 							<a
 								href={taskHref(entry)}
-								class="group block min-w-0 rounded-sm outline-none transition-colors hover:text-cyan-200 focus-visible:ring-1 focus-visible:ring-cyan-400"
+								class="group block min-w-0 outline-none transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-[#555]"
 								aria-label={`Open task ${taskLabel(entry)}`}
 							>
 								<div class="flex flex-wrap items-center gap-2">
-									<span class={`inline-flex border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${statusTone(entry.status)}`}>
+									<span class={`inline-flex border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${statusTone(entry.status)}`}>
 										{entry.status}
 									</span>
-									<span class="text-[11px] uppercase tracking-[0.18em] text-cyan-300">
+									<span class="text-[11px] uppercase tracking-wider text-[#888]">
 										{taskLabel(entry)} · {entry.type}
 									</span>
 									{#if entry.origin_mode}
-										<span class="text-[11px] text-slate-500">({entry.origin_mode})</span>
+										<span class="text-[11px] text-[#666]">({entry.origin_mode})</span>
 									{/if}
 								</div>
-								<div class="mt-1 truncate text-sm text-slate-200 group-hover:text-cyan-100">{entry.title}</div>
-								<div class="mt-1 text-[11px] text-slate-500">{formatStamp(entry.created_at)}</div>
+								<div class="mt-1 truncate text-sm text-[#888] group-hover:text-white">{entry.title}</div>
+								<div class="mt-1 text-[11px] text-[#666]">{formatStamp(entry.created_at)}</div>
 							</a>
 						</div>
 						<button
 							type="button"
-							class="mt-0.5 border border-transparent px-2 py-1 text-[11px] text-slate-500 transition-colors hover:border-[#333] hover:text-slate-200"
+							class="mt-0.5 border border-transparent px-2 py-1 text-[11px] text-[#666] transition-colors hover:border-[#333] hover:text-[#888]"
 							on:click={() => toggle(entry.task_id)}
 							aria-expanded={expandedId === entry.task_id}
 							aria-label={expandedId === entry.task_id ? `Hide ${taskLabel(entry)} details` : `Show ${taskLabel(entry)} details`}
@@ -105,31 +105,31 @@
 					</div>
 
 					{#if expandedId === entry.task_id}
-						<div class="mt-3 space-y-2 border-t border-[#1a1a1a] pt-3 text-[12px] text-slate-300">
+						<div class="mt-3 space-y-2 border-t border-[#1a1a1a] pt-3 text-[12px] text-[#888]">
 							{#if entry.decision}
 								<div>
-									<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Decision</div>
-									<div class="mt-1 whitespace-pre-wrap text-slate-200">{entry.decision}</div>
+									<div class="text-[10px] uppercase tracking-wider text-[#666]">Decision</div>
+									<div class="mt-1 whitespace-pre-wrap text-[#888]">{entry.decision}</div>
 								</div>
 							{/if}
 							{#if entry.feedback}
 								<div>
-									<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Feedback</div>
-									<div class="mt-1 whitespace-pre-wrap text-slate-200">{entry.feedback}</div>
+									<div class="text-[10px] uppercase tracking-wider text-[#666]">Feedback</div>
+									<div class="mt-1 whitespace-pre-wrap text-[#888]">{entry.feedback}</div>
 								</div>
 							{/if}
 							{#if entry.audit_events.length > 0}
 								<div>
-									<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Recent events</div>
-									<ul class="mt-1 space-y-1 text-[11px] text-slate-400">
+									<div class="text-[10px] uppercase tracking-wider text-[#666]">Recent events</div>
+									<ul class="mt-1 space-y-1 text-[11px] text-[#666]">
 										{#each entry.audit_events as event}
-											<li class="border-l border-slate-700 pl-2">{auditSummary(event)}</li>
+											<li class="border-l border-[#333] pl-2">{auditSummary(event)}</li>
 										{/each}
 									</ul>
 								</div>
 							{/if}
 							{#if !entry.decision && !entry.feedback && entry.audit_events.length === 0}
-								<div class="text-slate-500 italic">No output recorded yet.</div>
+								<div class="text-[#666] italic">No output recorded yet.</div>
 							{/if}
 						</div>
 					{/if}

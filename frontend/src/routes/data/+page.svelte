@@ -404,7 +404,7 @@
 	}
 
 	function scoreClass(score: number): string {
-		if (score >= 90) return 'text-green-400';
+		if (score >= 90) return 'text-emerald-400';
 		if (score >= 70) return 'text-yellow-400';
 		return 'text-red-400';
 	}
@@ -651,17 +651,17 @@
 	/>
 </svelte:head>
 
-<div class="h-full overflow-auto bg-[#050505] text-white p-4 space-y-4">
-	<header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+<div class="h-full overflow-auto text-white p-4 space-y-4">
+	<header class="flex flex-col gap-3 border-b border-[#222] pb-4 md:flex-row md:items-end md:justify-between">
 		<div>
-			<h1 class="text-xl font-bold tracking-tight">Data Manager</h1>
-			<p class="text-xs text-gray-400 mt-1">Download, inspect, and track historical datasets across crypto and stock-market feeds.</p>
+			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Data Manager</h1>
+			<p class="mt-1 text-xs text-[#666]">Download, inspect, and track historical datasets across crypto and stock-market feeds.</p>
 		</div>
 		<div class="flex flex-col gap-2 sm:flex-row">
 			<button
 				type="button"
 				on:click={openDownload}
-				class="px-3 py-2 text-xs rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors"
+				class="terminal-button-primary text-xs"
 			>
 				Download Data
 			</button>
@@ -674,18 +674,18 @@
 							: undefined
 					)}
 				disabled={refreshing}
-				class="px-3 py-2 text-xs rounded border border-[#2b2b2b] hover:border-white transition-colors disabled:opacity-50"
+				class="terminal-button text-xs"
 			>
 				{refreshing ? 'Refreshing...' : 'Refresh'}
 			</button>
 		</div>
 	</header>
 
-	<div class="flex w-fit bg-[#111] rounded border border-[#222] p-0.5">
+	<div class="flex gap-0 border-b border-[#222]">
 		{#each TABS as tab}
 			<button
 				type="button"
-				class="px-3 py-1 rounded-sm text-xs {activeTab === tab.id ? 'bg-[#333] text-white' : 'text-gray-400 hover:text-white'}"
+				class="border-b-2 px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-colors {activeTab === tab.id ? 'border-white text-white' : 'border-transparent text-[#555] hover:text-[#999]'}"
 				on:click={() => selectTab(tab.id)}
 			>{tab.label}</button>
 		{/each}

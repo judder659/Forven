@@ -141,7 +141,7 @@
 
 	/** Return a Tailwind color class based on metric quality: green=good, yellow=ok, red=bad */
 	function metricColor(metric: string, value: number | null | undefined): string {
-		if (value == null || isNaN(value)) return 'text-gray-500';
+		if (value == null || isNaN(value)) return 'text-[#666]';
 		switch (metric) {
 			case 'total_return':
 			case 'cagr':
@@ -173,7 +173,7 @@
 
 <div class="h-full flex flex-col bg-black font-mono text-sm overflow-hidden">
 	{#if status === 'idle'}
-		<div class="flex-1 flex flex-col items-center justify-center text-gray-700 space-y-2">
+		<div class="flex-1 flex flex-col items-center justify-center text-[#555] space-y-2">
 			<svg class="w-12 h-12 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 			</svg>
@@ -182,7 +182,7 @@
 	{:else if status === 'running'}
 		<div class="flex-1 p-4 overflow-y-auto space-y-1 font-mono text-sm">
 			{#each logs as log}
-				<div class="text-gray-400 border-l-2 border-gray-800 pl-2 py-0.5">{log}</div>
+				<div class="text-[#888] border-l-2 border-[#222] pl-2 py-0.5">{log}</div>
 			{/each}
 			{#if progress}
 				<div class="text-emerald-400 pl-2 font-bold">> {progress}</div>
@@ -191,9 +191,9 @@
 		</div>
 	{:else if status === 'failed'}
 		<div class="flex-1 p-6 flex flex-col items-center justify-center">
-			<div class="bg-red-900/20 border border-red-900 p-6 max-w-lg text-center">
-				<h3 class="text-red-500 font-bold mb-2">SIMULATION FAILED</h3>
-				<div class="text-red-300 space-y-1">
+			<div class="border border-red-900 bg-red-500/5 p-6 max-w-lg text-center">
+				<h3 class="text-red-400 font-bold uppercase tracking-widest mb-2">SIMULATION FAILED</h3>
+				<div class="text-red-400 space-y-1">
 					{#each logs.slice(-3) as log}
 						<div>{log}</div>
 					{/each}
@@ -206,7 +206,7 @@
 				{#if scorecard}
 					<StrategyScorecard {scorecard} />
 				{:else}
-					<div class="flex h-full items-center justify-center text-gray-600">
+					<div class="flex h-full items-center justify-center text-[#555]">
 						Select a run in History, then generate Scorecard.
 					</div>
 				{/if}
@@ -218,19 +218,19 @@
 						{#if robustness.monte_carlo}
 							<div class="grid grid-cols-3 gap-4 mb-4">
 								<div class="terminal-card p-4">
-									<div class="text-xs uppercase text-gray-500 mb-1">Prob. Profit</div>
+									<div class="text-xs uppercase text-[#666] mb-1">Prob. Profit</div>
 									<div class="text-2xl font-bold text-white">
 										{formatPercent((robustness.monte_carlo.probability_of_profit || 0) * 100)}
 									</div>
 								</div>
 								<div class="terminal-card p-4">
-									<div class="text-xs uppercase text-gray-500 mb-1">Prob. Ruin</div>
+									<div class="text-xs uppercase text-[#666] mb-1">Prob. Ruin</div>
 									<div class="text-2xl font-bold text-white">
 										{formatPercent((robustness.monte_carlo.probability_of_ruin || 0) * 100)}
 									</div>
 								</div>
 								<div class="terminal-card p-4">
-									<div class="text-xs uppercase text-gray-500 mb-1">Avg Max DD</div>
+									<div class="text-xs uppercase text-[#666] mb-1">Avg Max DD</div>
 									<div class="text-2xl font-bold text-red-500">
 										{formatPercent(robustness.monte_carlo.avg_max_drawdown || 0)}
 									</div>
@@ -240,7 +240,7 @@
 							<!-- Monte Carlo Fan Chart -->
 							{#if robustness.monte_carlo.equity_paths_sample && robustness.monte_carlo.equity_paths_sample.length > 0}
 								<div class="mt-4">
-									<h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Equity Path Distribution</h4>
+									<h4 class="text-xs font-bold text-[#666] uppercase tracking-wider mb-2">Equity Path Distribution</h4>
 									<MonteCarloChart 
 										equityPaths={robustness.monte_carlo.equity_paths_sample}
 										height={220}
@@ -248,11 +248,11 @@
 								</div>
 							{/if}
 						{:else if robustness.monte_carlo_note}
-							<div class="text-gray-400">{robustness.monte_carlo_note}</div>
+							<div class="text-[#888]">{robustness.monte_carlo_note}</div>
 						{:else if robustness.monte_carlo_error}
 							<div class="text-red-400">{robustness.monte_carlo_error}</div>
 						{:else}
-							<div class="text-gray-600">No Monte Carlo results.</div>
+							<div class="text-[#555]">No Monte Carlo results.</div>
 						{/if}
 					</div>
 
@@ -260,14 +260,14 @@
 					{#if robustness.regimes}
 						<div class="terminal-card p-4">
 							<h3 class="text-base font-bold text-white uppercase tracking-wider mb-4">Regimes</h3>
-							<div class="text-sm text-gray-400">
+							<div class="text-sm text-[#888]">
 								Current: <span class="text-white">{robustness.regimes.current_regime ?? 'unknown'}</span>
 							</div>
 							{#if robustness.regimes.performance_by_regime}
 								<div class="mt-4 overflow-x-auto">
 									<table class="w-full text-left border-collapse">
 										<thead>
-											<tr class="text-xs text-gray-500 uppercase border-b border-[#222]">
+											<tr class="text-xs text-[#666] uppercase border-b border-[#222]">
 												<th class="p-2 font-medium">Regime</th>
 												<th class="p-2 font-medium text-right">Return</th>
 												<th class="p-2 font-medium text-right">Sharpe</th>
@@ -278,20 +278,20 @@
 										<tbody class="text-sm font-mono">
 											{#each perfByRegimeEntries as [regime, perf]}
 												<tr class="border-b border-[#111] hover:bg-[#111] transition-colors">
-													<td class="p-2 text-gray-300">{regime}</td>
+													<td class="p-2 text-[#888]">{regime}</td>
 													<td class="p-2 text-right" class:text-green-500={(perf.total_return_pct ?? 0) > 0} class:text-red-500={(perf.total_return_pct ?? 0) < 0}>
 														{formatPercent(perf.total_return_pct ?? 0)}
 													</td>
-													<td class="p-2 text-right text-gray-200">{formatNumber(perf.sharpe_ratio ?? 0)}</td>
+													<td class="p-2 text-right text-[#aaa]">{formatNumber(perf.sharpe_ratio ?? 0)}</td>
 													<td class="p-2 text-right text-red-500">{formatPercent(perf.max_drawdown_pct ?? 0)}</td>
-													<td class="p-2 text-right text-gray-400">{formatPercent(perf.pct_of_total ?? 0)}</td>
+													<td class="p-2 text-right text-[#888]">{formatPercent(perf.pct_of_total ?? 0)}</td>
 												</tr>
 											{/each}
 										</tbody>
 									</table>
 								</div>
 							{:else}
-								<div class="text-gray-600 mt-2">No regime performance data.</div>
+								<div class="text-[#555] mt-2">No regime performance data.</div>
 							{/if}
 						</div>
 					{:else if robustness.regime_error}
@@ -301,12 +301,12 @@
 						</div>
 					{/if}
 				{:else}
-					<div class="flex h-full items-center justify-center text-gray-600">
+					<div class="flex h-full items-center justify-center text-[#555]">
 						Select a run in History, then run Robustness.
 					</div>
 				{/if}
 			{:else if !result}
-				<div class="flex h-full items-center justify-center text-gray-600">
+				<div class="flex h-full items-center justify-center text-[#555]">
 					Run a simulation to see results.
 				</div>
 		{:else if mode === 'optimize' || isOptimizationResult(result)}
@@ -325,33 +325,33 @@
 				</div>
 					<div class="grid grid-cols-3 gap-4">
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Objective</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Objective</div>
 							<div class="text-white font-mono text-base">{m.objective ?? '-'}</div>
 						</div>
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Best Value</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Best Value</div>
 							<div class="text-3xl font-bold text-white">{m.best_value !== undefined ? formatNumber(m.best_value) : '-'}</div>
 						</div>
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Trials</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Trials</div>
 							<div class="text-3xl font-bold text-white">{m.n_trials ?? '-'}</div>
 						</div>
 					</div>
 
 					{#if m.best_params}
 						<div class="mt-6">
-							<h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Best Params</h4>
+							<h4 class="text-xs font-bold text-[#666] uppercase tracking-wider mb-2">Best Params</h4>
 							<div class="grid grid-cols-2 gap-2">
 								{#each Object.entries(m.best_params) as [k, v]}
 									<div class="flex justify-between items-center bg-[#0a0a0a] border border-[#222] px-3 py-2">
-										<span class="text-xs text-gray-500 uppercase">{k}</span>
+										<span class="text-xs text-[#666] uppercase">{k}</span>
 										<span class="text-white font-mono text-sm">{v}</span>
 									</div>
 								{/each}
 							</div>
 						</div>
 					{:else}
-						<div class="text-gray-600 mt-4">No best params returned.</div>
+						<div class="text-[#555] mt-4">No best params returned.</div>
 					{/if}
 
 				<!-- Optimization Convergence Chart -->
@@ -382,30 +382,30 @@
 					</div>
 					<div class="grid grid-cols-4 gap-4">
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Train Avg</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Train Avg</div>
 							<div class="text-white font-mono text-base">{m.avg_train_metric !== undefined ? formatNumber(Number(m.avg_train_metric)) : '-'}</div>
 						</div>
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Test Avg</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Test Avg</div>
 							<div class="text-white font-mono text-base">{m.avg_test_metric !== undefined ? formatNumber(Number(m.avg_test_metric)) : '-'}</div>
 						</div>
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Overfit Ratio</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Overfit Ratio</div>
 							<div class="text-white font-mono text-base">{m.overfitting_ratio !== undefined ? formatNumber(Number(m.overfitting_ratio)) : '-'}</div>
 						</div>
 						<div class="terminal-card p-4">
-							<div class="text-xs uppercase text-gray-500 mb-1">Folds</div>
+							<div class="text-xs uppercase text-[#666] mb-1">Folds</div>
 							<div class="text-white font-mono text-base">{Array.isArray(m.n_folds) ? m.n_folds.length : folds.length || '-'}</div>
 						</div>
 					</div>
 
 					{#if m.most_robust_params}
 						<div class="mt-6">
-							<h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Most Robust Params</h4>
+							<h4 class="text-xs font-bold text-[#666] uppercase tracking-wider mb-2">Most Robust Params</h4>
 							<div class="grid grid-cols-2 gap-2">
 								{#each Object.entries(m.most_robust_params) as [k, v]}
 									<div class="flex justify-between items-center bg-[#0a0a0a] border border-[#222] px-3 py-2">
-										<span class="text-xs text-gray-500 uppercase">{k}</span>
+										<span class="text-xs text-[#666] uppercase">{k}</span>
 										<span class="text-white font-mono text-sm">{v}</span>
 									</div>
 								{/each}
@@ -416,17 +416,17 @@
 					<!-- Walk-Forward Fold Visualization -->
 					{#if folds.length > 0}
 						<div class="mt-6">
-							<h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Train vs Test Performance</h4>
+							<h4 class="text-xs font-bold text-[#666] uppercase tracking-wider mb-2">Train vs Test Performance</h4>
 							<WalkForwardChart {folds} height={200} />
 						</div>
 					{/if}
 
 					{#if folds.length > 0}
 						<div class="mt-6 overflow-x-auto">
-							<h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Folds</h4>
+							<h4 class="text-xs font-bold text-[#666] uppercase tracking-wider mb-2">Folds</h4>
 							<table class="w-full text-left border-collapse">
 								<thead>
-									<tr class="text-xs text-gray-500 uppercase border-b border-[#222]">
+									<tr class="text-xs text-[#666] uppercase border-b border-[#222]">
 										<th class="p-2 font-medium">Fold</th>
 										<th class="p-2 font-medium">Train</th>
 										<th class="p-2 font-medium">Test</th>
@@ -437,15 +437,15 @@
 								<tbody class="text-sm font-mono">
 									{#each folds as fold}
 										<tr class="border-b border-[#111] hover:bg-[#111] transition-colors">
-											<td class="p-2 text-gray-300">{fold.fold_index + 1}</td>
-											<td class="p-2 text-gray-400 text-xs">
+											<td class="p-2 text-[#888]">{fold.fold_index + 1}</td>
+											<td class="p-2 text-[#888] text-xs">
 												{new Date(fold.train_start).toLocaleDateString()} - {new Date(fold.train_end).toLocaleDateString()}
 											</td>
-											<td class="p-2 text-gray-400 text-xs">
+											<td class="p-2 text-[#888] text-xs">
 												{new Date(fold.test_start).toLocaleDateString()} - {new Date(fold.test_end).toLocaleDateString()}
 											</td>
-											<td class="p-2 text-right text-gray-200">{formatNumber(fold.train_metric ?? 0)}</td>
-											<td class="p-2 text-right text-gray-200">{formatNumber(fold.test_metric ?? 0)}</td>
+											<td class="p-2 text-right text-[#aaa]">{formatNumber(fold.train_metric ?? 0)}</td>
+											<td class="p-2 text-right text-[#aaa]">{formatNumber(fold.test_metric ?? 0)}</td>
 										</tr>
 									{/each}
 								</tbody>
@@ -458,9 +458,9 @@
 
 				<!-- Warnings -->
 				{#if result.config?.warnings && result.config.warnings.length > 0}
-					<div class="terminal-card p-4 border-l-4 border-yellow-600 bg-yellow-900/10 mb-4">
-						<h3 class="text-sm font-bold text-yellow-500 uppercase tracking-wider mb-2">Warnings</h3>
-						<ul class="list-disc list-inside text-xs text-yellow-200 space-y-1">
+					<div class="border-l-2 border-yellow-900 bg-yellow-500/5 p-4 mb-4">
+						<h3 class="text-[10px] font-bold text-yellow-400 uppercase tracking-widest mb-2">Warnings</h3>
+						<ul class="list-disc list-inside text-xs text-yellow-400 space-y-1">
 							{#each result.config.warnings as warning}
 								<li>{warning}</li>
 							{/each}
@@ -471,25 +471,25 @@
 				<!-- Header Metrics -->
 				<div class="grid grid-cols-4 gap-4">
 					<div class="terminal-card p-4">
-						<div class="text-xs uppercase text-gray-500 mb-1">Annual Return</div>
+						<div class="text-xs uppercase text-[#666] mb-1">Annual Return</div>
 						<div class="text-3xl font-bold {metricColor('total_return', normalizedAnnualReturn(result))}">
 							{formatPercent(normalizedAnnualReturn(result))}
 						</div>
 					</div>
 					<div class="terminal-card p-4">
-						<div class="text-xs uppercase text-gray-500 mb-1">Sharpe Ratio</div>
+						<div class="text-xs uppercase text-[#666] mb-1">Sharpe Ratio</div>
 						<div class="text-3xl font-bold {metricColor('sharpe_ratio', result.metrics.sharpe_ratio)}">
 							{result.metrics.sharpe_ratio.toFixed(2)}
 						</div>
 					</div>
 					<div class="terminal-card p-4">
-						<div class="text-xs uppercase text-gray-500 mb-1">Max Drawdown</div>
+						<div class="text-xs uppercase text-[#666] mb-1">Max Drawdown</div>
 						<div class="text-3xl font-bold {metricColor('max_drawdown', result.metrics.max_drawdown)}">
 							{formatPercent(result.metrics.max_drawdown)}
 						</div>
 					</div>
 					<div class="terminal-card p-4">
-						<div class="text-xs uppercase text-gray-500 mb-1">Win Rate</div>
+						<div class="text-xs uppercase text-[#666] mb-1">Win Rate</div>
 						<div class="text-3xl font-bold {metricColor('win_rate', result.metrics.win_rate)}">
 							{formatPercent(result.metrics.win_rate)}
 						</div>
@@ -515,7 +515,7 @@
 							height={350}
 						/>
 					{:else}
-						<div class="h-64 flex items-center justify-center text-gray-600">NO CHART DATA</div>
+						<div class="h-64 flex items-center justify-center text-[#555]">NO CHART DATA</div>
 					{/if}
 				</div>
 
@@ -533,7 +533,7 @@
 						<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
 							{#each Object.entries(result.config.params) as [k, v]}
 								<div class="flex justify-between items-center bg-[#0a0a0a] border border-[#222] px-3 py-2">
-									<span class="text-xs text-gray-500 uppercase">{k}</span>
+									<span class="text-xs text-[#666] uppercase">{k}</span>
 									<span class="text-white font-mono text-sm">{v}</span>
 								</div>
 							{/each}
@@ -542,20 +542,20 @@
 							<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
 								{#if result.config.initial_capital}
 									<div class="flex justify-between items-center bg-[#0a0a0a] border border-[#181818] px-3 py-2">
-										<span class="text-xs text-gray-600">Capital</span>
-										<span class="text-gray-400 font-mono text-sm">${result.config.initial_capital.toLocaleString()}</span>
+										<span class="text-xs text-[#555]">Capital</span>
+										<span class="text-[#888] font-mono text-sm">${result.config.initial_capital.toLocaleString()}</span>
 									</div>
 								{/if}
 								{#if result.config.fee_bps !== undefined}
 									<div class="flex justify-between items-center bg-[#0a0a0a] border border-[#181818] px-3 py-2">
-										<span class="text-xs text-gray-600">Fees</span>
-										<span class="text-gray-400 font-mono text-sm">{result.config.fee_bps} bps</span>
+										<span class="text-xs text-[#555]">Fees</span>
+										<span class="text-[#888] font-mono text-sm">{result.config.fee_bps} bps</span>
 									</div>
 								{/if}
 								{#if result.config.slippage_bps !== undefined}
 									<div class="flex justify-between items-center bg-[#0a0a0a] border border-[#181818] px-3 py-2">
-										<span class="text-xs text-gray-600">Slippage</span>
-										<span class="text-gray-400 font-mono text-sm">{result.config.slippage_bps} bps</span>
+										<span class="text-xs text-[#555]">Slippage</span>
+										<span class="text-[#888] font-mono text-sm">{result.config.slippage_bps} bps</span>
 									</div>
 								{/if}
 							</div>
@@ -568,35 +568,35 @@
 					<h3 class="text-base font-bold text-white uppercase tracking-wider mb-4">Statistics</h3>
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-8">
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Trades</div>
+							<div class="text-xs text-[#666] uppercase">Trades</div>
 							<div class="font-mono text-sm {metricColor('total_trades', result.metrics.total_trades)}">{result.metrics.total_trades}</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Profit Factor</div>
+							<div class="text-xs text-[#666] uppercase">Profit Factor</div>
 							<div class="font-mono text-sm {metricColor('profit_factor', result.metrics.profit_factor ?? null)}">{result.metrics.profit_factor?.toFixed(2) ?? '-'}</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Expectancy</div>
+							<div class="text-xs text-[#666] uppercase">Expectancy</div>
 							<div class="font-mono text-sm {metricColor('expectancy', result.metrics.expectancy ?? null)}">{result.metrics.expectancy ? formatCurrency(result.metrics.expectancy) : '-'}</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Sortino</div>
+							<div class="text-xs text-[#666] uppercase">Sortino</div>
 							<div class="font-mono text-sm {metricColor('sortino_ratio', result.metrics.sortino_ratio ?? null)}">{result.metrics.sortino_ratio?.toFixed(2) ?? '-'}</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">CAGR</div>
+							<div class="text-xs text-[#666] uppercase">CAGR</div>
 							<div class="font-mono text-sm {metricColor('cagr', result.metrics.cagr ?? null)}">{result.metrics.cagr ? formatPercent(result.metrics.cagr) : '-'}</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Vol (Ann)</div>
+							<div class="text-xs text-[#666] uppercase">Vol (Ann)</div>
 							<div class="text-white font-mono text-sm">{(result.metrics.max_drawdown / 2).toFixed(2)}%</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Avg Trade</div>
+							<div class="text-xs text-[#666] uppercase">Avg Trade</div>
 							<div class="font-mono text-sm {metricColor('avg_trade', result.trades && result.trades.length > 0 ? result.trades.reduce((a, t) => a + t.return_pct, 0) / result.trades.length : null)}">{calculateAvgTrade(result.trades || [])}</div>
 						</div>
 						<div>
-							<div class="text-xs text-gray-500 uppercase">Recovery Factor</div>
+							<div class="text-xs text-[#666] uppercase">Recovery Factor</div>
 							<div class="font-mono text-sm {metricColor('recovery_factor', result.metrics.recovery_factor ?? null)}">{result.metrics.recovery_factor?.toFixed(2) ?? '-'}</div>
 						</div>
 					</div>
@@ -611,10 +611,10 @@
 						<div class="p-3 border-b border-[#222] flex justify-between items-center">
 							<h3 class="text-base font-bold text-white uppercase tracking-wider">Trades</h3>
 							<div class="flex items-center gap-3">
-								<span class="text-xs text-gray-500">{result.trades.length} total</span>
+								<span class="text-xs text-[#666]">{result.trades.length} total</span>
 								{#if result.trades.length > 50}
 									<button
-										class="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+										class="text-xs text-[#888] hover:text-white transition-colors"
 										on:click={() => showAllTrades = !showAllTrades}
 									>
 										{showAllTrades ? 'Show Recent' : 'Show All'}
@@ -625,7 +625,7 @@
 						<div class="overflow-x-auto">
 							<table class="w-full text-left border-collapse">
 								<thead>
-									<tr class="text-[11px] text-gray-500 uppercase border-b border-[#222] sticky top-0 bg-[#0a0a0a]">
+									<tr class="text-[11px] text-[#666] uppercase border-b border-[#222] sticky top-0 bg-[#0a0a0a]">
 										<th class="px-2 py-2 font-medium text-center">#</th>
 										<th class="px-2 py-2 font-medium">Side</th>
 										<th class="px-2 py-2 font-medium">Entry Time</th>
@@ -656,18 +656,18 @@
 											return `${days}d`;
 										})()}
 										<tr class="border-b border-[#111] hover:bg-[#111] transition-colors">
-											<td class="px-2 py-1.5 text-center text-gray-600">{tradeIdx}</td>
+											<td class="px-2 py-1.5 text-center text-[#555]">{tradeIdx}</td>
 											<td class="px-2 py-1.5">
-												<span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase {(trade.direction || 'long') === 'long' ? 'bg-green-900/40 text-green-400 border border-green-800/50' : 'bg-red-900/40 text-red-400 border border-red-800/50'}">
+												<span class="px-1.5 py-0.5 text-[10px] font-bold uppercase {(trade.direction || 'long') === 'long' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-900' : 'bg-red-500/10 text-red-400 border border-red-900'}">
 													{(trade.direction || 'long') === 'long' ? 'LONG' : 'SHORT'}
 												</span>
 											</td>
-											<td class="px-2 py-1.5 text-gray-400 whitespace-nowrap">{new Date(trade.entry_time).toLocaleString()}</td>
-											<td class="px-2 py-1.5 text-right text-gray-300">{trade.entry_price.toFixed(2)}</td>
-											<td class="px-2 py-1.5 text-gray-400 whitespace-nowrap">{new Date(trade.exit_time).toLocaleString()}</td>
-											<td class="px-2 py-1.5 text-right text-gray-300">{trade.exit_price.toFixed(2)}</td>
-											<td class="px-2 py-1.5 text-right text-gray-300">{trade.size.toFixed(4)}</td>
-											<td class="px-2 py-1.5 text-right text-gray-500">{duration}</td>
+											<td class="px-2 py-1.5 text-[#888] whitespace-nowrap">{new Date(trade.entry_time).toLocaleString()}</td>
+											<td class="px-2 py-1.5 text-right text-[#888]">{trade.entry_price.toFixed(2)}</td>
+											<td class="px-2 py-1.5 text-[#888] whitespace-nowrap">{new Date(trade.exit_time).toLocaleString()}</td>
+											<td class="px-2 py-1.5 text-right text-[#888]">{trade.exit_price.toFixed(2)}</td>
+											<td class="px-2 py-1.5 text-right text-[#888]">{trade.size.toFixed(4)}</td>
+											<td class="px-2 py-1.5 text-right text-[#666]">{duration}</td>
 											<td class="px-2 py-1.5 text-right text-yellow-500/70">{formatCurrency(estFees)}</td>
 											<td class="px-2 py-1.5 text-right font-bold" class:text-green-500={trade.pnl > 0} class:text-red-500={trade.pnl < 0}>
 												{formatCurrency(trade.pnl)}

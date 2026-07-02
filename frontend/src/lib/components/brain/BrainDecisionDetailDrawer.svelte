@@ -204,7 +204,7 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
+		background: rgba(0, 0, 0, 0.8);
 		border: none;
 		padding: 0;
 		cursor: pointer;
@@ -218,11 +218,11 @@
 		width: min(640px, 100%);
 		height: 100vh;
 		background: #0a0a0a;
-		border-left: 1px solid #2a2a2a;
+		border-left: 1px solid #222;
 		display: flex;
 		flex-direction: column;
 		z-index: 1001;
-		box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
+		box-shadow: none;
 	}
 
 	header {
@@ -230,7 +230,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 1rem 1.25rem;
-		border-bottom: 1px solid #2a2a2a;
+		border-bottom: 1px solid #222;
 	}
 
 	.kicker {
@@ -256,11 +256,11 @@
 	.copy-link {
 		background: #1a1a1a;
 		border: 1px solid #333;
-		color: #93c5fd;
+		color: #888;
 		font-size: 0.8125rem;
 		cursor: pointer;
 		padding: 0.35rem 0.7rem;
-		border-radius: 4px;
+		border-radius: 0;
 		white-space: nowrap;
 	}
 
@@ -277,7 +277,7 @@
 		line-height: 1;
 		cursor: pointer;
 		padding: 0.25rem 0.5rem;
-		border-radius: 4px;
+		border-radius: 0;
 	}
 
 	.close:hover {
@@ -305,7 +305,7 @@
 		border: 1px solid #5a2020;
 		color: #f8c0c0;
 		padding: 0.625rem 0.875rem;
-		border-radius: 4px;
+		border-radius: 0;
 		font-size: 0.875rem;
 	}
 
@@ -357,8 +357,8 @@
 
 	.block {
 		background: #050505;
-		border: 1px solid #1f1f1f;
-		border-radius: 4px;
+		border: 1px solid #1a1a1a;
+		border-radius: 0;
 		padding: 0.625rem;
 		font-family: 'JetBrains Mono', 'Consolas', monospace;
 		font-size: 0.8125rem;
@@ -379,9 +379,9 @@
 	}
 
 	.tasks li {
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 4px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 0.5rem 0.75rem;
 	}
 
@@ -394,7 +394,7 @@
 	}
 
 	.task-head a {
-		color: #93c5fd;
+		color: #888;
 		text-decoration: none;
 		font-family: 'JetBrains Mono', 'Consolas', monospace;
 	}
@@ -410,13 +410,13 @@
 
 	.chip {
 		padding: 0.125rem 0.5rem;
-		border-radius: 999px;
+		border-radius: 0;
 		font-size: 0.7rem;
 		font-weight: 600;
 		text-transform: uppercase;
 		background: #1a1a1a;
 		color: #aaa;
-		border: 1px solid #2a2a2a;
+		border: 1px solid #222;
 	}
 
 	.task-meta {

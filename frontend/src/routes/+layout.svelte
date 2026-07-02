@@ -281,7 +281,7 @@
 <!-- Floating Chat Button -->
 <button
 	on:click={toggleAssistant}
-	class="fixed z-50 w-14 h-14 bg-cyan-600 hover:bg-cyan-500 rounded-full shadow-lg flex items-center justify-center transition-all duration-200 hover:scale-110 relative"
+	class="fixed z-50 w-14 h-14 border border-[#333] bg-black text-white hover:bg-white hover:text-black flex items-center justify-center transition-colors relative"
 	style="position: fixed; right: 1.5rem; bottom: 1.5rem; left: auto; top: auto;"
 	aria-label="Open assistant"
 >
@@ -296,9 +296,8 @@
 	{/if}
 
 	{#if !$assistantUI.open && $chatUnreadCount > 0}
-		<span class="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-rose-400 animate-ping opacity-75" aria-hidden="true"></span>
 		<span
-			class="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 rounded-full bg-rose-500 text-[10px] font-bold text-white flex items-center justify-center ring-2 ring-black"
+			class="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 bg-red-500 text-[10px] font-bold text-white flex items-center justify-center"
 			aria-label={`${$chatUnreadCount} unread chat replies`}
 		>
 			{unreadChatCountLabel}

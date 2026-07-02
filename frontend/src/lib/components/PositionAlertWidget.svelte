@@ -6,7 +6,7 @@
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
 	import { snoozeUntil, snoozeNotifications, getSnoozeOptions } from '$lib/stores/processTracker';
 
-	let positionAlert: {
+	interface PositionAlert {
 		token: string;
 		sessionId: string;
 		strategyName: string;
@@ -15,7 +15,9 @@
 		entryPrice: number;
 		positionSize: number;
 		openedAt: string;
-	} | null = null;
+	}
+
+	let positionAlerts: PositionAlert[] = [];
 
 	let dismissedPositionTokens = new Set<string>();
 	let positionAlertPoller: RealtimeRefreshController | null = null;
@@ -23,19 +25,19 @@
 	const POSITION_ALERT_POLL_MS = 25_000;
 	const DISMISSED_STORAGE_KEY = 'forven.paper.dismissedPositionAlerts';
 
-	let showPositionSnoozeMenu = false;
-	let positionSnoozeMenuRef: HTMLDivElement | null = null;
+	let openSnoozeToken: string | null = null;
 	const snoozeOptions = getSnoozeOptions();
 
 	function handlePositionSnooze(durationMs: number) {
 		snoozeNotifications(durationMs);
-		showPositionSnoozeMenu = false;
-		positionAlert = null;
+		openSnoozeToken = null;
+		positionAlerts = [];
 	}
 
 	function handlePositionClickOutside(event: MouseEvent) {
-		if (positionSnoozeMenuRef && !positionSnoozeMenuRef.contains(event.target as Node)) {
-			showPositionSnoozeMenu = false;
+		const target = event.target as Element | null;
+		if (!target?.closest('[data-position-snooze-root]')) {
+			openSnoozeToken = null;
 		}
 	}
 
@@ -74,7 +76,7 @@
 		}
 	}
 
-	function toPositionAlert(session: PaperTradingSession, token: string) {
+	function toPositionAlert(session: PaperTradingSession, token: string): PositionAlert {
 		return {
 			token,
 			sessionId: session.id,
@@ -97,24 +99,26 @@
 		return date.toLocaleString();
 	}
 
-	function dismissPositionAlert() {
-		if (!positionAlert) return;
-		dismissedPositionTokens.add(positionAlert.token);
+	function dismissPositionAlert(token: string) {
+		dismissedPositionTokens.add(token);
 		persistDismissedTokens();
-		positionAlert = null;
+		if (openSnoozeToken === token) openSnoozeToken = null;
+		positionAlerts = positionAlerts.filter((alert) => alert.token !== token);
 	}
 
-	function openSessionFromAlert(sessionId: string) {
+	function openSessionFromAlert(alert: PositionAlert) {
+		// Acting on the alert is an acknowledgement — dismiss it like Close does.
+		dismissPositionAlert(alert.token);
 		if (typeof window === 'undefined') return;
 		// Persist for the cross-page case: navigating to /trading mounts the page,
 		// which reads this key and selects the session.
-		window.localStorage.setItem('forven.paper.selectedSessionId', sessionId);
+		window.localStorage.setItem('forven.paper.selectedSessionId', alert.sessionId);
 		// Live channel for the already-on-/trading case: the same-URL <a> nav is a
 		// no-op, so the page never re-reads the key. Tell the mounted page directly.
-		window.dispatchEvent(new CustomEvent('forven:select-session', { detail: { sessionId } }));
+		window.dispatchEvent(new CustomEvent('forven:select-session', { detail: { sessionId: alert.sessionId } }));
 	}
 
-	async function refreshPositionAlert() {
+	async function refreshPositionAlerts() {
 		if (positionAlertInFlight) return;
 		positionAlertInFlight = true;
 		try {
@@ -135,18 +139,13 @@
 			}
 			if (prunedDismissed) persistDismissedTokens();
 
-			if (positionAlert && !activeTokens.has(positionAlert.token)) {
-				positionAlert = null;
+			const nextAlerts: PositionAlert[] = [];
+			for (const session of openSessions) {
+				const token = getPositionToken(session);
+				if (!token || dismissedPositionTokens.has(token)) continue;
+				nextAlerts.push(toPositionAlert(session, token));
 			}
-
-			if (!positionAlert) {
-				for (const session of openSessions) {
-					const token = getPositionToken(session);
-					if (!token || dismissedPositionTokens.has(token)) continue;
-					positionAlert = toPositionAlert(session, token);
-					break;
-				}
-			}
+			positionAlerts = nextAlerts;
 		} catch {
 			// Ignore intermittent API failures and retry next poll.
 		} finally {
@@ -156,7 +155,7 @@
 
 	function startPositionAlertPolling() {
 		if (positionAlertPoller) return;
-		positionAlertPoller = createRealtimeRefresh(refreshPositionAlert, {
+		positionAlertPoller = createRealtimeRefresh(refreshPositionAlerts, {
 			fallbackMs: POSITION_ALERT_POLL_MS,
 			wsDebounceMs: 1000,
 			wsEvents: ['trade', 'task_completed', 'task_failed', 'kill_switch_activated', 'kill_switch_cleared'],
@@ -185,21 +184,23 @@
 	});
 </script>
 
-{#if positionAlert && $snoozeUntil <= Date.now()}
-	{@const activeAlert = positionAlert}
-	<div class="fixed bottom-4 right-4 z-[10001] pointer-events-none">
-		<div class="pointer-events-auto bg-[#111] border border-[#333] border-l-4 border-l-green-500 rounded px-4 py-3 min-w-[280px] max-w-sm shadow-lg shadow-black/60">
+{#if $snoozeUntil <= Date.now()}
+	{#each positionAlerts as alert (alert.token)}
+		<div
+			class="pointer-events-auto bg-[#050505] border border-emerald-900 px-4 py-3 min-w-[280px] max-w-sm"
+			transition:fly={{ x: 300, duration: 250 }}
+		>
 			<div class="flex items-start justify-between gap-3">
 				<div class="min-w-0">
-					<div class="text-[10px] uppercase tracking-wider text-green-400 font-bold">Position Open</div>
-					<div class="text-xs text-white font-bold truncate">{activeAlert.strategyName}</div>
-					<div class="text-[10px] text-gray-400 mt-0.5">{activeAlert.symbol} / {activeAlert.timeframe}</div>
+					<div class="text-[10px] uppercase tracking-wider text-emerald-400 font-bold">Position Open</div>
+					<div class="text-xs text-white font-bold truncate">{alert.strategyName}</div>
+					<div class="text-[10px] text-[#888] mt-0.5">{alert.symbol} / {alert.timeframe}</div>
 				</div>
 				<div class="flex items-center gap-2">
-					<div class="relative" bind:this={positionSnoozeMenuRef}>
+					<div class="relative" data-position-snooze-root>
 						<button
-							class="text-[10px] text-gray-500 hover:text-white border border-[#333] hover:border-white px-2 py-0.5 flex items-center gap-1"
-							on:click|stopPropagation={() => showPositionSnoozeMenu = !showPositionSnoozeMenu}
+							class="text-[10px] text-[#666] hover:text-white border border-[#333] hover:border-white px-2 py-0.5 flex items-center gap-1 transition-colors"
+							on:click|stopPropagation={() => openSnoozeToken = openSnoozeToken === alert.token ? null : alert.token}
 							title="Snooze notifications"
 						>
 							<svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
@@ -208,22 +209,22 @@
 							<span>Snooze</span>
 						</button>
 
-						{#if showPositionSnoozeMenu}
+						{#if openSnoozeToken === alert.token}
 							<div
-								class="absolute bottom-full right-0 mb-1 bg-[#111] border border-[#333] rounded shadow-lg shadow-black/50 py-1 min-w-[140px] z-[10002]"
+								class="absolute bottom-full right-0 mb-1 bg-[#050505] border border-[#333] py-1 min-w-[140px] z-[10002]"
 								transition:fly={{ y: 10, duration: 150 }}
 							>
 								<button
-									class="w-full text-left px-3 py-1.5 text-[10px] text-green-400 hover:bg-[#222] flex items-center gap-2"
+									class="w-full text-left px-3 py-1.5 text-[10px] text-emerald-400 hover:bg-[#111] flex items-center gap-2"
 									on:click|stopPropagation={() => handlePositionSnooze(24 * 60 * 60 * 1000)}
 								>
-									<input type="checkbox" class="accent-green-500 pointer-events-none" checked />
+									<input type="checkbox" class="accent-emerald-500 pointer-events-none" checked />
 									<span>Pause all alerts</span>
 								</button>
-								<div class="border-t border-[#333] my-1"></div>
+								<div class="border-t border-[#222] my-1"></div>
 								{#each snoozeOptions as option}
 									<button
-										class="w-full text-left px-3 py-1.5 text-[10px] text-gray-400 hover:bg-[#222] hover:text-white transition-colors"
+										class="w-full text-left px-3 py-1.5 text-[10px] text-[#888] hover:bg-[#111] hover:text-white transition-colors"
 										on:click|stopPropagation={() => handlePositionSnooze(option.ms)}
 									>
 										{option.label}
@@ -233,28 +234,28 @@
 						{/if}
 					</div>
 					<button
-						class="text-[10px] text-gray-500 hover:text-white border border-[#333] hover:border-white px-2 py-0.5"
-						on:click={dismissPositionAlert}
+						class="text-[10px] text-[#666] hover:text-white border border-[#333] hover:border-white px-2 py-0.5 transition-colors"
+						on:click={() => dismissPositionAlert(alert.token)}
 					>
 						Close
 					</button>
 				</div>
 			</div>
 			<div class="grid grid-cols-2 gap-x-3 gap-y-1 mt-3 text-[10px]">
-				<div class="text-gray-500">Entry</div>
-				<div class="text-gray-300 text-right">{formatPrice(activeAlert.entryPrice)}</div>
-				<div class="text-gray-500">Size</div>
-				<div class="text-gray-300 text-right">{activeAlert.positionSize.toLocaleString(undefined, { maximumFractionDigits: 6 })}</div>
-				<div class="text-gray-500">Opened</div>
-				<div class="text-gray-300 text-right">{formatDateTime(activeAlert.openedAt)}</div>
+				<div class="text-[#666]">Entry</div>
+				<div class="text-[#999] text-right">{formatPrice(alert.entryPrice)}</div>
+				<div class="text-[#666]">Size</div>
+				<div class="text-[#999] text-right">{alert.positionSize.toLocaleString(undefined, { maximumFractionDigits: 6 })}</div>
+				<div class="text-[#666]">Opened</div>
+				<div class="text-[#999] text-right">{formatDateTime(alert.openedAt)}</div>
 			</div>
 			<a
 				href="/trading"
 				class="mt-3 inline-block text-[10px] uppercase tracking-wider text-white border border-white px-2 py-1 hover:bg-white hover:text-black transition-colors"
-				on:click={() => openSessionFromAlert(activeAlert.sessionId)}
+				on:click={() => openSessionFromAlert(alert)}
 			>
 				Open Session
 			</a>
 		</div>
-	</div>
+	{/each}
 {/if}

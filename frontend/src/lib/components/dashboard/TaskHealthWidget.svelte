@@ -127,8 +127,7 @@
 		gap: 0.5rem;
 		padding: 0.6rem 0.75rem;
 		border: 1px solid #222;
-		background: #0a0a0a;
-		border-radius: 0.375rem;
+		background: #050505;
 		min-width: 220px;
 	}
 
@@ -149,7 +148,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #aaa;
+		color: #888;
 		font-weight: 600;
 	}
 
@@ -164,16 +163,15 @@
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		padding: 0.2rem 0.5rem;
-		border-radius: 999px;
-		border: 1px solid rgba(74, 222, 128, 0.4);
-		background: rgba(74, 222, 128, 0.08);
-		color: #86efac;
+		border: 1px solid #064e3b;
+		background: rgba(52, 211, 153, 0.08);
+		color: #34d399;
 	}
 
 	.status-pill--warn {
-		border-color: rgba(251, 191, 36, 0.4);
-		background: rgba(251, 191, 36, 0.1);
-		color: #fbbf24;
+		border-color: #713f12;
+		background: rgba(250, 204, 21, 0.1);
+		color: #facc15;
 	}
 
 	.stats {
@@ -189,14 +187,13 @@
 		padding: 0.3rem 0.4rem;
 		background: #050505;
 		border: 1px solid #1a1a1a;
-		border-radius: 0.375rem;
 	}
 
 	.stat-label {
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #777;
+		color: #666;
 		white-space: nowrap;
 	}
 
@@ -209,12 +206,12 @@
 	}
 
 	.stat-value--warn {
-		color: #fbbf24;
+		color: #facc15;
 	}
 
 	.issues {
 		font-size: 0.625rem;
-		color: #fbbf24;
+		color: #facc15;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -229,10 +226,9 @@
 
 	.error {
 		font-size: 0.6875rem;
-		color: #fca5a5;
+		color: #f87171;
 		padding: 0.4rem 0.5rem;
-		border: 1px solid rgba(248, 113, 113, 0.3);
-		background: rgba(248, 113, 113, 0.08);
-		border-radius: 0.375rem;
+		border: 1px solid #7f1d1d;
+		background: rgba(239, 68, 68, 0.05);
 	}
 </style>

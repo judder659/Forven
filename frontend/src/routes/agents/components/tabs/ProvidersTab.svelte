@@ -285,15 +285,15 @@
 
 <section
 	aria-labelledby="agents-providers-heading"
-	class="border border-gray-800 rounded-lg bg-black p-6 space-y-4"
+	class="terminal-card p-6 space-y-4"
 >
-	<header class="border-b border-gray-800 pb-2 flex items-start justify-between gap-3">
+	<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
 		<div>
-			<h2 id="agents-providers-heading" class="text-lg font-semibold text-white">
+			<h2 id="agents-providers-heading" class="text-sm font-bold uppercase tracking-widest text-white">
 				Providers &amp; Keys
 			</h2>
-			<p class="text-xs text-gray-500 mt-1">
-				Connect a provider to authorize spend against it. Only <span class="text-green-300">connected</span>
+			<p class="text-xs text-[#666] mt-1">
+				Connect a provider to authorize spend against it. Only <span class="text-emerald-400">connected</span>
 				providers and enabled models are ever selectable for agents or routing.
 				{#if authFile}<span class="font-mono">{authFile}</span>{/if}
 			</p>
@@ -302,7 +302,7 @@
 			type="button"
 			on:click={reload}
 			disabled={authProvidersLoading}
-			class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-60"
+			class="terminal-button text-xs px-2 py-1 disabled:opacity-60"
 		>
 			{authProvidersLoading ? 'Refreshing…' : 'Refresh'}
 		</button>
@@ -313,9 +313,9 @@
 	{/if}
 
 	{#if authProvidersLoading && providers.length === 0}
-		<p class="text-sm text-gray-400">Loading providers…</p>
+		<p class="text-sm text-[#666]">Loading providers…</p>
 	{:else if providers.length === 0}
-		<p class="text-sm text-gray-400">No providers registered.</p>
+		<p class="text-sm text-[#666]">No providers registered.</p>
 	{:else}
 		<ul class="space-y-2">
 			{#each providers as provider (provider.provider)}
@@ -328,63 +328,63 @@
 				{@const isBaseUrlProvider = provider.requires_token === false && !provider.supports_oauth}
 				{@const statusColor =
 					provider.status === 'active'
-						? 'text-green-300 border-green-800 bg-green-950/40'
+						? 'text-emerald-400 border-emerald-900'
 						: provider.status === 'not_configured'
-							? 'text-gray-400 border-gray-700 bg-gray-900/40'
+							? 'text-[#888] border-[#333]'
 							: provider.status === 'needs_reauth'
-								? 'text-red-300 border-red-800 bg-red-950/40'
-								: 'text-amber-300 border-amber-800 bg-amber-950/40'}
-				<li class="bg-black border rounded p-4 space-y-3 {connected ? 'border-green-900/70' : 'border-gray-800'}">
+								? 'text-red-400 border-red-900'
+								: 'text-yellow-400 border-yellow-900'}
+				<li class="terminal-card p-4 space-y-3 {connected ? 'border-emerald-900' : 'border-[#222]'}">
 					<div class="flex flex-wrap items-center justify-between gap-2">
 						<div class="flex items-center gap-2 flex-wrap">
 							<span class="font-mono text-sm text-white uppercase">{key}</span>
 							{#if connected}
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border text-green-200 border-green-700 bg-green-950/60 flex items-center gap-1">
+								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border text-emerald-400 border-emerald-900 bg-emerald-500/10 flex items-center gap-1">
 									<svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
 									Connected
 								</span>
 							{:else}
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-gray-700 text-gray-400">
+								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border border-[#333] text-[#888]">
 									Not connected
 								</span>
 							{/if}
-							<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border {statusColor}">
+							<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border {statusColor}">
 								{provider.status === 'needs_reauth' ? 're-authenticate' : provider.status}
 							</span>
 							{#if provider.supports_oauth}
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-gray-700 text-gray-400">
+								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border border-[#333] text-[#888]">
 									oauth
 								</span>
 							{/if}
 							{#if provider.configured && !connected}
-								<span class="text-[10px] text-amber-400/80" title="A credential exists (e.g. env var) but the operator has not connected this provider.">env key only</span>
+								<span class="text-[10px] text-yellow-400" title="A credential exists (e.g. env var) but the operator has not connected this provider.">env key only</span>
 							{/if}
 						</div>
 						{#if provider.expires_in}
-							<span class="text-xs text-gray-400">{provider.expires_in}</span>
+							<span class="text-xs text-[#888]">{provider.expires_in}</span>
 						{/if}
 					</div>
 
 					{#if provider.expires_at}
-						<p class="text-xs text-gray-500">Expires {provider.expires_at}</p>
+						<p class="text-xs text-[#666]">Expires {provider.expires_at}</p>
 					{/if}
 					{#if provider.base_url}
-						<p class="text-xs text-gray-400">
+						<p class="text-xs text-[#888]">
 							Base URL: <span class="font-mono">{provider.base_url}</span>
 						</p>
 					{/if}
 					{#if provider.last_refresh_error}
-						<div class="rounded border border-red-900 bg-red-950/30 px-2 py-1.5 text-xs text-red-300">
+						<div class="border border-red-900 bg-red-500/5 px-2 py-1.5 text-xs text-red-400">
 							<span class="font-semibold">Token refresh failed:</span>
 							{provider.last_refresh_error}
 							{#if provider.supports_oauth}
-								<span class="text-red-200/80">— sign in again to recover.</span>
+								<span class="text-red-400/80">— sign in again to recover.</span>
 							{/if}
 						</div>
 					{/if}
 
 					{#if msg}
-						<p class="text-xs text-green-400" role="status">{msg}</p>
+						<p class="text-xs text-emerald-400" role="status">{msg}</p>
 					{/if}
 					{#if err}
 						<p class="text-xs text-red-400" role="alert">{err}</p>
@@ -416,30 +416,30 @@
 																: 'Starting…'}
 						{@const pillColor =
 							pollStatus === 'complete'
-								? 'text-green-300 border-green-800 bg-green-950/40'
+								? 'text-emerald-400 border-emerald-900'
 								: pollStatus === 'expired' || pollStatus === 'denied' || pollStatus === 'error'
-									? 'text-red-300 border-red-800 bg-red-950/40'
+									? 'text-red-400 border-red-900'
 									: pollStatus === 'slow_down' || pollStatus === 'retrying'
-										? 'text-amber-300 border-amber-800 bg-amber-950/40'
-										: 'text-blue-300 border-blue-800 bg-blue-950/40'}
-						<div class="bg-gray-950 border border-gray-700 rounded p-3 space-y-2">
-							<p class="text-xs text-gray-300">
+										? 'text-yellow-400 border-yellow-900'
+										: 'text-[#888] border-[#333]'}
+						<div class="border border-[#333] bg-[#050505] p-3 space-y-2">
+							<p class="text-xs text-[#888]">
 								{oauth.flow === 'device_code' ? 'Device code flow' : 'Authorization code flow'}
 							</p>
 							{#if oauth.verification_url && oauth.user_code}
-								<p class="text-xs text-gray-400">
+								<p class="text-xs text-[#888]">
 									Go to <a
 										href={oauth.verification_url}
 										on:click|preventDefault={() => openExternal(oauth.verification_url!)}
-										class="text-blue-400 underline cursor-pointer">{oauth.verification_url}</a>
+										class="text-white underline cursor-pointer">{oauth.verification_url}</a>
 									and enter code <span class="font-mono text-white">{oauth.user_code}</span>
 								</p>
 							{:else if oauth.authorize_url}
-								<p class="text-xs text-gray-400">
+								<p class="text-xs text-[#888]">
 									A new tab opened to <a
 										href={oauth.authorize_url}
 										on:click|preventDefault={() => openExternal(oauth.authorize_url!)}
-										class="text-blue-400 underline cursor-pointer">authorize</a>.
+										class="text-white underline cursor-pointer">authorize</a>.
 									{#if isManualPaste}
 										Paste the code returned by the provider:
 									{:else if isAuthorizationCode}
@@ -454,16 +454,16 @@
 									type="text"
 									placeholder="Paste callback URL or authorization code"
 									bind:value={oauth.code}
-									class="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+									class="terminal-input w-full text-sm font-mono"
 								/>
 							{/if}
 							{#if oauth.bind_error}
-								<p class="text-[11px] text-amber-300">
+								<p class="text-[11px] text-yellow-400">
 									Couldn't bind loopback listener ({oauth.bind_error}); using manual paste.
 								</p>
 							{/if}
 							<div class="flex items-center gap-2">
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border {pillColor}">
+								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border {pillColor}">
 									{pillLabel}
 								</span>
 								{#if isAuthorizationCode}
@@ -471,7 +471,7 @@
 										type="button"
 										on:click={() => completeOAuth(key)}
 										disabled={busy || !(oauth.code ?? '').trim()}
-										class="text-xs px-3 py-1 rounded bg-blue-700 text-white hover:bg-blue-600 disabled:opacity-60"
+										class="terminal-button-primary text-xs px-3 py-1 disabled:opacity-60"
 									>
 										{busy ? 'Completing…' : 'Use pasted code'}
 									</button>
@@ -479,7 +479,7 @@
 								<button
 									type="button"
 									on:click={() => cancelOAuth(key)}
-									class="text-xs px-3 py-1 rounded border border-gray-700 text-gray-300 hover:text-white"
+									class="terminal-button text-xs px-3 py-1"
 								>
 									Cancel
 								</button>
@@ -487,44 +487,44 @@
 						</div>
 					{:else}
 						{#if connected}
-							<p class="text-xs text-green-400">
+							<p class="text-xs text-emerald-400">
 								Connected{provider.expires_in ? ` · renews in ${provider.expires_in}` : ''}. This provider is authorized to spend.
 							</p>
 						{:else}
 							<div class="flex flex-wrap items-end gap-2">
 								{#if isBaseUrlProvider}
 									<label class="flex-1 min-w-[14rem]">
-										<span class="block text-xs text-gray-400 mb-1">Base URL</span>
+										<span class="block text-[10px] uppercase tracking-wider text-[#666] mb-1">Base URL</span>
 										<input
 											type="text"
 											placeholder={provider.base_url ?? 'http://localhost:1234/v1'}
 											bind:value={providerBaseUrlInput[key]}
-											class="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+											class="terminal-input w-full text-sm font-mono"
 										/>
 									</label>
 									<button
 										type="button"
 										on:click={() => saveProviderBaseUrl(key)}
 										disabled={busy}
-										class="text-xs px-3 py-1.5 rounded bg-blue-700 text-white hover:bg-blue-600 disabled:opacity-60"
+										class="terminal-button-primary text-xs px-3 py-1.5 disabled:opacity-60"
 									>
 										{busy ? 'Saving…' : 'Connect'}
 									</button>
 								{:else}
 									<label class="flex-1 min-w-[14rem]">
-										<span class="block text-xs text-gray-400 mb-1">API key / access token</span>
+										<span class="block text-[10px] uppercase tracking-wider text-[#666] mb-1">API key / access token</span>
 										<input
 											type="password"
 											placeholder="Paste token and press Connect"
 											bind:value={providerTokenInput[key]}
-											class="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+											class="terminal-input w-full text-sm font-mono"
 										/>
 									</label>
 									<button
 										type="button"
 										on:click={() => saveProviderToken(key)}
 										disabled={busy}
-										class="text-xs px-3 py-1.5 rounded bg-blue-700 text-white hover:bg-blue-600 disabled:opacity-60"
+										class="terminal-button-primary text-xs px-3 py-1.5 disabled:opacity-60"
 									>
 										{busy ? 'Saving…' : 'Connect'}
 									</button>
@@ -533,7 +533,7 @@
 											type="button"
 											on:click={() => startOAuth(key)}
 											disabled={busy}
-											class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-200 hover:text-white hover:border-gray-500 disabled:opacity-60"
+											class="terminal-button text-xs px-3 py-1.5 disabled:opacity-60"
 										>
 											{provider.configured ? 'Re-authenticate' : 'Sign in with OAuth'}
 										</button>
@@ -543,11 +543,11 @@
 							{#if key === 'opencode-go'}
 								<OpenCodeGoReferralNote />
 							{:else if PROVIDER_SIGNUP_URLS[key]}
-								<p class="text-xs text-gray-500">
+								<p class="text-xs text-[#666]">
 									Need access? <a
 										href={PROVIDER_SIGNUP_URLS[key]}
 										on:click|preventDefault={() => openExternal(PROVIDER_SIGNUP_URLS[key]!)}
-										class="text-blue-400 underline cursor-pointer">Get a key ↗</a>
+										class="text-white underline cursor-pointer">Get a key ↗</a>
 								</p>
 							{/if}
 						{/if}
@@ -558,7 +558,7 @@
 									type="button"
 									on:click={() => testProvider(key)}
 									disabled={busy}
-									class="text-xs px-3 py-1 rounded border border-gray-700 text-gray-300 hover:text-white disabled:opacity-60"
+									class="terminal-button text-xs px-3 py-1 disabled:opacity-60"
 								>
 									{busy ? 'Testing…' : 'Test connection'}
 								</button>
@@ -567,7 +567,7 @@
 										type="button"
 										on:click={() => startOAuth(key)}
 										disabled={busy}
-										class="text-xs px-3 py-1 rounded border border-gray-700 text-gray-300 hover:text-white disabled:opacity-60"
+										class="terminal-button text-xs px-3 py-1 disabled:opacity-60"
 									>
 										Re-authenticate
 									</button>
@@ -576,7 +576,7 @@
 									type="button"
 									on:click={() => disconnectProvider(key)}
 									disabled={busy}
-									class="text-xs px-3 py-1 rounded border border-red-900 text-red-300 hover:text-red-200 hover:border-red-700 disabled:opacity-60"
+									class="terminal-button-danger text-xs px-3 py-1 disabled:opacity-60"
 								>
 									Disconnect
 								</button>
@@ -584,14 +584,14 @@
 						{/if}
 					{/if}
 
-					<details class="text-xs text-gray-500">
-						<summary class="cursor-pointer hover:text-gray-300">CLI equivalent</summary>
+					<details class="text-xs text-[#666]">
+						<summary class="cursor-pointer hover:text-white">CLI equivalent</summary>
 						<div class="mt-1 space-y-1">
 							{#if provider.login_command}
-								<p><span class="text-gray-600">Login:</span> <span class="font-mono text-gray-400">{provider.login_command}</span></p>
+								<p><span class="text-[#555]">Login:</span> <span class="font-mono text-[#888]">{provider.login_command}</span></p>
 							{/if}
 							{#if provider.refresh_command && provider.configured}
-								<p><span class="text-gray-600">Refresh:</span> <span class="font-mono text-gray-400">{provider.refresh_command}</span></p>
+								<p><span class="text-[#555]">Refresh:</span> <span class="font-mono text-[#888]">{provider.refresh_command}</span></p>
 							{/if}
 						</div>
 					</details>

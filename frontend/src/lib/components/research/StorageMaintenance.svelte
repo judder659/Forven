@@ -93,89 +93,89 @@
 	onMount(load);
 </script>
 
-<div class="rounded-lg border border-[#222] bg-[#0a0a0a] p-4">
+<div class="border border-[#222] bg-[#050505] p-4">
 	<div class="mb-3 flex items-center justify-between">
-		<h2 class="text-sm font-semibold tracking-tight text-gray-200">Storage &amp; maintenance</h2>
-		<button class="rounded border border-[#333] px-2 py-0.5 text-[11px] text-gray-300 hover:bg-[#1a1a1a]" on:click={load} disabled={loading}>
+		<h2 class="text-xs font-bold uppercase tracking-widest text-white">Storage &amp; maintenance</h2>
+		<button class="border border-[#333] px-2 py-0.5 text-[11px] text-[#888] hover:bg-[#111] hover:text-white transition-colors" on:click={load} disabled={loading}>
 			{loading ? '…' : 'Refresh'}
 		</button>
 	</div>
 
 	{#if error}
-		<div class="mb-2 rounded bg-red-900/40 p-2 text-xs text-red-200">{error}</div>
+		<div class="mb-2 border border-red-900 bg-red-500/5 p-2 text-xs text-red-400">{error}</div>
 	{/if}
 	{#if notice}
-		<div class="mb-2 rounded bg-green-900/30 p-2 text-xs text-green-200">{notice}</div>
+		<div class="mb-2 border border-emerald-900 bg-emerald-500/5 p-2 text-xs text-emerald-400">{notice}</div>
 	{/if}
 
 	{#if loading && !health}
-		<div class="text-xs text-gray-500">Loading…</div>
+		<div class="text-xs text-[#666]">Loading…</div>
 	{:else if health}
 		<!-- Storage summary -->
 		<div class="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
 			<div>
-				<div class="text-gray-500">Datasets</div>
-				<div class="font-mono text-gray-200">{health.dataset_count}</div>
+				<div class="text-[#666]">Datasets</div>
+				<div class="font-mono text-[#888]">{health.dataset_count}</div>
 			</div>
 			<div>
-				<div class="text-gray-500">Parquet files</div>
-				<div class="font-mono text-gray-200">{health.total_parquet_files}</div>
+				<div class="text-[#666]">Parquet files</div>
+				<div class="font-mono text-[#888]">{health.total_parquet_files}</div>
 			</div>
 			<div>
-				<div class="text-gray-500">Parquet size</div>
-				<div class="font-mono text-gray-200">{fmtBytes(health.total_parquet_bytes)}</div>
+				<div class="text-[#666]">Parquet size</div>
+				<div class="font-mono text-[#888]">{fmtBytes(health.total_parquet_bytes)}</div>
 			</div>
 			<div>
-				<div class="text-gray-500">DB size</div>
-				<div class="font-mono text-gray-200">{fmtBytes(health.db_size_bytes)}{health.wal_present ? ` (+${fmtBytes(health.wal_size_bytes)} WAL)` : ''}</div>
+				<div class="text-[#666]">DB size</div>
+				<div class="font-mono text-[#888]">{fmtBytes(health.db_size_bytes)}{health.wal_present ? ` (+${fmtBytes(health.wal_size_bytes)} WAL)` : ''}</div>
 			</div>
 			<div>
-				<div class="text-gray-500">Avg quality</div>
-				<div class="font-mono {health.quality_avg_score == null ? 'text-gray-500' : health.quality_avg_score >= 90 ? 'text-green-300' : health.quality_avg_score >= 70 ? 'text-yellow-300' : 'text-red-300'}">
+				<div class="text-[#666]">Avg quality</div>
+				<div class="font-mono {health.quality_avg_score == null ? 'text-[#666]' : health.quality_avg_score >= 90 ? 'text-emerald-400' : health.quality_avg_score >= 70 ? 'text-yellow-400' : 'text-red-300'}">
 					{health.quality_avg_score == null ? '—' : health.quality_avg_score.toFixed(0)}
 				</div>
 			</div>
 			<div>
-				<div class="text-gray-500">Last ingestion</div>
-				<div class="font-mono text-gray-200">{ago(health.last_ingestion_at)}</div>
+				<div class="text-[#666]">Last ingestion</div>
+				<div class="font-mono text-[#888]">{ago(health.last_ingestion_at)}</div>
 			</div>
 		</div>
 
 		<!-- Orphan scan -->
-		<div class="mb-4 border-t border-[#222] pt-3">
+		<div class="mb-4 border-t border-[#1a1a1a] pt-3">
 			<div class="mb-2 flex items-center justify-between">
-				<span class="text-xs font-medium text-gray-400">
+				<span class="text-xs font-medium text-[#888]">
 					Storage drift
 					{#if health.orphan_count > 0}
-						<span class="ml-1 rounded bg-yellow-900/50 px-1.5 py-0.5 text-yellow-300">{health.orphan_count} flagged</span>
+						<span class="ml-1 border border-yellow-900 px-1.5 py-0.5 text-yellow-400">{health.orphan_count} flagged</span>
 					{/if}
 				</span>
 				<div class="flex items-center gap-2">
 					{#if orphans && orphans.orphans.some((o) => o.safe_delete)}
-						<button class="rounded border border-orange-700 px-2 py-0.5 text-[11px] text-orange-300 hover:bg-[#1a1a1a] disabled:opacity-50" on:click={doCleanup} disabled={cleaning || scanning}>
+						<button class="border border-yellow-800 px-2 py-0.5 text-[11px] text-yellow-400 hover:bg-[#111] transition-colors disabled:opacity-50" on:click={doCleanup} disabled={cleaning || scanning}>
 							{cleaning ? 'cleaning…' : `Clean up ${orphans.orphans.filter((o) => o.safe_delete).length}`}
 						</button>
 					{/if}
-					<button class="rounded border border-[#333] px-2 py-0.5 text-[11px] text-gray-300 hover:bg-[#1a1a1a] disabled:opacity-50" on:click={doScan} disabled={scanning || cleaning}>
+					<button class="border border-[#333] px-2 py-0.5 text-[11px] text-[#888] hover:bg-[#111] hover:text-white transition-colors disabled:opacity-50" on:click={doScan} disabled={scanning || cleaning}>
 						{scanning ? 'scanning…' : 'Scan orphans'}
 					</button>
 				</div>
 			</div>
 			{#if orphans}
 				{#if orphans.orphans.length === 0 && orphans.cataloged_missing.length === 0}
-					<div class="text-xs text-gray-500">In sync — no orphaned files or missing parquet.</div>
+					<div class="text-xs text-[#666]">In sync — no orphaned files or missing parquet.</div>
 				{:else}
 					<div class="space-y-1 text-xs">
 						{#each orphans.orphans as o}
-							<div class="flex items-center justify-between {o.safe_delete ? 'text-yellow-200/90' : 'text-gray-400'}">
+							<div class="flex items-center justify-between {o.safe_delete ? 'text-yellow-400' : 'text-[#888]'}">
 								<span class="font-mono">{o.symbol}/{o.timeframe}</span>
-								<span class="text-gray-500">{o.reason ?? 'orphan'} · {fmtBytes(o.size_bytes)}{o.safe_delete ? '' : ' · kept'}</span>
+								<span class="text-[#666]">{o.reason ?? 'orphan'} · {fmtBytes(o.size_bytes)}{o.safe_delete ? '' : ' · kept'}</span>
 							</div>
 						{/each}
 						{#each orphans.cataloged_missing as m}
-							<div class="flex items-center justify-between text-red-200/90">
+							<div class="flex items-center justify-between text-red-400">
 								<span class="font-mono">{m.symbol}/{m.timeframe}</span>
-								<span class="text-gray-500">cataloged but file missing</span>
+								<span class="text-[#666]">cataloged but file missing</span>
 							</div>
 						{/each}
 					</div>
@@ -184,15 +184,15 @@
 		</div>
 
 		<!-- Recent versions audit trail -->
-		<div class="border-t border-[#222] pt-3">
-			<div class="mb-2 text-xs font-medium text-gray-400">Recent ingestion versions</div>
+		<div class="border-t border-[#1a1a1a] pt-3">
+			<div class="mb-2 text-xs font-medium text-[#888]">Recent ingestion versions</div>
 			{#if versions.length === 0}
-				<div class="text-xs text-gray-500">No version history yet.</div>
+				<div class="text-xs text-[#666]">No version history yet.</div>
 			{:else}
 				<div class="overflow-x-auto">
 					<table class="w-full text-xs">
 						<thead>
-							<tr class="text-left text-gray-500">
+							<tr class="text-left text-[#666]">
 								<th class="py-1 pr-3 font-medium">series</th>
 								<th class="py-1 pr-3 font-medium">source</th>
 								<th class="py-1 pr-3 font-medium text-right">rows</th>
@@ -201,11 +201,11 @@
 						</thead>
 						<tbody>
 							{#each versions as v}
-								<tr class="border-t border-[#222]">
-									<td class="py-1 pr-3 font-mono text-gray-300">{v.symbol}<span class="text-gray-600">/{v.timeframe}</span></td>
-									<td class="py-1 pr-3 text-gray-400">{v.source}</td>
-									<td class="py-1 pr-3 text-right font-mono text-gray-400">{v.row_count.toLocaleString()}</td>
-									<td class="py-1 text-right text-gray-500">{ago(v.created_at)}</td>
+								<tr class="border-t border-[#111]">
+									<td class="py-1 pr-3 font-mono text-[#888]">{v.symbol}<span class="text-[#555]">/{v.timeframe}</span></td>
+									<td class="py-1 pr-3 text-[#888]">{v.source}</td>
+									<td class="py-1 pr-3 text-right font-mono text-[#888]">{v.row_count.toLocaleString()}</td>
+									<td class="py-1 text-right text-[#666]">{ago(v.created_at)}</td>
 								</tr>
 							{/each}
 						</tbody>

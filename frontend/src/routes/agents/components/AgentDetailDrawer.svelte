@@ -118,7 +118,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <div
-	class="fixed inset-0 z-[110] flex justify-end bg-black/70 backdrop-blur-sm"
+	class="fixed inset-0 z-[110] flex justify-end bg-black/80"
 	role="button"
 	tabindex="0"
 	aria-label="Close agent detail"
@@ -128,21 +128,21 @@
 	<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 	<!-- svelte-ignore a11y-click-events-have-key-events -->
 	<div
-		class="w-full max-w-xl h-full bg-[#0c0c0c] border-l border-[#333] shadow-2xl overflow-y-auto"
+		class="w-full max-w-xl h-full bg-[#050505] border-l border-[#222] overflow-y-auto"
 		role="dialog"
 		aria-modal="true"
 		aria-label={`${agentName} details`}
 		tabindex="-1"
 		on:click|stopPropagation
 	>
-		<header class="sticky top-0 z-10 bg-[#111] border-b border-[#333] px-5 py-3 flex items-center justify-between">
+		<header class="sticky top-0 z-10 bg-[#050505] border-b border-[#222] px-5 py-3 flex items-center justify-between">
 			<div>
-				<h2 class="text-base font-semibold text-white">{agentName}</h2>
-				<p class="text-[11px] font-mono text-gray-500">{agentId}</p>
+				<h2 class="text-sm font-bold uppercase tracking-widest text-white">{agentName}</h2>
+				<p class="mt-0.5 text-[11px] font-mono text-[#666]">{agentId}</p>
 			</div>
 			<button
 				type="button"
-				class="text-gray-500 hover:text-white p-1"
+				class="terminal-button-icon"
 				aria-label="Close"
 				on:click={close}
 			>
@@ -156,33 +156,33 @@
 		<div class="p-5 space-y-6">
 			<!-- Role + instructions + discord -->
 			<section class="space-y-3">
-				<label class="block text-xs text-gray-400">
+				<label class="block text-[10px] uppercase tracking-wider text-[#666]">
 					Role
 					<input
 						type="text"
 						bind:value={role}
-						class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+						class="terminal-input mt-1 w-full text-sm"
 					/>
 				</label>
-				<label class="block text-xs text-gray-400">
+				<label class="block text-[10px] uppercase tracking-wider text-[#666]">
 					Instructions
 					<textarea
 						rows="6"
 						bind:value={instructions}
-						class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-xs font-mono resize-y"
+						class="terminal-input mt-1 w-full text-xs font-mono resize-y"
 						placeholder="Optional system-prompt guidance"
 					></textarea>
 				</label>
-				<label class="block text-xs text-gray-400">
+				<label class="block text-[10px] uppercase tracking-wider text-[#666]">
 					Discord bot token
 					{#if hasDiscordToken}
-						<span class="text-gray-500">(saved — enter a new value to overwrite)</span>
+						<span class="text-[#555] normal-case tracking-normal">(saved — enter a new value to overwrite)</span>
 					{/if}
 					<input
 						type="password"
 						bind:value={discordToken}
 						placeholder={hasDiscordToken ? '•••••••• (saved)' : ''}
-						class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+						class="terminal-input mt-1 w-full text-sm"
 					/>
 				</label>
 				<div class="flex gap-2">
@@ -190,7 +190,7 @@
 						type="button"
 						on:click={saveAgent}
 						disabled={savingAgent}
-						class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-3 py-1.5 rounded text-sm"
+						class="terminal-button-primary text-xs"
 					>
 						{savingAgent ? 'Saving…' : 'Save'}
 					</button>
@@ -198,7 +198,7 @@
 						type="button"
 						on:click={testDiscord}
 						disabled={discordTesting || !hasDiscordToken}
-						class="border border-gray-700 hover:border-gray-500 text-gray-200 disabled:bg-gray-800 disabled:text-gray-500 px-3 py-1.5 rounded text-sm"
+						class="terminal-button text-xs"
 					>
 						{discordTesting ? 'Sending…' : 'Send Discord test'}
 					</button>
@@ -206,10 +206,10 @@
 			</section>
 
 			<!-- Per-agent documents -->
-			<section class="bg-black border border-gray-800 rounded p-4 space-y-4">
+			<section class="terminal-card p-4 space-y-4">
 				<div>
-					<h3 class="text-sm font-medium text-white">Agent docs</h3>
-					<p class="text-xs text-gray-500 mt-0.5">
+					<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Agent docs</h3>
+					<p class="text-xs text-[#666] mt-1">
 						SOUL.md, AGENTS.md, and ROLE.md are saved per-agent. Restart background services if
 						behavior updates need to propagate.
 					</p>
@@ -218,24 +218,24 @@
 				{#each DOC_KINDS as doc (doc)}
 					<div class="space-y-2">
 						<div class="flex items-center justify-between">
-							<span class="block text-xs text-gray-400">{doc.toUpperCase()}.md</span>
+							<span class="block text-[10px] uppercase tracking-wider text-[#666]">{doc.toUpperCase()}.md</span>
 							<button
 								type="button"
 								on:click={() => saveDoc(doc)}
 								disabled={docSaving[doc] || docsLoading}
-								class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-60"
+								class="terminal-button text-[10px] px-2 py-1 disabled:opacity-60"
 							>
 								{docSaving[doc] ? 'Saving…' : 'Save'}
 							</button>
 						</div>
 						{#if docsLoading}
-							<p class="text-xs text-gray-500">Loading {doc.toUpperCase()}.md…</p>
+							<p class="text-xs text-[#666]">Loading {doc.toUpperCase()}.md…</p>
 						{:else}
 							<textarea
 								rows="8"
 								bind:value={docs[doc]}
 								aria-label={`${doc.toUpperCase()}.md content`}
-								class="w-full bg-gray-950 border border-gray-700 text-white px-3 py-2 rounded text-xs font-mono resize-y"
+								class="terminal-input w-full text-xs font-mono resize-y"
 							></textarea>
 						{/if}
 					</div>

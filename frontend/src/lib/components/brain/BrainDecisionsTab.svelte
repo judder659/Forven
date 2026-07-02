@@ -270,9 +270,9 @@
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 0.75rem;
 		align-items: end;
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 4px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 0.875rem;
 	}
 
@@ -290,7 +290,7 @@
 	.filters select {
 		background: #050505;
 		border: 1px solid #333;
-		border-radius: 3px;
+		border-radius: 0;
 		color: #e5e5e5;
 		padding: 0.4rem 0.5rem;
 		font-size: 0.875rem;
@@ -299,7 +299,7 @@
 	.filters input:focus,
 	.filters select:focus {
 		outline: none;
-		border-color: #4f8df7;
+		border-color: #fff;
 	}
 
 	.filter-actions {
@@ -312,19 +312,19 @@
 		border: 1px solid #333;
 		color: #ddd;
 		padding: 0.5rem 1rem;
-		border-radius: 4px;
+		border-radius: 0;
 		cursor: pointer;
 		font-size: 0.875rem;
 	}
 
 	.filter-actions .primary {
-		background: #1e40af;
-		border-color: #1e40af;
-		color: #fff;
+		background: #fff;
+		border-color: #fff;
+		color: #000;
 	}
 
 	.filter-actions .primary:hover:not(:disabled) {
-		background: #1d4ed8;
+		background: #ddd;
 	}
 
 	.filter-actions button:disabled {
@@ -337,7 +337,7 @@
 		border: 1px solid #5a2020;
 		color: #f8c0c0;
 		padding: 0.625rem 0.875rem;
-		border-radius: 4px;
+		border-radius: 0;
 		font-size: 0.875rem;
 	}
 
@@ -357,8 +357,8 @@
 		font-size: 0.875rem;
 		padding: 1rem;
 		text-align: center;
-		border: 1px dashed #2a2a2a;
-		border-radius: 4px;
+		border: 1px dashed #222;
+		border-radius: 0;
 	}
 
 	.meta {
@@ -378,9 +378,9 @@
 	.row {
 		width: 100%;
 		text-align: left;
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 4px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 0.75rem 0.875rem;
 		color: #e5e5e5;
 		cursor: pointer;
@@ -391,8 +391,8 @@
 	}
 
 	.row:hover {
-		border-color: #3f5b8f;
-		background: #111923;
+		border-color: #555;
+		background: #111;
 	}
 
 	.row-head {
@@ -410,13 +410,13 @@
 
 	.chip {
 		padding: 0.125rem 0.5rem;
-		border-radius: 999px;
+		border-radius: 0;
 		font-size: 0.75rem;
 		font-weight: 600;
 		text-transform: uppercase;
 		background: #1a1a1a;
 		color: #aaa;
-		border: 1px solid #2a2a2a;
+		border: 1px solid #222;
 	}
 
 	.chip-success {
@@ -440,13 +440,13 @@
 	.chip-pending {
 		background: #1a1a1a;
 		color: #888;
-		border-color: #2a2a2a;
+		border-color: #222;
 	}
 
 	.action {
-		background: #1e3a5f;
-		color: #93c5fd;
-		border-color: #1e3a5f;
+		background: #1a1a1a;
+		color: #888;
+		border-color: #1a1a1a;
 	}
 
 	.when {
@@ -472,7 +472,7 @@
 		border: 1px solid #333;
 		color: #ddd;
 		padding: 0.5rem 1.25rem;
-		border-radius: 4px;
+		border-radius: 0;
 		cursor: pointer;
 		font-size: 0.875rem;
 	}

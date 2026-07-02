@@ -37,26 +37,26 @@
 </script>
 
 {#if isIdle && lastCompletedAt}
-	<div class="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-slate-900/40 px-4 py-2 text-xs text-slate-500">
-		<svg class="h-3.5 w-3.5 text-emerald-400/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+	<div class="flex items-center gap-2 border border-[#222] bg-[#050505] px-4 py-2 text-xs text-[#666]">
+		<svg class="h-3.5 w-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 		</svg>
 		Last cycle completed {formatRelative(lastCompletedAt)}
 	</div>
 {:else if !isIdle}
-	<div class="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3">
-		<p class="mb-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">Cycle Progress</p>
+	<div class="border border-[#222] bg-[#050505] px-4 py-3">
+		<p class="mb-3 text-[11px] uppercase tracking-[0.16em] text-[#666]">Cycle Progress</p>
 		<div class="flex items-center gap-0">
 			{#each steps as step, i}
 				{@const state = stepClass(step.key)}
 				<div class="flex items-center">
 					<!-- Step node -->
 					<div class="flex flex-col items-center gap-1">
-						<div class={`flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-semibold transition-all
-							${state === 'done' ? 'border-emerald-600 bg-emerald-500/20 text-emerald-300' :
-							  state === 'running' ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200 shadow-[0_0_8px_rgba(6,182,212,0.35)]' :
-							  state === 'failed' ? 'border-rose-600 bg-rose-500/15 text-rose-300' :
-							  'border-slate-700 bg-slate-900 text-slate-600'}`}>
+						<div class={`flex h-7 w-7 items-center justify-center border text-[11px] font-semibold transition-colors
+							${state === 'done' ? 'border-emerald-600 bg-emerald-500/10 text-emerald-400' :
+							  state === 'running' ? 'border-white bg-white/10 text-white' :
+							  state === 'failed' ? 'border-red-600 bg-red-500/10 text-red-400' :
+							  'border-[#333] bg-[#050505] text-[#555]'}`}>
 							{#if state === 'done'}
 								<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
@@ -73,23 +73,23 @@
 						</div>
 						<span class={`text-[10px] uppercase tracking-[0.12em] whitespace-nowrap
 							${state === 'done' ? 'text-emerald-400' :
-							  state === 'running' ? 'text-cyan-300' :
-							  state === 'failed' ? 'text-rose-400' :
-							  'text-slate-600'}`}>
+							  state === 'running' ? 'text-white' :
+							  state === 'failed' ? 'text-red-400' :
+							  'text-[#555]'}`}>
 							{step.label}
 						</span>
 					</div>
 
 					<!-- Connector line -->
 					{#if i < steps.length - 1}
-						<div class={`mx-1 mb-4 h-[2px] w-10 rounded-full transition-all
-							${step.key < activeStep ? 'bg-emerald-600/60' : 'bg-slate-700/60'}`}></div>
+						<div class={`mx-1 mb-4 h-[2px] w-10 transition-colors
+							${step.key < activeStep ? 'bg-emerald-600' : 'bg-[#222]'}`}></div>
 					{/if}
 				</div>
 			{/each}
 		</div>
 		{#if isFailed}
-			<p class="mt-2 text-xs text-rose-400">Cycle failed — check worker logs for details.</p>
+			<p class="mt-2 text-xs text-red-400">Cycle failed — check worker logs for details.</p>
 		{/if}
 	</div>
 {/if}

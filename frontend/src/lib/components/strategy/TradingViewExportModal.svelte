@@ -55,24 +55,24 @@
 	on:keydown={(e) => { if (e.key === 'Escape') close(); }}
 >
 	<div
-		class="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-[#2b2b2b] bg-[#080808] shadow-2xl"
+		class="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden border border-[#222] bg-[#050505]"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="tv-export-title"
 	>
-		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#1f1f1f] px-4 py-3">
+		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#1a1a1a] px-4 py-3">
 			<div>
-				<div id="tv-export-title" class="text-[10px] uppercase tracking-[0.22em] text-sky-300">TradingView Pine Strategy</div>
-				<div class="mt-1 font-mono text-xs text-gray-500">{filename}</div>
+				<div id="tv-export-title" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">TradingView Pine Strategy</div>
+				<div class="mt-1 font-mono text-xs text-[#666]">{filename}</div>
 			</div>
 			<div class="flex items-center gap-2">
 				{#if copyStatus}
-					<span class="text-[11px] uppercase tracking-wide text-emerald-300">{copyStatus}</span>
+					<span class="text-[11px] uppercase tracking-wide text-emerald-400">{copyStatus}</span>
 				{/if}
 				<button
 					type="button"
 					data-testid="copy-tradingview-script"
-					class="rounded border border-emerald-700 bg-emerald-950/30 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200 transition hover:bg-emerald-900/40"
+					class="border border-emerald-900 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/20"
 					on:click={() => void copy()}
 				>
 					Copy
@@ -80,7 +80,7 @@
 				<button
 					type="button"
 					data-testid="close-tradingview-export"
-					class="rounded border border-[#2b2b2b] bg-black px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400 transition hover:text-white"
+					class="border border-[#333] bg-black px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-[#888] transition-colors hover:border-[#555] hover:text-white"
 					use:autofocusClose
 					on:click={close}
 				>
@@ -89,13 +89,13 @@
 			</div>
 		</div>
 		{#if warnings.length > 0}
-			<div class="border-b border-amber-900/30 bg-amber-950/15 px-4 py-2 text-xs text-amber-200">
+			<div class="border-b border-yellow-900/50 bg-yellow-500/5 px-4 py-2 text-xs text-yellow-500">
 				{warnings[0]}
 			</div>
 		{/if}
 		<textarea
 			data-testid="tradingview-export-script"
-			class="min-h-[520px] flex-1 resize-none overflow-auto bg-black p-4 font-mono text-xs leading-relaxed text-gray-200 outline-none"
+			class="min-h-[520px] flex-1 resize-none overflow-auto bg-black p-4 font-mono text-xs leading-relaxed text-[#ccc] outline-none"
 			readonly
 			spellcheck="false"
 			value={script}

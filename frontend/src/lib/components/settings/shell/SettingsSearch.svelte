@@ -68,16 +68,16 @@
     aria-activedescendant={highlightIndex >= 0 && results[highlightIndex]
       ? `settings-search-option-${results[highlightIndex].id}`
       : undefined}
-    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-500"
+    class="terminal-input w-full"
   />
   {#if showDropdown}
     <ul
       id="settings-search-results"
       role="listbox"
-      class="absolute z-30 left-0 right-0 mt-1 bg-gray-950 border border-gray-800 rounded shadow-lg max-h-96 overflow-y-auto"
+      class="absolute z-30 left-0 right-0 mt-1 bg-[#050505] border border-[#222] max-h-96 overflow-y-auto"
     >
       {#if results.length === 0}
-        <li class="px-3 py-2 text-xs text-gray-500">No matches</li>
+        <li class="px-3 py-2 text-xs text-[#666]">No matches</li>
       {:else}
         {#each results as entry, i (entry.id)}
           <li
@@ -88,13 +88,13 @@
             <button
               type="button"
               on:click={() => pick(entry)}
-              class="w-full text-left px-3 py-2 hover:bg-gray-900 text-sm text-gray-200"
-              class:bg-gray-800={i === highlightIndex}
+              class="w-full text-left px-3 py-2 hover:bg-[#111] text-sm text-[#888] transition-colors"
+              class:bg-[#111]={i === highlightIndex}
             >
-              <span class="text-gray-500 text-xs"
+              <span class="text-[#555] text-[10px] uppercase tracking-wider"
                 >{entry.area} › {subMap.get(entry.subsection)?.label ?? entry.subsection}</span
               >
-              <span class="block">{entry.label}</span>
+              <span class="block text-white">{entry.label}</span>
             </button>
           </li>
         {/each}

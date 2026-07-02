@@ -311,7 +311,6 @@
 <style>
 	.candlestick-chart {
 		width: 100%;
-		border-radius: 0.5rem;
 		overflow: hidden;
 	}
 </style>

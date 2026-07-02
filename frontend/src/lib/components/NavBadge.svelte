@@ -9,43 +9,35 @@
 	export let active = false;
 
 	const COUNT_COLORS: Record<string, string> = {
-		danger: 'bg-red-500 text-white',
-		warn: 'bg-amber-500 text-black',
-		success: 'bg-green-500 text-black',
-		info: 'bg-cyan-500 text-black',
-		neutral: 'bg-gray-600 text-white',
+		danger: 'border border-red-900 bg-red-500/10 text-red-400',
+		warn: 'border border-yellow-900 bg-yellow-500/10 text-yellow-400',
+		success: 'border border-emerald-900 bg-emerald-500/10 text-emerald-400',
+		info: 'border border-[#555] text-white',
+		neutral: 'border border-[#333] text-[#888]',
 	};
 
 	const COUNT_COLORS_SEEN: Record<string, string> = {
-		danger: 'bg-red-500/25 text-red-300',
-		warn: 'bg-amber-500/25 text-amber-300',
-		success: 'bg-green-500/25 text-green-300',
-		info: 'bg-cyan-500/25 text-cyan-300',
-		neutral: 'bg-gray-600/30 text-gray-400',
-	};
-
-	const PING_COLORS: Record<string, string> = {
-		danger: 'bg-red-400',
-		warn: 'bg-amber-400',
-		success: 'bg-green-400',
-		info: 'bg-cyan-400',
-		neutral: 'bg-gray-400',
+		danger: 'border border-red-900 text-red-400',
+		warn: 'border border-yellow-900 text-yellow-500',
+		success: 'border border-emerald-900 text-emerald-500',
+		info: 'border border-[#333] text-[#999]',
+		neutral: 'border border-[#333] text-[#666]',
 	};
 
 	const PILL_COLORS: Record<string, string> = {
-		danger: 'border-red-500 text-red-400',
-		warn: 'border-amber-500 text-amber-400',
-		success: 'border-green-500 text-green-400',
-		info: 'border-cyan-500 text-cyan-400',
-		neutral: 'border-gray-500 text-gray-400',
+		danger: 'border-red-900 bg-red-500/10 text-red-400',
+		warn: 'border-yellow-900 bg-yellow-500/10 text-yellow-400',
+		success: 'border-emerald-900 bg-emerald-500/10 text-emerald-400',
+		info: 'border-[#555] text-white',
+		neutral: 'border-[#333] text-[#888]',
 	};
 
 	const DOT_COLORS: Record<string, string> = {
 		danger: 'bg-red-500',
-		warn: 'bg-amber-500',
-		success: 'bg-green-500',
-		info: 'bg-cyan-500',
-		neutral: 'bg-gray-500',
+		warn: 'bg-yellow-400',
+		success: 'bg-emerald-400',
+		info: 'bg-white',
+		neutral: 'bg-[#666]',
 	};
 
 	function countLabel(count: number): string {
@@ -68,22 +60,21 @@
 
 {#if showPulse && pulse}
 	<span class="relative flex shrink-0" title={pulse.summary}>
-		<span class="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping {PING_COLORS[pulse.severity] ?? PING_COLORS.neutral}" aria-hidden="true"></span>
-		<span class="relative min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center {COUNT_COLORS[pulse.severity] ?? COUNT_COLORS.neutral}">
+		<span class="relative min-w-[18px] h-[18px] px-1 text-[10px] font-bold flex items-center justify-center animate-pulse {COUNT_COLORS[pulse.severity] ?? COUNT_COLORS.neutral}">
 			{countLabel(pulse.count)}
 		</span>
 	</span>
 {:else if showMetric && metric}
 	{#if metric.kind === 'count' && metric.count > 0}
 		<span
-			class="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center {(metricDimmed ? COUNT_COLORS_SEEN : COUNT_COLORS)[metric.severity] ?? COUNT_COLORS.neutral}"
+			class="shrink-0 min-w-[18px] h-[18px] px-1 text-[10px] font-bold flex items-center justify-center {(metricDimmed ? COUNT_COLORS_SEEN : COUNT_COLORS)[metric.severity] ?? COUNT_COLORS.neutral}"
 			title={metric.summary}
 		>
 			{countLabel(metric.count)}
 		</span>
 	{:else if metric.kind === 'status' && metric.label}
 		<span
-			class="shrink-0 border rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider {PILL_COLORS[metric.severity] ?? PILL_COLORS.neutral} {metricDimmed ? 'opacity-50' : ''}"
+			class="shrink-0 border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider {PILL_COLORS[metric.severity] ?? PILL_COLORS.neutral} {metricDimmed ? 'opacity-50' : ''}"
 			title={metric.summary}
 		>
 			{metric.label}

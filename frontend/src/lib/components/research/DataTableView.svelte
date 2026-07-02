@@ -83,7 +83,7 @@
 		<!-- Date Range -->
 		<div class="flex items-center gap-2">
 			<div class="flex flex-col">
-				<label for="start" class="text-[9px] text-gray-500 uppercase font-bold">Start</label>
+				<label for="start" class="text-[9px] text-[#666] uppercase font-bold">Start</label>
 				<input 
 					type="datetime-local" 
 					id="start" 
@@ -92,7 +92,7 @@
 				/>
 			</div>
 			<div class="flex flex-col">
-				<label for="end" class="text-[9px] text-gray-500 uppercase font-bold">End</label>
+				<label for="end" class="text-[9px] text-[#666] uppercase font-bold">End</label>
 				<input 
 					type="datetime-local" 
 					id="end" 
@@ -106,13 +106,13 @@
 
 		<!-- Column Toggles -->
 		<div class="flex items-center gap-3">
-			<span class="text-[9px] text-gray-500 uppercase font-bold">Columns:</span>
+			<span class="text-[9px] text-[#666] uppercase font-bold">Columns:</span>
 			{#each Object.keys(showColumns) as col}
-				<label class="flex items-center gap-1.5 cursor-pointer select-none hover:text-white text-gray-400">
+				<label class="flex items-center gap-1.5 cursor-pointer select-none hover:text-white text-[#888]">
 					<input 
 						type="checkbox" 
 						bind:checked={showColumns[col]} 
-						class="bg-[#111] border-[#333] rounded-sm w-3 h-3 text-blue-500 focus:ring-0"
+						class="bg-[#111] border-[#333] w-3 h-3 text-white focus:ring-0"
 					/>
 					<span class="uppercase text-xs">{col}</span>
 				</label>
@@ -122,7 +122,7 @@
 		<div class="flex-1"></div>
 
 		<!-- Stats -->
-		<div class="text-xs text-gray-500">
+		<div class="text-xs text-[#666]">
 			Showing <span class="text-white">{filteredData.length}</span> rows
 		</div>
 	</div>
@@ -133,22 +133,22 @@
 			<thead class="sticky top-0 bg-[#111] z-10">
 				<tr class="border-b border-[#333]">
 					{#if showColumns.timestamp}
-						<th class="p-2 font-bold text-gray-400 uppercase w-48">Timestamp</th>
+						<th class="p-2 font-bold text-[#666] uppercase w-48">Timestamp</th>
 					{/if}
 					{#if showColumns.open}
-						<th class="p-2 font-bold text-gray-400 uppercase text-right">Open</th>
+						<th class="p-2 font-bold text-[#666] uppercase text-right">Open</th>
 					{/if}
 					{#if showColumns.high}
-						<th class="p-2 font-bold text-gray-400 uppercase text-right">High</th>
+						<th class="p-2 font-bold text-[#666] uppercase text-right">High</th>
 					{/if}
 					{#if showColumns.low}
-						<th class="p-2 font-bold text-gray-400 uppercase text-right">Low</th>
+						<th class="p-2 font-bold text-[#666] uppercase text-right">Low</th>
 					{/if}
 					{#if showColumns.close}
-						<th class="p-2 font-bold text-gray-400 uppercase text-right">Close</th>
+						<th class="p-2 font-bold text-[#666] uppercase text-right">Close</th>
 					{/if}
 					{#if showColumns.volume}
-						<th class="p-2 font-bold text-gray-400 uppercase text-right">Volume</th>
+						<th class="p-2 font-bold text-[#666] uppercase text-right">Volume</th>
 					{/if}
 				</tr>
 			</thead>
@@ -156,10 +156,10 @@
 				{#each displayData as bar}
 					<tr class="hover:bg-[#111] transition-colors">
 						{#if showColumns.timestamp}
-							<td class="p-2 text-gray-400 whitespace-nowrap">{formatDate(bar.timestamp)}</td>
+							<td class="p-2 text-[#888] whitespace-nowrap">{formatDate(bar.timestamp)}</td>
 						{/if}
 						{#if showColumns.open}
-							<td class="p-2 text-gray-300 text-right font-mono">{formatPrice(bar.open)}</td>
+							<td class="p-2 text-[#888] text-right font-mono">{formatPrice(bar.open)}</td>
 						{/if}
 						{#if showColumns.high}
 							<td class="p-2 text-green-400 text-right font-mono">{formatPrice(bar.high)}</td>
@@ -171,13 +171,13 @@
 							<td class="p-2 text-white text-right font-bold font-mono">{formatPrice(bar.close)}</td>
 						{/if}
 						{#if showColumns.volume}
-							<td class="p-2 text-gray-500 text-right font-mono">{formatVolume(bar.volume)}</td>
+							<td class="p-2 text-[#666] text-right font-mono">{formatVolume(bar.volume)}</td>
 						{/if}
 					</tr>
 				{/each}
 				{#if displayData.length === 0}
 					<tr>
-						<td colspan={Object.values(showColumns).filter(Boolean).length} class="p-8 text-center text-gray-600">
+						<td colspan={Object.values(showColumns).filter(Boolean).length} class="p-8 text-center text-[#555]">
 							No data matches the current filter
 						</td>
 					</tr>
@@ -207,7 +207,7 @@
 			</button>
 		</div>
 
-		<div class="flex items-center gap-2 text-gray-500">
+		<div class="flex items-center gap-2 text-[#666]">
 			<span>Page</span>
 			<input 
 				type="number" 

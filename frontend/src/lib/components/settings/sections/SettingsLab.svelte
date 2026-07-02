@@ -317,26 +317,26 @@
 <div class="space-y-6">
 	<section
 		data-testid="system-mode-card"
-		class="border border-[#222] bg-[#0d0d0d] rounded p-4 space-y-3"
+		class="terminal-card p-4 space-y-3"
 	>
 		<header class="flex flex-wrap items-start justify-between gap-2">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-wider text-white">
+				<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
 					System mode
 				</h2>
-				<p class="text-xs text-gray-400 mt-0.5">
+				<p class="text-xs text-[#666] mt-0.5">
 					Controls how much of the pipeline runs on its own. Changes apply immediately.
 				</p>
 			</div>
 			{#if systemModeLoading}
-				<span class="text-[10px] uppercase tracking-wider text-gray-500">Loading…</span>
+				<span class="text-[10px] uppercase tracking-wider text-[#666]">Loading…</span>
 			{:else}
 				<div class="text-right">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">
 						Current: <span class="text-white">{systemMode}</span>
 					</div>
 					{#if systemMode === 'manual'}
-						<div class="mt-1 text-[10px] text-amber-300">{pausedManualSummary(pausedManualCounts)}</div>
+						<div class="mt-1 text-[10px] text-yellow-400">{pausedManualSummary(pausedManualCounts)}</div>
 					{/if}
 				</div>
 			{/if}
@@ -345,8 +345,8 @@
 			<div
 				class={`border px-3 py-2 text-xs ${
 					systemModeBanner.tone === 'success'
-						? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-						: 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+						? 'border-emerald-900 bg-emerald-500/5 text-emerald-400'
+						: 'border-red-900 bg-red-500/5 text-red-400'
 				}`}
 			>
 				{systemModeBanner.message}
@@ -358,14 +358,14 @@
 				{@const saving = systemModeSaving === option.value}
 				<button
 					type="button"
-					class={`text-left border rounded px-3 py-3 transition-colors ${
+					class={`text-left border px-3 py-3 transition-colors ${
 						active
 							? option.value === 'auto'
-								? 'border-red-600 bg-red-950/30 text-red-100'
+								? 'border-red-600 bg-red-500/10 text-red-400'
 								: option.value === 'semi_auto'
-									? 'border-sky-600 bg-sky-950/30 text-sky-100'
-									: 'border-amber-600 bg-amber-950/30 text-amber-100'
-							: 'border-[#2a2a2a] bg-[#0a0a0a] text-gray-300 hover:border-[#444] hover:bg-[#111]'
+									? 'border-[#555] bg-[#111] text-white'
+									: 'border-yellow-600 bg-yellow-500/10 text-yellow-400'
+							: 'border-[#222] bg-[#050505] text-[#888] hover:border-[#555] hover:bg-[#111]'
 					} ${saving ? 'opacity-60 cursor-wait' : ''}`}
 					on:click={() => handleSystemModeChange(option.value)}
 					disabled={systemModeLoading || saving}
@@ -379,10 +379,10 @@
 							<span class="text-[10px] uppercase tracking-wider">Saving…</span>
 						{/if}
 					</div>
-					<div class="text-[11px] uppercase tracking-wider text-gray-400 mb-1">
+					<div class="text-[11px] uppercase tracking-wider text-[#666] mb-1">
 						{option.short}
 					</div>
-					<p class="text-xs leading-relaxed text-gray-300">{option.description}</p>
+					<p class="text-xs leading-relaxed text-[#888]">{option.description}</p>
 				</button>
 			{/each}
 		</div>
@@ -402,8 +402,8 @@
 					<div
 						class={`mb-3 border px-3 py-2 text-xs ${
 							researchBanner.tone === 'success'
-								? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-								: 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+								? 'border-emerald-900 bg-emerald-500/5 text-emerald-400'
+								: 'border-red-900 bg-red-500/5 text-red-400'
 						}`}
 					>
 						{researchBanner.message}
@@ -416,19 +416,19 @@
 				/>
 			{:else if sub.id === 'lab-pipeline-preset' && presetEntry}
 				<div class="flex items-center justify-between gap-3 py-3">
-					<label for="pipeline-stance-select" class="text-sm text-gray-200">{presetEntry.label}</label>
+					<label for="pipeline-stance-select" class="text-sm text-[#888]">{presetEntry.label}</label>
 					<select
 						id="pipeline-stance-select"
 						value={presetSelectValue}
 						on:change={(e) => applyPreset((e.target as HTMLSelectElement).value)}
-						class="bg-gray-900 border border-gray-700 text-white px-2 py-1 rounded text-sm"
+						class="terminal-select"
 					>
 						{#each presetEntry.options ?? [] as opt}
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
 					</select>
 				</div>
-				<p class="text-xs text-gray-400 pb-3">{presetEntry.description}</p>
+				<p class="text-xs text-[#666] pb-3">{presetEntry.description}</p>
 			{:else}
 				{#each entries as entry (entry.id)}
 					<SettingsFieldRow

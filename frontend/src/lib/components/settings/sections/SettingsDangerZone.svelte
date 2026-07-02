@@ -76,19 +76,19 @@
 </script>
 
 <div class="space-y-6">
-	<div class="border border-red-900 bg-red-950/30 rounded p-5 space-y-4">
+	<div class="border border-red-900 bg-red-500/5 p-5 space-y-4">
 		<div>
-			<h2 class="text-lg font-semibold text-red-200">Factory reset</h2>
-			<p class="text-sm text-red-300/80 mt-1">
+			<h2 class="text-sm font-bold uppercase tracking-widest text-red-400">Factory reset</h2>
+			<p class="text-xs text-red-400/80 mt-1">
 				Permanently wipes the selected data categories and restores a clean slate. This cannot be
 				undone. Choose which categories to <strong>keep</strong> — everything else is erased.
 			</p>
 		</div>
 
 		{#if loading}
-			<p class="text-sm text-gray-400">Loading reset categories…</p>
+			<p class="text-xs text-[#666]">Loading reset categories…</p>
 		{:else if loadError}
-			<p class="text-sm text-red-300">Could not load categories: {loadError}</p>
+			<p class="text-xs text-red-400">Could not load categories: {loadError}</p>
 		{:else}
 			<ul class="space-y-2">
 				{#each categories as cat (cat.id)}
@@ -100,15 +100,15 @@
 							on:change={(e) => toggleKeep(cat.id, e.currentTarget.checked)}
 							class="mt-1 accent-red-500"
 						/>
-						<label for={`keep-${cat.id}`} class="text-sm text-gray-200 leading-tight">
-							<span class="font-medium">Keep {cat.label}</span>
-							{#if cat.description}<span class="block text-gray-500">{cat.description}</span>{/if}
+						<label for={`keep-${cat.id}`} class="text-xs text-[#888] leading-tight">
+							<span class="font-bold text-white">Keep {cat.label}</span>
+							{#if cat.description}<span class="block text-[#666]">{cat.description}</span>{/if}
 						</label>
 					</li>
 				{/each}
 			</ul>
 
-			<p class="text-xs text-red-300/80">
+			<p class="text-xs text-red-400/80">
 				{#if wipeLabels.length}
 					Will wipe: {wipeLabels.join(', ')}.
 				{:else}
@@ -120,43 +120,43 @@
 				type="button"
 				on:click={openConfirm}
 				disabled={categories.length === 0}
-				class="px-4 py-2 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+				class="terminal-button-danger text-xs"
 			>
 				Wipe &amp; factory reset…
 			</button>
 		{/if}
 
 		{#if resultMessage}
-			<p class="text-sm text-emerald-300">{resultMessage}</p>
+			<p class="text-xs text-emerald-400">{resultMessage}</p>
 		{/if}
 		{#if resultError}
-			<p class="text-sm text-red-300">{resultError}</p>
+			<p class="text-xs text-red-400">{resultError}</p>
 		{/if}
 	</div>
 </div>
 
 {#if confirmOpen}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="factory-reset-title"
 	>
-		<div class="w-full max-w-md rounded border border-red-900 bg-[#0a0a0a] p-5 space-y-4 shadow-xl">
-			<h2 id="factory-reset-title" class="text-base font-semibold text-red-200">
+		<div class="w-full max-w-md border border-red-900 bg-[#050505] p-5 space-y-4">
+			<h2 id="factory-reset-title" class="text-sm font-bold uppercase tracking-widest text-red-400">
 				Confirm factory reset
 			</h2>
-			<p class="text-sm text-gray-300">
+			<p class="text-xs text-[#888]">
 				This will permanently wipe:
-				<strong class="text-red-300">{wipeLabels.join(', ') || 'nothing'}</strong>. This action
+				<strong class="text-red-400">{wipeLabels.join(', ') || 'nothing'}</strong>. This action
 				cannot be undone.
 			</p>
-			<label class="block text-sm text-gray-400">
-				Type <span class="font-mono text-red-300">RESET</span> to confirm:
+			<label class="block text-xs text-[#666]">
+				Type <span class="text-red-400">RESET</span> to confirm:
 				<input
 					type="text"
 					bind:value={confirmText}
-					class="mt-1 w-full rounded border border-[#333] bg-black px-3 py-1.5 text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+					class="terminal-input mt-1 w-full"
 					autocomplete="off"
 				/>
 			</label>
@@ -164,7 +164,7 @@
 				<button
 					type="button"
 					on:click={cancelConfirm}
-					class="px-3 py-1.5 rounded border border-[#333] text-sm text-gray-300 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-500"
+					class="terminal-button text-xs"
 				>
 					Cancel
 				</button>
@@ -172,7 +172,7 @@
 					type="button"
 					on:click={doReset}
 					disabled={!confirmArmed || resetting}
-					class="px-3 py-1.5 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+					class="terminal-button-danger text-xs"
 				>
 					{resetting ? 'Resetting…' : 'Wipe everything'}
 				</button>

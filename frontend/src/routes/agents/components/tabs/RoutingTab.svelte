@@ -430,26 +430,26 @@
 </script>
 
 <div class="space-y-6">
-	<section class="border border-gray-800 rounded-lg bg-black p-6 space-y-4">
-		<header class="border-b border-gray-800 pb-2 flex items-start justify-between gap-3">
+	<section class="terminal-card p-6 space-y-4">
+		<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 class="text-lg font-semibold text-white">Routing &amp; Fallbacks</h2>
-				<p class="text-xs text-gray-500 mt-1">
-					<span class="text-gray-400">Every agent's model — including the Brain's — is set
-					<span class="text-cyan-300">here</span>, not on the Roster (the Roster shows it
+				<h2 class="text-sm font-bold uppercase tracking-widest text-white">Routing &amp; Fallbacks</h2>
+				<p class="text-xs text-[#666] mt-1">
+					<span class="text-[#888]">Every agent's model — including the Brain's — is set
+					<span class="text-white">here</span>, not on the Roster (the Roster shows it
 					read-only).</span>
 					Set each agent's model and fallback chain below, plus the auxiliary Brain sub-task
 					models, the global backup, and per-slot fallback chains.
-					Every picker is limited to <span class="text-green-300">connected providers</span> and
-					<span class="text-green-300">enabled models</span>. An empty fallback list means
-					<span class="text-amber-300">no fallback (fail closed)</span>.
+					Every picker is limited to <span class="text-emerald-400">connected providers</span> and
+					<span class="text-emerald-400">enabled models</span>. An empty fallback list means
+					<span class="text-yellow-400">no fallback (fail closed)</span>.
 				</p>
 			</div>
 			<button
 				type="button"
 				on:click={load}
 				disabled={loading}
-				class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-60"
+				class="terminal-button text-xs px-2 py-1 disabled:opacity-60"
 			>
 				{loading ? 'Refreshing…' : 'Refresh'}
 			</button>
@@ -460,7 +460,7 @@
 		{/if}
 
 		{#if noneSelectable}
-			<div class="rounded border border-amber-900 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+			<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">
 				No connected provider has an enabled model yet. Connect a provider (Providers &amp; Keys)
 				and enable at least one of its models (Models) before configuring routing.
 			</div>
@@ -468,16 +468,16 @@
 	</section>
 
 	<!-- Agents — the single place every agent's model + fallback chain is set. -->
-	<section class="border border-gray-800 rounded-lg bg-black p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-gray-300">Agents</h3>
-		<p class="text-xs text-gray-500">
+	<section class="terminal-card p-6 space-y-3">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Agents</h3>
+		<p class="text-xs text-[#666]">
 			Pick each agent's model and ordered fallback chain. This is the
-			<span class="text-cyan-300">single place</span> an agent's model is set — the Roster shows
-			it read-only. The <span class="text-gray-300">Brain's</span> selection also becomes the
+			<span class="text-white">single place</span> an agent's model is set — the Roster shows
+			it read-only. The <span class="text-[#ccc]">Brain's</span> selection also becomes the
 			default model for any routing slot below with no explicit choice.
 		</p>
 		{#if agentRows.length === 0}
-			<p class="text-xs text-gray-600">No agents found.</p>
+			<p class="text-xs text-[#555]">No agents found.</p>
 		{:else}
 			<ul class="space-y-3">
 				{#each agentRows as agent (agent.id)}
@@ -497,27 +497,27 @@
 	</section>
 
 	<!-- Default model (derived from the Brain's selection in Agents above) -->
-	<section class="border border-gray-800 rounded-lg bg-black p-6 space-y-2">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-gray-300">Default model</h3>
-		<p class="text-xs text-gray-500">
+	<section class="terminal-card p-6 space-y-2">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Default model</h3>
+		<p class="text-xs text-[#666]">
 			The fallback model for any slot below with no explicit selection. This is
-			<span class="text-gray-300">not a separate setting</span> — it is derived from the
-			<span class="text-cyan-300">Brain's model in the Agents section above</span> and saved
+			<span class="text-[#ccc]">not a separate setting</span> — it is derived from the
+			<span class="text-white">Brain's model in the Agents section above</span> and saved
 			automatically whenever you save here.
 		</p>
-		<div class="rounded border border-gray-800 bg-gray-950 px-3 py-2 text-sm font-mono">
+		<div class="border border-[#1a1a1a] bg-[#050505] px-3 py-2 text-sm font-mono">
 			{#if brainModelLabel}
-				<span class="text-gray-200">{brainModelLabel}</span>
+				<span class="text-[#ccc]">{brainModelLabel}</span>
 			{:else}
-				<span class="text-amber-300">Brain model not set — pick it in the Agents section above.</span>
+				<span class="text-yellow-400">Brain model not set — pick it in the Agents section above.</span>
 			{/if}
 		</div>
 	</section>
 
 	<!-- Auxiliary -->
-	<section class="border border-gray-800 rounded-lg bg-black p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-gray-300">Auxiliary task models</h3>
-		<p class="text-xs text-gray-500">
+	<section class="terminal-card p-6 space-y-3">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Auxiliary task models</h3>
+		<p class="text-xs text-[#666]">
 			Lightweight models for specific Brain sub-tasks. Each is independent of the default model.
 		</p>
 		<ul class="space-y-3">
@@ -539,9 +539,9 @@
 	</section>
 
 	<!-- Backup -->
-	<section class="border border-gray-800 rounded-lg bg-black p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-gray-300">Backup provider</h3>
-		<p class="text-xs text-gray-500">
+	<section class="terminal-card p-6 space-y-3">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Backup provider</h3>
+		<p class="text-xs text-[#666]">
 			When a slot's primary credentials become unusable, calls fall back to this model instead of
 			failing. Leave unset to disable backup — a credential problem then pauses the routine and alerts you.
 		</p>

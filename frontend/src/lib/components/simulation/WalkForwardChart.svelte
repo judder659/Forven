@@ -88,7 +88,7 @@
 		<div class="legend">
 			<span class="legend-item"><span class="box train"></span> Train</span>
 			<span class="legend-item"><span class="box test"></span> Test</span>
-			<span class="legend-item text-gray-500">|</span>
+			<span class="legend-item text-[#555]">|</span>
 			<span class="legend-item"><span class="timeline-box train"></span> Train Period</span>
 			<span class="legend-item"><span class="timeline-box test"></span> Test Period</span>
 		</div>
@@ -106,7 +106,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: #6b7280;
+		color: #666666;
 		font-size: 12px;
 	}
 	.chart-area {
@@ -140,12 +140,11 @@
 	.bar {
 		flex: 1;
 		min-height: 4px;
-		border-radius: 2px 2px 0 0;
 		position: relative;
 		transition: height 0.3s ease;
 	}
 	.bar.train {
-		background-color: rgba(96, 165, 250, 0.7);
+		background-color: rgba(255, 255, 255, 0.35);
 	}
 	.bar.test {
 		/* Color set dynamically via inline style */
@@ -157,12 +156,12 @@
 		left: 50%;
 		transform: translateX(-50%);
 		font-size: 9px;
-		color: #9ca3af;
+		color: #888888;
 		white-space: nowrap;
 	}
 	.fold-label {
 		font-size: 9px;
-		color: #6b7280;
+		color: #666666;
 		text-transform: uppercase;
 	}
 	.degradation {
@@ -176,9 +175,8 @@
 	.timeline-strip {
 		display: flex;
 		height: 12px;
-		border-radius: 2px;
 		overflow: hidden;
-		background: #111827;
+		background: #111111;
 	}
 	.timeline-segment {
 		flex: 1;
@@ -186,7 +184,7 @@
 	}
 	.train-period {
 		flex: 7;
-		background: rgba(96, 165, 250, 0.4);
+		background: rgba(255, 255, 255, 0.2);
 	}
 	.test-period {
 		flex: 3;
@@ -199,7 +197,7 @@
 		gap: 1rem;
 		margin-top: 0.5rem;
 		font-size: 10px;
-		color: #9ca3af;
+		color: #888888;
 	}
 	.legend-item {
 		display: flex;
@@ -209,15 +207,13 @@
 	.box {
 		width: 10px;
 		height: 10px;
-		border-radius: 2px;
 	}
-	.box.train { background: rgba(96, 165, 250, 0.7); }
+	.box.train { background: rgba(255, 255, 255, 0.35); }
 	.box.test { background: rgba(34, 197, 94, 0.7); }
 	.timeline-box {
 		width: 16px;
 		height: 6px;
-		border-radius: 1px;
 	}
-	.timeline-box.train { background: rgba(96, 165, 250, 0.4); }
+	.timeline-box.train { background: rgba(255, 255, 255, 0.2); }
 	.timeline-box.test { background: rgba(34, 197, 94, 0.4); }
 </style>

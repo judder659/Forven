@@ -139,7 +139,7 @@
 		{#each tierTabs as tier}
 			<button
 				type="button"
-				class="px-2 py-0.5 text-[10px] rounded border transition-colors {tierFilter === tier ? 'border-white text-white bg-white/10' : 'border-[#333] text-gray-500 hover:border-gray-400'}"
+				class="border px-2 py-0.5 text-[10px] uppercase tracking-wide transition-colors {tierFilter === tier ? 'border-white bg-white text-black' : 'border-[#333] text-gray-500 hover:border-[#555] hover:text-white'}"
 				on:click={() => setTierFilter(tier)}
 			>
 				{tier === 'all' ? 'All' : tier.charAt(0).toUpperCase() + tier.slice(1)}
@@ -147,7 +147,7 @@
 		{/each}
 	</div>
 
-	<div class="flex-1 overflow-auto border border-[#222] rounded">
+	<div class="flex-1 overflow-auto border border-[#222]">
 		<table class="w-full text-xs">
 			<thead class="bg-[#0a0a0a] sticky top-0">
 				<tr class="text-gray-600 text-left">
@@ -192,7 +192,7 @@
 								>★</span>
 							{/if}
 							<span
-								class="text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+								class="cursor-pointer text-white hover:underline"
 								role="button"
 								tabindex="0"
 								on:click={(ev) => handleStrategyNameClick(ev, e)}
@@ -209,7 +209,7 @@
 						<td class="px-2 py-1 text-center">
 							<button
 								type="button"
-								class="text-cyan-400 hover:text-cyan-300 transition-colors"
+								class="text-[#888] transition-colors hover:text-white"
 								title="Open strategy detail"
 								aria-label="Open strategy detail"
 								on:click|stopPropagation={(ev) => handleStrategyNameClick(ev, e)}

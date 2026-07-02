@@ -5,6 +5,7 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import { pendingValues } from '$lib/settings/dirty';
 	import SettingsTrading from '$lib/components/settings/sections/SettingsTrading.svelte';
+	import SettingsHyperliquid from '$lib/components/settings/sections/SettingsHyperliquid.svelte';
 	import SettingsAgents from '$lib/components/settings/sections/SettingsAgents.svelte';
 	import SettingsNotifications from '$lib/components/settings/sections/SettingsNotifications.svelte';
 	import WizardStepRail from './WizardStepRail.svelte';
@@ -27,10 +28,11 @@
 		{ id: 'done', label: 'Done', critical: false, description: 'Review and finish.' },
 	];
 
-	const TRADING_SUBS_WIZARD = [
-		'trading-exchange',
-		'trading-credentials-hl',
-	];
+	// The HL credentials subsection lives in the dedicated HyperLiquid settings
+	// area now; the wizard's trading step renders it right after the exchange
+	// picker via SettingsHyperliquid below.
+	const TRADING_SUBS_WIZARD = ['trading-exchange'];
+	const HL_SUBS_WIZARD = ['hl-credentials'];
 
 	let providersActive = false;
 
@@ -169,10 +171,10 @@
 </script>
 
 {#if $wizardOpen}
-	<div class="fixed inset-0 z-[100] flex items-stretch justify-center bg-black/70 p-6"
+	<div class="fixed inset-0 z-[100] flex items-stretch justify-center bg-black/80 p-6"
 		on:click|self={closeWizard}
 		role="presentation">
-		<div class="flex w-full max-w-5xl h-full max-h-[90vh] bg-black border border-gray-800 rounded-lg overflow-hidden">
+		<div class="flex w-full max-w-5xl h-full max-h-[90vh] bg-[#050505] border border-[#222] overflow-hidden">
 			<WizardStepRail
 				steps={stepsForRail}
 				activeIndex={$wizardStep}
@@ -180,19 +182,19 @@
 				onSkipAll={skipAll}
 			/>
 			<section class="flex-1 min-w-0 flex flex-col">
-				<header class="flex items-start justify-between px-6 py-4 border-b border-gray-800">
+				<header class="flex items-start justify-between px-6 py-4 border-b border-[#222]">
 					<div>
-						<h2 class="text-lg font-semibold text-white">{step.label}</h2>
-						<p class="text-xs text-gray-400 mt-1">{step.description}</p>
+						<h2 class="text-lg font-bold uppercase tracking-widest text-white">{step.label}</h2>
+						<p class="text-xs text-[#666] mt-1">{step.description}</p>
 					</div>
 					<button type="button"
-						class="text-gray-500 hover:text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+						class="text-[#666] hover:text-white focus:outline-none"
 						on:click={closeWizard}
 						aria-label="Close wizard">✕</button>
 				</header>
 
 				{#if step.critical && !isSatisfied(step)}
-					<div class="px-6 py-3 bg-amber-900/30 border-b border-amber-800 text-sm text-amber-200">
+					<div class="px-6 py-3 bg-yellow-500/5 border-b border-yellow-900 text-sm text-yellow-400">
 						{#if step.id === 'trading'}
 							⚠ Without an exchange API connection, Forven can't place paper or live orders.
 						{:else}
@@ -203,7 +205,7 @@
 
 				<div class="flex-1 min-h-0 overflow-y-auto px-6 py-4">
 					{#if step.id === 'welcome'}
-						<p class="text-sm text-gray-300 leading-relaxed">
+						<p class="text-sm text-[#888] leading-relaxed">
 							This wizard walks you through the minimum setup to run Forven.
 							You can skip anything and change it later in Settings.
 						</p>
@@ -213,10 +215,17 @@
 							variant="wizard"
 							visibleSubsections={TRADING_SUBS_WIZARD}
 						/>
+						<div class="mt-4">
+							<SettingsHyperliquid
+								{settings}
+								variant="wizard"
+								visibleSubsections={HL_SUBS_WIZARD}
+							/>
+						</div>
 					{:else if step.id === 'ai'}
-						<div class="mb-4 rounded border border-cyan-900 bg-cyan-950/30 px-4 py-3 text-sm text-cyan-100">
-							<p class="font-semibold text-cyan-200">💡 On a budget? Recommended: Google Gemini → <span class="font-mono">gemini-2.5-flash-lite</span></p>
-							<ul class="mt-2 space-y-1 text-xs text-cyan-100/90 list-disc pl-5">
+						<div class="mb-4 border border-[#222] bg-[#111] px-4 py-3 text-sm text-[#888]">
+							<p class="font-bold text-white">💡 On a budget? Recommended: Google Gemini → <span class="font-mono">gemini-2.5-flash-lite</span></p>
+							<ul class="mt-2 space-y-1 text-xs text-[#888] list-disc pl-5">
 								<li>Cheapest model that reliably runs Forven's agents (~$0.10 / $0.40 per 1M input/output tokens) and has a <strong>free tier</strong> to try.</li>
 								<li>Supports the tool-calling and large context the agents need.</li>
 								<li><strong>Caveat:</strong> it trades some reasoning depth for cost. If strategy quality looks weak, step up to <span class="font-mono">gemini-2.5-flash</span> (still far cheaper than the pro/3.x models).</li>
@@ -231,11 +240,11 @@
 							{#each STEPS.slice(1, -1) as s (s.id)}
 								<li class="flex items-center gap-2">
 									{#if s.critical && !isSatisfied(s)}
-										<span class="text-amber-400" aria-hidden="true">△</span>
+										<span class="text-yellow-400" aria-hidden="true">△</span>
 									{:else if isSatisfied(s)}
 										<span class="text-emerald-400" aria-hidden="true">✓</span>
 									{:else}
-										<span class="text-gray-500" aria-hidden="true">○</span>
+										<span class="text-[#666]" aria-hidden="true">○</span>
 									{/if}
 									<span>{s.label}</span>
 								</li>
@@ -244,22 +253,22 @@
 					{/if}
 				</div>
 
-				<footer class="flex items-center justify-between px-6 py-3 border-t border-gray-800">
+				<footer class="flex items-center justify-between px-6 py-3 border-t border-[#222]">
 					<button type="button"
-						class="text-sm text-gray-400 hover:text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:opacity-40"
+						class="terminal-button text-xs"
 						disabled={$wizardStep === 0}
 						on:click={() => goTo($wizardStep - 1)}>
 						Back
 					</button>
 					{#if step.id === 'done'}
 						<button type="button"
-							class="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+							class="terminal-button-primary text-xs"
 							on:click={finish}>
 							Finish
 						</button>
 					{:else}
 						<button type="button"
-							class="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+							class="terminal-button-primary text-xs"
 							on:click={() => goTo($wizardStep + 1)}>
 							Next
 						</button>

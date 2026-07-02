@@ -1278,15 +1278,15 @@ describe('/lab/strategy/[id] backtest history', () => {
 		const leverageChip = activeChips.find((chip) => chip.textContent?.includes('leverage=2'));
 		const profileChip = activeChips.find((chip) => chip.textContent?.includes('execution_profile'));
 		expect(leverageChip).toBeTruthy();
-		expect(leverageChip?.getAttribute('class') ?? '').not.toContain('amber');
-		expect(profileChip?.getAttribute('class') ?? '').not.toContain('amber');
+		expect(leverageChip?.getAttribute('class') ?? '').not.toContain('yellow');
+		expect(profileChip?.getAttribute('class') ?? '').not.toContain('yellow');
 
-		// A run whose leverage differs from the default still flags amber.
+		// A run whose leverage differs from the default still flags the changed highlight.
 		const otherChips = Array.from(
 			target.querySelectorAll('[data-testid="backtest-param-summary-B_OTHER"] span'),
 		);
 		const otherLeverage = otherChips.find((chip) => chip.textContent?.includes('leverage=5'));
-		expect(otherLeverage?.getAttribute('class') ?? '').toContain('amber');
+		expect(otherLeverage?.getAttribute('class') ?? '').toContain('yellow');
 	});
 
 	it('marks the Gauntlet Parameters card active (green) when no backtest run is pinned', async () => {

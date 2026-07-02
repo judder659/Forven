@@ -302,7 +302,7 @@
 		border: 1px solid #5a2020;
 		color: #f8c0c0;
 		padding: 0.625rem 0.875rem;
-		border-radius: 4px;
+		border-radius: 0;
 		font-size: 0.875rem;
 	}
 
@@ -334,9 +334,9 @@
 
 	textarea {
 		width: 100%;
-		background: #0d0d0d;
+		background: #050505;
 		border: 1px solid #333;
-		border-radius: 4px;
+		border-radius: 0;
 		color: #e5e5e5;
 		font-family: 'JetBrains Mono', 'Consolas', monospace;
 		font-size: 0.875rem;
@@ -346,7 +346,7 @@
 
 	textarea:focus {
 		outline: none;
-		border-color: #4f8df7;
+		border-color: #fff;
 	}
 
 	.bar-row {
@@ -359,7 +359,7 @@
 		flex: 1;
 		height: 6px;
 		background: #1a1a1a;
-		border-radius: 3px;
+		border-radius: 0;
 		overflow: hidden;
 	}
 
@@ -403,7 +403,7 @@
 		border: 1px solid #333;
 		color: #ddd;
 		padding: 0.5rem 1rem;
-		border-radius: 4px;
+		border-radius: 0;
 		cursor: pointer;
 		font-size: 0.875rem;
 	}
@@ -418,19 +418,19 @@
 	}
 
 	.actions .primary {
-		background: #1e40af;
-		border-color: #1e40af;
-		color: #fff;
+		background: #fff;
+		border-color: #fff;
+		color: #000;
 	}
 
 	.actions .primary:hover:not(:disabled) {
-		background: #1d4ed8;
+		background: #ddd;
 	}
 
 	.viewer pre {
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 4px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 0.875rem;
 		font-family: 'JetBrains Mono', 'Consolas', monospace;
 		font-size: 0.875rem;
@@ -456,9 +456,9 @@
 	}
 
 	.history li {
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 4px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 0.625rem 0.75rem;
 	}
 
@@ -473,15 +473,15 @@
 
 	.badge {
 		padding: 0.125rem 0.5rem;
-		border-radius: 999px;
+		border-radius: 0;
 		font-size: 0.75rem;
 		font-weight: 600;
 		text-transform: uppercase;
 	}
 
 	.mutation-replace {
-		background: #1e3a5f;
-		color: #93c5fd;
+		background: #1a1a1a;
+		color: #888;
 	}
 
 	.mutation-add {
@@ -506,8 +506,8 @@
 
 	.excerpt {
 		background: #050505;
-		border: 1px solid #1f1f1f;
-		border-radius: 3px;
+		border: 1px solid #1a1a1a;
+		border-radius: 0;
 		padding: 0.375rem;
 	}
 
@@ -532,7 +532,7 @@
 	.confirm-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
+		background: rgba(0, 0, 0, 0.8);
 		border: none;
 		padding: 0;
 		cursor: pointer;
@@ -544,13 +544,13 @@
 		top: 50%;
 		left: 50%;
 		transform: translate(-50%, -50%);
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 6px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 1.25rem;
 		max-width: 420px;
 		width: calc(100% - 2rem);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+		box-shadow: none;
 		z-index: 1002;
 	}
 
@@ -572,7 +572,7 @@
 		border: 1px solid #333;
 		color: #ddd;
 		padding: 0.5rem 1rem;
-		border-radius: 4px;
+		border-radius: 0;
 		cursor: pointer;
 		font-size: 0.875rem;
 	}
@@ -582,26 +582,26 @@
 	}
 
 	.confirm-actions .primary {
-		background: #1e40af;
-		border-color: #1e40af;
-		color: #fff;
+		background: #fff;
+		border-color: #fff;
+		color: #000;
 	}
 
 	.confirm-actions .primary:hover {
-		background: #1d4ed8;
+		background: #ddd;
 	}
 
 	.toast {
 		position: fixed;
 		bottom: 1.5rem;
 		right: 1.5rem;
-		background: #1e293b;
-		border: 1px solid #334155;
+		background: #050505;
+		border: 1px solid #222;
 		color: #e5e5e5;
 		padding: 0.75rem 1rem;
-		border-radius: 4px;
+		border-radius: 0;
 		font-size: 0.875rem;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+		box-shadow: none;
 		max-width: 380px;
 		z-index: 1000;
 	}

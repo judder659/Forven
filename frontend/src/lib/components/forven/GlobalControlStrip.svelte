@@ -204,10 +204,10 @@
 	}
 
 	function getSentimentClass(score: number | null): string {
-		if (score === null) return 'border-[#333] text-gray-500';
-		if (score >= 60) return 'border-green-700 text-green-400';
-		if (score >= 40) return 'border-yellow-700 text-yellow-400';
-		return 'border-red-700 text-red-400';
+		if (score === null) return 'border-[#333] text-[#666]';
+		if (score >= 60) return 'border-emerald-900 text-emerald-400';
+		if (score >= 40) return 'border-yellow-900 text-yellow-400';
+		return 'border-red-900 text-red-400';
 	}
 
 	onMount(() => {
@@ -227,20 +227,20 @@
 </script>
 
 {#if systemMode === 'manual'}
-	<div class="bg-amber-700/85 border-b border-amber-500 px-4 py-1 text-[11px] uppercase tracking-wider text-white font-bold flex flex-wrap items-center justify-between gap-2">
+	<div class="bg-yellow-500/5 border-b border-yellow-900 px-4 py-1 text-[11px] uppercase tracking-wider text-yellow-400 font-bold flex flex-wrap items-center justify-between gap-2">
 		<span>{pausedManualBannerText(pausedManualCounts)}</span>
 		<button
-			class="px-2 py-0.5 border border-white/40 rounded text-[10px] hover:bg-white/10 transition-colors"
+			class="px-2 py-0.5 border border-yellow-900 text-[10px] hover:bg-yellow-500/10 transition-colors"
 			on:click={() => requestSystemMode('semi_auto')}
 		>
 			Switch to Semi
 		</button>
 	</div>
 {:else if systemMode === 'semi_auto'}
-	<div class="bg-sky-800/85 border-b border-sky-500 px-4 py-1 text-[11px] uppercase tracking-wider text-white font-bold flex flex-wrap items-center justify-between gap-2">
+	<div class="bg-white/5 border-b border-[#333] px-4 py-1 text-[11px] uppercase tracking-wider text-[#999] font-bold flex flex-wrap items-center justify-between gap-2">
 		<span>Semi mode - autonomous generation off; user-created hypotheses still run through the pipeline.</span>
 		<button
-			class="px-2 py-0.5 border border-white/40 rounded text-[10px] hover:bg-white/10 transition-colors"
+			class="px-2 py-0.5 border border-[#555] text-[10px] hover:bg-white hover:text-black transition-colors"
 			on:click={() => requestSystemMode('auto')}
 		>
 			Switch to Auto
@@ -248,73 +248,73 @@
 	</div>
 {/if}
 {#if !wsConnected}
-	<div class="bg-red-700/85 border-b border-red-500 px-4 py-1 text-[11px] uppercase tracking-wider text-white font-bold">
+	<div class="bg-red-500/5 border-b border-red-900 px-4 py-1 text-[11px] uppercase tracking-wider text-red-400 font-bold">
 		Connection lost. Reconnecting to Forven websocket...
 	</div>
 {/if}
 {#if $simulationActive}
-	<div class="bg-gray-900/90 border-b border-gray-700 px-4 py-1 text-[11px] uppercase tracking-wider text-white font-bold flex flex-wrap items-center justify-between gap-2">
+	<div class="bg-white/5 border-b border-[#333] px-4 py-1 text-[11px] uppercase tracking-wider text-white font-bold flex flex-wrap items-center justify-between gap-2">
 		<span class="flex items-center gap-2">
 			<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
 			Simulation Active &mdash; Virtual Time: {simTimeFormatted} &mdash; {simPhase}
 		</span>
-		<a href="/lab" class="px-2 py-0.5 border border-white/40 rounded text-[10px] hover:bg-white/10 transition-colors">
+		<a href="/lab" class="px-2 py-0.5 border border-[#555] text-[10px] hover:bg-white hover:text-black transition-colors">
 			Open Strategies
 		</a>
 	</div>
 {/if}
-<header class="border-b border-[#222] bg-[#0b0b0b] px-4 py-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-wider">
+<header class="border-b border-[#222] bg-[#050505] px-4 py-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-wider">
 	<div class="flex min-w-0 flex-wrap items-center gap-3 lg:gap-4">
 		<div class="flex items-center gap-2 whitespace-nowrap">
-			<span class={`w-2 h-2 rounded-full ${daemonStatus === 'OFFLINE' ? 'bg-red-500' : daemonStatus === 'SYNCING' ? 'bg-yellow-500' : 'bg-green-500'}`}></span>
-			<span class="text-gray-300">Daemon {daemonStatus}</span>
+			<span class={`w-2 h-2 rounded-full ${daemonStatus === 'OFFLINE' ? 'bg-red-500' : daemonStatus === 'SYNCING' ? 'bg-yellow-400' : 'bg-emerald-400'}`}></span>
+			<span class="text-[#888]">Daemon {daemonStatus}</span>
 		</div>
 		<div class="flex items-center gap-2 whitespace-nowrap">
-			<span class={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
-			<span class={wsConnected ? 'text-green-400' : 'text-red-400'}>{wsConnected ? 'WS Live' : 'WS Offline'}</span>
+			<span class={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400' : 'bg-red-500'}`}></span>
+			<span class={wsConnected ? 'text-emerald-400' : 'text-red-400'}>{wsConnected ? 'WS Live' : 'WS Offline'}</span>
 		</div>
 	</div>
 
 	<div class="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-2">
-		<span class="px-2 py-1 border border-cyan-900 text-cyan-300 bg-cyan-950/20 rounded whitespace-nowrap">
+		<span class="px-2 py-1 border border-[#333] text-[#888] whitespace-nowrap">
 			BTC: {btcRegime}
-			{#if ethRegime}<span class="text-cyan-500/80 ml-1">| ETH: {ethRegime}</span>{/if}
-			{#if solRegime}<span class="text-cyan-500/80 ml-1">| SOL: {solRegime}</span>{/if}
+			{#if ethRegime}<span class="text-[#666] ml-1">| ETH: {ethRegime}</span>{/if}
+			{#if solRegime}<span class="text-[#666] ml-1">| SOL: {solRegime}</span>{/if}
 		</span>
 
 		<!-- Execution mode is display-only: Forven supports paper trading +
 		     Hyperliquid testnet only. Live/mainnet is not a supported feature, so
 		     there is no in-app switch to it. -->
 		<span
-			class={`px-2 py-1 border rounded whitespace-nowrap ${executionMode === 'live' ? 'border-red-800 text-red-300 bg-red-950/20' : 'border-yellow-800 text-yellow-300 bg-yellow-950/20'}`}
+			class={`px-2 py-1 border whitespace-nowrap ${executionMode === 'live' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-[#333] text-[#888]'}`}
 			title={`Execution mode: ${executionMode.toUpperCase()} — paper trading + Hyperliquid testnet only`}
 		>
 			Mode: {executionMode.toUpperCase()}
 		</span>
 
 		<span
-			class={`px-2 py-1 border rounded whitespace-nowrap font-bold ${hlNetwork === 'mainnet' ? 'border-red-600 text-red-300 bg-red-950/30' : 'border-emerald-800 text-emerald-300 bg-emerald-950/20'}`}
+			class={`px-2 py-1 border whitespace-nowrap font-bold ${hlNetwork === 'mainnet' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-emerald-900 text-emerald-400 bg-emerald-500/10'}`}
 			title={hlNetwork === 'mainnet' ? 'HyperLiquid MAINNET — orders use real funds' : 'HyperLiquid testnet — no real funds at risk'}
 		>
 			{hlNetwork === 'mainnet' ? 'MAINNET' : 'TESTNET'}
 		</span>
 
-		<span class={`px-2 py-1 border rounded whitespace-nowrap ${getSentimentClass(sentimentScore)}`}>
+		<span class={`px-2 py-1 border whitespace-nowrap ${getSentimentClass(sentimentScore)}`}>
 			F&G: {sentimentScore !== null ? Math.round(sentimentScore) : '--'}
 		</span>
 
-		<a href="/risk" class={`px-2 py-1 border rounded whitespace-nowrap ${tradingAllowed ? 'border-green-800 text-green-400' : 'border-red-800 text-red-400'}`}>
+		<a href="/risk" class={`px-2 py-1 border whitespace-nowrap transition-colors ${tradingAllowed ? 'border-emerald-900 text-emerald-400' : 'border-red-900 text-red-400'}`}>
 			{tradingAllowed ? 'Trading Allowed' : 'Trading Halted'}
 		</a>
 
 		{#if killSwitchActive}
-			<span class="px-2 py-1 border border-red-700 text-red-300 rounded whitespace-nowrap">Kill Switch Active</span>
+			<span class="px-2 py-1 border border-red-900 bg-red-500/10 text-red-400 whitespace-nowrap">Kill Switch Active</span>
 		{/if}
 	</div>
 
 	<div class="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
 		<div
-			class="inline-flex items-stretch border border-[#333] rounded overflow-hidden"
+			class="inline-flex items-stretch border border-[#333]"
 			role="group"
 			aria-label="System mode"
 			title="System mode - controls whether the system runs autonomously"
@@ -324,11 +324,11 @@
 					class={`px-2.5 py-1 text-[11px] font-bold transition-colors border-r border-[#333] last:border-r-0 ${
 						systemMode === option.value
 							? option.value === 'auto'
-								? 'bg-red-900/40 text-red-200'
+								? 'bg-red-500/10 text-red-400'
 								: option.value === 'semi_auto'
-									? 'bg-sky-900/40 text-sky-200'
-									: 'bg-amber-900/40 text-amber-200'
-							: 'text-gray-400 hover:bg-[#1a1a1a] hover:text-white'
+									? 'bg-white/10 text-white'
+									: 'bg-yellow-500/10 text-yellow-400'
+							: 'text-[#888] hover:bg-[#111] hover:text-white'
 					}`}
 					on:click={() => requestSystemMode(option.value)}
 					aria-pressed={systemMode === option.value}
@@ -338,12 +338,12 @@
 			{/each}
 		</div>
 		{#if !tradingAllowed}
-			<button class="px-2 py-1 border border-gray-700 text-gray-300 hover:bg-gray-800/40 rounded whitespace-nowrap transition-colors" on:click={() => openModal('trading-reset')}>
+			<button class="px-2 py-1 border border-[#333] text-[#888] hover:bg-[#111] hover:text-white whitespace-nowrap transition-colors" on:click={() => openModal('trading-reset')}>
 				Reset Halt
 			</button>
 		{/if}
 		<button
-			class="px-2 py-1 border border-red-800 text-red-300 hover:bg-red-900/30 rounded whitespace-nowrap transition-colors"
+			class="px-2 py-1 border border-red-900 text-red-400 hover:bg-red-500 hover:border-red-500 hover:text-white whitespace-nowrap transition-colors"
 			on:click={() => openModal('emergency-halt')}
 		>
 			Emergency Halt
@@ -352,7 +352,7 @@
 </header>
 
 {#if !tradingAllowed}
-	<div class="border-b border-[#222] bg-[#080808] px-4 py-1 text-[10px] uppercase tracking-wider text-red-300">
+	<div class="border-b border-red-900 bg-red-500/5 px-4 py-1 text-[10px] uppercase tracking-wider text-red-400">
 		Trading halted: {tradingReason}
 	</div>
 {/if}
@@ -360,19 +360,19 @@
 {#if modalOpen && modalAction}
 	<!-- svelte-ignore a11y-click-events-have-key-events -->
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="fixed inset-0 z-[10010] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 pointer-events-none" on:click={() => closeModal()}>
-		<div class="w-full max-w-md border border-[#333] bg-[#0f0f0f] rounded p-4 space-y-3 pointer-events-auto" on:click|stopPropagation>
-			<h3 class={`text-sm font-bold uppercase tracking-wider ${modalDanger ? 'text-red-300' : 'text-white'}`}>{modalTitle}</h3>
-			<p class="text-xs text-gray-300 leading-relaxed">{modalMessage}</p>
+	<div class="fixed inset-0 z-[10010] bg-black/80 flex items-center justify-center p-4 pointer-events-none" on:click={() => closeModal()}>
+		<div class="w-full max-w-md border border-[#222] bg-[#050505] p-4 space-y-3 pointer-events-auto" on:click|stopPropagation>
+			<h3 class={`text-sm font-bold uppercase tracking-wider ${modalDanger ? 'text-red-400' : 'text-white'}`}>{modalTitle}</h3>
+			<p class="text-xs text-[#888] leading-relaxed">{modalMessage}</p>
 			{#if actionError}
-				<div class="text-xs border border-red-900 bg-red-950/40 text-red-300 px-2 py-1 rounded">{actionError}</div>
+				<div class="text-xs border border-red-900 bg-red-500/5 text-red-400 px-2 py-1">{actionError}</div>
 			{/if}
 			<div class="flex justify-end gap-2 pt-1">
-				<button class="px-3 py-1.5 text-xs border border-[#444] text-gray-300 hover:text-white hover:border-[#666] rounded" on:click={() => closeModal()}>
+				<button class="px-3 py-1.5 text-xs border border-[#333] text-[#888] hover:text-white hover:border-[#555] transition-colors" on:click={() => closeModal()}>
 					Cancel
 				</button>
 				<button
-					class={`px-3 py-1.5 text-xs border rounded ${modalDanger ? 'border-red-700 text-red-200 hover:bg-red-900/40' : 'border-white text-white hover:bg-white hover:text-black'}`}
+					class={`px-3 py-1.5 text-xs border transition-colors ${modalDanger ? 'border-red-900 text-red-400 hover:bg-red-500 hover:border-red-500 hover:text-white' : 'border-white text-white hover:bg-white hover:text-black'}`}
 					on:click={confirmModal}
 					disabled={actionBusy}
 				>

@@ -50,7 +50,7 @@
 <div class="workspace-layout flex-col">
 	<div class="flex-shrink-0 px-2 pt-2">
 		<div class="flex items-center gap-1 mb-2" data-testid="session-view-toggle">
-			<span class="text-[10px] uppercase tracking-wider text-gray-500 mr-1">Sessions</span>
+			<span class="text-[10px] uppercase tracking-wider text-[#666] mr-1">Sessions</span>
 			{#each VIEWS as v (v.id)}
 				<button
 					class="terminal-button text-[10px] py-0 px-2 {view === v.id ? 'bg-[#111] text-white border-white' : ''} {v.id === 'live' ? 'text-red-400' : ''}"
@@ -59,7 +59,7 @@
 				>{v.label}</button>
 			{/each}
 			{#if view !== 'paper'}
-				<span class="text-[10px] text-gray-500 ml-2">Loading deployed sessions can take a few seconds.</span>
+				<span class="text-[10px] text-[#666] ml-2">Loading deployed sessions can take a few seconds.</span>
 			{/if}
 			<a
 				href="/all-trades"

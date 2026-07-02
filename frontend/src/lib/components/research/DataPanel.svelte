@@ -21,11 +21,11 @@
 	let activeSymbols: Set<string> = new Set();
 
 	const ASSET_CLASS_BADGES: Record<string, { label: string; color: string; border: string }> = {
-		crypto: { label: 'Crypto', color: 'text-orange-300', border: 'border-orange-700' },
-		stock: { label: 'Stock', color: 'text-blue-300', border: 'border-blue-700' },
-		etf: { label: 'ETF', color: 'text-sky-300', border: 'border-sky-700' },
-		forex: { label: 'FX', color: 'text-emerald-300', border: 'border-emerald-700' },
-		index: { label: 'Index', color: 'text-purple-300', border: 'border-purple-700' },
+		crypto: { label: 'Crypto', color: 'text-[#888]', border: 'border-[#333]' },
+		stock: { label: 'Stock', color: 'text-[#888]', border: 'border-[#333]' },
+		etf: { label: 'ETF', color: 'text-[#888]', border: 'border-[#333]' },
+		forex: { label: 'FX', color: 'text-[#888]', border: 'border-[#333]' },
+		index: { label: 'Index', color: 'text-[#888]', border: 'border-[#333]' },
 	};
 
 	function inferAssetClass(dataset: Dataset): string {
@@ -119,7 +119,7 @@
 		/>
 		<select
 			bind:value={assetClassFilter}
-			class="w-full bg-[#0b0b0b] border border-[#222] px-2 py-1 text-[10px] rounded outline-none focus:border-cyan-500 text-gray-400"
+			class="w-full bg-[#0b0b0b] border border-[#333] px-2 py-1 text-[10px] outline-none focus:border-[#555] text-[#888]"
 		>
 			<option value="all">All asset classes</option>
 			<option value="crypto">Crypto</option>
@@ -133,22 +133,22 @@
 	<!-- List -->
 	<div class="flex-1 overflow-y-auto">
 		{#if loading && datasets.length === 0}
-			<div class="p-4 text-xs text-gray-500 text-center">Loading...</div>
+			<div class="p-4 text-xs text-[#666] text-center">Loading...</div>
 		{:else if filteredDatasets.length === 0}
-			<div class="p-4 text-xs text-gray-500 text-center">No datasets found</div>
+			<div class="p-4 text-xs text-[#666] text-center">No datasets found</div>
 		{:else}
 			{#each groupedDatasetEntries as [base, groupDatasets]}
 				{@const expanded = !!searchQuery.trim() || expandedGroups[base] === true}
 				<button
 					type="button"
-					class="sticky top-0 w-full bg-[#0a0a0a] px-3 py-1.5 border-b border-[#222] z-10 flex items-center gap-2 text-left hover:bg-[#101010] transition-colors"
+					class="sticky top-0 w-full bg-[#0a0a0a] px-3 py-1.5 border-b border-[#222] z-10 flex items-center gap-2 text-left hover:bg-[#111] transition-colors"
 					on:click={() => toggleGroup(base)}
 					aria-expanded={expanded}
 					title={expanded ? 'Collapse' : 'Expand'}
 				>
-					<span class="text-[10px] text-gray-500 font-mono transition-transform duration-150" class:rotate-90={expanded}>&#9654;</span>
-					<span class="text-xs font-bold text-gray-300 tracking-wider uppercase">{base}</span>
-					<span class="text-[9px] px-1.5 py-0.5 rounded bg-[#111] text-gray-500">{groupDatasets.length}</span>
+					<span class="text-[10px] text-[#666] font-mono transition-transform duration-150" class:rotate-90={expanded}>&#9654;</span>
+					<span class="text-xs font-bold text-[#888] tracking-wider uppercase">{base}</span>
+					<span class="text-[9px] px-1.5 py-0.5 bg-[#111] text-[#666]">{groupDatasets.length}</span>
 				</button>
 				{#if expanded}
 					<div transition:slide={{ duration: 150 }}>
@@ -164,21 +164,21 @@
 								tabindex="0"
 							>
 								<div class="flex flex-col min-w-0">
-									<span class="font-bold truncate" style={isSelected ? "color: var(--color-cyan-100);" : ""}>{dataset.symbol}</span>
-									<span class="text-[10px] text-gray-500 flex gap-2">
-										<span class="text-cyan-600/70 font-mono">{dataset.timeframe}</span>
+									<span class="font-bold truncate" style={isSelected ? "color: #fff;" : ""}>{dataset.symbol}</span>
+									<span class="text-[10px] text-[#666] flex gap-2">
+										<span class="text-[#888] font-mono">{dataset.timeframe}</span>
 										<span>&bull;</span>
 										<span class="uppercase opacity-60">{dataset.source}</span>
 									</span>
 								</div>
 								<div class="flex items-center gap-2">
 									{#if badge && ac !== 'crypto'}
-										<span class="text-[8px] font-bold tracking-widest {badge.color} border {badge.border} px-1 py-0.5 rounded-sm">{badge.label}</span>
+										<span class="text-[8px] font-bold tracking-widest {badge.color} border {badge.border} px-1 py-0.5">{badge.label}</span>
 									{/if}
 									{#if isLive(dataset)}
-										<span class="text-[8px] font-bold tracking-widest text-green-400 border border-green-800 px-1 py-0.5 rounded-sm">LIVE</span>
+										<span class="text-[8px] font-bold tracking-widest text-emerald-400 border border-emerald-900 px-1 py-0.5">LIVE</span>
 									{/if}
-									<span class="text-[10px] text-gray-600 font-mono">{(dataset.row_count || 0).toLocaleString()} <span class="opacity-50 text-[9px]">bars</span></span>
+									<span class="text-[10px] text-[#555] font-mono">{(dataset.row_count || 0).toLocaleString()} <span class="opacity-50 text-[9px]">bars</span></span>
 									<button
 										class="hidden group-hover:block text-red-500 hover:text-red-400 p-1"
 										on:click={(e) => remove(dataset, e)}

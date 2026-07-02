@@ -185,8 +185,7 @@
 		display: flex;
 		flex-direction: column;
 		border: 1px solid #222;
-		background: #0a0a0a;
-		border-radius: 0.375rem;
+		background: #050505;
 	}
 
 	.strip {
@@ -201,7 +200,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #aaa;
+		color: #888;
 		font-weight: 600;
 	}
 
@@ -245,21 +244,20 @@
 		font-size: 0.625rem;
 		font-family: ui-monospace, monospace;
 		padding: 0.1rem 0.4rem;
-		border-radius: 999px;
-		border: 1px solid #2a2a2a;
+		border: 1px solid #333;
 		background: #050505;
-		color: #9ca3af;
+		color: #888;
 		white-space: nowrap;
 	}
 
 	.reason-chip b {
-		color: #e5e7eb;
+		color: #fff;
 	}
 
 	.reason-chip--warn {
-		border-color: rgba(251, 191, 36, 0.4);
-		background: rgba(251, 191, 36, 0.08);
-		color: #fbbf24;
+		border-color: #713f12;
+		background: rgba(250, 204, 21, 0.08);
+		color: #facc15;
 	}
 
 	.reason-chip--warn b {
@@ -279,7 +277,7 @@
 	}
 
 	.toggle:hover {
-		color: #ddd;
+		color: #fff;
 	}
 
 	.table-wrap {
@@ -297,12 +295,12 @@
 	th {
 		position: sticky;
 		top: 0;
-		background: #0a0a0a;
+		background: #050505;
 		text-align: left;
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #777;
+		color: #666;
 		font-weight: 600;
 		padding: 0.3rem 0.5rem;
 		border-bottom: 1px solid #1a1a1a;
@@ -311,7 +309,7 @@
 	td {
 		padding: 0.25rem 0.5rem;
 		border-bottom: 1px solid #141414;
-		color: #cbd5e1;
+		color: #888;
 		white-space: nowrap;
 	}
 
@@ -330,14 +328,14 @@
 
 	.reason-cell {
 		font-family: ui-monospace, monospace;
-		color: #9ca3af;
+		color: #888;
 		max-width: 28ch;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
 	.reason-cell.warn {
-		color: #fbbf24;
+		color: #facc15;
 	}
 
 	.empty {
@@ -348,7 +346,7 @@
 
 	.error {
 		font-size: 0.6875rem;
-		color: #fca5a5;
+		color: #f87171;
 		padding: 0.4rem 0.75rem;
 	}
 </style>

@@ -164,7 +164,7 @@
 	{#if tooltipVisible}
 		<div
 			bind:this={tooltipEl}
-			class="fixed z-50 px-2 py-1 text-xs bg-gray-800 border border-gray-700 rounded shadow-lg text-white pointer-events-none"
+			class="fixed z-50 px-2 py-1 text-xs bg-[#111] border border-[#333] text-white pointer-events-none"
 			style="left: {tooltipX}px; top: {tooltipY}px;"
 		>
 			{tooltipContent}

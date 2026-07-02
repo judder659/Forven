@@ -40,19 +40,19 @@
 	})();
 </script>
 
-<div class="border border-zinc-800 rounded-lg bg-zinc-950/40 p-4 space-y-3">
+<div class="terminal-card p-4 space-y-3">
 	<div class="flex items-start justify-between gap-3">
 		<div class="min-w-0">
-			<h3 class="text-sm font-semibold text-zinc-100">Software updates</h3>
-			<p class="text-[11px] text-zinc-400 mt-0.5">
+			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Software updates</h3>
+			<p class="text-[11px] text-[#666] mt-0.5">
 				Fast-forward Forven to the latest code on
-				<span class="text-zinc-300">{status?.target_remote ?? 'origin'}/{status?.target_branch ?? 'main'}</span>.
+				<span class="text-[#888]">{status?.target_remote ?? 'origin'}/{status?.target_branch ?? 'main'}</span>.
 				Applying restarts the backend.
 			</p>
 		</div>
 		<button
 			type="button"
-			class="text-[11px] border border-zinc-700 text-zinc-100 px-3 py-1.5 rounded hover:bg-zinc-800 transition-colors disabled:opacity-50 shrink-0"
+			class="terminal-button text-[11px] shrink-0"
 			on:click={handleCheck}
 			disabled={busy}
 		>
@@ -61,19 +61,19 @@
 	</div>
 
 	<dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-		<dt class="text-zinc-500">Current version</dt>
-		<dd class="text-zinc-200 font-mono">{status?.current_version ?? '—'}{#if status?.current_sha_short} ({status.current_sha_short}){/if}</dd>
-		<dt class="text-zinc-500">Branch</dt>
-		<dd class="text-zinc-200 font-mono">{status?.current_branch ?? '—'}</dd>
+		<dt class="text-[#666]">Current version</dt>
+		<dd class="text-white font-mono">{status?.current_version ?? '—'}{#if status?.current_sha_short} ({status.current_sha_short}){/if}</dd>
+		<dt class="text-[#666]">Branch</dt>
+		<dd class="text-white font-mono">{status?.current_branch ?? '—'}</dd>
 		{#if status?.checked_at}
-			<dt class="text-zinc-500">Last checked</dt>
-			<dd class="text-zinc-300">{new Date(status.checked_at).toLocaleString()}</dd>
+			<dt class="text-[#666]">Last checked</dt>
+			<dd class="text-[#888]">{new Date(status.checked_at).toLocaleString()}</dd>
 		{/if}
 	</dl>
 
 	<div class="flex items-center justify-between gap-3 pt-1">
 		<p
-			class="text-[11px] {status?.update_available ? 'text-cyan-300' : 'text-zinc-400'}"
+			class="text-[11px] {status?.update_available ? 'text-emerald-400' : 'text-[#666]'}"
 			role="status"
 		>
 			{#if $updateRestarting}
@@ -87,7 +87,7 @@
 		{#if status?.can_apply}
 			<button
 				type="button"
-				class="text-[11px] border border-cyan-600 text-cyan-50 px-3 py-1.5 rounded hover:bg-cyan-900/40 transition-colors disabled:opacity-50 shrink-0"
+				class="terminal-button-primary text-[11px] shrink-0"
 				on:click={handleApply}
 				disabled={busy}
 			>
@@ -97,12 +97,12 @@
 	</div>
 
 	{#if status?.update_available && status?.blocked_reason}
-		<p class="text-[11px] text-amber-300/90">{status.blocked_reason}</p>
+		<p class="text-[11px] text-yellow-400">{status.blocked_reason}</p>
 	{/if}
 	{#if status?.update_available && status?.latest_commit_subject}
-		<p class="text-[11px] text-zinc-400 truncate">Latest: {status.latest_commit_subject}</p>
+		<p class="text-[11px] text-[#666] truncate">Latest: {status.latest_commit_subject}</p>
 	{/if}
 	{#if $updateError}
-		<p class="text-[11px] text-rose-400" role="alert">{$updateError}</p>
+		<p class="text-[11px] text-red-400" role="alert">{$updateError}</p>
 	{/if}
 </div>

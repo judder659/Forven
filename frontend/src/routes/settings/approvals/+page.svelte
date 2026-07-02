@@ -171,11 +171,11 @@
 <svelte:head><title>Approval Modes | Forven</title></svelte:head>
 
 <div class="space-y-6 p-6 max-w-5xl">
-	<header class="flex items-center justify-between">
+	<header class="flex items-center justify-between border-b border-[#222] pb-4">
 		<div>
-			<div class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Settings</div>
-			<h1 class="text-2xl font-semibold text-gray-100">Approval Modes</h1>
-			<p class="mt-1 text-xs text-gray-500 max-w-2xl">
+			<div class="text-[10px] uppercase tracking-widest text-[#666]">Settings</div>
+			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Approval Modes</h1>
+			<p class="mt-1 text-xs text-[#666] max-w-2xl">
 				Configure per-category approval behavior. <strong>manual</strong> requires operator review,
 				<strong>smart</strong> classifies via the auxiliary LLM and auto-approves only when
 				the classifier returns <code>auto_approve</code> with high confidence, and
@@ -185,13 +185,13 @@
 		<div class="flex items-center gap-2">
 			<a
 				href="/approval"
-				class="text-xs border border-[#333] px-3 py-1.5 rounded text-gray-300 hover:text-gray-100"
+				class="terminal-button text-xs"
 			>
 				View pending approvals
 			</a>
 			<button
 				type="button"
-				class="text-xs border border-[#333] px-3 py-1.5 rounded text-gray-300"
+				class="terminal-button text-xs"
 				on:click={() => void load()}
 			>
 				Reload
@@ -199,58 +199,58 @@
 		</div>
 	</header>
 
-	{#if actionMessage}<div class="bg-emerald-900/20 border border-emerald-800 text-emerald-300 text-xs px-3 py-2 rounded">{actionMessage}</div>{/if}
-	{#if error}<div class="bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded">{error}</div>{/if}
+	{#if actionMessage}<div class="border border-emerald-900 bg-emerald-500/5 text-emerald-400 text-xs px-4 py-2">{actionMessage}</div>{/if}
+	{#if error}<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-4 py-2">{error}</div>{/if}
 
 	{#if loading}
-		<div class="text-gray-500">Loading...</div>
+		<div class="py-20 text-center text-xs uppercase tracking-widest text-[#555]">Loading...</div>
 	{:else}
-		<section class="border border-[#222] rounded p-4 space-y-4 bg-[#0a0a0a]">
-			<h2 class="text-sm uppercase tracking-wider text-gray-400">Defaults</h2>
-			<div class="grid sm:grid-cols-3 gap-4">
+		<section class="terminal-card">
+			<h2 class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Defaults</h2>
+			<div class="grid sm:grid-cols-3 gap-4 p-4">
 				<label class="block text-xs">
-					<span class="text-gray-500 uppercase tracking-wider">Default mode</span>
-					<select bind:value={defaultMode} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+					<span class="text-[10px] text-[#666] uppercase tracking-wider">Default mode</span>
+					<select bind:value={defaultMode} class="terminal-select mt-1 w-full">
 						{#each validModes as mode}
 							<option value={mode}>{mode}</option>
 						{/each}
 					</select>
 				</label>
 				<label class="block text-xs">
-					<span class="text-gray-500 uppercase tracking-wider">Default deadline (hours)</span>
+					<span class="text-[10px] text-[#666] uppercase tracking-wider">Default deadline (hours)</span>
 					<input
 						type="number"
 						min="1"
 						max="720"
 						bind:value={defaultDeadlineHours}
-						class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200"
+						class="terminal-input mt-1 w-full"
 					/>
 				</label>
 				<label class="block text-xs">
-					<span class="text-gray-500 uppercase tracking-wider">Escalation owner (display id)</span>
+					<span class="text-[10px] text-[#666] uppercase tracking-wider">Escalation owner (display id)</span>
 					<input
 						type="text"
 						bind:value={escalationOwner}
 						placeholder="e.g. operator"
-						class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200"
+						class="terminal-input mt-1 w-full"
 					/>
 				</label>
 			</div>
 		</section>
 
-		<section class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden">
-			<header class="px-4 py-3 flex items-center justify-between border-b border-[#222]">
-				<h2 class="text-sm uppercase tracking-wider text-gray-400">Per-category overrides</h2>
+		<section class="terminal-card overflow-hidden">
+			<header class="px-4 py-2 flex items-center justify-between border-b border-[#1a1a1a]">
+				<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Per-category overrides</h2>
 				<div class="flex items-center gap-2">
 					<input
 						type="text"
 						placeholder="add category…"
 						bind:value={newCategory}
-						class="bg-black border border-[#222] px-2 py-1 text-xs text-gray-200"
+						class="terminal-input text-xs"
 					/>
 					<button
 						type="button"
-						class="border border-[#333] px-3 py-1 text-xs text-gray-300 rounded"
+						class="terminal-button text-xs"
 						on:click={addCategory}
 					>
 						Add
@@ -258,10 +258,10 @@
 				</div>
 			</header>
 			{#if rows.length === 0}
-				<div class="px-4 py-6 text-xs text-gray-500">No category overrides yet — defaults apply to everything.</div>
+				<div class="px-4 py-6 text-xs text-[#666]">No category overrides yet — defaults apply to everything.</div>
 			{:else}
 				<table class="w-full text-xs">
-					<thead class="bg-[#101010] text-gray-500 uppercase tracking-wider">
+					<thead class="text-[10px] text-[#666] uppercase tracking-wider border-b border-[#222]">
 						<tr>
 							<th class="text-left px-3 py-2">Category</th>
 							<th class="text-left px-3 py-2">Mode</th>
@@ -272,12 +272,12 @@
 					</thead>
 					<tbody>
 						{#each rows as row (row.category)}
-							<tr class="border-t border-[#1a1a1a]">
-								<td class="px-3 py-2 font-mono text-gray-200">{row.category}</td>
+							<tr class="border-b border-[#111] hover:bg-[#111] transition-colors">
+								<td class="px-3 py-2 text-white">{row.category}</td>
 								<td class="px-3 py-2">
 									<select
 										bind:value={row.mode}
-										class="bg-black border px-2 py-1 text-gray-200 {invalidCategories.has(row.category) ? 'border-red-700' : 'border-[#222]'}"
+										class="terminal-select {invalidCategories.has(row.category) ? '!border-red-700' : ''}"
 									>
 										{#each validModes as mode}
 											<option value={mode} disabled={mode === 'off' && !offAllowlist.includes(row.category)}>{mode}</option>
@@ -293,20 +293,20 @@
 										min="1"
 										max="720"
 										bind:value={row.deadlineHours}
-										class="w-24 bg-black border border-[#222] px-2 py-1 text-gray-200"
+										class="terminal-input w-24"
 									/>
 								</td>
 								<td class="px-3 py-2">
 									{#if offAllowlist.includes(row.category)}
 										<span class="text-emerald-400">Yes</span>
 									{:else}
-										<span class="text-gray-500" title="Server rejects mode=off for this category. Controlled in backend code.">No (server-gated)</span>
+										<span class="text-[#666]" title="Server rejects mode=off for this category. Controlled in backend code.">No (server-gated)</span>
 									{/if}
 								</td>
 								<td class="px-3 py-2 text-right">
 									<button
 										type="button"
-										class="text-gray-500 hover:text-red-300 text-xs"
+										class="text-[#666] hover:text-red-400 text-xs transition-colors"
 										on:click={() => removeRow(row.category)}
 									>
 										Remove
@@ -319,37 +319,39 @@
 			{/if}
 		</section>
 
-		<section class="border border-[#222] rounded p-4 bg-[#0a0a0a]">
-			<h2 class="text-sm uppercase tracking-wider text-gray-400 mb-2">Off allowlist (server-enforced)</h2>
-			<p class="text-[11px] text-gray-500 mb-3">
-				Setting a category to <code>off</code> auto-approves it immediately, so eligibility is
-				deliberately controlled in backend code rather than this UI — the server rejects any
-				<code>off</code> mode for a category not on the allowlist below. This is a safety guardrail,
-				not an oversight: high-stakes categories cannot be silenced from the operator console.
-			</p>
-			<div class="mb-2 text-[11px] uppercase tracking-wider text-gray-500">Eligible for off ({offAllowlist.length})</div>
-			<div class="flex flex-wrap gap-2 text-[11px]">
-				{#each offAllowlist as cat}
-					<span class="border border-[#333] bg-[#111] px-2 py-1 rounded font-mono text-gray-300">{cat}</span>
-				{:else}
-					<span class="text-gray-500">No categories permit mode=off.</span>
-				{/each}
-			</div>
-			{#if offGatedCategories.length > 0}
-				<div class="mt-3 mb-2 text-[11px] uppercase tracking-wider text-gray-500">Server-gated (off not permitted)</div>
+		<section class="terminal-card">
+			<h2 class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Off allowlist (server-enforced)</h2>
+			<div class="p-4">
+				<p class="text-[11px] text-[#666] mb-3">
+					Setting a category to <code>off</code> auto-approves it immediately, so eligibility is
+					deliberately controlled in backend code rather than this UI — the server rejects any
+					<code>off</code> mode for a category not on the allowlist below. This is a safety guardrail,
+					not an oversight: high-stakes categories cannot be silenced from the operator console.
+				</p>
+				<div class="mb-2 text-[10px] uppercase tracking-wider text-[#666]">Eligible for off ({offAllowlist.length})</div>
 				<div class="flex flex-wrap gap-2 text-[11px]">
-					{#each offGatedCategories as cat}
-						<span class="border border-[#222] bg-black px-2 py-1 rounded font-mono text-gray-500">{cat}</span>
+					{#each offAllowlist as cat}
+						<span class="border border-[#333] bg-[#111] px-2 py-1 text-[#888]">{cat}</span>
+					{:else}
+						<span class="text-[#666]">No categories permit mode=off.</span>
 					{/each}
 				</div>
-			{/if}
+				{#if offGatedCategories.length > 0}
+					<div class="mt-3 mb-2 text-[10px] uppercase tracking-wider text-[#666]">Server-gated (off not permitted)</div>
+					<div class="flex flex-wrap gap-2 text-[11px]">
+						{#each offGatedCategories as cat}
+							<span class="border border-[#222] bg-black px-2 py-1 text-[#555]">{cat}</span>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		</section>
 
 		<div class="flex items-center gap-3">
 			<button
 				type="button"
 				disabled={saving || invalidCategories.size > 0}
-				class="border border-emerald-700 bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-300 px-4 py-2 rounded disabled:opacity-40"
+				class="terminal-button-primary text-xs"
 				on:click={() => void save()}
 			>
 				{saving ? 'Saving...' : 'Save changes'}
@@ -357,7 +359,7 @@
 			{#if invalidCategories.size > 0}
 				<span class="text-[11px] text-red-400">Resolve the highlighted row(s) before saving.</span>
 			{:else if isDirty}
-				<span class="text-[11px] text-amber-400">Unsaved changes</span>
+				<span class="text-[11px] text-yellow-400">Unsaved changes</span>
 			{/if}
 		</div>
 	{/if}

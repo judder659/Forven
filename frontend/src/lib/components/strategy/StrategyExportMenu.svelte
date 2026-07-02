@@ -73,7 +73,7 @@
 	<button
 		type="button"
 		data-testid="strategy-export-trigger"
-		class={`inline-flex items-center gap-1 rounded border border-[#2b2b2b] bg-black font-semibold uppercase tracking-[0.14em] text-gray-300 transition hover:text-white disabled:opacity-50 ${
+		class={`inline-flex items-center gap-1 border border-[#333] bg-black font-bold uppercase tracking-widest text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-50 ${
 			compact ? 'px-2 py-1 text-[9px]' : 'px-3 py-1.5 text-[10px]'
 		}`}
 		disabled={busy}
@@ -94,13 +94,13 @@
 			on:click|stopPropagation={close}
 		></button>
 		<div
-			class="absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded border border-[#2b2b2b] bg-[#0a0a0a] shadow-xl"
+			class="absolute right-0 z-50 mt-1 w-44 overflow-hidden border border-[#222] bg-[#050505]"
 			role="menu"
 		>
 			<button
 				type="button"
 				data-testid="strategy-export-download"
-				class="block w-full px-3 py-2 text-left text-[11px] text-gray-200 transition hover:bg-[#161616]"
+				class="block w-full px-3 py-2 text-left text-[11px] text-[#888] transition-colors hover:bg-[#111] hover:text-white"
 				role="menuitem"
 				on:click|stopPropagation={() => void exportDownload()}
 			>
@@ -109,7 +109,7 @@
 			<button
 				type="button"
 				data-testid="strategy-export-clipboard"
-				class="block w-full border-t border-[#1c1c1c] px-3 py-2 text-left text-[11px] text-gray-200 transition hover:bg-[#161616]"
+				class="block w-full border-t border-[#1a1a1a] px-3 py-2 text-left text-[11px] text-[#888] transition-colors hover:bg-[#111] hover:text-white"
 				role="menuitem"
 				on:click|stopPropagation={() => void exportClipboard()}
 			>

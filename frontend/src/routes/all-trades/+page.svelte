@@ -362,15 +362,15 @@
 	}
 
 	function pnlClass(value: number | null): string {
-		if (value === null || value === 0) return 'text-gray-500';
-		return value > 0 ? 'text-green-400' : 'text-red-400';
+		if (value === null || value === 0) return 'text-[#777]';
+		return value > 0 ? 'text-emerald-400' : 'text-red-400';
 	}
 	function statusClass(status: unknown): string {
 		const t = String(status ?? '').toUpperCase();
-		if (t === 'OPEN') return 'text-cyan-400';
+		if (t === 'OPEN') return 'text-white';
 		if (t === 'FAILED') return 'text-red-400';
-		if (t === 'CLOSED') return 'text-gray-300';
-		return 'text-gray-500';
+		if (t === 'CLOSED') return 'text-[#888]';
+		return 'text-[#555]';
 	}
 
 	$: showingFrom = total === 0 ? 0 : offset + 1;
@@ -415,8 +415,8 @@
 			<div class="stat">
 				<span class="stat-label">Avg win / loss</span>
 				<span class="stat-value">
-					<span class="text-green-400">{fmtUsd(stats.avg_win)}</span>
-					<span class="text-gray-600"> / </span>
+					<span class="text-emerald-400">{fmtUsd(stats.avg_win)}</span>
+					<span class="text-[#555]"> / </span>
 					<span class="text-red-400">{fmtUsd(stats.avg_loss)}</span>
 				</span>
 				<span class="stat-sub">expectancy {fmtUsd(stats.expectancy)}</span>
@@ -424,8 +424,8 @@
 			<div class="stat">
 				<span class="stat-label">Best / worst</span>
 				<span class="stat-value">
-					<span class="text-green-400">{fmtUsd(stats.best)}</span>
-					<span class="text-gray-600"> / </span>
+					<span class="text-emerald-400">{fmtUsd(stats.best)}</span>
+					<span class="text-[#555]"> / </span>
 					<span class="text-red-400">{fmtUsd(stats.worst)}</span>
 				</span>
 			</div>
@@ -435,7 +435,7 @@
 				<span class="stat-sub">{stats.open_count} position(s)</span>
 			</div>
 		{:else}
-			<span class="text-gray-600">No stats</span>
+			<span class="text-[#555]">No stats</span>
 		{/if}
 	</div>
 
@@ -446,13 +446,13 @@
 				<button
 					class="px-3 py-1 border uppercase tracking-wide {statusFilter === s
 						? 'border-white text-white'
-						: 'border-[#333] text-gray-500 hover:text-gray-300'}"
+						: 'border-[#333] text-[#666] hover:text-[#888]'}"
 					on:click={() => setStatus(s)}
 				>
 					{s}
 				</button>
 			{/each}
-			<span class="ml-auto text-gray-500">{showingFrom}–{showingTo} of {total}</span>
+			<span class="ml-auto text-[#666]">{showingFrom}–{showingTo} of {total}</span>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
 			<input
@@ -481,10 +481,10 @@
 				<option value="paper">Paper</option>
 				<option value="live">Live</option>
 			</select>
-			<label class="flex items-center gap-1 text-gray-500">
+			<label class="flex items-center gap-1 text-[#666]">
 				from <input class="filter-input" type="date" bind:value={fromDate} on:change={() => applyFilters()} />
 			</label>
-			<label class="flex items-center gap-1 text-gray-500">
+			<label class="flex items-center gap-1 text-[#666]">
 				to <input class="filter-input" type="date" bind:value={toDate} on:change={() => applyFilters()} />
 			</label>
 			<input
@@ -498,25 +498,25 @@
 	</div>
 
 	{#if error}
-		<div class="px-4 py-2 text-xs text-red-400 border-b border-red-900/50 bg-red-950/20">{error}</div>
+		<div class="px-4 py-2 text-xs text-red-400 border-b border-red-900 bg-red-500/5">{error}</div>
 	{/if}
 	{#if notice}
-		<div class="px-4 py-2 text-xs text-green-400 border-b border-green-900/50 bg-green-950/20">{notice}</div>
+		<div class="px-4 py-2 text-xs text-emerald-400 border-b border-emerald-900 bg-emerald-500/5">{notice}</div>
 	{/if}
 
 	<!-- Blotter -->
 	<div class="flex-1 overflow-auto">
 		<table class="w-full text-[11px]">
-			<thead class="text-gray-500 border-b border-[#222] bg-[#0a0a0a] sticky top-0 z-10">
+			<thead class="text-[#666] border-b border-[#222] bg-[#0a0a0a] sticky top-0 z-10">
 				<tr>
 					{#each COLUMNS as col}
 						<th
 							class="px-2 py-2 {col.align === 'right' ? 'text-right' : 'text-left'} {col.sortKey
-								? 'cursor-pointer select-none hover:text-gray-200'
+								? 'cursor-pointer select-none hover:text-white'
 								: ''}"
 							on:click={() => toggleSort(col)}
 						>
-							{col.label}{#if col.sortKey && sort === col.sortKey}<span class="text-cyan-400"
+							{col.label}{#if col.sortKey && sort === col.sortKey}<span class="text-white"
 									>{sortDir === 'asc' ? ' ▲' : ' ▼'}</span
 								>{/if}
 						</th>
@@ -533,47 +533,47 @@
 						<tr class="border-b border-[#111] hover:bg-[#111]">
 							<td class="px-2 py-1.5 text-center">
 								<button
-									class="text-gray-600 hover:text-cyan-400"
+									class="text-[#555] hover:text-white"
 									on:click={() => toggleExpand(trade.id)}
 									aria-label="Toggle detail"
 								>
 									{expandedId === trade.id ? '▾' : '▸'}
 								</button>
 							</td>
-							<td class="px-2 py-1.5 text-gray-400 whitespace-nowrap">{fmtTs(trade.opened_at)}</td>
+							<td class="px-2 py-1.5 text-[#888] whitespace-nowrap">{fmtTs(trade.opened_at)}</td>
 							<td class="px-2 py-1.5 font-mono">
 								{#if strategyId(trade)}
 									<a
-										class="text-cyan-400 hover:underline"
+										class="text-white hover:underline"
 										href={tradeHref(trade)}
 										title="Hop into {strategyId(trade)}'s trade on the Trades page"
 									>{strategyId(trade)}</a>
 								{:else}
-									<span class="text-gray-500">—</span>
+									<span class="text-[#666]">—</span>
 								{/if}
 							</td>
-							<td class="px-2 py-1.5 text-gray-200 font-bold">{String(trade.asset ?? '—').toUpperCase()}</td>
-							<td class="px-2 py-1.5 font-bold {String(trade.direction ?? '').toLowerCase() === 'short' ? 'text-red-400' : 'text-green-400'}">
+							<td class="px-2 py-1.5 text-white font-bold">{String(trade.asset ?? '—').toUpperCase()}</td>
+							<td class="px-2 py-1.5 font-bold {String(trade.direction ?? '').toLowerCase() === 'short' ? 'text-red-400' : 'text-emerald-400'}">
 								{String(trade.direction ?? '—').toUpperCase()}
 							</td>
 							<td class="px-2 py-1.5">
 								<span
 									class="px-1.5 py-0.5 border text-[10px] uppercase {String(trade.execution_type ?? '').toLowerCase() === 'live'
-										? 'border-amber-600/60 text-amber-400'
-										: 'border-[#333] text-gray-400'}"
+										? 'border-red-900 text-red-400'
+										: 'border-[#333] text-[#888]'}"
 								>
 									{String(trade.execution_type ?? '—')}
 								</span>
 							</td>
 							<td class="px-2 py-1.5 font-bold {statusClass(trade.status)}">{String(trade.status ?? '—').toUpperCase()}</td>
-							<td class="px-2 py-1.5 text-right text-gray-400">{fmtPrice(toNumber(trade.fill_entry_price) ?? toNumber(trade.entry_price))}</td>
-							<td class="px-2 py-1.5 text-right text-gray-400">{fmtPrice(toNumber(trade.fill_exit_price) ?? toNumber(trade.exit_price))}</td>
-							<td class="px-2 py-1.5 text-right text-gray-400">{fmtUsd(notional(trade), false)}</td>
+							<td class="px-2 py-1.5 text-right text-[#888]">{fmtPrice(toNumber(trade.fill_entry_price) ?? toNumber(trade.entry_price))}</td>
+							<td class="px-2 py-1.5 text-right text-[#888]">{fmtPrice(toNumber(trade.fill_exit_price) ?? toNumber(trade.exit_price))}</td>
+							<td class="px-2 py-1.5 text-right text-[#888]">{fmtUsd(notional(trade), false)}</td>
 							<td class="px-2 py-1.5 text-right font-bold {pnlClass(usd)}">
-								{fmtUsd(usd)}{#if rowOpen && usd !== null}<span class="text-gray-600 text-[9px] ml-0.5">●</span>{/if}
+								{fmtUsd(usd)}{#if rowOpen && usd !== null}<span class="text-[#555] text-[9px] ml-0.5">●</span>{/if}
 							</td>
 							<td class="px-2 py-1.5 text-right font-bold {pnlClass(pct)}">{fmtPct(pct)}</td>
-							<td class="px-2 py-1.5 text-right text-gray-400 whitespace-nowrap">{fmtDuration(durationMs(trade))}</td>
+							<td class="px-2 py-1.5 text-right text-[#888] whitespace-nowrap">{fmtDuration(durationMs(trade))}</td>
 							<td class="px-2 py-1.5 text-right">
 								{#if rowOpen}
 									<button
@@ -584,7 +584,7 @@
 										{busyTradeId === trade.id ? '…' : 'Mark Failed'}
 									</button>
 								{:else}
-									<span class="text-gray-700">—</span>
+									<span class="text-[#444]">—</span>
 								{/if}
 							</td>
 						</tr>
@@ -623,7 +623,7 @@
 					{/each}
 				{:else}
 					<tr>
-						<td colspan={COLUMNS.length} class="py-8 text-center text-gray-600 text-xs">
+						<td colspan={COLUMNS.length} class="py-8 text-center text-[#555] text-xs">
 							{loading ? 'Loading…' : 'No trades match these filters'}
 						</td>
 					</tr>
@@ -644,8 +644,8 @@
 				Next
 			</button>
 		</div>
-		<span class="text-gray-500">{showingFrom}–{showingTo} of {total}</span>
-		<label class="flex items-center gap-1 text-gray-500">
+		<span class="text-[#666]">{showingFrom}–{showingTo} of {total}</span>
+		<label class="flex items-center gap-1 text-[#666]">
 			rows
 			<select class="filter-input" value={pageSize} on:change={changePageSize}>
 				<option value={50}>50</option>

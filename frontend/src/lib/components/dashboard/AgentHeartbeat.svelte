@@ -23,61 +23,61 @@
 
 	const AGENT_STYLES: Record<string, AgentStyle> = {
 		brain: {
-			badgeClass: 'text-violet-200 border-violet-500/40 bg-violet-500/10',
-			dotClass: 'bg-violet-400',
+			badgeClass: 'text-white border-[#333]',
+			dotClass: 'bg-[#888]',
 			icon: '◎',
 		},
 		'strategy-developer': {
-			badgeClass: 'text-blue-200 border-blue-500/40 bg-blue-500/10',
-			dotClass: 'bg-blue-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '◆',
 		},
 		'simulation-agent': {
-			badgeClass: 'text-amber-200 border-amber-500/40 bg-amber-500/10',
-			dotClass: 'bg-amber-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '▣',
 		},
 		'backtest-engineer': {
-			badgeClass: 'text-amber-200 border-amber-500/40 bg-amber-500/10',
-			dotClass: 'bg-amber-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '▣',
 		},
 		'quant-researcher': {
-			badgeClass: 'text-cyan-200 border-cyan-500/40 bg-cyan-500/10',
-			dotClass: 'bg-cyan-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '◈',
 		},
 		'risk-manager': {
-			badgeClass: 'text-rose-200 border-rose-500/40 bg-rose-500/10',
-			dotClass: 'bg-rose-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '▲',
 		},
 		'execution-trader': {
-			badgeClass: 'text-emerald-200 border-emerald-500/40 bg-emerald-500/10',
-			dotClass: 'bg-emerald-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '▶',
 		},
 		'full-stack-engineer': {
-			badgeClass: 'text-sky-200 border-sky-500/40 bg-sky-500/10',
-			dotClass: 'bg-sky-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '◍',
 		},
 	};
 
 	const FALLBACK_STYLES: AgentStyle[] = [
 		{
-			badgeClass: 'text-slate-200 border-slate-500/40 bg-slate-500/10',
-			dotClass: 'bg-slate-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '•',
 		},
 		{
-			badgeClass: 'text-lime-200 border-lime-500/40 bg-lime-500/10',
-			dotClass: 'bg-lime-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '○',
 		},
 		{
-			badgeClass: 'text-orange-200 border-orange-500/40 bg-orange-500/10',
-			dotClass: 'bg-orange-400',
+			badgeClass: 'text-[#888] border-[#333]',
+			dotClass: 'bg-[#666]',
 			icon: '◌',
 		},
 	];
@@ -231,33 +231,33 @@
 	});
 </script>
 
-<section class="h-full flex flex-col border border-[#242424] rounded bg-[#080808]">
-	<header class="flex items-center justify-between px-3 py-2 border-b border-[#202020] bg-[#0d0d0d]">
+<section class="terminal-card h-full flex flex-col">
+	<header class="flex items-center justify-between border-b border-[#1a1a1a] px-4 py-2">
 		<div class="flex items-center gap-2">
-			<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
-			<h3 class="text-xs tracking-[0.2em] uppercase text-gray-200 font-semibold">Heartbeat / Agent Activity</h3>
+			<span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Heartbeat / Agent Activity</h3>
 		</div>
-		<span class="text-[10px] text-gray-500 font-mono">ws live + fallback</span>
+		<span class="text-[10px] text-[#555] font-mono">ws live + fallback</span>
 	</header>
 
 	<div class="flex-1 min-h-0 overflow-y-auto px-2 py-2 font-mono text-xs">
 		{#if loading && entries.length === 0}
-			<div class="h-full flex items-center justify-center text-gray-500 animate-pulse">Booting activity stream...</div>
+			<div class="h-full flex items-center justify-center text-[#555] uppercase tracking-widest">Booting activity stream...</div>
 		{:else if entries.length === 0}
-			<div class="h-full flex items-center justify-center text-gray-500">No heartbeat events yet.</div>
+			<div class="h-full flex items-center justify-center text-[#555]">No heartbeat events yet.</div>
 		{:else}
-			<div class="space-y-1">
+			<div>
 				{#each entries as entry (entry.id)}
 					<div
-						class="group flex items-start gap-2 px-2 py-1 rounded border border-transparent hover:border-[#2a2a2a] hover:bg-[#111] transition-colors"
+						class="group flex items-start gap-2 px-2 py-1 border-b border-[#111] hover:bg-[#111] transition-colors"
 					>
-						<span class="text-[10px] text-gray-500 w-[74px] flex-shrink-0 pt-[2px]">{formatTime(entry.timestamp)}</span>
+						<span class="text-[10px] text-[#555] w-[74px] flex-shrink-0 pt-[2px]">{formatTime(entry.timestamp)}</span>
 						<span class="w-1.5 h-1.5 rounded-full mt-[7px] flex-shrink-0 {entry.style.dotClass}"></span>
-						<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] uppercase tracking-wide flex-shrink-0 {entry.style.badgeClass}">
+						<span class="inline-flex items-center gap-1 px-2 py-0.5 border text-[10px] uppercase tracking-wide flex-shrink-0 {entry.style.badgeClass}">
 							<span>{entry.style.icon}</span>
 							{rosterNameById[entry.agentId] ?? entry.agentName}
 						</span>
-						<span class="text-gray-200 leading-5 break-words">{entry.message}</span>
+						<span class="text-[#aaa] leading-5 break-words">{entry.message}</span>
 					</div>
 				{/each}
 			</div>
@@ -269,26 +269,26 @@
 	     (model, task count) lives in each chip's tooltip. -->
 	<div
 		data-testid="agent-roster"
-		class="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[#1a1a1a] bg-[#0b0b0b] px-2.5 py-1.5"
+		class="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[#1a1a1a] px-2.5 py-1.5"
 	>
 		{#if roster.length === 0}
-			<span class="text-[10px] italic text-gray-600">No agents registered.</span>
+			<span class="text-[10px] italic text-[#555]">No agents registered.</span>
 		{:else}
 			{#each roster as agent (agent.id)}
 				<span
-					class="inline-flex items-center gap-1 font-mono text-[10px] {agent.running ? 'text-gray-300' : 'text-gray-600'}"
+					class="inline-flex items-center gap-1 font-mono text-[10px] {agent.running ? 'text-[#888]' : 'text-[#555]'}"
 					title="{agent.name}{agent.model ? ` · ${agent.model}` : ''} · {agent.activeTaskCount} active task(s) · {agent.running ? 'running' : 'idle'}"
 				>
 					<span class={`inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full ${agent.running ? 'bg-emerald-400' : 'bg-gray-700'}`}></span>
-					{agent.name}{#if agent.activeTaskCount > 0}<span class="text-cyan-400">·{agent.activeTaskCount}</span>{/if}
+					{agent.name}{#if agent.activeTaskCount > 0}<span class="text-white">·{agent.activeTaskCount}</span>{/if}
 				</span>
 			{/each}
-			<span class="ml-auto font-mono text-[10px] text-gray-600">{roster.length} agents</span>
+			<span class="ml-auto font-mono text-[10px] text-[#555]">{roster.length} agents</span>
 		{/if}
 	</div>
 
 	{#if errorMessage}
-		<div class="px-3 py-2 border-t border-red-900/40 bg-red-900/10 text-[10px] text-red-300">
+		<div class="px-4 py-2 border-t border-red-900 bg-red-500/5 text-[10px] text-red-400">
 			{errorMessage}
 		</div>
 	{/if}

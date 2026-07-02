@@ -15,6 +15,7 @@
 	import SettingsData from '$lib/components/settings/sections/SettingsData.svelte';
 	import SettingsLab from '$lib/components/settings/sections/SettingsLab.svelte';
 	import SettingsTrading from '$lib/components/settings/sections/SettingsTrading.svelte';
+	import SettingsHyperliquid from '$lib/components/settings/sections/SettingsHyperliquid.svelte';
 	import SettingsNotifications from '$lib/components/settings/sections/SettingsNotifications.svelte';
 	import SettingsSystem from '$lib/components/settings/sections/SettingsSystem.svelte';
 	import SettingsDangerZone from '$lib/components/settings/sections/SettingsDangerZone.svelte';
@@ -148,21 +149,21 @@
 </script>
 
 <div class="min-h-screen bg-black text-white p-6 space-y-6">
-	<header class="flex items-baseline justify-between gap-4">
-		<h1 class="text-2xl font-semibold text-white">Settings</h1>
+	<header class="flex items-baseline justify-between gap-4 border-b border-[#222] pb-4">
+		<h1 class="text-lg font-bold uppercase tracking-widest text-white">Settings</h1>
 		<div class="w-full max-w-md"><SettingsSearch /></div>
 	</header>
 
 	{#if wizardIncomplete}
 		<div
-			class="flex items-center justify-between gap-4 border border-amber-700 bg-amber-900/30 text-amber-100 rounded px-4 py-3"
+			class="flex items-center justify-between gap-4 border border-yellow-900 bg-yellow-500/5 text-yellow-400 px-4 py-3"
 			role="alert"
 		>
-			<span class="text-sm">Wizard incomplete — complete the onboarding wizard to finish setting up Forven.</span>
+			<span class="text-xs">Wizard incomplete — complete the onboarding wizard to finish setting up Forven.</span>
 			<button
 				type="button"
 				on:click={openWizard}
-				class="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+				class="terminal-button text-xs"
 			>
 				Complete onboarding
 			</button>
@@ -170,10 +171,10 @@
 	{/if}
 
 	{#if loading}
-		<p class="text-sm text-gray-400">Loading settings…</p>
+		<p class="py-20 text-center text-xs uppercase tracking-widest text-[#555]">Loading settings…</p>
 	{:else if loadError && !settings}
-		<div class="border border-red-900 bg-red-950/40 rounded p-4">
-			<p class="text-sm text-red-200">Failed to load settings: {loadError}</p>
+		<div class="border border-red-900 bg-red-500/5 px-4 py-3">
+			<p class="text-xs text-red-400">Failed to load settings: {loadError}</p>
 		</div>
 	{:else if settings}
 		<div class="flex gap-6">
@@ -187,6 +188,8 @@
 					<SettingsLab {settings} />
 				{:else if activeArea === 'trading'}
 					<SettingsTrading {settings} />
+				{:else if activeArea === 'hyperliquid'}
+					<SettingsHyperliquid {settings} />
 				{:else if activeArea === 'notifications'}
 					<SettingsNotifications {settings} />
 				{:else if activeArea === 'system'}
@@ -200,30 +203,30 @@
 
 	{#if leavePromptOpen}
 		<div
-			class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+			class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="settings-leave-title"
 		>
-			<div class="w-full max-w-md rounded border border-[#333] bg-[#0a0a0a] p-5 space-y-4 shadow-xl">
-				<h2 id="settings-leave-title" class="text-base font-semibold text-white">
+			<div class="w-full max-w-md border border-[#222] bg-[#050505] p-5 space-y-4">
+				<h2 id="settings-leave-title" class="text-sm font-bold uppercase tracking-widest text-white">
 					Discard unsaved changes?
 				</h2>
-				<p class="text-sm text-gray-400">
+				<p class="text-xs text-[#888]">
 					You have unsaved settings changes. Leaving this page will discard them.
 				</p>
 				<div class="flex justify-end gap-2">
 					<button
 						type="button"
 						on:click={cancelLeave}
-						class="px-3 py-1.5 rounded border border-[#333] text-sm text-gray-300 hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-500"
+						class="terminal-button text-xs"
 					>
 						Stay on page
 					</button>
 					<button
 						type="button"
 						on:click={confirmLeave}
-						class="px-3 py-1.5 rounded bg-red-700 hover:bg-red-600 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+						class="terminal-button-danger text-xs"
 					>
 						Discard &amp; leave
 					</button>

@@ -23,20 +23,20 @@
 
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: '#030712' },
-				textColor: '#9ca3af',
+				background: { type: ColorType.Solid, color: '#050505' },
+				textColor: '#888888',
 			},
 			grid: {
-				vertLines: { color: '#1f2937' },
-				horzLines: { color: '#1f2937' },
+				vertLines: { color: '#1a1a1a' },
+				horzLines: { color: '#1a1a1a' },
 			},
 			width: chartContainer.clientWidth,
 			height: height,
 			rightPriceScale: {
-				borderColor: '#1f2937',
+				borderColor: '#222222',
 			},
 			timeScale: {
-				borderColor: '#1f2937',
+				borderColor: '#222222',
 				visible: false, // Hide time axis for simulated paths
 			},
 			crosshair: {
@@ -175,7 +175,7 @@
 		gap: 1.5rem;
 		margin-top: 0.5rem;
 		font-size: 10px;
-		color: #9ca3af;
+		color: #888888;
 	}
 	.legend-item {
 		display: flex;

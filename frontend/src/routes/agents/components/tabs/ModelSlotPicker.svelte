@@ -79,22 +79,22 @@
 	}
 </script>
 
-<li class="bg-black border border-gray-800 rounded p-4 space-y-3">
+<li class="terminal-card p-4 space-y-3">
 	<div class="flex items-start justify-between gap-3">
 		<div>
 			<h3 class="text-sm font-semibold text-white">
 				{label}
 				{#if dirty}
-					<span class="ml-2 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-amber-800 text-amber-300 bg-amber-950/40">unsaved</span>
+					<span class="ml-2 text-[9px] font-bold uppercase tracking-widest px-1.5 py-px border border-yellow-500/50 text-yellow-400">unsaved</span>
 				{/if}
 			</h3>
 			{#if description}
-				<p class="text-xs text-gray-500 mt-0.5">{description}</p>
+				<p class="text-xs text-[#666] mt-0.5">{description}</p>
 			{/if}
 		</div>
 	</div>
 
-	<div class="block text-xs text-gray-400">
+	<div class="block text-xs text-[#888]">
 		<span class="block mb-1">Primary model</span>
 		<ModelPicker
 			{value}
@@ -106,31 +106,31 @@
 	</div>
 
 	<div class="space-y-2">
-		<div class="text-xs text-gray-400 flex items-center justify-between">
+		<div class="text-xs text-[#888] flex items-center justify-between">
 			<span>Fallback chain</span>
 			{#if fallbacks.length === 0}
-				<span class="text-[10px] uppercase tracking-wider text-amber-400/90" title="With no fallback the call fails closed instead of silently switching providers.">no fallback · fail closed</span>
+				<span class="text-[10px] uppercase tracking-wider text-yellow-400" title="With no fallback the call fails closed instead of silently switching providers.">no fallback · fail closed</span>
 			{/if}
 		</div>
 
 		{#if fallbacks.length > 0}
 			<ol class="space-y-1">
 				{#each fallbacks as fb, idx (idx)}
-					<li class="flex items-center gap-2 bg-gray-950 border border-gray-800 rounded px-2 py-1.5">
-						<span class="text-[10px] text-gray-600 w-5 text-center">{idx + 1}</span>
-						<span class="flex-1 font-mono text-xs {isStale(fb) ? 'text-amber-300' : 'text-gray-200'}">
+					<li class="flex items-center gap-2 bg-[#050505] border border-[#1a1a1a] px-2 py-1.5">
+						<span class="text-[10px] text-[#666] w-5 text-center">{idx + 1}</span>
+						<span class="flex-1 font-mono text-xs {isStale(fb) ? 'text-yellow-400' : 'text-[#ccc]'}">
 							{labelForKey(fb)}{isStale(fb) ? ' (unavailable)' : ''}
 						</span>
 						<button
 							type="button"
-							class="text-gray-500 hover:text-white disabled:opacity-30 px-1"
+							class="text-[#666] hover:text-white disabled:opacity-30 px-1"
 							aria-label="Move up"
 							disabled={idx === 0}
 							on:click={() => moveFallback(idx, -1)}
 						>↑</button>
 						<button
 							type="button"
-							class="text-gray-500 hover:text-white disabled:opacity-30 px-1"
+							class="text-[#666] hover:text-white disabled:opacity-30 px-1"
 							aria-label="Move down"
 							disabled={idx === fallbacks.length - 1}
 							on:click={() => moveFallback(idx, 1)}
@@ -147,11 +147,11 @@
 		{/if}
 
 		<div class="flex items-end gap-2">
-			<label class="flex-1 block text-[10px] text-gray-500 uppercase tracking-wider">
+			<label class="flex-1 block text-[10px] text-[#666] uppercase tracking-wider">
 				Add fallback
 				<select
 					bind:value={addDraft}
-					class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+					class="terminal-select mt-1 w-full text-sm font-mono"
 				>
 					<option value="">— pick a connected, enabled model —</option>
 					{#each selectable as opt (opt.key)}
@@ -163,7 +163,7 @@
 				type="button"
 				on:click={addFallback}
 				disabled={!addDraft}
-				class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-200 hover:text-white hover:border-gray-500 disabled:opacity-50"
+				class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
 			>
 				Add
 			</button>

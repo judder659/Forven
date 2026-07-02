@@ -674,10 +674,8 @@
 		max-height: 45%;
 		overflow: auto;
 		background: rgba(0, 0, 0, 0.82);
-		border: 1px solid #1f2937;
-		border-radius: 6px;
+		border: 1px solid #222;
 		padding: 8px;
-		backdrop-filter: blur(2px);
 		pointer-events: none;
 		z-index: 10;
 	}
@@ -687,12 +685,12 @@
 		align-items: baseline;
 		gap: 8px;
 		margin-bottom: 6px;
-		border-bottom: 1px solid #111827;
+		border-bottom: 1px solid #1a1a1a;
 		padding-bottom: 4px;
 	}
 
 	.strategy-overlay-title {
-		color: #f3f4f6;
+		color: #fff;
 		font-size: 11px;
 		font-weight: 700;
 		letter-spacing: 0.04em;
@@ -700,7 +698,7 @@
 	}
 
 	.strategy-overlay-meta {
-		color: #9ca3af;
+		color: #666;
 		font-size: 10px;
 		font-family: 'JetBrains Mono', monospace;
 	}
@@ -712,7 +710,7 @@
 	}
 
 	.strategy-overlay-key {
-		color: #9ca3af;
+		color: #666;
 		font-size: 10px;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
@@ -729,7 +727,7 @@
 	}
 
 	.strategy-overlay-empty {
-		color: #6b7280;
+		color: #666;
 		font-size: 10px;
 		font-style: italic;
 	}

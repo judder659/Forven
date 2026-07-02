@@ -38,13 +38,13 @@
 	function statusTone(s: string): string {
 		switch (s) {
 			case 'proven':
-				return 'text-emerald-200';
+				return 'text-emerald-400';
 			case 'disproven':
-				return 'text-slate-400 line-through';
+				return 'text-[#555] line-through';
 			case 'researching':
-				return 'text-sky-200';
+				return 'text-white';
 			default:
-				return 'text-amber-200';
+				return 'text-yellow-400';
 		}
 	}
 
@@ -66,13 +66,13 @@
 	function claimClasses(v: string): string {
 		switch (v) {
 			case 'confirmed':
-				return 'border-emerald-400/60 bg-emerald-500/15 text-emerald-200';
+				return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
 			case 'partially_confirmed':
-				return 'border-amber-400/60 bg-amber-500/15 text-amber-200';
+				return 'border-yellow-900 bg-yellow-500/10 text-yellow-400';
 			case 'disproven':
-				return 'border-rose-500/60 bg-rose-500/15 text-rose-200';
+				return 'border-red-900 bg-red-500/10 text-red-400';
 			default:
-				return 'border-slate-500/50 bg-slate-700/20 text-slate-300';
+				return 'border-[#333] text-[#888]';
 		}
 	}
 
@@ -90,13 +90,13 @@
 	}
 </script>
 
-<section class="rounded-lg border border-[#222] bg-[#0b0b0b] p-4" data-testid="verdict-memo-card">
+<section class="terminal-card p-4" data-testid="verdict-memo-card">
 	<div class="flex items-center justify-between gap-3">
-		<div class="text-xs uppercase tracking-[0.22em] text-slate-400">Current verdict</div>
+		<div class="text-[10px] uppercase tracking-widest text-[#666]">Current verdict</div>
 		{#if canReopen}
 			<button
 				type="button"
-				class="rounded border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-200 transition hover:bg-amber-500/20 disabled:opacity-50"
+				class="border border-yellow-900 bg-yellow-500/10 px-3 py-1 text-xs font-bold uppercase tracking-widest text-yellow-400 transition-colors hover:bg-yellow-500/20 disabled:opacity-50"
 				on:click={doReopen}
 				disabled={busy}
 				data-action="reopen-hypothesis"
@@ -110,52 +110,52 @@
 
 	{#if memo?.claim_verdict && memo.claim_verdict !== 'no_claim'}
 		<div class="mt-2">
-			<span class={`inline-flex items-center border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] ${claimClasses(memo.claim_verdict)}`} data-claim-verdict={memo.claim_verdict}>
+			<span class={`inline-flex items-center border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${claimClasses(memo.claim_verdict)}`} data-claim-verdict={memo.claim_verdict}>
 				{claimLabel(memo.claim_verdict)}
 			</span>
 			{#if memo.claim_assessment}
-				<p class="mt-1.5 text-xs text-slate-400">{memo.claim_assessment}</p>
+				<p class="mt-1.5 text-xs text-[#666]">{memo.claim_assessment}</p>
 			{/if}
 		</div>
 	{/if}
 
 	{#if memo?.rationale}
-		<p class="mt-2 text-sm text-slate-200">{memo.rationale}</p>
+		<p class="mt-2 text-sm text-[#888]">{memo.rationale}</p>
 	{:else if !memo}
-		<p class="mt-2 text-sm text-slate-500">No verdict memo has been written yet.</p>
+		<p class="mt-2 text-sm text-[#666]">No verdict memo has been written yet.</p>
 	{/if}
 
 	{#if memo?.evidence_summary}
-		<p class="mt-2 text-xs text-slate-400">{memo.evidence_summary}</p>
+		<p class="mt-2 text-xs text-[#666]">{memo.evidence_summary}</p>
 	{/if}
 
 	{#if signals && signals.rolling_window_size > 0}
-		<div class="mt-3 grid grid-cols-3 gap-2 text-center">
-			<div class="border border-[#222] bg-black/40 px-2 py-1.5">
-				<div class="text-[9px] uppercase tracking-[0.16em] text-slate-500">Hit rate</div>
-				<div class="mt-0.5 text-sm font-semibold text-slate-200">{Math.round(signals.hit_rate * 100)}%</div>
-				<div class="text-[9px] text-slate-600">need ≥ {Math.round(signals.hit_rate_threshold * 100)}%</div>
+		<div class="mt-3 grid grid-cols-3 gap-px bg-[#1a1a1a] text-center">
+			<div class="bg-[#050505] px-2 py-1.5">
+				<div class="text-[9px] uppercase tracking-wider text-[#666]">Hit rate</div>
+				<div class="mt-0.5 text-sm font-semibold text-[#888]">{Math.round(signals.hit_rate * 100)}%</div>
+				<div class="text-[9px] text-[#555]">need ≥ {Math.round(signals.hit_rate_threshold * 100)}%</div>
 			</div>
-			<div class="border border-[#222] bg-black/40 px-2 py-1.5">
-				<div class="text-[9px] uppercase tracking-[0.16em] text-slate-500">Diversity</div>
-				<div class="mt-0.5 text-sm font-semibold text-slate-200">{signals.diversity_cells}</div>
-				<div class="text-[9px] text-slate-600">need ≥ {signals.effective_min_diversity_cells ?? signals.min_diversity_cells} cells</div>
+			<div class="bg-[#050505] px-2 py-1.5">
+				<div class="text-[9px] uppercase tracking-wider text-[#666]">Diversity</div>
+				<div class="mt-0.5 text-sm font-semibold text-[#888]">{signals.diversity_cells}</div>
+				<div class="text-[9px] text-[#555]">need ≥ {signals.effective_min_diversity_cells ?? signals.min_diversity_cells} cells</div>
 			</div>
-			<div class="border border-[#222] bg-black/40 px-2 py-1.5">
-				<div class="text-[9px] uppercase tracking-[0.16em] text-slate-500">Window</div>
-				<div class="mt-0.5 text-sm font-semibold text-slate-200">{signals.rolling_window_size}/{signals.rolling_window_setting}</div>
-				<div class="text-[9px] text-slate-600">children</div>
+			<div class="bg-[#050505] px-2 py-1.5">
+				<div class="text-[9px] uppercase tracking-wider text-[#666]">Window</div>
+				<div class="mt-0.5 text-sm font-semibold text-[#888]">{signals.rolling_window_size}/{signals.rolling_window_setting}</div>
+				<div class="text-[9px] text-[#555]">children</div>
 			</div>
 		</div>
-		<div class="mt-1.5 text-[10px] text-slate-500">
-			Evidence floor: <span class="text-slate-300">{signals.mathematical_verdict}</span>
+		<div class="mt-1.5 text-[10px] text-[#666]">
+			Evidence floor: <span class="text-[#888]">{signals.mathematical_verdict}</span>
 		</div>
 	{/if}
 
 	{#if memo?.next_step_suggestions?.length}
 		<div class="mt-3">
-			<div class="text-[10px] uppercase tracking-[0.18em] text-slate-400">Next steps</div>
-			<ul class="mt-1 list-disc pl-5 text-sm text-slate-300">
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Next steps</div>
+			<ul class="mt-1 list-disc pl-5 text-sm text-[#888]">
 				{#each memo.next_step_suggestions as suggestion}
 					<li>{suggestion}</li>
 				{/each}
@@ -164,17 +164,17 @@
 	{/if}
 
 	{#if memo?.garbage_signal}
-		<div class="mt-3 inline-flex items-center rounded border border-rose-500/50 bg-rose-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-rose-200">
+		<div class="mt-3 inline-flex items-center border border-red-900 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-red-400">
 			Garbage signal
 		</div>
 	{/if}
 
 	{#if memoAt}
-		<div class="mt-3 text-[11px] text-slate-500">Written {formatStamp(memoAt)} by {memoBy ?? 'unknown'}</div>
+		<div class="mt-3 text-[11px] text-[#666]">Written {formatStamp(memoAt)} by {memoBy ?? 'unknown'}</div>
 	{/if}
 
 	{#if canReopen}
-		<label class="mt-3 block text-[10px] uppercase tracking-[0.18em] text-slate-500" for="reopen-rationale">
+		<label class="mt-3 block text-[10px] uppercase tracking-wider text-[#666]" for="reopen-rationale">
 			Optional rationale
 		</label>
 		<input
@@ -182,7 +182,7 @@
 			type="text"
 			bind:value={reopenRationale}
 			placeholder="Why reopen this crucible?"
-			class="mt-1 w-full rounded border border-[#222] bg-black/60 px-2 py-1 text-xs text-slate-100 outline-none placeholder:text-slate-600"
+			class="terminal-input mt-1 w-full text-xs"
 		/>
 	{/if}
 </section>

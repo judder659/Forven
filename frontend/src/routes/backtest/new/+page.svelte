@@ -302,58 +302,58 @@
 	<title>Manual Backtest | Forven</title>
 </svelte:head>
 
-<div class="min-h-screen bg-[#050505] px-4 py-8 md:px-8">
-	<div class="mx-auto max-w-4xl">
+<div class="mx-auto max-w-7xl px-4 py-6">
+	<div>
 		<!-- Header -->
-		<div class="rounded-2xl border border-[#1a1a1a] bg-gradient-to-b from-[#0d0d0d] to-[#080808] px-6 py-5">
-			<div class="flex flex-wrap items-center justify-between gap-4">
+		<div class="mb-4 border-b border-[#222] pb-4">
+			<div class="flex flex-wrap items-end justify-between gap-4">
 				<div>
-					<h1 class="text-xl font-semibold text-white">Manual Backtest</h1>
-					<p class="mt-1 text-sm text-gray-500">
+					<h1 class="text-lg font-bold uppercase tracking-widest text-white">Manual Backtest</h1>
+					<p class="mt-1 text-xs text-[#666]">
 						Pick a strategy, configure execution, preview signals, and run — results appear inline.
 					</p>
 				</div>
 				<a href="/strategy-creator"
-					class="inline-flex items-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-[12px] font-medium text-cyan-200 transition hover:bg-cyan-500/20">
-					✨ Build your own → Strategy Creator
+					class="terminal-button text-xs">
+					Build your own → Strategy Creator
 				</a>
 			</div>
 		</div>
 
 		<form id="bt-config" on:submit|preventDefault={handleSubmit} novalidate>
 			<!-- Strategy Selection -->
-			<div class="mt-6 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
+			<div class="terminal-card p-4">
 				<div class="flex items-center justify-between gap-3">
-					<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">
 						Strategy
-						<span class="ml-2 rounded bg-[#1a1a1a] px-1.5 py-0.5 text-[10px] tabular-nums text-gray-400">{strategies.length}</span>
+						<span class="ml-2 border border-[#333] px-1.5 py-0.5 text-[9px] tabular-nums text-[#888]">{strategies.length}</span>
 					</div>
 					<button
 						type="button"
 						on:click={toggleAppGenerated}
 						disabled={busy}
 						aria-pressed={includeAppGenerated}
-						class="inline-flex items-center gap-2 rounded border px-3 py-1 text-[11px] transition {includeAppGenerated
-							? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
-							: 'border-[#2b2b2b] bg-[#111] text-gray-500 hover:border-gray-600 hover:text-gray-300'}"
+						class="inline-flex items-center gap-2 border px-3 py-1 text-[10px] uppercase tracking-wide transition-colors {includeAppGenerated
+							? 'border-white bg-white text-black'
+							: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white'}"
 					>
-						<span class="inline-block h-2 w-2 rounded-full {includeAppGenerated ? 'bg-cyan-400' : 'bg-gray-600'}"></span>
+						<span class="inline-block h-1.5 w-1.5 rounded-full {includeAppGenerated ? 'bg-black' : 'bg-[#555]'}"></span>
 						Include app-generated strategies
 					</button>
 				</div>
 				<div class="mt-3">
 					{#if loadingStrategies}
-						<div class="text-sm text-gray-500" role="status" aria-live="polite">Loading strategies…</div>
+						<div class="text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading strategies…</div>
 					{:else if loadError}
 						<div class="flex flex-wrap items-center gap-3" role="alert">
 							<span class="text-sm text-red-400">{loadError}</span>
 							<button type="button" on:click={loadStrategies}
-								class="rounded border border-[#2b2b2b] bg-[#111] px-3 py-1 text-[11px] text-gray-300 transition hover:border-gray-600 hover:text-white">Retry</button>
+								class="terminal-button text-[10px]">Retry</button>
 						</div>
 					{:else}
 						<select
 							id="bt-strategy"
-							class="w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none transition focus:border-white/60"
+							class="terminal-select"
 							on:change={onStrategySelect}
 							disabled={busy}
 							value={selectedKey}
@@ -366,15 +366,15 @@
 							{/each}
 						</select>
 						{#if selectedStrategy?.description}
-							<div class="mt-2 text-xs text-gray-500">{selectedStrategy.description}</div>
+							<div class="mt-2 text-[11px] text-[#666]">{selectedStrategy.description}</div>
 						{/if}
 					{/if}
 				</div>
 			</div>
 
 			<!-- Market Scope -->
-			<div class="mt-6 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
-				<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Market Scope</div>
+			<div class="terminal-card mt-4 p-4">
+				<div class="text-[10px] uppercase tracking-wider text-[#666]">Market Scope</div>
 				<div class="mt-3 grid gap-4 md:grid-cols-2">
 					<SymbolInput id="bt-symbol" bind:value={symbol} disabled={busy} suggestions={symbolSuggestions} helpText="Backtested on the base asset (e.g. BTC)." />
 					<TimeframeSelect id="bt-timeframe" bind:value={timeframe} disabled={busy} />
@@ -386,8 +386,8 @@
 
 			<!-- Strategy Parameters -->
 			{#if selectedStrategy}
-				<div class="mt-6 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
-					<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Strategy Parameters</div>
+				<div class="terminal-card mt-4 p-4">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Strategy Parameters</div>
 					<div class="mt-3">
 						<ParameterEditor params={paramsDraft} saving={busy} on:paramsChange={onParamsChange} />
 					</div>
@@ -395,101 +395,101 @@
 			{/if}
 
 			<!-- Advanced Execution Config -->
-			<div class="mt-6 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
+			<div class="terminal-card mt-4 p-4">
 				<button type="button" class="flex w-full items-center justify-between text-left" on:click={() => (showAdvanced = !showAdvanced)} aria-expanded={showAdvanced}>
-					<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Execution Settings</div>
-					<span class="text-sm text-gray-500">{showAdvanced ? '−' : '+'}</span>
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution Settings</div>
+					<span class="text-sm text-[#555]">{showAdvanced ? '−' : '+'}</span>
 				</button>
 				{#if showAdvanced}
-					<div class="mt-4 text-[10px] uppercase tracking-[0.2em] text-gray-600">Capital &amp; Costs</div>
+					<div class="mt-4 border-t border-[#222] pt-4 text-[10px] uppercase tracking-wider text-[#555]">Capital &amp; Costs</div>
 					<div class="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Initial Capital</div>
-							<input type="number" bind:value={initialCapital} step="1000" min="100" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Fee (bps)</div>
-							<input type="number" bind:value={feeBps} step="1" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Slippage (bps)</div>
-							<input type="number" bind:value={slippageBps} step="1" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Leverage</div>
-							<input type="number" bind:value={leverage} step="0.5" min="1" max="125" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Trade Direction</div>
-							<select bind:value={tradeMode} disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60">
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Initial Capital</div>
+							<input type="number" bind:value={initialCapital} step="1000" min="100" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fee (bps)</div>
+							<input type="number" bind:value={feeBps} step="1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Slippage (bps)</div>
+							<input type="number" bind:value={slippageBps} step="1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Leverage</div>
+							<input type="number" bind:value={leverage} step="0.5" min="1" max="125" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trade Direction</div>
+							<select bind:value={tradeMode} disabled={busy} class="terminal-select mt-1.5">
 								<option value="long_only">Long only</option><option value="short_only">Short only</option><option value="both">Both (hedged)</option>
 							</select></label>
 					</div>
-					<div class="mt-5 text-[10px] uppercase tracking-[0.2em] text-gray-600">Position Sizing</div>
+					<div class="mt-5 text-[10px] uppercase tracking-wider text-[#555]">Position Sizing</div>
 					<div class="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Sizing Mode</div>
-							<select bind:value={sizingMode} disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60">
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Sizing Mode</div>
+							<select bind:value={sizingMode} disabled={busy} class="terminal-select mt-1.5">
 								<option value="full">Full equity (default)</option><option value="fraction">Fraction (risk-based)</option><option value="fixed">Fixed notional</option><option value="atr">ATR risk</option><option value="kelly">Kelly</option>
 							</select></label>
 						{#if sizingMode === 'fraction' || sizingMode === 'atr'}
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Risk Per Trade</div>
-								<input type="number" bind:value={riskPerTrade} step="0.005" min="0" max="1" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Risk Per Trade</div>
+								<input type="number" bind:value={riskPerTrade} step="0.005" min="0" max="1" disabled={busy} class="terminal-input mt-1.5" /></label>
 						{/if}
 						{#if sizingMode === 'fixed'}
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Fixed Size (quote)</div>
-								<input type="number" bind:value={fixedSize} step="100" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fixed Size (quote)</div>
+								<input type="number" bind:value={fixedSize} step="100" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
 						{/if}
 						{#if sizingMode === 'atr'}
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">ATR Stop Multiplier</div>
-								<input type="number" bind:value={atrStopMultiplier} step="0.1" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">ATR Stop Multiplier</div>
+								<input type="number" bind:value={atrStopMultiplier} step="0.1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
 						{/if}
 						{#if sizingMode === 'kelly'}
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Kelly Multiplier</div>
-								<input type="number" bind:value={kellyMultiplier} step="0.05" min="0" max="5" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Kelly Lookback (trades)</div>
-								<input type="number" bind:value={kellyLookback} step="10" min="1" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Kelly Multiplier</div>
+								<input type="number" bind:value={kellyMultiplier} step="0.05" min="0" max="5" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Kelly Lookback (trades)</div>
+								<input type="number" bind:value={kellyLookback} step="10" min="1" disabled={busy} class="terminal-input mt-1.5" /></label>
 						{/if}
 					</div>
-					<div class="mt-5 text-[10px] uppercase tracking-[0.2em] text-gray-600">Exits &amp; Stops</div>
+					<div class="mt-5 text-[10px] uppercase tracking-wider text-[#555]">Exits &amp; Stops</div>
 					<div class="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Stop Loss %</div>
-							<input type="number" value={stopLossPct ?? ''} on:input={(e) => (stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Take Profit %</div>
-							<input type="number" value={takeProfitPct ?? ''} on:input={(e) => (takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Trailing Stop %</div>
-							<input type="number" value={trailingStopPct ?? ''} on:input={(e) => (trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Time Stop (bars)</div>
-							<input type="number" value={timeStopBars ?? ''} on:input={(e) => (timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Stop Loss %</div>
+							<input type="number" value={stopLossPct ?? ''} on:input={(e) => (stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Take Profit %</div>
+							<input type="number" value={takeProfitPct ?? ''} on:input={(e) => (takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trailing Stop %</div>
+							<input type="number" value={trailingStopPct ?? ''} on:input={(e) => (trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Time Stop (bars)</div>
+							<input type="number" value={timeStopBars ?? ''} on:input={(e) => (timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
 					</div>
 				{/if}
 			</div>
 
 			<!-- Preview -->
-			<div class="mt-6 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
+			<div class="terminal-card mt-4 p-4">
 				<div class="flex items-center justify-between">
-					<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Signal Preview</div>
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Signal Preview</div>
 					<button type="button" on:click={handlePreview} disabled={busy || previewLoading || !selectedStrategy}
-						class="rounded border border-[#2b2b2b] bg-[#111] px-3 py-1 text-[11px] text-gray-300 transition hover:border-gray-600 hover:text-white disabled:opacity-40">
+						class="terminal-button text-[10px]">
 						{previewLoading ? 'Previewing…' : 'Preview signals'}
 					</button>
 				</div>
 				{#if previewError}
-					<div class="mt-3 rounded border border-red-900/40 bg-red-950/20 px-3 py-2 text-[11px] text-red-300" role="alert">{previewError}</div>
+					<div class="mt-3 border border-red-900 bg-red-500/5 px-3 py-2 text-[11px] text-red-400" role="alert">{previewError}</div>
 				{:else if preview}
 					<div class="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-						<div><span class="text-gray-500">Bars:</span> <span class="font-mono text-gray-300">{preview.total_bars.toLocaleString()}</span></div>
-						<div><span class="text-gray-500">Entries:</span> <span class="font-mono text-cyan-300">{preview.entry_count}</span></div>
-						<div><span class="text-gray-500">Exits:</span> <span class="font-mono text-gray-300">{preview.exit_count}</span></div>
-						<div><span class="text-gray-500">Density:</span>
-							<span class="font-mono {preview.signal_density === 'dense' ? 'text-emerald-300' : preview.signal_density === 'moderate' ? 'text-amber-300' : 'text-gray-400'}">{preview.signal_density}</span></div>
+						<div><span class="text-[#555]">Bars:</span> <span class="font-mono text-[#aaa]">{preview.total_bars.toLocaleString()}</span></div>
+						<div><span class="text-[#555]">Entries:</span> <span class="font-mono text-white">{preview.entry_count}</span></div>
+						<div><span class="text-[#555]">Exits:</span> <span class="font-mono text-[#aaa]">{preview.exit_count}</span></div>
+						<div><span class="text-[#555]">Density:</span>
+							<span class="font-mono {preview.signal_density === 'dense' ? 'text-emerald-400' : preview.signal_density === 'moderate' ? 'text-amber-400' : 'text-[#888]'}">{preview.signal_density}</span></div>
 					</div>
 					{#if preview.warnings.length}
 						<div class="mt-2 space-y-1">
-							{#each preview.warnings as w}<div class="rounded border border-amber-900/40 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">{w}</div>{/each}
+							{#each preview.warnings as w}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{w}</div>{/each}
 						</div>
 					{/if}
 				{:else}
-					<p class="mt-2 text-[11px] text-gray-600">Check signal density and data coverage for your config before committing to a full run.</p>
+					<p class="mt-2 text-[11px] text-[#555]">Check signal density and data coverage for your config before committing to a full run.</p>
 				{/if}
 			</div>
 
 			<!-- Submit -->
-			<div class="mt-6 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
-				{#if submitError}<div class="mb-4 rounded-xl border border-red-900/40 bg-red-950/20 px-4 py-3 text-sm text-red-300" role="alert">{submitError}</div>{/if}
+			<div class="terminal-card mt-4 p-4">
+				{#if submitError}<div class="mb-4 border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{submitError}</div>{/if}
 				<div class="flex flex-wrap items-center gap-3">
 					<button type="submit" disabled={busy || resultLoading || !selectedStrategy} aria-busy={busy}
-						class="inline-flex items-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-6 py-2.5 text-sm font-medium text-cyan-200 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-40">
+						class="terminal-button-primary text-xs disabled:cursor-not-allowed disabled:opacity-40">
 						{#if busy || resultLoading}Running backtest…{:else}Run Backtest{/if}
 					</button>
 				</div>
@@ -498,33 +498,33 @@
 
 		<!-- Inline results -->
 		{#if resultLoading || inlineResult || submitWarning}
-			<div id="bt-results" class="mt-8 scroll-mt-6">
+			<div id="bt-results" class="mt-6 scroll-mt-6">
 				{#if submitWarning}
-					<div class="mb-4 rounded-xl border border-amber-900/40 bg-amber-950/20 px-4 py-3 text-sm text-amber-300" role="alert">⚠ {submitWarning}</div>
+					<div class="mb-4 border border-amber-900 bg-amber-500/5 px-4 py-3 text-sm text-amber-400" role="alert">⚠ {submitWarning}</div>
 				{/if}
-				<div class="rounded-2xl border border-[#1a1a1a] bg-gradient-to-b from-[#0d0d0d] to-[#080808] px-6 py-5">
+				<div class="border-b border-[#222] pb-4">
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<div>
-							<h2 class="text-lg font-semibold text-white">Result</h2>
-							<p class="mt-0.5 text-xs text-gray-500">Out-of-sample performance for the run you just submitted.</p>
+							<h2 class="text-sm font-bold uppercase tracking-widest text-white">Result</h2>
+							<p class="mt-1 text-xs text-[#666]">Out-of-sample performance for the run you just submitted.</p>
 						</div>
 						<div class="flex items-center gap-2">
 							<button type="button" on:click={resetForNextRun}
-								class="rounded border border-[#2b2b2b] bg-[#111] px-3 py-1.5 text-[11px] text-gray-300 transition hover:border-gray-600 hover:text-white">Adjust &amp; re-run</button>
+								class="terminal-button text-[10px]">Adjust &amp; re-run</button>
 							<button type="button" on:click={openFullReport} disabled={!lastStrategyId}
-								class="rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-[11px] text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">Open full report →</button>
+								class="terminal-button-primary text-[10px] disabled:opacity-40">Open full report →</button>
 						</div>
 					</div>
 				</div>
 				<div class="mt-4">
 					{#if resultLoading}
-						<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-8 text-center text-sm text-gray-500" role="status" aria-live="polite">Loading result…</div>
+						<div class="terminal-card p-8 text-center text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading result…</div>
 					{:else if inlineResult}
 						<BacktestResultSummary result={inlineResult} />
 					{:else if lastResultId}
-						<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-6 text-sm text-gray-400">
+						<div class="terminal-card p-6 text-sm text-[#888]">
 							Result saved (<span class="font-mono">{lastResultId}</span>) but the summary could not be loaded here.
-							<button type="button" on:click={openFullReport} class="ml-1 text-cyan-300 underline">Open the full report</button>.
+							<button type="button" on:click={openFullReport} class="ml-1 text-white underline">Open the full report</button>.
 						</div>
 					{/if}
 				</div>

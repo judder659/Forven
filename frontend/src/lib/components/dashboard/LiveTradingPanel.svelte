@@ -214,7 +214,7 @@
 		if (source === 'exchange' || exchangeSource === 'exchange_sync') {
 			badges.push({
 				label: 'Exchange-backed',
-				className: 'border-cyan-700/60 bg-cyan-950/40 text-cyan-300',
+				className: 'border-[#555] bg-[#111] text-[#aaa]',
 			});
 		}
 		if (protectionStatus === 'missing') {
@@ -316,16 +316,16 @@
 </script>
 
 {#if loading && !dashboard}
-	<div class="border border-[#222] rounded bg-[#0a0a0a] p-3 text-gray-500 text-xs animate-pulse">
+	<div class="animate-pulse border border-[#222] bg-[#050505] p-3 text-xs text-gray-500">
 		Loading live trading data...
 	</div>
 {:else if dashboardError && !dashboard}
-	<div class="border border-red-800/50 rounded bg-red-950/20 p-3 text-red-300 text-xs">
+	<div class="border border-red-800/50 bg-red-950/20 p-3 text-xs text-red-300">
 		{dashboardError}
 	</div>
 {:else if dashboard}
 	<!-- KPI Strip -->
-	<div class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-[#222] bg-[#0a0a0a] px-3 py-1.5 font-mono text-xs" data-testid="live-stats-strip">
+	<div class="flex flex-wrap items-center gap-x-4 gap-y-1 border border-[#222] bg-[#050505] px-3 py-1.5 font-mono text-xs" data-testid="live-stats-strip">
 		<span><span class="mr-1 text-[10px] uppercase text-gray-500">Equity</span><span class="font-bold text-gray-200">${formatUsd(accountValue)}</span>{#if accountNetworkLabel}<span class="text-[10px] text-teal-400"> {accountNetworkLabel}</span>{/if}</span>
 		<span><span class="mr-1 text-[10px] uppercase text-gray-500">Avail</span><span class="text-gray-300">${formatUsd(availableToTrade)}</span></span>
 		<span><span class="mr-1 text-[10px] uppercase text-gray-500">Margin</span><span class="text-gray-300">${formatUsd(marginUsed)}</span></span>
@@ -333,7 +333,7 @@
 		<span><span class="mr-1 text-[10px] uppercase text-gray-500">Open</span><span class="text-gray-200">{openTrades.length}</span>{#if activeStratCount > 0}<span class="text-purple-400"> · {activeStratCount} strat</span>{/if}</span>
 		<span class="flex min-w-0 flex-wrap items-center gap-1">
 			{#each priceEntries as [coin, price]}
-				<span class="rounded border border-[#333] bg-[#111] px-1 text-[10px]"><span class="font-bold text-cyan-500">{coin}</span> <span class="text-gray-300">{formatPrice(price)}</span></span>
+				<span class="border border-[#333] bg-[#111] px-1 text-[10px]"><span class="font-bold text-white">{coin}</span> <span class="text-gray-300">{formatPrice(price)}</span></span>
 			{:else}
 				<span class="text-[10px] text-gray-500">Waiting…</span>
 			{/each}
@@ -343,7 +343,7 @@
 			<span class="flex min-w-0 flex-wrap items-center gap-1">
 				<span class="text-[10px] uppercase text-gray-500">Active</span>
 				{#each activeStratNames.slice(0, 6) as stratName}
-					<span class="inline-flex items-center gap-1 rounded border border-[#333] bg-[#111] px-1 text-[10px]">
+					<span class="inline-flex items-center gap-1 border border-[#333] bg-[#111] px-1 text-[10px]">
 						<span class="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-green-500"></span>
 						<span class="truncate text-gray-300">{stratName}</span>
 					</span>
@@ -356,7 +356,7 @@
 	</div>
 
 	{#if dashboard?.recovery?.active || dashboard?.recovery?.requires_operator}
-		<div class="rounded border border-amber-800/60 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-200">
+		<div class="border border-amber-800/60 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-200">
 			<div class="font-bold uppercase tracking-wider text-amber-300">Recovery Blocking Entries</div>
 			<div class="mt-1 text-amber-100/90">{dashboard?.recovery?.summary || 'Startup exchange recovery is active.'}</div>
 		</div>
@@ -364,10 +364,10 @@
 
 	<!-- Open Trades (always visible) -->
 	{#if openTrades.length > 0}
-		<div class="bg-[#0a0a0a] border border-[#222] rounded">
+		<div class="border border-[#222] bg-[#050505]">
 			<div class="px-3 py-2 border-b border-[#222] flex items-center gap-2">
 				<h3 class="font-bold text-[10px] text-gray-400 uppercase tracking-wider">Open Trades</h3>
-				<span class="bg-yellow-900 text-yellow-300 text-[9px] px-1.5 py-0.5 rounded-full border border-yellow-700">{openTrades.length}</span>
+				<span class="border border-yellow-700 bg-yellow-900 px-1.5 py-0.5 text-[9px] text-yellow-300">{openTrades.length}</span>
 			</div>
 			<div class="overflow-x-auto">
 				<table class="w-full text-left text-xs">
@@ -390,7 +390,7 @@
 							<tr class="hover:bg-[#111] transition-colors">
 								<td class="px-3 py-1.5 font-bold text-gray-200">{String(trade.asset ?? '--')}</td>
 								<td class="px-3 py-1.5">
-									<span class="text-[10px] px-1 py-0.5 rounded border uppercase font-bold tracking-wider
+									<span class="border px-1 py-0.5 text-[10px] font-bold uppercase tracking-wider
 										{direction === 'long' ? 'text-green-500 border-green-500/30' : 'text-red-500 border-red-500/30'}"
 									>
 										{direction}
@@ -401,7 +401,7 @@
 									{#if badges.length > 0}
 										<div class="mt-1 flex flex-wrap gap-1">
 											{#each badges as badge}
-												<span class={`rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${badge.className}`}>
+												<span class={`border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${badge.className}`}>
 													{badge.label}
 												</span>
 											{/each}
@@ -432,8 +432,8 @@
 				{#if dashboard}
 					{@const executionMode = String(dashboard.execution_mode ?? 'paper').toLowerCase()}
 					{@const tradingAllowed = Boolean(dashboard.trading_allowed)}
-					<span class="px-1.5 py-0.5 border border-[#333] rounded text-[10px] {executionMode === 'live' ? 'text-green-500' : 'text-yellow-500'}">{executionMode}</span>
-					<span class="px-1.5 py-0.5 border border-[#333] rounded text-[10px] {tradingAllowed ? 'text-green-500' : 'text-red-500'}">{tradingAllowed ? 'Trading' : 'Halted'}</span>
+					<span class="border border-[#333] px-1.5 py-0.5 text-[10px] {executionMode === 'live' ? 'text-green-500' : 'text-yellow-500'}">{executionMode}</span>
+					<span class="border border-[#333] px-1.5 py-0.5 text-[10px] {tradingAllowed ? 'text-green-500' : 'text-red-500'}">{tradingAllowed ? 'Trading' : 'Halted'}</span>
 				{/if}
 			</span>
 			<span>Live Trading Details</span>
@@ -447,7 +447,7 @@
 
 		<!-- Recent Executions -->
 		{#if recentTrades.length > 0}
-			<div class="bg-[#0a0a0a] border border-[#222] rounded">
+			<div class="border border-[#222] bg-[#050505]">
 				<div class="px-3 py-2 border-b border-[#222]">
 					<h3 class="font-bold text-[10px] text-gray-400 uppercase tracking-wider">Recent Executions</h3>
 				</div>
@@ -471,7 +471,7 @@
 								<tr class="hover:bg-[#111] transition-colors">
 									<td class="px-3 py-1.5 font-bold text-gray-200">{String(trade.asset ?? '--')}</td>
 									<td class="px-3 py-1.5">
-										<span class="text-[10px] px-1 py-0.5 rounded border uppercase font-bold tracking-wider
+										<span class="border px-1 py-0.5 text-[10px] font-bold uppercase tracking-wider
 											{direction === 'long' ? 'text-green-500 border-green-500/30' : 'text-red-500 border-red-500/30'}"
 										>
 											{direction}
@@ -483,7 +483,7 @@
 										{pnl != null ? `$${pnl.toFixed(2)}` : '--'}
 									</td>
 									<td class="px-3 py-1.5">
-										<span class="text-[10px] px-1 py-0.5 rounded border uppercase font-bold tracking-wider
+										<span class="border px-1 py-0.5 text-[10px] font-bold uppercase tracking-wider
 											{status === 'OPEN' ? 'text-yellow-500 border-yellow-500/30' : 'text-gray-500 border-gray-600'}"
 										>
 											{status}

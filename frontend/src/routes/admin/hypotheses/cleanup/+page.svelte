@@ -78,33 +78,33 @@
 	}
 
 	function toneClass(tone: LogTone): string {
-		if (tone === 'error') return 'text-rose-300';
-		if (tone === 'success') return 'text-emerald-300';
-		return 'text-slate-300';
+		if (tone === 'error') return 'text-red-400';
+		if (tone === 'success') return 'text-emerald-400';
+		return 'text-[#888]';
 	}
 </script>
 
-<section class="mx-auto max-w-4xl p-6">
-	<header class="mb-6">
-		<h1 class="text-2xl font-semibold text-slate-100">Crucible cleanup</h1>
-		<p class="mt-1 text-sm text-slate-400">
+<section class="mx-auto max-w-4xl px-4 py-6">
+	<header class="mb-4 border-b border-[#222] pb-4">
+		<h1 class="text-lg font-bold uppercase tracking-widest text-white">Crucible cleanup</h1>
+		<p class="mt-1 text-xs text-[#666]">
 			Run evidence-rule sweeps and LLM triage batches over hypotheses that still need verdict memos.
 		</p>
 	</header>
 
 	<div class="grid gap-4 md:grid-cols-2">
-		<div class="rounded-lg border border-slate-700/60 bg-slate-900/60 p-4">
-			<h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-300">Evidence rule</h2>
-			<p class="mt-1 text-xs text-slate-400">
+		<div class="terminal-card p-4">
+			<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Evidence rule</h2>
+			<p class="mt-1 text-xs text-[#666]">
 				Mark any hypothesis disproven whose best strategy has ≥ 3 fails and 0 passes.
 			</p>
-			<label class="mt-3 inline-flex items-center gap-2 text-xs text-slate-300">
-				<input type="checkbox" bind:checked={dryRun} class="rounded border-slate-600" />
+			<label class="mt-3 inline-flex items-center gap-2 text-xs text-[#888]">
+				<input type="checkbox" bind:checked={dryRun} class="border-[#333] accent-white" />
 				Dry run (preview only)
 			</label>
 			<button
 				type="button"
-				class="mt-3 w-full rounded border border-sky-500/50 bg-sky-500/10 px-3 py-2 text-sm font-semibold uppercase tracking-[0.18em] text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-50"
+				class="terminal-button-primary mt-3 w-full text-xs disabled:opacity-50"
 				on:click={doEvidenceCleanup}
 				disabled={evidenceBusy}
 			>
@@ -115,45 +115,45 @@
 				{@const count = evidenceWasDryRun
 					? (evidenceResult.would_disprove_count ?? ids.length)
 					: (evidenceResult.disproven_count ?? ids.length)}
-				<div class="mt-3 rounded border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-300">
-					<div class="font-semibold text-slate-200">
+				<div class="mt-3 border border-[#222] bg-black p-3 text-xs text-[#888]">
+					<div class="font-semibold text-[#888]">
 						{evidenceWasDryRun ? `Would disprove ${count}` : `Disproved ${count}`} hypotheses
 					</div>
 					{#if ids.length}
 						<ul class="mt-2 flex flex-wrap gap-x-3 gap-y-1">
 							{#each ids as id (id)}
 								<li>
-									<a href={`/hypotheses/${id}`} class="text-sky-300 underline-offset-2 hover:underline">
+									<a href={`/hypotheses/${id}`} class="text-white underline-offset-2 hover:underline">
 										{id}
 									</a>
 								</li>
 							{/each}
 						</ul>
 					{:else}
-						<p class="mt-1 text-slate-500">No matching hypotheses.</p>
+						<p class="mt-1 text-[#666]">No matching hypotheses.</p>
 					{/if}
 				</div>
 			{/if}
 		</div>
 
-		<div class="rounded-lg border border-slate-700/60 bg-slate-900/60 p-4">
-			<h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-300">LLM triage</h2>
-			<p class="mt-1 text-xs text-slate-400">
+		<div class="terminal-card p-4">
+			<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">LLM triage</h2>
+			<p class="mt-1 text-xs text-[#666]">
 				Write a verdict memo for each hypothesis still missing one.
 			</p>
-			<label class="mt-3 flex items-center gap-2 text-xs text-slate-300">
+			<label class="mt-3 flex items-center gap-2 text-xs text-[#888]">
 				Batch size
 				<input
 					type="number"
 					bind:value={triageBatchSize}
 					min="1"
 					max="50"
-					class="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+					class="terminal-input w-20 text-xs"
 				/>
 			</label>
 			<button
 				type="button"
-				class="mt-3 w-full rounded border border-violet-500/50 bg-violet-500/10 px-3 py-2 text-sm font-semibold uppercase tracking-[0.18em] text-violet-200 transition hover:bg-violet-500/20 disabled:opacity-50"
+				class="terminal-button-primary mt-3 w-full text-xs disabled:opacity-50"
 				on:click={doTriage}
 				disabled={triageBusy}
 			>
@@ -161,37 +161,37 @@
 			</button>
 			{#if triageResult}
 				{@const processedIds = triageResult.processed_ids ?? []}
-				<div class="mt-3 rounded border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-300">
-					<div class="font-semibold text-slate-200">
+				<div class="mt-3 border border-[#222] bg-black p-3 text-xs text-[#888]">
+					<div class="font-semibold text-[#888]">
 						Wrote {triageResult.processed_count} memos · {triageResult.errors?.length ?? 0} errors
 					</div>
 					{#if processedIds.length}
 						<ul class="mt-2 flex flex-wrap gap-x-3 gap-y-1">
 							{#each processedIds as id (id)}
 								<li>
-									<a href={`/hypotheses/${id}`} class="text-violet-300 underline-offset-2 hover:underline">
+									<a href={`/hypotheses/${id}`} class="text-white underline-offset-2 hover:underline">
 										{id}
 									</a>
 								</li>
 							{/each}
 						</ul>
 					{:else}
-						<p class="mt-1 text-slate-500">No hypotheses processed.</p>
+						<p class="mt-1 text-[#666]">No hypotheses processed.</p>
 					{/if}
 				</div>
 			{/if}
 		</div>
 	</div>
 
-	<div class="mt-6 rounded-lg border border-slate-700/60 bg-slate-900/60 p-4">
-		<h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-300">Activity log</h2>
+	<div class="terminal-card mt-6 p-4">
+		<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Activity log</h2>
 		{#if logs.length === 0}
-			<p class="mt-2 text-xs text-slate-500">No actions yet.</p>
+			<p class="mt-2 text-xs text-[#666]">No actions yet.</p>
 		{:else}
 			<ul class="mt-2 space-y-1 font-mono text-xs">
 				{#each logs as entry (entry.id)}
 					<li class={toneClass(entry.tone)}>
-						<span class="text-slate-600">[{entry.timestamp}]</span>
+						<span class="text-[#555]">[{entry.timestamp}]</span>
 						{entry.message}
 					</li>
 				{/each}

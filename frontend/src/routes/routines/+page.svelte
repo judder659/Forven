@@ -75,12 +75,12 @@
 			case 'dispatched':
 			case 'ok':
 			case 'completed':
-				return 'text-emerald-300 border-emerald-700 bg-emerald-900/20';
+				return 'text-emerald-400 border-emerald-900 bg-emerald-500/10';
 			case 'error':
 			case 'failed':
-				return 'text-red-300 border-red-700 bg-red-900/20';
+				return 'text-red-400 border-red-900 bg-red-500/10';
 			default:
-				return 'text-gray-400 border-[#333] bg-[#111]';
+				return 'text-[#888] border-[#333] bg-[#111]';
 		}
 	}
 
@@ -256,106 +256,106 @@
 <div class="space-y-6 p-6">
 	<header class="flex items-center justify-between">
 		<div>
-			<div class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Brain</div>
-			<h1 class="text-2xl font-semibold text-gray-100">Routines</h1>
-			<p class="mt-1 text-xs text-gray-500 max-w-2xl">
+			<div class="text-[11px] uppercase tracking-[0.18em] text-[#666]">Brain</div>
+			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Routines</h1>
+			<p class="mt-1 text-xs text-[#666] max-w-2xl">
 				Scheduled instructions the Brain runs autonomously — optionally posting the result to a
 				Discord channel. Operator-authored routines are live immediately; Brain-proposed routines
 				must be approved on the <a href="/approval" class="underline">/approval</a> page first.
 			</p>
 		</div>
-		<button type="button" class="text-xs border border-[#333] px-3 py-1.5 rounded text-gray-300" on:click={() => void load()}>Reload</button>
+		<button type="button" class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors" on:click={() => void load()}>Reload</button>
 	</header>
 
-	{#if actionMessage}<div class="bg-emerald-900/20 border border-emerald-800 text-emerald-300 text-xs px-3 py-2 rounded">{actionMessage}</div>{/if}
-	{#if error}<div class="bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded">{error}</div>{/if}
+	{#if actionMessage}<div class="border border-emerald-900 bg-emerald-500/5 text-emerald-400 text-xs px-3 py-2">{actionMessage}</div>{/if}
+	{#if error}<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{error}</div>{/if}
 
-	<section class="border border-[#222] bg-[#0a0a0a] rounded p-4 space-y-3">
-		<h2 class="text-sm uppercase tracking-wider text-gray-400">Create routine</h2>
+	<section class="border border-[#222] bg-[#050505] p-4 space-y-3">
+		<h2 class="text-sm uppercase tracking-wider text-[#888]">Create routine</h2>
 		<div class="grid sm:grid-cols-2 gap-3">
-			<label class="text-xs"><span class="text-gray-500 uppercase tracking-wider">Name</span>
-				<input type="text" bind:value={createForm.name} placeholder="hourly-status-report" class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+			<label class="text-xs"><span class="text-[#666] uppercase tracking-wider">Name</span>
+				<input type="text" bind:value={createForm.name} placeholder="hourly-status-report" class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white" />
 			</label>
 			<div class="text-xs">
 				<div class="flex items-center justify-between gap-2">
-					<span class="text-gray-500 uppercase tracking-wider">Schedule</span>
-					<button type="button" class="text-[10px] px-2 py-0.5 rounded border {createAdvanced ? 'bg-[#1a1a1a] text-gray-100 border-[#444]' : 'text-gray-500 border-[#222] hover:text-gray-300'}" on:click={() => (createAdvanced = !createAdvanced)}>Advanced</button>
+					<span class="text-[#666] uppercase tracking-wider">Schedule</span>
+					<button type="button" class="text-[10px] px-2 py-0.5 border {createAdvanced ? 'bg-[#1a1a1a] text-white border-[#555]' : 'text-[#666] border-[#333] hover:text-[#888]'}" on:click={() => (createAdvanced = !createAdvanced)}>Advanced</button>
 				</div>
 				{#if createAdvanced}
-					<input type="text" bind:value={createForm.cron_expr} placeholder="0 14 * * 1" class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200 font-mono" />
-					<div class="mt-1 text-[11px] text-gray-500">Raw 5-field cron, UTC.</div>
+					<input type="text" bind:value={createForm.cron_expr} placeholder="0 14 * * 1" class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white font-mono" />
+					<div class="mt-1 text-[11px] text-[#666]">Raw 5-field cron, UTC.</div>
 				{:else}
 					<div class="mt-1 flex flex-wrap items-center gap-2">
-						<select bind:value={createSched.freq} class="bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+						<select bind:value={createSched.freq} class="bg-black border border-[#333] px-2 py-1.5 text-white">
 							{#each FREQ_OPTIONS as opt}<option value={opt.value}>{opt.label}</option>{/each}
 						</select>
 						{#if createSched.freq === 'minutes' || createSched.freq === 'hours'}
-							<span class="text-gray-400">every</span>
-							<input type="number" min="1" max={createSched.freq === 'minutes' ? 59 : 23} step="1" bind:value={createSched.every} class="w-16 bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
-							<span class="text-gray-400">{createSched.freq}</span>
+							<span class="text-[#888]">every</span>
+							<input type="number" min="1" max={createSched.freq === 'minutes' ? 59 : 23} step="1" bind:value={createSched.every} class="w-16 bg-black border border-[#333] px-2 py-1.5 text-white" />
+							<span class="text-[#888]">{createSched.freq}</span>
 						{:else}
 							{#if createSched.freq === 'weekly'}
-								<span class="text-gray-400">on</span>
-								<select bind:value={createSched.weekday} class="bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+								<span class="text-[#888]">on</span>
+								<select bind:value={createSched.weekday} class="bg-black border border-[#333] px-2 py-1.5 text-white">
 									{#each WEEKDAY_NAMES as day, i}<option value={i}>{day}</option>{/each}
 								</select>
 							{:else if createSched.freq === 'monthly'}
-								<span class="text-gray-400">on day</span>
-								<input type="number" min="1" max="31" step="1" bind:value={createSched.dom} class="w-16 bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+								<span class="text-[#888]">on day</span>
+								<input type="number" min="1" max="31" step="1" bind:value={createSched.dom} class="w-16 bg-black border border-[#333] px-2 py-1.5 text-white" />
 							{/if}
-							<span class="text-gray-400">at</span>
-							<input type="time" bind:value={createSched.time} class="bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+							<span class="text-[#888]">at</span>
+							<input type="time" bind:value={createSched.time} class="bg-black border border-[#333] px-2 py-1.5 text-white" />
 						{/if}
 					</div>
-					<div class="mt-1 text-[11px] text-gray-400">{describeFriendly(createSched)} (your local time)</div>
+					<div class="mt-1 text-[11px] text-[#888]">{describeFriendly(createSched)} (your local time)</div>
 				{/if}
 			</div>
 		</div>
-		<label class="text-xs block"><span class="text-gray-500 uppercase tracking-wider">Prompt</span>
-			<textarea rows="3" bind:value={createForm.prompt} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200" placeholder="What should the Brain do when this fires?"></textarea>
+		<label class="text-xs block"><span class="text-[#666] uppercase tracking-wider">Prompt</span>
+			<textarea rows="3" bind:value={createForm.prompt} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white" placeholder="What should the Brain do when this fires?"></textarea>
 		</label>
 		<div class="grid sm:grid-cols-3 gap-3">
-			<label class="text-xs"><span class="text-gray-500 uppercase tracking-wider">Post result to Discord</span>
+			<label class="text-xs"><span class="text-[#666] uppercase tracking-wider">Post result to Discord</span>
 				{#if channels.length > 0}
-					<select bind:value={createForm.channel} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+					<select bind:value={createForm.channel} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white">
 						<option value="">— don't post —</option>
 						{#each channels as ch}<option value={ch.id}>{ch.label}</option>{/each}
 					</select>
 				{:else}
-					<input type="text" bind:value={createForm.channel} placeholder="channel alias or id (optional)" class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+					<input type="text" bind:value={createForm.channel} placeholder="channel alias or id (optional)" class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white" />
 				{/if}
 			</label>
-			<label class="text-xs"><span class="text-gray-500 uppercase tracking-wider">Tools context</span>
-				<select bind:value={createForm.tools_context} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+			<label class="text-xs"><span class="text-[#666] uppercase tracking-wider">Tools context</span>
+				<select bind:value={createForm.tools_context} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white">
 					{#each VALID_CONTEXTS as ctx}<option value={ctx}>{ctx}</option>{/each}
 				</select>
 			</label>
 			<label class="text-xs flex items-center gap-2 mt-5">
 				<input type="checkbox" bind:checked={createForm.enabled} />
-				<span class="text-gray-300 uppercase tracking-wider">Enabled</span>
+				<span class="text-[#888] uppercase tracking-wider">Enabled</span>
 			</label>
 		</div>
-		<div class="text-[11px] text-gray-500">
+		<div class="text-[11px] text-[#666]">
 			Next 5 fire times (local):
 			{#if cronPreviewError}<span class="text-red-400 ml-2">{cronPreviewError}</span>
 			{:else if cronPreview.length === 0}<span class="ml-2">--</span>
 			{:else}
 				<ul class="ml-2 inline-flex flex-wrap gap-2">
-					{#each cronPreview as t}<li class="border border-[#222] bg-black px-2 py-0.5 rounded font-mono">{fmtDate(t)}</li>{/each}
+					{#each cronPreview as t}<li class="border border-[#222] bg-black px-2 py-0.5 font-mono">{fmtDate(t)}</li>{/each}
 				</ul>
 			{/if}
 		</div>
 		<div>
-			<button type="button" disabled={creating || !createForm.name.trim() || !createForm.prompt.trim() || !createForm.cron_expr.trim()} class="border border-emerald-700 bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-300 px-4 py-2 rounded text-xs disabled:opacity-40" on:click={() => void handleCreate()}>{creating ? 'Creating...' : 'Create routine'}</button>
+			<button type="button" disabled={creating || !createForm.name.trim() || !createForm.prompt.trim() || !createForm.cron_expr.trim()} class="border border-emerald-900 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-4 py-2 text-xs uppercase tracking-wide font-bold disabled:opacity-40" on:click={() => void handleCreate()}>{creating ? 'Creating...' : 'Create routine'}</button>
 		</div>
 	</section>
 
-	<section class="border border-[#222] bg-[#0a0a0a] rounded">
-		<header class="px-4 py-3 border-b border-[#222]"><h2 class="text-sm uppercase tracking-wider text-gray-400">Active routines</h2></header>
+	<section class="border border-[#222] bg-[#050505]">
+		<header class="px-4 py-3 border-b border-[#222]"><h2 class="text-sm uppercase tracking-wider text-[#888]">Active routines</h2></header>
 		{#if loading}
-			<div class="px-4 py-6 text-xs text-gray-500">Loading...</div>
+			<div class="px-4 py-6 text-xs text-[#666]">Loading...</div>
 		{:else if routines.length === 0}
-			<div class="px-4 py-6 text-xs text-gray-500">No routines yet.</div>
+			<div class="px-4 py-6 text-xs text-[#666]">No routines yet.</div>
 		{:else}
 			<ul class="divide-y divide-[#1a1a1a]">
 				{#each routines as routine (routine.id)}
@@ -363,87 +363,87 @@
 						<div class="flex items-start justify-between gap-3">
 							<div>
 								<div class="flex items-center gap-2">
-									<div class="text-sm font-semibold text-gray-100">{routine.name}</div>
+									<div class="text-sm font-semibold text-white">{routine.name}</div>
 									{#if routine.approval_id !== null}
-										<span class="border border-[#333] bg-[#111] text-gray-400 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider">brain · approval #{routine.approval_id}</span>
+										<span class="border border-[#333] bg-[#111] text-[#888] px-1.5 py-0.5 text-[10px] uppercase tracking-wider">brain · approval #{routine.approval_id}</span>
 									{:else}
-										<span class="border border-[#333] bg-[#111] text-gray-400 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider">{routine.created_by ? `operator · ${routine.created_by}` : 'operator'}</span>
+										<span class="border border-[#333] bg-[#111] text-[#888] px-1.5 py-0.5 text-[10px] uppercase tracking-wider">{routine.created_by ? `operator · ${routine.created_by}` : 'operator'}</span>
 									{/if}
 									{#if routine.channel}
-										<span class="border border-sky-900 bg-sky-900/20 text-sky-300 rounded px-1.5 py-0.5 text-[10px]" title="Result is posted to this Discord channel">→ {channelLabel(routine.channel)}</span>
+										<span class="border border-[#333] bg-[#111] text-[#888] px-1.5 py-0.5 text-[10px]" title="Result is posted to this Discord channel">→ {channelLabel(routine.channel)}</span>
 									{/if}
 								</div>
-								<div class="text-[11px] text-gray-500 mt-0.5" title={routine.cron_expr}>{scheduleLabel(routine)} · {routine.tools_context}</div>
+								<div class="text-[11px] text-[#666] mt-0.5" title={routine.cron_expr}>{scheduleLabel(routine)} · {routine.tools_context}</div>
 							</div>
 							<div class="flex items-center gap-2 text-[11px]">
-								<span class="border rounded px-2 py-0.5 uppercase tracking-wider {routine.enabled ? 'border-emerald-700 bg-emerald-900/20 text-emerald-300' : 'border-[#333] bg-[#111] text-gray-400'}">
+								<span class="border px-2 py-0.5 uppercase tracking-wider {routine.enabled ? 'border-emerald-900 bg-emerald-500/10 text-emerald-400' : 'border-[#333] bg-[#111] text-[#888]'}">
 									{routine.enabled ? 'enabled' : 'paused'}
 								</span>
 								{#if routine.last_status}
-									<span class="border rounded px-2 py-0.5 uppercase tracking-wider {statusClass(routine.last_status)}">{routine.last_status}</span>
+									<span class="border px-2 py-0.5 uppercase tracking-wider {statusClass(routine.last_status)}">{routine.last_status}</span>
 								{/if}
-								<span class="text-gray-500">last: {fmtDate(routine.last_run_at)}</span>
+								<span class="text-[#666]">last: {fmtDate(routine.last_run_at)}</span>
 							</div>
 						</div>
 						{#if routine.last_error && ['error', 'failed'].includes((routine.last_status || '').toLowerCase())}
-							<div class="text-[11px] text-red-400 border border-red-900/40 bg-red-900/10 rounded px-2 py-1 whitespace-pre-wrap break-words" title={routine.last_error}>{routine.last_error}</div>
+							<div class="text-[11px] text-red-400 border border-red-900 bg-red-500/5 px-2 py-1 whitespace-pre-wrap break-words" title={routine.last_error}>{routine.last_error}</div>
 						{/if}
-						<div class="text-xs text-gray-300 whitespace-pre-wrap line-clamp-3">{routine.prompt}</div>
+						<div class="text-xs text-[#888] whitespace-pre-wrap line-clamp-3">{routine.prompt}</div>
 						<div class="flex flex-wrap gap-2 text-xs pt-1">
-							<button type="button" disabled={busyId === routine.id || !routine.enabled} title={routine.enabled ? 'Dispatch this routine now' : 'Resume the routine before running it'} class="border border-sky-700 bg-sky-900/20 text-sky-300 hover:bg-sky-900/40 px-3 py-1 rounded disabled:opacity-40" on:click={() => void handleRun(routine)}>Run now</button>
-							<button type="button" disabled={busyId === routine.id} class="border border-[#333] text-gray-300 hover:text-gray-100 px-3 py-1 rounded disabled:opacity-40" on:click={() => void startEdit(routine)}>Edit</button>
-							<button type="button" disabled={busyId === routine.id} class="border border-[#333] text-gray-300 hover:text-amber-300 px-3 py-1 rounded disabled:opacity-40" on:click={() => void togglePause(routine)}>{routine.enabled ? 'Pause' : 'Resume'}</button>
-							<button type="button" disabled={busyId === routine.id} class="border border-[#333] text-gray-300 hover:text-red-300 px-3 py-1 rounded disabled:opacity-40" on:click={() => void handleDelete(routine)}>Delete</button>
+							<button type="button" disabled={busyId === routine.id || !routine.enabled} title={routine.enabled ? 'Dispatch this routine now' : 'Resume the routine before running it'} class="border border-[#333] text-[#888] hover:text-white hover:border-[#555] px-3 py-1 disabled:opacity-40" on:click={() => void handleRun(routine)}>Run now</button>
+							<button type="button" disabled={busyId === routine.id} class="border border-[#333] text-[#888] hover:text-white px-3 py-1 disabled:opacity-40" on:click={() => void startEdit(routine)}>Edit</button>
+							<button type="button" disabled={busyId === routine.id} class="border border-[#333] text-[#888] hover:text-yellow-400 px-3 py-1 disabled:opacity-40" on:click={() => void togglePause(routine)}>{routine.enabled ? 'Pause' : 'Resume'}</button>
+							<button type="button" disabled={busyId === routine.id} class="border border-[#333] text-[#888] hover:text-red-400 px-3 py-1 disabled:opacity-40" on:click={() => void handleDelete(routine)}>Delete</button>
 						</div>
 
 						{#if editingId === routine.id}
-							<div class="border border-[#333] bg-[#0d0d0d] rounded p-3 space-y-2 mt-2">
+							<div class="border border-[#222] bg-[#050505] p-3 space-y-2 mt-2">
 								<div class="grid sm:grid-cols-2 gap-3">
-									<label class="text-xs"><span class="text-gray-500 uppercase tracking-wider">Name</span>
-										<input type="text" bind:value={editDraft.name} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+									<label class="text-xs"><span class="text-[#666] uppercase tracking-wider">Name</span>
+										<input type="text" bind:value={editDraft.name} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white" />
 									</label>
 									<div class="text-xs">
 										<div class="flex items-center justify-between gap-2">
-											<span class="text-gray-500 uppercase tracking-wider">Schedule</span>
-											<button type="button" class="text-[10px] px-2 py-0.5 rounded border {editAdvanced ? 'bg-[#1a1a1a] text-gray-100 border-[#444]' : 'text-gray-500 border-[#222] hover:text-gray-300'}" on:click={() => (editAdvanced = !editAdvanced)}>Advanced</button>
+											<span class="text-[#666] uppercase tracking-wider">Schedule</span>
+											<button type="button" class="text-[10px] px-2 py-0.5 border {editAdvanced ? 'bg-[#1a1a1a] text-white border-[#555]' : 'text-[#666] border-[#333] hover:text-[#888]'}" on:click={() => (editAdvanced = !editAdvanced)}>Advanced</button>
 										</div>
 										{#if editAdvanced}
-											<input type="text" bind:value={editDraft.cron_expr} placeholder="0 14 * * 1" class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200 font-mono" />
-											<div class="mt-1 text-[11px] text-gray-500">Raw 5-field cron, UTC.</div>
+											<input type="text" bind:value={editDraft.cron_expr} placeholder="0 14 * * 1" class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white font-mono" />
+											<div class="mt-1 text-[11px] text-[#666]">Raw 5-field cron, UTC.</div>
 										{:else}
 											<div class="mt-1 flex flex-wrap items-center gap-2">
-												<select bind:value={editSched.freq} class="bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+												<select bind:value={editSched.freq} class="bg-black border border-[#333] px-2 py-1.5 text-white">
 													{#each FREQ_OPTIONS as opt}<option value={opt.value}>{opt.label}</option>{/each}
 												</select>
 												{#if editSched.freq === 'minutes' || editSched.freq === 'hours'}
-													<span class="text-gray-400">every</span>
-													<input type="number" min="1" max={editSched.freq === 'minutes' ? 59 : 23} step="1" bind:value={editSched.every} class="w-16 bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
-													<span class="text-gray-400">{editSched.freq}</span>
+													<span class="text-[#888]">every</span>
+													<input type="number" min="1" max={editSched.freq === 'minutes' ? 59 : 23} step="1" bind:value={editSched.every} class="w-16 bg-black border border-[#333] px-2 py-1.5 text-white" />
+													<span class="text-[#888]">{editSched.freq}</span>
 												{:else}
 													{#if editSched.freq === 'weekly'}
-														<span class="text-gray-400">on</span>
-														<select bind:value={editSched.weekday} class="bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+														<span class="text-[#888]">on</span>
+														<select bind:value={editSched.weekday} class="bg-black border border-[#333] px-2 py-1.5 text-white">
 															{#each WEEKDAY_NAMES as day, i}<option value={i}>{day}</option>{/each}
 														</select>
 													{:else if editSched.freq === 'monthly'}
-														<span class="text-gray-400">on day</span>
-														<input type="number" min="1" max="31" step="1" bind:value={editSched.dom} class="w-16 bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+														<span class="text-[#888]">on day</span>
+														<input type="number" min="1" max="31" step="1" bind:value={editSched.dom} class="w-16 bg-black border border-[#333] px-2 py-1.5 text-white" />
 													{/if}
-													<span class="text-gray-400">at</span>
-													<input type="time" bind:value={editSched.time} class="bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+													<span class="text-[#888]">at</span>
+													<input type="time" bind:value={editSched.time} class="bg-black border border-[#333] px-2 py-1.5 text-white" />
 												{/if}
 											</div>
-											<div class="mt-1 text-[11px] text-gray-400">{describeFriendly(editSched)} (your local time)</div>
+											<div class="mt-1 text-[11px] text-[#888]">{describeFriendly(editSched)} (your local time)</div>
 										{/if}
 									</div>
 								</div>
-								<label class="text-xs block"><span class="text-gray-500 uppercase tracking-wider">Prompt</span>
-									<textarea rows="3" bind:value={editDraft.prompt} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200"></textarea>
+								<label class="text-xs block"><span class="text-[#666] uppercase tracking-wider">Prompt</span>
+									<textarea rows="3" bind:value={editDraft.prompt} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white"></textarea>
 								</label>
 								<div class="grid sm:grid-cols-3 gap-3">
-									<label class="text-xs"><span class="text-gray-500 uppercase tracking-wider">Post result to Discord</span>
+									<label class="text-xs"><span class="text-[#666] uppercase tracking-wider">Post result to Discord</span>
 										{#if channels.length > 0}
-											<select bind:value={editDraft.channel} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+											<select bind:value={editDraft.channel} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white">
 												<option value="">— don't post —</option>
 												{#if editDraft.channel && !channels.some((c) => c.id === editDraft.channel)}
 													<option value={editDraft.channel}>{channelLabel(editDraft.channel)}</option>
@@ -451,23 +451,23 @@
 												{#each channels as ch}<option value={ch.id}>{ch.label}</option>{/each}
 											</select>
 										{:else}
-											<input type="text" bind:value={editDraft.channel} placeholder="channel alias or id (optional)" class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200" />
+											<input type="text" bind:value={editDraft.channel} placeholder="channel alias or id (optional)" class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white" />
 										{/if}
 									</label>
-									<label class="text-xs"><span class="text-gray-500 uppercase tracking-wider">Context</span>
-										<select bind:value={editDraft.tools_context} class="mt-1 w-full bg-black border border-[#222] px-2 py-1.5 text-gray-200">
+									<label class="text-xs"><span class="text-[#666] uppercase tracking-wider">Context</span>
+										<select bind:value={editDraft.tools_context} class="mt-1 w-full bg-black border border-[#333] px-2 py-1.5 text-white">
 											{#each VALID_CONTEXTS as ctx}<option value={ctx}>{ctx}</option>{/each}
 										</select>
 									</label>
-									<label class="text-xs flex items-center gap-2 mt-5"><input type="checkbox" bind:checked={editDraft.enabled} /><span class="text-gray-300 uppercase tracking-wider">Enabled</span></label>
+									<label class="text-xs flex items-center gap-2 mt-5"><input type="checkbox" bind:checked={editDraft.enabled} /><span class="text-[#888] uppercase tracking-wider">Enabled</span></label>
 								</div>
 								{#if editPreview.length > 0}
-									<div class="text-[11px] text-gray-500">Upcoming fires (local): {editPreview.slice(0, 3).map((t) => fmtDate(t)).join(' · ')}</div>
+									<div class="text-[11px] text-[#666]">Upcoming fires (local): {editPreview.slice(0, 3).map((t) => fmtDate(t)).join(' · ')}</div>
 								{/if}
 								{#if editError}<div class="text-[11px] text-red-400">{editError}</div>{/if}
 								<div class="flex gap-2">
-									<button type="button" disabled={busyId === routine.id} class="border border-emerald-700 bg-emerald-900/20 text-emerald-300 px-3 py-1 rounded text-xs disabled:opacity-40" on:click={() => void saveEdit()}>{busyId === routine.id ? 'Saving...' : 'Save'}</button>
-									<button type="button" class="border border-[#333] text-gray-300 px-3 py-1 rounded text-xs" on:click={() => (editingId = null)}>Cancel</button>
+									<button type="button" disabled={busyId === routine.id} class="border border-emerald-900 bg-emerald-500/10 text-emerald-400 px-3 py-1 text-xs disabled:opacity-40" on:click={() => void saveEdit()}>{busyId === routine.id ? 'Saving...' : 'Save'}</button>
+									<button type="button" class="border border-[#333] text-[#888] hover:text-white px-3 py-1 text-xs" on:click={() => (editingId = null)}>Cancel</button>
 								</div>
 							</div>
 						{/if}

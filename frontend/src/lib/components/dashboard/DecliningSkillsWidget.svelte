@@ -123,8 +123,7 @@
 		gap: 0.5rem;
 		padding: 0.75rem;
 		border: 1px solid #222;
-		background: #0a0a0a;
-		border-radius: 0.375rem;
+		background: #050505;
 		height: 100%;
 		min-height: 0;
 	}
@@ -146,7 +145,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #aaa;
+		color: #888;
 		font-weight: 600;
 	}
 
@@ -159,18 +158,17 @@
 		font-size: 0.625rem;
 		font-weight: 700;
 		padding: 0.2rem 0.5rem;
-		border-radius: 999px;
-		border: 1px solid rgba(248, 113, 113, 0.4);
-		background: rgba(248, 113, 113, 0.1);
-		color: #fca5a5;
+		border: 1px solid #7f1d1d;
+		background: rgba(239, 68, 68, 0.1);
+		color: #f87171;
 		min-width: 1.75rem;
 		text-align: center;
 	}
 
 	.count-pill--clean {
-		border-color: rgba(74, 222, 128, 0.4);
-		background: rgba(74, 222, 128, 0.08);
-		color: #86efac;
+		border-color: #064e3b;
+		background: rgba(52, 211, 153, 0.08);
+		color: #34d399;
 	}
 
 	.rows {
@@ -192,7 +190,6 @@
 		padding: 0.4rem 0.5rem;
 		background: #050505;
 		border: 1px solid #1a1a1a;
-		border-radius: 0.375rem;
 		color: inherit;
 		text-align: left;
 		cursor: pointer;
@@ -200,8 +197,8 @@
 	}
 
 	.row:hover {
-		border-color: #444;
-		background: #0d0d0d;
+		border-color: #555;
+		background: #111;
 	}
 
 	.row-main {
@@ -224,7 +221,7 @@
 
 	.row-meta {
 		font-size: 0.625rem;
-		color: #777;
+		color: #666;
 	}
 
 	.row-stats {
@@ -242,11 +239,11 @@
 	}
 
 	.delta--mild {
-		color: #fbbf24;
+		color: #888;
 	}
 
 	.delta--warn {
-		color: #fb923c;
+		color: #facc15;
 	}
 
 	.delta--critical {
@@ -268,15 +265,14 @@
 	}
 
 	.empty--clean {
-		color: #6ee7b7;
+		color: #34d399;
 	}
 
 	.error {
 		font-size: 0.6875rem;
-		color: #fca5a5;
+		color: #f87171;
 		padding: 0.4rem 0.5rem;
-		border: 1px solid rgba(248, 113, 113, 0.3);
-		background: rgba(248, 113, 113, 0.08);
-		border-radius: 0.375rem;
+		border: 1px solid #7f1d1d;
+		background: rgba(239, 68, 68, 0.05);
 	}
 </style>

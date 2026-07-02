@@ -135,8 +135,8 @@
 
 <aside class="relative z-40 w-60 flex-shrink-0 border-r border-[#222] bg-black flex flex-col">
 	<div class="px-3 py-4 border-b border-[#222] flex items-center justify-center gap-2">
-		<div class="w-2 h-2 bg-orange-500 shrink-0" title="forven"></div>
-		<div class="text-sm font-mono lowercase tracking-wide text-orange-500">forven</div>
+		<div class="w-2 h-2 bg-white shrink-0" title="forven"></div>
+		<div class="text-sm font-mono lowercase tracking-wide text-white">forven</div>
 	</div>
 
 	<nav aria-label="Primary navigation" class="flex-1 overflow-y-auto px-2 py-4 flex flex-col gap-4">
@@ -150,7 +150,7 @@
 					aria-label={link.label}
 					aria-current={isActive ? 'page' : undefined}
 					title={link.label}
-					class="group flex min-h-[48px] w-full items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors {isActive ? 'border-white text-white bg-[#111]' : 'border-transparent text-gray-400 hover:text-white hover:bg-[#0f0f0f]'}"
+					class="group flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isActive ? 'border-l-white text-white bg-[#111]' : 'border-l-transparent text-[#888] hover:text-white hover:bg-[#111]'}"
 				>
 					<svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 						<path d={link.icon} />
@@ -164,7 +164,7 @@
 		</div>
 
 		<section class="mt-auto border-t border-[#222] pt-3">
-			<div class="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Management</div>
+			<div class="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#666]">Management</div>
 			<div class="space-y-1">
 				{#each managementLinks as link}
 					{@const isActive = isRouteActive(link.href, $page.url.pathname)}
@@ -175,7 +175,7 @@
 						aria-label={link.label}
 						aria-current={isActive ? 'page' : undefined}
 						title={link.label}
-						class="group flex min-h-[48px] w-full items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors {isActive ? 'border-white text-white bg-[#111]' : 'border-transparent text-gray-400 hover:text-white hover:bg-[#0f0f0f]'}"
+						class="group flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isActive ? 'border-l-white text-white bg-[#111]' : 'border-l-transparent text-[#888] hover:text-white hover:bg-[#111]'}"
 					>
 						<svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 							<path d={link.icon} />
@@ -198,7 +198,7 @@
 			aria-label={settingsLink.label}
 			aria-current={isRouteActive(settingsLink.href, $page.url.pathname) ? 'page' : undefined}
 			title={settingsLink.label}
-			class="group my-2 flex min-h-[48px] w-full items-center justify-start gap-3 rounded-md border px-3 py-2 transition-colors {isRouteActive(settingsLink.href, $page.url.pathname) ? 'border-white text-white bg-[#111]' : 'border-transparent text-gray-400 hover:text-white hover:bg-[#0f0f0f]'}"
+			class="group my-2 flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isRouteActive(settingsLink.href, $page.url.pathname) ? 'border-l-white text-white bg-[#111]' : 'border-l-transparent text-[#888] hover:text-white hover:bg-[#111]'}"
 		>
 			<svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 				<path d={settingsLink.icon} />
@@ -219,7 +219,7 @@
 			href="https://github.com/judder659/Forven"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+			class="text-[10px] text-[#555] hover:text-[#888] transition-colors"
 			title="Forven source code (AGPL-3.0)"
 		>Source · AGPL-3.0</a>
 	</div>
@@ -227,11 +227,11 @@
 	<div class="px-2 py-3 border-t border-[#222] flex items-center justify-center">
 		<div class="flex items-center">
 			<div
-				class="w-2 h-2 rounded-full ring-2 ring-black"
+				class="w-2 h-2 rounded-full"
 				title={`Status: ${connectionStatus}`}
-				class:bg-green-500={connectionStatus === 'connected'}
+				class:bg-emerald-400={connectionStatus === 'connected'}
 				class:bg-red-500={connectionStatus === 'disconnected'}
-				class:bg-yellow-500={connectionStatus === 'checking'}
+				class:bg-yellow-400={connectionStatus === 'checking'}
 			></div>
 		</div>
 	</div>

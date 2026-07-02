@@ -104,13 +104,13 @@
 	}
 
 	function metricClass(kind: 'return' | 'sharpe' | 'drawdown' | 'win_rate' | 'profit_factor', value: number | null | undefined): string {
-		if (value === null || value === undefined || !Number.isFinite(value)) return 'text-gray-600';
+		if (value === null || value === undefined || !Number.isFinite(value)) return 'text-[#555]';
 		switch (kind) {
 			case 'return':
 				return value >= 0 ? 'text-emerald-400' : 'text-red-400';
 			case 'sharpe':
 				if (value >= 1.0) return 'text-emerald-400';
-				if (value >= 0.5) return 'text-blue-300';
+				if (value >= 0.5) return 'text-emerald-300';
 				if (value > 0) return 'text-yellow-300';
 				return 'text-red-400';
 			case 'drawdown':
@@ -139,7 +139,7 @@
 		if (normalized.includes('weak') || normalized.includes('failed') || normalized.includes('not robust')) {
 			return 'border-red-800 bg-red-950/20 text-red-300';
 		}
-		return 'border-[#333] bg-[#111] text-gray-400';
+		return 'border-[#333] bg-[#111] text-[#888]';
 	}
 
 	function toggleSort(field: SortField): void {
@@ -218,15 +218,15 @@
 		<div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 			<div>
 				<div class="mb-1">
-					<a href="/lab" class="text-xs text-gray-500 transition-colors hover:text-cyan-300">The Forge</a>
+					<a href="/lab" class="text-xs text-[#555] uppercase tracking-wider transition-colors hover:text-white">The Forge</a>
 				</div>
-				<h1 class="text-xl font-bold tracking-tight text-white">All Backtests</h1>
-				<p class="mt-1 text-xs text-gray-500">{loadedSummary}</p>
+				<h1 class="text-xl font-bold uppercase tracking-widest text-white">All Backtests</h1>
+				<p class="mt-1 text-xs text-[#666]">{loadedSummary}</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">
 				<a
 					href="/lab"
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 transition-colors hover:border-white hover:text-white"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] transition-colors hover:border-white hover:text-white"
 				>
 					Back to Forge
 				</a>
@@ -234,7 +234,7 @@
 					type="button"
 					on:click={loadResults}
 					disabled={loading}
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 transition-colors hover:border-white hover:text-white disabled:opacity-40"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 				>
 					{loading ? 'Loading...' : 'Refresh'}
 				</button>
@@ -268,17 +268,17 @@
 					<option value={type}>{type === 'all' ? 'All types' : type}</option>
 				{/each}
 			</select>
-			<span class="ml-auto text-[11px] text-gray-600">{sortedResults.length} rows</span>
+			<span class="ml-auto text-[11px] text-[#555]">{sortedResults.length} rows</span>
 		</div>
 
 		{#if error}
-			<div class="border-b border-red-900/50 bg-red-950/20 px-4 py-2 text-xs text-red-300">{error}</div>
+			<div class="border-b border-red-900 bg-red-500/5 px-4 py-2 text-xs text-red-400">{error}</div>
 		{/if}
 
 		<div class="flex-1 overflow-auto bg-black">
 			<table class="w-full min-w-[1280px] text-xs">
 				<thead class="sticky top-0 z-10 bg-[#0d0d0d]">
-					<tr class="border-b border-[#222] text-gray-500">
+					<tr class="border-b border-[#222] text-[#666]">
 						<th class="py-2 px-2 text-left">Backtest</th>
 						<SortableTh field="strategy" label="Strategy" active={sortBy === 'strategy'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
 						<SortableTh field="symbol" label="Pair" active={sortBy === 'symbol'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
@@ -299,51 +299,51 @@
 				</thead>
 				<tbody>
 					{#if loading}
-						<tr><td colspan="16" class="py-8 text-center text-gray-600">Loading backtests...</td></tr>
+						<tr><td colspan="16" class="py-8 text-center text-[#555]">Loading backtests...</td></tr>
 					{:else if sortedResults.length === 0}
-						<tr><td colspan="16" class="py-8 text-center text-gray-600">No backtests match this view.</td></tr>
+						<tr><td colspan="16" class="py-8 text-center text-[#555]">No backtests match this view.</td></tr>
 					{:else}
 						{#each sortedResults as result (result.id)}
 							{@const strategyId = resultStrategyId(result)}
 							<tr class="border-t border-[#181818] hover:bg-[#0f0f0f]">
-								<td class="py-2 px-2 font-mono text-gray-300">
+								<td class="py-2 px-2 font-mono text-[#888]">
 									<div class="text-white">{result.id}</div>
-									<div class="mt-0.5 text-[10px] text-gray-600">{result.job_id}</div>
+									<div class="mt-0.5 text-[10px] text-[#555]">{result.job_id}</div>
 								</td>
 								<td class="py-2 px-2 max-w-[360px]">
 									<StrategyLink
 										strategyId={strategyId}
 										label={result.strategy_name || strategyId || 'Unknown Strategy'}
 										returnTo="/lab/backtests"
-										className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-cyan-300"
+										className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
 										titlePrefix="Open strategy container"
 									/>
 									{#if strategyId}
-										<div class="mt-0.5 font-mono text-[10px] text-gray-600">{strategyId}</div>
+										<div class="mt-0.5 font-mono text-[10px] text-[#555]">{strategyId}</div>
 									{/if}
 								</td>
-								<td class="py-2 px-2 font-mono text-gray-300">{result.symbol || '-'}</td>
-								<td class="py-2 px-2 font-mono text-gray-300">{result.timeframe || '-'}</td>
+								<td class="py-2 px-2 font-mono text-[#888]">{result.symbol || '-'}</td>
+								<td class="py-2 px-2 font-mono text-[#888]">{result.timeframe || '-'}</td>
 								<td class="py-2 px-2">
-									<span class="rounded border border-[#333] bg-[#111] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-gray-400">{resultType(result)}</span>
+									<span class="border border-[#333] bg-[#111] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[#888]">{resultType(result)}</span>
 								</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('return', result.total_return)}`}>{formatPercent(result.total_return)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('return', result.annualized_return_pct)}`}>{formatPercent(result.annualized_return_pct)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('sharpe', result.sharpe_ratio)}`}>{formatNumber(result.sharpe_ratio)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('drawdown', result.max_drawdown)}`}>{formatPercent(result.max_drawdown)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('win_rate', result.win_rate)}`}>{formatPercent(result.win_rate, 1)}</td>
-								<td class="py-2 px-2 font-mono text-gray-300">{formatNumber(result.total_trades, 0)}</td>
+								<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(result.total_trades, 0)}</td>
 								<td class={`py-2 px-2 font-mono ${result.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', result.profit_factor)}`}>
 									{result.profit_factor_is_infinite ? 'Inf' : formatNumber(result.profit_factor)}
 								</td>
-								<td class="py-2 px-2 font-mono text-gray-300">{formatMonths(result.backtest_months)}</td>
-								<td class="py-2 px-2 text-gray-500">{formatDate(result.start)} to {formatDate(result.end)}</td>
+								<td class="py-2 px-2 font-mono text-[#888]">{formatMonths(result.backtest_months)}</td>
+								<td class="py-2 px-2 text-[#666]">{formatDate(result.start)} to {formatDate(result.end)}</td>
 								<td class="py-2 px-2">
-									<span class={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] ${verdictClass(result.verdict)}`}>
+									<span class={`border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] ${verdictClass(result.verdict)}`}>
 										{result.verdict || '-'}
 									</span>
 								</td>
-								<td class="py-2 px-2 text-gray-500">{formatDateTime(result.created_at)}</td>
+								<td class="py-2 px-2 text-[#666]">{formatDateTime(result.created_at)}</td>
 							</tr>
 						{/each}
 					{/if}

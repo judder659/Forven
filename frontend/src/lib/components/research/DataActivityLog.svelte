@@ -9,14 +9,14 @@
 	let search = '';
 
 	const ACTION_META: Record<string, { label: string; icon: string; tone: string }> = {
-		download: { label: 'Download', icon: '↓', tone: 'border-cyan-700 text-cyan-300' },
-		backfill: { label: 'Backfill', icon: '⛏', tone: 'border-blue-700 text-blue-300' },
-		source_reconciliation: { label: 'Reconcile', icon: '⇄', tone: 'border-purple-700 text-purple-300' },
-		csv_upload: { label: 'CSV upload', icon: '⇪', tone: 'border-emerald-700 text-emerald-300' },
-		dataset_delete: { label: 'Delete', icon: '✕', tone: 'border-red-700 text-red-300' },
-		orphan_scan: { label: 'Orphan scan', icon: '⚠', tone: 'border-amber-700 text-amber-300' },
-		orphan_cleanup: { label: 'Cleanup', icon: '♻', tone: 'border-orange-700 text-orange-300' },
-		event: { label: 'Event', icon: '•', tone: 'border-[#222] text-gray-300' }
+		download: { label: 'Download', icon: '↓', tone: 'border-[#333] text-[#888]' },
+		backfill: { label: 'Backfill', icon: '⛏', tone: 'border-[#333] text-[#888]' },
+		source_reconciliation: { label: 'Reconcile', icon: '⇄', tone: 'border-[#333] text-[#888]' },
+		csv_upload: { label: 'CSV upload', icon: '⇪', tone: 'border-emerald-900 bg-emerald-500/10 text-emerald-400' },
+		dataset_delete: { label: 'Delete', icon: '✕', tone: 'border-red-900 bg-red-500/10 text-red-400' },
+		orphan_scan: { label: 'Orphan scan', icon: '⚠', tone: 'border-yellow-900 bg-yellow-500/10 text-yellow-400' },
+		orphan_cleanup: { label: 'Cleanup', icon: '♻', tone: 'border-yellow-900 bg-yellow-500/10 text-yellow-400' },
+		event: { label: 'Event', icon: '•', tone: 'border-[#333] text-[#888]' }
 	};
 
 	function meta(action: string) {
@@ -24,9 +24,9 @@
 	}
 
 	function levelClass(level: string): string {
-		if (level === 'error') return 'text-red-300';
-		if (level === 'warning') return 'text-yellow-300';
-		return 'text-gray-300';
+		if (level === 'error') return 'text-red-400';
+		if (level === 'warning') return 'text-yellow-400';
+		return 'text-[#888]';
 	}
 
 	function ago(ts: string | null): string {
@@ -66,38 +66,38 @@
 	onMount(load);
 </script>
 
-<div class="rounded-lg border border-[#222] bg-[#0a0a0a] p-4">
-	<div class="mb-1 flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-sm font-semibold tracking-tight text-gray-200">Activity log</h2>
+<div class="terminal-card">
+	<div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#1a1a1a] px-4 py-2">
+		<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Activity log</h2>
 		<div class="flex flex-wrap items-center gap-2 text-xs">
 			<input
 				type="text"
 				bind:value={search}
 				placeholder="Search symbol, action…"
-				class="w-40 rounded border border-[#333] bg-[#111] px-2 py-0.5 text-[11px] text-gray-200 outline-none focus:border-cyan-500"
+				class="terminal-input w-40 px-2 py-0.5 text-[11px]"
 			/>
 			<select
 				bind:value={actionFilter}
-				class="rounded border border-[#333] bg-[#111] px-2 py-0.5 text-[11px] text-gray-200 outline-none focus:border-cyan-500"
+				class="terminal-select w-auto px-2 py-0.5 text-[11px]"
 			>
 				<option value="all">All actions</option>
 				{#each actions as a}
 					<option value={a}>{meta(a).label}</option>
 				{/each}
 			</select>
-			<button class="rounded border border-[#333] px-2 py-0.5 text-[11px] text-gray-300 hover:bg-[#1a1a1a]" on:click={load} disabled={loading}>
+			<button class="terminal-button px-2 py-0.5 text-[11px]" on:click={load} disabled={loading}>
 				{loading ? '…' : 'Refresh'}
 			</button>
 		</div>
 	</div>
-	<p class="mb-3 text-[11px] text-gray-500">Every download, backfill, upload, delete, reconciliation, and cleanup, newest first.</p>
+	<p class="border-b border-[#1a1a1a] px-4 py-2 text-[11px] text-[#666]">Every download, backfill, upload, delete, reconciliation, and cleanup, newest first.</p>
 
 	{#if error}
-		<div class="rounded bg-red-900/40 p-2 text-xs text-red-200">{error}</div>
+		<div class="m-3 border border-red-900 bg-red-500/5 px-4 py-2 text-xs text-red-400">{error}</div>
 	{:else if loading && events.length === 0}
-		<div class="text-xs text-gray-500">Loading activity…</div>
+		<div class="px-4 py-3 text-xs uppercase tracking-widest text-[#555]">Loading activity…</div>
 	{:else if shown.length === 0}
-		<div class="text-xs text-gray-500">
+		<div class="px-4 py-3 text-xs text-[#666]">
 			{events.length === 0
 				? 'No data actions logged yet. Download a dataset or backfill a series and it will appear here.'
 				: 'No activity for this filter.'}
@@ -106,19 +106,19 @@
 		<ol class="relative space-y-0">
 			{#each shown as event}
 				{@const m = meta(event.action)}
-				<li class="flex items-start gap-3 border-t border-[#222] py-2 first:border-t-0">
-					<span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] {m.tone}" title={m.label}>
+				<li class="flex items-start gap-3 border-t border-[#111] px-4 py-2 transition-colors first:border-t-0 hover:bg-[#111]">
+					<span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center border text-[11px] {m.tone}" title={m.label}>
 						{m.icon}
 					</span>
 					<div class="min-w-0 flex-1">
 						<div class="text-xs {levelClass(event.level)}">{event.message}</div>
 						{#if event.detail?.error}
-							<div class="mt-0.5 truncate font-mono text-[11px] text-red-300/80" title={String(event.detail.error)}>
+							<div class="mt-0.5 truncate font-mono text-[11px] text-red-400/80" title={String(event.detail.error)}>
 								{event.detail.error}
 							</div>
 						{/if}
 					</div>
-					<span class="shrink-0 whitespace-nowrap text-[11px] text-gray-500" title={event.ts ?? ''}>{ago(event.ts)}</span>
+					<span class="shrink-0 whitespace-nowrap text-[11px] text-[#666]" title={event.ts ?? ''}>{ago(event.ts)}</span>
 				</li>
 			{/each}
 		</ol>

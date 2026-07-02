@@ -21,10 +21,10 @@
 	}
 
 	function typeColor(type: string): string {
-		if (type === 'lifecycle') return 'text-cyan-400';
+		if (type === 'lifecycle') return 'text-white';
 		if (type === 'autopilot_job') return 'text-emerald-400';
-		if (type === 'signal') return 'text-blue-400';
-		return 'text-gray-400';
+		if (type === 'signal') return 'text-[#888]';
+		return 'text-[#666]';
 	}
 
 	async function openActivity(item: DashboardActivityItem) {
@@ -49,12 +49,12 @@
 	}
 </script>
 
-<div class="flex flex-col h-full border border-[#222] rounded bg-[#0a0a0a]">
-	<div class="text-[10px] text-gray-600 uppercase tracking-wider px-3 py-2 border-b border-[#1a1a1a]">Activity Stream</div>
+<div class="terminal-card flex flex-col h-full">
+	<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Activity Stream</div>
 	<div class="flex-1 overflow-auto">
 		{#each items as item, index (activityKey(item, index))}
 			<div
-				class="w-full text-left px-3 py-2 border-b border-[#141414] hover:bg-[#0f0f0f] transition-colors cursor-pointer"
+				class="w-full text-left px-4 py-2 border-b border-[#111] hover:bg-[#111] transition-colors cursor-pointer"
 				role="button"
 				tabindex="0"
 				on:click={() => openActivity(item)}
@@ -67,11 +67,11 @@
 			>
 				<div class="flex items-center gap-2 text-[11px]">
 					<span class={`font-mono ${typeColor(item.type)}`}>{item.type}</span>
-					<span class="text-gray-600 ml-auto">{fmtTs(item.ts)}</span>
+					<span class="text-[#555] ml-auto">{fmtTs(item.ts)}</span>
 				</div>
-				<div class="text-xs text-gray-200 truncate mt-1" title={item.title}>{item.title}</div>
+				<div class="text-xs text-white truncate mt-1" title={item.title}>{item.title}</div>
 				{#if item.detail}
-					<div class="text-[11px] text-gray-500 truncate" title={item.detail}>{item.detail}</div>
+					<div class="text-[11px] text-[#666] truncate" title={item.detail}>{item.detail}</div>
 				{/if}
 				{#if item.strategy_id}
 					<div class="mt-2">
@@ -80,7 +80,7 @@
 				{/if}
 			</div>
 		{:else}
-			<div class="px-3 py-8 text-center text-xs text-gray-600">No recent activity</div>
+			<div class="px-3 py-8 text-center text-xs text-[#555]">No recent activity</div>
 		{/each}
 	</div>
 </div>

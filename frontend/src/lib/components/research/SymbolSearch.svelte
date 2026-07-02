@@ -134,7 +134,7 @@
 <div class="relative">
 	<!-- magnifier affordance: signals the field is searchable even when pre-filled -->
 	<svg
-		class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500"
+		class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#666]"
 		viewBox="0 0 20 20"
 		fill="none"
 		stroke="currentColor"
@@ -163,14 +163,14 @@
 		on:blur={onBlur}
 	/>
 	{#if loading}
-		<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">…</span>
+		<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#666]">…</span>
 	{/if}
 
 	{#if open && results.length}
 		<ul
 			id={listboxId}
 			role="listbox"
-			class="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-none border border-[#222] bg-[#0a0a0a] shadow-lg"
+			class="absolute z-30 mt-1 max-h-64 w-full overflow-auto border border-[#222] bg-[#050505]"
 		>
 			{#each results as s, i (s.symbol)}
 				<li id={optionId(i)} role="option" aria-selected={i === activeIndex}>
@@ -183,8 +183,8 @@
 						on:mousedown|preventDefault={() => pick(s)}
 						on:mouseenter={() => (activeIndex = i)}
 					>
-						<span class="font-mono text-gray-200">{s.symbol}</span>
-						<span class="flex items-center gap-1.5 text-[10px] text-gray-500">
+						<span class="font-mono text-white">{s.symbol}</span>
+						<span class="flex items-center gap-1.5 text-[10px] text-[#666]">
 							{#if s.base && s.quote}<span>{s.base}/{s.quote}</span>{/if}
 							{#if s.active === false}<span class="text-red-400">delisted</span>{/if}
 						</span>
@@ -194,7 +194,7 @@
 		</ul>
 	{:else if open && !loading && value.trim()}
 		<div
-			class="absolute z-30 mt-1 w-full rounded-none border border-[#222] bg-[#0a0a0a] px-2 py-1.5 text-[11px] text-gray-500"
+			class="absolute z-30 mt-1 w-full border border-[#222] bg-[#050505] px-2 py-1.5 text-[11px] text-[#666]"
 		>
 			No matches on {exchange || source}.
 		</div>

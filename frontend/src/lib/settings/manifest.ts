@@ -3,6 +3,7 @@ export type SettingsAreaId =
   | 'data'
   | 'lab'
   | 'trading'
+  | 'hyperliquid'
   | 'notifications'
   | 'system'
   | 'danger';
@@ -57,7 +58,8 @@ export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'home', label: 'Home', description: 'Daily controls, search, and recently changed settings.', deepLinks: [] },
   { id: 'data', label: 'Data', description: 'Local data engine, source priority, coverage, streaming, and retention.', deepLinks: [{ label: 'Data Manager', href: '/data' }] },
   { id: 'lab', label: 'Lab', description: 'Strategy research, pipeline gating, simulation, continuous testing.', deepLinks: [] },
-  { id: 'trading', label: 'Trading', description: 'Exchange, mode, capital, risk, regime gating.', deepLinks: [] },
+  { id: 'trading', label: 'Trading', description: 'Mode, capital, risk, regime gating.', deepLinks: [] },
+  { id: 'hyperliquid', label: 'HyperLiquid', description: 'Credentials, wallets & sub-accounts, spot/perp balances, direction books — all Hyperliquid setup in one place.', deepLinks: [{ label: 'Bot Factory', href: '/bot-factory' }] },
   { id: 'notifications', label: 'Notifications', description: 'Discord transport, event subscriptions, delivery level.', deepLinks: [] },
   { id: 'system', label: 'System', description: 'API keys, remote engine, bot operations, health & telemetry.', deepLinks: [] },
   { id: 'danger', label: 'Danger Zone', description: 'Factory reset, credential purge.', deepLinks: [], danger: true },
@@ -67,7 +69,12 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   // Trading
   { id: 'trading-exchange', area: 'trading', label: 'Exchange connection', description: 'Which exchange the bot trades on.', deepLinkTo: '/' },
   { id: 'trading-mode-capital', area: 'trading', label: 'Mode & capital', description: 'Paper vs. live trading and starting equity.' },
-  { id: 'trading-credentials-hl', area: 'trading', label: 'Hyperliquid credentials', description: 'Wallet, API address, API secret, and testnet toggle for Hyperliquid.' },
+
+  // HyperLiquid — all wallet/exchange setup consolidated here. The wallets
+  // manager (sub-account create/discover/fund, spot↔perp transfers) renders as
+  // a custom card in SettingsHyperliquid, not as manifest fields.
+  { id: 'hl-credentials', area: 'hyperliquid', label: 'Credentials & network', description: 'Master wallet, API wallet address + secret, testnet toggle, and margin mode.' },
+  { id: 'hl-direction-books', area: 'hyperliquid', label: 'Direction books (long/short sub-accounts)', description: 'Route LIVE longs and shorts to separate sub-accounts so both sides of one asset can coexist. Named wallets for Bot Factory isolation are managed in the Wallets card above.' },
   { id: 'trading-risk-position-sizing', area: 'trading', label: 'Position sizing', description: 'Max position size and max concurrent positions.' },
   { id: 'trading-risk-loss-limits', area: 'trading', label: 'Loss limits', description: 'Daily-loss, drawdown, and cooldown guardrails.', deepLinkTo: '/risk' },
   { id: 'trading-risk-regime-gating', area: 'trading', label: 'Regime gating', description: 'Strict/soft gating of strategies by detected market regime.', deepLinkTo: '/lab' },
@@ -139,8 +146,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Hyperliquid wallet address',
     default: '',
     type: 'text',
-    area: 'trading',
-    subsection: 'trading-credentials-hl',
+    area: 'hyperliquid',
+    subsection: 'hl-credentials',
     backendSection: 'hyperliquid',
     backendPath: 'hyperliquid_wallet',
     description: 'On-chain wallet address Hyperliquid uses to attribute your orders and balances.',
@@ -151,8 +158,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Hyperliquid API address',
     default: '',
     type: 'text',
-    area: 'trading',
-    subsection: 'trading-credentials-hl',
+    area: 'hyperliquid',
+    subsection: 'hl-credentials',
     backendSection: 'hyperliquid',
     backendPath: 'hyperliquid_api_address',
     description: 'Hyperliquid API wallet address (separate from the funding wallet) used to sign requests.',
@@ -163,8 +170,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Hyperliquid API secret',
     default: '',
     type: 'secret',
-    area: 'trading',
-    subsection: 'trading-credentials-hl',
+    area: 'hyperliquid',
+    subsection: 'hl-credentials',
     backendSection: 'hyperliquid',
     backendPath: 'api_secret_key',
     description: 'Private key Hyperliquid uses to sign API requests from this bot.',
@@ -175,8 +182,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Hyperliquid testnet',
     default: true,
     type: 'toggle',
-    area: 'trading',
-    subsection: 'trading-credentials-hl',
+    area: 'hyperliquid',
+    subsection: 'hl-credentials',
     backendSection: 'hyperliquid',
     backendPath: 'hyperliquid_testnet',
     description: 'Route Hyperliquid orders to testnet so live mode stays paper-safe.',
@@ -260,8 +267,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Live direction books (long/short sub-accounts)',
     default: false,
     type: 'toggle',
-    area: 'trading',
-    subsection: 'trading-risk-position-sizing',
+    area: 'hyperliquid',
+    subsection: 'hl-direction-books',
     backendSection: 'risk',
     backendPath: 'live_books_enabled',
     description:
@@ -273,8 +280,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Long-book sub-account address',
     default: '',
     type: 'text',
-    area: 'trading',
-    subsection: 'trading-risk-position-sizing',
+    area: 'hyperliquid',
+    subsection: 'hl-direction-books',
     backendSection: 'risk',
     backendPath: 'hyperliquid_long_book_address',
     description:
@@ -286,8 +293,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Short-book sub-account address',
     default: '',
     type: 'text',
-    area: 'trading',
-    subsection: 'trading-risk-position-sizing',
+    area: 'hyperliquid',
+    subsection: 'hl-direction-books',
     backendSection: 'risk',
     backendPath: 'hyperliquid_short_book_address',
     description:
@@ -299,8 +306,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     label: 'Use cross margin (live)',
     default: false,
     type: 'toggle',
-    area: 'trading',
-    subsection: 'trading-risk-position-sizing',
+    area: 'hyperliquid',
+    subsection: 'hl-credentials',
     backendSection: 'risk',
     backendPath: 'hyperliquid_use_cross_margin',
     description:

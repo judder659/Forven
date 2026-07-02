@@ -396,26 +396,26 @@
 		<div class="px-4 py-4">
 			<div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
 				<div class="min-w-0">
-					<div class="inline-flex items-center gap-2 border border-[#2e2e2e] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-gray-400">
-						<span class="h-1.5 w-1.5 bg-cyan-400"></span>
+					<div class="inline-flex items-center gap-2 border border-[#333] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[#888]">
+						<span class="h-1.5 w-1.5 rounded-full bg-[#555]"></span>
 						Research / Crucibles
 					</div>
-					<h1 class="mt-3 text-2xl font-bold tracking-tight text-white">The Crucible</h1>
-					<p class="mt-0.5 text-[11px] text-gray-600">An idea under test — proposed by an agent, harvested from a source, or seeded by you — that the Forge proves or disproves.</p>
-					<p class="mt-1 max-w-3xl text-xs leading-relaxed text-gray-500">
+					<h1 class="mt-3 text-lg font-bold uppercase tracking-widest text-white">The Crucible</h1>
+					<p class="mt-1 text-[11px] text-[#666]">An idea under test — proposed by an agent, harvested from a source, or seeded by you — that the Forge proves or disproves.</p>
+					<p class="mt-1 max-w-3xl text-xs leading-relaxed text-[#666]">
 						Operate the thesis inventory from intake to verdict. Prioritize active research, repair weak entries, and keep data blockers visible before they stall the strategy pipeline.
 					</p>
 				</div>
 				<div class="flex flex-wrap items-center gap-2">
 					<a
 						href="/hypotheses/data-gaps"
-						class="border border-[#333] px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-white hover:text-white"
+						class="border border-[#333] px-3 py-1.5 text-xs text-[#888] transition-colors hover:border-white hover:text-white"
 					>
 						Data gaps
 					</a>
 					<a
 						href="/admin/hypotheses/cleanup"
-						class="border border-[#333] px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-white hover:text-white"
+						class="border border-[#333] px-3 py-1.5 text-xs text-[#888] transition-colors hover:border-white hover:text-white"
 						title="Evidence cleanup + LLM triage for low-quality crucibles"
 					>
 						Triage
@@ -425,7 +425,7 @@
 						data-action="discover-crucibles"
 						on:click={runDiscovery}
 						disabled={discoverPending}
-						class="border border-violet-500/60 bg-violet-950/30 px-3 py-1.5 text-xs text-violet-100 transition hover:bg-violet-900/50 disabled:opacity-50"
+						class="terminal-button text-xs"
 						title="Harvest new crucibles from external sources (YouTube/Reddit/forums/podcasts)"
 					>
 						{discoverPending ? 'Discovering…' : 'Discover'}
@@ -433,60 +433,60 @@
 					<button
 						type="button"
 						on:click={() => (manualIngestOpen = true)}
-						class="border border-emerald-600/60 bg-emerald-950/30 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-900/50"
+						class="terminal-button text-xs"
 					>
 						Create manually
 					</button>
 					<button
 						type="button"
 						on:click={() => (urlIngestOpen = true)}
-						class="border border-cyan-500/60 bg-cyan-950/30 px-3 py-1.5 text-xs text-cyan-100 transition hover:bg-cyan-900/50"
+						class="terminal-button-primary text-xs"
 					>
 						Add URL
 					</button>
 					<button
 						type="button"
 						on:click={refreshAll}
-						class="border border-[#333] px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-white hover:text-white"
+						class="border border-[#333] px-3 py-1.5 text-xs text-[#888] transition-colors hover:border-white hover:text-white"
 					>
 						Refresh
 					</button>
 				</div>
 			</div>
 
-			<div class="mt-4 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-gray-600">
+			<div class="mt-4 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[#555]">
 				<span>Inventory health</span>
-				<span class="normal-case tracking-normal {filtersActive ? 'text-amber-300/80' : 'text-gray-600'}">
+				<span class="normal-case tracking-normal {filtersActive ? 'text-yellow-400/80' : 'text-[#555]'}">
 					— {filtersActive ? 'reflects the filtered view, not the full bucket' : 'in current view'}
 				</span>
 			</div>
 			<div class="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
 				<div class="border border-[#222] bg-[#090909] px-3 py-2">
-					<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Inventory</div>
+					<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Inventory</div>
 					<div class="mt-1 flex items-end justify-between gap-3">
 						<div class="text-2xl font-semibold text-white">{totalRows}</div>
-						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-gray-500">{viewLabels[managerView]}</div>
+						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-[#555]">{viewLabels[managerView]}</div>
 					</div>
 				</div>
 				<div class="border border-[#222] bg-[#090909] px-3 py-2">
-					<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Research Queue</div>
+					<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Research Queue</div>
 					<div class="mt-1 flex items-end justify-between gap-3">
-						<div class="text-2xl font-semibold text-sky-200">{researchCount}</div>
-						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-gray-500">{activeTaskCount} active task{activeTaskCount === 1 ? '' : 's'}</div>
+						<div class="text-2xl font-semibold text-white">{researchCount}</div>
+						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-[#555]">{activeTaskCount} active task{activeTaskCount === 1 ? '' : 's'}</div>
 					</div>
 				</div>
 				<div class="border border-[#222] bg-[#090909] px-3 py-2">
-					<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Quality</div>
+					<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Quality</div>
 					<div class="mt-1 flex items-end justify-between gap-3">
-						<div class="text-2xl font-semibold {placeholderCount > 0 ? 'text-amber-200' : 'text-emerald-200'}">{placeholderCount}</div>
-						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-gray-500">placeholder{placeholderCount === 1 ? '' : 's'} / {productiveCount} productive</div>
+						<div class="text-2xl font-semibold {placeholderCount > 0 ? 'text-yellow-400' : 'text-emerald-200'}">{placeholderCount}</div>
+						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-[#555]">placeholder{placeholderCount === 1 ? '' : 's'} / {productiveCount} productive</div>
 					</div>
 				</div>
 				<div class="border border-[#222] bg-[#090909] px-3 py-2">
-					<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Blockers / Wins</div>
+					<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Blockers / Wins</div>
 					<div class="mt-1 flex items-end justify-between gap-3">
-						<div class="text-2xl font-semibold {dataGapCount > 0 ? 'text-amber-200' : 'text-gray-200'}">{dataGapCount}</div>
-						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-gray-500">{provenCount} proven</div>
+						<div class="text-2xl font-semibold {dataGapCount > 0 ? 'text-yellow-400' : 'text-white'}">{dataGapCount}</div>
+						<div class="text-right text-[10px] uppercase tracking-[0.16em] text-[#555]">{provenCount} proven</div>
 					</div>
 				</div>
 			</div>
@@ -500,10 +500,10 @@
 						role="tab"
 						aria-selected={managerView === view}
 						on:click={() => setManagerView(view)}
-						class="border-b-2 px-4 py-2 text-left transition-colors {managerView === view ? 'border-white text-white' : 'border-transparent text-gray-500 hover:text-gray-200'}"
+						class="border-b-2 px-4 py-2 text-left transition-colors {managerView === view ? 'border-white text-white' : 'border-transparent text-[#555] hover:text-white'}"
 					>
-						<span class="block text-xs font-medium">{viewLabels[view]} <span class="text-gray-500">({counts[view]})</span></span>
-						<span class="mt-0.5 block text-[10px] text-gray-600">{viewDescriptions[view]}</span>
+						<span class="block text-xs font-medium">{viewLabels[view]} <span class="text-[#555]">({counts[view]})</span></span>
+						<span class="mt-0.5 block text-[10px] text-[#555]">{viewDescriptions[view]}</span>
 					</button>
 				{/each}
 			</div>
@@ -516,16 +516,16 @@
 						type="text"
 						bind:value={searchQuery}
 						placeholder="Search title, id, source, assets, timeframes..."
-						class="min-w-[18rem] flex-1 border border-[#333] bg-black px-3 py-2 text-xs text-gray-100 placeholder:text-gray-600 focus:border-white focus:outline-none"
+						class="min-w-[18rem] flex-1 border border-[#333] bg-black px-3 py-2 text-xs text-gray-100 placeholder:text-[#555] focus:border-white focus:outline-none"
 					/>
-					<select aria-label="Filter by stage" bind:value={statusFilter} class="w-44 border border-[#333] bg-black px-2 py-2 text-xs text-gray-200">
+					<select aria-label="Filter by stage" bind:value={statusFilter} class="w-44 border border-[#333] bg-black px-2 py-2 text-xs text-white">
 						<option value="">All stages</option>
 						<option value="proposed">Proposed</option>
 						<option value="researching">Testing</option>
 						<option value="proven">Viable / Expanded</option>
 						<option value="disproven">Failed</option>
 					</select>
-					<select aria-label="Sort" bind:value={sortOption} class="w-36 border border-[#333] bg-black px-2 py-2 text-xs text-gray-200">
+					<select aria-label="Sort" bind:value={sortOption} class="w-36 border border-[#333] bg-black px-2 py-2 text-xs text-white">
 						<option value="updated_desc">Updated first</option>
 						<option value="created_desc">Newest first</option>
 						<option value="novelty_desc">Highest novelty</option>
@@ -534,7 +534,7 @@
 				</div>
 
 				<div class="flex flex-wrap items-center gap-2">
-					<label class="flex items-center gap-1.5 border border-[#222] bg-[#090909] px-2 py-2 text-[10px] uppercase tracking-wider text-gray-400">
+					<label class="flex items-center gap-1.5 border border-[#222] bg-[#090909] px-2 py-2 text-[10px] uppercase tracking-wider text-[#888]">
 						<input type="checkbox" bind:checked={includeDisproven} class="h-3 w-3 accent-cyan-400" />
 						Disproven
 					</label>
@@ -544,7 +544,7 @@
 							managerView = 'active';
 							qualityFilter = 'placeholder';
 						}}
-						class="border border-amber-700/50 bg-amber-950/20 px-2 py-2 text-[10px] uppercase tracking-[0.16em] text-amber-200 hover:bg-amber-900/40"
+						class="border border-yellow-900 bg-yellow-500/5 px-2 py-2 text-[10px] uppercase tracking-[0.16em] text-yellow-400 hover:border-yellow-500"
 					>
 						Placeholders
 					</button>
@@ -559,14 +559,14 @@
 						type="button"
 						on:click={clearFilters}
 						disabled={!filtersActive}
-						class="border border-[#333] px-2 py-2 text-[10px] uppercase tracking-[0.16em] text-gray-400 transition-colors hover:border-white hover:text-white disabled:opacity-40"
+						class="border border-[#333] px-2 py-2 text-[10px] uppercase tracking-[0.16em] text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 					>
 						Clear
 					</button>
 				</div>
 			</div>
 
-			<div class="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-gray-500">
+			<div class="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-[#555]">
 				<span>
 					Showing {visibleStart}-{visibleEnd} of {totalRows}
 				</span>
@@ -574,7 +574,7 @@
 				<label for="hyp-page-size" class="uppercase tracking-[0.16em]">Rows</label>
 				<select
 					id="hyp-page-size"
-					class="border border-[#333] bg-black px-2 py-1 text-xs text-gray-200"
+					class="border border-[#333] bg-black px-2 py-1 text-xs text-white"
 					value={String(pageSize)}
 					on:change={(event) => changePageSize(Number((event.currentTarget as HTMLSelectElement).value))}
 				>
@@ -586,7 +586,7 @@
 				<div class="ml-auto flex items-center gap-2">
 					<button
 						type="button"
-						class="border border-[#333] px-2 py-1 text-gray-400 hover:border-white hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+						class="border border-[#333] px-2 py-1 text-[#888] hover:border-white hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
 						on:click={goPrevPage}
 						disabled={currentPage <= 1}
 					>
@@ -595,7 +595,7 @@
 					<span>{currentPage}/{pageCount}</span>
 					<button
 						type="button"
-						class="border border-[#333] px-2 py-1 text-gray-400 hover:border-white hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+						class="border border-[#333] px-2 py-1 text-[#888] hover:border-white hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
 						on:click={goNextPage}
 						disabled={currentPage >= pageCount}
 					>
@@ -617,7 +617,7 @@
 	{/if}
 
 	{#if placeholderCount > 0 && managerView === 'active'}
-		<div class="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 border border-amber-600/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
+		<div class="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-300">
 			<div>
 				<strong class="font-semibold">{placeholderCount}</strong>
 				crucible{placeholderCount === 1 ? '' : 's'} stuck as <em class="not-italic">placeholder{placeholderCount === 1 ? '' : 's'}</em>
@@ -627,7 +627,7 @@
 				type="button"
 				on:click={bulkResearchPlaceholders}
 				disabled={mutationPending}
-				class="border border-amber-500/60 bg-amber-900/50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-50 transition hover:bg-amber-800/70 disabled:opacity-50"
+				class="border border-yellow-900 bg-yellow-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-yellow-300 transition hover:border-yellow-500 disabled:opacity-50"
 			>
 				{#if bulkResearchProgress}
 					Re-researching {bulkResearchProgress.done}/{bulkResearchProgress.total}…
@@ -644,7 +644,7 @@
 			<span class="text-white font-medium">{selectedCount} selected</span>
 			<button
 				type="button"
-				class="text-gray-400 hover:text-white transition-colors"
+				class="text-[#888] hover:text-white transition-colors"
 				on:click={clearSelection}
 			>
 				Clear selection
@@ -656,7 +656,7 @@
 						data-action="archive-selected"
 						on:click={() => runBulkAction('archive')}
 						disabled={mutationPending}
-						class="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-900/20 disabled:opacity-40"
+						class="px-2 py-1 border border-[#333] text-[#888] hover:border-white hover:text-white disabled:opacity-40"
 					>
 						Archive
 					</button>
@@ -675,7 +675,7 @@
 						data-action="restore-selected"
 						on:click={() => runBulkAction('restore')}
 						disabled={mutationPending}
-						class="px-2 py-1 border border-cyan-700 text-cyan-300 hover:bg-cyan-900/20 disabled:opacity-40"
+						class="px-2 py-1 border border-[#333] text-[#888] hover:border-white hover:text-white disabled:opacity-40"
 					>
 						Restore
 					</button>
@@ -694,7 +694,7 @@
 						data-action="restore-selected"
 						on:click={() => runBulkAction('restore')}
 						disabled={mutationPending}
-						class="px-2 py-1 border border-cyan-700 text-cyan-300 hover:bg-cyan-900/20 disabled:opacity-40"
+						class="px-2 py-1 border border-[#333] text-[#888] hover:border-white hover:text-white disabled:opacity-40"
 					>
 						Restore
 					</button>
@@ -705,7 +705,7 @@
 						on:click={() => runBulkAction('restore')}
 						disabled={mutationPending}
 						title="Returns graduated crucibles to active research via the revisit path (subject to the active-pool cap)"
-						class="px-2 py-1 border border-cyan-700 text-cyan-300 hover:bg-cyan-900/20 disabled:opacity-40"
+						class="px-2 py-1 border border-[#333] text-[#888] hover:border-white hover:text-white disabled:opacity-40"
 					>
 						Revisit
 					</button>

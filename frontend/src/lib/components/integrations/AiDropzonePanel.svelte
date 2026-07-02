@@ -913,7 +913,7 @@
 						<div class="border border-[#1a1a1a] rounded bg-[#050505] overflow-hidden">
 							{#each HTTP_ENDPOINTS as ep}
 								<div class="flex items-center gap-3 px-3 py-1.5 border-b border-[#141414] last:border-b-0 text-[11px]">
-									<span class="w-12 shrink-0 font-semibold {ep.method === 'GET' ? 'text-sky-400' : 'text-amber-400'}">{ep.method}</span>
+									<span class="w-12 shrink-0 font-semibold {ep.method === 'GET' ? 'text-emerald-400' : 'text-yellow-400'}">{ep.method}</span>
 									<code class="text-gray-300">{ep.path}</code>
 									<span class="ml-auto text-[10px] text-gray-600">{ep.purpose}</span>
 								</div>
@@ -1077,7 +1077,7 @@
 							title="Static AST scan — checks for forbidden imports and dangerous calls"
 						>{scanBusy ? '…' : 'Scan'}</button>
 						<button
-							class="text-[10px] uppercase tracking-widest px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded disabled:opacity-40"
+							class="terminal-button text-[10px] tracking-widest disabled:opacity-40"
 							on:click={submitRegister}
 							disabled={registerBusy || !registerFilePath.trim() || !scanClean || scanStale}
 							title={!scanReport
@@ -1143,7 +1143,7 @@
 							bind:value={backtestDatasetId}
 						/>
 						<button
-							class="text-[10px] uppercase tracking-widest px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded disabled:opacity-40"
+							class="terminal-button text-[10px] tracking-widest disabled:opacity-40"
 							on:click={submitBacktest}
 							disabled={backtestBusy || !backtestStrategyId.trim() || !backtestDatasetId.trim()}
 						>{backtestBusy ? '…' : 'Run'}</button>

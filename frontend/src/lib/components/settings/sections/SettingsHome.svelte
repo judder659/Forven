@@ -118,125 +118,129 @@
 		<button
 			type="button"
 			on:click={openWizard}
-			class="px-3 py-1.5 rounded border border-gray-700 text-sm text-gray-200 hover:bg-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+			class="terminal-button text-xs"
 		>
 			Open setup wizard
 		</button>
 	</div>
 
 	<!-- Daily-control tiles -->
-	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px border border-[#222] bg-[#222]">
 		<button
 			type="button"
 			aria-label="Open system settings (status: {systemStatus ?? 'unknown'})"
 			on:click={() => jumpTo('system')}
-			class="bg-black border border-gray-800 rounded-lg p-4 text-left hover:border-gray-600 focus:outline-none focus:border-gray-500"
+			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
 		>
-			<div class="text-xs uppercase tracking-wide text-gray-500">System</div>
-			<div class="mt-1 text-lg font-medium text-white">
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">System</div>
+			<div class="mt-1 text-lg font-bold text-white">
 				{systemStatus ?? (dashboard ? 'UNKNOWN' : 'Loading…')}
 			</div>
-			<div class="mt-1 text-xs text-gray-400">Overall runtime state.</div>
+			<div class="mt-1 text-xs text-[#666]">Overall runtime state.</div>
 		</button>
 
 		<button
 			type="button"
 			aria-label="Open trading mode settings (current: {tradingMode ?? 'unknown'})"
 			on:click={() => jumpTo('trading', 'trading-mode.trading_mode')}
-			class="bg-black border border-gray-800 rounded-lg p-4 text-left hover:border-gray-600 focus:outline-none focus:border-gray-500"
+			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
 		>
-			<div class="text-xs uppercase tracking-wide text-gray-500">Mode</div>
-			<div class="mt-1 text-lg font-medium" class:text-amber-300={tradingMode === 'live'} class:text-white={tradingMode !== 'live'}>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Mode</div>
+			<div class="mt-1 text-lg font-bold" class:text-red-400={tradingMode === 'live'} class:text-white={tradingMode !== 'live'}>
 				{tradingMode === 'live' ? 'Live' : 'Paper'}
 			</div>
-			<div class="mt-1 text-xs text-gray-400">Paper-trades vs. real orders.</div>
+			<div class="mt-1 text-xs text-[#666]">Paper-trades vs. real orders.</div>
 		</button>
 
 		<button
 			type="button"
 			aria-label="Open system settings — kill switch ({killSwitchActive ? 'active' : 'inactive'})"
 			on:click={() => jumpTo('system')}
-			class="bg-black border border-gray-800 rounded-lg p-4 text-left hover:border-gray-600 focus:outline-none focus:border-gray-500"
+			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
 		>
-			<div class="text-xs uppercase tracking-wide text-gray-500">Kill Switch</div>
-			<div class="mt-1 text-lg font-medium" class:text-red-400={killSwitchActive} class:text-green-400={!killSwitchActive}>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Kill Switch</div>
+			<div class="mt-1 text-lg font-bold" class:text-red-400={killSwitchActive} class:text-emerald-400={!killSwitchActive}>
 				{killSwitchActive ? 'TRIPPED' : 'Armed'}
 			</div>
-			<div class="mt-1 text-xs text-gray-400">Emergency halt state.</div>
+			<div class="mt-1 text-xs text-[#666]">Emergency halt state.</div>
 		</button>
 
 		<button
 			type="button"
 			aria-label="Open self-healing settings (current: {selfHealing ? 'enabled' : 'disabled'})"
 			on:click={() => jumpTo('system', 'bot-operations.self_healing_enabled')}
-			class="bg-black border border-gray-800 rounded-lg p-4 text-left hover:border-gray-600 focus:outline-none focus:border-gray-500"
+			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
 		>
-			<div class="text-xs uppercase tracking-wide text-gray-500">Self-healing</div>
-			<div class="mt-1 text-lg font-medium text-white">
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Self-healing</div>
+			<div class="mt-1 text-lg font-bold text-white">
 				{selfHealing ? 'Enabled' : 'Disabled'}
 			</div>
-			<div class="mt-1 text-xs text-gray-400">Auto-recover from known errors.</div>
+			<div class="mt-1 text-xs text-[#666]">Auto-recover from known errors.</div>
 		</button>
 	</div>
 
 	<!-- Search -->
-	<div class="bg-black border border-gray-800 rounded-lg p-4">
-		<div class="text-sm text-gray-300 mb-2">Jump to a setting</div>
+	<div class="terminal-card p-4">
+		<div class="text-[10px] uppercase tracking-wider text-[#666] mb-2">Jump to a setting</div>
 		<SettingsSearch />
 	</div>
 
 	<!-- Needs configuration -->
-	<div class="bg-black border border-gray-800 rounded-lg p-6">
-		<div class="flex items-baseline justify-between mb-3">
-			<h3 class="text-sm font-semibold text-gray-200">Needs configuration</h3>
-			<span class="text-xs text-gray-500">{needsConfig.length} issue{needsConfig.length === 1 ? '' : 's'}</span>
+	<div class="terminal-card">
+		<div class="flex items-baseline justify-between border-b border-[#1a1a1a] px-4 py-2">
+			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Needs configuration</h3>
+			<span class="text-xs text-[#666]">{needsConfig.length} issue{needsConfig.length === 1 ? '' : 's'}</span>
 		</div>
-		{#if needsConfig.length === 0}
-			<p class="text-sm text-gray-500">Nothing to configure. You're good to go.</p>
-		{:else}
-			<ul class="space-y-2">
-				{#each needsConfig as issue (issue.key)}
-					<li>
-						<button
-							type="button"
-							on:click={() => jumpTo(issue.area, issue.id)}
-							class="w-full text-left px-3 py-2 rounded border border-amber-900/50 bg-amber-950/30 hover:border-amber-700 text-sm text-amber-100 focus:outline-none focus:border-amber-500"
-						>
-							{issue.label}
-						</button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
+		<div class="p-4">
+			{#if needsConfig.length === 0}
+				<p class="text-xs text-[#666]">Nothing to configure. You're good to go.</p>
+			{:else}
+				<ul class="space-y-2">
+					{#each needsConfig as issue (issue.key)}
+						<li>
+							<button
+								type="button"
+								on:click={() => jumpTo(issue.area, issue.id)}
+								class="w-full text-left px-3 py-2 border border-yellow-900 bg-yellow-500/5 hover:border-yellow-700 text-xs text-yellow-400 transition-colors"
+							>
+								{issue.label}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
 	</div>
 
 	<!-- Recently changed -->
-	<div class="bg-black border border-gray-800 rounded-lg p-6">
-		<div class="flex items-baseline justify-between mb-3">
-			<h3 class="text-sm font-semibold text-gray-200">Recently changed</h3>
-			<span class="text-xs text-gray-500">last {auditLog.length} change{auditLog.length === 1 ? '' : 's'}</span>
+	<div class="terminal-card">
+		<div class="flex items-baseline justify-between border-b border-[#1a1a1a] px-4 py-2">
+			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Recently changed</h3>
+			<span class="text-xs text-[#666]">last {auditLog.length} change{auditLog.length === 1 ? '' : 's'}</span>
 		</div>
-		{#if !auditLoaded}
-			<p class="text-sm text-gray-500">Loading…</p>
-		{:else if auditLog.length === 0}
-			<p class="text-sm text-gray-500">No recent setting changes.</p>
-		{:else}
-			<ul class="divide-y divide-gray-900">
-				{#each auditLog as entry (entry.at + entry.id)}
-					<li class="py-2 text-sm">
-						<div class="flex flex-wrap items-baseline gap-x-2">
-							<span class="font-mono text-gray-200">{entry.id}</span>
-							<span class="text-gray-500 text-xs">{fmtWhen(entry.at)}</span>
-							<span class="text-gray-500 text-xs">by {entry.actor}</span>
-						</div>
-						<div class="mt-0.5 text-xs text-gray-400">
-							<span class="text-gray-500">{str(entry.from)}</span>
-							<span class="mx-1 text-gray-600">→</span>
-							<span class="text-gray-200">{str(entry.to)}</span>
-						</div>
-					</li>
-				{/each}
-			</ul>
-		{/if}
+		<div class="p-4">
+			{#if !auditLoaded}
+				<p class="text-xs text-[#666]">Loading…</p>
+			{:else if auditLog.length === 0}
+				<p class="text-xs text-[#666]">No recent setting changes.</p>
+			{:else}
+				<ul class="divide-y divide-[#1a1a1a]">
+					{#each auditLog as entry (entry.at + entry.id)}
+						<li class="py-2 text-sm">
+							<div class="flex flex-wrap items-baseline gap-x-2">
+								<span class="text-white">{entry.id}</span>
+								<span class="text-[#666] text-xs">{fmtWhen(entry.at)}</span>
+								<span class="text-[#666] text-xs">by {entry.actor}</span>
+							</div>
+							<div class="mt-0.5 text-xs text-[#888]">
+								<span class="text-[#666]">{str(entry.from)}</span>
+								<span class="mx-1 text-[#555]">→</span>
+								<span class="text-white">{str(entry.to)}</span>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
 	</div>
 </div>

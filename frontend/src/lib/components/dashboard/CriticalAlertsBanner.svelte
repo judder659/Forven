@@ -59,21 +59,21 @@
 
 {#if latest}
 	<div
-		class="flex-shrink-0 border border-red-800 bg-red-950/60 rounded text-xs"
+		class="flex-shrink-0 border border-red-900 bg-red-500/5 text-xs"
 		role="alert"
 		data-testid="critical-alerts-banner"
 	>
-		<div class="flex items-center gap-2 px-3 py-1.5">
+		<div class="flex items-center gap-2 px-4 py-1.5">
 			<span
-				class="px-1.5 py-0.5 rounded bg-red-600/30 border border-red-700 text-red-200 font-bold uppercase tracking-wider text-[10px]"
+				class="border border-red-900 bg-red-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-red-400"
 			>
 				Critical
 			</span>
-			<span class="text-red-200 font-semibold" data-testid="critical-alerts-count">
+			<span class="text-red-400 font-bold" data-testid="critical-alerts-count">
 				{alerts.length} alert{alerts.length === 1 ? '' : 's'}
 			</span>
-			<span class="text-red-300/80 truncate min-w-0" title={latest.message}>
-				{#if latest.component}<span class="font-mono text-red-200">{latest.component}</span> —{/if}
+			<span class="text-red-400/80 truncate min-w-0" title={latest.message}>
+				{#if latest.component}<span class="font-mono text-red-400">{latest.component}</span> —{/if}
 				{latest.message}
 			</span>
 			{#if latest.timestamp}
@@ -82,7 +82,7 @@
 			{#if restCount > 0}
 				<button
 					type="button"
-					class="ml-auto px-2 py-0.5 rounded border border-red-800 text-red-300 hover:bg-red-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 whitespace-nowrap"
+					class="ml-auto px-2 py-0.5 border border-red-900 text-red-400 hover:bg-red-500/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 whitespace-nowrap"
 					on:click={() => (expanded = !expanded)}
 					aria-expanded={expanded}
 					data-testid="critical-alerts-toggle"
@@ -93,13 +93,13 @@
 		</div>
 		{#if expanded && restCount > 0}
 			<ul
-				class="border-t border-red-900/70 max-h-[160px] overflow-y-auto divide-y divide-red-900/40"
+				class="border-t border-red-900 max-h-[160px] overflow-y-auto divide-y divide-red-900/40"
 				data-testid="critical-alerts-list"
 			>
 				{#each alerts.slice(1) as alert (alert.component + alert.message + alert.timestamp)}
-					<li class="px-3 py-1 flex items-baseline gap-2 text-red-300/90">
+					<li class="px-4 py-1 flex items-baseline gap-2 text-red-400/90">
 						{#if alert.component}
-							<span class="font-mono text-red-200 whitespace-nowrap">{alert.component}</span>
+							<span class="font-mono text-red-400 whitespace-nowrap">{alert.component}</span>
 						{/if}
 						<span class="truncate min-w-0" title={alert.message}>{alert.message}</span>
 						{#if alert.timestamp}

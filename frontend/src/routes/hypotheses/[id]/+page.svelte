@@ -488,16 +488,16 @@
 	<title>{hypothesis?.title ? `${hypothesis.title} | Crucibles | Forven` : 'Crucible Detail | Forven'}</title>
 </svelte:head>
 
-<div class="min-h-full bg-[#050505] px-4 py-5 text-slate-100 md:px-6">
-	<div class="border border-[#222] bg-[#0d0d0d] px-4 py-3">
+<div class="min-h-full bg-[#050505] px-4 py-5 text-white md:px-6">
+	<div class="border border-[#222] bg-[#050505] px-4 py-3">
 		<div class="flex flex-wrap items-center justify-between gap-3">
-			<a href="/hypotheses" class="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 transition hover:text-white">
+			<a href="/hypotheses" class="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#666] transition hover:text-white">
 				<span aria-hidden="true">←</span>
 				Back To Crucibles
 			</a>
 			{#if hypothesis}
 				<div class="flex flex-wrap items-center gap-2">
-					<span class="border border-[#333] bg-[#0b0b0b] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200">
+					<span class="border border-[#333] bg-black px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#888]">
 						{managerStateLabel(hypothesis.manager_state)}
 					</span>
 					{#if hypothesis.manager_state === 'active'}
@@ -506,7 +506,7 @@
 							data-detail-action="research"
 							on:click={runResearch}
 							disabled={mutationPending}
-							class="border border-blue-600/60 bg-blue-950/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100 transition hover:bg-blue-900/60 disabled:opacity-40"
+							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 							title="Queue a fresh strategy-developer research task"
 						>
 							{quality === 'researching' ? 'Re-queue research' : 'Re-research'}
@@ -516,7 +516,7 @@
 							data-detail-action="generate-strategies"
 							on:click={() => runGenerateStrategies()}
 							disabled={mutationPending}
-							class="border border-violet-600/60 bg-violet-950/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-100 transition hover:bg-violet-900/60 disabled:opacity-40"
+							class="terminal-button-primary px-3 py-2 text-[11px] disabled:opacity-40"
 							title="Send 1-3 candidate strategies to the Forge to prove/disprove this crucible"
 						>
 							Generate Candidate Strategies
@@ -527,7 +527,7 @@
 								data-detail-action="verdict"
 								on:click={runVerdict}
 								disabled={mutationPending}
-								class="border border-cyan-600/60 bg-cyan-950/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-900/60 disabled:opacity-40"
+								class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 								title="Ask the agent to write a verdict memo for this crucible"
 							>
 								Request Verdict
@@ -538,7 +538,7 @@
 							data-detail-action="edit"
 							on:click={startEdit}
 							disabled={mutationPending || editing}
-							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-cyan-300 hover:text-white disabled:opacity-40"
+							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 						>
 							Edit
 						</button>
@@ -547,7 +547,7 @@
 							data-detail-action="archive"
 							on:click={() => mutateLifecycle('archive')}
 							disabled={mutationPending}
-							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-cyan-300 hover:text-white disabled:opacity-40"
+							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 						>
 							Archive
 						</button>
@@ -556,7 +556,7 @@
 							data-detail-action="trash"
 							on:click={confirmTrash}
 							disabled={mutationPending}
-							class="border border-[#5d3a2d] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-100 transition hover:border-amber-300 hover:text-white disabled:opacity-40"
+							class="border border-yellow-900 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-yellow-400 transition-colors hover:border-yellow-400 hover:text-yellow-300 disabled:opacity-40"
 						>
 							Delete
 						</button>
@@ -565,7 +565,7 @@
 							type="button"
 							data-detail-action="research"
 							disabled
-							class="cursor-not-allowed border border-blue-600/30 bg-blue-950/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/40"
+							class="cursor-not-allowed border border-[#222] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#444]"
 							title="Restore this crucible to re-research or generate strategies"
 						>
 							Re-research
@@ -575,7 +575,7 @@
 							data-detail-action="restore"
 							on:click={() => mutateLifecycle('restore')}
 							disabled={mutationPending}
-							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-cyan-300 hover:text-white disabled:opacity-40"
+							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 						>
 							Restore
 						</button>
@@ -584,7 +584,7 @@
 							data-detail-action="trash"
 							on:click={confirmTrash}
 							disabled={mutationPending}
-							class="border border-[#5d3a2d] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-100 transition hover:border-amber-300 hover:text-white disabled:opacity-40"
+							class="border border-yellow-900 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-yellow-400 transition-colors hover:border-yellow-400 hover:text-yellow-300 disabled:opacity-40"
 						>
 							Delete
 						</button>
@@ -593,7 +593,7 @@
 							type="button"
 							data-detail-action="research"
 							disabled
-							class="cursor-not-allowed border border-blue-600/30 bg-blue-950/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/40"
+							class="cursor-not-allowed border border-[#222] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#444]"
 							title="Revisit this crucible to re-research or generate strategies"
 						>
 							Re-research
@@ -603,7 +603,7 @@
 							data-detail-action="revisit"
 							on:click={runRevisit}
 							disabled={mutationPending}
-							class="border border-emerald-600/60 bg-emerald-950/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-100 transition hover:bg-emerald-900/60 disabled:opacity-40"
+							class="border border-emerald-900 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-40"
 							title="Move back to active pool to beat the canonical"
 						>
 							Revisit
@@ -613,7 +613,7 @@
 							type="button"
 							data-detail-action="research"
 							disabled
-							class="cursor-not-allowed border border-blue-600/30 bg-blue-950/20 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/40"
+							class="cursor-not-allowed border border-[#222] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#444]"
 							title="Restore this crucible to re-research or generate strategies"
 						>
 							Re-research
@@ -623,7 +623,7 @@
 							data-detail-action="restore"
 							on:click={() => mutateLifecycle('restore')}
 							disabled={mutationPending}
-							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-cyan-300 hover:text-white disabled:opacity-40"
+							class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 						>
 							Restore
 						</button>
@@ -634,7 +634,7 @@
 	</div>
 
 	{#if banner}
-		<div class={`mt-4 flex items-start justify-between gap-3 border px-4 py-3 text-sm ${banner.tone === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200' : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>
+		<div class={`mt-4 flex items-start justify-between gap-3 border px-4 py-3 text-sm ${banner.tone === 'success' ? 'border-emerald-900 bg-emerald-500/10 text-emerald-400' : 'border-red-900 bg-red-500/5 text-red-400'}`}>
 			<span>{banner.message}</span>
 			<button
 				type="button"
@@ -648,7 +648,7 @@
 	{/if}
 
 	{#if pendingConfirm}
-		<div class={`mt-4 flex flex-wrap items-center justify-between gap-3 border px-4 py-3 text-sm ${pendingConfirm.tone === 'danger' ? 'border-rose-500/40 bg-rose-500/10 text-rose-100' : 'border-amber-500/40 bg-amber-500/10 text-amber-100'}`}>
+		<div class={`mt-4 flex flex-wrap items-center justify-between gap-3 border px-4 py-3 text-sm ${pendingConfirm.tone === 'danger' ? 'border-red-900 bg-red-500/5 text-red-400' : 'border-yellow-900 bg-yellow-500/5 text-yellow-400'}`}>
 			<span>{pendingConfirm.message}</span>
 			<div class="flex shrink-0 gap-2">
 				<button
@@ -656,7 +656,7 @@
 					data-detail-action="confirm-accept"
 					on:click={acceptConfirm}
 					disabled={mutationPending}
-					class={`border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] transition disabled:opacity-40 ${pendingConfirm.tone === 'danger' ? 'border-rose-400/60 text-rose-100 hover:bg-rose-500/20' : 'border-amber-400/60 text-amber-100 hover:bg-amber-500/20'}`}
+					class={`border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors disabled:opacity-40 ${pendingConfirm.tone === 'danger' ? 'border-red-900 text-red-400 hover:bg-red-500/10' : 'border-yellow-900 text-yellow-400 hover:bg-yellow-500/10'}`}
 				>
 					{pendingConfirm.confirmLabel}
 				</button>
@@ -665,7 +665,7 @@
 					data-detail-action="confirm-cancel"
 					on:click={cancelConfirm}
 					disabled={mutationPending}
-					class="border border-[#333] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:border-gray-400 hover:text-white disabled:opacity-40"
+					class="border border-[#333] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
 				>
 					Cancel
 				</button>
@@ -674,16 +674,16 @@
 	{/if}
 
 	{#if error}
-		<div class="mt-4 border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
+		<div class="mt-4 border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400">{error}</div>
 	{:else if loading}
-		<div class="mt-4 border border-[#222] bg-[#0b0b0b] p-6">
+		<div class="mt-4 border border-[#222] bg-black p-6">
 			<div class="h-4 w-32 animate-pulse bg-[#1a1a1a]"></div>
 			<div class="mt-4 h-8 w-2/3 animate-pulse bg-[#1a1a1a]"></div>
 			<div class="mt-4 h-3 w-full animate-pulse bg-[#1a1a1a]"></div>
 			<div class="mt-2 h-3 w-5/6 animate-pulse bg-[#1a1a1a]"></div>
 		</div>
 	{:else if hypothesis}
-		<section class="mt-4 border border-[#222] bg-[#0a0a0a] p-6">
+		<section class="mt-4 border border-[#222] bg-[#050505] p-6">
 			<div class="flex flex-wrap items-center gap-2">
 				<span class={`inline-flex items-center border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${crucibleStatusClasses(hypothesis.crucible_status)}`}>
 					{crucibleStatusLabel(hypothesis.crucible_status)}
@@ -697,55 +697,55 @@
 					{originLabel(hypothesis.origin)}
 				</span>
 				{#if hypothesis.display_id}
-					<span class="border border-[#333] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-300">{hypothesis.display_id}</span>
+					<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#888]">{hypothesis.display_id}</span>
 				{/if}
-				<span class="border border-[#333] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-400">{hypothesis.source_type}</span>
-				<span class="border border-[#333] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-300">{managerStateLabel(hypothesis.manager_state)}</span>
+				<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#666]">{hypothesis.source_type}</span>
+				<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#888]">{managerStateLabel(hypothesis.manager_state)}</span>
 				{#if hypothesis.source_tags?.length}
 					<SourceTags tags={hypothesis.source_tags} size="md" />
 				{/if}
 			</div>
 
 			{#if editing}
-				<label class="mt-4 block text-[10px] uppercase tracking-[0.18em] text-slate-500">
+				<label class="mt-4 block text-[10px] uppercase tracking-[0.18em] text-[#666]">
 					Title
 					<input
 						bind:value={editTitle}
-						class="mt-2 w-full border border-[#333] bg-[#0b0b0b] px-3 py-2 text-xl font-semibold text-white outline-none focus:border-cyan-400"
+						class="mt-2 w-full border border-[#333] bg-black px-3 py-2 text-xl font-semibold text-white outline-none focus:border-white"
 					/>
 				</label>
-				<label class="mt-3 block text-[10px] uppercase tracking-[0.18em] text-slate-500">
+				<label class="mt-3 block text-[10px] uppercase tracking-[0.18em] text-[#666]">
 					Market thesis
 					<textarea
 						bind:value={editThesis}
 						rows="3"
-						class="mt-2 w-full border border-[#333] bg-[#0b0b0b] px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-cyan-400"
+						class="mt-2 w-full border border-[#333] bg-black px-3 py-2 text-sm leading-6 text-white outline-none focus:border-white"
 					></textarea>
 				</label>
-				<label class="mt-3 block text-[10px] uppercase tracking-[0.18em] text-slate-500">
+				<label class="mt-3 block text-[10px] uppercase tracking-[0.18em] text-[#666]">
 					Why now
 					<textarea
 						bind:value={editWhyNow}
 						rows="2"
 						placeholder="What makes this timely right now?"
-						class="mt-2 w-full border border-[#333] bg-[#0b0b0b] px-3 py-2 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+						class="mt-2 w-full border border-[#333] bg-black px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-[#555] focus:border-white"
 					></textarea>
 				</label>
 				<div class="mt-3 grid gap-3 md:grid-cols-2">
-					<label class="block text-[10px] uppercase tracking-[0.18em] text-slate-500">
+					<label class="block text-[10px] uppercase tracking-[0.18em] text-[#666]">
 						Target assets (comma separated)
 						<input
 							bind:value={editAssets}
 							placeholder="BTC, ETH, SOL"
-							class="mt-2 w-full border border-[#333] bg-[#0b0b0b] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+							class="mt-2 w-full border border-[#333] bg-black px-3 py-2 text-sm text-white outline-none placeholder:text-[#555] focus:border-white"
 						/>
 					</label>
-					<label class="block text-[10px] uppercase tracking-[0.18em] text-slate-500">
+					<label class="block text-[10px] uppercase tracking-[0.18em] text-[#666]">
 						Target timeframes (comma separated)
 						<input
 							bind:value={editTimeframes}
 							placeholder="1h, 4h, 1d"
-							class="mt-2 w-full border border-[#333] bg-[#0b0b0b] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+							class="mt-2 w-full border border-[#333] bg-black px-3 py-2 text-sm text-white outline-none placeholder:text-[#555] focus:border-white"
 						/>
 					</label>
 				</div>
@@ -762,52 +762,52 @@
 						type="button"
 						on:click={cancelEdit}
 						disabled={mutationPending}
-						class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:border-gray-400 hover:text-white"
+						class="border border-[#333] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white"
 					>
 						Cancel
 					</button>
 				</div>
 			{:else}
 				<h1 class="mt-4 text-2xl font-bold tracking-tight text-white">{hypothesis.title}</h1>
-				<p class="mt-4 max-w-4xl text-sm leading-7 text-slate-300">{hypothesis.market_thesis}</p>
+				<p class="mt-4 max-w-4xl text-sm leading-7 text-[#888]">{hypothesis.market_thesis}</p>
 			{/if}
 
 			{#if researchTask}
-				<div class="mt-4 flex flex-wrap items-center gap-3 border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
-					<span class="inline-flex h-2 w-2 animate-pulse rounded-full bg-amber-300"></span>
-					<span class="font-semibold uppercase tracking-[0.18em]">
+				<div class="mt-4 flex flex-wrap items-center gap-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">
+					<span class="inline-flex h-2 w-2 animate-pulse rounded-full bg-yellow-400"></span>
+					<span class="font-semibold uppercase tracking-wider">
 						{researchTask.status === 'running' ? 'Researching now' : 'Research queued'}
 					</span>
-					<span class="text-amber-200/70">
+					<span class="text-yellow-400/70">
 						{researchTask.display_id || `Task ${researchTask.task_id}`} · {researchTask.type}
 					</span>
 					{#if researchTask.origin_mode === 'operator_url_paste'}
-						<span class="text-amber-200/60">(from your URL paste — agent will enrich fields and spawn strategies)</span>
+						<span class="text-yellow-400/60">(from your URL paste — agent will enrich fields and spawn strategies)</span>
 					{/if}
 				</div>
 			{/if}
 
 			<div class="mt-5 grid gap-4 lg:grid-cols-3">
-				<div class="border border-[#222] bg-[#0b0b0b] p-4">
-					<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Mechanism</div>
+				<div class="border border-[#222] bg-black p-4">
+					<div class="text-[10px] uppercase tracking-[0.18em] text-[#666]">Mechanism</div>
 					{#if editing}
 						<textarea
 							bind:value={editMechanism}
 							rows="3"
-							class="mt-2 w-full border border-[#333] bg-[#050505] px-2 py-1.5 text-sm leading-6 text-slate-100 outline-none focus:border-cyan-400"
+							class="mt-2 w-full border border-[#333] bg-[#050505] px-2 py-1.5 text-sm leading-6 text-white outline-none focus:border-white"
 						></textarea>
 					{:else}
-						<p class="mt-2 text-sm leading-6 text-slate-300">{hypothesis.mechanism}</p>
+						<p class="mt-2 text-sm leading-6 text-[#888]">{hypothesis.mechanism}</p>
 					{/if}
 				</div>
-				<div class="border border-[#222] bg-[#0b0b0b] p-4">
-					<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Why Now</div>
-					<p class="mt-2 text-sm leading-6 text-slate-300">{hypothesis.why_now || 'No timing note attached yet.'}</p>
+				<div class="border border-[#222] bg-black p-4">
+					<div class="text-[10px] uppercase tracking-[0.18em] text-[#666]">Why Now</div>
+					<p class="mt-2 text-sm leading-6 text-[#888]">{hypothesis.why_now || 'No timing note attached yet.'}</p>
 				</div>
-				<div class="border border-[#222] bg-[#0b0b0b] p-4">
-					<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Origin</div>
-					<p class="mt-2 text-sm leading-6 text-slate-300">{hypothesis.origin_agent_id || 'unknown agent'}</p>
-					<p class="mt-1 text-xs text-slate-500">{hypothesis.origin_model || 'unknown model'}</p>
+				<div class="border border-[#222] bg-black p-4">
+					<div class="text-[10px] uppercase tracking-[0.18em] text-[#666]">Origin</div>
+					<p class="mt-2 text-sm leading-6 text-[#888]">{hypothesis.origin_agent_id || 'unknown agent'}</p>
+					<p class="mt-1 text-xs text-[#666]">{hypothesis.origin_model || 'unknown model'}</p>
 				</div>
 			</div>
 
@@ -823,29 +823,29 @@
 				/>
 			</div>
 
-			<div class="mt-4 border border-[#222] bg-[#0b0b0b] p-4">
-				<div class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Operator notes</div>
+			<div class="mt-4 border border-[#222] bg-black p-4">
+				<div class="text-[10px] uppercase tracking-[0.18em] text-[#666]">Operator notes</div>
 				{#if editing}
 					<textarea
 						bind:value={editNotes}
 						rows="3"
 						placeholder="Private notes — not shown to the agent, for your reference."
-						class="mt-2 w-full border border-[#333] bg-[#050505] px-2 py-1.5 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+						class="mt-2 w-full border border-[#333] bg-[#050505] px-2 py-1.5 text-sm leading-6 text-white outline-none placeholder:text-[#555] focus:border-white"
 					></textarea>
 				{:else if hypothesis.operator_notes}
-					<p class="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">{hypothesis.operator_notes}</p>
+					<p class="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#888]">{hypothesis.operator_notes}</p>
 				{:else}
-					<p class="mt-2 text-sm leading-6 text-slate-500 italic">No notes yet. Click Edit to add one.</p>
+					<p class="mt-2 text-sm leading-6 text-[#666] italic">No notes yet. Click Edit to add one.</p>
 				{/if}
 			</div>
 
 			{#if !editing}
 				<div class="mt-5 flex flex-wrap gap-2">
 					{#each hypothesis.target_assets as asset}
-						<span class="border border-[#2d2d2d] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-300">{asset}</span>
+						<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#888]">{asset}</span>
 					{/each}
 					{#each hypothesis.target_timeframes as timeframe}
-						<span class="border border-[#2d2d2d] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-300">{timeframe}</span>
+						<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#888]">{timeframe}</span>
 					{/each}
 				</div>
 			{/if}
@@ -853,22 +853,22 @@
 
 		<div class="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,1fr)]">
 			<div class="space-y-5">
-				<div class="border border-[#222] bg-[#0b0b0b]">
-					<div class="border-b border-[#222] bg-[#0d0d0d] px-5 py-4">
-						<h2 class="text-sm font-semibold uppercase tracking-[0.22em] text-slate-300">Forge — Proof Attempts</h2>
-						<p class="mt-1 text-xs text-slate-500">Each candidate is sent to the Forge to prove or disprove this crucible; results roll back up here as the verdict.</p>
-						<div class="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-slate-600">
-							<span class="text-slate-400">Idea</span><span>→</span><span class="text-slate-400">Forge</span><span>→</span><span class="text-slate-400">Verdict</span>
+				<div class="border border-[#222] bg-black">
+					<div class="border-b border-[#222] bg-[#050505] px-5 py-4">
+						<h2 class="text-sm font-semibold uppercase tracking-[0.22em] text-[#888]">Forge — Proof Attempts</h2>
+						<p class="mt-1 text-xs text-[#666]">Each candidate is sent to the Forge to prove or disprove this crucible; results roll back up here as the verdict.</p>
+						<div class="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-[#555]">
+							<span class="text-[#666]">Idea</span><span>→</span><span class="text-[#666]">Forge</span><span>→</span><span class="text-[#666]">Verdict</span>
 						</div>
 					</div>
 					<div class="divide-y divide-[#1a1a1a]">
 						{#if linkedStrategies.length === 0}
-							<div class="px-5 py-10 text-sm text-slate-500">No linked strategies yet.</div>
+							<div class="px-5 py-10 text-sm text-[#666]">No linked strategies yet.</div>
 						{:else}
 							{#each linkedStrategies as strategy}
 								<a href={strategyHref(strategy, hypothesisRouteId)} class="block px-5 py-4 transition hover:bg-[#111]">
 									<div class="flex flex-wrap items-center gap-2">
-										<span class="border border-[#2d2d2d] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-300">{forgeStageLabel(strategy.stage)}</span>
+										<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#888]">{forgeStageLabel(strategy.stage)}</span>
 										{#if strategy.gauntlet_status && forgeStatusLabel(strategy.gauntlet_status)}
 											<span class={`border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${forgeStatusClasses(strategy.gauntlet_status)}`} data-forge-status={strategy.gauntlet_status}>
 												{forgeStatusLabel(strategy.gauntlet_status)}
@@ -877,7 +877,7 @@
 										{#if strategy.canonical}
 											<span
 												data-canonical-badge
-												class="border border-emerald-500/60 bg-emerald-950/40 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100"
+												class="border border-emerald-900 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400"
 												title="Canonical: cleanup-protected per (asset, timeframe) cell"
 											>
 												Canonical
@@ -885,41 +885,41 @@
 										{/if}
 										{#if strategy.parent_strategy_id}
 											<span
-												class="border border-indigo-500/50 bg-indigo-950/30 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-indigo-200"
+												class="border border-[#333] px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#888]"
 												title={`Parent: ${strategy.parent_strategy_id}`}
 											>
 												⮑ iter
 											</span>
 										{/if}
 										{#if strategy.symbol}
-											<span class="border border-[#2d2d2d] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-400">{strategy.symbol}</span>
+											<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#666]">{strategy.symbol}</span>
 										{/if}
 										{#if strategy.timeframe}
-											<span class="border border-[#2d2d2d] bg-[#0b0b0b] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-400">{strategy.timeframe}</span>
+											<span class="border border-[#333] bg-black px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-[#666]">{strategy.timeframe}</span>
 										{/if}
 									</div>
 									<div class="mt-3 flex items-center justify-between gap-4">
 										<div class="min-w-0 flex-1">
 											<div class="text-base font-semibold text-white">{strategy.name}</div>
-											<div class="mt-1 text-sm text-slate-500">{strategy.owner || 'Unassigned owner'}</div>
+											<div class="mt-1 text-sm text-[#666]">{strategy.owner || 'Unassigned owner'}</div>
 										</div>
 										{#if strategy.latest_result}
 											<div class="flex flex-shrink-0 gap-3 text-right text-[11px] uppercase tracking-[0.14em]">
 												<div>
-													<div class="text-slate-500">Sharpe</div>
+													<div class="text-[#666]">Sharpe</div>
 													<div class="mt-1 text-sm font-semibold text-white">{formatSharpe(strategy.latest_result.sharpe)}</div>
 												</div>
 												<div>
-													<div class="text-slate-500">Return</div>
+													<div class="text-[#666]">Return</div>
 													<div class="mt-1 text-sm font-semibold text-white">{formatPct(strategy.latest_result.total_return_pct)}</div>
 												</div>
 												<div>
-													<div class="text-slate-500">Trades</div>
+													<div class="text-[#666]">Trades</div>
 													<div class="mt-1 text-sm font-semibold text-white">{strategy.latest_result.total_trades ?? '—'}</div>
 												</div>
 											</div>
 										{:else}
-											<div class="text-xs uppercase tracking-[0.18em] text-slate-600">No backtest yet</div>
+											<div class="text-xs uppercase tracking-[0.18em] text-[#555]">No backtest yet</div>
 										{/if}
 									</div>
 								</a>

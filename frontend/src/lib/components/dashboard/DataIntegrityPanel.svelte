@@ -65,10 +65,10 @@
 	});
 </script>
 
-<div class="flex h-full flex-col rounded border border-[#222] bg-[#0a0a0a] p-2.5" data-testid="data-integrity-panel">
+<div class="flex h-full flex-col border border-[#222] bg-[#050505] p-2.5" data-testid="data-integrity-panel">
 	<div class="mb-1.5 flex items-center justify-between">
 		<h2 class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Data integrity</h2>
-		<a href="/data" class="text-[10px] uppercase text-gray-600 hover:text-cyan-300">data manager →</a>
+		<a href="/data" class="text-[10px] uppercase text-[#555] hover:text-white">data manager →</a>
 	</div>
 
 	{#if error && !health}

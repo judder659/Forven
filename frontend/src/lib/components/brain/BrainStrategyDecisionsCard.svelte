@@ -131,9 +131,9 @@
 
 <style>
 	.card {
-		background: #0d0d0d;
-		border: 1px solid #2a2a2a;
-		border-radius: 4px;
+		background: #050505;
+		border: 1px solid #222;
+		border-radius: 0;
 		padding: 0.875rem;
 		display: flex;
 		flex-direction: column;
@@ -168,16 +168,16 @@
 		min-width: 1.5em;
 		margin-left: 0.375rem;
 		padding: 0 0.5rem;
-		border-radius: 999px;
-		background: #1e3a5f;
-		color: #93c5fd;
+		border-radius: 0;
+		background: #1a1a1a;
+		color: #888;
 		font-size: 0.6875rem;
 		font-weight: 600;
 		text-align: center;
 	}
 
 	.deep-link {
-		color: #93c5fd;
+		color: #888;
 		text-decoration: none;
 		font-size: 0.8125rem;
 	}
@@ -197,8 +197,8 @@
 
 	li {
 		background: #050505;
-		border: 1px solid #1f1f1f;
-		border-radius: 3px;
+		border: 1px solid #1a1a1a;
+		border-radius: 0;
 		padding: 0.5rem 0.625rem;
 		display: flex;
 		flex-direction: column;
@@ -220,7 +220,7 @@
 
 	.outcome {
 		padding: 0.0625rem 0.4rem;
-		border-radius: 999px;
+		border-radius: 0;
 		font-size: 0.6875rem;
 		font-weight: 600;
 		text-transform: uppercase;
@@ -254,7 +254,7 @@
 	.preview {
 		margin: 0;
 		font-size: 0.8125rem;
-		color: #cfd8e8;
+		color: #888;
 		font-family: 'JetBrains Mono', 'Consolas', monospace;
 		line-height: 1.45;
 		white-space: pre-wrap;
@@ -267,7 +267,7 @@
 		background: transparent;
 		color: #f8c0c0;
 		border: 1px solid #5a2020;
-		border-radius: 3px;
+		border-radius: 0;
 		padding: 0.25rem 0.625rem;
 		cursor: pointer;
 		font-size: 0.75rem;

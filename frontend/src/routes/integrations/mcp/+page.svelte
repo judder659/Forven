@@ -187,7 +187,7 @@
 			</p>
 		</div>
 		<button
-			class="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-sm rounded"
+			class="terminal-button-primary text-sm"
 			on:click={() => {
 				resetCreate();
 				showCreate = !showCreate;
@@ -249,7 +249,7 @@
 						{/each}
 						<button
 							type="button"
-							class="self-start text-[11px] text-blue-400 hover:text-blue-300"
+							class="self-start text-[11px] text-[#888] hover:text-white"
 							on:click={() => (createArgs = [...createArgs, ''])}
 						>
 							+ Add arg
@@ -290,7 +290,7 @@
 						{/each}
 						<button
 							type="button"
-							class="self-start text-[11px] text-blue-400 hover:text-blue-300"
+							class="self-start text-[11px] text-[#888] hover:text-white"
 							on:click={() => (createHeaders = [...createHeaders, { key: '', value: '' }])}
 						>
 							+ Add header
@@ -323,7 +323,7 @@
 					{/each}
 					<button
 						type="button"
-						class="self-start text-[11px] text-blue-400 hover:text-blue-300"
+						class="self-start text-[11px] text-[#888] hover:text-white"
 						on:click={() => (createEnv = [...createEnv, { key: '', value: '' }])}
 					>
 						+ Add env var
@@ -362,7 +362,7 @@
 					Cancel
 				</button>
 				<button
-					class="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded disabled:opacity-50"
+					class="terminal-button-primary text-xs disabled:opacity-50"
 					on:click={handleCreate}
 					disabled={creating}
 				>
@@ -418,7 +418,7 @@
 							<td class="px-3 py-2 font-mono">
 								<a
 									href={`/integrations/mcp/${encodeURIComponent(s.name)}`}
-									class="text-blue-400 hover:underline"
+									class="text-white hover:underline"
 								>
 									{s.name}
 								</a>
@@ -442,7 +442,7 @@
 							</td>
 							<td class="px-3 py-2 text-right">
 								<button
-									class="px-2 py-0.5 text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-50"
+									class="px-2 py-0.5 text-[11px] text-[#888] hover:text-white disabled:opacity-50"
 									on:click={() => handleTest(s.name)}
 									disabled={busyName === s.name}
 								>

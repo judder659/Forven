@@ -118,21 +118,21 @@
 	function statusClass(status: string): string {
 		switch (String(status || '').toLowerCase()) {
 			case 'running':
-				return 'text-cyan-300 border-cyan-700 bg-cyan-900/20';
+				return 'text-[#888] border-[#333] bg-[#111]';
 			case 'approved':
 			case 'done':
 			case 'completed':
 				return 'text-emerald-300 border-emerald-700 bg-emerald-900/20';
 			case 'blocked':
 			case 'pending_approval':
-				return 'text-amber-300 border-amber-700 bg-amber-900/20';
+				return 'text-yellow-300 border-yellow-700 bg-yellow-900/20';
 			case 'failed':
 			case 'denied':
 				return 'text-red-300 border-red-700 bg-red-900/20';
 			case 'revised':
-				return 'text-violet-300 border-violet-700 bg-violet-900/20';
+				return 'text-[#888] border-[#333] bg-[#111]';
 			default:
-				return 'text-gray-300 border-gray-700 bg-gray-900/20';
+				return 'text-[#888] border-[#333] bg-[#111]';
 		}
 	}
 
@@ -155,9 +155,9 @@
 			case 'escalate':
 				return 'border-red-700 bg-red-900/30 text-red-300';
 			case 'hold':
-				return 'border-amber-700 bg-amber-900/30 text-amber-300';
+				return 'border-yellow-700 bg-yellow-900/30 text-yellow-300';
 			default:
-				return 'border-[#333] bg-[#111] text-gray-400';
+				return 'border-[#333] bg-[#111] text-[#888]';
 		}
 	}
 
@@ -182,13 +182,13 @@
 	function modeBadgeClass(mode: string): string {
 		switch (mode.toLowerCase()) {
 			case 'smart':
-				return 'border-cyan-700 bg-cyan-900/30 text-cyan-300';
+				return 'border-[#333] bg-[#111] text-[#888]';
 			case 'off':
 				return 'border-emerald-700 bg-emerald-900/30 text-emerald-300';
 			case 'manual':
-				return 'border-amber-700 bg-amber-900/30 text-amber-300';
+				return 'border-yellow-700 bg-yellow-900/30 text-yellow-300';
 			default:
-				return 'border-[#333] bg-[#111] text-gray-500';
+				return 'border-[#333] bg-[#111] text-[#666]';
 		}
 	}
 
@@ -212,8 +212,8 @@
 			hours <= 6
 				? 'text-red-300 border-red-800 bg-red-900/30'
 				: hours <= 24
-					? 'text-amber-300 border-amber-800 bg-amber-900/30'
-					: 'text-gray-400 border-[#333] bg-[#111]';
+					? 'text-yellow-300 border-yellow-800 bg-yellow-900/30'
+					: 'text-[#888] border-[#333] bg-[#111]';
 		return { label: niceLabel, className };
 	}
 
@@ -635,38 +635,38 @@
 	$: executionRaw = responseText(approvalContext?.linked_task_detail);
 </script>
 
-<div class="p-6 space-y-4 text-sm">
+<div class="p-4 space-y-4 text-sm">
 	<header class="flex items-center justify-between gap-4">
 		<div class="flex items-center gap-4">
-			<h1 class="text-2xl font-bold tracking-tight">Approvals</h1>
-			<div class="flex bg-[#111] rounded border border-[#222] p-0.5">
-				<button class="px-3 py-1 rounded-sm text-xs {viewMode === 'pending' ? 'bg-[#333] text-white' : 'text-gray-400'}" on:click={() => switchView('pending')}>Pending</button>
-				<button class="px-3 py-1 rounded-sm text-xs {viewMode === 'history' ? 'bg-[#333] text-white' : 'text-gray-400'}" on:click={() => switchView('history')}>History</button>
+			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Approvals</h1>
+			<div class="flex bg-[#111] border border-[#222] p-0.5">
+				<button class="px-3 py-1 text-xs {viewMode === 'pending' ? 'bg-[#333] text-white' : 'text-[#888]'}" on:click={() => switchView('pending')}>Pending</button>
+				<button class="px-3 py-1 text-xs {viewMode === 'history' ? 'bg-[#333] text-white' : 'text-[#888]'}" on:click={() => switchView('history')}>History</button>
 			</div>
 		</div>
 		<div class="flex items-center gap-3">
 			{#if !settingsLoading}
-				<button type="button" class="flex items-center gap-2 px-3 py-1.5 rounded border {autoApprovePromotions ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-[#111] border-[#333] text-gray-400'}" on:click={toggleAutoApprovePromotions}>
-					<div class="w-3 h-3 rounded-full {autoApprovePromotions ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-gray-600'}"></div>
+				<button type="button" class="flex items-center gap-2 px-3 py-1.5 border {autoApprovePromotions ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-[#111] border-[#333] text-[#888]'}" on:click={toggleAutoApprovePromotions}>
+					<div class="w-3 h-3 rounded-full {autoApprovePromotions ? 'bg-emerald-500' : 'bg-[#444]'}"></div>
 					<span class="text-xs font-semibold uppercase tracking-wider">Promotions</span>
 				</button>
-				<button type="button" class="flex items-center gap-2 px-3 py-1.5 rounded border {autoApproveCodeEdits ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-[#111] border-[#333] text-gray-400'}" on:click={toggleAutoApproveCodeEdits}>
-					<div class="w-3 h-3 rounded-full {autoApproveCodeEdits ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-gray-600'}"></div>
+				<button type="button" class="flex items-center gap-2 px-3 py-1.5 border {autoApproveCodeEdits ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-[#111] border-[#333] text-[#888]'}" on:click={toggleAutoApproveCodeEdits}>
+					<div class="w-3 h-3 rounded-full {autoApproveCodeEdits ? 'bg-emerald-500' : 'bg-[#444]'}"></div>
 					<span class="text-xs font-semibold uppercase tracking-wider">Code edits</span>
 				</button>
 			{/if}
-			<a href="/settings/approvals" class="text-xs border border-[#333] px-3 py-1.5 text-gray-300 rounded hover:text-white hover:border-[#555]">Configure approval modes</a>
+			<a href="/settings/approvals" class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555]">Configure approval modes</a>
 			{#if viewMode === 'pending' && autoApprovableIds().length > 0}
 				<button
 					type="button"
 					disabled={bulkApproving}
-					class="text-xs border border-emerald-700 bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-300 px-3 py-1.5 rounded disabled:opacity-40"
+					class="text-xs border border-emerald-700 bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-300 px-3 py-1.5 disabled:opacity-40"
 					on:click={() => void runBulkApprove()}
 				>
 					{bulkApproving ? 'Approving...' : `Bulk approve (${autoApprovableIds().length})`}
 				</button>
 			{/if}
-			<button type="button" disabled={refreshing} class="text-xs border border-[#333] px-3 py-1.5 text-gray-300 rounded disabled:opacity-40" on:click={() => void loadApprovals(true)}>{refreshing ? 'Refreshing...' : 'Refresh'}</button>
+			<button type="button" disabled={refreshing} class="text-xs border border-[#333] px-3 py-1.5 text-[#888] disabled:opacity-40" on:click={() => void loadApprovals(true)}>{refreshing ? 'Refreshing...' : 'Refresh'}</button>
 		</div>
 	</header>
 
@@ -674,128 +674,128 @@
 	{#if error}<div class="bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded">{error}</div>{/if}
 
 	<div class="grid gap-3 md:grid-cols-4">
-		<div class="rounded border px-4 py-3 {autoApprovePromotions ? 'border-amber-700 bg-amber-900/20' : 'border-emerald-700 bg-emerald-900/20'}">
-			<div class="text-[10px] uppercase tracking-wider text-gray-400">Promotions</div>
-			<div class="mt-1 text-sm font-semibold {autoApprovePromotions ? 'text-amber-300' : 'text-emerald-300'}">{autoApprovePromotions ? 'Auto-approve' : 'Manual review'}</div>
+		<div class="border px-4 py-3 {autoApprovePromotions ? 'border-yellow-700 bg-yellow-900/20' : 'border-emerald-700 bg-emerald-900/20'}">
+			<div class="text-[10px] uppercase tracking-wider text-[#888]">Promotions</div>
+			<div class="mt-1 text-sm font-semibold {autoApprovePromotions ? 'text-yellow-300' : 'text-emerald-300'}">{autoApprovePromotions ? 'Auto-approve' : 'Manual review'}</div>
 		</div>
-		<div class="rounded border px-4 py-3 {autoApproveCodeEdits ? 'border-amber-700 bg-amber-900/20' : 'border-cyan-700 bg-cyan-900/20'}">
-			<div class="text-[10px] uppercase tracking-wider text-gray-400">Code edits</div>
-			<div class="mt-1 text-sm font-semibold {autoApproveCodeEdits ? 'text-amber-300' : 'text-cyan-300'}">{autoApproveCodeEdits ? 'Auto-approve' : 'Logged for review'}</div>
+		<div class="border px-4 py-3 {autoApproveCodeEdits ? 'border-yellow-700 bg-yellow-900/20' : 'border-[#333] bg-[#111]'}">
+			<div class="text-[10px] uppercase tracking-wider text-[#888]">Code edits</div>
+			<div class="mt-1 text-sm font-semibold {autoApproveCodeEdits ? 'text-yellow-300' : 'text-[#888]'}">{autoApproveCodeEdits ? 'Auto-approve' : 'Logged for review'}</div>
 		</div>
-		<div class="rounded border border-[#222] bg-[#0d0d0d] px-4 py-3">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Visible approvals</div>
-			<div class="mt-1 text-sm font-semibold text-gray-100">{approvals.length}</div>
+		<div class="border border-[#222] bg-[#050505] px-4 py-3">
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Visible approvals</div>
+			<div class="mt-1 text-sm font-semibold text-white">{approvals.length}</div>
 		</div>
-		<div class="rounded border border-[#222] bg-[#0d0d0d] px-4 py-3">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Oldest visible age</div>
-			<div class="mt-1 text-sm font-semibold text-gray-100">{oldestVisibleAge}</div>
+		<div class="border border-[#222] bg-[#050505] px-4 py-3">
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Oldest visible age</div>
+			<div class="mt-1 text-sm font-semibold text-white">{oldestVisibleAge}</div>
 		</div>
 	</div>
 
 	{#if loading}
-		<div class="text-gray-500">Loading approvals...</div>
+		<div class="text-[#666]">Loading approvals...</div>
 	{:else if approvals.length === 0}
-		<div class="text-gray-500">No {viewMode === 'pending' ? 'pending' : 'historical'} approvals.</div>
+		<div class="text-[#666]">No {viewMode === 'pending' ? 'pending' : 'historical'} approvals.</div>
 	{:else}
 		<div class="space-y-3">
 			{#each approvals as approval}
-				<article class="border border-[#2a2a2a] bg-[#0d0d0d] rounded p-4 space-y-3">
+				<article class="terminal-card p-4 space-y-3">
 					<div class="flex items-start justify-between gap-3">
 						<div>
-							<div class="text-xs uppercase tracking-wider text-gray-500">Approval #{approval.id}</div>
-							<div class="text-lg font-semibold text-gray-200">{approval.approval_type}</div>
-							<div class="mt-1 text-sm text-gray-300">{reasonText(approval)}</div>
+							<div class="text-xs uppercase tracking-wider text-[#666]">Approval #{approval.id}</div>
+							<div class="text-lg font-semibold text-white">{approval.approval_type}</div>
+							<div class="mt-1 text-sm text-[#888]">{reasonText(approval)}</div>
 							<div class="mt-2 flex flex-wrap items-center gap-2">
 								<span
-									class="inline-flex items-center px-2 py-0.5 border rounded text-[10px] uppercase tracking-wider {classifierBadgeClass(approval.classifier_recommendation)}"
+									class="inline-flex items-center px-2 py-0.5 border text-[10px] uppercase tracking-wider {classifierBadgeClass(approval.classifier_recommendation)}"
 									title={approval.classifier_reasoning || 'Smart-approval classifier has not run yet for this item.'}
 								>
 									{classifierLabel(approval.classifier_recommendation)}
 								</span>
 								{#if effectiveMode(approval.approval_type)}
 									<span
-										class="inline-flex items-center px-2 py-0.5 border rounded text-[10px] uppercase tracking-wider {modeBadgeClass(effectiveMode(approval.approval_type))}"
+										class="inline-flex items-center px-2 py-0.5 border text-[10px] uppercase tracking-wider {modeBadgeClass(effectiveMode(approval.approval_type))}"
 										title="Active policy for '{approval.approval_type}' (configure under Approval Modes). 'smart' auto-approves classifier auto_approve rows; 'off' auto-approves; 'manual' always requires review."
 									>
 										{effectiveMode(approval.approval_type)}
 									</span>
 								{/if}
 								{#if approval.classifier_model}
-									<span class="text-[10px] text-gray-500">{approval.classifier_model}</span>
+									<span class="text-[10px] text-[#666]">{approval.classifier_model}</span>
 								{/if}
 								{#if viewMode === 'pending'}
 									<button
 										type="button"
 										disabled={isBusy(approval.id)}
-										class="text-[10px] border border-[#333] px-2 py-0.5 text-gray-400 hover:text-gray-200 rounded disabled:opacity-40"
+										class="text-[10px] border border-[#333] px-2 py-0.5 text-[#888] hover:text-white disabled:opacity-40"
 										on:click={() => void runClassify(approval.id)}
 									>
 										{approval.classifier_recommendation ? 'Re-classify' : 'Classify'}
 									</button>
 								{/if}
 								{#if approval.auto_approved}
-									<span class="text-[10px] border border-emerald-800 bg-emerald-900/30 text-emerald-300 px-2 py-0.5 rounded uppercase tracking-wider">Auto-approved</span>
+									<span class="text-[10px] border border-emerald-800 bg-emerald-900/30 text-emerald-300 px-2 py-0.5 uppercase tracking-wider">Auto-approved</span>
 								{/if}
 							</div>
 							{#if approval.classifier_reasoning}
-								<div class="mt-1 text-[11px] text-gray-500 italic">{compact(approval.classifier_reasoning, 200)}</div>
+								<div class="mt-1 text-[11px] text-[#666] italic">{compact(approval.classifier_reasoning, 200)}</div>
 							{/if}
 						</div>
-						<div class="text-right text-xs text-gray-500">
-							<div class="inline-flex items-center px-2 py-0.5 border rounded uppercase {statusClass(approval.status)}">{approval.status}</div>
+						<div class="text-right text-xs text-[#666]">
+							<div class="inline-flex items-center px-2 py-0.5 border uppercase {statusClass(approval.status)}">{approval.status}</div>
 							<div class="mt-1">{fmtDate(approval.created_at)}</div>
 							{#if deadlineState(approval)}
-								<div class="mt-1 inline-flex items-center px-2 py-0.5 border rounded uppercase tracking-wider {deadlineState(approval)!.className}">{deadlineState(approval)!.label}</div>
+								<div class="mt-1 inline-flex items-center px-2 py-0.5 border uppercase tracking-wider {deadlineState(approval)!.className}">{deadlineState(approval)!.label}</div>
 							{/if}
 						</div>
 					</div>
 
 					<div class="grid gap-3 sm:grid-cols-2 text-xs">
-						<div class="rounded border border-[#222] bg-black/30 px-3 py-2">
-							<div class="text-[10px] uppercase tracking-wider text-gray-500">Execution task</div>
-							<div class="mt-1 font-mono">{#if taskDetailUrl(approval.linked_task)}<button type="button" class="text-cyan-300 hover:text-cyan-200 hover:underline" on:click={() => goto(taskDetailUrl(approval.linked_task))}>{taskLabel(approval.linked_task)}</button>{:else}<span class="text-cyan-300">{taskLabel(approval.linked_task)}</span>{/if}</div>
+						<div class="border border-[#222] bg-black/30 px-3 py-2">
+							<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution task</div>
+							<div class="mt-1 font-mono">{#if taskDetailUrl(approval.linked_task)}<button type="button" class="text-[#888] hover:text-white hover:underline" on:click={() => goto(taskDetailUrl(approval.linked_task))}>{taskLabel(approval.linked_task)}</button>{:else}<span class="text-[#888]">{taskLabel(approval.linked_task)}</span>{/if}</div>
 							{#if approval.linked_task}
-								<div class="mt-1 text-gray-400">{compact(approval.linked_task.title || approval.linked_task.description)}</div>
+								<div class="mt-1 text-[#888]">{compact(approval.linked_task.title || approval.linked_task.description)}</div>
 							{/if}
 						</div>
-						<div class="rounded border border-[#222] bg-black/30 px-3 py-2">
-							<div class="text-[10px] uppercase tracking-wider text-gray-500">Troubleshoot</div>
-							<div class="mt-1 font-mono">{#if taskDetailUrl(approval.troubleshoot_task)}<button type="button" class="text-amber-300 hover:text-amber-200 hover:underline" on:click={() => goto(taskDetailUrl(approval.troubleshoot_task))}>{taskLabel(approval.troubleshoot_task)}</button>{:else}<span class="text-amber-300">{taskLabel(approval.troubleshoot_task)}</span>{/if}</div>
-							<div class="mt-1 text-gray-500">{approval.troubleshoot_task ? taskStatus(approval.troubleshoot_task) : 'Not started'}</div>
+						<div class="border border-[#222] bg-black/30 px-3 py-2">
+							<div class="text-[10px] uppercase tracking-wider text-[#666]">Troubleshoot</div>
+							<div class="mt-1 font-mono">{#if taskDetailUrl(approval.troubleshoot_task)}<button type="button" class="text-yellow-300 hover:text-yellow-200 hover:underline" on:click={() => goto(taskDetailUrl(approval.troubleshoot_task))}>{taskLabel(approval.troubleshoot_task)}</button>{:else}<span class="text-yellow-300">{taskLabel(approval.troubleshoot_task)}</span>{/if}</div>
+							<div class="mt-1 text-[#666]">{approval.troubleshoot_task ? taskStatus(approval.troubleshoot_task) : 'Not started'}</div>
 						</div>
 					</div>
 
 					{#if approval.approval_type === 'skill_update_proposal' && typeof approval.payload === 'object' && approval.payload}
 						<SkillUpdateProposalCard payload={approval.payload as Record<string, unknown>} />
 					{:else}
-						<pre class="text-[11px] text-gray-400 bg-black border border-[#222] p-2 max-h-40 overflow-auto whitespace-pre-wrap">{typeof approval.payload === 'object' ? JSON.stringify(approval.payload, null, 2) : String(approval.payload || '-')}</pre>
+						<pre class="text-[11px] text-[#888] bg-black border border-[#222] p-2 max-h-40 overflow-auto whitespace-pre-wrap">{typeof approval.payload === 'object' ? JSON.stringify(approval.payload, null, 2) : String(approval.payload || '-')}</pre>
 					{/if}
 
 					<div class="flex flex-wrap gap-2">
 						{#if canTroubleshoot(approval)}
-							<button type="button" disabled={isLaunchingTroubleshoot(approval.id)} class="border border-amber-800 text-amber-300 px-3 py-2 disabled:opacity-40" on:click={() => void launchTroubleshoot(approval.id)}>
+							<button type="button" disabled={isLaunchingTroubleshoot(approval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void launchTroubleshoot(approval.id)}>
 								{isLaunchingTroubleshoot(approval.id) ? 'Launching...' : approval.troubleshoot_task ? 'Open Troubleshoot' : 'Troubleshoot'}
 							</button>
 						{/if}
-						<button type="button" class="border border-[#444] text-gray-200 px-3 py-2" on:click={() => openInspector(approval, approvalStatus(approval) === 'approved' ? 'execution' : 'diagnosis')}>
+						<button type="button" class="terminal-button text-xs px-3 py-2" on:click={() => openInspector(approval, approvalStatus(approval) === 'approved' ? 'execution' : 'diagnosis')}>
 							{approvalStatus(approval) === 'approved' ? 'Watch Task' : 'Details'}
 						</button>
 						{#if viewMode === 'pending'}
-							<button type="button" disabled={isBusy(approval.id)} class="border border-emerald-800 text-emerald-300 px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'approve')}>{isBusy(approval.id) ? 'Approving...' : 'Approve'}</button>
-							<button type="button" disabled={isBusy(approval.id)} class="border border-cyan-800 text-cyan-300 px-3 py-2 disabled:opacity-40" on:click={() => void handleUserComplete(approval.id)}>{isBusy(approval.id) ? 'Completing...' : 'I Did This'}</button>
-							<button type="button" disabled={isBusy(approval.id)} class="border border-red-800 text-red-300 px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'deny')}>{isBusy(approval.id) ? 'Denying...' : 'Deny'}</button>
+							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-primary text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'approve')}>{isBusy(approval.id) ? 'Approving...' : 'Approve'}</button>
+							<button type="button" disabled={isBusy(approval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void handleUserComplete(approval.id)}>{isBusy(approval.id) ? 'Completing...' : 'I Did This'}</button>
+							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-danger text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'deny')}>{isBusy(approval.id) ? 'Denying...' : 'Deny'}</button>
 						{/if}
 					</div>
 
 					{#if viewMode === 'pending'}
 						<div class="flex gap-2">
-							<input type="text" placeholder="Revision feedback..." class="flex-1 bg-black border border-[#222] text-xs px-3 py-2 text-gray-200" value={reviseInput[approval.id] || ''} on:input={(event) => onReviseInput(approval.id, (event.currentTarget as HTMLInputElement).value)} />
-							<button type="button" disabled={isBusy(approval.id)} class="border border-violet-800 text-violet-300 px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'revise')}>{isBusy(approval.id) ? 'Revising...' : 'Revise'}</button>
+							<input type="text" placeholder="Revision feedback..." class="flex-1 bg-black border border-[#222] text-xs px-3 py-2 text-white" value={reviseInput[approval.id] || ''} on:input={(event) => onReviseInput(approval.id, (event.currentTarget as HTMLInputElement).value)} />
+							<button type="button" disabled={isBusy(approval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'revise')}>{isBusy(approval.id) ? 'Revising...' : 'Revise'}</button>
 						</div>
 					{:else}
 						<div class="grid sm:grid-cols-2 gap-3 text-xs border-t border-[#222] pt-3">
-							<div><div class="text-gray-500 uppercase tracking-wider">Decision</div><div class="text-gray-200 font-semibold">{approval.decision || 'N/A'}</div></div>
-							<div><div class="text-gray-500 uppercase tracking-wider">Feedback</div><div class="text-gray-200">{approval.feedback || '-'}</div></div>
+							<div><div class="text-[#666] uppercase tracking-wider">Decision</div><div class="text-white font-semibold">{approval.decision || 'N/A'}</div></div>
+							<div><div class="text-[#666] uppercase tracking-wider">Feedback</div><div class="text-white">{approval.feedback || '-'}</div></div>
 						</div>
 					{/if}
 				</article>
@@ -806,41 +806,41 @@
 
 {#if selectedApprovalId !== null}
 	<button type="button" class="fixed inset-0 z-40 bg-black/70" aria-label="Close approval inspector" on:click={closeInspector}></button>
-	<aside class="fixed inset-y-0 right-0 z-50 w-full max-w-[780px] bg-[#050505] border-l border-[#222] shadow-2xl flex flex-col">
+	<aside class="fixed inset-y-0 right-0 z-50 w-full max-w-[780px] bg-[#050505] border-l border-[#222] flex flex-col">
 		<header class="border-b border-[#222] px-6 py-4 space-y-3">
 			<div class="flex items-start justify-between gap-3">
 				<div class="min-w-0">
-					<div class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Approval Inspector</div>
+					<div class="text-[11px] uppercase tracking-[0.18em] text-[#666]">Approval Inspector</div>
 					<div class="mt-1 text-xl font-semibold text-white">{selectedApproval ? `Approval #${selectedApproval.id}` : `Approval #${selectedApprovalId}`}</div>
-					<div class="mt-1 text-sm text-gray-400">{selectedApproval ? reasonText(selectedApproval) : 'Loading approval context...'}</div>
+					<div class="mt-1 text-sm text-[#888]">{selectedApproval ? reasonText(selectedApproval) : 'Loading approval context...'}</div>
 				</div>
 				<div class="flex items-center gap-2">
 					{#if selectedApproval && canTroubleshoot(selectedApproval)}
-						<button type="button" disabled={isLaunchingTroubleshoot(selectedApproval.id)} class="border border-amber-800 text-amber-300 px-3 py-2 text-xs disabled:opacity-40" on:click={() => void launchTroubleshoot(selectedApproval.id)}>
+						<button type="button" disabled={isLaunchingTroubleshoot(selectedApproval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void launchTroubleshoot(selectedApproval.id)}>
 							{isLaunchingTroubleshoot(selectedApproval.id) ? 'Launching...' : selectedApproval.troubleshoot_task ? 'Refresh Diagnosis' : 'Run Troubleshoot'}
 						</button>
 					{/if}
-					<button type="button" disabled={contextLoading || contextRefreshing} class="border border-[#444] text-gray-200 px-3 py-2 text-xs disabled:opacity-40" on:click={() => selectedApprovalId !== null && void loadApprovalContext(selectedApprovalId)}>{contextRefreshing ? 'Refreshing...' : 'Refresh'}</button>
-					<button type="button" class="border border-[#333] text-gray-300 px-3 py-2 text-xs" on:click={closeInspector}>Close</button>
+					<button type="button" disabled={contextLoading || contextRefreshing} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => selectedApprovalId !== null && void loadApprovalContext(selectedApprovalId)}>{contextRefreshing ? 'Refreshing...' : 'Refresh'}</button>
+					<button type="button" class="terminal-button text-xs px-3 py-2" on:click={closeInspector}>Close</button>
 				</div>
 			</div>
 
 			<div class="grid gap-3 md:grid-cols-3 text-xs">
-				<div class="rounded border border-[#222] bg-black/30 px-3 py-2"><div class="text-[10px] uppercase tracking-wider text-gray-500">Approval status</div><div class="mt-1 inline-flex items-center px-2 py-0.5 border rounded uppercase {statusClass(approvalStatus(selectedApproval))}">{selectedApproval?.status || 'loading'}</div></div>
-				<div class="rounded border border-[#222] bg-black/30 px-3 py-2"><div class="text-[10px] uppercase tracking-wider text-gray-500">Execution</div><div class="mt-1 font-mono">{#if taskDetailUrl(approvalContext?.linked_task)}<button type="button" class="text-cyan-300 hover:text-cyan-200 hover:underline" on:click={() => goto(taskDetailUrl(approvalContext?.linked_task))}>{taskLabel(approvalContext?.linked_task)}</button>{:else}<span class="text-cyan-300">{taskLabel(approvalContext?.linked_task)}</span>{/if}</div></div>
-				<div class="rounded border border-[#222] bg-black/30 px-3 py-2"><div class="text-[10px] uppercase tracking-wider text-gray-500">Troubleshoot</div><div class="mt-1 font-mono">{#if taskDetailUrl(approvalContext?.troubleshoot_task)}<button type="button" class="text-amber-300 hover:text-amber-200 hover:underline" on:click={() => goto(taskDetailUrl(approvalContext?.troubleshoot_task))}>{taskLabel(approvalContext?.troubleshoot_task)}</button>{:else}<span class="text-amber-300">{taskLabel(approvalContext?.troubleshoot_task)}</span>{/if}</div></div>
+				<div class="border border-[#222] bg-black/30 px-3 py-2"><div class="text-[10px] uppercase tracking-wider text-[#666]">Approval status</div><div class="mt-1 inline-flex items-center px-2 py-0.5 border uppercase {statusClass(approvalStatus(selectedApproval))}">{selectedApproval?.status || 'loading'}</div></div>
+				<div class="border border-[#222] bg-black/30 px-3 py-2"><div class="text-[10px] uppercase tracking-wider text-[#666]">Execution</div><div class="mt-1 font-mono">{#if taskDetailUrl(approvalContext?.linked_task)}<button type="button" class="text-[#888] hover:text-white hover:underline" on:click={() => goto(taskDetailUrl(approvalContext?.linked_task))}>{taskLabel(approvalContext?.linked_task)}</button>{:else}<span class="text-[#888]">{taskLabel(approvalContext?.linked_task)}</span>{/if}</div></div>
+				<div class="border border-[#222] bg-black/30 px-3 py-2"><div class="text-[10px] uppercase tracking-wider text-[#666]">Troubleshoot</div><div class="mt-1 font-mono">{#if taskDetailUrl(approvalContext?.troubleshoot_task)}<button type="button" class="text-yellow-300 hover:text-yellow-200 hover:underline" on:click={() => goto(taskDetailUrl(approvalContext?.troubleshoot_task))}>{taskLabel(approvalContext?.troubleshoot_task)}</button>{:else}<span class="text-yellow-300">{taskLabel(approvalContext?.troubleshoot_task)}</span>{/if}</div></div>
 			</div>
 
 			<div class="flex items-center gap-2">
-				<button type="button" class="px-3 py-1.5 text-xs border rounded uppercase {drawerTab === 'diagnosis' ? 'border-amber-500 text-amber-200 bg-amber-900/20' : 'border-[#333] text-gray-400'}" on:click={() => drawerTab = 'diagnosis'}>Diagnosis</button>
-				<button type="button" disabled={!approvalContext?.linked_task} class="px-3 py-1.5 text-xs border rounded uppercase {drawerTab === 'execution' ? 'border-cyan-500 text-cyan-200 bg-cyan-900/20' : 'border-[#333] text-gray-400'} disabled:opacity-40" on:click={() => drawerTab = 'execution'}>Execution</button>
+				<button type="button" class="px-3 py-1.5 text-xs border uppercase {drawerTab === 'diagnosis' ? 'border-yellow-500 text-yellow-200 bg-yellow-900/20' : 'border-[#333] text-[#888]'}" on:click={() => drawerTab = 'diagnosis'}>Diagnosis</button>
+				<button type="button" disabled={!approvalContext?.linked_task} class="px-3 py-1.5 text-xs border uppercase {drawerTab === 'execution' ? 'border-white text-white bg-[#111]' : 'border-[#333] text-[#888]'} disabled:opacity-40" on:click={() => drawerTab = 'execution'}>Execution</button>
 			</div>
 
 			{#if selectedApproval && approvalStatus(selectedApproval) === 'pending_approval'}
 				<div class="flex flex-wrap gap-2">
-					<button type="button" disabled={isBusy(selectedApproval.id)} class="border border-emerald-800 text-emerald-300 px-3 py-2 text-xs disabled:opacity-40" on:click={() => void submitDecision(selectedApproval.id, 'approve', 'execution')}>{isBusy(selectedApproval.id) ? 'Approving...' : 'Approve + Watch'}</button>
-					<button type="button" disabled={isBusy(selectedApproval.id)} class="border border-cyan-800 text-cyan-300 px-3 py-2 text-xs disabled:opacity-40" on:click={() => void handleUserComplete(selectedApproval.id)}>{isBusy(selectedApproval.id) ? 'Completing...' : 'I Did This'}</button>
-					<button type="button" disabled={isBusy(selectedApproval.id)} class="border border-red-800 text-red-300 px-3 py-2 text-xs disabled:opacity-40" on:click={() => void submitDecision(selectedApproval.id, 'deny')}>{isBusy(selectedApproval.id) ? 'Denying...' : 'Deny'}</button>
+					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button-primary text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(selectedApproval.id, 'approve', 'execution')}>{isBusy(selectedApproval.id) ? 'Approving...' : 'Approve + Watch'}</button>
+					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void handleUserComplete(selectedApproval.id)}>{isBusy(selectedApproval.id) ? 'Completing...' : 'I Did This'}</button>
+					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button-danger text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(selectedApproval.id, 'deny')}>{isBusy(selectedApproval.id) ? 'Denying...' : 'Deny'}</button>
 				</div>
 			{/if}
 		</header>
@@ -848,35 +848,35 @@
 		<div class="flex-1 overflow-auto p-6 space-y-4">
 			{#if contextError}<div class="bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded">{contextError}</div>{/if}
 			{#if contextLoading && !approvalContext}
-				<div class="text-gray-500">Loading approval context...</div>
+				<div class="text-[#666]">Loading approval context...</div>
 			{:else if drawerTab === 'diagnosis'}
-				<div class="rounded border border-[#222] bg-[#0d0d0d] p-4 space-y-3">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Diagnosis output</div>
+				<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Diagnosis output</div>
 					{#if !approvalContext?.troubleshoot_task}
-						<div class="text-xs text-gray-400">No troubleshoot run yet. Start one to get a root-cause report before approving the fix.</div>
+						<div class="text-xs text-[#888]">No troubleshoot run yet. Start one to get a root-cause report before approving the fix.</div>
 					{:else if troubleshootReport}
 						<div class="space-y-3 text-sm">
-							<div><div class="text-[10px] uppercase tracking-wider text-gray-500">Summary</div><div class="mt-1 text-gray-100">{troubleshootReport.summary || 'No summary returned.'}</div></div>
-							<div><div class="text-[10px] uppercase tracking-wider text-gray-500">Root Cause</div><div class="mt-1 text-amber-200">{troubleshootReport.rootCause || 'No root cause returned.'}</div></div>
-							<div><div class="text-[10px] uppercase tracking-wider text-gray-500">Recommended Fix</div><div class="mt-1 text-gray-200">{troubleshootReport.recommendedFix.length > 0 ? troubleshootReport.recommendedFix.join(' | ') : 'No fix recommendation yet.'}</div></div>
-							<div><div class="text-[10px] uppercase tracking-wider text-gray-500">Validation Plan</div><div class="mt-1 text-gray-200">{troubleshootReport.validationPlan.length > 0 ? troubleshootReport.validationPlan.join(' | ') : 'No validation plan yet.'}</div></div>
-							<div class="text-[11px] text-gray-500">Files: {troubleshootReport.affectedFiles.length > 0 ? troubleshootReport.affectedFiles.join(', ') : '--'} | Risk {troubleshootReport.riskLevel || '--'} | Confidence {troubleshootReport.confidence || '--'}</div>
+							<div><div class="text-[10px] uppercase tracking-wider text-[#666]">Summary</div><div class="mt-1 text-white">{troubleshootReport.summary || 'No summary returned.'}</div></div>
+							<div><div class="text-[10px] uppercase tracking-wider text-[#666]">Root Cause</div><div class="mt-1 text-yellow-200">{troubleshootReport.rootCause || 'No root cause returned.'}</div></div>
+							<div><div class="text-[10px] uppercase tracking-wider text-[#666]">Recommended Fix</div><div class="mt-1 text-white">{troubleshootReport.recommendedFix.length > 0 ? troubleshootReport.recommendedFix.join(' | ') : 'No fix recommendation yet.'}</div></div>
+							<div><div class="text-[10px] uppercase tracking-wider text-[#666]">Validation Plan</div><div class="mt-1 text-white">{troubleshootReport.validationPlan.length > 0 ? troubleshootReport.validationPlan.join(' | ') : 'No validation plan yet.'}</div></div>
+							<div class="text-[11px] text-[#666]">Files: {troubleshootReport.affectedFiles.length > 0 ? troubleshootReport.affectedFiles.join(', ') : '--'} | Risk {troubleshootReport.riskLevel || '--'} | Confidence {troubleshootReport.confidence || '--'}</div>
 						</div>
 					{:else}
-						<pre class="max-h-[260px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{troubleshootRaw || 'Diagnosis is still gathering details.'}</pre>
+						<pre class="max-h-[260px] overflow-auto bg-black/40 border border-[#1b1b1b] p-3 text-[11px] text-[#888] whitespace-pre-wrap break-words">{troubleshootRaw || 'Diagnosis is still gathering details.'}</pre>
 					{/if}
 				</div>
-				<div class="rounded border border-[#222] bg-[#0d0d0d] p-4">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Troubleshoot Timeline</div>
+				<div class="border border-[#222] bg-[#050505] p-4">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Troubleshoot Timeline</div>
 					<div class="mt-3 space-y-2">
 						{#if diagnosisLog.length === 0}
-							<div class="text-xs text-gray-500">No timeline events yet.</div>
+							<div class="text-xs text-[#666]">No timeline events yet.</div>
 						{:else}
 							{#each diagnosisLog as entry}
-								<div class="rounded border border-[#1d1d1d] bg-black/30 px-3 py-2">
+								<div class="border border-[#1d1d1d] bg-black/30 px-3 py-2">
 									<div class="flex items-start justify-between gap-3">
-										<div><div class="text-xs font-semibold {entry.error ? 'text-red-300' : 'text-gray-200'}">{entry.title}</div><div class="mt-1 text-xs text-gray-400">{entry.summary}</div>{#if entry.detail}<div class="mt-1 text-[11px] text-gray-500">{entry.detail}</div>{/if}</div>
-										<div class="text-[10px] text-gray-600 whitespace-nowrap">{fmtDate(entry.timestamp)}</div>
+										<div><div class="text-xs font-semibold {entry.error ? 'text-red-300' : 'text-white'}">{entry.title}</div><div class="mt-1 text-xs text-[#888]">{entry.summary}</div>{#if entry.detail}<div class="mt-1 text-[11px] text-[#666]">{entry.detail}</div>{/if}</div>
+										<div class="text-[10px] text-[#555] whitespace-nowrap">{fmtDate(entry.timestamp)}</div>
 									</div>
 								</div>
 							{/each}
@@ -884,26 +884,26 @@
 					</div>
 				</div>
 			{:else}
-				<div class="rounded border border-[#222] bg-[#0d0d0d] p-4 space-y-3">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Execution task</div>
-					<div class="text-sm">{#if taskDetailUrl(approvalContext?.linked_task)}<button type="button" class="text-gray-100 hover:text-cyan-200 hover:underline font-mono" on:click={() => goto(taskDetailUrl(approvalContext?.linked_task))}>{taskLabel(approvalContext?.linked_task)}</button>{:else}<span class="text-gray-100">{approvalContext?.linked_task ? taskLabel(approvalContext.linked_task) : 'No linked task'}</span>{/if}</div>
+				<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution task</div>
+					<div class="text-sm">{#if taskDetailUrl(approvalContext?.linked_task)}<button type="button" class="text-white hover:text-white hover:underline font-mono" on:click={() => goto(taskDetailUrl(approvalContext?.linked_task))}>{taskLabel(approvalContext?.linked_task)}</button>{:else}<span class="text-white">{approvalContext?.linked_task ? taskLabel(approvalContext.linked_task) : 'No linked task'}</span>{/if}</div>
 					{#if approvalContext?.linked_task}
-						<div class="text-xs text-gray-400">{compact(approvalContext.linked_task.title || approvalContext.linked_task.description, 180)}</div>
-						<div class="inline-flex items-center px-2 py-0.5 border rounded uppercase {statusClass(taskStatus(approvalContext.linked_task))}">{taskStatus(approvalContext.linked_task)}</div>
+						<div class="text-xs text-[#888]">{compact(approvalContext.linked_task.title || approvalContext.linked_task.description, 180)}</div>
+						<div class="inline-flex items-center px-2 py-0.5 border uppercase {statusClass(taskStatus(approvalContext.linked_task))}">{taskStatus(approvalContext.linked_task)}</div>
 					{/if}
-					{#if executionRaw}<pre class="max-h-[220px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{executionRaw}</pre>{/if}
+					{#if executionRaw}<pre class="max-h-[220px] overflow-auto bg-black/40 border border-[#1b1b1b] p-3 text-[11px] text-[#888] whitespace-pre-wrap break-words">{executionRaw}</pre>{/if}
 				</div>
-				<div class="rounded border border-[#222] bg-[#0d0d0d] p-4">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Execution Timeline</div>
+				<div class="border border-[#222] bg-[#050505] p-4">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution Timeline</div>
 					<div class="mt-3 space-y-2">
 						{#if executionLog.length === 0}
-							<div class="text-xs text-gray-500">No execution events yet.</div>
+							<div class="text-xs text-[#666]">No execution events yet.</div>
 						{:else}
 							{#each executionLog as entry}
-								<div class="rounded border border-[#1d1d1d] bg-black/30 px-3 py-2">
+								<div class="border border-[#1d1d1d] bg-black/30 px-3 py-2">
 									<div class="flex items-start justify-between gap-3">
-										<div><div class="text-xs font-semibold {entry.error ? 'text-red-300' : 'text-gray-200'}">{entry.title}</div><div class="mt-1 text-xs text-gray-400">{entry.summary}</div>{#if entry.detail}<div class="mt-1 text-[11px] text-gray-500">{entry.detail}</div>{/if}</div>
-										<div class="text-[10px] text-gray-600 whitespace-nowrap">{fmtDate(entry.timestamp)}</div>
+										<div><div class="text-xs font-semibold {entry.error ? 'text-red-300' : 'text-white'}">{entry.title}</div><div class="mt-1 text-xs text-[#888]">{entry.summary}</div>{#if entry.detail}<div class="mt-1 text-[11px] text-[#666]">{entry.detail}</div>{/if}</div>
+										<div class="text-[10px] text-[#555] whitespace-nowrap">{fmtDate(entry.timestamp)}</div>
 									</div>
 								</div>
 							{/each}

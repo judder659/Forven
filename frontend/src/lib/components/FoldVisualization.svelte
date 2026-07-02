@@ -25,22 +25,22 @@
 
 <div class="fold-visualization">
 	{#if folds.length === 0}
-		<div class="text-gray-400 text-sm">Configure splits to see fold preview</div>
+		<div class="text-[#666] text-sm">Configure splits to see fold preview</div>
 	{:else}
 		<div class="space-y-2">
 			{#each folds as fold, index}
 				<div class="flex items-center gap-3">
-					<span class="text-gray-400 text-xs w-12">Fold {index + 1}</span>
-					<div class="flex-1 h-6 bg-gray-700 rounded relative">
+					<span class="text-[#888] text-xs w-12">Fold {index + 1}</span>
+					<div class="flex-1 h-6 bg-[#111] relative">
 						<!-- Train segment -->
 						<div
-							class="absolute h-full bg-blue-600/60 rounded-l"
+							class="absolute h-full bg-white/20"
 							style="left: {getPosition(fold.train_start)}%; width: {getPosition(fold.train_end) - getPosition(fold.train_start)}%;"
 							title="Train: {formatDate(fold.train_start)} - {formatDate(fold.train_end)}"
 						></div>
 						<!-- Test segment -->
 						<div
-							class="absolute h-full bg-green-600/60 rounded-r"
+							class="absolute h-full bg-emerald-500/40"
 							style="left: {getPosition(fold.test_start)}%; width: {getPosition(fold.test_end) - getPosition(fold.test_start)}%;"
 							title="Test: {formatDate(fold.test_start)} - {formatDate(fold.test_end)}"
 						></div>
@@ -49,19 +49,19 @@
 			{/each}
 		</div>
 
-		<div class="flex justify-between text-xs text-gray-500 mt-2">
+		<div class="flex justify-between text-xs text-[#666] mt-2">
 			<span>{formatDate(totalStart)}</span>
 			<span>{formatDate(totalEnd)}</span>
 		</div>
 
 		<div class="flex gap-4 mt-3 text-xs">
 			<div class="flex items-center gap-2">
-				<div class="w-3 h-3 bg-blue-600/60 rounded"></div>
-				<span class="text-gray-400">Training</span>
+				<div class="w-3 h-3 bg-white/20"></div>
+				<span class="text-[#888]">Training</span>
 			</div>
 			<div class="flex items-center gap-2">
-				<div class="w-3 h-3 bg-green-600/60 rounded"></div>
-				<span class="text-gray-400">Testing (OOS)</span>
+				<div class="w-3 h-3 bg-emerald-500/40"></div>
+				<span class="text-[#888]">Testing (OOS)</span>
 			</div>
 		</div>
 	{/if}

@@ -158,13 +158,13 @@
 
 	function marketChip(market: string | undefined): { label: string; cls: string } {
 		const m = String(market || 'unstamped').toLowerCase();
-		if (m === 'perp') return { label: 'PERP', cls: 'border-cyan-800 text-cyan-300' };
-		if (m === 'spot') return { label: 'SPOT', cls: 'border-amber-800 text-amber-300' };
-		return { label: m.toUpperCase(), cls: 'border-[#333] text-gray-500' };
+		if (m === 'perp') return { label: 'PERP', cls: 'border-[#333] text-white' };
+		if (m === 'spot') return { label: 'SPOT', cls: 'border-[#333] text-[#888]' };
+		return { label: m.toUpperCase(), cls: 'border-[#333] text-[#555]' };
 	}
 
 	function streamStatusColor(status: string): string {
-		if (status === 'live') return 'text-green-400';
+		if (status === 'live') return 'text-emerald-400';
 		if (status === 'accumulating') return 'text-yellow-400';
 		return 'text-red-500';
 	}
@@ -374,9 +374,9 @@
 	<div class="panel-header">
 		<span>{mode === 'fetch' ? 'Fetch Data' : 'Inspector'}</span>
 		{#if mode === 'details'}
-			<button class="text-xs text-white hover:text-gray-300" on:click={() => mode = 'fetch'}>+ NEW</button>
+			<button class="text-xs text-white hover:text-[#999]" on:click={() => mode = 'fetch'}>+ NEW</button>
 		{:else}
-			<button class="text-xs text-white hover:text-gray-300" on:click={() => mode = 'details'}>CANCEL</button>
+			<button class="text-xs text-white hover:text-[#999]" on:click={() => mode = 'details'}>CANCEL</button>
 		{/if}
 	</div>
 
@@ -387,7 +387,7 @@
 				<div class="flex border-b border-[#222]">
 					{#each dataSources.filter(s => s.available) as source}
 						<button
-							class="px-3 py-1 text-xs uppercase font-bold transition-colors border-b-2 {selectedSource === source.id ? 'border-white text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}"
+							class="px-3 py-1 text-xs uppercase font-bold transition-colors border-b-2 {selectedSource === source.id ? 'border-white text-white' : 'border-transparent text-[#666] hover:text-[#999]'}"
 							on:click={() => selectedSource = source.id}
 						>
 							{source.name}
@@ -399,14 +399,14 @@
 					<div class="space-y-3">
 						{#if selectedSource === 'ccxt'}
 							<div>
-								<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-exchange">Exchange</label>
+								<label class="text-[10px] uppercase text-[#666] block mb-1" for="data-inspector-exchange">Exchange</label>
 								<select id="data-inspector-exchange" bind:value={fetchExchange} class="terminal-select">
 									{#each exchanges as ex}<option value={ex}>{ex}</option>{/each}
 								</select>
 							</div>
 						{/if}
 						<div>
-							<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-symbol">Symbol</label>
+							<label class="text-[10px] uppercase text-[#666] block mb-1" for="data-inspector-symbol">Symbol</label>
 							{#if selectedSource === 'polygon'}
 								<input id="data-inspector-symbol" bind:value={fetchSymbol} class="terminal-input" placeholder="AAPL" />
 							{:else}
@@ -421,33 +421,33 @@
 						</div>
 						{#if !fetchAllTimeframes}
 							<div>
-								<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-timeframe">Timeframe</label>
+								<label class="text-[10px] uppercase text-[#666] block mb-1" for="data-inspector-timeframe">Timeframe</label>
 								<select id="data-inspector-timeframe" bind:value={fetchTimeframe} class="terminal-select">
 									{#each timeframes as tf}<option value={tf}>{tf}</option>{/each}
 								</select>
 							</div>
 						{/if}
 						<label class="flex items-center gap-2 cursor-pointer mt-2 mb-1">
-							<input type="checkbox" bind:checked={fetchAllTimeframes} class="rounded border-[#222] bg-[#0b0b0b] text-cyan-500 focus:ring-cyan-500 focus:ring-offset-[#050505]">
-							<span class="text-[10px] uppercase text-gray-500">All Timeframes</span>
+							<input type="checkbox" bind:checked={fetchAllTimeframes} class="border-[#333] bg-[#0b0b0b] text-white focus:ring-0">
+							<span class="text-[10px] uppercase text-[#666]">All Timeframes</span>
 						</label>
 						<label class="flex items-center gap-2 cursor-pointer mt-2 mb-1">
-							<input type="checkbox" bind:checked={fetchAllAvailable} class="rounded border-[#222] bg-[#0b0b0b] text-cyan-500 focus:ring-cyan-500 focus:ring-offset-[#050505]">
-							<span class="text-[10px] uppercase text-gray-500">All Available Data</span>
+							<input type="checkbox" bind:checked={fetchAllAvailable} class="border-[#333] bg-[#0b0b0b] text-white focus:ring-0">
+							<span class="text-[10px] uppercase text-[#666]">All Available Data</span>
 						</label>
 
 						{#if !fetchAllAvailable}
 							<div>
-								<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-bars">Or Limit Bars</label>
+								<label class="text-[10px] uppercase text-[#666] block mb-1" for="data-inspector-bars">Or Limit Bars</label>
 								<input id="data-inspector-bars" type="number" bind:value={fetchLimit} class="terminal-input" />
 							</div>
 							<div class="grid grid-cols-2 gap-2">
 								<div>
-									<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-since">Since (Optional)</label>
+									<label class="text-[10px] uppercase text-[#666] block mb-1" for="data-inspector-since">Since (Optional)</label>
 									<input id="data-inspector-since" type="datetime-local" bind:value={fetchSince} class="terminal-input" />
 								</div>
 								<div>
-									<label class="text-[10px] uppercase text-gray-500 block mb-1" for="data-inspector-until">Until (Optional)</label>
+									<label class="text-[10px] uppercase text-[#666] block mb-1" for="data-inspector-until">Until (Optional)</label>
 									<input id="data-inspector-until" type="datetime-local" bind:value={fetchUntil} class="terminal-input" />
 								</div>
 							</div>
@@ -455,7 +455,7 @@
 					</div>
 				{:else if selectedSource === 'csv'}
 					<div class="space-y-3">
-						<input type="file" accept=".csv" on:change={handleCSVSelect} class="text-xs text-gray-400" />
+						<input type="file" accept=".csv" on:change={handleCSVSelect} class="text-xs text-[#888]" />
 						<input bind:value={csvSymbol} class="terminal-input" placeholder="Symbol Name" />
 					</div>
 				{/if}
@@ -469,13 +469,13 @@
 				</button>
 
 				{#if $dataFetchState.status === 'running' && $dataFetchState.progress}
-					<div class="text-xs text-red-400 mt-2 font-mono animate-pulse">
+					<div class="text-xs text-[#888] mt-2 font-mono animate-pulse">
 						{$dataFetchState.progress}
 					</div>
 				{/if}
 
 				{#if $dataFetchState.status === 'success' && $dataFetchState.message}
-					<div class="text-xs text-green-400 mt-2 font-mono">
+					<div class="text-xs text-emerald-400 mt-2 font-mono">
 						{$dataFetchState.message}
 					</div>
 				{/if}
@@ -491,20 +491,20 @@
 				<div class="flex items-start justify-between gap-2">
 					<div>
 						<h3 class="text-lg font-bold text-white">{selectedDataset.symbol}</h3>
-						<div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-1">
-							<span class="bg-[#111] px-1 rounded">{selectedDataset.timeframe}</span>
-							<span class="bg-[#111] px-1 rounded uppercase">{selectedDataset.source}</span>
+						<div class="flex flex-wrap items-center gap-2 text-xs text-[#666] mt-1">
+							<span class="border border-[#333] px-1">{selectedDataset.timeframe}</span>
+							<span class="border border-[#333] px-1 uppercase">{selectedDataset.source}</span>
 							{#if selectedDataset.market !== undefined}
 								{@const chip = marketChip(selectedDataset.market)}
 								<span
-									class="border px-1 rounded text-[10px] font-mono {chip.cls}"
+									class="border px-1 text-[10px] font-mono {chip.cls}"
 									title="Venue identity of the stored bars (from the write path's market stamp). UNSTAMPED = legacy file — run the market reconcile."
 								>{chip.label}</span>
 							{/if}
 						</div>
 					</div>
 					<button
-						class="text-[10px] font-mono px-2 py-1 border border-cyan-800/50 text-cyan-400 hover:text-white hover:border-cyan-500 transition-colors whitespace-nowrap"
+						class="text-[10px] font-mono px-2 py-1 border border-[#333] text-[#888] hover:text-white hover:border-[#555] transition-colors whitespace-nowrap"
 						on:click={() => dispatch('viewSeries', { symbol: selectedDataset!.symbol, timeframe: selectedDataset!.timeframe })}
 						title="Open the data viewer for this series"
 					>
@@ -514,17 +514,17 @@
 
 				<!-- Gauntlet fitness: the exact data-gate verdict a strategy backtest
 				     on this series faces (fail-closed on gaps/staleness). -->
-				<div class="bg-[#111] border {gate ? (gate.ok ? 'border-green-900/60' : 'border-red-900/60') : 'border-[#222]'} p-2 space-y-1">
+				<div class="bg-[#111] border {gate ? (gate.ok ? 'border-emerald-900/60' : 'border-red-900/60') : 'border-[#222]'} p-2 space-y-1">
 					<div class="flex items-center justify-between">
-						<span class="text-[10px] text-gray-500 uppercase tracking-wider">Gauntlet fitness</span>
+						<span class="text-[10px] text-[#666] uppercase tracking-wider">Gauntlet fitness</span>
 						{#if gateLoading}
-							<span class="text-[10px] font-mono text-gray-500 animate-pulse">checking…</span>
+							<span class="text-[10px] font-mono text-[#666] animate-pulse">checking…</span>
 						{:else if gate}
-							<span class="text-[10px] font-bold tracking-widest {gate.ok ? 'text-green-400' : 'text-red-400'}">
+							<span class="text-[10px] font-bold tracking-widest {gate.ok ? 'text-emerald-400' : 'text-red-400'}">
 								{gate.ok ? 'FIT TO SCORE' : 'GATE BLOCKED'}
 							</span>
 						{:else}
-							<span class="text-[10px] font-mono text-gray-600">unavailable</span>
+							<span class="text-[10px] font-mono text-[#555]">unavailable</span>
 						{/if}
 					</div>
 					{#if gate && !gate.ok}
@@ -533,10 +533,10 @@
 								<li class="font-mono truncate" title={reason}>• {reason}</li>
 							{/each}
 						</ul>
-						<div class="text-[10px] text-gray-500">Verdicts on this series are deferred until self-healing repairs it.</div>
+						<div class="text-[10px] text-[#666]">Verdicts on this series are deferred until self-healing repairs it.</div>
 					{/if}
 					{#if restatements}
-						<div class="text-[10px] text-gray-500">
+						<div class="text-[10px] text-[#666]">
 							{#if restatements.count > 0}
 								{restatements.count} restatement event{restatements.count === 1 ? '' : 's'} in the revision log
 								{#if restatements.latest}(latest {new Date(restatements.latest).toLocaleDateString()}){/if}
@@ -548,24 +548,24 @@
 				</div>
 
 				{#if qualityLoading}
-					<div class="text-xs text-gray-500">Analyzing quality...</div>
+					<div class="text-xs text-[#666]">Analyzing quality...</div>
 				{:else if quality}
 					<!-- Quality Stats -->
 					<div class="space-y-4">
 						<div class="grid grid-cols-2 gap-2">
 							<div class="bg-[#111] p-2 border border-[#222]">
-								<div class="text-[10px] text-gray-500 uppercase">Bars</div>
+								<div class="text-[10px] text-[#666] uppercase">Bars</div>
 								<div class="text-sm font-bold">{quality.row_count.toLocaleString()}</div>
 							</div>
 							<div class="bg-[#111] p-2 border border-[#222]">
-								<div class="text-[10px] text-gray-500 uppercase">Gaps</div>
-								<div class="text-sm font-bold {quality.gaps > 0 ? 'text-yellow-500' : 'text-green-500'}">{quality.gaps}</div>
+								<div class="text-[10px] text-[#666] uppercase">Gaps</div>
+								<div class="text-sm font-bold {quality.gaps > 0 ? 'text-yellow-500' : 'text-emerald-500'}">{quality.gaps}</div>
 							</div>
 						</div>
 
 						<div>
-							<div class="text-[10px] text-gray-500 uppercase mb-2">Range</div>
-							<div class="text-xs font-mono text-gray-300">
+							<div class="text-[10px] text-[#666] uppercase mb-2">Range</div>
+							<div class="text-xs font-mono text-[#888]">
 								{new Date(quality.start).toLocaleDateString()}
 								<br/>↓<br/>
 								{new Date(quality.end).toLocaleDateString()}
@@ -573,33 +573,33 @@
 						</div>
 
 						<div>
-							<div class="text-[10px] text-gray-500 uppercase mb-2">Integrity</div>
+							<div class="text-[10px] text-[#666] uppercase mb-2">Integrity</div>
 							<div class="space-y-1">
 								<div class="flex justify-between text-xs">
-									<span class="text-gray-400">Nulls</span>
-									<span class={quality.null_values > 0 ? 'text-red-500' : 'text-green-500'}>{quality.null_values}</span>
+									<span class="text-[#888]">Nulls</span>
+									<span class={quality.null_values > 0 ? 'text-red-500' : 'text-emerald-500'}>{quality.null_values}</span>
 								</div>
 								<div class="flex justify-between text-xs">
-									<span class="text-gray-400">Bad H/L</span>
-									<span class={quality.integrity.invalid_high_low > 0 ? 'text-red-500' : 'text-green-500'}>{quality.integrity.invalid_high_low}</span>
+									<span class="text-[#888]">Bad H/L</span>
+									<span class={quality.integrity.invalid_high_low > 0 ? 'text-red-500' : 'text-emerald-500'}>{quality.integrity.invalid_high_low}</span>
 								</div>
 							</div>
 						</div>
 					</div>
 				{:else}
-					<div class="text-xs text-gray-500">No quality data available.</div>
+					<div class="text-xs text-[#666]">No quality data available.</div>
 				{/if}
 
 				<!-- F1, F3, F4, F5 — Streams section -->
 				<div class="space-y-2">
-					<div class="text-[10px] text-gray-500 uppercase tracking-wider">Streams</div>
+					<div class="text-[10px] text-[#666] uppercase tracking-wider">Streams</div>
 
 					{#if streamsLoading}
-						<div class="text-xs text-gray-500 font-mono animate-pulse">Loading streams...</div>
+						<div class="text-xs text-[#666] font-mono animate-pulse">Loading streams...</div>
 					{:else if streams}
 						<!-- F5 — Active symbol source indicator -->
 						{#if streams.collection_reason}
-							<div class="text-[10px] text-cyan-600/70 font-mono mb-1">{streams.collection_reason}</div>
+							<div class="text-[10px] text-[#666] font-mono mb-1">{streams.collection_reason}</div>
 						{/if}
 
 						<!-- F1 — Stream health rows -->
@@ -611,12 +611,12 @@
 							<div class="bg-[#111] border border-[#222] p-2 space-y-1">
 								<div class="flex items-center justify-between">
 									<div class="flex items-center gap-2">
-										<span class="text-[10px] text-gray-400 font-mono uppercase w-14">{row.label}</span>
+										<span class="text-[10px] text-[#888] font-mono uppercase w-14">{row.label}</span>
 										<span class="text-[9px] font-bold tracking-widest {streamStatusColor(row.info.status)}">{streamStatusLabel(row.info.status)}</span>
 									</div>
 									<!-- F3 — Collect Now button -->
 									<button
-										class="text-[9px] font-mono px-1.5 py-0.5 border border-cyan-800/50 text-cyan-600 hover:text-cyan-400 hover:border-cyan-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+										class="text-[9px] font-mono px-1.5 py-0.5 border border-[#333] text-[#888] hover:text-white hover:border-[#555] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
 										disabled={!!collectCooldowns[row.key] || collectingStream === row.key}
 										on:click={() => collectNow(selectedDataset!.symbol, row.key)}
 										title="Trigger collection now"
@@ -633,50 +633,50 @@
 
 								<!-- F4 — Empty state or data details -->
 								{#if row.info.status === 'no_data'}
-									<div class="text-[10px] text-gray-600 font-mono leading-relaxed">
+									<div class="text-[10px] text-[#555] font-mono leading-relaxed">
 										No data yet. Collection runs automatically — check back after the next scheduled pass.
 									</div>
 								{:else}
-									<div class="flex gap-3 text-[10px] text-gray-500 font-mono">
+									<div class="flex gap-3 text-[10px] text-[#666] font-mono">
 										<span>{row.info.row_count.toLocaleString()} rows</span>
 										{#if row.info.data_age_hours !== null}
-											<span class={row.info.data_age_hours > 2 ? 'text-yellow-600' : 'text-gray-500'}>{row.info.data_age_hours}h ago</span>
+											<span class={row.info.data_age_hours > 2 ? 'text-yellow-600' : 'text-[#666]'}>{row.info.data_age_hours}h ago</span>
 										{/if}
 									</div>
 								{/if}
 
 								<!-- F4b — last manual Collect result -->
 								{#if collectResult[row.key]}
-									<div class="text-[10px] font-mono {collectResult[row.key]?.ok ? 'text-green-600' : 'text-red-400'}">
+									<div class="text-[10px] font-mono {collectResult[row.key]?.ok ? 'text-emerald-600' : 'text-red-400'}">
 										{collectResult[row.key]?.ok ? '✓' : '✗'} {collectResult[row.key]?.msg}
 									</div>
 								{/if}
 							</div>
 						{/each}
 					{:else}
-						<div class="text-[10px] text-gray-600">Stream data unavailable.</div>
+						<div class="text-[10px] text-[#555]">Stream data unavailable.</div>
 					{/if}
 				</div>
 
 			<!-- BV Backfill section -->
 			<div class="space-y-2">
-				<div class="text-[10px] text-gray-500 uppercase tracking-wider">Binance Vision Backfill</div>
+				<div class="text-[10px] text-[#666] uppercase tracking-wider">Binance Vision Backfill</div>
 				<div class="bg-[#111] border border-[#222] p-2 space-y-2">
 					<div class="flex items-center justify-between">
-						<span class="text-[10px] font-mono text-gray-400">
+						<span class="text-[10px] font-mono text-[#888]">
 							{#if backfillStatus?.running}
 								<span class="text-yellow-400 animate-pulse">RUNNING</span>
 							{:else if backfillStatus?.last_error}
 								<span class="text-red-400">ERROR</span>
 							{:else if backfillStatus?.last_result}
-								<span class="text-green-400">DONE</span>
+								<span class="text-emerald-400">DONE</span>
 							{:else}
-								<span class="text-gray-600">IDLE</span>
+								<span class="text-[#555]">IDLE</span>
 							{/if}
 						</span>
 						<div class="flex gap-1">
 							<button
-								class="text-[9px] font-mono px-1.5 py-0.5 border border-cyan-800/50 text-cyan-600 hover:text-cyan-400 hover:border-cyan-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+								class="text-[9px] font-mono px-1.5 py-0.5 border border-[#333] text-[#888] hover:text-white hover:border-[#555] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
 								disabled={backfillLoading || !!backfillStatus?.running}
 								on:click={() => startBackfill(selectedDataset!.symbol)}
 								title="Backfill this symbol"
@@ -684,7 +684,7 @@
 								{backfillStatus?.running ? '...' : 'THIS'}
 							</button>
 							<button
-								class="text-[9px] font-mono px-1.5 py-0.5 border border-slate-700/50 text-slate-500 hover:text-slate-300 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+								class="text-[9px] font-mono px-1.5 py-0.5 border border-[#333] text-[#666] hover:text-[#999] hover:border-[#555] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
 								disabled={backfillLoading || !!backfillStatus?.running}
 								on:click={() => startBackfill()}
 								title="Backfill all symbols"
@@ -699,14 +699,14 @@
 						{@const entries = Object.entries(backfillStatus.last_result)}
 						<div class="space-y-1">
 							{#each entries as [sym, streams]}
-								<div class="text-[10px] font-mono text-gray-500">{sym}:</div>
+								<div class="text-[10px] font-mono text-[#666]">{sym}:</div>
 								{#each Object.entries(streams) as [stream, value]}
 									{#if typeof value === 'number'}
-										<div class="text-[10px] font-mono text-gray-400 pl-2">
-											{stream}: <span class="text-green-400">+{value} rows</span>
+										<div class="text-[10px] font-mono text-[#888] pl-2">
+											{stream}: <span class="text-emerald-400">+{value} rows</span>
 										</div>
 									{:else if String(stream).endsWith('_skip_reason')}
-										<div class="text-[10px] font-mono text-gray-600 pl-2">
+										<div class="text-[10px] font-mono text-[#555] pl-2">
 											{stream.replace('_skip_reason', '')}: <span class="text-yellow-700">{value}</span>
 										</div>
 									{:else if String(stream).endsWith('_error')}
@@ -719,13 +719,13 @@
 						</div>
 					{/if}
 					{#if backfillStatus?.last_started_at}
-						<div class="text-[10px] text-gray-700 font-mono">{new Date(backfillStatus.last_started_at).toLocaleTimeString()}</div>
+						<div class="text-[10px] text-[#444] font-mono">{new Date(backfillStatus.last_started_at).toLocaleTimeString()}</div>
 					{/if}
 				</div>
 			</div>
 		</div>
 		{:else}
-			<div class="flex h-full items-center justify-center text-xs text-gray-600">
+			<div class="flex h-full items-center justify-center text-xs text-[#555]">
 				Select a dataset to view details
 			</div>
 		{/if}

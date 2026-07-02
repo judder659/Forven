@@ -18,15 +18,15 @@
 	}
 </script>
 
-<p class="text-xs text-gray-500">
+<p class="text-xs text-[#666]">
 	<a
 		href={OPENCODE_GO_REFERRAL_URL}
 		on:click|preventDefault={openReferral}
-		class="text-blue-400 hover:text-blue-300 hover:underline">Get OpenCode GO ↗</a>
-	<span class="text-gray-600">— referral link: you get $5 of usage credit</span>
+		class="text-white hover:text-[#888] hover:underline">Get OpenCode GO ↗</a>
+	<span class="text-[#555]">— referral link: you get $5 of usage credit</span>
 </p>
 {#if copyFallback}
-	<p class="mt-1 text-[11px] text-amber-300 break-all">
+	<p class="mt-1 text-[11px] text-yellow-400 break-all">
 		Couldn't open your browser. Copy this link: {OPENCODE_GO_REFERRAL_URL}
 	</p>
 {/if}

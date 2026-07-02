@@ -45,13 +45,13 @@
 	function severityChip(severity: string): string {
 		switch ((severity || '').toLowerCase()) {
 			case 'critical':
-				return 'text-red-200 border-red-700 bg-red-950/40';
+				return 'text-red-400 border-red-900 bg-red-500/10';
 			case 'fail':
-				return 'text-red-300 border-red-800 bg-red-950/20';
+				return 'text-red-400 border-red-900 bg-red-500/10';
 			case 'warn':
-				return 'text-amber-300 border-amber-800 bg-amber-950/20';
+				return 'text-yellow-400 border-yellow-900 bg-yellow-500/10';
 			default:
-				return 'text-gray-400 border-[#333] bg-[#111]';
+				return 'text-[#888] border-[#333] bg-[#111]';
 		}
 	}
 
@@ -61,9 +61,9 @@
 			case 'fail':
 				return 'bg-red-500';
 			case 'warn':
-				return 'bg-amber-400';
+				return 'bg-yellow-400';
 			default:
-				return 'bg-gray-500';
+				return 'bg-[#444]';
 		}
 	}
 
@@ -182,26 +182,26 @@
 	];
 </script>
 
-<div class="border border-[#333] bg-[#0d0d0d] rounded">
+<div class="border border-[#222] bg-[#050505]">
 	<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between gap-4">
 		<div class="flex items-center gap-4">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-gray-200">Notifications</h2>
+			<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">Notifications</h2>
 			<div class="flex items-center gap-1">
 				<button
-					class="text-[10px] uppercase tracking-wider px-2 py-1 border rounded transition-colors {activeTab === 'inbox'
+					class="text-[10px] uppercase tracking-wider px-2 py-1 border transition-colors {activeTab === 'inbox'
 						? 'border-white text-white bg-[#1a1a1a]'
-						: 'border-[#333] text-gray-500 hover:text-white'}"
+						: 'border-[#333] text-[#666] hover:text-white'}"
 					on:click={() => switchTab('inbox')}
 				>
 					Inbox
 					{#if items.length > 0}
-						<span class="ml-1 text-[10px] font-bold px-1.5 rounded-full {inboxSplit.fresh.length > 0 ? 'bg-red-500 text-white' : 'bg-[#333] text-gray-300'}">{items.length}</span>
+						<span class="ml-1 text-[10px] font-bold px-1.5 {inboxSplit.fresh.length > 0 ? 'bg-red-500 text-white' : 'bg-[#333] text-[#888]'}">{items.length}</span>
 					{/if}
 				</button>
 				<button
-					class="text-[10px] uppercase tracking-wider px-2 py-1 border rounded transition-colors {activeTab === 'log'
+					class="text-[10px] uppercase tracking-wider px-2 py-1 border transition-colors {activeTab === 'log'
 						? 'border-white text-white bg-[#1a1a1a]'
-						: 'border-[#333] text-gray-500 hover:text-white'}"
+						: 'border-[#333] text-[#666] hover:text-white'}"
 					on:click={() => switchTab('log')}
 				>
 					Log
@@ -210,7 +210,7 @@
 		</div>
 		{#if activeTab === 'inbox' && items.length > 0}
 			<button
-				class="text-xs border border-[#333] px-3 py-1.5 text-gray-300 hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+				class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
 				on:click={() => void handleAcknowledgeAll()}
 				disabled={ackAllInFlight}
 				title="Mark every listed notification as acknowledged"
@@ -222,13 +222,13 @@
 
 	{#if activeTab === 'inbox'}
 		{#if error}
-			<div class="px-4 py-3 text-xs text-red-300 border-b border-[#222]">{error}</div>
+			<div class="px-4 py-3 text-xs text-red-400 border-b border-[#222]">{error}</div>
 		{/if}
 
 		{#if loading}
-			<div class="px-4 py-6 text-center text-xs text-gray-500">Loading notifications…</div>
+			<div class="px-4 py-6 text-center text-xs text-[#666]">Loading notifications…</div>
 		{:else if items.length === 0}
-			<div class="px-4 py-6 text-center text-xs text-gray-500">
+			<div class="px-4 py-6 text-center text-xs text-[#666]">
 				No actionable notifications. New critical issues (risk, trade failures, system health) appear here.
 			</div>
 		{:else}
@@ -237,11 +237,11 @@
 					{@const item = entry.item}
 					{@const isOpen = expanded.has(item.id)}
 					{#if i > 0 && !entry.isNew && inboxEntries[i - 1].isNew}
-						<div class="px-4 py-1.5 text-[10px] uppercase tracking-[0.18em] text-gray-600 bg-[#0a0a0a]">
+						<div class="px-4 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#555] bg-[#0a0a0a]">
 							Seen on an earlier visit
 						</div>
 					{/if}
-					<div class="px-4 py-3 {entry.isNew ? 'border-l-2 border-l-cyan-500 bg-cyan-950/10' : ''}">
+					<div class="px-4 py-3 {entry.isNew ? 'border-l-2 border-l-white bg-white/[0.02]' : ''}">
 						<div class="flex items-start justify-between gap-4">
 							<button
 								class="flex items-start gap-3 min-w-0 text-left flex-1"
@@ -250,26 +250,26 @@
 							>
 								<span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0 {severityDot(item.severity)}"></span>
 								<div class="min-w-0">
-									<div class="text-xs font-bold text-gray-100 truncate">
+									<div class="text-xs font-bold text-white truncate">
 										{#if entry.isNew}
-											<span class="text-[9px] font-bold uppercase tracking-wider text-cyan-300 border border-cyan-700 rounded px-1 py-px mr-1.5 align-middle">New</span>
+											<span class="text-[9px] font-bold uppercase tracking-wider text-white border border-[#555] px-1 py-px mr-1.5 align-middle">New</span>
 										{/if}
 										{item.title}
 									</div>
 									{#if item.summary}
-										<div class="text-[11px] text-gray-400 mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
+										<div class="text-[11px] text-[#888] mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
 									{/if}
-									<div class="text-[10px] text-gray-600 mt-0.5">
+									<div class="text-[10px] text-[#555] mt-0.5">
 										{item.source} · {item.event_type} · {formatTimestamp(item.created_at)}
 									</div>
 								</div>
 							</button>
 							<div class="flex items-center gap-2 shrink-0">
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded {severityChip(item.severity)}">
+								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border {severityChip(item.severity)}">
 									{item.severity}
 								</span>
 								<button
-									class="text-xs border border-[#333] px-2 py-1 text-gray-300 hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+									class="text-xs border border-[#333] px-2 py-1 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
 									on:click={() => void handleAcknowledge(item)}
 									disabled={ackInFlight.has(item.id)}
 									title="Mark as acknowledged"
@@ -281,10 +281,10 @@
 						{#if isOpen && (item.body || item.delivery_error)}
 							<div class="mt-3 ml-5 border-l border-[#222] pl-4 space-y-2">
 								{#if item.body}
-									<div class="text-[11px] text-gray-300 whitespace-pre-wrap break-words">{item.body}</div>
+									<div class="text-[11px] text-[#888] whitespace-pre-wrap break-words">{item.body}</div>
 								{/if}
 								{#if item.delivery_error}
-									<div class="text-[11px] text-red-300/80 break-all">delivery error: {item.delivery_error}</div>
+									<div class="text-[11px] text-red-400 break-all">delivery error: {item.delivery_error}</div>
 								{/if}
 							</div>
 						{/if}
@@ -294,13 +294,13 @@
 		{/if}
 	{:else}
 		{#if logError}
-			<div class="px-4 py-3 text-xs text-red-300 border-b border-[#222]">{logError}</div>
+			<div class="px-4 py-3 text-xs text-red-400 border-b border-[#222]">{logError}</div>
 		{/if}
 
 		{#if logLoading}
-			<div class="px-4 py-6 text-center text-xs text-gray-500">Loading log…</div>
+			<div class="px-4 py-6 text-center text-xs text-[#666]">Loading log…</div>
 		{:else if logItems.length === 0}
-			<div class="px-4 py-6 text-center text-xs text-gray-500">No notifications recorded yet.</div>
+			<div class="px-4 py-6 text-center text-xs text-[#666]">No notifications recorded yet.</div>
 		{:else}
 			<div class="divide-y divide-[#1a1a1a]">
 				{#each logItems as item (item.id)}
@@ -315,11 +315,11 @@
 							>
 								<span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0 {severityDot(item.severity)}"></span>
 								<div class="min-w-0">
-									<div class="text-xs font-bold text-gray-100 truncate">{item.title}</div>
+									<div class="text-xs font-bold text-white truncate">{item.title}</div>
 									{#if item.summary}
-										<div class="text-[11px] text-gray-400 mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
+										<div class="text-[11px] text-[#888] mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
 									{/if}
-									<div class="text-[10px] text-gray-600 mt-0.5">
+									<div class="text-[10px] text-[#555] mt-0.5">
 										{item.source} · {item.event_type} · {formatTimestamp(item.created_at)}
 										{#if acked}
 											· acked {formatTimestamp(item.acknowledged_at)}
@@ -327,17 +327,17 @@
 									</div>
 								</div>
 							</button>
-							<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded shrink-0 {severityChip(item.severity)}">
+							<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border shrink-0 {severityChip(item.severity)}">
 								{item.severity}
 							</span>
 						</div>
 						{#if isOpen && (item.body || item.delivery_error)}
 							<div class="mt-3 ml-5 border-l border-[#222] pl-4 space-y-2">
 								{#if item.body}
-									<div class="text-[11px] text-gray-300 whitespace-pre-wrap break-words">{item.body}</div>
+									<div class="text-[11px] text-[#888] whitespace-pre-wrap break-words">{item.body}</div>
 								{/if}
 								{#if item.delivery_error}
-									<div class="text-[11px] text-red-300/80 break-all">delivery error: {item.delivery_error}</div>
+									<div class="text-[11px] text-red-400 break-all">delivery error: {item.delivery_error}</div>
 								{/if}
 							</div>
 						{/if}
@@ -347,7 +347,7 @@
 			{#if logHasMore}
 				<div class="px-4 py-3 border-t border-[#222] text-center">
 					<button
-						class="text-xs border border-[#333] px-3 py-1.5 text-gray-300 hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+						class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
 						on:click={() => void loadLog(false)}
 						disabled={logLoadingMore}
 					>

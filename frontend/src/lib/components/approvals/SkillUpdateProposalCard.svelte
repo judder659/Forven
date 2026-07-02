@@ -163,7 +163,6 @@
 		padding: 0.75rem;
 		border: 1px solid #1f1f1f;
 		background: #050505;
-		border-radius: 0.5rem;
 	}
 
 	.card-header {
@@ -193,10 +192,9 @@
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
 		padding: 0.2rem 0.55rem;
-		border: 1px solid rgba(34, 211, 238, 0.4);
-		background: rgba(34, 211, 238, 0.1);
-		color: #67e8f9;
-		border-radius: 999px;
+		border: 1px solid #333;
+		background: transparent;
+		color: #888;
 	}
 
 	.version-pill--loading {
@@ -211,7 +209,6 @@
 		border: 1px solid rgba(248, 113, 113, 0.3);
 		background: rgba(248, 113, 113, 0.08);
 		padding: 0.4rem 0.6rem;
-		border-radius: 0.375rem;
 	}
 
 	.section {
@@ -237,7 +234,6 @@
 
 	.diff-cell {
 		padding: 0.5rem;
-		border-radius: 0.375rem;
 		border: 1px solid #1f1f1f;
 		background: #050505;
 		font-size: 0.8rem;
@@ -262,8 +258,8 @@
 	}
 
 	.diff-new {
-		border-color: rgba(74, 222, 128, 0.25);
-		background: rgba(74, 222, 128, 0.04);
+		border-color: rgba(52, 211, 153, 0.25);
+		background: rgba(52, 211, 153, 0.04);
 	}
 
 	.add-list {
@@ -277,15 +273,14 @@
 
 	.add-list li {
 		padding: 0.4rem 0.55rem;
-		border-radius: 0.375rem;
 		font-size: 0.8rem;
 		border: 1px solid transparent;
 	}
 
 	.add-list--positive li {
-		background: rgba(74, 222, 128, 0.06);
-		border-color: rgba(74, 222, 128, 0.25);
-		color: #bbf7d0;
+		background: rgba(52, 211, 153, 0.06);
+		border-color: rgba(52, 211, 153, 0.25);
+		color: #a7f3d0;
 	}
 
 	.add-list--negative li {
@@ -319,7 +314,7 @@
 
 	.meta-key {
 		font-family: ui-monospace, monospace;
-		color: #c4b5fd;
+		color: #fff;
 	}
 
 	.meta-old {
@@ -327,7 +322,7 @@
 	}
 
 	.meta-new {
-		color: #4ade80;
+		color: #34d399;
 	}
 
 	.hint {

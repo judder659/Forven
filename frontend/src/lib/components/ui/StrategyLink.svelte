@@ -17,12 +17,12 @@
 	<a
 		href={href}
 		title={title}
-		class={`inline-flex items-center gap-1 rounded border border-cyan-900/60 bg-cyan-900/10 px-2 py-0.5 font-mono text-[11px] text-cyan-300 transition-colors hover:border-cyan-500 hover:text-cyan-200 ${className}`}
+		class={`inline-flex items-center gap-1 border border-[#333] bg-[#111] px-2 py-0.5 font-mono text-[11px] text-[#888] transition-colors hover:border-[#555] hover:text-white ${className}`}
 	>
 		{text}
 	</a>
 {:else}
-	<span class={`inline-flex items-center gap-1 rounded border border-[#333] bg-[#111] px-2 py-0.5 font-mono text-[11px] text-gray-500 ${className}`}>
+	<span class={`inline-flex items-center gap-1 border border-[#333] bg-[#111] px-2 py-0.5 font-mono text-[11px] text-[#555] ${className}`}>
 		{text}
 	</span>
 {/if}

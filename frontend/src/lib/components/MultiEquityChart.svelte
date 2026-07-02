@@ -21,20 +21,20 @@
 
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: '#1f2937' },
+				background: { type: ColorType.Solid, color: '#0a0a0a' },
 				textColor: '#9ca3af',
 			},
 			grid: {
-				vertLines: { color: '#374151' },
-				horzLines: { color: '#374151' },
+				vertLines: { color: '#1c1c1c' },
+				horzLines: { color: '#1c1c1c' },
 			},
 			width: chartContainer.clientWidth,
 			height: height,
 			rightPriceScale: {
-				borderColor: '#374151',
+				borderColor: '#222222',
 			},
 			timeScale: {
-				borderColor: '#374151',
+				borderColor: '#222222',
 				timeVisible: true,
 			},
 			crosshair: {
@@ -127,7 +127,6 @@
 <style>
 	.multi-equity-chart {
 		width: 100%;
-		border-radius: 0.5rem;
 		overflow: hidden;
 	}
 </style>

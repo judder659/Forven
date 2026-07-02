@@ -64,29 +64,29 @@
 	function stageTone(stage: string): string {
 		switch (stage) {
 			case 'live_graduated':
-				return 'border-emerald-600/60 bg-emerald-950/40 text-emerald-200';
+				return 'border-emerald-900 bg-emerald-500/10 text-emerald-400 hover:border-emerald-700';
 			case 'paper':
-				return 'border-cyan-600/60 bg-cyan-950/40 text-cyan-200';
+				return 'border-[#333] bg-black text-white hover:border-[#555]';
 			case 'gauntlet':
-				return 'border-violet-600/60 bg-violet-950/40 text-violet-200';
+				return 'border-[#333] bg-black text-[#888] hover:border-[#555]';
 			case 'archived':
 			case 'rejected':
-				return 'border-red-900/60 bg-red-950/30 text-red-300';
+				return 'border-red-900 bg-red-500/10 text-red-400 hover:border-red-700';
 			default:
-				return 'border-[#2b2b2b] bg-black text-gray-300';
+				return 'border-[#333] bg-black text-[#888] hover:border-[#555]';
 		}
 	}
 
 	function optionTone(kind: StageOption['kind']): string {
 		switch (kind) {
 			case 'forward':
-				return 'text-cyan-200 hover:bg-cyan-950/40';
+				return 'text-white hover:bg-[#111]';
 			case 'backward':
-				return 'text-amber-200 hover:bg-amber-950/40';
+				return 'text-yellow-400 hover:bg-[#111]';
 			case 'terminal':
-				return 'text-red-300 hover:bg-red-950/40';
+				return 'text-red-400 hover:bg-[#111]';
 			case 'revive':
-				return 'text-emerald-200 hover:bg-emerald-950/40';
+				return 'text-emerald-400 hover:bg-[#111]';
 		}
 	}
 
@@ -159,7 +159,7 @@
 	<button
 		type="button"
 		data-testid="stage-control-toggle"
-		class={`flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition hover:brightness-125 ${stageTone(currentStage)}`}
+		class={`flex items-center gap-1.5 border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest transition-colors ${stageTone(currentStage)}`}
 		title="Change lifecycle stage"
 		aria-expanded={open}
 		on:click={toggleOpen}
@@ -173,16 +173,16 @@
 	{#if open}
 		<div
 			data-testid="stage-control-panel"
-			class="absolute left-0 top-full z-30 mt-1.5 w-72 rounded-lg border border-[#2b2b2b] bg-[#0b0b0b] p-2 shadow-[0_18px_40px_rgba(0,0,0,0.6)]"
+			class="absolute left-0 top-full z-30 mt-1.5 w-72 border border-[#222] bg-[#050505] p-2"
 		>
 			{#if !targetStage}
-				<div class="px-1 pb-1.5 text-[10px] uppercase tracking-[0.18em] text-gray-500">Move to stage</div>
+				<div class="px-1 pb-1.5 text-[10px] uppercase tracking-wider text-[#666]">Move to stage</div>
 				<div class="space-y-0.5">
 					{#each stageOptions as option (option.key)}
 						<button
 							type="button"
 							data-testid={`stage-option-${option.key}`}
-							class={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs transition ${optionTone(option.kind)}`}
+							class={`flex w-full items-center justify-between px-2 py-1.5 text-left text-xs transition-colors ${optionTone(option.kind)}`}
 							on:click={() => selectTarget(option.key)}
 						>
 							<span>{option.label}</span>
@@ -194,8 +194,8 @@
 				</div>
 			{:else}
 				<div class="space-y-2 p-1">
-					<div class="text-xs text-gray-200">
-						Move <span class="font-mono text-cyan-300">{strategyId}</span> to
+					<div class="text-xs text-[#ccc]">
+						Move <span class="font-mono text-white">{strategyId}</span> to
 						<span class="font-semibold">{targetOption?.label ?? lifecycleStageLabel(targetStage)}</span>?
 					</div>
 					{#if targetStage === 'archived'}
@@ -234,7 +234,7 @@
 						data-testid="stage-control-reason"
 						placeholder="Reason (optional)"
 						rows="2"
-						class="w-full rounded border border-[#2b2b2b] bg-black px-2 py-1 text-xs text-gray-300 placeholder:text-gray-600 focus:border-cyan-700 focus:outline-none"
+						class="w-full border border-[#333] bg-black px-2 py-1 text-xs text-[#aaa] placeholder:text-[#555] focus:border-white focus:outline-none"
 					></textarea>
 					{#if blockReason}
 						<div class="rounded border border-amber-700/50 bg-amber-950/30 p-2 text-[11px]" data-testid="stage-control-block-reason">
@@ -257,7 +257,7 @@
 								type="button"
 								data-testid="stage-control-confirm"
 								disabled={submitting || !goLiveArmed}
-								class="rounded bg-cyan-600 px-3 py-1 text-xs text-white transition hover:bg-cyan-500 disabled:opacity-50"
+								class="terminal-button-primary px-3 py-1 text-xs disabled:opacity-50"
 								on:click={() => void confirm(false)}
 							>{submitting ? 'Moving…' : 'Confirm'}</button>
 						{/if}

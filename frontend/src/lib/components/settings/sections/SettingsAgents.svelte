@@ -533,14 +533,14 @@
 	<!-- Roster-driven: AI providers (read-only status, CLI-managed credentials) -->
 	<section
 		aria-labelledby="agents-providers-heading"
-		class="border border-gray-800 rounded-lg bg-black p-6 space-y-4"
+		class="terminal-card p-6 space-y-4"
 	>
-		<header class="border-b border-gray-800 pb-2 flex items-start justify-between gap-3">
+		<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 id="agents-providers-heading" class="text-lg font-semibold text-white">
+				<h2 id="agents-providers-heading" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
 					AI providers
 				</h2>
-				<p class="text-xs text-gray-500 mt-1">
+				<p class="text-xs text-[#666] mt-1">
 					Provider credentials are stored in the auth file and managed via CLI.
 					{#if authFile}<span class="font-mono">{authFile}</span>{/if}
 				</p>
@@ -549,7 +549,7 @@
 				type="button"
 				on:click={() => loadAuthProviders()}
 				disabled={authProvidersLoading}
-				class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-60"
+				class="terminal-button text-xs"
 			>
 				{authProvidersLoading ? 'Refreshing…' : 'Refresh'}
 			</button>
@@ -560,9 +560,9 @@
 		{/if}
 
 		{#if authProvidersLoading}
-			<p class="text-sm text-gray-400">Loading providers…</p>
+			<p class="text-sm text-[#888]">Loading providers…</p>
 		{:else if authProviders.length === 0}
-			<p class="text-sm text-gray-400">No providers registered.</p>
+			<p class="text-sm text-[#888]">No providers registered.</p>
 		{:else}
 			<ul class="space-y-2">
 				{#each authProviders as provider (provider.provider)}
@@ -574,40 +574,40 @@
 					{@const isBaseUrlProvider = provider.requires_token === false && !provider.supports_oauth}
 					{@const statusColor =
 						provider.status === 'active'
-							? 'text-green-300 border-green-800 bg-green-950/40'
+							? 'text-emerald-400 border-emerald-900 bg-emerald-500/10'
 							: provider.status === 'not_configured'
-								? 'text-gray-400 border-gray-700 bg-gray-900/40'
+								? 'text-[#888] border-[#333] bg-transparent'
 								: provider.status === 'needs_reauth'
-									? 'text-red-300 border-red-800 bg-red-950/40'
-									: 'text-amber-300 border-amber-800 bg-amber-950/40'}
-					<li class="bg-black border border-gray-800 rounded p-4 space-y-3">
+									? 'text-red-400 border-red-900 bg-red-500/10'
+									: 'text-yellow-400 border-yellow-900 bg-yellow-500/10'}
+					<li class="border border-[#222] bg-black p-4 space-y-3">
 						<div class="flex flex-wrap items-center justify-between gap-2">
 							<div class="flex items-center gap-2">
 								<span class="font-mono text-sm text-white uppercase">{key}</span>
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border {statusColor}">
+								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border {statusColor}">
 									{provider.status === 'needs_reauth' ? 're-authenticate' : provider.status}
 								</span>
 								{#if provider.supports_oauth}
-									<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-gray-700 text-gray-400">
+									<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border border-[#333] text-[#888]">
 										oauth
 									</span>
 								{/if}
 							</div>
 							{#if provider.expires_in}
-								<span class="text-xs text-gray-400">{provider.expires_in}</span>
+								<span class="text-xs text-[#888]">{provider.expires_in}</span>
 							{/if}
 						</div>
 
 						{#if provider.expires_at}
-							<p class="text-xs text-gray-500">Expires {provider.expires_at}</p>
+							<p class="text-xs text-[#666]">Expires {provider.expires_at}</p>
 						{/if}
 						{#if provider.base_url}
-							<p class="text-xs text-gray-400">
+							<p class="text-xs text-[#888]">
 								Base URL: <span class="font-mono">{provider.base_url}</span>
 							</p>
 						{/if}
 						{#if provider.last_refresh_error}
-							<div class="rounded border border-red-900 bg-red-950/30 px-2 py-1.5 text-xs text-red-300">
+							<div class="border border-red-900 bg-red-500/5 px-2 py-1.5 text-xs text-red-400">
 								<span class="font-semibold">Token refresh failed:</span>
 								{provider.last_refresh_error}
 								{#if provider.supports_oauth}
@@ -617,7 +617,7 @@
 						{/if}
 
 						{#if msg}
-							<p class="text-xs text-green-400" role="status">{msg}</p>
+							<p class="text-xs text-emerald-400" role="status">{msg}</p>
 						{/if}
 						{#if err}
 							<p class="text-xs text-red-400" role="alert">{err}</p>
@@ -649,32 +649,32 @@
 																	: 'Starting…'}
 							{@const pillColor =
 								pollStatus === 'complete'
-									? 'text-green-300 border-green-800 bg-green-950/40'
+									? 'text-emerald-400 border-emerald-900 bg-emerald-500/10'
 									: pollStatus === 'expired' ||
 										  pollStatus === 'denied' ||
 										  pollStatus === 'error'
-										? 'text-red-300 border-red-800 bg-red-950/40'
+										? 'text-red-400 border-red-900 bg-red-500/10'
 										: pollStatus === 'slow_down' || pollStatus === 'retrying'
-											? 'text-amber-300 border-amber-800 bg-amber-950/40'
-											: 'text-blue-300 border-blue-800 bg-blue-950/40'}
-							<div class="bg-gray-950 border border-gray-700 rounded p-3 space-y-2">
-								<p class="text-xs text-gray-300">
+											? 'text-yellow-400 border-yellow-900 bg-yellow-500/10'
+											: 'text-[#888] border-[#333] bg-[#111]'}
+							<div class="bg-[#050505] border border-[#333] p-3 space-y-2">
+								<p class="text-xs text-[#888]">
 									{oauth.flow === 'device_code' ? 'Device code flow' : 'Authorization code flow'}
 								</p>
 								{#if oauth.verification_url && oauth.user_code}
-									<p class="text-xs text-gray-400">
+									<p class="text-xs text-[#888]">
 										Go to <a
 											href={oauth.verification_url}
 											on:click|preventDefault={() => openExternal(oauth.verification_url!)}
-											class="text-blue-400 underline cursor-pointer">{oauth.verification_url}</a>
+											class="text-white underline cursor-pointer">{oauth.verification_url}</a>
 										and enter code <span class="font-mono text-white">{oauth.user_code}</span>
 									</p>
 								{:else if oauth.authorize_url}
-									<p class="text-xs text-gray-400">
+									<p class="text-xs text-[#888]">
 										A new tab opened to <a
 											href={oauth.authorize_url}
 											on:click|preventDefault={() => openExternal(oauth.authorize_url!)}
-											class="text-blue-400 underline cursor-pointer">authorize</a>.
+											class="text-white underline cursor-pointer">authorize</a>.
 										{#if isManualPaste}
 											Paste the code returned by the provider:
 										{:else if isAuthorizationCode}
@@ -689,17 +689,17 @@
 										type="text"
 										placeholder="Paste callback URL or authorization code"
 										bind:value={oauth.code}
-										class="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+										class="terminal-input w-full font-mono"
 									/>
 								{/if}
 								{#if oauth.bind_error}
-									<p class="text-[11px] text-amber-300">
+									<p class="text-[11px] text-yellow-400">
 										Couldn't bind loopback listener ({oauth.bind_error}); using manual paste.
 									</p>
 								{/if}
 								<div class="flex items-center gap-2">
 									<span
-										class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border {pillColor}"
+										class="text-[10px] uppercase tracking-wider px-2 py-0.5 border {pillColor}"
 									>
 										{pillLabel}
 									</span>
@@ -708,7 +708,7 @@
 											type="button"
 											on:click={() => completeOAuth(key)}
 											disabled={busy || !(oauth.code ?? '').trim()}
-											class="text-xs px-3 py-1 rounded bg-blue-700 text-white hover:bg-blue-600 disabled:opacity-60"
+											class="terminal-button-primary text-xs"
 										>
 											{busy ? 'Completing…' : 'Use pasted code'}
 										</button>
@@ -716,7 +716,7 @@
 									<button
 										type="button"
 										on:click={() => cancelOAuth(key)}
-										class="text-xs px-3 py-1 rounded border border-gray-700 text-gray-300 hover:text-white"
+										class="terminal-button text-xs"
 									>
 										Cancel
 									</button>
@@ -725,44 +725,45 @@
 						{:else}
 							{@const isActive = provider.configured && provider.status === 'active'}
 							{#if isActive}
-								<p class="text-xs text-green-400">
+								<p class="text-xs text-emerald-400">
 									Connected{provider.expires_in ? ` · renews in ${provider.expires_in}` : ''}. No action needed.
+
 								</p>
 							{:else}
 								<div class="flex flex-wrap items-end gap-2">
 									{#if isBaseUrlProvider}
 										<label class="flex-1 min-w-[14rem]">
-											<span class="block text-xs text-gray-400 mb-1">Base URL</span>
+											<span class="block text-xs text-[#888] mb-1">Base URL</span>
 											<input
 												type="text"
 												placeholder={provider.base_url ?? 'http://localhost:1234/v1'}
 												bind:value={providerBaseUrlInput[key]}
-												class="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+												class="terminal-input w-full font-mono"
 											/>
 										</label>
 										<button
 											type="button"
 											on:click={() => saveProviderBaseUrl(key)}
 											disabled={busy}
-											class="text-xs px-3 py-1.5 rounded bg-blue-700 text-white hover:bg-blue-600 disabled:opacity-60"
+											class="terminal-button-primary text-xs"
 										>
 											{busy ? 'Saving…' : 'Save'}
 										</button>
 									{:else}
 										<label class="flex-1 min-w-[14rem]">
-											<span class="block text-xs text-gray-400 mb-1">API key / access token</span>
+											<span class="block text-xs text-[#888] mb-1">API key / access token</span>
 											<input
 												type="password"
 												placeholder="Paste token and press Save"
 												bind:value={providerTokenInput[key]}
-												class="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+												class="terminal-input w-full font-mono"
 											/>
 										</label>
 										<button
 											type="button"
 											on:click={() => saveProviderToken(key)}
 											disabled={busy}
-											class="text-xs px-3 py-1.5 rounded bg-blue-700 text-white hover:bg-blue-600 disabled:opacity-60"
+											class="terminal-button-primary text-xs"
 										>
 											{busy ? 'Saving…' : 'Save'}
 										</button>
@@ -771,7 +772,7 @@
 												type="button"
 												on:click={() => startOAuth(key)}
 												disabled={busy}
-												class="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-200 hover:text-white hover:border-gray-500 disabled:opacity-60"
+												class="terminal-button text-xs"
 											>
 												{provider.configured ? 'Re-authenticate' : 'Sign in with OAuth'}
 											</button>
@@ -789,7 +790,7 @@
 										type="button"
 										on:click={() => testProvider(key)}
 										disabled={busy}
-										class="text-xs px-3 py-1 rounded border border-gray-700 text-gray-300 hover:text-white disabled:opacity-60"
+										class="terminal-button text-xs"
 									>
 										{busy ? 'Testing…' : 'Test connection'}
 									</button>
@@ -798,7 +799,7 @@
 											type="button"
 											on:click={() => startOAuth(key)}
 											disabled={busy}
-											class="text-xs px-3 py-1 rounded border border-gray-700 text-gray-300 hover:text-white disabled:opacity-60"
+											class="terminal-button text-xs"
 										>
 											Re-authenticate
 										</button>
@@ -807,7 +808,7 @@
 										type="button"
 										on:click={() => disconnectProvider(key)}
 										disabled={busy}
-										class="text-xs px-3 py-1 rounded border border-red-900 text-red-300 hover:text-red-200 hover:border-red-700 disabled:opacity-60"
+										class="terminal-button-danger text-xs"
 									>
 										Disconnect
 									</button>
@@ -815,14 +816,14 @@
 							{/if}
 						{/if}
 
-						<details class="text-xs text-gray-500">
-							<summary class="cursor-pointer hover:text-gray-300">CLI equivalent</summary>
+						<details class="text-xs text-[#666]">
+							<summary class="cursor-pointer hover:text-white">CLI equivalent</summary>
 							<div class="mt-1 space-y-1">
 								{#if provider.login_command}
-									<p><span class="text-gray-600">Login:</span> <span class="font-mono text-gray-400">{provider.login_command}</span></p>
+									<p><span class="text-[#555]">Login:</span> <span class="font-mono text-[#888]">{provider.login_command}</span></p>
 								{/if}
 								{#if provider.refresh_command && provider.configured}
-									<p><span class="text-gray-600">Refresh:</span> <span class="font-mono text-gray-400">{provider.refresh_command}</span></p>
+									<p><span class="text-[#555]">Refresh:</span> <span class="font-mono text-[#888]">{provider.refresh_command}</span></p>
 								{/if}
 							</div>
 						</details>
@@ -836,14 +837,14 @@
 	<!-- Roster-driven: Model policy (enabled model checkboxes grouped by provider) -->
 	<section
 		aria-labelledby="agents-model-policy-heading"
-		class="border border-gray-800 rounded-lg bg-black p-6 space-y-4"
+		class="terminal-card p-6 space-y-4"
 	>
-		<header class="border-b border-gray-800 pb-2 flex items-start justify-between gap-3">
+		<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 id="agents-model-policy-heading" class="text-lg font-semibold text-white">
+				<h2 id="agents-model-policy-heading" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
 					Model policy
 				</h2>
-				<p class="text-xs text-gray-500 mt-1">
+				<p class="text-xs text-[#666] mt-1">
 					Check the model options that should appear in the agent model picker.
 				</p>
 			</div>
@@ -851,7 +852,7 @@
 				type="button"
 				on:click={() => loadModelOptions(true)}
 				disabled={modelOptionsRefreshing || modelOptionsLoading}
-				class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-60"
+				class="terminal-button text-xs"
 			>
 				{modelOptionsRefreshing ? 'Refreshing…' : 'Refresh from providers'}
 			</button>
@@ -861,13 +862,13 @@
 			<p class="text-xs text-red-400" role="alert">{modelOptionsError}</p>
 		{/if}
 		{#if modelOptionsMessage}
-			<p class="text-xs text-green-400" role="status">{modelOptionsMessage}</p>
+			<p class="text-xs text-emerald-400" role="status">{modelOptionsMessage}</p>
 		{/if}
 
 		{#if modelOptionsLoading}
-			<p class="text-sm text-gray-400">Loading available models…</p>
+			<p class="text-sm text-[#888]">Loading available models…</p>
 		{:else if modelOptions.length === 0}
-			<p class="text-sm text-gray-400">
+			<p class="text-sm text-[#888]">
 				No models discovered. Configure a provider under AI providers above.
 			</p>
 		{:else}
@@ -881,13 +882,13 @@
 			<div class="space-y-4">
 				{#each Object.entries(grouped) as [provider, opts] (provider)}
 					<div>
-						<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-							{provider} <span class="text-gray-600 font-normal">({opts.length})</span>
+						<h3 class="text-[10px] font-bold text-[#666] uppercase tracking-wider mb-2">
+							{provider} <span class="text-[#555] font-normal">({opts.length})</span>
 						</h3>
 						<div class="grid gap-1 md:grid-cols-2 lg:grid-cols-3">
 							{#each opts as opt (opt.key)}
 								<label
-									class="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-gray-200 hover:bg-gray-900 cursor-pointer"
+									class="flex items-center gap-2 px-2 py-1.5 text-sm text-[#888] hover:bg-[#111] cursor-pointer transition-colors"
 								>
 									<input
 										type="checkbox"
@@ -913,13 +914,13 @@
 	<!-- Roster-driven: Agent personas + per-agent documents -->
 	<section
 		aria-labelledby="agents-personas-heading"
-		class="border border-gray-800 rounded-lg bg-black p-6 space-y-4"
+		class="terminal-card p-6 space-y-4"
 	>
-		<header class="border-b border-gray-800 pb-2">
-			<h2 id="agents-personas-heading" class="text-lg font-semibold text-white">
+		<header class="border-b border-[#1a1a1a] pb-2">
+			<h2 id="agents-personas-heading" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
 				Agent personas
 			</h2>
-			<p class="text-xs text-gray-500 mt-1">
+			<p class="text-xs text-[#666] mt-1">
 				Per-agent role, model, schedule, instructions, and SOUL.md / AGENTS.md / ROLE.md.
 			</p>
 		</header>
@@ -928,13 +929,13 @@
 			<p class="text-xs text-red-400" role="alert">{agentError}</p>
 		{/if}
 		{#if agentMessage}
-			<p class="text-xs text-green-400" role="status">{agentMessage}</p>
+			<p class="text-xs text-emerald-400" role="status">{agentMessage}</p>
 		{/if}
 
 		{#if agentsLoading}
-			<p class="text-sm text-gray-400">Loading agents…</p>
+			<p class="text-sm text-[#888]">Loading agents…</p>
 		{:else if agents.length === 0}
-			<p class="text-sm text-gray-400">No agents registered.</p>
+			<p class="text-sm text-[#888]">No agents registered.</p>
 		{:else}
 			<div class="grid gap-6 md:grid-cols-[240px_1fr]">
 				<!-- Roster -->
@@ -947,10 +948,10 @@
 									role="option"
 									aria-selected={agent.id === selectedAgentId}
 									on:click={() => selectAgent(agent.id ?? null)}
-									class="w-full text-left px-3 py-2 rounded text-sm border border-gray-800 hover:border-gray-600 {agent.id ===
+									class="w-full text-left px-3 py-2 text-sm border transition-colors {agent.id ===
 									selectedAgentId
-										? 'bg-gray-800 text-white border-gray-600'
-										: 'bg-gray-900 text-gray-300'}"
+										? 'bg-[#111] text-white border-[#555]'
+										: 'bg-[#050505] text-[#888] border-[#222] hover:border-[#555]'}"
 								>
 									<span class="block font-medium truncate">{agent.name ?? agent.id}</span>
 								</button>
@@ -964,84 +965,84 @@
 					{#if agentDraft && selectedAgentId}
 						<div class="space-y-3">
 							<div class="grid gap-3 md:grid-cols-2">
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Name
 									<input
 										type="text"
 										bind:value={agentDraft.name}
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+										class="terminal-input mt-1 w-full"
 									/>
 								</label>
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Role
 									<input
 										type="text"
 										bind:value={agentDraft.role}
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+										class="terminal-input mt-1 w-full"
 									/>
 								</label>
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Model provider
 									<input
 										type="text"
 										bind:value={agentDraft.model}
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+										class="terminal-input mt-1 w-full"
 									/>
 								</label>
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Model ID
 									<input
 										type="text"
 										bind:value={agentDraft.model_id}
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+										class="terminal-input mt-1 w-full"
 									/>
 								</label>
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Schedule type
 									<select
 										bind:value={agentDraft.schedule_type}
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+										class="terminal-input mt-1 w-full"
 									>
 										<option value="">Unspecified</option>
 										<option value="cron">Cron</option>
 										<option value="interval">Interval</option>
 									</select>
 								</label>
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Schedule expression
 									<input
 										type="text"
 										bind:value={agentDraft.schedule_expr}
 										placeholder="e.g. 0 9 * * *"
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+										class="terminal-input mt-1 w-full font-mono"
 									/>
 								</label>
 							</div>
 
-							<label class="flex items-center gap-2 text-sm text-gray-300">
+							<label class="flex items-center gap-2 text-sm text-[#888]">
 								<input type="checkbox" bind:checked={agentDraft.enabled} class="rounded" />
 								Enabled
 							</label>
 
-							<label class="block text-xs text-gray-400">
+							<label class="block text-xs text-[#888]">
 								Instructions
 								<textarea
 									rows="6"
 									bind:value={agentDraft.instructions}
-									class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-xs font-mono"
+									class="terminal-input mt-1 w-full text-xs font-mono"
 								></textarea>
 							</label>
 
-							<label class="block text-xs text-gray-400">
+							<label class="block text-xs text-[#888]">
 								Discord bot token
 								{#if agentDraft.has_discord_token}
-									<span class="text-gray-500">(saved — enter a new value to overwrite)</span>
+									<span class="text-[#666]">(saved — enter a new value to overwrite)</span>
 								{/if}
 								<input
 									type="password"
 									bind:value={agentDraft.discord_token}
 									placeholder={agentDraft.has_discord_token ? '•••••••• (saved)' : ''}
-									class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+									class="terminal-input mt-1 w-full"
 								/>
 							</label>
 
@@ -1050,7 +1051,7 @@
 									type="button"
 									on:click={saveAgent}
 									disabled={agentSaving}
-									class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-3 py-1.5 rounded text-sm"
+									class="terminal-button-primary text-xs"
 								>
 									{agentSaving ? 'Saving…' : 'Update agent'}
 								</button>
@@ -1058,7 +1059,7 @@
 									type="button"
 									on:click={testAgentDiscord}
 									disabled={agentDiscordTesting || !agentDraft.has_discord_token}
-									class="border border-gray-700 hover:border-gray-500 text-gray-200 disabled:bg-gray-800 disabled:text-gray-500 px-3 py-1.5 rounded text-sm"
+									class="terminal-button text-xs"
 								>
 									{agentDiscordTesting ? 'Sending…' : 'Send Discord test'}
 								</button>
@@ -1066,9 +1067,9 @@
 						</div>
 
 						<!-- Per-agent documents -->
-						<div class="bg-black border border-gray-800 rounded p-4 space-y-4">
+						<div class="border border-[#222] bg-black p-4 space-y-4">
 							<h3 class="text-sm font-medium text-white">Agent docs</h3>
-							<p class="text-xs text-gray-500">
+							<p class="text-xs text-[#666]">
 								SOUL.md, AGENTS.md, and ROLE.md are saved per-agent. Restart background
 								services if behavior updates need to propagate.
 							</p>
@@ -1076,31 +1077,31 @@
 							{#each agentDocKinds as doc}
 								<div class="space-y-2">
 									<div class="flex items-center justify-between">
-										<span class="block text-xs text-gray-400">{doc.toUpperCase()}.md</span>
+										<span class="block text-xs text-[#888]">{doc.toUpperCase()}.md</span>
 										<button
 											type="button"
 											on:click={() => saveAgentDoc(doc)}
 											disabled={agentDocSaving[doc] || agentDocsLoading}
-											class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-60"
+											class="terminal-button text-xs"
 										>
 											{agentDocSaving[doc] ? 'Saving…' : 'Save'}
 										</button>
 									</div>
 									{#if agentDocsLoading}
-										<p class="text-xs text-gray-500">Loading {doc.toUpperCase()}.md…</p>
+										<p class="text-xs text-[#666]">Loading {doc.toUpperCase()}.md…</p>
 									{:else}
 										<textarea
 											rows="8"
 											bind:value={agentDocs[doc]}
 											aria-label={`${doc.toUpperCase()}.md content`}
-											class="w-full bg-gray-950 border border-gray-700 text-white px-3 py-2 rounded text-xs font-mono resize-y"
+											class="terminal-input w-full text-xs font-mono resize-y"
 										></textarea>
 									{/if}
 								</div>
 							{/each}
 						</div>
 					{:else}
-						<p class="text-sm text-gray-400">Select an agent to edit its settings and docs.</p>
+						<p class="text-sm text-[#888]">Select an agent to edit its settings and docs.</p>
 					{/if}
 				</div>
 			</div>
@@ -1113,13 +1114,13 @@
 	<!-- Roster-driven: Scheduler jobs -->
 	<section
 		aria-labelledby="agents-scheduler-heading"
-		class="border border-gray-800 rounded-lg bg-black p-6 space-y-4"
+		class="terminal-card p-6 space-y-4"
 	>
-		<header class="border-b border-gray-800 pb-2">
-			<h2 id="agents-scheduler-heading" class="text-lg font-semibold text-white">
+		<header class="border-b border-[#1a1a1a] pb-2">
+			<h2 id="agents-scheduler-heading" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
 				Scheduler jobs
 			</h2>
-			<p class="text-xs text-gray-500 mt-1">
+			<p class="text-xs text-[#666] mt-1">
 				Schedules for continuous learning and trading processes. Each job has its own
 				cron/interval.
 			</p>
@@ -1129,42 +1130,42 @@
 			<p class="text-xs text-red-400" role="alert">{schedulerError}</p>
 		{/if}
 		{#if schedulerMessage}
-			<p class="text-xs text-green-400" role="status">{schedulerMessage}</p>
+			<p class="text-xs text-emerald-400" role="status">{schedulerMessage}</p>
 		{/if}
 
 		{#if schedulerLoading}
-			<p class="text-sm text-gray-400">Loading scheduler jobs…</p>
+			<p class="text-sm text-[#888]">Loading scheduler jobs…</p>
 		{:else if schedulerJobs.length === 0}
-			<p class="text-sm text-gray-400">No scheduler jobs found.</p>
+			<p class="text-sm text-[#888]">No scheduler jobs found.</p>
 		{:else}
 			<div class="space-y-3">
 				{#each schedulerJobs as job (job.id)}
-					<div class="bg-black border border-gray-800 rounded p-4 space-y-3">
+					<div class="border border-[#222] bg-black p-4 space-y-3">
 						<div class="flex items-start justify-between gap-3">
 							<div>
 								<h3 class="font-medium text-white">{job.name ?? job.id}</h3>
-								<p class="text-xs text-gray-500 font-mono">ID: {job.id}</p>
+								<p class="text-xs text-[#666] font-mono">ID: {job.id}</p>
 							</div>
-							<label class="flex items-center gap-2 text-sm text-gray-300">
+							<label class="flex items-center gap-2 text-sm text-[#888]">
 								<input type="checkbox" bind:checked={job.enabled} class="rounded" />
 								Enabled
 							</label>
 						</div>
 
 						<div class="grid gap-3 md:grid-cols-[160px_1fr_auto] items-end">
-							<label class="block text-xs text-gray-400">
+							<label class="block text-xs text-[#888]">
 								Type
 								<select
 									bind:value={job.schedule_type}
 									on:change={() => (job.schedule_expr = '')}
-									class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm"
+									class="terminal-input mt-1 w-full"
 								>
 									<option value="cron">Cron</option>
 									<option value="interval">Interval (minutes)</option>
 								</select>
 							</label>
 							{#if job.schedule_type === 'interval'}
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Run every (minutes)
 									<input
 										type="number"
@@ -1174,17 +1175,17 @@
 										on:input={(e) =>
 											(job.schedule_expr = minutesToMs(e.currentTarget.value))}
 										placeholder="e.g. 60"
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+										class="terminal-input mt-1 w-full font-mono"
 									/>
 								</label>
 							{:else}
-								<label class="block text-xs text-gray-400">
+								<label class="block text-xs text-[#888]">
 									Expression (cron)
 									<input
 										type="text"
 										bind:value={job.schedule_expr}
 										placeholder="e.g. 0 9 * * *"
-										class="mt-1 w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono"
+										class="terminal-input mt-1 w-full font-mono"
 									/>
 								</label>
 							{/if}
@@ -1192,18 +1193,18 @@
 								type="button"
 								on:click={() => saveSchedulerJob(job)}
 								disabled={schedulerJobSaving[String(job.id ?? '')]}
-								class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-3 py-1.5 rounded text-sm"
+								class="terminal-button-primary text-xs"
 							>
 								{schedulerJobSaving[String(job.id ?? '')] ? 'Saving…' : 'Update job'}
 							</button>
 						</div>
 
-						<div class="flex gap-4 text-xs text-gray-400">
+						<div class="flex gap-4 text-xs text-[#888]">
 							{#if job.schedule_type === 'interval' && job.schedule_expr}
-								<span>Schedule: <span class="text-gray-300">{formatIntervalMs(job.schedule_expr)}</span></span>
+								<span>Schedule: <span class="text-[#888]">{formatIntervalMs(job.schedule_expr)}</span></span>
 							{/if}
 							{#if job.next_run_at}
-								<span>Next run: <span class="text-gray-300">{formatDate(job.next_run_at)}</span></span>
+								<span>Next run: <span class="text-[#888]">{formatDate(job.next_run_at)}</span></span>
 							{/if}
 							{#if job.last_status}
 								<span

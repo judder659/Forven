@@ -49,9 +49,9 @@
 	}
 
 	function scoreClass(score: number): string {
-		if (score >= 90) return 'text-green-300';
-		if (score >= 70) return 'text-yellow-300';
-		return 'text-red-300';
+		if (score >= 90) return 'text-emerald-400';
+		if (score >= 70) return 'text-yellow-400';
+		return 'text-red-400';
 	}
 
 	async function load() {
@@ -169,14 +169,14 @@
 
 <!-- backdrop -->
 <div
-	class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
+	class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-4 sm:p-8"
 	on:click={() => dispatch('close')}
 	on:keydown={() => {}}
 	role="presentation"
 >
 	<!-- panel -->
 	<div
-		class="mt-4 w-full max-w-4xl rounded-lg border border-[#222] bg-[#0a0a0a] shadow-xl"
+		class="mt-4 w-full max-w-4xl border border-[#222] bg-[#050505]"
 		on:click|stopPropagation
 		on:keydown|stopPropagation
 		role="dialog"
@@ -186,57 +186,57 @@
 	>
 		<div class="flex items-center justify-between border-b border-[#222] p-4">
 			<div class="flex items-baseline gap-3">
-				<h2 class="font-mono text-lg font-semibold text-gray-100">{symbol}<span class="text-gray-500">/{headerSuffix}</span></h2>
+				<h2 class="font-mono text-lg font-semibold text-white">{symbol}<span class="text-[#666]">/{headerSuffix}</span></h2>
 				{#if series}
-					<span class="rounded bg-[#161616] px-2 py-0.5 text-xs text-gray-300">
-						source: <span class="font-mono text-gray-200">{series.source || 'local'}</span>
+					<span class="border border-[#333] px-2 py-0.5 text-xs text-[#888]">
+						source: <span class="font-mono text-white">{series.source || 'local'}</span>
 					</span>
 					{#if series.is_fallback}
-						<span class="rounded bg-yellow-900/50 px-2 py-0.5 text-xs text-yellow-300">fallback</span>
+						<span class="border border-yellow-900 px-2 py-0.5 text-xs text-yellow-400">fallback</span>
 					{/if}
 					{#if quality}
 						{@const sc = scoreFrom(quality)}
-						<span class="text-xs text-gray-500">quality</span>
+						<span class="text-xs text-[#666]">quality</span>
 						<span class="font-mono text-sm font-bold {scoreClass(sc)}">{sc}</span>
 					{/if}
 				{/if}
 			</div>
-			<button class="rounded p-1 text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200" on:click={() => dispatch('close')} aria-label="Close">
+			<button class="p-1 text-[#888] hover:bg-[#111] hover:text-white" on:click={() => dispatch('close')} aria-label="Close">
 				✕
 			</button>
 		</div>
 
 		<div class="p-4">
 			{#if error}
-				<div class="mb-3 rounded bg-red-900/40 p-2 text-xs text-red-200">{error}</div>
+				<div class="mb-3 border border-red-900 bg-red-500/5 p-2 text-xs text-red-400">{error}</div>
 			{/if}
 
 			<!-- Stream selector + (OHLCV) chart/rows toggle -->
 			<div class="mb-3 flex flex-wrap items-center gap-2">
-				<div class="flex rounded border border-[#333] p-0.5 text-xs">
+				<div class="flex border border-[#333] p-0.5 text-xs">
 					{#each STREAM_TABS as t}
 						<button
-							class="rounded-sm px-2 py-0.5 {streamView === t.id ? 'bg-[#222] text-white' : 'text-gray-400 hover:text-gray-200'}"
+							class="px-2 py-0.5 {streamView === t.id ? 'bg-[#222] text-white' : 'text-[#888] hover:text-white'}"
 							on:click={() => selectStream(t.id)}
 						>{t.label}</button>
 					{/each}
 				</div>
 				{#if streamView === 'ohlcv' && series && series.data.length > 0}
-					<div class="flex rounded border border-[#333] p-0.5 text-xs">
-						<button class="rounded-sm px-2 py-0.5 {ohlcvView === 'chart' ? 'bg-[#222] text-white' : 'text-gray-400 hover:text-gray-200'}" on:click={() => (ohlcvView = 'chart')}>Chart</button>
-						<button class="rounded-sm px-2 py-0.5 {ohlcvView === 'table' ? 'bg-[#222] text-white' : 'text-gray-400 hover:text-gray-200'}" on:click={() => (ohlcvView = 'table')}>Rows</button>
+					<div class="flex border border-[#333] p-0.5 text-xs">
+						<button class="px-2 py-0.5 {ohlcvView === 'chart' ? 'bg-[#222] text-white' : 'text-[#888] hover:text-white'}" on:click={() => (ohlcvView = 'chart')}>Chart</button>
+						<button class="px-2 py-0.5 {ohlcvView === 'table' ? 'bg-[#222] text-white' : 'text-[#888] hover:text-white'}" on:click={() => (ohlcvView = 'table')}>Rows</button>
 					</div>
 				{/if}
 			</div>
 
 			{#if streamView === 'ohlcv'}
 				{#if loading && !series}
-					<div class="py-12 text-center text-sm text-gray-500">Loading series…</div>
+					<div class="py-12 text-center text-sm text-[#666]">Loading series…</div>
 				{:else if series && series.data.length > 0}
 					{#if ohlcvView === 'chart'}
 						<CandlestickChart data={series.data} height={320} showVolume={true} />
 					{:else}
-						<div class="h-96 overflow-hidden rounded border border-[#222]">
+						<div class="h-96 overflow-hidden border border-[#222]">
 							<DataTableView data={series.data} />
 						</div>
 					{/if}
@@ -244,63 +244,63 @@
 					<div class="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-6">
 						{#each metrics as m}
 							<div>
-								<div class="text-[11px] uppercase tracking-wide text-gray-500">{m.label}</div>
-								<div class="font-mono text-sm {m.bad ? 'text-red-300' : 'text-gray-200'}">{m.value}</div>
+								<div class="text-[11px] uppercase tracking-wide text-[#666]">{m.label}</div>
+								<div class="font-mono text-sm {m.bad ? 'text-red-300' : 'text-white'}">{m.value}</div>
 							</div>
 						{/each}
 					</div>
 
 					{#if quality && quality.gap_details.length > 0}
-						<div class="mt-4 border-t border-[#222] pt-3">
+						<div class="mt-4 border-t border-[#1a1a1a] pt-3">
 							<div class="mb-2 flex items-center justify-between">
-								<span class="text-xs font-medium text-gray-400">
-									Gap detail <span class="text-gray-600">({quality.gap_details.length})</span>
+								<span class="text-xs font-medium text-[#888]">
+									Gap detail <span class="text-[#555]">({quality.gap_details.length})</span>
 								</span>
-								<button class="rounded border border-[#333] px-2 py-0.5 text-[11px] text-blue-300 hover:bg-[#1a1a1a] disabled:opacity-50" on:click={fix} disabled={filling}>
+								<button class="border border-[#333] px-2 py-0.5 text-[11px] text-[#888] hover:bg-[#111] hover:text-white transition-colors disabled:opacity-50" on:click={fix} disabled={filling}>
 									{filling ? 'filling…' : 'Backfill gaps'}
 								</button>
 							</div>
 							<div class="max-h-32 space-y-0.5 overflow-y-auto text-xs">
 								{#each quality.gap_details.slice(0, 50) as g}
-									<div class="flex justify-between text-gray-400">
+									<div class="flex justify-between text-[#888]">
 										<span class="font-mono">{g.timestamp}</span>
-										<span class="text-yellow-300/80">{g.gap_size}</span>
+										<span class="text-yellow-400/80">{g.gap_size}</span>
 									</div>
 								{/each}
 							</div>
 						</div>
 					{/if}
 				{:else}
-					<div class="py-12 text-center text-sm text-gray-500">No bars stored for this series.</div>
+					<div class="py-12 text-center text-sm text-[#666]">No bars stored for this series.</div>
 				{/if}
 			{:else}
 				<!-- Funding / OI: raw enrichment-stream rows -->
 				{#if streamRowsLoading}
-					<div class="py-12 text-center text-sm text-gray-500">Loading {streamView}…</div>
+					<div class="py-12 text-center text-sm text-[#666]">Loading {streamView}…</div>
 				{:else if streamRowsError}
 					<div class="py-12 text-center text-sm text-red-400">Couldn't load {streamView} rows: {streamRowsError}</div>
 				{:else if streamRows && streamRows.rows.length > 0}
-					<div class="max-h-96 overflow-auto rounded border border-[#222]">
+					<div class="max-h-96 overflow-auto border border-[#222]">
 						<table class="w-full text-left text-xs font-mono">
 							<thead class="sticky top-0 bg-[#111]">
-								<tr class="border-b border-[#333] text-gray-400">
+								<tr class="border-b border-[#333] text-[#666]">
 									{#each streamRows.columns as c}<th class="p-2 uppercase">{c}</th>{/each}
 								</tr>
 							</thead>
 							<tbody>
 								{#each [...streamRows.rows].reverse() as r}
-									<tr class="border-b border-[#1a1a1a] text-gray-300">
+									<tr class="border-b border-[#1a1a1a] text-[#888]">
 										{#each streamRows.columns as c}<td class="p-2">{formatCell(r[c])}</td>{/each}
 									</tr>
 								{/each}
 							</tbody>
 						</table>
 					</div>
-					<div class="mt-1 text-[11px] text-gray-500">
+					<div class="mt-1 text-[11px] text-[#666]">
 						{streamRows.rows.length.toLocaleString()} rows{#if streamRows.timeframe} · {streamRows.timeframe}{/if} · newest first
 					</div>
 				{:else}
-					<div class="py-12 text-center text-sm text-gray-500">No {streamView} data stored for this series.</div>
+					<div class="py-12 text-center text-sm text-[#666]">No {streamView} data stored for this series.</div>
 				{/if}
 			{/if}
 		</div>

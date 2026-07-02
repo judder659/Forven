@@ -7,7 +7,7 @@
 		A: 'text-emerald-400',
 		B: 'text-emerald-400',
 		C: 'text-yellow-400',
-		D: 'text-orange-400',
+		D: 'text-red-400',
 		F: 'text-red-400'
 	};
 
@@ -15,7 +15,7 @@
 		A: 'bg-emerald-500',
 		B: 'bg-emerald-500',
 		C: 'bg-yellow-500',
-		D: 'bg-orange-500',
+		D: 'bg-red-500',
 		F: 'bg-red-500'
 	};
 
@@ -24,7 +24,7 @@
 		good: 'bg-emerald-400',
 		fair: 'bg-yellow-400',
 		poor: 'bg-red-400',
-		unknown: 'bg-gray-600'
+		unknown: 'bg-[#444]'
 	};
 
 	const ratingTextColors: Record<string, string> = {
@@ -32,22 +32,22 @@
 		good: 'text-emerald-400',
 		fair: 'text-yellow-400',
 		poor: 'text-red-400',
-		unknown: 'text-gray-500'
+		unknown: 'text-[#666]'
 	};
 
 	const deploymentColors: Record<string, { bg: string; border: string; text: string }> = {
-		approved: { bg: 'bg-emerald-900/30', border: 'border-emerald-500/50', text: 'text-emerald-400' },
+		approved: { bg: 'bg-emerald-500/10', border: 'border-emerald-900', text: 'text-emerald-400' },
 		approved_with_conditions: {
-			bg: 'bg-emerald-900/20',
-			border: 'border-emerald-500/40',
+			bg: 'bg-emerald-500/10',
+			border: 'border-emerald-900',
 			text: 'text-emerald-400'
 		},
 		not_recommended: {
-			bg: 'bg-yellow-900/20',
-			border: 'border-yellow-500/40',
+			bg: 'bg-yellow-500/10',
+			border: 'border-yellow-900',
 			text: 'text-yellow-400'
 		},
-		rejected: { bg: 'bg-red-900/20', border: 'border-red-500/40', text: 'text-red-400' }
+		rejected: { bg: 'bg-red-500/10', border: 'border-red-900', text: 'text-red-400' }
 	};
 
 	const deploymentLabels: Record<string, string> = {
@@ -118,7 +118,7 @@
 
 <div class="space-y-4">
 	<!-- Header: Grade Circle + Verdict + Deployment Badge -->
-	<div class="bg-[#0a0a0a] rounded-lg p-5 border border-[#222]">
+	<div class="terminal-card p-5">
 		<div class="flex items-center gap-6">
 			<!-- Grade Circle -->
 			<div class="relative flex-shrink-0" style="width: 80px; height: 80px;">
@@ -130,7 +130,7 @@
 						cx="50" cy="50" r="40" fill="none"
 						stroke={scorecard.grade === 'A' || scorecard.grade === 'B' ? '#34d399'
 							: scorecard.grade === 'C' ? '#facc15'
-							: scorecard.grade === 'D' ? '#fb923c' : '#f87171'}
+							: scorecard.grade === 'D' ? '#f87171' : '#f87171'}
 						stroke-width="6" stroke-linecap="round"
 						stroke-dasharray={2 * Math.PI * 40}
 						stroke-dashoffset={2 * Math.PI * 40 - (percentage / 100) * 2 * Math.PI * 40}
@@ -144,30 +144,30 @@
 
 			<!-- Verdict Text -->
 			<div class="flex-1 min-w-0">
-				<h2 class="text-xl font-bold text-white">Strategy Analysis</h2>
-				<p class="text-gray-400 text-sm mt-0.5">
+				<h2 class="text-xl font-bold uppercase tracking-widest text-white">Strategy Analysis</h2>
+				<p class="text-[#888] text-sm mt-0.5">
 					{scorecard.strategy_name || 'Unknown Strategy'}
 					{#if scorecard.symbol}
-						<span class="text-gray-500">on {scorecard.symbol}</span>
+						<span class="text-[#666]">on {scorecard.symbol}</span>
 					{/if}
 					{#if scorecard.timeframe}
-						<span class="text-gray-500">({scorecard.timeframe})</span>
+						<span class="text-[#666]">({scorecard.timeframe})</span>
 					{/if}
 				</p>
 				<p class="text-sm mt-1">
 					<span class="{gradeColors[scorecard.grade]} font-semibold">{scorecard.verdict}</span>
-					<span class="text-gray-500 ml-1">— {scorecard.total_score}/{scorecard.max_score} pts</span>
+					<span class="text-[#666] ml-1">— {scorecard.total_score}/{scorecard.max_score} pts</span>
 				</p>
 			</div>
 
 			<!-- Deployment Badge -->
 			<div class="flex-shrink-0">
-				<div class="px-3 py-1.5 rounded border {deploymentStyle.bg} {deploymentStyle.border}">
-					<span class="text-xs font-bold tracking-wider {deploymentStyle.text}">
+				<div class="px-3 py-1.5 border {deploymentStyle.bg} {deploymentStyle.border}">
+					<span class="text-xs font-bold uppercase tracking-widest {deploymentStyle.text}">
 						{deploymentLabels[scorecard.deployment_verdict]}
 					</span>
 				</div>
-				<div class="text-[10px] text-gray-500 mt-1 text-right">
+				<div class="text-[10px] text-[#666] mt-1 text-right">
 					Tests: {scorecard.tests_included.join(', ')}
 				</div>
 			</div>
@@ -176,9 +176,9 @@
 
 	<!-- Executive Summary -->
 	{#if writeup.executive_summary}
-		<div class="bg-[#0a0a0a] rounded-lg p-5 border border-[#222]">
-			<h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Executive Summary</h3>
-			<p class="text-sm text-gray-300 leading-relaxed">{writeup.executive_summary}</p>
+		<div class="terminal-card p-5">
+			<h3 class="text-[10px] font-bold text-[#888] uppercase tracking-widest mb-3">Executive Summary</h3>
+			<p class="text-sm text-[#888] leading-relaxed">{writeup.executive_summary}</p>
 		</div>
 	{/if}
 
@@ -188,32 +188,32 @@
 		{@const meta = sectionMeta[sectionKey]}
 		{@const text = getWriteupSection(sectionKey)}
 		{#if text || cat}
-			<div class="bg-[#0a0a0a] rounded-lg p-5 border border-[#222]">
+			<div class="terminal-card p-5">
 				<!-- Section Header with progress bar -->
 				<div class="flex items-center justify-between mb-3">
-					<h3 class="text-sm font-semibold text-white">{meta.label}</h3>
+					<h3 class="text-[10px] font-bold text-white uppercase tracking-widest">{meta.label}</h3>
 					{#if cat}
 						<div class="flex items-center gap-3">
 							<!-- Mini progress bar -->
-								<div class="w-24 h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+								<div class="w-24 h-1.5 bg-[#1a1a1a] overflow-hidden">
 									<div
-										class="h-full rounded-full {ratingBarColors[cat.rating]}"
+										class="h-full {ratingBarColors[cat.rating]}"
 										style="width: {cat.max_score > 0 ? Math.round((cat.score / cat.max_score) * 100) : 0}%"
 									></div>
 								</div>
 							<span class="text-xs {ratingTextColors[cat.rating]} capitalize font-medium">
 								{cat.rating}
 							</span>
-							<span class="text-xs text-gray-500">{cat.score}/{cat.max_score}</span>
+							<span class="text-xs text-[#666]">{cat.score}/{cat.max_score}</span>
 						</div>
 					{/if}
 				</div>
 
 				<!-- Analysis paragraph -->
 				{#if text}
-					<p class="text-sm text-gray-300 leading-relaxed">{text}</p>
+					<p class="text-sm text-[#888] leading-relaxed">{text}</p>
 				{:else}
-					<p class="text-sm text-gray-500 italic">No analysis data available for this category.</p>
+					<p class="text-sm text-[#666] italic">No analysis data available for this category.</p>
 				{/if}
 			</div>
 		{/if}
@@ -221,40 +221,40 @@
 
 	<!-- Bottom Line -->
 	{#if writeup.bottom_line}
-		<div class="bg-[#0a0a0a] rounded-lg p-5 border border-[#222]">
-			<h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Bottom Line</h3>
-			<p class="text-sm text-gray-300 leading-relaxed">{writeup.bottom_line}</p>
+		<div class="terminal-card p-5">
+			<h3 class="text-[10px] font-bold text-[#888] uppercase tracking-widest mb-3">Bottom Line</h3>
+			<p class="text-sm text-[#888] leading-relaxed">{writeup.bottom_line}</p>
 		</div>
 	{/if}
 
 	<!-- Red Flags Banner -->
 	{#if scorecard.red_flags.length > 0}
-		<div class="bg-red-950/40 rounded-lg p-5 border border-red-500/50">
+		<div class="border border-red-900 bg-red-500/5 p-5">
 			<div class="flex items-center gap-2 mb-3">
 				<svg class="w-5 h-5 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
 					<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
 				</svg>
-				<h3 class="text-sm font-bold text-red-400 uppercase tracking-wider">
+				<h3 class="text-[10px] font-bold text-red-400 uppercase tracking-widest">
 					{scorecard.red_flags.length} Red Flag{scorecard.red_flags.length > 1 ? 's' : ''}
 				</h3>
 			</div>
 			<div class="space-y-2">
 				{#each scorecard.red_flags as flag}
-					<p class="text-sm text-red-300/90 pl-7">{flag}</p>
+					<p class="text-sm text-red-400 pl-7">{flag}</p>
 				{/each}
 			</div>
 		</div>
 	{/if}
 
 	<!-- Collapsible Metrics Reference -->
-	<div class="bg-[#0a0a0a] rounded-lg border border-[#222]">
+	<div class="terminal-card">
 		<button
-			class="w-full flex items-center justify-between p-4 text-left hover:bg-[#111] transition-colors rounded-lg"
+			class="w-full flex items-center justify-between p-4 text-left hover:bg-[#111] transition-colors"
 			on:click={() => (metricsExpanded = !metricsExpanded)}
 		>
-			<span class="text-sm text-gray-400 font-medium">Key Metrics Reference</span>
+			<span class="text-[10px] uppercase tracking-widest text-[#888] font-bold">Key Metrics Reference</span>
 			<svg
-				class="w-4 h-4 text-gray-500 transition-transform {metricsExpanded ? 'rotate-180' : ''}"
+				class="w-4 h-4 text-[#666] transition-transform {metricsExpanded ? 'rotate-180' : ''}"
 				fill="none" stroke="currentColor" viewBox="0 0 24 24"
 			>
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -266,21 +266,21 @@
 				{#each scorecard.categories as category}
 					<div>
 						<div class="flex items-center justify-between mb-2">
-							<h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">{category.name}</h4>
-							<span class="text-xs text-gray-500">{category.score}/{category.max_score}</span>
+							<h4 class="text-[10px] font-bold text-[#666] uppercase tracking-wider">{category.name}</h4>
+							<span class="text-xs text-[#666]">{category.score}/{category.max_score}</span>
 						</div>
 						<div class="space-y-1">
 							{#each category.metrics as metric}
 								<div class="flex items-center justify-between text-xs">
 									<div class="flex items-center gap-2">
 										<div class="w-1.5 h-1.5 rounded-full {ratingBarColors[metric.rating]}"></div>
-										<span class="text-gray-400">{metric.name}</span>
+										<span class="text-[#888]">{metric.name}</span>
 									</div>
 									<div class="flex items-center gap-2">
 										<span class="{ratingTextColors[metric.rating]} font-mono">
 											{formatMetricValue(metric.value, metric.name)}
 										</span>
-										<span class="text-gray-600 w-6 text-right">{metric.score}/{metric.max_score}</span>
+										<span class="text-[#555] w-6 text-right">{metric.score}/{metric.max_score}</span>
 									</div>
 								</div>
 							{/each}

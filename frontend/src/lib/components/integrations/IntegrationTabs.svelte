@@ -17,12 +17,12 @@
 	] as const;
 </script>
 
-<div class="min-h-full bg-black text-gray-200">
+<div class="min-h-full bg-black text-[#888]">
 	<div class="border-b border-[#222] bg-black px-4 py-3">
 		<div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
 			<div>
-				<h1 class="text-sm font-semibold uppercase tracking-[0.22em] text-gray-200">Integrations</h1>
-				<p class="mt-1 max-w-3xl text-[11px] leading-5 text-gray-500">
+				<h1 class="text-sm font-semibold uppercase tracking-[0.22em] text-white">Integrations</h1>
+				<p class="mt-1 max-w-3xl text-[11px] leading-5 text-[#666]">
 					One MCP control room: AI clients connect into Forven, while agent tool servers let
 					Forven agents connect out to external tools.
 				</p>
@@ -32,13 +32,13 @@
 				{#each tabs as tab}
 					<a
 						href={tab.href}
-						class="min-w-[180px] rounded border px-3 py-2 transition-colors {active === tab.id
-							? 'border-emerald-500/70 bg-emerald-950/20 text-emerald-200'
-							: 'border-[#252525] bg-[#0a0a0a] text-gray-400 hover:border-[#444] hover:text-gray-100'}"
+						class="min-w-[180px] border-l-2 px-3 py-2 transition-colors {active === tab.id
+							? 'border-l-white bg-[#111] text-white'
+							: 'border-l-transparent bg-black text-[#888] hover:bg-[#0a0a0a] hover:text-white'}"
 						aria-current={active === tab.id ? 'page' : undefined}
 					>
 						<span class="block text-[11px] font-semibold uppercase tracking-widest">{tab.label}</span>
-						<span class="mt-1 block text-[10px] leading-4 text-gray-500">{tab.description}</span>
+						<span class="mt-1 block text-[10px] leading-4 text-[#666]">{tab.description}</span>
 					</a>
 				{/each}
 			</nav>

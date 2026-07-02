@@ -38,25 +38,25 @@
 
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: '#030712' },
+				background: { type: ColorType.Solid, color: '#0a0a0a' },
 				textColor: '#9ca3af',
 			},
 			grid: {
-				vertLines: { color: '#1f293744' },
-				horzLines: { color: '#1f293744' },
+				vertLines: { color: '#1c1c1c' },
+				horzLines: { color: '#1c1c1c' },
 			},
 			width: chartContainer.clientWidth,
 			height: height,
 			rightPriceScale: {
-				borderColor: '#1f2937',
+				borderColor: '#222222',
 				visible: true,
 			},
 			leftPriceScale: {
-				borderColor: '#1f2937',
+				borderColor: '#222222',
 				visible: false,
 			},
 			timeScale: {
-				borderColor: '#1f2937',
+				borderColor: '#222222',
 				timeVisible: true,
 			},
 			crosshair: {

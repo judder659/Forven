@@ -74,7 +74,7 @@
 	function toTone(toState: string): string {
 		if (toState === 'paper' || toState === 'paper_trading') return 'text-emerald-400';
 		if (toState === 'deployed' || toState === 'live_graduated') return 'text-emerald-300';
-		if (toState === 'backtesting' || toState === 'gauntlet') return 'text-cyan-400';
+		if (toState === 'backtesting' || toState === 'gauntlet') return 'text-white';
 		if (toState === 'rejected' || toState === 'backtest_failed') return 'text-red-400';
 		return 'text-gray-500';
 	}
@@ -111,7 +111,7 @@
 	});
 </script>
 
-<div class="flex h-full min-h-0 flex-col rounded border border-[#222] bg-[#0a0a0a]" data-testid="pipeline-flow-panel">
+<div class="flex h-full min-h-0 flex-col border border-[#222] bg-[#050505]" data-testid="pipeline-flow-panel">
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#1a1a1a] px-2.5 py-1.5">
 		<h2 class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Pipeline</h2>
 		<span class="flex items-center gap-1.5 font-mono text-[11px]">
@@ -126,7 +126,7 @@
 			<span title="Retired + rejected (graveyard)"><span class="text-gray-500">out</span> <span class="text-gray-400">{terminalCount}</span></span>
 		</span>
 		<span class="ml-auto font-mono text-[10px] text-gray-500" title="Stage transitions in the last 24h (from the most recent {events.length} events)">
-			24h: <span class="text-cyan-400">+{promoted24h} advanced</span> · <span class="text-gray-400">−{culled24h} culled</span>
+			24h: <span class="text-white">+{promoted24h} advanced</span> · <span class="text-gray-400">−{culled24h} culled</span>
 		</span>
 	</div>
 	<div class="min-h-0 flex-1 overflow-y-auto px-2.5 py-1.5">
@@ -141,7 +141,7 @@
 				{#each transitions as event (event.id)}
 					<li class="flex items-center gap-2" title={event.reason}>
 						<span class="w-8 shrink-0 text-right text-[10px] text-gray-600">{ageLabel(event)}</span>
-						<a href="/lab/strategy/{event.strategyId}" class="shrink-0 text-gray-300 hover:text-cyan-300 hover:underline">{event.strategyId}</a>
+						<a href="/lab/strategy/{event.strategyId}" class="shrink-0 text-gray-300 hover:text-white hover:underline">{event.strategyId}</a>
 						<span class="shrink-0 text-gray-600">{event.fromState}</span>
 						<span class="shrink-0 text-gray-700">→</span>
 						<span class="shrink-0 {toTone(event.toState)}">{event.toState}</span>

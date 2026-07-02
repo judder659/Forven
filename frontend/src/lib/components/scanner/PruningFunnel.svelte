@@ -16,17 +16,17 @@
 	};
 
 	const COLORS: Record<string, string> = {
-		passed: '#4ade80',
+		passed: '#34d399',
 		no_trades: '#991b1b',
 		too_few_trades: '#b91c1c',
 		low_sharpe: '#dc2626',
 		low_pf: '#ef4444',
 		high_dd: '#f87171',
-		corr_dedup: '#fbbf24',
-		timeout: '#a855f7',
-		error: '#6b7280',
-		risk_violation: '#f97316',
-		other: '#374151',
+		corr_dedup: '#facc15',
+		timeout: '#999999',
+		error: '#666666',
+		risk_violation: '#eab308',
+		other: '#444444',
 	};
 
 	function getLabel(stage: string): string {
@@ -34,7 +34,7 @@
 	}
 
 	function getColor(stage: string): string {
-		return COLORS[stage] ?? '#374151';
+		return COLORS[stage] ?? '#444444';
 	}
 
 	$: total = stages.reduce((sum, s) => sum + s.count, 0);
@@ -48,13 +48,13 @@
 
 {#if total > 0}
 	<div class="space-y-1">
-		<div class="flex items-center gap-2 text-[10px] text-gray-500">
+		<div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-[#666]">
 			<span>{total.toLocaleString()} tested</span>
-			<span class="text-gray-700">&rarr;</span>
-			<span class="text-green-400 font-medium">{passedCount.toLocaleString()} passed</span>
-			<span class="text-gray-700">({total > 0 ? ((passedCount / total) * 100).toFixed(1) : 0}%)</span>
+			<span class="text-[#444]">&rarr;</span>
+			<span class="text-emerald-400 font-medium">{passedCount.toLocaleString()} passed</span>
+			<span class="text-[#444]">({total > 0 ? ((passedCount / total) * 100).toFixed(1) : 0}%)</span>
 		</div>
-		<div class="flex h-3 rounded overflow-hidden bg-[#111] border border-[#222]">
+		<div class="flex h-3 overflow-hidden bg-[#222] border border-[#222]">
 			{#each sorted as s (s.stage)}
 				{@const pct = total > 0 ? (s.count / total) * 100 : 0}
 				{#if pct > 0.5}
@@ -70,9 +70,9 @@
 			{#each sorted as s (s.stage)}
 				{#if s.count > 0}
 					<span class="flex items-center gap-1">
-						<span class="w-2 h-2 rounded-sm inline-block" style="background-color: {getColor(s.stage)};"></span>
-						<span class="text-gray-500">{getLabel(s.stage)}</span>
-						<span class="text-gray-400">{s.count.toLocaleString()}</span>
+						<span class="w-2 h-2 inline-block" style="background-color: {getColor(s.stage)};"></span>
+						<span class="text-[#666]">{getLabel(s.stage)}</span>
+						<span class="text-[#888]">{s.count.toLocaleString()}</span>
 					</span>
 				{/if}
 			{/each}

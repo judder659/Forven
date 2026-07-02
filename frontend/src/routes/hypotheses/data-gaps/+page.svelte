@@ -124,33 +124,33 @@
 	<title>Data Gaps | Forven</title>
 </svelte:head>
 
-<div class="h-full flex flex-col overflow-y-auto bg-[#050505] text-gray-100">
+<div class="h-full flex flex-col overflow-y-auto bg-[#050505] text-white">
 	<div class="px-4 py-3 border-b border-[#222] flex-shrink-0">
 		<div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
 			<div>
-				<div class="inline-flex items-center gap-2 border border-[#2e2e2e] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-gray-400">
-					<span class="h-1.5 w-1.5 bg-cyan-400"></span>
+				<div class="inline-flex items-center gap-2 border border-[#333] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[#888]">
+					<span class="h-1.5 w-1.5 rounded-full bg-[#555]"></span>
 					Research / Data Gaps
 				</div>
-				<h1 class="mt-3 text-2xl font-bold tracking-tight text-white">Data Gaps</h1>
-				<p class="mt-1 text-xs text-gray-500 max-w-2xl">
+				<h1 class="mt-3 text-lg font-bold uppercase tracking-widest text-white">Data Gaps</h1>
+				<p class="mt-1 text-xs text-[#666] max-w-2xl">
 					Missing datasets and fields most often blocking crucible execution, ranked by priority and request volume.
 				</p>
-				<p class="mt-1 text-[10px] text-gray-600 max-w-2xl">
+				<p class="mt-1 text-[10px] text-[#555] max-w-2xl">
 					Priority is a composite score (request volume × recency) — higher means more urgent. Read it as a relative ranking, not an absolute scale.
 				</p>
 			</div>
 			<div class="flex items-center gap-2">
 				<a
 					href="/hypotheses"
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
 				>
 					← Back to Crucibles
 				</a>
 				<button
 					type="button"
 					on:click={load}
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
 				>
 					Refresh
 				</button>
@@ -170,7 +170,7 @@
 			<select
 				bind:value={categoryFilter}
 				aria-label="Filter by category"
-				class="bg-black border border-[#333] px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-white"
+				class="bg-black border border-[#333] px-2 py-1.5 text-xs text-[#888] focus:outline-none focus:border-white"
 			>
 				<option value="">All categories</option>
 				{#each categories as cat}
@@ -178,17 +178,17 @@
 				{/each}
 			</select>
 		{/if}
-		<span class="text-[10px] text-gray-500 ml-1">
+		<span class="text-[10px] text-[#666] ml-1">
 			{filtered.length} items
 			{#if filtered.length !== items.length}
 				(of {items.length})
 			{/if}
 		</span>
-		<div class="ml-auto flex items-center gap-2 text-[10px] text-gray-500">
+		<div class="ml-auto flex items-center gap-2 text-[10px] text-[#666]">
 			<label for="datagaps-limit">Fetch</label>
 			<select
 				id="datagaps-limit"
-				class="bg-black border border-[#333] px-2 py-1 text-xs text-gray-200"
+				class="bg-black border border-[#333] px-2 py-1 text-xs text-[#888]"
 				bind:value={limit}
 				on:change={load}
 			>
@@ -201,13 +201,13 @@
 	</div>
 
 	{#if error}
-		<div class="mx-4 mt-3 bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2">{error}</div>
+		<div class="mx-4 mt-3 border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{error}</div>
 	{/if}
 
 	<div class="flex-1 overflow-auto bg-black">
 		<table class="w-full text-xs">
-			<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-				<tr class="text-gray-500 border-b border-[#222]">
+			<thead class="sticky top-0 bg-[#050505] z-10">
+				<tr class="text-[#666] border-b border-[#222]">
 					<th class="py-2 px-3 text-left w-10">#</th>
 					<th class="py-2 px-3 text-left cursor-pointer" on:click={() => toggleSort('title')}>Gap{sortIndicator('title')}</th>
 					<th class="py-2 px-3 text-left">Category</th>
@@ -227,13 +227,13 @@
 			</thead>
 			<tbody>
 				{#if loading}
-					<tr><td colspan="7" class="py-8 text-center text-gray-600">Loading data gaps…</td></tr>
+					<tr><td colspan="7" class="py-8 text-center text-[#555]">Loading data gaps…</td></tr>
 				{:else if filtered.length === 0}
 					<tr>
-						<td colspan="7" class="py-8 text-center text-gray-600">
+						<td colspan="7" class="py-8 text-center text-[#555]">
 							<div>No data gaps match this view.</div>
 							{#if cappedNoMatch}
-								<div class="mt-2 text-[11px] text-amber-300/80">
+								<div class="mt-2 text-[11px] text-yellow-400">
 									Showing the top {limit} ranked gaps only — raise “Fetch” to search lower-priority gaps.
 								</div>
 							{/if}
@@ -241,31 +241,31 @@
 					</tr>
 				{:else}
 					{#each filtered as item, index (item.id)}
-						<tr class="border-t border-[#181818] hover:bg-[#0f0f0f] align-top">
-							<td class="py-2 px-3 text-gray-500 font-mono">{index + 1}</td>
+						<tr class="border-t border-[#111] hover:bg-[#111] align-top">
+							<td class="py-2 px-3 text-[#666] font-mono">{index + 1}</td>
 							<td class="py-2 px-3">
 								<div class="text-white font-medium">{item.title}</div>
 								{#if item.why_it_matters}
-									<div class="mt-1 text-gray-400 leading-5 max-w-2xl">{item.why_it_matters}</div>
+									<div class="mt-1 text-[#666] leading-5 max-w-2xl">{item.why_it_matters}</div>
 								{/if}
 							</td>
 							<td class="py-2 px-3">
 								{#if item.category}
-									<span class="border border-[#222] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.15em] text-gray-400">{item.category}</span>
+									<span class="border border-[#222] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#666]">{item.category}</span>
 								{:else}
-									<span class="text-gray-600">—</span>
+									<span class="text-[#555]">—</span>
 								{/if}
 							</td>
-							<td class="py-2 px-3 text-gray-300 font-mono uppercase tracking-[0.15em] text-[10px]">{item.missing_dataset}</td>
+							<td class="py-2 px-3 text-[#888] font-mono uppercase tracking-wider text-[10px]">{item.missing_dataset}</td>
 							<td class="py-2 px-3">
 								{#if item.missing_fields.length}
 									<div class="flex flex-wrap gap-1">
 										{#each item.missing_fields as field}
-											<span class="border border-[#222] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.15em] text-gray-400">{field}</span>
+											<span class="border border-[#222] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#666]">{field}</span>
 										{/each}
 									</div>
 								{:else}
-									<span class="text-gray-600">—</span>
+									<span class="text-[#555]">—</span>
 								{/if}
 							</td>
 							<td class="py-2 px-3 text-right align-top">
@@ -277,11 +277,11 @@
 												<a
 													href={`/hypotheses/${encodeURIComponent(req.id)}`}
 													title={req.title}
-													class="border border-cyan-800/60 bg-cyan-950/30 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-[0.12em] text-cyan-200 hover:border-cyan-400 hover:text-cyan-100"
+													class="border border-[#333] px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-[#888] hover:border-white hover:text-white"
 												>{req.display_id ?? req.id}</a>
 											{/each}
 											{#if item.requesting_hypotheses.length > 4}
-												<span class="px-1 text-[10px] text-gray-500">+{item.requesting_hypotheses.length - 4}</span>
+												<span class="px-1 text-[10px] text-[#666]">+{item.requesting_hypotheses.length - 4}</span>
 											{/if}
 										</div>
 									</div>

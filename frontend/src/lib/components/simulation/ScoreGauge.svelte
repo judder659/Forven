@@ -15,7 +15,7 @@
 				: percentage >= 55
 					? '#facc15' // yellow-400
 					: percentage >= 40
-						? '#fb923c' // orange-400
+						? '#f87171' // red-400
 						: '#f87171'; // red-400
 </script>
 
@@ -27,9 +27,8 @@
 			cy="50"
 			r="40"
 			fill="none"
-			stroke="#374151"
+			stroke="#222"
 			stroke-width="8"
-			class="opacity-50"
 		/>
 		<!-- Progress circle -->
 		<circle
@@ -47,6 +46,6 @@
 	</svg>
 	<div class="absolute inset-0 flex flex-col items-center justify-center">
 		<span class="text-2xl font-bold text-white">{percentage}%</span>
-		<span class="text-xs text-gray-400">{score}/{maxScore}</span>
+		<span class="text-xs text-[#666]">{score}/{maxScore}</span>
 	</div>
 </div>

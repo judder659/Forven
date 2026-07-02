@@ -156,18 +156,18 @@
 
 	function effectiveClass(tool: ToolDefinition): string {
 		const eff = effectiveByName.get(tool.name);
-		if (!eff) return 'text-gray-500';
-		return eff.enabled ? 'text-emerald-300' : 'text-red-300';
+		if (!eff) return 'text-[#888]';
+		return eff.enabled ? 'text-emerald-400' : 'text-red-400';
 	}
 
 	function rowChipClass(state: RowState): string {
 		switch (state) {
 			case 'enable':
-				return 'border-emerald-700 bg-emerald-900/30 text-emerald-300';
+				return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
 			case 'disable':
-				return 'border-red-800 bg-red-900/30 text-red-300';
+				return 'border-red-900 bg-red-500/10 text-red-400';
 			default:
-				return 'border-[#333] bg-[#111] text-gray-400';
+				return 'border-[#333] text-[#888]';
 		}
 	}
 
@@ -226,17 +226,17 @@
 <svelte:head><title>Agent Toolsets | Forven</title></svelte:head>
 
 <div class="flex h-screen overflow-hidden">
-	<aside class="w-64 border-r border-[#222] bg-[#0a0a0a] overflow-y-auto">
+	<aside class="w-64 border-r border-[#222] bg-[#050505] overflow-y-auto">
 		<header class="px-4 py-4 border-b border-[#222]">
-			<div class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Agents</div>
-			<h1 class="text-base font-semibold text-gray-100 mt-1">Toolset matrix</h1>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Agents</div>
+			<h1 class="text-sm font-bold uppercase tracking-widest text-white mt-1">Toolset matrix</h1>
 		</header>
 		{#if agentsLoading}
-			<div class="px-4 py-3 text-xs text-gray-500">Loading agents...</div>
+			<div class="px-4 py-3 text-xs text-[#666]">Loading agents...</div>
 		{:else if agentsError}
 			<div class="px-4 py-3 text-xs text-red-400">{agentsError}</div>
 		{:else if agents.length === 0}
-			<div class="px-4 py-3 text-xs text-gray-500">No agents.</div>
+			<div class="px-4 py-3 text-xs text-[#666]">No agents.</div>
 		{:else}
 			<ul class="divide-y divide-[#1a1a1a]">
 				{#each agents as agent}
@@ -244,11 +244,11 @@
 						<button
 							type="button"
 							disabled={loading || saving}
-							class="w-full text-left px-4 py-2 hover:bg-[#111] disabled:opacity-50 disabled:cursor-not-allowed {selectedAgentId === agent.id ? 'bg-[#101010] text-gray-100' : 'text-gray-300'}"
+							class="w-full text-left px-4 py-2 hover:bg-[#111] transition-colors disabled:opacity-50 disabled:cursor-not-allowed {selectedAgentId === agent.id ? 'bg-[#111] text-white border-l-2 border-l-white pl-[14px]' : 'text-[#888]'}"
 							on:click={() => void handleSelectAgent(String(agent.id))}
 						>
 							<div class="text-sm font-mono">{agent.id}</div>
-							<div class="text-[11px] text-gray-500">{agent.name || agent.role || ''}</div>
+							<div class="text-[11px] text-[#666]">{agent.name || agent.role || ''}</div>
 						</button>
 					</li>
 				{/each}
@@ -258,25 +258,25 @@
 
 	<section class="flex-1 overflow-y-auto p-6 space-y-4">
 		{#if !selectedAgentId}
-			<div class="text-gray-500">Select an agent to view its toolset.</div>
+			<div class="text-[#666]">Select an agent to view its toolset.</div>
 		{:else if loading}
-			<div class="text-gray-500">Loading toolset for {selectedAgentId}...</div>
+			<div class="text-[#666]">Loading toolset for {selectedAgentId}...</div>
 		{:else if error}
-			<div class="bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded">{error}</div>
+			<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{error}</div>
 		{:else if !toolsets}
-			<div class="text-gray-500">No toolset data.</div>
+			<div class="text-[#666]">No toolset data.</div>
 		{:else}
 			<header class="space-y-2">
 				<div class="flex items-end justify-between gap-3">
 					<div>
-						<div class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Agent</div>
-						<h2 class="text-2xl font-semibold text-gray-100">{toolsets.agent_id}</h2>
+						<div class="text-[10px] uppercase tracking-wider text-[#666]">Agent</div>
+						<h2 class="text-lg font-bold uppercase tracking-widest text-white">{toolsets.agent_id}</h2>
 					</div>
 					<div class="flex items-center gap-2">
 						<button
 							type="button"
 							disabled={saving || !dirty}
-							class="border border-emerald-700 bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-300 px-3 py-1.5 rounded text-xs disabled:opacity-40"
+							class="terminal-button-primary text-xs disabled:opacity-40"
 							on:click={() => void saveOverrides()}
 						>
 							{saving ? 'Saving...' : 'Save changes'}
@@ -284,14 +284,14 @@
 						<button
 							type="button"
 							disabled={saving || contextOverrideCount === 0}
-							class="border border-[#444] text-gray-300 hover:text-red-300 px-3 py-1.5 rounded text-xs disabled:opacity-40"
+							class="terminal-button text-xs disabled:opacity-40"
 							on:click={() => void resetContext()}
 						>
 							Reset context
 						</button>
 					</div>
 				</div>
-				<p class="text-xs text-gray-500 max-w-3xl">
+				<p class="text-xs text-[#666] max-w-3xl">
 					Per-context overrides for this agent. Resolution order:
 					exact tool name &gt; <code>mcp:&lt;server&gt;</code> &gt; <code>mcp:*</code> &gt;
 					<code>category:&lt;cat&gt;</code> &gt; default-deny set. Click a row's chip to cycle
@@ -299,7 +299,7 @@
 				</p>
 			</header>
 
-			{#if actionMessage}<div class="bg-emerald-900/20 border border-emerald-800 text-emerald-300 text-xs px-3 py-2 rounded">{actionMessage}</div>{/if}
+			{#if actionMessage}<div class="border border-emerald-900 bg-emerald-500/5 text-emerald-400 text-xs px-3 py-2">{actionMessage}</div>{/if}
 
 			<nav class="flex flex-wrap items-center gap-2 border-b border-[#222] pb-2">
 				{#each contexts as ctx}
@@ -307,12 +307,12 @@
 					<button
 						type="button"
 						disabled={loading || saving}
-						class="flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-1.5 rounded border disabled:opacity-50 disabled:cursor-not-allowed {activeContext === ctx ? 'border-cyan-700 bg-cyan-900/20 text-cyan-300' : 'border-[#333] text-gray-400 hover:text-gray-200'}"
+						class="flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-1.5 border transition-colors disabled:opacity-50 disabled:cursor-not-allowed {activeContext === ctx ? 'border-[#555] bg-[#111] text-white' : 'border-[#333] text-[#888] hover:text-white'}"
 						on:click={() => void handleSelectContext(ctx)}
 					>
 						{ctx}
 						{#if ctxOverrides > 0}
-							<span class="text-[10px] px-1 rounded bg-amber-900/40 text-amber-300 border border-amber-800">{ctxOverrides}</span>
+							<span class="text-[10px] px-1 border border-yellow-900 bg-yellow-500/10 text-yellow-400">{ctxOverrides}</span>
 						{/if}
 					</button>
 				{/each}
@@ -321,10 +321,10 @@
 						type="text"
 						bind:value={nameFilter}
 						placeholder="Filter tools..."
-						class="bg-black border border-[#222] px-2 py-1 text-gray-200 placeholder-gray-600 w-40"
+						class="terminal-input w-40 !py-1"
 					/>
-					<span class="text-gray-500 uppercase tracking-wider">Category</span>
-					<select bind:value={categoryFilter} class="bg-black border border-[#222] px-2 py-1 text-gray-200">
+					<span class="text-[#666] uppercase tracking-wider">Category</span>
+					<select bind:value={categoryFilter} class="terminal-select !w-auto !py-1">
 						{#each categories as cat}
 							<option value={cat}>{cat}</option>
 						{/each}
@@ -332,14 +332,14 @@
 				</div>
 			</nav>
 
-			<div class="flex items-center gap-3 text-[11px] text-gray-500">
+			<div class="flex items-center gap-3 text-[11px] text-[#666]">
 				<span>{filteredTools.length} tool(s)</span>
 				<span class="text-emerald-400">{filteredEnabledCount} enabled</span>
 				<span class="text-red-400">{filteredDisabledCount} disabled</span>
 			</div>
 
 			<table class="w-full text-xs">
-				<thead class="text-gray-500 uppercase tracking-wider">
+				<thead class="text-[10px] text-[#666] uppercase tracking-wider">
 					<tr>
 						<th class="text-left px-3 py-2">Tool</th>
 						<th class="text-left px-3 py-2">Category</th>
@@ -351,21 +351,21 @@
 					{#each filteredTools as tool}
 						{@const state = rowState(tool.name)}
 						{@const rowDirty = isRowDirty(tool.name)}
-						<tr class="border-t border-[#1a1a1a] hover:bg-[#0d0d0d] {rowDirty ? 'bg-amber-900/10' : ''}">
-							<td class="px-3 py-1.5 font-mono text-gray-200" title={tool.description || ''}>
+						<tr class="border-t border-[#1a1a1a] hover:bg-[#111] transition-colors {rowDirty ? 'bg-yellow-500/5' : ''}">
+							<td class="px-3 py-1.5 font-mono text-[#ccc]" title={tool.description || ''}>
 								<span class="inline-flex items-center gap-1.5">
-									{#if rowDirty}<span class="text-amber-400" title="Unsaved change">●</span>{/if}
+									{#if rowDirty}<span class="text-yellow-400" title="Unsaved change">●</span>{/if}
 									{tool.name}
-									{#if tool.description}<span class="text-gray-600" title={tool.description}>(?)</span>{/if}
+									{#if tool.description}<span class="text-[#555]" title={tool.description}>(?)</span>{/if}
 								</span>
 							</td>
-							<td class="px-3 py-1.5 text-gray-500">{tool.category}</td>
+							<td class="px-3 py-1.5 text-[#666]">{tool.category}</td>
 							<td class="px-3 py-1.5 {effectiveClass(tool)}">{effectiveLabel(tool)}</td>
 							<td class="px-3 py-1.5">
 								<button
 									type="button"
 									disabled={saving}
-									class="text-[10px] uppercase tracking-wider px-2 py-0.5 border rounded disabled:opacity-50 {rowChipClass(state)}"
+									class="text-[10px] uppercase tracking-wider px-2 py-0.5 border disabled:opacity-50 {rowChipClass(state)}"
 									on:click={() => cycleRow(tool.name)}
 								>
 									{rowChipLabel(state)}

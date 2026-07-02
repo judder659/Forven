@@ -631,20 +631,18 @@ TYPE_NAME = "my_strategy"
 
 <svelte:head><title>Strategy Creator | Forven</title></svelte:head>
 
-<div class="min-h-screen bg-[#050505] px-4 py-8 md:px-8">
-	<div class="mx-auto max-w-7xl">
+<div class="mx-auto max-w-7xl px-4 py-6">
+	<div>
 		<!-- Header -->
-		<div class="rounded-2xl border border-[#1a1a1a] bg-gradient-to-b from-[#0d0d0d] to-[#080808] px-6 py-5">
-			<div class="flex flex-wrap items-center justify-between gap-4">
-				<div>
-					<h1 class="text-xl font-semibold text-white">Strategy Creator</h1>
-					<p class="mt-1 text-sm text-gray-500">
-						Build your own idea from {indicators.length || '40+'} indicators, watch signals on a live chart, then backtest and send it to the Forge.
-					</p>
-				</div>
-				<div class="flex flex-wrap items-center gap-2">
+		<div class="mb-4 border-b border-[#222] pb-4">
+			<div>
+				<h1 class="text-lg font-bold uppercase tracking-widest text-white">Strategy Creator</h1>
+				<p class="mt-1 text-xs text-[#666]">
+					Build your own idea from {indicators.length || '40+'} indicators, watch signals on a live chart, then backtest and send it to the Forge.
+				</p>
+				<div class="mt-4 flex flex-wrap items-center gap-2">
 					<select bind:value={openSelectValue} on:change={onOpenSelect}
-						class="max-w-[15rem] rounded-lg border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-[12px] text-gray-200 outline-none transition focus:border-white/60"
+						class="terminal-select max-w-[15rem] text-xs"
 						title="Open any strategy in the system">
 						<option value="">Open a strategy…</option>
 						<option value="blank">✦ Blank canvas</option>
@@ -667,49 +665,49 @@ TYPE_NAME = "my_strategy"
 							</optgroup>
 						{/if}
 					</select>
-					<label class="inline-flex items-center gap-1.5 text-[11px] text-gray-500" title="Include app-generated strategies in the dropdown">
-						<input type="checkbox" checked={includeAppGenerated} on:change={toggleAppGenerated} class="accent-cyan-500" />
+					<label class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#666]" title="Include app-generated strategies in the dropdown">
+						<input type="checkbox" checked={includeAppGenerated} on:change={toggleAppGenerated} class="accent-white" />
 						app-generated{#if appLoading}…{/if}
 					</label>
 					<button type="button" on:click={() => { libraryOpen = !libraryOpen; if (libraryOpen) loadLibrary(); }}
-						class="rounded-lg border border-[#2b2b2b] bg-[#111] px-3 py-2 text-[12px] text-gray-300 transition hover:border-gray-600 hover:text-white">
+						class="terminal-button text-[10px]">
 						My Strategies ({library.length})
 					</button>
 					<button type="button" data-testid="creator-import-strategy" on:click={() => (showImportDialog = true)}
 						title="Import a strategy export as a new quick_screen container"
-						class="rounded-lg border border-[#2b2b2b] bg-[#111] px-3 py-2 text-[12px] text-gray-300 transition hover:border-gray-600 hover:text-white">
-						⤒ Import
+						class="terminal-button text-[10px]">
+						Import
 					</button>
 				</div>
 			</div>
 		</div>
 
 		{#if loadError}
-			<div class="mt-4 rounded-xl border border-red-900/40 bg-red-950/20 px-4 py-3 text-sm text-red-300" role="alert">{loadError}</div>
+			<div class="mb-4 border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{loadError}</div>
 		{/if}
 
-		<div class="mt-6 grid gap-6 lg:grid-cols-2">
+		<div class="grid gap-4 lg:grid-cols-2">
 			<!-- LEFT: builder -->
-			<div class="space-y-6">
-				<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
+			<div class="space-y-4">
+				<div class="terminal-card p-4">
 					<!-- Name + mode tabs -->
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<input bind:value={strategyName} placeholder="Strategy name"
-							class="rounded border border-[#2b2b2b] bg-[#050505] px-3 py-1.5 text-sm text-white outline-none transition focus:border-white/60" />
-						<div class="inline-flex rounded-lg border border-[#2b2b2b] bg-[#070707] p-0.5 text-[11px]">
+							class="terminal-input max-w-xs" />
+						<div class="inline-flex border border-[#333] bg-black text-[10px] uppercase tracking-wide">
 							<button type="button" on:click={() => (mode = 'visual')} aria-pressed={mode === 'visual'}
-								class="rounded-md px-3 py-1 transition {mode === 'visual' ? 'bg-cyan-500/15 text-cyan-200' : 'text-gray-500 hover:text-gray-300'}">Visual</button>
+								class="border-r border-[#333] px-3 py-1.5 transition-colors {mode === 'visual' ? 'bg-white text-black' : 'text-[#666] hover:text-white'}">Visual</button>
 							<button type="button" on:click={() => (mode = 'ai')} aria-pressed={mode === 'ai'}
-								class="rounded-md px-3 py-1 transition {mode === 'ai' ? 'bg-cyan-500/15 text-cyan-200' : 'text-gray-500 hover:text-gray-300'}">AI ✨</button>
+								class="border-r border-[#333] px-3 py-1.5 transition-colors {mode === 'ai' ? 'bg-white text-black' : 'text-[#666] hover:text-white'}">AI</button>
 							<button type="button" on:click={() => (mode = 'code')} aria-pressed={mode === 'code'}
-								class="rounded-md px-3 py-1 transition {mode === 'code' ? 'bg-cyan-500/15 text-cyan-200' : 'text-gray-500 hover:text-gray-300'}">Code</button>
+								class="px-3 py-1.5 transition-colors {mode === 'code' ? 'bg-white text-black' : 'text-[#666] hover:text-white'}">Code</button>
 						</div>
 					</div>
 
 					{#if nonEditableNotice}
-						<div class="mt-3 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-[12px] text-amber-300">
+						<div class="mt-3 border border-amber-900 bg-amber-500/5 px-3 py-2 text-[12px] text-amber-400">
 							{nonEditableNotice}
-							<a href="/backtest/new" class="ml-1 underline hover:text-amber-200">Open Manual Backtest →</a>
+							<a href="/backtest/new" class="ml-1 text-white underline">Open Manual Backtest →</a>
 						</div>
 					{/if}
 
@@ -718,44 +716,44 @@ TYPE_NAME = "my_strategy"
 							<StrategyBuilder {indicators} initialSpec={currentSpec} disabled={busy} on:change={onBuilderChange} />
 						{:else if mode === 'ai'}
 							<div class="space-y-3">
-								<p class="text-[12px] text-gray-500">Describe your idea in plain English. The AI drafts an editable rule spec, validated against the engine.</p>
+								<p class="text-[12px] text-[#666]">Describe your idea in plain English. The AI drafts an editable rule spec, validated against the engine.</p>
 								<textarea bind:value={aiPrompt} rows="4" placeholder="e.g. Buy when RSI drops below 30 and price is above the 200 EMA; sell when RSI goes above 60."
-									class="w-full resize-y rounded border border-[#2b2b2b] bg-black px-3 py-2 text-[13px] text-gray-200 outline-none transition focus:border-cyan-400/60"></textarea>
+									class="terminal-input w-full resize-y text-[13px]"></textarea>
 								<button type="button" on:click={generateFromNl} disabled={aiLoading || !aiPrompt.trim()}
-									class="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-1.5 text-[12px] font-medium text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">
-									{aiLoading ? 'Generating…' : 'Generate strategy ✨'}
+									class="terminal-button-primary text-[10px] disabled:opacity-40">
+									{aiLoading ? 'Generating…' : 'Generate strategy'}
 								</button>
-								{#if aiProvider}<span class="ml-2 text-[10px] text-gray-600">via {aiProvider}</span>{/if}
-								{#if aiError}<div class="rounded border border-amber-900/40 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">{aiError}</div>{/if}
+								{#if aiProvider}<span class="ml-2 text-[10px] text-[#555]">via {aiProvider}</span>{/if}
+								{#if aiError}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{aiError}</div>{/if}
 							</div>
 						{:else}
 							<div class="space-y-2">
-								<p class="text-[11px] text-gray-500">
-									Subclass <span class="font-mono text-gray-400">BaseStrategy</span>, return entries/exits from
-									<span class="font-mono text-gray-400">generate_signals(df)</span>. Must export
-									<span class="font-mono text-gray-400">STRATEGY_CLASS</span> and <span class="font-mono text-gray-400">TYPE_NAME</span>.
+								<p class="text-[11px] text-[#666]">
+									Subclass <span class="font-mono text-[#aaa]">BaseStrategy</span>, return entries/exits from
+									<span class="font-mono text-[#aaa]">generate_signals(df)</span>. Must export
+									<span class="font-mono text-[#aaa]">STRATEGY_CLASS</span> and <span class="font-mono text-[#aaa]">TYPE_NAME</span>.
 								</p>
 								<textarea bind:value={customCode} spellcheck="false" rows="16" disabled={busy || customStatus === 'validating'}
-									class="w-full resize-y rounded border border-[#2b2b2b] bg-black px-3 py-2 font-mono text-[12px] leading-5 text-gray-200 outline-none transition focus:border-cyan-400/60"></textarea>
+									class="terminal-input w-full resize-y font-mono text-[12px] leading-5"></textarea>
 								<div class="flex flex-wrap items-center gap-3">
 									<button type="button" on:click={loadCustomStrategy} disabled={busy || customStatus === 'validating' || !customCode.trim()}
-										class="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-1.5 text-[12px] font-medium text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">
+										class="terminal-button-primary text-[10px] disabled:opacity-40">
 										{customStatus === 'validating' ? 'Validating…' : 'Validate & load'}
 									</button>
 									<button type="button" on:click={() => (customCode = CUSTOM_TEMPLATE)} disabled={busy}
-										class="rounded border border-[#2b2b2b] bg-[#111] px-3 py-1.5 text-[11px] text-gray-400 transition hover:text-gray-200">Reset template</button>
+										class="terminal-button text-[10px]">Reset template</button>
 									{#if customStatus === 'loaded' && customLoadedName}
-										<span class="inline-flex items-center gap-1.5 text-[12px] text-emerald-300">
+										<span class="inline-flex items-center gap-1.5 text-[12px] text-emerald-400">
 											<span class="inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
 											Loaded <span class="font-mono">{customLoadedName}</span>
 										</span>
 									{/if}
 								</div>
-								{#each customErrors as e}<div class="rounded border border-red-900/40 bg-red-950/20 px-3 py-1.5 font-mono text-[11px] text-red-300">{e}</div>{/each}
-								{#each customWarnings as w}<div class="rounded border border-amber-900/40 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">{w}</div>{/each}
+								{#each customErrors as e}<div class="border border-red-900 bg-red-500/5 px-3 py-1.5 font-mono text-[11px] text-red-400">{e}</div>{/each}
+								{#each customWarnings as w}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{w}</div>{/each}
 								{#if customStatus === 'loaded'}
 									<div class="mt-2">
-										<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Parameters</div>
+										<div class="text-[10px] uppercase tracking-wider text-[#666]">Parameters</div>
 										<ParameterEditor params={paramsDraft} saving={busy} on:paramsChange={(e) => (paramsDraft = e.detail)} />
 									</div>
 								{/if}
@@ -765,8 +763,8 @@ TYPE_NAME = "my_strategy"
 				</div>
 
 				<!-- Market scope -->
-				<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
-					<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Market Scope</div>
+				<div class="terminal-card p-4">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Market Scope</div>
 					<div class="mt-3 grid gap-4 md:grid-cols-2">
 						<SymbolInput id="sc-symbol" bind:value={symbol} disabled={busy} suggestions={symbolSuggestions} helpText="Base asset is used for the backtest (e.g. BTC)." />
 						<TimeframeSelect id="sc-timeframe" bind:value={timeframe} disabled={busy} />
@@ -775,81 +773,81 @@ TYPE_NAME = "my_strategy"
 				</div>
 
 				<!-- Execution settings -->
-				<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
+				<div class="terminal-card p-4">
 					<button type="button" class="flex w-full items-center justify-between text-left" on:click={() => (showAdvanced = !showAdvanced)} aria-expanded={showAdvanced}>
-						<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Execution Settings</div>
-						<span class="text-sm text-gray-500">{showAdvanced ? '−' : '+'}</span>
+						<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution Settings</div>
+						<span class="text-sm text-[#555]">{showAdvanced ? '−' : '+'}</span>
 					</button>
 					{#if showAdvanced}
-						<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Initial Capital</div>
-								<input type="number" bind:value={initialCapital} step="1000" min="100" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Fee (bps)</div>
-								<input type="number" bind:value={feeBps} step="1" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Slippage (bps)</div>
-								<input type="number" bind:value={slippageBps} step="1" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Leverage</div>
-								<input type="number" bind:value={leverage} step="0.5" min="1" max="125" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+						<div class="mt-4 grid gap-4 border-t border-[#222] pt-4 md:grid-cols-2 xl:grid-cols-3">
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Initial Capital</div>
+								<input type="number" bind:value={initialCapital} step="1000" min="100" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fee (bps)</div>
+								<input type="number" bind:value={feeBps} step="1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Slippage (bps)</div>
+								<input type="number" bind:value={slippageBps} step="1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Leverage</div>
+								<input type="number" bind:value={leverage} step="0.5" min="1" max="125" disabled={busy} class="terminal-input mt-1.5" /></label>
 							{#if mode !== 'visual'}
-								<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Trade Direction</div>
-									<select bind:value={tradeMode} disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60">
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trade Direction</div>
+									<select bind:value={tradeMode} disabled={busy} class="terminal-select mt-1.5">
 										<option value="long_only">Long only</option><option value="short_only">Short only</option><option value="both">Both</option>
 									</select></label>
 							{/if}
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Sizing Mode</div>
-								<select bind:value={sizingMode} disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60">
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Sizing Mode</div>
+								<select bind:value={sizingMode} disabled={busy} class="terminal-select mt-1.5">
 									<option value="full">Full equity</option><option value="fraction">Fraction (risk)</option><option value="fixed">Fixed notional</option><option value="atr">ATR risk</option><option value="kelly">Kelly</option>
 								</select></label>
 							{#if sizingMode === 'fraction' || sizingMode === 'atr'}
-								<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Risk Per Trade</div>
-									<input type="number" bind:value={riskPerTrade} step="0.005" min="0" max="1" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Risk Per Trade</div>
+									<input type="number" bind:value={riskPerTrade} step="0.005" min="0" max="1" disabled={busy} class="terminal-input mt-1.5" /></label>
 							{/if}
 							{#if sizingMode === 'fixed'}
-								<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Fixed Size (quote)</div>
-									<input type="number" bind:value={fixedSize} step="100" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fixed Size (quote)</div>
+									<input type="number" bind:value={fixedSize} step="100" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
 							{/if}
 							{#if sizingMode === 'atr'}
-								<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">ATR Stop Mult</div>
-									<input type="number" bind:value={atrStopMultiplier} step="0.1" min="0" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">ATR Stop Mult</div>
+									<input type="number" bind:value={atrStopMultiplier} step="0.1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
 							{/if}
 							{#if sizingMode === 'kelly'}
-								<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Kelly Mult</div>
-									<input type="number" bind:value={kellyMultiplier} step="0.05" min="0" max="5" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-								<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Kelly Lookback</div>
-									<input type="number" bind:value={kellyLookback} step="10" min="1" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Kelly Mult</div>
+									<input type="number" bind:value={kellyMultiplier} step="0.05" min="0" max="5" disabled={busy} class="terminal-input mt-1.5" /></label>
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Kelly Lookback</div>
+									<input type="number" bind:value={kellyLookback} step="10" min="1" disabled={busy} class="terminal-input mt-1.5" /></label>
 							{/if}
 						</div>
 						<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Stop Loss %</div>
-								<input type="number" value={stopLossPct ?? ''} on:input={(e) => (stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Take Profit %</div>
-								<input type="number" value={takeProfitPct ?? ''} on:input={(e) => (takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Trailing Stop %</div>
-								<input type="number" value={trailingStopPct ?? ''} on:input={(e) => (trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Time Stop (bars)</div>
-								<input type="number" value={timeStopBars ?? ''} on:input={(e) => (timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" disabled={busy} class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Stop Loss %</div>
+								<input type="number" value={stopLossPct ?? ''} on:input={(e) => (stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Take Profit %</div>
+								<input type="number" value={takeProfitPct ?? ''} on:input={(e) => (takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trailing Stop %</div>
+								<input type="number" value={trailingStopPct ?? ''} on:input={(e) => (trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Time Stop (bars)</div>
+								<input type="number" value={timeStopBars ?? ''} on:input={(e) => (timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
 						</div>
 					{/if}
 				</div>
 			</div>
 
 			<!-- RIGHT: live preview + actions -->
-			<div class="space-y-6">
-				<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
+			<div class="space-y-4">
+				<div class="terminal-card p-4">
 					<div class="flex items-center justify-between">
-						<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">Live Preview</div>
+						<div class="text-[10px] uppercase tracking-wider text-[#666]">Live Preview</div>
 						<div class="flex items-center gap-2 text-[11px]">
-							{#if previewLoading}<span class="text-cyan-300">Updating…</span>{/if}
+							{#if previewLoading}<span class="text-white">Updating…</span>{/if}
 							<button type="button" on:click={runPreview} disabled={mode !== 'visual' || !liveValid}
-								class="rounded border border-[#2b2b2b] bg-[#111] px-2 py-1 text-gray-300 transition hover:border-gray-600 hover:text-white disabled:opacity-40">Refresh</button>
+								class="terminal-button px-2 py-1 text-[10px]">Refresh</button>
 						</div>
 					</div>
 					{#if mode !== 'visual'}
-						<div class="mt-3 rounded-lg border border-dashed border-[#1f1f1f] px-3 py-10 text-center text-[12px] text-gray-600">
+						<div class="mt-3 border border-dashed border-[#333] px-3 py-10 text-center text-[12px] text-[#555]">
 							Live chart preview is available in the Visual builder.
 						</div>
 					{:else}
-						<div class="mt-3 h-[360px] overflow-hidden rounded-lg border border-[#161616]">
+						<div class="mt-3 h-[360px] overflow-hidden border border-[#222]">
 							<ChartWorkspace
 								data={chartProps.data}
 								entryMarkers={chartProps.entryMarkers}
@@ -862,56 +860,56 @@ TYPE_NAME = "my_strategy"
 							/>
 						</div>
 						{#if previewError}
-							<div class="mt-2 rounded border border-red-900/40 bg-red-950/20 px-3 py-1.5 text-[11px] text-red-300">{previewError}</div>
+							<div class="mt-2 border border-red-900 bg-red-500/5 px-3 py-1.5 text-[11px] text-red-400">{previewError}</div>
 						{:else if previewCtx}
 							<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-								<span class="text-gray-500">Entries: <span class="font-mono text-cyan-300">{chartProps.entryMarkers.length}</span></span>
-								<span class="text-gray-500">Exits: <span class="font-mono text-gray-300">{chartProps.exitMarkers.length}</span></span>
-								<span class="text-gray-500">Bars: <span class="font-mono text-gray-300">{chartProps.data.length.toLocaleString()}</span></span>
+								<span class="text-[#555]">Entries: <span class="font-mono text-white">{chartProps.entryMarkers.length}</span></span>
+								<span class="text-[#555]">Exits: <span class="font-mono text-[#aaa]">{chartProps.exitMarkers.length}</span></span>
+								<span class="text-[#555]">Bars: <span class="font-mono text-[#aaa]">{chartProps.data.length.toLocaleString()}</span></span>
 							</div>
 							{#each chartProps.warnings.slice(0, 3) as w}
-								<div class="mt-1 rounded border border-amber-900/40 bg-amber-950/20 px-3 py-1 text-[11px] text-amber-300">{w}</div>
+								<div class="mt-1 border border-amber-900 bg-amber-500/5 px-3 py-1 text-[11px] text-amber-400">{w}</div>
 							{/each}
 						{/if}
 					{/if}
 				</div>
 
 				<!-- Actions -->
-				<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-5">
-					{#if submitError}<div class="mb-3 rounded-xl border border-red-900/40 bg-red-950/20 px-4 py-2.5 text-sm text-red-300" role="alert">{submitError}</div>{/if}
+				<div class="terminal-card p-4">
+					{#if submitError}<div class="mb-3 border border-red-900 bg-red-500/5 px-4 py-2.5 text-sm text-red-400" role="alert">{submitError}</div>{/if}
 					<div class="flex flex-wrap items-center gap-3">
 						<button type="button" on:click={runBacktest} disabled={busy || resultLoading}
-							class="inline-flex items-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-6 py-2.5 text-sm font-medium text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">
+							class="terminal-button-primary text-xs disabled:opacity-40">
 							{#if busy || resultLoading}Running…{:else}Run Backtest{/if}
 						</button>
 						<button type="button" on:click={requestSave} disabled={saving}
-							class="rounded-lg border border-[#2b2b2b] bg-[#111] px-4 py-2.5 text-sm text-gray-200 transition hover:border-gray-600 disabled:opacity-40">
+							class="terminal-button text-xs">
 							{saving ? 'Saving…' : currentLibraryId ? 'Save' : 'Save to library'}
 						</button>
 						{#if currentLibraryId}
 							<button type="button" on:click={(e) => { const entry = library.find((l) => l.id === currentLibraryId); if (entry) forgeEntry(entry, e); }}
-								class="rounded-lg border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm text-violet-200 transition hover:bg-violet-500/20"
+								class="terminal-button text-xs"
 								title="Save first, then promote to the Forge pipeline">Send to Forge →</button>
 						{/if}
 					</div>
 					{#if !currentLibraryId}
-						<p class="mt-2 text-[11px] text-gray-600">Save to your library to enable Send to Forge.</p>
+						<p class="mt-2 text-[11px] text-[#555]">Save to your library to enable Send to Forge.</p>
 					{/if}
 				</div>
 
 				<!-- Inline result -->
 				{#if resultLoading || inlineResult || submitWarning}
 					<div id="sc-results" class="scroll-mt-6 space-y-3">
-						{#if submitWarning}<div class="rounded-xl border border-amber-900/40 bg-amber-950/20 px-4 py-2.5 text-sm text-amber-300">⚠ {submitWarning}</div>{/if}
-						<div class="rounded-2xl border border-[#1a1a1a] bg-gradient-to-b from-[#0d0d0d] to-[#080808] px-5 py-4">
+						{#if submitWarning}<div class="border border-amber-900 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-400">⚠ {submitWarning}</div>{/if}
+						<div class="border-b border-[#222] pb-4">
 							<div class="flex items-center justify-between">
-								<h2 class="text-base font-semibold text-white">Backtest Result</h2>
+								<h2 class="text-sm font-bold uppercase tracking-widest text-white">Backtest Result</h2>
 								<button type="button" on:click={openFullReport} disabled={!lastStrategyId}
-									class="rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-[11px] text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">Full report →</button>
+									class="terminal-button-primary text-[10px] disabled:opacity-40">Full report →</button>
 							</div>
 						</div>
 						{#if resultLoading}
-							<div class="rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] p-8 text-center text-sm text-gray-500">Loading result…</div>
+							<div class="terminal-card p-8 text-center text-xs uppercase tracking-widest text-[#555]">Loading result…</div>
 						{:else if inlineResult}
 							<BacktestResultSummary result={inlineResult} />
 						{/if}
@@ -924,35 +922,35 @@ TYPE_NAME = "my_strategy"
 	<!-- Library drawer -->
 	{#if libraryOpen}
 		<button type="button" class="fixed inset-0 z-40 bg-black/50" on:click={() => (libraryOpen = false)} aria-label="Close library"></button>
-		<aside class="fixed right-0 top-0 z-50 h-full w-full max-w-md overflow-y-auto border-l border-[#222] bg-[#080808] p-5 shadow-2xl">
-			<div class="flex items-center justify-between">
-				<h2 class="text-lg font-semibold text-white">My Strategies</h2>
-				<button type="button" on:click={() => (libraryOpen = false)} class="text-gray-500 hover:text-white">✕</button>
+		<aside class="fixed right-0 top-0 z-50 h-full w-full max-w-md overflow-y-auto border-l border-[#222] bg-[#050505] p-5">
+			<div class="flex items-center justify-between border-b border-[#222] pb-4">
+				<h2 class="text-sm font-bold uppercase tracking-widest text-white">My Strategies</h2>
+				<button type="button" on:click={() => (libraryOpen = false)} class="text-[#555] hover:text-white">✕</button>
 			</div>
 			{#if libraryLoading}
-				<div class="mt-6 text-sm text-gray-500">Loading…</div>
+				<div class="mt-6 text-xs uppercase tracking-widest text-[#555]">Loading…</div>
 			{:else if library.length === 0}
-				<div class="mt-6 rounded-lg border border-dashed border-[#1f1f1f] p-6 text-center text-sm text-gray-600">
+				<div class="mt-6 border border-dashed border-[#333] p-6 text-center text-sm text-[#555]">
 					No saved strategies yet. Build one and hit “Save to library”.
 				</div>
 			{:else}
 				<div class="mt-4 space-y-2">
 					{#each library as entry (entry.id)}
 						<button type="button" on:click={() => openLibraryEntry(entry)}
-							class="block w-full rounded-lg border border-[#1a1a1a] bg-[#0a0a0a] p-3 text-left transition hover:border-cyan-500/40 {currentLibraryId === entry.id ? 'border-cyan-500/40' : ''}">
+							class="block w-full border bg-[#050505] p-3 text-left transition-colors hover:border-white {currentLibraryId === entry.id ? 'border-white' : 'border-[#222]'}">
 							<div class="flex items-center justify-between gap-2">
-								<span class="truncate text-sm text-gray-200">{entry.name}</span>
-								<span class="shrink-0 rounded bg-[#1a1a1a] px-1.5 py-0.5 text-[10px] text-gray-400">{entry.status}</span>
+								<span class="truncate text-sm text-white">{entry.name}</span>
+								<span class="shrink-0 border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#888]">{entry.status}</span>
 							</div>
-							<div class="mt-0.5 truncate text-[11px] text-gray-600">
+							<div class="mt-0.5 truncate text-[11px] text-[#555]">
 								{entry.kind} · {entry.symbol} {entry.timeframe}{entry.description ? ` · ${entry.description}` : ''}
 							</div>
 							<div class="mt-2 flex items-center gap-3 text-[11px]">
-								<span class="text-cyan-300/80 hover:text-cyan-200">Open</span>
-								<span class="text-gray-500 hover:text-gray-300" role="button" tabindex="0" on:click={(e) => duplicateEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && duplicateEntry(entry, e)}>Duplicate</span>
-								<span class="text-violet-300/80 hover:text-violet-200" role="button" tabindex="0" on:click={(e) => forgeEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && forgeEntry(entry, e)}>→ Forge</span>
-								{#if entry.forge_strategy_id}<span class="text-emerald-400/70">in forge</span>{/if}
-								<span class="ml-auto text-gray-600 hover:text-red-300" role="button" tabindex="0" on:click={(e) => deleteEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && deleteEntry(entry, e)}>Delete</span>
+								<span class="text-white">Open</span>
+								<span class="text-[#666] hover:text-white" role="button" tabindex="0" on:click={(e) => duplicateEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && duplicateEntry(entry, e)}>Duplicate</span>
+								<span class="text-[#888] hover:text-white" role="button" tabindex="0" on:click={(e) => forgeEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && forgeEntry(entry, e)}>→ Forge</span>
+								{#if entry.forge_strategy_id}<span class="text-emerald-400">in forge</span>{/if}
+								<span class="ml-auto text-[#555] hover:text-red-400" role="button" tabindex="0" on:click={(e) => deleteEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && deleteEntry(entry, e)}>Delete</span>
 							</div>
 						</button>
 					{/each}
@@ -964,30 +962,30 @@ TYPE_NAME = "my_strategy"
 	<!-- Save prompt: overwrite the opened strategy or create a new one -->
 	{#if savePromptOpen}
 		<button type="button" class="fixed inset-0 z-40 bg-black/50" on:click={() => (savePromptOpen = false)} aria-label="Cancel save"></button>
-		<div class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-[#222] bg-[#0a0a0a] p-5 shadow-2xl">
-			<h3 class="text-base font-semibold text-white">Save strategy</h3>
+		<div class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-[#333] bg-[#050505] p-5">
+			<h3 class="border-b border-[#222] pb-3 text-sm font-bold uppercase tracking-widest text-white">Save strategy</h3>
 			{#if currentLibraryId}
-				<p class="mt-1 text-[12px] text-gray-500">
-					You're editing <span class="text-gray-300">{strategyName}</span>. Overwrite it, or save your changes as a new strategy?
+				<p class="mt-3 text-[12px] text-[#666]">
+					You're editing <span class="text-white">{strategyName}</span>. Overwrite it, or save your changes as a new strategy?
 				</p>
 				<button type="button" on:click={() => doSave(true)} disabled={saving}
-					class="mt-4 w-full rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2.5 text-sm font-medium text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">
+					class="terminal-button-primary mt-4 w-full text-xs disabled:opacity-40">
 					{saving ? 'Saving…' : `Overwrite “${strategyName}”`}
 				</button>
-				<div class="my-3 flex items-center gap-2 text-[11px] text-gray-600">
-					<span class="h-px flex-1 bg-[#1a1a1a]"></span>or<span class="h-px flex-1 bg-[#1a1a1a]"></span>
+				<div class="my-3 flex items-center gap-2 text-[11px] text-[#555]">
+					<span class="h-px flex-1 bg-[#222]"></span>or<span class="h-px flex-1 bg-[#222]"></span>
 				</div>
 			{:else}
-				<p class="mt-1 text-[12px] text-gray-500">Name this strategy to save it to your library.</p>
+				<p class="mt-3 text-[12px] text-[#666]">Name this strategy to save it to your library.</p>
 			{/if}
-			<label for="sc-saveas-name" class="mt-2 block text-[10px] uppercase tracking-[0.2em] text-gray-500">New strategy name</label>
+			<label for="sc-saveas-name" class="mt-2 block text-[10px] uppercase tracking-wider text-[#666]">New strategy name</label>
 			<input id="sc-saveas-name" bind:value={saveAsName} placeholder="Strategy name"
-				class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white outline-none focus:border-white/60" />
+				class="terminal-input mt-1.5" />
 			<div class="mt-4 flex items-center justify-end gap-2">
 				<button type="button" on:click={() => (savePromptOpen = false)}
-					class="rounded border border-[#2b2b2b] bg-[#111] px-3 py-2 text-[12px] text-gray-400 transition hover:text-gray-200">Cancel</button>
+					class="terminal-button text-[10px]">Cancel</button>
 				<button type="button" on:click={() => doSave(false)} disabled={saving || !saveAsName.trim()}
-					class="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-[12px] font-medium text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-40">
+					class="terminal-button-primary text-[10px] disabled:opacity-40">
 					{saving ? 'Saving…' : 'Save as new'}
 				</button>
 			</div>

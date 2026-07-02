@@ -2891,13 +2891,13 @@
 										on:click={handleFlipPosition}
 									>Flip</button>
 									<button
-										class="text-sky-400 hover:text-sky-200 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										class="text-[#888] hover:text-white text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
 										disabled={!supportsManualControl(selectedSession) || requestInFlight}
 										on:click={handleToggleAutoManagement}
 										title={selectedSession.position.manual_pause ? 'Resume scanner auto-management' : 'Pause scanner auto-management (you own this position)'}
 									>{selectedSession.position.manual_pause ? 'Resume' : 'Pause'}</button>
 									{#if selectedSession.position.manual_pause}
-										<span class="text-[9px] uppercase tracking-wider text-sky-400 border border-sky-700 rounded px-1">Manual</span>
+										<span class="text-[9px] uppercase tracking-wider text-[#888] border border-[#333] px-1">Manual</span>
 									{/if}
 								</span>
 							</span>
@@ -3348,7 +3348,7 @@
 										{activeDrawingTool === 'cursor' ? 'Cursor' : activeDrawingTool === 'horizontalLine' ? 'Horizontal lines' : 'Trend lines'}
 									</span>
 									{#if pendingTrendLineStart}
-										<span class="text-sky-300">Trend line anchor locked. Click a second point to finish.</span>
+										<span class="text-white">Trend line anchor locked. Click a second point to finish.</span>
 									{/if}
 									{#if chartDrawings.length > 0}
 										<span class="text-gray-600">{chartDrawings.length} drawing{chartDrawings.length === 1 ? '' : 's'} on chart</span>
@@ -3414,7 +3414,7 @@
 								{@const group = getIndicatorSidebarGroup(name, indicatorConfig[name])}
 								<div class="flex items-center gap-2 py-1 border-b border-[#111] hover:bg-[#111] px-1">
 									<span class="min-w-0 flex-1 truncate text-[11px] text-gray-400" title={name}>{name}</span>
-									<span class="text-[9px] uppercase tracking-wider {group === 'overlays' ? 'text-emerald-400' : group === 'lower' ? 'text-sky-400' : 'text-gray-600'}">
+									<span class="text-[9px] uppercase tracking-wider {group === 'overlays' ? 'text-emerald-400' : group === 'lower' ? 'text-white' : 'text-[#555]'}">
 										{group === 'overlays' ? 'OVR' : group === 'lower' ? 'LOW' : 'SIDE'}
 									</span>
 									<span class="text-[11px] text-white font-mono">{formatIndicatorValue(value, name)}</span>
@@ -3492,7 +3492,7 @@
 											<span class="font-bold {getPnlTone(trade.pnl)}">
 												{formatDollarPnl(trade.pnl)}
 											</span>
-											<div class="absolute right-0 top-full z-10 hidden group-hover:block bg-[#111] border border-[#333] p-2 text-[10px] min-w-[140px] shadow-lg">
+											<div class="absolute right-0 top-full z-10 hidden group-hover:block bg-[#111] border border-[#333] p-2 text-[10px] min-w-[140px]">
 												<div class="flex justify-between gap-4 mb-1">
 													<span class="text-gray-500">Gross:</span>
 													<span class="text-gray-300">{formatDollarPnl(trade.gross_pnl)}</span>

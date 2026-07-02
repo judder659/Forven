@@ -284,25 +284,25 @@
 
 {#if open}
 	<!-- Backdrop -->
-	<div class="fixed inset-0 bg-black/40 z-[9998] pointer-events-none"></div>
+	<div class="fixed inset-0 bg-black/80 z-[9998] pointer-events-none"></div>
 
 	<!-- Panel -->
 	<div
-		class="fixed top-0 right-0 h-full w-[440px] max-w-[92vw] bg-[#0a0a0a] border-l border-[#222] z-[9999] flex flex-col"
+		class="fixed top-0 right-0 h-full w-[440px] max-w-[92vw] bg-[#050505] border-l border-[#222] z-[9999] flex flex-col"
 		transition:fly={{ x: 440, duration: 250 }}
 	>
 		<!-- Header -->
 		<div class="flex items-center justify-between px-4 py-3 border-b border-[#222]">
 			<div class="flex items-center gap-2 min-w-0">
-				<div class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></div>
+				<div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
 				<span class="text-sm font-bold text-white uppercase tracking-wider">Forven</span>
 				{#if contextLabel}
-					<span class="text-[10px] text-cyan-300/80 uppercase tracking-wider truncate">· {contextLabel}</span>
+					<span class="text-[10px] text-[#666] uppercase tracking-wider truncate">· {contextLabel}</span>
 				{/if}
 			</div>
 			<div class="flex items-center gap-2">
 				<button
-					class="text-[10px] text-gray-500 hover:text-white border border-[#333] hover:border-white px-2 py-0.5 transition-colors disabled:opacity-40"
+					class="text-[10px] text-[#888] hover:text-white border border-[#333] hover:border-[#555] px-2 py-0.5 transition-colors disabled:opacity-40 uppercase tracking-wider"
 					on:click={newThread}
 					disabled={sending}
 					title="Archive this conversation and start fresh"
@@ -310,7 +310,7 @@
 					New
 				</button>
 				<button
-					class="text-gray-500 hover:text-white transition-colors"
+					class="text-[#555] hover:text-white transition-colors"
 					aria-label="Close assistant"
 					title="Close assistant"
 					on:click={closeAssistant}
@@ -325,16 +325,16 @@
 		<!-- Messages -->
 		<div class="flex-1 overflow-y-auto px-4 py-3 space-y-3" bind:this={messagesEl}>
 			{#if loadingHistory && messages.length === 0}
-				<div class="text-center text-gray-600 text-xs mt-8">Opening…</div>
+				<div class="text-center text-[#555] text-xs uppercase tracking-widest mt-8">Opening…</div>
 			{:else if messages.length === 0}
-				<div class="text-center text-gray-600 text-xs mt-8">
-					<div class="text-2xl mb-2 text-cyan-300">Forven</div>
+				<div class="text-center text-[#666] text-xs mt-8">
+					<div class="text-lg font-bold uppercase tracking-widest mb-2 text-white">Forven</div>
 					<div>Ask anything, or tell me what to do — I can see {contextLabel || 'this page'}.</div>
 					<div class="mt-4 flex flex-wrap justify-center gap-2">
 						{#each suggestions as suggestion}
 							<button
 								type="button"
-								class="px-2.5 py-1 text-[11px] rounded-full border border-[#2a2a2a] bg-[#111] text-gray-400 hover:text-white hover:border-[#555] transition-colors disabled:opacity-40"
+								class="px-2.5 py-1 text-[11px] border border-[#333] bg-[#111] text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-40"
 								on:click={() => sendChip(suggestion)}
 								disabled={sending}
 							>
@@ -348,40 +348,40 @@
 			{#each messages as msg, idx}
 				<div class="flex flex-col {msg.kind === 'user' ? 'items-end' : 'items-start'}">
 					{#if msg.kind === 'tool'}
-						<div class="max-w-[94%] rounded border border-cyan-900/40 bg-cyan-950/20 px-3 py-2 font-mono text-[11px] text-cyan-200/90 whitespace-pre-wrap">
-							<div class="text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-500/80 mb-0.5">{msg.toolName ?? 'tool'}</div>
+						<div class="max-w-[94%] border border-[#222] bg-[#111] px-3 py-2 font-mono text-[11px] text-[#888] whitespace-pre-wrap">
+							<div class="text-[9px] font-semibold uppercase tracking-[0.18em] text-[#666] mb-0.5">{msg.toolName ?? 'tool'}</div>
 							{msg.content && msg.content.length > 700 ? msg.content.slice(0, 700) + '\n…' : msg.content}
 						</div>
 					{:else if msg.kind === 'action'}
-						<div class="max-w-[94%] w-full rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
-							<div class="text-[9px] font-semibold uppercase tracking-[0.18em] text-amber-400/80 mb-1">Confirm action</div>
+						<div class="max-w-[94%] w-full border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-[#ccc]">
+							<div class="text-[9px] font-semibold uppercase tracking-[0.18em] text-yellow-400 mb-1">Confirm action</div>
 							<div class="mb-2 whitespace-pre-wrap">{msg.summary || msg.content}</div>
 							{#if msg.actionStatus === 'pending'}
 								<div class="flex items-center gap-2">
 									<button
-										class="px-2.5 py-1 text-[11px] font-bold rounded bg-amber-500 text-black hover:bg-amber-400 transition-colors"
+										class="terminal-button-primary px-2.5 py-1 text-[11px]"
 										on:click={() => confirm(idx, true)}
 									>
 										Approve
 									</button>
 									<button
-										class="px-2.5 py-1 text-[11px] font-medium rounded border border-[#444] text-gray-300 hover:text-white hover:border-[#777] transition-colors"
+										class="terminal-button px-2.5 py-1 text-[11px]"
 										on:click={() => confirm(idx, false)}
 									>
 										Reject
 									</button>
 								</div>
 							{:else}
-								<div class="text-[11px] {msg.actionStatus === 'failed' ? 'text-red-400' : msg.actionStatus === 'rejected' ? 'text-gray-400' : 'text-emerald-400'}">
+								<div class="text-[11px] {msg.actionStatus === 'failed' ? 'text-red-400' : msg.actionStatus === 'rejected' ? 'text-[#888]' : 'text-emerald-400'}">
 									{actionStatusLabel(msg.actionStatus)}
 								</div>
 							{/if}
 						</div>
 					{:else}
-						<div class="max-w-[88%] rounded px-3 py-2 text-xs {msg.kind === 'user' ? 'bg-white text-black' : msg.kind === 'error' ? 'bg-[#1a0e0e] border border-red-900/50 text-red-300' : 'bg-[#111] border border-[#222] text-gray-300'}">
+						<div class="max-w-[88%] px-3 py-2 text-xs {msg.kind === 'user' ? 'bg-white text-black' : msg.kind === 'error' ? 'bg-red-500/5 border border-red-900 text-red-400' : 'bg-[#111] border border-[#222] text-[#888]'}">
 							{#if msg.kind === 'assistant' && !msg.content && sending}
-								<div class="flex items-center gap-2 text-gray-500">
-									<div class="w-3 h-3 border border-gray-500 border-t-transparent rounded-full animate-spin"></div>
+								<div class="flex items-center gap-2 text-[#666]">
+									<div class="w-3 h-3 border border-[#555] border-t-transparent rounded-full animate-spin"></div>
 									<span>Thinking…</span>
 								</div>
 							{:else if msg.kind === 'user' || msg.kind === 'error'}
@@ -391,14 +391,14 @@
 							{/if}
 						</div>
 					{/if}
-					<div class="text-[9px] text-gray-600 mt-0.5 px-1">{fmtTime(msg.ts)}</div>
+					<div class="text-[9px] text-[#555] mt-0.5 px-1">{fmtTime(msg.ts)}</div>
 				</div>
 			{/each}
 
 			{#if sending && liveAssistantIdx === null}
 				<div class="flex items-start">
-					<div class="rounded px-3 py-2 text-xs bg-[#111] border border-[#222] text-gray-500 flex items-center gap-2">
-						<div class="w-3 h-3 border border-gray-500 border-t-transparent rounded-full animate-spin"></div>
+					<div class="px-3 py-2 text-xs bg-[#111] border border-[#222] text-[#666] flex items-center gap-2">
+						<div class="w-3 h-3 border border-[#555] border-t-transparent rounded-full animate-spin"></div>
 						<span>Working…</span>
 					</div>
 				</div>
@@ -408,11 +408,11 @@
 		<!-- Input -->
 		<div class="border-t border-[#222] px-4 py-3">
 			<div class="flex items-center justify-between mb-2">
-				<label class="flex items-center gap-1.5 text-[10px] text-gray-500 cursor-pointer select-none" title="When off, the assistant answers and advises but takes no actions.">
-					<input type="checkbox" bind:checked={allowActions} class="accent-cyan-500 h-3 w-3" />
+				<label class="flex items-center gap-1.5 text-[10px] text-[#666] cursor-pointer select-none" title="When off, the assistant answers and advises but takes no actions.">
+					<input type="checkbox" bind:checked={allowActions} class="accent-emerald-500 h-3 w-3" />
 					Allow actions
 				</label>
-				<span class="text-[9px] text-gray-600">Create + backtest run directly · promotions ask first</span>
+				<span class="text-[9px] text-[#555]">Create + backtest run directly · promotions ask first</span>
 			</div>
 			<div class="flex items-center gap-2">
 				<input
@@ -420,11 +420,11 @@
 					bind:value={input}
 					on:keydown={handleKeydown}
 					placeholder="Ask, or tell me what to do…"
-					class="flex-1 bg-[#111] border border-[#333] focus:border-cyan-500 rounded px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none transition-colors"
+					class="flex-1 terminal-input text-xs"
 					disabled={sending}
 				/>
 				<button
-					class="px-3 py-2 text-xs font-bold rounded transition-colors disabled:opacity-30 bg-cyan-500 text-black hover:bg-cyan-400"
+					class="terminal-button-primary px-3 py-2 text-xs disabled:opacity-30"
 					on:click={() => send()}
 					disabled={!input.trim() || sending}
 				>
@@ -439,11 +439,11 @@
 	.chat-markdown :global(p) { margin: 0.25em 0; }
 	.chat-markdown :global(ul), .chat-markdown :global(ol) { margin: 0.25em 0; padding-left: 1.25em; }
 	.chat-markdown :global(li) { margin: 0.1em 0; }
-	.chat-markdown :global(code) { background: #1a1a1a; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
-	.chat-markdown :global(pre) { background: #1a1a1a; padding: 0.5em; border-radius: 4px; overflow-x: auto; margin: 0.4em 0; }
+	.chat-markdown :global(code) { background: #1a1a1a; padding: 0.1em 0.3em; border-radius: 0; font-size: 0.9em; }
+	.chat-markdown :global(pre) { background: #1a1a1a; padding: 0.5em; border-radius: 0; overflow-x: auto; margin: 0.4em 0; }
 	.chat-markdown :global(pre code) { background: none; padding: 0; }
 	.chat-markdown :global(h1), .chat-markdown :global(h2), .chat-markdown :global(h3) { font-size: 1em; font-weight: 600; margin: 0.4em 0 0.2em; }
-	.chat-markdown :global(a) { color: #93c5fd; text-decoration: underline; }
+	.chat-markdown :global(a) { color: #fff; text-decoration: underline; }
 	.chat-markdown :global(blockquote) { border-left: 2px solid #333; padding-left: 0.5em; margin: 0.3em 0; color: #999; }
 	.chat-markdown :global(table) { border-collapse: collapse; margin: 0.3em 0; font-size: 0.9em; }
 	.chat-markdown :global(th), .chat-markdown :global(td) { border: 1px solid #333; padding: 0.2em 0.5em; }

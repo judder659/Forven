@@ -88,7 +88,7 @@
 </script>
 
 <div
-	class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded border border-[#222] bg-[#050505]/95 px-3 py-2"
+	class="flex flex-wrap items-center gap-x-4 gap-y-1 border border-[#222] bg-[#050505] px-3 py-2"
 	data-testid="ops-header-strip"
 >
 	<span class="flex items-center gap-2">
@@ -103,7 +103,7 @@
 		</span>
 	</span>
 
-	<span class="rounded border px-2 py-0.5 font-mono text-[11px] {liveDanger ? 'border-red-600 bg-red-950/40 text-red-300' : 'border-[#333] bg-black/40 text-gray-300'}" title="Execution mode · venue · network">
+	<span class="border px-2 py-0.5 font-mono text-[11px] {liveDanger ? 'border-red-600 bg-red-950/40 text-red-300' : 'border-[#333] bg-black text-gray-300'}" title="Execution mode · venue · network">
 		{modeBadge}
 	</span>
 

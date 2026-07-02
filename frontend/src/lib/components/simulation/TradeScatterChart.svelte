@@ -51,7 +51,7 @@
 		const plotHeight = chartHeight - padding.top - padding.bottom;
 
 		// Clear canvas
-		ctx.fillStyle = '#030712';
+		ctx.fillStyle = '#050505';
 		ctx.fillRect(0, 0, width, chartHeight);
 
 		// Filter trades with MAE/MFE data
@@ -72,7 +72,7 @@
 		const maxMfe = Math.max(...mfeValues, 1);
 
 		// Draw grid
-		ctx.strokeStyle = '#1f2937';
+		ctx.strokeStyle = '#1a1a1a';
 		ctx.lineWidth = 1;
 		
 		// Vertical grid lines
@@ -94,7 +94,7 @@
 		}
 
 		// Draw axes
-		ctx.strokeStyle = '#374151';
+		ctx.strokeStyle = '#222';
 		ctx.lineWidth = 1;
 		
 		// Y-axis
@@ -110,7 +110,7 @@
 		ctx.stroke();
 
 		// Draw diagonal reference line (edge ratio = 1)
-		ctx.strokeStyle = '#4b5563';
+		ctx.strokeStyle = '#333';
 		ctx.setLineDash([5, 5]);
 		ctx.beginPath();
 		ctx.moveTo(padding.left, chartHeight - padding.bottom);
@@ -194,8 +194,8 @@
 
 <div class="trade-scatter-chart">
 	<div class="chart-header">
-		<span class="text-[10px] text-gray-500 uppercase tracking-wider">Trade Quality (MAE vs MFE)</span>
-		<span class="text-[9px] text-gray-600">Points above diagonal = good edge ratio</span>
+		<span class="text-[10px] text-[#666] uppercase tracking-wider">Trade Quality (MAE vs MFE)</span>
+		<span class="text-[9px] text-[#555]">Points above diagonal = good edge ratio</span>
 	</div>
 	<canvas bind:this={canvas} style="height: {height}px"></canvas>
 </div>

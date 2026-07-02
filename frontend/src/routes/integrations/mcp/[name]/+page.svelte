@@ -195,46 +195,46 @@
 </svelte:head>
 
 <IntegrationTabs active="tool-servers">
-<div class="p-4 text-gray-200">
-	<a href="/integrations/mcp" class="text-xs text-blue-400 hover:underline">← All MCP servers</a>
+<div class="p-4 text-[#888]">
+	<a href="/integrations/mcp" class="text-[11px] uppercase tracking-wider text-[#555] hover:text-white">← All MCP servers</a>
 
 	{#if loading}
-		<div class="mt-4 text-xs text-gray-500">Loading…</div>
+		<div class="mt-4 text-xs text-[#666]">Loading…</div>
 	{:else if error || !server}
 		<div class="mt-4 text-xs text-red-400">{error || 'Server not found'}</div>
 	{:else}
 		<div class="mt-3 flex items-center justify-between">
 			<div>
-				<h1 class="text-xl font-semibold font-mono">{server.name}</h1>
-				<p class="text-xs text-gray-500 mt-0.5">
+				<h1 class="text-xl font-bold font-mono text-white">{server.name}</h1>
+				<p class="text-xs text-[#666] mt-0.5">
 					{server.transport} • {server.enabled ? 'enabled' : 'disabled'}
 				</p>
 			</div>
 			<div class="flex gap-2">
 				<button
-					class="px-3 py-1.5 bg-[#1a1a1a] border border-[#333] hover:border-[#555] text-xs rounded disabled:opacity-50"
+					class="px-3 py-1.5 border border-[#333] text-[#888] hover:border-[#555] hover:text-white text-xs transition-colors disabled:opacity-50"
 					on:click={handleTest}
 					disabled={testBusy}
 				>
 					{testBusy ? 'Testing…' : 'Test connection'}
 				</button>
 				<button
-					class="px-3 py-1.5 bg-[#1a1a1a] border border-[#333] hover:border-[#555] text-xs rounded"
+					class="px-3 py-1.5 border border-[#333] text-[#888] hover:border-[#555] hover:text-white text-xs transition-colors"
 					on:click={() => (showEdit ? (showEdit = false) : openEdit())}
 				>
 					{showEdit ? 'Cancel edit' : 'Edit'}
 				</button>
 				<button
-					class="px-3 py-1.5 text-xs rounded disabled:opacity-50 {server.enabled
-						? 'bg-amber-900 hover:bg-amber-800 text-amber-100'
-						: 'bg-blue-700 hover:bg-blue-600 text-white'}"
+					class="px-3 py-1.5 text-xs transition-colors disabled:opacity-50 {server.enabled
+						? 'border border-yellow-800 text-yellow-400 hover:bg-yellow-500/10'
+						: 'border border-[#333] text-[#888] hover:border-[#555] hover:text-white'}"
 					on:click={handleToggleEnabled}
 					disabled={toggleBusy}
 				>
 					{server.enabled ? 'Disable' : 'Enable'}
 				</button>
 				<button
-					class="px-3 py-1.5 bg-red-900 hover:bg-red-800 text-red-100 text-xs rounded disabled:opacity-50"
+					class="px-3 py-1.5 border border-red-900 text-red-500 hover:bg-red-500 hover:text-white text-xs transition-colors disabled:opacity-50"
 					on:click={handleDelete}
 					disabled={deleteBusy}
 				>
@@ -245,7 +245,7 @@
 
 		{#if toggleMsg}
 			<div
-				class="mt-3 px-3 py-2 text-xs rounded border border-red-700 bg-red-950 text-red-300"
+				class="mt-3 px-3 py-2 text-xs border border-red-900 bg-red-500/5 text-red-400"
 			>
 				{toggleMsg}
 			</div>
@@ -253,13 +253,13 @@
 
 		{#if testMsg}
 			<div
-				class="mt-3 px-3 py-2 text-xs rounded border"
-				class:border-green-700={testMsg.startsWith('OK')}
-				class:bg-green-950={testMsg.startsWith('OK')}
-				class:text-green-300={testMsg.startsWith('OK')}
-				class:border-red-700={!testMsg.startsWith('OK')}
+				class="mt-3 px-3 py-2 text-xs border"
+				class:border-emerald-900={testMsg.startsWith('OK')}
+				class:bg-emerald-950={testMsg.startsWith('OK')}
+				class:text-emerald-400={testMsg.startsWith('OK')}
+				class:border-red-900={!testMsg.startsWith('OK')}
 				class:bg-red-950={!testMsg.startsWith('OK')}
-				class:text-red-300={!testMsg.startsWith('OK')}
+				class:text-red-400={!testMsg.startsWith('OK')}
 			>
 				{testMsg}
 				{#if testServerInfo && Object.keys(testServerInfo).length}
@@ -273,13 +273,13 @@
 		{/if}
 
 		{#if showEdit}
-			<div class="mt-4 bg-[#0d0d0d] border border-[#222] rounded p-4">
+			<div class="mt-4 border border-[#222] bg-[#050505] p-4">
 				<h2 class="text-sm font-semibold mb-3">Edit configuration</h2>
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
 					<label class="flex flex-col gap-1">
-						<span class="text-gray-400">Transport</span>
+						<span class="text-[#888]">Transport</span>
 						<select
-							class="bg-black border border-[#333] px-2 py-1 rounded"
+							class="bg-black border border-[#333] px-2 py-1"
 							bind:value={editTransport}
 						>
 							<option value="stdio">stdio (subprocess)</option>
@@ -289,52 +289,52 @@
 					<div></div>
 					{#if editTransport === 'stdio'}
 						<label class="flex flex-col gap-1 md:col-span-2">
-							<span class="text-gray-400">Command</span>
+							<span class="text-[#888]">Command</span>
 							<input
-								class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+								class="bg-black border border-[#333] px-2 py-1 font-mono"
 								bind:value={editCommand}
 								placeholder="npx"
 							/>
 						</label>
 						<label class="flex flex-col gap-1 md:col-span-2">
-							<span class="text-gray-400">Args (space-separated)</span>
+							<span class="text-[#888]">Args (space-separated)</span>
 							<input
-								class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+								class="bg-black border border-[#333] px-2 py-1 font-mono"
 								bind:value={editArgs}
 								placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
 							/>
 						</label>
 					{:else}
 						<label class="flex flex-col gap-1 md:col-span-2">
-							<span class="text-gray-400">URL</span>
+							<span class="text-[#888]">URL</span>
 							<input
-								class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+								class="bg-black border border-[#333] px-2 py-1 font-mono"
 								bind:value={editUrl}
 								placeholder="https://mcp.example.com/rpc"
 							/>
 						</label>
 					{/if}
 					<label class="flex flex-col gap-1 md:col-span-2">
-						<span class="text-gray-400">Env (KEY=value, one per line)</span>
+						<span class="text-[#888]">Env (KEY=value, one per line)</span>
 						<textarea
-							class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+							class="bg-black border border-[#333] px-2 py-1 font-mono"
 							rows="3"
 							bind:value={editEnv}
 							placeholder="API_KEY=xxxx"
 						></textarea>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="text-gray-400">Tools include (space-separated, blank = all)</span>
+						<span class="text-[#888]">Tools include (space-separated, blank = all)</span>
 						<input
-							class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+							class="bg-black border border-[#333] px-2 py-1 font-mono"
 							bind:value={editToolsInclude}
 							placeholder="read_file write_file"
 						/>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="text-gray-400">Tools exclude (space-separated)</span>
+						<span class="text-[#888]">Tools exclude (space-separated)</span>
 						<input
-							class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+							class="bg-black border border-[#333] px-2 py-1 font-mono"
 							bind:value={editToolsExclude}
 							placeholder="delete_file"
 						/>
@@ -345,14 +345,14 @@
 				{/if}
 				<div class="mt-3 flex justify-end gap-2">
 					<button
-						class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200"
+						class="px-3 py-1.5 text-xs text-[#888] hover:text-white"
 						on:click={() => (showEdit = false)}
 						disabled={editBusy}
 					>
 						Cancel
 					</button>
 					<button
-						class="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded disabled:opacity-50"
+						class="terminal-button-primary text-xs disabled:opacity-50"
 						on:click={handleEdit}
 						disabled={editBusy}
 					>
@@ -363,32 +363,32 @@
 		{/if}
 
 		<div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
-			<div class="bg-[#0d0d0d] border border-[#222] rounded p-3">
+			<div class="border border-[#222] bg-[#050505] p-3">
 				<h2 class="text-sm font-semibold mb-2">Configuration</h2>
 				<dl class="text-xs space-y-1.5">
 					<div class="flex">
-						<dt class="text-gray-500 w-32">Transport</dt>
+						<dt class="text-[#666] w-32">Transport</dt>
 						<dd class="font-mono">{server.transport}</dd>
 					</div>
 					{#if server.transport === 'stdio'}
 						<div class="flex">
-							<dt class="text-gray-500 w-32">Command</dt>
+							<dt class="text-[#666] w-32">Command</dt>
 							<dd class="font-mono break-all">{server.command || '—'}</dd>
 						</div>
 						<div class="flex">
-							<dt class="text-gray-500 w-32">Args</dt>
+							<dt class="text-[#666] w-32">Args</dt>
 							<dd class="font-mono break-all">
 								{server.args.length ? server.args.join(' ') : '—'}
 							</dd>
 						</div>
 					{:else}
 						<div class="flex">
-							<dt class="text-gray-500 w-32">URL</dt>
+							<dt class="text-[#666] w-32">URL</dt>
 							<dd class="font-mono break-all">{server.url || '—'}</dd>
 						</div>
 					{/if}
 					<div class="flex">
-						<dt class="text-gray-500 w-32">Env keys</dt>
+						<dt class="text-[#666] w-32">Env keys</dt>
 						<dd class="font-mono">
 							{Object.keys(server.env).length
 								? Object.keys(server.env).join(', ')
@@ -396,41 +396,41 @@
 						</dd>
 					</div>
 					<div class="flex">
-						<dt class="text-gray-500 w-32">Tools include</dt>
+						<dt class="text-[#666] w-32">Tools include</dt>
 						<dd class="font-mono">
 							{server.tools_include?.length ? server.tools_include.join(', ') : 'all'}
 						</dd>
 					</div>
 					<div class="flex">
-						<dt class="text-gray-500 w-32">Tools exclude</dt>
+						<dt class="text-[#666] w-32">Tools exclude</dt>
 						<dd class="font-mono">
 							{server.tools_exclude.length ? server.tools_exclude.join(', ') : '—'}
 						</dd>
 					</div>
 					<div class="flex">
-						<dt class="text-gray-500 w-32">Last status</dt>
+						<dt class="text-[#666] w-32">Last status</dt>
 						<dd>{server.last_status || '—'}</dd>
 					</div>
 					<div class="flex">
-						<dt class="text-gray-500 w-32">Last status at</dt>
+						<dt class="text-[#666] w-32">Last status at</dt>
 						<dd>{formatStatusAt(server.last_status_at) || '—'}</dd>
 					</div>
 					{#if server.last_error}
 						<div class="flex">
-							<dt class="text-gray-500 w-32">Last error</dt>
+							<dt class="text-[#666] w-32">Last error</dt>
 							<dd class="text-red-400 break-all">{server.last_error}</dd>
 						</div>
 					{/if}
 				</dl>
 			</div>
 
-			<div class="bg-[#0d0d0d] border border-[#222] rounded p-3">
+			<div class="border border-[#222] bg-[#050505] p-3">
 				<div class="flex items-center justify-between mb-2">
 					<h2 class="text-sm font-semibold">
 						Discovered tools ({tools.length})
 					</h2>
 					<button
-						class="px-2 py-0.5 text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-50"
+						class="px-2 py-0.5 text-[11px] text-[#888] hover:text-white disabled:opacity-50"
 						on:click={loadTools}
 						disabled={toolsBusy}
 					>
@@ -442,16 +442,16 @@
 						Could not reach server: {toolsError}
 					</p>
 				{:else if tools.length === 0}
-					<p class="text-xs text-gray-500">Server exposes no tools.</p>
+					<p class="text-xs text-[#666]">Server exposes no tools.</p>
 				{:else}
 					<ul class="text-xs space-y-2">
 						{#each tools as t (t.name)}
 							<li class="border-l border-[#333] pl-2">
 								<div class="flex items-center gap-2">
-									<span class="font-mono text-gray-200">{t.name}</span>
+									<span class="font-mono text-white">{t.name}</span>
 									{#if t.inputSchema && Object.keys(t.inputSchema).length}
 										<button
-											class="text-[10px] text-blue-400 hover:text-blue-300"
+											class="text-[10px] text-[#888] hover:text-white"
 											on:click={() =>
 												(expandedSchema = {
 													...expandedSchema,
@@ -463,11 +463,11 @@
 									{/if}
 								</div>
 								{#if t.description}
-									<div class="text-gray-500 mt-0.5">{t.description}</div>
+									<div class="text-[#666] mt-0.5">{t.description}</div>
 								{/if}
 								{#if expandedSchema[t.name] && t.inputSchema}
 									<pre
-										class="mt-1 text-[10px] text-gray-400 whitespace-pre-wrap break-all bg-black border border-[#222] rounded p-1.5">{JSON.stringify(
+										class="mt-1 text-[10px] text-[#888] whitespace-pre-wrap break-all bg-black border border-[#222] p-1.5">{JSON.stringify(
 											t.inputSchema,
 											null,
 											2,

@@ -253,13 +253,13 @@
 	}
 
 	function metricClass(kind: 'return' | 'sharpe' | 'robustness' | 'drawdown' | 'win_rate' | 'profit_factor', value: number | null): string {
-		if (value === null || !Number.isFinite(value)) return 'text-gray-600';
+		if (value === null || !Number.isFinite(value)) return 'text-[#555]';
 		switch (kind) {
 			case 'return':
 				return value >= 0 ? 'text-emerald-400' : 'text-red-400';
 			case 'sharpe':
 				if (value >= 1.0) return 'text-emerald-400';
-				if (value >= 0.5) return 'text-blue-300';
+				if (value >= 0.5) return 'text-emerald-300';
 				if (value > 0) return 'text-yellow-300';
 				return 'text-red-400';
 			case 'robustness':
@@ -283,8 +283,8 @@
 
 	function badgeClass(kind: 'source' | 'untested'): string {
 		return kind === 'source'
-			? 'text-cyan-300 border-cyan-700 bg-cyan-900/20'
-			: 'text-amber-300 border-amber-700 bg-amber-900/20';
+			? 'text-white border-[#444] bg-[#111]'
+			: 'text-yellow-400 border-yellow-800 bg-yellow-950/20';
 	}
 
 	function recoveryBadge(row: ManagerRow): { label: string; className: string } | null {
@@ -293,13 +293,13 @@
 		if (status === 'repair_pending' || status === 'repair_running') {
 			return {
 				label: 'Repairing',
-				className: 'text-rose-300 border-rose-700 bg-rose-950/20'
+				className: 'text-yellow-400 border-yellow-800 bg-yellow-950/20'
 			};
 		}
 		if (status === 'replay_running' || status === 'final_retry_running') {
 			return {
 				label: 'Healing',
-				className: 'text-amber-300 border-amber-700 bg-amber-900/20'
+				className: 'text-yellow-300 border-yellow-800 bg-yellow-950/20'
 			};
 		}
 		if (status === 'exhausted') {
@@ -397,7 +397,7 @@
 			case 'green': return 'bg-emerald-400';
 			case 'amber': return 'bg-yellow-400';
 			case 'red': return 'bg-red-400';
-			default: return 'bg-gray-500';
+			default: return 'bg-[#555]';
 		}
 	}
 
@@ -406,7 +406,7 @@
 			case 'green': return 'text-emerald-400';
 			case 'amber': return 'text-yellow-300';
 			case 'red': return 'text-red-400';
-			default: return 'text-gray-400';
+			default: return 'text-[#888]';
 		}
 	}
 
@@ -887,15 +887,15 @@
 	<div class="px-4 py-3 bg-[#050505] border-b border-[#222] flex-shrink-0">
 		<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-bold tracking-tight text-white">The Forge</h1>
-				<p class="text-xs text-gray-500 mt-1">
+				<h1 class="text-xl font-bold uppercase tracking-widest text-white">The Forge</h1>
+				<p class="text-xs text-[#666] mt-1">
 					{rowsInView.length} in view · Pipeline {pipelineActiveCount} · Research-only {researchOnlyCount}
 				</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">
 				<a
 					href="/lab/backtests"
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
 				>
 					View All Backtests
 				</a>
@@ -903,14 +903,14 @@
 					type="button"
 					data-testid="forge-import-strategy"
 					on:click={() => (showImportDialog = true)}
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
 				>
 					⤒ Import
 				</button>
 				<button
 					type="button"
 					on:click={refreshAll}
-					class="text-xs border border-[#333] px-3 py-1.5 text-gray-400 hover:text-white hover:border-white transition-colors"
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
 				>
 					Refresh
 				</button>
@@ -950,42 +950,42 @@
 			{/if}
 			<details
 				data-testid="forge-health-chip"
-				class="relative w-full text-xs border border-[#333] bg-[#0a0a0a] text-gray-400 open:border-[#555] xl:w-auto"
+				class="relative w-full text-xs border border-[#333] bg-[#0a0a0a] text-[#888] open:border-[#555] xl:w-auto"
 			>
 				<summary class="list-none cursor-pointer px-2.5 py-1.5 inline-flex w-full items-center gap-2 xl:w-auto">
 					<span class={`inline-flex h-2 w-2 rounded-full ${healthSummaryDot}`}></span>
 					<span class="uppercase tracking-[0.14em] text-[10px]">System Health</span>
 					<span class={`font-medium ${healthSummaryClass}`}>{healthSummaryLabel}</span>
 					{#if failedHealthChecks.length > 0}
-						<span class="text-[10px] text-red-300">{failedHealthChecks.length} issue{failedHealthChecks.length !== 1 ? 's' : ''}</span>
+						<span class="text-[10px] text-red-400">{failedHealthChecks.length} issue{failedHealthChecks.length !== 1 ? 's' : ''}</span>
 					{/if}
 				</summary>
-				<div class="absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border-t border-[#222] bg-[#080808] p-2 text-[11px] shadow-xl xl:w-80 xl:max-w-[420px]">
+				<div class="absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border border-[#222] bg-[#080808] p-2 text-[11px] xl:w-80 xl:max-w-[420px]">
 					{#if healthError}
 						<div class="text-red-400 flex items-center gap-2">
 							<span>{healthError}</span>
 							<button type="button" class="underline" on:click={loadHealth}>retry</button>
 						</div>
 					{:else if !healthLoaded}
-						<div class="text-gray-500">Loading…</div>
+						<div class="text-[#666]">Loading…</div>
 					{:else}
 						<div class="space-y-1">
 							{#each healthData?.components ?? [] as comp (comp.name)}
 								<div class="flex items-center gap-2">
 									<span class={`inline-flex h-1.5 w-1.5 rounded-full ${healthDotClass(comp.state)}`}></span>
-									<span class="text-gray-300">{friendlyHealthName(comp.name)}</span>
+									<span class="text-[#888]">{friendlyHealthName(comp.name)}</span>
 									<span class={healthTextClass(comp.state)}>{healthStateLabel(comp.state)}</span>
-									<span class="text-gray-600 truncate">{comp.message}</span>
+									<span class="text-[#555] truncate">{comp.message}</span>
 								</div>
 							{/each}
 							{#if (healthData?.components ?? []).length === 0}
-								<div class="text-gray-600">No components registered.</div>
+								<div class="text-[#555]">No components registered.</div>
 							{/if}
 						</div>
 						{#if (healthData?.data_checks ?? []).length > 0}
 							<div class="mt-2 border-t border-[#1a1a1a] pt-2 space-y-1">
 								{#each healthData?.data_checks ?? [] as check (check.name)}
-									<div class={check.passed ? 'text-gray-500' : check.severity === 'critical' ? 'text-red-400' : 'text-yellow-300'}>
+									<div class={check.passed ? 'text-[#666]' : check.severity === 'critical' ? 'text-red-400' : 'text-yellow-300'}>
 										{friendlyHealthName(check.name)}: {check.detail}
 									</div>
 								{/each}
@@ -996,23 +996,23 @@
 			</details>
 			<details
 				data-testid="forge-now-working-chip"
-				class="relative w-full text-xs border border-[#333] bg-[#0a0a0a] text-gray-400 open:border-[#555] xl:w-auto"
+				class="relative w-full text-xs border border-[#333] bg-[#0a0a0a] text-[#888] open:border-[#555] xl:w-auto"
 			>
 				<summary class="list-none cursor-pointer px-2.5 py-1.5 inline-flex w-full items-center gap-2 xl:w-auto">
-					<span class={`inline-flex h-2 w-2 rounded-full ${nowWorkingError ? 'bg-red-400' : nowWorkingLoaded && nowWorkingRows.length > 0 ? 'bg-cyan-400' : 'bg-gray-500'}`}></span>
+					<span class={`inline-flex h-2 w-2 rounded-full ${nowWorkingError ? 'bg-red-400' : nowWorkingLoaded && nowWorkingRows.length > 0 ? 'bg-emerald-400' : 'bg-[#555]'}`}></span>
 					<span class="uppercase tracking-[0.14em] text-[10px]">Now Working</span>
-					<span class={nowWorkingError ? 'text-red-400 font-medium' : 'text-cyan-300 font-medium'}>{nowWorkingSummaryLabel}</span>
+					<span class={nowWorkingError ? 'text-red-400 font-medium' : 'text-emerald-400 font-medium'}>{nowWorkingSummaryLabel}</span>
 				</summary>
-				<div class="absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border-t border-[#222] bg-[#080808] p-2 text-[11px] shadow-xl xl:w-[32rem] xl:max-w-[520px]">
+				<div class="absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border border-[#222] bg-[#080808] p-2 text-[11px] xl:w-[32rem] xl:max-w-[520px]">
 					{#if nowWorkingError}
 						<div class="text-red-400 flex items-center gap-2">
 							<span>Failed to load active work</span>
 							<button type="button" class="underline" on:click={loadNowWorking}>retry</button>
 						</div>
 					{:else if !nowWorkingLoaded}
-						<div class="text-gray-500">Loading…</div>
+						<div class="text-[#666]">Loading…</div>
 					{:else if nowWorkingRows.length === 0}
-						<div class="text-gray-500">Engine idle.</div>
+						<div class="text-[#666]">Engine idle.</div>
 					{:else}
 						<ul class="space-y-1">
 							{#each nowWorkingRows as row (`${row.strategy_id}:${row.current_task.type}`)}
@@ -1024,11 +1024,11 @@
 											class="w-full text-left hover:bg-[#111] px-2 py-1 flex items-center gap-3"
 											on:click={() => goto(`/lab/strategy/${encodeURIComponent(row.strategy_id)}?returnTo=${encodeURIComponent('/lab')}`)}
 										>
-											<span class="font-mono text-gray-300 truncate flex-1">{row.name}</span>
+											<span class="font-mono text-[#888] truncate flex-1">{row.name}</span>
 											{#if row.stage}
-												<span class={`text-[10px] px-1.5 py-0.5 border rounded uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
+												<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 											{/if}
-											<span class="text-gray-500">{row.current_task.type}</span>
+											<span class="text-[#666]">{row.current_task.type}</span>
 											<span class="uppercase {row.current_task.status === 'running' ? 'text-emerald-400' : 'text-yellow-400'}">
 												{row.current_task.status}
 											</span>
@@ -1038,8 +1038,8 @@
 										</button>
 									{:else}
 										<div class="w-full text-left px-2 py-1 flex items-center gap-3">
-											<span class="font-mono text-gray-400 truncate flex-1">{row.name}</span>
-											<span class="text-gray-500">{row.current_task.type}</span>
+											<span class="font-mono text-[#888] truncate flex-1">{row.name}</span>
+											<span class="text-[#666]">{row.current_task.type}</span>
 											<span class="uppercase {row.current_task.status === 'running' ? 'text-emerald-400' : 'text-yellow-400'}">
 												{row.current_task.status}
 											</span>
@@ -1054,13 +1054,13 @@
 					{/if}
 				</div>
 			</details>
-			<span class="text-[10px] text-gray-500 ml-1">
+			<span class="text-[10px] text-[#666] ml-1">
 				{rowsInView.length} items
 				{#if rowsInView.length > (bucket === 'active' ? activePageRows.length : bucket === 'parked' ? parkedPageRows.length : trashPageRows.length)}
 					(showing {bucket === 'active' ? activePageRows.length : bucket === 'parked' ? parkedPageRows.length : trashPageRows.length})
 				{/if}
 			</span>
-			<div class="ml-auto flex items-center gap-2 text-[10px] text-gray-500">
+			<div class="ml-auto flex items-center gap-2 text-[10px] text-[#666]">
 				<label for="manager-page-size">Rows</label>
 				<select
 					id="manager-page-size"
@@ -1078,7 +1078,7 @@
 				</select>
 				<button
 					type="button"
-					class="px-2 py-1 border border-[#333] text-gray-400 hover:text-white hover:border-white disabled:opacity-40 disabled:cursor-not-allowed"
+					class="px-2 py-1 border border-[#333] text-[#888] hover:text-white hover:border-white disabled:opacity-40 disabled:cursor-not-allowed"
 					on:click={goPrevPage}
 					disabled={currentPage <= 1}
 				>
@@ -1087,7 +1087,7 @@
 				<span>{currentPage}/{pageCount}</span>
 				<button
 					type="button"
-					class="px-2 py-1 border border-[#333] text-gray-400 hover:text-white hover:border-white disabled:opacity-40 disabled:cursor-not-allowed"
+					class="px-2 py-1 border border-[#333] text-[#888] hover:text-white hover:border-white disabled:opacity-40 disabled:cursor-not-allowed"
 					on:click={goNextPage}
 					disabled={currentPage >= pageCount}
 				>
@@ -1103,36 +1103,36 @@
 				type="button"
 				aria-pressed={bucket === 'active'}
 				on:click={() => { bucket = 'active'; clearSelection(); }}
-				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'active' ? 'border-white text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}"
+				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'active' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
 			>
-				Open <span class="ml-1 text-gray-500">({activeResults.length})</span>
+				Open <span class="ml-1 text-[#666]">({activeResults.length})</span>
 			</button>
 			<button
 				type="button"
 				aria-pressed={bucket === 'parked'}
 				on:click={() => { bucket = 'parked'; clearSelection(); }}
-				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'parked' ? 'border-white text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}"
+				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'parked' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
 			>
-				Parked <span class="ml-1 text-gray-500">({parkedResults.length})</span>
+				Parked <span class="ml-1 text-[#666]">({parkedResults.length})</span>
 			</button>
 			<button
 				type="button"
 				aria-pressed={bucket === 'trash'}
 				on:click={() => { bucket = 'trash'; clearSelection(); }}
-				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'trash' ? 'border-white text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}"
+				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'trash' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
 			>
-				Graveyard <span class="ml-1 text-gray-500">({trashResults.length})</span>
+				Graveyard <span class="ml-1 text-[#666]">({trashResults.length})</span>
 				{#if graveyardLoading}
-					<span class="ml-1 text-gray-600">loading</span>
+					<span class="ml-1 text-[#555]">loading</span>
 				{/if}
 			</button>
 			{#if bucket === 'trash' && graveyardCapped}
-				<span class="ml-3 pb-2 text-[10px] tracking-wide text-amber-400/80">
+				<span class="ml-3 pb-2 text-[10px] tracking-wide text-yellow-400">
 					Showing first {graveyardStrategyLimit} archived/rejected — older ones are not loaded.
 				</span>
 				<button
 					type="button"
-					class="ml-2 pb-2 text-[10px] underline text-amber-300 hover:text-amber-200 disabled:opacity-50"
+					class="ml-2 pb-2 text-[10px] underline text-yellow-400 hover:text-yellow-300 disabled:opacity-50"
 					on:click={loadAllGraveyard}
 					disabled={graveyardLoading}
 				>
@@ -1142,15 +1142,15 @@
 		</div>
 
 		{#if actionMsg}
-			<div role="status" aria-live="polite" class="mx-4 mt-3 bg-green-900/20 border border-green-800 text-green-300 text-xs px-3 py-2 rounded flex items-start gap-2">
+			<div role="status" aria-live="polite" class="mx-4 mt-3 border border-emerald-800 bg-emerald-500/5 text-emerald-300 text-xs px-3 py-2 flex items-start gap-2">
 				<span class="flex-1">{actionMsg}</span>
-				<button type="button" class="shrink-0 text-green-300/70 hover:text-green-100 leading-none" aria-label="Dismiss message" on:click={() => (actionMsg = null)}>×</button>
+				<button type="button" class="shrink-0 text-emerald-300/70 hover:text-emerald-100 leading-none" aria-label="Dismiss message" on:click={() => (actionMsg = null)}>×</button>
 			</div>
 		{/if}
 		{#if error}
-			<div role="alert" aria-live="assertive" class="mx-4 mt-3 bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded flex items-start gap-2">
+			<div role="alert" aria-live="assertive" class="mx-4 mt-3 border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2 flex items-start gap-2">
 				<span class="flex-1">{error}</span>
-				<button type="button" class="shrink-0 text-red-300/70 hover:text-red-100 leading-none" aria-label="Dismiss error" on:click={() => (error = null)}>×</button>
+				<button type="button" class="shrink-0 text-red-400/70 hover:text-red-100 leading-none" aria-label="Dismiss error" on:click={() => (error = null)}>×</button>
 			</div>
 		{/if}
 
@@ -1160,14 +1160,14 @@
 				<span class="text-white font-medium">{selectedInView} selected</span>
 				<button
 					type="button"
-					class="text-gray-400 hover:text-white transition-colors"
+					class="text-[#888] hover:text-white transition-colors"
 					on:click={selectFiltered}
 				>
 					Select all {rowsInView.length} matching
 				</button>
 				<button
 					type="button"
-					class="text-gray-400 hover:text-white transition-colors"
+					class="text-[#888] hover:text-white transition-colors"
 					on:click={clearSelection}
 				>
 					Clear selection
@@ -1176,7 +1176,7 @@
 					{#if bucket === 'active'}
 						<select
 							aria-label="Move selected strategies to stage"
-							class="px-2 py-1 border border-blue-700 bg-blue-900/20 text-blue-300 text-xs outline-none cursor-pointer"
+							class="px-2 py-1 border border-[#333] bg-[#111] text-[#888] text-xs outline-none cursor-pointer"
 							on:change={(e) => moveBatchToStage(e.currentTarget.value, e.currentTarget)}
 						>
 							<option value="" disabled selected>Move stage…</option>
@@ -1187,20 +1187,20 @@
 							<option value="deployed">Deployed</option>
 							<option value="rejected">Rejected</option>
 						</select>
-						<button type="button" class="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-900/20" on:click={() => runBatchAction('archive')}>Archive</button>
-						<button type="button" class="px-2 py-1 border border-yellow-700 text-yellow-300 hover:bg-yellow-900/20" on:click={() => runBatchAction('trash')}>Graveyard</button>
-						<button type="button" class="px-2 py-1 border border-red-700 text-red-300 hover:bg-red-900/20" on:click={() => runBatchAction('delete')}>Delete</button>
+						<button type="button" class="px-2 py-1 border border-[#333] text-[#888] hover:border-[#555] hover:bg-[#111]" on:click={() => runBatchAction('archive')}>Archive</button>
+						<button type="button" class="px-2 py-1 border border-yellow-800 text-yellow-400 hover:bg-yellow-950/20" on:click={() => runBatchAction('trash')}>Graveyard</button>
+						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete</button>
 					{:else if bucket === 'parked'}
-						<button type="button" class="px-2 py-1 border border-cyan-700 text-cyan-300 hover:bg-cyan-900/20" on:click={() => runBatchAction('recover_parked')}>Recover</button>
-						<button type="button" class="px-2 py-1 border border-red-700 text-red-300 hover:bg-red-900/20" on:click={() => runBatchAction('delete')}>Delete</button>
+						<button type="button" class="px-2 py-1 border border-emerald-800 text-emerald-400 hover:bg-emerald-950/20" on:click={() => runBatchAction('recover_parked')}>Recover</button>
+						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete</button>
 					{:else if bucket === 'trash'}
-						<button type="button" class="px-2 py-1 border border-cyan-700 text-cyan-300 hover:bg-cyan-900/20" on:click={() => runBatchAction('recover')}>Recover</button>
-						<button type="button" class="px-2 py-1 border border-red-700 text-red-300 hover:bg-red-900/20" on:click={() => runBatchAction('delete')}>Delete permanently</button>
+						<button type="button" class="px-2 py-1 border border-emerald-800 text-emerald-400 hover:bg-emerald-950/20" on:click={() => runBatchAction('recover')}>Recover</button>
+						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete permanently</button>
 					{/if}
 				</div>
 			</div>
 		{:else if bucket === 'parked'}
-			<div class="border-b border-[#222] bg-[#0a0a0a] px-4 py-2 text-[10px] text-gray-500">
+			<div class="border-b border-[#222] bg-[#0a0a0a] px-4 py-2 text-[10px] text-[#666]">
 				Research-only containers. Select rows to batch-recover them into the active pipeline, or use the per-row Recover button.
 			</div>
 		{/if}
@@ -1209,7 +1209,7 @@
 				<table class="w-full min-w-[1100px] text-xs">
 					{#if bucket === 'active'}
 						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-gray-500 border-b border-[#222]">
+							<tr class="text-[#666] border-b border-[#222]">
 								<th class="py-2 px-2 text-left w-8">
 									<input
 										type="checkbox"
@@ -1238,9 +1238,9 @@
 						</thead>
 						<tbody>
 							{#if loading}
-								<tr><td colspan="15" class="py-8 text-center text-gray-600">Loading containers...</td></tr>
+								<tr><td colspan="15" class="py-8 text-center text-[#555]">Loading containers...</td></tr>
 							{:else if activeFiltered.length === 0}
-								<tr><td colspan="15" class="py-8 text-center text-gray-600">No active containers match this view.</td></tr>
+								<tr><td colspan="15" class="py-8 text-center text-[#555]">No active containers match this view.</td></tr>
 							{:else}
 								{#each activePageRows as row (row.id)}
 									{@const recovery = recoveryBadge(row)}
@@ -1257,47 +1257,47 @@
 												strategyId={row.id}
 												label={row.display_name || row.name}
 												returnTo="/lab"
-												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-cyan-300"
+												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
 											/>
-											<div class="text-[10px] text-gray-600 font-mono mt-0.5">{row.id}</div>
+											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 rounded border border-[#2a2a2a] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-gray-400 transition hover:border-cyan-500/40 hover:text-cyan-200">
+												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white">
 													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
 												</a>
 											{/if}
 											{#if row.source === 'ai_dropzone' || !row.has_backtest_results || recovery}
 												<div class="mt-1 flex flex-wrap gap-1">
 													{#if row.source === 'ai_dropzone'}
-														<span class={`text-[9px] px-1.5 py-0.5 border rounded uppercase ${badgeClass('source')}`}>AI Drop Zone</span>
+														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('source')}`}>AI Drop Zone</span>
 													{/if}
 													{#if !row.has_backtest_results}
-														<span class={`text-[9px] px-1.5 py-0.5 border rounded uppercase ${badgeClass('untested')}`}>Untested</span>
+														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('untested')}`}>Untested</span>
 													{/if}
 													{#if recovery}
-														<span class={`text-[9px] px-1.5 py-0.5 border rounded uppercase ${recovery.className}`}>{recovery.label}</span>
+														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${recovery.className}`}>{recovery.label}</span>
 													{/if}
 												</div>
 											{/if}
 										</td>
-										<td class="py-2 px-2 text-gray-300 font-mono">{row.symbol} / {row.timeframe}</td>
+										<td class="py-2 px-2 text-[#888] font-mono">{row.symbol} / {row.timeframe}</td>
 										<td class="py-2 px-2">
-											<span class={`text-[10px] px-1.5 py-0.5 border rounded uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
+											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 										</td>
-										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-gray-500 italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-gray-500'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
+										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 2)}{row.max_drawdown_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('win_rate', row.win_rate)}`}>{formatPercent(row.win_rate, 1)}</td>
-										<td class="py-2 px-2 font-mono text-gray-300">{formatNumber(row.total_trades, 0)}</td>
+										<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(row.total_trades, 0)}</td>
 										<td class={`py-2 px-2 font-mono ${row.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', row.profit_factor)}`} title={row.profit_factor_is_infinite ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('robustness', row.robustness_score)}`}>{formatPercent(row.robustness_score, 1)}</td>
-										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-gray-500 italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-gray-500'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
-										<td class="py-2 px-2 text-gray-500">{formatDateTime(row.created_at)}</td>
+										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
+										<td class="py-2 px-2 text-[#666]">{formatDateTime(row.created_at)}</td>
 										<td class="py-2 px-2 text-right">
 											<div class="inline-flex flex-wrap justify-end items-center gap-2">
 												<select
 													aria-label="Move strategy to stage"
-													class="text-xs bg-transparent text-gray-400 hover:text-white outline-none cursor-pointer border border-[#333] hover:border-[#555] rounded px-1 py-0.5"
+													class="text-xs bg-transparent text-[#888] hover:text-white outline-none cursor-pointer border border-[#333] hover:border-[#555] px-1 py-0.5"
 													on:change={(e) => moveOneToStage(row.id, e.currentTarget.value, e.currentTarget)}
 													title="Move to another stage"
 												>
@@ -1310,8 +1310,8 @@
 													<option value="rejected">Rejected</option>
 												</select>
 												<StrategyExportMenu strategyId={row.id} displayId={row.id} name={row.name} compact />
-												<button type="button" class="text-cyan-300 hover:text-cyan-200" on:click={() => openContainer(row)}>Details</button>
-												<button type="button" class="text-yellow-300 hover:text-yellow-200" on:click={() => trashOne(row.id)}>Graveyard</button>
+												<button type="button" class="text-white hover:text-[#888]" on:click={() => openContainer(row)}>Details</button>
+												<button type="button" class="text-yellow-400 hover:text-yellow-300" on:click={() => trashOne(row.id)}>Graveyard</button>
 												<button type="button" class="text-red-400 hover:text-red-300" on:click={() => deleteOne(row.id)}>Delete</button>
 											</div>
 										</td>
@@ -1321,7 +1321,7 @@
 						</tbody>
 					{:else if bucket === 'parked'}
 						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-gray-500 border-b border-[#222]">
+							<tr class="text-[#666] border-b border-[#222]">
 									<th class="py-2 px-2 text-left w-8"><input type="checkbox" class="accent-white w-3 h-3 align-middle" aria-label="Select all matching strategies" checked={selectAllChecked} indeterminate={selectAllIndeterminate} on:change={toggleSelectAll} /></th>
 								<th class="py-2 px-2 text-left">Strategy</th>
 								<th class="py-2 px-2 text-left">Pair/TF</th>
@@ -1341,9 +1341,9 @@
 						</thead>
 						<tbody>
 							{#if loading}
-								<tr><td colspan="15" class="py-8 text-center text-gray-600">Loading parked containers...</td></tr>
+								<tr><td colspan="15" class="py-8 text-center text-[#555]">Loading parked containers...</td></tr>
 							{:else if parkedFiltered.length === 0}
-								<tr><td colspan="15" class="py-8 text-center text-gray-600">No parked strategies.</td></tr>
+								<tr><td colspan="15" class="py-8 text-center text-[#555]">No parked strategies.</td></tr>
 							{:else}
 								{#each parkedPageRows as row (row.id)}
 									<tr class="border-t border-[#181818] hover:bg-[#0f0f0f]">
@@ -1353,32 +1353,32 @@
 												strategyId={row.id}
 												label={row.display_name || row.name}
 												returnTo="/lab"
-												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-cyan-300"
+												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
 											/>
-											<div class="text-[10px] text-gray-600 font-mono mt-0.5">{row.id}</div>
+											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 rounded border border-[#2a2a2a] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-gray-400 transition hover:border-cyan-500/40 hover:text-cyan-200">
+												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white">
 													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
 												</a>
 											{/if}
 										</td>
-										<td class="py-2 px-2 text-gray-300 font-mono">{row.symbol} / {row.timeframe}</td>
+										<td class="py-2 px-2 text-[#888] font-mono">{row.symbol} / {row.timeframe}</td>
 										<td class="py-2 px-2">
-											<span class={`text-[10px] px-1.5 py-0.5 border rounded uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
+											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 										</td>
-										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-gray-500 italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-gray-500'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
+										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 2)}{row.max_drawdown_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('win_rate', row.win_rate)}`}>{formatPercent(row.win_rate, 1)}</td>
-										<td class="py-2 px-2 font-mono text-gray-300">{formatNumber(row.total_trades, 0)}</td>
+										<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(row.total_trades, 0)}</td>
 										<td class={`py-2 px-2 font-mono ${row.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', row.profit_factor)}`} title={row.profit_factor_is_infinite ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('robustness', row.robustness_score)}`}>{formatPercent(row.robustness_score, 1)}</td>
-										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-gray-500 italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-gray-500'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
-										<td class="py-2 px-2 text-gray-500">{formatDateTime(row.created_at)}</td>
+										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
+										<td class="py-2 px-2 text-[#666]">{formatDateTime(row.created_at)}</td>
 										<td class="py-2 px-2 text-right space-x-2 whitespace-nowrap">
-											<button type="button" class="text-cyan-300 hover:text-cyan-200" on:click={() => openContainer(row)}>Details</button>
-											<button type="button" class="text-cyan-300 hover:text-cyan-200" on:click={() => recoverParked(row.id)} title="Move this research-only container back into the active pipeline">Recover</button>
+											<button type="button" class="text-white hover:text-[#888]" on:click={() => openContainer(row)}>Details</button>
+											<button type="button" class="text-emerald-400 hover:text-emerald-300" on:click={() => recoverParked(row.id)} title="Move this research-only container back into the active pipeline">Recover</button>
 										</td>
 									</tr>
 								{/each}
@@ -1386,7 +1386,7 @@
 						</tbody>
 					{:else}
 						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-gray-500 border-b border-[#222]">
+							<tr class="text-[#666] border-b border-[#222]">
 								<th class="py-2 px-2 text-left w-8">
 									<input
 										type="checkbox"
@@ -1415,9 +1415,9 @@
 						</thead>
 						<tbody>
 							{#if loading || graveyardLoading}
-								<tr><td colspan="15" class="py-8 text-center text-gray-600">Loading graveyard...</td></tr>
+								<tr><td colspan="15" class="py-8 text-center text-[#555]">Loading graveyard...</td></tr>
 							{:else if trashFiltered.length === 0}
-								<tr><td colspan="15" class="py-8 text-center text-gray-600">Graveyard is empty.</td></tr>
+								<tr><td colspan="15" class="py-8 text-center text-[#555]">Graveyard is empty.</td></tr>
 							{:else}
 								{#each trashPageRows as row (row.id)}
 									<tr class="border-t border-[#181818] hover:bg-[#0f0f0f]">
@@ -1429,45 +1429,45 @@
 												strategyId={row.id}
 												label={row.display_name || row.name}
 												returnTo="/lab"
-												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-cyan-300"
+												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
 											/>
-											<div class="text-[10px] text-gray-600 font-mono mt-0.5">{row.id}</div>
+											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 rounded border border-[#2a2a2a] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-gray-400 transition hover:border-cyan-500/40 hover:text-cyan-200">
+												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white">
 													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
 												</a>
 											{/if}
 											{#if row.source === 'ai_dropzone' || !row.has_backtest_results}
 												<div class="mt-1 flex flex-wrap gap-1">
 													{#if row.source === 'ai_dropzone'}
-														<span class={`text-[9px] px-1.5 py-0.5 border rounded uppercase ${badgeClass('source')}`}>AI Drop Zone</span>
+														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('source')}`}>AI Drop Zone</span>
 													{/if}
 													{#if !row.has_backtest_results}
-														<span class={`text-[9px] px-1.5 py-0.5 border rounded uppercase ${badgeClass('untested')}`}>Untested</span>
+														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('untested')}`}>Untested</span>
 													{/if}
 												</div>
 											{/if}
 										</td>
-										<td class="py-2 px-2 text-gray-300 font-mono">{row.symbol} / {row.timeframe}</td>
+										<td class="py-2 px-2 text-[#888] font-mono">{row.symbol} / {row.timeframe}</td>
 										<td class="py-2 px-2">
-											<span class={`text-[10px] px-1.5 py-0.5 border rounded uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
+											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 										</td>
-										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-gray-500 italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-gray-500'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
+										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 2)}{row.max_drawdown_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('win_rate', row.win_rate)}`}>{formatPercent(row.win_rate, 1)}</td>
-										<td class="py-2 px-2 font-mono text-gray-300">{formatNumber(row.total_trades, 0)}</td>
+										<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(row.total_trades, 0)}</td>
 										<td class={`py-2 px-2 font-mono ${row.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', row.profit_factor)}`} title={row.profit_factor_is_infinite ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('robustness', row.robustness_score)}`}>{formatPercent(row.robustness_score, 1)}</td>
-										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-gray-500 italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-gray-500'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
-										<td class="py-2 px-2 text-gray-500">
+										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
+										<td class="py-2 px-2 text-[#666]">
 											<div>{formatDateTime(row.created_at)}</div>
-											<div class="text-[10px] text-gray-600">Archived {formatDateTime(row.deleted_at || row.created_at)}</div>
+											<div class="text-[10px] text-[#555]">Archived {formatDateTime(row.deleted_at || row.created_at)}</div>
 										</td>
 										<td class="py-2 px-2 text-right space-x-2 whitespace-nowrap">
-											<button type="button" class="text-cyan-300 hover:text-cyan-200" on:click={() => openContainer(row)}>Details</button>
-											<button type="button" class="text-cyan-300 hover:text-cyan-200" on:click={() => restoreOne(row.id)}>Recover</button>
+											<button type="button" class="text-white hover:text-[#888]" on:click={() => openContainer(row)}>Details</button>
+											<button type="button" class="text-emerald-400 hover:text-emerald-300" on:click={() => restoreOne(row.id)}>Recover</button>
 											<button type="button" class="text-red-400 hover:text-red-300" on:click={() => deleteOne(row.id)}>Delete</button>
 										</td>
 									</tr>
@@ -1490,16 +1490,16 @@
 <style>
 	tr.strategy-row-highlight {
 		animation: strategy-highlight-pulse 0.9s ease-in-out 3;
-		background-color: rgba(34, 211, 238, 0.12);
-		outline: 1px solid rgba(34, 211, 238, 0.6);
+		background-color: rgba(52, 211, 153, 0.12);
+		outline: 1px solid rgba(52, 211, 153, 0.6);
 		outline-offset: -1px;
 	}
 	@keyframes strategy-highlight-pulse {
 		0%, 100% {
-			background-color: rgba(34, 211, 238, 0.08);
+			background-color: rgba(52, 211, 153, 0.08);
 		}
 		50% {
-			background-color: rgba(34, 211, 238, 0.22);
+			background-color: rgba(52, 211, 153, 0.22);
 		}
 	}
 </style>

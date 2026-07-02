@@ -26,31 +26,32 @@
 	const todayUtc = new Date().toISOString().slice(0, 10);
 	$: maxCeiling = maxDate || todayUtc;
 
+	// Terminal design language: accents collapse to the white/neutral scale.
 	const accentStyles = {
 		cyan: {
-			active: 'border-cyan-500/70 bg-cyan-500/12 text-cyan-200',
-			idle: 'border-[#2b2b2b] bg-[#070707] text-gray-400 hover:border-cyan-700 hover:text-cyan-200',
-			meta: 'text-cyan-300',
+			active: 'border-white bg-white text-black',
+			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
+			meta: 'text-[#888]',
 		},
 		blue: {
-			active: 'border-blue-500/70 bg-blue-500/12 text-blue-200',
-			idle: 'border-[#2b2b2b] bg-[#070707] text-gray-400 hover:border-blue-700 hover:text-blue-200',
-			meta: 'text-blue-300',
+			active: 'border-white bg-white text-black',
+			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
+			meta: 'text-[#888]',
 		},
 		violet: {
-			active: 'border-violet-500/70 bg-violet-500/12 text-violet-200',
-			idle: 'border-[#2b2b2b] bg-[#070707] text-gray-400 hover:border-violet-700 hover:text-violet-200',
-			meta: 'text-violet-300',
+			active: 'border-white bg-white text-black',
+			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
+			meta: 'text-[#888]',
 		},
 		amber: {
-			active: 'border-amber-500/70 bg-amber-500/12 text-amber-200',
-			idle: 'border-[#2b2b2b] bg-[#070707] text-gray-400 hover:border-amber-700 hover:text-amber-200',
-			meta: 'text-amber-300',
+			active: 'border-white bg-white text-black',
+			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
+			meta: 'text-[#888]',
 		},
 		rose: {
-			active: 'border-rose-500/70 bg-rose-500/12 text-rose-200',
-			idle: 'border-[#2b2b2b] bg-[#070707] text-gray-400 hover:border-rose-700 hover:text-rose-200',
-			meta: 'text-rose-300',
+			active: 'border-white bg-white text-black',
+			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
+			meta: 'text-[#888]',
 		},
 	};
 
@@ -73,17 +74,17 @@
 	$: styles = accentStyles[accent];
 </script>
 
-<div class="rounded border border-[#1a1a1a] bg-[#050505] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+<div class="border border-[#222] bg-[#050505] p-3">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
-			<div class="text-[10px] uppercase tracking-[0.24em] text-gray-500">{title}</div>
-			<div class="mt-1 text-xs text-gray-500">{description}</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">{title}</div>
+			<div class="mt-1 text-[11px] text-[#555]">{description}</div>
 		</div>
 		<div class="flex flex-wrap items-center gap-2 text-[11px]">
-			<span class={`rounded-full border border-[#2b2b2b] bg-[#090909] px-2.5 py-1 ${styles.meta}`}>
+			<span class={`border border-[#333] px-2 py-0.5 ${styles.meta}`}>
 				{windowSummary}
 			</span>
-			<span class="rounded-full border border-[#2b2b2b] bg-[#090909] px-2.5 py-1 text-gray-400">
+			<span class="border border-[#333] px-2 py-0.5 text-[#666]">
 				{barEstimateLabel}
 			</span>
 		</div>
@@ -93,7 +94,7 @@
 		{#each DATE_RANGE_PRESETS as preset}
 			<button
 				type="button"
-				class={`rounded-full border px-2.5 py-1 text-[11px] transition ${activePreset === preset.id ? styles.active : styles.idle}`}
+				class={`border px-2.5 py-1 text-[11px] uppercase tracking-wide transition-colors ${activePreset === preset.id ? styles.active : styles.idle}`}
 				on:click={() => applyPreset(preset.id)}
 			>
 				{preset.label}
@@ -102,38 +103,38 @@
 		{#if minDate}
 			<button
 				type="button"
-				class={`rounded-full border px-2.5 py-1 text-[11px] transition ${activePreset === 'max' ? styles.active : styles.idle}`}
+				class={`border px-2.5 py-1 text-[11px] uppercase tracking-wide transition-colors ${activePreset === 'max' ? styles.active : styles.idle}`}
 				on:click={() => applyPreset('max')}
 			>
 				Max
 			</button>
 		{/if}
-		<span class={`rounded-full border px-2.5 py-1 text-[11px] ${activePreset === 'custom' ? styles.active : 'border-[#2b2b2b] bg-[#070707] text-gray-500'}`}>
+		<span class={`border px-2.5 py-1 text-[11px] uppercase tracking-wide ${activePreset === 'custom' ? styles.active : 'border-[#333] text-[#555]'}`}>
 			Custom
 		</span>
 	</div>
 
 	<div class="mt-3 grid gap-3 md:grid-cols-2">
 		<label class="block" for={`${idPrefix}-start`}>
-			<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Start</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Start</div>
 			<input
 				id={`${idPrefix}-start`}
 				type="date"
 				bind:value={startDate}
 				min={minDate || undefined}
 				max={endDate || maxCeiling}
-				class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] outline-none transition focus:border-white/60"
+				class="terminal-input mt-1.5"
 			/>
 		</label>
 		<label class="block" for={`${idPrefix}-end`}>
-			<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">End</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">End</div>
 			<input
 				id={`${idPrefix}-end`}
 				type="date"
 				bind:value={endDate}
 				min={startDate || minDate || undefined}
 				max={maxCeiling}
-				class="mt-1.5 w-full rounded border border-[#2b2b2b] bg-[#050505] px-3 py-2 text-sm text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] outline-none transition focus:border-white/60"
+				class="terminal-input mt-1.5"
 			/>
 		</label>
 	</div>

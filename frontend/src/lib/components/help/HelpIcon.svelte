@@ -21,7 +21,7 @@
 
 <button
 	type="button"
-	class="inline-flex items-center justify-center rounded-full bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors cursor-pointer {sizeClasses[size]}"
+	class="inline-flex items-center justify-center border border-[#333] bg-[#111] hover:border-[#555] hover:bg-[#222] text-[#888] hover:text-white transition-colors cursor-pointer {sizeClasses[size]}"
 	on:click={handleClick}
 	title="Click for more information"
 >

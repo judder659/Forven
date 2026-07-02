@@ -176,28 +176,35 @@
 </svelte:head>
 
 <div
-	class="relative h-full min-h-0 flex flex-col overflow-hidden p-2 gap-1.5 bg-[#050505]"
+	class="relative flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-black px-4 py-6"
 >
 	<CriticalAlertsBanner />
+
+	<div class="flex-shrink-0 border-b border-[#222] pb-4">
+		<h1 class="text-lg font-bold uppercase tracking-widest text-white">Dashboard</h1>
+		<p class="mt-1 text-xs text-[#666]">
+			Live operations, trading exposure, agent activity, and strategy pipeline health.
+		</p>
+	</div>
 
 	<OpsHeaderStrip autopilot={overview?.autopilot ?? null} kpis={overview?.kpis ?? null} />
 
 	{#if loading && !overview}
 		<div class="min-h-[220px] grid grid-cols-[1fr_1fr_1fr] gap-2">
-			<div class="border border-[#222] p-4 bg-[#0a0a0a]"><Skeleton rows={6} /></div>
-			<div class="border border-[#222] p-4 bg-[#0a0a0a]"><Skeleton rows={6} /></div>
-			<div class="border border-[#222] p-4 bg-[#0a0a0a]"><Skeleton rows={6} /></div>
+			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={6} /></div>
+			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={6} /></div>
+			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={6} /></div>
 		</div>
 		<div class="min-h-[240px] grid grid-cols-2 gap-2">
-			<div class="border border-[#222] p-4 bg-[#0a0a0a]"><Skeleton rows={8} /></div>
-			<div class="border border-[#222] p-4 bg-[#0a0a0a]"><Skeleton rows={8} /></div>
+			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={8} /></div>
+			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={8} /></div>
 		</div>
 	{:else}
 		<div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-			<div class="space-y-1.5 pb-1.5">
+			<div class="space-y-2 pb-2">
 				<!-- Monitor row: is the machine alive, is the data trustworthy, what needs attention -->
-				<div class="grid grid-cols-1 gap-1.5 lg:h-[330px] lg:grid-cols-3">
-					<div class="flex min-h-0 flex-col gap-1.5">
+				<div class="grid grid-cols-1 gap-2 lg:h-[330px] lg:grid-cols-3">
+					<div class="flex min-h-0 flex-col gap-2">
 						<div class="min-h-0 flex-1"><SystemPulsePanel /></div>
 						<div class="min-h-0 flex-1"><DataIntegrityPanel /></div>
 					</div>
@@ -206,7 +213,7 @@
 				</div>
 
 				<!-- Trading row: what is the money doing right now -->
-				<div class="flex-shrink-0 space-y-1.5">
+				<div class="flex-shrink-0 space-y-2">
 					<LiveTradingPanel />
 				</div>
 				<div class="flex-shrink-0">
@@ -214,7 +221,7 @@
 				</div>
 
 				<!-- Agent activity + pipeline flow, side by side -->
-				<div class="flex-shrink-0 grid grid-cols-1 gap-1.5 lg:grid-cols-2 lg:h-[260px]">
+				<div class="flex-shrink-0 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:h-[260px]">
 					<div class="h-[240px] min-h-0 lg:h-auto"><AgentHeartbeat /></div>
 					<div class="h-[240px] min-h-0 lg:h-auto"><PipelineFlowPanel /></div>
 				</div>
@@ -225,7 +232,7 @@
 				</div>
 
 				<div
-					class="flex-shrink-0 min-h-[180px] overflow-hidden border border-[#222] rounded bg-[#0a0a0a] p-1.5"
+					class="flex-shrink-0 min-h-[180px] overflow-hidden terminal-card p-1.5"
 				>
 					<EquityOverlay />
 				</div>
@@ -235,10 +242,10 @@
 				</div>
 
 				<!-- Full activity firehose (alerts have their own panel above) -->
-				<div class="flex-shrink-0 border border-[#222] rounded bg-[#0a0a0a]">
+				<div class="flex-shrink-0 terminal-card">
 					<button
 						type="button"
-						class="w-full text-left px-3 py-1.5 text-[10px] uppercase tracking-wider text-gray-500 hover:text-gray-300"
+						class="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888] hover:text-white transition-colors"
 						on:click={toggleActivity}
 						aria-expanded={activityExpanded}
 						aria-controls="activity-stream-panel"
@@ -258,7 +265,7 @@
 
 	{#if loadingError}
 		<div
-			class="flex-shrink-0 border border-red-900 bg-red-900/20 rounded px-3 py-2 text-xs text-red-300"
+			class="flex-shrink-0 border border-red-900 bg-red-500/5 px-4 py-2 text-xs text-red-400"
 		>
 			{loadingError}
 		</div>

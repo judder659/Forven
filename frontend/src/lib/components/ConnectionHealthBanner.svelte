@@ -92,13 +92,13 @@
 {#if showCritical || showWarning}
 	<div
 		class="border-b px-4 py-2 flex items-center justify-between gap-3 {showCritical
-			? 'border-red-800/70 bg-red-950/40 text-red-100'
-			: 'border-amber-800/70 bg-amber-950/30 text-amber-100'}"
+			? 'border-red-900 bg-red-500/5 text-red-400'
+			: 'border-yellow-900 bg-yellow-500/5 text-yellow-400'}"
 		role={showCritical ? 'alert' : 'status'}
 	>
 		<div class="flex items-center gap-3 min-w-0">
 			<svg
-				class="w-4 h-4 shrink-0 {showCritical ? 'text-red-400' : 'text-amber-400'}"
+				class="w-4 h-4 shrink-0 {showCritical ? 'text-red-400' : 'text-yellow-400'}"
 				viewBox="0 0 24 24"
 				fill="currentColor"
 				aria-hidden="true"
@@ -119,9 +119,9 @@
 		<div class="flex items-center gap-2 shrink-0">
 			<button
 				type="button"
-				class="text-[11px] border px-2.5 py-1 rounded transition-colors {showCritical
-					? 'border-red-700 text-red-100 hover:bg-red-900/40'
-					: 'border-amber-700 text-amber-100 hover:bg-amber-900/40'}"
+				class="text-[11px] border px-2.5 py-1 transition-colors {showCritical
+					? 'border-red-900 text-red-400 hover:bg-red-500/10'
+					: 'border-yellow-900 text-yellow-400 hover:bg-yellow-500/10'}"
 				on:click={openHealth}
 			>
 				Open Health
@@ -129,7 +129,7 @@
 			{#if showWarning}
 				<button
 					type="button"
-					class="text-[11px] text-amber-300/70 hover:text-amber-200 px-2"
+					class="text-[11px] text-[#666] hover:text-white px-2 transition-colors"
 					on:click={handleDismiss}
 					aria-label="Dismiss"
 				>

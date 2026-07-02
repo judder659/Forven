@@ -166,8 +166,8 @@
 		align-items: center;
 		gap: 1rem;
 		padding: 0.75rem 1rem;
-		background: #111827;
-		border-bottom: 1px solid #1f2937;
+		background: #050505;
+		border-bottom: 1px solid #222;
 	}
 
 	.toolbar-group {
@@ -179,16 +179,15 @@
 	.toolbar-label {
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: #6b7280;
+		color: #666;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.toolbar-select {
-		background: #1f2937;
-		border: 1px solid #374151;
-		border-radius: 0.25rem;
-		color: #f3f4f6;
+		background: #111;
+		border: 1px solid #333;
+		color: #fff;
 		padding: 0.375rem 0.75rem;
 		font-size: 0.875rem;
 		font-family: inherit;
@@ -197,12 +196,12 @@
 	}
 
 	.toolbar-select:hover:not(:disabled) {
-		border-color: #4b5563;
+		border-color: #555;
 	}
 
 	.toolbar-select:focus {
 		outline: none;
-		border-color: #3b82f6;
+		border-color: #555;
 	}
 
 	.toolbar-select:disabled {
@@ -227,25 +226,24 @@
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.375rem 0.75rem;
-		background: #1f2937;
-		border: 1px solid #374151;
-		border-radius: 0.25rem;
-		color: #9ca3af;
+		background: #111;
+		border: 1px solid #333;
+		color: #888;
 		font-size: 0.75rem;
 		font-family: inherit;
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 	}
 
 	.toolbar-btn:hover:not(:disabled) {
-		background: #374151;
-		color: #f3f4f6;
+		background: #222;
+		color: #fff;
 	}
 
 	.toolbar-btn.active {
-		background: #1e3a5f;
-		border-color: #3b82f6;
-		color: #3b82f6;
+		background: #111;
+		border-color: #fff;
+		color: #fff;
 	}
 
 	.toolbar-btn:disabled {
@@ -277,16 +275,15 @@
 		align-items: center;
 		gap: 0.25rem;
 		padding: 0.25rem 0.5rem;
-		background: #1f2937;
-		border: 1px solid #374151;
-		border-radius: 0.25rem;
+		background: #111;
+		border: 1px solid #333;
 		font-size: 0.75rem;
 		font-family: 'JetBrains Mono', monospace;
-		color: #9ca3af;
+		color: #888;
 	}
 
 	.entry-count {
-		color: #22c55e;
+		color: #34d399;
 	}
 
 	.exit-count {

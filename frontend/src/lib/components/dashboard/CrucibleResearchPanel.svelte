@@ -51,8 +51,8 @@
 		const normalized = status.toLowerCase();
 		if (normalized.includes('confirm') || normalized.includes('graduat') || normalized.includes('proven')) return 'text-emerald-400';
 		if (normalized.includes('disprov') || normalized.includes('reject')) return 'text-red-400';
-		if (normalized.includes('testing') || normalized.includes('research')) return 'text-cyan-400';
-		return 'text-gray-500';
+		if (normalized.includes('testing') || normalized.includes('research')) return 'text-white';
+		return 'text-[#666]';
 	}
 
 	function ageLabel(timestamp: string | null | undefined): string {
@@ -74,51 +74,51 @@
 	});
 </script>
 
-<div class="flex h-full min-h-0 flex-col rounded border border-[#222] bg-[#0a0a0a]" data-testid="crucible-research-panel">
-	<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#1a1a1a] px-2.5 py-1.5">
-		<h2 class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Crucibles</h2>
+<div class="terminal-card flex h-full min-h-0 flex-col" data-testid="crucible-research-panel">
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#1a1a1a] px-4 py-2">
+		<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Crucibles</h2>
 		{#if counts}
 			<span class="font-mono text-[11px]">
-				<span class="text-gray-500">active</span> <span class="text-cyan-300">{counts.active ?? 0}</span>
-				<span class="text-gray-700">·</span>
-				<span class="text-gray-500">graduated</span> <span class="text-emerald-400">{counts.graduated ?? 0}</span>
-				<span class="text-gray-700">·</span>
-				<span class="text-gray-500">archived</span> <span class="text-gray-400">{counts.archived ?? 0}</span>
+				<span class="text-[#666]">active</span> <span class="text-white">{counts.active ?? 0}</span>
+				<span class="text-[#444]">·</span>
+				<span class="text-[#666]">graduated</span> <span class="text-emerald-400">{counts.graduated ?? 0}</span>
+				<span class="text-[#444]">·</span>
+				<span class="text-[#666]">archived</span> <span class="text-[#888]">{counts.archived ?? 0}</span>
 			</span>
 		{/if}
-		<a href="/hypotheses" class="ml-auto text-[10px] uppercase text-gray-600 hover:text-cyan-300">all hypotheses →</a>
+		<a href="/hypotheses" class="ml-auto text-[10px] uppercase tracking-wider text-[#555] hover:text-white transition-colors">all hypotheses →</a>
 	</div>
-	<div class="grid min-h-0 flex-1 grid-cols-1 gap-x-4 overflow-hidden px-2.5 py-1.5 lg:grid-cols-2">
+	<div class="grid min-h-0 flex-1 grid-cols-1 gap-x-4 overflow-hidden px-4 py-2 lg:grid-cols-2">
 		{#if error && !loaded}
-			<div class="text-xs text-red-300">{error}</div>
+			<div class="text-xs text-red-400">{error}</div>
 		{:else if !loaded}
-			<div class="text-xs text-gray-500">Loading…</div>
+			<div class="text-xs uppercase tracking-widest text-[#555]">Loading…</div>
 		{:else}
 			<div class="min-h-0 overflow-y-auto">
-				<div class="mb-1 text-[9px] uppercase tracking-wider text-gray-600">In the crucible</div>
+				<div class="mb-1 text-[9px] uppercase tracking-wider text-[#555]">In the crucible</div>
 				{#each active as h (h.id)}
 					<div class="flex items-center gap-2 font-mono text-[11px] leading-snug" title={h.title}>
-						<a href="/hypotheses?focus={h.display_id ?? h.id}" class="shrink-0 text-gray-300 hover:text-cyan-300 hover:underline">{h.display_id ?? h.id}</a>
+						<a href="/hypotheses?focus={h.display_id ?? h.id}" class="shrink-0 text-[#888] hover:text-white hover:underline">{h.display_id ?? h.id}</a>
 						<span class="shrink-0 {statusTone(String(h.crucible_status ?? h.status))}">{h.crucible_status ?? h.status}</span>
-						<span class="min-w-0 flex-1 truncate text-gray-500">{h.title}</span>
-						<span class="shrink-0 text-gray-600" title="Strategies spawned from this hypothesis">{h.strategy_count}s</span>
-						<span class="shrink-0 text-[10px] text-gray-700">{ageLabel(h.updated_at)}</span>
+						<span class="min-w-0 flex-1 truncate text-[#666]">{h.title}</span>
+						<span class="shrink-0 text-[#555]" title="Strategies spawned from this hypothesis">{h.strategy_count}s</span>
+						<span class="shrink-0 text-[10px] text-[#444]">{ageLabel(h.updated_at)}</span>
 					</div>
 				{:else}
-					<div class="text-xs text-gray-600">No active hypotheses — the ideation loop will replenish.</div>
+					<div class="text-xs text-[#555]">No active hypotheses — the ideation loop will replenish.</div>
 				{/each}
 			</div>
 			<div class="min-h-0 overflow-y-auto">
-				<div class="mb-1 text-[9px] uppercase tracking-wider text-gray-600">Recent verdicts</div>
+				<div class="mb-1 text-[9px] uppercase tracking-wider text-[#555]">Recent verdicts</div>
 				{#each recentArchived as h (h.id)}
 					<div class="flex items-center gap-2 font-mono text-[11px] leading-snug" title={h.verdict_memo?.rationale ?? h.title}>
-						<a href="/hypotheses?focus={h.display_id ?? h.id}" class="shrink-0 text-gray-400 hover:text-cyan-300 hover:underline">{h.display_id ?? h.id}</a>
+						<a href="/hypotheses?focus={h.display_id ?? h.id}" class="shrink-0 text-[#888] hover:text-white hover:underline">{h.display_id ?? h.id}</a>
 						<span class="shrink-0 {statusTone(String(h.status))}">{h.status}</span>
-						<span class="min-w-0 flex-1 truncate text-gray-600">{h.title}</span>
-						<span class="shrink-0 text-[10px] text-gray-700">{ageLabel(h.updated_at)}</span>
+						<span class="min-w-0 flex-1 truncate text-[#555]">{h.title}</span>
+						<span class="shrink-0 text-[10px] text-[#444]">{ageLabel(h.updated_at)}</span>
 					</div>
 				{:else}
-					<div class="text-xs text-gray-600">No verdicts yet.</div>
+					<div class="text-xs text-[#555]">No verdicts yet.</div>
 				{/each}
 			</div>
 		{/if}

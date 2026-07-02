@@ -105,9 +105,11 @@
 	}
 
 	.brain-header h1 {
-		font-size: 1.75rem;
-		font-weight: 600;
+		font-size: 1.125rem;
+		font-weight: 700;
 		margin: 0;
+		text-transform: uppercase;
+		letter-spacing: 0.15em;
 	}
 
 	.subtitle {
@@ -119,7 +121,7 @@
 	.tabs {
 		display: flex;
 		gap: 0;
-		border-bottom: 1px solid #2a2a2a;
+		border-bottom: 1px solid #222;
 		margin-bottom: 1.5rem;
 	}
 
@@ -140,7 +142,7 @@
 
 	.tabs button.active {
 		color: #fff;
-		border-bottom-color: #4f8df7;
+		border-bottom-color: #fff;
 	}
 
 	.tab-content {

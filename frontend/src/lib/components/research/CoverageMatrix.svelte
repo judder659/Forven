@@ -86,10 +86,10 @@
 	}
 
 	const FRESH_CLASS: Record<Fresh, string> = {
-		current: 'bg-green-700/70 text-green-50',
-		behind: 'bg-yellow-700/70 text-yellow-50',
-		stale: 'bg-red-800/70 text-red-50',
-		missing: 'bg-[#161616] text-gray-600'
+		current: 'border border-emerald-900 bg-emerald-500/10 text-emerald-400',
+		behind: 'border border-yellow-900 bg-yellow-500/10 text-yellow-400',
+		stale: 'border border-red-900 bg-red-500/10 text-red-400',
+		missing: 'border border-[#1a1a1a] bg-[#0a0a0a] text-[#555]'
 	};
 
 	function cellLabel(entry: DataCoverageEntry | undefined): string {
@@ -182,34 +182,34 @@
 	});
 </script>
 
-<div class="rounded-lg border border-[#222] bg-[#0a0a0a] p-4">
-	<div class="mb-1 flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-sm font-semibold tracking-tight text-gray-200">Coverage matrix</h2>
-		<div class="flex flex-wrap items-center gap-3 text-[11px] text-gray-400">
+<div class="terminal-card">
+	<div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#1a1a1a] px-4 py-2">
+		<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Coverage matrix</h2>
+		<div class="flex flex-wrap items-center gap-3 text-[11px] text-[#666]">
 			{#if availableStreams.length > 1}
-				<div class="flex rounded border border-[#333] p-0.5">
+				<div class="flex border border-[#333]">
 					{#each availableStreams as s}
 						<button
-							class="rounded-sm px-2 py-0.5 {stream === s ? 'bg-[#222] text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
+							class="px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors {stream === s ? 'bg-[#222] text-white' : 'text-[#666] hover:text-white'}"
 							on:click={() => (stream = s as 'ohlcv' | 'oi' | 'basis')}
 						>{STREAM_LABEL[s]}</button>
 					{/each}
 				</div>
 			{/if}
-			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded bg-green-700/70"></span> current</span>
-			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded bg-yellow-700/70"></span> behind</span>
-			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded bg-red-800/70"></span> stale</span>
-			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded bg-[#161616]"></span> not collected</span>
-			<button class="ml-1 rounded border border-[#333] px-2 py-0.5 hover:bg-[#1a1a1a]" on:click={() => void load()} disabled={loading}>
+			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 border border-emerald-900 bg-emerald-500/10"></span> current</span>
+			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 border border-yellow-900 bg-yellow-500/10"></span> behind</span>
+			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 border border-red-900 bg-red-500/10"></span> stale</span>
+			<span class="flex items-center gap-1"><span class="inline-block h-3 w-3 border border-[#1a1a1a] bg-[#0a0a0a]"></span> not collected</span>
+			<button class="terminal-button ml-1 px-2 py-1 text-[10px]" on:click={() => void load()} disabled={loading}>
 				{loading ? '…' : 'Refresh'}
 			</button>
 		</div>
 	</div>
-	<p class="mb-3 text-[11px] text-gray-500">
-		Each cell shows <span class="text-gray-400">bars stored</span> for that symbol &amp; timeframe; the
-		<span class="text-gray-400">colour</span> is how current the latest bar is.
+	<p class="px-4 py-3 text-[11px] text-[#555]">
+		Each cell shows <span class="text-[#888]">bars stored</span> for that symbol &amp; timeframe; the
+		<span class="text-[#888]">colour</span> is how current the latest bar is.
 		{#if stream === 'ohlcv'}Click any cell to fill its gaps and update it to the latest bar (red → green).{:else}Switch to Price to backfill gaps.{/if}
-		Click a <span class="text-gray-400">symbol name</span> to open its data viewer.
+		Click a <span class="text-[#888]">symbol name</span> to open its data viewer.
 	</p>
 
 	{#if error}
@@ -242,7 +242,7 @@
 						<tr>
 							<td class="w-px whitespace-nowrap px-2 py-1 pr-4 font-mono">
 							<button
-								class="text-gray-300 hover:text-cyan-300 hover:underline"
+								class="text-[#aaa] hover:text-white hover:underline"
 								on:click={() => viewSymbol(symbol)}
 								title="View {symbol} data"
 							>{symbol}</button>

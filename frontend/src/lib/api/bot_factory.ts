@@ -33,6 +33,8 @@ export interface BotConfig {
 	max_llm_calls_per_day: number;
 	max_consecutive_errors: number;
 	template_id: string | null;
+	execution_mode: 'paper' | 'live';
+	live_wallet: string | null;
 	status: string;
 	created_at: string;
 	updated_at: string;
@@ -44,6 +46,10 @@ export interface BotConfig {
 	error_message: string | null;
 	llm_calls_today: number | null;
 	consecutive_errors: number | null;
+	// List-endpoint trade digest (absent on getBot)
+	realized_pnl?: number;
+	open_positions?: number;
+	closed_trades?: number;
 }
 
 export interface BotDecision {
@@ -129,6 +135,43 @@ export async function killAllBots(): Promise<{ stopped: number }> {
 	return fetchApi('/bot-factory/kill-all', { method: 'POST' });
 }
 
+// ── Execution mode (paper / live) ──────────────────────────────────
+
+/** Arm a bot for LIVE execution. `confirm` must be the typed phrase "GO LIVE";
+ * the ceiling bounds every live order's notional (server-enforced GO-LIVE-1).
+ * `wallet` optionally routes all live orders to a registered named sub-account
+ * wallet (capital isolation); null = master / direction books. */
+export async function goLiveBot(
+	id: string,
+	confirm: string,
+	liveNotionalCeilingUsd: number,
+	wallet: string | null = null
+): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/go-live`, {
+		method: 'POST',
+		body: JSON.stringify({
+			confirm,
+			live_notional_ceiling_usd: liveNotionalCeilingUsd,
+			wallet,
+		}),
+	});
+}
+
+/** Disarm live execution and return the bot to paper mode. */
+export async function goPaperBot(id: string): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/go-paper`, { method: 'POST' });
+}
+
+/** Set the wallet the bot's live orders will route to (null = master/books).
+ * Only allowed while the bot is in paper mode — a live-armed bot's routing
+ * changes go through GO LIVE re-arming. */
+export async function setBotWallet(id: string, wallet: string | null): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/wallet`, {
+		method: 'POST',
+		body: JSON.stringify({ wallet }),
+	});
+}
+
 // ── Bot Data ───────────────────────────────────────────────────────
 
 export interface BotTrade {
@@ -203,23 +246,30 @@ export async function getBotMemory(id: string, limit = 50): Promise<BotMemoryEnt
 export interface BotOpenPosition {
 	trade_id: string;
 	ticker: string;
+	asset: string | null;
 	direction: 'long' | 'short';
 	qty: number;
 	entry_price: number;
 	current_price: number | null;
+	unrealized_pnl?: number;
 	stop_loss_price: number | null;
 	take_profit_price: number | null;
 	entry_fee_usd: number;
 	opened_at: string;
+	execution_type: 'paper' | 'live';
 }
 
 export interface BotPositionsSnapshot {
 	bot_id: string;
 	starting_capital: number;
 	realized_pnl: number;
+	unrealized_pnl: number;
+	equity: number;
 	peak_equity: number | null;
 	equity_state_started_at: string | null;
+	mark_age_seconds: number | null;
 	open_positions: BotOpenPosition[];
+	execution_mode: 'paper' | 'live';
 }
 
 export async function getBotPositions(id: string): Promise<BotPositionsSnapshot> {
@@ -228,6 +278,26 @@ export async function getBotPositions(id: string): Promise<BotPositionsSnapshot>
 
 export async function diffBotVersions(id: string, v1: number, v2: number): Promise<BotVersionDiff> {
 	return fetchApi(`/bot-factory/bots/${id}/versions/${v1}/diff/${v2}`);
+}
+
+export interface BotClosePositionResult {
+	status: string;
+	trade_id: string;
+	fill_price?: number;
+	net_pnl?: number;
+	realized?: number;
+}
+
+/** Manually close one of a bot's open positions (server dispatches paper vs live). */
+export async function closeBotPosition(
+	botId: string,
+	tradeId: string,
+	reason?: string
+): Promise<BotClosePositionResult> {
+	return fetchApi(`/bot-factory/bots/${botId}/positions/${tradeId}/close`, {
+		method: 'POST',
+		body: JSON.stringify({ reason: reason ?? null }),
+	});
 }
 
 // ── Strategy Bridge ────────────────────────────────────────────────

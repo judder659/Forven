@@ -57,14 +57,14 @@
 </script>
 
 {#if label}
-	<span class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">{label}</span>
+	<span class="block text-[10px] text-[#666] uppercase tracking-wider mb-1">{label}</span>
 {/if}
 <select
 	{id}
 	{disabled}
 	value={value}
 	on:change={(e) => onChange((e.target as HTMLSelectElement).value)}
-	class="w-full bg-gray-950 border border-gray-700 text-white px-2 py-1.5 rounded text-sm font-mono focus:outline-none focus:border-cyan-500 disabled:opacity-60"
+	class="terminal-select w-full text-sm font-mono disabled:opacity-60"
 >
 	{#if allowUnset}
 		<option value="">{unsetLabel}</option>
@@ -77,7 +77,7 @@
 	{/if}
 </select>
 {#if showStaleWarning && stale}
-	<p class="mt-1 text-[11px] text-amber-300">
+	<p class="mt-1 text-[11px] text-yellow-400">
 		This model's provider isn't connected — connect it under Providers &amp; Keys, or pick a connected model.
 	</p>
 {/if}

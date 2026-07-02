@@ -8,15 +8,18 @@
 		createBot,
 		updateBot,
 		listTemplates,
-		type BotConfig,
-		type BotTemplate,
-	} from '$lib/api';
-	import {
+		listWallets,
+		setBotWallet,
+		goLiveBot,
+		goPaperBot,
 		createBotFromStrategy,
 		createTemplate,
 		deleteTemplate,
+		type BotConfig,
+		type BotTemplate,
 		type BotSessionHours,
-	} from '$lib/api/bot_factory';
+	} from '$lib/api';
+	import { addToast } from '$lib/stores/processTracker';
 
 	const WEEKDAYS = [
 		'monday',
@@ -33,8 +36,8 @@
 	let error: string | null = null;
 	let editId: string | null = null;
 	let templates: BotTemplate[] = [];
-	let activeTab: 'core' | 'trading' | 'advanced' = 'core';
 	let showTemplateSelector = false;
+	let editExecutionMode: 'paper' | 'live' = 'paper';
 
 	// Form state
 	let name = 'Untitled Bot';
@@ -65,11 +68,52 @@
 	let sessionStart = '09:30';
 	let sessionEnd = '16:00';
 
+	// Wallet the bot's LIVE orders route to ('' = master / direction books).
+	// Saved via the dedicated wallet endpoint (locked while the bot is
+	// live-armed — routing changes then go through GO LIVE re-arming).
+	let liveWallet = '';
+	let savedLiveWallet = '';
+	let walletOptions: string[] = [];
+	let walletOptionsError: string | null = null;
+
+	// Execution-mode selection. `editExecutionMode` is the bot's CURRENT armed
+	// state; `execMode` is what the operator wants after save. Going live still
+	// requires the typed "GO LIVE" + per-order notional ceiling (server-enforced
+	// GO-LIVE-1) — the arming fields render inline when Live is picked.
+	let execMode: 'paper' | 'live' = 'paper';
+	let armCeiling: number | null = null;
+	let armConfirm = '';
+	$: needsArming = execMode === 'live' && editExecutionMode !== 'live';
+	$: armReady =
+		!needsArming ||
+		(armConfirm.trim().toUpperCase() === 'GO LIVE' && !!armCeiling && armCeiling > 0);
+
+	async function loadWalletOptions() {
+		try {
+			const snapshot = await listWallets(true);
+			walletOptions = snapshot.registered.map((w) => w.label);
+		} catch (e: any) {
+			walletOptions = [];
+			walletOptionsError = String(e.message || e);
+		}
+	}
+
 	function toggleSessionDay(day: string) {
 		sessionDays = sessionDays.includes(day)
 			? sessionDays.filter((d) => d !== day)
 			: [...sessionDays, day];
 	}
+
+	// Live summary rail derivations
+	$: maxPositionUsd = (capitalAllocation || 0) * (maxPositionPct || 0) / 100;
+	$: cadenceLabel = cooldownSeconds >= 3600
+		? `${(cooldownSeconds / 3600).toFixed(1)}h`
+		: cooldownSeconds >= 60
+			? `${Math.round(cooldownSeconds / 60)}m`
+			: `${cooldownSeconds}s`;
+	$: universeLabel = assetMode === 'locked'
+		? (lockedPairsText.split(',').map((s) => s.trim()).filter(Boolean).join(', ') || '— pick pairs —')
+		: 'Top perps by volume (auto)';
 
 	function populateFromConfig(config: Partial<BotConfig> | Record<string, unknown>) {
 		name = (config.name as string) || name;
@@ -94,6 +138,14 @@
 		lockedPairsText = Array.isArray(lp) ? lp.join(', ') : '';
 		maxLlmCallsPerDay = (config.max_llm_calls_per_day as number) ?? 200;
 		maxConsecutiveErrors = (config.max_consecutive_errors as number) ?? 5;
+		if (config.execution_mode === 'live' || config.execution_mode === 'paper') {
+			editExecutionMode = config.execution_mode;
+			execMode = config.execution_mode;
+		}
+		if ('live_wallet' in config) {
+			liveWallet = (config.live_wallet as string | null) ?? '';
+			savedLiveWallet = liveWallet;
+		}
 
 		const sh = config.session_hours as Partial<BotSessionHours> | null | undefined;
 		if (sh && typeof sh === 'object') {
@@ -159,11 +211,26 @@
 		error = null;
 		try {
 			const config = buildConfig();
+			let savedId = editId;
 			if (editId) {
 				await updateBot(editId, config as Partial<BotConfig>);
 			} else {
-				await createBot(config as Partial<BotConfig>);
+				const created = await createBot(config as Partial<BotConfig>);
+				savedId = created.id;
 			}
+			// Execution mode + wallet are armed separately (never through the
+			// generic config PUT). Config saves FIRST so a stop-loss entered in
+			// this same save satisfies the go-live requirement.
+			if (savedId && needsArming) {
+				await goLiveBot(savedId, armConfirm.trim(), armCeiling ?? 0, liveWallet || null);
+				addToast('Bot armed for LIVE execution', 'success');
+			} else if (savedId && execMode === 'paper' && editExecutionMode === 'live') {
+				await goPaperBot(savedId);
+				addToast('Bot returned to paper mode', 'success');
+			} else if (savedId && editExecutionMode !== 'live' && liveWallet !== savedLiveWallet) {
+				await setBotWallet(savedId, liveWallet || null);
+			}
+			addToast(editId ? 'Bot saved' : 'Bot created', 'success');
 			goto('/bot-factory');
 		} catch (e: any) {
 			error = e.message || 'Failed to save';
@@ -172,22 +239,30 @@
 		}
 	}
 
+	// ── Save-as-template (inline form — no window.prompt) ─────────────
+	let templateFormOpen = false;
+	let templateName = '';
+	let templateDesc = '';
 	let savingTemplate = false;
 	let deletingTemplateId: string | null = null;
+	let confirmDeleteTemplateId: string | null = null;
 
 	async function loadTemplates() {
 		templates = await listTemplates();
 	}
 
 	async function handleSaveAsTemplate() {
-		const templateName = (window.prompt('Template name', name) || '').trim();
-		if (!templateName) return;
-		const templateDesc = (window.prompt('Description (optional)', '') || '').trim();
+		const trimmed = templateName.trim();
+		if (!trimmed) return;
 		savingTemplate = true;
 		error = null;
 		try {
-			await createTemplate(templateName, templateDesc || null, buildConfig());
+			await createTemplate(trimmed, templateDesc.trim() || null, buildConfig());
 			await loadTemplates();
+			addToast(`Template "${trimmed}" saved`, 'success');
+			templateFormOpen = false;
+			templateName = '';
+			templateDesc = '';
 		} catch (e: any) {
 			error = e.message || 'Failed to save template';
 		} finally {
@@ -197,12 +272,13 @@
 
 	async function handleDeleteTemplate(template: BotTemplate) {
 		if (template.is_builtin) return;
-		if (!window.confirm(`Delete the template "${template.name}"? This cannot be undone.`)) return;
+		confirmDeleteTemplateId = null;
 		deletingTemplateId = template.id;
 		error = null;
 		try {
 			await deleteTemplate(template.id);
 			await loadTemplates();
+			addToast('Template deleted', 'success');
 		} catch (e: any) {
 			error = e.message || 'Failed to delete template';
 		} finally {
@@ -211,6 +287,7 @@
 	}
 
 	onMount(async () => {
+		void loadWalletOptions();
 		try {
 			await loadTemplates();
 			const params = $page.url.searchParams;
@@ -243,254 +320,448 @@
 </script>
 
 <svelte:head>
-	<title>{editId ? 'Edit Bot' : 'Create Bot'} | Bot Factory | Forven</title>
+	<title>{editId ? 'Edit Bot' : 'New Bot'} | Bot Factory | Forven</title>
 </svelte:head>
 
-<div class="mx-auto max-w-4xl px-4 py-6">
+<div class="mx-auto max-w-6xl px-4 py-6">
 	<!-- Header -->
-	<div class="mb-6 flex items-center justify-between">
+	<div class="mb-6 flex items-end justify-between border-b border-[#222] pb-4">
 		<div>
-			<button on:click={() => goto('/bot-factory')} class="mb-2 text-sm text-gray-500 hover:text-gray-300">&larr; Back to Bot Factory</button>
-			<h1 class="text-xl font-bold text-white">{editId ? 'Edit Bot' : 'Create New Bot'}</h1>
+			<button on:click={() => goto('/bot-factory')} class="mb-1 text-[11px] uppercase tracking-wider text-[#555] hover:text-white">&larr; Bot Factory</button>
+			<h1 class="text-lg font-bold uppercase tracking-widest text-white">{editId ? 'Edit Bot' : 'New Bot'}</h1>
 		</div>
 		<div class="flex items-center gap-2">
 			<button
-				on:click={handleSaveAsTemplate}
+				on:click={() => (templateFormOpen = !templateFormOpen)}
 				disabled={saving || savingTemplate || !name.trim()}
-				class="rounded-lg border border-[#333] bg-[#121212] px-4 py-2 text-sm font-medium text-gray-300 transition hover:border-sky-500/30 hover:text-white disabled:opacity-50"
+				class="terminal-button text-xs"
 			>
-				{savingTemplate ? 'Saving...' : 'Save as Template'}
+				Save as Template
 			</button>
 			<button
 				on:click={handleSave}
-				disabled={saving || savingTemplate || !name.trim()}
-				class="rounded-lg bg-sky-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-sky-500 disabled:opacity-50"
+				disabled={saving || savingTemplate || !name.trim() || !armReady}
+				class="terminal-button-primary text-xs"
 			>
-				{saving ? 'Saving...' : editId ? 'Save Changes' : 'Create Bot'}
+				{saving ? 'Saving…' : needsArming ? 'Save + Arm Live' : editId ? 'Save Changes' : 'Create Bot'}
 			</button>
 		</div>
 	</div>
 
 	{#if error}
-		<div class="mb-4 rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-300">{error}</div>
+		<div class="mb-4 border border-red-900 bg-red-500/5 p-3 text-sm text-red-400">{error}</div>
+	{/if}
+
+	{#if templateFormOpen}
+		<div class="mb-6 border border-[#333] bg-[#050505] p-4">
+			<div class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Save current config as template</div>
+			<div class="mt-3 flex flex-wrap items-end gap-3">
+				<div class="flex flex-col gap-1">
+					<label for="tpl-name" class="text-[10px] uppercase tracking-wider text-[#666]">Name</label>
+					<input id="tpl-name" bind:value={templateName} placeholder={name} class="terminal-input w-56" />
+				</div>
+				<div class="flex min-w-0 flex-1 flex-col gap-1">
+					<label for="tpl-desc" class="text-[10px] uppercase tracking-wider text-[#666]">Description (optional)</label>
+					<input id="tpl-desc" bind:value={templateDesc} class="terminal-input" />
+				</div>
+				<button on:click={handleSaveAsTemplate} disabled={savingTemplate || !templateName.trim()} class="terminal-button-primary text-xs">
+					{savingTemplate ? 'Saving…' : 'Save'}
+				</button>
+				<button on:click={() => (templateFormOpen = false)} class="terminal-button text-xs">Cancel</button>
+			</div>
+		</div>
 	{/if}
 
 	{#if loading}
-		<div class="py-20 text-center text-gray-500">Loading...</div>
+		<div class="py-20 text-center text-xs uppercase tracking-widest text-[#555]">Loading…</div>
 	{:else}
-		<!-- Template selector (only on create, initially) -->
+		<!-- Template gallery (only on create, initially) -->
 		{#if showTemplateSelector && !editId && templates.length > 0}
-			<div class="mb-6 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] p-5">
-				<h2 class="mb-3 text-sm font-semibold text-gray-300">Start from a template</h2>
-				<div class="grid grid-cols-2 gap-3">
+			<div class="mb-6 border border-[#222] bg-[#050505] p-4">
+				<div class="mb-3 text-[10px] font-bold uppercase tracking-widest text-[#888]">Start from a template</div>
+				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
 					{#each templates as template}
 						<div class="relative">
 							<button
 								on:click={() => { populateFromConfig(template.config_snapshot); name = template.name; showTemplateSelector = false; }}
-								class="w-full rounded-lg border border-[#333] bg-[#121212] p-3 text-left transition hover:border-sky-500/30"
+								class="w-full border border-[#222] bg-black p-3 text-left transition-colors hover:border-[#555]"
 							>
-								<div class="pr-6 text-sm font-medium text-white">{template.name}</div>
-								<div class="mt-0.5 text-xs text-gray-500">{template.description}</div>
+								<div class="pr-8 text-sm font-bold text-white">{template.name}</div>
+								<div class="mt-0.5 text-xs text-[#777]">{template.description}</div>
 							</button>
 							{#if !template.is_builtin}
-								<button
-									type="button"
-									on:click={() => handleDeleteTemplate(template)}
-									disabled={deletingTemplateId === template.id}
-									aria-label={`Delete template ${template.name}`}
-									title="Delete template"
-									class="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md text-gray-500 transition hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-50"
-								>
-									{#if deletingTemplateId === template.id}
-										<span class="h-3 w-3 animate-spin rounded-full border border-rose-400/40 border-t-rose-400"></span>
-									{:else}
-										&times;
-									{/if}
-								</button>
+								{#if confirmDeleteTemplateId === template.id}
+									<div class="absolute right-2 top-2 flex gap-1">
+										<button
+											type="button"
+											on:click={() => handleDeleteTemplate(template)}
+											disabled={deletingTemplateId === template.id}
+											class="border border-red-900 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-400 hover:bg-red-500 hover:text-white"
+										>{deletingTemplateId === template.id ? '…' : 'Delete'}</button>
+										<button type="button" on:click={() => (confirmDeleteTemplateId = null)} class="border border-[#333] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[#888]">×</button>
+									</div>
+								{:else}
+									<button
+										type="button"
+										on:click={() => (confirmDeleteTemplateId = template.id)}
+										aria-label={`Delete template ${template.name}`}
+										title="Delete template"
+										class="absolute right-2 top-2 flex h-6 w-6 items-center justify-center text-[#555] transition-colors hover:text-red-400"
+									>&times;</button>
+								{/if}
 							{/if}
 						</div>
 					{/each}
 				</div>
-				<button on:click={() => (showTemplateSelector = false)} class="mt-3 text-xs text-gray-500 hover:text-gray-300">
+				<button on:click={() => (showTemplateSelector = false)} class="mt-3 text-[11px] uppercase tracking-wider text-[#666] hover:text-white">
 					or start from scratch &rarr;
 				</button>
 			</div>
 		{/if}
 
-		<!-- Tabs -->
-		<div class="mb-4 flex gap-1 rounded-lg border border-[#2a2a2a] bg-[#121212] p-1">
-			{#each [['core', 'Core'], ['trading', 'Trading'], ['advanced', 'Advanced']] as [key, label]}
-				<button
-					on:click={() => (activeTab = key as typeof activeTab)}
-					class="flex-1 rounded-md px-3 py-1.5 text-sm transition {activeTab === key ? 'bg-[#2a2a2a] text-white font-medium' : 'text-gray-500 hover:text-gray-300'}"
-				>
-					{label}
-				</button>
-			{/each}
-		</div>
+		<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+			<!-- Form column -->
+			<div class="space-y-6 lg:col-span-2">
+				<!-- Identity -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Identity</div>
+					<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+						<div>
+							<label for="name" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Name</label>
+							<input id="name" bind:value={name} class="terminal-input" />
+						</div>
+						<div>
+							<label for="model" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Model</label>
+							<input id="model" bind:value={model} placeholder="(default provider)" class="terminal-input" />
+							<p class="mt-1 text-[11px] text-[#555]">Blank = your configured default provider.</p>
+						</div>
+					</div>
+				</section>
 
-		<!-- Tab content -->
-		<div class="rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] p-6">
-			{#if activeTab === 'core'}
-				<div class="space-y-4">
-					<div class="grid grid-cols-2 gap-4">
+				<!-- Persona -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Persona &amp; Strategy</div>
+					<div class="space-y-4 p-4">
 						<div>
-							<label for="name" class="mb-1 block text-xs font-medium text-gray-400">Name</label>
-							<input id="name" bind:value={name} class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
+							<label for="soul" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Soul <span class="normal-case text-[#555]">— personality, temperament, decision style</span></label>
+							<textarea id="soul" bind:value={soul} rows="4" class="terminal-input resize-y" placeholder="You are an aggressive momentum trader who thrives on volatility..."></textarea>
 						</div>
 						<div>
-							<label for="model" class="mb-1 block text-xs font-medium text-gray-400">Model</label>
-							<input id="model" bind:value={model} placeholder="(default provider)" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-							<p class="mt-1 text-xs text-gray-600">Leave blank to use your configured default provider.</p>
+							<label for="strategy" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Strategy <span class="normal-case text-[#555]">— trading approach, broad or narrow</span></label>
+							<textarea id="strategy" bind:value={strategy} rows="4" class="terminal-input resize-y" placeholder="Trade momentum breakouts on high-volume assets..."></textarea>
+						</div>
+						<div>
+							<label for="context" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Context <span class="normal-case text-[#555]">— seed knowledge, research notes, market thesis</span></label>
+							<textarea id="context" bind:value={context} rows="3" class="terminal-input resize-y" placeholder="BTC tends to correlate with macro risk-on sentiment..."></textarea>
+						</div>
+						<div>
+							<label for="guardrails" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Guardrails <span class="normal-case text-[#555]">— behavioral rules (best-effort, LLM-interpreted)</span></label>
+							<textarea id="guardrails" bind:value={guardrails} rows="3" class="terminal-input resize-y" placeholder="Never hold a position for more than 2 hours..."></textarea>
 						</div>
 					</div>
-					<div>
-						<label for="soul" class="mb-1 block text-xs font-medium text-gray-400">Soul <span class="text-gray-600">— personality, temperament, decision style</span></label>
-						<textarea id="soul" bind:value={soul} rows="4" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" placeholder="You are an aggressive momentum trader who thrives on volatility..."></textarea>
+				</section>
+
+				<!-- Risk & sizing -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Risk &amp; Sizing</div>
+					<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+						<div>
+							<label for="capital" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Capital Allocation ($)</label>
+							<input id="capital" type="number" bind:value={capitalAllocation} min="0.01" step="any" class="terminal-input" />
+						</div>
+						<div>
+							<label for="maxPos" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Max Position Size (%)</label>
+							<input id="maxPos" type="number" bind:value={maxPositionPct} min="0.01" max="100" step="0.5" class="terminal-input" />
+						</div>
+						<div>
+							<label for="maxConcurrent" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Max Concurrent Positions</label>
+							<input id="maxConcurrent" type="number" bind:value={maxConcurrentPositions} min="1" max="100" step="1" class="terminal-input" />
+						</div>
+						<div>
+							<label for="maxDrawdown" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Max Drawdown (%)</label>
+							<input id="maxDrawdown" type="number" bind:value={maxDrawdownPct} min="0.01" max="100" step="0.5" class="terminal-input" />
+						</div>
+						<div>
+							<label for="stopLoss" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Stop Loss (%) <span class="normal-case text-[#555]">— required for live</span></label>
+							<input id="stopLoss" type="number" bind:value={stopLossPct} min="0.01" max="100" step="0.5" placeholder="none" class="terminal-input" />
+						</div>
+						<div>
+							<label for="takeProfit" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Take Profit (%) <span class="normal-case text-[#555]">— optional</span></label>
+							<input id="takeProfit" type="number" bind:value={takeProfitPct} min="0.01" step="0.5" placeholder="none" class="terminal-input" />
+						</div>
 					</div>
-					<div>
-						<label for="strategy" class="mb-1 block text-xs font-medium text-gray-400">Strategy <span class="text-gray-600">— trading approach, broad or narrow</span></label>
-						<textarea id="strategy" bind:value={strategy} rows="4" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" placeholder="Trade momentum breakouts on high-volume assets..."></textarea>
-					</div>
-					<div>
-						<label for="context" class="mb-1 block text-xs font-medium text-gray-400">Context <span class="text-gray-600">— seed knowledge, research notes, market thesis</span></label>
-						<textarea id="context" bind:value={context} rows="3" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" placeholder="BTC tends to correlate with macro risk-on sentiment..."></textarea>
-					</div>
-					<div>
-						<label for="guardrails" class="mb-1 block text-xs font-medium text-gray-400">Guardrails <span class="text-gray-600">— behavioral rules (best-effort, LLM-interpreted)</span></label>
-						<textarea id="guardrails" bind:value={guardrails} rows="3" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" placeholder="Never hold a position for more than 2 hours..."></textarea>
-					</div>
-				</div>
-			{:else if activeTab === 'trading'}
-				<div class="space-y-4">
-					<div class="grid grid-cols-2 gap-4">
+				</section>
+
+				<!-- Execution -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Execution</div>
+					<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
 						<div>
-							<label for="capital" class="mb-1 block text-xs font-medium text-gray-400">Capital Allocation ($)</label>
-							<input id="capital" type="number" bind:value={capitalAllocation} min="0.01" step="any" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
+							<label for="takerFee" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Taker Fee (bps) <span class="normal-case text-[#555]">— paper cost model</span></label>
+							<input id="takerFee" type="number" bind:value={takerFeeBps} min="0" step="0.1" class="terminal-input" />
 						</div>
 						<div>
-							<label for="maxPos" class="mb-1 block text-xs font-medium text-gray-400">Max Position Size (%)</label>
-							<input id="maxPos" type="number" bind:value={maxPositionPct} min="0.01" max="100" step="0.5" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
+							<label for="slippage" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Slippage (bps) <span class="normal-case text-[#555]">— paper cost model</span></label>
+							<input id="slippage" type="number" bind:value={slippageBps} min="0" step="0.1" class="terminal-input" />
 						</div>
 						<div>
-							<label for="maxConcurrent" class="mb-1 block text-xs font-medium text-gray-400">Max Concurrent Positions</label>
-							<input id="maxConcurrent" type="number" bind:value={maxConcurrentPositions} min="1" max="100" step="1" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
+							<label for="cooldown" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Decision Cadence (seconds)</label>
+							<input id="cooldown" type="number" bind:value={cooldownSeconds} min="1" step="1" class="terminal-input" />
 						</div>
 						<div>
-							<label for="maxDrawdown" class="mb-1 block text-xs font-medium text-gray-400">Max Drawdown (%)</label>
-							<input id="maxDrawdown" type="number" bind:value={maxDrawdownPct} min="0.01" max="100" step="0.5" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-						</div>
-						<div>
-							<label for="stopLoss" class="mb-1 block text-xs font-medium text-gray-400">Stop Loss (%) <span class="text-gray-600">— optional</span></label>
-							<input id="stopLoss" type="number" bind:value={stopLossPct} min="0.01" max="100" step="0.5" placeholder="none" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-						</div>
-						<div>
-							<label for="takeProfit" class="mb-1 block text-xs font-medium text-gray-400">Take Profit (%) <span class="text-gray-600">— optional</span></label>
-							<input id="takeProfit" type="number" bind:value={takeProfitPct} min="0.01" step="0.5" placeholder="none" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-						</div>
-						<div>
-							<label for="takerFee" class="mb-1 block text-xs font-medium text-gray-400">Taker Fee (bps)</label>
-							<input id="takerFee" type="number" bind:value={takerFeeBps} min="0" step="0.1" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-						</div>
-						<div>
-							<label for="slippage" class="mb-1 block text-xs font-medium text-gray-400">Slippage (bps)</label>
-							<input id="slippage" type="number" bind:value={slippageBps} min="0" step="0.1" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-						</div>
-						<div>
-							<label for="cooldown" class="mb-1 block text-xs font-medium text-gray-400">Cooldown (seconds)</label>
-							<input id="cooldown" type="number" bind:value={cooldownSeconds} min="1" step="1" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
-						</div>
-						<div>
-							<label for="verbosity" class="mb-1 block text-xs font-medium text-gray-400">Reasoning Verbosity</label>
-							<select id="verbosity" bind:value={reasoningVerbosity} class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white">
+							<label for="verbosity" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Reasoning Verbosity</label>
+							<select id="verbosity" bind:value={reasoningVerbosity} class="terminal-select">
 								<option value="minimal">Minimal</option>
 								<option value="standard">Standard</option>
 								<option value="verbose">Verbose</option>
 							</select>
 						</div>
 					</div>
+				</section>
 
-					<div>
-						<span class="mb-1 block text-xs font-medium text-gray-400">Asset Mode</span>
+				<!-- Universe -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Universe</div>
+					<div class="space-y-4 p-4">
 						<div class="flex gap-2">
 							<button
 								on:click={() => (assetMode = 'free_roam')}
-								class="rounded-lg px-4 py-2 text-sm {assetMode === 'free_roam' ? 'bg-sky-600/20 border border-sky-500/30 text-sky-300' : 'border border-[#333] bg-[#121212] text-gray-400'}"
-							>Default Pairs (BTC/ETH)</button>
+								class="{assetMode === 'free_roam' ? 'terminal-button-primary' : 'terminal-button'} text-xs"
+							>Free Roam</button>
 							<button
 								on:click={() => (assetMode = 'locked')}
-								class="rounded-lg px-4 py-2 text-sm {assetMode === 'locked' ? 'bg-sky-600/20 border border-sky-500/30 text-sky-300' : 'border border-[#333] bg-[#121212] text-gray-400'}"
+								class="{assetMode === 'locked' ? 'terminal-button-primary' : 'terminal-button'} text-xs"
 							>Locked Pairs</button>
 						</div>
 						{#if assetMode === 'free_roam'}
-							<p class="mt-1 text-xs text-gray-600">Observes only BTC/USDT and ETH/USDT — this is NOT a market-wide scan. Use Locked Pairs to pick specific symbols.</p>
-						{/if}
-					</div>
-
-					{#if assetMode === 'locked'}
-						<div>
-							<label for="pairs" class="mb-1 block text-xs font-medium text-gray-400">Locked Pairs (comma-separated)</label>
-							<input id="pairs" bind:value={lockedPairsText} class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" placeholder="BTC/USDT, ETH/USDT, SOL/USDT" />
-						</div>
-					{/if}
-
-					<!-- Session Hours -->
-					<div class="rounded-lg border border-[#2a2a2a] bg-[#121212] p-4">
-						<label class="flex items-center gap-2 text-xs font-medium text-gray-300">
-							<input type="checkbox" bind:checked={sessionHoursEnabled} class="h-3.5 w-3.5 rounded border-[#333] bg-[#1a1a1a]" />
-							Restrict to session hours
-						</label>
-						<p class="mt-1 text-xs text-gray-600">When off, the bot is always active. When on, it only trades within the window below.</p>
-
-						{#if sessionHoursEnabled}
-							<div class="mt-4 space-y-4">
-								<div class="grid grid-cols-2 gap-4">
-									<div>
-										<label for="sessionTz" class="mb-1 block text-xs font-medium text-gray-400">Timezone</label>
-										<input id="sessionTz" bind:value={sessionTimezone} placeholder="America/New_York" class="w-full rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2 text-sm text-white" />
-									</div>
-									<div class="grid grid-cols-2 gap-4">
-										<div>
-											<label for="sessionStart" class="mb-1 block text-xs font-medium text-gray-400">Start (HH:MM)</label>
-											<input id="sessionStart" type="time" bind:value={sessionStart} class="w-full rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2 text-sm text-white" />
-										</div>
-										<div>
-											<label for="sessionEnd" class="mb-1 block text-xs font-medium text-gray-400">End (HH:MM)</label>
-											<input id="sessionEnd" type="time" bind:value={sessionEnd} class="w-full rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2 text-sm text-white" />
-										</div>
-									</div>
-								</div>
-								<div>
-									<span class="mb-1 block text-xs font-medium text-gray-400">Active Days</span>
-									<div class="flex flex-wrap gap-2">
-										{#each WEEKDAYS as day}
-											<button
-												type="button"
-												on:click={() => toggleSessionDay(day)}
-												class="rounded-lg px-3 py-1.5 text-xs capitalize {sessionDays.includes(day) ? 'bg-sky-600/20 border border-sky-500/30 text-sky-300' : 'border border-[#333] bg-[#1a1a1a] text-gray-400'}"
-											>{day.slice(0, 3)}</button>
-										{/each}
-									</div>
-									<p class="mt-1 text-xs text-gray-600">An end earlier than start is treated as an overnight window.</p>
-								</div>
+							<p class="text-[11px] text-[#555]">Watches the top perps by 24h volume from the research universe (up to 6 pairs, refreshed hourly). Use Locked Pairs to pin specific symbols.</p>
+						{:else}
+							<div>
+								<label for="pairs" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Locked Pairs (comma-separated)</label>
+								<input id="pairs" bind:value={lockedPairsText} class="terminal-input" placeholder="BTC/USDT, ETH/USDT, SOL/USDT" />
 							</div>
 						{/if}
 					</div>
-				</div>
-			{:else if activeTab === 'advanced'}
-				<div class="space-y-4">
-					<div class="grid grid-cols-2 gap-4">
+				</section>
+
+				<!-- Execution: paper vs live + wallet -->
+				<section class="terminal-card {execMode === 'live' ? 'border-red-900' : ''}">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Execution</div>
+					<div class="space-y-4 p-4">
 						<div>
-							<label for="llmCap" class="mb-1 block text-xs font-medium text-gray-400">Daily LLM Call Cap</label>
-							<input id="llmCap" type="number" bind:value={maxLlmCallsPerDay} min="1" step="1" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
+							<span class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Mode</span>
+							<div class="flex gap-2">
+								<button
+									on:click={() => (execMode = 'paper')}
+									class="{execMode === 'paper' ? 'terminal-button-primary' : 'terminal-button'} text-xs"
+								>Paper</button>
+								<button
+									on:click={() => (execMode = 'live')}
+									class="text-xs {execMode === 'live' ? 'border border-red-500 bg-red-500 px-3 py-1.5 font-bold uppercase tracking-wide text-white' : 'terminal-button-danger'}"
+								>Live</button>
+							</div>
+							{#if execMode === 'paper'}
+								<p class="mt-1.5 text-[11px] text-[#555]">Simulated fills against live market data — no real orders. {editExecutionMode === 'live' ? 'Saving will DISARM live execution (refused while real positions are open).' : ''}</p>
+							{:else if editExecutionMode === 'live'}
+								<p class="mt-1.5 text-[11px] text-red-400">Armed LIVE — real Hyperliquid orders through the full risk gate stack.</p>
+							{/if}
+						</div>
+
+						{#if needsArming}
+							<div class="border border-red-900 bg-red-500/5 p-3">
+								<p class="text-[11px] leading-relaxed text-[#aaa]">
+									Going live places <span class="font-bold text-red-400">real Hyperliquid orders</span>, admission-checked against the
+									account's live risk budget on every open. A stop-loss % is required (set it under Risk &amp; Sizing — this save can include it).
+								</p>
+								<div class="mt-3 flex flex-wrap items-end gap-3">
+									<div class="flex flex-col gap-1">
+										<label for="arm-ceiling" class="text-[10px] uppercase tracking-wider text-[#666]">Per-order notional ceiling (USD)</label>
+										<input id="arm-ceiling" type="number" min="1" bind:value={armCeiling} placeholder="e.g. 250" class="terminal-input w-44 focus:border-red-500" />
+									</div>
+									<div class="flex flex-col gap-1">
+										<label for="arm-confirm" class="text-[10px] uppercase tracking-wider text-[#666]">Type <span class="font-bold text-red-400">GO LIVE</span> to confirm</label>
+										<input id="arm-confirm" type="text" bind:value={armConfirm} placeholder="GO LIVE" class="terminal-input w-44 focus:border-red-500" />
+									</div>
+								</div>
+								{#if stopLossPct == null}
+									<p class="mt-2 text-[11px] text-yellow-500">No stop-loss set yet — going live will be refused until one is entered under Risk &amp; Sizing.</p>
+								{/if}
+								{#if !armReady}
+									<p class="mt-2 text-[11px] text-[#555]">Save unlocks once the ceiling and typed confirmation are filled.</p>
+								{/if}
+							</div>
+						{/if}
+
+						<div>
+							<label for="live-wallet" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Live orders route to</label>
+							<select id="live-wallet" bind:value={liveWallet} disabled={editExecutionMode === 'live'} class="terminal-select w-72">
+								<option value="">Master / shared (default)</option>
+								{#each walletOptions as label}
+									<option value={label}>{label} (isolated sub-account)</option>
+								{/each}
+								{#if liveWallet && !walletOptions.includes(liveWallet)}
+									<option value={liveWallet}>{liveWallet} (unregistered!)</option>
+								{/if}
+							</select>
+						</div>
+						{#if editExecutionMode === 'live'}
+							<p class="text-[11px] text-yellow-500">Bot is LIVE-armed — its wallet is locked. Switch to Paper (or re-arm via GO LIVE) to change it.</p>
+						{:else if liveWallet}
+							<p class="text-[11px] text-[#555]">Once armed live, ALL of this bot's orders trade on the <span class="font-bold text-white">{liveWallet}</span> sub-account — sized and budgeted against its own balance, fully isolated from the pipeline. Paper trading is unaffected.</p>
+						{:else}
+							<p class="text-[11px] text-[#555]">
+								Master / shared: live orders use the main wallet (with direction books when enabled). Register an isolated sub-account under
+								<a href="/settings#hyperliquid" class="text-[#999] underline hover:text-white">Settings › HyperLiquid</a> to appear here.
+							</p>
+						{/if}
+						{#if walletOptionsError}
+							<p class="text-[11px] text-red-400">Wallet list failed: {walletOptionsError}</p>
+						{/if}
+					</div>
+				</section>
+
+				<!-- Schedule -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Schedule</div>
+					<div class="space-y-4 p-4">
+						<label class="flex items-center gap-2 text-xs text-[#aaa]">
+							<input type="checkbox" bind:checked={sessionHoursEnabled} class="h-3.5 w-3.5 rounded-none border-[#333] bg-black" />
+							Restrict to session hours
+						</label>
+						<p class="text-[11px] text-[#555]">Off = always active. On = the bot only trades within the window below.</p>
+
+						{#if sessionHoursEnabled}
+							<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+								<div>
+									<label for="sessionTz" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Timezone</label>
+									<input id="sessionTz" bind:value={sessionTimezone} placeholder="America/New_York" class="terminal-input" />
+								</div>
+								<div class="grid grid-cols-2 gap-4">
+									<div>
+										<label for="sessionStart" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Start</label>
+										<input id="sessionStart" type="time" bind:value={sessionStart} class="terminal-input" />
+									</div>
+									<div>
+										<label for="sessionEnd" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">End</label>
+										<input id="sessionEnd" type="time" bind:value={sessionEnd} class="terminal-input" />
+									</div>
+								</div>
+							</div>
+							<div>
+								<span class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Active Days</span>
+								<div class="flex flex-wrap gap-1.5">
+									{#each WEEKDAYS as day}
+										<button
+											type="button"
+											on:click={() => toggleSessionDay(day)}
+											class="{sessionDays.includes(day) ? 'terminal-button-primary' : 'terminal-button'} px-2.5 py-1 text-[10px]"
+										>{day.slice(0, 3)}</button>
+									{/each}
+								</div>
+								<p class="mt-1 text-[11px] text-[#555]">An end earlier than start is treated as an overnight window.</p>
+							</div>
+						{/if}
+					</div>
+				</section>
+
+				<!-- Safety limits -->
+				<section class="terminal-card">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Safety Limits</div>
+					<div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+						<div>
+							<label for="llmCap" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Daily LLM Call Cap</label>
+							<input id="llmCap" type="number" bind:value={maxLlmCallsPerDay} min="1" step="1" class="terminal-input" />
 						</div>
 						<div>
-							<label for="maxErrors" class="mb-1 block text-xs font-medium text-gray-400">Circuit Breaker (max errors)</label>
-							<input id="maxErrors" type="number" bind:value={maxConsecutiveErrors} min="1" step="1" class="w-full rounded-lg border border-[#333] bg-[#121212] px-3 py-2 text-sm text-white" />
+							<label for="maxErrors" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Circuit Breaker (max consecutive errors)</label>
+							<input id="maxErrors" type="number" bind:value={maxConsecutiveErrors} min="1" step="1" class="terminal-input" />
 						</div>
 					</div>
+				</section>
+			</div>
+
+			<!-- Summary rail -->
+			<div class="lg:col-span-1">
+				<div class="terminal-card sticky top-6">
+					<div class="border-b border-[#1a1a1a] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888]">Summary</div>
+					<div class="space-y-0 text-xs">
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Bot</span>
+							<span class="max-w-[60%] truncate font-bold text-white">{name || '—'}</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Mode</span>
+							{#if execMode === 'live'}
+								<span class="border border-red-900 bg-red-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-red-400">
+									Live{#if needsArming}<span class="text-[#888]"> — arms on save</span>{/if}
+								</span>
+							{:else}
+								<span class="border border-[#333] px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-[#888]">
+									Paper{#if editExecutionMode === 'live'}<span class="text-yellow-500"> — disarms on save</span>{/if}
+								</span>
+							{/if}
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Model</span>
+							<span class="max-w-[60%] truncate text-white">{model.trim() || 'default'}</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Capital</span>
+							<span class="text-white">${(capitalAllocation || 0).toLocaleString()}</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Max per position</span>
+							<span class="text-white">${maxPositionUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span class="text-[#555]">({maxPositionPct}%)</span></span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Concurrent / Drawdown</span>
+							<span class="text-white">{maxConcurrentPositions} / {maxDrawdownPct}%</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Stop / Target</span>
+							<span class="text-white">
+								<span class={stopLossPct != null ? 'text-red-400' : 'text-[#555]'}>{stopLossPct != null ? `${stopLossPct}%` : 'none'}</span>
+								<span class="text-[#555]"> / </span>
+								<span class={takeProfitPct != null ? 'text-emerald-400' : 'text-[#555]'}>{takeProfitPct != null ? `${takeProfitPct}%` : 'none'}</span>
+							</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Cadence</span>
+							<span class="text-white">every {cadenceLabel}</span>
+						</div>
+						<div class="flex items-start justify-between gap-3 border-b border-[#111] px-4 py-2.5">
+							<span class="shrink-0 text-[#666]">Universe</span>
+							<span class="text-right text-white">{universeLabel}</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Wallet</span>
+							<span class="text-white">{liveWallet || 'master / shared'}</span>
+						</div>
+						<div class="flex items-center justify-between border-b border-[#111] px-4 py-2.5">
+							<span class="text-[#666]">Session</span>
+							<span class="text-white">{sessionHoursEnabled ? `${sessionStart}–${sessionEnd}` : 'always on'}</span>
+						</div>
+						<div class="flex items-center justify-between px-4 py-2.5">
+							<span class="text-[#666]">LLM budget</span>
+							<span class="text-white">{maxLlmCallsPerDay}/day</span>
+						</div>
+					</div>
+					{#if stopLossPct == null}
+						<div class="border-t border-yellow-900/50 bg-yellow-500/5 px-4 py-2.5 text-[11px] text-yellow-500">
+							No stop-loss set — fine for paper, but GO LIVE will require one.
+						</div>
+					{/if}
+					<div class="border-t border-[#1a1a1a] p-3">
+						<button
+							on:click={handleSave}
+							disabled={saving || savingTemplate || !name.trim() || !armReady}
+							class="terminal-button-primary w-full text-xs"
+						>
+							{saving ? 'Saving…' : needsArming ? 'Save + Arm Live' : editId ? 'Save Changes' : 'Create Bot'}
+						</button>
+					</div>
 				</div>
-			{/if}
+			</div>
 		</div>
 	{/if}
 </div>

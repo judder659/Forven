@@ -216,22 +216,22 @@
 		<div class="flex items-center gap-1">
 			<button
 				type="button"
-				class="px-2 py-0.5 text-[10px] border rounded {overlayMode === 'normalized' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-[#333] text-gray-500'}"
+				class="border px-2 py-0.5 text-[10px] uppercase tracking-wide {overlayMode === 'normalized' ? 'border-white bg-white text-black' : 'border-[#333] text-gray-500 hover:border-[#555] hover:text-white'}"
 				on:click={() => overlayMode = 'normalized'}
 			>Return %</button>
 			<button
 				type="button"
-				class="px-2 py-0.5 text-[10px] border rounded {overlayMode === 'absolute' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-[#333] text-gray-500'}"
+				class="border px-2 py-0.5 text-[10px] uppercase tracking-wide {overlayMode === 'absolute' ? 'border-white bg-white text-black' : 'border-[#333] text-gray-500 hover:border-[#555] hover:text-white'}"
 				on:click={() => overlayMode = 'absolute'}
 			>Equity $</button>
 			<button
 				type="button"
-				class="px-2 py-0.5 text-[10px] border rounded {windowMode === 'recent' ? 'border-emerald-500 text-emerald-300 bg-emerald-900/20' : 'border-[#333] text-gray-500'}"
+				class="border px-2 py-0.5 text-[10px] uppercase tracking-wide {windowMode === 'recent' ? 'border-white bg-white text-black' : 'border-[#333] text-gray-500 hover:border-[#555] hover:text-white'}"
 				on:click={() => windowMode = 'recent'}
 			>Recent</button>
 			<button
 				type="button"
-				class="px-2 py-0.5 text-[10px] border rounded {windowMode === 'all' ? 'border-emerald-500 text-emerald-300 bg-emerald-900/20' : 'border-[#333] text-gray-500'}"
+				class="border px-2 py-0.5 text-[10px] uppercase tracking-wide {windowMode === 'all' ? 'border-white bg-white text-black' : 'border-[#333] text-gray-500 hover:border-[#555] hover:text-white'}"
 				on:click={() => windowMode = 'all'}
 			>All</button>
 		</div>
@@ -239,11 +239,11 @@
 
 	<div class="px-2 mb-1.5 flex items-center gap-3 text-[10px]">
 		<span class="text-gray-500">Best <span class="text-emerald-400 font-bold">{formatSigned(summary.bestReturn)}%</span></span>
-		<span class="text-gray-500">Avg <span class="text-cyan-300 font-bold">{formatSigned(summary.avgReturn)}%</span></span>
+		<span class="text-gray-500">Avg <span class="font-bold text-white">{formatSigned(summary.avgReturn)}%</span></span>
 		<span class="text-gray-500">Worst DD <span class="text-red-400 font-bold">{summary.worstDd.toFixed(2)}%</span></span>
 	</div>
 
-	<div class="flex-1 border border-[#222] rounded overflow-hidden min-h-[200px] relative" bind:this={container}>
+	<div class="relative min-h-[200px] flex-1 overflow-hidden border border-[#222]" bind:this={container}>
 		{#if loading}
 			<div class="absolute inset-0 flex items-center justify-center text-xs text-gray-500 bg-[#0a0a0a]/70 z-10 pointer-events-none">Loading equity curves...</div>
 		{:else if !loading && baseSeries.length === 0}

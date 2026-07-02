@@ -59,7 +59,7 @@
 	});
 </script>
 
-<div class="flex h-full flex-col rounded border border-[#222] bg-[#0a0a0a] p-2.5" data-testid="system-pulse-panel">
+<div class="flex h-full flex-col border border-[#222] bg-[#050505] p-2.5" data-testid="system-pulse-panel">
 	<div class="mb-1.5 flex items-center justify-between">
 		<h2 class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">System pulse</h2>
 		{#if pulse}

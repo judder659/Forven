@@ -272,7 +272,7 @@
 	}
 
 	const inputCls =
-		'rounded border border-[#2b2b2b] bg-[#050505] px-2 py-1 text-[12px] text-white outline-none transition focus:border-cyan-400/60 disabled:opacity-40';
+		'border border-[#333] bg-black px-2 py-1 text-[12px] text-white outline-none transition-colors focus:border-white disabled:opacity-40';
 
 	const SIDE_META: { key: keyof typeof sides; label: string; short: boolean }[] = [
 		{ key: 'entry_long', label: 'Entry — Long', short: false },
@@ -285,10 +285,10 @@
 
 <!-- input/change bubble up; bump() recomputes derived spec -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="space-y-5" on:input={bump} on:change={bump}>
+<div class="space-y-4" on:input={bump} on:change={bump}>
 	<!-- Indicator palette + active instances -->
-	<div class="rounded-xl border border-[#1a1a1a] bg-[#070707] p-3">
-		<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Indicators</div>
+	<div class="border border-[#222] bg-[#050505] p-3">
+		<div class="text-[10px] uppercase tracking-wider text-[#666]">Indicators</div>
 		<div class="mt-2 flex flex-wrap items-center gap-2">
 			<input
 				bind:value={paletteSearch}
@@ -300,7 +300,7 @@
 			<div class="flex flex-wrap gap-1">
 				{#each categories as cat}
 					<button type="button" on:click={() => (paletteCat = cat)} {disabled}
-						class="rounded px-2 py-1 text-[10px] transition {paletteCat === cat ? 'bg-cyan-500/20 text-cyan-200' : 'bg-[#111] text-gray-500 hover:text-gray-300'}">
+						class="border px-2 py-1 text-[10px] uppercase tracking-wide transition-colors {paletteCat === cat ? 'border-white bg-white text-black' : 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white'}">
 						{cat}
 					</button>
 				{/each}
@@ -309,16 +309,16 @@
 		<div class="mt-2 grid max-h-44 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
 			{#each paletteResults as meta (meta.kind)}
 				<button type="button" on:click={() => addIndicator(meta)} {disabled}
-					class="group flex items-start gap-2 rounded border border-[#1a1a1a] bg-[#0a0a0a] px-2 py-1.5 text-left transition hover:border-cyan-500/40 hover:bg-cyan-500/5 disabled:opacity-40">
-					<span class="mt-0.5 text-cyan-400/70 group-hover:text-cyan-300">＋</span>
+					class="group flex items-start gap-2 border border-[#222] bg-black px-2 py-1.5 text-left transition-colors hover:border-white disabled:opacity-40">
+					<span class="mt-0.5 text-[#666] group-hover:text-white">＋</span>
 					<span class="min-w-0">
-						<span class="block truncate text-[12px] text-gray-200">{meta.label}</span>
-						<span class="block truncate text-[10px] text-gray-600">{meta.category}</span>
+						<span class="block truncate text-[12px] text-[#aaa] group-hover:text-white">{meta.label}</span>
+						<span class="block truncate text-[10px] text-[#555]">{meta.category}</span>
 					</span>
 				</button>
 			{/each}
 			{#if paletteResults.length === 0}
-				<div class="col-span-full px-2 py-3 text-[11px] text-gray-600">No indicators match “{paletteSearch}”.</div>
+				<div class="col-span-full px-2 py-3 text-[11px] text-[#555]">No indicators match “{paletteSearch}”.</div>
 			{/if}
 		</div>
 
@@ -326,23 +326,23 @@
 		<div class="mt-3 space-y-2">
 			{#each instances as inst, i (inst.uid)}
 				{@const meta = metaByKind[inst.kind]}
-				<div class="flex flex-wrap items-center gap-2 rounded border border-[#1a1a1a] bg-[#0a0a0a] p-2">
-					<span class="rounded bg-[#1a1a1a] px-1.5 py-0.5 text-[10px] text-gray-400">{meta?.label ?? inst.kind}</span>
+				<div class="flex flex-wrap items-center gap-2 border border-[#222] bg-black p-2">
+					<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#888]">{meta?.label ?? inst.kind}</span>
 					<input class={`${inputCls} w-24`} bind:value={inst.id} {disabled} placeholder="id" aria-label="indicator id" />
 					{#each meta?.params ?? [] as p}
-						<label class="flex items-center gap-1 text-[10px] text-gray-500">
+						<label class="flex items-center gap-1 text-[10px] text-[#666]">
 							{p.key}
 							<input type="number" class={`${inputCls} w-16`} bind:value={inst.params[p.key]}
 								min={p.min} max={p.max} step={p.step} {disabled} />
 						</label>
 					{/each}
-					<span class="ml-auto font-mono text-[10px] text-gray-600">→ {outputNames(inst).join(', ')}</span>
+					<span class="ml-auto font-mono text-[10px] text-[#555]">→ {outputNames(inst).join(', ')}</span>
 					<button type="button" on:click={() => removeIndicator(i)} {disabled}
-						class="rounded px-1.5 text-[12px] text-gray-500 hover:text-red-300" aria-label="remove indicator">✕</button>
+						class="px-1.5 text-[12px] text-[#555] hover:text-red-400" aria-label="remove indicator">✕</button>
 				</div>
 			{/each}
 			{#if instances.length === 0}
-				<div class="rounded border border-dashed border-[#1f1f1f] px-3 py-2 text-[11px] text-gray-600">
+				<div class="border border-dashed border-[#333] px-3 py-2 text-[11px] text-[#555]">
 					No indicators yet — click one above, or build conditions on raw price/volume.
 				</div>
 			{/if}
@@ -352,41 +352,41 @@
 	<!-- Parameters -->
 	<div>
 		<div class="flex items-center justify-between">
-			<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">
-				Parameters <span class="normal-case tracking-normal text-gray-600">(tunable knobs you can reference in conditions)</span>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">
+				Parameters <span class="normal-case tracking-normal text-[#555]">(tunable knobs you can reference in conditions)</span>
 			</div>
 			<button type="button" on:click={addParam} {disabled}
-				class="rounded border border-[#2b2b2b] bg-[#111] px-2 py-1 text-[11px] text-gray-300 hover:text-white disabled:opacity-40">+ Parameter</button>
+				class="terminal-button px-2 py-1 text-[10px]">+ Parameter</button>
 		</div>
 		<div class="mt-2 flex flex-wrap gap-2">
 			{#each params as p, i (p.uid)}
-				<div class="flex items-center gap-1.5 rounded border border-[#1a1a1a] bg-[#0a0a0a] p-1.5">
+				<div class="flex items-center gap-1.5 border border-[#222] bg-[#050505] p-1.5">
 					<input class={`${inputCls} w-28`} bind:value={p.name} {disabled} placeholder="name" aria-label="parameter name" />
-					<span class="text-gray-600">=</span>
+					<span class="text-[#555]">=</span>
 					<input type="number" class={`${inputCls} w-20`} bind:value={p.value} {disabled} step="any" aria-label="parameter value" />
 					<button type="button" on:click={() => removeParam(i)} {disabled}
-						class="px-1 text-[12px] text-gray-500 hover:text-red-300" aria-label="remove parameter">✕</button>
+						class="px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove parameter">✕</button>
 				</div>
 			{/each}
 			{#if params.length === 0}
-				<span class="text-[11px] text-gray-600">No parameters.</span>
+				<span class="text-[11px] text-[#555]">No parameters.</span>
 			{/if}
 		</div>
 	</div>
 
 	<!-- Short side toggle -->
 	{#if !showShort}
-		<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-cyan-300/80 hover:text-cyan-200">+ Add short side</button>
+		<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#888] hover:text-white">+ Add short side</button>
 	{:else}
-		<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-gray-500 hover:text-red-300">− Remove short side</button>
+		<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#666] hover:text-red-400">− Remove short side</button>
 	{/if}
 
 	<!-- Condition sides -->
 	{#each visibleSides as sm (sm.key)}
 		{@const side = sides[sm.key]}
-		<div class="rounded-xl border border-[#1a1a1a] bg-[#070707] p-3">
+		<div class="border border-[#222] bg-[#050505] p-3">
 			<div class="flex items-center justify-between">
-				<div class="text-[10px] uppercase tracking-[0.2em] text-gray-400">{sm.label}</div>
+				<div class="text-[10px] uppercase tracking-wider text-[#888]">{sm.label}</div>
 				<div class="flex items-center gap-2">
 					{#if side.rows.length > 1}
 						<select class={inputCls} bind:value={side.logic} {disabled} aria-label="combine logic">
@@ -395,22 +395,22 @@
 						</select>
 					{/if}
 					<button type="button" on:click={() => addCond(side)} {disabled}
-						class="rounded border border-[#2b2b2b] bg-[#111] px-2 py-1 text-[11px] text-gray-300 hover:text-white disabled:opacity-40">+ Condition</button>
+						class="terminal-button px-2 py-1 text-[10px]">+ Condition</button>
 					<button type="button" on:click={() => addGroup(side)} {disabled}
-						class="rounded border border-[#2b2b2b] bg-[#111] px-2 py-1 text-[11px] text-gray-300 hover:text-white disabled:opacity-40">+ Group</button>
+						class="terminal-button px-2 py-1 text-[10px]">+ Group</button>
 				</div>
 			</div>
 			<div class="mt-2 space-y-2">
 				{#each side.rows as row, ri (row.uid)}
 					{#if row.kind === 'group'}
-						<div class="rounded-lg border border-[#222] bg-[#0a0a0a] p-2">
+						<div class="border border-[#333] bg-black p-2">
 							<div class="mb-1.5 flex items-center justify-between">
 								<select class={inputCls} bind:value={row.logic} {disabled} aria-label="group logic">
 									<option value="or">ANY (OR)</option>
 									<option value="and">ALL (AND)</option>
 								</select>
 								<button type="button" on:click={() => removeRow(side, ri)} {disabled}
-									class="px-1 text-[12px] text-gray-500 hover:text-red-300" aria-label="remove group">✕ group</button>
+									class="px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove group">✕ group</button>
 							</div>
 							<div class="space-y-2">
 								{#each row.conds as cond (cond.uid)}
@@ -453,11 +453,11 @@
 											<input type="number" class={`${inputCls} w-24`} bind:value={cond.right.value} {disabled} step="any" />
 										{/if}
 										<button type="button" on:click={() => removeGroupCond(row, row.conds.indexOf(cond))} {disabled}
-											class="ml-auto px-1 text-[12px] text-gray-500 hover:text-red-300" aria-label="remove condition">✕</button>
+											class="ml-auto px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove condition">✕</button>
 									</div>
 								{/each}
 								<button type="button" on:click={() => addGroupCond(row)} {disabled}
-									class="text-[11px] text-cyan-300/70 hover:text-cyan-200">+ condition in group</button>
+									class="text-[11px] text-[#888] hover:text-white">+ condition in group</button>
 							</div>
 						</div>
 					{:else}
@@ -498,12 +498,12 @@
 								<input type="number" class={`${inputCls} w-24`} bind:value={row.right.value} {disabled} step="any" />
 							{/if}
 							<button type="button" on:click={() => removeRow(side, ri)} {disabled}
-								class="ml-auto px-1 text-[12px] text-gray-500 hover:text-red-300" aria-label="remove condition">✕</button>
+								class="ml-auto px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove condition">✕</button>
 						</div>
 					{/if}
 				{/each}
 				{#if side.rows.length === 0}
-					<div class="text-[11px] text-gray-600">No conditions{sm.short ? ' (short side optional)' : ''}.</div>
+					<div class="text-[11px] text-[#555]">No conditions{sm.short ? ' (short side optional)' : ''}.</div>
 				{/if}
 			</div>
 		</div>
@@ -511,7 +511,7 @@
 
 	{#if errors.length}
 		<div class="space-y-1" role="alert">
-			{#each errors as e}<div class="rounded border border-amber-900/40 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">{e}</div>{/each}
+			{#each errors as e}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{e}</div>{/each}
 		</div>
 	{/if}
 </div>

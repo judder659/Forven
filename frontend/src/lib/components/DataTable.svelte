@@ -14,9 +14,9 @@
 	export let rowKey: string | ((row: unknown, index: number) => string | number) = 'id';
 	export let tableClass = 'w-full text-xs';
 	export let headerClass = 'bg-[#111]';
-	export let rowClass = 'border-t border-[#1a1a1a] hover:bg-[#0a0a0a]';
+	export let rowClass = 'border-t border-[#1a1a1a] hover:bg-[#111]';
 	export let emptyText = 'No rows';
-	export let emptyClass = 'px-4 py-8 text-center text-gray-600';
+	export let emptyClass = 'px-4 py-8 text-center text-[#555]';
 	export let stickyHeader = false;
 
 	function alignClass(align: Align | undefined): string {

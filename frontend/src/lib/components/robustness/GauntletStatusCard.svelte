@@ -146,30 +146,30 @@
 	}
 
 	function scoreTone(score: number | null | undefined, min: number | null | undefined): string {
-		if (score == null) return 'border-[#2a2a2a] bg-[#0d0d0d] text-gray-400';
+		if (score == null) return 'border-[#333] bg-[#050505] text-[#888]';
 		const v = Number(score);
 		const floor = min == null ? 50 : Number(min);
-		if (v >= floor + 20) return 'border-emerald-800/40 bg-emerald-950/20 text-emerald-200';
-		if (v >= floor) return 'border-yellow-800/40 bg-yellow-950/20 text-yellow-200';
-		return 'border-red-900/40 bg-red-950/20 text-red-200';
+		if (v >= floor + 20) return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
+		if (v >= floor) return 'border-yellow-900 bg-yellow-500/10 text-yellow-400';
+		return 'border-red-900 bg-red-500/10 text-red-400';
 	}
 
 	function pillTone(entry: GauntletTestEntry | null | undefined): string {
 		const s = (entry?.status ?? 'not_started').toLowerCase();
 		const v = (entry?.verdict ?? '').toUpperCase();
 		if ((s === 'succeeded' || s === 'passed') && (!v || v === 'PASS')) {
-			return 'border-emerald-800/40 bg-emerald-950/30 text-emerald-200';
+			return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
 		}
 		if ((s === 'succeeded' || s === 'passed' || s === 'failed_gate') && v === 'FAIL') {
-			return 'border-red-900/40 bg-red-950/30 text-red-200';
+			return 'border-red-900 bg-red-500/10 text-red-400';
 		}
 		if (s === 'failed' || s === 'error' || s === 'failed_gate' || s === 'blocked_runtime' || s === 'blocked_data' || s === 'blocked_operator') {
-			return 'border-red-900/40 bg-red-950/30 text-red-200';
+			return 'border-red-900 bg-red-500/10 text-red-400';
 		}
 		if (s === 'running' || s === 'submitted' || s === 'queued' || s === 'pending') {
-			return 'border-cyan-800/40 bg-cyan-950/30 text-cyan-200 animate-pulse';
+			return 'border-yellow-900 bg-yellow-500/10 text-yellow-400 animate-pulse';
 		}
-		return 'border-[#2a2a2a] bg-[#0b0b0b] text-gray-500';
+		return 'border-[#333] text-[#888]';
 	}
 
 	function pillLabel(entry: GauntletTestEntry | null | undefined): string {
@@ -207,21 +207,21 @@
 
 	function tileTone(key: GauntletTestKey): string {
 		if (selectedTestKey === key) {
-			return 'border-cyan-700/60 bg-cyan-950/20 text-cyan-100 ring-1 ring-cyan-500/30';
+			return 'border-[#555] bg-[#111] text-white';
 		}
-		return 'border-[#1d1d1d] bg-black/40 text-gray-400 hover:border-[#333] hover:text-gray-200';
+		return 'border-[#1a1a1a] bg-[#050505] text-[#888] hover:border-[#333] hover:text-[#aaa]';
 	}
 </script>
 
 <div
 	data-testid="gauntlet-status-card"
-	class="rounded border border-[#1d1d1d] bg-[linear-gradient(180deg,#0b0b0b_0%,#070707_100%)] p-3 space-y-3"
+	class="terminal-card space-y-3 p-3"
 >
 	<div class="flex items-center justify-between gap-3">
 		<div class="flex items-center gap-2">
-			<span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">Gauntlet Status</span>
+			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Gauntlet Status</span>
 			{#if hasInFlight}
-				<span class="rounded-full border border-cyan-800/40 bg-cyan-950/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-200 animate-pulse">Live</span>
+				<span class="border border-yellow-900 bg-yellow-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-yellow-400 animate-pulse">Live</span>
 			{/if}
 		</div>
 		<button
@@ -229,48 +229,48 @@
 			data-testid="gauntlet-status-refresh"
 			on:click={() => void load()}
 			disabled={loading}
-			class="rounded border border-[#2a2a2a] bg-black px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-gray-400 hover:text-gray-200 disabled:opacity-50"
+			class="terminal-button px-2 py-0.5 text-[10px]"
 		>
 			{loading ? 'Loading...' : 'Refresh'}
 		</button>
 	</div>
 
 	{#if error}
-		<div class="rounded border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-300">
+		<div class="border border-red-900 bg-red-500/5 px-2.5 py-2 text-[11px] text-red-400">
 			{error}
 		</div>
 	{:else if !status && loading}
-		<div class="py-2 text-center text-[11px] text-gray-500">Loading gauntlet status...</div>
+		<div class="py-2 text-center text-[11px] text-[#555]">Loading gauntlet status...</div>
 	{:else if status && !status.ok}
-		<div class="rounded border border-yellow-900/40 bg-yellow-950/20 px-2.5 py-2 text-[11px] text-yellow-300">
+		<div class="border border-yellow-900 bg-yellow-500/5 px-2.5 py-2 text-[11px] text-yellow-400">
 			{status.error ?? 'Gauntlet status unavailable'}
 		</div>
 	{:else if status}
 		<div class="flex flex-wrap items-center gap-3">
 			<div
 				data-testid="gauntlet-composite-score"
-				class={`rounded border px-3 py-2 ${scoreTone(status.composite_robustness_score, status.min_robustness_score)}`}
+				class={`border px-3 py-2 ${scoreTone(status.composite_robustness_score, status.min_robustness_score)}`}
 				title={status.min_robustness_score != null ? `Gauntlet threshold: ${status.min_robustness_score}` : ''}
 			>
-				<div class="text-[9px] font-semibold uppercase tracking-[0.18em] opacity-80">Composite</div>
+				<div class="text-[9px] font-bold uppercase tracking-widest opacity-80">Composite</div>
 				<div class="text-lg font-bold leading-tight">{formatScore(status.composite_robustness_score)}</div>
-				<div class="text-[9px] uppercase tracking-[0.12em] opacity-70">
+				<div class="text-[9px] uppercase tracking-wider opacity-70">
 					/ 100{status.min_robustness_score != null ? ` · floor ${status.min_robustness_score}` : ''}
 				</div>
 			</div>
 			<div class="flex flex-col gap-0.5 text-[11px]">
-				<div class="text-gray-400">
-					<span class="text-gray-200 font-medium">{displayTestsPassed}</span> / {status.tests_total} passed
-					<span class="text-gray-600">·</span>
-					<span class="text-gray-200 font-medium">{displayTestsCompleted}</span> / {status.tests_total} completed
+				<div class="text-[#888]">
+					<span class="text-white font-medium">{displayTestsPassed}</span> / {status.tests_total} passed
+					<span class="text-[#555]">·</span>
+					<span class="text-white font-medium">{displayTestsCompleted}</span> / {status.tests_total} completed
 				</div>
 				{#if status.required_tests.length}
-					<div class="text-[10px] text-gray-500">
+					<div class="text-[10px] text-[#666]">
 						Required:
 						{#each status.required_tests as rt, i}
 							{@const reqMissing = displayMissingRequired.includes(rt)}
 							<span
-								class={reqMissing ? 'text-red-300' : 'text-emerald-300'}
+								class={reqMissing ? 'text-red-400' : 'text-emerald-400'}
 								aria-label={`${TEST_LABELS[rt] ?? rt} ${reqMissing ? 'pending' : 'passed'}`}
 							>
 								<span aria-hidden="true">{reqMissing ? '✗' : '✓'}</span>
@@ -291,25 +291,25 @@
 					data-testid={`gauntlet-test-${key}`}
 					aria-pressed={selectedTestKey === key}
 					on:click={() => dispatch('selectTest', { key })}
-					class={`rounded border px-2 py-1.5 text-left transition focus:outline-none focus:ring-1 focus:ring-cyan-500/50 ${tileTone(key)}`}
+					class={`border px-2 py-1.5 text-left transition-colors focus:outline-none focus:border-[#888] ${tileTone(key)}`}
 					title={entry?.stale
 						? `${TEST_LABELS[key]}: strategy params changed AFTER this test ran — its verdict no longer describes the current strategy. Re-run to revalidate.`
 						: entry?.error
 							? `${TEST_LABELS[key]}: ${entry.error}`
 							: TEST_LABELS[key]}
 				>
-					<div class="truncate text-[10px] uppercase tracking-[0.12em] text-current opacity-70">{TEST_LABELS[key]}</div>
+					<div class="truncate text-[10px] uppercase tracking-wider text-current opacity-70">{TEST_LABELS[key]}</div>
 					<div class="mt-0.5 flex items-center gap-1">
 						<span
 							data-testid={`gauntlet-test-verdict-${key}`}
-							class={`inline-block rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${pillTone(entry)}`}
+							class={`inline-block border px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${pillTone(entry)}`}
 						>
 							{pillLabel(entry)}
 						</span>
 						{#if entry?.stale}
 							<span
 								data-testid={`gauntlet-test-stale-${key}`}
-								class="inline-block rounded-full border border-amber-700/60 bg-amber-950/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-200"
+								class="inline-block border border-yellow-900 bg-yellow-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-yellow-400"
 							>
 								Stale
 							</span>
@@ -320,13 +320,13 @@
 		</div>
 
 		{#if staleTests.length > 0}
-			<div data-testid="gauntlet-stale-warning" class="rounded border border-amber-900/40 bg-amber-950/15 px-2.5 py-2 text-[11px] text-amber-200">
+			<div data-testid="gauntlet-stale-warning" class="border border-yellow-900 bg-yellow-500/5 px-2.5 py-2 text-[11px] text-yellow-400">
 				Params changed since {staleTests.map((k) => TEST_LABELS[k] ?? k).join(', ')} ran — those verdicts describe the OLD configuration. Re-run to revalidate.
 			</div>
 		{/if}
 
 		{#if displayMissingRequired.length > 0 && isGauntlet}
-			<div class="rounded border border-yellow-900/40 bg-yellow-950/15 px-2.5 py-2 text-[11px] text-yellow-200">
+			<div class="border border-yellow-900 bg-yellow-500/5 px-2.5 py-2 text-[11px] text-yellow-400">
 				Missing required: {displayMissingRequired.map((k) => TEST_LABELS[k] ?? k).join(', ')}
 			</div>
 		{/if}
@@ -334,12 +334,12 @@
 		{#if pendingApprovalId != null}
 			<div
 				data-testid="gauntlet-approval-pending"
-				class="flex items-center justify-between gap-2 rounded border border-violet-800/40 bg-violet-950/20 px-2.5 py-2 text-[11px] text-violet-200"
+				class="flex items-center justify-between gap-2 border border-[#333] bg-[#0a0a0a] px-2.5 py-2 text-[11px] text-[#888]"
 			>
 				<span>Operator approval pending (#{pendingApprovalId}) — promotion is queued for review.</span>
 				<a
 					href={`/approval?approval_id=${pendingApprovalId}`}
-					class="rounded border border-violet-700/50 bg-violet-950/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-violet-100 hover:bg-violet-900/50"
+					class="terminal-button px-2 py-0.5 text-[10px]"
 				>
 					Review
 				</a>
@@ -347,7 +347,7 @@
 		{:else if status.ready_for_paper}
 			<div
 				data-testid="gauntlet-ready-for-paper"
-				class={`flex items-center justify-between gap-2 rounded border px-2.5 py-2 text-[11px] ${meetsRobustnessFloor ? 'border-emerald-800/40 bg-emerald-950/20 text-emerald-200' : 'border-amber-800/40 bg-amber-950/20 text-amber-200'}`}
+				class={`flex items-center justify-between gap-2 border px-2.5 py-2 text-[11px] ${meetsRobustnessFloor ? 'border-emerald-900 bg-emerald-500/5 text-emerald-400' : 'border-yellow-900 bg-yellow-500/5 text-yellow-400'}`}
 			>
 				<span>
 					{#if meetsRobustnessFloor}
@@ -359,7 +359,7 @@
 				<button
 					type="button"
 					on:click={() => status && dispatch('promote', { status })}
-					class={`rounded border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] ${meetsRobustnessFloor ? 'border-emerald-700/50 bg-emerald-950/40 text-emerald-100 hover:bg-emerald-900/50' : 'border-amber-700/50 bg-amber-950/40 text-amber-100 hover:bg-amber-900/50'}`}
+					class={`border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest transition-colors ${meetsRobustnessFloor ? 'border-emerald-900 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'border-yellow-900 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20'}`}
 				>
 					Run check
 				</button>

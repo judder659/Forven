@@ -22,45 +22,45 @@
 <div class="space-y-3">
 	<!-- Status bar -->
 	<div class="flex items-center gap-2">
-		<div class="w-2 h-2 rounded-full {isRunning ? 'bg-green-400 animate-pulse' : isPaused ? 'bg-yellow-400' : isDone ? (scan.status === 'completed' ? 'bg-blue-400' : 'bg-red-400') : 'bg-gray-500'}"></div>
-		<span class="text-xs uppercase tracking-wider text-gray-400">{scan.status}</span>
-		<span class="text-xs text-gray-600 ml-auto">{scan.name}</span>
+		<div class="w-2 h-2 rounded-full {isRunning ? 'bg-emerald-400 animate-pulse' : isPaused ? 'bg-yellow-400' : isDone ? (scan.status === 'completed' ? 'bg-emerald-400' : 'bg-red-500') : 'bg-gray-700'}"></div>
+		<span class="text-[10px] uppercase tracking-wider text-[#888]">{scan.status}</span>
+		<span class="text-xs text-[#555] ml-auto">{scan.name}</span>
 	</div>
 
 	<!-- Progress bar -->
-	<div class="w-full bg-[#111] rounded-full h-2 overflow-hidden">
-		<div class="h-full bg-white transition-all duration-300 rounded-full" style="width: {pct}%"></div>
+	<div class="w-full bg-[#222] h-2 overflow-hidden">
+		<div class="h-full bg-white transition-all duration-300" style="width: {pct}%"></div>
 	</div>
 
 	<!-- Stats row -->
 	<div class="grid grid-cols-4 gap-2 text-center">
 		<div>
 			<div class="text-lg font-mono">{progress?.completed_count?.toLocaleString() ?? 0}</div>
-			<div class="text-[10px] text-gray-500">TESTED</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">TESTED</div>
 		</div>
 		<div>
-			<div class="text-lg font-mono text-gray-400">{progress?.pruned_count?.toLocaleString() ?? 0}</div>
-			<div class="text-[10px] text-gray-500">PRUNED</div>
+			<div class="text-lg font-mono text-[#888]">{progress?.pruned_count?.toLocaleString() ?? 0}</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">PRUNED</div>
 		</div>
 		<div>
 			<div class="text-lg font-mono text-yellow-400">{progress?.best_sharpe?.toFixed(2) ?? '0.00'}</div>
-			<div class="text-[10px] text-gray-500">BEST SHARPE</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">BEST SHARPE</div>
 		</div>
 		<div>
-			<div class="text-lg font-mono text-gray-400">{formatTime(progress?.elapsed_seconds ?? 0)}</div>
-			<div class="text-[10px] text-gray-500">ELAPSED</div>
+			<div class="text-lg font-mono text-[#888]">{formatTime(progress?.elapsed_seconds ?? 0)}</div>
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">ELAPSED</div>
 		</div>
 	</div>
 
 	{#if progress?.best_strategy_name}
-		<div class="bg-[#111] border border-[#222] rounded px-3 py-2">
-			<div class="text-[10px] text-gray-500 mb-0.5">BEST SO FAR</div>
+		<div class="bg-[#111] border border-[#222] px-3 py-2">
+			<div class="text-[10px] uppercase tracking-wider text-[#666] mb-0.5">BEST SO FAR</div>
 			<div class="text-xs font-mono truncate">{progress.best_strategy_name}</div>
 		</div>
 	{/if}
 
 	{#if progress?.current_symbol && isRunning}
-		<div class="text-xs text-gray-500">
+		<div class="text-xs text-[#666]">
 			Testing: {progress.current_symbol} {progress.current_timeframe}
 			{#if progress.avg_backtest_ms > 0}
 				({progress.avg_backtest_ms.toFixed(0)}ms avg)
@@ -72,21 +72,21 @@
 	{#if !isDone}
 		<div class="flex gap-2 pt-1">
 			{#if isRunning}
-				<button class="px-3 py-1 text-xs border border-[#333] rounded hover:border-yellow-500 hover:text-yellow-400 transition-colors" on:click={() => dispatch('pause')}>
+				<button class="px-3 py-1 text-xs uppercase tracking-wide border border-[#333] hover:border-yellow-500 hover:text-yellow-400 transition-colors" on:click={() => dispatch('pause')}>
 					Pause
 				</button>
 			{:else if isPaused}
-				<button class="px-3 py-1 text-xs border border-[#333] rounded hover:border-green-500 hover:text-green-400 transition-colors" on:click={() => dispatch('resume')}>
+				<button class="px-3 py-1 text-xs uppercase tracking-wide border border-[#333] hover:border-emerald-500 hover:text-emerald-400 transition-colors" on:click={() => dispatch('resume')}>
 					Resume
 				</button>
 			{/if}
-			<button class="px-3 py-1 text-xs border border-[#333] rounded hover:border-red-500 hover:text-red-400 transition-colors" on:click={() => dispatch('cancel')}>
+			<button class="px-3 py-1 text-xs uppercase tracking-wide border border-[#333] hover:border-red-500 hover:text-red-400 transition-colors" on:click={() => dispatch('cancel')}>
 				Cancel
 			</button>
 		</div>
 	{/if}
 
 	{#if scan.error}
-		<div class="text-xs text-red-400 bg-red-900/20 border border-red-800/30 rounded px-3 py-2">{scan.error}</div>
+		<div class="text-xs text-red-400 bg-red-500/5 border border-red-900 px-3 py-2">{scan.error}</div>
 	{/if}
 </div>

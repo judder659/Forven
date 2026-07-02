@@ -115,14 +115,14 @@
 	}
 </script>
 
-<div class="flex flex-col gap-1 py-3 border-b border-gray-900">
+<div class="flex flex-col gap-1 py-3 border-b border-[#1a1a1a]">
 	<div class="flex items-center justify-between gap-3">
-		<label for={id} class="text-sm text-gray-200 flex items-center gap-2">
+		<label for={id} class="text-[10px] uppercase tracking-wider text-[#666] flex items-center gap-2">
 			{label}
 			{#if dirty}
 				<span
 					data-testid="dirty-dot-{id}"
-					class="w-1.5 h-1.5 rounded-full bg-amber-400"
+					class="w-1.5 h-1.5 rounded-full bg-yellow-400"
 					aria-label="unsaved"
 				></span>
 			{/if}
@@ -189,7 +189,7 @@
 						type="text"
 						value={csvDisplay(value)}
 						on:input={handleCsvInput}
-						class="bg-gray-900 border border-gray-700 text-white px-2 py-1 rounded text-sm w-96"
+						class="terminal-input w-96"
 					/>
 				{/if}
 			{:else}
@@ -198,7 +198,7 @@
 					type="text"
 					value={value as string}
 					on:input={handleNumberOrTextInput}
-					class="bg-gray-900 border border-gray-700 text-white px-2 py-1 rounded text-sm w-48"
+					class="terminal-input w-48"
 				/>
 			{/if}
 			{#if unit}<span class="text-xs text-gray-500">{unit}</span>{/if}

@@ -16,15 +16,15 @@
 
 {#if dirty}
 	<div
-		class="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-lg border border-blue-700 bg-blue-950/90 px-4 py-3 shadow-lg backdrop-blur"
+		class="sticky bottom-0 z-10 flex items-center justify-between gap-3 border border-[#333] bg-[#050505] px-4 py-3"
 	>
-		<span class="text-sm text-blue-100">{message}</span>
+		<span class="text-xs uppercase tracking-wider text-[#aaa]">{message}</span>
 		<div class="flex gap-2">
 			<button
 				type="button"
 				on:click={onDiscard}
 				disabled={saving}
-				class="text-sm px-3 py-1.5 rounded border border-gray-600 text-gray-200 hover:text-white hover:border-gray-400 disabled:opacity-60"
+				class="terminal-button text-xs"
 			>
 				Discard
 			</button>
@@ -32,7 +32,7 @@
 				type="button"
 				on:click={onSave}
 				disabled={saving}
-				class="text-sm px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium disabled:opacity-60"
+				class="terminal-button-primary text-xs"
 			>
 				{saving ? 'Saving…' : saveLabel}
 			</button>

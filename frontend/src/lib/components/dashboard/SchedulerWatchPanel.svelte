@@ -65,7 +65,7 @@
 	});
 </script>
 
-<div class="flex h-full min-h-0 flex-col rounded border border-[#222] bg-[#0a0a0a]" data-testid="scheduler-watch-panel">
+<div class="flex h-full min-h-0 flex-col border border-[#222] bg-[#050505]" data-testid="scheduler-watch-panel">
 	<div class="flex items-center justify-between border-b border-[#1a1a1a] px-2.5 py-1.5">
 		<h2 class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Scheduler</h2>
 		<span class="font-mono text-[10px] {failing.length > 0 ? 'text-red-400' : 'text-gray-500'}">
@@ -88,8 +88,8 @@
 			{/each}
 			{#each running as job (job.id)}
 				<div class="flex items-center justify-between gap-2">
-					<span class="min-w-0 truncate text-cyan-300" title={job.id}>{shortName(job)}</span>
-					<span class="shrink-0 text-cyan-500">running</span>
+					<span class="min-w-0 truncate text-white" title={job.id}>{shortName(job)}</span>
+					<span class="shrink-0 text-[#888]">running</span>
 				</div>
 			{/each}
 			{#each upcoming as entry (entry.job.id)}
