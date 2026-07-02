@@ -983,9 +983,37 @@ async def _run_brain_task(task: dict) -> None:
         AGENT_TOOLS + BRAIN_TOOLS + BACKTESTING_TOOLS, "brain", brain_tools_context
     )
 
+    # P1-T06 (wired to the LIVE path): record a brain_decisions row for every
+    # autonomous cycle. brain.invoke was the only writer before, but production
+    # runs THIS tool loop — so the decision ledger sat at 0 rows and the
+    # Decisions/Lessons UI was removed as "orphaned". assign_agent_task links
+    # any tasks it creates to this decision via the active-decision ContextVar;
+    # action_taken is filled in after the loop from the tool audit.
+    from forven.brain_decisions import (
+        record_decision,
+        reset_active_decision_id,
+        set_active_decision_id,
+        update_action_taken,
+    )
+
+    decision_id = 0
+    try:
+        decision_id = record_decision(
+            cycle_id=f"B{int(task['id']):04d}",
+            situation_summary=(
+                f"[{source or 'headless'}] {message[:500]}"
+                + (f" | reviewing {len(review_ids)} completed agent task(s)" if review_ids else "")
+                + (f" | {len(post_mortems)} pending post-mortem(s)" if post_mortems else "")
+            ),
+            decision_json={"source": source or "headless", "tools_context": brain_tools_context},
+        )
+    except Exception:
+        log.debug("brain_decisions: record_decision failed for task %s", task.get("id"), exc_info=True)
+
     tool_tokens = set_tool_context(
         "brain", f"B{int(task['id']):04d}", tools_context=brain_tools_context
     )
+    decision_token = set_active_decision_id(decision_id or None)
     brain_trace: list[dict] = []
     try:
         response = await _call_with_tools(
@@ -998,7 +1026,23 @@ async def _run_brain_task(task: dict) -> None:
             trace=brain_trace,
         )
     finally:
+        reset_active_decision_id(decision_token)
         reset_tool_context(tool_tokens)
+
+    if decision_id:
+        try:
+            from forven.db import get_task_tool_calls
+
+            calls = get_task_tool_calls(f"B{int(task['id']):04d}")
+            update_action_taken(decision_id, {
+                "tool_calls": [
+                    {"tool": c.get("tool_name"), "summary": str(c.get("output_summary") or "")[:160]}
+                    for c in calls
+                ],
+                "response": _brain_response_text(response)[:1500],
+            })
+        except Exception:
+            log.debug("brain_decisions: update_action_taken failed for task %s", task.get("id"), exc_info=True)
 
     if review_ids:
         mark_agent_tasks_reviewed(review_ids)

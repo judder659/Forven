@@ -11,6 +11,7 @@ audit trail later (decision → tasks → outcomes).
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from typing import Any
@@ -18,6 +19,26 @@ from typing import Any
 from forven.db import get_db
 
 log = logging.getLogger("forven.brain_decisions")
+
+# The decision row for the CURRENTLY running Brain cycle. Set by the runtime
+# worker around the tool loop so tool handlers (assign_agent_task) can link
+# the agent_tasks they create back to the decision that spawned them —
+# without this linkage the outcome backfill has nothing to resolve against.
+_active_decision_id_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "brain_active_decision_id", default=None
+)
+
+
+def set_active_decision_id(decision_id: int | None) -> contextvars.Token:
+    return _active_decision_id_var.set(int(decision_id) if decision_id else None)
+
+
+def reset_active_decision_id(token: contextvars.Token) -> None:
+    _active_decision_id_var.reset(token)
+
+
+def get_active_decision_id() -> int | None:
+    return _active_decision_id_var.get()
 
 # situation_summary is what the Brain "saw" — bounded so a single oversized
 # context dump can't bloat the recall corpus.
@@ -202,9 +223,12 @@ __all__ = [
     "ACTION_TAKEN_MAX_CHARS",
     "SITUATION_SUMMARY_MAX_CHARS",
     "backfill_outcome_for_strategy",
+    "get_active_decision_id",
     "get_decision",
     "link_agent_task",
     "record_decision",
+    "reset_active_decision_id",
+    "set_active_decision_id",
     "stage_to_outcome",
     "update_action_taken",
 ]
