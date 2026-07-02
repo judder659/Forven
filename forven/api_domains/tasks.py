@@ -13,6 +13,32 @@ log = logging.getLogger("forven.api")
 DISMISSIBLE_TASK_STATUSES = {"failed", "error", "cancelled", "blocked", "rejected"}
 
 
+# List endpoints must NEVER select the run-output blobs: output_data averages
+# ~19KB per row (max >1MB), so the Task Manager's 1000-row load shipped >50MB
+# of JSON through parse → sanitize → re-serialize on the single-worker event
+# loop — freezing the page and starving the live WebSocket — and the system
+# status heartbeat re-paid ~4MB of that on every poll. Detail views
+# (get_task_container_audit / get_task_transcript) still return the full row.
+_AGENT_TASK_LIST_COLUMNS: tuple[str, ...] = (
+    "id", "agent_id", "type", "title", "description", "input_data", "display_id",
+    "strategy_id", "audit_log", "status", "assigned_by", "priority", "created_at",
+    "started_at", "completed_at", "error", "feedback", "decision", "retry_at",
+    "input_tokens", "output_tokens", "total_tokens", "provider", "model_id",
+    "retry_count", "source", "dismissed_at", "dismissed_by", "dismissed_note",
+    "cost_usd", "brain_decision_id",
+)
+_GLOBAL_TASK_LIST_COLUMNS: tuple[str, ...] = (
+    "id", "type", "payload", "status", "priority", "created_at", "claimed_at",
+    "completed_at", "error", "retry_at", "retry_count", "source", "dismissed_at",
+    "dismissed_by", "dismissed_note",
+)
+
+
+def _list_columns(columns: tuple[str, ...], alias: str = "") -> str:
+    prefix = f"{alias}." if alias else ""
+    return ", ".join(f"{prefix}{column}" for column in columns)
+
+
 def _normalize_agent_task_row(row: dict) -> dict:
     payload = core._safe_json(row.get("input_data"))
     output_data = core._safe_json(row.get("output_data"))
@@ -140,16 +166,23 @@ def _ensure_dismissible_status(status: object) -> str:
 
 
 def get_agent_tasks() -> list[dict[str, object]]:
-    """Task queue with status, priority, agent_id, timestamps."""
+    """Task queue with status, priority, agent_id, timestamps.
+
+    Slim rows only — no output_data/result blobs (see _AGENT_TASK_LIST_COLUMNS).
+    """
     with get_db() as conn:
         agent_rows = [
             dict(row)
             for row in conn.execute(
-                "SELECT * FROM agent_tasks WHERE dismissed_at IS NULL ORDER BY created_at DESC LIMIT 200"
+                f"SELECT {_list_columns(_AGENT_TASK_LIST_COLUMNS)} FROM agent_tasks "
+                "WHERE dismissed_at IS NULL ORDER BY created_at DESC LIMIT 200"
             ).fetchall()
         ]
         task_rows: list[dict] = []
-        for row in conn.execute("SELECT * FROM tasks WHERE dismissed_at IS NULL ORDER BY created_at DESC LIMIT 200").fetchall():
+        for row in conn.execute(
+            f"SELECT {_list_columns(_GLOBAL_TASK_LIST_COLUMNS)} FROM tasks "
+            "WHERE dismissed_at IS NULL ORDER BY created_at DESC LIMIT 200"
+        ).fetchall():
             parsed_row = dict(row)
             if _is_global_task_history_noise(parsed_row):
                 continue
@@ -263,7 +296,7 @@ def get_task_containers(
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     sql = (
         "SELECT "
-        "t.*, "
+        f"{_list_columns(_AGENT_TASK_LIST_COLUMNS, 't')}, "
         "s.display_id AS strategy_display_id, "
         "s.stage AS strategy_stage, "
         "s.name AS strategy_name "

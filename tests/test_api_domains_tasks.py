@@ -244,8 +244,14 @@ def test_get_task_containers_sanitizes_nonfinite_payload_values(forven_db):
     json.dumps(containers, allow_nan=False)
     task = containers["tasks"][0]
     assert task["input_data"]["risk"] is None
-    assert task["output_data"]["profit_factor"] is None
+    # List rows deliberately exclude the output_data blob (avg ~19KB/row; a
+    # 1000-row page load shipped >50MB) — the detail endpoint carries it.
+    assert task["output_data"] is None
     assert task["audit_log"][0]["score"] is None
+
+    audit = tasks_domain.get_task_container_audit("AT-INF")
+    json.dumps(audit, allow_nan=False)
+    assert audit["task"]["output_data"]["profit_factor"] is None
 
 
 def test_get_pipeline_errors_and_activity_stub(forven_db):

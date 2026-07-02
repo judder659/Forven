@@ -2892,6 +2892,14 @@ def _run_migrations(conn: sqlite3.Connection):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent_status ON agent_tasks (agent_id, status)"
     )
+    # The task-manager/queue list endpoints ORDER BY created_at DESC LIMIT n;
+    # without these the query scans every (blob-heavy) row on each page load.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_tasks_created_at ON agent_tasks (created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC)"
+    )
     conn.execute("DROP INDEX IF EXISTS idx_agent_tasks_active_dedup")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_active_dedup "
