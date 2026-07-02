@@ -7,10 +7,14 @@
 	export let height: number = 300;
 	export let showDrawdown: boolean = true;
 	export let benchmarkData: EquityPoint[] | null = null;
+	/** Legend/series title for the benchmark line (e.g. a compared run's id). */
+	export let benchmarkTitle: string = 'Buy & Hold';
 	export let candleData: OHLCVBar[] | null = null;
 	/** When set, shade the in-sample portion (time < this) and draw a divider at the
 	 *  out-of-sample start. Used to show the full IS+OOS backtest in one chart. */
 	export let oosStartTimestamp: string | null = null;
+	/** Event annotations drawn on the equity line (snapped to the nearest data point). */
+	export let annotations: Array<{ timestamp: string; label: string; color?: string }> = [];
 
 	let chartContainer: HTMLDivElement;
 	let chart: IChartApi | null = null;
@@ -25,7 +29,7 @@
 	let resizeObserver: ResizeObserver | null = null;
 
 	$: if (chart && data.length > 0) {
-		rebuildSeries(data, benchmarkData, candleData, oosStartTimestamp);
+		rebuildSeries(data, benchmarkData, candleData, oosStartTimestamp, annotations, benchmarkTitle);
 	}
 
 	onMount(async () => {
@@ -68,7 +72,7 @@
 		resizeObserver.observe(chartContainer);
 
 		if (data.length > 0) {
-			rebuildSeries(data, benchmarkData, candleData, oosStartTimestamp);
+			rebuildSeries(data, benchmarkData, candleData, oosStartTimestamp, annotations, benchmarkTitle);
 		}
 	});
 
@@ -100,7 +104,14 @@
 	 *   4. Buy & Hold line
 	 *   5. Equity line (FRONT — most important)
 	 */
-	function rebuildSeries(equityData: EquityPoint[], benchmark: EquityPoint[] | null, candles: OHLCVBar[] | null, oosStart: string | null = null) {
+	function rebuildSeries(
+		equityData: EquityPoint[],
+		benchmark: EquityPoint[] | null,
+		candles: OHLCVBar[] | null,
+		oosStart: string | null = null,
+		annotationList: Array<{ timestamp: string; label: string; color?: string }> = [],
+		benchmarkSeriesTitle: string = 'Buy & Hold',
+	) {
 		if (!chart) return;
 
 		// Parse equity data
@@ -243,7 +254,7 @@
 				lineWidth: 1,
 				lineStyle: 2,
 				priceScaleId: 'right',
-				title: 'Buy & Hold',
+				title: benchmarkSeriesTitle,
 				priceFormat: {
 					type: 'custom',
 					formatter: (price: number) => '$' + price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
@@ -291,18 +302,6 @@
 				priceFormat: usdFormat,
 			});
 			equitySeries.setData(oosData);
-
-			const boundary = oosData[0];
-			if (boundary) {
-				const markers: SeriesMarker<UTCTimestamp>[] = [{
-					time: boundary.time,
-					position: 'aboveBar',
-					color: '#67e8f9',
-					shape: 'arrowDown',
-					text: 'OOS',
-				}];
-				equitySeries.setMarkers(markers);
-			}
 		} else {
 			equitySeries = chart.addLineSeries({
 				color: '#22d3ee',
@@ -312,6 +311,45 @@
 				priceFormat: usdFormat,
 			});
 			equitySeries.setData(chartData);
+		}
+
+		// --- Markers: OOS divider + event annotations (both on the front series) ---
+		const seriesMarkers: SeriesMarker<UTCTimestamp>[] = [];
+		const frontData = hasSplit
+			? chartData.filter((p) => (p.time as number) >= (oosStartSec as number))
+			: chartData;
+		if (hasSplit && frontData[0]) {
+			seriesMarkers.push({
+				time: frontData[0].time,
+				position: 'aboveBar',
+				color: '#67e8f9',
+				shape: 'arrowDown',
+				text: 'OOS',
+			});
+		}
+		if (annotationList.length > 0 && frontData.length > 0) {
+			// Snap each annotation to the nearest rendered point so the marker always
+			// lands on the series (lightweight-charts anchors markers to data times).
+			const times = frontData.map((p) => p.time as number);
+			for (const note of annotationList.slice(0, 30)) {
+				const ts = parseTimestamp(note.timestamp);
+				if (ts === null) continue;
+				let nearest = times[0];
+				for (const t of times) {
+					if (Math.abs(t - ts) < Math.abs(nearest - ts)) nearest = t;
+				}
+				seriesMarkers.push({
+					time: nearest as UTCTimestamp,
+					position: 'belowBar',
+					color: note.color ?? '#a78bfa',
+					shape: 'circle',
+					text: note.label,
+				});
+			}
+		}
+		if (seriesMarkers.length > 0 && equitySeries) {
+			seriesMarkers.sort((a, b) => (a.time as number) - (b.time as number));
+			equitySeries.setMarkers(seriesMarkers);
 		}
 
 		// Set right scale margins

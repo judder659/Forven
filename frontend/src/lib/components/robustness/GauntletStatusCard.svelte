@@ -69,6 +69,7 @@
 		const s = (displayTests[k]?.status ?? '').toLowerCase();
 		return s === 'submitted' || s === 'running' || s === 'queued' || s === 'pending';
 	});
+	$: staleTests = status ? TEST_ORDER.filter((k) => displayTests[k]?.stale === true) : [];
 
 	function cancelPoll() {
 		if (pollHandle) {
@@ -291,20 +292,38 @@
 					aria-pressed={selectedTestKey === key}
 					on:click={() => dispatch('selectTest', { key })}
 					class={`rounded border px-2 py-1.5 text-left transition focus:outline-none focus:ring-1 focus:ring-cyan-500/50 ${tileTone(key)}`}
-					title={entry?.error ? `${TEST_LABELS[key]}: ${entry.error}` : TEST_LABELS[key]}
+					title={entry?.stale
+						? `${TEST_LABELS[key]}: strategy params changed AFTER this test ran — its verdict no longer describes the current strategy. Re-run to revalidate.`
+						: entry?.error
+							? `${TEST_LABELS[key]}: ${entry.error}`
+							: TEST_LABELS[key]}
 				>
 					<div class="truncate text-[10px] uppercase tracking-[0.12em] text-current opacity-70">{TEST_LABELS[key]}</div>
-					<div class="mt-0.5">
+					<div class="mt-0.5 flex items-center gap-1">
 						<span
 							data-testid={`gauntlet-test-verdict-${key}`}
 							class={`inline-block rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${pillTone(entry)}`}
 						>
 							{pillLabel(entry)}
 						</span>
+						{#if entry?.stale}
+							<span
+								data-testid={`gauntlet-test-stale-${key}`}
+								class="inline-block rounded-full border border-amber-700/60 bg-amber-950/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-200"
+							>
+								Stale
+							</span>
+						{/if}
 					</div>
 				</button>
 			{/each}
 		</div>
+
+		{#if staleTests.length > 0}
+			<div data-testid="gauntlet-stale-warning" class="rounded border border-amber-900/40 bg-amber-950/15 px-2.5 py-2 text-[11px] text-amber-200">
+				Params changed since {staleTests.map((k) => TEST_LABELS[k] ?? k).join(', ')} ran — those verdicts describe the OLD configuration. Re-run to revalidate.
+			</div>
+		{/if}
 
 		{#if displayMissingRequired.length > 0 && isGauntlet}
 			<div class="rounded border border-yellow-900/40 bg-yellow-950/15 px-2.5 py-2 text-[11px] text-yellow-200">

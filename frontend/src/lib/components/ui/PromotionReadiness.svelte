@@ -110,6 +110,53 @@
 		re_run_validation_suite: 'Re-run Validation',
 	};
 
+	// Numeric progress payload the paper checks attach (current/threshold/direction).
+	// Older backends return no extra — the row degrades to detail text only.
+	type ProgressExtra = { current: number; threshold: number; direction: string; unit?: string };
+
+	function progressExtra(step: ReadinessStep): ProgressExtra | null {
+		const extra = step.extra;
+		if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return null;
+		const record = extra as Record<string, unknown>;
+		const current = Number(record.current);
+		const threshold = Number(record.threshold);
+		const direction = String(record.direction ?? '').trim();
+		if (!Number.isFinite(current) || !Number.isFinite(threshold) || !direction) return null;
+		return {
+			current,
+			threshold,
+			direction,
+			unit: typeof record.unit === 'string' ? record.unit : undefined,
+		};
+	}
+
+	function progressPct(info: ProgressExtra): number {
+		if (info.threshold <= 0) return info.current > 0 ? 100 : 0;
+		return Math.max(0, Math.min(100, (info.current / info.threshold) * 100));
+	}
+
+	function progressTone(info: ProgressExtra, status: string): string {
+		if (info.direction === 'lt' || info.direction === 'lte') {
+			// The bar shows usage of a LIMIT (e.g. drawdown): filling up is bad.
+			const usage = progressPct(info);
+			if (usage >= 100) return 'bg-red-500';
+			if (usage >= 75) return 'bg-amber-400';
+			return 'bg-emerald-500';
+		}
+		return status === 'passed' ? 'bg-emerald-500' : 'bg-cyan-400';
+	}
+
+	function progressValueLabel(info: ProgressExtra): string {
+		const unit = info.unit === '%' ? '%' : info.unit ? ` ${info.unit}` : '';
+		return `${info.current}${unit}`;
+	}
+
+	function progressTargetLabel(info: ProgressExtra): string {
+		const unit = info.unit === '%' ? '%' : info.unit ? ` ${info.unit}` : '';
+		const word = info.direction === 'lt' || info.direction === 'lte' ? 'limit' : 'target';
+		return `${word} ${info.threshold}${unit}`;
+	}
+
 	function statusLabel(status: string): string {
 		switch (status) {
 			case 'passed':
@@ -260,6 +307,7 @@
 
 		<div class="space-y-1.5">
 			{#each readiness.steps as step}
+				{@const progress = progressExtra(step)}
 				<div
 					data-testid={`readiness-row-${step.name}`}
 					class={`rounded border px-2.5 py-2 ${statusTone(step.status)}`}
@@ -275,6 +323,20 @@
 							>
 								{step.detail}
 							</div>
+							{#if progress}
+								<div data-testid={`readiness-progress-${step.name}`}>
+									<div class="h-1.5 w-full rounded bg-black/60">
+										<div
+											class={`h-1.5 rounded transition-all ${progressTone(progress, step.status)}`}
+											style={`width: ${progressPct(progress)}%`}
+										></div>
+									</div>
+									<div class="mt-0.5 flex justify-between text-[10px] text-gray-500">
+										<span>{progressValueLabel(progress)}</span>
+										<span>{progressTargetLabel(progress)}</span>
+									</div>
+								</div>
+							{/if}
 						</div>
 
 						<div class="flex shrink-0 items-center gap-2">

@@ -2152,6 +2152,29 @@ def _reconcile_stage_after_validation(strategy_id: str) -> None:
     )
 
 
+def _current_params_hash(strategy_id: object) -> str | None:
+    """Fingerprint of the strategy's CURRENT default params.
+
+    Stamped into each validation row's config at submission — the moment the
+    runners read the params they validate — so the gauntlet status can flag a
+    result as STALE once those params change.
+    """
+    clean = str(strategy_id or "").strip()
+    if not clean:
+        return None
+    try:
+        from forven.db import get_db
+        from forven.util import params_fingerprint
+
+        with get_db() as conn:
+            row = conn.execute("SELECT params FROM strategies WHERE id = ?", (clean,)).fetchone()
+        if not row:
+            return None
+        return params_fingerprint(row["params"])
+    except Exception:
+        return None
+
+
 def _run_inline_result(
     *,
     result_type: str,
@@ -2182,6 +2205,7 @@ def _run_inline_result(
         "error": None,
         "start_date": context.get("start_date"),
         "end_date": context.get("end_date"),
+        "params_hash": _current_params_hash(context.get("strategy_id")),
     }
     _persist_placeholder_result(
         result_id=result_id,
@@ -2273,6 +2297,7 @@ def _submit_result(
         "strategy_id": context.get("strategy_id"),
         "symbol": context.get("symbol"),
         "timeframe": context.get("timeframe"),
+        "params_hash": _current_params_hash(context.get("strategy_id")),
     }
     _persist_placeholder_result(
         result_id=result_id,

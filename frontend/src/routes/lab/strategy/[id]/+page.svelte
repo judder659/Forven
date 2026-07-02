@@ -43,10 +43,12 @@
 	import type { SizingMode, ExecutionProfileDraft } from '$lib/types/executionProfile';
 	import {
 		getPipelineConfig,
+		getStrategyExecutionGrowth,
 		type GauntletTestEntry,
 		type GauntletTestKey,
 		type PipelineThresholds,
 	} from '$lib/api/lifecycle';
+	import { closePaperPosition } from '$lib/api/paper';
 	import type { IndicatorConfig as WorkspaceIndicatorConfig, SignalMarker } from '$lib/stores/chartStore';
 	import { addToast } from '$lib/stores/processTracker';
 	import { estimateBarCount, formatBarEstimate, formatDateWindowSummary, resolveDateRangePreset } from '$lib/utils/dateRange';
@@ -431,7 +433,7 @@
 	});
 	$: executionTrades = container?.execution.trades ?? [];
 	$: executionPositions = container?.execution.positions ?? [];
-	$: executionGrowth = buildExecutionGrowth(executionTrades);
+	$: executionGrowth = buildExecutionGrowth(growthTrades ?? executionTrades);
 
 	// ── Overview: realized growth from actual paper/live trading ────────────────
 	// The paper engine trades an isolated book of $10k + realized PnL, so for a
@@ -497,6 +499,442 @@
 			tradeCount: closed.length,
 			totalPnl: equity - base,
 		};
+	}
+
+	// ── Gauntlet run comparison ──────────────────────────────────────────────────
+	// Pick two history runs to diff params, compare headline metrics, and overlay
+	// their equity curves (run B rides the chart's benchmark series).
+	let compareSelection: string[] = [];
+	let compareResults: Record<string, BacktestResult | null> = {};
+	let compareLoading = false;
+	let compareError = '';
+
+	$: compareItemA = compareSelection.length > 0
+		? backtestHistoryRaw.find((item) => item.result_id === compareSelection[0]) ?? null
+		: null;
+	$: compareItemB = compareSelection.length > 1
+		? backtestHistoryRaw.find((item) => item.result_id === compareSelection[1]) ?? null
+		: null;
+	$: comparePairReady = Boolean(compareItemA && compareItemB);
+	$: compareResultA = compareItemA ? compareResults[compareItemA.result_id] ?? null : null;
+	$: compareResultB = compareItemB ? compareResults[compareItemB.result_id] ?? null : null;
+	$: compareCurveA = compareResultA ? (compareResultA.equity_curve_full ?? compareResultA.equity_curve ?? null) : null;
+	$: compareCurveB = compareResultB ? (compareResultB.equity_curve_full ?? compareResultB.equity_curve ?? null) : null;
+	$: compareOverlayReady =
+		Array.isArray(compareCurveA) && compareCurveA.length > 1 &&
+		Array.isArray(compareCurveB) && compareCurveB.length > 1;
+	$: compareParamDiff = compareItemA && compareItemB
+		? buildCompareParamDiff(compareItemA, compareItemB)
+		: [];
+	$: compareChangedParamCount = compareParamDiff.filter((row) => !row.same).length;
+	$: compareMetricRows = compareItemA && compareItemB
+		? buildCompareMetricRows(compareItemA, compareItemB)
+		: [];
+
+	type CompareMetricRow = { label: string; a: string; b: string; delta: number | null; higherIsBetter: boolean };
+
+	function toggleCompareSelection(item: StrategyContainerHistoryItem): void {
+		const resultId = String(item.result_id || '').trim();
+		if (!resultId) return;
+		if (compareSelection.includes(resultId)) {
+			compareSelection = compareSelection.filter((id) => id !== resultId);
+			return;
+		}
+		// Keep at most two: the earliest pick stays as A, a third pick replaces B.
+		compareSelection = compareSelection.length >= 2
+			? [compareSelection[0], resultId]
+			: [...compareSelection, resultId];
+		void loadCompareResults();
+	}
+
+	function clearCompareSelection(): void {
+		compareSelection = [];
+		compareError = '';
+	}
+
+	async function loadCompareResults(): Promise<void> {
+		const targets = compareSelection.filter((id) => !(id in compareResults));
+		if (targets.length === 0) return;
+		compareLoading = true;
+		compareError = '';
+		try {
+			for (const resultId of targets) {
+				const result = await getResult(resultId).catch((err: unknown) => {
+					compareError = err instanceof Error ? err.message : 'Failed to load run for comparison';
+					return null;
+				});
+				if (destroyed) return;
+				compareResults = { ...compareResults, [resultId]: result ?? null };
+			}
+		} finally {
+			compareLoading = false;
+		}
+	}
+
+	function buildCompareParamDiff(
+		itemA: StrategyContainerHistoryItem,
+		itemB: StrategyContainerHistoryItem,
+	): Array<{ key: string; a: string; b: string; same: boolean }> {
+		const paramsA = getHistoryParams(itemA);
+		const paramsB = getHistoryParams(itemB);
+		const keys = Array.from(new Set([...Object.keys(paramsA), ...Object.keys(paramsB)])).sort();
+		return keys.map((key) => ({
+			key,
+			a: key in paramsA ? formatBacktestParamChipValue(paramsA[key]) : '—',
+			b: key in paramsB ? formatBacktestParamChipValue(paramsB[key]) : '—',
+			same: stableStringify({ v: paramsA[key] }) === stableStringify({ v: paramsB[key] }),
+		}));
+	}
+
+	function buildCompareMetricRows(
+		itemA: StrategyContainerHistoryItem,
+		itemB: StrategyContainerHistoryItem,
+	): CompareMetricRow[] {
+		const rows: Array<{
+			label: string;
+			read: (item: StrategyContainerHistoryItem) => number | null;
+			format: (item: StrategyContainerHistoryItem) => string;
+			higherIsBetter: boolean;
+		}> = [
+			{ label: 'OOS CAGR', read: readOutOfSampleCagr, format: formatOutOfSampleCagr, higherIsBetter: true },
+			{ label: 'OOS Sharpe', read: readOutOfSampleSharpe, format: formatOutOfSampleSharpe, higherIsBetter: true },
+			{
+				label: 'Max DD',
+				read: (item) => readDrawdownPercentMetricOptional(item, 'max_drawdown_pct', 'max_drawdown'),
+				format: (item) => pct(readDrawdownPercentMetric(item, 'max_drawdown_pct', 'max_drawdown')),
+				higherIsBetter: false,
+			},
+			{
+				label: 'Win%',
+				read: (item) => readPercentMetricOptional(item, 'win_rate', 'win_rate_pct'),
+				format: (item) => pct(readPercentMetric(item, 'win_rate', 'win_rate_pct')),
+				higherIsBetter: true,
+			},
+			{
+				label: 'Trades',
+				read: (item) => readMetricOptional(item, 'total_trades', 'trades'),
+				format: (item) => historyTradesCount(item),
+				higherIsBetter: true,
+			},
+			{
+				label: 'PF',
+				read: (item) => readMetricOptional(item, 'profit_factor', 'pf'),
+				format: formatProfitFactor,
+				higherIsBetter: true,
+			},
+			{ label: 'Rob%', read: readRobustness, format: formatRobustness, higherIsBetter: true },
+		];
+		return rows.map((row) => {
+			const valueA = row.read(itemA);
+			const valueB = row.read(itemB);
+			return {
+				label: row.label,
+				a: row.format(itemA),
+				b: row.format(itemB),
+				delta: valueA !== null && valueB !== null ? valueB - valueA : null,
+				higherIsBetter: row.higherIsBetter,
+			};
+		});
+	}
+
+	function compareDeltaClass(row: CompareMetricRow): string {
+		if (row.delta === null || Math.abs(row.delta) < 1e-9) return 'text-gray-500';
+		const improved = row.higherIsBetter ? row.delta > 0 : row.delta < 0;
+		return improved ? 'text-emerald-400' : 'text-red-400';
+	}
+
+	function compareDeltaLabel(row: CompareMetricRow): string {
+		if (row.delta === null) return '—';
+		const sign = row.delta > 0 ? '+' : '';
+		return `${sign}${row.delta.toFixed(2)}`;
+	}
+
+	// Lifecycle stage changes that fall inside the growth window, drawn as markers on
+	// the growth curve so "the line changed here" connects to "because the stage changed".
+	$: growthAnnotations = buildGrowthAnnotations(orderedRecentEvents, executionGrowth);
+
+	function buildGrowthAnnotations(
+		events: typeof orderedRecentEvents,
+		growth: ExecutionGrowth | null,
+	): Array<{ timestamp: string; label: string; color?: string }> {
+		if (!growth || growth.points.length === 0) return [];
+		const startTs = Date.parse(growth.points[0].timestamp);
+		const endTs = Date.parse(growth.points[growth.points.length - 1].timestamp);
+		if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return [];
+		// Allow a day of slack at the end so a just-now stage change still shows.
+		const windowEnd = endTs + 86_400_000;
+		return events
+			.filter((event) => {
+				const ts = Date.parse(event.created_at || '');
+				return Number.isFinite(ts) && ts >= startTs && ts <= windowEnd;
+			})
+			.map((event) => ({
+				timestamp: event.created_at,
+				label: `→ ${lifecycleStageLabel(event.to_state)}`,
+				color: '#a78bfa',
+			}))
+			.slice(0, 20);
+	}
+
+	// ── Full growth series (uncapped) ────────────────────────────────────────────
+	// The container payload slices the 500 most-recent trades; the dedicated
+	// execution-growth endpoint returns EVERY closed trade so long-lived books
+	// don't render a silently-truncated curve. Falls back to the container slice.
+	let growthTrades: Record<string, unknown>[] | null = null;
+	let growthTradesLoadedFor = '';
+
+	$: if (activeTab === 'overview' && container && strategyId && growthTradesLoadedFor !== strategyId) {
+		growthTradesLoadedFor = strategyId;
+		void loadGrowthTrades(strategyId);
+	}
+
+	async function loadGrowthTrades(targetStrategyId: string): Promise<void> {
+		try {
+			const response = await getStrategyExecutionGrowth(targetStrategyId);
+			if (destroyed || strategyId !== targetStrategyId) return;
+			growthTrades = Array.isArray(response?.trades)
+				? (response.trades as unknown as Record<string, unknown>[])
+				: null;
+		} catch {
+			if (destroyed || strategyId !== targetStrategyId) return;
+			growthTrades = null;
+		}
+	}
+
+	// ── Backtest ↔ reality parity ────────────────────────────────────────────────
+	// The trades table stores signed slippage (bps, positive = adverse) and the
+	// realized round-trip cost drag (pnl_pct − net_pnl_pct, fractions incl. leverage).
+	// Comparing them against the execution profile's modeled costs turns "paper looks
+	// worse than the backtest" into a number.
+	type ExecutionParity = {
+		entrySlipBps: number | null;
+		entryCount: number;
+		exitSlipBps: number | null;
+		exitCount: number;
+		costDragPct: number | null;
+		costCount: number;
+		avgLeverage: number;
+	};
+
+	function meanOf(values: number[]): number | null {
+		return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+	}
+
+	function buildExecutionParity(trades: Record<string, unknown>[]): ExecutionParity | null {
+		const entrySlips: number[] = [];
+		const exitSlips: number[] = [];
+		const costDrags: number[] = [];
+		const leverages: number[] = [];
+		for (const row of trades) {
+			const entrySlip = Number(row.entry_slippage_bps);
+			if (Number.isFinite(entrySlip)) entrySlips.push(entrySlip);
+			const exitSlip = Number(row.exit_slippage_bps);
+			if (Number.isFinite(exitSlip)) exitSlips.push(exitSlip);
+			const gross = Number(row.pnl_pct);
+			const net = Number(row.net_pnl_pct);
+			if (Number.isFinite(gross) && Number.isFinite(net)) costDrags.push((gross - net) * 100);
+			const leverage = Number(row.leverage);
+			if (Number.isFinite(leverage) && leverage > 0) leverages.push(leverage);
+		}
+		if (entrySlips.length === 0 && exitSlips.length === 0 && costDrags.length === 0) return null;
+		return {
+			entrySlipBps: meanOf(entrySlips),
+			entryCount: entrySlips.length,
+			exitSlipBps: meanOf(exitSlips),
+			exitCount: exitSlips.length,
+			costDragPct: meanOf(costDrags),
+			costCount: costDrags.length,
+			avgLeverage: meanOf(leverages) ?? 1,
+		};
+	}
+
+	$: executionParity = buildExecutionParity(executionTrades);
+	$: modeledSlippageBps = optionalNumber(containerExecutionDefaults.slippage_bps) ?? null;
+	$: modeledFeeBps = optionalNumber(containerExecutionDefaults.fee_bps) ?? null;
+	// Realized fees include leverage (fees_pct = 2 × fee × leverage), so the modeled
+	// round-trip budget scales by the average realized leverage for a fair comparison.
+	$: modeledCostDragPct =
+		modeledFeeBps !== null && executionParity ? (2 * modeledFeeBps * executionParity.avgLeverage) / 100 : null;
+
+	function parityTone(realized: number | null, modeled: number | null): string {
+		if (realized === null) return 'text-gray-500';
+		if (modeled === null) return 'text-gray-300';
+		if (modeled <= 0) return realized <= 0 ? 'text-emerald-400' : 'text-amber-300';
+		if (realized <= modeled * 1.25) return 'text-emerald-400';
+		if (realized <= modeled * 2) return 'text-amber-300';
+		return 'text-red-400';
+	}
+
+	function fmtBps(value: number | null): string {
+		return value === null ? '—' : `${value >= 0 ? '+' : ''}${value.toFixed(1)} bps`;
+	}
+
+	// ── Live allocation ramp (configured schedule — advisory) ───────────────────
+	type LiveRampInfo = {
+		daysLive: number;
+		week: number;
+		allocationPct: number | null;
+		killSwitchPct: number | null;
+	};
+
+	$: liveRampInfo =
+		currentLifecycleStage === 'live_graduated' ? buildLiveRampInfo(container, pipelineThresholds) : null;
+
+	function buildLiveRampInfo(
+		payload: StrategyContainerPayload | null,
+		thresholds: PipelineThresholds | null,
+	): LiveRampInfo | null {
+		if (!payload) return null;
+		const strategyRecord = payload.strategy as unknown as Record<string, unknown>;
+		const sinceRaw = String(
+			strategyRecord.stage_changed_at ?? payload.strategy.state_changed_at ?? payload.strategy.created_at ?? '',
+		).trim();
+		const since = Date.parse(sinceRaw);
+		if (!Number.isFinite(since)) return null;
+		const daysLive = Math.max(0, Math.floor((Date.now() - since) / 86_400_000));
+		const week = Math.floor(daysLive / 7) + 1;
+		const schedule = thresholds?.live_graduated?.allocation_schedule ?? [];
+		let allocationPct: number | null = null;
+		for (const rung of schedule) {
+			if (week >= rung.week_start && week <= rung.week_end) {
+				allocationPct = rung.allocation_pct;
+				break;
+			}
+		}
+		if (allocationPct === null && schedule.length > 0 && week > schedule[schedule.length - 1].week_end) {
+			allocationPct = schedule[schedule.length - 1].allocation_pct;
+		}
+		return {
+			daysLive,
+			week,
+			allocationPct,
+			killSwitchPct: thresholds?.live_graduated?.decay_kill_switch_pct ?? null,
+		};
+	}
+
+	// ── Execution tab: rich trade/position views ─────────────────────────────────
+	$: executionClosedTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'CLOSED');
+	$: executionOpenTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'OPEN');
+	$: executionRealizedSummary = buildExecutionRealizedSummary(executionClosedTrades);
+	$: paperSessionId = String(container?.strategy.paper_session_id ?? '').trim();
+	let closingPosition = false;
+
+	type ExecutionRealizedSummary = {
+		count: number;
+		wins: number;
+		losses: number;
+		winRatePct: number;
+		totalPnlUsd: number;
+		profitFactor: number | null;
+		avgNetPct: number | null;
+	};
+
+	function tradeRowPnlUsd(row: Record<string, unknown>): number | null {
+		for (const key of ['pnl_usd', 'pnl'] as const) {
+			const value = Number(row[key]);
+			if (Number.isFinite(value)) return value;
+		}
+		return null;
+	}
+
+	// pnl_pct / net_pnl_pct are stored as FRACTIONS (0.05 = 5%) — scale for display.
+	function tradeRowNetPct(row: Record<string, unknown>): number | null {
+		for (const key of ['net_pnl_pct', 'pnl_pct'] as const) {
+			const value = Number(row[key]);
+			if (Number.isFinite(value)) return value * 100;
+		}
+		return null;
+	}
+
+	function tradeRowFeesPct(row: Record<string, unknown>): number | null {
+		const value = Number(row.fees_pct);
+		return Number.isFinite(value) ? value * 100 : null;
+	}
+
+	function tradeRowSlipBps(row: Record<string, unknown>, key: 'entry_slippage_bps' | 'exit_slippage_bps'): number | null {
+		const value = Number(row[key]);
+		return Number.isFinite(value) ? value : null;
+	}
+
+	function tradeRowSignal(row: Record<string, unknown>): Record<string, unknown> {
+		const raw = row.signal_data;
+		if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+		if (typeof raw === 'string' && raw.trim()) {
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+			} catch {
+				return {};
+			}
+		}
+		return {};
+	}
+
+	function tradeRowCloseReason(row: Record<string, unknown>): string {
+		const reason = String(tradeRowSignal(row).close_reason ?? '').trim();
+		return reason ? reason.replace(/[_-]+/g, ' ') : '-';
+	}
+
+	function tradeRowSignalNumber(row: Record<string, unknown>, key: string): number | null {
+		const value = Number(tradeRowSignal(row)[key]);
+		return Number.isFinite(value) ? value : null;
+	}
+
+	function tradeRowPrice(row: Record<string, unknown>, fillKey: string, signalKey: string): string {
+		for (const key of [fillKey, signalKey]) {
+			const value = Number(row[key]);
+			if (Number.isFinite(value) && value > 0) return value.toFixed(4);
+		}
+		return '-';
+	}
+
+	function buildExecutionRealizedSummary(trades: Record<string, unknown>[]): ExecutionRealizedSummary | null {
+		if (trades.length === 0) return null;
+		let wins = 0;
+		let losses = 0;
+		let grossWin = 0;
+		let grossLoss = 0;
+		let totalPnl = 0;
+		const netPcts: number[] = [];
+		for (const row of trades) {
+			const pnl = tradeRowPnlUsd(row) ?? 0;
+			totalPnl += pnl;
+			if (pnl > 0) {
+				wins += 1;
+				grossWin += pnl;
+			} else if (pnl < 0) {
+				losses += 1;
+				grossLoss += Math.abs(pnl);
+			}
+			const netPct = tradeRowNetPct(row);
+			if (netPct !== null) netPcts.push(netPct);
+		}
+		return {
+			count: trades.length,
+			wins,
+			losses,
+			winRatePct: trades.length > 0 ? (wins / trades.length) * 100 : 0,
+			totalPnlUsd: totalPnl,
+			profitFactor: grossLoss > 0 ? grossWin / grossLoss : null,
+			avgNetPct: meanOf(netPcts),
+		};
+	}
+
+	async function closeOpenPosition(): Promise<void> {
+		if (!paperSessionId || closingPosition) return;
+		const prompt =
+			"Close this strategy's open position at market?\n\nDispatches on the trade's execution type — paper closes at a fresh mid, live sends a reduce-only market order.";
+		if (typeof window !== 'undefined' && !window.confirm(prompt)) return;
+		closingPosition = true;
+		try {
+			await closePaperPosition(paperSessionId, 'Manual close from strategy container');
+			addToast('Position close requested', 'success', `/lab/strategy/${encodeURIComponent(strategyId)}`);
+			await loadContainer();
+		} catch (err) {
+			addToast(err instanceof Error ? err.message : 'Failed to close position', 'error');
+		} finally {
+			closingPosition = false;
+		}
 	}
 	// execution_profile is persisted INSIDE params (the canonical home the
 	// optimizer/gauntlet read) but is NOT an alpha param. Strip it everywhere the
@@ -3332,6 +3770,13 @@
 		overviewResultId = '';
 		overviewResultError = '';
 		overviewResultLoading = false;
+		// Comparison selections belong to the previous container state.
+		compareSelection = [];
+		compareResults = {};
+		compareError = '';
+		// Refetch the full growth series alongside the container.
+		growthTrades = null;
+		growthTradesLoadedFor = '';
 		let nextSelectedBacktest: StrategyContainerHistoryItem | null = null;
 		let loadSucceeded = false;
 		try {
@@ -3925,6 +4370,32 @@
 							{/if}
 						</div>
 
+						{#if liveRampInfo}
+							<div class="rounded-lg border border-emerald-900/40 bg-[#090909] p-3" data-testid="overview-live-ramp">
+								<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Live Status</div>
+								<div class="mt-2 grid grid-cols-3 gap-2 text-xs">
+									<div class="rounded border border-[#1f1f1f] bg-black px-2.5 py-2">
+										<div class="text-[9px] uppercase tracking-wide text-gray-500">Days Live</div>
+										<div class="mt-1 font-mono text-sm text-emerald-300">{liveRampInfo.daysLive}</div>
+									</div>
+									<div class="rounded border border-[#1f1f1f] bg-black px-2.5 py-2">
+										<div class="text-[9px] uppercase tracking-wide text-gray-500">Week</div>
+										<div class="mt-1 font-mono text-sm text-gray-300">{liveRampInfo.week}</div>
+									</div>
+									<div class="rounded border border-[#1f1f1f] bg-black px-2.5 py-2" title="From the configured allocation schedule. Advisory only — the live sizer does not currently enforce this ramp.">
+										<div class="text-[9px] uppercase tracking-wide text-gray-500">Ramp Alloc</div>
+										<div class="mt-1 font-mono text-sm text-gray-300">{liveRampInfo.allocationPct !== null ? `${liveRampInfo.allocationPct}%` : '—'}</div>
+									</div>
+								</div>
+								<div class="mt-2 text-[11px] text-gray-500">
+									{#if liveRampInfo.killSwitchPct !== null}
+										Decay kill switch at <span class="text-red-300">{liveRampInfo.killSwitchPct}%</span> drawdown.
+									{/if}
+									The allocation ramp is the configured schedule — advisory, not enforced by the sizer.
+								</div>
+							</div>
+						{/if}
+
 						<GauntletStatusCard
 							{strategyId}
 							stage={currentLifecycleStage}
@@ -4048,12 +4519,48 @@
 									<EquityChart
 										data={executionGrowth.points}
 										showDrawdown={executionGrowth.mode === 'paper'}
+										annotations={growthAnnotations}
 										height={220}
 									/>
 								</div>
 							{:else}
 								<div class="mt-3 rounded border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-gray-500">
 									No closed paper/live trades yet — real trading growth appears here once the strategy starts closing trades.
+								</div>
+							{/if}
+						</div>
+
+						<div class="rounded-lg border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-parity-card">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Backtest ↔ Reality</div>
+								{#if executionParity}
+									<span class="text-[11px] text-gray-500">avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
+								{/if}
+							</div>
+							{#if executionParity}
+								<div class="mt-1 text-xs text-gray-500">
+									Realized execution costs vs the execution profile's model. Slippage is signed — positive = filled worse than the signal price.
+								</div>
+								<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="overview-parity-metrics">
+									<div class="rounded border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed entry slippage vs the signal price across fills. Modeled budget: the execution profile's per-side slippage.">
+										<div class="text-[9px] uppercase tracking-wide text-gray-500">Entry Slippage</div>
+										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.entrySlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.entrySlipBps)}</div>
+										<div class="mt-0.5 text-[10px] text-gray-600">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.entryCount}</div>
+									</div>
+									<div class="rounded border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed exit slippage vs the signal price across closes.">
+										<div class="text-[9px] uppercase tracking-wide text-gray-500">Exit Slippage</div>
+										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.exitSlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.exitSlipBps)}</div>
+										<div class="mt-0.5 text-[10px] text-gray-600">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.exitCount}</div>
+									</div>
+									<div class="rounded border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average realized round-trip cost drag per closed trade (gross − net PnL, includes leverage). Modeled: 2 × fee × avg leverage.">
+										<div class="text-[9px] uppercase tracking-wide text-gray-500">Cost / Trade</div>
+										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.costDragPct, modeledCostDragPct)}`}>{executionParity.costDragPct !== null ? `${executionParity.costDragPct.toFixed(3)}%` : '—'}</div>
+										<div class="mt-0.5 text-[10px] text-gray-600">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
+									</div>
+								</div>
+							{:else}
+								<div class="mt-3 rounded border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-gray-500">
+									No fills with recorded slippage/cost data yet — parity metrics appear once the strategy starts trading.
 								</div>
 							{/if}
 						</div>
@@ -4205,6 +4712,113 @@
 					</div>
 				</details>
 
+				{#if compareSelection.length === 1}
+					<div class="mb-3 rounded border border-cyan-900/40 bg-cyan-950/10 px-3 py-2 text-[11px] text-cyan-200" data-testid="compare-hint">
+						<span class="font-mono">{compareSelection[0]}</span> selected — tick a second run's Cmp box to compare.
+						<button type="button" class="ml-2 rounded border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-gray-400 hover:text-white" on:click={clearCompareSelection}>Clear</button>
+					</div>
+				{/if}
+
+				{#if comparePairReady && compareItemA && compareItemB}
+					<div class="mb-3 rounded-lg border border-[#1d1d1d] bg-[#090909] p-3" data-testid="run-compare-panel">
+						<div class="flex flex-wrap items-center gap-2">
+							<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Run Comparison</div>
+							<span class="rounded border border-cyan-900/50 bg-cyan-950/15 px-1.5 py-0.5 font-mono text-[11px] text-cyan-300">A · {compareItemA.result_id}</span>
+							<span class="text-gray-600">vs</span>
+							<span class="rounded border border-amber-900/50 bg-amber-950/15 px-1.5 py-0.5 font-mono text-[11px] text-amber-300">B · {compareItemB.result_id}</span>
+							<span class="text-[11px] text-gray-500">Δ = B − A</span>
+							<button
+								type="button"
+								data-testid="compare-clear"
+								class="ml-auto rounded border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-gray-400 transition hover:text-white"
+								on:click={clearCompareSelection}
+							>Clear</button>
+						</div>
+
+						<div class="mt-3 grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+							<div>
+								<table class="w-full text-xs" data-testid="compare-metrics-table">
+									<thead class="bg-[#0d0d0d] text-[10px] uppercase tracking-[0.14em] text-gray-500">
+										<tr>
+											<th class="px-2 py-1.5 text-left">Metric</th>
+											<th class="px-2 py-1.5 text-right text-cyan-300">A</th>
+											<th class="px-2 py-1.5 text-right text-amber-300">B</th>
+											<th class="px-2 py-1.5 text-right">Δ</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each compareMetricRows as row (row.label)}
+											<tr class="border-t border-[#161616] font-mono">
+												<td class="px-2 py-1.5 text-left text-gray-400">{row.label}</td>
+												<td class="px-2 py-1.5 text-right text-gray-300">{row.a}</td>
+												<td class="px-2 py-1.5 text-right text-gray-300">{row.b}</td>
+												<td class={`px-2 py-1.5 text-right ${compareDeltaClass(row)}`}>{compareDeltaLabel(row)}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+
+								<div class="mt-3 border-t border-[#1a1a1a] pt-3">
+									<div class="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-gray-500">
+										<span>Parameter Diff</span>
+										<span class="rounded-full border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono normal-case tracking-normal text-gray-400">{compareChangedParamCount} changed</span>
+									</div>
+									{#if compareParamDiff.length === 0}
+										<div class="mt-2 text-[11px] text-gray-600">No stored params on either run.</div>
+									{:else}
+										<div class="mt-2 max-h-[260px] overflow-auto">
+											<table class="w-full text-xs" data-testid="compare-param-diff">
+												<tbody>
+													{#each compareParamDiff.filter((row) => !row.same) as row (row.key)}
+														<tr class="border-t border-[#161616] font-mono">
+															<td class="px-2 py-1 text-left text-gray-400">{row.key}</td>
+															<td class="px-2 py-1 text-right text-cyan-300">{row.a}</td>
+															<td class="px-2 py-1 text-right text-amber-300">{row.b}</td>
+														</tr>
+													{/each}
+													{#if compareChangedParamCount === 0}
+														<tr><td class="px-2 py-2 text-[11px] text-gray-600" colspan="3">All {compareParamDiff.length} stored params are identical.</td></tr>
+													{:else if compareParamDiff.length - compareChangedParamCount > 0}
+														<tr><td class="px-2 py-2 text-[11px] text-gray-600" colspan="3">{compareParamDiff.length - compareChangedParamCount} identical param{compareParamDiff.length - compareChangedParamCount === 1 ? '' : 's'} hidden.</td></tr>
+													{/if}
+												</tbody>
+											</table>
+										</div>
+									{/if}
+								</div>
+							</div>
+
+							<div>
+								<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-gray-500">
+									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>A · {compareItemA.result_id}</span>
+									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-amber-400"></span>B · {compareItemB.result_id}</span>
+								</div>
+								{#if compareError}
+									<div class="mt-2 rounded border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">{compareError}</div>
+								{:else if compareLoading}
+									<div class="mt-2 rounded border border-cyan-900/40 bg-cyan-950/10 px-3 py-4 text-xs text-cyan-100">Loading equity curves…</div>
+								{:else if compareOverlayReady}
+									<div class="mt-2" data-testid="compare-equity-overlay">
+										{#key `${compareItemA.result_id}:${compareItemB.result_id}`}
+											<EquityChart
+												data={compareCurveA ?? []}
+												benchmarkData={compareCurveB}
+												benchmarkTitle={`B · ${compareItemB.result_id}`}
+												showDrawdown={false}
+												height={280}
+											/>
+										{/key}
+									</div>
+								{:else}
+									<div class="mt-2 rounded border border-[#1f1f1f] bg-black px-3 py-4 text-xs text-gray-500">
+										Equity curves are unavailable for one or both runs (older results may not have stored them).
+									</div>
+								{/if}
+							</div>
+						</div>
+					</div>
+				{/if}
+
 				<div class="rounded-lg border border-[#1d1d1d] bg-[#090909] p-3">
 					<div class="flex items-center justify-between gap-2">
 						<div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Gauntlet history</div>
@@ -4270,6 +4884,14 @@
 											>
 												<td class="px-3 py-2 text-left">
 													<div class="flex items-center gap-2">
+														<input
+															type="checkbox"
+															data-testid={`compare-select-${item.result_id}`}
+															class="h-3.5 w-3.5 rounded border border-[#2b2b2b] bg-black text-cyan-400 focus:ring-cyan-500/30"
+															title="Select for run comparison (pick two)"
+															checked={compareSelection.includes(item.result_id)}
+															on:click|stopPropagation={() => toggleCompareSelection(item)}
+														/>
 														<span class="text-cyan-300">{item.result_id}</span>
 														<span class={`rounded-full border px-2 py-0.5 text-[9px] ${resultTypeBadge(item.result_type)}`}>{resultTypeLabel(item.result_type)}</span>
 														{#if pinnedBacktestId && pinnedBacktestId === item.result_id}
@@ -5176,31 +5798,70 @@
 			{/if}
 
 			{#if activeTab === 'execution'}
-				<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-					<div class="rounded border border-[#222] bg-[#090909]">
-						<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-gray-500">Positions</div>
-						{#if executionPositions.length === 0}
-							<div class="px-3 py-4 text-xs text-gray-600">No positions recorded.</div>
+				<div class="space-y-4">
+					{#if executionRealizedSummary}
+						<div class="rounded-lg border border-[#1d1d1d] bg-[#090909] p-3" data-testid="execution-summary-strip">
+							<div class="flex flex-wrap items-center gap-x-5 gap-y-1.5 font-mono text-xs">
+								<span class="text-[10px] uppercase tracking-[0.2em] text-gray-500">Realized</span>
+								<span><span class="text-gray-500">Closed</span> <span class="text-gray-300">{executionRealizedSummary.count}</span></span>
+								<span><span class="text-gray-500">Win%</span> <span class="text-gray-300">{executionRealizedSummary.winRatePct.toFixed(1)}%</span></span>
+								<span><span class="text-gray-500">Total PnL</span> <span class={executionRealizedSummary.totalPnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(executionRealizedSummary.totalPnlUsd)}</span></span>
+								<span><span class="text-gray-500">PF</span> <span class="text-gray-300">{executionRealizedSummary.profitFactor !== null ? executionRealizedSummary.profitFactor.toFixed(2) : '∞'}</span></span>
+								<span title="Average net PnL per closed trade (fees included)"><span class="text-gray-500">Avg Net</span> <span class={(executionRealizedSummary.avgNetPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{executionRealizedSummary.avgNetPct !== null ? `${executionRealizedSummary.avgNetPct.toFixed(3)}%` : '—'}</span></span>
+							</div>
+						</div>
+					{/if}
+
+					<div class="rounded border border-[#222] bg-[#090909]" data-testid="execution-open-trades">
+						<div class="flex items-center justify-between gap-2 border-b border-[#1a1a1a] px-3 py-2">
+							<span class="text-[10px] uppercase tracking-wide text-gray-500">Open Positions ({executionOpenTrades.length})</span>
+							{#if executionOpenTrades.length > 0 && paperSessionId}
+								<button
+									type="button"
+									data-testid="execution-close-position"
+									class="rounded border border-red-900/50 bg-red-950/20 px-2.5 py-1 text-[10px] uppercase tracking-wide text-red-300 transition hover:bg-red-900/30 disabled:opacity-50"
+									disabled={closingPosition}
+									on:click={() => void closeOpenPosition()}
+									title="Close the session's open position at market — paper closes at a fresh mid, live sends a reduce-only market order."
+								>{closingPosition ? 'Closing…' : 'Close Position'}</button>
+							{/if}
+						</div>
+						{#if executionOpenTrades.length === 0}
+							<div class="px-3 py-4 text-xs text-gray-600">No open positions.</div>
 						{:else}
-							<div class="max-h-[480px] overflow-auto">
-								<table class="w-full text-xs">
-									<thead class="bg-[#0d0d0d] text-gray-500">
+							<div class="max-h-[320px] overflow-auto">
+								<table class="min-w-full text-xs">
+									<thead class="sticky top-0 bg-[#0d0d0d] text-gray-500">
 										<tr>
 											<th class="px-3 py-2 text-left">ID</th>
 											<th class="px-3 py-2 text-left">Asset</th>
 											<th class="px-3 py-2 text-left">Side</th>
+											<th class="px-3 py-2 text-left">Type</th>
+											<th class="px-3 py-2 text-right">Entry</th>
 											<th class="px-3 py-2 text-right">Size</th>
-											<th class="px-3 py-2 text-left">Status</th>
+											<th class="px-3 py-2 text-right">Lev</th>
+											<th class="px-3 py-2 text-right">Stop</th>
+											<th class="px-3 py-2 text-right">Target</th>
+											<th class="px-3 py-2 text-right" title="Signed entry slippage vs the signal price (positive = adverse)">Slip In</th>
+											<th class="px-3 py-2 text-left">Opened</th>
 										</tr>
 									</thead>
 									<tbody>
-										{#each executionPositions as row, index}
-											<tr class="border-t border-[#111]">
-												<td class="px-3 py-2 font-mono text-cyan-300">{getRowId(row, `pos-${index}`)}</td>
-												<td class="px-3 py-2 text-gray-300">{getString(row, 'asset')}</td>
-												<td class="px-3 py-2 text-gray-300">{getString(row, 'direction')}</td>
-												<td class="px-3 py-2 text-right font-mono text-gray-400">{asNumber(row.size, 0).toFixed(4)}</td>
-												<td class="px-3 py-2 text-gray-300">{getString(row, 'status')}</td>
+										{#each executionOpenTrades as row, index}
+											{@const stop = tradeRowSignalNumber(row, 'stop_loss')}
+											{@const target = tradeRowSignalNumber(row, 'take_profit')}
+											<tr class="border-t border-[#111] font-mono">
+												<td class="px-3 py-2 text-cyan-300">{getRowId(row, `open-${index}`)}</td>
+												<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
+												<td class={`px-3 py-2 ${getString(row, 'direction') === 'short' ? 'text-red-400' : 'text-emerald-400'}`}>{getString(row, 'direction')}</td>
+												<td class="px-3 py-2 text-gray-400">{getString(row, 'execution_type')}</td>
+												<td class="px-3 py-2 text-right text-gray-300">{tradeRowPrice(row, 'fill_entry_price', 'entry_price')}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{asNumber(row.size, 0) ? asNumber(row.size, 0).toFixed(4) : '-'}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{asNumber(row.leverage, 0) ? `${asNumber(row.leverage, 0).toFixed(1)}×` : '-'}</td>
+												<td class="px-3 py-2 text-right text-red-300">{stop !== null ? stop.toFixed(4) : '-'}</td>
+												<td class="px-3 py-2 text-right text-emerald-300">{target !== null ? target.toFixed(4) : '-'}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{fmtBps(tradeRowSlipBps(row, 'entry_slippage_bps'))}</td>
+												<td class="px-3 py-2 text-left text-gray-400">{fmtDate(row.opened_at)}</td>
 											</tr>
 										{/each}
 									</tbody>
@@ -5209,30 +5870,51 @@
 						{/if}
 					</div>
 
-					<div class="rounded border border-[#222] bg-[#090909]">
-						<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-gray-500">Trades</div>
-						{#if executionTrades.length === 0}
-							<div class="px-3 py-4 text-xs text-gray-600">No trades recorded.</div>
+					<div class="rounded border border-[#222] bg-[#090909]" data-testid="execution-closed-trades">
+						<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-gray-500">Closed Trades ({executionClosedTrades.length})</div>
+						{#if executionClosedTrades.length === 0}
+							<div class="px-3 py-4 text-xs text-gray-600">No closed trades recorded.</div>
 						{:else}
-							<div class="max-h-[480px] overflow-auto">
-								<table class="w-full text-xs">
-									<thead class="bg-[#0d0d0d] text-gray-500">
+							<div class="max-h-[520px] overflow-auto">
+								<table class="min-w-full text-xs">
+									<thead class="sticky top-0 bg-[#0d0d0d] text-gray-500">
 										<tr>
 											<th class="px-3 py-2 text-left">ID</th>
 											<th class="px-3 py-2 text-left">Asset</th>
 											<th class="px-3 py-2 text-left">Side</th>
+											<th class="px-3 py-2 text-left">Type</th>
 											<th class="px-3 py-2 text-right">Entry</th>
-											<th class="px-3 py-2 text-right">PnL%</th>
+											<th class="px-3 py-2 text-right">Exit</th>
+											<th class="px-3 py-2 text-right">PnL $</th>
+											<th class="px-3 py-2 text-right" title="Net PnL per trade (fees included) as % of margin">Net %</th>
+											<th class="px-3 py-2 text-right" title="Realized round-trip fees (includes leverage)">Fees %</th>
+											<th class="px-3 py-2 text-right" title="Signed entry slippage (positive = adverse)">Slip In</th>
+											<th class="px-3 py-2 text-right" title="Signed exit slippage (positive = adverse)">Slip Out</th>
+											<th class="px-3 py-2 text-left">Reason</th>
+											<th class="px-3 py-2 text-left">Opened</th>
+											<th class="px-3 py-2 text-left">Closed</th>
 										</tr>
 									</thead>
 									<tbody>
-										{#each executionTrades as row, index}
-											<tr class="border-t border-[#111]">
-												<td class="px-3 py-2 font-mono text-cyan-300">{getRowId(row, `trade-${index}`)}</td>
-												<td class="px-3 py-2 text-gray-300">{getString(row, 'asset')}</td>
-												<td class="px-3 py-2 text-gray-300">{getString(row, 'direction')}</td>
-												<td class="px-3 py-2 text-right font-mono text-gray-400">{asNumber(row.entry_price, 0).toFixed(4)}</td>
-												<td class="px-3 py-2 text-right font-mono {(asNumber(row.pnl_pct, 0) >= 0) ? 'text-emerald-400' : 'text-red-400'}">{pct(row.pnl_pct)}</td>
+										{#each executionClosedTrades as row, index}
+											{@const pnlUsd = tradeRowPnlUsd(row)}
+											{@const netPct = tradeRowNetPct(row)}
+											{@const feesPct = tradeRowFeesPct(row)}
+											<tr class="border-t border-[#111] font-mono hover:bg-[#0d0d0d]">
+												<td class="px-3 py-2 text-cyan-300">{getRowId(row, `trade-${index}`)}</td>
+												<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
+												<td class={`px-3 py-2 ${getString(row, 'direction') === 'short' ? 'text-red-400' : 'text-emerald-400'}`}>{getString(row, 'direction')}</td>
+												<td class="px-3 py-2 text-gray-400">{getString(row, 'execution_type')}</td>
+												<td class="px-3 py-2 text-right text-gray-300">{tradeRowPrice(row, 'fill_entry_price', 'entry_price')}</td>
+												<td class="px-3 py-2 text-right text-gray-300">{tradeRowPrice(row, 'fill_exit_price', 'exit_price')}</td>
+												<td class={`px-3 py-2 text-right ${(pnlUsd ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnlUsd !== null ? formatSignedCurrency(pnlUsd) : '-'}</td>
+												<td class={`px-3 py-2 text-right ${(netPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{netPct !== null ? `${netPct.toFixed(2)}%` : '-'}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{feesPct !== null ? `${feesPct.toFixed(3)}%` : '-'}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{fmtBps(tradeRowSlipBps(row, 'entry_slippage_bps'))}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{fmtBps(tradeRowSlipBps(row, 'exit_slippage_bps'))}</td>
+												<td class="px-3 py-2 text-left text-gray-400">{tradeRowCloseReason(row)}</td>
+												<td class="px-3 py-2 text-left text-gray-500">{fmtDate(row.opened_at)}</td>
+												<td class="px-3 py-2 text-left text-gray-500">{fmtDate(row.closed_at)}</td>
 											</tr>
 										{/each}
 									</tbody>
@@ -5240,6 +5922,44 @@
 							</div>
 						{/if}
 					</div>
+
+					<details class="rounded border border-[#222] bg-[#090909]">
+						<summary class="cursor-pointer px-3 py-2 text-[10px] uppercase tracking-wide text-gray-500">Risk Slots ({executionPositions.length})</summary>
+						{#if executionPositions.length === 0}
+							<div class="border-t border-[#1a1a1a] px-3 py-4 text-xs text-gray-600">No live risk-slot reservations.</div>
+						{:else}
+							<div class="max-h-[280px] overflow-auto border-t border-[#1a1a1a]">
+								<table class="min-w-full text-xs">
+									<thead class="bg-[#0d0d0d] text-gray-500">
+										<tr>
+											<th class="px-3 py-2 text-left">Trade</th>
+											<th class="px-3 py-2 text-left">Asset</th>
+											<th class="px-3 py-2 text-left">Side</th>
+											<th class="px-3 py-2 text-right">Risk %</th>
+											<th class="px-3 py-2 text-right">Entry</th>
+											<th class="px-3 py-2 text-left">Type</th>
+											<th class="px-3 py-2 text-left">Book</th>
+											<th class="px-3 py-2 text-left">Opened</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each executionPositions as row, index}
+											<tr class="border-t border-[#111] font-mono">
+												<td class="px-3 py-2 text-cyan-300">{getString(row, 'trade_id', getRowId(row, `pos-${index}`))}</td>
+												<td class="px-3 py-2 text-gray-300">{getString(row, 'asset')}</td>
+												<td class="px-3 py-2 text-gray-300">{getString(row, 'direction')}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{asNumber(row.risk_pct, 0) ? `${(asNumber(row.risk_pct, 0) * 100).toFixed(2)}%` : '-'}</td>
+												<td class="px-3 py-2 text-right text-gray-400">{asNumber(row.entry_price, 0) ? asNumber(row.entry_price, 0).toFixed(4) : '-'}</td>
+												<td class="px-3 py-2 text-left text-gray-400">{getString(row, 'execution_type')}</td>
+												<td class="px-3 py-2 text-left text-gray-400">{getString(row, 'book')}</td>
+												<td class="px-3 py-2 text-left text-gray-500">{fmtDate(row.opened_at)}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+					</details>
 				</div>
 			{/if}
 		</div>

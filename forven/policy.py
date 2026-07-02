@@ -1212,7 +1212,7 @@ def check_paper_live_readiness(strategy_id: str) -> dict:
     return {"ready": ready, "steps": steps, "strategy_id": strategy_id}
 
 
-def _check_paper_duration(strategy_id: str) -> tuple[bool, str]:
+def _check_paper_duration(strategy_id: str) -> tuple:
     """Check if strategy has been in paper stage long enough."""
     config = load_pipeline_config()
     gate = config.get("paper_trading", {})
@@ -1228,9 +1228,12 @@ def _check_paper_duration(strategy_id: str) -> tuple[bool, str]:
         if started.tzinfo is None:
             started = started.replace(tzinfo=timezone.utc)
         days = (datetime.now(timezone.utc) - started).days
+        # `extra` carries the raw numbers so the UI can render a progress bar
+        # instead of re-parsing the detail string.
+        extra = {"current": days, "threshold": min_days, "direction": "gte", "unit": "days"}
         if days >= min_days:
-            return True, f"Paper duration: {days}/{min_days} days"
-        return False, f"Insufficient paper duration: {days}/{min_days} days"
+            return True, f"Paper duration: {days}/{min_days} days", extra
+        return False, f"Insufficient paper duration: {days}/{min_days} days", extra
     except Exception:
         return False, "Could not parse stage timestamp"
 
@@ -1247,7 +1250,7 @@ def _check_paper_duration(strategy_id: str) -> tuple[bool, str]:
 _PARITY_PNL_FILTER = " AND json_extract(signal_data, '$.pnl_is_equity_fraction') = 1"
 
 
-def _check_paper_trades(strategy_id: str) -> tuple[bool, str]:
+def _check_paper_trades(strategy_id: str) -> tuple:
     """Check if strategy has enough closed paper trades."""
     config = load_pipeline_config()
     gate = config.get("paper_trading", {})
@@ -1272,12 +1275,13 @@ def _check_paper_trades(strategy_id: str) -> tuple[bool, str]:
             tuple(params),
         ).fetchone()
     total = int(count_row["cnt"] or 0) if count_row else 0
+    extra = {"current": total, "threshold": min_trades, "direction": "gte", "unit": "trades"}
     if total >= min_trades:
-        return True, f"Paper trades: {total}/{min_trades}"
-    return False, f"Insufficient paper trades: {total}/{min_trades}"
+        return True, f"Paper trades: {total}/{min_trades}", extra
+    return False, f"Insufficient paper trades: {total}/{min_trades}", extra
 
 
-def _check_paper_return(strategy_id: str) -> tuple[bool, str]:
+def _check_paper_return(strategy_id: str) -> tuple:
     """Check if strategy has positive paper return."""
     row = _load_strategy_row_for_gate(strategy_id)
     if not row:
@@ -1301,12 +1305,13 @@ def _check_paper_return(strategy_id: str) -> tuple[bool, str]:
     pnls = [float(r["pnl_pct"]) for r in trade_rows if r["pnl_pct"] is not None]
     live = compute_live_metrics(pnls)
     total_return = float(live.get("total_return_pct", 0.0))
+    extra = {"current": round(total_return, 4), "threshold": 0.0, "direction": "gt", "unit": "%"}
     if total_return > 0:
-        return True, f"Paper return: {total_return:.2f}%"
-    return False, f"Paper return not positive: {total_return:.2f}%"
+        return True, f"Paper return: {total_return:.2f}%", extra
+    return False, f"Paper return not positive: {total_return:.2f}%", extra
 
 
-def _check_paper_drawdown(strategy_id: str) -> tuple[bool, str]:
+def _check_paper_drawdown(strategy_id: str) -> tuple:
     """Check if strategy paper drawdown is within limits."""
     config = load_pipeline_config()
     gate = config.get("paper_trading", {})
@@ -1333,9 +1338,15 @@ def _check_paper_drawdown(strategy_id: str) -> tuple[bool, str]:
     pnls = [float(r["pnl_pct"]) for r in trade_rows if r["pnl_pct"] is not None]
     live = compute_live_metrics(pnls)
     max_dd = float(live.get("max_drawdown_pct", 0.0))
+    extra = {
+        "current": round(max_dd * 100, 4),
+        "threshold": round(max_dd_limit * 100, 4),
+        "direction": "lt",
+        "unit": "%",
+    }
     if max_dd < max_dd_limit:
-        return True, f"Paper drawdown: {max_dd*100:.2f}% (limit {max_dd_limit*100:.2f}%)"
-    return False, f"Paper drawdown too high: {max_dd*100:.2f}% (limit {max_dd_limit*100:.2f}%)"
+        return True, f"Paper drawdown: {max_dd*100:.2f}% (limit {max_dd_limit*100:.2f}%)", extra
+    return False, f"Paper drawdown too high: {max_dd*100:.2f}% (limit {max_dd_limit*100:.2f}%)", extra
 
 
 def _load_strategy_row_for_gate(strategy_id: str):

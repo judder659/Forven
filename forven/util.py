@@ -120,6 +120,35 @@ def normalize_stage(value: str | None) -> str:
     return mapped if mapped in valid else "quick_screen"
 
 
+def params_fingerprint(params: Any) -> str | None:
+    """Stable short fingerprint of a strategy params blob (dict or JSON string).
+
+    Robustness validation rows stamp the fingerprint of the params they were run
+    against; the gauntlet status compares it to the strategy's CURRENT params to
+    flag results as STALE once the params they validated have changed. Returns
+    None for empty/unparseable input (callers treat that as "staleness unknown").
+    """
+    import json
+
+    if params is None:
+        return None
+    value = params
+    if isinstance(value, (bytes, str)):
+        text = value.decode() if isinstance(value, bytes) else value
+        text = text.strip()
+        if not text:
+            return None
+        try:
+            value = json.loads(text)
+        except Exception:
+            value = text
+    try:
+        canonical = json.dumps(value, sort_keys=True, default=str)
+    except Exception:
+        return None
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
 def sanitize_json_floats(value: Any) -> Any:
     """Recursively replace non-finite floats (nan, +/-inf) with None.
 

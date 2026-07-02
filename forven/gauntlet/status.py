@@ -128,6 +128,9 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
             "completed_at": config.get("completed_at") if isinstance(config, dict) else None,
             "created_at": row["created_at"],
             "error": config.get("error") if isinstance(config, dict) else None,
+            # Fingerprint of the params this validation ran against (stamped at
+            # submission by the robustness router; absent on legacy rows).
+            "params_hash": config.get("params_hash") if isinstance(config, dict) else None,
         }
     return latest
 
@@ -137,7 +140,7 @@ def _strategy_row(strategy_id: str) -> dict[str, Any] | None:
 
     with get_db() as conn:
         row = conn.execute(
-            "SELECT id, stage, status, metrics FROM strategies WHERE id = ?",
+            "SELECT id, stage, status, metrics, params FROM strategies WHERE id = ?",
             (strategy_id,),
         ).fetchone()
     return dict(row) if row else None
@@ -165,6 +168,12 @@ def get_strategy_gauntlet_status(strategy_id: str) -> dict[str, Any]:
     gauntlet_cfg = settings_snapshot.get("gauntlet") if isinstance(settings_snapshot.get("gauntlet"), dict) else {}
     required_tests = normalize_required_tests(gauntlet_cfg.get("required_tests"))
 
+    # Stale-validation detection: a result validated one set of params; once the
+    # strategy's params change, its PASS/FAIL no longer describes the strategy.
+    from forven.util import params_fingerprint
+
+    current_params_hash = params_fingerprint(strategy.get("params"))
+
     tests: dict[str, dict[str, Any]] = {}
     passed_tests: set[str] = set()
     completed_tests = 0
@@ -188,6 +197,12 @@ def get_strategy_gauntlet_status(strategy_id: str) -> dict[str, Any]:
         step_already_passed = str(step.get("status") or "").lower() == "passed"
         if result and not step_already_passed:
             payload.update(result)
+        # stale=True only when BOTH hashes are known and differ; legacy rows
+        # without a stamped hash stay None ("unknown") rather than crying wolf.
+        stored_hash = payload.get("params_hash")
+        payload["stale"] = (
+            (stored_hash != current_params_hash) if (stored_hash and current_params_hash) else None
+        )
         if payload["status"] in STEP_TERMINAL_STATUSES:
             completed_tests += 1
         if payload["status"] == "passed" and (not payload.get("verdict") or payload.get("verdict") == "PASS"):

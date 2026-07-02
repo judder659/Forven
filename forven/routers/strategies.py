@@ -373,6 +373,49 @@ def get_strategy_container(strategy_id: str, result_limit: int = 200, trade_limi
     return lifecycle.get_strategy_container(strategy_id, result_limit=result_limit, trade_limit=trade_limit)
 
 
+@router.get("/api/strategies/{strategy_id}/execution-growth")
+def get_strategy_execution_growth(strategy_id: str):
+    """Minimal rows for the FULL realized-growth curve of a strategy.
+
+    The container payload caps execution trades (most-recent-first), which would
+    silently truncate a long-lived strategy's growth chart. This returns every
+    CLOSED trade's (closed_at, pnl, execution_type) ascending — tiny rows, no cap.
+    """
+    clean = str(strategy_id or "").strip()
+    if not clean:
+        raise core.HTTPException(status_code=400, detail="strategy_id is required")
+    from forven.db import get_db
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT closed_at, opened_at, pnl_usd, pnl, execution_type
+            FROM trades
+            WHERE (strategy_id = ? OR strategy = ?)
+              AND UPPER(COALESCE(status, '')) = 'CLOSED'
+              AND TRIM(COALESCE(closed_at, '')) != ''
+            ORDER BY datetime(closed_at) ASC, id ASC
+            """,
+            (clean, clean),
+        ).fetchall()
+    import math
+
+    trades = []
+    for row in rows:
+        pnl = row["pnl_usd"] if row["pnl_usd"] is not None else row["pnl"]
+        if pnl is None or not math.isfinite(float(pnl)):
+            continue
+        trades.append(
+            {
+                "closed_at": row["closed_at"],
+                "opened_at": row["opened_at"],
+                "pnl": float(pnl),
+                "execution_type": row["execution_type"],
+            }
+        )
+    return {"ok": True, "strategy_id": clean, "trades": trades}
+
+
 @router.get("/api/strategies/{strategy_id}/export")
 def export_strategy_container(strategy_id: str):
     """Full container snapshot wrapped in a versioned, portable envelope (for import elsewhere)."""
