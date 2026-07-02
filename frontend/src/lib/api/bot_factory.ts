@@ -50,6 +50,8 @@ export interface BotConfig {
 	realized_pnl?: number;
 	open_positions?: number;
 	closed_trades?: number;
+	// Real balance of the routed wallet for LIVE bots (list endpoint only).
+	live_wallet_equity?: number | null;
 }
 
 export interface BotDecision {
@@ -270,6 +272,8 @@ export interface BotPositionsSnapshot {
 	mark_age_seconds: number | null;
 	open_positions: BotOpenPosition[];
 	execution_mode: 'paper' | 'live';
+	live_wallet: string | null;
+	live_wallet_equity: number | null;
 }
 
 export async function getBotPositions(id: string): Promise<BotPositionsSnapshot> {

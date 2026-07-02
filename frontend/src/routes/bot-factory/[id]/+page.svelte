@@ -116,6 +116,11 @@
 		return 'text-white';
 	})();
 
+	// Displayed equity: a LIVE bot shows the REAL balance of the wallet it
+	// trades (from the daemon snapshot); paper shows the simulated sandbox
+	// equity. Drawdown math above stays on the session-scoped currentEquity.
+	$: liveWalletEquity = positions?.live_wallet_equity ?? null;
+
 	function statusColor(s: string): string {
 		if (s === 'running') return 'text-emerald-400';
 		if (s === 'error') return 'text-red-400';
@@ -569,8 +574,16 @@
 				<div class="mt-1 text-base font-bold text-white">${bot.capital_allocation?.toLocaleString()}</div>
 			</div>
 			<div class="bg-[#050505] px-4 py-3">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Equity</div>
-				<div class="mt-1 text-base font-bold text-white">${currentEquity.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+				<div class="text-[10px] uppercase tracking-wider text-[#666]">{isLiveMode ? 'Wallet balance' : 'Equity'}</div>
+				{#if isLiveMode}
+					{#if liveWalletEquity == null}
+						<div class="mt-1 text-base font-bold text-[#666]" title="Live wallet balance unavailable — daemon snapshot pending or wallet unfunded">—</div>
+					{:else}
+						<div class="mt-1 text-base font-bold text-white">${liveWalletEquity.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+					{/if}
+				{:else}
+					<div class="mt-1 text-base font-bold text-white">${currentEquity.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+				{/if}
 			</div>
 			<div class="bg-[#050505] px-4 py-3">
 				<div class="text-[10px] uppercase tracking-wider text-[#666]">Max Position</div>

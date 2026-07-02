@@ -23,8 +23,41 @@ from forven.db import (
 )
 
 
+def _live_wallet_equity(bot: dict) -> float | None:
+    """Real equity of the wallet a LIVE bot routes to, from the daemon's cached
+    per-wallet snapshot (no exchange round-trip). None for paper bots or when
+    the snapshot lacks the wallet. A named wallet reads its own book equity; a
+    bot with no named wallet reads the aggregate live account value."""
+    if str(bot.get("execution_mode") or "paper").strip().lower() != "live":
+        return None
+    from forven.db import kv_get
+
+    daemon_state = kv_get("daemon_state", {}) or {}
+    account = daemon_state.get("exchange_account") if isinstance(daemon_state, dict) else None
+    if not isinstance(account, dict):
+        return None
+    wallet_label = str(bot.get("live_wallet") or "").strip().lower()
+    if wallet_label:
+        books_map = account.get("books")
+        if isinstance(books_map, dict) and wallet_label in books_map:
+            try:
+                return float(books_map[wallet_label])
+            except (TypeError, ValueError):
+                return None
+        return None
+    # No named wallet → master / direction-books routing: the aggregate live
+    # account value is the relevant balance.
+    try:
+        return float(account.get("accountValue"))
+    except (TypeError, ValueError):
+        return None
+
+
 def api_list_bots() -> list[dict]:
-    return list_bots()
+    bots = list_bots()
+    for bot in bots:
+        bot["live_wallet_equity"] = _live_wallet_equity(bot)
+    return bots
 
 
 def api_get_bot(bot_id: str) -> dict | None:
@@ -151,6 +184,7 @@ def api_get_positions(bot_id: str) -> dict:
     except Exception:
         pass  # no snapshot (daemon down) → positions serve with current_price=None
 
+    live_wallet_equity = _live_wallet_equity(bot)
     return {
         "bot_id": bot_id,
         "starting_capital": starting_capital,
@@ -162,6 +196,10 @@ def api_get_positions(bot_id: str) -> dict:
         "mark_age_seconds": mark_age_seconds,
         "open_positions": positions,
         "execution_mode": str(bot.get("execution_mode") or "paper"),
+        # Real balance of the wallet this LIVE bot trades (None for paper).
+        # The UI shows this as equity for live bots instead of paper capital.
+        "live_wallet": bot.get("live_wallet"),
+        "live_wallet_equity": live_wallet_equity,
     }
 
 

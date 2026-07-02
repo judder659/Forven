@@ -24,6 +24,7 @@ from forven.db import (
     get_bot_equity_state,
     get_open_bot_positions,
     heartbeat_bot,
+    log_bot_decision,
     reconcile_bot_realized_pnl,
     set_bot_status,
     update_bot_equity_state,
@@ -1056,6 +1057,26 @@ class BotRunner:
                                         f"{blocked_reason}",
                                         {"type": "trade_blocked", "ticker": ticker},
                                     )
+                                    # Surface the refusal in the Activity feed —
+                                    # otherwise a live open that never places an
+                                    # order is invisible (the operator sees a
+                                    # "Trade" decision but no execution).
+                                    try:
+                                        log_bot_decision(
+                                            bot_id=self.bot_id,
+                                            event_trigger=None,
+                                            reasoning=(
+                                                f"{action} {ticker} refused — {blocked_reason}"
+                                            ),
+                                            action_type="blocked",
+                                            action_data={
+                                                "action": action,
+                                                "ticker": ticker,
+                                                "reason": blocked_reason,
+                                            },
+                                        )
+                                    except Exception:
+                                        pass
                             elif is_open:
                                 logger.warning(
                                     "Bot %s %s %s but no market price available — skipping",

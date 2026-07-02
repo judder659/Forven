@@ -268,7 +268,9 @@
 				{@const isBusy = busyBots.has(bot.id)}
 				{@const status = statusOf(bot)}
 				{@const pnl = bot.realized_pnl ?? 0}
-				{@const equity = (bot.capital_allocation || 0) + pnl}
+				{@const isLive = bot.execution_mode === 'live'}
+				{@const walletEquity = bot.live_wallet_equity ?? null}
+				{@const equity = isLive ? (walletEquity ?? 0) : (bot.capital_allocation || 0) + pnl}
 				<div class="terminal-card flex flex-col">
 					<!-- Card header -->
 					<div class="flex items-start justify-between border-b border-[#1a1a1a] px-4 py-3">
@@ -300,8 +302,12 @@
 					<!-- Performance row -->
 					<div class="grid grid-cols-3 gap-px bg-[#1a1a1a]">
 						<div class="bg-[#050505] px-4 py-2.5">
-							<div class="text-[9px] uppercase tracking-wider text-[#555]">Equity</div>
-							<div class="mt-0.5 text-sm font-bold text-white">{fmtUsd(equity)}</div>
+							<div class="text-[9px] uppercase tracking-wider text-[#555]">{isLive ? 'Wallet' : 'Equity'}</div>
+							{#if isLive && walletEquity == null}
+								<div class="mt-0.5 text-sm font-bold text-[#666]" title="Live wallet balance unavailable — daemon snapshot pending or wallet unfunded">—</div>
+							{:else}
+								<div class="mt-0.5 text-sm font-bold text-white">{fmtUsd(equity)}</div>
+							{/if}
 						</div>
 						<div class="bg-[#050505] px-4 py-2.5">
 							<div class="text-[9px] uppercase tracking-wider text-[#555]">P&L</div>

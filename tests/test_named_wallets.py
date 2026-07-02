@@ -523,6 +523,54 @@ class TestLiveExecWalletRouting:
         assert pos is None
         assert "balance unavailable" in message
 
+    def test_open_live_sizes_off_wallet_not_paper_capital(self, forven_db):
+        """LIVE-SIZE-1: a $100k paper bot must size a live order off the REAL
+        wallet balance, not capital_allocation (the 'refused every open' bug —
+        $10k orders on a $13 wallet tripped the per-trade risk cap)."""
+        from forven.bot_factory.live_exec import open_live
+        from forven.exchange import subaccounts
+
+        subaccounts.register_wallet("botfund", ADDR_A)
+        config = self._armed_bot_config("botfund")
+        config["capital_allocation"] = 100_000
+        config["max_position_pct"] = 10
+
+        captured: dict = {}
+
+        def _fake_budget(coin, direction, *, add_risk_usd, add_notional_usd, **kw):
+            captured["notional"] = add_notional_usd
+            return (False, "stopping the test after sizing")
+
+        with patch("forven.scanner._book_account_equity", return_value=5_000.0), \
+             patch("forven.scanner._get_real_account_equity", return_value=5_000.0), \
+             patch("forven.exchange.risk.can_open", return_value=(True, 0.0, "ok")), \
+             patch("forven.exchange.risk.check_live_portfolio_budget", _fake_budget):
+            pos, _message = open_live(
+                config, ticker="BTC/USDT", direction="long", qty=999, ref_price=50_000,
+            )
+        assert pos is None  # budget mock halts after sizing
+        # Wallet $5,000 x 10% = $500, NOT capital $100k x 10% = $10,000.
+        assert abs(captured["notional"] - 500.0) < 1.0
+
+    def test_open_live_blocked_when_wallet_below_min_notional(self, forven_db):
+        """A near-empty wallet gets a fundable block, not a doomed order."""
+        from forven.bot_factory.live_exec import open_live
+        from forven.exchange import subaccounts
+
+        subaccounts.register_wallet("botfund", ADDR_A)
+        config = self._armed_bot_config("botfund")
+        config["capital_allocation"] = 100_000
+        config["max_position_pct"] = 10
+
+        with patch("forven.scanner._book_account_equity", return_value=13.0), \
+             patch("forven.scanner._get_real_account_equity", return_value=13.0), \
+             patch("forven.exchange.risk.can_open", return_value=(True, 0.0, "ok")):
+            pos, message = open_live(
+                config, ticker="BTC/USDT", direction="long", qty=999, ref_price=50_000,
+            )
+        assert pos is None
+        assert "too small" in message and "$13" in message
+
     def test_vault_resolution_fails_closed_on_missing_registry_entry(self, forven_db):
         from forven.db import execute_bot_trade
         from forven.exchange import subaccounts

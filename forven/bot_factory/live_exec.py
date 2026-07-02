@@ -29,6 +29,11 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
+# Hyperliquid rejects perp orders below ~$10 notional. Block a doomed order
+# early (with a fund-the-wallet message) instead of sending it and booking a
+# FAILED trade row every cycle.
+_MIN_LIVE_ORDER_NOTIONAL_USD = 10.0
+
 
 def pair_to_coin(ticker: str) -> str:
     """Map a bot market-data pair ("BTC/USDT") to the exchange coin ("BTC")."""
@@ -165,7 +170,35 @@ def open_live(
     if not equity or equity <= 0:
         return None, "blocked: real account equity unavailable (fail closed)"
 
+    # LIVE SIZING (LIVE-SIZE-1). The incoming qty was auto-sized off the bot's
+    # PAPER capital_allocation — meaningless for a real order. A live position
+    # must size off the REAL balance of the wallet it routes to, capped by the
+    # operator's configured capital_allocation (so a large wallet isn't fully
+    # deployed by a bot set up for a small allocation). Without this, a bot with
+    # $100k paper capital tries to place $10k orders on a $13 wallet and every
+    # open is auto-refused by the per-trade risk cap.
+    sizing_equity = wallet_equity if wallet_label else equity
+    try:
+        cap = float(bot_config.get("capital_allocation") or 0)
+    except (TypeError, ValueError):
+        cap = 0.0
+    if cap > 0:
+        sizing_equity = min(sizing_equity, cap)
+    try:
+        max_pct = float(bot_config.get("max_position_pct") or 10) / 100.0
+    except (TypeError, ValueError):
+        max_pct = 0.10
+    qty = round((sizing_equity * max_pct) / ref_price, 6)
     add_notional = qty * ref_price
+    # Hyperliquid rejects sub-minimum orders; block early with a fundable reason
+    # rather than sending a doomed order that just marks a FAILED trade row.
+    if qty <= 0 or add_notional < _MIN_LIVE_ORDER_NOTIONAL_USD:
+        return None, (
+            f"blocked: wallet equity ${sizing_equity:,.2f} is too small — a "
+            f"{max_pct * 100:.0f}% position is only ${add_notional:,.2f} notional, "
+            f"below the ${_MIN_LIVE_ORDER_NOTIONAL_USD:.0f} exchange minimum. "
+            "Fund the wallet or raise max position size."
+        )
     add_risk = abs(ref_price - float(stop)) * qty
     book_equity = wallet_equity
     if book_equity is None and books_on and open_book:
