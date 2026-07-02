@@ -1,6 +1,7 @@
 import os
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from forven.api_domains import data as data_domain
 from forven.api_security import require_operator_access
@@ -143,6 +144,14 @@ def get_quality_reports(limit: int = 100):
     this route the frontend 404s here and fans out ~100 concurrent per-series
     quality scans, which starves the event loop and drops the live websocket."""
     return data_domain.get_quality_reports(limit=limit)
+
+
+@router.get("/api/data/quality/reports/{symbol}/{timeframe}")
+def get_quality_report(symbol: str, timeframe: str):
+    """Single-series quality report. The frontend has always called this route;
+    it never existed server-side, so every call 404'd into a client-side
+    recompute fallback."""
+    return data_domain.get_quality_report(symbol=symbol, timeframe=timeframe)
 
 
 @router.get("/api/data/health")
@@ -294,7 +303,10 @@ def download_symbol(symbol: str, format: str = "csv"):
 @router.post("/api/upload/csv/preview")
 async def preview_csv_upload(file: UploadFile = File(...)):
     content = await _read_upload_bounded(file)
-    return data_domain.post_upload_csv_preview(content)
+    # These handlers are async (for the streaming bounded read), so the
+    # CPU-heavy pandas parse must be offloaded — parsing up to 50 MiB inline
+    # would block the event loop (and the live WebSocket) for the duration.
+    return await run_in_threadpool(data_domain.post_upload_csv_preview, content)
 
 
 @router.post("/api/upload/csv")
@@ -306,7 +318,8 @@ async def upload_csv(
     date_format: str | None = Form(None),
 ):
     content = await _read_upload_bounded(file)
-    return data_domain.post_upload_csv(
+    return await run_in_threadpool(
+        data_domain.post_upload_csv,
         content=content,
         filename=file.filename or "upload.csv",
         symbol=symbol,

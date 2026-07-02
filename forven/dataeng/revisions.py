@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,25 @@ log = logging.getLogger(__name__)
 _OHLCV = ["timestamp", "open", "high", "low", "close", "volume"]
 _REVISION_COLUMNS = [*_OHLCV, "observed_at", "seq"]
 _PRICE_COLUMNS = ["open", "high", "low", "close", "volume"]
+
+# Per-series write locks for the revision log. Deliberately a SEPARATE namespace
+# from data._get_dataset_lock: capture_restatements runs inside save_parquet,
+# whose callers may already hold the dataset lock — reusing it here would
+# deadlock (threading.Lock is not reentrant). This lock only serializes the
+# revision-log read-modify-write, which previously ran unlocked and could lose
+# rows / duplicate seq under concurrent restatement captures.
+_revision_locks_guard = threading.Lock()
+_revision_locks: dict[str, threading.Lock] = {}
+
+
+def _get_revision_lock(symbol: str, timeframe: str) -> threading.Lock:
+    key = f"{symbol_to_fs(symbol)}::{str(timeframe).strip()}"
+    with _revision_locks_guard:
+        lock = _revision_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _revision_locks[key] = lock
+        return lock
 
 
 def revisions_root() -> Path:
@@ -75,6 +95,16 @@ def _write_parquet_frame(path: Path, frame: pd.DataFrame) -> None:
 
     table = pa.Table.from_pandas(frame, preserve_index=False)
     pq.write_table(table, tmp, compression="zstd")
+    # Force the tmp bytes durable before the rename — a power loss between
+    # write and replace must not leave a truncated log and a dangling target.
+    try:
+        fd = os.open(str(tmp), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
     os.replace(str(tmp), str(path))
 
 
@@ -129,26 +159,27 @@ def append_revision(symbol: str, timeframe: str, prior_rows: pd.DataFrame, obser
     if prior_rows is None or prior_rows.empty:
         return 0
     path = revision_path(symbol, timeframe)
-    existing = _read_parquet_frame(path)
+    with _get_revision_lock(symbol, timeframe):
+        existing = _read_parquet_frame(path)
 
-    start_seq = 0
-    if existing is not None and not existing.empty and "seq" in existing.columns:
-        try:
-            start_seq = int(pd.to_numeric(existing["seq"], errors="coerce").max())
-        except (TypeError, ValueError):
-            start_seq = 0
+        start_seq = 0
+        if existing is not None and not existing.empty and "seq" in existing.columns:
+            try:
+                start_seq = int(pd.to_numeric(existing["seq"], errors="coerce").max())
+            except (TypeError, ValueError):
+                start_seq = 0
 
-    rows = prior_rows.copy()
-    rows["timestamp"] = pd.to_datetime(rows["timestamp"], utc=True, errors="coerce")
-    rows["observed_at"] = observed_at
-    rows["seq"] = list(range(start_seq + 1, start_seq + 1 + len(rows)))
-    rows = rows[_REVISION_COLUMNS]
+        rows = prior_rows.copy()
+        rows["timestamp"] = pd.to_datetime(rows["timestamp"], utc=True, errors="coerce")
+        rows["observed_at"] = observed_at
+        rows["seq"] = list(range(start_seq + 1, start_seq + 1 + len(rows)))
+        rows = rows[_REVISION_COLUMNS]
 
-    if existing is not None and not existing.empty and set(_REVISION_COLUMNS).issubset(existing.columns):
-        combined = pd.concat([existing[_REVISION_COLUMNS], rows], ignore_index=True)
-    else:
-        combined = rows
-    _write_parquet_frame(path, combined)
+        if existing is not None and not existing.empty and set(_REVISION_COLUMNS).issubset(existing.columns):
+            combined = pd.concat([existing[_REVISION_COLUMNS], rows], ignore_index=True)
+        else:
+            combined = rows
+        _write_parquet_frame(path, combined)
     return len(rows)
 
 
@@ -156,20 +187,22 @@ def capture_restatements(symbol: str, timeframe: str, new_frame: pd.DataFrame, *
     """Append the prior values of any bars restated by ``new_frame``.
 
     Called from ``data.save_parquet`` BEFORE the new frame replaces the lake file,
-    so the on-disk parquet is still the prior state. Best-effort and additive: it
-    only ever writes to the separate revisions log, never to the lake.
+    so the on-disk series is still the prior state. The prior state is the full
+    cold+tail read — a bar being restated may currently live in the TAIL sidecar
+    (recent appends), and diffing against the cold file alone would silently lose
+    that revision. Best-effort and additive: it only ever writes to the separate
+    revisions log, never to the lake.
     """
-    prior = _read_parquet_frame(_lake_path(symbol, timeframe))
+    try:
+        from forven.data import read_lake_frame
+
+        prior = read_lake_frame(symbol, timeframe)
+    except Exception:
+        prior = None
     restated = _restated_prior_rows(prior, new_frame)
     if restated.empty:
         return 0
     return append_revision(symbol, timeframe, restated, observed_at or _now_iso())
-
-
-def _lake_path(symbol: str, timeframe: str) -> Path:
-    from forven.data import parquet_path
-
-    return parquet_path(symbol, timeframe)
 
 
 def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_of: object) -> pd.DataFrame:

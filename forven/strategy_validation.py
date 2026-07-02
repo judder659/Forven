@@ -18,6 +18,7 @@ log = logging.getLogger("forven.strategy_validation")
 # Thresholds for guardrails
 MIN_SIGNALS_FOR_CREATION = 5  # Minimum signals in dry-run to allow container creation
 MIN_TRADES_QUICK_SCREEN = 1   # Minimum trades to survive quick_screen
+_SCALAR_SWEEP_BARS = 120      # Per-bar generate_signal fallback sweep length (bounded cost)
 
 
 def validate_strategy_type_exists(strategy_type: str) -> tuple[bool, str]:
@@ -177,38 +178,86 @@ def dry_run_signal_validation(
     if strategy_cls is None:
         return False, f"Strategy type '{strategy_type}' not found in registry", 0
     
-    # Try to get data for dry-run
+    # Get data for the dry-run from the local OHLCV lake (no network). This path
+    # previously called the nonexistent ``DataManager.get_ohlcv`` — the
+    # AttributeError was swallowed below and the guard silently allowed EVERY
+    # strategy, so the zero-trade screen never actually ran.
     try:
-        from forven.data_manager import DataManager
-        dm = DataManager()
-        df = dm.get_ohlcv(symbol, timeframe, lookback_bars=lookback_bars)
+        from forven.data import load_parquet
+
+        df = load_parquet(symbol, timeframe)
         if df is None or len(df) < 100:
-            # Can't validate without data - allow with warning
-            log.warning(f"Cannot perform dry-run for {strategy_type}: insufficient data")
+            log.warning(
+                "Cannot perform dry-run for %s: insufficient local data for %s %s "
+                "(%s bars)", strategy_type, symbol, timeframe,
+                0 if df is None else len(df),
+            )
             return True, "", -1  # -1 indicates unable to validate
+        df = df.tail(max(100, int(lookback_bars))).copy()
+        # Mirror the backtest frame contract (DatetimeIndex) and join the local
+        # enrichment streams — enrichment-gated strategies (funding/OI/order-flow
+        # columns) would otherwise generate zero signals on raw OHLCV and be
+        # falsely rejected here.
+        df = df.set_index("timestamp")
+        try:
+            from forven.data_manager import data_manager
+
+            df = data_manager.enrich(df, symbol, timeframe)
+        except Exception as exc:
+            log.warning("Dry-run enrichment skipped for %s %s: %s", symbol, timeframe, exc)
     except Exception as e:
-        log.warning(f"Cannot perform dry-run for {strategy_type}: {e}")
+        log.error(f"Cannot perform dry-run for {strategy_type}: data load failed: {e}")
         return True, "", -1  # Unable to validate
-    
-    # Try to generate signals
+
+    # Count entry signals. Prefer the vectorized path (exact over the whole
+    # lookback); fall back to a bounded per-bar generate_signal sweep.
     try:
         strategy = strategy_cls("__dry_run__", params)
-        signals = strategy.generate_signal(df)
-        
-        # Count non-zero signals
-        signal_count = 0
-        for sig in signals:
-            if sig != 0:
-                signal_count += 1
-        
-        if signal_count < MIN_SIGNALS_FOR_CREATION:
-            return False, (
-                f"Dry-run generated only {signal_count} signals (minimum {MIN_SIGNALS_FOR_CREATION} required). "
-                f"Strategy parameters likely too restrictive. Review thresholds."
-            ), signal_count
-        
-        return True, "", signal_count
-        
+
+        signal_count: int | None = None
+        try:
+            vec = strategy.generate_signals(df)
+        except NotImplementedError:
+            vec = None
+        if vec is not None:
+            if isinstance(vec, tuple) and len(vec) == 2:
+                entries = vec[0]
+                signal_count = int(entries.fillna(False).astype(bool).sum())
+            elif hasattr(vec, "long_entries") and hasattr(vec, "short_entries"):
+                signal_count = int(
+                    vec.long_entries.fillna(False).astype(bool).sum()
+                    + vec.short_entries.fillna(False).astype(bool).sum()
+                )
+
+        if signal_count is not None:
+            if signal_count < MIN_SIGNALS_FOR_CREATION:
+                return False, (
+                    f"Dry-run generated only {signal_count} signals over {len(df)} bars "
+                    f"(minimum {MIN_SIGNALS_FOR_CREATION} required). "
+                    f"Strategy parameters likely too restrictive. Review thresholds."
+                ), signal_count
+
+            return True, "", signal_count
+
+        # Scalar fallback: evaluate generate_signal on expanding windows over the
+        # last _SCALAR_SWEEP_BARS bars. This samples a shorter window than the
+        # vectorized path, so a zero count is reported as "unable to validate"
+        # rather than a rejection — sparse-but-valid strategies must not be
+        # false-rejected by the sample.
+        sweep = min(_SCALAR_SWEEP_BARS, max(0, len(df) - 100))
+        count = 0
+        for i in range(len(df) - sweep, len(df)):
+            sig = strategy.generate_signal(df.iloc[: i + 1])
+            if getattr(sig, "entry_signal", False):
+                count += 1
+        if count == 0:
+            log.warning(
+                "Dry-run for %s: 0 entry signals in the %d-bar scalar sweep — "
+                "allowing (unable to validate exactly)", strategy_type, sweep,
+            )
+            return True, "", -1
+        return True, "", count
+
     except Exception as e:
         log.warning(f"Dry-run failed for {strategy_type}: {e}")
         # Can't determine - allow with warning

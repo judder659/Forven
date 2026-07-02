@@ -1146,10 +1146,21 @@ async def _attempt_recovery(state: HealthState, name: str, status: ComponentStat
 # ---------------------------------------------------------------------------
 
 def check_candle_freshness() -> list[DataCheck]:
-    """Check if candle data for actively-traded symbols is fresh."""
+    """Check if candle data for actively-traded symbols is fresh.
+
+    Reads the parquet lake (footer timestamps) — the previous implementation
+    queried a SQLite ``ohlcv`` table that does not exist anywhere in the
+    schema, so with any running bot this check emitted "Query failed: no such
+    table" warnings forever and never measured real staleness.
+
+    Thresholds are timeframe-aware with absolute floors: a 4h series is not
+    "stale" after 2 wall-clock hours, and a 1m series is not paged for a
+    keep-alive rotation lag. WARNING past max(2h, 3 bars); CRITICAL past
+    max(6h, 8 bars).
+    """
     results = []
     try:
-        from forven.db import get_running_bots, get_db
+        from forven.db import get_running_bots
         running = get_running_bots()
         if not running:
             return [DataCheck(name="candle_freshness", passed=True, detail="No active bots")]
@@ -1170,45 +1181,64 @@ def check_candle_freshness() -> list[DataCheck]:
         if not symbols:
             return [DataCheck(name="candle_freshness", passed=True, detail="No locked pairs")]
 
-        now = datetime.now(timezone.utc)
-        for symbol in symbols:
+        from forven.data import _timeframe_to_ms, dataset_last_timestamp_ms
+        from forven.data_manager import data_manager
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        for symbol in sorted(symbols):
             try:
-                with get_db() as conn:
-                    row = conn.execute(
-                        """SELECT MAX(timestamp) as latest FROM ohlcv
-                           WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1""",
-                        (symbol,),
-                    ).fetchone()
-                if row and row["latest"]:
-                    latest = _parse_iso(row["latest"])
-                    if latest:
-                        age_hours = (now - latest).total_seconds() / 3600
-                        if age_hours > 2:
-                            results.append(DataCheck(
-                                name=f"candle:{symbol}",
-                                passed=False,
-                                severity=Severity.WARNING if age_hours < 6 else Severity.CRITICAL,
-                                detail=f"Last candle {age_hours:.1f}h ago",
-                            ))
-                        else:
-                            results.append(DataCheck(
-                                name=f"candle:{symbol}",
-                                passed=True,
-                                detail=f"Fresh ({age_hours:.1f}h ago)",
-                            ))
-                else:
+                fs_symbol = data_manager._normalize_keepalive_symbol(symbol, require_dataset=True)
+                if fs_symbol is None:
+                    results.append(DataCheck(
+                        name=f"candle:{symbol}",
+                        passed=False,
+                        severity=Severity.CRITICAL,
+                        detail="No candle dataset found for locked pair",
+                    ))
+                    continue
+                timeframes = data_manager.get_active_timeframes(fs_symbol) or {"1h"}
+                worst: tuple[str, float, float] | None = None  # (tf, age_h, age_bars)
+                any_data = False
+                for tf in sorted(timeframes):
+                    last_ms = dataset_last_timestamp_ms(fs_symbol, tf)
+                    if last_ms is None:
+                        continue
+                    any_data = True
+                    tf_ms = max(1, _timeframe_to_ms(tf))
+                    age_h = max(0.0, (now_ms - last_ms) / 3_600_000.0)
+                    age_bars = (now_ms - last_ms) / tf_ms
+                    if worst is None or age_bars > worst[2]:
+                        worst = (tf, age_h, age_bars)
+                if not any_data:
                     results.append(DataCheck(
                         name=f"candle:{symbol}",
                         passed=False,
                         severity=Severity.CRITICAL,
                         detail="No candle data found",
                     ))
+                    continue
+                tf, age_h, age_bars = worst
+                warn = age_h > 2.0 and age_bars > 3.0
+                crit = age_h > 6.0 and age_bars > 8.0
+                if crit or warn:
+                    results.append(DataCheck(
+                        name=f"candle:{symbol}",
+                        passed=False,
+                        severity=Severity.CRITICAL if crit else Severity.WARNING,
+                        detail=f"Last {tf} candle {age_h:.1f}h ago ({age_bars:.1f} bars)",
+                    ))
+                else:
+                    results.append(DataCheck(
+                        name=f"candle:{symbol}",
+                        passed=True,
+                        detail=f"Fresh ({tf}: {age_h:.1f}h ago)",
+                    ))
             except Exception as exc:
                 results.append(DataCheck(
                     name=f"candle:{symbol}",
                     passed=False,
                     severity=Severity.WARNING,
-                    detail=f"Query failed: {exc}",
+                    detail=f"Freshness read failed: {exc}",
                 ))
     except Exception as exc:
         results.append(DataCheck(
@@ -1574,6 +1604,29 @@ class HealthMonitor:
 
             await asyncio.sleep(self.poll_interval)
 
+    def _notify_data_check(self, check: DataCheck) -> None:
+        """Emit a notification for a CRITICAL data-integrity failure, with the
+        same landed-gated cooldown the component-status path uses (10 min)."""
+        dedupe_key = f"data_{check.name}:critical"
+        if self.state.was_recently_alerted(dedupe_key, cooldown_seconds=600):
+            return
+        try:
+            from forven.notifications import emit_notification
+
+            result = emit_notification(
+                "data_integrity_critical",
+                severity="critical",
+                source="health_monitor",
+                title=f"DATA CRITICAL: {check.name}",
+                summary=check.detail,
+                channel_name="alerts",
+                dedupe_key=dedupe_key,
+            )
+            if _notification_landed(result):
+                self.state.mark_notified(dedupe_key)
+        except Exception:
+            log.warning("Failed to emit data-integrity notification for %s", check.name)
+
     async def _data_check_loop(self) -> None:
         """Slower data integrity check loop.
 
@@ -1605,6 +1658,13 @@ class HealthMonitor:
                                     dedupe_key=f"data_{check.name}",
                                 )
                                 self.state.record_alert(alert)
+                                # CRITICAL data-integrity failures (stale candles
+                                # for a live bot, missing datasets) must PAGE the
+                                # operator, not just sit in the alerts feed —
+                                # previously nothing here ever reached
+                                # emit_notification.
+                                if check.severity == Severity.CRITICAL:
+                                    self._notify_data_check(check)
                     except Exception as exc:
                         log.warning("Data check %s failed: %s", check_fn.__name__, exc)
 

@@ -447,7 +447,11 @@ class BinanceVisionClient:
                 combined = new_df
             combined = combined.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
             rows_before = len(existing) if existing is not None else 0
-            save_fn(combined, fs_symbol, timeframe)
+            # Record the true source: these bars are Binance Vision USD-M
+            # FUTURES klines (data.binance.vision/data/futures/um), not the
+            # spot series the REST keep-alive fetches. Defaulting to "ccxt"
+            # hid the spot/futures splice from all tooling.
+            save_fn(combined, fs_symbol, timeframe, "binance-vision")
             return max(0, len(combined) - rows_before)
 
     @staticmethod

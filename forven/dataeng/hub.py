@@ -44,12 +44,12 @@ class DataHub:
         value is returned unchanged. ``as_of`` may be naive (interpreted UTC) or
         tz-aware."""
         ref = to_ref(symbol, source=source, market=market, timeframe=timeframe)
-        path = self._legacy_candles_path(ref.to_fs(), timeframe)
-        if not path.exists():
+        paths = self._series_paths(ref.to_fs(), timeframe)
+        if not paths:
             return None
 
         selected = _resolve_columns(columns)
-        frame = _read_candles_path(path, start=start, end=end, columns=selected)
+        frame = _read_candles_path(paths, start=start, end=end, columns=selected)
         normalized = _normalize_projected_frame(frame, selected)
         if as_of is not None and selected == _OHLCV_COLUMNS:
             from forven.dataeng.revisions import reconstruct_as_of
@@ -64,43 +64,61 @@ class DataHub:
         timeframe: str,
         *,
         include_macro: bool = False,
+        exclude_streams: tuple[str, ...] = (),
     ) -> pd.DataFrame:
+        """Join enrichment streams onto an OHLCV frame.
+
+        ``exclude_streams`` names crypto-native streams to skip ("funding",
+        "oi", "long_short_ratio", "taker_volume", "liquidations"). It MUST be
+        honoured here: the backtest path excludes funding/OI because its source
+        of truth is the Hyperliquid hourly series joined upstream — silently
+        joining this lake's Binance per-8h funding over it mischarges funding
+        ~8x. (This parameter was previously missing, so the exclusion was
+        dropped whenever the data engine was enabled.)
+        """
         if df is None or df.empty:
             return df
 
-        specs = _available_enrichment_specs(symbol, timeframe, include_macro=include_macro)
+        excluded = {str(s).strip().lower() for s in (exclude_streams or ())}
+        specs = _available_enrichment_specs(
+            symbol, timeframe, include_macro=include_macro, exclude_streams=excluded
+        )
         if not specs:
             return df
 
         try:
             return _enrich_with_duckdb(df, specs)
-        except Exception:
+        except Exception as exc:
             # Fallback to legacy DataManager enrichment when data engine unavailable.
             # This ensures taker_buy_sell_ratio and other derivatives data are joined
             # via the proven _merge_asof_parquet path when DuckDB path fails.
+            # Loud, not silent: a persistent failure here means the two engines can
+            # produce differently-enriched frames without anyone noticing.
+            import logging
+
+            logging.getLogger("forven.dataeng.hub").warning(
+                "DuckDB enrichment failed for %s/%s; falling back to legacy joins: %s",
+                symbol, timeframe, exc,
+            )
             from forven.data_manager import get_data_manager
             dm = get_data_manager()
             result = df.copy()
-            try:
-                result = dm._enrich_taker_volume(result, symbol)
-            except Exception:
-                pass
-            try:
-                result = dm._enrich_liquidations(result, symbol)
-            except Exception:
-                pass
-            try:
-                result = dm._enrich_long_short_ratio(result, symbol)
-            except Exception:
-                pass
-            try:
-                result = dm._enrich_funding(result, symbol)
-            except Exception:
-                pass
-            try:
-                result = dm._enrich_oi(result, symbol, timeframe)
-            except Exception:
-                pass
+            legacy_joins = [
+                ("taker_volume", lambda frame: dm._enrich_taker_volume(frame, symbol)),
+                ("liquidations", lambda frame: dm._enrich_liquidations(frame, symbol)),
+                ("long_short_ratio", lambda frame: dm._enrich_long_short_ratio(frame, symbol)),
+                ("funding", lambda frame: dm._enrich_funding(frame, symbol)),
+                ("oi", lambda frame: dm._enrich_oi(frame, symbol, timeframe)),
+            ]
+            for stream_name, join in legacy_joins:
+                if stream_name in excluded:
+                    continue
+                try:
+                    result = join(result)
+                except Exception as join_exc:
+                    logging.getLogger("forven.dataeng.hub").warning(
+                        "Legacy %s enrichment skipped for %s: %s", stream_name, symbol, join_exc
+                    )
             if include_macro:
                 try:
                     result = dm._enrich_fear_greed(result)
@@ -110,10 +128,10 @@ class DataHub:
 
     def quality(self, symbol: str, timeframe: str) -> dict[str, object]:
         ref = to_ref(symbol, source="binance", market="spot", timeframe=timeframe)
-        path = self._legacy_candles_path(ref.to_fs(), timeframe)
-        if not path.exists():
+        paths = self._series_paths(ref.to_fs(), timeframe)
+        if not paths:
             raise FileNotFoundError(f"dataset not found: {ref.to_fs()} {timeframe}")
-        return _quality_from_path(path, ref.to_fs(), timeframe)
+        return _quality_from_path(paths, ref.to_fs(), timeframe)
 
     def status(self) -> dict[str, object]:
         from forven.dataeng.catalog import Catalog
@@ -210,6 +228,15 @@ class DataHub:
 
         return parquet_path(fs_symbol, timeframe)
 
+    def _series_paths(self, fs_symbol: str, timeframe: str) -> list[Path]:
+        """Existing storage files for a series: cold parquet + tail sidecar.
+        Recent appends live in the tail — reading the cold file alone serves
+        stale candles."""
+        from forven.data import parquet_path, tail_path
+
+        paths = [p for p in (parquet_path(fs_symbol, timeframe), tail_path(fs_symbol, timeframe)) if p.exists()]
+        return paths
+
 
 _DATA_HUB: DataHub | None = None
 
@@ -233,15 +260,19 @@ def _resolve_columns(columns: Iterable[str] | None) -> list[str]:
 
 
 def _read_candles_path(
-    path: Path,
+    paths: Path | list[Path],
     *,
     start: object | None,
     end: object | None,
     columns: list[str],
 ) -> pd.DataFrame:
+    """Read one series from its storage files (cold parquet, plus the tail
+    sidecar when present). Duplicate timestamps across files are deduped
+    keep-last downstream in _normalize_projected_frame (tail rows win)."""
+    path_list = [str(p) for p in (paths if isinstance(paths, list) else [paths])]
     quoted_columns = ", ".join(_quote_identifier(column) for column in columns)
     predicates: list[str] = []
-    params: list[object] = [str(path)]
+    params: list[object] = [path_list]
     if start is not None:
         predicates.append("timestamp >= ?")
         params.append(_as_utc_timestamp(start))
@@ -292,6 +323,7 @@ def _timestamp_ns(value: object) -> pd.Series:
 
 @dataclass(frozen=True)
 class _EnrichmentSpec:
+    stream: str
     path: Path
     source_columns: tuple[str, ...]
     output_columns: tuple[str, ...]
@@ -305,7 +337,11 @@ class _EnrichmentSpec:
 
 
 def _available_enrichment_specs(
-    symbol: str, timeframe: str, *, include_macro: bool = False
+    symbol: str,
+    timeframe: str,
+    *,
+    include_macro: bool = False,
+    exclude_streams: set[str] | None = None,
 ) -> list[_EnrichmentSpec]:
     from forven import data_manager
     from forven.data import symbol_to_fs
@@ -313,18 +349,21 @@ def _available_enrichment_specs(
     fs_symbol = symbol_to_fs(symbol)
     candidates = [
         _EnrichmentSpec(
+            "funding",
             data_manager.FUNDING_DIR / fs_symbol / "history.parquet",
             ("funding_rate",),
             ("funding_rate",),
             {"funding_rate": 0.0},
         ),
         _EnrichmentSpec(
+            "oi",
             data_manager.OI_DIR / fs_symbol / f"{timeframe}.parquet",
             ("open_interest",),
             ("open_interest",),
             {"open_interest": 0.0},
         ),
         _EnrichmentSpec(
+            "long_short_ratio",
             data_manager.DERIVATIVES_DIR / fs_symbol / "long_short_ratio_1h.parquet",
             ("ls_ratio",),
             ("ls_ratio",),
@@ -332,13 +371,20 @@ def _available_enrichment_specs(
             bucket_close_shift_seconds=3600,
         ),
         _EnrichmentSpec(
+            "taker_volume",
             data_manager.DERIVATIVES_DIR / fs_symbol / "taker_volume_1h.parquet",
             ("taker_buy_sell_ratio",),
             ("taker_buy_sell_ratio",),
-            {"taker_buy_sell_ratio": 1.0},
+            # PARITY: legacy _enrich_taker_volume fills 0.0. This spec used 1.0
+            # (neutral), so the two engines produced different values on bars
+            # before taker coverage. All existing backtests were scored on the
+            # legacy fill; match it. (Making the fill "neutral 1.0" everywhere is
+            # a deliberate behaviour change that would require a re-baseline.)
+            {"taker_buy_sell_ratio": 0.0},
             bucket_close_shift_seconds=3600,
         ),
         _EnrichmentSpec(
+            "liquidations",
             data_manager.DERIVATIVES_DIR / fs_symbol / "liquidations_1h.parquet",
             ("long_liq_usd", "short_liq_usd", "liq_imbalance"),
             ("long_liq_usd", "short_liq_usd", "liq_imbalance"),
@@ -346,12 +392,15 @@ def _available_enrichment_specs(
             bucket_close_shift_seconds=3600,
         ),
     ]
+    excluded = exclude_streams or set()
+    candidates = [spec for spec in candidates if spec.stream not in excluded]
     # Daily macro / sentiment is RESEARCH-ONLY (same-day-close lookahead, weekend
     # gaps) and is never joined on the strategy/backtest path — matching the
     # legacy data_manager.enrich gate.
     if include_macro:
         candidates.append(
             _EnrichmentSpec(
+                "fear_greed",
                 data_manager.MACRO_DIR / "fear_greed_1d.parquet",
                 ("fear_greed",),
                 ("fear_greed",),
@@ -373,7 +422,7 @@ def _macro_specs(macro_dir: Path) -> list[_EnrichmentSpec]:
     ):
         path = _first_existing_macro_path(macro_dir, macro_name)
         if path is not None:
-            specs.append(_EnrichmentSpec(path, (value_col,), (output_name,), {}))
+            specs.append(_EnrichmentSpec(f"macro_{macro_name}", path, (value_col,), (output_name,), {}))
     return specs
 
 
@@ -399,6 +448,18 @@ def _parquet_has_columns(path: Path, columns: list[str]) -> bool:
 def _enrich_with_duckdb(df: pd.DataFrame, specs: list[_EnrichmentSpec]) -> pd.DataFrame:
     output_columns = [column for spec in specs for column in spec.output_columns]
     base = df.drop(columns=[column for column in output_columns if column in df.columns], errors="ignore").copy()
+
+    # Accept the timestamp as a column (scanner/live frames) OR as a
+    # DatetimeIndex (backtest frames after _normalize_backtest_frame). Index
+    # frames previously raised KeyError('timestamp') here, which sent EVERY
+    # backtest enrich through the legacy fallback — mirror
+    # data_manager._merge_asof_parquet: run on a reset-index copy, restore the
+    # DatetimeIndex (and its name) afterwards.
+    index_is_time = "timestamp" not in base.columns and isinstance(base.index, pd.DatetimeIndex)
+    original_index_name = base.index.name
+    if index_is_time:
+        base = base.reset_index()
+        base = base.rename(columns={base.columns[0]: "timestamp"})
     base["timestamp"] = _timestamp_ns(base["timestamp"])
 
     select_parts = ["b.*"]
@@ -437,6 +498,10 @@ def _enrich_with_duckdb(df: pd.DataFrame, specs: list[_EnrichmentSpec]) -> pd.Da
         con.register("base", base)
         enriched = con.execute(query, [*select_params, *join_params]).fetchdf()
     enriched["timestamp"] = _timestamp_ns(enriched["timestamp"])
+    if index_is_time:
+        enriched = enriched.set_index("timestamp")
+        enriched.index.name = original_index_name
+        return enriched
     return enriched.reset_index(drop=True)
 
 
@@ -444,9 +509,10 @@ def _joined_col(alias: str, output_col: str) -> str:
     return f"{alias}__{output_col}"
 
 
-def _quality_from_path(path: Path, symbol: str, timeframe: str) -> dict[str, object]:
+def _quality_from_path(paths: Path | list[Path], symbol: str, timeframe: str) -> dict[str, object]:
     from forven.data import _freshness_for, _timeframe_to_ms, _to_iso
 
+    path_list = [str(p) for p in (paths if isinstance(paths, list) else [paths])]
     timeframe_ms = _timeframe_to_ms(timeframe)
     with duckdb.connect(":memory:") as con:
         stats = con.execute(
@@ -454,6 +520,9 @@ def _quality_from_path(path: Path, symbol: str, timeframe: str) -> dict[str, obj
             WITH src AS (
                 SELECT timestamp, open, high, low, close, volume
                 FROM read_parquet(?)
+                -- cold+tail may briefly overlap in the crash window between a
+                -- cold replace and the tail clear; count each bar once.
+                QUALIFY row_number() OVER (PARTITION BY timestamp) = 1
             ),
             agg AS (
                 SELECT
@@ -492,15 +561,20 @@ def _quality_from_path(path: Path, symbol: str, timeframe: str) -> dict[str, obj
                 invalid_close_range
             FROM agg
             """,
-            [str(path)],
+            [path_list],
         ).fetchone()
         gap_rows = con.execute(
             """
-            WITH ordered AS (
+            WITH deduped AS (
+                SELECT timestamp
+                FROM read_parquet(?)
+                QUALIFY row_number() OVER (PARTITION BY timestamp) = 1
+            ),
+            ordered AS (
                 SELECT
                     timestamp,
                     lag(timestamp) OVER (ORDER BY timestamp) AS prev_ts
-                FROM read_parquet(?)
+                FROM deduped
             )
             SELECT prev_ts, timestamp
             FROM ordered
@@ -509,7 +583,7 @@ def _quality_from_path(path: Path, symbol: str, timeframe: str) -> dict[str, obj
             ORDER BY timestamp
             LIMIT 200
             """,
-            [str(path), timeframe_ms],
+            [path_list, timeframe_ms],
         ).fetchall()
 
     if stats is None or int(stats[0] or 0) == 0:

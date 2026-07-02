@@ -203,15 +203,23 @@ class Catalog:
 
 
 def _read_parquet_bounds(path: Path) -> tuple[str | None, str | None, int]:
+    # Include the series' tail sidecar (recent appends live there until
+    # compaction). A cold-only end_ts would make the catch-up planner re-plan
+    # bars that are already stored — every cycle, forever — and mark healthy
+    # series as stalled when the re-fetch yields zero new rows.
+    paths = [str(path)]
+    tail = Path(str(path) + ".tail")
+    if tail.exists():
+        paths.append(str(tail))
     with duckdb.connect(":memory:") as con:
         row = con.execute(
             """
             SELECT min(timestamp) AS start_ts,
                    max(timestamp) AS end_ts,
-                   count(*) AS row_count
+                   count(DISTINCT timestamp) AS row_count
             FROM read_parquet(?)
             """,
-            [str(path)],
+            [paths],
         ).fetchone()
     if row is None:
         return None, None, 0

@@ -47,7 +47,7 @@ def test_hub_aggregate_is_causal(tmp_path):
 
     p = _write_hourly(tmp_path, "taker_volume_1h.parquet", "taker_buy_sell_ratio", [10.0 + i for i in range(8)])
     spec = _EnrichmentSpec(
-        p, ("taker_buy_sell_ratio",), ("taker_buy_sell_ratio",), {"taker_buy_sell_ratio": 1.0},
+        "taker_volume", p, ("taker_buy_sell_ratio",), ("taker_buy_sell_ratio",), {"taker_buy_sell_ratio": 1.0},
         bucket_close_shift_seconds=3600,
     )
     out = _enrich_with_duckdb(_bars_15m(), [spec])
@@ -60,7 +60,7 @@ def test_hub_aggregate_leaks_without_shift(tmp_path):
     from forven.dataeng.hub import _enrich_with_duckdb, _EnrichmentSpec
 
     p = _write_hourly(tmp_path, "taker_volume_1h.parquet", "taker_buy_sell_ratio", [10.0 + i for i in range(8)])
-    spec = _EnrichmentSpec(p, ("taker_buy_sell_ratio",), ("taker_buy_sell_ratio",), {"taker_buy_sell_ratio": 1.0})  # shift=0
+    spec = _EnrichmentSpec("taker_volume", p, ("taker_buy_sell_ratio",), ("taker_buy_sell_ratio",), {"taker_buy_sell_ratio": 1.0})  # shift=0
     out = _enrich_with_duckdb(_bars_15m(), [spec])
     assert (out["taker_buy_sell_ratio"] == 12.0).all()  # in-progress 02:00 bucket -> the leak the shift fixes
 
@@ -72,7 +72,7 @@ def test_hub_point_in_time_stream_unshifted(tmp_path):
     from forven.dataeng.hub import _enrich_with_duckdb, _EnrichmentSpec
 
     p = _write_hourly(tmp_path, "oi.parquet", "open_interest", [100.0 + i for i in range(8)])
-    spec = _EnrichmentSpec(p, ("open_interest",), ("open_interest",), {"open_interest": 0.0})  # default shift 0
+    spec = _EnrichmentSpec("oi", p, ("open_interest",), ("open_interest",), {"open_interest": 0.0})  # default shift 0
     out = _enrich_with_duckdb(_bars_15m(), [spec])
     assert (out["open_interest"] == 102.0).all()  # the 02:00 snapshot
 

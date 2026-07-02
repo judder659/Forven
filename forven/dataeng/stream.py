@@ -45,7 +45,7 @@ class StreamManager:
         self._states[key] = "disconnected"
 
     def flush_closed_candles(self, ref: str | SymbolRef, timeframe: str, *, now: object | None = None) -> int:
-        from forven.data import _timeframe_to_ms, load_parquet, merge_and_dedup, save_parquet
+        from forven.data import _get_dataset_lock, _timeframe_to_ms, load_parquet, merge_and_dedup, save_parquet
 
         resolved = ref if isinstance(ref, SymbolRef) else to_ref(ref, timeframe=timeframe)
         key = (resolved.source, resolved.market, resolved.to_fs(), "candles")
@@ -68,9 +68,13 @@ class StreamManager:
         for record in open_rows.to_dict("records"):
             buffer.append(record)
 
-        existing = load_parquet(resolved.to_fs(), timeframe)
-        merged = merge_and_dedup(existing, closed)
-        save_parquet(merged, resolved.to_fs(), timeframe, source=resolved.source)
+        # Same per-series lock the fetch/backfill writers hold: an unlocked
+        # load→merge→save here interleaving with a concurrent backfill would
+        # lose whichever write finished first (last os.replace wins).
+        with _get_dataset_lock(resolved.to_fs(), timeframe):
+            existing = load_parquet(resolved.to_fs(), timeframe)
+            merged = merge_and_dedup(existing, closed)
+            save_parquet(merged, resolved.to_fs(), timeframe, source=resolved.source)
         return max(0, len(merged) - (len(existing) if existing is not None else 0))
 
     def status(self) -> list[StreamState]:

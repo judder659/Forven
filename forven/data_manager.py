@@ -399,6 +399,25 @@ _parquet_cache_lock = threading.Lock()
 _parquet_cache: dict[str, tuple[tuple[float, int], pd.DataFrame]] = {}
 _PARQUET_CACHE_MAX = 256
 
+# Enrichment joins are fully graceful (a missing stream file returns the frame
+# unchanged, no column added) — but SILENTLY so. Surface each absent stream
+# file once per process so "this strategy never got its order-flow columns"
+# is visible in the logs instead of only in a debugger.
+_missing_stream_logged_lock = threading.Lock()
+_missing_stream_logged: set[str] = set()
+
+
+def _log_missing_stream_once(path: Path) -> None:
+    key = str(path)
+    with _missing_stream_logged_lock:
+        if key in _missing_stream_logged:
+            return
+        _missing_stream_logged.add(key)
+    log.warning(
+        "Enrichment stream file absent or empty: %s — the corresponding column(s) "
+        "will not be joined until it is collected", path,
+    )
+
 
 def _parquet_read_cache(path: Path) -> pd.DataFrame | None:
     """(mtime, size)-keyed cache wrapping _load_stream_parquet.
@@ -465,6 +484,7 @@ def _merge_asof_parquet(
     """
     src = _parquet_read_cache(path)
     if src is None or src.empty:
+        _log_missing_stream_once(path)
         return df
     if not all(c in src.columns for c in cols):
         return df
@@ -628,7 +648,7 @@ class OHLCVCollector:
             last_ms = dataset_last_timestamp_ms(symbol, timeframe)
 
             # A present-but-unreadable lake file must NOT be treated as first-time:
-            # dataset_last_timestamp_ms returns None for BOTH a missing file and a
+            # dataset_last_timestamp_ms returns None for BOTH a missing series and a
             # corrupt/unreadable one, and a None cursor refetches from scratch and
             # overwrites the file with a short window — silently dropping history.
             # The old load_parquet path raised on a corrupt file; preserve that.
@@ -1432,14 +1452,20 @@ class DataManager:
         """
         if not (max_pairs_per_run and max_pairs_per_run > 0) or len(pairs) <= max_pairs_per_run:
             return list(pairs)
-        from forven.data import parquet_path
+        from forven.data import parquet_path, tail_path
 
         def _last_refresh(pair: tuple[str, str]) -> float:
             symbol, timeframe = pair
-            try:
-                return parquet_path(symbol, timeframe).stat().st_mtime
-            except OSError:
-                return 0.0  # never written -> treat as most stale
+            # Appends land in the tail sidecar, so freshness is the NEWEST of
+            # cold/tail mtime — cold alone would rank freshly-appended pairs
+            # as stale forever.
+            newest = 0.0
+            for candidate in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)):
+                try:
+                    newest = max(newest, candidate.stat().st_mtime)
+                except OSError:
+                    continue
+            return newest  # 0.0 = never written -> treat as most stale
 
         def _rank(pair: tuple[str, str]) -> tuple[float, float]:
             return (self._keepalive_last_checked.get(pair, 0.0), _last_refresh(pair))
@@ -1853,9 +1879,21 @@ class DataManager:
             if _data_engine_read_enabled():
                 from forven.dataeng.hub import get_data_hub
 
-                return get_data_hub().enrich(df, symbol, timeframe)
+                # exclude_streams MUST be forwarded: the backtest path excludes
+                # funding/OI (its source of truth is the Hyperliquid hourly join)
+                # and dropping the exclusion here re-joins Binance per-8h funding
+                # over it — ~8x funding mischarge.
+                return get_data_hub().enrich(
+                    df,
+                    symbol,
+                    timeframe,
+                    include_macro=include_macro,
+                    exclude_streams=tuple(excluded),
+                )
         except Exception as exc:
-            log.debug("DataHub enrichment failed for %s/%s; falling back to legacy enrich: %s", symbol, timeframe, exc)
+            # Loud: a persistent DataHub failure means the engine-on and legacy
+            # paths can silently diverge on enrichment values.
+            log.warning("DataHub enrichment failed for %s/%s; falling back to legacy enrich: %s", symbol, timeframe, exc)
 
         result = df.copy()
 

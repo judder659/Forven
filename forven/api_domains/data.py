@@ -625,6 +625,17 @@ def post_data_ingestion_submit(
 
 
 def get_data_ingestion_run(run_id: str):
+    # Live runs (and remote-mode fabricated runs) are keyed in the in-memory
+    # run store — a direct lookup, not the previous linear scan of up to 10k
+    # reconstructed rows on every 1.5s frontend poll.
+    from forven.data import get_ingestion_run
+
+    run = get_ingestion_run(str(run_id))
+    if run is not None:
+        run["symbol"] = _to_ui_symbol(run.get("symbol"))
+        return run
+    # Synthetic catalog ids ("dataset-N-...") and remote-listed runs still go
+    # through the composite listing.
     rows = get_data_ingestion_runs(limit=10_000, offset=0)
     match = next((row for row in rows if str(row.get("id")) == str(run_id)), None)
     if match is None:
@@ -973,6 +984,31 @@ def get_quality_reports(limit: int = 100) -> list[dict]:
         reports = _compute_quality_reports(cache_limit)
         _quality_reports_cache[cache_key] = (time.time(), reports)
         return reports
+
+
+def get_quality_report(symbol: str, timeframe: str) -> dict:
+    """Single-series quality report in leaderboard row shape.
+
+    The frontend has always called /data/quality/reports/{symbol}/{timeframe};
+    the route never existed server-side, so every call 404'd into a client-side
+    recompute fallback. Serve it from the cached leaderboard when present,
+    else compute the one series directly.
+    """
+    from forven.data import compute_data_quality, symbol_to_fs
+
+    fs_symbol = symbol_to_fs(symbol)
+    ui_symbol = _to_ui_symbol(fs_symbol)
+    for cached_at, reports in list(_quality_reports_cache.values()):
+        if (time.time() - cached_at) >= _QUALITY_REPORTS_TTL_SECONDS:
+            continue
+        for report in reports:
+            if report.get("symbol") == ui_symbol and report.get("timeframe") == timeframe:
+                return report
+    try:
+        q = compute_data_quality(fs_symbol, timeframe)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _quality_report_from({"symbol": fs_symbol, "timeframe": timeframe}, q, 0)
 
 
 def get_data_health():
@@ -1845,33 +1881,40 @@ def post_collect_stream(symbol: str, stream: str) -> dict:
 
 
 def get_active_symbols_with_reasons() -> list[dict]:
-    """Return active symbols with strategy/backtest counts as reasons."""
+    """Return active symbols with strategy/backtest counts as reasons.
+
+    Two GROUP BY queries on one connection instead of the previous
+    two-queries-per-symbol N+1 (matching semantics unchanged: exact
+    symbol-string equality)."""
     try:
         from forven.data_manager import data_manager
         from forven.db import get_db
         from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         symbols = data_manager.get_active_symbols()
-        result = []
-        for symbol in sorted(symbols):
-            try:
-                with get_db() as conn:
-                    strat_count = conn.execute(
-                        "SELECT COUNT(*) FROM strategies WHERE symbol = ? AND stage IN ('paper', 'paper_trading', 'live_graduated', 'deployed', 'gauntlet', 'active')",
-                        (symbol,),
-                    ).fetchone()[0]
-                    bt_count = conn.execute(
-                        "SELECT COUNT(DISTINCT id) FROM backtest_results WHERE symbol = ? AND created_at >= ? AND deleted_at IS NULL",
-                        (symbol, cutoff),
-                    ).fetchone()[0]
-                result.append({
-                    "symbol": symbol,
-                    "active_strategies": strat_count,
-                    "recent_backtests": bt_count,
-                })
-            except Exception:
-                result.append({"symbol": symbol, "active_strategies": 0, "recent_backtests": 0})
-        return result
+        strat_counts: dict[str, int] = {}
+        bt_counts: dict[str, int] = {}
+        try:
+            with get_db() as conn:
+                for sym, count in conn.execute(
+                    "SELECT symbol, COUNT(*) FROM strategies WHERE stage IN ('paper', 'paper_trading', 'live_graduated', 'deployed', 'gauntlet', 'active') GROUP BY symbol"
+                ).fetchall():
+                    strat_counts[str(sym)] = int(count)
+                for sym, count in conn.execute(
+                    "SELECT symbol, COUNT(DISTINCT id) FROM backtest_results WHERE created_at >= ? AND deleted_at IS NULL GROUP BY symbol",
+                    (cutoff,),
+                ).fetchall():
+                    bt_counts[str(sym)] = int(count)
+        except Exception:
+            pass
+        return [
+            {
+                "symbol": symbol,
+                "active_strategies": strat_counts.get(symbol, 0),
+                "recent_backtests": bt_counts.get(symbol, 0),
+            }
+            for symbol in sorted(symbols)
+        ]
     except Exception as exc:
         log.warning("get_active_symbols_with_reasons failed: %s", exc)
         return []

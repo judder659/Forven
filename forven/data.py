@@ -358,6 +358,242 @@ def parquet_path(symbol: str, timeframe: str) -> Path:
     return path
 
 
+# ---------------------------------------------------------------------------
+# Hot-tail storage (append without whole-file rewrite)
+#
+# Every series is COLD file + optional TAIL sidecar:
+#   data/ohlcv/{SYMBOL}/{tf}.parquet        — the bulk of the series (immutable
+#                                             between compactions)
+#   data/ohlcv/{SYMBOL}/{tf}.parquet.tail   — small parquet taking all
+#                                             incremental appends
+#
+# Appending N new closed bars costs O(N + len(tail)) instead of O(series):
+# previously EVERY keep-alive/catch-up append re-read and re-wrote the whole
+# parquet (the "~4 min CPU for ~20 bars" catch-up cost and the single-worker
+# WebSocket starvation both trace to that rewrite). The tail folds into the
+# cold file when it exceeds TAIL_COMPACT_ROWS (or via compact_series()).
+#
+# Naming is deliberate: "*.parquet.tail" does NOT match the "*.parquet" globs
+# used by the catalog scan, orphan scan and backfill discovery, so the tail
+# can never be mistaken for a standalone series. All reads inside this module
+# go through read_lake_frame(), which merges cold+tail (tail wins on duplicate
+# timestamps). Invariants preserved at this new write boundary: closed-bar-
+# only, OHLC sanity quarantine, fsync-then-rename, per-series lock.
+# ---------------------------------------------------------------------------
+
+TAIL_COMPACT_ROWS = 5000
+
+# Which MARKET a source's bars come from. Stamped as parquet metadata
+# (forven_market) on every write so the spot/futures provenance of a series is
+# visible to tooling: today a series can hold Binance Vision USD-M FUTURES
+# history (deep backfill) under a Binance SPOT tail (REST keep-alive) — a
+# basis discontinuity at the splice that nothing recorded. The metadata
+# reflects the LAST writer; the per-row reconciliation/canonicalization is the
+# data-manager-overhaul Phase 1 follow-up (docs/data-manager-overhaul.md).
+_SOURCE_MARKET = {
+    "binance": "spot",
+    "ccxt": "spot",
+    "polygon": "spot",
+    "binanceusdm": "perp",
+    "binance-vision": "perp",
+    "csv": "unknown",
+}
+
+
+def market_for_source(source: str) -> str:
+    return _SOURCE_MARKET.get(str(source or "").strip().lower(), "unknown")
+
+
+def get_dataset_market(symbol: str, timeframe: str) -> str | None:
+    """Recorded market (spot/perp/unknown) of a stored series from the parquet
+    ``forven_market`` metadata; None when absent (pre-stamping files)."""
+    try:
+        path = parquet_path(symbol, timeframe)
+        if not path.exists():
+            return None
+        if _using_pyarrow():
+            keyvals = pq.read_metadata(path).metadata or {}
+            raw = keyvals.get(b"forven_market")
+            return raw.decode("utf-8", errors="ignore") if raw else None
+        _require_pyarrow_for_lake()
+    except Exception:
+        return None
+
+
+def tail_path(symbol: str, timeframe: str) -> Path:
+    return Path(str(parquet_path(symbol, timeframe)) + ".tail")
+
+
+def _footer_bounds(path: Path) -> tuple[int, int | None, int | None]:
+    """(row_count, min_ts_ms, max_ts_ms) for one parquet, from footer statistics
+    only; falls back to a single-column load when statistics are absent.
+    Raises on an unreadable file (callers must not mistake corrupt for empty)."""
+    if not _using_pyarrow():
+        _require_pyarrow_for_lake()
+    metadata = pq.read_metadata(path)
+    rows = int(metadata.num_rows or 0)
+    if rows == 0:
+        return 0, None, None
+    names = list(metadata.schema.names)
+    if "timestamp" in names:
+        ts_idx = names.index("timestamp")
+        mins: list[Any] = []
+        maxes: list[Any] = []
+        for rg in range(metadata.num_row_groups):
+            stats = getattr(metadata.row_group(rg).column(ts_idx), "statistics", None)
+            if stats is None or not getattr(stats, "has_min_max", False):
+                mins = []
+                maxes = []
+                break
+            mins.append(stats.min)
+            maxes.append(stats.max)
+        if mins and maxes:
+            min_ts = _as_utc_timestamp(pd.Series(mins)).dropna().sort_values()
+            max_ts = _as_utc_timestamp(pd.Series(maxes)).dropna().sort_values()
+            if len(min_ts) and len(max_ts):
+                return rows, _to_ms(min_ts.iloc[0]), _to_ms(max_ts.iloc[-1])
+    series = pq.read_table(path, columns=["timestamp"]).to_pandas()["timestamp"]
+    ts = _as_utc_timestamp(pd.Series(series)).dropna().sort_values()
+    if not len(ts):
+        return rows, None, None
+    return rows, _to_ms(ts.iloc[0]), _to_ms(ts.iloc[-1])
+
+
+def read_lake_frame(symbol: str, timeframe: str) -> pd.DataFrame | None:
+    """Raw cold+tail merged read of a stored series (normalized; tail wins on
+    duplicate timestamps). No data-engine delegation, no as_of — this is the
+    storage primitive both the legacy read path and the DataHub build on.
+    Returns None when neither file exists; raises on a corrupt file."""
+    cold = parquet_path(symbol, timeframe)
+    tail = tail_path(symbol, timeframe)
+    frames: list[pd.DataFrame] = []
+    if cold.exists():
+        if not _using_pyarrow():
+            _require_pyarrow_for_lake()
+        frames.append(pq.read_table(cold).to_pandas())
+    if tail.exists():
+        if not _using_pyarrow():
+            _require_pyarrow_for_lake()
+        frames.append(pq.read_table(tail).to_pandas())
+    if not frames:
+        return None
+    if len(frames) == 1:
+        return _normalize_ohlcv_frame(frames[0])
+    # concat order [cold, tail] + keep-last dedup in _normalize_ohlcv_frame
+    # makes tail rows win over a (crash-window) duplicate in cold.
+    return _normalize_ohlcv_frame(pd.concat(frames, ignore_index=True))
+
+
+def _write_lake_parquet(frame: pd.DataFrame, path: Path, *, symbol: str, timeframe: str, source: str) -> None:
+    """Atomic parquet write with forven metadata + fsync-then-rename."""
+    if not _using_pyarrow():
+        _require_pyarrow_for_lake()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    meta = dict(table.schema.metadata or {})
+    meta.update(
+        {
+            b"forven_source": str(source).encode("utf-8"),
+            b"forven_market": market_for_source(source).encode("utf-8"),
+            b"forven_symbol": symbol_to_fs(symbol).encode("utf-8"),
+            b"forven_timeframe": str(timeframe).encode("utf-8"),
+            b"forven_updated_at": _now_iso().encode("utf-8"),
+        }
+    )
+    table = table.replace_schema_metadata(meta)
+    pq.write_table(table, tmp, compression="zstd")
+    try:
+        fd = os.open(str(tmp), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+    os.replace(str(tmp), str(path))
+
+
+def _append_bars_locked(
+    symbol: str,
+    timeframe: str,
+    new_frame: pd.DataFrame,
+    *,
+    source: str = "ccxt",
+) -> int | None:
+    """Append strictly-newer closed bars to the tail sidecar. Caller MUST hold
+    the dataset lock (this does not take it — the lock is not reentrant).
+
+    Returns rows appended, or None when the fast path does not apply and the
+    caller must fall back to the full load→merge→save path: no cold file yet,
+    or any new row overlaps stored data (an overlap can be a RESTATEMENT whose
+    prior value must be captured by the revision log on the full path).
+    """
+    cold = parquet_path(symbol, timeframe)
+    if not cold.exists():
+        return None
+    frame = _normalize_ohlcv_frame(new_frame)
+    frame = _reject_invalid_ohlc(frame, symbol, timeframe)
+    frame = _drop_unclosed_bars(frame, _timeframe_to_ms(timeframe), int(time.time() * 1000))
+    if frame is None or frame.empty:
+        return 0
+
+    tail = tail_path(symbol, timeframe)
+    last_ms: int | None = None
+    _, _, cold_last = _footer_bounds(cold)
+    last_ms = cold_last
+    tail_frame: pd.DataFrame | None = None
+    if tail.exists():
+        tail_frame = pq.read_table(tail).to_pandas()
+        _, _, tail_last = _footer_bounds(tail)
+        if tail_last is not None:
+            last_ms = max(last_ms or 0, tail_last) or tail_last
+
+    if last_ms is None:
+        return None  # unreadable/empty cold bounds — take the safe full path
+    first_new_ms = _to_ms(frame["timestamp"].iloc[0])
+    if first_new_ms <= last_ms:
+        return None  # overlap/restatement — full path captures revisions
+
+    if tail_frame is not None and not tail_frame.empty:
+        combined = _normalize_ohlcv_frame(pd.concat([tail_frame, frame], ignore_index=True))
+    else:
+        combined = frame
+    _write_lake_parquet(combined, tail, symbol=symbol, timeframe=timeframe, source=source)
+    _invalidate_catalog_cache()
+
+    if len(combined) >= TAIL_COMPACT_ROWS:
+        _compact_series_locked(symbol, timeframe, source=source)
+    return len(frame)
+
+
+def append_bars(symbol: str, timeframe: str, new_frame: pd.DataFrame, *, source: str = "ccxt") -> int | None:
+    """Public locked wrapper around the tail append. See _append_bars_locked."""
+    with _get_dataset_lock(symbol, timeframe):
+        return _append_bars_locked(symbol, timeframe, new_frame, source=source)
+
+
+def _compact_series_locked(symbol: str, timeframe: str, *, source: str | None = None) -> bool:
+    """Fold the tail into the cold file. Caller must hold the dataset lock.
+    Returns True when a compaction ran."""
+    tail = tail_path(symbol, timeframe)
+    if not tail.exists():
+        return False
+    merged = read_lake_frame(symbol, timeframe)
+    if merged is None or merged.empty:
+        return False
+    resolved_source = source or get_dataset_source(symbol, timeframe) or "ccxt"
+    # save_parquet clears the tail after the cold replace.
+    save_parquet(merged, symbol, timeframe, source=resolved_source)
+    return True
+
+
+def compact_series(symbol: str, timeframe: str) -> bool:
+    """Fold a series' tail sidecar into its cold file (no-op without a tail)."""
+    with _get_dataset_lock(symbol, timeframe):
+        return _compact_series_locked(symbol, timeframe)
+
+
 def _data_engine_read_enabled() -> bool:
     try:
         from forven.dataeng.settings import load_data_engine_settings
@@ -389,7 +625,11 @@ def _normalize_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
     for col in required:
         if col not in frame.columns:
             frame[col] = 0.0 if col != "timestamp" else pd.NaT
-    frame["timestamp"] = _as_utc_timestamp(frame["timestamp"])
+    # Pin ns resolution: pandas>=2 preserves the parquet us resolution on read,
+    # so a raw-parquet read and a DuckDB/hub read otherwise return different
+    # timestamp dtypes for the SAME series (parity break + merge_asof key
+    # mismatches downstream).
+    frame["timestamp"] = _as_utc_timestamp(frame["timestamp"]).astype("datetime64[ns, UTC]")
     for col in ("open", "high", "low", "close", "volume"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
     frame = frame.dropna(subset=["timestamp", "open", "high", "low", "close", "volume"])
@@ -414,21 +654,23 @@ def load_parquet(symbol: str, timeframe: str, *, as_of: object | None = None) ->
 
             return get_data_hub().candles(symbol, timeframe, as_of=as_of)
         except Exception as exc:
-            log.debug("DataHub candle read failed for %s %s; falling back to legacy parquet read: %s", symbol, timeframe, exc)
+            # Loud: a persistent hub failure means engine-on reads silently
+            # degrade to the legacy path and the two can drift unnoticed.
+            log.warning("DataHub candle read failed for %s %s; falling back to legacy parquet read: %s", symbol, timeframe, exc)
 
-    path = parquet_path(symbol, timeframe)
-    if not path.exists():
+    if not _using_pyarrow():
+        path = parquet_path(symbol, timeframe)
+        if path.exists():
+            with path.open("rb") as fh:
+                if fh.read(4) == b"PAR1":
+                    raise RuntimeError(
+                        "pyarrow is required to read parquet-backed OHLCV datasets in this environment"
+                    )
+            _require_pyarrow_for_lake()
         return None
-    if _using_pyarrow():
-        table = pq.read_table(path)
-        frame = _normalize_ohlcv_frame(table.to_pandas())
-    else:
-        with path.open("rb") as fh:
-            if fh.read(4) == b"PAR1":
-                raise RuntimeError(
-                    "pyarrow is required to read parquet-backed OHLCV datasets in this environment"
-                )
-        _require_pyarrow_for_lake()
+    frame = read_lake_frame(symbol, timeframe)
+    if frame is None:
+        return None
     if as_of is not None:
         try:
             from forven.dataeng.revisions import reconstruct_as_of
@@ -457,6 +699,7 @@ def save_parquet(df: pd.DataFrame, symbol: str, timeframe: str, source: str = "c
         meta.update(
             {
                 b"forven_source": str(source).encode("utf-8"),
+                b"forven_market": market_for_source(source).encode("utf-8"),
                 b"forven_symbol": symbol_to_fs(symbol).encode("utf-8"),
                 b"forven_timeframe": str(timeframe).encode("utf-8"),
                 b"forven_updated_at": _now_iso().encode("utf-8"),
@@ -470,7 +713,29 @@ def save_parquet(df: pd.DataFrame, symbol: str, timeframe: str, source: str = "c
         out.attrs["forven_timeframe"] = str(timeframe)
         out.attrs["forven_updated_at"] = _now_iso()
         _require_pyarrow_for_lake()
+    # Force the tmp bytes durable BEFORE the rename (mirrors
+    # data_manager._save_stream_parquet): a power loss between write and replace
+    # must not leave a truncated lake file behind a completed-looking rename.
+    try:
+        fd = os.open(str(tmp_path), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
     os.replace(str(tmp_path), str(path))
+    # A full save is REPLACEMENT semantics: the dataset is now exactly `out`.
+    # Clear the tail sidecar — every merge-path caller loads via load_parquet
+    # (cold+tail) first, so its rows are folded into the frame just written.
+    # Crash window (cold replaced, tail not yet removed) is harmless: reads
+    # dedup keep-last and the next save/compaction clears it.
+    try:
+        _tail = tail_path(symbol, timeframe)
+        if _tail.exists():
+            _tail.unlink()
+    except OSError as exc:
+        log.warning("Could not clear tail sidecar for %s %s after save: %s", symbol, timeframe, exc)
     _invalidate_catalog_cache()
 
 
@@ -490,42 +755,21 @@ def dataset_last_timestamp_ms(symbol: str, timeframe: str) -> int | None:
     when the file is missing, empty, or unreadable.
 
     Lets the OHLCV keep-alive cheaply decide whether a new closed bar is even due
-    before paying for a full read + whole-file rewrite (the dominant cost behind
-    single-worker WS starvation). Mirrors the footer-stats approach in
-    ``_coverage_entry_uncached``.
+    before paying for a full read (the dominant cost behind single-worker WS
+    starvation). Tail-aware: the latest bar usually lives in the tail sidecar,
+    whose footer is tiny.
     """
-    path = parquet_path(symbol, timeframe)
-    if not path.exists():
-        return None
-    try:
-        if _using_pyarrow():
-            metadata = pq.read_metadata(path)
-            if int(metadata.num_rows or 0) == 0:
-                return None
-            names = list(metadata.schema.names)
-            if "timestamp" in names:
-                ts_idx = names.index("timestamp")
-                maxes: list[Any] = []
-                for rg in range(metadata.num_row_groups):
-                    stats = getattr(metadata.row_group(rg).column(ts_idx), "statistics", None)
-                    if stats is None or not getattr(stats, "has_min_max", False):
-                        maxes = []
-                        break
-                    maxes.append(stats.max)
-                if maxes:
-                    max_ts = _as_utc_timestamp(pd.Series(maxes)).dropna().sort_values()
-                    if len(max_ts):
-                        return int(max_ts.iloc[-1].timestamp() * 1000)
-            # Statistics absent — single-column load (still far cheaper than a full read).
-            series = pq.read_table(path, columns=["timestamp"]).to_pandas()["timestamp"]
-        else:
-            _require_pyarrow_for_lake()
-        ts = _as_utc_timestamp(pd.Series(series)).dropna().sort_values()
-        if len(ts):
-            return int(ts.iloc[-1].timestamp() * 1000)
-    except Exception:
-        return None
-    return None
+    last: int | None = None
+    for candidate in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)):
+        if not candidate.exists():
+            continue
+        try:
+            _, _, max_ms = _footer_bounds(candidate)
+        except Exception:
+            continue
+        if max_ms is not None and (last is None or max_ms > last):
+            last = max_ms
+    return last
 
 
 def merge_and_dedup(existing: pd.DataFrame | None, new: pd.DataFrame | None) -> pd.DataFrame:
@@ -688,15 +932,21 @@ def reconcile_close_prices(frame_a: pd.DataFrame, frame_b: pd.DataFrame) -> dict
 
 
 def _series_row_count(symbol: str, timeframe: str) -> int:
-    try:
-        path = parquet_path(symbol, timeframe)
-        if not path.exists():
-            return 0
-        if _using_pyarrow():
-            return int(pq.read_metadata(path).num_rows or 0)
-        _require_pyarrow_for_lake()
-    except Exception:
-        return 0
+    """Approximate stored row count (cold + tail footers). May briefly double-
+    count the crash-window overlap between a cold replace and the tail clear —
+    callers use it for progress accounting, not correctness."""
+    total = 0
+    for candidate in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)):
+        try:
+            if not candidate.exists():
+                continue
+            if _using_pyarrow():
+                total += int(pq.read_metadata(candidate).num_rows or 0)
+            else:
+                _require_pyarrow_for_lake()
+        except Exception:
+            continue
+    return total
 
 
 def _log_data_action(action: str, message: str, *, level: str = "info", **detail: Any) -> None:
@@ -819,58 +1069,47 @@ def backfill_ohlcv_gaps(
 
 
 def compute_checksum(symbol: str, timeframe: str) -> str | None:
+    """Content checksum over the whole stored series (cold file + tail sidecar,
+    in that order) so an append visibly changes the checksum."""
     path = parquet_path(symbol, timeframe)
     if not path.exists():
         return None
     digest = hashlib.md5()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
+    for candidate in (path, tail_path(symbol, timeframe)):
+        if not candidate.exists():
+            continue
+        with candidate.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
     return digest.hexdigest()
 
 
 def _dataset_from_file(path: Path, symbol: str, timeframe: str) -> dict[str, Any]:
-    if _using_pyarrow():
-        metadata = pq.read_metadata(path)
-        rows = int(metadata.num_rows or 0)
-        keyvals = metadata.metadata or {}
-        source = keyvals.get(b"forven_source", b"ccxt")
-        source_name = source.decode("utf-8", errors="ignore") or "ccxt"
-
-        if rows == 0:
-            start = None
-            end = None
-        else:
-            start = None
-            end = None
-            try:
-                timestamp_idx = list(metadata.schema.names).index("timestamp")
-                mins: list[Any] = []
-                maxes: list[Any] = []
-                for row_group_idx in range(metadata.num_row_groups):
-                    column = metadata.row_group(row_group_idx).column(timestamp_idx)
-                    stats = getattr(column, "statistics", None)
-                    if stats is None or not getattr(stats, "has_min_max", False):
-                        mins = []
-                        maxes = []
-                        break
-                    mins.append(stats.min)
-                    maxes.append(stats.max)
-                if mins and maxes:
-                    min_ts = _as_utc_timestamp(pd.Series(mins)).dropna().sort_values()
-                    max_ts = _as_utc_timestamp(pd.Series(maxes)).dropna().sort_values()
-                    start = _to_iso(min_ts.iloc[0]) if len(min_ts) else None
-                    end = _to_iso(max_ts.iloc[-1]) if len(max_ts) else None
-            except Exception:
-                start = None
-                end = None
-            if start is None or end is None:
-                ts = pq.read_table(path, columns=["timestamp"]).to_pandas()["timestamp"]
-                ts = _as_utc_timestamp(ts).dropna().sort_values()
-                start = _to_iso(ts.iloc[0]) if len(ts) else None
-                end = _to_iso(ts.iloc[-1]) if len(ts) else None
-    else:
+    if not _using_pyarrow():
         _require_pyarrow_for_lake()
+
+    keyvals = pq.read_metadata(path).metadata or {}
+    source = keyvals.get(b"forven_source", b"ccxt")
+    source_name = source.decode("utf-8", errors="ignore") or "ccxt"
+
+    rows, start_ms, end_ms = _footer_bounds(path)
+    # Fold in the tail sidecar: recent appends live there until compaction, so
+    # a cold-only view under-counts rows and reports a stale end (which would
+    # make a freshly-appended series look stale in the catalog/coverage UI).
+    tail = Path(str(path) + ".tail")
+    if tail.exists():
+        try:
+            t_rows, t_start, t_end = _footer_bounds(tail)
+            rows += t_rows
+            if t_start is not None and (start_ms is None or t_start < start_ms):
+                start_ms = t_start
+            if t_end is not None and (end_ms is None or t_end > end_ms):
+                end_ms = t_end
+        except Exception:
+            pass
+
+    start = _to_iso(pd.Timestamp(start_ms, unit="ms", tz="UTC")) if start_ms is not None else None
+    end = _to_iso(pd.Timestamp(end_ms, unit="ms", tz="UTC")) if end_ms is not None else None
 
     asset_class = classify_dataset_asset_class(symbol, source_name)
     return {
@@ -938,51 +1177,12 @@ def scan_datasets(force: bool = False) -> list[dict[str, Any]]:
 
 
 def _coverage_entry_uncached(path: Path) -> dict[str, Any] | None:
-    """Row count + date range for one parquet, read from footer metadata.
-
-    Mirrors ``_dataset_from_file``: the row count comes from the footer and the
-    timestamp min/max from per-row-group column statistics, so we never load the
-    timestamp column unless statistics are absent. Returns ``None`` for empty or
-    unreadable files (the matrix renders those as "not collected"), matching the
-    old behaviour where an empty frame raised and the key was skipped.
-    """
-    if _using_pyarrow():
-        metadata = pq.read_metadata(path)
-        rows = int(metadata.num_rows or 0)
-        if rows == 0:
-            return None
-        start = None
-        end = None
-        try:
-            names = list(metadata.schema.names)
-            if "timestamp" in names:
-                ts_idx = names.index("timestamp")
-                mins: list[Any] = []
-                maxes: list[Any] = []
-                for rg in range(metadata.num_row_groups):
-                    stats = getattr(metadata.row_group(rg).column(ts_idx), "statistics", None)
-                    if stats is None or not getattr(stats, "has_min_max", False):
-                        mins = []
-                        maxes = []
-                        break
-                    mins.append(stats.min)
-                    maxes.append(stats.max)
-                if mins and maxes:
-                    min_ts = _as_utc_timestamp(pd.Series(mins)).dropna().sort_values()
-                    max_ts = _as_utc_timestamp(pd.Series(maxes)).dropna().sort_values()
-                    start = min_ts.iloc[0] if len(min_ts) else None
-                    end = max_ts.iloc[-1] if len(max_ts) else None
-        except Exception:
-            start = None
-            end = None
-        if start is None or end is None:
-            ts = pq.read_table(path, columns=["timestamp"]).to_pandas()["timestamp"]
-            ts = _as_utc_timestamp(ts).dropna().sort_values()
-            if not len(ts):
-                return None
-            start = ts.iloc[0]
-            end = ts.iloc[-1]
-    else:
+    """Row count + date range for one series (cold parquet + tail sidecar),
+    read from footer metadata only — never a full column load. Returns ``None``
+    for empty or unreadable files (the matrix renders those as "not collected"),
+    matching the old behaviour where an empty frame raised and the key was
+    skipped."""
+    if not _using_pyarrow():
         df = pd.read_parquet(path, columns=["timestamp"])
         rows = len(df)
         if rows == 0:
@@ -990,11 +1190,27 @@ def _coverage_entry_uncached(path: Path) -> dict[str, Any] | None:
         ts = _as_utc_timestamp(df["timestamp"]).dropna().sort_values()
         if not len(ts):
             return None
-        start = ts.iloc[0]
-        end = ts.iloc[-1]
+        start_ms: int | None = _to_ms(ts.iloc[0])
+        end_ms: int | None = _to_ms(ts.iloc[-1])
+    else:
+        rows, start_ms, end_ms = _footer_bounds(path)
 
-    start_ts = pd.Timestamp(start)
-    end_ts = pd.Timestamp(end)
+    tail = Path(str(path) + ".tail")
+    if tail.exists():
+        try:
+            t_rows, t_start, t_end = _footer_bounds(tail)
+            rows += t_rows
+            if t_start is not None and (start_ms is None or t_start < start_ms):
+                start_ms = t_start
+            if t_end is not None and (end_ms is None or t_end > end_ms):
+                end_ms = t_end
+        except Exception:
+            pass
+
+    if rows == 0 or start_ms is None or end_ms is None:
+        return None
+    start_ts = pd.Timestamp(start_ms, unit="ms", tz="UTC")
+    end_ts = pd.Timestamp(end_ms, unit="ms", tz="UTC")
     return {
         "rows": rows,
         "from": start_ts.strftime("%Y-%m-%d"),
@@ -1006,7 +1222,11 @@ def _coverage_entry_uncached(path: Path) -> dict[str, Any] | None:
 
 
 def coverage_entry(path: Path) -> dict[str, Any] | None:
-    """Cached per-file coverage entry, invalidated by the file's mtime + size."""
+    """Cached per-series coverage entry, invalidated by cold+tail mtime/size.
+
+    The cache key includes the TAIL sidecar's stat: an append only touches the
+    tail, and keying on the cold file alone would serve a stale entry (stale
+    freshness colour) for every freshly-appended series."""
     try:
         st = path.stat()
     except OSError:
@@ -1014,6 +1234,12 @@ def coverage_entry(path: Path) -> dict[str, Any] | None:
     key = str(path)
     mtime_ns = st.st_mtime_ns
     size = st.st_size
+    try:
+        tail_st = Path(str(path) + ".tail").stat()
+        mtime_ns = max(mtime_ns, tail_st.st_mtime_ns)
+        size += tail_st.st_size
+    except OSError:
+        pass
     with _coverage_cache_lock:
         cached = _coverage_cache.get(key)
         if cached is not None and cached[0] == mtime_ns and cached[1] == size:
@@ -1183,6 +1409,38 @@ def _build_dataset_record(
     }
 
 
+def _footer_dataset_record(fs_symbol: str, timeframe: str, source: str) -> dict[str, Any]:
+    """Dataset record (symbol/timeframe/source/bounds/row_count) built from
+    cold+tail footers only — the append fast-path must not load the series
+    just to describe it."""
+    rows = 0
+    start_ms: int | None = None
+    end_ms: int | None = None
+    for candidate in (parquet_path(fs_symbol, timeframe), tail_path(fs_symbol, timeframe)):
+        if not candidate.exists():
+            continue
+        try:
+            c_rows, c_start, c_end = _footer_bounds(candidate)
+        except Exception:
+            continue
+        rows += c_rows
+        if c_start is not None and (start_ms is None or c_start < start_ms):
+            start_ms = c_start
+        if c_end is not None and (end_ms is None or c_end > end_ms):
+            end_ms = c_end
+    asset_class = classify_dataset_asset_class(fs_symbol, source)
+    return {
+        "symbol": symbol_to_fs(fs_symbol),
+        "timeframe": timeframe,
+        "source": source,
+        "start_ts": _to_iso(pd.Timestamp(start_ms, unit="ms", tz="UTC")) if start_ms is not None else None,
+        "end_ts": _to_iso(pd.Timestamp(end_ms, unit="ms", tz="UTC")) if end_ms is not None else None,
+        "row_count": rows,
+        "asset_class": asset_class,
+        "market_type": dataset_market_type(asset_class),
+    }
+
+
 def _estimate_limit_window_start(limit: int, timeframe: str) -> int:
     now_ms = int(time.time() * 1000)
     bars = max(int(limit), 1)
@@ -1292,11 +1550,16 @@ def fetch_ohlcv_chunked(
     now_ms = int(time.time() * 1000)
     tf_ms = _timeframe_to_ms(timeframe)
 
-    try:
-        snapshot = load_parquet(fs_symbol, timeframe)
-    except Exception as exc:
-        log.debug("Ignoring unreadable OHLCV snapshot for %s %s before remote fetch: %s", fs_symbol, timeframe, exc)
-        snapshot = None
+    # Only the all_available branch needs the existing frame up front; the
+    # since_ms (keep-alive/incremental) and limit branches never read it, so
+    # loading it here was a pure full-file read wasted on every keep-alive.
+    snapshot: pd.DataFrame | None = None
+    if all_available:
+        try:
+            snapshot = load_parquet(fs_symbol, timeframe)
+        except Exception as exc:
+            log.debug("Ignoring unreadable OHLCV snapshot for %s %s before remote fetch: %s", fs_symbol, timeframe, exc)
+            snapshot = None
     fetched_blocks: list[pd.DataFrame] = []
 
     end_ms_to_use = until_ms if until_ms is not None else (now_ms + tf_ms)
@@ -1330,6 +1593,30 @@ def fetch_ohlcv_chunked(
 
     lock = _get_dataset_lock(fs_symbol, timeframe)
     with lock:
+        # Fast path for the incremental fetch (keep-alive, tail extension,
+        # catch-up): strictly-newer closed bars append to the tail sidecar in
+        # O(new bars) — no full read, no whole-file rewrite. Falls through to
+        # the full merge path on first-time fetch, overlap (possible
+        # restatement — the revision log must see the prior values), or any
+        # bounds problem.
+        if since_ms is not None and fetched.empty and (
+            parquet_path(fs_symbol, timeframe).exists() or tail_path(fs_symbol, timeframe).exists()
+        ):
+            # Incremental fetch found nothing new: do NOT pay a full
+            # read + whole-file rewrite of unchanged data (the old path did).
+            record = _footer_dataset_record(fs_symbol, timeframe, exchange_id)
+            record["bars_fetched"] = 0
+            record["bars_new"] = 0
+            return record
+
+        if since_ms is not None and not fetched.empty:
+            appended = _append_bars_locked(fs_symbol, timeframe, fetched, source=exchange_id)
+            if appended is not None:
+                record = _footer_dataset_record(fs_symbol, timeframe, exchange_id)
+                record["bars_fetched"] = int(len(fetched))
+                record["bars_new"] = int(appended)
+                return record
+
         try:
             current = load_parquet(fs_symbol, timeframe)
         except Exception as exc:
@@ -1352,6 +1639,34 @@ def fetch_ohlcv_chunked(
 def get_active_ingestion_runs():
     with _ingestion_runs_lock:
         return list(_ingestion_runs.values())
+
+
+def get_ingestion_run(run_id: str) -> dict | None:
+    """Keyed lookup of one ingestion run (copy), or None."""
+    with _ingestion_runs_lock:
+        run = _ingestion_runs.get(str(run_id))
+        return dict(run) if isinstance(run, dict) else None
+
+
+# The run store is process-local and was never pruned — a long-lived backend
+# accumulated every run forever, and coverage.ensure_coverage's completed-run
+# short-circuit could match arbitrarily stale entries. Cap it, evicting the
+# OLDEST terminal runs first; pending/running runs are never evicted.
+_INGESTION_RUNS_MAX = 500
+
+
+def _prune_ingestion_runs_locked() -> None:
+    if len(_ingestion_runs) <= _INGESTION_RUNS_MAX:
+        return
+    terminal = [
+        key
+        for key, run in _ingestion_runs.items()
+        if isinstance(run, dict) and run.get("status") in ("completed", "failed")
+    ]
+    terminal.sort(key=lambda key: str(_ingestion_runs[key].get("completed_at") or ""))
+    excess = len(_ingestion_runs) - _INGESTION_RUNS_MAX
+    for key in terminal[:excess]:
+        _ingestion_runs.pop(key, None)
 
 def submit_ingestion(
     symbol: str, 
@@ -1378,6 +1693,7 @@ def submit_ingestion(
     }
     with _ingestion_runs_lock:
         _ingestion_runs[run_id] = run
+        _prune_ingestion_runs_locked()
 
     def _worker():
         with _ingestion_runs_lock:
@@ -1421,9 +1737,17 @@ def get_dataset_detail(symbol: str, timeframe: str) -> dict[str, Any]:
     match = next((d for d in datasets if d["symbol"] == fs_symbol and d["timeframe"] == timeframe), None)
     if match is None:
         raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
+    updated_mtime: float | None = None
+    for candidate in (path, tail_path(fs_symbol, timeframe)):
+        try:
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            continue
+        if updated_mtime is None or mtime > updated_mtime:
+            updated_mtime = mtime
     return {
         **match,
-        "updated_at": _to_iso(datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)) if path.exists() else None,
+        "updated_at": _to_iso(datetime.fromtimestamp(updated_mtime, tz=timezone.utc)) if updated_mtime else None,
         "parquet_exists": path.exists(),
         "checksum": compute_checksum(fs_symbol, timeframe),
     }
@@ -1437,6 +1761,12 @@ def delete_dataset(symbol: str, timeframe: str) -> bool:
     with lock:
         if path.exists():
             path.unlink()
+        tail = tail_path(symbol, timeframe)
+        if tail.exists():
+            try:
+                tail.unlink()
+            except OSError:
+                pass
     # Remove now-empty symbol directories for cleanliness.
     parent = path.parent
     if parent.exists() and not any(parent.glob("*.parquet")):
@@ -1499,6 +1829,28 @@ def _find_parquet_orphans() -> tuple[list[dict[str, Any]], list[dict[str, str]]]
                     "reason": "stale temp file",
                     "safe_delete": True,
                 })
+            for tail_file in sorted(symbol_dir.glob("*.parquet.tail")):
+                try:
+                    tail_stat = tail_file.stat()
+                except OSError:
+                    continue
+                cold_sibling = Path(str(tail_file)[: -len(".tail")])
+                # "5m.parquet.tail" -> timeframe "5m"
+                tail_tf = Path(tail_file.stem).stem
+                if tail_stat.st_size == 0:
+                    orphans.append({
+                        "symbol": symbol, "timeframe": tail_tf, "path": str(tail_file),
+                        "size_bytes": 0, "reason": "empty tail sidecar", "safe_delete": True,
+                    })
+                elif not cold_sibling.exists():
+                    # A tail can only be created next to an existing cold file;
+                    # a stranded one holds real bars — review, never auto-delete.
+                    orphans.append({
+                        "symbol": symbol, "timeframe": tail_tf, "path": str(tail_file),
+                        "size_bytes": int(tail_stat.st_size),
+                        "reason": "tail sidecar without cold file — review manually",
+                        "safe_delete": False,
+                    })
             for pq_file in sorted(symbol_dir.glob("*.parquet")):
                 timeframe = pq_file.stem
                 seen.add((symbol, timeframe))
@@ -1681,7 +2033,7 @@ def compute_data_quality(symbol: str, timeframe: str) -> dict[str, Any]:
         except FileNotFoundError:
             raise
         except Exception as exc:
-            log.debug("DataHub quality query failed for %s %s; falling back to legacy quality: %s", fs_symbol, timeframe, exc)
+            log.warning("DataHub quality query failed for %s %s; falling back to legacy quality: %s", fs_symbol, timeframe, exc)
 
     frame = load_parquet(fs_symbol, timeframe)
     if frame is None or frame.empty:
@@ -1752,6 +2104,12 @@ def compute_data_health() -> dict[str, Any]:
             total_files += 1
             try:
                 total_bytes += int(path.stat().st_size)
+            except Exception:
+                pass
+            try:
+                tail = tail_path(item["symbol"], item["timeframe"])
+                if tail.exists():
+                    total_bytes += int(tail.stat().st_size)
             except Exception:
                 pass
         end_ts = item.get("end_ts")
@@ -1970,7 +2328,21 @@ def export_dataset_bytes(symbol: str, timeframe: str, format: str = "csv") -> tu
 
     fmt = str(format or "csv").strip().lower()
     if fmt == "parquet":
-        data = path.read_bytes()
+        # With a tail sidecar present the cold file alone silently omits the
+        # most recent bars — export the merged series instead. Without a tail,
+        # keep the cheap raw-bytes path.
+        tail = tail_path(fs_symbol, timeframe)
+        if tail.exists():
+            frame = load_parquet(fs_symbol, timeframe)
+            if frame is None:
+                raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
+            if not _using_pyarrow():
+                _require_pyarrow_for_lake()
+            buf = io.BytesIO()
+            pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), buf, compression="zstd")
+            data = buf.getvalue()
+        else:
+            data = path.read_bytes()
         filename = f"{fs_symbol}_{timeframe}.parquet"
         return data, "application/octet-stream", filename
 
