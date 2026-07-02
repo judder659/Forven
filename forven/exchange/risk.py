@@ -2651,16 +2651,20 @@ def reconcile_exchange_positions(
         for asset, position in hl_by_asset.items():
             if asset in db_by_asset:
                 local_trades = db_by_asset.get(asset, [])
-                # Exclude Bot Factory paper trades (source='bot:{id}') only: a bot
+                # Exclude Bot Factory PAPER trades (source='bot:{id}') only: a bot
                 # paper position on an asset the live engine also holds must not be
                 # matched against the exchange position or counted as a duplicate
                 # live trade (that raises a false duplicate_sqlite_trades
-                # discrepancy and halts new live entries). Paper-stage STRATEGY
-                # trades are NOT excluded — the live reconcile legitimately repairs
-                # their protection here.
+                # discrepancy and halts new live entries). A live-armed bot's LIVE
+                # rows mirror real exchange positions and MUST reconcile like any
+                # strategy live trade. Paper-stage STRATEGY trades are NOT excluded
+                # — the live reconcile legitimately repairs their protection here.
                 local_trades = [
                     t for t in local_trades
-                    if not str(t.get("source") or "").startswith("bot:")
+                    if not (
+                        str(t.get("source") or "").startswith("bot:")
+                        and str(t.get("execution_type") or "").strip().lower() != "live"
+                    )
                 ]
                 if len(local_trades) > 1:
                     duplicate_trade_ids = [
@@ -3943,15 +3947,15 @@ def close_all_positions() -> list[dict]:
             # local trades that mirror an exchange position may be closed at the flatten
             # price. A PAPER trade on the same asset never reached the exchange — closing
             # it at another account's fill would fabricate PnL on the paper book (the
-            # promotion gate's input). The old filter excluded only Bot Factory rows
-            # (source='bot:{id}') for exactly this reason, but scanner-kernel paper opens
-            # leave source NULL and slipped through — scope by execution_type instead
-            # (schema default 'live'), keeping the bot exclusion as belt-and-braces.
+            # promotion gate's input). Scoped by execution_type (schema default 'live').
+            # Bot Factory rows are NOT excluded: a live-armed bot's trades ARE real
+            # exchange positions the flatten just closed, and their ledger crediting
+            # happens at the close choke-point (close_trade_record); bot PAPER rows are
+            # already excluded by the execution_type scope.
             rows = conn.execute(
                 f"SELECT id, asset FROM trades WHERE status='OPEN' "
                 f"AND UPPER(asset) IN ({placeholders}) "
-                f"AND LOWER(COALESCE(execution_type, 'live')) = 'live' "
-                f"AND COALESCE(source, '') NOT LIKE 'bot:%'",
+                f"AND LOWER(COALESCE(execution_type, 'live')) = 'live'",
                 tuple(closed_assets),
             ).fetchall()
     for row in rows:

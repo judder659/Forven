@@ -382,14 +382,46 @@ class BotRunner:
             logger.debug("Live price fetch failed for %s: %s", symbol, e)
             return None
 
+    # Free-roam breadth: enough coins for the LLM to actually roam, small
+    # enough that the per-tick snapshot + prompt stay bounded.
+    _FREE_ROAM_MAX_PAIRS = 6
+    _FREE_ROAM_FALLBACK = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    _free_roam_cache: list[str] | None = None
+    _free_roam_cached_at: float = 0.0
+
     def _get_pairs(self) -> list[str]:
         """Get the list of trading pairs this bot watches."""
         if not self._config:
             return []
         if self._config.get("asset_mode") == "locked" and self._config.get("locked_pairs"):
             return self._config["locked_pairs"]
-        # Free roam default — top crypto pairs
-        return ["BTC/USDT", "ETH/USDT"]
+        return self._free_roam_pairs()
+
+    def _free_roam_pairs(self) -> list[str]:
+        """Top active perps by 24h quote volume from the symbol registry — the
+        same universe the research pipeline ranks — so free_roam actually
+        roams. Falls back to the BTC/ETH/SOL staples when the registry is
+        empty/unavailable. Cached for an hour (liquidity ranks move slowly)."""
+        now = time.time()
+        if self._free_roam_cache is not None and now - self._free_roam_cached_at < 3600:
+            return self._free_roam_cache
+        pairs: list[str] = []
+        try:
+            from forven.dataeng.universe import get_symbol_registry
+
+            rows = [r for r in get_symbol_registry() if r.get("status") == "active"]
+            rows.sort(key=lambda r: float(r.get("quote_volume_24h") or 0.0), reverse=True)
+            for row in rows[: self._FREE_ROAM_MAX_PAIRS]:
+                sym = str(row.get("symbol") or "").strip()  # fs format "BTC-USDT"
+                if sym:
+                    pairs.append(sym.replace("-", "/"))
+        except Exception as e:
+            logger.debug("Bot %s free-roam registry read failed: %s", self.bot_id, e)
+        if not pairs:
+            pairs = list(self._FREE_ROAM_FALLBACK)
+        self._free_roam_cache = pairs
+        self._free_roam_cached_at = now
+        return pairs
 
     def _fetch_market_snapshot(self) -> dict | None:
         """Fetch current market data for the bot's watched pairs.
@@ -514,7 +546,80 @@ class BotRunner:
             "stop_loss_price": sl_price,
             "take_profit_price": tp_price,
             "entry_fee_usd": entry_fee,
+            "execution_type": "paper",
         }
+
+    def _is_live_mode(self) -> bool:
+        """Whether this bot is armed for LIVE execution. Read once per use from
+        the config loaded at spawn — go-live/go-paper require a stopped bot, so
+        the mode can never flip under a running loop."""
+        return str((self._config or {}).get("execution_mode") or "paper").strip().lower() == "live"
+
+    def _execute_open_routed(
+        self,
+        *,
+        ticker: str,
+        action: str,
+        qty: float,
+        market_price: float,
+        reasoning: str | None,
+    ) -> tuple[dict | None, str | None]:
+        """Open in the bot's execution mode. Returns (position, blocked_reason).
+
+        Paper keeps the modeled slippage/fee fill; live routes through the full
+        sanctioned gate stack (bot_factory.live_exec) and REAL exchange fills.
+        """
+        if not self._is_live_mode():
+            pos = self._execute_open(
+                ticker=ticker, action=action, qty=qty,
+                market_price=market_price, reasoning=reasoning,
+            )
+            return pos, None
+        from forven.bot_factory.live_exec import open_live
+
+        direction = "long" if action == "BUY" else "short"
+        pos, message = open_live(
+            self._config, ticker=ticker, direction=direction, qty=qty,
+            ref_price=market_price, reasoning=reasoning,
+        )
+        if pos is None:
+            logger.warning("Bot %s live open %s %s refused: %s", self.bot_id, action, ticker, message)
+            return None, message
+        logger.info("Bot %s %s", self.bot_id, message)
+        return pos, None
+
+    def _execute_close_routed(
+        self,
+        *,
+        position: dict,
+        market_price: float,
+        reason: str,
+    ) -> tuple[float, float, float, float | None] | None:
+        """Close a position through the path that owns it.
+
+        A live row gets a REAL reduce-only close (kernel-close semantics: real
+        fill, protection-order retirement, risk-slot release); everything else
+        keeps the paper close with modeled slippage + fees. Returns the paper
+        close's (fill_price, net_pnl, total_fees, new_realized) shape, or None
+        when nothing was closed this tick (pending reconcile, refused, raced).
+        """
+        if str(position.get("execution_type") or "paper").strip().lower() != "live":
+            return self._execute_close(position=position, market_price=market_price, reason=reason)
+        from forven.bot_factory.live_exec import close_live
+
+        position = dict(position)
+        position.setdefault("current_price", market_price)
+        out = close_live(self._config, position=position, reason=reason)
+        state = out.get("state")
+        if state != "closed":
+            logger.warning(
+                "Bot %s live close for trade %s not finalized (%s): %s",
+                self.bot_id, position.get("trade_id"), state, out.get("message"),
+            )
+            return None
+        # Exchange fees/funding are folded into net_pnl_pct by the close
+        # finalizer, not itemized like the paper fee model — report 0 here.
+        return float(out.get("fill_price") or market_price), float(out.get("net_pnl") or 0.0), 0.0, out.get("realized")
 
     def _execute_close(
         self,
@@ -598,6 +703,12 @@ class BotRunner:
             self._config.get("cooldown_seconds", 60) or 60,
             MIN_LLM_INTERVAL_SECONDS,
         )
+        is_live = self._is_live_mode()
+        if is_live:
+            logger.warning(
+                "Bot %s running in LIVE mode — real orders via the sanctioned gate stack",
+                self.bot_id,
+            )
         funding_rate_bps_per_day = float(
             self._config.get("funding_rate_bps_per_day", 0) or 0
         )
@@ -686,6 +797,35 @@ class BotRunner:
             except Exception:
                 pass
 
+            # Re-sync open positions from the DB each tick: closes happen OUT OF
+            # BAND (the daemon's mark watcher, manual UI controls, the kill
+            # switch, an exchange stop caught by reconcile) and the in-memory
+            # list would otherwise keep managing ghosts. Carry the marks over by
+            # trade_id so unrealized P&L stays fresh between snapshots.
+            try:
+                fresh_positions = get_open_bot_positions(self.bot_id)
+                prior_marks = {
+                    p.get("trade_id"): p.get("current_price") for p in open_positions
+                }
+                for p in fresh_positions:
+                    mark = prior_marks.get(p.get("trade_id"))
+                    if mark is not None:
+                        p["current_price"] = mark
+                open_positions = fresh_positions
+            except Exception as e:
+                logger.debug("Bot %s position re-sync failed: %s", self.bot_id, e)
+
+            # realized_pnl's source of truth is the DB ledger — the close
+            # choke-point (trade_state.close_trade_record) credits it on EVERY
+            # close path, not just the runner's own. Re-read instead of trusting
+            # in-memory accumulation.
+            try:
+                _state = get_bot_equity_state(self.bot_id) or {}
+                if _state.get("realized_pnl") is not None:
+                    realized_pnl = float(_state["realized_pnl"])
+            except Exception:
+                pass
+
             # Fetch market data (run in thread to avoid blocking heartbeat)
             market_event = None
             try:
@@ -711,10 +851,16 @@ class BotRunner:
 
             # Funding cost accrual (perp-style configs only). Deducted from
             # realized_pnl so it flows through the drawdown gate. Ticks where
-            # the rate is 0 or no positions exist cost nothing.
+            # the rate is 0 or no positions exist cost nothing. LIVE positions
+            # pay REAL funding on the exchange (folded into net P&L at close by
+            # _execute_direct's cumFunding read) — never model it on top.
             now_ts = time.time()
+            _fundable = [
+                p for p in open_positions
+                if str(p.get("execution_type") or "paper").lower() != "live"
+            ]
             funding_delta = _accrue_funding_cost(
-                open_positions, last_funding_ts, now_ts, funding_rate_bps_per_day,
+                _fundable, last_funding_ts, now_ts, funding_rate_bps_per_day,
             )
             if funding_delta:
                 new_realized = accrue_bot_funding(self.bot_id, funding_delta)
@@ -734,6 +880,12 @@ class BotRunner:
             # immediately rather than waiting for the next decision cycle.
             triggered_indices: list[int] = []
             for idx, pos in enumerate(open_positions):
+                # LIVE positions carry REAL resting stop/TP trigger orders on
+                # the exchange — a soft mark-based close here would race them
+                # and double-fire. Paper positions keep the soft enforcement
+                # (the daemon's mark watcher also covers them tick-level).
+                if str(pos.get("execution_type") or "paper").lower() == "live":
+                    continue
                 reason = _check_sl_tp_trigger(pos)
                 if not reason:
                     continue
@@ -792,6 +944,26 @@ class BotRunner:
                     )
                 except Exception:
                     pass
+                if is_live:
+                    # A paused live bot must not leave REAL positions unmanaged:
+                    # flatten them with real reduce-only closes first (each has
+                    # a resting exchange stop meanwhile; a pending close is
+                    # finalized by the reconcile sweep).
+                    try:
+                        from forven.bot_factory.live_exec import flatten_live_positions
+
+                        flatten_results = flatten_live_positions(
+                            self._config, reason="bot_max_drawdown"
+                        )
+                        logger.warning(
+                            "Bot %s drawdown flatten of live positions: %s",
+                            self.bot_id, flatten_results,
+                        )
+                    except Exception as fe:
+                        logger.error(
+                            "Bot %s drawdown flatten FAILED: %s", self.bot_id, fe,
+                            exc_info=True,
+                        )
                 set_bot_status(self.bot_id, "paused", error_message=msg)
                 break
 
@@ -854,8 +1026,10 @@ class BotRunner:
 
                         try:
                             if is_open and qty and price:
-                                # BUY → long, SHORT → short (handled by _execute_open).
-                                new_pos = self._execute_open(
+                                # BUY → long, SHORT → short. Routed by execution
+                                # mode: paper = modeled fill, live = real order
+                                # through the sanctioned gate stack.
+                                new_pos, blocked_reason = self._execute_open_routed(
                                     ticker=ticker,
                                     action=action,
                                     qty=qty,
@@ -873,6 +1047,14 @@ class BotRunner:
                                             "entry_price": new_pos["entry_price"],
                                             "qty": qty,
                                         },
+                                    )
+                                elif blocked_reason:
+                                    # Feed the refusal back so the LLM stops
+                                    # re-proposing an open the gates will refuse.
+                                    memory.store(
+                                        f"{action} {ticker} x{qty} REFUSED by live risk gates: "
+                                        f"{blocked_reason}",
+                                        {"type": "trade_blocked", "ticker": ticker},
                                     )
                             elif is_open:
                                 logger.warning(
@@ -920,7 +1102,7 @@ class BotRunner:
                                         self.bot_id, action, ticker,
                                     )
                                 else:
-                                    closed = self._execute_close(
+                                    closed = self._execute_close_routed(
                                         position=closing,
                                         market_price=price,
                                         reason=f"llm_{action.lower()}",

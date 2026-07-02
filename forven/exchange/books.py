@@ -31,6 +31,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import re
 
 from forven.db import kv_get
 
@@ -40,8 +41,20 @@ LONG_BOOK = "long"
 SHORT_BOOK = "short"
 MAIN_BOOK = "main"
 
-# Every label that can be stored on a trade row.
+# The built-in direction/master labels. NAMED wallets (operator-registered
+# sub-accounts, e.g. for Bot Factory isolation) extend the label space at
+# runtime — see named_wallets().
 ALL_BOOKS = (LONG_BOOK, SHORT_BOOK, MAIN_BOOK)
+
+# Labels that can never be used for a named wallet (would shadow the built-in
+# routing semantics). "master" is reserved for UI clarity.
+RESERVED_WALLET_LABELS = frozenset((*ALL_BOOKS, "master"))
+
+# Settings key holding the named-wallet registry: {label: address}. Managed
+# ONLY through the /api/wallets endpoints (the generic settings PUT never
+# touches it, but preserves it — _apply_settings_section starts from the
+# stored dict).
+NAMED_WALLETS_SETTINGS_KEY = "hyperliquid_named_wallets"
 
 
 def _settings(settings: dict | None = None) -> dict:
@@ -86,9 +99,64 @@ def is_long_only(settings: dict | None = None) -> bool:
     return books_enabled(s) and short_book_address(s) is None
 
 
-def normalize_book(value: object) -> str:
+_WALLET_LABEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
+_WALLET_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def validate_wallet_label(label: object) -> str:
+    """Normalize + validate a named-wallet label. Raises ValueError when bad."""
+    cleaned = str(label or "").strip().lower()
+    if not _WALLET_LABEL_RE.match(cleaned):
+        raise ValueError(
+            "wallet label must be 2-32 chars of a-z, 0-9, '-' or '_' (starting alphanumeric)"
+        )
+    if cleaned in RESERVED_WALLET_LABELS:
+        raise ValueError(f"wallet label {cleaned!r} is reserved")
+    return cleaned
+
+
+def validate_wallet_address(address: object) -> str:
+    """Validate an EVM-style Hyperliquid address. Raises ValueError when bad."""
+    cleaned = str(address or "").strip()
+    if not _WALLET_ADDRESS_RE.match(cleaned):
+        raise ValueError("wallet address must be a 0x-prefixed 40-hex-char address")
+    return cleaned
+
+
+def named_wallets(settings: dict | None = None) -> dict[str, str]:
+    """Operator-registered named sub-account wallets: {label: address}.
+
+    Independent of the direction-books switch — a named wallet routes live
+    orders to its own funded sub-account (e.g. Bot Factory isolation) whether
+    or not direction books are enabled. Entries with malformed labels or
+    addresses are skipped rather than raising (a corrupted registry entry must
+    not take down routing for the rest)."""
+    raw = _settings(settings).get(NAMED_WALLETS_SETTINGS_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    wallets: dict[str, str] = {}
+    for label, address in raw.items():
+        cleaned_label = str(label or "").strip().lower()
+        cleaned_addr = str(address or "").strip()
+        if not _WALLET_LABEL_RE.match(cleaned_label) or cleaned_label in RESERVED_WALLET_LABELS:
+            continue
+        if not _WALLET_ADDRESS_RE.match(cleaned_addr):
+            continue
+        wallets[cleaned_label] = cleaned_addr
+    return wallets
+
+
+def is_named_wallet(label: object, settings: dict | None = None) -> bool:
+    return str(label or "").strip().lower() in named_wallets(settings)
+
+
+def normalize_book(value: object, settings: dict | None = None) -> str:
     book = str(value or "").strip().lower()
-    return book if book in ALL_BOOKS else MAIN_BOOK
+    if book in ALL_BOOKS:
+        return book
+    if book and book in named_wallets(settings):
+        return book
+    return MAIN_BOOK
 
 
 def book_for_direction(direction: str) -> str:
@@ -110,14 +178,17 @@ def book_address(book: str, settings: dict | None = None) -> str | None:
     """Resolve a book label to its sub-account address.
 
     Returns None for the master wallet ("main", or a long book with no dedicated
-    sub-account configured). Raises nothing — callers treat None as "master".
+    sub-account configured). NAMED wallet labels resolve to their registered
+    address. Raises nothing — callers treat None as "master".
     """
     s = _settings(settings)
-    label = normalize_book(book)
+    label = normalize_book(book, s)
     if label == LONG_BOOK:
         return long_book_address(s)
     if label == SHORT_BOOK:
         return short_book_address(s)
+    if label != MAIN_BOOK:
+        return named_wallets(s).get(label)
     return None
 
 
@@ -152,18 +223,26 @@ def resolve_open_book(direction: str, settings: dict | None = None) -> tuple[str
 def active_book_addresses(settings: dict | None = None) -> list[tuple[str, str | None]]:
     """The (book_label, address) pairs the reconciler must snapshot independently.
 
-    - Books disabled: just the master wallet [("main", None)].
-    - Books enabled: the long book and (if configured) the short book. The long
-      book may itself be the master wallet (address None) when no dedicated long
-      sub-account is set.
+    - Books disabled: the master wallet [("main", None)] plus any NAMED wallets.
+    - Books enabled: the long book, (if configured) the short book, plus NAMED
+      wallets. The long book may itself be the master wallet (address None) when
+      no dedicated long sub-account is set.
+
+    Named wallets are always active — they hold real routed positions (e.g.
+    live Bot Factory bots) regardless of the direction-books switch, so the
+    daemon equity snapshot, reconcile, and liquidation sweeps must cover them.
     """
     s = _settings(settings)
+    pairs: list[tuple[str, str | None]] = []
     if not books_enabled(s):
-        return [(MAIN_BOOK, None)]
-    pairs: list[tuple[str | None, str | None]] = [(LONG_BOOK, long_book_address(s))]
-    short_addr = short_book_address(s)
-    if short_addr is not None:
-        pairs.append((SHORT_BOOK, short_addr))
+        pairs.append((MAIN_BOOK, None))
+    else:
+        pairs.append((LONG_BOOK, long_book_address(s)))
+        short_addr = short_book_address(s)
+        if short_addr is not None:
+            pairs.append((SHORT_BOOK, short_addr))
+    for label, addr in sorted(named_wallets(s).items()):
+        pairs.append((label, addr))
     # Deduplicate by resolved address so a long book pointed at the master wallet
     # (None) isn't snapshotted twice if main also appears.
     seen: set[str | None] = set()
@@ -200,6 +279,7 @@ def live_books_status(settings: dict | None = None) -> dict:
         "long_only": long_only,
         "long_book_configured": long_book_address(s) is not None,
         "short_book_configured": short_book_address(s) is not None,
+        "named_wallets": sorted(named_wallets(s).keys()),
         "subaccount_volume_requirement_usd": SUBACCOUNT_VOLUME_REQUIREMENT_USD,
         "note": note,
     }

@@ -3830,9 +3830,6 @@ def _resolve_trade_vault_address(trade_id, *, strict: bool = False) -> str | Non
         book = dict(row).get("book") if row else None
         if not book:
             return None
-        label = books.normalize_book(book)
-        if label == books.MAIN_BOOK:
-            return None
         # BOOKS-1: distinguish a LEGITIMATE master route (a long book with no
         # dedicated sub-account) from a TRANSIENT settings-read failure. The
         # convenience books.book_address() path runs through books._settings(),
@@ -3841,9 +3838,24 @@ def _resolve_trade_vault_address(trade_id, *, strict: bool = False) -> str | Non
         # no-op that strands the real sub-account position). Read settings here
         # via kv_get, which RE-RAISES on a locked DB, so a transient failure
         # propagates to the except below and (strict) fails the close CLOSED.
+        # Settings are read BEFORE normalize_book so a NAMED-wallet label is
+        # normalized against a real registry read, not a swallowed empty one.
         settings = _kv_get("forven:settings", {})
         if not isinstance(settings, dict):
             settings = {}
+        raw_label = str(book or "").strip().lower()
+        label = books.normalize_book(raw_label, settings)
+        if label == books.MAIN_BOOK:
+            # WALLET-1: a label that is NOT literally main/blank collapsed to
+            # MAIN — either a named wallet whose registry entry was removed or
+            # a label this build doesn't know. Routing its order to master
+            # would hit the wrong account; fail closed.
+            if raw_label and raw_label != books.MAIN_BOOK:
+                raise RuntimeError(
+                    f"trade {normalized} routes to unknown wallet {raw_label!r} "
+                    "(named-wallet registry entry missing); refusing to route to master"
+                )
+            return None
         addr = books.book_address(label, settings)
         if addr is None and label == books.SHORT_BOOK:
             # A routed SHORT can never legitimately close on master: shorts are
@@ -3852,6 +3864,13 @@ def _resolve_trade_vault_address(trade_id, *, strict: bool = False) -> str | Non
             raise RuntimeError(
                 f"trade {normalized} routes to the short book but its sub-account "
                 "address is unavailable; refusing to downgrade the close to master"
+            )
+        if addr is None and label not in books.ALL_BOOKS:
+            # Named wallet resolved but its address vanished between normalize
+            # and resolve (registry mutation race) — same fail-closed rule.
+            raise RuntimeError(
+                f"trade {normalized} routes to named wallet {label!r} but its "
+                "address is unavailable; refusing to downgrade to master"
             )
         return addr
     except Exception as exc:

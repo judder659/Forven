@@ -1365,6 +1365,8 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     reasoning_verbosity TEXT DEFAULT 'standard',
     asset_mode TEXT DEFAULT 'free_roam',
     locked_pairs TEXT,
+    execution_mode TEXT NOT NULL DEFAULT 'paper',
+    live_wallet TEXT,
     tools TEXT,
     web_allowlist TEXT,
     web_rate_limit INTEGER DEFAULT 10,
@@ -4130,11 +4132,17 @@ def get_trades_stats(
 def get_open_trades(exclude_bots: bool = False) -> list[dict]:
     """Get all open trades.
 
-    When ``exclude_bots`` is True, Bot Factory paper trades (source='bot:{id}')
+    When ``exclude_bots`` is True, Bot Factory PAPER trades (source='bot:{id}')
     are omitted so live/strategy risk-reasoning contexts never count them as
-    real exposure. Defaults False to preserve every existing caller.
+    real exposure. A live-armed bot's LIVE rows are real exchange exposure and
+    stay visible. Defaults False to preserve every existing caller.
     """
-    bot_filter = " AND COALESCE(source, '') NOT LIKE 'bot:%'" if exclude_bots else ""
+    bot_filter = (
+        " AND NOT (COALESCE(source, '') LIKE 'bot:%'"
+        " AND LOWER(COALESCE(execution_type, 'paper')) != 'live')"
+        if exclude_bots
+        else ""
+    )
     with get_db() as conn:
         rows = conn.execute(
             # `strategy` is the human-facing label the live/open-trades UI renders
@@ -7385,7 +7393,12 @@ def _default_bot_model() -> str:
 
 
 def create_bot(config: dict) -> str:
-    """Create a new bot and return its ID."""
+    """Create a new bot and return its ID.
+
+    Every bot is born in PAPER mode regardless of the incoming config (clones
+    of a live-armed bot included) — live execution is armed only through the
+    explicit go-live endpoint with its typed confirmation + notional ceiling.
+    """
     bot_id = str(uuid4())
     now = _now_utc()
     with get_db() as conn:
@@ -7399,8 +7412,8 @@ def create_bot(config: dict) -> str:
                 reasoning_verbosity, asset_mode, locked_pairs,
                 tools, web_allowlist, web_rate_limit, data_sources,
                 max_llm_calls_per_day, max_consecutive_errors, template_id,
-                status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stopped', ?, ?)""",
+                execution_mode, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
             (
                 bot_id,
                 config.get("name", "Untitled Bot"),
@@ -7466,19 +7479,31 @@ def get_bot(bot_id: str) -> dict | None:
 
 
 def list_bots() -> list[dict]:
-    """List all bots with status info."""
+    """List all bots with status info plus a per-bot trade digest
+    (realized P&L, open/closed counts) so the roster can show performance
+    without N+1 stats calls."""
     with get_db() as conn:
         rows = conn.execute(
             """SELECT c.id, c.name, c.model, c.status, c.asset_mode,
                       c.capital_allocation, c.locked_pairs, c.template_id,
-                      c.reasoning_verbosity, c.created_at, c.updated_at,
+                      c.reasoning_verbosity, c.execution_mode, c.live_wallet,
+                      c.created_at, c.updated_at,
                       s.pid, s.status AS runtime_status, s.last_heartbeat,
                       s.started_at, s.error_message, s.llm_calls_today,
-                      s.consecutive_errors, c.max_llm_calls_per_day
+                      s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                ORDER BY c.created_at DESC"""
         ).fetchall()
+        digest_rows = conn.execute(
+            """SELECT source,
+                      SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open_positions,
+                      SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS closed_trades
+                 FROM trades
+                WHERE source LIKE 'bot:%'
+             GROUP BY source"""
+        ).fetchall()
+        digests = {str(r["source"]): dict(r) for r in digest_rows}
         results = []
         for row in rows:
             d = dict(row)
@@ -7487,6 +7512,10 @@ def list_bots() -> list[dict]:
                     d["locked_pairs"] = json.loads(d["locked_pairs"])
                 except (json.JSONDecodeError, TypeError):
                     pass
+            digest = digests.get(f"bot:{d['id']}") or {}
+            d["open_positions"] = int(digest.get("open_positions") or 0)
+            d["closed_trades"] = int(digest.get("closed_trades") or 0)
+            d["realized_pnl"] = float(d.get("realized_pnl") or 0.0)
             results.append(d)
         return results
 
@@ -7521,7 +7550,11 @@ def update_bot(bot_id: str, updates: dict) -> None:
         set_parts = []
         values = []
         for key, val in updates.items():
-            if key in ("id", "created_at"):
+            # execution_mode and live_wallet are deliberately NOT settable
+            # through the generic update path — both are armed atomically by
+            # the typed go-live confirmation (dedicated endpoint); a plain
+            # config PUT must never flip a bot live or redirect its orders.
+            if key in ("id", "created_at", "execution_mode", "live_wallet"):
                 continue
             if key in json_fields and val is not None and not isinstance(val, str):
                 val = json.dumps(val)
@@ -7617,6 +7650,40 @@ def set_bot_status(
             "UPDATE bot_configs SET status = ? WHERE id = ?",
             (status, bot_id),
         )
+
+
+def set_bot_live_wallet(bot_id: str, wallet: str | None) -> None:
+    """Set (or clear, with None) the named wallet a live bot routes orders to.
+
+    Only the go-live endpoint calls this — the generic update path strips
+    live_wallet. Registration validity is the caller's job (api_go_live checks
+    the label against the wallet registry)."""
+    cleaned = str(wallet or "").strip().lower() or None
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE bot_configs SET live_wallet = ?, updated_at = ? WHERE id = ?",
+            (cleaned, _now_utc(), bot_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Bot {bot_id} not found")
+
+
+def set_bot_execution_mode(bot_id: str, mode: str) -> None:
+    """Set a bot's execution mode ('paper' | 'live').
+
+    Only the go-live / go-paper endpoints call this — the generic update path
+    strips execution_mode so live can never be armed by a plain config PUT.
+    """
+    normalized = str(mode or "").strip().lower()
+    if normalized not in ("paper", "live"):
+        raise ValueError(f"invalid execution_mode {mode!r} (expected 'paper' or 'live')")
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE bot_configs SET execution_mode = ?, updated_at = ? WHERE id = ?",
+            (normalized, _now_utc(), bot_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Bot {bot_id} not found")
 
 
 def get_bot_status(bot_id: str) -> dict | None:
@@ -7840,6 +7907,11 @@ def execute_bot_trade(
     entry_fee_usd: float | None = None,
     stop_loss_price: float | None = None,
     take_profit_price: float | None = None,
+    execution_type: str = "paper",
+    book: str | None = None,
+    risk_pct: float | None = None,
+    leverage: float | None = None,
+    asset: str | None = None,
 ) -> str:
     """Record a bot OPEN trade in the trades table. Returns trade ID.
 
@@ -7847,6 +7919,13 @@ def execute_bot_trade(
     actual fill price after slippage; `signal_price` is the pre-slippage
     decision price. Fees are recorded in signal_data so P&L reconciliation
     can deduct them at close.
+
+    execution_type='live' records a REAL order (live_exec places it through
+    the sanctioned gate stack): `asset` carries the exchange coin ("BTC")
+    while `ticker` stays the bot's pair ("BTC/USDT", kept in signal_data.pair
+    so the runner and UI can map the row back to its market-data feed);
+    `book`/`risk_pct`/`leverage` mirror what register() needs for the live
+    risk budget.
     """
     with get_db() as conn:
         bot = conn.execute(
@@ -7859,11 +7938,17 @@ def execute_bot_trade(
         # used on scanner + recovered trades. Bots are a separate, isolated product
         # whose venue/data semantics differ (the trade is already tagged source=bot:{id});
         # stamping the crypto-strategy venue here would be incorrect.
+        exec_type = str(execution_type or "paper").strip().lower()
+        if exec_type not in ("paper", "live"):
+            raise ValueError(f"invalid bot execution_type {execution_type!r}")
+        asset_value = str(asset or ticker)
         signal_data: dict = {
             "bot_id": bot_id,
             "bot_name": bot_name,
             "reasoning": reasoning,
         }
+        if asset_value != ticker:
+            signal_data["pair"] = ticker
         if entry_fee_bps is not None:
             signal_data["entry_fee_bps"] = float(entry_fee_bps)
         if entry_fee_usd is not None:
@@ -7885,14 +7970,15 @@ def execute_bot_trade(
                     """INSERT INTO trades
                     (id, strategy, strategy_name, strategy_id, asset, symbol, direction,
                      entry_price, signal_entry_price, fill_entry_price, entry_slippage_bps,
-                     size, status, execution_type, source, signal_data, opened_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 'paper', ?, ?, ?)""",
+                     size, risk_pct, leverage, status, execution_type, book, source,
+                     signal_data, opened_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)""",
                     (
                         trade_id,
                         f"bot:{bot_id}",
                         bot_name,
                         f"bot:{bot_id}",
-                        ticker,
+                        asset_value,
                         ticker,
                         direction.lower(),
                         price or 0,
@@ -7900,6 +7986,10 @@ def execute_bot_trade(
                         price or 0,
                         float(entry_slippage_bps) if entry_slippage_bps is not None else None,
                         qty,
+                        float(risk_pct) if risk_pct is not None else None,
+                        float(leverage) if leverage is not None else None,
+                        exec_type,
+                        book,
                         f"bot:{bot_id}",
                         json.dumps(signal_data),
                         _now_utc(),
@@ -8007,39 +8097,29 @@ def close_bot_trade(
         result["signal_data"] = signal_data
         net_pnl = adjusted
 
-    # Atomically credit the owning bot's realized_pnl from this close so a crash
-    # between the trade-close and the runner's in-memory accumulation can't drop
-    # the P&L. Startup also rebuilds realized from the ledger (reconcile_bot_realized_pnl),
-    # so this and orphan-reconcile closes stay consistent with the trade list.
-    bot_realized = _bump_bot_realized_pnl_for_trade(trade_id, net_pnl)
+    # Rebuild the bot's realized_pnl from the closed-trade ledger. The close
+    # choke-point (close_trade_record) already reconciled with the GROSS P&L;
+    # the fee adjustment above changed this trade's pnl_usd, so reconcile again
+    # to land on the net. Ledger-derived (not incremental) so replays, crashes,
+    # and out-of-band closes can never double-count or drop P&L.
+    bot_realized = _reconcile_bot_realized_pnl_for_trade(trade_id)
     if bot_realized is not None:
         result["bot_realized_pnl"] = bot_realized
     return result
 
 
-def _bump_bot_realized_pnl_for_trade(trade_id: str, net_pnl: float) -> float | None:
-    """Credit a bot's realized_pnl by a just-closed trade's net P&L, deriving the
-    bot_id from the trade's source ('bot:{id}'). Returns the new realized_pnl, or
-    None when the trade is not a Bot Factory trade (no bot to credit)."""
+def _reconcile_bot_realized_pnl_for_trade(trade_id: str) -> float | None:
+    """Rebuild the owning bot's realized_pnl from the ledger, deriving the
+    bot_id from the trade's source ('bot:{id}'). Returns the new realized_pnl,
+    or None when the trade is not a Bot Factory trade (no bot to credit)."""
     with get_db() as conn:
         row = conn.execute(
             "SELECT source FROM trades WHERE id = ?", (trade_id,)
         ).fetchone()
-        src = str((row["source"] if row else "") or "")
-        if not src.startswith("bot:"):
-            return None
-        bot_id = src.split(":", 1)[1]
-        cur = conn.execute(
-            "SELECT realized_pnl FROM bot_status WHERE bot_id = ?", (bot_id,)
-        ).fetchone()
-        if not cur:
-            return None
-        new_val = float(cur["realized_pnl"] or 0.0) + float(net_pnl or 0.0)
-        conn.execute(
-            "UPDATE bot_status SET realized_pnl = ? WHERE bot_id = ?",
-            (new_val, bot_id),
-        )
-        return new_val
+    src = str((row["source"] if row else "") or "")
+    if not src.startswith("bot:"):
+        return None
+    return reconcile_bot_realized_pnl(src.split(":", 1)[1])
 
 
 def accrue_bot_funding(bot_id: str, funding_delta: float) -> float | None:
@@ -8116,7 +8196,8 @@ def get_open_bot_positions(bot_id: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, asset, symbol, direction, size, entry_price,
-                      fill_entry_price, signal_entry_price, signal_data, opened_at
+                      fill_entry_price, signal_entry_price, signal_data, opened_at,
+                      execution_type
                  FROM trades
                 WHERE source = ? AND status = 'OPEN'
              ORDER BY opened_at ASC""",
@@ -8135,19 +8216,25 @@ def get_open_bot_positions(bot_id: str) -> list[dict]:
             entry = d.get("fill_entry_price") or d.get("entry_price") or d.get("signal_entry_price") or 0
             positions.append({
                 "trade_id": d["id"],
-                "ticker": d.get("asset") or d.get("symbol"),
+                # Live rows store the exchange coin in `asset` ("BTC") and keep
+                # the bot's market-data pair ("BTC/USDT") in signal_data.pair —
+                # the runner keys its snapshot/decisions by pair, so prefer it.
+                "ticker": sig.get("pair") or d.get("asset") or d.get("symbol"),
+                "asset": d.get("asset"),
                 "direction": d.get("direction") or "long",
                 "qty": d.get("size") or 0,
                 "entry_price": entry,
                 # No live mark is persisted in the DB (the runner marks to market
                 # in-process), so expose None rather than echoing entry as a
                 # fake-flat "current" price. The runner handles None safely and
-                # refreshes on its next tick; the UI shows "—" until a live mark.
+                # refreshes on its next tick; the API layer attaches the daemon's
+                # mark snapshot before serving to the UI.
                 "current_price": None,
                 "stop_loss_price": sig.get("stop_loss_price"),
                 "take_profit_price": sig.get("take_profit_price"),
                 "entry_fee_usd": float(sig.get("entry_fee_usd") or 0),
                 "opened_at": d.get("opened_at"),
+                "execution_type": str(d.get("execution_type") or "paper").lower(),
             })
         return positions
 
@@ -8218,6 +8305,11 @@ def reconcile_orphaned_bot_trades(
     the last recorded entry price (zero-P&L) with close_reason='orphan'
     so the trade no longer lingers as phantom exposure in the UI.
 
+    PAPER rows only: a LIVE bot trade mirrors a REAL exchange position, and
+    ghost-closing it locally would strand that position untracked (and
+    fabricate a zero-P&L close). Live bot rows are the exchange reconciler's
+    job, exactly like strategy live trades.
+
     Returns a list of {trade_id, bot_id, ticker, action} dicts. When
     `dry_run=True`, returns what *would* close without modifying anything.
     """
@@ -8225,7 +8317,7 @@ def reconcile_orphaned_bot_trades(
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, source, asset, symbol, entry_price, fill_entry_price,
-                      signal_entry_price, size, direction
+                      signal_entry_price, size, direction, execution_type
                  FROM trades
                 WHERE status = 'OPEN' AND source LIKE 'bot:%'"""
         ).fetchall()
@@ -8235,6 +8327,8 @@ def reconcile_orphaned_bot_trades(
             src = row["source"] or ""
             if not src.startswith("bot:"):
                 continue
+            if str(row["execution_type"] or "").strip().lower() == "live":
+                continue  # real exchange position — reconciler-owned, never ghost-close
             bot_id = src.split(":", 1)[1]
             if bot_id in active:
                 continue
@@ -8277,14 +8371,16 @@ def reconcile_orphaned_bot_trades(
 
 
 def close_open_bot_trades(bot_id: str, reason: str = "bot_deleted") -> list[str]:
-    """Close every OPEN paper trade for a single bot at its entry price (≈0 gross
+    """Close every OPEN PAPER trade for a single bot at its entry price (≈0 gross
     P&L, minus fees). Used on delete so the bot's positions don't linger as
-    phantom exposure once its config — and attribution — is gone."""
+    phantom exposure once its config — and attribution — is gone. Live rows are
+    excluded — the delete path refuses to run while real positions are open."""
     source = f"bot:{bot_id}"
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, fill_entry_price, entry_price, signal_entry_price "
-            "FROM trades WHERE source = ? AND status = 'OPEN'",
+            "FROM trades WHERE source = ? AND status = 'OPEN' "
+            "AND LOWER(COALESCE(execution_type, 'paper')) != 'live'",
             (source,),
         ).fetchall()
         targets = [

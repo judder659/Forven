@@ -445,9 +445,16 @@ def get_learned_skills_context() -> str:
 def _format_recent_trades(limit: int = 20) -> str:
     """Format recent trades for context."""
     trades = get_recent_trades(limit)
-    # Bot Factory paper trades (source='bot:{id}') are a separate product, not
+    # Bot Factory PAPER trades (source='bot:{id}') are a separate product, not
     # part of the live/strategy book the Brain reasons over — keep them out.
-    trades = [t for t in trades if not str(t.get("source") or "").startswith("bot:")]
+    # A live-armed bot's LIVE trades are real account activity and stay visible.
+    trades = [
+        t for t in trades
+        if not (
+            str(t.get("source") or "").startswith("bot:")
+            and str(t.get("execution_type") or "").strip().lower() != "live"
+        )
+    ]
     if not trades:
         return ""
 

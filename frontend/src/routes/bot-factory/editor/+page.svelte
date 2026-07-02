@@ -12,6 +12,7 @@
 		setBotWallet,
 		goLiveBot,
 		goPaperBot,
+		getSettings,
 		createBotFromStrategy,
 		createTemplate,
 		deleteTemplate,
@@ -95,6 +96,36 @@
 		} catch (e: any) {
 			walletOptions = [];
 			walletOptionsError = String(e.message || e);
+		}
+	}
+
+	// Model options are the operator's enabled models (agent_model_keys, e.g.
+	// "openai:gpt-4.1-mini"), grouped by provider for the dropdown. The bot
+	// model field accepts a "provider:model" key directly (resolver auto-detects
+	// the provider), so the keys drop in as-is.
+	let modelKeys: string[] = [];
+	$: modelsByProvider = (() => {
+		const groups = new Map<string, { key: string; label: string }[]>();
+		for (const key of modelKeys) {
+			const idx = key.indexOf(':');
+			const provider = idx > 0 ? key.slice(0, idx) : 'other';
+			const label = idx > 0 ? key.slice(idx + 1) : key;
+			if (!groups.has(provider)) groups.set(provider, []);
+			groups.get(provider)!.push({ key, label });
+		}
+		return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+	})();
+	// A saved bot may carry a plain model id or a key no longer enabled — keep it
+	// selectable so opening the editor never silently drops the current model.
+	$: modelIsCustom = model.trim().length > 0 && !modelKeys.includes(model.trim());
+
+	async function loadModelOptions() {
+		try {
+			const settings = await getSettings();
+			const keys = (settings as { agent_model_keys?: string[] }).agent_model_keys;
+			modelKeys = Array.isArray(keys) ? [...keys].sort() : [];
+		} catch {
+			modelKeys = [];
 		}
 	}
 
@@ -223,14 +254,16 @@
 			// this same save satisfies the go-live requirement.
 			if (savedId && needsArming) {
 				await goLiveBot(savedId, armConfirm.trim(), armCeiling ?? 0, liveWallet || null);
-				addToast('Bot armed for LIVE execution', 'success');
+				addToast('Bot saved and armed for LIVE execution', 'success');
 			} else if (savedId && execMode === 'paper' && editExecutionMode === 'live') {
 				await goPaperBot(savedId);
-				addToast('Bot returned to paper mode', 'success');
-			} else if (savedId && editExecutionMode !== 'live' && liveWallet !== savedLiveWallet) {
-				await setBotWallet(savedId, liveWallet || null);
+				addToast('Bot saved and returned to paper mode', 'success');
+			} else {
+				if (savedId && editExecutionMode !== 'live' && liveWallet !== savedLiveWallet) {
+					await setBotWallet(savedId, liveWallet || null);
+				}
+				addToast(editId ? 'Bot saved' : 'Bot created', 'success');
 			}
-			addToast(editId ? 'Bot saved' : 'Bot created', 'success');
 			goto('/bot-factory');
 		} catch (e: any) {
 			error = e.message || 'Failed to save';
@@ -288,6 +321,7 @@
 
 	onMount(async () => {
 		void loadWalletOptions();
+		void loadModelOptions();
 		try {
 			await loadTemplates();
 			const params = $page.url.searchParams;
@@ -432,8 +466,26 @@
 						</div>
 						<div>
 							<label for="model" class="mb-1 block text-[10px] uppercase tracking-wider text-[#666]">Model</label>
-							<input id="model" bind:value={model} placeholder="(default provider)" class="terminal-input" />
-							<p class="mt-1 text-[11px] text-[#555]">Blank = your configured default provider.</p>
+							<select id="model" bind:value={model} class="terminal-select">
+								<option value="">Default provider (recommended)</option>
+								{#each modelsByProvider as [provider, entries]}
+									<optgroup label={provider}>
+										{#each entries as entry}
+											<option value={entry.key}>{entry.label}</option>
+										{/each}
+									</optgroup>
+								{/each}
+								{#if modelIsCustom}
+									<option value={model}>{model} (custom)</option>
+								{/if}
+							</select>
+							<p class="mt-1 text-[11px] text-[#555]">
+								{#if modelKeys.length === 0}
+									Blank = your configured default provider. Enable models on the <a href="/agents" class="text-[#999] underline hover:text-white">Agents</a> page to pick a specific one.
+								{:else}
+									Blank = your configured default provider. List = models you've enabled on the Agents page.
+								{/if}
+							</p>
 						</div>
 					</div>
 				</section>

@@ -1,6 +1,7 @@
 """Bot Factory API router."""
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from forven.api_domains import bot_factory as bf_domain
 from forven.api_security import require_operator_access
@@ -8,6 +9,7 @@ from forven.bot_factory.models import (
     BotCloneRequest,
     BotConfigCreate,
     BotConfigUpdate,
+    BotGoLiveRequest,
     BotTemplateCreate,
 )
 
@@ -86,6 +88,36 @@ def kill_all():
     return bf_domain.api_kill_all()
 
 
+@router.post("/api/bot-factory/bots/{bot_id}/go-live")
+def go_live(bot_id: str, body: BotGoLiveRequest):
+    try:
+        return bf_domain.api_go_live(
+            bot_id, body.confirm, body.live_notional_ceiling_usd, wallet=body.wallet
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/bot-factory/bots/{bot_id}/go-paper")
+def go_paper(bot_id: str):
+    try:
+        return bf_domain.api_go_paper(bot_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class BotWalletRequest(BaseModel):
+    wallet: str | None = None  # named-wallet label; None = master / direction books
+
+
+@router.post("/api/bot-factory/bots/{bot_id}/wallet")
+def set_bot_wallet(bot_id: str, body: BotWalletRequest):
+    try:
+        return bf_domain.api_set_bot_wallet(bot_id, body.wallet)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ── Bot Data ─────────────────────────────────────────────────────────
 
 
@@ -102,6 +134,20 @@ def get_bot_stats(bot_id: str):
 @router.get("/api/bot-factory/bots/{bot_id}/positions")
 def get_bot_positions(bot_id: str):
     return bf_domain.api_get_positions(bot_id)
+
+
+class BotClosePositionRequest(BaseModel):
+    reason: str | None = None
+
+
+@router.post("/api/bot-factory/bots/{bot_id}/positions/{trade_id}/close")
+def close_bot_position(bot_id: str, trade_id: str, body: BotClosePositionRequest | None = None):
+    try:
+        return bf_domain.api_close_position(
+            bot_id, trade_id, reason=(body.reason if body else None)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/api/bot-factory/bots/{bot_id}/decisions")

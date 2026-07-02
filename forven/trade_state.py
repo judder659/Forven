@@ -1,7 +1,10 @@
 import json
+import logging
 
 from forven.db import get_db_immediate
 from forven.sim.clock import get_now
+
+log = logging.getLogger(__name__)
 
 
 def _coerce_optional_float(value: object) -> float | None:
@@ -385,6 +388,16 @@ def close_trade_record(
                 ),
             )
 
+    # Bot Factory ledger crediting at the ONE close choke-point: a bot trade can
+    # be closed by ANY path — the bot runner, the daemon's mark watcher, manual
+    # UI controls, the kill switch, or exchange reconcile — and every one of
+    # them lands here. Rebuild the owning bot's realized_pnl from the closed-
+    # trade ledger (idempotent) so the equity driving the bot's drawdown gate
+    # never drifts until its next restart. Runs AFTER the write txn commits
+    # (the reconcile opens its own connection); a failure must never undo or
+    # block the close itself — bot startup reconcile self-heals.
+    _reconcile_bot_ledger_after_close(trade)
+
     return {
         "updated": True,
         "trade": trade,
@@ -401,6 +414,18 @@ def close_trade_record(
         "close_reason": str(close_reason) if close_reason is not None else None,
         "signal_data": signal_data,
     }
+
+
+def _reconcile_bot_ledger_after_close(trade: dict) -> None:
+    src = str(trade.get("source") or "")
+    if not src.startswith("bot:"):
+        return
+    try:
+        from forven.db import reconcile_bot_realized_pnl
+
+        reconcile_bot_realized_pnl(src.split(":", 1)[1])
+    except Exception:
+        log.debug("bot ledger reconcile failed for trade %s", trade.get("id"), exc_info=True)
 
 
 __all__ = [

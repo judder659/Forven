@@ -124,6 +124,23 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
         if openai_key:
             env["OPENAI_API_KEY"] = openai_key
 
+    # A LIVE-armed bot places real exchange orders from its subprocess through
+    # the sanctioned live stack (bot_factory.live_exec). Hyperliquid credentials
+    # normally come from the encrypted KV settings store (reachable via
+    # FORVEN_HOME, already forwarded); when the operator supplies them via
+    # environment instead, forward exactly those vars — and ONLY for live bots,
+    # keeping paper bots exchange-credential-free.
+    if str(bot_config.get("execution_mode") or "paper").strip().lower() == "live":
+        for var in (
+            "FORVEN_HL_API_SECRET", "HL_API_SECRET",
+            "FORVEN_HL_API_KEY", "HL_API_KEY",
+            "FORVEN_HL_WALLET_ADDRESS", "HL_WALLET_ADDRESS",
+            "FORVEN_HL_USE_TESTNET", "USE_TESTNET",
+        ):
+            val = os.environ.get(var)
+            if val:
+                env[var] = val
+
     return env
 
 
@@ -175,6 +192,43 @@ class BotManager:
         bot = get_bot(bot_id)
         if not bot:
             raise ValueError(f"Bot {bot_id} not found")
+
+        # Fail closed on a live-armed bot whose arming state has decayed since
+        # go-live: the protective stop config and the per-bot notional ceiling
+        # are both load-bearing for live opens.
+        if str(bot.get("execution_mode") or "paper").strip().lower() == "live":
+            if bot.get("stop_loss_pct") is None:
+                raise ValueError(
+                    "Live bot has no stop_loss_pct — set one (or switch to paper) before starting."
+                )
+            try:
+                from forven.exchange.risk import get_live_notional_ceilings
+
+                if not get_live_notional_ceilings().get(f"bot:{bot_id}"):
+                    raise ValueError(
+                        "Live bot has no go-live notional ceiling recorded — re-arm via go-live."
+                    )
+            except ValueError:
+                raise
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot verify the live notional ceiling ({exc}) — refusing to start a live bot."
+                )
+            wallet_label = str(bot.get("live_wallet") or "").strip().lower()
+            if wallet_label:
+                try:
+                    from forven.exchange import books
+
+                    registered = wallet_label in books.named_wallets()
+                except Exception as exc:
+                    raise ValueError(
+                        f"Cannot verify wallet '{wallet_label}' ({exc}) — refusing to start a live bot."
+                    )
+                if not registered:
+                    raise ValueError(
+                        f"Live bot routes to wallet '{wallet_label}' which is no longer "
+                        "registered — re-arm via go-live (or restore the wallet)."
+                    )
 
         status = bot.get("runtime_status") or bot.get("status", "stopped")
         if status == "running":

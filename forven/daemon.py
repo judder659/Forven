@@ -185,7 +185,26 @@ def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
 PRICE_SNAPSHOT_TIMEOUT_SECONDS = _env_float("FORVEN_DAEMON_PRICE_SNAPSHOT_TIMEOUT_SECONDS", 6)
 RISK_ACCOUNT_TIMEOUT_SECONDS = _env_float("FORVEN_DAEMON_ACCOUNT_TIMEOUT_SECONDS", 10)
 RISK_UPDATE_TIMEOUT_SECONDS = _env_float("FORVEN_DAEMON_RISK_UPDATE_TIMEOUT_SECONDS", 8)
+# PER-ACCOUNT reconcile budget. reconcile_all_books runs one sequential pass per
+# wallet (master + direction books + named wallets + any open-trade-routed
+# account), each making several exchange round-trips — a fixed total budget
+# sized for one wallet started "timing out" the moment the operator registered
+# a second account, and 15 minutes of those false timeouts tripped the
+# sustained-outage operator halt against a perfectly healthy exchange. See
+# _reconcile_timeout_seconds for the account-count scaling.
 RISK_RECONCILE_TIMEOUT_SECONDS = _env_float("FORVEN_DAEMON_RECONCILE_TIMEOUT_SECONDS", 20)
+
+
+def _reconcile_timeout_seconds() -> float:
+    """Total reconcile budget = per-account budget × (accounts + 1 headroom)."""
+    accounts = 1
+    try:
+        from forven.exchange import books
+
+        accounts = max(1, len(books.active_book_addresses()))
+    except Exception:
+        accounts = 1
+    return RISK_RECONCILE_TIMEOUT_SECONDS * (accounts + 1)
 # CR-2: a single transient reconcile error/timeout (testnet REST blip) must not
 # freeze ALL new entries + flag 'requires operator'. Only escalate to a hard
 # block after this many CONSECUTIVE errors; real discrepancies still block at once.
@@ -1690,7 +1709,7 @@ async def _run_tick(state: dict, prices: dict[str, float], source: str, last_rec
             else:
                 recon = await _to_thread_with_timeout(
                     "daemon.reconcile_all_books",
-                    RISK_RECONCILE_TIMEOUT_SECONDS,
+                    _reconcile_timeout_seconds(),
                     reconcile_all_books,
                     _get_testnet(),
                 )

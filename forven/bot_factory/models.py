@@ -68,6 +68,23 @@ class BotCloneRequest(BaseModel):
     new_name: str
 
 
+class BotGoLiveRequest(BaseModel):
+    """Request body for arming a bot for LIVE execution.
+
+    `confirm` must be the typed phrase "GO LIVE" (validated server-side by the
+    same validate_go_live_confirmation the strategy pipeline uses); the ceiling
+    is the per-order notional bound every live open is admission-checked
+    against. Note execution_mode is deliberately absent from BotConfigCreate /
+    BotConfigUpdate — this endpoint is the only way to arm live.
+    """
+
+    confirm: str
+    live_notional_ceiling_usd: float = Field(gt=0)
+    # Registered named-wallet label to route ALL live orders to (capital
+    # isolation from the pipeline); None = legacy direction-books/master.
+    wallet: str | None = None
+
+
 class BotTemplateCreate(BaseModel):
     """Request body for saving a bot config as a template."""
 
