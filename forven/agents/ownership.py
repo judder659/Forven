@@ -12,7 +12,11 @@ import json
 import logging
 
 from forven.db import get_db
-from .roster import normalize_agent_id as _normalize_agent_id
+from forven.roster import (
+    STAGE_OWNER_GUARD as _STAGE_TO_OWNER_GUARD,
+    normalize_agent_id as _normalize_agent_id,
+    normalize_stage_key as _normalize_stage_guard,
+)
 
 log = logging.getLogger("forven.agents.runner")
 
@@ -40,34 +44,6 @@ def _extract_task_strategy_id(task: dict) -> str | None:
     if isinstance(strategy_id, str) and strategy_id.strip():
         return strategy_id.strip()
     return None
-
-
-_STAGE_TO_OWNER_GUARD = {
-    "quick_screen": "simulation-agent",
-    "gauntlet": "simulation-agent",
-    "paper": "risk-manager",
-    # execution-trader retired — live oversight ownership is risk-manager's.
-    "live_graduated": "risk-manager",
-}
-
-
-def _normalize_stage_guard(value: str | None) -> str:
-    normalized = str(value or "").strip().lower()
-    aliases = {
-        "researching": "quick_screen",
-        "developing": "quick_screen",
-        "backtesting": "gauntlet",
-        "paper_trading": "paper",
-        "papertrading": "paper",
-        "paper-trading": "paper",
-        "review": "live_graduated",
-        "ceoreview": "live_graduated",
-        "ceo-review": "live_graduated",
-        "ceo_review": "live_graduated",
-        "deployed": "live_graduated",
-        "retired": "archived",
-    }
-    return aliases.get(normalized, normalized)
 
 
 def _check_task_owner(

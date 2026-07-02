@@ -126,17 +126,9 @@ _CONTEXT_DEFAULT_DENY: dict[str, frozenset[str]] = {
 
 VALID_CONTEXTS: tuple[str, ...] = ("scheduled", "interactive", "recovery", "research", "develop")
 
-_CANONICAL_AGENT_ROLES = frozenset(
-    {
-        "brain",
-        # execution-trader retired 2026-06-30 (no LLM execution path).
-        "full-stack-engineer",
-        "quant-researcher",
-        "risk-manager",
-        "simulation-agent",
-        "strategy-developer",
-    }
-)
+# Canonical role tokens come from the roster (execution-trader retired
+# 2026-06-30 — deliberately absent so no agent can be granted its tools).
+from forven.roster import CANONICAL_AGENT_ROLES as _CANONICAL_AGENT_ROLES
 
 
 def _role_tokens_from_text(value: object) -> set[str]:

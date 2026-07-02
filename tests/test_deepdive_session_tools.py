@@ -113,6 +113,48 @@ def test_dispatch_unknown_tool(forven_db):
     assert "unknown" in out.lower() or "not found" in out.lower()
 
 
+def test_dispatch_routes_through_execute_tool_with_audit(thread, monkeypatch):
+    """Deepdive tool calls go through execute_tool (audit + redaction), not a
+    direct handler call — regression for the audit-bypass finding: deepdive
+    used to leave NO task_audit_log rows and skipped output redaction."""
+    from forven import deepdive_session
+
+    calls = {"n": 0}
+
+    async def fake_invoke(messages, strategy_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "content": "checking code",
+                "tool_calls": [{"name": "deepdive_read_strategy_code", "input": {}, "id": "tc1"}],
+                "cost_usd": 0.0,
+                "model": "stub",
+            }
+        return {"content": "done", "tool_calls": [], "cost_usd": 0.0, "model": "stub"}
+
+    monkeypatch.setattr(deepdive_session, "_invoke_llm", fake_invoke)
+    # Real _dispatch_tool -> execute_tool -> real registry handler; make the
+    # handler read a known file by pointing the custom dir at a temp strategy.
+    import forven.agents.tools_deepdive as tools_deepdive
+    monkeypatch.setattr(tools_deepdive, "_read_strategy_code", lambda: "print('hi')")
+
+    events = []
+
+    async def collect():
+        async for ev in deepdive_session.run_turn(thread["id"], user_text="read it"):
+            events.append(ev)
+
+    asyncio.run(collect())
+
+    # The audit row exists, keyed to the deepdive thread.
+    from forven.db import get_task_tool_calls
+
+    audit = get_task_tool_calls(f"DD:{thread['id']}")
+    assert audit, "deepdive tool call must write a task_audit_log row"
+    assert audit[0]["tool_name"] == "deepdive_read_strategy_code"
+    assert audit[0]["agent_id"] == "deepdive"
+
+
 def test_tool_handler_exception_surfaced_to_loop(thread, monkeypatch):
     from forven import deepdive_session
 

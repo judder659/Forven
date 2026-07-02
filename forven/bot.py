@@ -506,6 +506,7 @@ def get_bot_token() -> str:
 def _build_default_agents() -> list[dict]:
     """Build the DEFAULT_AGENTS seed list, using dynamic settings from kv."""
     from forven.db import kv_get
+    from forven.roster import LIVE_AGENTS
 
     settings = kv_get("forven:settings", {})
     pipeline = kv_get("forven:pipeline_thresholds", {})
@@ -529,7 +530,7 @@ def _build_default_agents() -> list[dict]:
     return [
         {
             "agent_id": "quant-researcher",
-            "name": "Quant Researcher",
+            "name": LIVE_AGENTS["quant-researcher"]["name"],
             "role": "Research market structure, benchmark external ideas, identify missing data or feature gaps, and own data integrity, feature reliability, and dataset drift/decay checks.",
             "model": "openai",
             "model_id": get_default_model_for_provider("openai"),
@@ -552,7 +553,7 @@ def _build_default_agents() -> list[dict]:
         },
         {
             "agent_id": "simulation-agent",
-            "name": "Simulation Agent",
+            "name": LIVE_AGENTS["simulation-agent"]["name"],
             "role": "Stress-test strategy hypotheses with Walk-Forward Analysis, Monte Carlo simulation, and parameter optimization. Validate that strategies are robust, not curve-fitted.",
             "model": "openai",
             "model_id": get_default_model_for_provider("openai"),
@@ -571,7 +572,7 @@ def _build_default_agents() -> list[dict]:
         },
         {
             "agent_id": "risk-manager",
-            "name": "Risk Manager",
+            "name": LIVE_AGENTS["risk-manager"]["name"],
             "role": f"Monitor portfolio risk, review position sizing, evaluate strategy health, enforce capital preservation rules. {max_dd}% drawdown kill, ${daily_loss} daily loss, {max_trade}% per trade.",
             "model": "openai",
             "model_id": get_default_model_for_provider("openai"),
@@ -595,7 +596,7 @@ def _build_default_agents() -> list[dict]:
         # closes. The row is deleted via `deprecated_agents` in seed_default_agents.
         {
             "agent_id": "strategy-developer",
-            "name": "Strategy Developer",
+            "name": LIVE_AGENTS["strategy-developer"]["name"],
             "role": "Generate market hypotheses and translate them directly into testable Strategy Container logic.",
             "model": "openai",
             "model_id": get_default_model_for_provider("openai"),
@@ -613,7 +614,7 @@ def _build_default_agents() -> list[dict]:
         },
         {
             "agent_id": "full-stack-engineer",
-            "name": "Full-Stack Engineer",
+            "name": LIVE_AGENTS["full-stack-engineer"]["name"],
             "role": "Operator-triggered diagnosis and triage for bug reports, approval troubleshooting, and notification-repair requests. The autonomous code-execution path is retired: this agent investigates and reports; it does not modify code.",
             "model": "openai",
             "model_id": get_default_model_for_provider("openai"),
@@ -629,7 +630,7 @@ def _build_default_agents() -> list[dict]:
         },
         {
             "agent_id": "brain",
-            "name": "Brain",
+            "name": LIVE_AGENTS["brain"]["name"],
             "role": "Central orchestrator and decision layer for Forven. Delegates work and arbitrates between agents.",
             "model": "openai",
             "model_id": get_default_model_for_provider("openai"),
@@ -668,12 +669,8 @@ def seed_default_agents() -> dict:
         existing = {r["id"] for r in conn.execute("SELECT id FROM agents").fetchall()}
 
     removed_deprecated: list[str] = []
-    deprecated_agents = {
-        "portfolio-optimizer", "sentiment-analyst", "data-scientist",
-        # Retired 2026-06-30: execution is owned by the scanner kernel + the
-        # operator's manual controls; no LLM order path remains.
-        "execution-trader",
-    }
+    from forven.roster import DEPRECATED_AGENT_IDS as deprecated_agents
+
     for deprecated_id in sorted(deprecated_agents & existing):
         try:
             delete_agent(deprecated_id)

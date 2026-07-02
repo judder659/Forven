@@ -46,6 +46,11 @@ DEFAULT_RETENTION_DAYS: dict[str, int] = {
     # growth table not covered by the age prune — bound it so a week-long soak
     # can't bloat it unbounded. 60d keeps plenty of operator history.
     "retention_notifications_days": 60,
+    # Backstop window for agent-run children (transcripts, tool-call audit
+    # rows, truncation blobs). Parent-linked rows are cascade-deleted with
+    # their run; this age prune catches chat (CHAT:)/deepdive (DD:) keys that
+    # have no queue-row parent, plus any legacy orphans.
+    "retention_agent_transcript_days": 45,
 }
 RETENTION_SETTING_KEYS = tuple(DEFAULT_RETENTION_DAYS.keys())
 
@@ -58,9 +63,13 @@ RETENTION_SETTING_KEYS = tuple(DEFAULT_RETENTION_DAYS.keys())
 #   * ``failed`` rows prune at a strictly LONGER window AND only when their error
 #     is NOT one recovery would re-queue,
 #   * ``interrupted`` (re-pended on app restart) rows are NEVER pruned.
-# Default of 72h with the failed-multiplier keeps this effectively-safe; set to 0
-# to disable terminal queue-row pruning entirely.
-DEFAULT_FAILED_RETENTION_HOURS = 72
+# Set to 0 to disable terminal queue-row pruning entirely.
+#
+# 720h (30 days): agent-task rows now anchor the per-round run transcripts
+# (agent_task_messages) — they ARE the operator's run history, and 72h made
+# "what did the agents do last week" unanswerable. Override with the
+# ``failed_retention_hours`` pipeline setting.
+DEFAULT_FAILED_RETENTION_HOURS = 720
 # ``failed`` rows get a window this many times the terminal window so we stay well
 # clear of the recovery loop's staleness threshold (caps at 240 min / 4h).
 _FAILED_WINDOW_MULTIPLIER = 4
@@ -68,11 +77,17 @@ _FAILED_WINDOW_MULTIPLIER = 4
 # Whitelisted (table, timestamp_column) pairs for the generic age-based prune.
 # Table/column names cannot be SQL-parameterized, so the whitelist prevents any
 # injection and documents exactly what the maintenance job is allowed to touch.
-_AGE_PRUNE_TABLES = {
-    "retention_activity_log_days": ("activity_log", "created_at"),
-    "retention_scanner_results_days": ("scanner_signal_results", "ts"),
-    "retention_gate_rejections_days": ("gate_rejections", "created_at"),
-    "retention_notifications_days": ("notifications", "created_at"),
+# Each settings key maps to one or more (table, ts_column) pairs.
+_AGE_PRUNE_TABLES: dict[str, tuple[tuple[str, str], ...]] = {
+    "retention_activity_log_days": (("activity_log", "created_at"),),
+    "retention_scanner_results_days": (("scanner_signal_results", "ts"),),
+    "retention_gate_rejections_days": (("gate_rejections", "created_at"),),
+    "retention_notifications_days": (("notifications", "created_at"),),
+    "retention_agent_transcript_days": (
+        ("agent_task_messages", "created_at"),
+        ("task_audit_log", "created_at"),
+        ("tool_truncations", "created_at"),
+    ),
 }
 
 
@@ -243,6 +258,32 @@ _TERMINAL_TASK_TABLES: tuple[tuple[str, str], ...] = (
 )
 _DEFINITIVE_TERMINAL_STATUSES = ("done", "completed", "cancelled")
 
+# Child tables keyed by the run's display id (T…/B…). Cascade-deleted with
+# their parent queue row so pruning a run never strands transcript/audit
+# fragments (pre-cascade, these tables accumulated orphans forever while the
+# runs they described were already gone).
+_TASK_CHILD_TABLES: tuple[tuple[str, str], ...] = (
+    ("agent_task_messages", "task_display_id"),
+    ("task_audit_log", "task_id"),
+    ("tool_truncations", "task_display_id"),
+)
+
+
+def _display_ids_for_prune(table: str, rows: list, ids: set[str]) -> list[str]:
+    """Display ids (T…/B…) for the queue rows about to be deleted."""
+    display_ids: list[str] = []
+    for row in rows:
+        if str(row["id"]) not in ids:
+            continue
+        if table == "agent_tasks":
+            display_id = str(row["display_id"] or "").strip() if "display_id" in row.keys() else ""
+            if not display_id:
+                display_id = f"T{int(row['id']):05d}"
+        else:  # tasks (brain_invoke) — the worker keys audit rows as B%04d
+            display_id = f"B{int(row['id']):04d}"
+        display_ids.append(display_id)
+    return display_ids
+
 
 def _prune_terminal_rows(
     table: str,
@@ -262,6 +303,7 @@ def _prune_terminal_rows(
     write txn so the queue write lock is never held long.
     """
     status_ph = ",".join("?" for _ in statuses)
+    select_cols = "id, error, display_id" if table == "agent_tasks" else "id, error"
     deleted_total = 0
     # Page forward by ``id`` so recovery-protected ``failed`` rows we deliberately
     # skip don't block progress (a fixed LIMIT window would re-fetch them forever).
@@ -270,7 +312,7 @@ def _prune_terminal_rows(
         with get_db() as conn:
             rows = conn.execute(
                 f"""
-                SELECT id, error FROM {table}
+                SELECT {select_cols} FROM {table}
                 WHERE status IN ({status_ph})
                   AND {ts_column} IS NOT NULL
                   AND datetime({ts_column}) < datetime(?)
@@ -295,6 +337,19 @@ def _prune_terminal_rows(
             else:
                 ids = [str(r["id"]) for r in rows]
             if ids:
+                # Cascade the run's transcript/audit/truncation children first
+                # so they never outlive their parent as unreachable orphans.
+                display_ids = _display_ids_for_prune(table, rows, set(ids))
+                if display_ids:
+                    did_ph = ",".join("?" for _ in display_ids)
+                    for child_table, child_col in _TASK_CHILD_TABLES:
+                        try:
+                            conn.execute(
+                                f"DELETE FROM {child_table} WHERE {child_col} IN ({did_ph})",
+                                display_ids,
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # older schema without the child table
                 id_ph = ",".join("?" for _ in ids)
                 cur = conn.execute(
                     f"DELETE FROM {table} WHERE id IN ({id_ph})",
@@ -376,13 +431,14 @@ def run_db_maintenance(settings: dict | None = None, *, vacuum: bool = False) ->
     summary["backtest_results"] = prune_trashed_backtest_results(
         retention["retention_backtest_trash_days"]
     )
-    for setting_key, (table, ts_column) in _AGE_PRUNE_TABLES.items():
-        try:
-            summary[table] = prune_table_by_age(table, ts_column, retention[setting_key])
-        except sqlite3.OperationalError as exc:
-            # A missing table on an older schema must not abort the whole job.
-            log.warning("maintenance: skipping %s (%s)", table, exc)
-            summary[table] = 0
+    for setting_key, tables in _AGE_PRUNE_TABLES.items():
+        for table, ts_column in tables:
+            try:
+                summary[table] = prune_table_by_age(table, ts_column, retention[setting_key])
+            except sqlite3.OperationalError as exc:
+                # A missing table on an older schema must not abort the whole job.
+                log.warning("maintenance: skipping %s (%s)", table, exc)
+                summary[table] = 0
 
     try:
         summary["heartbeat_rows"] = prune_heartbeat_rows(retention["retention_heartbeat_days"])

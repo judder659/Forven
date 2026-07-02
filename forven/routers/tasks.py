@@ -39,6 +39,11 @@ def get_task_container_audit(task_display_id: str):
     return tasks_domain.get_task_container_audit(task_display_id)
 
 
+@router.get("/api/tasks/{task_display_id}/transcript")
+def get_task_transcript(task_display_id: str):
+    return tasks_domain.get_task_transcript(task_display_id)
+
+
 @router.get("/api/pipeline/task-containers")
 def get_pipeline_task_containers(
     limit: int = 200,

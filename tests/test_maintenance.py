@@ -225,3 +225,74 @@ def test_agent_tasks_fts_stays_consistent_after_prune(forven_db):
             "SELECT rowid FROM agent_tasks_fts WHERE agent_tasks_fts MATCH 'haystack'"
         ).fetchall()
         assert [r["rowid"] for r in survivors] == [keep]
+
+
+# --- child-row cascade (transcripts / audit / truncations) -------------------
+
+
+def test_prune_cascades_transcript_and_audit_children(forven_db):
+    """Pruning a run deletes its agent_task_messages / task_audit_log /
+    tool_truncations children — previously these outlived their parent forever
+    as unreachable orphans."""
+    from forven.db import append_task_message, log_tool_call
+
+    old = _ts(DEFAULT_FAILED_RETENTION_HOURS + 10)
+    task_id = _insert_agent_task(status="done", completed_at=old)
+    display_id = f"T{task_id:05d}"
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE agent_tasks SET display_id = ? WHERE id = ?", (display_id, task_id)
+        )
+    append_task_message(display_id, "agent-test", 1, "user", content="prompt")
+    log_tool_call(display_id, "agent-test", "run_backtest", {"x": 1}, "ok", 5)
+
+    # A fresh run's children must be untouched.
+    fresh_id = _insert_agent_task(status="done", completed_at=_ts(1))
+    fresh_display = f"T{fresh_id:05d}"
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE agent_tasks SET display_id = ? WHERE id = ?", (fresh_display, fresh_id)
+        )
+    append_task_message(fresh_display, "agent-test", 1, "user", content="fresh prompt")
+
+    deleted = prune_terminal_task_rows(DEFAULT_FAILED_RETENTION_HOURS)
+    assert deleted == 1
+    assert not _exists_agent(task_id)
+    assert _exists_agent(fresh_id)
+
+    with get_db() as conn:
+        old_msgs = conn.execute(
+            "SELECT COUNT(*) AS c FROM agent_task_messages WHERE task_display_id = ?",
+            (display_id,),
+        ).fetchone()["c"]
+        old_audit = conn.execute(
+            "SELECT COUNT(*) AS c FROM task_audit_log WHERE task_id = ?",
+            (display_id,),
+        ).fetchone()["c"]
+        fresh_msgs = conn.execute(
+            "SELECT COUNT(*) AS c FROM agent_task_messages WHERE task_display_id = ?",
+            (fresh_display,),
+        ).fetchone()["c"]
+    assert old_msgs == 0
+    assert old_audit == 0
+    assert fresh_msgs == 1
+
+
+def test_agent_spend_rollup_survives_run_prune(forven_db):
+    """Cost history lives in agent_spend_daily and is untouched by run pruning."""
+    from forven.db import get_agent_spend, record_agent_spend
+
+    old = _ts(DEFAULT_FAILED_RETENTION_HOURS + 10)
+    task_id = _insert_agent_task(status="done", completed_at=old)
+    assert record_agent_spend("agent-test", cost_usd=0.5, input_tokens=100, output_tokens=50)
+    assert record_agent_spend("agent-test", cost_usd=0.25, input_tokens=10, output_tokens=5)
+
+    prune_terminal_task_rows(DEFAULT_FAILED_RETENTION_HOURS)
+    assert not _exists_agent(task_id)
+
+    spend = get_agent_spend(days=2)
+    assert len(spend) == 1
+    assert spend[0]["agent_id"] == "agent-test"
+    assert spend[0]["tasks"] == 2
+    assert abs(spend[0]["cost_usd"] - 0.75) < 1e-9
+    assert spend[0]["input_tokens"] == 110

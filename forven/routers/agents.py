@@ -58,6 +58,25 @@ def post_strategy_developer_agent(body: core.LegacyAgentCreateBody):
     return core.post_strategy_developer_agent(body)
 
 
+@router.get("/api/agents/spend")
+def get_agents_spend(days: int = 30):
+    """Per-agent daily spend rollup (survives run-row pruning)."""
+    from forven.db import get_agent_spend
+
+    rows = get_agent_spend(days=days)
+    totals: dict[str, dict] = {}
+    for row in rows:
+        agent = totals.setdefault(
+            row["agent_id"],
+            {"agent_id": row["agent_id"], "tasks": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0},
+        )
+        agent["tasks"] += int(row["tasks"] or 0)
+        agent["cost_usd"] += float(row["cost_usd"] or 0.0)
+        agent["input_tokens"] += int(row["input_tokens"] or 0)
+        agent["output_tokens"] += int(row["output_tokens"] or 0)
+    return {"days": days, "daily": rows, "totals": sorted(totals.values(), key=lambda a: -a["cost_usd"])}
+
+
 @router.get("/api/agents/{agent_id}")
 def get_agent(agent_id: str):
     return core.get_agent(agent_id)

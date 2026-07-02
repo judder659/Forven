@@ -16,17 +16,8 @@ PIPELINE_AUTO_HANDOFF_TASK_TYPES = {
     "gauntlet": {"backtest", "optimize", "optimization", "robustness", "verdict"},
 }
 
-BRAIN_AGENT_IDS = [
-    "quant-researcher",
-    "simulation-agent",
-    "risk-manager",
-    # execution-trader retired 2026-06-30 (execution is kernel-driven; no LLM
-    # order path) — removed from the assignable roster so the brain can't
-    # delegate trading tasks to it.
-    "strategy-developer",
-    "full-stack-engineer",
-    "brain",
-]
+# The Brain's assignable roster lives in forven.roster (single source of truth).
+from forven.roster import BRAIN_AGENT_IDS as BRAIN_AGENT_IDS  # noqa: PLC0414 - re-export
 
 # ---------------------------------------------------------------------------
 # Backward-compatible list exports

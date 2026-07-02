@@ -4,19 +4,24 @@
 	import { page } from '$app/stores';
 	import BrainOverviewTab from '$lib/components/brain/BrainOverviewTab.svelte';
 	import BrainMemoryTab from '$lib/components/brain/BrainMemoryTab.svelte';
+	import BrainDecisionsTab from '$lib/components/brain/BrainDecisionsTab.svelte';
 
-	// Decisions / Recall / Lessons tabs were removed from the nav (2026-06-13):
-	// brain_decisions and brain_lessons are 0-row orphaned tables and Recall had
-	// degraded to thin keyword search over stale task titles. The tab components
-	// (BrainDecisionsTab / BrainRecallTab / BrainLessonsTab) remain in the
-	// codebase and can be re-linked here if those stores are ever populated.
-	type Tab = 'overview' | 'memory';
+	// Decisions re-linked (2026-07-02): the live brain worker now records a
+	// brain_decisions row per autonomous cycle (agent-overhaul), so the ledger
+	// populates again. Recall / Lessons stay unlinked — brain_lessons still has
+	// no writer (BrainRecallTab / BrainLessonsTab remain in the codebase).
+	type Tab = 'overview' | 'decisions' | 'memory';
 
 	const TABS: { id: Tab; label: string; description: string }[] = [
 		{
 			id: 'overview',
 			label: 'Overview',
 			description: 'Autonomy state, actions, blockers, and memory.'
+		},
+		{
+			id: 'decisions',
+			label: 'Decisions',
+			description: 'What the Brain saw, what it decided, the tasks it spawned, and how each decision turned out.'
 		},
 		{
 			id: 'memory',
@@ -29,7 +34,7 @@
 
 	function tabFromUrl(searchParams: URLSearchParams): Tab {
 		const raw = searchParams.get('tab');
-		if (raw === 'overview' || raw === 'memory') return raw;
+		if (raw === 'overview' || raw === 'decisions' || raw === 'memory') return raw;
 		return 'overview';
 	}
 
@@ -77,6 +82,8 @@
 	<section class="tab-content">
 		{#if activeTab === 'overview'}
 			<BrainOverviewTab />
+		{:else if activeTab === 'decisions'}
+			<BrainDecisionsTab />
 		{:else if activeTab === 'memory'}
 			<BrainMemoryTab />
 		{/if}

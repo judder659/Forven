@@ -361,15 +361,17 @@ def test_execute_tool_no_context_does_not_gate(synthetic_registry) -> None:
 
 def test_apply_default_categorization_matches_real_tool_names(synthetic_registry) -> None:
     # Add general-category tools named like the REAL destructive/exchange tools.
+    # (place_order/close_position were deleted outright — agents have no order
+    # path — so the exchange bucket is pinned via the market-data tool name.)
     synthetic_registry["factory_reset"] = ToolDef(
         name="factory_reset", description="d", input_schema={}, handler=synthetic_registry["get_status"].handler,
     )
-    synthetic_registry["place_order"] = ToolDef(
-        name="place_order", description="d", input_schema={}, handler=synthetic_registry["get_status"].handler,
+    synthetic_registry["fetch_exchange_data"] = ToolDef(
+        name="fetch_exchange_data", description="d", input_schema={}, handler=synthetic_registry["get_status"].handler,
     )
     apply_default_categorization()
     assert synthetic_registry["factory_reset"].category == "catastrophic"
-    assert synthetic_registry["place_order"].category == "exchange"
+    assert synthetic_registry["fetch_exchange_data"].category == "exchange"
 
 
 def test_recovery_context_denies_factory_reset_after_categorization(synthetic_registry) -> None:

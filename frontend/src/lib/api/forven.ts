@@ -928,6 +928,23 @@ export async function getForvenAgents(): Promise<ForvenAgent[]> {
 	return fetchApi('/forven/agents');
 }
 
+export interface ForvenAgentSpendTotal {
+	agent_id: string;
+	tasks: number;
+	cost_usd: number;
+	input_tokens: number;
+	output_tokens: number;
+}
+
+/** Per-agent daily spend rollup — survives run-row pruning. */
+export async function getForvenAgentSpend(days = 30): Promise<{
+	days: number;
+	daily: Array<Record<string, unknown>>;
+	totals: ForvenAgentSpendTotal[];
+}> {
+	return fetchApi(`/agents/spend?days=${days}`);
+}
+
 export async function getForvenAgentDocuments(agentId: string): Promise<ForvenAgentDocumentsResponse> {
 	return fetchApi(`/forven/agents/${encodeURIComponent(agentId)}/documents`);
 }

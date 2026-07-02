@@ -239,14 +239,16 @@ async def _invoke_llm(messages: list[dict], strategy_id: str) -> dict:
 
 
 async def _dispatch_tool(name: str, tool_input: dict) -> str:
-    """Look up a tool in the registry and invoke its handler.
+    """Look up a tool in the registry and invoke it via ``execute_tool``.
 
-    Hard-gates to tools with 'deepdive' in their permissions — the LLM
-    cannot reach tools outside the deepdive scope. Bypasses the agent-id
-    permission gate in execute_tool because deepdive sessions are not
-    backed by an `agents` row.
+    Hard-gates to tools with 'deepdive' in their permissions FIRST — the LLM
+    cannot reach tools outside the deepdive scope even where execute_tool's
+    subject check would allow a wildcard tool. Dispatching through
+    execute_tool (rather than tool.handler directly, as this used to) gives
+    deepdive calls the same audit rows, output redaction/truncation and
+    120s timeout as every other agent tool call.
     """
-    from forven.agents.tool_registry import _REGISTRY
+    from forven.agents.tool_registry import _REGISTRY, execute_tool
 
     tool = _REGISTRY.get(name)
     if tool is None:
@@ -255,7 +257,7 @@ async def _dispatch_tool(name: str, tool_input: dict) -> str:
         return f"Permission denied: '{name}' is not allowed in deepdive sessions"
     payload = tool_input if isinstance(tool_input, dict) else {}
     try:
-        return await tool.handler(payload)
+        return await execute_tool(name, payload)
     except Exception as exc:
         return f"Tool error: {exc}"
 
@@ -313,6 +315,13 @@ async def run_turn(thread_id: str, *, user_text: str) -> AsyncIterator[dict]:
     yield {"type": "user_persisted"}
 
     set_deepdive_strategy(thread["strategy_id"])
+    # Tool-call context so execute_tool's permission subjects resolve to
+    # {"deepdive"} and every call is audited under this thread's id.
+    from forven.agents.context import reset_tool_context, set_tool_context
+
+    tool_context_tokens = set_tool_context(
+        "deepdive", f"DD:{thread_id}", strategy_id=thread["strategy_id"]
+    )
     try:
         history = list_messages(thread_id)
         llm_messages: list[dict] = [
@@ -384,4 +393,5 @@ async def run_turn(thread_id: str, *, user_text: str) -> AsyncIterator[dict]:
         log.exception("deepdive turn failed")
         yield {"type": "error", "code": "internal", "message": str(exc)}
     finally:
+        reset_tool_context(tool_context_tokens)
         clear_deepdive_strategy()

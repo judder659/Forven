@@ -185,18 +185,17 @@ def test_execution_trader_is_retired():
     """The agent is gone from the seed and the brain's assignable roster, and is
     queued for deletion on existing installs."""
     from forven.agents.tool_definitions import BRAIN_AGENT_IDS
-    from forven.bot import _build_default_agents, seed_default_agents
+    from forven.bot import _build_default_agents
     from forven.brain import STAGE_TO_AGENT
+    from forven.roster import DEPRECATED_AGENT_IDS, LIVE_AGENTS
 
     assert "execution-trader" not in BRAIN_AGENT_IDS
+    assert "execution-trader" not in LIVE_AGENTS
     assert "execution-trader" not in {a["agent_id"] for a in _build_default_agents()}
     # Live oversight ownership moved to risk-manager (no execution agent).
     assert STAGE_TO_AGENT["live_graduated"] == "risk-manager"
-    # Deletion path: seed_default_agents lists it among deprecated_agents.
-    import inspect
-
-    src = inspect.getsource(seed_default_agents)
-    assert "execution-trader" in src  # in the deprecated_agents removal set
+    # Deletion path: seed_default_agents removes every DEPRECATED_AGENT_IDS row.
+    assert "execution-trader" in DEPRECATED_AGENT_IDS
 
 
 def test_brain_owner_normalization_carries_execution_trader_to_risk_manager():

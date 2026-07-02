@@ -9,30 +9,9 @@ from datetime import datetime, timezone
 from typing import Mapping, Any
 
 from forven.notifications import emit_notification
+from forven.roster import AGENT_CHANNEL_MAP, AGENT_LABELS
 
 log = logging.getLogger("forven.reporter")
-
-AGENT_CHANNEL_MAP = {
-    "brain": "chat",
-    "strategy-developer": "development",
-    "quant-researcher": "research",
-    "simulation-agent": "backtesting",
-    "backtest-engineer": "backtesting",
-    "risk-manager": "risk",
-    "execution-trader": "autopilot",
-    "full-stack-engineer": "development",
-}
-
-AGENT_LABELS = {
-    "quant-researcher": "Quant Researcher",
-    "simulation-agent": "Simulation Agent",
-    "backtest-engineer": "Simulation Agent",
-    "risk-manager": "Risk Manager",
-    "execution-trader": "Execution Trader",
-    "strategy-developer": "Strategy Developer",
-    "full-stack-engineer": "Full-Stack Engineer",
-    "brain": "Brain",
-}
 
 _FAILURE_TITLE_PATTERNS = (
     "task execution failed",
@@ -199,13 +178,7 @@ def _emit_agent_task_notification(
     metadata_marks_failure = _metadata_marks_failure(notification_metadata)
     metadata_marks_risk_alert = _metadata_marks_risk_alert(notification_metadata)
 
-    if normalized_agent == "execution-trader" and "trade opened" in normalized_title:
-        event_type = "trade_opened"
-        notification_metadata.update({"execution_type": "live", "channel_name": channel_name})
-    elif normalized_agent == "execution-trader" and "trade closed" in normalized_title:
-        event_type = "trade_closed"
-        notification_metadata.update({"execution_type": "live", "channel_name": channel_name})
-    elif "strategy promoted" in normalized_title or "promoted to" in normalized_content:
+    if "strategy promoted" in normalized_title or "promoted to" in normalized_content:
         event_type = "pipeline_transition"
     elif "approval" in normalized_title and "required" in normalized_title:
         event_type = "approval_required"

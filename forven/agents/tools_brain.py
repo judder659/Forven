@@ -8,7 +8,7 @@ from forven.db import get_db
 from .context import _current_agent_id_var, _current_task_display_id_var
 from .tool_definitions import BRAIN_AGENT_IDS
 from .tool_registry import register_tool
-from .roster import normalize_agent_id as _normalize_agent_id
+from forven.roster import normalize_agent_id as _normalize_agent_id
 
 
 def _suggest_known_families(stype: str, *, n: int = 3) -> list[str]:
@@ -152,20 +152,21 @@ def _tool_assign_agent_task(params: dict) -> str:
             f"{', '.join(available)}"
         )
 
-    assign_task(agent_id, task_type, title, description, input_data=input_data, strategy_id=strategy_id)
+    task_id = assign_task(
+        agent_id, task_type, title, description, input_data=input_data, strategy_id=strategy_id
+    )
 
-    # Also broadcast to Discord (removed due to noise)
-    # try:
-    #     from forven.reporter import broadcast_agent_task
-    #     import asyncio
-    #     loop = asyncio.get_event_loop()
-    #     if loop.is_running():
-    #         loop.create_task(broadcast_agent_task(
-    #             "brain", f"Task Assigned → {agent_id}",
-    #             f"**{title}**\n\n{description[:500]}",
-    #         ))
-    # except Exception:
-    #     pass
+    # Link the created task to the Brain decision that spawned it (when the
+    # runtime worker recorded one for this cycle) so decision → task → outcome
+    # joins work.
+    try:
+        from forven.brain_decisions import get_active_decision_id, link_agent_task
+
+        decision_id = get_active_decision_id()
+        if decision_id and task_id:
+            link_agent_task(int(task_id), int(decision_id))
+    except Exception:
+        pass
 
     return f"Task assigned to {agent_id}: {title}"
 

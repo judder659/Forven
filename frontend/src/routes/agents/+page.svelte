@@ -11,6 +11,7 @@
 		deleteForvenAgent,
 		dismissForvenAgentTask,
 		getForvenAgents,
+		getForvenAgentSpend,
 		getForvenAgentTasks,
 		getForvenSchedulerJobs,
 		getForvenLogs,
@@ -1322,9 +1323,32 @@
 		dataRealtime.start();
 	}
 
+	// 30d per-agent spend (from agent_spend_daily — survives run pruning).
+	let agentSpend: Record<string, { cost_usd: number; tasks: number }> = {};
+
+	async function fetchAgentSpend() {
+		try {
+			const spend = await getForvenAgentSpend(30);
+			const map: Record<string, { cost_usd: number; tasks: number }> = {};
+			for (const t of spend.totals ?? []) {
+				map[t.agent_id] = { cost_usd: t.cost_usd, tasks: t.tasks };
+			}
+			agentSpend = map;
+		} catch {
+			// Spend is decorative on the roster; never block the page on it.
+		}
+	}
+
+	function fmtSpendUsd(value: number): string {
+		if (!Number.isFinite(value) || value <= 0) return '$0';
+		if (value < 0.01) return `$${value.toFixed(4)}`;
+		return `$${value.toFixed(2)}`;
+	}
+
 	onMount(() => {
 		void fetchData();
 		void fetchModelOptions();
+		void fetchAgentSpend();
 		// Shared page-level config (providers / models / policy / enabled-keys)
 		// consumed by the Providers / Models / Routing / Health tabs.
 		void agentsConfig.load();
@@ -1504,6 +1528,15 @@
 								set in Routing &amp; Fallbacks
 							</a>
 						</div>
+						{#if agentSpend[agent.id]?.cost_usd}
+							<div class="text-[10px] text-gray-500" title="Spend over the last 30 days">
+								30d spend:
+								<span class="text-gray-300 font-mono"
+									>{fmtSpendUsd(agentSpend[agent.id].cost_usd)}</span
+								>
+								<span class="text-gray-600">· {agentSpend[agent.id].tasks} runs</span>
+							</div>
+						{/if}
 						<button
 							type="button"
 							class="mt-1 w-full text-left text-[10px] uppercase tracking-widest text-gray-500 hover:text-cyan-300 transition-colors"
@@ -1688,6 +1721,15 @@
 								>
 									set in Routing &amp; Fallbacks
 								</a>
+								{#if agentSpend[agent.id]?.cost_usd}
+									<div class="mt-1" title="Spend over the last 30 days">
+										30d spend:
+										<span class="text-gray-300 font-mono"
+											>{fmtSpendUsd(agentSpend[agent.id].cost_usd)}</span
+										>
+										<span class="text-gray-600">· {agentSpend[agent.id].tasks} runs</span>
+									</div>
+								{/if}
 							</div>
 						</div>
 					</div>

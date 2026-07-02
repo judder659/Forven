@@ -968,10 +968,40 @@ export async function batchDeleteStrategies(strategyIds: string[]): Promise<{ ok
 	});
 }
 
+export interface TaskTranscriptMessage {
+	id: number;
+	task_display_id: string;
+	agent_id: string | null;
+	seq: number;
+	tool_round: number | null;
+	role: 'user' | 'assistant' | 'tool' | 'event' | string;
+	content: string | null;
+	reasoning: string | null;
+	tool_name: string | null;
+	tool_call_id: string | null;
+	tool_args: string | null;
+	tool_result: string | null;
+	provider: string | null;
+	model_id: string | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	created_at: string;
+}
+
 export async function getTaskAudit(taskDisplayId: string): Promise<{
 	task: TaskContainer;
 	audit_log: TaskAuditEvent[];
 	tool_calls: Array<Record<string, unknown>>;
+	transcript: TaskTranscriptMessage[];
 }> {
 	return fetchApi(`/pipeline/tasks/${encodeURIComponent(taskDisplayId)}/audit`);
+}
+
+/** Transcript for ANY run key (T…/B…/CHAT:…/DD:…) — no parent task row required. */
+export async function getTaskTranscript(taskDisplayId: string): Promise<{
+	task_display_id: string;
+	messages: TaskTranscriptMessage[];
+	tool_calls: Array<Record<string, unknown>>;
+}> {
+	return fetchApi(`/tasks/${encodeURIComponent(taskDisplayId)}/transcript`);
 }

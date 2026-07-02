@@ -307,10 +307,34 @@ def get_task_container_audit(task_display_id: str) -> dict[str, object]:
     audit_log = task.get("audit_log")
     if not isinstance(audit_log, list):
         audit_log = []
+    from forven.db import get_task_messages
+
     return sanitize_json_floats({
         "task": task,
         "audit_log": audit_log,
         "tool_calls": tool_calls,
+        # Full per-round transcript (prompt → assistant turns w/ reasoning →
+        # tool calls w/ args+results → nudges/events) — the run's thought
+        # process, streamed to agent_task_messages while the run executed.
+        "transcript": get_task_messages(display_id),
+    })
+
+
+def get_task_transcript(task_display_id: str) -> dict[str, object]:
+    """Ordered transcript for ANY run key (T…/B…/CHAT:…/DD:…).
+
+    Unlike the audit endpoint this does not require an agent_tasks parent row,
+    so brain cycles / chat / deepdive tool activity are also inspectable.
+    """
+    normalized = str(task_display_id or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="task_display_id is required")
+    from forven.db import get_task_messages
+
+    return sanitize_json_floats({
+        "task_display_id": normalized,
+        "messages": get_task_messages(normalized),
+        "tool_calls": get_task_tool_calls(normalized),
     })
 
 

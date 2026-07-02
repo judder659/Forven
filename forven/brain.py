@@ -52,18 +52,9 @@ except ImportError:
 
 log = logging.getLogger("forven.brain")
 
-STAGE_TO_AGENT = {
-    "quick_screen": "simulation-agent",
-    "research_only": "strategy-developer",
-    "gauntlet": "simulation-agent",
-    "paper": "risk-manager",
-    # Live execution is automated by the scanner's parity kernel; the retired
-    # execution-trader agent no longer exists, so live oversight ownership falls
-    # to risk-manager (which already owns paper + live risk/allocation).
-    "live_graduated": "risk-manager",
-    "archived": None,
-    "rejected": None,
-}
+# Canonical stage→owner map lives in forven.roster (single source of truth);
+# re-exported here because many callers/tests import brain.STAGE_TO_AGENT.
+from forven.roster import STAGE_TO_AGENT, normalize_strategy_owner as _roster_normalize_strategy_owner
 
 VALID_TRANSITIONS = {
     "quick_screen": {"gauntlet", "research_only", "archived", "rejected", "backtest_failed"},
@@ -515,20 +506,8 @@ def _is_strategy_developer(agent: dict) -> bool:
 
 
 def _normalize_strategy_owner(value: str | None) -> str | None:
-    normalized = str(value or "").strip().lower()
-    if not normalized:
-        return None
-    if normalized == "system":
-        return "brain"
-    if normalized == "backtest-engineer":
-        return "simulation-agent"
-    # execution-trader is retired; carry its historical ownerships forward to
-    # risk-manager (which now owns live oversight).
-    if normalized == "execution-trader":
-        return "risk-manager"
-    if normalized in {"quant-researcher", "strategy-developer", "simulation-agent", "risk-manager", "ceo", "brain"}:
-        return normalized
-    return None
+    """Normalize a stored owner to a live owner id (delegates to the roster)."""
+    return _roster_normalize_strategy_owner(value)
 
 
 def _normalize_stage(value: str | None) -> str | None:

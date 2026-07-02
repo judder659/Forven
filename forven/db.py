@@ -19,6 +19,14 @@ from forven.config import (
     WORKSPACE_DIR,
     ensure_dirs,
 )
+from forven.roster import (
+    RETIRED_OWNER_SUCCESSORS as _RETIRED_OWNER_SUCCESSORS,
+    STAGE_OWNER_GUARD as _STAGE_TO_OWNER_FOR_LOCK,
+    STAGE_TO_AGENT as _STAGE_TO_AGENT,
+    VALID_APPROVAL_OWNERS as _VALID_APPROVAL_OWNERS,
+    normalize_agent_id as _normalize_agent_id_for_lock,
+    normalize_stage_key as _normalize_stage_for_lock,
+)
 
 SCHEMA_VERSION = 28
 DEFAULT_ID_WIDTH = 5
@@ -201,28 +209,12 @@ _PHANTOM_RECOVERY_INLINE_ELIGIBLE_STAGES = frozenset(
 )
 
 
-_VALID_APPROVAL_OWNERS = {
-    "quant-researcher",
-    "strategy-developer",
-    "risk-manager",
-    "simulation-agent",
-    "execution-trader",
-    "ceo",
-    "brain",
-    "system",
-}
-
-_LEGACY_APPROVAL_OWNER_ALIASES = {
-    "backtest-engineer": "simulation-agent",
-    "system": "brain",
-}
-
-
 def _normalize_approval_owner(value: str | None) -> str | None:
     normalized = str(value or "").strip().lower()
     if not normalized:
         return None
-    normalized = _LEGACY_APPROVAL_OWNER_ALIASES.get(normalized, normalized)
+    # Retired owners (incl. execution-trader) carry forward to their successor.
+    normalized = _RETIRED_OWNER_SUCCESSORS.get(normalized, normalized)
     return normalized if normalized in _VALID_APPROVAL_OWNERS else None
 
 
@@ -3009,6 +3001,52 @@ def _run_migrations(conn: sqlite3.Connection):
         "CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task ON task_checkpoints (task_id)"
     )
 
+    # Agent run transcript: one row per conversation turn (assistant text +
+    # reasoning, tool calls with args/results) written by the runner AS EACH
+    # ROUND COMPLETES, so a crashed/timed-out run still has its partial
+    # transcript. This is the ground truth for "what was the agent thinking" —
+    # before this table only the initial prompt + final response survived.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_task_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_display_id TEXT NOT NULL,
+            agent_id TEXT,
+            seq INTEGER NOT NULL,
+            tool_round INTEGER,
+            role TEXT NOT NULL,
+            content TEXT,
+            reasoning TEXT,
+            tool_name TEXT,
+            tool_call_id TEXT,
+            tool_args TEXT,
+            tool_result TEXT,
+            provider TEXT,
+            model_id TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_task_messages_task ON agent_task_messages (task_display_id, seq)"
+    )
+
+    # Per-agent daily spend rollup. agent_tasks rows are pruned after the
+    # retention window; this tiny table is what keeps cost history durable
+    # (and powers per-agent spend views) after the runs themselves are gone.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_spend_daily (
+            day TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            tasks INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+            PRIMARY KEY (day, agent_id)
+        )
+    """)
+
     # Hermes-inspired Phase 1: Brain memory + decisions + FTS5 recall.
     # Brain-only: these tables back the Brain agent's persistent operational
     # memory and decision log. Quant agents (task workers) stay stateless.
@@ -4641,6 +4679,139 @@ def find_duplicate_trading_strategy(
     return None
 
 
+# Per-field caps for transcript rows. Generous enough to read a full thought
+# process; anything larger already landed (gzipped, in full) in
+# tool_truncations via the tool-output caps.
+_TASK_MESSAGE_TEXT_CAP = 20_000
+_TASK_MESSAGE_ARGS_CAP = 8_000
+
+
+def append_task_message(
+    task_display_id: str,
+    agent_id: str | None,
+    seq: int,
+    role: str,
+    *,
+    content: str | None = None,
+    reasoning: str | None = None,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    tool_args: str | None = None,
+    tool_result: str | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    tool_round: int | None = None,
+) -> bool:
+    """Append one transcript turn for an agent task. Best-effort: transcript
+    persistence must never fail the run itself."""
+    if not task_display_id or not role:
+        return False
+
+    def _cap(value: str | None, cap: int) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if len(text) > cap:
+            return text[:cap] + f"\n… [truncated {len(text) - cap} chars]"
+        return text
+
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO agent_task_messages "
+                "(task_display_id, agent_id, seq, tool_round, role, content, reasoning, "
+                " tool_name, tool_call_id, tool_args, tool_result, provider, model_id, "
+                " input_tokens, output_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(task_display_id).strip(),
+                    str(agent_id).strip() if agent_id else None,
+                    int(seq),
+                    int(tool_round) if tool_round is not None else None,
+                    str(role).strip(),
+                    _cap(content, _TASK_MESSAGE_TEXT_CAP),
+                    _cap(reasoning, _TASK_MESSAGE_TEXT_CAP),
+                    str(tool_name).strip() if tool_name else None,
+                    str(tool_call_id).strip() if tool_call_id else None,
+                    _cap(tool_args, _TASK_MESSAGE_ARGS_CAP),
+                    _cap(tool_result, _TASK_MESSAGE_TEXT_CAP),
+                    str(provider).strip() if provider else None,
+                    str(model_id).strip() if model_id else None,
+                    int(input_tokens) if input_tokens is not None else None,
+                    int(output_tokens) if output_tokens is not None else None,
+                ),
+            )
+        return True
+    except Exception as exc:  # noqa: BLE001 - transcript writes are best-effort
+        log.warning("append_task_message failed for %s: %s", task_display_id, exc)
+        return False
+
+
+def get_task_messages(task_display_id: str) -> list[dict]:
+    """Return the full ordered transcript for one agent task."""
+    if not task_display_id:
+        return []
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_task_messages WHERE task_display_id = ? ORDER BY seq ASC, id ASC",
+            (str(task_display_id).strip(),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def record_agent_spend(
+    agent_id: str | None,
+    *,
+    cost_usd: float | None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> bool:
+    """Fold one completed run into the per-agent daily spend rollup.
+
+    Best-effort: spend accounting must never fail the run itself.
+    """
+    normalized_agent = str(agent_id or "").strip().lower()
+    if not normalized_agent:
+        return False
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO agent_spend_daily (day, agent_id, tasks, cost_usd, input_tokens, output_tokens) "
+                "VALUES (?, ?, 1, ?, ?, ?) "
+                "ON CONFLICT(day, agent_id) DO UPDATE SET "
+                "tasks = tasks + 1, "
+                "cost_usd = cost_usd + excluded.cost_usd, "
+                "input_tokens = input_tokens + excluded.input_tokens, "
+                "output_tokens = output_tokens + excluded.output_tokens, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')",
+                (
+                    day,
+                    normalized_agent,
+                    float(cost_usd or 0.0),
+                    int(input_tokens or 0),
+                    int(output_tokens or 0),
+                ),
+            )
+        return True
+    except Exception as exc:  # noqa: BLE001 - spend rollup is best-effort
+        log.warning("record_agent_spend failed for %s: %s", normalized_agent, exc)
+        return False
+
+
+def get_agent_spend(days: int = 30) -> list[dict]:
+    """Per-agent spend rollup for the last ``days`` days (newest first)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))).strftime("%Y-%m-%d")
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_spend_daily WHERE day >= ? ORDER BY day DESC, agent_id ASC",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def create_strategy_container(
     conn: sqlite3.Connection,
     name: str,
@@ -4751,17 +4922,7 @@ def create_strategy_container(
         type_=type_,
         strategy_id=final_strategy_id,
     )
-    owner_by_stage = {
-        "quick_screen": "simulation-agent",
-        "research_only": "strategy-developer",
-        "gauntlet": "simulation-agent",
-        "paper": "risk-manager",
-        # execution-trader retired — live oversight owned by risk-manager.
-        "live_graduated": "risk-manager",
-        "archived": None,
-        "rejected": None,
-    }
-    owner = owner_by_stage.get(normalized_stage)
+    owner = _STAGE_TO_AGENT.get(normalized_stage)
     now = _now()
     normalized_hypothesis_id = str(hypothesis_id or "").strip() or None
     normalized_origin_task_id = str(origin_task_id or "").strip() or None
@@ -5061,41 +5222,8 @@ def _extract_strategy_id(task_input: object) -> str | None:
     return normalized or None
 
 
-def _normalize_agent_id_for_lock(agent_id: str | None) -> str:
-    normalized = str(agent_id or "").strip().lower()
-    if normalized == "backtest-engineer":
-        return "simulation-agent"
-    if normalized == "system":
-        return "brain"
-    return normalized
-
-
-_STAGE_TO_OWNER_FOR_LOCK = {
-    "quick_screen": "simulation-agent",
-    "gauntlet": "simulation-agent",
-    "paper": "risk-manager",
-    # execution-trader retired — live oversight owned by risk-manager.
-    "live_graduated": "risk-manager",
-}
-
-
-def _normalize_stage_for_lock(value: str | None) -> str:
-    normalized = str(value or "").strip().lower()
-    aliases = {
-        "researching": "quick_screen",
-        "developing": "quick_screen",
-        "backtesting": "gauntlet",
-        "paper_trading": "paper",
-        "papertrading": "paper",
-        "paper-trading": "paper",
-        "review": "live_graduated",
-        "ceoreview": "live_graduated",
-        "ceo-review": "live_graduated",
-        "ceo_review": "live_graduated",
-        "deployed": "live_graduated",
-        "retired": "archived",
-    }
-    return aliases.get(normalized, normalized)
+# _normalize_agent_id_for_lock, _STAGE_TO_OWNER_FOR_LOCK and
+# _normalize_stage_for_lock are imported from forven.roster (canonical).
 
 
 def _claim_ownership_for_task(conn: sqlite3.Connection, agent_id: str, task: sqlite3.Row) -> tuple[str | None, str | None]:

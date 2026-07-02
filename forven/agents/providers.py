@@ -40,6 +40,11 @@ class ProviderResponse:
     stop: bool = False  # True when the model signals end-of-turn
     raw_assistant_message: Any = None  # Opaque blob to append to message history
     usage: dict = field(default_factory=dict)  # {input_tokens, output_tokens}
+    # Human-readable model reasoning for this turn (reasoning_content /
+    # thinking blocks / Codex reasoning summaries) — persisted to the run
+    # transcript so the operator can see WHY the agent acted. None when the
+    # provider/model exposes no readable reasoning.
+    reasoning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +124,15 @@ class MiniMaxProvider(ToolCallProvider):
         usage = data.get("usage", {})
 
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         for block in content_blocks:
             if block.get("type") == "text":
                 text_parts.append(block["text"])
+            elif block.get("type") == "thinking":
+                thinking = str(block.get("thinking") or block.get("text") or "").strip()
+                if thinking:
+                    thinking_parts.append(thinking)
             elif block.get("type") == "tool_use":
                 tool_calls.append(ToolCall(
                     id=block["id"],
@@ -136,6 +146,7 @@ class MiniMaxProvider(ToolCallProvider):
             stop=(not tool_calls or stop_reason == "end_turn"),
             raw_assistant_message=content_blocks,
             usage=usage,
+            reasoning="\n\n".join(thinking_parts) or None,
         )
 
     async def stream(self, model_id, messages, system, tools, token):
@@ -434,19 +445,7 @@ class OpenAIProvider(ToolCallProvider):
             self._openai_tools = _to_openai_tools(tools)
 
         # OpenAI uses system message in the messages array.
-        openai_messages: list[dict] = []
-        if system:
-            openai_messages.append({"role": "system", "content": system})
-        for msg in messages:
-            role = str(msg.get("role", "user"))
-            if role not in {"system", "user", "assistant", "tool"}:
-                role = "user"
-            coerced: dict = {"role": role, "content": _coerce_openai_text(msg.get("content", ""))}
-            if role == "tool" and msg.get("tool_call_id"):
-                coerced["tool_call_id"] = str(msg["tool_call_id"])
-            if role == "assistant" and msg.get("tool_calls"):
-                coerced["tool_calls"] = msg["tool_calls"]
-            openai_messages.append(coerced)
+        openai_messages = _build_openai_messages(system, messages)
 
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         headers.update(self._extra_headers())
@@ -467,6 +466,9 @@ class OpenAIProvider(ToolCallProvider):
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
         assistant_text = _coerce_openai_text(assistant.get("content"))
+        # Reasoning models (DeepSeek-R1, o-series via compat gateways, ...)
+        # return their chain-of-thought as `reasoning_content`.
+        reasoning = str(assistant.get("reasoning_content") or "").strip() or None
         raw_tool_calls = assistant.get("tool_calls") or []
         usage = data.get("usage", {})
 
@@ -494,6 +496,7 @@ class OpenAIProvider(ToolCallProvider):
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=usage,
+            reasoning=reasoning,
         )
 
     def append_assistant(self, messages, response):
@@ -544,12 +547,28 @@ class CodexProvider(OpenAIProvider):
             ]
         if result.get("reasoning_items"):
             raw_msg["_codex_reasoning"] = result["reasoning_items"]
+        # Readable reasoning summaries (requested with reasoning.summary=auto);
+        # the encrypted payload replays across rounds, the summary is for the
+        # operator-facing transcript.
+        summary_parts: list[str] = []
+        for item in result.get("reasoning_items") or []:
+            if not isinstance(item, dict):
+                continue
+            for summary in item.get("summary") or []:
+                summary_text = (
+                    str(summary.get("text") or "").strip()
+                    if isinstance(summary, dict)
+                    else str(summary or "").strip()
+                )
+                if summary_text:
+                    summary_parts.append(summary_text)
         return ProviderResponse(
             text=text,
             tool_calls=tool_calls,
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=result.get("usage") or {},
+            reasoning="\n\n".join(summary_parts) or None,
         )
 
     async def call(self, model_id, messages, system, tools, token):
@@ -638,19 +657,7 @@ class LMStudioProvider(ToolCallProvider):
         if self._openai_tools is None:
             self._openai_tools = _to_openai_tools(tools)
 
-        openai_messages: list[dict] = []
-        if system:
-            openai_messages.append({"role": "system", "content": system})
-        for msg in messages:
-            role = str(msg.get("role", "user"))
-            if role not in {"system", "user", "assistant", "tool"}:
-                role = "user"
-            coerced: dict = {"role": role, "content": _coerce_openai_text(msg.get("content", ""))}
-            if role == "tool" and msg.get("tool_call_id"):
-                coerced["tool_call_id"] = str(msg["tool_call_id"])
-            if role == "assistant" and msg.get("tool_calls"):
-                coerced["tool_calls"] = msg["tool_calls"]
-            openai_messages.append(coerced)
+        openai_messages = _build_openai_messages(system, messages)
 
         headers = {"Content-Type": "application/json"}
         cleaned_token = str(token or "").strip()
@@ -674,6 +681,7 @@ class LMStudioProvider(ToolCallProvider):
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
         assistant_text = _coerce_openai_text(assistant.get("content"))
+        reasoning = str(assistant.get("reasoning_content") or "").strip() or None
         raw_tool_calls = assistant.get("tool_calls") or []
         usage = data.get("usage", {})
 
@@ -700,6 +708,7 @@ class LMStudioProvider(ToolCallProvider):
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=usage,
+            reasoning=reasoning,
         )
 
     def append_assistant(self, messages, response):
@@ -813,19 +822,7 @@ class ZAIProvider(ToolCallProvider):
         if self._openai_tools is None:
             self._openai_tools = _to_openai_tools(tools)
 
-        openai_messages: list[dict] = []
-        if system:
-            openai_messages.append({"role": "system", "content": system})
-        for msg in messages:
-            role = str(msg.get("role", "user"))
-            if role not in {"system", "user", "assistant", "tool"}:
-                role = "user"
-            coerced: dict = {"role": role, "content": _coerce_openai_text(msg.get("content", ""))}
-            if role == "tool" and msg.get("tool_call_id"):
-                coerced["tool_call_id"] = str(msg["tool_call_id"])
-            if role == "assistant" and msg.get("tool_calls"):
-                coerced["tool_calls"] = msg["tool_calls"]
-            openai_messages.append(coerced)
+        openai_messages = _build_openai_messages(system, messages)
 
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         body = {
@@ -845,8 +842,9 @@ class ZAIProvider(ToolCallProvider):
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
         assistant_text = _coerce_openai_text(assistant.get("content"))
-        if not assistant_text:
-            assistant_text = str(assistant.get("reasoning_content", "")).strip()
+        reasoning = str(assistant.get("reasoning_content") or "").strip() or None
+        if not assistant_text and reasoning:
+            assistant_text = reasoning
         raw_tool_calls = assistant.get("tool_calls") or []
         usage = data.get("usage", {})
 
@@ -873,6 +871,7 @@ class ZAIProvider(ToolCallProvider):
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=usage,
+            reasoning=reasoning,
         )
 
     def append_assistant(self, messages, response):
@@ -1048,57 +1047,7 @@ class DeepSeekProvider(OpenAIProvider):
 
 
 # ---------------------------------------------------------------------------
-# Groq + Gemini (free-tier) — OpenAI-compatible
-# ---------------------------------------------------------------------------
-
-class GroqProvider(OpenAIProvider):
-    """Groq Chat API — OpenAI Chat Completions compatible.
-
-    Default base: ``https://api.groq.com/openai/v1``. Free tier with low
-    rate limits; tool-calling is supported on the larger models (e.g.
-    ``llama-3.3-70b-versatile``).
-    """
-
-    DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
-
-    @staticmethod
-    def _get_base_url() -> str:
-        profile = get_profile("groq") or {}
-        base_url = str(profile.get("base_url") or "").strip()
-        if not base_url:
-            base_url = GroqProvider.DEFAULT_BASE_URL
-        return base_url.rstrip("/")
-
-    @property
-    def ENDPOINT(self) -> str:  # type: ignore[override]
-        return f"{self._get_base_url()}/chat/completions"
-
-
-class GeminiProvider(OpenAIProvider):
-    """Google Gemini — via its OpenAI Chat Completions compatible endpoint.
-
-    Default base: ``https://generativelanguage.googleapis.com/v1beta/openai``.
-    Free tier with daily/per-minute limits; tool-calling is supported on the
-    Gemini 2.x models.
-    """
-
-    DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
-
-    @staticmethod
-    def _get_base_url() -> str:
-        profile = get_profile("gemini") or {}
-        base_url = str(profile.get("base_url") or "").strip()
-        if not base_url:
-            base_url = GeminiProvider.DEFAULT_BASE_URL
-        return base_url.rstrip("/")
-
-    @property
-    def ENDPOINT(self) -> str:  # type: ignore[override]
-        return f"{self._get_base_url()}/chat/completions"
-
-
-# ---------------------------------------------------------------------------
-# Cerebras / Mistral / xAI (Grok) / Together — OpenAI-compatible
+# OpenAI-compatible gateways (Groq / Gemini / Cerebras / Mistral / xAI / ...)
 # ---------------------------------------------------------------------------
 
 class _OpenAICompatProvider(OpenAIProvider):
@@ -1120,6 +1069,30 @@ class _OpenAICompatProvider(OpenAIProvider):
     @property
     def ENDPOINT(self) -> str:  # type: ignore[override]
         return f"{self._get_base_url()}/chat/completions"
+
+
+class GroqProvider(_OpenAICompatProvider):
+    """Groq Chat API — OpenAI Chat Completions compatible.
+
+    Default base: ``https://api.groq.com/openai/v1``. Free tier with low
+    rate limits; tool-calling is supported on the larger models (e.g.
+    ``llama-3.3-70b-versatile``).
+    """
+
+    PROVIDER = "groq"
+    DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+
+
+class GeminiProvider(_OpenAICompatProvider):
+    """Google Gemini — via its OpenAI Chat Completions compatible endpoint.
+
+    Default base: ``https://generativelanguage.googleapis.com/v1beta/openai``.
+    Free tier with daily/per-minute limits; tool-calling is supported on the
+    Gemini 2.x models.
+    """
+
+    PROVIDER = "gemini"
+    DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
 class CerebrasProvider(_OpenAICompatProvider):
