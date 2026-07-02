@@ -40,6 +40,8 @@ def test_kernel_open_live_places_real_order(monkeypatch):
     monkeypatch.setattr("forven.exchange.risk.can_open", lambda *a, **k: (True, 0.01, "ok"))
     monkeypatch.setattr(scanner, "_open_trade_db", lambda *a, **k: "LIVE1")
     monkeypatch.setattr(scanner, "register", lambda *a, **k: None)
+    # PORT-1: the portfolio-budget gate fails closed without an equity snapshot.
+    monkeypatch.setattr(scanner, "_get_real_account_equity", lambda: 10000.0)
 
     def _fake_execute(action, trade_id, strat_id, asset, direction, size, price, **k):
         calls["x"] = dict(action=action, asset=asset, direction=direction, size=size,
@@ -102,3 +104,135 @@ def test_kernel_close_live_respects_pending_reconcile(monkeypatch):
     msg = scanner._kernel_close_live_trade("S1", {"asset": "BTC"}, action)
     assert finalized["closed"] is False
     assert "pending" in msg
+
+
+# ---------------------------------------------------------------- LIVE-TRAIL-1
+
+
+def test_kernel_effective_stop_combines_fixed_and_trail():
+    # fixed only
+    assert scanner._kernel_effective_stop({"stop_price": 97.0}, "long") == 97.0
+    # trailing only: extreme 110, trail 4% → 105.6
+    eff = scanner._kernel_effective_stop({"trail_pct": 0.04, "extreme": 110.0}, "long")
+    assert eff == pytest.approx(105.6)
+    # tighter wins (long: max)
+    eff = scanner._kernel_effective_stop(
+        {"stop_price": 97.0, "trail_pct": 0.04, "extreme": 110.0}, "long")
+    assert eff == pytest.approx(105.6)
+    # short: tighter is LOWER (min); extreme 90, trail 4% → 93.6
+    eff = scanner._kernel_effective_stop(
+        {"stop_price": 103.0, "trail_pct": 0.04, "extreme": 90.0}, "short")
+    assert eff == pytest.approx(93.6)
+
+
+def _live_row(sd_extra=None):
+    import json
+    sd = {"kernel_managed": True, "stop_loss_price": 97.0, "stop_loss": 97.0,
+          "exchange_stop_order_id": "111"}
+    sd.update(sd_extra or {})
+    return {"id": "LIVE9", "asset": "BTC", "direction": "long", "size": 0.5,
+            "signal_data": json.dumps(sd)}
+
+
+def _refresh_action(row, pos):
+    return ReconcileAction("refresh", "long", "2024-01-01T00:00:00+00:00",
+                           position=pos, recorded={"_row": row})
+
+
+def test_kernel_refresh_live_ratchets_trailing_stop(monkeypatch):
+    calls = {}
+
+    def _fake_place(asset, direction, size, price, **k):
+        calls["place"] = dict(asset=asset, direction=direction, size=size, price=price)
+        return {"stop_order_id": 222}
+
+    def _fake_cancel(asset, oid, **k):
+        calls["cancel"] = oid
+        return {}
+
+    monkeypatch.setattr("forven.exchange.hyperliquid.place_protective_stop", _fake_place)
+    monkeypatch.setattr("forven.exchange.hyperliquid.cancel_order", _fake_cancel)
+    monkeypatch.setattr(scanner, "_resolve_trade_vault_address", lambda *a, **k: None)
+    monkeypatch.setattr(scanner, "_resolve_hyperliquid_testnet", lambda: True)
+    updates = {}
+    monkeypatch.setattr(scanner, "_update_trade_signal_data", lambda tid, u: updates.update(u))
+
+    row = _live_row()
+    pos = {"stop_price": 97.0, "trail_pct": 0.04, "extreme": 110.0}  # trail 105.6 > 97
+    msg = scanner._kernel_refresh_live_trade("S1", _refresh_action(row, pos))
+    assert calls["place"]["price"] == pytest.approx(105.6)
+    assert calls["cancel"] == 111  # old stop retired AFTER the new one is confirmed
+    assert updates["stop_loss_price"] == pytest.approx(105.6)
+    assert updates["exchange_stop_order_id"] == "222"
+    assert updates["stop_loss_source"] == "kernel_trailing"
+    assert "LIVE-STOP-RATCHET" in msg
+
+
+def test_kernel_refresh_live_never_loosens(monkeypatch):
+    calls = {}
+    monkeypatch.setattr("forven.exchange.hyperliquid.place_protective_stop",
+                        lambda *a, **k: calls.setdefault("place", True) or {"stop_order_id": 222})
+    updates = {}
+    monkeypatch.setattr(scanner, "_update_trade_signal_data", lambda tid, u: updates.update(u))
+
+    row = _live_row()
+    pos = {"stop_price": 95.0, "trail_pct": None, "extreme": None}  # BELOW the resting 97
+    scanner._kernel_refresh_live_trade("S1", _refresh_action(row, pos))
+    assert "place" not in calls
+    assert "stop_loss_price" not in updates
+
+
+def test_kernel_refresh_live_keeps_old_stop_on_failed_replace(monkeypatch):
+    calls = {}
+
+    def _reject(*a, **k):
+        raise RuntimeError("exchange rejected")
+
+    monkeypatch.setattr("forven.exchange.hyperliquid.place_protective_stop", _reject)
+    monkeypatch.setattr("forven.exchange.hyperliquid.cancel_order",
+                        lambda asset, oid, **k: calls.setdefault("cancel", oid) or {})
+    monkeypatch.setattr(scanner, "_resolve_trade_vault_address", lambda *a, **k: None)
+    monkeypatch.setattr(scanner, "_resolve_hyperliquid_testnet", lambda: True)
+    updates = {}
+    monkeypatch.setattr(scanner, "_update_trade_signal_data", lambda tid, u: updates.update(u))
+
+    row = _live_row()
+    pos = {"stop_price": 97.0, "trail_pct": 0.04, "extreme": 110.0}
+    scanner._kernel_refresh_live_trade("S1", _refresh_action(row, pos))
+    assert "cancel" not in calls  # place-before-cancel: never cancel on a failed place
+    assert updates.get("stop_loss_replace_failed") is True
+    assert "stop_loss_price" not in updates  # the recorded level still matches the resting order
+
+
+def test_kernel_refresh_live_respects_manual_stop(monkeypatch):
+    calls = {}
+    monkeypatch.setattr("forven.exchange.hyperliquid.place_protective_stop",
+                        lambda *a, **k: calls.setdefault("place", True) or {"stop_order_id": 222})
+    monkeypatch.setattr(scanner, "_update_trade_signal_data", lambda tid, u: None)
+
+    row = _live_row({"stop_loss_source": "manual"})
+    pos = {"stop_price": 97.0, "trail_pct": 0.04, "extreme": 110.0}
+    scanner._kernel_refresh_live_trade("S1", _refresh_action(row, pos))
+    assert "place" not in calls
+
+
+def test_kernel_open_live_trailing_only_derives_initial_stop(monkeypatch):
+    calls = {}
+    monkeypatch.setattr("forven.exchange.risk.can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(scanner, "_open_trade_db", lambda *a, **k: "LIVE2")
+    monkeypatch.setattr(scanner, "register", lambda *a, **k: None)
+    # PORT-1: the portfolio-budget gate fails closed without an equity snapshot.
+    monkeypatch.setattr(scanner, "_get_real_account_equity", lambda: 10000.0)
+    monkeypatch.setattr(scanner, "_execute_direct",
+                        lambda action, trade_id, strat_id, asset, direction, size, price, **k:
+                        calls.setdefault("x", dict(stop=k.get("stop_loss"))) or {})
+
+    # Trailing-only profile: no fixed stop, 5% trail → initial resting stop at 95.
+    action = ReconcileAction("open", "long", "2024-01-01T00:00:00+00:00",
+                             position={"entry_price": 100.0, "size_fraction": 0.5,
+                                       "stop_price": None, "target_price": None,
+                                       "trail_pct": 0.05, "entry_bar": 10})
+    msg = scanner._kernel_open_live_trade("S1", {"asset": "BTC", "params": {}}, action,
+                                          sizing_equity=10000.0, leverage=2.0)
+    assert calls["x"]["stop"] == pytest.approx(95.0)
+    assert "LIVE-KERNEL-OPEN" in msg

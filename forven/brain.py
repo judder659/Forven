@@ -1415,6 +1415,42 @@ def transition_stage(
                     "runtime_unloadable",
                 )
 
+        # DUP-1 GATE: never admit a strategy into a TRADING stage while an exact
+        # duplicate (same type/symbol/timeframe/params) is already trading — the two
+        # fire on the identical signal and silently DOUBLE exposure on every entry
+        # (S05275/S05276: the same Donchian promoted twice booked two identical SOL
+        # longs 4.5s apart). Operator force bypasses, like the other admission gates.
+        if (not force) and normalized_target in {"paper", "deployed", "live_graduated"}:
+            _dup_id = None
+            try:
+                from forven.db import find_duplicate_trading_strategy
+
+                _dup_row = conn.execute(
+                    "SELECT type, symbol, timeframe, params FROM strategies WHERE id = ?",
+                    (strategy_id,),
+                ).fetchone()
+                if _dup_row:
+                    _dup_id = find_duplicate_trading_strategy(
+                        conn,
+                        type_=str(_dup_row["type"] or ""),
+                        symbol=str(_dup_row["symbol"] or ""),
+                        timeframe=str(_dup_row["timeframe"] or "1h"),
+                        params=json.loads(_dup_row["params"] or "{}"),
+                        exclude_id=strategy_id,
+                    )
+            except Exception as exc:
+                _dup_id = None
+                log.warning("Duplicate-strategy check errored for %s: %s", strategy_id, exc)
+            if _dup_id:
+                log.error("DUPLICATE STRATEGY BLOCKED: %s -> %s (identical to trading %s)",
+                          strategy_id, normalized_target, _dup_id)
+                return _record_blocked_transition(
+                    f"Duplicate-strategy gate: {_dup_id} is already trading the identical "
+                    "type/symbol/timeframe/params — promoting this one would double exposure "
+                    "on every signal (archive one of them first)",
+                    "duplicate_trading_strategy",
+                )
+
         # WIP cap enforcement: refuse to admit another strategy into a capped stage
         # when the configured capacity is already full. Skipped for terminal/archival
         # transitions and for operator-forced moves. The paper cap is also lifted when

@@ -487,6 +487,260 @@ def get_portfolio_summary() -> dict:
     return {"groups": summary, "total_net_risk": round(total_net, 4)}
 
 
+# --------------------------------------------------------------------------- #
+# PORT-1: LIVE portfolio risk budget — account-level, dollar-denominated.
+#
+# Every live strategy sizes independently off account equity, so N strategies at
+# 1% risk each can stack N% of the account into what is effectively ONE trade
+# (BTC/ETH/SOL trend strategies fire in the same regimes). The legacy Rule-3
+# budget works in allocated risk-pct labels and is SKIPPED on the default kernel
+# path (enforce_risk_caps=False). This budget instead measures the REAL book —
+# open live rows' risk-to-stop and notional in dollars against real equity — and
+# is NOT skippable by enforce_risk_caps. LIVE ONLY: paper strategies are isolated
+# $10k sandboxes by design and never share a budget.
+#
+# All thresholds are operator-editable settings (percent of account equity).
+# The risk-to-stop cap is the PRIMARY dial; the notional caps are gap-risk
+# backstops and must sit ABOVE normal sizing — a routine 1%-risk position with a
+# ~2% stop is already ~50-100% notional, so caps at 50/100 would block normal
+# operation, not protect it:
+#   live_portfolio_budget_enabled   (default True)
+#   live_max_total_open_risk_pct    (default 5.0  — Σ risk-to-stop, all positions)
+#   live_max_asset_exposure_pct     (default 150.0 — |net notional| per asset)
+#   live_max_group_exposure_pct     (default 200.0 — |net notional| per
+#                                    CORRELATION_GROUPS group, e.g. crypto_major)
+# --------------------------------------------------------------------------- #
+
+_PORTFOLIO_BUDGET_DEFAULTS = {
+    "live_max_total_open_risk_pct": 5.0,
+    "live_max_asset_exposure_pct": 150.0,
+    "live_max_group_exposure_pct": 200.0,
+}
+# Risk fallback for a live row with no recorded stop (should not exist — live
+# opens are refused without one; adopted/recovered rows are the edge case).
+# Mirrors sizing.DEFAULT_STOP_LOSS_PCT_FLOOR so the assumption lives in one place.
+_BUDGET_NO_STOP_RISK_FRAC = 0.03
+
+
+def _budget_pct_setting(settings: dict, key: str) -> float:
+    try:
+        raw = settings.get(key)
+        value = float(raw) if raw is not None else float(_PORTFOLIO_BUDGET_DEFAULTS[key])
+    except (TypeError, ValueError):
+        value = float(_PORTFOLIO_BUDGET_DEFAULTS[key])
+    return max(value, 0.0)
+
+
+def _live_aggregate_equity() -> float | None:
+    """Total account equity for the budget denominator (aggregate across books).
+
+    Same resolution chain the live sizing path uses (daemon snapshot → risk
+    state → daily baseline); returns None when no real snapshot exists so the
+    gate can FAIL CLOSED rather than budget against a fabricated constant."""
+    try:
+        daemon_state = kv_get("daemon_state", {})
+        if isinstance(daemon_state, dict):
+            eq = _coerce_non_negative_float(daemon_state.get("account_equity"))
+            if eq:
+                return eq
+    except Exception:
+        pass
+    try:
+        risk = kv_get(sim_kv_key("risk_state"), {})
+        if isinstance(risk, dict):
+            eq = _coerce_non_negative_float(risk.get("last_equity"))
+            if eq:
+                return eq
+            hwm = _coerce_non_negative_float(risk.get("high_water_mark"))
+            if hwm:
+                drawdown = min(max(float(risk.get("drawdown_pct", 0.0) or 0.0), 0.0), 0.9999)
+                return hwm * (1.0 - drawdown)
+    except Exception:
+        pass
+    try:
+        daily = kv_get(sim_kv_key("daily_risk"), {})
+        if isinstance(daily, dict):
+            eq = _coerce_non_negative_float(daily.get("start_equity"))
+            if eq:
+                return eq
+    except Exception:
+        pass
+    return None
+
+
+def live_portfolio_exposure() -> dict:
+    """The live book's current dollar exposure, from OPEN live trade rows.
+
+    Per row: notional = entry x units; risk = distance to the CURRENT stop x
+    units, floored at 0 (a ratcheted trailing stop above a long's entry has
+    locked profit — zero remaining risk). Rows with no stop are counted at the
+    conservative no-stop fallback and surfaced via ``stops_missing``."""
+    from forven.trade_state import parse_trade_signal_data as _parse_sd
+
+    per_asset: dict[str, dict] = {}
+    per_group: dict[str, dict] = {}
+    total_risk_usd = 0.0
+    stops_missing = 0
+    rows: list[dict] = []
+    try:
+        with get_db() as conn:
+            db_rows = conn.execute(
+                "SELECT id, asset, direction, entry_price, fill_entry_price, size, "
+                "COALESCE(strategy_id, strategy) AS strategy_id, signal_data "
+                "FROM trades WHERE status = 'OPEN' "
+                "AND LOWER(COALESCE(execution_type, 'live')) = 'live'"
+            ).fetchall()
+    except Exception as exc:
+        log.warning("Portfolio budget: could not read open live trades: %s", exc)
+        db_rows = []
+    for r in db_rows:
+        row = dict(r)
+        asset_u = str(row.get("asset") or "").strip().upper()
+        entry = _coerce_non_negative_float(row.get("fill_entry_price")) or _coerce_non_negative_float(row.get("entry_price"))
+        size = _coerce_non_negative_float(row.get("size"))
+        if not asset_u or not entry or not size:
+            continue
+        direction = str(row.get("direction") or "long").strip().lower()
+        sign = -1.0 if direction == "short" else 1.0
+        notional = entry * size
+        sd = _parse_sd(row.get("signal_data"))
+        stop = _coerce_non_negative_float(
+            sd.get("stop_loss_price") if sd.get("stop_loss_price") is not None else sd.get("stop_loss")
+        )
+        if stop:
+            risk_usd = max(0.0, (entry - stop) * size * sign)
+        else:
+            stops_missing += 1
+            risk_usd = notional * _BUDGET_NO_STOP_RISK_FRAC
+        group = ASSET_GROUP.get(asset_u) or asset_u
+        a = per_asset.setdefault(asset_u, {"net_notional_usd": 0.0, "risk_usd": 0.0, "positions": 0, "group": group})
+        a["net_notional_usd"] += sign * notional
+        a["risk_usd"] += risk_usd
+        a["positions"] += 1
+        g = per_group.setdefault(group, {"net_notional_usd": 0.0, "risk_usd": 0.0, "positions": 0})
+        g["net_notional_usd"] += sign * notional
+        g["risk_usd"] += risk_usd
+        g["positions"] += 1
+        total_risk_usd += risk_usd
+        rows.append({
+            "trade_id": str(row.get("id")), "asset": asset_u, "direction": direction,
+            "strategy_id": row.get("strategy_id"), "notional_usd": round(notional, 2),
+            "risk_usd": round(risk_usd, 2), "stop_price": stop, "group": group,
+        })
+    return {
+        "total_risk_usd": round(total_risk_usd, 2),
+        "per_asset": per_asset,
+        "per_group": per_group,
+        "stops_missing": stops_missing,
+        "positions": rows,
+    }
+
+
+def check_live_portfolio_budget(
+    asset: str, direction: str, *,
+    add_risk_usd: float, add_notional_usd: float, equity: float | None = None,
+) -> tuple[bool, str]:
+    """The account-level admission check for a NEW live position.
+
+    Returns (allowed, reason). Fails CLOSED when equity is unavailable. Pass
+    add_risk_usd = |entry - stop| x units and add_notional_usd = entry x units
+    for the order about to be placed."""
+    settings = _load_risk_settings()
+    if not bool(settings.get("live_portfolio_budget_enabled", True)):
+        return True, "portfolio budget disabled"
+    eq = _coerce_non_negative_float(equity) or _live_aggregate_equity()
+    if not eq:
+        return False, (
+            "portfolio budget: account equity unavailable — refusing the live open "
+            "(fail closed) until the daemon equity snapshot recovers"
+        )
+    exposure = live_portfolio_exposure()
+    asset_u = str(asset or "").strip().upper()
+    direction = str(direction or "long").strip().lower()
+    sign = -1.0 if direction == "short" else 1.0
+    add_risk = max(float(add_risk_usd or 0.0), 0.0)
+    add_notional = max(float(add_notional_usd or 0.0), 0.0)
+
+    max_risk_usd = _budget_pct_setting(settings, "live_max_total_open_risk_pct") / 100.0 * eq
+    new_total_risk = exposure["total_risk_usd"] + add_risk
+    if new_total_risk > max_risk_usd:
+        return False, (
+            f"portfolio budget: total open risk ${new_total_risk:,.0f} would exceed "
+            f"{_budget_pct_setting(settings, 'live_max_total_open_risk_pct'):g}% of equity "
+            f"(${max_risk_usd:,.0f}); ${exposure['total_risk_usd']:,.0f} already at risk "
+            f"across {len(exposure['positions'])} position(s)"
+        )
+
+    max_asset_usd = _budget_pct_setting(settings, "live_max_asset_exposure_pct") / 100.0 * eq
+    asset_net = float((exposure["per_asset"].get(asset_u) or {}).get("net_notional_usd", 0.0))
+    new_asset_net = asset_net + sign * add_notional
+    if abs(new_asset_net) > max_asset_usd:
+        return False, (
+            f"portfolio budget: {asset_u} net exposure ${abs(new_asset_net):,.0f} would exceed "
+            f"{_budget_pct_setting(settings, 'live_max_asset_exposure_pct'):g}% of equity (${max_asset_usd:,.0f})"
+        )
+
+    group = ASSET_GROUP.get(asset_u) or asset_u
+    max_group_usd = _budget_pct_setting(settings, "live_max_group_exposure_pct") / 100.0 * eq
+    group_net = float((exposure["per_group"].get(group) or {}).get("net_notional_usd", 0.0))
+    new_group_net = group_net + sign * add_notional
+    if abs(new_group_net) > max_group_usd:
+        return False, (
+            f"portfolio budget: correlated group '{group}' net exposure ${abs(new_group_net):,.0f} "
+            f"would exceed {_budget_pct_setting(settings, 'live_max_group_exposure_pct'):g}% of "
+            f"equity (${max_group_usd:,.0f})"
+        )
+
+    return True, (
+        f"portfolio budget OK: risk ${new_total_risk:,.0f}/${max_risk_usd:,.0f}, "
+        f"'{group}' net ${abs(new_group_net):,.0f}/${max_group_usd:,.0f}"
+    )
+
+
+def live_portfolio_budget_snapshot(equity: float | None = None) -> dict:
+    """Operator-facing view of the live portfolio budget (used by /api/risk)."""
+    settings = _load_risk_settings()
+    eq = _coerce_non_negative_float(equity) or _live_aggregate_equity()
+    exposure = live_portfolio_exposure()
+    limits_pct = {key: _budget_pct_setting(settings, key) for key in _PORTFOLIO_BUDGET_DEFAULTS}
+    max_risk_usd = (limits_pct["live_max_total_open_risk_pct"] / 100.0 * eq) if eq else None
+    per_asset = {
+        a: {
+            "net_notional_usd": round(v["net_notional_usd"], 2),
+            "risk_usd": round(v["risk_usd"], 2),
+            "positions": v["positions"],
+            "group": v["group"],
+            "limit_usd": round(limits_pct["live_max_asset_exposure_pct"] / 100.0 * eq, 2) if eq else None,
+        }
+        for a, v in exposure["per_asset"].items()
+    }
+    per_group = {
+        g: {
+            "net_notional_usd": round(v["net_notional_usd"], 2),
+            "risk_usd": round(v["risk_usd"], 2),
+            "positions": v["positions"],
+            "limit_usd": round(limits_pct["live_max_group_exposure_pct"] / 100.0 * eq, 2) if eq else None,
+        }
+        for g, v in exposure["per_group"].items()
+    }
+    return {
+        "enabled": bool(settings.get("live_portfolio_budget_enabled", True)),
+        "equity_usd": round(eq, 2) if eq else None,
+        "equity_available": bool(eq),
+        "limits_pct": limits_pct,
+        "total_open_risk_usd": exposure["total_risk_usd"],
+        "total_open_risk_limit_usd": round(max_risk_usd, 2) if max_risk_usd else None,
+        "total_open_risk_used_frac": (
+            round(exposure["total_risk_usd"] / max_risk_usd, 4) if max_risk_usd else None
+        ),
+        "stops_missing": exposure["stops_missing"],
+        "per_asset": per_asset,
+        "per_group": per_group,
+        "positions": exposure["positions"],
+        "groups": {g: list(assets) for g, assets in CORRELATION_GROUPS.items()},
+    }
+
+
 def can_open(
     asset: str, direction: str, strategy: str,
     risk_pct: float | None = None,
@@ -657,6 +911,35 @@ def can_open(
                 f"Max concurrent positions reached: {len(positions)}/{max_concurrent_positions}. "
                 "Close an existing position before opening a new one."
             )
+
+        # PORT-1 (coarse gate): when the live book's TOTAL open risk already meets the
+        # account budget, NO path may add more — including legacy/manual opens that
+        # never reach the kernel path's precise per-order check. Deliberately
+        # direction-neutral and total-risk-only (net/hedge exposure decisions need the
+        # actual signed order size and belong to check_live_portfolio_budget at the
+        # sizing site). NOT gated by enforce_risk_caps — the whole point is that the
+        # authoritative-sizing kernel path must still respect the account budget.
+        if not is_paper_scope:
+            try:
+                if bool(settings.get("live_portfolio_budget_enabled", True)):
+                    _pb_exposure = live_portfolio_exposure()
+                    if _pb_exposure["positions"]:
+                        _pb_eq = _live_aggregate_equity()
+                        if not _pb_eq:
+                            return False, 0.0, (
+                                "Portfolio budget: account equity unavailable — refusing a new "
+                                "live position (fail closed) until the equity snapshot recovers."
+                            )
+                        _pb_cap = _budget_pct_setting(settings, "live_max_total_open_risk_pct") / 100.0 * _pb_eq
+                        if _pb_exposure["total_risk_usd"] >= _pb_cap:
+                            return False, 0.0, (
+                                f"Portfolio budget exhausted: ${_pb_exposure['total_risk_usd']:,.0f} already at "
+                                f"risk across {len(_pb_exposure['positions'])} live position(s) — cap "
+                                f"{_budget_pct_setting(settings, 'live_max_total_open_risk_pct'):g}% of equity "
+                                f"(${_pb_cap:,.0f}). Close a position or raise the cap in Settings."
+                            )
+            except Exception as _pb_exc:
+                return False, 0.0, f"Portfolio budget check failed ({_pb_exc}) — refusing the live open (fail closed)."
 
         cooldown_after_loss_hours = _get_cooldown_after_loss_hours(settings)
         cooling_down, cooldown_reason = _is_strategy_in_loss_cooldown(strategy, cooldown_after_loss_hours)
@@ -910,9 +1193,15 @@ def _first_item(values: list | tuple | None):
 
 
 def _extract_close_price(result: object) -> float | None:
+    """The bookable price from a close_position response: the REAL fill (avgPx,
+    surfaced as ``exit_price``), else the mid at request time (an honest market
+    print). NEVER ``close_price`` — that is the aggressive IOC *limit* (mid padded
+    by up to the emergency slippage tier, 300+ bps); booking it recorded exits at
+    prices the market never traded (the 2026-06-28 kill-switch closes E0001/E0002,
+    +259/+309 bps beyond the bar range, a winning short recorded as a loss)."""
     if not isinstance(result, dict):
         return None
-    for key in ("close_price", "mid"):
+    for key in ("exit_price", "mid"):
         raw_value = result.get(key)
         if raw_value is None:
             continue
@@ -3122,9 +3411,13 @@ def close_all_positions() -> list[dict]:
 
     try:
         with get_db() as conn:
+            # LIVE rows only: these ids feed the pending-close marking on a FAILED
+            # flatten and the strategy attribution — a PAPER trade must never be
+            # swept into the exchange-close reconcile machinery (same scoping as the
+            # post-close local sweep below).
             rows = conn.execute(
                 "SELECT id, COALESCE(strategy_id, strategy) as strategy_id, asset FROM trades "
-                "WHERE status = 'OPEN'"
+                "WHERE status = 'OPEN' AND LOWER(COALESCE(execution_type, 'live')) = 'live'"
             ).fetchall()
             for row in rows:
                 trade_id = str(row["id"] or "").strip()
@@ -3312,13 +3605,18 @@ def close_all_positions() -> list[dict]:
     if closed_assets:
         with get_db() as conn:
             placeholders = ",".join("?" for _ in closed_assets)
-            # Exclude Bot Factory paper trades (source='bot:{id}'): the kill-switch
-            # flattened LIVE exchange positions, and a bot paper position on the
-            # same asset must not be force-closed at the live flatten price (it
-            # never reached the exchange — that would fabricate PnL on a paper book).
+            # LIVE rows only: the kill-switch flattened LIVE exchange positions, so only
+            # local trades that mirror an exchange position may be closed at the flatten
+            # price. A PAPER trade on the same asset never reached the exchange — closing
+            # it at another account's fill would fabricate PnL on the paper book (the
+            # promotion gate's input). The old filter excluded only Bot Factory rows
+            # (source='bot:{id}') for exactly this reason, but scanner-kernel paper opens
+            # leave source NULL and slipped through — scope by execution_type instead
+            # (schema default 'live'), keeping the bot exclusion as belt-and-braces.
             rows = conn.execute(
                 f"SELECT id, asset FROM trades WHERE status='OPEN' "
                 f"AND UPPER(asset) IN ({placeholders}) "
+                f"AND LOWER(COALESCE(execution_type, 'live')) = 'live' "
                 f"AND COALESCE(source, '') NOT LIKE 'bot:%'",
                 tuple(closed_assets),
             ).fetchall()
@@ -3516,6 +3814,10 @@ def get_risk_status() -> dict:
         "recovery_last_checked_at": recovery.get("recovery_last_checked_at"),
         "recovery_network": recovery.get("recovery_network"),
         "portfolio": summary,
+        # PORT-1: the live account-level budget (dollar risk-to-stop + net exposure
+        # vs equity) — distinct from limits.portfolio_budget, the legacy risk-pct
+        # slot ledger. The frontend risk page renders this block.
+        "portfolio_budget_live": live_portfolio_budget_snapshot(),
         "limits": {
             "max_drawdown": float(limits["max_drawdown"]),
             "daily_loss_limit": float(limits["daily_loss_limit"]),

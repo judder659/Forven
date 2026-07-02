@@ -120,9 +120,15 @@ def test_kernel_paper_path_fills_now_not_backstamped(forven_db, monkeypatch):
         assert str(sd.get("source")) == "scanner.kernel.fill_now"
         assert sd.get("late_entry") is True
         assert ket in bt_entry_times, f"paper entry {ket} is not a backtest signal bar"
-        # opened_at is the wall-clock fill moment, strictly AFTER the historical signal bar —
-        # the back-stamp bug made these EQUAL (opened_at == the kernel's historical bar).
-        assert _ts(r["opened_at"]) > _ts(ket)
+        # opened_at is the wall-clock fill moment, AT/AFTER the kernel's fill-bar OPEN —
+        # never before it, and never back-stamped onto a historical bar with a historical
+        # price (late_entry + fill_now + current-mark above prove the fill is live). With
+        # the signal-bar-close pending machinery (LAG-1) the fill lands the moment the
+        # signal bar closes, so opened_at can EQUAL the fill-bar label exactly (this
+        # test's get_now sits precisely on the bar boundary); the old one-bar-late
+        # fill-now made it strictly later, and the back-stamp bug stamped it EARLIER
+        # (onto the historical bar) at the historical open price.
+        assert _ts(r["opened_at"]) >= _ts(ket)
         # the recorded entry is the current mark; the kernel's historical entry is preserved
         # separately for bookkeeping (and differs from the recorded fill).
         assert float(r["entry_price"]) > 0

@@ -14,6 +14,7 @@ import contextvars
 import functools
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -578,7 +579,7 @@ def _apply_runtime_scheduler_overrides() -> int:
             if current_type == schedule_type and current_expr == schedule_expr and payload_update is None:
                 continue
             timezone_name = str(row["timezone"] or "UTC")
-            next_run = _compute_next_run(schedule_type, schedule_expr, timezone_name)
+            next_run = _compute_next_run(schedule_type, schedule_expr, timezone_name, job_id=job_id)
             if payload_update is None:
                 conn.execute(
                     "UPDATE scheduler_jobs SET schedule_type = ?, schedule_expr = ?, next_run_at = ? WHERE id = ?",
@@ -804,7 +805,7 @@ def add_job(
             (
                 job_id, name, schedule_type, schedule_expr,
                 timezone_str, command, json.dumps(payload) if payload else None,
-                _compute_next_run(schedule_type, schedule_expr, timezone_str),
+                _compute_next_run(schedule_type, schedule_expr, timezone_str, job_id=job_id),
             ),
         )
 
@@ -818,8 +819,22 @@ def enable_job(job_id: str, enabled: bool = True):
         )
 
 
-def _compute_next_run(schedule_type: str, schedule_expr: str, tz: str = "UTC") -> str:
-    """Compute the next run time for a job."""
+# LAG-2 / BAR-ALIGNED SCANS: the scanner jobs must fire just AFTER each bar closes, not
+# at an arbitrary interval phase. A plain `now + interval` schedule drifts to whatever
+# phase the job was last touched at, adding up to a full interval of latency between a
+# bar close and the scan that acts on it — on top of the signal-bar-close fill this
+# latency is pure entry/exit skew. Aligning the interval to wall-clock (UTC-epoch)
+# multiples makes every scan land at :00/:05/:10…, and the :00 scan catches every bar
+# close on every timeframe (all crypto bars are UTC-aligned). The small offset gives the
+# venue time to publish the just-closed candle before we fetch.
+_BAR_ALIGNED_JOB_IDS = frozenset({"forven-scanner-hourly", "forven-scanner-signal"})
+_BAR_ALIGN_OFFSET_SECONDS = 20.0
+
+
+def _compute_next_run(schedule_type: str, schedule_expr: str, tz: str = "UTC", *, job_id: str | None = None) -> str:
+    """Compute the next run time for a job. Interval jobs in ``_BAR_ALIGNED_JOB_IDS``
+    are aligned to wall-clock multiples of their interval (+ the candle-publication
+    offset) instead of free-running from "now"."""
     import zoneinfo
     schedule_expr = (schedule_expr or "").strip()
     if not schedule_expr:
@@ -839,8 +854,14 @@ def _compute_next_run(schedule_type: str, schedule_expr: str, tz: str = "UTC") -
             interval_ms = int(schedule_expr)
         except Exception as e:
             raise ValueError(f"invalid interval expression '{schedule_expr}' (ms integer required): {e}") from e
-        next_time = datetime.now(timezone.utc).timestamp() + interval_ms / 1000
-        return datetime.fromtimestamp(next_time, timezone.utc).isoformat()
+        now_s = datetime.now(timezone.utc).timestamp()
+        if job_id in _BAR_ALIGNED_JOB_IDS and interval_ms > 0:
+            step = interval_ms / 1000.0
+            next_s = (math.floor((now_s - _BAR_ALIGN_OFFSET_SECONDS) / step) + 1) * step + _BAR_ALIGN_OFFSET_SECONDS
+            if next_s <= now_s:  # float-edge guard: never schedule at/before now
+                next_s += step
+            return datetime.fromtimestamp(next_s, timezone.utc).isoformat()
+        return datetime.fromtimestamp(now_s + interval_ms / 1000, timezone.utc).isoformat()
     else:
         raise ValueError(f"unsupported schedule_type '{schedule_type}'")
 
@@ -2171,7 +2192,7 @@ async def _execute_claimed_scheduler_job(job: dict) -> None:
     try:
         next_run_str = _compute_next_run(
             job["schedule_type"], job["schedule_expr"],
-            job.get("timezone", "UTC"),
+            job.get("timezone", "UTC"), job_id=str(job.get("id") or ""),
         )
     except Exception as e:
         # Fallback: schedule next run at a reasonable interval so the job
@@ -2292,6 +2313,7 @@ async def tick():
                     job["schedule_type"],
                     job["schedule_expr"],
                     job.get("timezone", "UTC"),
+                    job_id=str(job.get("id") or ""),
                 )
             except Exception as e:
                 msg = f"scheduler next-run error: {e}"
@@ -2311,6 +2333,7 @@ async def tick():
                     job["schedule_type"],
                     job["schedule_expr"],
                     job.get("timezone", "UTC"),
+                    job_id=str(job.get("id") or ""),
                 )
             except Exception as e:
                 msg = f"scheduler next-run error: {e}"
@@ -2340,6 +2363,7 @@ async def tick():
                         job["schedule_type"],
                         job["schedule_expr"],
                         job.get("timezone", "UTC"),
+                        job_id=str(job.get("id") or ""),
                     )
                 except Exception as e:
                     log.error("Scheduler schedule compute failed for %s: %s", job.get("id"), e)
@@ -2370,6 +2394,7 @@ async def tick():
                             job["schedule_type"],
                             job["schedule_expr"],
                             job.get("timezone", "UTC"),
+                            job_id=str(job.get("id") or ""),
                         )
                     except Exception as e:
                         log.error("Scheduler schedule compute failed for %s: %s", job.get("id"), e)

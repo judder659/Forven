@@ -4605,6 +4605,42 @@ def log_tool_call(
         )
 
 
+# DUP-1: stages in which a strategy actually places (paper or real) trades. Two
+# strategies with identical type/symbol/timeframe/params in these stages double
+# exposure on every signal.
+_TRADING_STAGES = frozenset({"paper", "live", "live_graduated", "deployed"})
+
+
+def find_duplicate_trading_strategy(
+    conn: sqlite3.Connection,
+    *,
+    type_: str,
+    symbol: str,
+    timeframe: str,
+    params: dict | None,
+    exclude_id: str | None = None,
+) -> str | None:
+    """The id of an existing TRADING-stage strategy with the identical
+    type + symbol + timeframe + params, or None. Canonical (sorted-key) JSON
+    comparison so key order can't defeat the check."""
+    params_canon = json.dumps(params or {}, sort_keys=True)
+    stage_ph = ",".join("?" for _ in _TRADING_STAGES)
+    for row in conn.execute(
+        f"SELECT id, params FROM strategies WHERE type = ? AND symbol = ? AND timeframe = ? "
+        f"AND LOWER(COALESCE(stage, '')) IN ({stage_ph})",
+        (str(type_ or ""), str(symbol or ""), str(timeframe or "1h"), *sorted(_TRADING_STAGES)),
+    ).fetchall():
+        if exclude_id and str(row["id"]) == str(exclude_id):
+            continue
+        try:
+            existing_canon = json.dumps(json.loads(row["params"] or "{}"), sort_keys=True)
+        except Exception:
+            continue
+        if existing_canon == params_canon:
+            return str(row["id"])
+    return None
+
+
 def create_strategy_container(
     conn: sqlite3.Connection,
     name: str,
@@ -4674,6 +4710,26 @@ def create_strategy_container(
 
     normalized_stage = str(stage or "quick_screen").strip().lower() or "quick_screen"
     normalized_symbol = _normalize_strategy_symbol(symbol, params)
+    # DUP-1: refuse creating a strategy DIRECTLY INTO a trading stage when an exact
+    # duplicate is already trading — same type + symbol + timeframe + identical params
+    # trades the identical signal, silently DOUBLING exposure on every entry
+    # (S05275/S05276: the same Donchian registered twice booked two identical SOL longs
+    # 4.5s apart). Research-stage duplicates are allowed (candidates legitimately share
+    # baseline params before the sweep differentiates them); the same check guards the
+    # promotion path (find_duplicate_trading_strategy), which is where a research-stage
+    # dup would otherwise become double exposure.
+    if normalized_stage in _TRADING_STAGES:
+        _dup_id = find_duplicate_trading_strategy(
+            conn, type_=str(type_ or ""), symbol=normalized_symbol,
+            timeframe=str(timeframe or "1h"), params=params,
+        )
+        if _dup_id:
+            raise ValueError(
+                f"duplicate strategy: {_dup_id} is already trading the identical "
+                f"type/symbol/timeframe/params ({type_} {normalized_symbol} {timeframe or '1h'}) — "
+                "registering it again would double exposure on every signal; archive the "
+                "existing strategy first if you mean to replace it"
+            )
     stage_aliases = {
         "researching": "quick_screen",
         "developing": "quick_screen",

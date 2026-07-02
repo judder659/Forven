@@ -381,6 +381,68 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.exchange.risk', 'forven.runtime_worker'],
   },
 
+  // Risk: LIVE portfolio budget (account-level, dollar-denominated — PORT-1).
+  // Live only: paper strategies are isolated $10k sandboxes and never share a budget.
+  {
+    id: 'risk.live_portfolio_budget_enabled',
+    label: 'Live portfolio budget',
+    default: true,
+    type: 'toggle',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_portfolio_budget_enabled',
+    description:
+      'Account-level admission gate for new LIVE positions: caps total open risk-to-stop, per-asset net exposure, and correlated-group net exposure as a percent of real account equity. Live only — paper sandboxes are unaffected.',
+    usedBy: ['forven.exchange.risk', 'forven.scanner'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.live_max_total_open_risk_pct',
+    label: 'Live max total open risk',
+    unit: '%',
+    default: 5,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_max_total_open_risk_pct',
+    description:
+      'Cap on the SUM of every open live position’s risk-to-stop (distance from entry to its current stop × size) as a percent of account equity. At the default 1% risk per trade this allows ~5 concurrent positions; a ratcheted trailing stop that locks profit frees its budget.',
+    usedBy: ['forven.exchange.risk', 'forven.scanner'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.live_max_asset_exposure_pct',
+    label: 'Live max per-asset exposure',
+    unit: '%',
+    default: 150,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_max_asset_exposure_pct',
+    description:
+      'Cap on the absolute NET notional (longs minus shorts) held in any single asset, as a percent of account equity. A gap-risk backstop above normal sizing: a routine 1%-risk position with a ~2% stop is already ~50-100% notional. A hedge that reduces net exposure is always allowed.',
+    usedBy: ['forven.exchange.risk', 'forven.scanner'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.live_max_group_exposure_pct',
+    label: 'Live max correlated-group exposure',
+    unit: '%',
+    default: 200,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_max_group_exposure_pct',
+    description:
+      'Cap on the absolute NET notional across a correlation group (crypto_major: BTC/ETH/SOL/BNB/AVAX/LINK/MATIC move together), as a percent of account equity. Stops several strategies from stacking what is effectively one correlated trade — a 10% adverse gap through stops on 200% net exposure costs ~20% of the account, so tighten this as capital grows.',
+    usedBy: ['forven.exchange.risk', 'forven.scanner'],
+    deepLinkTo: '/risk',
+  },
+
   // Risk: regime gating (deduped — ONLY under trading, not health)
   {
     id: 'risk.strict_regime_gating',

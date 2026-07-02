@@ -52,6 +52,18 @@
 	$: recoverySummary = recovery?.summary || risk?.recovery_summary || '';
 	$: recoveryRequiresOperator = Boolean(recovery?.requires_operator);
 
+	// PORT-1: the LIVE account-level portfolio budget (dollar risk-to-stop and net
+	// exposure vs real equity) — the admission gate every new live position passes.
+	$: liveBudget = risk?.portfolio_budget_live ?? null;
+	$: liveBudgetRiskUsed = Number(liveBudget?.total_open_risk_usd ?? 0);
+	$: liveBudgetRiskLimit = Number(liveBudget?.total_open_risk_limit_usd ?? 0);
+	$: liveBudgetAssets = Object.entries(liveBudget?.per_asset ?? {});
+	$: liveBudgetGroups = Object.entries(liveBudget?.per_group ?? {});
+
+	function formatBudgetUsd(value: number): string {
+		return `$${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+	}
+
 	$: circuitBreakers = dashboard?.circuit_breakers
 		? [
 				{ label: 'Price Feed', state: dashboard.circuit_breakers.hl_price },
@@ -368,6 +380,100 @@
 		<div class="border border-[#3a2f1a] bg-[#161208] rounded p-4 text-sm text-amber-200">
 			Risk telemetry is unavailable. Gauges and limits cannot be displayed — the values below are not safe-zero readings.
 		</div>
+	{/if}
+
+	{#if liveBudget}
+	<div class="border border-[#333] bg-[#0d0d0d] rounded p-4 space-y-3">
+		<div class="flex items-center justify-between">
+			<h2 class="text-sm font-bold uppercase tracking-wider text-gray-200">Live Portfolio Budget</h2>
+			<div class="flex items-center gap-2">
+				<span class={`text-xs px-2 py-1 border rounded ${liveBudget.enabled ? 'text-green-400 border-green-800' : 'text-amber-400 border-amber-800'}`}>
+					{liveBudget.enabled ? 'Enforcing' : 'Disabled'}
+				</span>
+				<a href="/settings" class="text-[10px] uppercase tracking-wider text-gray-500 hover:text-gray-300 transition-colors">Edit caps</a>
+			</div>
+		</div>
+		<p class="text-[11px] text-gray-500">
+			Account-level admission gate for new LIVE positions — total dollars at risk to stops, plus net
+			exposure per asset and per correlated group, all against real account equity. Paper strategies
+			keep their own isolated $10k sandboxes and are not counted here.
+		</p>
+
+		{#if !liveBudget.equity_available}
+			<div class="rounded border border-red-800 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+				Account equity snapshot unavailable — the budget gate is FAILING CLOSED (new live opens are blocked)
+				until the daemon equity feed recovers.
+			</div>
+		{/if}
+		{#if (liveBudget.stops_missing ?? 0) > 0}
+			<div class="rounded border border-amber-800 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+				{liveBudget.stops_missing} open live position(s) carry no recorded stop — their risk is counted at a
+				conservative 3% of notional.
+			</div>
+		{/if}
+
+		<div class="space-y-1">
+			<div class="flex items-center justify-between text-[11px]">
+				<span class="text-gray-400">Total open risk (to stops)</span>
+				<span class={liveBudgetRiskLimit > 0 && liveBudgetRiskUsed > liveBudgetRiskLimit ? 'text-red-400' : 'text-gray-300'}>
+					{formatBudgetUsd(liveBudgetRiskUsed)} / {liveBudgetRiskLimit > 0 ? formatBudgetUsd(liveBudgetRiskLimit) : '—'}
+					{#if liveBudget.limits_pct?.live_max_total_open_risk_pct}
+						<span class="text-gray-500">({liveBudget.limits_pct.live_max_total_open_risk_pct}% of equity)</span>
+					{/if}
+				</span>
+			</div>
+			<div class="h-2 rounded bg-[#1a1a1a] overflow-hidden">
+				<div
+					class={`h-full ${liveBudgetRiskLimit > 0 && liveBudgetRiskUsed / liveBudgetRiskLimit >= 1 ? 'bg-red-500' : liveBudgetRiskLimit > 0 && liveBudgetRiskUsed / liveBudgetRiskLimit >= 0.75 ? 'bg-amber-500' : 'bg-green-500'}`}
+					style={`width: ${clampPercent(liveBudgetRiskLimit > 0 ? (liveBudgetRiskUsed / liveBudgetRiskLimit) * 100 : 0)}%;`}
+				></div>
+			</div>
+		</div>
+
+		{#if liveBudgetGroups.length > 0}
+			<div class="space-y-2 pt-1">
+				<div class="text-[10px] uppercase tracking-wider text-gray-500">Correlated-group net exposure</div>
+				{#each liveBudgetGroups as [name, g]}
+					{@const net = Number(g.net_notional_usd ?? 0)}
+					{@const cap = Number(g.limit_usd ?? 0)}
+					<div class="space-y-1">
+						<div class="flex items-center justify-between text-[11px]">
+							<span class="text-gray-400">{name} <span class="text-gray-600">({g.positions} pos)</span></span>
+							<span class={cap > 0 && Math.abs(net) > cap ? 'text-red-400' : net >= 0 ? 'text-green-400' : 'text-red-300'}>
+								{net >= 0 ? 'net long' : 'net short'} {formatBudgetUsd(net)} / {cap > 0 ? formatBudgetUsd(cap) : '—'}
+							</span>
+						</div>
+						<div class="h-1.5 rounded bg-[#1a1a1a] overflow-hidden">
+							<div
+								class={`h-full ${cap > 0 && Math.abs(net) / cap >= 1 ? 'bg-red-500' : net >= 0 ? 'bg-green-600' : 'bg-red-600'}`}
+								style={`width: ${clampPercent(cap > 0 ? (Math.abs(net) / cap) * 100 : 0)}%;`}
+							></div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+
+		{#if liveBudgetAssets.length > 0}
+			<div class="pt-1">
+				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Per-asset</div>
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+					{#each liveBudgetAssets as [assetName, a]}
+						{@const anet = Number(a.net_notional_usd ?? 0)}
+						<div class="border border-[#222] bg-[#090909] rounded px-3 py-2 flex items-center justify-between text-[11px]">
+							<span class="font-bold text-gray-300">{assetName} <span class="font-normal text-gray-600">({a.positions})</span></span>
+							<span class="text-gray-400">
+								<span class={anet >= 0 ? 'text-green-400' : 'text-red-300'}>{anet >= 0 ? '+' : '−'}{formatBudgetUsd(anet)}</span>
+								<span class="text-gray-600"> · risk {formatBudgetUsd(Number(a.risk_usd ?? 0))}</span>
+							</span>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{:else}
+			<div class="text-xs text-gray-500">No open live positions — full budget available.</div>
+		{/if}
+	</div>
 	{/if}
 
 	<div class="border border-[#333] bg-[#0d0d0d] rounded p-4 space-y-3">

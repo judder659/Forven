@@ -181,6 +181,8 @@ def test_kernel_open_live_reports_open_failure(monkeypatch):
     monkeypatch.setattr(risk, "can_open", lambda *a, **k: (True, 0.01, "ok"))
     monkeypatch.setattr(sc, "_open_trade_db", lambda *a, **k: "T1")
     monkeypatch.setattr(sc, "register", lambda *a, **k: None)
+    # PORT-1: the portfolio-budget gate fails closed without an equity snapshot.
+    monkeypatch.setattr(sc, "_get_real_account_equity", lambda: 10000.0)
 
     def _boom(*a, **k):
         raise RuntimeError("margin rejected")

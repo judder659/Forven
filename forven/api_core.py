@@ -2575,6 +2575,20 @@ def _apply_settings_section(section: str, payload: dict) -> dict:
             updates["liq_distance_critical_pct"] = _coerce_float(payload.get("liq_distance_critical_pct"), updates.get("liq_distance_critical_pct", 7))
         if "cooldown_after_loss_hours" in payload:
             updates["cooldown_after_loss_hours"] = _coerce_float(payload.get("cooldown_after_loss_hours"), updates["cooldown_after_loss_hours"])
+        # PORT-1: live account-level portfolio budget (read top-level from
+        # forven:settings by forven.exchange.risk.check_live_portfolio_budget).
+        if "live_portfolio_budget_enabled" in payload:
+            updates["live_portfolio_budget_enabled"] = _coerce_bool(
+                payload.get("live_portfolio_budget_enabled"),
+                bool(updates.get("live_portfolio_budget_enabled", True)),
+            )
+        for _pb_key, _pb_default in (
+            ("live_max_total_open_risk_pct", 5.0),
+            ("live_max_asset_exposure_pct", 150.0),
+            ("live_max_group_exposure_pct", 200.0),
+        ):
+            if _pb_key in payload:
+                updates[_pb_key] = _coerce_float(payload.get(_pb_key), _coerce_float(updates.get(_pb_key), _pb_default))
         if "strict_regime_gating" in payload:
             updates["strict_regime_gating"] = _coerce_bool(payload.get("strict_regime_gating"), updates["strict_regime_gating"])
         if "regime_min_confidence" in payload:

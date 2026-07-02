@@ -71,6 +71,12 @@ class ReconcileAction:
     # full-replay parity path (which faithfully back-stamps). The field name is retained for
     # continuity with the (now-repurposed) hop-in machinery that applies it.
     late_entry: bool = False
+    # True when this action comes from the kernel's PENDING (signal-bar-close) projection:
+    # the last CLOSED bar's signal decides an order for the forming bar's open — i.e. NOW.
+    # A pending "open" carries the kernel's raw pending payload in ``position`` (the scanner
+    # materializes fill/stop/size at its current mark); a pending "close" carries the pending
+    # exit payload in ``trade`` (the scanner stamps the reference exit at the current mark).
+    pending: bool = False
 
 
 def _canonical_ts(entry_time: str) -> str:
@@ -185,6 +191,28 @@ def reconcile(res: KernelResult, recorded: list[dict], *, recent_cutoff: str | N
         else:
             matched.add(id(r))  # already recorded closed → nothing to do, but it IS matched.
 
+    # PENDING EXIT (signal-bar close): the kernel STILL holds this position, but the last
+    # CLOSED bar's signal/time-stop already decided an exit at the forming bar's open —
+    # i.e. NOW. Close the recorded trade this scan instead of waiting a full bar for the
+    # fill bar to close (the one-bar exit lag). Live/paper mode only (fresh_cutoff set):
+    # the full-replay parity path keeps the faithful historical-close semantics.
+    pending_closes: list[ReconcileAction] = []
+    closing_ids: set[int] = set(id(a.recorded) for a in closes if a.recorded is not None)
+    _pending_exits = getattr(res, "pending_exits", None) or {}
+    _pending_entries = getattr(res, "pending_entries", None) or {}
+    if fresh_cutoff is not None:
+        for direction, pe in _pending_exits.items():
+            direction = str(direction or "long").strip().lower()
+            entry_time = str(pe.get("entry_time") or "")
+            r = recorded_by_key.get(_key(direction, entry_time))
+            if r is None or str(r.get("status") or "open").strip().lower() == "closed" or id(r) in matched:
+                continue  # never recorded / already closed (an earlier scan this bar) / consumed
+            pending_closes.append(ReconcileAction(
+                "close", direction, entry_time, trade=dict(pe), recorded=r, pending=True,
+            ))
+            matched.add(id(r))
+            closing_ids.add(id(r))
+
     opens: list[ReconcileAction] = []
     refreshes: list[ReconcileAction] = []
     kernel_open_dirs: set[str] = set()
@@ -232,6 +260,38 @@ def reconcile(res: KernelResult, recorded: list[dict], *, recent_cutoff: str | N
                 opens.append(ReconcileAction("open", direction, entry_time, position=pos, late_entry=True))
             # else: recent-but-stale → no action (chart trigger only)
 
+    # PENDING ENTRY (signal-bar close): the last CLOSED bar's entry signal fills at the
+    # forming bar's open — i.e. NOW. Open it fill-now immediately, keyed by the projected
+    # fill-bar entry_time the scanner stamped, so once the fill bar closes and the kernel
+    # actually holds the position, the next scan reconciles it as a plain REFRESH (and a
+    # same-bar kernel round-trip reconciles as a plain CLOSE). Live/paper mode only.
+    pending_opens: list[ReconcileAction] = []
+    if fresh_cutoff is not None:
+        for direction, pe in _pending_entries.items():
+            direction = str(direction or "long").strip().lower()
+            entry_time = str(pe.get("entry_time") or "")
+            if not entry_time:
+                continue  # scanner stamped no projected fill-bar label (stale frame) → skip
+            if direction in kernel_open_dirs and direction not in _pending_exits:
+                continue  # defensive: kernel still holds this direction and isn't exiting
+            r = recorded_by_key.get(_key(direction, entry_time))
+            if r is not None:
+                # Already acted on this projected entry (an earlier scan within the same
+                # forming bar), or the operator closed it mid-bar (never re-open — the same
+                # suppression as the closed-row rule above). Mark it matched so the orphan
+                # pass (the kernel is necessarily flat on it until the fill bar closes)
+                # leaves the still-open row alone.
+                matched.add(id(r))
+                continue
+            r_dir = recorded_open_by_dir.get(direction)
+            if r_dir is not None and id(r_dir) not in closing_ids:
+                continue  # slot held by another OPEN row that isn't closing this round
+            if not _recent(entry_time):
+                continue
+            pending_opens.append(ReconcileAction(
+                "open", direction, entry_time, position=dict(pe), late_entry=True, pending=True,
+            ))
+
     # ORPHAN CLOSE: a recorded OPEN trade the kernel can no longer see (no exact match,
     # not adopted) for a direction the kernel now holds NO position on → the kernel has
     # exited it. Converge by closing it, so paper never holds a trade the strategy/kernel
@@ -249,4 +309,4 @@ def reconcile(res: KernelResult, recorded: list[dict], *, recent_cutoff: str | N
 
     # Apply closes/backfills before opens so a same-direction re-entry after an exit is
     # never mistaken for a still-open position; orphan-closes last (pure cleanup).
-    return closes + backfills + opens + refreshes + orphan_closes
+    return closes + pending_closes + backfills + opens + pending_opens + refreshes + orphan_closes

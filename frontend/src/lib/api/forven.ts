@@ -113,6 +113,41 @@ export interface ForvenRiskStatus {
 			net?: number;
 		}>;
 	};
+	/** PORT-1: the LIVE account-level budget (dollar risk-to-stop + net exposure vs equity). */
+	portfolio_budget_live?: {
+		enabled?: boolean;
+		equity_usd?: number | null;
+		equity_available?: boolean;
+		limits_pct?: Record<string, number>;
+		total_open_risk_usd?: number;
+		total_open_risk_limit_usd?: number | null;
+		total_open_risk_used_frac?: number | null;
+		stops_missing?: number;
+		per_asset?: Record<string, {
+			net_notional_usd?: number;
+			risk_usd?: number;
+			positions?: number;
+			group?: string;
+			limit_usd?: number | null;
+		}>;
+		per_group?: Record<string, {
+			net_notional_usd?: number;
+			risk_usd?: number;
+			positions?: number;
+			limit_usd?: number | null;
+		}>;
+		positions?: Array<{
+			trade_id?: string;
+			asset?: string;
+			direction?: string;
+			strategy_id?: string;
+			notional_usd?: number;
+			risk_usd?: number;
+			stop_price?: number | null;
+			group?: string;
+		}>;
+		groups?: Record<string, string[]>;
+	};
 }
 
 export interface ForvenRegimeSnapshot {

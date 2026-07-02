@@ -3094,14 +3094,18 @@ SIGNAL_CHECKERS = {
 
 
 def _signed_slippage_bps(signal_price: float, fill_price: float, side: str) -> float:
-    """Compute directional slippage in bps."""
+    """Signed slippage in bps, POSITIVE = ADVERSE execution (buy filled above the
+    reference / sell filled below it). This is the same convention as
+    monitoring._calc_slippage_bps and agents.tools_exchange._signed_slippage_bps —
+    the scanner previously used the OPPOSITE sign (positive = favorable), so the
+    slippage monitor's 168h re-sweep silently flipped every recorded value."""
     signal_price = float(signal_price or 0)
     fill_price = float(fill_price or 0)
     if signal_price <= 0 or fill_price <= 0:
         return 0.0
     if side == "buy":
-        return ((signal_price - fill_price) / signal_price) * 1e4
-    return ((fill_price - signal_price) / signal_price) * 1e4
+        return ((fill_price - signal_price) / signal_price) * 1e4
+    return ((signal_price - fill_price) / signal_price) * 1e4
 
 
 def _update_trade_signal_data(trade_id: str, updates: dict) -> None:
@@ -5644,6 +5648,7 @@ def _kernel_close_recorded(
     *, closed_at_override: str | None = None,
     current_price: float | None = None, current_time: str | None = None,
     funding_df: "pd.DataFrame | None" = None, timeframe: str | None = None,
+    pending: bool = False,
 ) -> str | None:
     trade_id = str(row.get("id"))
     sd = parse_trade_signal_data(row.get("signal_data"))
@@ -5656,12 +5661,13 @@ def _kernel_close_recorded(
     # FILL-NOW exit: a late hop-in's SIGNAL/time-stop exit is a decision the kernel just
     # made on the most-recently-closed bar — fill it at the CURRENT mark/time, exactly like
     # its fill-now ENTRY, instead of the kernel's historical exit-bar price (which can be
-    # delayed up to ~1 bar by the backtest's own fill convention). PRICE exits (stop/target/
-    # trailing) are excluded: those are owned by the re-anchored intrabar monitor
-    # (_kernel_handle_late_entry_exits), which already fills realistically bar-by-bar and
-    # never passes current_price here.
+    # delayed up to ~1 bar by the backtest's own fill convention). A PENDING (signal-bar-
+    # close) exit is by construction such a decision, whatever the row's provenance. PRICE
+    # exits (stop/target/trailing) are excluded: those are owned by the re-anchored intrabar
+    # monitor (_kernel_handle_late_entry_exits), which already fills realistically
+    # bar-by-bar and never passes current_price here.
     fresh_exit = (
-        late and exit_reason not in _KERNEL_PRICE_EXIT_REASONS
+        (late or pending) and exit_reason not in _KERNEL_PRICE_EXIT_REASONS
         and current_price is not None and float(current_price) > 0
     )
     if fresh_exit:
@@ -5677,10 +5683,11 @@ def _kernel_close_recorded(
         _closed_at = str(current_time).replace(" ", "T")
     if closed_at_override:
         _closed_at = str(closed_at_override).replace(" ", "T")
-    if late:
+    if late or pending:
         # FILL-NOW entry: the recorded entry is the current-mark fill price, NOT the kernel's
         # historical entry — so the kernel's historical-entry pnl_pct does NOT describe this
-        # position. Recompute the NET equity-fraction PnL from OUR actual entry, using the
+        # position (a PENDING close likewise has no kernel pnl at all — the kernel hasn't
+        # exited yet). Recompute the NET equity-fraction PnL from OUR actual entry, using the
         # kernel's own convention ((price_return*sign*lev - round_trip_drag) * size_fraction),
         # and write it equity-fraction-flagged via pnl_override so this close is COUNTED by the
         # promotion gate (which filters on pnl_is_equity_fraction). Omitting the flag — as the
@@ -5747,6 +5754,7 @@ def _kernel_close_paper_trade(
     funding_df: "pd.DataFrame | None" = None, timeframe: str | None = None,
 ) -> str | None:
     trade = action.trade or {}
+    pending = bool(getattr(action, "pending", False))
     if action.recorded and action.recorded.get("_row"):
         row = action.recorded["_row"]
         sd = parse_trade_signal_data(row.get("signal_data"))
@@ -5770,7 +5778,7 @@ def _kernel_close_paper_trade(
                 return _kernel_close_recorded(
                     strat_id, strat, row, trade, action.direction,
                     closed_at_override=row.get("opened_at"),
-                    funding_df=funding_df, timeframe=timeframe,
+                    funding_df=funding_df, timeframe=timeframe, pending=pending,
                 )
             # A LATE hop-in's PRICE exits are owned by its RE-ANCHORED stop/target (enforced
             # intrabar by _kernel_handle_late_entry_exits), NOT by the kernel's historical
@@ -5786,7 +5794,7 @@ def _kernel_close_paper_trade(
         return _kernel_close_recorded(
             strat_id, strat, row, trade, action.direction,
             current_price=current_price, current_time=current_time,
-            funding_df=funding_df, timeframe=timeframe,
+            funding_df=funding_df, timeframe=timeframe, pending=pending,
         )
     # Backfill: opened AND closed between scans — record the completed trade. Guard against
     # re-recording one already booked: if ANY trade already carries this kernel_entry_time,
@@ -5847,6 +5855,108 @@ def _kernel_refresh_paper_trade(action) -> str | None:
         updates["kernel_entry_time"] = str(action.entry_time)
     if updates:
         _update_trade_signal_data(str(row.get("id")), updates)
+    return None
+
+
+def _kernel_effective_stop(pos: dict, direction: str) -> float | None:
+    """The kernel position's EFFECTIVE protective level right now: the tighter of the
+    fixed stop and the ratcheted trailing level (extreme through the last closed bar) —
+    the same combination simulate() checks intrabar. This is the level a real resting
+    stop order must sit at for the exchange to reproduce the kernel's exit."""
+    sign = -1.0 if str(direction or "long").strip().lower() == "short" else 1.0
+    eff = _coerce_positive_float(pos.get("stop_price"))
+    trail_pct = pos.get("trail_pct")
+    extreme = _coerce_positive_float(pos.get("extreme"))
+    if trail_pct and extreme:
+        trail_level = extreme * (1.0 - sign * float(trail_pct))
+        if eff is None:
+            eff = trail_level
+        else:
+            eff = max(eff, trail_level) if sign > 0 else min(eff, trail_level)
+    return eff
+
+
+def _kernel_refresh_live_trade(strat_id: str, action) -> str | None:
+    """LIVE-TRAIL-1: mirror the kernel's stop — INCLUDING the ratcheted trailing level —
+    onto the LIVE position's resting exchange stop order.
+
+    Before this, only the INITIAL stop/TP became real exchange trigger orders; the
+    kernel's trailing stop existed solely inside the scan-time replay, so a live
+    reversal through a trailed-up level was only detected a full bar + scan-lag later
+    and closed at market from far below it. Each refresh now compares the kernel's
+    effective level against the resting stop and, when it has TIGHTENED, replaces the
+    exchange order place-before-cancel (never leave the position unprotected on a
+    rejected replacement — the old stop stays). Stops are only ever tightened here; a
+    manual stop (stop_loss_source='manual') is the operator's and is never touched."""
+    row = (action.recorded or {}).get("_row")
+    if row is None:
+        return None
+    sd = parse_trade_signal_data(row.get("signal_data"))
+    if sd.get("manual_pause"):
+        return None  # MANUAL-1: detached from auto-management
+    pos = action.position or {}
+    direction = str(row.get("direction") or action.direction or "long").strip().lower()
+    sign = -1.0 if direction == "short" else 1.0
+    updates: dict = {}
+    if str(sd.get("stop_loss_source") or "").strip().lower() != "manual":
+        eff = _kernel_effective_stop(pos, direction)
+        old = _coerce_positive_float(
+            sd.get("stop_loss_price") if sd.get("stop_loss_price") is not None else sd.get("stop_loss")
+        )
+        # Replace only on a genuine TIGHTENING move (long: up, short: down) beyond float
+        # dust — the trailing ratchet moves at most once per closed bar, so this stays a
+        # low-rate cancel/replace, never a churn.
+        tightened = eff is not None and (
+            old is None or (eff - old) * sign > max(abs(old), 1e-9) * 1e-4
+        )
+        if tightened:
+            trade_id = str(row.get("id"))
+            asset = str(row.get("asset") or "").strip().upper()
+            size = abs(_coerce_positive_float(row.get("size")) or 0.0)
+            if asset and size > 0:
+                from forven.exchange.hyperliquid import cancel_order, place_protective_stop
+                vault = None
+                try:
+                    vault = _resolve_trade_vault_address(trade_id)
+                except Exception:
+                    vault = None
+                old_oid = sd.get("exchange_stop_order_id")
+                new_oid = None
+                try:
+                    result = place_protective_stop(
+                        asset, direction, size, float(eff),
+                        testnet=_resolve_hyperliquid_testnet(), vault_address=vault,
+                    )
+                    if isinstance(result, dict) and not result.get("error"):
+                        new_oid = result.get("stop_order_id") or result.get("order_id")
+                except Exception as exc:
+                    log.warning("[%s] live trailing-stop replace failed for %s (%s); keeping the existing stop",
+                                strat_id, asset, exc)
+                if new_oid:
+                    if old_oid:
+                        try:
+                            cancel_order(asset, int(old_oid), testnet=_resolve_hyperliquid_testnet(), vault_address=vault)
+                        except Exception:  # a stale/already-filled order is fine to ignore
+                            log.warning("[%s] old stop cancel failed for %s oid=%s", strat_id, asset, old_oid, exc_info=True)
+                    updates.update({
+                        "stop_loss": float(eff), "stop_loss_price": float(eff),
+                        "stop_loss_source": "kernel_trailing" if pos.get("trail_pct") else "kernel",
+                        "exchange_stop_order_id": str(new_oid), "sl_adjusted_at": get_now().isoformat(),
+                    })
+                else:
+                    updates["stop_loss_replace_failed"] = True
+                    updates["stop_loss_replace_failed_at"] = get_now().isoformat()
+    # Display-refresh the un-owned TP side like the paper refresh does (the resting TP
+    # order itself is static — placed at open, level never moves).
+    if str(sd.get("take_profit_source") or "").strip().lower() != "manual" and pos.get("target_price") is not None:
+        updates.setdefault("take_profit", pos.get("target_price"))
+        updates.setdefault("take_profit_price", pos.get("target_price"))
+    if (action.recorded or {}).get("_orphan") and action.entry_time:
+        updates["kernel_entry_time"] = str(action.entry_time)
+    if updates:
+        _update_trade_signal_data(str(row.get("id")), updates)
+    if updates.get("exchange_stop_order_id"):
+        return f"LIVE-STOP-RATCHET {row.get('asset')} {direction} → {float(updates['stop_loss']):.6g}"
     return None
 
 
@@ -6129,12 +6239,40 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         return None
     stop_price = pos.get("stop_price")
     target_price = pos.get("target_price")
+    kernel_trail_pct = pos.get("trail_pct")
+    if stop_price is None and kernel_trail_pct:
+        # LIVE-TRAIL-1: a trailing-only profile carries no fixed stop, which the
+        # no-stop-no-open guard in _execute_direct would refuse. Its protective level
+        # DOES exist — the initial trailing level off the entry — so place the resting
+        # stop there; each refresh then ratchets it with the kernel's extreme.
+        _sgn = -1.0 if direction == "short" else 1.0
+        stop_price = round(float(ref_price) * (1.0 - _sgn * float(kernel_trail_pct)), 8)
+    # PORT-1 (precise gate): admission against the ACCOUNT-level budget with this
+    # order's actual risk (distance to its stop x units) and notional. Uses the
+    # AGGREGATE account equity, not the direction-book slice sizing_equity may have
+    # been narrowed to — the budget bounds the whole account. Not skippable by
+    # enforce_risk_caps; the coarse total-risk check in can_open covers non-kernel
+    # paths, this one owns per-asset / correlated-group net exposure.
+    from forven.exchange.risk import check_live_portfolio_budget
+    _add_notional = float(units) * float(ref_price)
+    if stop_price:
+        _add_risk = abs(float(ref_price) - float(stop_price)) * float(units)
+    else:
+        _add_risk = _add_notional * 0.03  # no stop known — conservative floor (mirrors risk._BUDGET_NO_STOP_RISK_FRAC)
+    _pb_ok, _pb_why = check_live_portfolio_budget(
+        asset, direction, add_risk_usd=_add_risk, add_notional_usd=_add_notional,
+        equity=_get_real_account_equity(),
+    )
+    if not _pb_ok:
+        log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _pb_why)
+        return f"BLOCKED {asset} live — {_pb_why}"
     risk_pct = float(alloc_risk) if alloc_risk else min(float(size_fraction), 1.0)
     signal_data = {
         "kernel_managed": True, "kernel_entry_time": action.entry_time,
         "kernel_size_fraction": round(float(size_fraction), 8), "kernel_equity_at_entry": round(float(sizing_equity), 4),
         "stop_loss": stop_price, "stop_loss_price": stop_price,
         "take_profit": target_price, "take_profit_price": target_price,
+        "kernel_trail_pct": float(kernel_trail_pct) if kernel_trail_pct else None,
         "direction": direction, "source": "scanner.kernel.live",
     }
     # Pass book only when direction books are active so the books-off path keeps the
@@ -6414,6 +6552,36 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # applies to live too (the shared reconciler), so live also stops chasing stale signals.
     _fill_now_max_bars = max(int(_scanner_float_setting("paper_kernel_fill_now_max_bars", 1)), 1)
     fresh_cutoff = str(df.index[-min(_fill_now_max_bars, len(df))]) if len(df) else None
+    # LAG-1 / SIGNAL-CLOSE ACTIONS: the kernel's pending_entries/pending_exits are the
+    # orders the LAST closed bar's signal decides for the FORMING bar's open — i.e. NOW.
+    # Without acting on them, an entry is only detected after the fill bar CLOSES (the
+    # kernel can't hold a position whose fill bar isn't in the frame), so every fill lands
+    # a full timeframe bar + scan-lag later than the validated backtest's next-bar-open
+    # fill (measured 10-330bps of adverse entry skew). Act on them THIS scan, but only
+    # when the forming bar really is the fill bar (wall-clock inside it) — on a stale
+    # frame the "next bar" is already history, and acting now would chase a stale signal
+    # (the anti-chase stance); the normal fill-now catch-up handles it when data recovers.
+    _bar_secs = _TIMEFRAME_SECONDS.get(timeframe, 3600)
+    _pending_next_label: str | None = None
+    _pending_live = False
+    if (res.pending_entries or res.pending_exits) and _scanner_bool_setting("kernel_signal_close_actions", True):
+        try:
+            _last_label_ts = float(df.index[-1].timestamp())
+            _now_s = get_now().timestamp()
+            _pending_live = _last_label_ts + _bar_secs <= _now_s < _last_label_ts + 2.0 * _bar_secs
+        except Exception:
+            _pending_live = False
+    if _pending_live:
+        try:
+            # The projected fill-bar label, in the kernel's own entry_time format
+            # (str(pd.Timestamp)) — the match key every subsequent scan REFRESHes on.
+            _pending_next_label = str(df.index[-1] + pd.Timedelta(seconds=_bar_secs))
+            for _pe in res.pending_entries.values():
+                _pe["entry_time"] = _pending_next_label
+        except Exception:
+            _pending_live, _pending_next_label = False, None
+    if not _pending_live:
+        res.pending_entries, res.pending_exits = {}, {}
     # Cross-asset guard: a recorded OPEN whose asset != the strategy's CURRENT asset is a
     # leftover from a symbol/asset flip while a position was open. The reconciler matches
     # only on (direction, entry_time) and would splice the new asset's stop/target onto the
@@ -6489,12 +6657,63 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     hop_price = last_close
     _has_fresh_open = any(a.kind == "open" and getattr(a, "late_entry", False) for a in actions_plan)
     _has_late_close = any(
-        a.kind == "close" and a.recorded and a.recorded.get("_row")
-        and parse_trade_signal_data(a.recorded["_row"].get("signal_data")).get("late_entry")
+        a.kind == "close" and (
+            getattr(a, "pending", False)
+            or (a.recorded and a.recorded.get("_row")
+                and parse_trade_signal_data(a.recorded["_row"].get("signal_data")).get("late_entry"))
+        )
         for a in actions_plan
     )
     if _has_fresh_open or _has_late_close:
         hop_price = _fill_now_mark(asset, last_close)
+
+    # Materialize PENDING (signal-bar-close) actions at the actual fill mark. A pending
+    # OPEN arrives as the kernel's raw payload (signal-bar ATR + regime); size and stop it
+    # here with the EXACT controls the kernel ran with (res.ec — including the
+    # default_controls fallback resolved inside the pipeline) so the position the kernel
+    # materializes once the fill bar closes has the same geometry. A pending CLOSE gets
+    # its reference exit stamped at the mark (the paper applier fills fresh exits at
+    # current_price; the live applier's real reduce-only order fills at the exchange).
+    if any(getattr(a, "pending", False) for a in actions_plan):
+        from forven.strategies import sizing as _psizing
+        _mark_ok = _coerce_positive_float(hop_price) is not None
+        _plan: list = []
+        for a in actions_plan:
+            if not getattr(a, "pending", False):
+                _plan.append(a)
+                continue
+            if not _mark_ok or (a.kind == "open" and res.ec is None):
+                continue  # no usable mark/controls → drop; the fill-now catch-up covers it next scan
+            if a.kind == "open":
+                pe = a.position or {}
+                _sgn = 1.0 if a.direction == "long" else -1.0
+                _stop_dist = _psizing.entry_stop_dist_pct(
+                    res.ec, entry_price=float(hop_price), atr_value=pe.get("atr_value"),
+                )
+                _stop_price = None
+                if _stop_dist is not None and (res.ec.get("stop_loss_pct") is not None or res.ec.get("sizing_mode") == "atr"):
+                    _stop_price = float(hop_price) * (1.0 - _sgn * _stop_dist)
+                _target_price = None
+                if res.ec.get("take_profit_pct") is not None:
+                    _target_price = float(hop_price) * (1.0 + _sgn * res.ec["take_profit_pct"] / 100.0)
+                a.position = {
+                    "entry_price": float(hop_price), "entry_bar": len(df), "entry_time": a.entry_time,
+                    "regime": pe.get("regime"),
+                    "size_fraction": _psizing.size_fraction(
+                        res.ec, _stop_dist, leverage=max(float(leverage), 1e-9),
+                        initial_capital=initial_capital, closed_gross=res.closed_gross,
+                    ),
+                    "stop_price": _stop_price, "target_price": _target_price,
+                    "trail_pct": (res.ec["trailing_stop_pct"] / 100.0) if res.ec.get("trailing_stop_pct") is not None else None,
+                    "extreme": float(hop_price),
+                }
+            elif a.kind == "close":
+                a.trade = dict(a.trade or {})
+                a.trade.setdefault("exit_price", float(hop_price))
+                if _pending_next_label:
+                    a.trade.setdefault("exit_time", _pending_next_label)
+            _plan.append(a)
+        actions_plan = _plan
 
     out: list[str] = []
     # Resolve cross-asset orphans held out of reconcile above. Paper: flat-close the
@@ -6552,7 +6771,9 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                     funding_df=df, timeframe=timeframe,
                 )
             elif a.kind == "refresh":
-                msg = _kernel_refresh_paper_trade(a)
+                # LIVE-TRAIL-1: the live refresh mirrors the kernel's ratcheted trailing
+                # stop onto the resting exchange order; the paper refresh is display-only.
+                msg = _kernel_refresh_live_trade(strat_id, a) if is_live else _kernel_refresh_paper_trade(a)
             elif a.kind == "orphan_close":
                 msg = _kernel_close_orphan(a, last_close=last_close, last_time=last_time)
             else:

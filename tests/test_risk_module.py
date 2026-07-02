@@ -733,7 +733,12 @@ class TestCloseAllPositionsPartialFailure:
 
         fake_hl = types.ModuleType("forven.exchange.hyperliquid")
         fake_hl.get_positions = lambda: mock_positions
-        fake_hl.close_position = lambda coin, size, side, **kwargs: {"close_price": 50000}
+        # Real close_position responses carry exit_price (the actual avgPx fill) and
+        # mid alongside close_price (the padded IOC LIMIT). The booked price must be
+        # the FILL — booking close_price fabricated off-market exits (E0001/E0002).
+        fake_hl.close_position = lambda coin, size, side, **kwargs: {
+            "close_price": 51500, "exit_price": 50000, "mid": 49990,
+        }
 
         with patch.dict(sys.modules, {"forven.exchange.hyperliquid": fake_hl}):
             results = close_all_positions()
@@ -853,7 +858,7 @@ class TestCloseAllPositionsPartialFailure:
         }
         responses = [
             {"error": "temporary timeout"},
-            {"close_price": 1.25, "status": "ok"},
+            {"close_price": 1.29, "exit_price": 1.25, "mid": 1.249, "status": "ok"},
         ]
         calls: list[tuple[str, float, str]] = []
 

@@ -260,6 +260,41 @@ def _validate_protective_level(kind: str, price: float, mid: float, direction: s
 # --------------------------------------------------------------------------- #
 # Close
 # --------------------------------------------------------------------------- #
+def _manual_paper_close_pnl_override(trade: dict, exit_price: float) -> dict | None:
+    """Net PnL for a manual close of a KERNEL-managed paper trade, using the kernel's
+    own cost convention ((price_return*sign*lev - round_trip_drag) * size_fraction).
+
+    Manual closes are operator actions and stay EXCLUDED from the promotion gate (no
+    pnl_is_equity_fraction flag, by design — see policy._PARITY_PNL_FILTER), but their
+    pnl_usd feeds the paper sandbox equity that sizes every subsequent trade — booking
+    them cost-free (the old behaviour) silently inflated the book. Returns None for
+    non-kernel rows (close_trade_record's default computation stands)."""
+    sd = parse_trade_signal_data(trade.get("signal_data"))
+    size_frac = _coerce_optional_float(sd.get("kernel_size_fraction"))
+    if not size_frac:
+        return None
+    entry = _coerce_optional_float(trade.get("fill_entry_price")) or _coerce_optional_float(trade.get("entry_price"))
+    if not entry or not exit_price or exit_price <= 0:
+        return None
+    from forven.db import kv_get
+
+    lev = _coerce_optional_float(trade.get("leverage")) or 1.0
+    sign = -1.0 if _normalize_trade_direction(trade.get("direction")) == "short" else 1.0
+    settings = kv_get("forven:settings", {}) or {}
+    try:
+        fee_bps = max(float(settings.get("backtest_fee_bps", 4.5) or 4.5), 0.0)
+        slip_bps = max(float(settings.get("backtest_slippage_bps", 2.0) or 2.0), 0.0)
+    except (TypeError, ValueError):
+        fee_bps, slip_bps = 4.5, 2.0
+    drag = 2.0 * (fee_bps + slip_bps) / 10000.0 * max(lev, 0.0)
+    pnl_eq = (((float(exit_price) - entry) / entry) * sign * lev - drag) * float(size_frac)
+    equity_at_entry = _coerce_optional_float(sd.get("kernel_equity_at_entry")) or 10000.0
+    return {
+        "net_pnl_pct": round(pnl_eq, 8),
+        "pnl_usd": round(equity_at_entry * pnl_eq, 4),
+    }
+
+
 def close_paper_position(session_id: str, reason: str | None = None) -> dict:
     """Close the session's open position (paper: at mid; live: reduce-only market)."""
     session, trade = _resolve_open_trade(session_id)
@@ -280,6 +315,7 @@ def close_paper_position(session_id: str, reason: str | None = None) -> dict:
                 "manually_closed_at": _iso_now(),
                 "manual_close_note": note,
             },
+            pnl_override=_manual_paper_close_pnl_override(trade, mid),
         )
         if not closed or not closed.get("updated"):
             raise HTTPException(status_code=502, detail="Failed to close position.")
