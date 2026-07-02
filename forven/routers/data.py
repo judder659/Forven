@@ -428,6 +428,12 @@ def cancel_universe_seed():
     return data_domain.post_cancel_universe_seed()
 
 
+@router.post("/api/data/universe/config")
+def update_universe_config(payload: dict):
+    """Update research-universe sizing (size/tiers/enabled). Seeding stays manual."""
+    return data_domain.post_universe_config(payload)
+
+
 @router.get("/api/data/depth-calibration/{symbol}")
 def get_depth_calibration(symbol: str):
     """Stored empirical depth profile (BV bookDepth) for a symbol."""

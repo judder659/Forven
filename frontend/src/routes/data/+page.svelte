@@ -34,6 +34,7 @@
 		cancelBackfill,
 		getCollectionHealth,
 		getDataHealth,
+		updateUniverseConfig,
 		type DataUniverse,
 		type BackfillStatus,
 		type CollectionHealth,
@@ -511,6 +512,52 @@
 	$: universeSeedRunning = Boolean(universe?.seed?.running);
 	$: universeMinuteTier = (universe?.plan ?? []).filter((p) => p.timeframes.includes('1m')).length;
 
+	// Universe sizing: presets are premades — the number itself stays editable.
+	const UNIVERSE_PRESETS = [
+		{ label: 'Focused', size: 10 },
+		{ label: 'Standard', size: 25 },
+		{ label: 'Comprehensive', size: 50 },
+	];
+	let universeSizeInput: number | null = null;
+	let universeConfigBusy = false;
+
+	$: universeSize = universeSizeInput ?? universe?.config?.size ?? 50;
+
+	// Rough per-tier download footprint (zstd parquet, full perp history):
+	// base ladder (1h/4h/1d) ~10 MB, +intraday (15m/5m) ~50 MB, +1m ~120 MB.
+	$: universeEstimate = (() => {
+		const size = universeSize;
+		const intradayTop = Math.min(universe?.config?.intraday_top ?? 20, size);
+		const minuteTop = Math.min(universe?.config?.minute_top ?? 10, intradayTop);
+		const mb = size * 10 + intradayTop * 50 + minuteTop * 120;
+		return mb >= 1024 ? `~${(mb / 1024).toFixed(1)} GB` : `~${mb} MB`;
+	})();
+
+	async function applyUniverseSize(size: number): Promise<void> {
+		universeConfigBusy = true;
+		try {
+			await updateUniverseConfig({ size });
+			universeSizeInput = null;
+			await loadOpsPanels();
+		} catch (err) {
+			universeError = err instanceof Error ? err.message : 'Failed to update universe size';
+		} finally {
+			universeConfigBusy = false;
+		}
+	}
+
+	async function toggleUniverseEnabled(): Promise<void> {
+		universeConfigBusy = true;
+		try {
+			await updateUniverseConfig({ enabled: !(universe?.config?.enabled ?? true) });
+			await loadOpsPanels();
+		} catch (err) {
+			universeError = err instanceof Error ? err.message : 'Failed to toggle universe';
+		} finally {
+			universeConfigBusy = false;
+		}
+	}
+
 	async function handleFetched(event: CustomEvent<{ dataset: Dataset }>): Promise<void> {
 		const fetched = event.detail.dataset;
 		await refreshData({ symbol: fetched.symbol, timeframe: fetched.timeframe });
@@ -754,6 +801,53 @@
 							<div class="text-[10px] text-gray-500 uppercase">delisted kept</div>
 						</div>
 					</div>
+
+					<!-- Universe sizing: presets are premades, the number stays editable;
+					     seeding is always manual, so nothing downloads until Seed is clicked. -->
+					<div class="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
+						<span class="text-gray-500 uppercase text-[10px] tracking-wider">Size</span>
+						{#each UNIVERSE_PRESETS as preset}
+							<button
+								type="button"
+								disabled={universeConfigBusy || universeSeedRunning}
+								on:click={() => void applyUniverseSize(preset.size)}
+								class="px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universeSize === preset.size
+									? 'border-cyan-600 text-cyan-200'
+									: 'border-[#2b2b2b] text-gray-400 hover:border-cyan-700 hover:text-gray-200'}"
+								title={`${preset.size} most liquid perps`}
+							>{preset.label} ({preset.size})</button>
+						{/each}
+						<input
+							type="number"
+							min="1"
+							max="500"
+							class="w-16 bg-[#111] border border-[#2b2b2b] rounded px-1.5 py-0.5 text-gray-200"
+							value={universeSize}
+							disabled={universeConfigBusy || universeSeedRunning}
+							on:change={(e) => {
+								const v = Number(e.currentTarget.value);
+								if (Number.isFinite(v) && v >= 1 && v <= 500) void applyUniverseSize(Math.round(v));
+							}}
+							title="Custom universe size (1-500 most liquid perps)"
+						/>
+						<span class="text-gray-500" title="Rough full-seed footprint at this size (perp history + derivatives)">
+							est. {universeEstimate}
+						</span>
+						<button
+							type="button"
+							disabled={universeConfigBusy || universeSeedRunning}
+							on:click={toggleUniverseEnabled}
+							class="ml-auto px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universe.config?.enabled === false
+								? 'border-[#2b2b2b] text-gray-500 hover:text-gray-300'
+								: 'border-green-900 text-green-300'}"
+							title="When off, the research universe is not planned or seeded — only your traded symbols keep collecting."
+						>{universe.config?.enabled === false ? 'Universe OFF' : 'Universe ON'}</button>
+					</div>
+					{#if universe.config?.enabled === false}
+						<div class="text-[11px] text-amber-200/80 mb-2">
+							Research universe disabled — no bulk downloads will be planned. Your traded symbols keep collecting normally.
+						</div>
+					{/if}
 					{#if universeSeedRunning && universe.seed.progress}
 						<div class="text-[11px] text-gray-300 mb-1">
 							Seeding {universe.seed.progress.current_symbol} — {universe.seed.progress.done}/{universe.seed.progress.total}

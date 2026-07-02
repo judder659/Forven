@@ -1078,6 +1078,16 @@ export interface UniverseSeedState {
 	progress?: JobProgress | null;
 }
 
+export interface UniverseConfig {
+	enabled?: boolean;
+	size?: number;
+	base_timeframes?: string[];
+	intraday_timeframes?: string[];
+	intraday_top?: number;
+	minute_top?: number;
+	metrics_days?: number;
+}
+
 export interface DataUniverse {
 	registry_count: number;
 	active: number;
@@ -1085,6 +1095,15 @@ export interface DataUniverse {
 	registry: SymbolRegistryRow[];
 	plan: UniversePlanEntry[];
 	seed: UniverseSeedState;
+	config?: UniverseConfig;
+}
+
+export async function updateUniverseConfig(config: UniverseConfig): Promise<{ config: UniverseConfig }> {
+	return fetchApi('/data/universe/config', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config),
+	});
 }
 
 export async function getDataUniverse(): Promise<DataUniverse> {

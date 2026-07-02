@@ -2265,6 +2265,14 @@ def get_data_universe() -> dict:
     with _universe_lock:
         _load_universe_state_locked()
         seed_state = dict(_universe_state)
+    config: dict = {}
+    try:
+        from forven.dataeng.settings import load_data_engine_settings
+
+        raw = load_data_engine_settings().research_universe
+        config = dict(raw) if isinstance(raw, dict) else {}
+    except Exception:
+        config = {}
     return {
         "registry_count": len(registry),
         "active": sum(1 for row in registry if row.get("status") == "active"),
@@ -2272,7 +2280,46 @@ def get_data_universe() -> dict:
         "registry": registry,
         "plan": plan,
         "seed": seed_state,
+        "config": config,
     }
+
+
+def post_universe_config(payload: dict) -> dict:
+    """Update the research-universe sizing config (Settings-grade knobs surfaced
+    next to the Seed button: presets are premades, every number stays editable).
+    Only known keys are accepted; the seed itself remains strictly manual."""
+    from forven.dataeng.settings import load_data_engine_settings, save_data_engine_settings
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="config payload must be an object")
+
+    settings = load_data_engine_settings()
+    config = dict(settings.research_universe) if isinstance(settings.research_universe, dict) else {}
+
+    if "enabled" in payload:
+        config["enabled"] = bool(payload["enabled"])
+    for key, lo, hi in (
+        ("size", 1, 500),
+        ("intraday_top", 0, 500),
+        ("minute_top", 0, 100),
+        ("metrics_days", 0, 3650),
+    ):
+        if key in payload:
+            try:
+                value = int(payload[key])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key} must be an integer")
+            if not (lo <= value <= hi):
+                raise HTTPException(status_code=400, detail=f"{key} must be between {lo} and {hi}")
+            config[key] = value
+    # Tier tops can't exceed the universe size (a 1m tier larger than the plan
+    # is meaningless and confuses the estimate).
+    config["intraday_top"] = min(int(config.get("intraday_top", 20)), int(config.get("size", 50)))
+    config["minute_top"] = min(int(config.get("minute_top", 10)), int(config.get("intraday_top", 20)))
+
+    settings.research_universe = config
+    save_data_engine_settings(settings)
+    return {"config": config}
 
 
 def post_refresh_universe_registry() -> dict:

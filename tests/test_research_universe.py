@@ -273,6 +273,51 @@ class TestMetricsMulti:
 # ---------------------------------------------------------------------------
 
 
+class TestUniverseConfig:
+    def test_config_update_validates_and_clamps(self, monkeypatch):
+        from forven.api_domains.data import post_universe_config
+
+        saved = {}
+
+        class _Settings:
+            research_universe = {
+                "enabled": True, "size": 50, "base_timeframes": ["1h", "4h", "1d"],
+                "intraday_timeframes": ["15m", "5m"], "intraday_top": 20,
+                "minute_top": 10, "metrics_days": 365,
+            }
+
+        monkeypatch.setattr(
+            "forven.dataeng.settings.load_data_engine_settings", lambda: _Settings()
+        )
+        monkeypatch.setattr(
+            "forven.dataeng.settings.save_data_engine_settings",
+            lambda s: saved.update(s.research_universe),
+        )
+
+        out = post_universe_config({"size": 10, "enabled": True})
+        assert out["config"]["size"] == 10
+        # Tier tops clamp to the new size (a 1m tier larger than the plan is meaningless).
+        assert out["config"]["intraday_top"] == 10
+        assert out["config"]["minute_top"] == 10
+        assert saved["size"] == 10
+
+    def test_config_rejects_out_of_range(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from forven.api_domains.data import post_universe_config
+
+        class _Settings:
+            research_universe = {"enabled": True, "size": 50, "intraday_top": 20, "minute_top": 10}
+
+        monkeypatch.setattr(
+            "forven.dataeng.settings.load_data_engine_settings", lambda: _Settings()
+        )
+        with pytest.raises(HTTPException):
+            post_universe_config({"size": 0})
+        with pytest.raises(HTTPException):
+            post_universe_config({"size": "lots"})
+
+
 class TestDelistedSkip:
     def test_normalizer_skips_delisted(self, tmp_path, monkeypatch):
         from forven.data_manager import DataManager
