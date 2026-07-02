@@ -280,6 +280,9 @@ def _normalize_dataset_rows(raw_rows: list[dict]) -> list[dict[str, object]]:
                 "row_count": row_count,
                 "asset_class": asset_class,
                 "market_type": market_type,
+                # Venue identity from the forven_market parquet stamp
+                # (perp/spot/unknown; "unstamped" = legacy pre-stamping file).
+                "market": str(raw.get("market") or "unstamped").strip().lower(),
             }
         )
     rows.sort(
