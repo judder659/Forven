@@ -473,7 +473,7 @@ def _replace_with_retry(tmp: "Path | str", path: "Path | str", *, attempts: int 
     last_exc: Exception | None = None
     for attempt in range(max(1, attempts)):
         try:
-            _replace_with_retry(tmp, path)
+            os.replace(str(tmp), str(path))
             return
         except PermissionError as exc:
             last_exc = exc
