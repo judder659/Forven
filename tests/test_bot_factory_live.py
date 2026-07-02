@@ -169,7 +169,7 @@ class TestGoLiveArming:
 
     def test_manager_start_refuses_live_bot_without_stop(self, forven_db):
         from forven.bot_factory.manager import BotManager
-        from forven.db import set_bot_execution_mode, update_bot
+        from forven.db import update_bot
 
         bot_id = _make_bot(stop_loss_pct=2.0)
         _arm_live(bot_id)

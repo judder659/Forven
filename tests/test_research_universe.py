@@ -6,7 +6,7 @@ from __future__ import annotations
 import io
 import threading
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pandas as pd

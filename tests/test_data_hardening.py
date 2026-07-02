@@ -23,7 +23,6 @@ import pytest
 
 import forven.data as data_mod
 from forven.data import (
-    TAIL_COMPACT_ROWS,
     append_bars,
     compact_series,
     compute_checksum,
