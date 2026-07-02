@@ -2265,7 +2265,7 @@ def get_coverage() -> dict:
     Missing parquet files are omitted from the result.
     """
     from forven.data import DATA_DIR, coverage_entry, prune_coverage_cache
-    from forven.data_manager import FUNDING_DIR, OI_DIR
+    from forven.data_manager import BASIS_DIR, FUNDING_DIR, OI_DIR
 
     result: dict = {}
     ohlcv_root = Path(DATA_DIR)
@@ -2305,6 +2305,14 @@ def get_coverage() -> dict:
                 entry = _entry_for(pq_file)
                 if entry is not None:
                     result[symbol][f"oi/{pq_file.stem}"] = entry
+
+        # Basis (perp premium index) timeframes
+        basis_sym_dir = BASIS_DIR / symbol
+        if basis_sym_dir.exists():
+            for pq_file in sorted(basis_sym_dir.glob("*.parquet")):
+                entry = _entry_for(pq_file)
+                if entry is not None:
+                    result[symbol][f"basis/{pq_file.stem}"] = entry
 
         if not result[symbol]:
             del result[symbol]

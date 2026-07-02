@@ -1023,11 +1023,19 @@ export async function getActiveSymbols(): Promise<ActiveSymbol[]> {
 	}
 }
 
+export interface JobProgress {
+	done: number;
+	total: number;
+	current_symbol: string;
+}
+
 export interface BackfillStatus {
 	running: boolean;
 	last_started_at: string | null;
 	last_result: Record<string, Record<string, number | string>> | null;
 	last_error: string | null;
+	progress?: JobProgress | null;
+	cancel_requested?: boolean;
 }
 
 export async function triggerBackfill(symbol?: string): Promise<{ status: string; symbol: string | null }> {
@@ -1037,6 +1045,62 @@ export async function triggerBackfill(symbol?: string): Promise<{ status: string
 
 export async function getBackfillStatus(): Promise<BackfillStatus> {
 	return fetchApi('/data/backfill/status');
+}
+
+export async function cancelBackfill(): Promise<{ status: string }> {
+	return fetchApi('/data/backfill/cancel', { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
+// Research universe (symbol registry + deep-history seeding)
+// ---------------------------------------------------------------------------
+
+export interface SymbolRegistryRow {
+	symbol: string;
+	market: string;
+	status: 'active' | 'delisted' | string;
+	inception_ts: string | null;
+	delist_ts: string | null;
+	quote_volume_24h: number | null;
+}
+
+export interface UniversePlanEntry {
+	symbol: string;
+	rank: number;
+	timeframes: string[];
+}
+
+export interface UniverseSeedState {
+	running: boolean;
+	last_started_at: string | null;
+	last_result: Record<string, unknown> | null;
+	last_error: string | null;
+	progress?: JobProgress | null;
+}
+
+export interface DataUniverse {
+	registry_count: number;
+	active: number;
+	delisted: number;
+	registry: SymbolRegistryRow[];
+	plan: UniversePlanEntry[];
+	seed: UniverseSeedState;
+}
+
+export async function getDataUniverse(): Promise<DataUniverse> {
+	return fetchApi('/data/universe');
+}
+
+export async function refreshUniverseRegistry(): Promise<{ active: number; delisted: number }> {
+	return fetchApi('/data/universe/refresh', { method: 'POST' });
+}
+
+export async function seedUniverse(): Promise<{ status: string }> {
+	return fetchApi('/data/universe/seed', { method: 'POST' });
+}
+
+export async function cancelUniverseSeed(): Promise<{ status: string }> {
+	return fetchApi('/data/universe/seed/cancel', { method: 'POST' });
 }
 
 export interface DataCoverageEntry {

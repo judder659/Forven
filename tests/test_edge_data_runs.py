@@ -426,6 +426,26 @@ class TestVenueSeries:
         assert len([d for d in datasets if d["symbol"] == SYMBOL]) == 1
 
 
+class TestCoverageIncludesBasis:
+    def test_basis_series_appear_in_coverage(self, lake, tmp_path, monkeypatch):
+        import forven.data_manager as dm_mod
+        from forven.api_domains.data import get_coverage
+
+        start = _closed_start(30)
+        data_mod.save_parquet(_bars(start, 10), SYMBOL, TF)
+        basis_dir = tmp_path / "basis" / SYMBOL
+        basis_dir.mkdir(parents=True)
+        hours = pd.date_range("2026-06-01T00:00:00Z", periods=8, freq="1h")
+        pd.DataFrame({"timestamp": hours, "basis": [0.001] * 8}).to_parquet(basis_dir / "1h.parquet")
+        monkeypatch.setattr(dm_mod, "BASIS_DIR", tmp_path / "basis")
+        monkeypatch.setattr(dm_mod, "FUNDING_DIR", tmp_path / "funding")
+        monkeypatch.setattr(dm_mod, "OI_DIR", tmp_path / "oi")
+
+        coverage = get_coverage()
+        assert "basis/1h" in coverage.get(SYMBOL, {})
+        assert coverage[SYMBOL]["basis/1h"]["rows"] == 8
+
+
 class TestSchedulerWiring:
     def test_new_job_kinds_registered(self):
         from forven.scheduler import _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS, _DATA_MANAGER_TIMEOUT_DEFAULTS

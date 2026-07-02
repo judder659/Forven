@@ -24,6 +24,17 @@
 		type IngestionRun,
 		type ForvenSettings,
 	} from '$lib/api';
+	import {
+		getDataUniverse,
+		refreshUniverseRegistry,
+		seedUniverse,
+		cancelUniverseSeed,
+		getBackfillStatus,
+		triggerBackfill,
+		cancelBackfill,
+		type DataUniverse,
+		type BackfillStatus,
+	} from '$lib/api/data';
 	import { dataFetchState, clearDataFetchTask } from '$lib/stores/dataFetch';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -366,6 +377,97 @@
 		? dataEnginePlan.tasks.filter((t) => t.stream === 'candles').length
 		: 0;
 
+	// --- Research universe + deep-history operations (maintenance tab) ---
+	let universe: DataUniverse | null = null;
+	let universeError: string | null = null;
+	let universeBusy = false;
+	let bvStatus: BackfillStatus | null = null;
+	let bvError: string | null = null;
+	let bvBusy = false;
+	let opsLoaded = false;
+
+	async function loadOpsPanels(): Promise<void> {
+		try {
+			universe = await getDataUniverse();
+			universeError = null;
+		} catch (err) {
+			universeError = err instanceof Error ? err.message : 'Failed to load universe';
+		}
+		try {
+			bvStatus = await getBackfillStatus();
+			bvError = null;
+		} catch (err) {
+			bvError = err instanceof Error ? err.message : 'Failed to load backfill status';
+		}
+		opsLoaded = true;
+	}
+
+	async function handleRefreshRegistry(): Promise<void> {
+		universeBusy = true;
+		try {
+			await refreshUniverseRegistry();
+			await loadOpsPanels();
+		} catch (err) {
+			universeError = err instanceof Error ? err.message : 'Registry refresh failed';
+		} finally {
+			universeBusy = false;
+		}
+	}
+
+	async function handleSeedUniverse(): Promise<void> {
+		universeBusy = true;
+		try {
+			await seedUniverse();
+			await loadOpsPanels();
+		} catch (err) {
+			universeError = err instanceof Error ? err.message : 'Universe seed failed to start';
+		} finally {
+			universeBusy = false;
+		}
+	}
+
+	async function handleCancelSeed(): Promise<void> {
+		try {
+			await cancelUniverseSeed();
+			await loadOpsPanels();
+		} catch (err) {
+			universeError = err instanceof Error ? err.message : 'Cancel failed';
+		}
+	}
+
+	async function handleTriggerBv(): Promise<void> {
+		bvBusy = true;
+		try {
+			await triggerBackfill();
+			await loadOpsPanels();
+		} catch (err) {
+			bvError = err instanceof Error ? err.message : 'Backfill failed to start';
+		} finally {
+			bvBusy = false;
+		}
+	}
+
+	async function handleCancelBv(): Promise<void> {
+		try {
+			await cancelBackfill();
+			await loadOpsPanels();
+		} catch (err) {
+			bvError = err instanceof Error ? err.message : 'Cancel failed';
+		}
+	}
+
+	function jobPct(progress: { done: number; total: number } | null | undefined): number {
+		if (!progress || !progress.total) return 0;
+		return Math.min(100, Math.round((progress.done / progress.total) * 100));
+	}
+
+	// First visit to the maintenance tab loads the operations panels once;
+	// the poll below keeps them fresh while a job runs.
+	$: if (activeTab === 'maintenance' && !opsLoaded) void loadOpsPanels();
+
+	$: universeSeedRunning = Boolean(universe?.seed?.running);
+	$: universeMinuteTier = (universe?.plan ?? []).filter((p) => p.timeframes.includes('1m')).length;
+
 	async function handleFetched(event: CustomEvent<{ dataset: Dataset }>): Promise<void> {
 		const fetched = event.detail.dataset;
 		await refreshData({ symbol: fetched.symbol, timeframe: fetched.timeframe });
@@ -436,9 +538,17 @@
 				});
 		}, 3000);
 
+		// Keep the maintenance operations panels live while a long job runs
+		// (universe seed / deep-history backfill) — per-symbol progress updates.
+		const opsInterval = setInterval(() => {
+			if (isDestroyed || activeTab !== 'maintenance') return;
+			if (universe?.seed?.running || bvStatus?.running) void loadOpsPanels();
+		}, 4000);
+
 		return () => {
 			isDestroyed = true;
 			clearInterval(interval);
+			clearInterval(opsInterval);
 		};
 	});
 </script>
@@ -521,6 +631,126 @@
 
 	{#if activeTab === 'maintenance'}
 	<StorageMaintenance />
+
+	<section class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden">
+		<div class="px-3 py-2 border-b border-[#1a1a1a]">
+			<div class="text-[11px] uppercase tracking-wider text-gray-400">Research Universe &amp; Deep History</div>
+			<div class="text-[11px] text-gray-500 mt-0.5">
+				Deep perp history for strategy discovery — more assets and more years means more evidence per hypothesis.
+			</div>
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2">
+			<div class="p-3 border-b lg:border-b-0 lg:border-r border-[#171717]">
+				<div class="flex items-center justify-between gap-2 mb-2">
+					<div class="text-[10px] uppercase tracking-wider text-gray-500">Research Universe</div>
+					<div class="flex gap-2">
+						<button
+							type="button"
+							on:click={handleRefreshRegistry}
+							disabled={universeBusy || universeSeedRunning}
+							class="px-2 py-1 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
+						>Refresh Registry</button>
+						{#if universeSeedRunning}
+							<button
+								type="button"
+								on:click={handleCancelSeed}
+								class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
+							>Cancel Seed</button>
+						{:else}
+							<button
+								type="button"
+								on:click={handleSeedUniverse}
+								disabled={universeBusy}
+								class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
+							>Seed Universe</button>
+						{/if}
+					</div>
+				</div>
+				{#if universeError}
+					<div class="text-[11px] text-red-300 mb-2">{universeError}</div>
+				{/if}
+				{#if universe}
+					<div class="grid grid-cols-3 gap-2 text-center mb-2">
+						<div class="rounded border border-[#1c1c1c] p-2">
+							<div class="text-sm font-semibold text-gray-100">{universe.active.toLocaleString()}</div>
+							<div class="text-[10px] text-gray-500 uppercase">active perps</div>
+						</div>
+						<div class="rounded border border-[#1c1c1c] p-2">
+							<div class="text-sm font-semibold text-gray-100">{universe.plan.length.toLocaleString()}</div>
+							<div class="text-[10px] text-gray-500 uppercase">in plan ({universeMinuteTier} w/ 1m)</div>
+						</div>
+						<div class="rounded border border-[#1c1c1c] p-2">
+							<div class="text-sm font-semibold text-gray-100">{universe.delisted.toLocaleString()}</div>
+							<div class="text-[10px] text-gray-500 uppercase">delisted kept</div>
+						</div>
+					</div>
+					{#if universeSeedRunning && universe.seed.progress}
+						<div class="text-[11px] text-gray-300 mb-1">
+							Seeding {universe.seed.progress.current_symbol} — {universe.seed.progress.done}/{universe.seed.progress.total}
+						</div>
+						<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
+							<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(universe.seed.progress)}%`}></div>
+						</div>
+					{:else if universe.seed.last_error}
+						<div class="text-[11px] text-red-300">Last seed failed: {universe.seed.last_error}</div>
+					{:else if universe.seed.last_result}
+						<div class="text-[11px] text-green-400">
+							Last seed: {String((universe.seed.last_result as Record<string, unknown>).series_seeded ?? 0)} series seeded,
+							{String((universe.seed.last_result as Record<string, unknown>).series_current ?? 0)} already current
+						</div>
+					{:else}
+						<div class="text-[11px] text-gray-500">
+							Seed downloads full Binance-Vision perp history + a live tail for each planned series. Resumable and cancellable.
+						</div>
+					{/if}
+				{:else if !universeError}
+					<div class="text-xs text-gray-500">Loading…</div>
+				{/if}
+			</div>
+			<div class="p-3">
+				<div class="flex items-center justify-between gap-2 mb-2">
+					<div class="text-[10px] uppercase tracking-wider text-gray-500">Deep History Backfill (Binance Vision)</div>
+					<div class="flex gap-2">
+						{#if bvStatus?.running}
+							<button
+								type="button"
+								on:click={handleCancelBv}
+								class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
+							>{bvStatus?.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
+						{:else}
+							<button
+								type="button"
+								on:click={handleTriggerBv}
+								disabled={bvBusy}
+								class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
+							>Backfill All</button>
+						{/if}
+					</div>
+				</div>
+				{#if bvError}
+					<div class="text-[11px] text-red-300 mb-2">{bvError}</div>
+				{/if}
+				{#if bvStatus?.running && bvStatus.progress}
+					<div class="text-[11px] text-gray-300 mb-1">
+						Backfilling {bvStatus.progress.current_symbol} — {bvStatus.progress.done}/{bvStatus.progress.total} symbols
+					</div>
+					<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
+						<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(bvStatus.progress)}%`}></div>
+					</div>
+				{:else if bvStatus?.running}
+					<div class="text-[11px] text-gray-300">Backfill running…</div>
+				{:else if bvStatus?.last_error}
+					<div class="text-[11px] text-red-300">Last backfill failed: {bvStatus.last_error}</div>
+				{:else if bvStatus?.last_started_at}
+					<div class="text-[11px] text-green-400">Last backfill: {formatTimestamp(bvStatus.last_started_at)} ✓</div>
+				{:else}
+					<div class="text-[11px] text-gray-500">
+						Fills pre-history (OHLCV / funding / OI / basis) for every stored symbol from Binance Vision archives. Survives restarts; cancellable between symbols.
+					</div>
+				{/if}
+			</div>
+		</div>
+	</section>
 	{/if}
 
 	{#if drillSeries}

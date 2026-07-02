@@ -9,13 +9,13 @@
 	let error: string | null = null;
 	let backfilling: string | null = null; // "symbol|tf" currently in flight
 	let backfillMsg: string | null = null;
-	let stream: 'ohlcv' | 'oi' = 'ohlcv';
+	let stream: 'ohlcv' | 'oi' | 'basis' = 'ohlcv';
 
 	// Backend coverage keys are "{stream}/{tf}" (e.g. "ohlcv/1h", "oi/15m"); funding
 	// is a single non-timeframed series and is shown in Source health instead.
 	const TF_ORDER = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w'];
 	const HIDDEN_TFS = new Set(['6h']); // timeframes we don't trade — hidden from the matrix
-	const STREAM_LABEL: Record<string, string> = { ohlcv: 'Price (OHLCV)', oi: 'Open interest' };
+	const STREAM_LABEL: Record<string, string> = { ohlcv: 'Price (OHLCV)', oi: 'Open interest', basis: 'Basis (premium)' };
 
 	$: symbols = Object.keys(coverage).sort();
 
@@ -27,7 +27,7 @@
 				if (slash > 0) present.add(key.slice(0, slash));
 			}
 		}
-		return ['ohlcv', 'oi'].filter((s) => present.has(s));
+		return ['ohlcv', 'oi', 'basis'].filter((s) => present.has(s));
 	})();
 
 	$: timeframes = (() => {
@@ -191,7 +191,7 @@
 					{#each availableStreams as s}
 						<button
 							class="rounded-sm px-2 py-0.5 {stream === s ? 'bg-[#222] text-gray-100' : 'text-gray-400 hover:text-gray-200'}"
-							on:click={() => (stream = s as 'ohlcv' | 'oi')}
+							on:click={() => (stream = s as 'ohlcv' | 'oi' | 'basis')}
 						>{STREAM_LABEL[s]}</button>
 					{/each}
 				</div>
