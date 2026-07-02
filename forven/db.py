@@ -3001,6 +3001,36 @@ def _run_migrations(conn: sqlite3.Connection):
         "CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task ON task_checkpoints (task_id)"
     )
 
+    # Agent run transcript: one row per conversation turn (assistant text +
+    # reasoning, tool calls with args/results) written by the runner AS EACH
+    # ROUND COMPLETES, so a crashed/timed-out run still has its partial
+    # transcript. This is the ground truth for "what was the agent thinking" —
+    # before this table only the initial prompt + final response survived.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_task_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_display_id TEXT NOT NULL,
+            agent_id TEXT,
+            seq INTEGER NOT NULL,
+            tool_round INTEGER,
+            role TEXT NOT NULL,
+            content TEXT,
+            reasoning TEXT,
+            tool_name TEXT,
+            tool_call_id TEXT,
+            tool_args TEXT,
+            tool_result TEXT,
+            provider TEXT,
+            model_id TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_task_messages_task ON agent_task_messages (task_display_id, seq)"
+    )
+
     # Hermes-inspired Phase 1: Brain memory + decisions + FTS5 recall.
     # Brain-only: these tables back the Brain agent's persistent operational
     # memory and decision log. Quant agents (task workers) stay stateless.
@@ -4595,6 +4625,88 @@ def log_tool_call(
                 int(duration_ms or 0),
             ),
         )
+
+
+# Per-field caps for transcript rows. Generous enough to read a full thought
+# process; anything larger already landed (gzipped, in full) in
+# tool_truncations via the tool-output caps.
+_TASK_MESSAGE_TEXT_CAP = 20_000
+_TASK_MESSAGE_ARGS_CAP = 8_000
+
+
+def append_task_message(
+    task_display_id: str,
+    agent_id: str | None,
+    seq: int,
+    role: str,
+    *,
+    content: str | None = None,
+    reasoning: str | None = None,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    tool_args: str | None = None,
+    tool_result: str | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    tool_round: int | None = None,
+) -> bool:
+    """Append one transcript turn for an agent task. Best-effort: transcript
+    persistence must never fail the run itself."""
+    if not task_display_id or not role:
+        return False
+
+    def _cap(value: str | None, cap: int) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if len(text) > cap:
+            return text[:cap] + f"\n… [truncated {len(text) - cap} chars]"
+        return text
+
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO agent_task_messages "
+                "(task_display_id, agent_id, seq, tool_round, role, content, reasoning, "
+                " tool_name, tool_call_id, tool_args, tool_result, provider, model_id, "
+                " input_tokens, output_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(task_display_id).strip(),
+                    str(agent_id).strip() if agent_id else None,
+                    int(seq),
+                    int(tool_round) if tool_round is not None else None,
+                    str(role).strip(),
+                    _cap(content, _TASK_MESSAGE_TEXT_CAP),
+                    _cap(reasoning, _TASK_MESSAGE_TEXT_CAP),
+                    str(tool_name).strip() if tool_name else None,
+                    str(tool_call_id).strip() if tool_call_id else None,
+                    _cap(tool_args, _TASK_MESSAGE_ARGS_CAP),
+                    _cap(tool_result, _TASK_MESSAGE_TEXT_CAP),
+                    str(provider).strip() if provider else None,
+                    str(model_id).strip() if model_id else None,
+                    int(input_tokens) if input_tokens is not None else None,
+                    int(output_tokens) if output_tokens is not None else None,
+                ),
+            )
+        return True
+    except Exception as exc:  # noqa: BLE001 - transcript writes are best-effort
+        log.warning("append_task_message failed for %s: %s", task_display_id, exc)
+        return False
+
+
+def get_task_messages(task_display_id: str) -> list[dict]:
+    """Return the full ordered transcript for one agent task."""
+    if not task_display_id:
+        return []
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_task_messages WHERE task_display_id = ? ORDER BY seq ASC, id ASC",
+            (str(task_display_id).strip(),),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def create_strategy_container(

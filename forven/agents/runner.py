@@ -90,6 +90,56 @@ def _is_missing_credentials_error(error: Exception) -> bool:
 _current_agent_id = _legacy_current_agent_id
 
 
+class _TaskTranscript:
+    """Streams per-round transcript rows to ``agent_task_messages``.
+
+    Rows are written AS EACH ROUND COMPLETES so a crashed or timed-out run
+    still has its partial thought process on disk. Best-effort by design —
+    a failed transcript write never interrupts the run (append_task_message
+    swallows its own errors).
+    """
+
+    def __init__(self, task_display_id: str | None, agent_id: str | None):
+        self.task_display_id = str(task_display_id or "").strip()
+        self.agent_id = agent_id
+        self.provider: str | None = None
+        self.model_id: str | None = None
+        self._seq = 0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.task_display_id)
+
+    def set_attempt(self, provider: str | None, model_id: str | None) -> None:
+        """Record which provider/model the current chain attempt is using."""
+        self.provider = provider
+        self.model_id = model_id
+
+    def write(self, role: str, **fields) -> None:
+        if not self.enabled:
+            return
+        try:
+            from forven.db import append_task_message
+            from forven.redact import redact
+
+            for key in ("content", "reasoning", "tool_args", "tool_result"):
+                value = fields.get(key)
+                if value:
+                    fields[key] = redact(str(value))[0]
+            self._seq += 1
+            append_task_message(
+                self.task_display_id,
+                self.agent_id,
+                self._seq,
+                role,
+                provider=self.provider,
+                model_id=self.model_id,
+                **fields,
+            )
+        except Exception as exc:  # noqa: BLE001 - transcript is best-effort
+            log.debug("Transcript write failed for %s: %s", self.task_display_id, exc)
+
+
 def _coerce_task_input_data(task: dict) -> dict:
     """Parse task input payload into a dict when possible."""
     input_data = task.get("input_data")
@@ -208,6 +258,7 @@ async def _call_with_tools(
     tools: list[dict] | None = None,
     agent_id: str | None = None,
     trace: list[dict] | None = None,
+    transcript: "_TaskTranscript | None" = None,
 ) -> tuple[str, dict]:
     """Call AI with tool support — implements the tool-call loop.
 
@@ -281,10 +332,18 @@ async def _call_with_tools(
 
     for chain_idx, (active_provider, active_model) in enumerate(chain):
         progress = {"tools_executed": False}
+        if transcript is not None:
+            transcript.set_attempt(active_provider, active_model)
+            if chain_idx > 0:
+                transcript.write(
+                    "event",
+                    content=f"Retrying on fallback provider {active_provider}/{active_model}.",
+                )
         try:
             result = await _call_with_tools_single(
                 active_provider, active_model, list(messages), system, tools,
                 progress=progress,
+                transcript=transcript,
             )
             # Health is keyed on the provider that ACTUALLY ran — a working
             # fallback must never mark the (broken) primary healthy.
@@ -307,6 +366,11 @@ async def _call_with_tools(
             return result
         except Exception as e:
             last_error = e
+            if transcript is not None:
+                transcript.write(
+                    "event",
+                    content=f"Provider {active_provider}/{active_model} failed: {_error_detail(e)[:500]}",
+                )
             # Record against the provider that actually failed (not the agent's
             # configured primary) so the banner/Discord name the right provider.
             record_call_failure(active_provider, e)
@@ -363,6 +427,7 @@ async def _call_with_tools_single(
     provider: str, model_id: str, messages: list[dict], system: str,
     tools: list[dict] | None = None,
     progress: dict | None = None,
+    transcript: "_TaskTranscript | None" = None,
 ) -> tuple[str, dict]:
     """Call a single provider with tool support — unified, provider-agnostic loop.
 
@@ -406,13 +471,13 @@ async def _call_with_tools_single(
                 break
 
         if round_num == MAX_TOOL_ROUNDS - 5:
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Note: You have 5 tool calls remaining before the limit. "
-                    "Start wrapping up and prepare your final answer."
-                ),
-            })
+            nudge = (
+                "Note: You have 5 tool calls remaining before the limit. "
+                "Start wrapping up and prepare your final answer."
+            )
+            messages.append({"role": "user", "content": nudge})
+            if transcript is not None:
+                transcript.write("event", content=nudge, tool_round=round_num)
 
         # Spend-safety chokepoint for the tool-call path (no-op until enforced).
         from forven.model_selection import assert_callable
@@ -421,6 +486,16 @@ async def _call_with_tools_single(
         token = get_token(provider)
         response = await impl.call(model_id, messages, system, active_tools, token)
         _accum(response.usage)
+
+        if transcript is not None:
+            transcript.write(
+                "assistant",
+                content=response.text or None,
+                reasoning=response.reasoning,
+                tool_round=round_num,
+                input_tokens=int(response.usage.get("input_tokens") or response.usage.get("prompt_tokens") or 0),
+                output_tokens=int(response.usage.get("output_tokens") or response.usage.get("completion_tokens") or 0),
+            )
 
         if response.text:
             last_nonempty_text = response.text
@@ -458,6 +533,15 @@ async def _call_with_tools_single(
                 progress["tools_executed"] = True
             result = await _execute_tool(tc.name, tc.input)
             tool_results.append((tc.id, str(result)[:5000]))
+            if transcript is not None:
+                transcript.write(
+                    "tool",
+                    tool_name=tc.name,
+                    tool_call_id=tc.id,
+                    tool_args=json.dumps(tc.input, default=str),
+                    tool_result=str(result),
+                    tool_round=round_num,
+                )
             call_sig = (tc.name, json.dumps(tc.input, sort_keys=True, default=str)[:200])
             _recent_tool_calls.append(call_sig)
 
@@ -467,14 +551,14 @@ async def _call_with_tools_single(
         if len(_recent_tool_calls) >= 3:
             last_three = _recent_tool_calls[-3:]
             if last_three[0] == last_three[1] == last_three[2]:
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "You have called the same tool 3 times with identical arguments. "
-                        "The result will not change. Synthesize what you have and provide your final answer, "
-                        "or try a different approach."
-                    ),
-                })
+                stuck_nudge = (
+                    "You have called the same tool 3 times with identical arguments. "
+                    "The result will not change. Synthesize what you have and provide your final answer, "
+                    "or try a different approach."
+                )
+                messages.append({"role": "user", "content": stuck_nudge})
+                if transcript is not None:
+                    transcript.write("event", content=stuck_nudge, tool_round=round_num)
 
     # Hit max rounds — force one final non-tool answer from gathered context/tool results.
     log.warning("Hit max tool rounds (%d) for %s/%s; forcing final answer", MAX_TOOL_ROUNDS, provider, model_id)
@@ -498,6 +582,12 @@ async def _call_with_tools_single(
         )
         forced = (forced or "").strip()
         if forced:
+            if transcript is not None:
+                transcript.write(
+                    "assistant",
+                    content=forced,
+                    tool_round=MAX_TOOL_ROUNDS,
+                )
             return (forced, total_usage)
     except Exception as e:
         log.warning("Forced final answer after max tool rounds failed: %s", e)
@@ -1215,8 +1305,19 @@ async def _run_agent_task_inner(
         messages = [{"role": "user", "content": prompt}]
         ai_trace: list[dict] = []
 
+        # Per-round transcript: the prompt, every assistant turn (text +
+        # reasoning), every tool call (args + result) and every injected nudge
+        # are persisted to agent_task_messages AS THE RUN PROGRESSES — this is
+        # what the operator reads to see the agent's thought process.
+        transcript = _TaskTranscript(
+            task_display_id or format_prefixed_id("T", int(task_id)), agent_id
+        )
+        transcript.set_attempt(provider, model_id)
+        transcript.write("user", content=prompt)
+
         response, usage = await _call_with_tools(
-            provider, model_id, messages, context, tools=agent_tools, agent_id=agent_id, trace=ai_trace
+            provider, model_id, messages, context, tools=agent_tools, agent_id=agent_id, trace=ai_trace,
+            transcript=transcript,
         )
         cost_usd = estimate_cost_usd(provider, model_id, usage)
 

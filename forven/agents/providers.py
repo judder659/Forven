@@ -40,6 +40,11 @@ class ProviderResponse:
     stop: bool = False  # True when the model signals end-of-turn
     raw_assistant_message: Any = None  # Opaque blob to append to message history
     usage: dict = field(default_factory=dict)  # {input_tokens, output_tokens}
+    # Human-readable model reasoning for this turn (reasoning_content /
+    # thinking blocks / Codex reasoning summaries) — persisted to the run
+    # transcript so the operator can see WHY the agent acted. None when the
+    # provider/model exposes no readable reasoning.
+    reasoning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +124,15 @@ class MiniMaxProvider(ToolCallProvider):
         usage = data.get("usage", {})
 
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         for block in content_blocks:
             if block.get("type") == "text":
                 text_parts.append(block["text"])
+            elif block.get("type") == "thinking":
+                thinking = str(block.get("thinking") or block.get("text") or "").strip()
+                if thinking:
+                    thinking_parts.append(thinking)
             elif block.get("type") == "tool_use":
                 tool_calls.append(ToolCall(
                     id=block["id"],
@@ -136,6 +146,7 @@ class MiniMaxProvider(ToolCallProvider):
             stop=(not tool_calls or stop_reason == "end_turn"),
             raw_assistant_message=content_blocks,
             usage=usage,
+            reasoning="\n\n".join(thinking_parts) or None,
         )
 
     async def stream(self, model_id, messages, system, tools, token):
@@ -467,6 +478,9 @@ class OpenAIProvider(ToolCallProvider):
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
         assistant_text = _coerce_openai_text(assistant.get("content"))
+        # Reasoning models (DeepSeek-R1, o-series via compat gateways, ...)
+        # return their chain-of-thought as `reasoning_content`.
+        reasoning = str(assistant.get("reasoning_content") or "").strip() or None
         raw_tool_calls = assistant.get("tool_calls") or []
         usage = data.get("usage", {})
 
@@ -494,6 +508,7 @@ class OpenAIProvider(ToolCallProvider):
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=usage,
+            reasoning=reasoning,
         )
 
     def append_assistant(self, messages, response):
@@ -544,12 +559,28 @@ class CodexProvider(OpenAIProvider):
             ]
         if result.get("reasoning_items"):
             raw_msg["_codex_reasoning"] = result["reasoning_items"]
+        # Readable reasoning summaries (requested with reasoning.summary=auto);
+        # the encrypted payload replays across rounds, the summary is for the
+        # operator-facing transcript.
+        summary_parts: list[str] = []
+        for item in result.get("reasoning_items") or []:
+            if not isinstance(item, dict):
+                continue
+            for summary in item.get("summary") or []:
+                summary_text = (
+                    str(summary.get("text") or "").strip()
+                    if isinstance(summary, dict)
+                    else str(summary or "").strip()
+                )
+                if summary_text:
+                    summary_parts.append(summary_text)
         return ProviderResponse(
             text=text,
             tool_calls=tool_calls,
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=result.get("usage") or {},
+            reasoning="\n\n".join(summary_parts) or None,
         )
 
     async def call(self, model_id, messages, system, tools, token):
@@ -674,6 +705,7 @@ class LMStudioProvider(ToolCallProvider):
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
         assistant_text = _coerce_openai_text(assistant.get("content"))
+        reasoning = str(assistant.get("reasoning_content") or "").strip() or None
         raw_tool_calls = assistant.get("tool_calls") or []
         usage = data.get("usage", {})
 
@@ -700,6 +732,7 @@ class LMStudioProvider(ToolCallProvider):
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=usage,
+            reasoning=reasoning,
         )
 
     def append_assistant(self, messages, response):
@@ -845,8 +878,9 @@ class ZAIProvider(ToolCallProvider):
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
         assistant_text = _coerce_openai_text(assistant.get("content"))
-        if not assistant_text:
-            assistant_text = str(assistant.get("reasoning_content", "")).strip()
+        reasoning = str(assistant.get("reasoning_content") or "").strip() or None
+        if not assistant_text and reasoning:
+            assistant_text = reasoning
         raw_tool_calls = assistant.get("tool_calls") or []
         usage = data.get("usage", {})
 
@@ -873,6 +907,7 @@ class ZAIProvider(ToolCallProvider):
             stop=(not tool_calls),
             raw_assistant_message=raw_msg,
             usage=usage,
+            reasoning=reasoning,
         )
 
     def append_assistant(self, messages, response):
