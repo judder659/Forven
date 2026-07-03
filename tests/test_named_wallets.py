@@ -158,15 +158,32 @@ class TestSubaccountGuards:
         with pytest.raises(ValueError, match="OPEN trade"):
             subaccounts.remove_wallet("botfund")
 
-    def test_remove_blocked_by_bot_reference(self, forven_db):
-        from forven.db import set_bot_live_wallet
+    def test_remove_blocked_by_live_bot_reference(self, forven_db):
+        from forven.db import set_bot_execution_mode, set_bot_live_wallet
         from forven.exchange import subaccounts
 
         subaccounts.register_wallet("botfund", ADDR_A)
         bot_id = _make_bot(name="Router Bot")
         set_bot_live_wallet(bot_id, "botfund")
+        set_bot_execution_mode(bot_id, "live")  # only live-armed bots route
         with pytest.raises(ValueError, match="Router Bot"):
             subaccounts.remove_wallet("botfund")
+
+    def test_paper_bot_reference_does_not_block_remove(self, forven_db):
+        # A bot returned to paper keeps its remembered live_wallet, but it
+        # routes nothing there — it must neither block removal nor keep the
+        # Remove button disabled. Removal clears the now-dangling pointer.
+        from forven.db import get_bot, set_bot_live_wallet
+        from forven.exchange import books, subaccounts
+
+        subaccounts.register_wallet("botfund", ADDR_A)
+        bot_id = _make_bot(name="Paper Router")
+        set_bot_live_wallet(bot_id, "botfund")  # default execution_mode is 'paper'
+
+        out = subaccounts.remove_wallet("botfund")
+        assert out["removed"] is True
+        assert books.named_wallets() == {}
+        assert get_bot(bot_id)["live_wallet"] is None
 
     def test_remove_clean_wallet(self, forven_db):
         from forven.exchange import books, subaccounts

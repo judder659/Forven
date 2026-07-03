@@ -77,12 +77,21 @@ def _open_trades_on_label(label: str) -> int:
 
 
 def _bots_on_label(label: str) -> list[str]:
+    """Bots that actively ROUTE live orders to this wallet.
+
+    Only LIVE-armed bots count: a paper bot merely remembers a wallet
+    preference (see api_set_bot_wallet) and routes nothing there, so it must
+    neither appear as a user of the wallet nor block its removal. Counting
+    paper bots left a returned-to-paper bot's stale live_wallet permanently
+    locking the wallet's Remove button."""
     from forven.db import get_db
 
     try:
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT name FROM bot_configs WHERE LOWER(COALESCE(live_wallet, '')) = ?",
+                "SELECT name FROM bot_configs "
+                "WHERE LOWER(COALESCE(live_wallet, '')) = ? "
+                "AND LOWER(COALESCE(execution_mode, 'paper')) = 'live'",
                 (label,),
             ).fetchall()
         return [str(r["name"]) for r in rows]
@@ -367,6 +376,19 @@ def remove_wallet(label: str) -> dict:
         )
     registry.pop(clean_label)
     _save_registry(registry)
+    # Clear stale wallet preferences on any (paper-mode) bots still pointing at
+    # the now-unregistered label so GO LIVE never preselects a dead wallet.
+    try:
+        from forven.db import get_db
+
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE bot_configs SET live_wallet = NULL "
+                "WHERE LOWER(COALESCE(live_wallet, '')) = ?",
+                (clean_label,),
+            )
+    except Exception:
+        pass  # cleanup is best-effort; a dangling pref is caught by GO LIVE validation
     log_activity(
         "info", "wallets", f"Named wallet '{clean_label}' removed", {"label": clean_label}
     )
