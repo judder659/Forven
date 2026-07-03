@@ -184,11 +184,27 @@ class SourceHttpClient:
                         raise UnsafeUrlError(
                             f"response exceeded {MAX_RESPONSE_BYTES} byte limit"
                         )
-                # Rebuild a Response the caller can .text / .json() on. We
-                # pass stream=None so httpx treats `content` as the body.
+                # Rebuild a Response the caller can .text / .json() on. `buf`
+                # was read via iter_bytes(), which ALREADY applied any
+                # Content-Encoding (gzip/deflate/br) transfer decoding — so it
+                # holds the decoded body. We must therefore drop the
+                # Content-Encoding (and now-stale Content-Length) headers before
+                # handing them back: httpx's Response constructor decodes again
+                # based on Content-Encoding, and re-decoding an already-decoded
+                # body raises `zlib.error: Error -3 ... incorrect header check`.
+                # This bit every discover_*/inspect_* fetch against a server
+                # that compresses responses (the GitHub API always; most blogs
+                # and forums by default).
+                decoded_headers = httpx.Headers(
+                    [
+                        (key, value)
+                        for key, value in resp.headers.multi_items()
+                        if key.lower() not in ("content-encoding", "content-length")
+                    ]
+                )
                 return httpx.Response(
                     status_code=resp.status_code,
-                    headers=resp.headers,
+                    headers=decoded_headers,
                     content=bytes(buf),
                     request=resp.request,
                 )

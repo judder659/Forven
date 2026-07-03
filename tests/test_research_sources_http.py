@@ -1,3 +1,6 @@
+import gzip
+import zlib
+
 import pytest
 import httpx
 from forven.research_sources._http import (
@@ -129,3 +132,55 @@ def test_ssrf_caps_response_body_size():
     client._transport = httpx.MockTransport(handler)
     with pytest.raises(UnsafeUrlError, match="byte limit"):
         client.get("https://example.com/huge")
+
+
+# Regression: _fetch_with_redirects reads the body via iter_bytes() (which
+# already applies Content-Encoding transfer decoding), then rebuilds a fresh
+# httpx.Response. If the original Content-Encoding header is carried onto the
+# rebuilt response, httpx decodes the ALREADY-decoded body a second time and
+# raises `zlib.error: Error -3 while decompressing data: incorrect header
+# check`. That broke every discover_*/inspect_* fetch against a server that
+# compresses responses (GitHub API always; most blogs/forums by default).
+@pytest.mark.parametrize(
+    "encoding, compress",
+    [
+        ("gzip", gzip.compress),
+        ("deflate", zlib.compress),
+    ],
+)
+def test_decodes_compressed_body_without_double_decompress(encoding, compress):
+    plaintext = b'{"hello": "world", "items": [1, 2, 3]}'
+    body = compress(plaintext)
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            content=body,
+            headers={"Content-Encoding": encoding, "Content-Type": "application/json"},
+        )
+
+    client = SourceHttpClient(default_rate_per_min=1000)
+    client._transport = httpx.MockTransport(handler)
+    resp = client.get("https://example.com/compressed")
+
+    assert resp.status_code == 200
+    assert resp.content == plaintext
+    assert resp.json() == {"hello": "world", "items": [1, 2, 3]}
+    # The rebuilt response must not re-declare the (already-applied) encoding.
+    assert "content-encoding" not in resp.headers
+
+
+def test_compressed_body_still_enforces_size_cap():
+    """The size cap runs on the decoded body, so a small compressed payload
+    that inflates past the limit is still rejected."""
+    huge_plaintext = b"x" * (MAX_RESPONSE_BYTES + 10)
+    body = gzip.compress(huge_plaintext)  # compresses tiny; decodes huge
+    assert len(body) < MAX_RESPONSE_BYTES
+
+    def handler(req):
+        return httpx.Response(200, content=body, headers={"Content-Encoding": "gzip"})
+
+    client = SourceHttpClient(default_rate_per_min=1000)
+    client._transport = httpx.MockTransport(handler)
+    with pytest.raises(UnsafeUrlError, match="byte limit"):
+        client.get("https://example.com/zipbomb")
