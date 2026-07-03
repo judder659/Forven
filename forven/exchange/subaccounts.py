@@ -95,7 +95,10 @@ def _wallet_balances(info, address: str) -> dict:
 
     Perp and spot USDC are SEPARATE Hyperliquid balances; the UI shows both so
     the operator can see where the collateral actually sits (and move it with
-    a class transfer). Each read degrades to None independently."""
+    a class transfer). spot_usd is the FREE spot balance: spot USDC on "hold"
+    backs an open isolated perp position and is already inside perp_usd, so
+    showing the total would display the same margin in both columns (and it
+    isn't movable anyway). Each read degrades to None independently."""
     from forven.exchange.hyperliquid import _extract_spot_usdc_balance, _safe_float
 
     out: dict = {"perp_usd": None, "spot_usd": None}
@@ -105,8 +108,8 @@ def _wallet_balances(info, address: str) -> dict:
     except Exception:
         pass
     try:
-        spot_total, _spot_free = _extract_spot_usdc_balance(info, address)
-        out["spot_usd"] = float(spot_total or 0.0)
+        _spot_total, spot_free = _extract_spot_usdc_balance(info, address)
+        out["spot_usd"] = max(0.0, float(spot_free or 0.0))
     except Exception:
         pass
     return out

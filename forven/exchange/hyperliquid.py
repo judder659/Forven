@@ -2062,18 +2062,28 @@ def get_account_value(
         or state.get("available")
     )
 
-    # Include SPOT USDC in total equity. On Hyperliquid the perp collateral and
-    # spot USDC are SEPARATE balances; opening an isolated perp position moves
-    # margin out of the cross balance, so the perp accountValue drops to ~the
-    # isolated margin while the rest of the collateral sits in spot. Reading
+    # Include FREE spot USDC in total equity. On Hyperliquid the perp collateral
+    # and spot USDC are SEPARATE balances; opening an isolated perp position
+    # moves margin out of the cross balance, so the perp accountValue drops to
+    # ~the isolated margin while the rest of the collateral sits in spot. Reading
     # perp-only then makes equity look like it crashed — faking a drawdown that
     # trips the kill-switch and flattens live positions, and over-stating margin
-    # usage (margin_used/accountValue -> ~100%). Summing spot makes the read
+    # usage (margin_used/accountValue -> ~100%). Adding spot makes the read
     # consistent whether collateral is in spot or perp, and whether or not a
-    # position is open. Best-effort: a spot-read failure degrades to perp-only.
-    spot_total, spot_free = 0.0, 0.0
+    # position is open.
+    #
+    # Only the FREE portion counts (total - hold): spot USDC on "hold" backs an
+    # open isolated perp position and is ALREADY reported in the perp
+    # accountValue — observed live (testnet named wallet: spot hold tracked the
+    # position's marginUsed tick-for-tick), so summing spot TOTAL double-counted
+    # the held margin and showed a $19 wallet as $39. Forven never places spot
+    # orders, so a hold from a real spot order (the other thing that could set
+    # it) doesn't occur; if it ever did, excluding it understates equity — the
+    # conservative direction. Best-effort: a spot-read failure degrades to
+    # perp-only.
+    spot_free = 0.0
     try:
-        spot_total, spot_free = _extract_spot_usdc_balance(info, address)
+        _spot_total, spot_free = _extract_spot_usdc_balance(info, address)
     except Exception:
         pass
 
@@ -2083,13 +2093,12 @@ def get_account_value(
     total_ntl_pos = 0.0 if total_ntl_pos is None else float(total_ntl_pos)
     perp_withdrawable = perp_raw_usd if perp_withdrawable is None else float(perp_withdrawable)
 
-    spot_total = max(0.0, float(spot_total or 0.0))
     spot_free = max(0.0, float(spot_free or 0.0))
     return {
-        "accountValue": float(perp_value + spot_total),
+        "accountValue": float(perp_value + spot_free),
         "totalMarginUsed": float(total_margin_used),
         "totalNtlPos": float(total_ntl_pos),
-        "totalRawUsd": float(perp_raw_usd + spot_total),
+        "totalRawUsd": float(perp_raw_usd + spot_free),
         "withdrawable": float(max(0.0, perp_withdrawable) + spot_free),
         "source": "exchange",
     }
