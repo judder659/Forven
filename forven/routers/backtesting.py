@@ -123,6 +123,34 @@ def create_backtesting_strategy(
     note_lines: list[str] = []
     if isinstance(data.get("notes"), str) and str(data.get("notes")).strip():
         note_lines.append(str(data.get("notes")).strip())
+
+    # Data-availability gate: land a strategy in research_only (not quick_screen)
+    # when it references an enrichment feed that GENUINELY can't be provided for
+    # its symbol — otherwise it climbs the gauntlet as a silent 0-trade phantom
+    # (see S05577; funding-family strategies on OHLCV-only data). On-disk only
+    # (auto_fetch=False) so the create path never blocks on network I/O, and we
+    # only downgrade for UNFETCHABLE feeds (e.g. liquidations): fetchable-but-not-
+    # yet-downloaded feeds are left for the backtest precheck to auto-fetch. Fails
+    # OPEN so a guard hiccup can never block strategy creation.
+    if target_stage == "quick_screen" and strategy_symbol and strategy_symbol.upper() != "MULTI":
+        try:
+            from forven.strategies.data_availability import evaluate_data_availability
+
+            avail = evaluate_data_availability(
+                strategy_type,
+                strategy_symbol,
+                strategy_timeframe,
+                auto_fetch=False,
+            )
+            if avail.blocked and avail.missing_unfetchable:
+                target_stage = "research_only"
+                note_lines.append(f"Research-only: {avail.error}")
+        except Exception:
+            log.exception(
+                "create-time data-availability check failed (skipping) for %s",
+                strategy_name,
+            )
+
     if target_stage == "research_only":
         blocking_reason = certification.primary_blocking_reason()
         if blocking_reason:

@@ -654,9 +654,60 @@ def _fetch_binance_funding_series_raw(symbol: str, start_ms: int, end_ms: int) -
     return out
 
 
+def _read_binance_funding_parquet_series(symbol: str, start_ms: int, end_ms: int) -> list[tuple[int, float]]:
+    """On-disk fallback for the live perp funding fetch: read the collected
+    funding history parquet (raw per-8h rates, written by
+    ``data_manager.FundingCollector``) and normalize to PER-HOUR — the SAME
+    ``/ _BINANCE_FUNDING_INTERVAL_HOURS`` conversion the live path applies — so a
+    network-less / geo-blocked / rate-limited run isn't silently funding-blind.
+    ``symbol`` is the ccxt pair ("BTC/USDT"); the parquet lives under the perp-
+    pair dir via ``symbol_to_fs``. Returns [] on any error (caller then proceeds
+    with no funding, matching prior behavior)."""
+    try:
+        import pandas as pd
+
+        from forven.data import symbol_to_fs
+        from forven.data_manager import FUNDING_DIR
+
+        path = FUNDING_DIR / symbol_to_fs(symbol) / "history.parquet"
+        if not path.exists():
+            return []
+        df = pd.read_parquet(path, columns=["timestamp", "funding_rate"])
+        if df.empty:
+            return []
+        # Force ns resolution before int64: pandas>=2 datetimes can carry s/ms/us
+        # resolution, and astype("int64") returns the value in THAT unit — so a
+        # naive `// 1_000_000` on an s-resolution series yields garbage epochs.
+        ts_ms = (
+            pd.to_datetime(df["timestamp"], utc=True)
+            .astype("datetime64[ns, UTC]")
+            .astype("int64")
+            // 1_000_000
+        )
+        out = [
+            (int(ts), float(rate) / _BINANCE_FUNDING_INTERVAL_HOURS)
+            for ts, rate in zip(ts_ms, df["funding_rate"])
+            if pd.notna(rate) and start_ms <= int(ts) <= end_ms
+        ]
+        out.sort(key=lambda pair: pair[0])
+        if out:
+            log.info(
+                "Served %d on-disk funding records for %s (live perp API unavailable)",
+                len(out), symbol,
+            )
+        return out
+    except Exception as exc:
+        log.debug("On-disk funding fallback failed for %s: %s", symbol, exc)
+        return []
+
+
 def fetch_binance_funding_series(coin: str, start_ms: int | None = None, end_ms: int | None = None) -> list[tuple[int, float]]:
     """Binance funding as (timestamp_ms, PER-HOUR rate) pairs over a window — a
-    drop-in for ``market_data_collector.get_funding_rate_series`` (which is HL)."""
+    drop-in for ``market_data_collector.get_funding_rate_series`` (which is HL).
+
+    Live perp API is the source of truth; when it's unreachable (offline / geo-
+    blocked / rate-limited) or returns nothing, fall back to the collected
+    on-disk funding parquet so backtests aren't silently funding-blind."""
     symbol = _binance_symbol(coin)
     now = time.time()
     end_ms = int(end_ms) if end_ms else int(now * 1000)
@@ -665,7 +716,16 @@ def fetch_binance_funding_series(coin: str, start_ms: int | None = None, end_ms:
     if cached and (now - cached[0]) < _SERIES_CACHE_TTL and cached[1] and cached[1][0][0] <= start_ms:
         series = cached[1]
     else:
-        series = _fetch_binance_funding_series_raw(symbol, start_ms, end_ms)
+        try:
+            series = _fetch_binance_funding_series_raw(symbol, start_ms, end_ms)
+        except Exception as exc:
+            log.warning(
+                "Binance funding fetch failed for %s (%s); falling back to on-disk parquet",
+                symbol, exc,
+            )
+            series = []
+        if not series:
+            series = _read_binance_funding_parquet_series(symbol, start_ms, end_ms)
         if series:
             _FUNDING_SERIES_CACHE[symbol] = (now, series)
     return [(ts, rate) for ts, rate in series if start_ms <= ts <= end_ms]

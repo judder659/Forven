@@ -336,25 +336,59 @@ def _available_enrichment_specs(
     from forven import data_manager
     from forven.data import symbol_to_fs
 
-    fs_symbol = symbol_to_fs(symbol)
+    # Derivatives streams (funding/OI/order-flow/basis) are written under the full
+    # PERP-PAIR symbol dir ("BTC/USDT" -> "BTC-USDT/"; see FundingCollector.collect),
+    # but callers pass a bare ASSET ("BTC"). symbol_to_fs("BTC") == "BTC", which then
+    # misses the on-disk data and every funding/OI strategy runs feed-blind to a
+    # silent 0-trade phantom. Try the bare form first (preserves any legacy bare-keyed
+    # store), then the perp-pair variants — the same bare->pair normalization already
+    # applied on the backtest scanner path (backtest._enrich_symbol).
+    raw_symbol = str(symbol or "")
+    fs_candidates: list[str] = []
+    for cand in (
+        symbol_to_fs(raw_symbol),
+        *(
+            [symbol_to_fs(f"{raw_symbol}/{quote}") for quote in ("USDT", "USDC")]
+            if ("/" not in raw_symbol and "-" not in raw_symbol)
+            else []
+        ),
+    ):
+        if cand and cand not in fs_candidates:
+            fs_candidates.append(cand)
+
+    def _sym_path(base: Path, *rest: str) -> Path:
+        """First existing base/<fs>/<rest...> across the symbol candidates.
+
+        Falls back to the primary (bare) candidate when none exists, so the
+        downstream ``_parquet_has_columns`` filter drops it exactly as before.
+        """
+        primary: Path | None = None
+        for fs in fs_candidates:
+            p = base.joinpath(fs, *rest)
+            if primary is None:
+                primary = p
+            if p.exists():
+                return p
+        return primary if primary is not None else base.joinpath(*rest)
+
     candidates = [
         _EnrichmentSpec(
             "funding",
-            data_manager.FUNDING_DIR / fs_symbol / "history.parquet",
+            _sym_path(data_manager.FUNDING_DIR, "history.parquet"),
             ("funding_rate",),
             ("funding_rate",),
             {"funding_rate": 0.0},
         ),
         _EnrichmentSpec(
             "oi",
-            data_manager.OI_DIR / fs_symbol / f"{timeframe}.parquet",
+            _sym_path(data_manager.OI_DIR, f"{timeframe}.parquet"),
             ("open_interest",),
             ("open_interest",),
             {"open_interest": 0.0},
         ),
         _EnrichmentSpec(
             "long_short_ratio",
-            data_manager.DERIVATIVES_DIR / fs_symbol / "long_short_ratio_1h.parquet",
+            _sym_path(data_manager.DERIVATIVES_DIR, "long_short_ratio_1h.parquet"),
             ("ls_ratio",),
             ("ls_ratio",),
             {"ls_ratio": 0.0},
@@ -362,7 +396,7 @@ def _available_enrichment_specs(
         ),
         _EnrichmentSpec(
             "taker_volume",
-            data_manager.DERIVATIVES_DIR / fs_symbol / "taker_volume_1h.parquet",
+            _sym_path(data_manager.DERIVATIVES_DIR, "taker_volume_1h.parquet"),
             ("taker_buy_sell_ratio",),
             ("taker_buy_sell_ratio",),
             # PARITY: legacy _enrich_taker_volume fills 0.0. This spec used 1.0
@@ -375,7 +409,7 @@ def _available_enrichment_specs(
         ),
         _EnrichmentSpec(
             "liquidations",
-            data_manager.DERIVATIVES_DIR / fs_symbol / "liquidations_1h.parquet",
+            _sym_path(data_manager.DERIVATIVES_DIR, "liquidations_1h.parquet"),
             ("long_liq_usd", "short_liq_usd", "liq_imbalance"),
             ("long_liq_usd", "short_liq_usd", "liq_imbalance"),
             {"long_liq_usd": 0.0, "short_liq_usd": 0.0, "liq_imbalance": 0.0},
@@ -385,7 +419,7 @@ def _available_enrichment_specs(
         # fill — NaN before coverage, matching the legacy joins).
         _EnrichmentSpec(
             "basis",
-            data_manager.BASIS_DIR / fs_symbol / "1h.parquet",
+            _sym_path(data_manager.BASIS_DIR, "1h.parquet"),
             ("basis",),
             ("basis",),
             {},

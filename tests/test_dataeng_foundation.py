@@ -273,6 +273,48 @@ def test_datahub_enrich_matches_legacy_data_manager(forven_db, tmp_path, monkeyp
     pd.testing.assert_frame_equal(via_hub, legacy)
 
 
+def test_available_specs_resolves_bare_asset_to_perp_pair_dir(forven_db, tmp_path, monkeypatch):
+    """Regression: derivatives feeds are written under the perp-PAIR dir
+    ("BTC-USDT/"; see FundingCollector.collect), but hub callers pass a bare
+    ASSET ("BTC"). The spec resolver must locate the pair-dir data rather than
+    look under a nonexistent bare "BTC/" dir — otherwise funding/OI/order-flow
+    strategies run feed-blind to a silent 0-trade phantom (the funding-family
+    dead-zone). Cover the bare, pair, and fs-form spellings.
+    """
+    from forven.data_manager import _save_stream_parquet
+    from forven.dataeng.hub import _available_enrichment_specs
+
+    monkeypatch.setattr("forven.data_manager.FUNDING_DIR", tmp_path / "funding")
+    monkeypatch.setattr("forven.data_manager.OI_DIR", tmp_path / "oi")
+    monkeypatch.setattr("forven.data_manager.DERIVATIVES_DIR", tmp_path / "derivatives")
+
+    _save_stream_parquet(
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-05-01", periods=3, freq="8h", tz="UTC"),
+                "funding_rate": [0.01, -0.02, 0.03],
+            }
+        ),
+        tmp_path / "funding" / "BTC-USDT" / "history.parquet",
+        "funding",
+        "BTC-USDT",
+    )
+
+    def _funding_surfaced(symbol: str) -> bool:
+        specs = _available_enrichment_specs(
+            symbol, "1h", include_macro=False, exclude_streams=set()
+        )
+        return "funding_rate" in {col for spec in specs for col in spec.output_columns}
+
+    # The bare asset is the spelling that was silently missing the data.
+    assert _funding_surfaced("BTC")
+    # Pair / fs-form spellings must still resolve to the same dir.
+    assert _funding_surfaced("BTC/USDT")
+    assert _funding_surfaced("BTC-USDT")
+    # A symbol with genuinely no derivatives data stays absent (no false surface).
+    assert not _funding_surfaced("DOGE")
+
+
 def test_datahub_quality_matches_legacy_compute_data_quality(forven_db, monkeypatch, tmp_path):
     from forven import api_core
     from forven import data as data_mod

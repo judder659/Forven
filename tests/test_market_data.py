@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from forven.market_data import (
+    _BINANCE_FUNDING_INTERVAL_HOURS,
     clean_ohlcv,
     compute_features,
     compute_vpin,
     dataframe_to_ohlcv_rows,
+    fetch_binance_funding_series,
     ohlcv_rows_to_dataframe,
 )
 
@@ -191,3 +194,51 @@ def test_compute_features_adds_expected_columns():
         assert column in out.columns
     assert len(out) == len(df)
     assert out["vpin"].between(0.0, 1.0).all()
+
+
+def test_funding_series_falls_back_to_on_disk_parquet_when_live_fails(monkeypatch, tmp_path):
+    """When the live perp funding API is unreachable, fetch_binance_funding_series
+    must serve the collected on-disk funding parquet (raw per-8h -> per-hour) so
+    backtests aren't silently funding-blind. Data lives under the perp-PAIR dir.
+    """
+    import forven.market_data as md
+
+    monkeypatch.setattr("forven.data_manager.FUNDING_DIR", tmp_path / "funding")
+
+    per8h = [0.0001, -0.0002, 0.0003]  # raw Binance per-8h epoch rates
+    ts = pd.date_range("2026-01-01", periods=len(per8h), freq="8h", tz="UTC")
+    pair_dir = tmp_path / "funding" / "BTC-USDT"
+    pair_dir.mkdir(parents=True)
+    pd.DataFrame({"timestamp": ts, "funding_rate": per8h}).to_parquet(
+        pair_dir / "history.parquet"
+    )
+
+    # Force the live path to fail so the fallback engages.
+    def _boom(*_a, **_k):
+        raise RuntimeError("perp API unreachable")
+
+    monkeypatch.setattr(md, "_fetch_binance_funding_series_raw", _boom)
+    monkeypatch.setattr(md, "_FUNDING_SERIES_CACHE", {})
+
+    start = int(ts[0].timestamp() * 1000)
+    end = int(ts[-1].timestamp() * 1000)
+    series = fetch_binance_funding_series("BTC", start, end)
+
+    assert len(series) == len(per8h)
+    # Per-hour normalization matches the live path (raw / interval hours).
+    for (_, got), raw in zip(series, per8h):
+        assert got == pytest.approx(raw / _BINANCE_FUNDING_INTERVAL_HOURS, abs=1e-12)
+
+
+def test_funding_series_no_parquet_returns_empty(monkeypatch, tmp_path):
+    """No on-disk funding + dead live API => empty series (caller proceeds with no
+    funding, matching prior behavior — never raises)."""
+    import forven.market_data as md
+
+    monkeypatch.setattr("forven.data_manager.FUNDING_DIR", tmp_path / "funding")
+    monkeypatch.setattr(
+        md, "_fetch_binance_funding_series_raw",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("down")),
+    )
+    monkeypatch.setattr(md, "_FUNDING_SERIES_CACHE", {})
+    assert fetch_binance_funding_series("BTC", 0, 10_000) == []
