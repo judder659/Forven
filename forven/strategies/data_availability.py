@@ -299,6 +299,7 @@ def evaluate_data_availability(
     *,
     strategy_id: str | None = None,
     auto_fetch: bool = True,
+    strategy_cls: type | None = None,
 ) -> DataAvailabilityResult:
     """Precheck the data a strategy needs against what's available.
 
@@ -306,12 +307,17 @@ def evaluate_data_availability(
     means the caller must NOT run the backtest (required feed genuinely
     unavailable). Otherwise it is safe to proceed; ``warnings`` may note feeds
     that were auto-fetched. Fails OPEN (ok) on any internal error.
+
+    ``strategy_cls`` lets registration-time callers probe a class that is not
+    yet resolvable through the runtime registry.
     """
     result = DataAvailabilityResult()
     try:
-        from forven.strategies.backtest import _resolve_strategy_class
+        cls = strategy_cls
+        if cls is None:
+            from forven.strategies.backtest import _resolve_strategy_class
 
-        cls = _resolve_strategy_class(strategy_type)
+            cls = _resolve_strategy_class(strategy_type)
         if cls is None:
             return result
 

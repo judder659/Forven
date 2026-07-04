@@ -134,6 +134,17 @@ def _insert_backtest_result(
     config: dict | None = None,
 ) -> None:
     """Insert a minimal backtest_results row for gate satisfaction."""
+    if metrics is None:
+        # The canonical-backtest guard only accepts SUCCESSFUL traded runs
+        # (>=1 trade, no error/failed status) — a bare row no longer satisfies
+        # it, so the default fixture models a genuine completed backtest.
+        metrics = {
+            "total_trades": 42,
+            "sharpe": 1.2,
+            "profit_factor": 1.5,
+            "max_drawdown_pct": 0.1,
+            "win_rate": 52.0,
+        }
     rid = result_id or f"auto-{result_type}-{strategy_id}-{int(datetime.now(timezone.utc).timestamp() * 1e6)}"
     with get_db() as conn:
         conn.execute(
@@ -297,7 +308,7 @@ def test_attempt_stage_promotion_reports_blocked_transition_when_transition_stag
     )
 
     assert promoted is False
-    assert "canonical backtest evidence" in reason.lower()
+    assert "canonical backtest" in reason.lower()
 
     with get_db() as conn:
         row = conn.execute(

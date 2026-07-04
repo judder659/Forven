@@ -263,6 +263,7 @@ def test_execute_verdict_resolves_dataset_id_to_latest_matching_result(forven_db
             "profit_factor": 2.1,
             "max_drawdown_pct": 0.08,
             "win_rate": 0.58,
+            "wfa_ratio": 0.8,
         },
         created_at=newer,
     )
@@ -337,6 +338,9 @@ def test_execute_verdict_resolves_decorated_strategy_id_to_canonical_result(forv
             "profit_factor": 1.9,
             "max_drawdown_pct": 0.06,
             "win_rate": 0.57,
+            # walk_forward needs explicit evidence now — an absent wfa_ratio
+            # yields "pending" instead of the old passing default.
+            "wfa_ratio": 0.8,
         },
         created_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -361,6 +365,7 @@ def test_execute_verdict_falls_back_to_strategy_metrics_when_result_row_missing(
             (
                 json.dumps(
                     {
+                        "wfa_ratio": 0.8,
                         "out_of_sample": {
                             "total_trades": 77,
                             "win_rate": 0.5844,
@@ -368,7 +373,7 @@ def test_execute_verdict_falls_back_to_strategy_metrics_when_result_row_missing(
                             "profit_factor": 1.856,
                             "max_drawdown_pct": 0.21034,
                             "total_return_pct": 1.48075,
-                        }
+                        },
                     }
                 ),
                 "S00144",
@@ -400,6 +405,7 @@ def test_execute_verdict_direct_result_id_lookup_still_works(forven_db):
             "profit_factor": 1.8,
             "max_drawdown_pct": 0.07,
             "win_rate": 0.55,
+            "wfa_ratio": 0.8,
         },
         created_at=datetime.now(timezone.utc).isoformat(),
     )

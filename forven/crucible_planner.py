@@ -291,6 +291,10 @@ def _untested_strategy_id(crucible_id: str) -> str | None:
                     )
                   )
               AND {_LIVE_STRATEGY_STAGE_CLAUSE}
+              -- research_only is a parking stage (lookahead/crash/data-blocked):
+              -- those candidates are revived via research recovery, not by
+              -- scheduling first-backtests that their block guarantees will fail.
+              AND LOWER(TRIM(COALESCE(s.stage, ''))) != 'research_only'
               AND NOT EXISTS (
                   SELECT 1
                   FROM backtest_results AS br
