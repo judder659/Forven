@@ -444,10 +444,7 @@ def _build_risk_nav_indicator(risk: dict[str, Any]) -> dict[str, object]:
     )
 
 
-def _build_trades_nav_indicator(
-    open_trades: list[dict[str, Any]],
-    paper_sessions: list[dict[str, Any]],
-) -> dict[str, object]:
+def _build_live_trades_nav_indicator(open_trades: list[dict[str, Any]]) -> dict[str, object]:
     live_trade_count = len(open_trades)
     if live_trade_count > 0:
         return _build_nav_indicator(
@@ -458,7 +455,10 @@ def _build_trades_nav_indicator(
             _build_seen_key("trades-live", [trade.get("id") or trade.get("trade_id") for trade in open_trades[:8]]),
             count=live_trade_count,
         )
+    return _empty_nav_indicator()
 
+
+def _build_paper_trades_nav_indicator(paper_sessions: list[dict[str, Any]]) -> dict[str, object]:
     active_statuses = {"position_open", "warming_up", "watching"}
     active_paper_sessions = [
         session
@@ -595,7 +595,8 @@ def _build_nav_indicators(
         "/data": _build_data_nav_indicator(ingestion_runs),
         "/lab": _build_lab_nav_indicator(scans),
         "/risk": _build_risk_nav_indicator(risk),
-        "/trading": _build_trades_nav_indicator(open_trades, paper_sessions),
+        "/paper-trades": _build_paper_trades_nav_indicator(paper_sessions),
+        "/live-trades": _build_live_trades_nav_indicator(open_trades),
         "/agents": _build_agents_nav_indicator(agent_tasks),
         "/tasks": _build_tasks_nav_indicator(agent_tasks),
         "/approval": _build_approvals_nav_indicator(approvals),

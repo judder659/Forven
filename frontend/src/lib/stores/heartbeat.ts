@@ -51,7 +51,8 @@ function buildFallbackNavIndicators(heartbeat: SystemHeartbeatResponse): Record<
 		'/lab': emptyIndicator(),
 		'/hypotheses': emptyIndicator(),
 		'/risk': emptyIndicator(),
-		'/trading': emptyIndicator(),
+		'/paper-trades': emptyIndicator(),
+		'/live-trades': emptyIndicator(),
 		'/agents': emptyIndicator(),
 		'/approval': emptyIndicator(),
 		'/settings': emptyIndicator(),
@@ -139,16 +140,15 @@ function buildFallbackNavIndicators(heartbeat: SystemHeartbeatResponse): Record<
 		);
 	}
 
-	// Paper + live now share the one Trades page (/trading). Open live positions are
-	// the more important signal, so they take precedence on the nav badge; paper
-	// session activity shows only when there are no live positions open.
+	// Paper and live each have their own page now, so each carries its own badge:
+	// open live positions on Live Trades, paper session activity on Paper Trades.
 	const liveTrades = Array.isArray(heartbeat.open_trades) ? heartbeat.open_trades : [];
 	const paperSessions = Array.isArray(heartbeat.paper_sessions) ? heartbeat.paper_sessions : [];
 	const activePaperSessions = paperSessions.filter((session) =>
 		['position_open', 'warming_up', 'watching'].includes(normalizeStatus(session.status)),
 	);
 	if (liveTrades.length > 0) {
-		routes['/trading'] = indicator(
+		routes['/live-trades'] = indicator(
 			'count',
 			'info',
 			String(liveTrades.length),
@@ -156,8 +156,9 @@ function buildFallbackNavIndicators(heartbeat: SystemHeartbeatResponse): Record<
 			liveTrades.length,
 			seenKey('trades-live', liveTrades.map((trade) => trade.id).slice(0, 8)),
 		);
-	} else if (activePaperSessions.length > 0) {
-		routes['/trading'] = indicator(
+	}
+	if (activePaperSessions.length > 0) {
+		routes['/paper-trades'] = indicator(
 			'activity',
 			'success',
 			'SIM',

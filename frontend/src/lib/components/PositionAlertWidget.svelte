@@ -110,11 +110,11 @@
 		// Acting on the alert is an acknowledgement — dismiss it like Close does.
 		dismissPositionAlert(alert.token);
 		if (typeof window === 'undefined') return;
-		// Persist for the cross-page case: navigating to /trading mounts the page,
-		// which reads this key and selects the session.
+		// Persist for the cross-page case: navigating to /paper-trades mounts the
+		// page, which reads this key and selects the session.
 		window.localStorage.setItem('forven.paper.selectedSessionId', alert.sessionId);
-		// Live channel for the already-on-/trading case: the same-URL <a> nav is a
-		// no-op, so the page never re-reads the key. Tell the mounted page directly.
+		// Live channel for the already-on-/paper-trades case: the same-URL <a> nav
+		// is a no-op, so the page never re-reads the key. Tell the mounted page directly.
 		window.dispatchEvent(new CustomEvent('forven:select-session', { detail: { sessionId: alert.sessionId } }));
 	}
 
@@ -250,7 +250,7 @@
 				<div class="text-[#999] text-right">{formatDateTime(alert.openedAt)}</div>
 			</div>
 			<a
-				href="/trading"
+				href="/paper-trades"
 				class="mt-3 inline-block text-[10px] uppercase tracking-wider text-white border border-white px-2 py-1 hover:bg-white hover:text-black transition-colors"
 				on:click={() => openSessionFromAlert(alert)}
 			>

@@ -132,7 +132,8 @@ def test_get_system_heartbeat_nav_indicators_use_frontend_route_keys(monkeypatch
         "/data",
         "/lab",
         "/risk",
-        "/trading",
+        "/paper-trades",
+        "/live-trades",
         "/agents",
         "/tasks",
         "/approval",
@@ -144,8 +145,10 @@ def test_get_system_heartbeat_nav_indicators_use_frontend_route_keys(monkeypatch
     assert nav["/approval"]["count"] == 2
     assert nav["/approval"]["severity"] == "warn"
 
-    assert nav["/trading"]["kind"] == "count"
-    assert nav["/trading"]["count"] == 1
+    assert nav["/live-trades"]["kind"] == "count"
+    assert nav["/live-trades"]["count"] == 1
+    # No paper sessions in this fixture — the paper tab must stay quiet.
+    assert nav["/paper-trades"]["kind"] == "none"
 
 
 def test_system_heartbeat_route_sanitizes_nonfinite_values(monkeypatch):

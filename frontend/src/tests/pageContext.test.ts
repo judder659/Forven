@@ -13,7 +13,8 @@ describe('pageContext', () => {
 		expect(inferPageKind('/lab/strategy/S00007')).toBe('strategy_detail');
 		expect(inferPageKind('/lab')).toBe('lab');
 		expect(inferPageKind('/')).toBe('dashboard');
-		expect(inferPageKind('/trading')).toBe('paper_trading');
+		expect(inferPageKind('/paper-trades')).toBe('paper_trading');
+		expect(inferPageKind('/live-trades')).toBe('live_trading');
 		expect(inferPageKind('/data')).toBe('data_engine');
 		expect(inferPageKind('/settings/agents')).toBe('settings');
 	});

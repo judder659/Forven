@@ -47,7 +47,16 @@ function pulse(href: string, severity: 'info' | 'success' | 'warn' | 'danger', s
 }
 
 function tradeRoute(trade: TradeSummary): string {
-	return String(trade.source ?? '').startsWith('bot:') ? '/bot-factory' : '/trading';
+	if (String(trade.source ?? '').startsWith('bot:')) return '/bot-factory';
+	return String(trade.execution_type ?? '').toLowerCase() === 'live' ? '/live-trades' : '/paper-trades';
+}
+
+/** Landing page for an aggregate toast: the shared page when every fill routes
+ *  the same way, otherwise the combined All Trades ledger. */
+function aggregateTradeRoute(trades: TradeSummary[]): string {
+	const routes = new Set(trades.map(tradeRoute));
+	const only = routes.values().next().value;
+	return routes.size === 1 && only ? only : '/all-trades';
 }
 
 function tradeLabel(trade: TradeSummary): string {
@@ -85,7 +94,7 @@ function handleTradeDiff(data: Record<string, unknown>): void {
 		(trade) => trade.execution_type !== 'paper' || String(trade.source ?? '').startsWith('bot:'),
 	);
 	if (openedNeedingToast.length > MAX_INDIVIDUAL_TRADE_TOASTS) {
-		addToast(`Opened ${openedNeedingToast.length} positions`, 'success', '/trading', TRADE_TOAST_MS);
+		addToast(`Opened ${openedNeedingToast.length} positions`, 'success', aggregateTradeRoute(openedNeedingToast), TRADE_TOAST_MS);
 	} else {
 		for (const trade of openedNeedingToast) {
 			addToast(`Trade opened: ${tradeLabel(trade)}`, 'success', tradeRoute(trade), TRADE_TOAST_MS);
@@ -93,7 +102,7 @@ function handleTradeDiff(data: Record<string, unknown>): void {
 	}
 
 	if (closed.length > MAX_INDIVIDUAL_TRADE_TOASTS) {
-		addToast(`Closed ${closed.length} positions`, 'info', '/trading', TRADE_TOAST_MS);
+		addToast(`Closed ${closed.length} positions`, 'info', aggregateTradeRoute(closed), TRADE_TOAST_MS);
 	} else {
 		for (const trade of closed) {
 			const pnl = typeof trade.pnl_pct === 'number' ? trade.pnl_pct : null;
