@@ -142,6 +142,9 @@ export interface PaperTradingSession {
 	balance_source?: 'exchange' | 'books_only' | 'books_aggregate' | 'simulated' | 'unavailable' | string | null;
 	account_network?: string | null;
 	account_synced_at?: string | null;
+	// GO-LIVE-1: per-asset notional ceiling (USD) enforced on every live open;
+	// null = no per-strategy cap. Deployed/live sessions only.
+	live_notional_ceiling_usd?: number | null;
 	total_pnl: number;
 	total_pnl_pct: number | null;
 	total_trades: number;

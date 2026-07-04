@@ -23,6 +23,7 @@
 		listLifecycleStrategies,
 		getLifecycleStrategy
 	} from '$lib/api';
+	import { setLiveNotionalCeiling } from '$lib/api/forven';
 	import type {
 		Strategy,
 		Dataset,
@@ -116,6 +117,11 @@
 	let openLeverageInput = '1';
 	let openSlInput = '';
 	let openTpInput = '';
+	// GO-LIVE-1 ceiling inline editor (live sessions only). ceilingEditFor holds
+	// the strategy_id being edited so switching sessions closes the editor.
+	let ceilingEditFor: string | null = null;
+	let ceilingInput = '';
+	let ceilingSaving = false;
 	let pendingConfirm: { label: string; detail: string; run: () => Promise<PaperTradingSession> } | null = null;
 	const MANUAL_INPUT_CLASS =
 		'bg-[#0a0a0a] border border-[#333] text-white px-1 py-0.5 text-[10px] focus:outline-none focus:border-gray-500';
@@ -1291,6 +1297,37 @@
 		if (!selectedSession || !pos) return;
 		const paused = !pos.manual_pause;
 		void runManualAction(() => setPaperAutoManagement(selectedSession!.id, paused));
+	}
+
+	function startCeilingEdit(): void {
+		const sid = selectedSession?.strategy_id;
+		if (!sid) return;
+		ceilingInput =
+			selectedSession?.live_notional_ceiling_usd != null
+				? String(selectedSession.live_notional_ceiling_usd)
+				: '';
+		ceilingEditFor = sid;
+	}
+
+	async function handleSaveCeiling(): Promise<void> {
+		const sid = selectedSession?.strategy_id;
+		if (!selectedSession || !sid || ceilingSaving) return;
+		const value = Number(ceilingInput);
+		if (!Number.isFinite(value) || value <= 0) {
+			error = 'Enter a ceiling > 0 (USD).';
+			return;
+		}
+		ceilingSaving = true;
+		error = null;
+		try {
+			await setLiveNotionalCeiling(sid, value);
+			updateSession({ ...selectedSession, live_notional_ceiling_usd: value });
+			ceilingEditFor = null;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update the live notional ceiling.';
+		} finally {
+			ceilingSaving = false;
+		}
 	}
 
 	function handleAdjustLevel(kind: 'sl' | 'tp', clear = false): void {
@@ -2859,6 +2896,35 @@
 						<span class="text-gray-500">Default</span>
 						<span class="text-white font-bold ml-1">{humanizeLabel(selectedSession.trade_mode ?? 'long_only')}</span>
 					</span>
+					{#if isLiveSelected}
+						<span class="inline-flex items-center" title="Go-live notional ceiling: the largest order notional (USD) this strategy may open live. Opens above the ceiling are refused, not downsized.">
+							<span class="text-gray-500">Ceiling</span>
+							{#if ceilingEditFor === selectedSession.strategy_id}
+								<input
+									class="{MANUAL_INPUT_CLASS} w-16 ml-1"
+									type="number"
+									min="1"
+									step="50"
+									bind:value={ceilingInput}
+									disabled={ceilingSaving}
+									on:keydown={(e) => {
+										if (e.key === 'Enter') void handleSaveCeiling();
+										if (e.key === 'Escape') ceilingEditFor = null;
+									}}
+								/>
+								<button class="{MANUAL_BTN_CLASS} ml-1" disabled={ceilingSaving} on:click={handleSaveCeiling}>Save</button>
+								<button class="{MANUAL_BTN_CLASS} ml-1" disabled={ceilingSaving} on:click={() => (ceilingEditFor = null)}>Cancel</button>
+							{:else}
+								<span class="text-white font-bold ml-1">
+									{selectedSession.live_notional_ceiling_usd != null ? formatPrice(selectedSession.live_notional_ceiling_usd) : 'none'}
+								</span>
+								<button
+									class="text-[#888] hover:text-white text-[10px] uppercase font-bold ml-1"
+									on:click={startCeilingEdit}
+								>Edit</button>
+							{/if}
+						</span>
+					{/if}
 					{#if blockedMarkers.length > 0}
 						{@const lastBlocked = latestBlockedMarker()}
 						<span title={lastBlocked?.reason ?? 'Blocked signal'}>

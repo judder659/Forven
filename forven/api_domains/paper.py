@@ -631,6 +631,17 @@ def _collect_compat_paper_sessions(
     # daemon snapshot (no per-session exchange round-trip — WS-starvation safe).
     real_account = _resolve_real_account_snapshot(daemon_state)
 
+    # GO-LIVE-1 ceilings, read once — live opens above the ceiling are refused,
+    # so the session card must show (and let the operator edit) the bound.
+    live_ceilings: dict = {}
+    if include_deployed:
+        try:
+            from forven.exchange.risk import get_live_notional_ceilings
+
+            live_ceilings = get_live_notional_ceilings()
+        except Exception:
+            live_ceilings = {}
+
     sessions: list[dict] = []
     for row in rows:
         strategy_row = dict(row)
@@ -757,7 +768,13 @@ def _collect_compat_paper_sessions(
         account_margin_used: float | None = None
         account_network: str | None = None
         account_synced_at: str | None = None
+        live_notional_ceiling_usd: float | None = None
         if is_deployed:
+            ceiling_entry = live_ceilings.get(strategy_id)
+            if isinstance(ceiling_entry, dict):
+                ceiling_value = trading_domain._coerce_optional_float(ceiling_entry.get("ceiling_usd"))
+                if ceiling_value and ceiling_value > 0:
+                    live_notional_ceiling_usd = ceiling_value
             if real_account["available"]:
                 account_value = float(real_account["account_value"])
                 account_withdrawable = real_account["withdrawable"]
@@ -873,6 +890,9 @@ def _collect_compat_paper_sessions(
                 "balance_source": balance_source,
                 "account_network": account_network,
                 "account_synced_at": account_synced_at,
+                # GO-LIVE-1: per-asset notional ceiling enforced on every live
+                # open (None = no per-strategy cap; deployed sessions only).
+                "live_notional_ceiling_usd": live_notional_ceiling_usd,
                 "total_pnl": total_pnl,
                 "total_pnl_pct": total_pnl_pct,
                 "total_trades": len(all_closed_trade_views),
