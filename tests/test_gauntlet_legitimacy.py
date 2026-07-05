@@ -29,6 +29,33 @@ def test_parameter_jitter_with_iterations_and_pass_rate_is_legitimate():
     assert verdict["ok"] is True
 
 
+def test_parameter_jitter_not_applicable_is_legitimate():
+    # Composites / fixed-logic strategies expose no numeric params: the analysis
+    # records an explicit NOT_APPLICABLE verdict with zero reruns. That must count
+    # as legitimate evidence, not a failed gate (P25-4 skips it via absent pass_rate).
+    verdict = validate_robustness_payload(
+        "parameter_jitter",
+        {
+            "verdict": "NOT_APPLICABLE",
+            "not_applicable": True,
+            "n_variants": 0,
+            "iterations": [],
+            "verdict_reason": "strategy exposes no numeric parameters to jitter",
+        },
+    )
+
+    assert verdict["ok"] is True
+    assert "not applicable" in verdict["reason"]
+
+
+def test_parameter_jitter_without_rate_and_iterations_still_fails_legitimacy():
+    # The bypass is ONLY for the explicit not_applicable flag — a payload that
+    # simply lacks evidence must keep failing.
+    verdict = validate_robustness_payload("parameter_jitter", {"verdict": "PASS"})
+
+    assert verdict["ok"] is False
+
+
 def test_monte_carlo_with_one_trade_is_not_legitimate():
     verdict = validate_robustness_payload(
         "monte_carlo",

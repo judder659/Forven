@@ -466,15 +466,66 @@ async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict
         params=params,
     )
     now = datetime.now(timezone.utc).isoformat()
+    result_payload = result if isinstance(result, dict) else {"result": result}
+    error_text = str(result_payload.get("error") or "").strip()
+    _availability = result_payload.get("data_availability")
+    data_blocked = bool(
+        isinstance(_availability, dict) and _availability.get("blocked")
+    )
     output = {
-        "response": "Deterministic crucible planner backtest completed.",
+        "response": (
+            f"Deterministic crucible planner backtest failed: {error_text}"
+            if error_text
+            else "Deterministic crucible planner backtest completed."
+        ),
         "execution": "deterministic_crucible_backtest",
         "strategy_id": strategy_id,
         "crucible_id": payload.get("crucible_id") or payload.get("hypothesis_id"),
         "completed_at": now,
-        "result": result if isinstance(result, dict) else {"result": result},
+        "result": result_payload,
     }
     safe_output = _json_safe_task_output(output)
+
+    if error_text:
+        # A blocked/errored backtest is NOT a completed one. Marking it 'done'
+        # made the planner treat the step as satisfied and advance the doomed
+        # candidate to validation (S05838 got three blocked backtests recorded
+        # as 'done' and then a WFA task, 2026-07-04). 'failed' feeds the
+        # planner's per-strategy retry cap instead.
+        with get_db() as conn:
+            conn.execute(
+                """
+                UPDATE agent_tasks
+                SET status = 'failed',
+                    output_data = ?,
+                    error = ?,
+                    completed_at = ?,
+                    retry_at = NULL
+                WHERE id = ? AND status NOT IN ('done', 'reviewed', 'failed')
+                """,
+                (json.dumps(safe_output, default=str), error_text[:500], now, task_id),
+            )
+            append_task_audit_event(
+                conn,
+                task_id,
+                "failed",
+                {
+                    "agent_id": "simulation-agent",
+                    "execution": "deterministic_crucible_backtest",
+                    "strategy_id": strategy_id,
+                    "data_blocked": data_blocked,
+                },
+            )
+            log_activity(
+                "warning",
+                "runtime_worker",
+                f"Deterministic crucible backtest failed for {strategy_id}: {error_text[:200]}",
+                {"task_id": task_id, "strategy_id": strategy_id, "data_blocked": data_blocked},
+                conn=conn,
+            )
+        if data_blocked:
+            _park_data_blocked_strategy(strategy_id, error_text)
+        return safe_output if isinstance(safe_output, dict) else output
 
     with get_db() as conn:
         conn.execute(
@@ -506,6 +557,41 @@ async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict
             conn=conn,
         )
     return safe_output if isinstance(safe_output, dict) else output
+
+
+def _park_data_blocked_strategy(strategy_id: str, reason: str) -> None:
+    """Move a strategy whose required data feed is unavailable to research_only.
+
+    A data-blocked candidate can never produce a trading backtest, so leaving
+    it in quick_screen just burns planner cycles re-scheduling backtests that
+    the availability precheck will always abort. research_only is the revival
+    parking stage: try_research_recovery re-checks data availability and
+    promotes it back if the feed ever appears. Best-effort — failures only log.
+    """
+    from forven.db import get_db, log_activity
+
+    try:
+        from forven.brain import transition_stage
+
+        transition = transition_stage(
+            strategy_id,
+            "research_only",
+            reason=f"Data-blocked: {reason[:300]}",
+            actor="system",
+        )
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE strategies SET status_reason = ? WHERE id = ?",
+                (f"data_blocked: {reason[:400]}", strategy_id),
+            )
+        log_activity(
+            "warning",
+            "runtime_worker",
+            f"Parked data-blocked strategy {strategy_id} in research_only",
+            {"strategy_id": strategy_id, "transition": transition, "reason": reason[:300]},
+        )
+    except Exception as exc:
+        log.warning("Could not park data-blocked strategy %s: %s", strategy_id, exc)
 
 
 def _get_bot_lock_status() -> dict:

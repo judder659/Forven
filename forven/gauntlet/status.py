@@ -208,6 +208,24 @@ def get_strategy_gauntlet_status(strategy_id: str) -> dict[str, Any]:
         step_already_passed = str(step.get("status") or "").lower() == "passed"
         if result and not step_already_passed:
             payload.update(result)
+        # Fold-rescue transparency (issue #18): a rescued walk_forward step passed the
+        # workflow even though the raw WFA verdict was FAIL (its fold pass rate cleared
+        # the floor). Without these fields the step renders as an outright PASS while
+        # the persisted artifact still says FAIL — indistinguishable and contradictory.
+        # Keyed off wfa_verdict_raw so rescued rows persisted before the explicit flag
+        # existed surface retroactively.
+        step_output = step.get("output") if isinstance(step.get("output"), dict) else {}
+        if step_key == "walk_forward" and step_already_passed and (
+            step_output.get("rescued_by_fold_pass_rate") or step_output.get("wfa_verdict_raw")
+        ):
+            payload["verdict"] = "PASS"
+            payload["rescued_by_fold_pass_rate"] = True
+            payload["verdict_raw"] = str(step_output.get("wfa_verdict_raw") or "FAIL").upper()
+            if step_output.get("fold_pass_rate") is not None:
+                try:
+                    payload["fold_pass_rate"] = float(step_output["fold_pass_rate"])
+                except (TypeError, ValueError):
+                    pass
         # stale=True only when BOTH hashes are known and differ; legacy rows
         # without a stamped hash stay None ("unknown") rather than crying wolf.
         stored_hash = payload.get("params_hash")

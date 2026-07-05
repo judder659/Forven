@@ -33,8 +33,21 @@ describe('notificationRouter', () => {
 		expect(list).toHaveLength(1);
 		expect(list[0].type).toBe('success');
 		expect(list[0].message).toContain('LONG BTC');
-		expect(list[0].href).toBe('/trading');
-		expect(get(navEventPulses)['/trading']).toMatchObject({ count: 1, severity: 'success' });
+		expect(list[0].href).toBe('/paper-trades');
+		expect(get(navEventPulses)['/paper-trades']).toMatchObject({ count: 1, severity: 'success' });
+	});
+
+	it('routes live fills to the Live Trades tab', () => {
+		emit({
+			type: 'trade',
+			data: { opened: [{ id: 'l1', asset: 'BTC', direction: 'long', execution_type: 'live', source: 'scanner' }], closed: [] },
+		});
+
+		const list = get(toasts);
+		expect(list).toHaveLength(1);
+		expect(list[0].href).toBe('/live-trades');
+		expect(get(navEventPulses)['/live-trades']).toMatchObject({ count: 1, severity: 'success' });
+		expect(get(navEventPulses)['/paper-trades']).toBeUndefined();
 	});
 
 	it('pulses red on close and colors the toast by pnl', () => {
@@ -47,7 +60,7 @@ describe('notificationRouter', () => {
 		expect(list).toHaveLength(1);
 		expect(list[0].type).toBe('error');
 		expect(list[0].message).toContain('-1.23%');
-		expect(get(navEventPulses)['/trading']).toMatchObject({ count: 1, severity: 'danger' });
+		expect(get(navEventPulses)['/paper-trades']).toMatchObject({ count: 1, severity: 'danger' });
 	});
 
 	it('aggregates a mass close into a single toast', () => {
@@ -57,7 +70,25 @@ describe('notificationRouter', () => {
 		const list = get(toasts);
 		expect(list).toHaveLength(1);
 		expect(list[0].message).toBe('Closed 5 positions');
-		expect(get(navEventPulses)['/trading']?.count).toBe(5);
+		expect(list[0].href).toBe('/paper-trades');
+		expect(get(navEventPulses)['/paper-trades']?.count).toBe(5);
+	});
+
+	it('lands a mixed paper+live mass close on the All Trades ledger', () => {
+		const closed = [
+			{ id: 'p1', asset: 'BTC', direction: 'long', execution_type: 'paper', pnl_pct: 0.01 },
+			{ id: 'p2', asset: 'ETH', direction: 'long', execution_type: 'paper', pnl_pct: 0.01 },
+			{ id: 'l1', asset: 'SOL', direction: 'short', execution_type: 'live', pnl_pct: -0.02 },
+			{ id: 'l2', asset: 'BTC', direction: 'short', execution_type: 'live', pnl_pct: 0.03 },
+		];
+		emit({ type: 'trade', data: { opened: [], closed } });
+
+		const list = get(toasts);
+		expect(list).toHaveLength(1);
+		expect(list[0].href).toBe('/all-trades');
+		// Pulses still land on each trade's own tab.
+		expect(get(navEventPulses)['/paper-trades']?.count).toBe(2);
+		expect(get(navEventPulses)['/live-trades']?.count).toBe(2);
 	});
 
 	it('skips the open toast for paper-session fills (position card covers them) but still pulses', () => {
@@ -67,14 +98,15 @@ describe('notificationRouter', () => {
 		});
 
 		expect(get(toasts)).toHaveLength(0);
-		expect(get(navEventPulses)['/trading']).toMatchObject({ count: 1, severity: 'success' });
+		expect(get(navEventPulses)['/paper-trades']).toMatchObject({ count: 1, severity: 'success' });
 	});
 
 	it('routes bot trades to the Bot Factory tab', () => {
 		emit({ type: 'trade', data: { opened: [{ id: 'b1', asset: 'DOGE', direction: 'long', source: 'bot:42' }], closed: [] } });
 
 		expect(get(navEventPulses)['/bot-factory']).toMatchObject({ count: 1, severity: 'success' });
-		expect(get(navEventPulses)['/trading']).toBeUndefined();
+		expect(get(navEventPulses)['/paper-trades']).toBeUndefined();
+		expect(get(navEventPulses)['/live-trades']).toBeUndefined();
 	});
 
 	it('ignores activity-log shaped trade events so a fill never notifies twice', () => {
@@ -99,11 +131,11 @@ describe('notificationRouter', () => {
 	});
 
 	it('suppresses the pulse for the route being viewed but still toasts', () => {
-		setRoute('/trading');
+		setRoute('/paper-trades');
 		emit({ type: 'trade', data: { opened: [{ id: 't9', asset: 'SOL', direction: 'long' }], closed: [] } });
 
 		expect(get(toasts)).toHaveLength(1);
-		expect(get(navEventPulses)['/trading']).toBeUndefined();
+		expect(get(navEventPulses)['/paper-trades']).toBeUndefined();
 	});
 
 	it('toasts kill-switch flips only from state-diff payloads', () => {
@@ -121,9 +153,9 @@ describe('notificationRouter', () => {
 		emit({ type: 'trade', data: { opened: [{ id: 'a', asset: 'BTC', direction: 'long' }], closed: [] } });
 		emit({ type: 'trade', data: { opened: [], closed: [{ id: 'a', asset: 'BTC', direction: 'long', pnl_pct: 0.02 }] } });
 
-		expect(get(navEventPulses)['/trading']).toMatchObject({ count: 2, severity: 'danger' });
+		expect(get(navEventPulses)['/paper-trades']).toMatchObject({ count: 2, severity: 'danger' });
 
-		markNavIndicatorSeen('/trading');
-		expect(get(navEventPulses)['/trading']).toBeUndefined();
+		markNavIndicatorSeen('/paper-trades');
+		expect(get(navEventPulses)['/paper-trades']).toBeUndefined();
 	});
 });

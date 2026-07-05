@@ -1,11 +1,15 @@
+import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
-import { getForvenDashboard } from '$lib/api';
-import type { ForvenDashboardResponse } from '$lib/api';
 
 export const ssr = false;
 
-export const load: PageLoad = async () => {
-	const dashboardResult = await Promise.allSettled([getForvenDashboard()]);
-	const dashboard = dashboardResult[0].status === 'fulfilled' ? dashboardResult[0].value : null;
-	return { dashboard } satisfies { dashboard: ForvenDashboardResponse | null };
+// Legacy combined Trades page — split into /paper-trades and /live-trades.
+// Redirect by the old ?view= param and carry the ?select= deep-link (used by
+// old All Trades blotter links and external bookmarks) to the right page.
+export const load: PageLoad = ({ url }) => {
+	const view = url.searchParams.get('view');
+	const select = url.searchParams.get('select');
+	const target = view === 'live' ? '/live-trades' : '/paper-trades';
+	const query = select ? `?select=${encodeURIComponent(select)}` : '';
+	redirect(307, `${target}${query}`);
 };

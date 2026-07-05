@@ -5582,7 +5582,8 @@ def _describe_strategy(strategy_type: str | None, params: dict) -> str:
             f"Covers at oversold (below {k_os})."
         )
     if st == "funding":
-        threshold = params.get("entry_threshold", 0.00003)
+        # Mirrors FundingStrategy.default_params (per-hour funding convention).
+        threshold = params.get("entry_threshold", 0.00000375)
         threshold_pct = float(threshold) * 100
         return (
             f"Buys when crypto futures funding becomes extremely negative "

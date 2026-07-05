@@ -9,7 +9,7 @@ from uuid import uuid4
 import httpx
 
 from forven.db import get_db
-from forven.verdict_engine import build_strategy_verdict_blob
+from forven.verdict_engine import build_strategy_verdict_blob, get_overall_verdict
 
 from .context import _current_agent_id_var, _current_strategy_id_var, _current_task_display_id_var
 from .tool_registry import register_tool
@@ -269,6 +269,26 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
     merged_tests.update(normalized_tests)
     metrics["verdict_tests"] = merged_tests
     verdict_blob["tests"] = merged_tests
+
+    # Recompute the overall status over the MERGED test set. The incoming
+    # verdict may cover only a subset of tests (the tool lets callers select
+    # them); without this recompute a passing subset overwrites an earlier
+    # full-suite FAIL as the strategy's persisted overall verdict — that is
+    # exactly how S05838 got a "pass" blob while its own merged tests still
+    # showed sample_size FAIL (2026-07-04).
+    merged_dict_tests = {k: v for k, v in merged_tests.items() if isinstance(v, dict)}
+    overall = get_overall_verdict(merged_dict_tests)
+    verdict_blob["status"] = overall
+    statuses = [
+        str(payload.get("status") or "pending").strip().lower()
+        for payload in merged_dict_tests.values()
+    ]
+    summary = dict(verdict_blob["summary"]) if isinstance(verdict_blob.get("summary"), dict) else {}
+    summary["overall"] = overall
+    summary["pass_count"] = statuses.count("pass")
+    summary["warn_count"] = statuses.count("warn")
+    summary["fail_count"] = statuses.count("fail")
+    verdict_blob["summary"] = summary
     updated_at = datetime.now(timezone.utc).isoformat()
 
     from forven.db import get_db

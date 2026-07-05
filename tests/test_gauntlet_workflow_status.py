@@ -190,6 +190,100 @@ def test_gauntlet_status_payload_is_strict_json_with_poisoned_step(forven_db):
     assert payload["ok"] is True
 
 
+# =====================================================================================
+# 2026-07-04 — walk-forward fold-rescue transparency (issue #18)
+# =====================================================================================
+
+
+def _rescued_walk_forward_setup(step_output: dict) -> str:
+    """Strategy + workflow with a fold-rescued walk_forward step AND the contradictory
+    persisted artifact (raw verdict FAIL) that motivated the issue."""
+    strategy_id = _create_strategy()
+    workflow = create_or_get_workflow(
+        strategy_id=strategy_id,
+        created_by="pytest",
+        settings_snapshot={"gauntlet": {"required_tests": ["walk_forward"]}},
+    )
+    detail = get_workflow_detail(workflow["id"])
+    wf_step = next(step for step in detail["steps"] if step["step_key"] == "walk_forward")
+    update_step_status(wf_step["id"], "passed", output=step_output, result_id="WF-R1")
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO backtest_results (
+                result_id, strategy_id, result_type, symbol, timeframe, metrics_json, config_json, created_at
+            )
+            VALUES (?, ?, 'walk_forward', 'BTC/USDT', '1h', ?, ?, '2026-07-04T00:00:00+00:00')
+            """,
+            (
+                "WF-R1",
+                strategy_id,
+                json.dumps({"verdict": "FAIL"}),
+                json.dumps({"status": "succeeded"}),
+            ),
+        )
+    return strategy_id
+
+
+def test_gauntlet_status_surfaces_fold_rescue_distinctly(forven_db):
+    strategy_id = _rescued_walk_forward_setup(
+        {
+            "result_id": "WF-R1",
+            "verdict": "PASS",
+            "wfa_verdict_raw": "FAIL",
+            "rescued_by_fold_pass_rate": True,
+            "fold_pass_rate": 0.4,
+        }
+    )
+
+    status = get_strategy_gauntlet_status(strategy_id)
+    wf = status["tests"]["walk_forward"]
+
+    # Still counts as passed (no gating change) ...
+    assert wf["status"] == "passed"
+    assert wf["verdict"] == "PASS"
+    assert "walk_forward" not in status["missing_required"]
+    # ... but the rescue is visible instead of masquerading as an outright pass.
+    assert wf["rescued_by_fold_pass_rate"] is True
+    assert wf["verdict_raw"] == "FAIL"
+    assert wf["fold_pass_rate"] == 0.4
+
+
+def test_gauntlet_status_surfaces_legacy_rescue_rows_without_flag(forven_db):
+    # Rows persisted before rescued_by_fold_pass_rate existed carry only
+    # wfa_verdict_raw — they must surface retroactively.
+    strategy_id = _rescued_walk_forward_setup(
+        {"result_id": "WF-R1", "verdict": "PASS", "wfa_verdict_raw": "FAIL", "fold_pass_rate": 0.5}
+    )
+
+    status = get_strategy_gauntlet_status(strategy_id)
+    wf = status["tests"]["walk_forward"]
+
+    assert wf["status"] == "passed"
+    assert wf["verdict"] == "PASS"
+    assert wf["rescued_by_fold_pass_rate"] is True
+    assert wf["verdict_raw"] == "FAIL"
+
+
+def test_gauntlet_status_outright_walk_forward_pass_has_no_rescue_markers(forven_db):
+    strategy_id = _create_strategy()
+    workflow = create_or_get_workflow(
+        strategy_id=strategy_id,
+        created_by="pytest",
+        settings_snapshot={"gauntlet": {"required_tests": ["walk_forward"]}},
+    )
+    detail = get_workflow_detail(workflow["id"])
+    wf_step = next(step for step in detail["steps"] if step["step_key"] == "walk_forward")
+    update_step_status(wf_step["id"], "passed", output={"result_id": "WF-OK", "verdict": "PASS"}, result_id="WF-OK")
+
+    status = get_strategy_gauntlet_status(strategy_id)
+    wf = status["tests"]["walk_forward"]
+
+    assert wf["status"] == "passed"
+    assert "rescued_by_fold_pass_rate" not in wf
+    assert "verdict_raw" not in wf
+
+
 def test_gauntlet_status_rescales_legacy_fraction_composite(forven_db):
     # Legacy strategies carry `metrics.robustness` as a 0-1 fraction; the status
     # payload contract (and the min_robustness_score floor) is 0-100. A 0.726 must

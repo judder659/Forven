@@ -170,6 +170,12 @@ class IntakeRegistration:
     # gauntlet backfill only picks up quick_screen/gauntlet) with the reason here.
     lookahead_blocked: bool = False
     lookahead_reason: str | None = None
+    # Data-availability probe outcome (GATE D). When a required enrichment feed
+    # is unavailable and cannot be auto-downloaded, the strategy registers as
+    # research_only — it can never produce a trading backtest until the data
+    # exists (S05577/S05838 phantom class).
+    data_blocked: bool = False
+    data_block_reason: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -339,6 +345,34 @@ def scan_custom_strategies(*, register: bool = False) -> dict:
                 modname, type_name, crash_reason,
             )
 
+        # GATE D: data-availability probe (see register_custom_strategy_file).
+        # A strategy needing an unavailable, non-downloadable feed can never
+        # produce a trading backtest — park it as research_only at birth.
+        data_block_reason = None
+        try:
+            from forven.strategies.data_availability import evaluate_data_availability
+
+            _avail = evaluate_data_availability(
+                type_name,
+                asset.upper(),
+                _intended_timeframe(default_params),
+                strategy_cls=strategy_cls,
+            )
+            if _avail is not None and _avail.blocked:
+                data_block_reason = _avail.error or "required data feed unavailable"
+        except Exception as exc:
+            log.warning(
+                "Intake: data-availability probe errored for %s (failing open): %s",
+                modname, exc,
+            )
+        if data_block_reason:
+            if not cert_error:
+                cert_error = data_block_reason
+            log.warning(
+                "Intake: required data feed unavailable for %s (type=%s) — registering as research_only: %s",
+                modname, type_name, data_block_reason,
+            )
+
         existing_strategy = _find_existing_strategy_container(
             type_name=type_name,
             source_ref=source_ref,
@@ -370,8 +404,9 @@ def scan_custom_strategies(*, register: bool = False) -> dict:
             # Create DB container. ``certified`` may have been downgraded by the
             # lookahead probe above, so derive the stage from the (possibly
             # downgraded) local flag rather than cert.certified alone — a leak
-            # forces research_only even when certification itself passed.
-            initial_stage = "quick_screen" if certified else "research_only"
+            # forces research_only even when certification itself passed. A
+            # data-blocked strategy is also parked regardless of certification.
+            initial_stage = "quick_screen" if (certified and not data_block_reason) else "research_only"
             try:
                 from forven.db import create_strategy_container, get_db
                 stored_params = cert.canonical_params if certified else default_params
@@ -386,6 +421,11 @@ def scan_custom_strategies(*, register: bool = False) -> dict:
                         stage=initial_stage,
                     )
                     strategy_id = sid
+                    if data_block_reason:
+                        conn.execute(
+                            "UPDATE strategies SET status_reason = ? WHERE id = ?",
+                            (f"data_blocked: {data_block_reason[:400]}", strategy_id),
+                        )
             except Exception as exc:
                 log.warning("Intake: DB container creation failed for %s: %s", modname, exc)
 
@@ -594,7 +634,42 @@ def register_custom_strategy_file(
             modname, type_name, crash_reason,
         )
 
-    initial_stage = "research_only" if (lookahead_blocked or crash_reason) else "quick_screen"
+    # GATE D: data-availability probe. A strategy that reads enrichment feed
+    # columns (funding/liquidations/ls_ratio/...) that don't exist for its
+    # target symbol and cannot be auto-downloaded can never produce a trading
+    # backtest — every downstream backtest correctly aborts, but the candidate
+    # then burns planner/repair cycles as a phantom (S05577, S05838). Park it
+    # at birth as research_only with the real reason; fetchable feeds are
+    # auto-downloaded by the probe itself, so this only fires on genuinely
+    # unavailable data. Fails open on internal errors.
+    data_block_reason: str | None = None
+    try:
+        from forven.strategies.data_availability import evaluate_data_availability
+
+        _avail = evaluate_data_availability(
+            type_name,
+            str(asset).upper(),
+            _intended_timeframe(default_params),
+            strategy_cls=strategy_cls,
+        )
+        if _avail is not None and _avail.blocked:
+            data_block_reason = _avail.error or "required data feed unavailable"
+    except Exception as exc:
+        log.warning(
+            "Targeted intake: data-availability probe errored for %s (failing open): %s",
+            modname, exc,
+        )
+    if data_block_reason:
+        log.warning(
+            "Targeted intake: required data feed unavailable for %s (type=%s) — registering as research_only: %s",
+            modname, type_name, data_block_reason,
+        )
+
+    initial_stage = (
+        "research_only"
+        if (lookahead_blocked or crash_reason or data_block_reason)
+        else "quick_screen"
+    )
 
     existing_strategy = _find_existing_strategy_container(
         type_name=type_name,
@@ -628,6 +703,11 @@ def register_custom_strategy_file(
             record_strategy_in_session(
                 conn, session_id=clean_session_id, strategy_id=strategy_id
             )
+        if data_block_reason:
+            conn.execute(
+                "UPDATE strategies SET status_reason = ? WHERE id = ?",
+                (f"data_blocked: {data_block_reason[:400]}", strategy_id),
+            )
 
     registration = IntakeRegistration(
         module_name=modname,
@@ -643,6 +723,8 @@ def register_custom_strategy_file(
         session_id=clean_session_id,
         lookahead_blocked=lookahead_blocked,
         lookahead_reason=lookahead_reason,
+        data_blocked=bool(data_block_reason),
+        data_block_reason=data_block_reason,
     )
 
     log_activity(
@@ -660,6 +742,8 @@ def register_custom_strategy_file(
             "session_id": clean_session_id,
             "lookahead_blocked": lookahead_blocked,
             "lookahead_reason": lookahead_reason,
+            "data_blocked": bool(data_block_reason),
+            "data_block_reason": data_block_reason,
         },
     )
 

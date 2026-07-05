@@ -1173,6 +1173,10 @@ def _robustness_outcome(
                         "n_folds": len(splits),
                         "pass_rate": fold_pass_rate,
                         "wfa_verdict_raw": verdict,  # preserve original verdict for audit
+                        # Explicit rescue marker (issue #18) so reporting can distinguish
+                        # a fold-rescued step from an outright WFA pass. status.py keys
+                        # off wfa_verdict_raw too, covering rows persisted before this flag.
+                        "rescued_by_fold_pass_rate": True,
                         "payload": response,
                     }
             except Exception:

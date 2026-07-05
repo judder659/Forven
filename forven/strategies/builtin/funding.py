@@ -23,8 +23,14 @@ class FundingStrategy(BaseStrategy):
 
     @property
     def default_params(self) -> dict:
+        # The enriched ``funding_rate`` column is a PER-HOUR rate (HL is natively
+        # hourly; Binance 8h rates are divided by 8 — one convention across both
+        # sources, see market_data.fetch_binance_funding_series). These thresholds
+        # are the original per-8h calibration (0.003% / 0.001%) divided by 8: read
+        # against the per-hour column, the per-8h values only fired on ~0.5% of
+        # funding events in 6.5y of BTC/ETH history and the strategy never traded.
         return {
-            "entry_threshold": 0.00003, "exit_threshold": 0.00001,
+            "entry_threshold": 0.00000375, "exit_threshold": 0.00000125,
             "regime_ema200": True, "leverage": 3.0,
         }
 
@@ -34,7 +40,7 @@ class FundingStrategy(BaseStrategy):
 
     def describe(self) -> str:
         p = self.params
-        threshold_pct = p.get("entry_threshold", 0.00003) * 100
+        threshold_pct = p.get("entry_threshold", 0.00000375) * 100
         return (
             f"Buys when crypto futures funding becomes extremely negative "
             f"(shorts overpaying longs, below -{threshold_pct:.4f}%). "
@@ -54,8 +60,8 @@ class FundingStrategy(BaseStrategy):
         """
         p = self.params
         close = df["close"]
-        entry_threshold = p.get("entry_threshold", 0.00003)
-        exit_threshold = p.get("exit_threshold", 0.00001)
+        entry_threshold = p.get("entry_threshold", 0.00000375)
+        exit_threshold = p.get("exit_threshold", 0.00000125)
 
         if "funding_rate" not in df.columns:
             empty = pd.Series(False, index=df.index)

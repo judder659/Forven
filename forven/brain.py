@@ -1504,21 +1504,45 @@ def transition_stage(
                     )
 
                 # CANONICAL BACKTEST GUARD: Reject quick_screen → gauntlet without canonical backtest evidence.
-                has_backtest = conn.execute(
+                # Evidence means a SUCCESSFUL result_type='backtest' row with at least one
+                # trade — not merely any backtest_results row. A failed optimization
+                # artifact ({"status":"failed","error":...}, 0 trades) satisfied the old
+                # any-row check and walked S05838 into the gauntlet with zero successful
+                # backtests (2026-07-04).
+                backtest_rows = conn.execute(
                     """
-                    SELECT 1 FROM backtest_results br
+                    SELECT br.metrics_json FROM backtest_results br
                     LEFT JOIN backtest_result_trash bt ON bt.result_id = br.result_id
                     WHERE br.strategy_id = ?
+                      AND br.result_type = 'backtest'
                       AND bt.result_id IS NULL
                       AND br.deleted_at IS NULL
-                    LIMIT 1
+                    ORDER BY datetime(br.created_at) DESC
+                    LIMIT 50
                     """,
                     (strategy_id,),
-                ).fetchone()
+                ).fetchall()
+                has_backtest = False
+                for _bt_row in backtest_rows:
+                    try:
+                        _bt_metrics = json.loads(_bt_row["metrics_json"] or "{}")
+                    except Exception:
+                        continue
+                    if not isinstance(_bt_metrics, dict):
+                        continue
+                    if _bt_metrics.get("error") or str(_bt_metrics.get("status") or "").lower() == "failed":
+                        continue
+                    try:
+                        _bt_trades = float(_bt_metrics.get("total_trades") or 0)
+                    except (TypeError, ValueError):
+                        _bt_trades = 0.0
+                    if _bt_trades >= 1:
+                        has_backtest = True
+                        break
                 if not has_backtest:
-                    log.warning("CANONICAL BACKTEST GUARD BLOCKED %s: no backtest evidence for gauntlet entry", strategy_id)
+                    log.warning("CANONICAL BACKTEST GUARD BLOCKED %s: no successful traded backtest for gauntlet entry", strategy_id)
                     return _record_blocked_transition(
-                        "Gauntlet entry requires canonical backtest evidence",
+                        "Gauntlet entry requires a successful canonical backtest with at least one trade",
                         "canonical_backtest_required",
                     )
 
@@ -3572,7 +3596,7 @@ def try_research_recovery(strategy_id: str) -> dict:
     """
     with get_db() as conn:
         row = conn.execute(
-            "SELECT id, stage, type, params FROM strategies WHERE id = ?",
+            "SELECT id, stage, type, params, symbol, timeframe FROM strategies WHERE id = ?",
             (strategy_id,),
         ).fetchone()
         if not row:
@@ -3597,8 +3621,38 @@ def try_research_recovery(strategy_id: str) -> dict:
                 (f"tier{tier}:{canonical}", strategy_id),
             )
             return {"promoted": False, "reason": cert.primary_blocking_reason()}
+        strategy_type = str(row["type"] or "")
+        strategy_symbol = str(row["symbol"] or "BTC").strip() or "BTC"
+        strategy_timeframe = str(row["timeframe"] or "1h").strip() or "1h"
 
-    # Certification passed — promote via transition_stage
+    # Data-availability gate: certification only proves the CLASS executes; a
+    # strategy parked because its required feed doesn't exist would otherwise
+    # re-certify instantly and bounce back into quick_screen while still
+    # untestable (S05838 was un-parked 18s after the brain parked it,
+    # 2026-07-04). Runs outside the DB context — the probe may synchronously
+    # auto-fetch fetchable feeds. Fails open on internal errors.
+    try:
+        from forven.strategies.data_availability import evaluate_data_availability
+
+        _avail = evaluate_data_availability(
+            strategy_type,
+            strategy_symbol,
+            strategy_timeframe,
+            strategy_id=strategy_id,
+        )
+    except Exception as exc:
+        log.warning("Research recovery data-availability probe errored for %s: %s", strategy_id, exc)
+        _avail = None
+    if _avail is not None and _avail.blocked:
+        block_reason = _avail.error or "required data feed unavailable"
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE strategies SET status_reason = ? WHERE id = ?",
+                (f"data_blocked: {block_reason[:400]}", strategy_id),
+            )
+        return {"promoted": False, "reason": block_reason}
+
+    # Certification + data availability passed — promote via transition_stage
     result = transition_stage(
         strategy_id=strategy_id,
         target_stage="quick_screen",

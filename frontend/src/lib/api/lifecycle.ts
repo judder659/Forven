@@ -714,6 +714,12 @@ export interface GauntletTestEntry {
 	// longer describes the current strategy). null/undefined = staleness unknown
 	// (legacy rows without a stamped params hash).
 	stale?: boolean | null;
+	// Walk-forward fold-rescue (issue #18): the step passed the workflow even though
+	// the raw WFA verdict was FAIL, because the fold pass rate cleared the floor.
+	// verdict_raw carries the original verdict; fold_pass_rate is a 0-1 fraction.
+	rescued_by_fold_pass_rate?: boolean;
+	verdict_raw?: string;
+	fold_pass_rate?: number;
 }
 
 // Deflated Sharpe payload embedded in the gauntlet status response. n_trials is

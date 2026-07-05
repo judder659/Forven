@@ -165,8 +165,9 @@ DEFAULT_PIPELINE_CONFIG = {
         "wfa_pass_rate_band": [0.30, 0.60],
         # Fraction of walk-forward OOS folds that must be positive for the WFA verdict to
         # count as passed at the capital gate. Wired so it can be loosened in adverse regimes.
-        # 0.40 = 2/5 folds positive: achievable-paper while still requiring multi-fold
-        # consistency (not a single lucky fold). The strict paper->live gate enforces edge.
+        # 0.33 = 1 in 3 evaluated folds positive (2/5 on a full 5-fold run): achievable-paper
+        # while still requiring multi-fold consistency (not a single lucky fold). The strict
+        # paper->live gate enforces edge.
         "wfa_fold_pass_rate_min": 0.33,
         # Minimum OOS trades a walk-forward fold must have to count toward the
         # fold pass-rate. Near-empty folds (a trend system sitting out a flat

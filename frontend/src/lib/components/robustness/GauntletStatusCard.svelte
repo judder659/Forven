@@ -190,6 +190,11 @@
 	function pillTone(entry: GauntletTestEntry | null | undefined): string {
 		const s = (entry?.status ?? 'not_started').toLowerCase();
 		const v = (entry?.verdict ?? '').toUpperCase();
+		if ((s === 'succeeded' || s === 'passed') && entry?.rescued_by_fold_pass_rate) {
+			// Fold-rescued: passed the workflow on the fold floor, not on the raw
+			// WFA verdict — amber so it reads differently from an outright pass.
+			return 'border-amber-900 bg-amber-500/10 text-amber-400';
+		}
 		if ((s === 'succeeded' || s === 'passed') && (!v || v === 'PASS')) {
 			return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
 		}
@@ -208,6 +213,7 @@
 	function pillLabel(entry: GauntletTestEntry | null | undefined): string {
 		const s = (entry?.status ?? 'not_started').toLowerCase();
 		const v = (entry?.verdict ?? '').toUpperCase();
+		if ((s === 'succeeded' || s === 'passed') && entry?.rescued_by_fold_pass_rate) return 'PASS*';
 		if ((s === 'succeeded' || s === 'passed') && v) return v;
 		if (s === 'succeeded' || s === 'passed') return 'PASS';
 		if (s === 'running' || s === 'submitted') return 'RUN';
@@ -219,6 +225,13 @@
 		if (s === 'cancelled') return 'CXL';
 		if (s === 'not_started') return 'OFF';
 		return s.toUpperCase().slice(0, 6);
+	}
+
+	function rescueTitle(key: GauntletTestKey, entry: GauntletTestEntry): string {
+		const raw = (entry.verdict_raw ?? 'FAIL').toUpperCase();
+		const r = entry.fold_pass_rate;
+		const folds = typeof r === 'number' && isFinite(r) ? ` (${Math.round(r * 100)}% of folds profitable)` : '';
+		return `${TEST_LABELS[key]}: fold-rescued — the overall walk-forward verdict was ${raw}, but the fold pass rate cleared the floor${folds}, so the strategy proceeds to the paper gate, which re-checks the fold floor. Not the same as passing WFA outright.`;
 	}
 
 	function isCompleted(entry: GauntletTestEntry | null | undefined): boolean {
@@ -339,9 +352,11 @@
 					class={`border px-2 py-1.5 text-left transition-colors focus:outline-none focus:border-[#888] ${tileTone(key)}`}
 					title={entry?.stale
 						? `${TEST_LABELS[key]}: strategy params changed AFTER this test ran — its verdict no longer describes the current strategy. Re-run to revalidate.`
-						: entry?.error
-							? `${TEST_LABELS[key]}: ${entry.error}`
-							: TEST_LABELS[key]}
+						: entry?.rescued_by_fold_pass_rate
+							? rescueTitle(key, entry)
+							: entry?.error
+								? `${TEST_LABELS[key]}: ${entry.error}`
+								: TEST_LABELS[key]}
 				>
 					<div class="truncate text-[10px] uppercase tracking-wider text-current opacity-70">{TEST_LABELS[key]}</div>
 					<div class="mt-0.5 flex items-center gap-1">

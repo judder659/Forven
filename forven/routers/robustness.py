@@ -1135,6 +1135,33 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
     if abs(original_return) <= 1.0:
         original_return *= 100.0
 
+    numeric_keys = [
+        key
+        for key, value in base_params.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    if not numeric_keys:
+        # No tunable numeric params (composites, fixed-logic strategies): every
+        # "perturbation" is byte-identical to the baseline, so the sweep measures
+        # nothing about parameter stability — it just burns n_iters backtests and
+        # the pass rate degenerates to the sign of the rerun-window Sharpe (a
+        # guaranteed P25-4 reject whenever that window is negative). A strategy
+        # with no fitted parameters cannot be parameter-overfit, so record an
+        # explicit NOT_APPLICABLE verdict. pass_rate/stable_pct are deliberately
+        # ABSENT: the P25-4 paper gate and the composite scorer both skip the
+        # jitter check when no rate is present.
+        return {
+            "method": "rerun_parameter_jitter",
+            "strategy_type": strategy_type,
+            "original_sharpe": round(original_sharpe, 3),
+            "original_return": round(original_return, 3),
+            "n_variants": 0,
+            "verdict": "NOT_APPLICABLE",
+            "not_applicable": True,
+            "verdict_reason": "strategy exposes no numeric parameters to jitter",
+            "iterations": [],
+        }
+
     # Rerun over the baseline's ACTUAL window (capped) so jitter sees the same
     # trades the baseline produced. The old fixed 720-bar (~30-day) recent window
     # produced zero trades for low-frequency strategies that didn't trade in the
@@ -1149,11 +1176,6 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
     if candles.empty:
         raise HTTPException(400, "No candle data available for parameter jitter reruns.")
 
-    numeric_keys = [
-        key
-        for key, value in base_params.items()
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    ]
     rng = np.random.default_rng(42)
     iterations: list[dict] = []
     sharpes: list[float] = []

@@ -28,6 +28,20 @@ _STRATEGY_TEST_ALIASES = {
 _VALID_DATASET_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d", "1w")
 _CANONICAL_STRATEGY_ID_PATTERN = re.compile(r"S\d+", flags=re.IGNORECASE)
 
+# Keys that constitute genuine backtest-performance evidence in a strategy's
+# metrics blob (vs. bookkeeping like "verdict_tests" or "fitness").
+_STRATEGY_METRICS_EVIDENCE_KEYS = (
+    "total_trades",
+    "sharpe",
+    "sharpe_ratio",
+    "profit_factor",
+    "win_rate",
+    "max_drawdown_pct",
+    "total_return_pct",
+    "in_sample",
+    "out_of_sample",
+)
+
 
 def _coerce_float(value: object, default: float = 0.0) -> float:
     try:
@@ -155,6 +169,14 @@ def _resolve_strategy_metrics_row(
     except Exception:
         metrics = {}
     if not isinstance(metrics, dict) or not metrics:
+        return None
+
+    # Only real performance evidence counts. A metrics blob holding nothing
+    # but verdict bookkeeping (e.g. "verdict_tests" written by a previous
+    # verdict run) must not resolve as backtest evidence — that circularity
+    # let a never-backtested strategy get verdicts computed from its own
+    # earlier verdict write (S05838, 2026-07-04).
+    if not any(metrics.get(key) is not None for key in _STRATEGY_METRICS_EVIDENCE_KEYS):
         return None
 
     oos_metrics = metrics.get("out_of_sample")
@@ -293,6 +315,15 @@ def normalize_strategy_verdict_tests(raw_tests: dict[str, Any] | None) -> dict[s
     return normalized_tests
 
 
+def _metric_evidence(payload: dict[str, Any], *keys: str) -> Any:
+    """First non-None value among ``keys``; None means NO evidence exists."""
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     payload = metrics if isinstance(metrics, dict) else {}
     config = load_pipeline_config()
@@ -303,21 +334,39 @@ def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[
     max_dd_req = _coerce_float(gate.get("max_drawdown_pct", 0.1), 0.1) * 100.0
     min_pf_req = _coerce_float(gate.get("min_profit_factor", 1.5), 1.5)
 
-    total_trades = int(_coerce_float(payload.get("total_trades", 0), 0.0))
-    sharpe = _coerce_float(payload.get("sharpe_ratio", payload.get("sharpe", 0.0)), 0.0)
-    wfa_ratio = _coerce_float(payload.get("wfa_ratio", 0.8), 0.8)
-    max_dd = _normalize_drawdown_pct(payload.get("max_drawdown_pct", 0.0))
-    pf = _coerce_float(payload.get("profit_factor", 1.0), 1.0)
-    win_rate = _normalize_win_rate(payload.get("win_rate", 0.0))
+    # Evidence-gated: a metric that is ABSENT from the payload yields a
+    # "pending" test, never a synthetic pass. The old behaviour substituted
+    # passing defaults (wfa_ratio 0.8, DD 0.0, PF 1.0), which let a strategy
+    # with no backtest at all clear every test except sample_size — S05838
+    # rode exactly that into the gauntlet (2026-07-04).
+    def _pending(threshold: Any, message: str) -> dict[str, Any]:
+        return {"status": "pending", "value": None, "threshold": threshold, "message": message}
 
-    return {
-        "sample_size": {
+    raw_trades = _metric_evidence(payload, "total_trades")
+    raw_sharpe = _metric_evidence(payload, "sharpe_ratio", "sharpe")
+    raw_wfa = _metric_evidence(payload, "wfa_ratio")
+    raw_dd = _metric_evidence(payload, "max_drawdown_pct")
+    raw_pf = _metric_evidence(payload, "profit_factor")
+    raw_win_rate = _metric_evidence(payload, "win_rate")
+
+    tests: dict[str, dict[str, Any]] = {}
+
+    if raw_trades is None:
+        tests["sample_size"] = _pending(min_trades_req, "No trade-count evidence (no backtest metrics)")
+    else:
+        total_trades = int(_coerce_float(raw_trades, 0.0))
+        tests["sample_size"] = {
             "status": "pass" if total_trades >= min_trades_req else "fail",
             "value": total_trades,
             "threshold": min_trades_req,
             "message": f"Trade count: {total_trades} (min: {min_trades_req})",
-        },
-        "statistical_significance": {
+        }
+
+    if raw_sharpe is None:
+        tests["statistical_significance"] = _pending(min_sharpe_req, "No Sharpe evidence (no backtest metrics)")
+    else:
+        sharpe = _coerce_float(raw_sharpe, 0.0)
+        tests["statistical_significance"] = {
             "status": "pass"
             if sharpe >= min_sharpe_req
             else "warn"
@@ -326,8 +375,13 @@ def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[
             "value": sharpe,
             "threshold": min_sharpe_req,
             "message": f"Sharpe: {sharpe:.2f} (min: {min_sharpe_req})",
-        },
-        "walk_forward": {
+        }
+
+    if raw_wfa is None:
+        tests["walk_forward"] = _pending(0.7, "No walk-forward evidence (WFA not run)")
+    else:
+        wfa_ratio = _coerce_float(raw_wfa, 0.0)
+        tests["walk_forward"] = {
             "status": "pass"
             if wfa_ratio >= 0.7
             else "warn"
@@ -336,8 +390,13 @@ def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[
             "value": wfa_ratio,
             "threshold": 0.7,
             "message": f"WFA ratio: {wfa_ratio:.2%}",
-        },
-        "monte_carlo": {
+        }
+
+    if raw_dd is None:
+        tests["monte_carlo"] = _pending(max_dd_req, "No drawdown evidence (no backtest metrics)")
+    else:
+        max_dd = _normalize_drawdown_pct(raw_dd)
+        tests["monte_carlo"] = {
             "status": "pass"
             if max_dd <= max_dd_req
             else "warn"
@@ -346,8 +405,13 @@ def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[
             "value": max_dd,
             "threshold": max_dd_req,
             "message": f"Max DD: {max_dd:.2f}% (max: {max_dd_req}%)",
-        },
-        "parameter_stability": {
+        }
+
+    if raw_pf is None:
+        tests["parameter_stability"] = _pending(min_pf_req, "No profit-factor evidence (no backtest metrics)")
+    else:
+        pf = _coerce_float(raw_pf, 0.0)
+        tests["parameter_stability"] = {
             "status": "pass"
             if pf >= min_pf_req
             else "warn"
@@ -356,19 +420,29 @@ def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[
             "value": pf,
             "threshold": min_pf_req,
             "message": f"Profit Factor: {pf:.2f} (min: {min_pf_req})",
-        },
-        "cost_stress": {
+        }
+
+    if raw_trades is None:
+        tests["cost_stress"] = _pending(None, "No backtest evidence (fees untested)")
+    else:
+        tests["cost_stress"] = {
             "status": "pass",
             "value": 0,
             "message": "Included in backtest fees",
-        },
-        "regime_performance": {
+        }
+
+    if raw_win_rate is None:
+        tests["regime_performance"] = _pending(50, "No win-rate evidence (no backtest metrics)")
+    else:
+        win_rate = _normalize_win_rate(raw_win_rate)
+        tests["regime_performance"] = {
             "status": "pass" if win_rate >= 50 else "warn" if win_rate >= 40 else "fail",
             "value": win_rate,
             "threshold": 50,
             "message": f"Win rate: {win_rate:.1f}% (min: 50%)",
-        },
-    }
+        }
+
+    return tests
 
 
 def get_overall_verdict(tests: dict[str, dict[str, Any]] | None) -> Literal["pass", "warn", "fail", "pending"]:
@@ -401,6 +475,12 @@ def build_verdict_result(
     from forven.engine_provenance import BACKTEST_ENGINE_VERSION
 
     requested_tests = set(normalize_requested_tests(tests))
+    # sample_size is MANDATORY regardless of the requested subset: without a
+    # trade-count check a caller can request only the tests that pass on
+    # neutral/absent metrics and flip a failing verdict to "pass" (observed:
+    # simulation-agent T59298 re-ran the verdict with a cherry-picked subset
+    # after a full-suite FAIL and got S05838 promoted on it).
+    requested_tests.add("sample_size")
     all_tests = calculate_verdict_metrics(metrics)
     filtered_tests = {
         name: payload for name, payload in all_tests.items() if name in requested_tests

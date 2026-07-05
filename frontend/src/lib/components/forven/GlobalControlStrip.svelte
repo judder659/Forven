@@ -18,6 +18,7 @@
 		type SystemMode,
 	} from '$lib/api';
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
+	import LivePnlTicker from '$lib/components/forven/LivePnlTicker.svelte';
 
 	type ModalAction = 'mode-toggle' | 'emergency-halt' | 'trading-reset' | 'system-mode-change' | null;
 	type ExecutionMode = 'paper' | 'live';
@@ -276,6 +277,8 @@
 	</div>
 
 	<div class="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-2">
+		<LivePnlTicker />
+
 		<span class="px-2 py-1 border border-[#333] text-[#888] whitespace-nowrap">
 			BTC: {btcRegime}
 			{#if ethRegime}<span class="text-[#666] ml-1">| ETH: {ethRegime}</span>{/if}

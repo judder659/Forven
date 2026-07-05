@@ -32,6 +32,7 @@ export function inferPageKind(pathname: string): string {
 	if (/^\/lab\/strategy\/[^/]+/.test(p)) return 'strategy_detail';
 	if (p === '/lab' || p.startsWith('/lab/')) return 'lab';
 	if (p === '/' || p.startsWith('/dashboard')) return 'dashboard';
+	if (p.startsWith('/live-trades')) return 'live_trading';
 	if (p.startsWith('/paper') || p.startsWith('/trading') || p.startsWith('/all-trades'))
 		return 'paper_trading';
 	if (p.startsWith('/data')) return 'data_engine';

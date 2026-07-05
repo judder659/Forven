@@ -72,6 +72,47 @@ def test_baseline_falls_back_when_pinned_row_deleted(forven_db):
     assert _baseline_backtest_result("bt-dangling")["result_id"] == "r-live"
 
 
+def test_param_jitter_with_no_numeric_params_is_not_applicable(forven_db):
+    """Composites (and any strategy whose params hold no plain numerics) have
+    nothing to perturb: the old sweep ran N byte-identical reruns and the pass
+    rate degenerated to the sign of the rerun-window Sharpe — a structural P25-4
+    reject. The analysis must short-circuit to an explicit NOT_APPLICABLE verdict
+    (no pass_rate, so the paper gate skips the jitter check) BEFORE loading
+    candles or running any reruns."""
+    import json as _json
+
+    from forven.routers.robustness import ParamJitterBody, _run_param_jitter_analysis
+
+    metrics = {"total_trades": 25, "sharpe_ratio": -0.15, "total_return": -0.005}
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, stage, params, created_at) "
+            "VALUES (?, ?, 'composite', 'gauntlet', ?, ?)",
+            ("jit-na", "jit-na", _json.dumps({"execution_profile": {"atr_period": 14}}),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, "
+            "timeframe, start_date, end_date, metrics_json, created_at) "
+            "VALUES ('r-jit-na', 'jit-na', 'backtest', 'ETH/USDT', '1h', "
+            "'2025-01-01', '2025-12-31', ?, ?)",
+            (_json.dumps(metrics), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+    result = _run_param_jitter_analysis(
+        ParamJitterBody(strategy_id="jit-na", result_id="r-jit-na")
+    )
+
+    assert result["verdict"] == "NOT_APPLICABLE"
+    assert result["not_applicable"] is True
+    assert result["n_variants"] == 0
+    # pass_rate/stable_pct must be ABSENT — their absence is what makes the
+    # P25-4 paper gate and the composite scorer skip the jitter check.
+    assert "pass_rate" not in result
+    assert "stable_pct" not in result
+
+
 def test_param_jitter_compute_bounds_are_wired_and_safe():
     from forven.policy import DEFAULT_PIPELINE_CONFIG
     from forven.routers.robustness import ParamJitterBody

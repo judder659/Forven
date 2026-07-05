@@ -51,6 +51,12 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
         return {"ok": True, "reason": "Monte Carlo payload has simulation evidence"}
 
     if normalized == "parameter_jitter":
+        # A strategy with no numeric params to jitter cannot be parameter-overfit;
+        # the analysis records an explicit NOT_APPLICABLE verdict (no reruns, no
+        # pass rate). That IS the evidence — demanding iterations here would
+        # convert "test does not apply" into a failed gate for every composite.
+        if payload.get("not_applicable") is True:
+            return {"ok": True, "reason": "parameter jitter not applicable (no numeric parameters)"}
         iterations = int(
             _as_float(
                 payload.get("n_iterations")

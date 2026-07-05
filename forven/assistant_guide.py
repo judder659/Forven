@@ -131,13 +131,24 @@ PAGES: list[dict] = [
         ],
     },
     {
-        "route": "/trading",
-        "name": "Trades",
+        "route": "/paper-trades",
+        "name": "Paper Trades",
         "kind": "paper_trading",
-        "summary": "Paper/Live/All session views: open positions, recent trades, and full manual position controls (Live drives REAL orders).",
+        "summary": "Paper-stage sessions: open positions, recent trades, and full manual position controls (simulated fills only).",
         "actions": [
-            "View open positions and recent trades per session",
+            "View open positions and recent trades per paper session",
             "Manually open/close/partial-close/flip a position",
+            "Set or edit stop-loss and take-profit",
+        ],
+    },
+    {
+        "route": "/live-trades",
+        "name": "Live Trades",
+        "kind": "live_trading",
+        "summary": "Deployed/graduated strategies: open positions, recent trades, and full manual position controls — actions drive REAL exchange orders.",
+        "actions": [
+            "View open positions and recent trades per live strategy",
+            "Manually open/close/partial-close/flip a REAL position",
             "Set or edit stop-loss and take-profit",
         ],
     },
@@ -354,11 +365,11 @@ HOWTOS: dict[str, dict] = {
     "manual-trade-controls": {
         "title": "Manually control a position (paper or live)",
         "steps": [
-            "Open Trades (/trading) and pick the Paper or Live view.",
+            "Open Paper Trades (/paper-trades) for paper sessions, or Live Trades (/live-trades) for deployed strategies.",
             "Per position: close, partial-close, flip, or edit stop-loss / take-profit.",
-            "You can also open a manual position. The Live view drives REAL exchange orders — treat it accordingly.",
+            "You can also open a manual position. Live Trades drives REAL exchange orders — treat it accordingly.",
         ],
-        "routes": ["/trading"],
+        "routes": ["/paper-trades", "/live-trades"],
     },
     "add-data": {
         "title": "Add or fix market data",
