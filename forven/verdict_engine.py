@@ -211,12 +211,19 @@ def resolve_backtest_result_row(strategy_id: str, dataset_id: str):
             return None
 
         placeholders = ", ".join("?" for _ in strategy_candidates)
+        # Only real metric-bearing rows are eligible. Robustness sub-check rows
+        # (param_jitter/walk_forward/monte_carlo/cost_stress/regime_split) share
+        # this table, carry the same symbol/timeframe, and sort NEWEST — without
+        # this filter the latest robustness run shadows the real backtest and
+        # the verdict computes from a row with no trade metrics (sample_size=0
+        # while the backtest path reports hundreds of trades).
         rows = conn.execute(
             f"""
             SELECT *
             FROM backtest_results
             WHERE strategy_id IN ({placeholders})
               AND deleted_at IS NULL
+              AND result_type IN ('backtest', 'optimization')
             ORDER BY datetime(created_at) DESC, created_at DESC
             """,
             tuple(strategy_candidates),

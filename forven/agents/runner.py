@@ -806,6 +806,13 @@ def _agent_is_strategy_developer(agent_id: str | None) -> bool:
 
 
 def _task_tool_output_shows_success(tool_call: dict) -> bool:
+    # Prefer the executor's write-time verdict (task_audit_log.success) — it
+    # saw exceptions and the FULL output. The text heuristic below only covers
+    # legacy rows written before that column existed, and its allowlist is
+    # known to mislabel plain-text successes (e.g. write_file) as failures.
+    recorded = tool_call.get("success")
+    if recorded is not None:
+        return bool(recorded)
     summary = str(tool_call.get("output_summary") or "").strip().lower()
     if not summary:
         return False

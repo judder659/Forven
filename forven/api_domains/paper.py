@@ -623,7 +623,18 @@ def _collect_compat_paper_sessions(
     exchange_positions = raw_exch_positions if isinstance(raw_exch_positions, dict) else {}
     scanner_state = kv_get("scanner_state", {}) or {}
     scanner_signals = scanner_state.get("signals", {}) if isinstance(scanner_state, dict) else {}
-    scanner_diagnostics = scanner_state.get("diagnostics", {}) if isinstance(scanner_state, dict) else {}
+    # Prefer the last EXECUTION scan's diagnostics: the signal-only scan runs
+    # seconds later on the same cadence and its snapshot carries
+    # execution_allowed=False, which made genuinely-executing paper strategies
+    # look inert to this API (overnight [BUG] #252/#275/#280).
+    scanner_diagnostics = {}
+    if isinstance(scanner_state, dict):
+        execution_diagnostics = scanner_state.get("execution_diagnostics")
+        if isinstance(execution_diagnostics, dict) and execution_diagnostics:
+            scanner_diagnostics = execution_diagnostics
+        else:
+            raw_diagnostics = scanner_state.get("diagnostics", {})
+            scanner_diagnostics = raw_diagnostics if isinstance(raw_diagnostics, dict) else {}
     scanner_ts = str(scanner_state.get("last_scan") or _now()) if isinstance(scanner_state, dict) else _now()
     recent_trades = trading_domain.read_recent_trades(limit=5000)
 

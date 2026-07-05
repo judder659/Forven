@@ -101,6 +101,8 @@ def test_allowed_cors_origins_default_to_explicit_local_hosts(monkeypatch):
 
     assert "http://127.0.0.1:4173" in origins
     assert "http://localhost:4173" in origins
+    assert "http://127.0.0.1:4174" in origins
+    assert "http://localhost:4178" in origins
     assert "*" not in origins
 
 
@@ -144,6 +146,14 @@ def test_csrf_allows_cors_allowlisted_origin(monkeypatch):
     monkeypatch.setenv("FORVEN_CORS_ORIGINS", "http://trusted.example")
     client = TestClient(_build_csrf_app())
     r = client.post("/api/write", headers={"Origin": "http://trusted.example"})
+    assert r.status_code == 200
+
+
+def test_csrf_allows_launcher_frontend_fallback_port(monkeypatch):
+    monkeypatch.delenv("FORVEN_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("FRONTEND_PORT", "4173")
+    client = TestClient(_build_csrf_app())
+    r = client.post("/api/write", headers={"Origin": "http://127.0.0.1:4174"})
     assert r.status_code == 200
 
 

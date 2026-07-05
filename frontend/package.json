@@ -14,6 +14,7 @@
 		"test:e2e": "playwright test --pass-with-no-tests"
 	},
 	"dependencies": {
+		"@rollup/rollup-win32-x64-msvc": "^4.62.2",
 		"dompurify": "^3.4.9",
 		"lightweight-charts": "^4.2.3",
 		"marked": "^17.0.3",

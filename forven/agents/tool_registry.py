@@ -696,6 +696,25 @@ def _process_tool_output(
     return candidate
 
 
+def _tool_result_shows_failure(result: str) -> bool:
+    """Scan a FULL (untruncated) tool result string for failure markers.
+
+    Used to derive the write-time ``success`` flag for the task ledger when a
+    handler returned normally — app-level failures come back as JSON/text, not
+    exceptions. Conservative: only explicit failure shapes count.
+    """
+    normalized = result.strip().lower()
+    if not normalized:
+        return True
+    if normalized.startswith(("tool error:", "unknown tool:", "permission denied", "validation failed")):
+        return True
+    if normalized.startswith("error") or " timed out after " in normalized[:120]:
+        return True
+    if '"ok": false' in normalized or "'ok': false" in normalized:
+        return True
+    return False
+
+
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
     """Dispatch a tool call — replaces the old elif chain in runner.py.
 
@@ -786,6 +805,9 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
                 tool_payload,
                 str(result)[:500],
                 duration_ms,
+                # Write-time verdict from the FULL result string — the 500-char
+                # summary the ledger used to re-scan cut off success markers.
+                success=not _tool_result_shows_failure(str(result)),
             )
         except Exception as exc:
             log.debug("Task tool audit log skipped for %s: %s", current_task_display_id, exc)

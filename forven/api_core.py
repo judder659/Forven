@@ -10643,7 +10643,13 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
                 inferred_params_for_backfill = dict(audit_params)
 
     requested_params = body.params if isinstance(body.params, dict) else {}
-    merged_params = {**base_params, **requested_params}
+    # A null override REMOVES the persisted key (mirrors POST /api/backtesting/run).
+    merged_params = dict(base_params)
+    for _override_key, _override_value in requested_params.items():
+        if _override_value is None:
+            merged_params.pop(_override_key, None)
+        else:
+            merged_params[_override_key] = _override_value
     strategy_type = _resolve_backtesting_strategy_type(
         explicit_type=strategy_row.get("type"),
         strategy_name=strategy_name or strategy_id,
@@ -10701,12 +10707,6 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
     asset = _extract_base_asset_symbol(body.symbol, resolved_symbol)
     timeframe = str(body.timeframe or resolved_timeframe or default_backtest_timeframe or "1h").strip() or "1h"
     bars = _estimate_backtest_bars(body.start, body.end, timeframe, duration_days_override=body.duration_days)
-    # Validate only the strategy's own params for genuinely-unenforced risk
-    # fields. The body-level execution controls (stops/sizing) are now honoured
-    # by the engine via execution_controls, so they must NOT be flagged here —
-    # doing so was the audited bug that warned about controls that actually work.
-    risk_parity_warning = _validate_local_backtest_risk_controls(execution_params)
-
     from forven.strategies.backtest import backtest_strategy
 
     # Manual execution controls — the engine honours these (stops, sizing). Only
@@ -10728,6 +10728,9 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
 
     # B-6: only canonical reruns (the strategy's own params/symbol/timeframe on
     # ~the default window) may refresh stored strategy metrics or auto-promote.
+    # Judged on BODY-level controls only — controls folded out of the strategy's
+    # own persisted params below ARE the stored configuration and must not
+    # disqualify a canonical rerun.
     sync_strategy_state = _is_canonical_backtest_submit(
         body,
         strategy_row=strategy_row,
@@ -10739,6 +10742,22 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
         manual_execution_controls=manual_execution_controls,
         settings=settings,
     )
+
+    # Fold engine-enforceable controls persisted in the strategy's params
+    # (stops/sizing/time-stop) into the honoured execution_controls channel,
+    # body-level values winning. Left inert in params they would only produce
+    # a parity warning while silently NOT being enforced — worse than either
+    # enforcing or rejecting them.
+    params_execution_controls = _collect_honored_backtest_execution_controls(execution_params)
+    if params_execution_controls:
+        for _control_key in params_execution_controls:
+            execution_params.pop(_control_key, None)
+        manual_execution_controls = {**params_execution_controls, **manual_execution_controls}
+
+    # Validate only what remains: risk fields with no simulator implementation
+    # at all (portfolio-level guards). Body-level execution controls and folded
+    # params-level controls are honoured and must NOT be flagged here.
+    risk_parity_warning = _validate_local_backtest_risk_controls(execution_params)
 
     try:
         run = backtest_strategy(
@@ -11630,8 +11649,15 @@ def post_backtesting_run(body: dict):
                 override_params = body.get("parameters")
                 if not isinstance(override_params, dict):
                     override_params = {}
+                # A null override REMOVES the persisted key — the only way a
+                # caller can unset a bad stored param (e.g. a legacy
+                # risk_per_trade) without re-sending the whole param set.
                 merged_params = dict(base_params)
-                merged_params.update(override_params)
+                for _override_key, _override_value in override_params.items():
+                    if _override_value is None:
+                        merged_params.pop(_override_key, None)
+                    else:
+                        merged_params[_override_key] = _override_value
                 # Run the backtest at the strategy's OWN declared leverage (captured here,
                 # before certification may drop the key), not a fixed 3x assumption. An
                 # explicit body leverage still wins; engine falls back to 3.0 if neither set.
@@ -11670,13 +11696,24 @@ def post_backtesting_run(body: dict):
                 # Use certified params (canonicalized) instead of raw merged_params
                 merged_params = certified_params
                 
-                # Strategy-param risk controls are still inert and must be
-                # guarded, but body-level execution controls are now honoured
-                # below through execution_controls just like POST /api/backtests.
-                risk_control_error = _validate_local_backtest_risk_controls(merged_params)
-                if risk_control_error:
-                    return {"ok": False, "error": risk_control_error}
+                # Controls the simulator honours via execution_controls
+                # (stops/sizing/time-stop) are folded OUT of the persisted
+                # params into that channel, body-level values winning. They
+                # used to hard-fail the run as "unsupported", which left any
+                # container with e.g. risk_per_trade or time_stop_bars in its
+                # persisted params permanently un-backtestable (S00045/S00056)
+                # even though the engine can enforce them.
                 manual_execution_controls = _collect_honored_backtest_execution_controls(body)
+                params_execution_controls = _collect_honored_backtest_execution_controls(merged_params)
+                if params_execution_controls:
+                    for _control_key in params_execution_controls:
+                        merged_params.pop(_control_key, None)
+                    manual_execution_controls = {**params_execution_controls, **manual_execution_controls}
+                # Whatever risk fields remain have no simulator implementation
+                # at all (portfolio-level guards). Attach a warning to the
+                # result — parity with POST /api/backtests — instead of
+                # rejecting the run outright.
+                risk_control_warning = _validate_local_backtest_risk_controls(merged_params)
 
                 # Bracket the synchronous backtest in an agent_tasks row so the
                 # Now Working panel surfaces API/tool backtests with provenance.
@@ -11755,6 +11792,8 @@ def post_backtesting_run(body: dict):
                         if _nw_task_id is not None:
                             result.setdefault("task_id", _nw_task_id)
                         result.setdefault("request_source", _nw_request_source)
+                        if risk_control_warning and not result.get("error"):
+                            result.setdefault("warning", risk_control_warning)
                     return json_safe_payload(result)
                 except Exception as exc:
                     _nw_error = exc

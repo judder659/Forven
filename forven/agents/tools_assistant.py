@@ -28,12 +28,19 @@ import json as _json
 from forven.agents.context import _current_agent_id_var  # noqa: F401 (kept for parity/future use)
 from forven.agents.tool_registry import register_tool
 from forven.db import get_db
+from forven.strategies.params import SUPPORTED_PARAM_FAMILIES
 
 # Common, certifiable strategy families surfaced to the model so it picks a real
 # runtime type instead of inventing one (which create_strategy rejects).
-_COMMON_FAMILIES = (
-    "rsi_momentum, macd, stochastic, williams_r, donchian, bollinger, ema_cross, "
-    "atr_breakout, adx_dmi, vwap, mean_reversion, supertrend"
+# Filtered against SUPPORTED_PARAM_FAMILIES at import so the hint cannot drift
+# from the runtime (it used to advertise mean_reversion/adx_dmi, which the
+# runtime rejects).
+_CURATED_FAMILIES = (
+    "rsi_momentum", "macd", "stochastic", "williams_r", "donchian", "bollinger",
+    "ema_cross", "atr_breakout", "adx_trend", "vwap", "bb_fade", "supertrend",
+)
+_COMMON_FAMILIES = ", ".join(
+    family for family in _CURATED_FAMILIES if family in SUPPORTED_PARAM_FAMILIES
 )
 
 

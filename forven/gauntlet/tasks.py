@@ -423,16 +423,15 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
     # nothing. Best-of-N is an enhancement layered on the gate: if its lookup fails,
     # degrade to the quick_screen result rather than crash the verdict.
     metrics = screen_metrics
+    winner_tf: str | None = None
+    winner_metrics: dict[str, Any] | None = None
     try:
         row = _strategy_row(strategy_id)
         fallback_tf = str(row.get("timeframe") or "") if row else ""
         best_tf, _best_result_id, best_metrics = _best_sweep_result(strategy_id, fallback_tf or "1h")
         if best_metrics:
             metrics = best_metrics
-            # Promote the winning timeframe + its metrics onto the strategy row so the
-            # brain guardrails (which read strategies.metrics) judge the best timeframe,
-            # and every downstream step (optimization/confirmation/paper) runs on it.
-            _persist_quick_screen_winner(strategy_id, best_tf, best_metrics)
+            winner_tf, winner_metrics = best_tf, best_metrics
     except Exception as exc:  # noqa: BLE001 - enhancement must never break the gate
         log.warning(
             "quick_screen_gate: best-of-N selection failed for %s, using quick_screen result: %s",
@@ -457,6 +456,16 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
         # is preserved; this only stops the pre-optimization rejection that kept the
         # pipeline empty.
         deferred_note = "quick-screen profitability deferred to optimization+robustness (testing_mode): " + "; ".join(failures)
+
+    # Promote the winning timeframe + its metrics onto the strategy row ONLY
+    # once the gate has decided to proceed — the brain guardrails in
+    # transition_stage below read strategies.metrics, so this must still
+    # happen before the transition. A FAILING gate must never mutate container
+    # identity as a side effect of being evaluated (S00061: declared 15m
+    # drifted to a degenerate 1h fallback slice during a failing screen, then
+    # the strategy archived with the wrong stored timeframe).
+    if winner_tf and winner_metrics:
+        _persist_quick_screen_winner(strategy_id, winner_tf, winner_metrics)
 
     try:
         from forven.brain import transition_stage

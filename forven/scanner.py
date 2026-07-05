@@ -7960,6 +7960,24 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
             }
         )
 
+    # The signal-only job runs on the same 5-minute cadence seconds after the
+    # execution job and used to overwrite `diagnostics` wholesale — observers
+    # (paper sessions API, dashboard, brain) then almost always read a stale
+    # signal-only snapshot (execution_allowed=False) and concluded executing
+    # paper strategies were inert (overnight [BUG] notifications #252/#275/
+    # #280). Execution-scan diagnostics now ALSO persist under their own key,
+    # merged only when an execution scan actually ran — mirroring the
+    # signal_summary/execution_summary split above.
+    diagnostics_state = _jsonable_diagnostics_map(scan_diagnostics)
+    prior_execution_diagnostics = (
+        prior_state.get("execution_diagnostics")
+        if isinstance(prior_state.get("execution_diagnostics"), dict)
+        else {}
+    )
+    execution_diagnostics_state = (
+        diagnostics_state if requested_execution else prior_execution_diagnostics
+    )
+
     state = {
         "strategies": signal_summary.get("strategies", []),
         "signals": signal_summary.get("signals", {}),
@@ -7983,7 +8001,9 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
         "paper_stage_local_execution_only": paper_stage_local_execution_only,
         "signal_summary": signal_summary,
         "execution_summary": execution_summary,
-        "diagnostics": _jsonable_diagnostics_map(scan_diagnostics),
+        "diagnostics": diagnostics_state,
+        "diagnostics_scan_kind": scan_mode,
+        "execution_diagnostics": execution_diagnostics_state,
     }
 
     kv_set("scanner_state", state)

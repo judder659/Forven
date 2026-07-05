@@ -122,6 +122,19 @@ def _env_profile(provider: str) -> dict:
     token = _first_env_value(_ENV_ACCESS_TOKEN_KEYS.get(normalized_provider, ()))
     base_url = _first_env_value(_ENV_BASE_URL_KEYS.get(normalized_provider, ()))
 
+    # The ANTHROPIC_BASE_URL fallback for zai exists for z.ai's
+    # Anthropic-COMPATIBLE endpoint (https://api.z.ai/api/anthropic). When the
+    # var points at REAL Anthropic (e.g. inherited from a Claude-tooling
+    # shell), it can never be a valid z.ai base — the adapter then posts
+    # OpenAI-style /chat/completions to api.anthropic.com and 404s forever.
+    # Drop it so the stored profile / paas/v4 default applies instead.
+    if (
+        normalized_provider == "zai"
+        and base_url
+        and "api.anthropic.com" in base_url.lower()
+    ):
+        base_url = ""
+
     profile: dict[str, str] = {}
     if token:
         profile["access"] = token

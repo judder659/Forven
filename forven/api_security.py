@@ -261,20 +261,41 @@ def _normalize_origin(value: object) -> str:
     return raw.rstrip("/")
 
 
+def _frontend_origin_ports() -> list[str]:
+    configured = _normalize_secret(os.environ.get("FRONTEND_PORT")) or "5173"
+    ports = [configured]
+    try:
+        base_port = int(configured)
+    except (TypeError, ValueError):
+        return ports
+    # start_all.ps1 falls forward up to five ports when the preferred Vite port
+    # is occupied. Those origins are still loopback-only and represent the same
+    # local UI, so keep CSRF/CORS in step with the launcher.
+    ports.extend(str(port) for port in range(base_port + 1, base_port + 6))
+    return ports
+
+
 def get_allowed_cors_origins() -> list[str]:
     configured = _normalize_secret(os.environ.get("FORVEN_CORS_ORIGINS"))
     if configured:
         values = configured.split(",")
     else:
-        frontend_port = _normalize_secret(os.environ.get("FRONTEND_PORT")) or "5173"
         api_port = _normalize_secret(os.environ.get("FORVEN_PORT")) or "8003"
-        values = [
-            f"http://127.0.0.1:{frontend_port}",
-            f"http://localhost:{frontend_port}",
-            f"http://127.0.0.1:{api_port}",
-            f"http://localhost:{api_port}",
-            _normalize_secret(os.environ.get("FORVEN_CLIENT_BASE")),
-        ]
+        values = []
+        for frontend_port in _frontend_origin_ports():
+            values.extend(
+                [
+                    f"http://127.0.0.1:{frontend_port}",
+                    f"http://localhost:{frontend_port}",
+                ]
+            )
+        values.extend(
+            [
+                f"http://127.0.0.1:{api_port}",
+                f"http://localhost:{api_port}",
+                _normalize_secret(os.environ.get("FORVEN_CLIENT_BASE")),
+            ]
+        )
 
     origins: list[str] = []
     seen: set[str] = set()

@@ -717,24 +717,37 @@ def test_submit_backtest_does_not_warn_for_honored_body_execution_controls(forve
     assert "stop_loss_pct" not in str(result.get("warning", ""))
 
 
-def test_submit_backtest_still_warns_for_strategy_param_risk_fields(forven_db, monkeypatch):
-    """STRATEGY-param risk fields remain genuinely unenforced by the engine,
-    so the parity warning must still fire for those."""
+def test_submit_backtest_folds_strategy_param_risk_fields_into_controls(forven_db, monkeypatch):
+    """STRATEGY-param risk fields the engine can enforce (stops/sizing/time-stop)
+    now fold into the honoured execution_controls channel instead of sitting
+    inert behind a parity warning. Only portfolio-level guards with no simulator
+    implementation still warn."""
     strategy_id = _seed_strategy(
         symbol="BTC",
         strategy_type="rsi_momentum",
-        params={"rsi_period": 14, "stop_loss_pct": 2.0},
+        params={"rsi_period": 14, "stop_loss_pct": 2.0, "max_daily_loss_pct": 0.05},
     )
+
+    captured: dict = {}
+
+    def _fake_backtest_strategy(**kwargs):
+        captured.update(kwargs)
+        return {"trades": [], "metrics": {"total_return_pct": 0, "sharpe": 0, "max_drawdown_pct": 0, "total_trades": 0}}
 
     monkeypatch.setattr(
         "forven.strategies.backtest.backtest_strategy",
-        lambda **_kwargs: {"trades": [], "metrics": {"total_return_pct": 0, "sharpe": 0, "max_drawdown_pct": 0, "total_trades": 0}},
+        _fake_backtest_strategy,
     )
 
     result = post_backtest_submit(BacktestSubmitBody(strategy_id=strategy_id))
 
     assert result["status"] == "succeeded"
-    assert "stop_loss_pct" in str(result.get("warning", ""))
+    controls = captured.get("execution_controls") or {}
+    assert controls.get("stop_loss_pct") == 2.0
+    assert "stop_loss_pct" not in (captured.get("params") or {})
+    warning_text = str(result.get("warning", ""))
+    assert "stop_loss_pct" not in warning_text
+    assert "max_daily_loss_pct" in warning_text
 
 
 def test_submit_backtest_translates_simple_macd_rule_blob_params(forven_db, monkeypatch):

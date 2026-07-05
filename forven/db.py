@@ -1975,6 +1975,12 @@ def _run_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "agent_tasks", "retry_count", "INTEGER DEFAULT 0")
     _ensure_column(conn, "agent_tasks", "source", "TEXT DEFAULT 'system'")
     _ensure_column(conn, "tasks", "source", "TEXT DEFAULT 'system'")
+    # Write-time success flag for the tool ledger: the executor knows whether a
+    # call raised/timed out and sees the FULL output; the post-hoc text scan of
+    # the 500-char summary mislabelled successes (e.g. write_file) as FAILED.
+    # Nullable: rows from before this column stay NULL and fall back to the
+    # legacy heuristic.
+    _ensure_column(conn, "task_audit_log", "success", "INTEGER")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS hypotheses (
             id TEXT PRIMARY KEY,
@@ -4571,14 +4577,20 @@ def log_tool_call(
     input_data: dict | None,
     output_summary: str | None,
     duration_ms: int | None,
+    success: bool | None = None,
 ):
-    """Record a tool invocation in task_audit_log."""
+    """Record a tool invocation in task_audit_log.
+
+    ``success`` is the executor's write-time verdict (it sees exceptions and
+    the full, untruncated output). ``None`` means unknown — readers fall back
+    to the legacy output_summary text scan.
+    """
     if not task_display_id or not tool_name:
         return
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO task_audit_log (task_id, agent_id, tool_name, input_json, output_summary, duration_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO task_audit_log (task_id, agent_id, tool_name, input_json, output_summary, duration_ms, success) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 str(task_display_id).strip(),
                 str(agent_id).strip() if agent_id else None,
@@ -4586,6 +4598,7 @@ def log_tool_call(
                 json.dumps(input_data or {})[:2000],
                 str(output_summary or "")[:500],
                 int(duration_ms or 0),
+                None if success is None else int(bool(success)),
             ),
         )
 

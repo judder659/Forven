@@ -1202,7 +1202,14 @@ def _check_validation_in_flight(strategy_id: str, config: dict | None = None) ->
 
 
 def _check_artifact_rows_exist(strategy_id: str, required_types: list[str]) -> tuple[bool, str]:
-    """Verify each required validation has a persisted, passing verdict payload."""
+    """Verify each required validation has a persisted, passing verdict payload.
+
+    The message distinguishes "the test never persisted a row" from "a row
+    persisted but its verdict FAILED" — the old single "Missing passing
+    persisted artifact rows" wording read as an artifact-persistence failure
+    to agents that had just watched a test complete-and-fail, generating
+    repeated false [BUG] reports against a correctly-blocking gate.
+    """
     required = {_canonicalize_gauntlet_verdict_test(rt) for rt in required_types if str(rt or "").strip()}
     payloads, _overall = _extract_gauntlet_verdict_payloads(strategy_id, None, {})
     passing = {
@@ -1213,11 +1220,24 @@ def _check_artifact_rows_exist(strategy_id: str, required_types: list[str]) -> t
 
     missing = sorted(required - passing)
     if missing:
-        return (
-            False,
-            f"Missing passing persisted artifact rows for: {', '.join(missing)}. "
-            f"Run or rerun these tests until the saved verdicts pass.",
+        failed = sorted(
+            test_name
+            for test_name in missing
+            if isinstance(payloads.get(test_name), dict)
         )
+        never_ran = sorted(set(missing) - set(failed))
+        parts: list[str] = []
+        if failed:
+            parts.append(
+                f"Persisted verdicts FAILING for: {', '.join(failed)} — the artifacts "
+                f"exist and were read; fix the strategy or rerun until they pass."
+            )
+        if never_ran:
+            parts.append(
+                f"No persisted artifact rows yet for: {', '.join(never_ran)} — "
+                f"submit these tests via the robustness endpoints."
+            )
+        return (False, " ".join(parts))
     return True, f"All required artifact rows passed: {', '.join(sorted(passing))}"
 
 

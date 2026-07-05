@@ -722,6 +722,10 @@ function Start-BackendService {
     return $proc
 }
 
+function Sync-FrontendPortEnvironment {
+    $env:FRONTEND_PORT = $frontendPort.ToString()
+}
+
 function Start-FrontendService {
     $portFreed = Stop-PortListeners -Port $frontendPort
     if (-not $portFreed) {
@@ -737,6 +741,7 @@ function Start-FrontendService {
                 Write-WarnMessage "Port $frontendPort occupied and unhealthy - using alternate port $altPort."
                 $frontendPort = $altPort
                 $frontendRoot = $altUrl
+                Sync-FrontendPortEnvironment
                 break
             }
         }
@@ -754,8 +759,10 @@ function Start-FrontendService {
             Write-WarnMessage "Could not clear Vite cache ${viteCache}: $($_.Exception.Message)"
         }
     }
-    # Bind Vite on the IPv6 unspecified address so both localhost (::1) and 127.0.0.1 work on Windows.
-    $proc = Start-LoggedProcess -FilePath $npm -CommandArgs @("run","dev","--","--host","::","--port",$frontendPort.ToString()) `
+    # Bind Vite to loopback only. This keeps the local control UI off the LAN while
+    # still serving the browser on this PC. If IPv6 localhost is needed later, use
+    # 127.0.0.1 explicitly in the browser URL.
+    $proc = Start-LoggedProcess -FilePath $npm -CommandArgs @("run","dev","--","--host","127.0.0.1","--port",$frontendPort.ToString()) `
         -WorkingDirectory (Join-Path $script:RepoRoot "frontend") -StdOutPath $frontendLog -StdErrPath $frontendErr
     if (-not (Wait-ForHttp -Url $frontendRoot -Label "Frontend")) {
         if (Test-Path $frontendErr) { Get-Content $frontendErr -Tail 120 }
@@ -1028,7 +1035,7 @@ $backendHost = if (-not [string]::IsNullOrWhiteSpace($env:FORVEN_BIND_HOST)) {
     "127.0.0.1"
 }
 $backendWorkers = if ([string]::IsNullOrWhiteSpace($env:BACKEND_WORKERS)) { 1 } else { [int]$env:BACKEND_WORKERS }
-$frontendPort = 5173
+$frontendPort = if ([string]::IsNullOrWhiteSpace($env:FRONTEND_PORT)) { 5173 } else { [int]$env:FRONTEND_PORT }
 $startBot = if ($env:START_BOT) { $env:START_BOT.Trim() } else { "0" }
 $regimeLabEnabledRaw = if ($env:FORVEN_ENABLE_REGIME_LAB) { $env:FORVEN_ENABLE_REGIME_LAB.Trim() } else { "0" }
 $regimeLabEnabled = @("1", "true", "yes", "on") -contains $regimeLabEnabledRaw.ToLowerInvariant()
@@ -1087,6 +1094,7 @@ $daemonErr = Join-Path $logRoot "forven_daemon.err.log"
 
 $backendHealth = "http://127.0.0.1:$backendPort/api/health"
 $frontendRoot = "http://127.0.0.1:$frontendPort/"
+Sync-FrontendPortEnvironment
 if ([string]::IsNullOrWhiteSpace($env:FORVEN_CLIENT_BASE)) { $env:FORVEN_CLIENT_BASE = "http://127.0.0.1:$backendPort" }
 $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) { $script:RepoRoot } else { "$script:RepoRoot;$($env:PYTHONPATH)" }
 

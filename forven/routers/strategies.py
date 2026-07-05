@@ -725,6 +725,18 @@ def get_backtesting_prompt_packs():
 
     return core.get_backtesting_prompt_packs()
 
+
+@router.get("/api/backtesting/results/{result_id}")
+def get_backtesting_result(result_id: str, remote_skip: bool = False):
+    """Result-by-id under the /api/backtesting prefix.
+
+    The BacktestingClient (forven/backtesting.py get_results) has always
+    called this path, but only GET /api/results/{result_id} was registered —
+    every forven_get_results tool call 404'd at the routing layer ([BUG]
+    #261). Same handler as /api/results/{result_id}.
+    """
+    return core.get_backtest_result(result_id, remote_skip=remote_skip)
+
 @router.post("/api/backtesting/run")
 async def post_backtesting_run(request: core.Request):
     body = await request.json()
