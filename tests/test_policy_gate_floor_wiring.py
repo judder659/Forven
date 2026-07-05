@@ -54,12 +54,15 @@ def _insert_strategy(conn, sid, *, metrics=None, stage="paper_trading", stage_ch
 
 def _insert_paper_trades(conn, sid, pnls):
     base = datetime.now(timezone.utc) - timedelta(days=20)
+    # The gate counts only kernel-managed parity rows (_PARITY_PNL_FILTER reads
+    # signal_data.pnl_is_equity_fraction), so the fixture must model them.
+    parity_signal = json.dumps({"pnl_is_equity_fraction": 1})
     for i, pnl in enumerate(pnls):
         closed_at = (base + timedelta(hours=i)).isoformat()
         conn.execute(
             "INSERT INTO trades (id, strategy_id, strategy, asset, direction, status, pnl_pct, "
-            "execution_type, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (f"t-{sid}-{i}", sid, sid, "BTC/USDT", "long", "CLOSED", pnl, "paper", closed_at),
+            "execution_type, closed_at, signal_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"t-{sid}-{i}", sid, sid, "BTC/USDT", "long", "CLOSED", pnl, "paper", closed_at, parity_signal),
         )
     conn.commit()
 
@@ -366,15 +369,18 @@ def test_check_paper_trades_window_falls_back_to_created_at(forven_db):
         _insert_strategy(conn, "p-window-fallback", metrics={}, stage_changed_at=None)
         # Old trades BEFORE created_at must not count toward the paper sample.
         old = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat()
+        # Parity-flagged so exclusion below comes from the created_at window
+        # under test, not from _PARITY_PNL_FILTER.
+        parity_signal = json.dumps({"pnl_is_equity_fraction": 1})
         for i in range(60):
             conn.execute(
                 "INSERT INTO trades (id, strategy_id, strategy, asset, direction, status, pnl_pct, "
-                "execution_type, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "execution_type, closed_at, signal_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (f"t-old-{i}", "p-window-fallback", "p-window-fallback", "BTC/USDT", "long",
-                 "CLOSED", 1.0, "paper", old),
+                 "CLOSED", 1.0, "paper", old, parity_signal),
             )
         conn.commit()
 
-    ok, detail = policy._check_paper_trades("p-window-fallback")
+    ok, detail, _extra = policy._check_paper_trades("p-window-fallback")
     assert not ok
     assert detail.startswith("Insufficient paper trades: 0/")
