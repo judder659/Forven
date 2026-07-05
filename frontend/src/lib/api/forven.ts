@@ -121,6 +121,7 @@ export interface RegimeGateStatus {
 		events: number;
 		mtm_n: number;
 		mtm_avg_pct: number | null;
+		by_execution?: Record<string, { events: number; mtm_n: number; mtm_avg_pct: number | null }>;
 	};
 }
 
@@ -155,6 +156,17 @@ export interface ForvenRiskStatus {
 			net?: number;
 		}>;
 	};
+	/** Paper-sandbox complement of `portfolio` (display-only, never gating). */
+	portfolio_paper?: {
+		total_net_risk?: number;
+		groups?: Record<string, {
+			gross_long?: number;
+			gross_short?: number;
+			net?: number;
+		}>;
+	};
+	open_positions_paper?: number;
+	current_per_trade_risk_paper?: number;
 	/** PORT-1: the LIVE account-level budget (dollar risk-to-stop + net exposure vs equity). */
 	portfolio_budget_live?: {
 		enabled?: boolean;

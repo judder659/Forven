@@ -5,6 +5,9 @@
 	import { formatRegimeLabel } from '$lib/utils/labRegime';
 
 	export let gate: RegimeGateStatus | null | undefined = null;
+	/** Risk-page scope: filters the ledger + prove-it stats by execution type.
+	 *  The gate itself (mode, rules, stances) is global — it guards both lanes. */
+	export let scope: 'live' | 'paper' = 'live';
 
 	const dispatch = createEventDispatcher<{ changed: void }>();
 	const MODES = ['off', 'observe', 'enforce'] as const;
@@ -39,7 +42,18 @@
 	}
 
 	$: mode = gate?.mode ?? 'observe';
-	$: aggregates = gate?.aggregates;
+	$: scopedEvents = (gate?.events ?? []).filter((event) =>
+		scope === 'paper'
+			? (event.execution_type ?? 'paper') === 'paper'
+			: (event.execution_type ?? 'paper') !== 'paper'
+	);
+	$: aggregates = (() => {
+		const base = gate?.aggregates;
+		if (!base) return base;
+		const split = base.by_execution?.[scope];
+		if (!split) return { ...base, events: 0, mtm_n: 0, mtm_avg_pct: null };
+		return { ...base, ...split };
+	})();
 	$: verdict =
 		aggregates && aggregates.mtm_n > 0 && aggregates.mtm_avg_pct !== null
 			? aggregates.mtm_avg_pct < 0
@@ -56,7 +70,10 @@
 
 <div class="border border-[#222] bg-[#050505] p-4 space-y-3" data-testid="regime-gate-panel">
 	<div class="flex flex-wrap items-center justify-between gap-2">
-		<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">Regime Gate</h2>
+		<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">
+			Regime Gate
+			<span class="ml-2 border px-1.5 py-0.5 text-[9px] font-normal tracking-wider {scope === 'live' ? 'border-red-900 text-red-400' : 'border-[#333] text-[#888]'}" title="Ledger and outcomes filtered to this scope; the gate itself guards both lanes">{scope.toUpperCase()} LEDGER</span>
+		</h2>
 		<div class="flex items-center gap-3">
 			<div class="inline-flex border border-[#333]" role="group" aria-label="regime gate mode">
 				{#each MODES as candidate (candidate)}
@@ -125,7 +142,7 @@
 			</div>
 		{/if}
 
-		{#if gate.events.length}
+		{#if scopedEvents.length}
 			<div class="overflow-x-auto">
 				<table class="w-full text-[11px]">
 					<thead>
@@ -140,7 +157,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each gate.events as event (event.id)}
+						{#each scopedEvents as event (event.id)}
 							<tr class="border-b border-[#111]">
 								<td class="whitespace-nowrap px-2 py-1 text-[#888]">{fmtTs(event.ts)}</td>
 								<td class="px-2 py-1 font-mono text-white">{event.strategy_id}</td>
@@ -165,7 +182,7 @@
 			</div>
 		{:else}
 			<p class="text-[11px] text-[#555]">
-				No gate events yet{mode === 'off' ? ' — the gate is off' : ''}.
+				No {scope} gate events yet{mode === 'off' ? ' — the gate is off' : ''}.
 			</p>
 		{/if}
 

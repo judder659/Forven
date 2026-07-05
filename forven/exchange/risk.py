@@ -428,6 +428,16 @@ def _live_scope_positions(positions: dict) -> dict:
     }
 
 
+def _paper_scope_positions(positions: dict) -> dict:
+    """Paper/simulation positions — the complement of _live_scope_positions,
+    for the Risk page's PAPER scope view."""
+    return {
+        trade_id: pos
+        for trade_id, pos in positions.items()
+        if _position_execution_type(pos) in _PAPER_EXECUTION_TYPES
+    }
+
+
 def get_group_exposure(group: str, positions: dict | None = None) -> dict:
     """Calculate net directional exposure for a correlation group."""
     if positions is None:
@@ -459,13 +469,20 @@ def get_group_exposure(group: str, positions: dict | None = None) -> dict:
     }
 
 
-def get_portfolio_summary() -> dict:
-    """Real-wallet portfolio risk summary across all groups.
+def get_portfolio_summary(scope: str = "live") -> dict:
+    """Portfolio risk summary across all groups, scoped by execution type.
 
-    Scoped to non-paper positions: this is the live-portfolio guardrail view
+    Default "live" = non-paper positions: the live-portfolio guardrail view
     (CLI `risk`, the /risk page), so paper sandbox rows must not inflate it.
+    "paper" gives the paper-sandbox complement for the Risk page's PAPER view
+    — display-only, never a gating input (paper sessions don't share a budget).
     """
-    positions = _live_scope_positions(_get_positions())
+    all_positions = _get_positions()
+    positions = (
+        _paper_scope_positions(all_positions)
+        if scope == "paper"
+        else _live_scope_positions(all_positions)
+    )
     summary = {}
     for group in CORRELATION_GROUPS:
         summary[group] = get_group_exposure(group, positions)
@@ -4196,6 +4213,12 @@ def get_risk_status() -> dict:
         candidate = _coerce_non_negative_float(_position.get("risk_pct"))
         if candidate is not None and candidate > current_per_trade_risk:
             current_per_trade_risk = candidate
+    # Paper counterpart for the Risk page's PAPER scope (display-only).
+    current_per_trade_risk_paper = 0.0
+    for _position in _paper_scope_positions(all_positions).values():
+        candidate = _coerce_non_negative_float(_position.get("risk_pct"))
+        if candidate is not None and candidate > current_per_trade_risk_paper:
+            current_per_trade_risk_paper = candidate
 
     return {
         "execution_mode": cfg.get_execution_mode(),
@@ -4211,6 +4234,7 @@ def get_risk_status() -> dict:
         "open_positions_paper": int(paper_open_positions),
         "live_books": _live_books_status_safe(),
         "current_per_trade_risk": round(float(current_per_trade_risk), 4),
+        "current_per_trade_risk_paper": round(float(current_per_trade_risk_paper), 4),
         "recovery_active": bool(recovery.get("recovery_active")),
         "recovery_status": recovery.get("recovery_status"),
         "recovery_started_at": recovery.get("recovery_started_at"),
@@ -4223,6 +4247,9 @@ def get_risk_status() -> dict:
         "recovery_last_checked_at": recovery.get("recovery_last_checked_at"),
         "recovery_network": recovery.get("recovery_network"),
         "portfolio": summary,
+        # PAPER-scope complement of `portfolio` for the Risk page's Live/Paper
+        # toggle. Display-only: paper sandboxes never share a budget or gate.
+        "portfolio_paper": get_portfolio_summary(scope="paper"),
         # PORT-1: the live account-level budget (dollar risk-to-stop + net exposure
         # vs equity) — distinct from limits.portfolio_budget, the legacy risk-pct
         # slot ledger. The frontend risk page renders this block.

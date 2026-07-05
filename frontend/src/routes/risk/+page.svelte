@@ -23,17 +23,21 @@
 	let realtime: RealtimeRefreshController | null = null;
 
 	$: limits = risk?.limits ?? {};
-	$: portfolio = risk?.portfolio ?? {};
+	$: portfolio = (scope === 'paper' ? risk?.portfolio_paper : risk?.portfolio) ?? {};
 	$: groups = portfolio?.groups ?? {};
+	$: scopedOpenPositions = scope === 'paper' ? Number(risk?.open_positions_paper ?? 0) : Number(risk?.open_positions ?? 0);
 	$: accountValue = Number(dashboard?.account?.accountValue ?? dashboard?.daily_risk?.current_equity ?? 0);
 	$: highWaterMark = Number(risk?.high_water_mark ?? dashboard?.risk?.high_water_mark ?? 0);
 	$: dailyStartEquity = Number(risk?.daily_start_equity ?? dashboard?.daily_risk?.start_equity ?? 0);
 	$: currentDrawdown = highWaterMark > 0 ? Math.max(0, (highWaterMark - accountValue) / highWaterMark) : 0;
 	$: dailyLoss = dailyStartEquity > 0 ? Math.max(0, (dailyStartEquity - accountValue) / dailyStartEquity) : 0;
 	$: portfolioRisk = Number(portfolio?.total_net_risk ?? 0);
-	// Largest single-trade risk currently committed across open positions. Backed by
-	// the additive `current_per_trade_risk` field on get_risk_status (display-only).
-	$: perTradeRisk = Number(risk?.current_per_trade_risk ?? 0);
+	// Largest single-trade risk currently committed across open positions in the
+	// selected scope. Backed by the additive `current_per_trade_risk` /
+	// `current_per_trade_risk_paper` fields on get_risk_status (display-only).
+	$: perTradeRisk = Number(
+		(scope === 'paper' ? risk?.current_per_trade_risk_paper : risk?.current_per_trade_risk) ?? 0
+	);
 	$: tradingAllowed = dashboard?.trading_allowed ?? true;
 	$: tradingReason = dashboard?.trading_reason || 'OK';
 	$: killSwitchActive = Boolean(risk?.kill_switch_active || dashboard?.risk?.kill_switch_active);
@@ -256,7 +260,29 @@
 		}
 	}
 
+	// Live/Paper scope for the position-derived panels. Live-only guard panels
+	// (portfolio budget, liquidity) hide under PAPER; global halts stay visible
+	// in both scopes (the kill switch halts paper too).
+	type RiskScope = 'live' | 'paper';
+	const RISK_SCOPE_KEY = 'forven:risk:scope';
+	let scope: RiskScope = 'live';
+
+	function setScope(next: RiskScope) {
+		scope = next;
+		try {
+			localStorage.setItem(RISK_SCOPE_KEY, next);
+		} catch {
+			/* storage unavailable — scope just won't persist */
+		}
+	}
+
 	onMount(() => {
+		try {
+			const stored = localStorage.getItem(RISK_SCOPE_KEY);
+			if (stored === 'paper' || stored === 'live') scope = stored;
+		} catch {
+			/* ignore */
+		}
 		void loadRiskData();
 		realtime = createRealtimeRefresh(loadRiskData, {
 			fallbackMs: 20_000,
@@ -283,6 +309,27 @@
 				<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 11H5V6.3l7-3.11v8.8h7c-.53 4.12-3.28 7.79-7 8.94V12z" />
 			</svg>
 			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Risk Command</h1>
+			<div class="inline-flex border border-[#333]" role="group" aria-label="risk scope">
+				<button
+					class="border-r border-[#333] px-3 py-1 text-[10px] uppercase tracking-wider {scope === 'live'
+						? 'bg-red-950/60 font-bold text-red-300'
+						: 'text-[#888] hover:text-white'}"
+					on:click={() => setScope('live')}
+				>
+					Live
+				</button>
+				<button
+					class="px-3 py-1 text-[10px] uppercase tracking-wider {scope === 'paper'
+						? 'bg-white font-bold text-black'
+						: 'text-[#888] hover:text-white'}"
+					on:click={() => setScope('paper')}
+				>
+					Paper
+				</button>
+			</div>
+			<span class="text-[10px] text-[#555]">
+				{scope === 'live' ? 'real-wallet exposure' : 'paper sandboxes · $10k each, no shared budget'}
+			</span>
 		</div>
 		<div class="flex items-center gap-2">
 			<button
@@ -395,7 +442,10 @@
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
 			<div class="flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-white">Trading Status</h2>
+				<h2 class="text-sm font-bold uppercase tracking-wider text-white">
+					Trading Status
+					<span class="ml-2 border border-[#333] px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-[#666]" title="Kill switch, daily-loss halt, and equity anchors are driven by live account equity but halt PAPER trading too">GLOBAL</span>
+				</h2>
 				<span class={`text-xs px-2 py-1 border ${tradingAllowed ? 'text-emerald-400 border-emerald-800' : 'text-red-400 border-red-800'}`}>
 					{tradingAllowed ? 'Allowed' : 'Halted'}
 				</span>
@@ -449,7 +499,7 @@
 		</div>
 	{/if}
 
-	{#if liveBudget}
+	{#if scope === 'live' && liveBudget}
 	<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
 		<div class="flex items-center justify-between">
 			<h2 class="text-sm font-bold uppercase tracking-wider text-white">Live Portfolio Budget</h2>
@@ -607,7 +657,7 @@
 	</div>
 	{/if}
 
-	{#if liquidityGuard}
+	{#if scope === 'live' && liquidityGuard}
 	<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
 		<div class="flex items-center justify-between">
 			<h2 class="text-sm font-bold uppercase tracking-wider text-white">Liquidity Guard</h2>
@@ -669,10 +719,23 @@
 	</div>
 	{/if}
 
-	<RegimeGatePanel gate={risk?.regime_gate} on:changed={() => loadRiskData()} />
+	{#if scope === 'paper'}
+		<div class="border border-[#1d1d1d] bg-[#0a0a0a] px-4 py-2 text-[11px] text-[#666]">
+			Live-only guards (Portfolio Budget, Liquidity Guard) are hidden in PAPER scope —
+			paper sessions are isolated $10k sandboxes and never share a budget.
+		</div>
+	{/if}
+
+	<RegimeGatePanel gate={risk?.regime_gate} {scope} on:changed={() => loadRiskData()} />
 
 	<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
-		<h2 class="text-sm font-bold uppercase tracking-wider text-white">Correlation Groups</h2>
+		<div class="flex items-center justify-between">
+			<h2 class="text-sm font-bold uppercase tracking-wider text-white">
+				Correlation Groups
+				<span class="ml-2 border px-1.5 py-0.5 text-[9px] font-normal tracking-wider {scope === 'live' ? 'border-red-900 text-red-400' : 'border-[#333] text-[#888]'}">{scope.toUpperCase()}</span>
+			</h2>
+			<span class="text-[11px] text-[#666]">{scopedOpenPositions} open position{scopedOpenPositions === 1 ? '' : 's'}</span>
+		</div>
 		{#if Object.entries(groups).length === 0}
 			<div class="text-xs text-[#666]">No active position groups.</div>
 		{:else}

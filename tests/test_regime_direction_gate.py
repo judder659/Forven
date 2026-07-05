@@ -188,13 +188,18 @@ def test_gate_status_payload():
 
     log_regime_gate_event("S1", "BTC", "long", TREND_DOWN, 0.8, "enforce", "blocked",
                           execution_type="live", ref_price=67000.0)
+    log_regime_gate_event("S2", "ETH", "long", TREND_DOWN, 0.7, "observe", "would_block",
+                          execution_type="paper", ref_price=3200.0)
     status = get_regime_gate_status()
     assert status["mode"] == "enforce"
     assert status["block_long"] == ["HIGH_VOL", "TREND_DOWN"]
     assert status["block_short"] == []
     assert len(status["stances"]) == 3
-    assert status["aggregates"]["events"] == 1
-    assert status["events"][0]["strategy_id"] == "S1"
+    assert status["aggregates"]["events"] == 2
+    # Live/Paper toggle: aggregates split per execution type
+    assert status["aggregates"]["by_execution"]["live"]["events"] == 1
+    assert status["aggregates"]["by_execution"]["paper"]["events"] == 1
+    assert {e["strategy_id"] for e in status["events"]} == {"S1", "S2"}
 
 
 def test_stance_marks_restricted_directions():

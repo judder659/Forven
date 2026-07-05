@@ -70,7 +70,13 @@ def get_regime_gate_status() -> dict:
         stances.append(stance)
 
     events: list[dict] = []
-    aggregates: dict = {"window_days": _AGGREGATE_WINDOW_DAYS, "events": 0, "mtm_n": 0, "mtm_avg_pct": None}
+    aggregates: dict = {
+        "window_days": _AGGREGATE_WINDOW_DAYS,
+        "events": 0,
+        "mtm_n": 0,
+        "mtm_avg_pct": None,
+        "by_execution": {},
+    }
     try:
         cutoff = (_now() - timedelta(days=_AGGREGATE_WINDOW_DAYS)).isoformat()
         with get_db() as conn:
@@ -92,6 +98,23 @@ def get_regime_gate_status() -> dict:
                 aggregates["mtm_avg_pct"] = (
                     round(float(agg["mtm_avg"]), 3) if agg["mtm_avg"] is not None else None
                 )
+            # Per-execution-type split for the Risk page's Live/Paper toggle.
+            by_execution: dict[str, dict] = {}
+            for row in conn.execute(
+                """SELECT COALESCE(execution_type, 'paper') AS exec_type,
+                          COUNT(*) AS n, COUNT(mtm_pct) AS mtm_n, AVG(mtm_pct) AS mtm_avg
+                   FROM regime_gate_events WHERE ts >= ?
+                   GROUP BY COALESCE(execution_type, 'paper')""",
+                (cutoff,),
+            ):
+                by_execution[str(row["exec_type"])] = {
+                    "events": int(row["n"] or 0),
+                    "mtm_n": int(row["mtm_n"] or 0),
+                    "mtm_avg_pct": (
+                        round(float(row["mtm_avg"]), 3) if row["mtm_avg"] is not None else None
+                    ),
+                }
+            aggregates["by_execution"] = by_execution
     except Exception as exc:
         log.debug("regime gate ledger read failed: %s", exc)
 
