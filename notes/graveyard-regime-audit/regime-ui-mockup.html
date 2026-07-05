@@ -1,0 +1,548 @@
+<title>Regime UI mockup — forven</title>
+<style>
+  :root {
+    --bg: #000000;
+    --bg2: #0a0a0a;
+    --panel: #111111;
+    --border: #222222;
+    --txt: #ffffff;
+    --dim: #888888;
+    --faint: #555555;
+    --up: #22c55e;
+    --down: #ef4444;
+    --vol: #eab308;
+    --range: #9ca3af;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--txt);
+    font-family: Consolas, 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 20px 80px; }
+
+  /* ── page header ─────────────────────────────────────────── */
+  .doc-head { border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 8px; }
+  .doc-head h1 { font-size: 18px; letter-spacing: 3px; margin: 0 0 8px; font-weight: 700; }
+  .doc-head p { color: var(--dim); margin: 0; max-width: 68ch; }
+  .doc-head .phases { display: flex; gap: 16px; margin-top: 14px; flex-wrap: wrap; }
+  .phase { border: 1px solid var(--border); padding: 6px 10px; font-size: 12px; color: var(--dim); }
+  .phase b { color: var(--txt); letter-spacing: 1px; }
+
+  /* ── annotation tags & frames ───────────────────────────── */
+  .tag-row { display: flex; align-items: baseline; gap: 12px; margin: 44px 0 8px; }
+  .tag {
+    color: var(--faint); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    border-left: 2px solid var(--faint); padding-left: 8px;
+  }
+  .tag b { color: var(--dim); }
+  .tag-note { color: var(--faint); font-size: 12px; }
+  .frame { border: 1px solid var(--border); background: var(--bg); }
+  .app-bar {
+    height: 36px; background: var(--bg2); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    font-size: 12px; font-weight: 700; letter-spacing: 2px; color: var(--dim);
+    text-transform: uppercase;
+  }
+  .app-bar .crumb { color: var(--faint); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .caption { color: var(--faint); font-size: 12px; margin: 8px 0 0; max-width: 74ch; }
+  .caption b { color: var(--dim); font-weight: 700; }
+
+  /* ── regime chip ─────────────────────────────────────────── */
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); background: var(--bg2);
+    padding: 2px 8px; font-size: 12px; letter-spacing: 1px;
+    cursor: pointer; user-select: none; color: var(--txt);
+    font-family: inherit;
+  }
+  .chip:focus-visible { outline: 1px dashed var(--txt); outline-offset: 2px; }
+  .chip .dot { width: 7px; height: 7px; flex: none; }
+  .chip .conf { color: var(--dim); font-size: 11px; }
+  .chip.up   { border-color: rgba(34,197,94,.45); }  .chip.up .dot   { background: var(--up); }
+  .chip.down { border-color: rgba(239,68,68,.45); }  .chip.down .dot { background: var(--down); }
+  .chip.vol  { border-color: rgba(234,179,8,.45); }  .chip.vol .dot  { background: var(--vol); }
+  .chip.rng  { border-color: #333; }                  .chip.rng .dot  { background: var(--range); }
+  .chip.up   .lbl { color: var(--up); }
+  .chip.down .lbl { color: var(--down); }
+  .chip.vol  .lbl { color: var(--vol); }
+  .chip.rng  .lbl { color: var(--range); }
+  .chip.mini { padding: 1px 6px; font-size: 11px; gap: 5px; cursor: default; }
+  .chip.static { cursor: default; }
+
+  /* ── trading header fragment ─────────────────────────────── */
+  .trading-strip {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+  }
+  .asset-cell {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-right: 1px solid var(--border);
+  }
+  .asset-cell .sym { font-weight: 700; letter-spacing: 1px; }
+  .asset-cell .px { color: var(--dim); }
+  .popover {
+    border-top: 1px solid var(--border); background: var(--panel);
+    padding: 14px 16px; display: none;
+  }
+  .popover.open { display: block; }
+  .pop-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .pop-head .state { color: var(--down); font-weight: 700; letter-spacing: 2px; }
+  .pop-head .since { color: var(--dim); font-size: 12px; }
+  .confbar { height: 4px; background: #1a1a1a; width: 180px; position: relative; }
+  .confbar i { position: absolute; inset: 0 auto 0 0; width: 78%; background: var(--down); }
+  .inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); margin: 12px 0; }
+  .inp { background: var(--bg2); padding: 8px 10px; }
+  .inp .k { color: var(--faint); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; display: block; }
+  .inp .v { font-size: 13px; }
+  .inp .v em { font-style: normal; color: var(--dim); font-size: 12px; }
+  .pop-links { display: flex; gap: 14px; }
+  .pop-links a { color: var(--dim); font-size: 12px; letter-spacing: 1px; text-decoration: none; border-bottom: 1px solid var(--border); padding-bottom: 1px; }
+  .pop-links a:hover { color: var(--txt); border-color: var(--dim); }
+
+  /* ── tables ──────────────────────────────────────────────── */
+  .scroll-x { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    text-align: left; color: var(--faint); font-size: 11px; letter-spacing: 1.5px;
+    text-transform: uppercase; font-weight: 700; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 7px 12px; border-bottom: 1px solid #161616; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.dim { color: var(--dim); }
+  .pos { color: var(--up); }
+  .neg { color: var(--down); }
+  th.new, td.new { background: rgba(255,255,255,.025); }
+  th.new { color: var(--dim); }
+
+  /* ── strategy detail fragment ────────────────────────────── */
+  .strat-head { padding: 14px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+  .strat-head .sid { font-weight: 700; letter-spacing: 1px; }
+  .stage-pill { border: 1px solid rgba(34,197,94,.5); color: var(--up); font-size: 11px; letter-spacing: 2px; padding: 2px 8px; }
+  .gate-note { width: 100%; color: var(--dim); font-size: 12px; }
+  .gate-note .blocked { color: var(--vol); }
+  .sec-label { padding: 10px 16px 0; color: var(--faint); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+  .regime-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); margin: 10px 16px 14px; }
+  .rcell { background: var(--bg2); padding: 10px 12px; border-top: 2px solid transparent; }
+  .rcell.up  { border-top-color: var(--up); }
+  .rcell.down{ border-top-color: var(--down); }
+  .rcell.rng { border-top-color: var(--range); }
+  .rcell.vol { border-top-color: var(--vol); }
+  .rcell .rname { font-size: 11px; letter-spacing: 1.5px; color: var(--dim); }
+  .rcell .rmain { font-size: 17px; font-weight: 700; margin: 3px 0 1px; }
+  .rcell .rsub { font-size: 11px; color: var(--faint); }
+  details.adv { margin: 0 16px 16px; border: 1px solid var(--border); }
+  details.adv summary {
+    cursor: pointer; list-style: none; padding: 8px 12px; font-size: 11px;
+    letter-spacing: 2px; color: var(--dim); text-transform: uppercase; background: var(--bg2);
+  }
+  details.adv summary::before { content: "+ "; color: var(--faint); }
+  details.adv[open] summary::before { content: "− "; }
+  details.adv summary:focus-visible { outline: 1px dashed var(--txt); outline-offset: -3px; }
+  .adv-body { border-top: 1px solid var(--border); }
+  .adv-src { padding: 8px 12px; color: var(--faint); font-size: 11px; }
+
+  /* ── risk gate panel ─────────────────────────────────────── */
+  .gate-status { display: flex; flex-direction: column; }
+  .gs-row { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid #161616; flex-wrap: wrap; }
+  .gs-row .sym { width: 42px; font-weight: 700; }
+  .gs-verdict { letter-spacing: 1px; font-size: 12px; }
+  .gs-verdict.block { color: var(--vol); }
+  .gs-verdict.clear { color: var(--faint); }
+  .prove {
+    margin: 14px 16px; border: 1px solid var(--border); background: var(--bg2);
+    padding: 10px 14px; display: flex; gap: 26px; flex-wrap: wrap;
+  }
+  .prove .m { display: flex; flex-direction: column; }
+  .prove .k { color: var(--faint); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; }
+  .prove .v { font-size: 16px; font-weight: 700; }
+  .knobs { padding: 0 16px 16px; color: var(--faint); font-size: 12px; }
+  .knob { border: 1px solid var(--border); padding: 2px 8px; color: var(--dim); display: inline-block; margin: 2px 6px 2px 0; }
+
+  /* ── chart fragment ──────────────────────────────────────── */
+  .chart-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg2); }
+  .chart-bar .l { font-size: 12px; color: var(--dim); letter-spacing: 1px; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 2px; color: var(--dim); cursor: pointer; user-select: none; }
+  .toggle input { accent-color: #ffffff; width: 13px; height: 13px; cursor: pointer; }
+  .toggle input:focus-visible { outline: 1px dashed var(--txt); outline-offset: 2px; }
+  canvas { display: block; width: 100%; height: 300px; }
+  .legend { display: flex; gap: 18px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--faint); letter-spacing: 1px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; }
+
+  .foot { margin-top: 56px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--faint); font-size: 12px; max-width: 76ch; }
+  .foot b { color: var(--dim); }
+  @media (prefers-reduced-motion: no-preference) {
+    details.adv .adv-body { animation: none; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="doc-head">
+    <h1>REGIME UI — MOCKUP</h1>
+    <p>Five fragments of existing pages, in the app's own terminal theme, showing the full
+       visual weight of the regime feature. One primitive (the chip) reused everywhere;
+       everything deeper is one click away.</p>
+    <div class="phases">
+      <span class="phase"><b>PHASE A · OBSERVE-ONLY</b> — fragments 1, 2, 3, 5</span>
+      <span class="phase"><b>PHASE B · GATE</b> — fragment 4</span>
+    </div>
+  </header>
+
+  <!-- ════════ 1 · TRADING HEADER ════════ -->
+  <div class="tag-row">
+    <span class="tag"><b>1 · TRADING</b> — header strip</span>
+    <span class="tag-note">click the BTC chip to toggle its popover</span>
+  </div>
+  <div class="frame">
+    <div class="app-bar">TRADING <span class="crumb">/ overview</span></div>
+    <div class="trading-strip">
+      <div class="asset-cell">
+        <span class="sym">BTC</span><span class="px">$67,412</span>
+        <button class="chip down" id="btcChip" aria-expanded="true" aria-controls="btcPop">
+          <span class="dot"></span><span class="lbl">▼ TREND DOWN</span><span class="conf">78%</span>
+        </button>
+      </div>
+      <div class="asset-cell">
+        <span class="sym">ETH</span><span class="px">$3,188</span>
+        <button class="chip down static"><span class="dot"></span><span class="lbl">▼ TREND DOWN</span><span class="conf">64%</span></button>
+      </div>
+      <div class="asset-cell">
+        <span class="sym">SOL</span><span class="px">$142.7</span>
+        <button class="chip rng static"><span class="dot"></span><span class="lbl">↔ RANGE</span><span class="conf">55%</span></button>
+      </div>
+    </div>
+    <div class="popover open" id="btcPop">
+      <div class="pop-head">
+        <span class="state">▼ TREND DOWN</span>
+        <span class="since">for 6d 14h · flipped from RANGE 2026-06-29 04:00</span>
+        <span class="confbar" title="confidence 78%"><i></i></span>
+      </div>
+      <div class="inputs">
+        <div class="inp"><span class="k">ADX (14)</span><span class="v">31.4 <em>&gt; 25 — trending</em></span></div>
+        <div class="inp"><span class="k">EMA 20 / 50 / 200</span><span class="v">bearish <em>20 &lt; 50 &lt; 200</em></span></div>
+        <div class="inp"><span class="k">ATR ratio</span><span class="v">1.21 <em>&lt; 1.5 — vol normal</em></span></div>
+        <div class="inp"><span class="k">RSI (14)</span><span class="v">41.2</span></div>
+      </div>
+      <div class="pop-links">
+        <a href="#chart-frag">VIEW ON CHART</a>
+        <a href="#" onclick="return false">REGIME HISTORY</a>
+      </div>
+    </div>
+  </div>
+  <p class="caption">The chip shows its <b>inputs</b>, never just the label — "why does it say
+     that?" is always one click. Same classifier the backtest and gate use.</p>
+
+  <!-- ════════ 2 · TRADE TABLE ════════ -->
+  <div class="tag-row">
+    <span class="tag"><b>2 · PAPER TRADES</b> — one new column</span>
+  </div>
+  <div class="frame">
+    <div class="app-bar">PAPER TRADES <span class="crumb">/ recent</span></div>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>CLOSED</th><th>STRATEGY</th><th>ASSET</th><th>DIR</th>
+            <th>ENTRY</th><th>EXIT</th><th>PNL%</th><th class="new">REGIME @ ENTRY</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="dim">07-05 18:00</td><td>S05665 compression-thrust</td><td>BTC</td><td>long</td>
+            <td class="dim">66,884</td><td class="dim">67,712</td><td class="pos">+1.24</td>
+            <td class="new"><span class="chip rng mini"><span class="dot"></span><span class="lbl">↔ RNG</span></span></td>
+          </tr>
+          <tr>
+            <td class="dim">07-05 09:15</td><td>S05782 funding-fade</td><td>ETH</td><td>short</td>
+            <td class="dim">3,241</td><td class="dim">3,196</td><td class="pos">+1.39</td>
+            <td class="new"><span class="chip down mini"><span class="dot"></span><span class="lbl">▼ DN</span></span></td>
+          </tr>
+          <tr>
+            <td class="dim">07-04 22:30</td><td>S05702 vwap-reclaim</td><td>SOL</td><td>long</td>
+            <td class="dim">146.1</td><td class="dim">143.9</td><td class="neg">−1.51</td>
+            <td class="new"><span class="chip down mini"><span class="dot"></span><span class="lbl">▼ DN</span></span></td>
+          </tr>
+          <tr>
+            <td class="dim">07-04 16:45</td><td>S05665 compression-thrust</td><td>BTC</td><td>long</td>
+            <td class="dim">67,020</td><td class="dim">66,410</td><td class="neg">−0.91</td>
+            <td class="new"><span class="chip vol mini"><span class="dot"></span><span class="lbl">⚡ VOL</span></span></td>
+          </tr>
+          <tr>
+            <td class="dim">07-04 03:00</td><td>S05611 ema-slope-ride</td><td>ETH</td><td>long</td>
+            <td class="dim">3,150</td><td class="dim">3,214</td><td class="pos">+2.03</td>
+            <td class="new"><span class="chip up mini"><span class="dot"></span><span class="lbl">▲ UP</span></span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="caption">Stamped at fill time by the kernel and <b>persisted</b> (today it's computed,
+     then dropped). Historical rows become ground truth — the next audit is a query, not a project.</p>
+
+  <!-- ════════ 3 · STRATEGY DETAIL ════════ -->
+  <div class="tag-row">
+    <span class="tag"><b>3 · STRATEGY DETAIL</b> — overview tab, one strip + one accordion</span>
+  </div>
+  <div class="frame">
+    <div class="app-bar">FORGE <span class="crumb">/ S05665</span></div>
+    <div class="strat-head">
+      <span class="sid">S05665 · BTC-COMPRESSION-THRUST · 4h</span>
+      <span class="stage-pill">PAPER</span>
+      <span class="chip up static mini"><span class="dot"></span><span class="lbl">▲ TREND UP</span></span>
+      <span class="chip rng static mini"><span class="dot"></span><span class="lbl">↔ RANGE</span></span>
+      <span class="gate-note">compatible regimes shown left · market now: BTC ▼ TREND DOWN →
+        <span class="blocked">new entries gated</span> (phase B)</span>
+    </div>
+    <div class="sec-label">Performance by regime — 2020→now backtest</div>
+    <div class="regime-strip">
+      <div class="rcell up">
+        <div class="rname">▲ TREND UP</div>
+        <div class="rmain pos">+0.31%/trade</div>
+        <div class="rsub">n=64 · win 46%</div>
+      </div>
+      <div class="rcell rng">
+        <div class="rname">↔ RANGE</div>
+        <div class="rmain pos">+0.12%/trade</div>
+        <div class="rsub">n=38 · win 41%</div>
+      </div>
+      <div class="rcell down">
+        <div class="rname">▼ TREND DOWN</div>
+        <div class="rmain neg">−0.22%/trade</div>
+        <div class="rsub">n=41 · win 27%</div>
+      </div>
+      <div class="rcell vol">
+        <div class="rname">⚡ HIGH VOL</div>
+        <div class="rmain neg">−0.48%/trade</div>
+        <div class="rsub">n=9 · win 22%</div>
+      </div>
+    </div>
+    <details class="adv">
+      <summary>Details — episodes, significance</summary>
+      <div class="adv-body scroll-x">
+        <table>
+          <thead>
+            <tr><th>REGIME</th><th>TRADES</th><th>EPISODES</th><th>T-STAT</th><th>PERM P</th><th>ALPHA T</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>▲ TREND UP</td><td>64</td><td>28</td><td>2.4</td><td>0.03</td><td>1.6</td></tr>
+            <tr><td>↔ RANGE</td><td>38</td><td>22</td><td>1.1</td><td class="dim">—</td><td>0.9</td></tr>
+            <tr><td>▼ TREND DOWN</td><td>41</td><td>19</td><td class="neg">−1.8</td><td class="dim">—</td><td class="neg">−1.2</td></tr>
+            <tr><td>⚡ HIGH VOL</td><td>9</td><td>7</td><td class="dim">n too small</td><td class="dim">—</td><td class="dim">—</td></tr>
+          </tbody>
+        </table>
+        <div class="adv-src">source: gauntlet regime_split artifact rs_9f21c4 · engine v2026.07.01 · causal classifier</div>
+      </div>
+    </details>
+  </div>
+  <p class="caption">Surface shows numbers users already know (return, n, win rate).
+     T-stats, permutation p, alpha live <b>behind the accordion</b> for the day you want to argue with it.</p>
+
+  <!-- ════════ 4 · RISK GATE ════════ -->
+  <div class="tag-row">
+    <span class="tag"><b>4 · RISK</b> — regime gate panel (phase B)</span>
+  </div>
+  <div class="frame">
+    <div class="app-bar">RISK <span class="crumb">/ regime gate</span></div>
+    <div class="gate-status">
+      <div class="gs-row">
+        <span class="sym">BTC</span>
+        <span class="chip down static mini"><span class="dot"></span><span class="lbl">▼ TREND DOWN</span><span class="conf">78%</span></span>
+        <span class="gs-verdict block">LONGS BLOCKED</span>
+      </div>
+      <div class="gs-row">
+        <span class="sym">ETH</span>
+        <span class="chip down static mini"><span class="dot"></span><span class="lbl">▼ TREND DOWN</span><span class="conf">64%</span></span>
+        <span class="gs-verdict block">LONGS BLOCKED</span>
+      </div>
+      <div class="gs-row">
+        <span class="sym">SOL</span>
+        <span class="chip rng static mini"><span class="dot"></span><span class="lbl">↔ RANGE</span><span class="conf">55%</span></span>
+        <span class="gs-verdict clear">NO RESTRICTION</span>
+      </div>
+    </div>
+    <div class="prove">
+      <div class="m"><span class="k">Blocked · 7d</span><span class="v">14 longs</span></div>
+      <div class="m"><span class="k">Their MTM +48h</span><span class="v neg">−3.1%</span></div>
+      <div class="m"><span class="k">Gate verdict</span><span class="v pos">earning its keep</span></div>
+    </div>
+    <div class="sec-label">Gate ledger — last blocks</div>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>TIME</th><th>STRATEGY</th><th>SIGNAL</th><th>REGIME</th><th>CONF</th><th>MTM +48H</th></tr></thead>
+        <tbody>
+          <tr><td class="dim">07-05 12:00</td><td>S05702 vwap-reclaim</td><td>long SOL</td><td>▼ TREND DOWN</td><td class="dim">71%</td><td class="neg">−1.9%</td></tr>
+          <tr><td class="dim">07-05 04:00</td><td>S05611 ema-slope-ride</td><td>long ETH</td><td>▼ TREND DOWN</td><td class="dim">66%</td><td class="neg">−0.7%</td></tr>
+          <tr><td class="dim">07-04 20:00</td><td>S05665 compression-thrust</td><td>long BTC</td><td>⚡ HIGH VOL</td><td class="dim">83%</td><td class="neg">−2.4%</td></tr>
+          <tr><td class="dim">07-04 08:00</td><td>S05782 funding-fade</td><td>long BTC</td><td>▼ TREND DOWN</td><td class="dim">74%</td><td class="pos">+0.8%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="knobs">
+      gate config →
+      <span class="knob">ENABLED</span>
+      <span class="knob">block longs in ▼ / ⚡</span>
+      <span class="knob">min confidence 0.60</span>
+      <span class="knob">shorts unrestricted</span>
+      &nbsp;editable in Settings
+    </div>
+  </div>
+  <p class="caption">The gate continuously <b>re-justifies itself</b>: every block is logged with the
+     signal's hypothetical outcome 48h later. If that number ever turns green for a month, you'll
+     know the gate is strangling good trades — from this panel, not from a hunch.</p>
+
+  <!-- ════════ 5 · CHART SHADING ════════ -->
+  <div class="tag-row" id="chart-frag">
+    <span class="tag"><b>5 · CHART</b> — regime shading toggle</span>
+    <span class="tag-note">off by default in the real app — flip it</span>
+  </div>
+  <div class="frame">
+    <div class="chart-bar">
+      <span class="l">BTC-USDT · 4h · backtest S05665</span>
+      <label class="toggle"><input type="checkbox" id="bandToggle" checked> REGIMES</label>
+    </div>
+    <canvas id="chart" width="940" height="300" aria-label="price chart with regime shading"></canvas>
+    <div class="legend">
+      <span><i style="background:rgba(34,197,94,.5)"></i>TREND UP</span>
+      <span><i style="background:rgba(239,68,68,.5)"></i>TREND DOWN</span>
+      <span><i style="background:rgba(156,163,175,.35)"></i>RANGE</span>
+      <span><i style="background:rgba(234,179,8,.5)"></i>HIGH VOL</span>
+      <span><i style="background:#fff;border-radius:50%"></i>▲▼ trade markers</span>
+    </div>
+  </div>
+  <p class="caption">The most convincing check there is: the classifier's opinion <b>under</b> the
+     actual tape, trades on top. You see exactly where it flips late — the lag is visible, priced in,
+     and honest.</p>
+
+  <footer class="foot">
+    <b>Total new weight for a casual user:</b> three chips in the trading header, one column of
+    mini-badges in trade tables, one strip on strategy pages. No new nav item. Everything
+    else — popover inputs, advanced stats, shading, the gate panel — sits behind a click,
+    on pages that already exist.
+  </footer>
+</div>
+
+<script>
+  // chip popover toggle
+  var chip = document.getElementById('btcChip');
+  var pop = document.getElementById('btcPop');
+  chip.addEventListener('click', function () {
+    var open = pop.classList.toggle('open');
+    chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  // ── chart: seeded walk shaped by regime bands ──────────────
+  var REGIMES = [
+    { r: 'up',   w: 0.16 }, { r: 'vol', w: 0.05 }, { r: 'rng', w: 0.12 },
+    { r: 'down', w: 0.20 }, { r: 'rng', w: 0.08 }, { r: 'up',  w: 0.17 },
+    { r: 'down', w: 0.14 }, { r: 'vol', w: 0.04 }, { r: 'rng', w: 0.04 }
+  ];
+  var BAND = { up: 'rgba(34,197,94,.08)', down: 'rgba(239,68,68,.08)',
+               rng: 'rgba(156,163,175,.05)', vol: 'rgba(234,179,8,.09)' };
+  var STRIP = { up: 'rgba(34,197,94,.6)', down: 'rgba(239,68,68,.6)',
+                rng: 'rgba(156,163,175,.4)', vol: 'rgba(234,179,8,.7)' };
+  var DRIFT = { up: 0.9, down: -0.9, rng: 0.0, vol: 0.1 };
+  var NOISE = { up: 1.0, down: 1.1, rng: 0.8, vol: 2.6 };
+
+  // deterministic PRNG (mulberry32)
+  function prng(seed) {
+    return function () {
+      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  var N = 360, prices = [], regimeAt = [];
+  (function build() {
+    var rand = prng(20260705), p = 100;
+    var idx = 0;
+    for (var s = 0; s < REGIMES.length; s++) {
+      var steps = Math.round(REGIMES[s].w * N);
+      for (var i = 0; i < steps && idx < N; i++, idx++) {
+        var g = (rand() + rand() + rand() - 1.5); // approx gaussian
+        p = p * (1 + (DRIFT[REGIMES[s].r] * 0.0016) + g * 0.006 * NOISE[REGIMES[s].r]);
+        prices.push(p);
+        regimeAt.push(REGIMES[s].r);
+      }
+    }
+    while (prices.length < N) { prices.push(p); regimeAt.push('rng'); }
+  })();
+
+  // trade markers: [index, 'entry'|'exit', win?]
+  var MARKERS = [[64, 'e'], [92, 'x', true], [208, 'e'], [241, 'x', true], [286, 'e'], [301, 'x', false]];
+
+  var canvas = document.getElementById('chart');
+  var toggle = document.getElementById('bandToggle');
+
+  function draw() {
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth, cssH = 300;
+    canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    var lo = Math.min.apply(null, prices), hi = Math.max.apply(null, prices);
+    var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    var X = function (i) { return i / (N - 1) * cssW; };
+    var Y = function (v) { return cssH - 18 - (v - lo) / (hi - lo) * (cssH - 30); };
+
+    // regime bands + bottom strip
+    if (toggle.checked) {
+      var start = 0;
+      for (var i = 1; i <= N; i++) {
+        if (i === N || regimeAt[i] !== regimeAt[start]) {
+          ctx.fillStyle = BAND[regimeAt[start]];
+          ctx.fillRect(X(start), 0, X(i - 1) - X(start) + cssW / N, cssH - 14);
+          ctx.fillStyle = STRIP[regimeAt[start]];
+          ctx.fillRect(X(start), cssH - 12, X(i - 1) - X(start) + cssW / N, 3);
+          start = i;
+        }
+      }
+    }
+
+    // faint grid
+    ctx.strokeStyle = 'rgba(255,255,255,.05)';
+    ctx.lineWidth = 1;
+    for (var g = 1; g < 5; g++) {
+      ctx.beginPath();
+      ctx.moveTo(0, cssH / 5 * g); ctx.lineTo(cssW, cssH / 5 * g);
+      ctx.stroke();
+    }
+
+    // price line
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (var j = 0; j < N; j++) {
+      var x = X(j), y = Y(prices[j]);
+      j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+
+    // trade markers
+    for (var m = 0; m < MARKERS.length; m++) {
+      var mk = MARKERS[m], mx = X(mk[0]), my = Y(prices[mk[0]]);
+      ctx.beginPath();
+      if (mk[1] === 'e') {
+        ctx.fillStyle = '#ffffff';
+        ctx.moveTo(mx, my + 12); ctx.lineTo(mx - 5, my + 20); ctx.lineTo(mx + 5, my + 20);
+      } else {
+        ctx.fillStyle = mk[2] ? '#22c55e' : '#ef4444';
+        ctx.moveTo(mx, my - 12); ctx.lineTo(mx - 5, my - 20); ctx.lineTo(mx + 5, my - 20);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  toggle.addEventListener('change', draw);
+  window.addEventListener('resize', draw);
+  draw();
+</script>
