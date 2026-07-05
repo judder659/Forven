@@ -4,11 +4,13 @@
 	import {
 		getResult,
 		getRobustnessResult,
+		getWalkForwardWindowRecommendation,
 		submitCostStressRobustness,
 		submitMonteCarloRobustness,
 		submitParamJitterRobustness,
 		submitRegimeSplitRobustness,
 		submitWalkForwardRobustness,
+		type WfaWindowRecommendation,
 		type CostStressRobustnessResult,
 		type CostStressSnapshot,
 		type MonteCarloRobustnessResult,
@@ -218,7 +220,91 @@
 			start_date: baselineWindowStart,
 			end_date: baselineWindowEnd,
 		};
+		autoSeededWfaWindow = { start: baselineWindowStart, end: baselineWindowEnd };
 	}
+
+	// ── Trade-frequency-aware WFA window (S05925) ──
+	// A WFA fold is only judgeable with >= min_fold_trades OOS trades, so the
+	// right window follows the strategy's measured trade rate — not a calendar
+	// preset. The backend recommendation (forven.wfa_window, the same rule that
+	// sizes the gauntlet's canonical runs) widens auto-seeded windows and drives
+	// the inline adequacy warning. Operator-edited windows are never overridden.
+	let wfaRecommendation: WfaWindowRecommendation | null = null;
+	let autoSeededWfaWindow = { start: '', end: '' };
+
+	async function loadWfaRecommendation() {
+		try {
+			wfaRecommendation = await getWalkForwardWindowRecommendation(strategyId, {
+				timeframe: (walkForwardForm.timeframe || defaultTimeframe || '').trim() || undefined,
+			});
+			applyRecommendedWindow();
+		} catch {
+			wfaRecommendation = null;
+		}
+	}
+
+	function windowDaysBetween(start: string, end: string): number | null {
+		if (!start || !end) return null;
+		const startMs = Date.parse(start);
+		const endMs = Date.parse(end);
+		if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+		return (endMs - startMs) / 86_400_000;
+	}
+
+	function applyRecommendedWindow(force = false) {
+		if (!wfaRecommendation) return;
+		const currentDays = windowDaysBetween(walkForwardForm.start_date, walkForwardForm.end_date);
+		const untouched =
+			!walkForwardForm.start_date ||
+			(walkForwardForm.start_date === autoSeededWfaWindow.start &&
+				walkForwardForm.end_date === autoSeededWfaWindow.end);
+		// A longer window than recommended is fine — only widen, never shrink.
+		if (!force && (!untouched || (currentDays != null && currentDays >= wfaRecommendation.window_days))) {
+			return;
+		}
+		walkForwardForm = {
+			...walkForwardForm,
+			start_date: wfaRecommendation.recommended_start_date,
+			end_date: wfaRecommendation.recommended_end_date,
+		};
+		autoSeededWfaWindow = {
+			start: wfaRecommendation.recommended_start_date,
+			end: wfaRecommendation.recommended_end_date,
+		};
+	}
+
+	// Inline adequacy check: estimate the OOS trades each fold will see at the
+	// strategy's measured trade rate; below min_fold_trades the folds are not
+	// judgeable (the gate treats such runs as insufficient evidence, not verdicts).
+	$: wfaSelectedWindowDays = windowDaysBetween(walkForwardForm.start_date, walkForwardForm.end_date);
+	$: wfaEstOosTradesPerFold =
+		wfaRecommendation?.est_trades_per_day && wfaSelectedWindowDays
+			? wfaRecommendation.est_trades_per_day *
+				((wfaSelectedWindowDays *
+					(1 - Math.min(Math.max(Number(walkForwardForm.train_ratio) || 0.7, 0.05), 0.95))) /
+					Math.max(Number(walkForwardForm.n_splits) || 1, 1))
+			: null;
+	$: wfaWindowWarning = (() => {
+		if (!wfaRecommendation || !wfaSelectedWindowDays) return '';
+		if (wfaEstOosTradesPerFold != null) {
+			if (wfaEstOosTradesPerFold < wfaRecommendation.min_fold_trades) {
+				return (
+					`At ~${wfaRecommendation.est_trades_per_month} trades/month, each OOS fold will see ` +
+					`~${wfaEstOosTradesPerFold.toFixed(1)} trades — below the ${wfaRecommendation.min_fold_trades}-trade ` +
+					`minimum to judge a fold. The promotion gate treats such runs as insufficient evidence.`
+				);
+			}
+			return '';
+		}
+		if (wfaSelectedWindowDays < wfaRecommendation.window_days) {
+			return (
+				`Selected window is ${Math.round(wfaSelectedWindowDays)} days; ` +
+				`~${wfaRecommendation.window_days} days recommended for a ${wfaRecommendation.timeframe} strategy ` +
+				`so every fold has a judgeable trade sample.`
+			);
+		}
+		return '';
+	})();
 	$: if (!costStressForm.start_date && baselineWindowStart) {
 		costStressForm = {
 			...costStressForm,
@@ -260,6 +346,7 @@
 			syncTrackedProcesses(processes);
 		});
 		void rehydrateFromValidationHistory();
+		void loadWfaRecommendation();
 		return () => {
 			destroyed = true;
 			mounted = false;
@@ -1252,6 +1339,21 @@
 					accent="violet"
 				/>
 			</div>
+
+			{#if wfaWindowWarning}
+				<div class="mt-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400" data-testid="wf-adequacy-warning">
+					<span>{wfaWindowWarning}</span>
+					{#if wfaRecommendation}
+						<button
+							type="button"
+							class="ml-2 underline decoration-dotted hover:text-yellow-200"
+							on:click={() => applyRecommendedWindow(true)}
+						>
+							Use recommended window (~{Math.round(wfaRecommendation.window_days / 30.44)} months)
+						</button>
+					{/if}
+				</div>
+			{/if}
 			<div class="mt-3 grid gap-4 lg:grid-cols-3">
 				<NumericInputField id="wf-splits" label="Splits" bind:value={walkForwardForm.n_splits} min="2" max="20" helpText="Number of train/test folds." />
 				<NumericInputField id="wf-train-ratio" label="Train ratio" bind:value={walkForwardForm.train_ratio} min="0.1" max="0.95" step="0.05" helpText="Fraction of each fold used for training." />

@@ -1825,7 +1825,10 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
         # promoted to paper off a boundary WFA while param_jitter was mid-run, real
         # gauntlet never finished). Defer until the workflow reaches a terminal state.
         try:
-            from forven.gauntlet.store import has_active_workflow_for_strategy
+            from forven.gauntlet.store import (
+                get_latest_workflow_for_strategy,
+                has_active_workflow_for_strategy,
+            )
 
             if has_active_workflow_for_strategy(strat_id):
                 deferred_ids = list(outcome.get("workflow_deferred_ids") or [])
@@ -1833,6 +1836,28 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
                 outcome["workflow_deferred_ids"] = deferred_ids
                 log.debug("Evolution: %s deferred to active gauntlet workflow", strat_id)
                 continue
+            # A TERMINALLY failed/cancelled workflow is a VERDICT, not an absence.
+            # The v3 workflow judged this strategy on the full sweep-before-gate
+            # sequence and rejected it (or an operator cancelled it); the lean
+            # fast-path/readiness gate below judges weaker evidence and used to
+            # re-promote such strategies minutes later (S05925: workflow
+            # failed_gate at 02:47 -> "Auto-promoted after gauntlet gate pass"
+            # at 02:57 off the same artifacts). Once a workflow has reached a
+            # terminal non-passed state, promotion ownership stays with the
+            # workflow system: a fresh workflow run is the only path to paper.
+            # quick_screen-stage candidates are unaffected (no workflow yet).
+            if stage_name == "gauntlet":
+                latest_workflow = get_latest_workflow_for_strategy(strat_id)
+                workflow_status = str((latest_workflow or {}).get("status") or "").strip().lower()
+                if workflow_status in {"failed_gate", "cancelled"}:
+                    blocked_ids = list(outcome.get("workflow_failed_blocked_ids") or [])
+                    blocked_ids.append(strat_id)
+                    outcome["workflow_failed_blocked_ids"] = blocked_ids
+                    log.debug(
+                        "Evolution: %s blocked from fast-path promotion (latest workflow %s)",
+                        strat_id, workflow_status,
+                    )
+                    continue
         except Exception as exc:
             log.warning("Evolution: workflow-deferral check failed for %s: %s", strat_id, exc)
 

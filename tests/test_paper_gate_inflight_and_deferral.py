@@ -308,6 +308,63 @@ def test_evolution_testing_step_defers_to_active_workflow(forven_db, monkeypatch
     assert promotion_attempts == ["s-defer"]
 
 
+def test_evolution_fast_path_blocked_by_terminally_failed_workflow(forven_db, monkeypatch):
+    """A terminally failed/cancelled v3 workflow is a VERDICT: the fast path
+    must not re-judge the same evidence through the lean gate and promote
+    (S05925: workflow failed_gate 02:47 -> fast-path promoted to paper 02:57)."""
+    import forven.evolution as evolution
+    import forven.gauntlet.store as store
+
+    candidate = {
+        "id": "s-wf-failed",
+        "stage": "gauntlet",
+        "status": "gauntlet",
+        "type": "rsi_momentum",
+        "params": {},
+        "symbol": "ETH/USDT",
+        "timeframe": "1h",
+    }
+    monkeypatch.setattr(evolution, "get_strategies", lambda: [candidate])
+    monkeypatch.setattr(evolution, "_is_pipeline_candidate_strategy", lambda s: True)
+    monkeypatch.setattr(
+        evolution, "_resolve_pipeline_execution_plan",
+        lambda n: {"drain": False, "drain_max_seconds": 60, "max_assignments": 3, "adaptive": False, "target_clear_hours": 0},
+    )
+    promotion_attempts: list[str] = []
+    monkeypatch.setattr(
+        evolution, "_attempt_stage_promotion",
+        lambda sid, **kwargs: promotion_attempts.append(sid) or (False, "stubbed"),
+    )
+    monkeypatch.setattr(
+        evolution, "_advance_gauntlet_readiness",
+        lambda **kwargs: {"action": "none"},
+    )
+    monkeypatch.setattr(store, "has_active_workflow_for_strategy", lambda sid: False)
+
+    monkeypatch.setattr(
+        store, "get_latest_workflow_for_strategy",
+        lambda sid: {"id": "gw_failed", "status": "failed_gate"},
+    )
+    outcome = evolution._run_testing_step_impl()
+    assert promotion_attempts == []
+    assert outcome.get("workflow_failed_blocked_ids") == ["s-wf-failed"]
+
+    monkeypatch.setattr(
+        store, "get_latest_workflow_for_strategy",
+        lambda sid: {"id": "gw_cancelled", "status": "cancelled"},
+    )
+    evolution._run_testing_step_impl()
+    assert promotion_attempts == []
+
+    # A PASSED terminal workflow does not block the (then no-op) fast path.
+    monkeypatch.setattr(
+        store, "get_latest_workflow_for_strategy",
+        lambda sid: {"id": "gw_passed", "status": "passed"},
+    )
+    evolution._run_testing_step_impl()
+    assert promotion_attempts == ["s-wf-failed"]
+
+
 # ---------------------------------------------------------------------------
 # 3. Best-backtest display scoped to the strategy's own market + trade floor
 # ---------------------------------------------------------------------------

@@ -1161,6 +1161,36 @@ export interface RobustnessAnalysis {
 	regime_error?: string;
 }
 
+export interface WfaWindowRecommendation {
+	strategy_id: string;
+	timeframe: string;
+	n_splits: number;
+	train_ratio: number;
+	window_days: number;
+	window_bars: number;
+	oos_days_per_fold: number;
+	target_oos_trades_per_fold: number;
+	min_fold_trades: number;
+	est_trades_per_day: number | null;
+	est_trades_per_month: number | null;
+	trade_rate_source: 'strategy_metrics' | 'latest_backtest' | 'none';
+	capped_by_max_bars: boolean;
+	recommended_start_date: string;
+	recommended_end_date: string;
+}
+
+export async function getWalkForwardWindowRecommendation(
+	strategyId: string,
+	params: { timeframe?: string; n_splits?: number; train_ratio?: number } = {},
+): Promise<WfaWindowRecommendation> {
+	const query = new URLSearchParams();
+	if (params.timeframe) query.set('timeframe', params.timeframe);
+	if (params.n_splits != null) query.set('n_splits', String(params.n_splits));
+	if (params.train_ratio != null) query.set('train_ratio', String(params.train_ratio));
+	const qs = query.toString();
+	return fetchApi(`/robustness/walk-forward/window-recommendation/${encodeURIComponent(strategyId)}${qs ? `?${qs}` : ''}`);
+}
+
 export async function runWalkForwardRobustness(request: {
 	strategy_id: string;
 	symbol: string;

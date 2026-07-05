@@ -2509,6 +2509,39 @@ def _submit_result(
     return {"job_id": job_id, "status": "running", "result_id": result_id}
 
 
+@router.get("/api/robustness/walk-forward/window-recommendation/{strategy_id}")
+def get_walk_forward_window_recommendation(
+    strategy_id: str,
+    timeframe: str | None = None,
+    n_splits: int | None = None,
+    train_ratio: float | None = None,
+):
+    """Recommend a WFA window sized to the strategy's measured trade rate.
+
+    Single source of truth = forven.wfa_window (the same rule that floors the
+    canonical runner's defaulted window), so the UI default and the gauntlet
+    re-runs can never disagree about what an adequate window is. Also returns
+    concrete start/end dates for direct use by the Robustness tab.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from forven.wfa_window import recommended_wfa_window
+
+    row = _load_strategy_row(strategy_id)
+    resolved_timeframe = str(timeframe or row["timeframe"] or "1h").strip() or "1h"
+    recommendation = recommended_wfa_window(
+        strategy_id,
+        resolved_timeframe,
+        n_splits=n_splits,
+        train_ratio=train_ratio,
+    )
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=int(recommendation["window_days"]))
+    recommendation["recommended_start_date"] = start.isoformat()
+    recommendation["recommended_end_date"] = end.isoformat()
+    return recommendation
+
+
 @router.post("/api/robustness/walk-forward")
 def post_walk_forward(body: WalkForwardBody):
     context = _prepare_walk_forward_context(body)

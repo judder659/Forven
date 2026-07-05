@@ -176,6 +176,33 @@ def test_robustness_floor_operator_reenforced(forven_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Walk-forward: zero judgeable folds = insufficient evidence, gate BLOCKS
+# (S05925: every fold below wfa_min_fold_trades used to be graded as coin
+# flips by the raw fallback — 2/5 positive 1-3-trade folds = pass_rate 0.40
+# == the configured floor, and the strategy reached paper).
+# ---------------------------------------------------------------------------
+
+def test_wfa_insufficient_fold_evidence_blocks_promotion(forven_db, monkeypatch):
+    _stub_prereqs(monkeypatch, {
+        "walk_forward": {
+            "status": "insufficient",
+            "passed": False,
+            "verdict": "INSUFFICIENT",
+            "folds": 0,
+            "pass_rate": 0.0,
+            "insufficient_fold_evidence": True,
+        },
+    })
+    cfg = _cfg(required_tests=[], min_robustness_score=0)
+    with get_db() as conn:
+        _insert_gauntlet(conn, "wfa-insufficient", _PASS_METRICS)
+    passed, msg = _evaluate_gauntlet_gate("wfa-insufficient", cfg)
+    assert not passed, msg
+    assert "window insufficient" in msg
+    assert "trade-frequency-aware" in msg
+
+
+# ---------------------------------------------------------------------------
 # Monte-Carlo tail-DD ceiling — default 0.50, operator-editable
 # ---------------------------------------------------------------------------
 

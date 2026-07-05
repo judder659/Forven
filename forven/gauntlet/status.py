@@ -127,11 +127,29 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
         metrics = _parse_json(row["metrics_json"], {})
         config = _parse_json(row["config_json"], {})
         verdict = metrics.get("verdict") if isinstance(metrics, dict) else None
+        # A walk-forward run where EVERY fold is below wfa_min_fold_trades judged
+        # nothing — the window was too short for the strategy's trade rate. Its
+        # PASS/FAIL verdict is noise either way: surface it as retryable absence
+        # (blocked_runtime) so run_paper_promotion_gate buckets it as
+        # absent_missing (re-queue) instead of merit failed_gate or a pass.
+        insufficient_wfa = False
+        if step_key == "walk_forward" and isinstance(metrics, dict):
+            try:
+                from forven.policy import wfa_insufficient_fold_evidence
+
+                insufficient_wfa = wfa_insufficient_fold_evidence(metrics)
+            except Exception:
+                insufficient_wfa = False
         latest[step_key] = {
             "result_id": row["result_id"],
             "result_type": result_type,
-            "status": _result_status_to_step_status(str(config.get("status") or ""), verdict),
-            "verdict": str(verdict).upper() if verdict else None,
+            "status": (
+                "blocked_runtime"
+                if insufficient_wfa
+                else _result_status_to_step_status(str(config.get("status") or ""), verdict)
+            ),
+            "verdict": "INSUFFICIENT" if insufficient_wfa else (str(verdict).upper() if verdict else None),
+            "insufficient_fold_evidence": insufficient_wfa or None,
             "submitted_at": config.get("submitted_at") if isinstance(config, dict) else None,
             "completed_at": config.get("completed_at") if isinstance(config, dict) else None,
             "created_at": row["created_at"],

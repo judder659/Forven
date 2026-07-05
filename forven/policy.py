@@ -1678,6 +1678,70 @@ def _canonicalize_gauntlet_verdict_test(name: object) -> str:
     return _GAUNTLET_VERDICT_ALIASES.get(normalized, normalized)
 
 
+def _wfa_fold_stats(splits: object, min_fold_trades: int) -> dict:
+    """Fold-level OOS evidence for a walk-forward artifact.
+
+    evaluated = folds with >= min_fold_trades OOS trades (judgeable);
+    reporting = folds that carry an explicit OOS trade count at all (modern
+    artifacts always do; legacy rows / test fixtures may not);
+    insufficient = folds exist and report counts, but NONE is judgeable —
+    the window was too short for the strategy's trade rate.
+    """
+    passed = 0
+    evaluated = 0
+    raw_passed = 0
+    reporting = 0
+    total = 0
+    for split in splits if isinstance(splits, list) else []:
+        if not isinstance(split, dict):
+            continue
+        total += 1
+        oos = split.get("out_of_sample") if isinstance(split.get("out_of_sample"), dict) else {}
+        sharpe = _coerce_float(oos.get("sharpe", oos.get("sharpe_ratio")), 0.0)
+        if sharpe > 0:
+            raw_passed += 1
+        if "total_trades" in oos or "trades" in oos:
+            reporting += 1
+        oos_trades = int(_coerce_float(oos.get("total_trades", oos.get("trades")), 0.0) or 0)
+        if oos_trades < min_fold_trades:
+            continue
+        evaluated += 1
+        if sharpe > 0:
+            passed += 1
+    return {
+        "total": total,
+        "reporting": reporting,
+        "evaluated": evaluated,
+        "passed": passed,
+        "raw_passed": raw_passed,
+        "insufficient": total > 0 and reporting > 0 and evaluated == 0,
+    }
+
+
+def wfa_insufficient_fold_evidence(metrics: dict) -> bool:
+    """True when a walk-forward artifact has NO judgeable fold: every fold
+    reports an OOS trade count below robustness_thresholds.wfa_min_fold_trades.
+
+    Such a run is ABSENCE of evidence (the window was too short for the
+    strategy's trade rate), not a merit verdict in either direction. Grading
+    those coin-flip folds anyway is how S05925 reached paper on 2/5 positive
+    folds of 1-3 trades each. Shared with gauntlet.status so the workflow gate
+    and the UI classify it as retryable absence rather than pass or merit fail.
+    """
+    if not isinstance(metrics, dict):
+        return False
+    splits = metrics.get("splits")
+    if not isinstance(splits, list) or not splits:
+        return False
+    try:
+        min_fold_trades = int(
+            (load_pipeline_config().get("robustness_thresholds") or {}).get("wfa_min_fold_trades", 5) or 5
+        )
+    except Exception:
+        min_fold_trades = 5
+    return bool(_wfa_fold_stats(splits, min_fold_trades)["insufficient"])
+
+
 def _validation_row_to_verdict_payload(result_type: str, metrics: dict, config: dict) -> dict:
     verdict = str(metrics.get("verdict") or "").strip().upper()
     raw_status = str(metrics.get("status") or config.get("status") or "").strip().lower()
@@ -1707,31 +1771,27 @@ def _validation_row_to_verdict_payload(result_type: str, metrics: dict, config: 
             )
         except Exception:
             _min_fold_trades = 5
-        passed_splits = 0
-        evaluated_splits = 0
-        raw_passed = 0  # sharpe>0 over ALL splits — legacy/fixture fallback
-        for split in splits:
-            if not isinstance(split, dict):
-                continue
-            oos = split.get("out_of_sample") if isinstance(split.get("out_of_sample"), dict) else {}
-            sharpe = _coerce_float(oos.get("sharpe", oos.get("sharpe_ratio")), 0.0)
-            if sharpe > 0:
-                raw_passed += 1
-            oos_trades = int(_coerce_float(oos.get("total_trades", oos.get("trades")), 0.0) or 0)
-            if oos_trades < _min_fold_trades:
-                continue  # too few trades to judge this fold either way
-            evaluated_splits += 1
-            if sharpe > 0:
-                passed_splits += 1
-        if evaluated_splits > 0:
-            fold_count = evaluated_splits
-            pass_rate = float(passed_splits / evaluated_splits)
+        stats = _wfa_fold_stats(splits, _min_fold_trades)
+        insufficient = bool(stats["insufficient"])
+        if stats["evaluated"] > 0:
+            fold_count = int(stats["evaluated"])
+            pass_rate = float(stats["passed"] / stats["evaluated"])
+        elif insufficient:
+            # Every fold REPORTED an OOS trade count and every one was below the
+            # judgeable floor: there is nothing here to grade. The old fallback
+            # graded these coin-flip folds by raw sharpe>0 anyway — S05925
+            # reached paper on 2/5 positive folds of 1-3 trades each (one a
+            # 2-trade fold at the +10 Sharpe clamp). Insufficient evidence is
+            # ABSENCE, not a pass and not a merit fail; the gate blocks with an
+            # actionable "window too short" reason below.
+            fold_count = 0
+            pass_rate = 0.0
         else:
             # No fold reported a per-fold trade count (legacy results / test
             # fixtures): fall back to the raw sharpe-based rate over all splits so
             # the de-noising never makes pass_rate worse than the old behavior.
             fold_count = len(splits)
-            pass_rate = float(raw_passed / fold_count) if fold_count > 0 else 0.0
+            pass_rate = float(stats["raw_passed"] / fold_count) if fold_count > 0 else 0.0
         # For walk_forward, 'passed' and 'status' MUST reflect actual fold pass rate,
         # not just the raw verdict string (which may fail for non-fold reasons like
         # negative avg IS Sharpe or IS->OOS degradation). If enough OOS folds are
@@ -1758,8 +1818,15 @@ def _validation_row_to_verdict_payload(result_type: str, metrics: dict, config: 
             _fold_min = 0.6
         # Use fold pass rate as the sole paper-gate criterion, regardless of the
         # overall WFA verdict (which may fail for non-fold reasons like negative IS).
-        wfa_passed = (pass_rate >= _fold_min if fold_count > 0 else status == "pass")
-        wfa_status = "pass" if wfa_passed else "fail"
+        if insufficient:
+            # Not graded at all: passed=False keeps scoring conservative, and the
+            # explicit marker routes the gate to an actionable "window too short"
+            # block instead of a merit verdict.
+            wfa_passed = False
+            wfa_status = "insufficient"
+        else:
+            wfa_passed = (pass_rate >= _fold_min if fold_count > 0 else status == "pass")
+            wfa_status = "pass" if wfa_passed else "fail"
         aggregate_oos = metrics.get("aggregate_oos") if isinstance(metrics.get("aggregate_oos"), dict) else {}
         oos_trades = (
             metrics.get("total_oos_trades")
@@ -1781,9 +1848,11 @@ def _validation_row_to_verdict_payload(result_type: str, metrics: dict, config: 
             # consistency check passes, report PASS here so _verdict_payload_failed
             # does not re-reject on the raw stored verdict (which may be FAIL for
             # non-fold reasons like negative avg IS Sharpe).
-            "verdict": "PASS" if wfa_passed else verdict,
+            "verdict": "PASS" if wfa_passed else ("INSUFFICIENT" if insufficient else verdict),
             "raw_verdict": verdict,  # preserve for auditability
         }
+        if insufficient:
+            payload["insufficient_fold_evidence"] = True
         if oos_trades is not None:
             payload["total_oos_trades"] = int(_coerce_float(oos_trades, 0.0) or 0)
         return payload
@@ -3701,6 +3770,18 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
 
     wfa_payload = verdict_payloads.get("walk_forward")
     if wfa_payload:
+        if wfa_payload.get("insufficient_fold_evidence"):
+            # Every OOS fold fell below wfa_min_fold_trades: the run judged
+            # nothing (window too short for the strategy's trade rate). This is
+            # ABSENCE of evidence — block with an actionable reason rather than
+            # grading coin-flip folds (S05925) or emitting a merit reject. The
+            # trade-frequency-aware default window (forven.wfa_window) makes the
+            # re-run produce judgeable folds.
+            _min_fold_trades_msg = int((rob_thresholds or {}).get("wfa_min_fold_trades", 5) or 5)
+            return False, (
+                "S00552 BLOCK: walk-forward window insufficient — no OOS fold reached "
+                f"{_min_fold_trades_msg} trades; re-run WFA on the trade-frequency-aware window"
+            )
         # F4(b): at the paper gate the WFA fold-consistency floor fires whenever
         # walk_forward actually ran — narrowing required_tests must NOT disable a
         # ran-but-failed safety check (the membership-gating was a bypass lever).

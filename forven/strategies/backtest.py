@@ -10453,6 +10453,11 @@ def walk_forward(
     # Resolve duration/bars
 
 
+    # A window nobody chose explicitly (no total_bars, no start/end dates) is
+    # eligible for the trade-frequency-aware floor below — explicit windows
+    # (operator UI runs, tests) are honored verbatim.
+    window_defaulted = total_bars is None and not start_date and not end_date
+
     if total_bars is None:
         # Timeframe-AWARE bar count so the WFA window matches the quick_screen
         # backtest's CALENDAR window (api_core._estimate_backtest_bars uses the same
@@ -10501,6 +10506,34 @@ def walk_forward(
         n_splits if n_splits is not None
         else settings.get("walkforward_folds", wfa_cfg.get("n_folds", 5))
     )
+
+    # Trade-frequency-aware window floor (S05925): a defaulted window must give
+    # every OOS fold a judgeable trade sample (wfa_min_fold_trades), or the fold
+    # pass rate degenerates to coin flips — the stage calendar window handed a
+    # ~3-trades/month 4h strategy folds of 1-3 OOS trades. Raise (never shrink)
+    # the defaulted window to the recommendation; explicit caller windows are
+    # untouched. The resolver caps itself at the same _WFA_MAX_BARS ceiling.
+    if window_defaulted:
+        try:
+            from forven.wfa_window import recommended_wfa_window
+
+            _rec = recommended_wfa_window(
+                strategy_id,
+                resolved_timeframe,
+                n_splits=resolved_n_splits,
+                train_ratio=resolved_in_sample_pct,
+            )
+            _rec_bars = int(_rec.get("window_bars") or 0)
+            if _rec_bars > resolved_total_bars:
+                log.info(
+                    "WFA window raised for %s: %d -> %d bars (%s, ~%.1f trades/mo, source=%s)",
+                    strategy_id, resolved_total_bars, _rec_bars, resolved_timeframe,
+                    float(_rec.get("est_trades_per_month") or 0.0),
+                    _rec.get("trade_rate_source"),
+                )
+                resolved_total_bars = _rec_bars
+        except Exception as exc:  # noqa: BLE001 — sizing must never break the run
+            log.warning("WFA window recommendation failed for %s: %s", strategy_id, exc)
 
     resolved_fee_bps = float(
         fee_bps if fee_bps is not None
