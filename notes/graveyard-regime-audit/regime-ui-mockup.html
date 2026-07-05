@@ -147,6 +147,22 @@
   .adv-src { padding: 8px 12px; color: var(--faint); font-size: 11px; }
 
   /* ── risk gate panel ─────────────────────────────────────── */
+  .mode-row {
+    display: flex; align-items: center; gap: 14px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); background: var(--bg2); flex-wrap: wrap;
+  }
+  .mode-row .k { color: var(--faint); font-size: 11px; letter-spacing: 2px; }
+  .seg { display: inline-flex; border: 1px solid #333; }
+  .seg button {
+    background: transparent; color: var(--dim); border: 0; border-right: 1px solid #333;
+    font-family: inherit; font-size: 11px; letter-spacing: 2px; padding: 5px 14px;
+    cursor: pointer;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button.sel { background: var(--txt); color: #000; font-weight: 700; }
+  .seg button:focus-visible { outline: 1px dashed var(--txt); outline-offset: 2px; }
+  .mode-note { color: var(--faint); font-size: 12px; }
+  .mode-note.armed { color: var(--vol); }
   .gate-status { display: flex; flex-direction: column; }
   .gs-row { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid #161616; flex-wrap: wrap; }
   .gs-row .sym { width: 42px; font-weight: 700; }
@@ -348,21 +364,30 @@
   </div>
   <div class="frame">
     <div class="app-bar">RISK <span class="crumb">/ regime gate</span></div>
+    <div class="mode-row">
+      <span class="k">GATE MODE</span>
+      <div class="seg" role="group" aria-label="gate mode">
+        <button data-mode="off">OFF</button>
+        <button data-mode="observe">OBSERVE</button>
+        <button data-mode="enforce" class="sel">ENFORCE</button>
+      </div>
+      <span class="mode-note armed" id="modeNote">blocking longs in ▼ / ⚡ · disarm any time — takes effect immediately</span>
+    </div>
     <div class="gate-status">
       <div class="gs-row">
         <span class="sym">BTC</span>
         <span class="chip down static mini"><span class="dot"></span><span class="lbl">▼ TREND DOWN</span><span class="conf">78%</span></span>
-        <span class="gs-verdict block">LONGS BLOCKED</span>
+        <span class="gs-verdict block" data-v="longs">LONGS BLOCKED</span>
       </div>
       <div class="gs-row">
         <span class="sym">ETH</span>
         <span class="chip down static mini"><span class="dot"></span><span class="lbl">▼ TREND DOWN</span><span class="conf">64%</span></span>
-        <span class="gs-verdict block">LONGS BLOCKED</span>
+        <span class="gs-verdict block" data-v="longs">LONGS BLOCKED</span>
       </div>
       <div class="gs-row">
         <span class="sym">SOL</span>
         <span class="chip rng static mini"><span class="dot"></span><span class="lbl">↔ RANGE</span><span class="conf">55%</span></span>
-        <span class="gs-verdict clear">NO RESTRICTION</span>
+        <span class="gs-verdict clear" data-v="none">NO RESTRICTION</span>
       </div>
     </div>
     <div class="prove">
@@ -370,7 +395,7 @@
       <div class="m"><span class="k">Their MTM +48h</span><span class="v neg">−3.1%</span></div>
       <div class="m"><span class="k">Gate verdict</span><span class="v pos">earning its keep</span></div>
     </div>
-    <div class="sec-label">Gate ledger — last blocks</div>
+    <div class="sec-label" id="ledgerLabel">Gate ledger — last blocks</div>
     <div class="scroll-x">
       <table>
         <thead><tr><th>TIME</th><th>STRATEGY</th><th>SIGNAL</th><th>REGIME</th><th>CONF</th><th>MTM +48H</th></tr></thead>
@@ -384,16 +409,17 @@
     </div>
     <div class="knobs">
       gate config →
-      <span class="knob">ENABLED</span>
       <span class="knob">block longs in ▼ / ⚡</span>
       <span class="knob">min confidence 0.60</span>
       <span class="knob">shorts unrestricted</span>
       &nbsp;editable in Settings
     </div>
   </div>
-  <p class="caption">The gate continuously <b>re-justifies itself</b>: every block is logged with the
-     signal's hypothetical outcome 48h later. If that number ever turns green for a month, you'll
-     know the gate is strangling good trades — from this panel, not from a hunch.</p>
+  <p class="caption">Ships in <b>OBSERVE</b> — the gate shadow-logs what it would have blocked, and the
+     ledger + 48h mark-to-market accumulate evidence while execution stays untouched. Arming
+     <b>ENFORCE</b> is an explicit act (same pattern as GO LIVE); <b>OFF</b> kills even the logging.
+     If the ledger's outcome column ever runs green for a month, the gate is strangling good
+     trades and this panel will say so itself.</p>
 
   <!-- ════════ 5 · CHART SHADING ════════ -->
   <div class="tag-row" id="chart-frag">
@@ -433,6 +459,49 @@
   chip.addEventListener('click', function () {
     var open = pop.classList.toggle('open');
     chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  // ── gate mode switch: OFF / OBSERVE / ENFORCE ──────────────
+  var MODES = {
+    off: {
+      note: 'gate disabled — no blocking, no logging',
+      noteArmed: false,
+      longs: '—', longsClass: 'clear',
+      none: '—',
+      ledger: 'Gate ledger — inactive while OFF'
+    },
+    observe: {
+      note: 'shadow mode — logging would-have-blocked signals, execution untouched',
+      noteArmed: false,
+      longs: 'WOULD BLOCK LONGS', longsClass: 'clear',
+      none: 'NO RESTRICTION',
+      ledger: 'Gate ledger — would-have-blocked (observe)'
+    },
+    enforce: {
+      note: 'blocking longs in ▼ / ⚡ · disarm any time — takes effect immediately',
+      noteArmed: true,
+      longs: 'LONGS BLOCKED', longsClass: 'block',
+      none: 'NO RESTRICTION',
+      ledger: 'Gate ledger — last blocks'
+    }
+  };
+  var segButtons = document.querySelectorAll('.seg button');
+  var modeNote = document.getElementById('modeNote');
+  var ledgerLabel = document.getElementById('ledgerLabel');
+  segButtons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      segButtons.forEach(function (b) { b.classList.remove('sel'); });
+      btn.classList.add('sel');
+      var m = MODES[btn.dataset.mode];
+      modeNote.textContent = m.note;
+      modeNote.classList.toggle('armed', m.noteArmed);
+      ledgerLabel.textContent = m.ledger;
+      document.querySelectorAll('.gs-verdict').forEach(function (v) {
+        var kind = v.dataset.v;
+        v.textContent = kind === 'longs' ? m.longs : m.none;
+        v.className = 'gs-verdict ' + (kind === 'longs' ? m.longsClass : 'clear');
+      });
+    });
   });
 
   // ── chart: seeded walk shaped by regime bands ──────────────
