@@ -664,19 +664,32 @@ def is_degenerate_backtest_metrics(
     strategies.metrics — which the gate then reads as IS Sharpe 0.00 / <5 trades and
     rejects, re-archiving an otherwise-healthy strategy on every retry. Used both to
     keep a degenerate slice from winning the sweep AND from locking out an honest
-    rerun via the best-of-Sharpe merge. Fail-safe (returns False on any error)."""
+    rerun via the best-of-Sharpe merge. Fail-safe (returns False on any error).
+
+    The IS-trades check applies only when the in_sample block RECORDS a trade count:
+    a blob whose in_sample carries only ratios (sharpe/pf) is not the zero-IS-trade
+    pathology, and treating the absent key as 0 made the best-of merge discard
+    honest runs (blocking quick_screen -> gauntlet promotion) whenever a caller
+    persisted slim slice summaries."""
     try:
         if not isinstance(metrics, dict) or not metrics:
             return False
         total = float(metrics.get("total_trades") or metrics.get("num_trades") or 0)
+        if total < float(min_total_trades):
+            return True
         is_block = metrics.get("in_sample") if isinstance(metrics.get("in_sample"), dict) else {}
+        has_recorded_is_trades = any(
+            key in is_block for key in ("total_trades", "num_trades", "trades")
+        )
+        if not has_recorded_is_trades:
+            return False
         is_trades = float(
             is_block.get("total_trades")
             or is_block.get("num_trades")
             or is_block.get("trades")
             or 0
         )
-        return total < float(min_total_trades) or is_trades < float(min_is_trades)
+        return is_trades < float(min_is_trades)
     except Exception:
         return False
 
