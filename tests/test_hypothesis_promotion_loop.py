@@ -75,6 +75,43 @@ def test_promotion_loop_respects_cooldown(forven_db):
     assert h["id"] not in result["dispatched_ids"]
 
 
+def test_promotion_loop_skips_develop_exhausted_crucible(forven_db):
+    """Mirror of the planner's develop-retry cap: a crucible with no live
+    strategies whose develop_candidate attempts all completed fruitlessly
+    (substrate-blocked refusals) must not be re-picked."""
+    from forven.hypothesis_promotion import run_promotion_loop
+    h = _hyp()
+    refusal_output = json.dumps({
+        "tool_trace": [
+            {"tool_name": "write_file", "ok": False, "output_summary": "refusal memo"},
+        ],
+    })
+    with get_db() as conn:
+        for _ in range(3):
+            conn.execute(
+                """INSERT INTO agent_tasks (agent_id, type, title, description, input_data, output_data, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "strategy-developer",
+                    "develop_candidate",
+                    "t",
+                    "d",
+                    json.dumps({
+                        "origin_mode": "crucible_planner",
+                        "action_kind": "develop_candidate",
+                        "crucible_id": h["id"],
+                    }),
+                    refusal_output,
+                    "reviewed",
+                ),
+            )
+    with patch("forven.brain.assign_task") as m:
+        result = run_promotion_loop(top_k=3)
+    assert h["id"] not in result["dispatched_ids"]
+    assert result["skipped"]["develop_exhausted"] == 1
+    m.assert_not_called()
+
+
 def test_promotion_loop_respects_global_cap(forven_db):
     """When MAX_IN_FLIGHT is hit, dispatches nothing new."""
     from forven.hypothesis_promotion import run_promotion_loop

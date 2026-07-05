@@ -194,7 +194,14 @@ def _dispatch_task(hypothesis: dict[str, Any]) -> int | None:
 def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEFAULT) -> dict[str, Any]:
     """Tick: pick up to top_k hypotheses by promise, dispatch one task each."""
     in_flight = _current_in_flight_task_count()
-    skipped = {"disproven": 0, "cooldown": 0, "archived": 0, "in_flight": 0, "candidate_open": 0}
+    skipped = {
+        "disproven": 0,
+        "cooldown": 0,
+        "archived": 0,
+        "in_flight": 0,
+        "candidate_open": 0,
+        "develop_exhausted": 0,
+    }
     dispatched_ids: list[str] = []
 
     if in_flight >= max_in_flight:
@@ -220,7 +227,11 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
     # Share the candidate dedup family with the crucible planner: skip a pick if a
     # develop_candidate / expand_viable_crucible task is already open for it, so the
     # two dispatchers don't both fire for the same crucible in one window.
-    from forven.crucible_planner import CrucibleTaskIndex
+    from forven.crucible_planner import (
+        _MAX_FAILED_ACTION_RETRIES,
+        CrucibleTaskIndex,
+        _strategy_count,
+    )
 
     task_index = CrucibleTaskIndex.build()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -228,8 +239,20 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
         hypothesis = get_hypothesis(candidate["id"])
         if not hypothesis:
             continue
-        if task_index.candidate_action_open(str(hypothesis["id"])):
+        hypothesis_id = str(hypothesis["id"])
+        if task_index.candidate_action_open(hypothesis_id):
             skipped["candidate_open"] += 1
+            continue
+        # Mirror the planner's develop-retry cap: a crucible with no live
+        # strategies whose develop attempts are exhausted (failed OR completed
+        # fruitlessly, e.g. substrate-blocked refusals) must not be re-picked —
+        # dispatching it just burns another agent run on the same refusal.
+        if (
+            task_index.failed_action_count("develop_candidate", hypothesis_id)
+            >= _MAX_FAILED_ACTION_RETRIES
+            and _strategy_count(hypothesis_id) == 0
+        ):
+            skipped["develop_exhausted"] += 1
             continue
         task_id = _dispatch_task(hypothesis)
         if task_id is None:

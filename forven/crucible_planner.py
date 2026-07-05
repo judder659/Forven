@@ -60,6 +60,15 @@ def _is_pending_expiry(status: object, error: object) -> bool:
 
 _REFINE_DURABLE_TOOLS = {"update_hypothesis_fields", "attach_hypothesis_artifact"}
 
+# Tool calls that durably persist a strategy row. Kept in sync with the
+# strategy-creation subset of forven.agents.runner._ARTIFACT_TOOLS.
+_DEVELOP_STRATEGY_CREATE_TOOLS = {
+    "create_strategy",
+    "forven_create_strategy",
+    "register_strategy",
+    "forven_register_strategy_file",
+}
+
 
 def _refine_task_has_durable_update(
     payload: dict[str, Any],
@@ -88,6 +97,43 @@ def _refine_task_has_durable_update(
     return any(f"[ok] {tool_name}" in response for tool_name in _REFINE_DURABLE_TOOLS)
 
 
+def _develop_task_spawned_strategy(output_data: object) -> bool:
+    """True if a completed develop_candidate task durably created a strategy.
+
+    Mirrors _refine_task_has_durable_update: agents that refuse a
+    substrate-blocked candidate (LESSONS L141/L142) still complete the task
+    'successfully', so refusals never hit the failed-retry cap and the planner
+    re-dispatched the same crucible every cycle forever (585 dispatches/48h at
+    its worst). A success-status develop_candidate whose tool evidence shows no
+    successful strategy-creation call must count as a failed attempt instead.
+
+    Tasks with no readable tool evidence at all are treated as fruitful so a
+    missing/legacy trace can never park a healthy crucible.
+    """
+    output = _parse_input_data(output_data)
+    if not output:
+        return True
+
+    has_evidence = False
+    trace = output.get("tool_trace")
+    if isinstance(trace, list):
+        for call in trace:
+            if not isinstance(call, dict):
+                continue
+            has_evidence = True
+            tool_name = str(call.get("tool_name") or "").strip()
+            if tool_name in _DEVELOP_STRATEGY_CREATE_TOOLS and bool(call.get("ok")):
+                return True
+
+    response = str(output.get("response") or "")
+    if response:
+        has_evidence = True
+        if any(f"[ok] {tool_name}" in response for tool_name in _DEVELOP_STRATEGY_CREATE_TOOLS):
+            return True
+
+    return not has_evidence
+
+
 @dataclass(frozen=True)
 class CrucibleTaskIndex:
     open_actions: set[tuple[str, str | None]]
@@ -95,6 +141,7 @@ class CrucibleTaskIndex:
     successful_actions: set[tuple[str, str | None]]
     failed_action_counts: dict[tuple[str, str | None], int]
     failed_backtest_counts: dict[tuple[str | None, str | None], int]
+    fruitless_develop_counts: dict[str | None, int]
 
     @classmethod
     def build(cls) -> "CrucibleTaskIndex":
@@ -113,6 +160,7 @@ class CrucibleTaskIndex:
         successful_actions: set[tuple[str, str | None]] = set()
         failed_action_counts: dict[tuple[str, str | None], int] = defaultdict(int)
         failed_backtest_counts: dict[tuple[str | None, str | None], int] = defaultdict(int)
+        fruitless_develop_counts: dict[str | None, int] = defaultdict(int)
 
         for row in rows:
             payload = _parse_input_data(row["input_data"])
@@ -129,6 +177,8 @@ class CrucibleTaskIndex:
             effective_success = status in _SUCCESS_STATUSES
             if effective_success and action_kind == "refine_crucible":
                 effective_success = _refine_task_has_durable_update(payload, row["output_data"])
+            elif effective_success and action_kind == "develop_candidate":
+                effective_success = _develop_task_spawned_strategy(row["output_data"])
 
             if status in _OPEN_STATUSES:
                 open_actions.add(key)
@@ -138,9 +188,15 @@ class CrucibleTaskIndex:
                 prior_actions.add(key)
             if (
                 status in _FAILED_STATUSES
-                or (status in _SUCCESS_STATUSES and action_kind == "refine_crucible" and not effective_success)
+                or (
+                    status in _SUCCESS_STATUSES
+                    and action_kind in ("refine_crucible", "develop_candidate")
+                    and not effective_success
+                )
             ) and not expired_pending:
                 failed_action_counts[key] += 1
+                if action_kind == "develop_candidate" and status in _SUCCESS_STATUSES:
+                    fruitless_develop_counts[crucible_id] += 1
                 if action_kind == "run_backtest":
                     strategy_id = str(payload.get("strategy_id") or "").strip() or None
                     failed_backtest_counts[(crucible_id, strategy_id)] += 1
@@ -151,6 +207,7 @@ class CrucibleTaskIndex:
             successful_actions=successful_actions,
             failed_action_counts=dict(failed_action_counts),
             failed_backtest_counts=dict(failed_backtest_counts),
+            fruitless_develop_counts=dict(fruitless_develop_counts),
         )
 
     def open_action_exists(self, action_kind: str, crucible_id: str | None) -> bool:
@@ -179,6 +236,11 @@ class CrucibleTaskIndex:
 
     def failed_action_count(self, action_kind: str, crucible_id: str | None) -> int:
         return int(self.failed_action_counts.get(_action_key(action_kind, crucible_id), 0))
+
+    def fruitless_develop_count(self, crucible_id: str | None) -> int:
+        """Completed develop_candidate tasks that durably created no strategy."""
+        key = str(crucible_id or "").strip() or None
+        return int(self.fruitless_develop_counts.get(key, 0))
 
     def failed_strategy_backtest_count(self, crucible_id: str | None, strategy_id: str | None) -> int:
         crucible_key = str(crucible_id or "").strip() or None
@@ -503,7 +565,15 @@ def _plan_for_crucible(
                 # Parked for good: the retry cap never resets, so this crucible
                 # can never be planned again. Archive it (attributably) instead
                 # of leaving a zombie occupying an active-pool slot forever.
-                _archive_parked_crucible(crucible, reason="develop_retries_exhausted")
+                # Fruitless completions (agent refusals, e.g. substrate-blocked)
+                # get their own reason so ops can tell "kept refusing" apart
+                # from "kept erroring".
+                reason = (
+                    "develop_fruitless_3x"
+                    if index.fruitless_develop_count(crucible_id) >= _MAX_FAILED_ACTION_RETRIES
+                    else "develop_retries_exhausted"
+                )
+                _archive_parked_crucible(crucible, reason=reason)
                 return None
             return _action(
                 action_kind="develop_candidate",

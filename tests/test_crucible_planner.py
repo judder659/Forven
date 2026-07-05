@@ -131,6 +131,7 @@ def _make_planner_task(
     *,
     error: str | None = None,
     durable_refine: bool = False,
+    output: dict | None = None,
 ) -> None:
     output_data = None
     if durable_refine:
@@ -147,6 +148,8 @@ def _make_planner_task(
                 ]
             }
         )
+    elif output is not None:
+        output_data = json.dumps(output)
     with get_db() as conn:
         conn.execute(
             """
@@ -723,6 +726,141 @@ def test_parked_protected_crucible_is_never_auto_archived(forven_db):
             (parked["id"],),
         ).fetchone()
     assert row["manager_state"] == "active"
+
+
+# A develop_candidate that completed WITHOUT a successful strategy-creation
+# tool call — the substrate-blocked refusal shape (LESSONS L141/L142) that used
+# to be re-dispatched every planner cycle forever.
+_REFUSAL_DEVELOP_OUTPUT = {
+    "tool_trace": [
+        {"tool_name": "read_file", "ok": False, "output_summary": "read notes"},
+        {
+            "tool_name": "write_file",
+            "ok": False,
+            "output_summary": "Appended to notes/substrate_refusal.md",
+        },
+    ],
+    "response": (
+        "=== TOOL EXECUTION LEDGER (ground truth) ===\n"
+        "  [FAILED] write_file — Appended to notes/substrate_refusal.md"
+    ),
+}
+
+_FRUITFUL_DEVELOP_OUTPUT = {
+    "tool_trace": [
+        {
+            "tool_name": "register_strategy",
+            "ok": True,
+            "output_summary": '{"ok": true, "strategy": {"id": "S-NEW"}}',
+        },
+    ],
+    "response": '=== TOOL EXECUTION LEDGER (ground truth) ===\n  [ok] register_strategy — {"ok": true}',
+}
+
+
+def test_fruitless_completed_develop_candidates_park_and_archive_crucible(forven_db):
+    """Substrate-blocked refusals complete 'successfully' but create nothing;
+    they must count toward the develop retry cap or the planner re-dispatches
+    the same crucible every cycle forever (observed at 40 dispatches/48h)."""
+    from forven.crucible_planner import plan_next_actions
+
+    parked = _make_crucible("researching")
+    for _ in range(3):
+        _make_planner_task(
+            parked["id"], "develop_candidate", "reviewed", output=_REFUSAL_DEVELOP_OUTPUT
+        )
+
+    actions = plan_next_actions(limit=3)
+
+    assert [action.action_kind for action in actions] == ["propose_crucible"]
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT manager_state, archive_reason FROM hypotheses WHERE id = ?",
+            (parked["id"],),
+        ).fetchone()
+    assert row["manager_state"] == "archived"
+    assert row["archive_reason"] == "develop_fruitless_3x"
+
+
+def test_fruitful_completed_develop_candidates_do_not_count_toward_retry_cap(forven_db):
+    from forven.crucible_planner import plan_next_actions
+
+    crucible = _make_crucible("researching")
+    for _ in range(3):
+        _make_planner_task(
+            crucible["id"], "develop_candidate", "reviewed", output=_FRUITFUL_DEVELOP_OUTPUT
+        )
+
+    actions = plan_next_actions(limit=3)
+
+    assert len(actions) == 1
+    assert actions[0].action_kind == "develop_candidate"
+    assert actions[0].crucible_id == crucible["id"]
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT manager_state FROM hypotheses WHERE id = ?",
+            (crucible["id"],),
+        ).fetchone()
+    assert row["manager_state"] == "active"
+
+
+def test_develop_completion_without_tool_evidence_is_not_counted_fruitless(forven_db):
+    """Legacy/missing traces must never park a healthy crucible."""
+    from forven.crucible_planner import plan_next_actions
+
+    crucible = _make_crucible("researching")
+    for _ in range(3):
+        _make_planner_task(crucible["id"], "develop_candidate", "reviewed")
+
+    actions = plan_next_actions(limit=3)
+
+    assert len(actions) == 1
+    assert actions[0].action_kind == "develop_candidate"
+    assert actions[0].crucible_id == crucible["id"]
+
+
+def test_mixed_failed_and_fruitless_develops_archive_with_retries_reason(forven_db):
+    """When hard failures (not refusals) push the count over the cap, keep the
+    original attributable reason."""
+    from forven.crucible_planner import plan_next_actions
+
+    parked = _make_crucible("researching")
+    _make_planner_task(parked["id"], "develop_candidate", "reviewed", output=_REFUSAL_DEVELOP_OUTPUT)
+    for _ in range(2):
+        _make_planner_task(parked["id"], "develop_candidate", "failed")
+
+    plan_next_actions(limit=3)
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT manager_state, archive_reason FROM hypotheses WHERE id = ?",
+            (parked["id"],),
+        ).fetchone()
+    assert row["manager_state"] == "archived"
+    assert row["archive_reason"] == "develop_retries_exhausted"
+
+
+def test_task_index_counts_fruitless_develops_with_response_ledger_fallback(forven_db):
+    from forven.crucible_planner import CrucibleTaskIndex
+
+    _make_planner_task("H-FRUITLESS", "develop_candidate", "reviewed", output=_REFUSAL_DEVELOP_OUTPUT)
+    # Trace missing, but the response ledger proves a successful creation call.
+    _make_planner_task(
+        "H-LEDGER-OK",
+        "develop_candidate",
+        "reviewed",
+        output={"response": "[ok] forven_create_strategy — persisted"},
+    )
+
+    index = CrucibleTaskIndex.build()
+
+    assert index.fruitless_develop_count("H-FRUITLESS") == 1
+    assert index.failed_action_count("develop_candidate", "H-FRUITLESS") == 1
+    assert index.successful_action_exists("develop_candidate", "H-FRUITLESS") is False
+
+    assert index.fruitless_develop_count("H-LEDGER-OK") == 0
+    assert index.failed_action_count("develop_candidate", "H-LEDGER-OK") == 0
+    assert index.successful_action_exists("develop_candidate", "H-LEDGER-OK") is True
 
 
 def test_researching_crucible_below_retry_cap_is_not_archived(forven_db):
