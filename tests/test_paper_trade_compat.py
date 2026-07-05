@@ -57,6 +57,41 @@ def test_build_compat_paper_trade_uses_exit_fallbacks_and_computes_pnl():
     assert abs(float(trade["pnl_pct"]) - 7.5) < 1e-9
 
 
+def test_build_compat_paper_trade_surfaces_real_close_costs():
+    # Mirrors live trade E0082 (verified against Hyperliquid's fills): pnl_usd
+    # stays gross while fees_pct / net_pnl_pct / funding_usd — all recorded at
+    # close — surface as real dollar costs instead of zero-fill.
+    trade = paper_domain._build_compat_paper_trade(
+        {
+            "id": "E0082",
+            "direction": "long",
+            "entry_price": 62588.0,
+            "exit_price": 62715.0,
+            "size": 0.00688,
+            "leverage": 1.3,
+            "opened_at": "2026-07-03T22:51:21+00:00",
+            "closed_at": "2026-07-05T06:00:42+00:00",
+            "pnl_usd": 0.8738,
+            "pnl_pct": 0.002638,
+            "net_pnl_pct": 0.00094627,
+            "fees_pct": 0.00117,
+            "signal_data": {"funding_usd": 0.172777, "close_reason": "signal"},
+        },
+        strategy_name="Compat Strategy",
+        symbol="BTC/USDT",
+    )
+
+    margin = 62588.0 * 0.00688 / 1.3
+    assert abs(trade["fees_paid"] - 0.00117 * margin) < 1e-9  # ~$0.39 round trip (0.19/leg on HL)
+    assert abs(trade["entry_fee_bps"] - 4.5) < 1e-9
+    assert abs(trade["exit_fee_bps"] - 4.5) < 1e-9
+    assert abs(trade["funding_pnl"] - (-0.172777)) < 1e-9
+    assert abs(trade["net_pnl"] - (0.8738 - trade["fees_paid"] - 0.172777)) < 1e-9
+    assert abs(trade["net_pnl_pct"] - 0.094627) < 1e-9
+    assert trade["gross_pnl"] == 0.8738
+    assert trade["pnl"] == 0.8738
+
+
 def test_build_compat_paper_trade_surfaces_incomplete_close_metadata():
     trade = paper_domain._build_compat_paper_trade(
         {

@@ -249,6 +249,23 @@ def _build_compat_paper_trade(trade_row: dict, strategy_name: str, symbol: str) 
             # it matches the realized close path; leverage stays in pnl_pct only.
             pnl = (exit_price - entry_price) * size * signed
 
+    # Real close costs. fees_pct/net_pnl_pct are leverage-inclusive fractions of
+    # margin written at close (scanner._close_trade_db / risk fee-recovery), and
+    # funding_usd is realized funding PAID since open (positive = cost). Convert
+    # to dollars via margin = notional / leverage so the UI can show what the
+    # trade actually netted instead of a zero-filled breakdown.
+    margin = (entry_price * size / leverage) if (entry_price > 0 and size > 0 and leverage > 0) else 0.0
+    fees_pct = trading_domain._coerce_optional_float(trade_row.get("fees_pct"))
+    net_pnl_pct = _normalize_trade_percent_value(trade_row.get("net_pnl_pct"))
+    funding_usd = trading_domain._coerce_optional_float(
+        signal_data.get("funding_usd") if signal_data.get("funding_usd") is not None else signal_data.get("close_funding_usd")
+    ) or 0.0
+    fees_paid = fees_pct * margin if (fees_pct is not None and margin > 0) else 0.0
+    # fees_pct models both legs at the same per-side rate (2 * fee_bps * leverage);
+    # back out the per-side bps so the UI can price each fill's fee off its own leg.
+    per_side_fee_bps = (fees_pct * 10000.0) / (2.0 * leverage) if (fees_pct is not None and leverage > 0) else 0.0
+    net_pnl = pnl - fees_paid - funding_usd if pnl is not None else None
+
     return {
         "id": str(trade_row.get("id") or ""),
         "symbol": symbol,
@@ -262,12 +279,12 @@ def _build_compat_paper_trade(trade_row: dict, strategy_name: str, symbol: str) 
         "pnl_pct": pnl_pct,
         "strategy_name": strategy_name,
         "gross_pnl": pnl,
-        "fees_paid": 0.0,
-        "funding_pnl": 0.0,
-        "net_pnl": pnl,
-        "net_pnl_pct": pnl_pct,
-        "entry_fee_bps": 0.0,
-        "exit_fee_bps": 0.0,
+        "fees_paid": fees_paid,
+        "funding_pnl": -funding_usd,
+        "net_pnl": net_pnl,
+        "net_pnl_pct": net_pnl_pct if net_pnl_pct is not None else pnl_pct,
+        "entry_fee_bps": per_side_fee_bps,
+        "exit_fee_bps": per_side_fee_bps,
         "close_reason": close_reason,
         "close_incomplete": close_incomplete,
     }

@@ -192,6 +192,7 @@
 	// Selected session
 	let selectedSession: PaperTradingSession | null = null;
 	let sessionTrades: PaperTrade[] = [];
+	$: sessionTradeFills = buildTradeFills(sessionTrades);
 	// One-shot: a strategy id from a ?select= deep-link (e.g. the All Trades blotter)
 	// to select THAT strategy's existing session on the next session load.
 	let preselectStrategyId: string | null = null;
@@ -233,14 +234,17 @@
 	const paperStockSymbols = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'SPY', 'QQQ'];
 	const speedPresets = [0.5, 1, 2, 5, 10, 20];
 	const CHART_MARKER_TIMEOUT_MS = 5_000;
-	const tradeHistoryColumns = [
-		{ key: 'side', label: 'Side' },
-		{ key: 'entry_time', label: 'Entry Time' },
-		{ key: 'exit_time', label: 'Exit Time' },
-		{ key: 'entry_price', label: 'Entry' },
-		{ key: 'exit_price', label: 'Exit' },
-		{ key: 'pnl', label: '$ P&L', align: 'right' as const },
-		{ key: 'pnl_pct', label: 'P&L %', align: 'right' as const },
+	// Hyperliquid-style fills view: each trade renders as an Open fill row plus a
+	// Close fill row (once closed), mirroring the exchange's trade history columns.
+	const tradeFillColumns = [
+		{ key: 'time', label: 'Time' },
+		{ key: 'market', label: 'Market' },
+		{ key: 'direction', label: 'Direction' },
+		{ key: 'price', label: 'Price', align: 'right' as const },
+		{ key: 'size', label: 'Size', align: 'right' as const },
+		{ key: 'value', label: 'Trade Value', align: 'right' as const },
+		{ key: 'fee', label: 'Fee', align: 'right' as const },
+		{ key: 'closed_pnl', label: 'Closed PNL', align: 'right' as const },
 	];
 
 	let liveChartPoller: Poller | null = null;
@@ -311,13 +315,99 @@
 	// real-money warnings on the manual controls and confirm modal.
 	$: isLiveSelected = isDeployedCompatSession(selectedSession);
 
-	function toPaperTrade(row: unknown): PaperTrade {
-		return row as PaperTrade;
+	// One exchange-style fill row (a trade contributes an open fill and, once
+	// closed, a close fill — matching Hyperliquid's trade history).
+	interface TradeFillRow {
+		key: string;
+		trade: PaperTrade;
+		kind: 'open' | 'close';
+		time: string | null;
+		price: number | null;
+		fee: number | null;
+		closedPnl: number | null;
 	}
 
-	function getPaperTradeRowKey(row: unknown, index: number): string | number {
-		const trade = toPaperTrade(row);
-		return trade.id ?? index;
+	function toTradeFill(row: unknown): TradeFillRow {
+		return row as TradeFillRow;
+	}
+
+	function getTradeFillRowKey(row: unknown, index: number): string | number {
+		return toTradeFill(row).key ?? index;
+	}
+
+	function legFee(feeBps: number | null | undefined, price: number | null | undefined, size: number): number | null {
+		if (typeof feeBps !== 'number' || feeBps <= 0) return null;
+		if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0 || size <= 0) return null;
+		return (feeBps / 10000) * price * size;
+	}
+
+	function buildTradeFills(trades: PaperTrade[]): TradeFillRow[] {
+		const fills: TradeFillRow[] = [];
+		for (const trade of trades) {
+			const size = Number(trade.size) || 0;
+			const entryFee = legFee(trade.entry_fee_bps, trade.entry_price, size);
+			if (trade.exit_time) {
+				const exitFee = legFee(trade.exit_fee_bps, trade.exit_price, size);
+				const gross = typeof trade.gross_pnl === 'number' ? trade.gross_pnl : trade.pnl;
+				fills.push({
+					key: `${trade.id}:close`,
+					trade,
+					kind: 'close',
+					time: trade.exit_time,
+					price: trade.exit_price,
+					fee: exitFee,
+					// Hyperliquid convention: each fill's closed PnL is net of that
+					// fill's own fee (funding lives in the hover breakdown).
+					closedPnl: typeof gross === 'number' ? gross - (exitFee ?? 0) : null,
+				});
+			}
+			fills.push({
+				key: `${trade.id}:open`,
+				trade,
+				kind: 'open',
+				time: trade.entry_time,
+				price: trade.entry_price,
+				fee: entryFee,
+				closedPnl: entryFee !== null ? -entryFee : null,
+			});
+		}
+		return fills.sort((a, b) => new Date(b.time ?? 0).getTime() - new Date(a.time ?? 0).getTime());
+	}
+
+	function fillMarket(fill: TradeFillRow): string {
+		const symbol = String(fill.trade.symbol || '').trim();
+		return symbol.split(/[/:_-]/)[0] || symbol || '--';
+	}
+
+	function fillDirectionLabel(fill: TradeFillRow): string {
+		const side = String(fill.trade.side || 'long').toUpperCase() === 'SHORT' ? 'Short' : 'Long';
+		return `${fill.kind === 'open' ? 'Open' : 'Close'} ${side}`;
+	}
+
+	function fillDirectionTone(fill: TradeFillRow): string {
+		const isShort = String(fill.trade.side || 'long').toUpperCase() === 'SHORT';
+		// Color by order side like the exchange: buys (open long / close short)
+		// green, sells (close long / open short) red.
+		const isBuy = (fill.kind === 'open') !== isShort;
+		return isBuy ? 'text-green-400' : 'text-red-400';
+	}
+
+	function fillTradeValue(fill: TradeFillRow): number | null {
+		const size = Number(fill.trade.size) || 0;
+		if (typeof fill.price !== 'number' || !Number.isFinite(fill.price) || size <= 0) return null;
+		return fill.price * size;
+	}
+
+	function formatFillTime(dateStr: string | null | undefined): string {
+		if (!dateStr) return '--';
+		const date = new Date(dateStr);
+		if (Number.isNaN(date.getTime())) return '--';
+		return `${date.toLocaleDateString()} - ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}`;
+	}
+
+	function formatFee(value: number | null): string {
+		if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+		return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 	}
 
 	type LegacyTradeMarker = TradeMarker & { time?: string };
@@ -3468,8 +3558,8 @@
 					</div>
 				</div>
 
-				<!-- Row 3: Bottom Panels -->
-				<div class="border-t border-[#222] grid grid-cols-3 overflow-hidden">
+				<!-- Row 3: Bottom Panels — trades get the lion's share, signals stay compact -->
+				<div class="border-t border-[#222] grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,4.8fr)] overflow-hidden">
 					<!-- Live Indicators -->
 					<div class="border-r border-[#222] p-2 overflow-y-auto">
 						<h3 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Indicators</h3>
@@ -3517,11 +3607,11 @@
 					<!-- Trade History -->
 					<div class="p-2 overflow-y-auto">
 						<h3 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Trades</h3>
-						{#if sessionTrades.length > 0}
+						{#if sessionTradeFills.length > 0}
 							<DataTable
-								columns={tradeHistoryColumns}
-								rows={sessionTrades}
-								rowKey={getPaperTradeRowKey}
+								columns={tradeFillColumns}
+								rows={sessionTradeFills}
+								rowKey={getTradeFillRowKey}
 								tableClass="w-full text-[11px]"
 								headerClass="text-gray-500 border-b border-[#222]"
 								rowClass="border-b border-[#111] hover:bg-[#111]"
@@ -3529,58 +3619,62 @@
 								emptyClass="py-3 text-center text-gray-600 text-[11px]"
 							>
 								<svelte:fragment slot="cell" let:row let:column>
-									{@const trade = toPaperTrade(row)}
-									{#if column.key === 'side'}
-										<span class="font-bold {trade.side === 'long' || trade.side === 'LONG' || trade.side === 'Long' ? 'text-green-400' : 'text-red-400'}">
-											{trade.side?.toUpperCase() === 'SHORT' ? 'Short' : 'Long'}
-										</span>
-									{:else if column.key === 'entry_time'}
-										<span class="text-gray-400">{formatDateTime(trade.entry_time)}</span>
-									{:else if column.key === 'exit_time'}
-										<span class="text-gray-400">{formatDateTime(trade.exit_time)}</span>
-									{:else if column.key === 'entry_price'}
-										<span class="text-gray-400">{formatPrice(trade.entry_price)}</span>
-									{:else if column.key === 'exit_price'}
-										{@const closeBadge = getTradeCloseBadge(trade)}
-										<div class="flex flex-col items-end">
-											<span class="text-gray-400">{formatPrice(trade.exit_price)}</span>
+									{@const fill = toTradeFill(row)}
+									{@const trade = fill.trade}
+									{#if column.key === 'time'}
+										<span class="text-gray-400 whitespace-nowrap">{formatFillTime(fill.time)}</span>
+									{:else if column.key === 'market'}
+										<span class="font-bold text-gray-300">{fillMarket(fill)}</span>
+									{:else if column.key === 'direction'}
+										{@const closeBadge = fill.kind === 'close' ? getTradeCloseBadge(trade) : null}
+										<div class="flex items-center gap-1.5">
+											<span class="{fillDirectionTone(fill)}">{fillDirectionLabel(fill)}</span>
 											{#if closeBadge}
 												<span
-													class="mt-1 inline-flex rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wider {closeBadge.tone}"
+													class="inline-flex rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wider {closeBadge.tone}"
 													title={closeBadge.title}
 												>
 													{closeBadge.label}
 												</span>
 											{/if}
 										</div>
-									{:else if column.key === 'pnl'}
-										<div class="relative group cursor-default">
-											<span class="font-bold {getPnlTone(trade.pnl)}">
-												{formatDollarPnl(trade.pnl)}
-											</span>
-											<div class="absolute right-0 top-full z-10 hidden group-hover:block bg-[#111] border border-[#333] p-2 text-[10px] min-w-[140px]">
-												<div class="flex justify-between gap-4 mb-1">
-													<span class="text-gray-500">Gross:</span>
-													<span class="text-gray-300">{formatDollarPnl(trade.gross_pnl)}</span>
-												</div>
-												<div class="flex justify-between gap-4 mb-1">
-													<span class="text-gray-500">Fees:</span>
-													<span class="text-red-400">{formatDollarPnl((trade.fees_paid ?? 0) * -1)}</span>
-												</div>
-												<div class="flex justify-between gap-4 mb-1">
-													<span class="text-gray-500">Funding:</span>
-													<span class="{getPnlTone(trade.funding_pnl)}">{formatDollarPnl(trade.funding_pnl)}</span>
-												</div>
-												<div class="border-t border-[#333] pt-1 mt-1 flex justify-between gap-4 font-bold">
-													<span class="text-gray-400">Net:</span>
-													<span class="{getPnlTone(trade.net_pnl)}">{formatDollarPnl(trade.net_pnl)}</span>
+									{:else if column.key === 'price'}
+										<span class="text-gray-400">{formatPrice(fill.price)}</span>
+									{:else if column.key === 'size'}
+										<span class="text-gray-400">{formatQty(trade.size)} {fillMarket(fill)}</span>
+									{:else if column.key === 'value'}
+										{@const value = fillTradeValue(fill)}
+										<span class="text-gray-400">{value === null ? '—' : formatFee(value)}</span>
+									{:else if column.key === 'fee'}
+										<span class="text-gray-400">{formatFee(fill.fee)}</span>
+									{:else if column.key === 'closed_pnl'}
+										{#if fill.kind === 'close'}
+											<div class="relative group cursor-default">
+												<span class="font-bold {getPnlTone(fill.closedPnl)}">
+													{formatDollarPnl(fill.closedPnl)}
+												</span>
+												<div class="absolute right-0 top-full z-10 hidden group-hover:block bg-[#111] border border-[#333] p-2 text-[10px] min-w-[150px]">
+													<div class="flex justify-between gap-4 mb-1">
+														<span class="text-gray-500">Gross:</span>
+														<span class="text-gray-300">{formatDollarPnl(trade.gross_pnl)}</span>
+													</div>
+													<div class="flex justify-between gap-4 mb-1">
+														<span class="text-gray-500">Fees:</span>
+														<span class="text-red-400">{formatDollarPnl((trade.fees_paid ?? 0) * -1)}</span>
+													</div>
+													<div class="flex justify-between gap-4 mb-1">
+														<span class="text-gray-500">Funding:</span>
+														<span class="{getPnlTone(trade.funding_pnl)}">{formatDollarPnl(trade.funding_pnl)}</span>
+													</div>
+													<div class="border-t border-[#333] pt-1 mt-1 flex justify-between gap-4 font-bold">
+														<span class="text-gray-400">Net:</span>
+														<span class="{getPnlTone(trade.net_pnl)}">{formatDollarPnl(trade.net_pnl)} ({formatPercent(trade.net_pnl_pct)})</span>
+													</div>
 												</div>
 											</div>
-										</div>
-									{:else if column.key === 'pnl_pct'}
-										<span class="font-bold {getPnlTone(trade.pnl_pct)}">
-											{formatPercent(trade.pnl_pct)}
-										</span>
+										{:else}
+											<span class="{getPnlTone(fill.closedPnl)}">{fill.closedPnl === null ? '—' : formatDollarPnl(fill.closedPnl)}</span>
+										{/if}
 									{/if}
 								</svelte:fragment>
 							</DataTable>
