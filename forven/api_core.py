@@ -3882,6 +3882,19 @@ def _build_minimax_oauth_start() -> dict[str, str]:
     }
 
 
+def _mark_provider_connected_after_oauth(provider: str) -> None:
+    """A finished OAuth flow is an explicit operator connection. Record it so
+    the fail-closed spend gate (provider_is_connected) goes green, exactly like
+    the manual key-save path — otherwise the tokens land in the auth file but
+    the provider keeps showing NOT CONNECTED / "env key only"."""
+    try:
+        from forven.model_selection import mark_provider_connected
+
+        mark_provider_connected(provider)
+    except Exception:
+        log.exception("failed to mark %s connected after oauth", provider)
+
+
 def _complete_openai_oauth(state: str, code: str, code_verifier: str | None) -> None:
     from forven.auth import openai as openai_auth
 
@@ -3955,6 +3968,7 @@ def _complete_openai_oauth(state: str, code: str, code_verifier: str | None) -> 
         profile["accountId"] = account_id
 
     upsert_profile("openai", profile)
+    _mark_provider_connected_after_oauth("openai")
     _consume_oauth_session("openai", state)
 
 
@@ -4099,6 +4113,7 @@ def _poll_minimax_once(state: str, session: dict) -> dict:
                 "expires": int(expires) if isinstance(expires, (int, float)) else None,
             }
             upsert_profile("minimax", profile)
+            _mark_provider_connected_after_oauth("minimax")
             _consume_oauth_session("minimax", state)
             return {"status": "complete"}
         status = _minimax_status_from_error(_oauth_error_code(payload), state, session)

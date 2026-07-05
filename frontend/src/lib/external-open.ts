@@ -84,8 +84,18 @@ export async function openExternal(url: string): Promise<boolean> {
 		}
 	}
 	try {
-		const win = window.open(url, '_blank', 'noopener,noreferrer');
-		return win !== null;
+		// Do NOT pass 'noopener' in the features string: per spec window.open()
+		// then returns null even when the tab opened fine, which misreported a
+		// working browser handoff as "could not open". Open plainly (null now
+		// really means blocked) and sever the opener link ourselves.
+		const win = window.open(url, '_blank');
+		if (!win) return false;
+		try {
+			win.opener = null;
+		} catch {
+			/* cross-origin — opener access denied, already isolated */
+		}
+		return true;
 	} catch {
 		return false;
 	}

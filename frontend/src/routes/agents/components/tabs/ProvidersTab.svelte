@@ -23,6 +23,7 @@
 	} from '$lib/api';
 	import { onDestroy } from 'svelte';
 	import { openExternal } from '$lib/external-open';
+	import { copyTextToClipboard } from '$lib/utils/clipboard';
 	import { agentsConfig, isProviderConnected } from '../agentsConfigStore';
 
 	$: providers = $agentsConfig.providers;
@@ -37,9 +38,25 @@
 	let providerBaseUrlInput: Record<string, string> = {};
 	let providerOAuthState: Record<
 		string,
-		(ForvenAuthProviderOAuthStartResponse & { code: string }) | null
+		(ForvenAuthProviderOAuthStartResponse & { code: string; openFailed?: boolean }) | null
 	> = {};
 	let providerOAuthStatus: Record<string, string> = {};
+	let providerLinkCopied: Record<string, boolean> = {};
+
+	async function copySignInLink(provider: string) {
+		const flow = providerOAuthState[provider];
+		const url = flow?.authorize_url ?? flow?.verification_url;
+		if (!url) return;
+		const ok = await copyTextToClipboard(url);
+		providerLinkCopied = { ...providerLinkCopied, [provider]: ok };
+		if (ok) {
+			setTimeout(() => {
+				providerLinkCopied = { ...providerLinkCopied, [provider]: false };
+			}, 2000);
+		} else {
+			setProviderError(provider, `Copy failed — select and copy the link manually: ${url}`);
+		}
+	}
 
 	/**
 	 * Where to sign up / get an API key per provider. Rendered as a plain "get a
@@ -166,6 +183,7 @@
 						stopPolling(provider);
 						setOAuthStatus(provider, 'complete');
 						providerOAuthState = { ...providerOAuthState, [provider]: null };
+						setProviderError(provider, null);
 						setProviderMessage(provider, 'Connected');
 						await reload();
 						return;
@@ -201,23 +219,6 @@
 		try {
 			const res = await startForvenAuthProviderOAuth(provider);
 			providerOAuthState = { ...providerOAuthState, [provider]: { ...res, code: '' } };
-			if (res.authorize_url) {
-				const ok = await openExternal(res.authorize_url);
-				if (!ok) {
-					setProviderError(
-						provider,
-						`Could not open browser. Copy this URL manually: ${res.authorize_url}`,
-					);
-				}
-			} else if (res.verification_url) {
-				const ok = await openExternal(res.verification_url);
-				if (!ok) {
-					setProviderError(
-						provider,
-						`Could not open browser. Copy this URL manually: ${res.verification_url}`,
-					);
-				}
-			}
 
 			const needsManualOnly = res.flow === 'authorization_code' && res.auto_callback === false;
 			if (needsManualOnly) {
@@ -225,6 +226,21 @@
 			} else {
 				setOAuthStatus(provider, 'awaiting_user');
 				schedulePoll(provider, res.state, res.interval ?? 2);
+			}
+
+			// Hand the URL to the OS browser. A failure here is recoverable from
+			// inside the flow panel (open link + copy button), so flag it on the
+			// flow state instead of aborting with an error.
+			const target = res.authorize_url ?? res.verification_url;
+			if (target) {
+				const opened = await openExternal(target);
+				const flow = providerOAuthState[provider];
+				if (!opened && flow) {
+					providerOAuthState = {
+						...providerOAuthState,
+						[provider]: { ...flow, openFailed: true },
+					};
+				}
 			}
 		} catch (e) {
 			setProviderError(provider, e instanceof Error ? e.message : 'Failed to start OAuth');
@@ -423,20 +439,38 @@
 							<p class="text-xs text-[#888]">
 								{oauth.flow === 'device_code' ? 'Device code flow' : 'Authorization code flow'}
 							</p>
+							{#if oauth.openFailed}
+								<p class="text-xs text-yellow-400">
+									Your browser didn't open automatically — use the sign-in link below.
+								</p>
+							{/if}
 							{#if oauth.verification_url && oauth.user_code}
 								<p class="text-xs text-[#888]">
 									Go to <a
 										href={oauth.verification_url}
+										target="_blank"
+										rel="noopener noreferrer"
 										on:click|preventDefault={() => openExternal(oauth.verification_url!)}
 										class="text-white underline cursor-pointer">{oauth.verification_url}</a>
 									and enter code <span class="font-mono text-white">{oauth.user_code}</span>
 								</p>
 							{:else if oauth.authorize_url}
 								<p class="text-xs text-[#888]">
-									A new tab opened to <a
-										href={oauth.authorize_url}
-										on:click|preventDefault={() => openExternal(oauth.authorize_url!)}
-										class="text-white underline cursor-pointer">authorize</a>.
+									{#if oauth.openFailed}
+										<a
+											href={oauth.authorize_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-white underline cursor-pointer">Open the sign-in page</a>
+										or copy the link, then finish signing in there.
+									{:else}
+										A new tab opened to <a
+											href={oauth.authorize_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											on:click|preventDefault={() => openExternal(oauth.authorize_url!)}
+											class="text-white underline cursor-pointer">authorize</a>.
+									{/if}
 									{#if isManualPaste}
 										Paste the code returned by the provider:
 									{:else if isAuthorizationCode}
@@ -471,6 +505,15 @@
 										class="terminal-button-primary text-xs px-3 py-1 disabled:opacity-60"
 									>
 										{busy ? 'Completing…' : 'Use pasted code'}
+									</button>
+								{/if}
+								{#if oauth.authorize_url || oauth.verification_url}
+									<button
+										type="button"
+										on:click={() => copySignInLink(key)}
+										class="terminal-button text-xs px-3 py-1"
+									>
+										{providerLinkCopied[key] ? 'Copied ✓' : 'Copy sign-in link'}
 									</button>
 								{/if}
 								<button
