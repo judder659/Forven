@@ -1752,32 +1752,53 @@ def fetch_ohlcv_chunked(
 
     end_ms_to_use = until_ms if until_ms is not None else (now_ms + tf_ms)
 
-    # Kraken-class venues can only serve the most-recent N candles and error on
-    # an out-of-window `since` (that's the EGeneral:Invalid arguments the user
-    # sees on an "all available" download). When the request reaches past that
-    # window, rewrite it to the single recent window the venue CAN return and
-    # remember we clamped, so the caller is told the span is capped instead of
-    # silently believing it got full history.
+    # Kraken's REST OHLC endpoint returns at most ~N candles per request as the
+    # window [since, now], and — the actual crash — rejects `since=0`/tiny values
+    # with EGeneral:Invalid arguments (an input-validation quirk, NOT a "too far
+    # back" limit: a valid old timestamp returns the recent window fine). Since
+    # every request ends at now, deeper history than ~N bars back can't be paged
+    # in one shot; larger local datasets are built by ACCUMULATION (each fetch
+    # merges its recent window into the lake, so repeated/keep-alive downloads
+    # grow it forward over time — which is why >N bars can already exist on disk).
+    #
+    # So: never send the since=0 that crashes, collapse an unservable request to
+    # the recent window the venue CAN return, and MERGE (never truncate — the
+    # merge below preserves everything already accumulated). Warn only when the
+    # user EXPLICITLY picked a start date older than the reachable window; an
+    # "all available" checkbox and a default/large bar-count are not shortfalls.
     capped_note: str | None = None
     venue_cap = _venue_ohlcv_max_bars(exchange_id)
     if venue_cap is not None:
         reachable_start = now_ms - venue_cap * tf_ms
-        wanted_start: int | None = None
-        if all_available:
-            wanted_start = 0
-        elif since_ms is not None:
-            wanted_start = int(since_ms)
-        elif limit is not None and int(limit) > venue_cap:
-            wanted_start = _estimate_limit_window_start(int(limit), timeframe)
-        if wanted_start is not None and wanted_start < reachable_start:
-            capped_note = (
-                f"{exchange_id} serves only the most recent ~{venue_cap} {timeframe} "
-                f"candles; older history is unavailable from this venue. Use Binance, "
-                f"OKX or Bybit for a full backfill."
-            )
-            # Collapse to the recent window Kraken accepts: since=None makes it
-            # return its latest bars, and routing through the limit branch (not
-            # the since/append fast-path) merges them into the lake correctly.
+        explicit_since_too_old = (
+            not all_available
+            and since_ms is not None
+            and int(since_ms) < reachable_start
+        )
+        # The bar-count `limit` only governs the fetch when neither all_available
+        # nor since_ms is set (that's the branch that reads it) — and only there
+        # can a huge limit on a long timeframe synthesize the crashing since=0.
+        # Guarding on it while since_ms is present would wrongly null a valid
+        # in-window date (limit defaults to 1000 > cap).
+        limit_branch_overshoots = (
+            not all_available
+            and since_ms is None
+            and limit is not None
+            and int(limit) > venue_cap
+        )
+        reaches_back = all_available or explicit_since_too_old or limit_branch_overshoots
+        if reaches_back:
+            if explicit_since_too_old:
+                capped_note = (
+                    f"{exchange_id}'s history API returns at most ~{venue_cap} "
+                    f"{timeframe} candles per request, so the earlier part of the "
+                    f"requested range wasn't available — the most recent window was "
+                    f"downloaded and merged. Use Binance, OKX or Bybit for deeper history."
+                )
+            # Collapse to the recent window Kraken accepts (since=None → its latest
+            # bars), routed through the limit branch (not the since/append
+            # fast-path) so the fetched window MERGES with — never replaces — the
+            # already-accumulated dataset.
             all_available = False
             since_ms = None
             limit = venue_cap

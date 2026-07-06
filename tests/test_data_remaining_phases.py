@@ -110,9 +110,12 @@ class TestPerpResolution:
 
 
 # ---------------------------------------------------------------------------
-# Venue OHLC ceiling (Kraken) — an "all available" / deep-history request must
-# not send an out-of-window `since` (Kraken 400s it with EGeneral:Invalid
-# arguments); it is clamped to the recent window and flagged capped instead.
+# Venue OHLC ceiling (Kraken). Kraken's REST OHLC returns at most ~720 candles
+# per request and 400s a since=0 (EGeneral:Invalid arguments). A download must
+# NEVER hard-fail on that: an unservable request is collapsed to the recent
+# window and MERGED (accumulated history is preserved, not truncated). A warning
+# is attached ONLY when the user explicitly picked a start date older than the
+# reachable window — not for the "all available" checkbox or a default limit.
 # ---------------------------------------------------------------------------
 
 
@@ -132,6 +135,7 @@ class TestVenueOhlcvCap:
 
         def _once(exchange, symbol, timeframe, since, limit):
             seen["once_since"] = since
+            seen["once_called"] = True
             return [
                 [data_mod._to_ms(ts), r.open, r.high, r.low, r.close, r.volume]
                 for ts, r in zip(recent["timestamp"], recent.itertuples(index=False))
@@ -146,18 +150,34 @@ class TestVenueOhlcvCap:
         monkeypatch.setattr(data_mod, "get_exchange", lambda ex: object())
         monkeypatch.setattr(data_mod, "_cached_markets", lambda ex: {})
 
-    def test_all_available_kraken_clamps_and_warns(self, lake, monkeypatch):
+    def test_all_available_kraken_downloads_without_warning(self, lake, monkeypatch):
         seen: dict = {}
         self._wire(monkeypatch, seen)
 
         rec = data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", all_available=True)
 
-        # Never sent the since=0 that Kraken rejects.
+        # Downloads (never sends the since=0 that Kraken rejects) and, because
+        # "all available" got everything obtainable, does NOT flag a shortfall.
+        assert seen.get("once_called") is True
         assert seen.get("once_since") is None
-        assert seen.get("range_start") is None  # deep-history range path not taken
-        assert rec["capped"] is True
-        assert "kraken" in rec["warning"].lower()
-        assert "720" in rec["warning"]
+        assert seen.get("range_start") is None  # the since=0 range path is skipped
+        assert not rec.get("capped")
+        assert not rec.get("warning")
+
+    def test_all_available_kraken_preserves_accumulated_history(self, lake, monkeypatch):
+        # A dataset already grown past the recent window (via prior accumulation)
+        # must not be truncated to the ~720 window when "all available" re-runs.
+        old = _bars(_closed_start(5000), 4000)  # far older than the recent fetch
+        data_mod.save_parquet(old, SYMBOL, TF, source="kraken")
+        before = len(data_mod.load_parquet(SYMBOL, TF))
+        assert before == 4000
+
+        seen: dict = {}
+        self._wire(monkeypatch, seen)
+        data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", all_available=True)
+
+        after = len(data_mod.load_parquet(SYMBOL, TF))
+        assert after >= before  # merged forward, nothing dropped
 
     def test_far_past_since_kraken_clamps_and_warns(self, lake, monkeypatch):
         seen: dict = {}
@@ -179,6 +199,18 @@ class TestVenueOhlcvCap:
 
         # A satisfiable request is honoured as-is, no cap flag.
         assert seen.get("range_start") == recent_since
+        assert not rec.get("capped")
+        assert not rec.get("warning")
+
+    def test_large_limit_kraken_clamps_without_warning(self, lake, monkeypatch):
+        seen: dict = {}
+        self._wire(monkeypatch, seen)
+
+        # A bar-count request beyond the cap downloads what's available; a
+        # count is not a date selection, so no warning is raised.
+        rec = data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", limit=5000)
+
+        assert seen.get("once_since") is None  # never the crashing since=0
         assert not rec.get("capped")
         assert not rec.get("warning")
 
