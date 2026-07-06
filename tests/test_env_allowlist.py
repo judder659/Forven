@@ -70,6 +70,45 @@ def test_forven_vars_pass():
     assert env["FORVEN_PROFILE"] == "default"
 
 
+def test_pythonpath_and_pythonhome_are_stripped():
+    """ENV-HERMETIC-1: a global Anaconda PYTHONPATH/PYTHONHOME must never reach a
+    child — it re-roots dependency resolution away from the project venv (the
+    sandbox pandas-ImportError class). Callers that need a Python path pass it
+    via `extra`."""
+    base = {
+        "PATH": "/usr/bin",
+        "PYTHONPATH": r"C:\Anaconda3\Lib\site-packages",
+        "PYTHONHOME": r"C:\Anaconda3",
+    }
+    env = build_subprocess_env(base=base)
+    assert "PYTHONPATH" not in env
+    assert "PYTHONHOME" not in env
+
+
+def test_pythonpath_allowed_via_extra():
+    env = build_subprocess_env(extra={"PYTHONPATH": "/repo"}, base={"PATH": "/x"})
+    assert env["PYTHONPATH"] == "/repo"
+
+
+def test_windows_service_vars_pass():
+    """DLL loading + user-profile resolution need these inside a scrubbed child;
+    they carry no secrets."""
+    base = {
+        "PATH": r"C:\Windows",
+        "APPDATA": r"C:\Users\u\AppData\Roaming",
+        "LOCALAPPDATA": r"C:\Users\u\AppData\Local",
+        "PROGRAMDATA": r"C:\ProgramData",
+        "ALLUSERSPROFILE": r"C:\ProgramData",
+        "HOMEDRIVE": "C:",
+        "HOMEPATH": r"\Users\u",
+        "WINDIR": r"C:\Windows",
+        "SYSTEMDRIVE": "C:",
+    }
+    env = build_subprocess_env(base=base)
+    for name in base:
+        assert name in env, f"{name} should pass the allowlist"
+
+
 def test_empty_base():
     env = build_subprocess_env(base={})
     assert env == {}

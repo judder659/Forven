@@ -91,3 +91,37 @@ def test_windows_run_code_blas_honours_parent_override(monkeypatch):
 
     env = captured["env"]
     assert env.get("OPENBLAS_NUM_THREADS") == "3"
+
+
+def test_windows_run_code_ignores_poisoned_parent_pythonpath(monkeypatch):
+    """ENV-HERMETIC-1: a global Anaconda PYTHONPATH in the parent must not reach
+    the sandbox — the child's PYTHONPATH is pinned to the repo root only."""
+    monkeypatch.setenv("PYTHONPATH", r"C:\Anaconda3\Lib\site-packages")
+    monkeypatch.setenv("PYTHONHOME", r"C:\Anaconda3")
+    captured: dict[str, object] = {}
+    _force_windows(monkeypatch, captured)
+
+    sandbox.run_code("print('x')")
+
+    env = captured["env"]
+    assert env["PYTHONPATH"] == str(sandbox.REPO_ROOT)
+    assert "PYTHONHOME" not in env
+
+
+def test_strategy_worker_env_ignores_poisoned_parent_pythonpath(monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", r"C:\Anaconda3\Lib\site-packages")
+    monkeypatch.setenv("PYTHONHOME", r"C:\Anaconda3")
+    from forven.sandbox import strategy_worker
+
+    env = strategy_worker._build_worker_env()
+    assert env["PYTHONPATH"] == str(sandbox.REPO_ROOT)
+    assert "PYTHONHOME" not in env
+    assert env[strategy_worker.WORKER_ENV_FLAG] == "1"
+
+
+def test_worker_env_diagnostic_names_interpreter():
+    from forven.sandbox import strategy_worker
+
+    diag = strategy_worker._worker_env_diagnostic()
+    assert strategy_worker.PYTHON_EXE in diag
+    assert "Anaconda" in diag  # the hint operators actually need

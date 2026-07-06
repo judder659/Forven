@@ -373,16 +373,31 @@ def _serve() -> int:
 # ---------------------------------------------------------------------------
 
 def _build_worker_env() -> dict:
-    existing_pythonpath = str(os.environ.get("PYTHONPATH") or "").strip()
-    repo_root = str(REPO_ROOT)
-    pythonpath = repo_root if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
-    extra = {"PYTHONPATH": pythonpath, WORKER_ENV_FLAG: "1"}
+    # ENV-HERMETIC-1: PYTHONPATH is pinned to the repo root ONLY — never extended
+    # with the parent's value. On machines with a global Anaconda, an inherited
+    # PYTHONPATH re-rooted the worker's pandas/numpy resolution away from the
+    # project venv, so `import pandas` failed inside the sandbox while the parent
+    # ran fine — bricking all custom-strategy registration for that user. The
+    # allowlist likewise no longer passes PYTHONPATH/PYTHONHOME through.
+    extra = {"PYTHONPATH": str(REPO_ROOT), WORKER_ENV_FLAG: "1"}
     for _k, _v in _BLAS_THREAD_ENV.items():
         extra[_k] = os.environ.get(_k, _v)
     env = build_subprocess_env(extra=extra)
     env.setdefault("PATH", os.environ.get("PATH", "/usr/bin:/usr/local/bin"))
     env.setdefault("HOME", tempfile.gettempdir())
     return env
+
+
+def _worker_env_diagnostic() -> str:
+    """One line naming the interpreter the worker runs on — the first question
+    when its imports fail (venv vs global Anaconda) and invisible in a bare
+    ImportError traceback."""
+    return (
+        f"worker interpreter: {PYTHON_EXE} (sys.prefix={sys.prefix}); "
+        "if imports fail here but the app runs, check for a global Anaconda/"
+        "PYTHONPATH contaminating the environment and start the backend from "
+        "the project venv"
+    )
 
 
 class _PersistentWorker:
@@ -423,10 +438,16 @@ class _PersistentWorker:
             ready = self._acks.get(timeout=READY_TIMEOUT_SECONDS)
         except queue.Empty:
             self.shutdown()
-            raise StrategyWorkerError(f"strategy worker did not become ready: {self.stderr_tail()}")
+            raise StrategyWorkerError(
+                f"strategy worker did not become ready: {self.stderr_tail()} "
+                f"[{_worker_env_diagnostic()}]"
+            )
         if not ready.get("ready"):
             self.shutdown()
-            raise StrategyWorkerError("strategy worker failed to report ready")
+            raise StrategyWorkerError(
+                f"strategy worker failed to report ready: {ready.get('error') or self.stderr_tail()} "
+                f"[{_worker_env_diagnostic()}]"
+            )
 
     def _read_loop(self) -> None:
         try:

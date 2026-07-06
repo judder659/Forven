@@ -28,12 +28,27 @@ log = logging.getLogger("forven.security.env_allowlist")
 
 # Variable names allowed by exact match against this pattern. Case-sensitive
 # on Unix; Windows callers should normalize beforehand if desired.
+#
+# PYTHONPATH / PYTHONHOME are deliberately NOT allowed (ENV-HERMETIC-1,
+# 2026-07-06): on machines with a global Anaconda they re-root a child's
+# dependency resolution away from the project venv — the registration sandbox
+# then fails to import pandas even though the parent runs fine. PYTHONHOME
+# re-roots the entire stdlib. A caller that genuinely needs a Python path
+# passes it via `extra` (the sandbox worker pins PYTHONPATH to the repo root).
+#
+# The Windows service vars (APPDATA/LOCALAPPDATA/PROGRAMDATA/ALLUSERSPROFILE/
+# HOMEDRIVE/HOMEPATH/WINDIR/SYSTEMDRIVE) ARE allowed: they carry no secrets,
+# and native-extension DLL loading + user-profile resolution can fail without
+# them — a failure mode that only reproduces inside the scrubbed child, never
+# in the parent.
 _ALLOW_NAME = re.compile(
     r"^(PATH|HOME|USER|USERNAME|USERPROFILE|LANG|LC_ALL|LC_[A-Z_]+|TERM|SHELL|"
     r"TMPDIR|TMP|TEMP|XDG_[A-Z_]+|"
-    r"PYTHONPATH|PYTHONHOME|PYTHONIOENCODING|PYTHONUNBUFFERED|"
+    r"PYTHONIOENCODING|PYTHONUNBUFFERED|"
     r"FORVEN_HOME|FORVEN_PROFILE|"
     r"SYSTEMROOT|COMSPEC|PATHEXT|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|"
+    r"APPDATA|LOCALAPPDATA|PROGRAMDATA|ALLUSERSPROFILE|HOMEDRIVE|HOMEPATH|"
+    r"WINDIR|SYSTEMDRIVE|"
     r"OS|COMPUTERNAME)$"
 )
 

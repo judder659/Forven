@@ -205,14 +205,11 @@ def run_code(
         # code. Build a filtered env via the allowlist (same as run_shell), then
         # add PYTHONPATH + BLAS caps explicitly. BLAS values honour a parent
         # override if present, mirroring the POSIX branch's setdefault semantics.
-        existing_pythonpath = str(os.environ.get("PYTHONPATH") or "").strip()
-        repo_root = str(REPO_ROOT)
-        pythonpath = (
-            repo_root
-            if not existing_pythonpath
-            else f"{repo_root}{os.pathsep}{existing_pythonpath}"
-        )
-        extra = {"PYTHONPATH": pythonpath}
+        # ENV-HERMETIC-1: PYTHONPATH is pinned to the repo root ONLY — inheriting
+        # the parent's value let a global Anaconda re-root the child's dependency
+        # resolution away from the project venv (import failures only inside the
+        # sandbox).
+        extra = {"PYTHONPATH": str(REPO_ROOT)}
         for _k, _v in _BLAS_THREAD_ENV.items():
             extra[_k] = os.environ.get(_k, _v)
         env = build_subprocess_env(extra=extra)
