@@ -80,6 +80,35 @@ def test_discovery_belong_rules():
     assert not ac._discovery_model_should_belong("opencode-go", "glm-5.2")
 
 
+def test_gemini_provider_surfaces_gemma_models():
+    # Google serves the open Gemma models under the SAME gemini endpoint/key,
+    # with more generous free-tier quota. Discovery must accept them (they were
+    # previously filtered out for not starting with "gemini-"), and they must be
+    # seeded in the curated catalog so they appear even without live discovery.
+    assert ac._discovery_model_should_belong("gemini", "gemma-3-27b-it")
+    assert ac._discovery_model_should_belong("gemini", "gemma-3-1b-it")
+    assert ac._discovery_model_should_belong("gemini", "gemini-2.5-flash")  # gemini still ok
+    # Non-text modalities and foreign ids stay filtered.
+    assert not ac._discovery_model_should_belong("gemini", "gemma-3-4b-it-image")
+    assert not ac._discovery_model_should_belong("gemini", "text-embedding-004")
+    assert not ac._discovery_model_should_belong("gemini", "gpt-4o")
+
+    catalog_gemini = {m["model_id"] for m in ac._AGENT_MODEL_CATALOG if m["provider"] == "gemini"}
+    assert "gemma-3-27b-it" in catalog_gemini
+    assert {"gemma-3-27b-it", "gemma-3-12b-it", "gemma-3-4b-it", "gemma-3-1b-it"} <= catalog_gemini
+
+    # Explicit gemini provider routes the Gemma model through unchanged (it's a
+    # passthrough provider — no model-name heuristic may re-route it elsewhere).
+    assert ai.normalize_provider_and_model("gemini", "gemma-3-27b-it") == ("gemini", "gemma-3-27b-it")
+
+    # A live-discovered Gemma id (auto-labelled, "models/" prefixed) brands as
+    # Gemma — NOT "Google Gemini gemma-…", which would mislabel the model.
+    rec = ac._coerce_discovered_model_record("models/gemma-3-27b-it", "gemini")
+    assert rec["model_id"] == "gemma-3-27b-it"
+    assert rec["label"] == "Google Gemma 3 27B"
+    assert "gemini" not in rec["label"].lower()
+
+
 # --------------------------------------------------------------------------- #
 # _call_openai extraction contract — a reasoning model (e.g. glm-5.2 via
 # opencode-go) can return an empty "content" with its output/thinking in
