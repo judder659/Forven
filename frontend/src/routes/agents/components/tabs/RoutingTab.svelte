@@ -57,6 +57,7 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import { agentsConfig, selectableModelOptions } from '../agentsConfigStore';
 	import ModelSlotPicker from './ModelSlotPicker.svelte';
+	import ModelPicker from './ModelPicker.svelte';
 	import DirtyBar from '../DirtyBar.svelte';
 
 	// Notify the host page when this tab gains/loses unsaved edits, so it can
@@ -115,6 +116,37 @@
 	let agentDirty: Record<string, boolean> = {};
 	// The model each agent had on load — used to decide whether to PATCH the row.
 	let agentBaseKey: Record<string, string> = {};
+
+	// ---- Bulk "set every agent to one model" -------------------------------- //
+	// The clone-to-all the operator wanted: switching models shouldn't mean
+	// re-picking the dropdown on every agent. Pick a model here, hit Apply, and it
+	// becomes the PRIMARY for every agent (the Brain included — which also derives
+	// the default model), marking each changed agent dirty so the one tab-wide Save
+	// persists them together. Per-agent fallback chains are left untouched.
+	let bulkKey = '';
+
+	function applyModelToAllAgents() {
+		if (!bulkKey || agentRows.length === 0) return;
+		const nextKey = { ...agentKey };
+		const nextDirty = { ...agentDirty };
+		let changed = 0;
+		for (const row of agentRows) {
+			if ((nextKey[row.id] ?? '') === bulkKey) continue;
+			nextKey[row.id] = bulkKey;
+			nextDirty[row.id] = true;
+			changed += 1;
+		}
+		agentKey = nextKey;
+		agentDirty = nextDirty;
+		if (changed > 0) {
+			addToast(
+				`Set ${changed} agent${changed === 1 ? '' : 's'} to ${labelForOptionKey(bulkKey)} — review, then Save.`,
+				'success'
+			);
+		} else {
+			addToast('Every agent was already on that model.', 'info');
+		}
+	}
 
 	// ---- Brain-derived primary --------------------------------------------- //
 	// The model-policy primary (default for any slot without an explicit model)
@@ -476,6 +508,32 @@
 			it read-only. The <span class="text-[#ccc]">Brain's</span> selection also becomes the
 			default model for any routing slot below with no explicit choice.
 		</p>
+		{#if agentRows.length > 0 && !noneSelectable}
+			<div class="flex flex-wrap items-end gap-2 border border-[#1a1a1a] bg-[#050505] px-3 py-2">
+				<div class="flex-1 min-w-[220px]">
+					<span class="block text-[10px] text-[#666] uppercase tracking-wider mb-1">
+						Set every agent to
+					</span>
+					<ModelPicker
+						value={bulkKey}
+						{selectable}
+						allowUnset
+						unsetLabel="— pick a model —"
+						showStaleWarning={false}
+						on:change={(e) => (bulkKey = e.detail.value)}
+					/>
+				</div>
+				<button
+					type="button"
+					on:click={applyModelToAllAgents}
+					disabled={!bulkKey}
+					class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
+					title="Set this model as the primary for every agent below. Fallback chains are left as-is; nothing saves until you hit Save."
+				>
+					Apply to all {agentRows.length}
+				</button>
+			</div>
+		{/if}
 		{#if agentRows.length === 0}
 			<p class="text-xs text-[#555]">No agents found.</p>
 		{:else}
