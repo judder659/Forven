@@ -10,7 +10,7 @@ import logging
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -38,6 +38,7 @@ from forven.workspace import (
     today_memory_path,
 )
 from forven.util import normalize_stage
+from forven.dethrone_cooldown import clear_dethrone_cooldown, dethrone_cooldown_active_until
 from forven.policy import evaluate_promotion, load_pipeline_config
 from forven.strategies.certification import certify_execution_strategy
 
@@ -611,6 +612,73 @@ def _find_active_promotion_approval(conn, strategy_id: str, requested_status: st
     ).fetchone()
 
 
+_SNAPSHOT_FORWARD_WINDOW_DAYS = 14
+
+
+def _strategy_approval_snapshot(conn, strategy_id: str) -> dict | None:
+    """Point-in-time strategy summary embedded in approval payloads.
+
+    Fail-soft by contract: returns None on any error — a broken metrics blob
+    or schema drift must never block approval creation.
+    """
+    try:
+        row = conn.execute(
+            "SELECT display_id, name, display_name, symbol, timeframe, stage, "
+            "stage_changed_at, metrics FROM strategies WHERE id = ?",
+            (strategy_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        metrics = _parse_metrics_blob(row["metrics"])
+        _, sharpe = _metric_with_key(metrics, "sharpe", "sharpe_ratio")
+        _, total_return = _metric_with_key(metrics, "total_return", "total_return_pct", "return_pct")
+        _, max_drawdown = _metric_with_key(metrics, "max_drawdown", "max_drawdown_pct", "max_dd")
+        _, trades = _metric_with_key(metrics, "trades", "num_trades", "total_trades", "trade_count")
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=_SNAPSHOT_FORWARD_WINDOW_DAYS)
+        ).isoformat()
+        forward_row = conn.execute(
+            "SELECT COUNT(*) AS c, SUM(pnl_pct) AS pnl_sum, "
+            "SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) AS wins "
+            "FROM trades WHERE COALESCE(strategy_id, strategy) = ? "
+            "AND status = 'CLOSED' AND pnl_pct IS NOT NULL "
+            "AND datetime(closed_at) >= datetime(?)",
+            (strategy_id, cutoff),
+        ).fetchone()
+
+        return {
+            "display_id": row["display_id"],
+            "name": row["name"],
+            "display_name": row["display_name"],
+            "symbol": row["symbol"],
+            "timeframe": row["timeframe"],
+            "stage": row["stage"],
+            "stage_changed_at": row["stage_changed_at"],
+            "backtest": {
+                "sharpe": sharpe,
+                "total_return": total_return,
+                "max_drawdown": max_drawdown,
+                "trades": int(trades) if trades is not None else None,
+            },
+            "forward": {
+                "window_days": _SNAPSHOT_FORWARD_WINDOW_DAYS,
+                "closed_trades": int(forward_row["c"]) if forward_row else 0,
+                "realized_pnl_pct_sum": (
+                    round(float(forward_row["pnl_sum"]), 4)
+                    if forward_row and forward_row["pnl_sum"] is not None
+                    else None
+                ),
+                "wins": int(forward_row["wins"]) if forward_row and forward_row["wins"] is not None else 0,
+            },
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception:
+        log.warning("strategy approval snapshot failed for %s", strategy_id, exc_info=True)
+        return None
+
+
 def _queue_promotion_approval(
     conn,
     *,
@@ -619,6 +687,7 @@ def _queue_promotion_approval(
     requested_status: str,
     actor: str,
     reason: str,
+    evidence: dict | None = None,
 ) -> tuple[int, bool]:
     existing = _find_active_promotion_approval(conn, strategy_id, requested_status)
     if existing:
@@ -631,6 +700,21 @@ def _queue_promotion_approval(
     if compact_reason:
         approval_reason = f"{approval_reason}: {compact_reason[:220]}"
 
+    payload = {
+        "strategy_id": strategy_id,
+        "current_stage": current_stage,
+        "recommended_action": "promote",
+        "recommended_target_stage": requested_status,
+        "operator_required": True,
+        "trigger_actor": actor,
+        "trigger_reason": compact_reason or None,
+    }
+    if evidence:
+        payload["evidence"] = dict(evidence)
+    snapshot = _strategy_approval_snapshot(conn, strategy_id)
+    if snapshot:
+        payload["strategy_snapshot"] = snapshot
+
     approval_id = create_approval(
         _PROMOTION_APPROVAL_TYPE,
         target_type="strategy",
@@ -639,15 +723,7 @@ def _queue_promotion_approval(
         status="pending_approval",
         actor=actor,
         reason=approval_reason,
-        payload={
-            "strategy_id": strategy_id,
-            "current_stage": current_stage,
-            "recommended_action": "promote",
-            "recommended_target_stage": requested_status,
-            "operator_required": True,
-            "trigger_actor": actor,
-            "trigger_reason": compact_reason or None,
-        },
+        payload=payload,
         owner="ceo",
         conn=conn,
     )
@@ -666,6 +742,64 @@ def _requires_operator_dethrone_approval(current_stage: str, target_stage: str) 
     if current_rank is None or target_rank is None:
         return False
     return target_rank < current_rank
+
+
+def _paper_dethrone_soak_block(conn, strategy_id: str, current_stage: str) -> str | None:
+    """Paper soak guard: no dethrone RECOMMENDATION until the strategy has had
+    a real chance to prove itself.
+
+    Hard floor of dethrone.paper_min_soak_days; between the floor and
+    dethrone.paper_max_soak_days the strategy stays protected while it has
+    fewer than dethrone.paper_min_closed_trades closed paper trades in the
+    current stay (low-frequency strategies may execute once a week or less).
+    Returns a human-readable block reason while protected, else None.
+    Fail-open: unreadable config/rows allow the recommendation.
+    """
+    if _normalize_stage(current_stage) != "paper":
+        return None
+    try:
+        cfg = load_pipeline_config().get("dethrone") or {}
+        min_days = float(cfg.get("paper_min_soak_days", 7))
+        max_days = float(cfg.get("paper_max_soak_days", 14))
+        min_trades = int(cfg.get("paper_min_closed_trades", 5))
+        if min_days <= 0 and max_days <= 0:
+            return None
+
+        row = conn.execute(
+            "SELECT stage_changed_at FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+        stage_changed_raw = str(row["stage_changed_at"] or "").strip() if row else ""
+        if not stage_changed_raw:
+            return None
+        stage_changed = datetime.fromisoformat(stage_changed_raw)
+        if stage_changed.tzinfo is None:
+            stage_changed = stage_changed.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - stage_changed).total_seconds() / 86400.0
+
+        if age_days >= max(min_days, max_days):
+            return None
+        if age_days < min_days:
+            return (
+                f"paper soak: {age_days:.1f}d of the {min_days:.0f}d minimum before "
+                f"dethrone recommendations"
+            )
+        trade_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM trades "
+            "WHERE COALESCE(strategy_id, strategy) = ? AND status = 'CLOSED' "
+            "AND LOWER(COALESCE(execution_type, '')) LIKE 'paper%' "
+            "AND datetime(closed_at) >= datetime(?)",
+            (strategy_id, stage_changed_raw),
+        ).fetchone()
+        closed_trades = int(trade_row["c"]) if trade_row else 0
+        if closed_trades < min_trades:
+            return (
+                f"paper soak extended: only {closed_trades}/{min_trades} closed paper "
+                f"trades in {age_days:.1f}d (protected until {max_days:.0f}d)"
+            )
+        return None
+    except Exception:
+        log.warning("paper dethrone soak check failed for %s", strategy_id, exc_info=True)
+        return None
 
 
 def _find_active_dethrone_approval(
@@ -701,6 +835,7 @@ def _queue_dethrone_approval(
     requested_status: str,
     actor: str,
     reason: str,
+    evidence: dict | None = None,
 ) -> tuple[int, bool]:
     existing = _find_active_dethrone_approval(conn, strategy_id, requested_status)
     if existing:
@@ -713,6 +848,21 @@ def _queue_dethrone_approval(
     if compact_reason:
         approval_reason = f"{approval_reason}: {compact_reason[:220]}"
 
+    payload = {
+        "strategy_id": strategy_id,
+        "current_stage": current_stage,
+        "recommended_action": "dethrone",
+        "recommended_target_stage": requested_status,
+        "operator_required": True,
+        "trigger_actor": actor,
+        "trigger_reason": compact_reason or None,
+    }
+    if evidence:
+        payload["evidence"] = dict(evidence)
+    snapshot = _strategy_approval_snapshot(conn, strategy_id)
+    if snapshot:
+        payload["strategy_snapshot"] = snapshot
+
     approval_id = create_approval(
         _DETHRONE_APPROVAL_TYPE,
         target_type="strategy",
@@ -721,15 +871,7 @@ def _queue_dethrone_approval(
         status="pending_approval",
         actor=actor,
         reason=approval_reason,
-        payload={
-            "strategy_id": strategy_id,
-            "current_stage": current_stage,
-            "recommended_action": "dethrone",
-            "recommended_target_stage": requested_status,
-            "operator_required": True,
-            "trigger_actor": actor,
-            "trigger_reason": compact_reason or None,
-        },
+        payload=payload,
         owner="ceo",
         conn=conn,
     )
@@ -1258,6 +1400,7 @@ def transition_stage(
     notes: str | None = None,
     force: bool = False,
     skip_approval_gate: bool = False,
+    evidence: dict | None = None,
 ) -> dict[str, str | None]:
     """Move a strategy between lifecycle stages in one atomic update path."""
     normalized_target = _normalize_stage(target_stage)
@@ -1368,6 +1511,29 @@ def transition_stage(
             raise ValueError(f"Invalid transition: {current_stage} -> {normalized_target}")
 
         if _requires_operator_dethrone_approval(current_stage, normalized_target) and not force:
+            # Deny cooldown: the operator recently rejected a dethrone rec for
+            # this strategy, so background demotion attempts stay blocked
+            # WITHOUT re-filing a new approval until the window expires.
+            # Fail-open on read errors — the safe fallback is surfacing the
+            # approval, not suppressing recommendations forever.
+            try:
+                cooldown_until = dethrone_cooldown_active_until(strategy_id, conn=conn)
+            except Exception:
+                cooldown_until = None
+            if cooldown_until:
+                return _record_blocked_transition(
+                    (
+                        f"Dethrone suppressed: operator denied a recent recommendation "
+                        f"for {strategy_id} (cooldown until {cooldown_until})"
+                    ),
+                    "dethrone_cooldown_active",
+                )
+            soak_block = _paper_dethrone_soak_block(conn, strategy_id, current_stage)
+            if soak_block:
+                return _record_blocked_transition(
+                    f"Dethrone suppressed: {soak_block}",
+                    "dethrone_soak_active",
+                )
             approval_id, reused = _queue_dethrone_approval(
                 conn,
                 strategy_id=strategy_id,
@@ -1375,6 +1541,7 @@ def transition_stage(
                 requested_status=normalized_target,
                 actor=actor,
                 reason=reason,
+                evidence=evidence,
             )
             action = "Existing dethrone approval reused" if reused else "Dethrone approval queued"
             blocked = _record_blocked_transition(
@@ -1595,6 +1762,7 @@ def transition_stage(
                 requested_status=normalized_target,
                 actor=actor,
                 reason=reason,
+                evidence=evidence,
             )
             action = "Existing promotion approval reused" if reused else "Promotion approval queued"
             blocked = _record_blocked_transition(
@@ -1785,6 +1953,15 @@ def transition_stage(
                 strategy_id,
             ),
         )
+
+        # The strategy actually left its operator-owned stage — any deny
+        # cooldown belongs to the stay that just ended. Uses the held conn
+        # (nested kv writes here would self-deadlock on the WAL writer lock).
+        if current_stage in _OPERATOR_OWNED_STAGES and normalized_target != current_stage:
+            try:
+                clear_dethrone_cooldown(strategy_id, conn=conn)
+            except Exception:
+                log.warning("dethrone cooldown clear failed for %s", strategy_id, exc_info=True)
 
         conn.execute(
             "INSERT INTO strategy_events "

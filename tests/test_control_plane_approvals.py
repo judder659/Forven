@@ -270,9 +270,13 @@ def test_deny_dethrone_recommendation_sets_cooldown(forven_db):
     assert result["ok"] is True
     assert result["strategy_id"] == "s-dethrone-deny"
     assert isinstance(result.get("cooldown_until"), str)
+    assert result.get("deny_count") == 1
     assert row["stage"] == "paper"
     assert row["status"] == "paper"
-    assert isinstance(cooldown, str)
+    # The cooldown is structured state now: escalating deny_count + expiry.
+    assert isinstance(cooldown, dict)
+    assert cooldown["deny_count"] == 1
+    assert isinstance(cooldown["until"], str)
 
 
 def test_approve_promotion_recommendation_transitions_strategy(forven_db, monkeypatch):

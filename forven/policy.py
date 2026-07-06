@@ -9,6 +9,7 @@ from statistics import mean, pstdev
 from typing import Any
 
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
+from forven.dethrone_cooldown import dethrone_cooldown_active_until
 
 from forven.gauntlet.legitimacy import validate_robustness_payload
 from forven.util import normalize_stage
@@ -223,6 +224,17 @@ DEFAULT_PIPELINE_CONFIG = {
         # OOS Sharpe may not exceed IS Sharpe by more than this ratio (OOS>>IS
         # signals a lucky/overfit OOS window).
         "max_oos_is_ratio": 1.5,
+    },
+    "dethrone": {
+        # Paper soak protection (2026-07-06 operator request): a paper strategy
+        # may not be RECOMMENDED for dethrone until it has had a chance to
+        # prove itself. Hard floor of paper_min_soak_days; low-frequency
+        # strategies (fewer than paper_min_closed_trades forward executions —
+        # some trade once a week or less) stay protected up to
+        # paper_max_soak_days. Operator force-demotions bypass this entirely.
+        "paper_min_soak_days": 7,
+        "paper_max_soak_days": 14,
+        "paper_min_closed_trades": 5,
     },
     "live_graduated": {
         "allocation_schedule": [
@@ -2598,7 +2610,6 @@ _EVIDENCE_ABSENCE_REASON_CODES = {
 }
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _DETHRONE_MANUAL_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
-_DETHRONE_REVIEW_COOLDOWN_HOURS = 24
 
 
 def _resolve_dethrone_target_stage(current_stage: str) -> str:
@@ -2608,23 +2619,6 @@ def _resolve_dethrone_target_stage(current_stage: str) -> str:
     if normalized in {"live_graduated", "deployed"}:
         return "paper"
     return "archived"
-
-
-def _dethrone_cooldown_key(strategy_id: str) -> str:
-    return f"forven:dethrone:cooldown:{strategy_id}"
-
-
-def _is_dethrone_cooldown_active(strategy_id: str) -> bool:
-    raw = kv_get(_dethrone_cooldown_key(strategy_id))
-    if not isinstance(raw, str) or not raw.strip():
-        return False
-    try:
-        ts = datetime.fromisoformat(raw.strip())
-    except Exception:
-        return False
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) < (ts + timedelta(hours=_DETHRONE_REVIEW_COOLDOWN_HOURS))
 
 
 def _queue_dethrone_recommendation(
@@ -2912,7 +2906,45 @@ def _queue_challenger_dethrone(
     if pending:
         return int(pending["id"])
 
-    recommended_target_stage = _resolve_dethrone_target_stage(incumbent_stage)
+    if dethrone_cooldown_active_until(incumbent_id, conn=conn):
+        logging.getLogger("forven.policy").info(
+            "challenger dethrone suppressed by deny cooldown: %s", incumbent_id
+        )
+        return None
+
+    try:
+        from forven.brain import _paper_dethrone_soak_block
+
+        soak_block = _paper_dethrone_soak_block(conn, incumbent_id, incumbent_stage)
+    except Exception:
+        soak_block = None
+    if soak_block:
+        logging.getLogger("forven.policy").info(
+            "challenger dethrone suppressed for %s: %s", incumbent_id, soak_block
+        )
+        return None
+
+    payload = {
+        "strategy_id": incumbent_id,
+        "current_stage": incumbent_stage,
+        "trigger": "superior_challenger",
+        "challenger_id": challenger_id,
+        "challenger_sharpe": challenger_sharpe,
+        "incumbent_sharpe": incumbent_sharpe,
+        "recommended_action": "dethrone",
+        "recommended_target_stage": _resolve_dethrone_target_stage(incumbent_stage),
+        "operator_required": True,
+    }
+    try:
+        from forven.brain import _strategy_approval_snapshot
+
+        snapshot = _strategy_approval_snapshot(conn, incumbent_id)
+        if snapshot:
+            payload["strategy_snapshot"] = snapshot
+    except Exception:
+        pass
+
+    recommended_target_stage = payload["recommended_target_stage"]
     approval_id = create_approval(
         approval_type=_DETHRONE_APPROVAL_TYPE,
         target_type="strategy",
@@ -2924,17 +2956,7 @@ def _queue_challenger_dethrone(
             f"Dethrone recommendation: challenger {challenger_id} (Sharpe {challenger_sharpe}) "
             f"materially beats incumbent {incumbent_id} (Sharpe {incumbent_sharpe}) on the same slot"
         ),
-        payload={
-            "strategy_id": incumbent_id,
-            "current_stage": incumbent_stage,
-            "trigger": "superior_challenger",
-            "challenger_id": challenger_id,
-            "challenger_sharpe": challenger_sharpe,
-            "incumbent_sharpe": incumbent_sharpe,
-            "recommended_action": "dethrone",
-            "recommended_target_stage": recommended_target_stage,
-            "operator_required": True,
-        },
+        payload=payload,
         owner="ceo",
         conn=conn,
     )
@@ -3091,7 +3113,7 @@ def _check_repeated_failure_auto_archive(
                         strategy_id, current_stage, failure_count, gate, reason_code,
                     )
                     return
-                if _is_dethrone_cooldown_active(strategy_id):
+                if dethrone_cooldown_active_until(strategy_id, conn=conn):
                     return
                 approval_id = _queue_dethrone_recommendation(
                     conn=conn,

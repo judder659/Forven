@@ -200,6 +200,15 @@ def run_decay_tracker(
                 reason=candidate["note"],
                 actor="decay_tracker",
                 notes=candidate["merged_notes"],
+                evidence={
+                    "trigger": "decay_tracker",
+                    "baseline_sharpe": candidate["baseline_sharpe"],
+                    "live_sharpe_72h": candidate["live_sharpe_72h"],
+                    "degradation": candidate["degradation"],
+                    "trade_count_72h": candidate["trade_count_72h"],
+                    "window_hours": window_hours,
+                    "degradation_threshold": degradation_threshold,
+                },
             )
             status_after = str(transition.get("to") or demote_status)
             candidate["status_after"] = status_after
@@ -208,6 +217,7 @@ def run_decay_tracker(
                     {
                         "strategy_id": strategy_id,
                         "reason": "approval_required",
+                        "reason_code": transition.get("reason_code"),
                         "requested_status": demote_status,
                         "current_status": status_after,
                         "approval_id": transition.get("approval_id"),

@@ -21,6 +21,7 @@
 		type ApprovalTaskSummary,
 	} from '$lib/api/forven';
 	import SkillUpdateProposalCard from '$lib/components/approvals/SkillUpdateProposalCard.svelte';
+	import { friendlyTitle, isStrategyLifecycleType, payloadRenderer } from '$lib/components/approvals/renderers';
 
 	type PendingDecision = 'approve' | 'deny' | 'revise';
 	type ViewMode = 'pending' | 'history';
@@ -50,6 +51,14 @@
 	let settingsLoading = true;
 	let approvalModes: Record<string, string> = {};
 	let defaultApprovalMode = '';
+
+	let filterType = '';
+	let filterText = '';
+	let collapsedGroups: Set<string> = new Set();
+	let denyPickerId: number | null = null;
+	let denyPreset = '';
+	let denyFreeText = '';
+	const DENY_PRESETS = ['Performing fine', 'Insufficient evidence', 'Wrong target stage'];
 
 	let selectedApprovalId: number | null = null;
 	let approvalContext: ApprovalContextResponse | null = null;
@@ -457,7 +466,33 @@
 		reviseInput = { ...reviseInput, [approvalId]: value };
 	}
 
-	async function submitDecision(approvalId: number, action: PendingDecision, preferredTab?: DrawerTab) {
+	function toggleGroup(groupType: string) {
+		const next = new Set(collapsedGroups);
+		if (next.has(groupType)) next.delete(groupType);
+		else next.add(groupType);
+		collapsedGroups = next;
+	}
+
+	// Denying a strategy dethrone/promotion arms an escalating cooldown on the
+	// backend, so it deserves a real reason instead of the old boilerplate
+	// "Manual decision via UI: deny". Other types keep one-click deny.
+	function handleDenyClick(approval: ApprovalRecord) {
+		if (isStrategyLifecycleType(approval.approval_type)) {
+			denyPickerId = denyPickerId === approval.id ? null : approval.id;
+			denyPreset = '';
+			denyFreeText = '';
+			return;
+		}
+		void submitDecision(approval.id, 'deny');
+	}
+
+	async function confirmDeny(approvalId: number) {
+		const reason = [denyPreset, denyFreeText.trim()].filter(Boolean).join(' — ') || 'Denied via UI';
+		denyPickerId = null;
+		await submitDecision(approvalId, 'deny', undefined, reason);
+	}
+
+	async function submitDecision(approvalId: number, action: PendingDecision, preferredTab?: DrawerTab, reasonOverride?: string) {
 		if (isBusy(approvalId)) return;
 		// GO-LIVE-1: approving a paper→live promotion is never a bare click — the
 		// backend requires a typed "GO LIVE" confirmation plus an initial per-asset
@@ -493,7 +528,7 @@
 		try {
 			const payload = {
 				actor: 'operator',
-				reason: `Manual decision via UI: ${action}`,
+				reason: reasonOverride || `Manual decision via UI: ${action}`,
 				feedback: (reviseInput[approvalId] || '').trim() || undefined,
 				...(goLive ?? {}),
 			};
@@ -627,6 +662,28 @@
 	$: oldestVisibleAge = approvals.length > 0
 		? fmtAge(approvals.reduce((oldest, row) => (parseDate(row.created_at) < parseDate(oldest.created_at) ? row : oldest)).created_at)
 		: '--';
+	$: presentTypes = [...new Set(approvals.map((row) => row.approval_type))].sort();
+	$: filteredApprovals = approvals.filter((row) => {
+		if (filterType && row.approval_type !== filterType) return false;
+		const needle = filterText.trim().toLowerCase();
+		if (needle) {
+			const haystack = `${row.target_id || ''} ${row.reason || ''} ${row.actor || ''} ${row.approval_type || ''}`.toLowerCase();
+			if (!haystack.includes(needle)) return false;
+		}
+		return true;
+	});
+	// Pending view groups by type (dethrone recs dominate the queue); history
+	// stays a flat newest-first list under a single hidden header.
+	$: displayGroups = (() => {
+		if (viewMode !== 'pending') return [['__all__', filteredApprovals]] as Array<[string, ApprovalRecord[]]>;
+		const groups = new Map<string, ApprovalRecord[]>();
+		for (const row of filteredApprovals) {
+			const key = row.approval_type || 'unknown';
+			if (!groups.has(key)) groups.set(key, []);
+			groups.get(key)!.push(row);
+		}
+		return [...groups.entries()].sort((left, right) => right[1].length - left[1].length);
+	})();
 	$: selectedApproval = approvalContext?.approval ?? approvals.find((approval) => approval.id === selectedApprovalId) ?? null;
 	$: diagnosisLog = buildTaskLog(approvalContext?.troubleshoot_task, approvalContext?.troubleshoot_task_detail);
 	$: executionLog = buildTaskLog(approvalContext?.linked_task, approvalContext?.linked_task_detail);
@@ -692,18 +749,55 @@
 		</div>
 	</div>
 
+	<div class="flex flex-wrap items-center gap-2">
+		<select bind:value={filterType} class="bg-black border border-[#222] text-xs px-2 py-1.5 text-white">
+			<option value="">All types</option>
+			{#each presentTypes as presentType}
+				<option value={presentType}>{friendlyTitle(presentType)}</option>
+			{/each}
+		</select>
+		<input
+			type="text"
+			placeholder="Filter by strategy, reason, actor..."
+			class="flex-1 min-w-[220px] max-w-md bg-black border border-[#222] text-xs px-3 py-1.5 text-white"
+			bind:value={filterText}
+		/>
+		{#if filterType || filterText}
+			<button type="button" class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white" on:click={() => { filterType = ''; filterText = ''; }}>Clear filters</button>
+			<span class="text-xs text-[#666]">{filteredApprovals.length} of {approvals.length} shown</span>
+		{/if}
+	</div>
+
 	{#if loading}
 		<div class="text-[#666]">Loading approvals...</div>
-	{:else if approvals.length === 0}
-		<div class="text-[#666]">No {viewMode === 'pending' ? 'pending' : 'historical'} approvals.</div>
+	{:else if filteredApprovals.length === 0}
+		<div class="text-[#666]">
+			{approvals.length === 0
+				? `No ${viewMode === 'pending' ? 'pending' : 'historical'} approvals.`
+				: 'No approvals match the current filters.'}
+		</div>
 	{:else}
-		<div class="space-y-3">
-			{#each approvals as approval}
+		<div class="space-y-4">
+			{#each displayGroups as [groupType, groupRows] (groupType)}
+			<section class="space-y-3">
+			{#if groupType !== '__all__'}
+				<button
+					type="button"
+					class="w-full flex items-center gap-2 border border-[#222] bg-[#0a0a0a] px-3 py-2 text-left hover:border-[#444]"
+					on:click={() => toggleGroup(groupType)}
+				>
+					<span class="text-sm font-semibold text-white uppercase tracking-wider">{friendlyTitle(groupType)}</span>
+					<span class="inline-flex items-center justify-center min-w-[1.5rem] px-1.5 py-0.5 text-xs border border-[#333] bg-black text-[#ccc]">{groupRows.length}</span>
+					<span class="ml-auto text-[#666] text-xs">{collapsedGroups.has(groupType) ? '+ expand' : '− collapse'}</span>
+				</button>
+			{/if}
+			{#if !collapsedGroups.has(groupType)}
+			{#each groupRows as approval (approval.id)}
 				<article class="terminal-card p-4 space-y-3">
 					<div class="flex items-start justify-between gap-3">
 						<div>
-							<div class="text-xs uppercase tracking-wider text-[#666]">Approval #{approval.id}</div>
-							<div class="text-lg font-semibold text-white">{approval.approval_type}</div>
+							<div class="text-xs uppercase tracking-wider text-[#666]">Approval #{approval.id} <span class="font-mono normal-case text-[#444]">· {approval.approval_type}</span></div>
+							<div class="text-lg font-semibold text-white">{friendlyTitle(approval.approval_type)}</div>
 							<div class="mt-1 text-sm text-[#888]">{reasonText(approval)}</div>
 							<div class="mt-2 flex flex-wrap items-center gap-2">
 								<span
@@ -744,6 +838,9 @@
 						<div class="text-right text-xs text-[#666]">
 							<div class="inline-flex items-center px-2 py-0.5 border uppercase {statusClass(approval.status)}">{approval.status}</div>
 							<div class="mt-1">{fmtDate(approval.created_at)}</div>
+							{#if approval.actor}
+								<div class="mt-1 font-mono" title="Requesting actor">{approval.actor}</div>
+							{/if}
 							{#if deadlineState(approval)}
 								<div class="mt-1 inline-flex items-center px-2 py-0.5 border uppercase tracking-wider {deadlineState(approval)!.className}">{deadlineState(approval)!.label}</div>
 							{/if}
@@ -767,6 +864,8 @@
 
 					{#if approval.approval_type === 'skill_update_proposal' && typeof approval.payload === 'object' && approval.payload}
 						<SkillUpdateProposalCard payload={approval.payload as Record<string, unknown>} />
+					{:else if payloadRenderer(approval.approval_type) && typeof approval.payload === 'object' && approval.payload}
+						<svelte:component this={payloadRenderer(approval.approval_type)} {approval} />
 					{:else}
 						<pre class="text-[11px] text-[#888] bg-black border border-[#222] p-2 max-h-40 overflow-auto whitespace-pre-wrap">{typeof approval.payload === 'object' ? JSON.stringify(approval.payload, null, 2) : String(approval.payload || '-')}</pre>
 					{/if}
@@ -783,9 +882,32 @@
 						{#if viewMode === 'pending'}
 							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-primary text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'approve')}>{isBusy(approval.id) ? 'Approving...' : 'Approve'}</button>
 							<button type="button" disabled={isBusy(approval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void handleUserComplete(approval.id)}>{isBusy(approval.id) ? 'Completing...' : 'I Did This'}</button>
-							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-danger text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'deny')}>{isBusy(approval.id) ? 'Denying...' : 'Deny'}</button>
+							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-danger text-xs px-3 py-2 disabled:opacity-40" on:click={() => handleDenyClick(approval)}>{isBusy(approval.id) ? 'Denying...' : 'Deny'}</button>
 						{/if}
 					</div>
+
+					{#if denyPickerId === approval.id && viewMode === 'pending'}
+						<div class="border border-red-900/60 bg-red-950/15 p-3 space-y-2">
+							<div class="text-[10px] uppercase tracking-wider text-red-300">Why deny?</div>
+							<div class="flex flex-wrap gap-2">
+								{#each DENY_PRESETS as preset}
+									<button
+										type="button"
+										class="text-xs border px-3 py-1.5 {denyPreset === preset ? 'border-red-500 bg-red-900/40 text-red-200' : 'border-[#333] text-[#888] hover:text-white'}"
+										on:click={() => denyPreset = denyPreset === preset ? '' : preset}
+									>
+										{preset}
+									</button>
+								{/each}
+							</div>
+							<input type="text" placeholder="Optional details..." class="w-full bg-black border border-[#222] text-xs px-3 py-2 text-white" bind:value={denyFreeText} />
+							<div class="text-[10px] text-[#666]">Denying pauses dethrone re-asks for this strategy: 24h on the first deny, then 3 days, then 7 days. Approving one (or the strategy leaving paper/live) resets the ladder.</div>
+							<div class="flex gap-2">
+								<button type="button" disabled={isBusy(approval.id)} class="terminal-button-danger text-xs px-3 py-2 disabled:opacity-40" on:click={() => void confirmDeny(approval.id)}>Confirm deny</button>
+								<button type="button" class="terminal-button text-xs px-3 py-2" on:click={() => denyPickerId = null}>Cancel</button>
+							</div>
+						</div>
+					{/if}
 
 					{#if viewMode === 'pending'}
 						<div class="flex gap-2">
@@ -793,12 +915,17 @@
 							<button type="button" disabled={isBusy(approval.id)} class="terminal-button text-xs px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'revise')}>{isBusy(approval.id) ? 'Revising...' : 'Revise'}</button>
 						</div>
 					{:else}
-						<div class="grid sm:grid-cols-2 gap-3 text-xs border-t border-[#222] pt-3">
+						<div class="grid sm:grid-cols-4 gap-3 text-xs border-t border-[#222] pt-3">
 							<div><div class="text-[#666] uppercase tracking-wider">Decision</div><div class="text-white font-semibold">{approval.decision || 'N/A'}</div></div>
+							<div><div class="text-[#666] uppercase tracking-wider">Decided</div><div class="text-white">{fmtDate(approval.decided_at)}</div></div>
+							<div><div class="text-[#666] uppercase tracking-wider">Actor</div><div class="text-white font-mono">{approval.actor || '-'}</div></div>
 							<div><div class="text-[#666] uppercase tracking-wider">Feedback</div><div class="text-white">{approval.feedback || '-'}</div></div>
 						</div>
 					{/if}
 				</article>
+			{/each}
+			{/if}
+			</section>
 			{/each}
 		</div>
 	{/if}

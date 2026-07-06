@@ -78,3 +78,143 @@ def test_discovery_belong_rules():
     assert "opencode-zen" in ac._MODEL_DISCOVERY_ALT_ENDPOINTS
     assert "opencode-go" not in ac._MODEL_DISCOVERY_ALT_ENDPOINTS
     assert not ac._discovery_model_should_belong("opencode-go", "glm-5.2")
+
+
+# --------------------------------------------------------------------------- #
+# _call_openai extraction contract — a reasoning model (e.g. glm-5.2 via
+# opencode-go) can return an empty "content" with its output/thinking in
+# "reasoning_content". Regression guard for the no-code builder's opaque
+# "Expecting value: line 1 column 1 (char 0)" crash: an empty/truncated reply
+# must RAISE (so the fallback chain engages) instead of silently returning "".
+# --------------------------------------------------------------------------- #
+def _run_call_openai(response_json: dict, *, provider_label: str = "opencode-go"):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = response_json
+
+    async def _post(url, json=None, headers=None):
+        return resp
+
+    async def _run():
+        with patch("forven.ai.get_token", return_value="tok"):
+            with patch("forven.ai.httpx.AsyncClient") as MockClient:
+                client = MagicMock()
+                client.__aenter__ = AsyncMock(return_value=client)
+                client.__aexit__ = AsyncMock(return_value=False)
+                client.post = AsyncMock(side_effect=_post)
+                MockClient.return_value = client
+                return await ai._call_openai(
+                    "tok", "glm-5.2", [{"role": "user", "content": "hi"}],
+                    1600, 0.1, "sys",
+                    endpoint=ai.ENDPOINTS["opencode-go"], provider_label=provider_label,
+                )
+
+    return asyncio.run(_run())
+
+
+def test_call_openai_raises_on_truncated_empty_reasoning_response():
+    import pytest
+
+    # The exact live shape: reasoning ate the whole budget, content is empty,
+    # finish_reason=length. Must RAISE a *truncated* EmptyProviderResponse (not
+    # return the unfinished thinking) so call_ai bumps the budget and retries.
+    payload = {
+        "choices": [{
+            "message": {"content": "", "reasoning_content": "let me think... " * 50},
+            "finish_reason": "length",
+        }],
+        "usage": {"prompt_tokens": 2131, "completion_tokens": 1600},
+    }
+    with pytest.raises(ai.EmptyProviderResponse) as ei:
+        _run_call_openai(payload)
+    assert ei.value.truncated is True
+
+
+def test_call_openai_raises_non_truncated_on_null_content():
+    import pytest
+
+    # content: null with a normal stop must also raise rather than return None —
+    # but marked NOT truncated (a bigger budget won't help), so no retry, fail over.
+    payload = {"choices": [{"message": {"content": None}, "finish_reason": "stop"}], "usage": {}}
+    with pytest.raises(ai.EmptyProviderResponse) as ei:
+        _run_call_openai(payload)
+    assert ei.value.truncated is False
+
+
+def test_call_openai_recovers_reasoning_content_when_stopped():
+    # Model finished normally (stop) but placed the answer in reasoning_content —
+    # recover it. (Only trusted when NOT truncated.)
+    payload = {
+        "choices": [{
+            "message": {"content": "", "reasoning_content": '{"ok": true}'},
+            "finish_reason": "stop",
+        }],
+        "usage": {},
+    }
+    assert _run_call_openai(payload) == '{"ok": true}'
+
+
+def test_call_openai_returns_plain_string_content_unchanged():
+    # The common case must be untouched by the robust extractor.
+    payload = {"choices": [{"message": {"content": "hello world"}, "finish_reason": "stop"}], "usage": {}}
+    assert _run_call_openai(payload) == "hello world"
+
+
+# --------------------------------------------------------------------------- #
+# Shared budget auto-bump: call_ai must retry the SAME provider with a larger
+# max_tokens when it truncates with empty output — so EVERY caller (not just the
+# no-code builder) recovers from a reasoning model, without any per-call-site
+# retry loop.
+# --------------------------------------------------------------------------- #
+def test_call_ai_auto_bumps_budget_on_truncation():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    budgets: list[int] = []
+
+    def fake_single(provider, model, messages, max_tokens, temperature, system, **kw):
+        budgets.append(max_tokens)
+        if len(budgets) == 1:
+            raise ai.EmptyProviderResponse(provider, model, truncated=True)
+        return "recovered"
+
+    with patch("forven.ai._call_single", new_callable=AsyncMock, side_effect=fake_single), \
+         patch("forven.ai.get_fallback_chain", return_value=[("opencode-go", "glm-5.2")]), \
+         patch("forven.ai._credentialed_chain", side_effect=lambda chain, requested: chain):
+        out = asyncio.run(ai.call_ai("opencode-go", "glm-5.2", prompt="hi", max_tokens=2048))
+
+    assert out == "recovered"
+    assert budgets[0] == 2048
+    assert budgets[1] > budgets[0]  # escalated on the truncation retry
+
+
+def test_call_ai_does_not_bump_on_non_truncated_empty():
+    import asyncio
+
+    import pytest
+    from unittest.mock import AsyncMock, patch
+
+    calls: list[int] = []
+
+    def fake_single(provider, model, messages, max_tokens, temperature, system, **kw):
+        calls.append(max_tokens)
+        raise ai.EmptyProviderResponse(provider, model, truncated=False)
+
+    with patch("forven.ai._call_single", new_callable=AsyncMock, side_effect=fake_single), \
+         patch("forven.ai.get_fallback_chain", return_value=[("opencode-go", "glm-5.2")]), \
+         patch("forven.ai._credentialed_chain", side_effect=lambda chain, requested: chain):
+        with pytest.raises(ai.EmptyProviderResponse):
+            asyncio.run(ai.call_ai("opencode-go", "glm-5.2", prompt="hi", max_tokens=2048))
+
+    assert calls == [2048]  # single attempt, no budget bump when not truncated
+
+
+def test_next_truncation_budget_escalates_to_ceiling():
+    # Small callers jump straight to real headroom; already-large stops (== ceiling).
+    assert ai._next_truncation_budget(512) == 4096
+    assert ai._next_truncation_budget(4096) == 8192
+    assert ai._next_truncation_budget(8192) == 8192  # at ceiling -> stop signal

@@ -86,6 +86,52 @@ _LMSTUDIO_CHAT_ENDPOINT = "/api/v1/chat"
 _ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
 
 
+class EmptyProviderResponse(RuntimeError):
+    """A provider returned no usable text.
+
+    ``truncated`` is True when the emptiness came from hitting ``max_tokens``
+    (finish_reason ``length`` / stop_reason ``max_tokens``) — typically a
+    reasoning model that spent its entire output budget "thinking" before
+    emitting any answer. A larger budget can recover it, so :func:`call_ai`
+    retries the SAME provider with an escalated ``max_tokens`` before falling
+    through the chain. When ``truncated`` is False the emptiness is not
+    budget-related (a bigger request won't help) and the chain fails over.
+    """
+
+    def __init__(self, provider: str, model: str, *, truncated: bool):
+        self.provider = provider
+        self.model = model
+        self.truncated = bool(truncated)
+        hint = " (truncated at max_tokens - raise the token budget)" if truncated else ""
+        super().__init__(f"{provider}/{model} returned an empty response{hint}")
+
+
+# When a provider truncates with EMPTY output, retry the same provider with a
+# larger budget before trying the next in the chain. Jump straight to real
+# headroom on the first bump so small-budget callers recover in one step; cap at
+# a value inside typical model output limits so we never request more than a
+# model can return.
+_TRUNCATION_RETRY_FLOOR = 4096
+_TRUNCATION_RETRY_CEILING = 8192
+
+
+def _next_truncation_budget(current: int) -> int:
+    """Next ``max_tokens`` to try after a truncated-empty response, or the same
+    value when already at the ceiling (the signal to stop retrying)."""
+    current = int(current or 0)
+    if current >= _TRUNCATION_RETRY_CEILING:
+        return current
+    return min(_TRUNCATION_RETRY_CEILING, max(current * 2, _TRUNCATION_RETRY_FLOOR))
+
+
+def _openai_finish_reason(data: dict) -> str:
+    """Lowercased finish_reason of the first choice in an OpenAI-style payload."""
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        return str(choices[0].get("finish_reason") or "").strip().lower()
+    return ""
+
+
 def _write_lmstudio_debug_event(event_type: str, payload: dict) -> None:
     """Persist LM Studio request/response metadata for local debugging."""
     try:
@@ -777,6 +823,43 @@ def _record_fallback_event(primary: str, used: str) -> None:
         pass
 
 
+async def _call_single_with_budget_retry(
+    provider: str,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    temperature: float,
+    system: str | None,
+    *,
+    response_schema: dict | None,
+    response_schema_name: str,
+) -> str:
+    """Call one provider, auto-escalating ``max_tokens`` when it truncates with
+    EMPTY output (a reasoning model that spent its whole budget thinking).
+
+    This is the shared "bump the budget and retry" behaviour, so every
+    ``call_ai`` caller — not just the no-code builder — recovers from a reasoning
+    model that would otherwise return nothing. Non-truncation emptiness and all
+    other errors propagate unchanged so the fallback chain can fail over.
+    """
+    budget = int(max_tokens)
+    while True:
+        try:
+            return await _call_single(
+                provider, model, messages, budget, temperature, system,
+                response_schema=response_schema, response_schema_name=response_schema_name,
+            )
+        except EmptyProviderResponse as exc:
+            nxt = _next_truncation_budget(budget)
+            if not exc.truncated or nxt <= budget:
+                raise  # not budget-related, or already at the ceiling
+            log.warning(
+                "%s/%s returned empty (truncated at max_tokens=%d) — retrying at %d",
+                provider, model, budget, nxt,
+            )
+            budget = nxt
+
+
 async def call_ai(
     provider: str,
     model: str | None = None,
@@ -823,7 +906,7 @@ async def call_ai(
             raise ValueError("call_ai(route=...) given an empty route")
     elif not fallback:
         try:
-            result = await _call_single(
+            result = await _call_single_with_budget_retry(
                 provider,
                 model,
                 messages,
@@ -857,7 +940,7 @@ async def call_ai(
     primary_fb = chain[0][0] if chain else provider
     for i, (fb_provider, fb_model) in enumerate(chain):
         try:
-            result = await _call_single(
+            result = await _call_single_with_budget_retry(
                 fb_provider,
                 fb_model,
                 messages,
@@ -1084,12 +1167,35 @@ async def _call_openai(
         resp.raise_for_status()
         data = resp.json()
 
-        text = data["choices"][0]["message"]["content"]
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") if isinstance(choice, dict) else None
+        message = message if isinstance(message, dict) else {}
+        finish_reason = str(choice.get("finish_reason") or "").strip().lower() if isinstance(choice, dict) else ""
+
+        # Extract robustly: content may be a plain string, a list of typed
+        # blocks, or empty. Reasoning models (e.g. glm-* via opencode-go) can
+        # leave "content" empty and put their answer in "reasoning_content" — but
+        # ONLY trust reasoning as the answer when the model stopped normally. A
+        # `length` cutoff means the reasoning itself is unfinished thinking, not
+        # the final output, so we must not hand that back as the response.
+        text = _extract_text_from_blocks(message.get("content"))
+        if not text and finish_reason != "length":
+            text = _extract_text_from_blocks(message.get("reasoning_content"))
+
         usage = data.get("usage", {})
         log.info(
             "%s/%s: %d input, %d output tokens",
             provider_label, model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
         )
+
+        if not text:
+            # A silent empty string is a failure, not a valid completion —
+            # downstream callers would parse "" and fail confusingly (e.g. the
+            # no-code builder's "Expecting value: line 1 column 1"). Raise so
+            # call_ai retries with a larger budget (reasoning models) or fails
+            # over. `length` == hit max_tokens (truncated, a bigger budget helps).
+            raise EmptyProviderResponse(provider_label, model, truncated=(finish_reason == "length"))
+
         return text
 
     raise last_error
@@ -1153,7 +1259,13 @@ async def _call_minimax(
             "minimax/%s: %d input, %d output tokens",
             model, usage.get("input_tokens", 0), usage.get("output_tokens", 0),
         )
-        return "\n".join(text_parts)
+        text = "\n".join(text_parts)
+        if not text.strip():
+            # No usable text — surface it (never silently return "") so call_ai
+            # can bump the budget on a truncation or fail over otherwise.
+            truncated = str(data.get("stop_reason") or "").strip().lower() in {"max_tokens", "length"}
+            raise EmptyProviderResponse("minimax", model, truncated=truncated)
+        return text
 
     if last_error is not None:
         raise last_error
@@ -1362,6 +1474,15 @@ async def _call_zai(
             usage.get("prompt_tokens", usage.get("input_tokens", 0)),
             usage.get("completion_tokens", usage.get("output_tokens", 0)),
         )
+        if not text:
+            # Never silently return "" — let call_ai bump the budget on a
+            # truncation (reasoning model) or fail over otherwise.
+            truncated = (
+                str(data.get("stop_reason") or "").strip().lower() == "max_tokens"
+                if anthropic_mode
+                else _openai_finish_reason(data) == "length"
+            )
+            raise EmptyProviderResponse("zai", model, truncated=truncated)
         return text
 
     if last_error is not None:

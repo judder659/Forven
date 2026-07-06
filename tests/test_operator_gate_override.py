@@ -59,7 +59,18 @@ def test_force_is_neutered_for_live_without_override(forven_db, monkeypatch):
 def test_override_forces_live_promotion(forven_db, monkeypatch):
     sid = _seed(forven_db)
     cap = _capture_transition(monkeypatch)
-    promote_strategy(sid, StrategyPromoteBody(to_status="live_graduated", from_status="paper", override=True))
+    # GO-LIVE-1: an override that can land in live_graduated must carry the
+    # typed confirmation + notional ceiling, same as the UI sends.
+    promote_strategy(
+        sid,
+        StrategyPromoteBody(
+            to_status="live_graduated",
+            from_status="paper",
+            override=True,
+            confirm="GO LIVE",
+            live_notional_ceiling_usd=1000.0,
+        ),
+    )
     assert cap["force"] is True  # operator override re-enables the bypass
     assert cap["target_stage"] == "live_graduated"
 
@@ -71,13 +82,48 @@ def test_force_still_works_for_noncapital_stage(forven_db, monkeypatch):
     assert cap["force"] is True  # gauntlet is not a capital stage; force honoured
 
 
+def test_manual_live_to_paper_demotion_executes(forven_db, monkeypatch):
+    """An operator DEMOTION into paper keeps force: the click IS the dethrone
+    approval, so it must not bounce into a self-approval loop."""
+    sid = _seed(forven_db, stage="live_graduated")
+    cap = _capture_transition(monkeypatch)
+    promote_strategy(sid, StrategyPromoteBody(to_status="paper", force=True))
+    assert cap["force"] is True
+    assert cap["target_stage"] == "paper"
+
+
+def test_manual_promotion_into_paper_still_neutered(forven_db, monkeypatch):
+    """Moving UP into paper (gauntlet -> paper) keeps the neutered force."""
+    sid = _seed(forven_db, stage="gauntlet")
+    cap = _capture_transition(monkeypatch)
+    promote_strategy(sid, StrategyPromoteBody(to_status="paper", force=True))
+    assert cap["force"] is False
+
+
+def test_lifecycle_live_to_paper_demotion_executes(forven_db, monkeypatch):
+    sid = _seed(forven_db, stage="live_graduated")
+    cap = _capture_transition(monkeypatch)
+    transition_lifecycle_strategy(
+        LifecycleTransitionBody(strategy_id=sid, to_state="paper", actor="manual", force=True)
+    )
+    assert cap["force"] is True
+    assert cap["target_stage"] == "paper"
+
+
 # --- transition_lifecycle_strategy -----------------------------------------
 
 def test_lifecycle_override_forces_and_coerces_actor(forven_db, monkeypatch):
     sid = _seed(forven_db)
     cap = _capture_transition(monkeypatch)
     transition_lifecycle_strategy(
-        LifecycleTransitionBody(strategy_id=sid, to_state="live", actor="system", override=True)
+        LifecycleTransitionBody(
+            strategy_id=sid,
+            to_state="live",
+            actor="system",
+            override=True,
+            confirm="GO LIVE",
+            live_notional_ceiling_usd=1000.0,
+        )
     )
     assert cap["force"] is True
     # a non-user actor is coerced to a user actor so transition_stage honours force

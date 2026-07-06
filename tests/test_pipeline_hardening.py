@@ -431,6 +431,8 @@ def test_transition_stage_queues_operator_approval_for_automated_paper_archive(f
             "max_drawdown_pct": 0.09,
             "total_return_pct": 9.0,
         },
+        # Past the paper dethrone-soak window so the recommendation may file.
+        stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
     )
 
     transition = transition_stage(
@@ -514,6 +516,7 @@ def test_transition_stage_reuses_existing_dethrone_approval_for_automated_paper_
         stage="paper",
         owner="risk-manager",
         metrics={"fitness": 52.0, "total_trades": 25},
+        stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
     )
     approval_id = create_approval(
         "strategy_dethrone_recommendation",
@@ -3232,7 +3235,12 @@ def test_materially_better_challenger_queues_dethrone_for_incumbent(forven_db):
     path (the auto-apply path is covered by test_auto_approve_dethrone_frees_the_slot).
     """
     kv_set("forven:settings", {"auto_approve_dethrone": False, "paper_slot_competition_enabled": True})
-    _insert_strategy("incumbent-weak2", stage="paper", metrics={"sharpe": 1.0, "total_trades": 40})
+    _insert_strategy(
+        "incumbent-weak2",
+        stage="paper",
+        metrics={"sharpe": 1.0, "total_trades": 40},
+        stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
+    )
     _insert_strategy("challenger-strong2", stage="quick_screen", metrics={"sharpe": 3.0, "total_trades": 40})
 
     evaluate_promotion("challenger-strong2", "quick_screen", "gauntlet")
@@ -3307,7 +3315,12 @@ def test_auto_approve_dethrone_frees_the_slot(forven_db):
     """With auto_approve_dethrone enabled, a superior challenger's dethrone is applied,
     demoting the incumbent out of paper so the slot opens."""
     kv_set("forven:settings", {"auto_approve_dethrone": True, "paper_slot_competition_enabled": True})
-    _insert_strategy("incumbent-evicted", stage="paper", metrics={"sharpe": 1.0, "total_trades": 40})
+    _insert_strategy(
+        "incumbent-evicted",
+        stage="paper",
+        metrics={"sharpe": 1.0, "total_trades": 40},
+        stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
+    )
     _insert_strategy("challenger-evictor", stage="quick_screen", metrics={"sharpe": 3.0, "total_trades": 40})
 
     evaluate_promotion("challenger-evictor", "quick_screen", "gauntlet")

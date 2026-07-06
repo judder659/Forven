@@ -1123,6 +1123,21 @@ def set_strategy_display_name(strategy_id: str, display_name: str | None, actor:
     }
 
 
+def _is_stage_demotion(current_status: str, target_status: str) -> bool:
+    """True when the move is strictly DOWN the stage progression.
+
+    Fail-soft: unknown stages read as not-a-demotion, which preserves the
+    old (neutered-force) behavior.
+    """
+    try:
+        from forven.brain import _STAGE_PROGRESS_RANK
+    except Exception:
+        return False
+    current_rank = _STAGE_PROGRESS_RANK.get(str(current_status or "").strip().lower())
+    target_rank = _STAGE_PROGRESS_RANK.get(str(target_status or "").strip().lower())
+    return current_rank is not None and target_rank is not None and target_rank < current_rank
+
+
 def promote_strategy(strategy_id: str, body: StrategyPromoteBody):
     try:
         from forven.brain import transition_stage
@@ -1186,7 +1201,25 @@ def promote_strategy(strategy_id: str, body: StrategyPromoteBody):
         # re-enables the bypass for those stages (the endpoint is operator-only
         # and actor="api" is a recognised user actor, so this can only originate
         # from a human at the UI after an informed confirmation).
-        force = (bool(body.force) and resolved_target not in {"paper", "live_graduated"}) or override
+        # Exception: a DEMOTION into paper (live_graduated -> paper) keeps force —
+        # the operator's click IS the dethrone approval, and it only ever reduces
+        # capital exposure. live_graduated as a target can never be a demotion
+        # (top rank), so every go-live guard below stays fully intact.
+        demotion = _is_stage_demotion(current_status, resolved_target)
+        force = (
+            bool(body.force)
+            and (
+                resolved_target not in {"paper", "live_graduated"}
+                or (demotion and resolved_target == "paper")
+            )
+        ) or override
+        if force and demotion and not override and resolved_target == "paper":
+            log_activity(
+                "warning",
+                "api",
+                f"Operator forced demotion: {strategy_id} from {current_status} to {resolved_target}",
+                {"strategy_id": strategy_id, "to_status": resolved_target, "reason": body.reason or ""},
+            )
         # GO-LIVE-1: a request that can actually LAND in live_graduated (an
         # operator override past the approval gate, or auto-live explicitly
         # enabled) must carry the typed confirmation + initial per-asset
@@ -1999,7 +2032,34 @@ def transition_lifecycle_strategy(body: LifecycleTransitionBody):
         from forven.brain import _USER_ACTORS
 
         override = bool(body.override)
-        force = (bool(body.force) and target_status not in {"paper", "live_graduated"}) or override
+        # Same demotion exception as promote_strategy: an operator forcing a
+        # move DOWN into paper is a dethrone-by-click, not a gate bypass.
+        # Fail-soft: if the current stage can't be read, treat as non-demotion.
+        current_status = ""
+        try:
+            with get_db() as conn:
+                row = conn.execute(
+                    "SELECT COALESCE(stage, status, '') AS stage FROM strategies WHERE id = ?",
+                    (strategy_id,),
+                ).fetchone()
+            current_status = str(row["stage"] if row else "").strip().lower()
+        except Exception:
+            current_status = ""
+        demotion = _is_stage_demotion(current_status, target_status)
+        force = (
+            bool(body.force)
+            and (
+                target_status not in {"paper", "live_graduated"}
+                or (demotion and target_status == "paper")
+            )
+        ) or override
+        if force and demotion and not override and target_status == "paper":
+            log_activity(
+                "warning",
+                "api",
+                f"Operator forced demotion: {strategy_id} from {current_status} to {target_status}",
+                {"strategy_id": strategy_id, "to_state": target_status, "actor": body.actor or "api"},
+            )
         actor = body.actor or "api"
         # transition_stage only honours a force-bypass for recognised user actors,
         # so an operator override must run under one (the lifecycle router is

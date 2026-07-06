@@ -277,15 +277,34 @@ def _build_nav_indicator(
 
 
 
+def _is_live_open_trade(trade: dict[str, Any]) -> bool:
+    """True only for REAL live exchange exposure.
+
+    ``read_open_trades`` returns every OPEN row — paper AND live — so the
+    "Live Trades" badge must not count paper positions (that would show, e.g.,
+    12 when there are zero live positions). A row is live when its
+    ``execution_type`` is 'live', or when it's a synthetic exchange-only
+    position (``source='exchange'``) appended from a real HyperLiquid position
+    that carries no ``execution_type``.
+    """
+    execution_type = str(trade.get("execution_type") or "").strip().lower()
+    if execution_type == "live":
+        return True
+    if execution_type in {"paper", "replay"}:
+        return False
+    return str(trade.get("source") or "").strip().lower() == "exchange"
+
+
 def _build_live_trades_nav_indicator(open_trades: list[dict[str, Any]]) -> dict[str, object]:
-    live_trade_count = len(open_trades)
+    live_trades = [trade for trade in open_trades if _is_live_open_trade(trade)]
+    live_trade_count = len(live_trades)
     if live_trade_count > 0:
         return _build_nav_indicator(
             "count",
             "info",
             str(live_trade_count),
             f"{_pluralize(live_trade_count, 'live trade')} open",
-            _build_seen_key("trades-live", [trade.get("id") or trade.get("trade_id") for trade in open_trades[:8]]),
+            _build_seen_key("trades-live", [trade.get("id") or trade.get("trade_id") for trade in live_trades[:8]]),
             count=live_trade_count,
         )
     return _empty_nav_indicator()

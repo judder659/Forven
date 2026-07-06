@@ -1898,12 +1898,57 @@ export interface ApprovalTaskDetail {
 	tool_calls: Array<Record<string, unknown>>;
 }
 
+/** Point-in-time strategy summary embedded in promotion/dethrone approval payloads
+ *  (payload.strategy_snapshot). Everything optional: approvals created before
+ *  2026-07-06 carry no snapshot. */
+export interface StrategySnapshot {
+	display_id?: string | null;
+	name?: string | null;
+	display_name?: string | null;
+	symbol?: string | null;
+	timeframe?: string | null;
+	stage?: string | null;
+	stage_changed_at?: string | null;
+	backtest?: {
+		sharpe?: number | null;
+		total_return?: number | null;
+		max_drawdown?: number | null;
+		trades?: number | null;
+	} | null;
+	forward?: {
+		window_days?: number | null;
+		closed_trades?: number | null;
+		realized_pnl_pct_sum?: number | null;
+		wins?: number | null;
+	} | null;
+	captured_at?: string | null;
+}
+
+/** Live decision context returned by GET /approvals/{id}/context for
+ *  strategy-targeted approvals. */
+export interface ApprovalStrategyContext {
+	strategy?: Record<string, unknown> | null;
+	dethrone_history?: {
+		pending?: number;
+		approved?: number;
+		denied?: number;
+		expired?: number;
+		last_denied_at?: string | null;
+	} | null;
+	cooldown?: {
+		active?: boolean;
+		until?: string | null;
+		deny_count?: number;
+	} | null;
+}
+
 export interface ApprovalContextResponse {
 	approval: ApprovalRecord;
 	linked_task?: ApprovalTaskSummary | null;
 	troubleshoot_task?: ApprovalTaskSummary | null;
 	linked_task_detail?: ApprovalTaskDetail | null;
 	troubleshoot_task_detail?: ApprovalTaskDetail | null;
+	strategy_context?: ApprovalStrategyContext | null;
 	recommended_mode: 'diagnosis' | 'execution' | string;
 }
 

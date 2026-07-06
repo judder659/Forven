@@ -101,7 +101,7 @@ def test_get_system_heartbeat_nav_indicators_use_frontend_route_keys(monkeypatch
     monkeypatch.setattr(control_plane_status, "get_sentiment", lambda: {"composite": 0.5})
     monkeypatch.setattr(control_plane_status, "get_regime", lambda: {"BTC": {"regime": "trend"}})
     monkeypatch.setattr(control_plane_status, "get_scanner_state", lambda: {"last_scan": "2026-03-06T00:00:00+00:00"})
-    monkeypatch.setattr("forven.api_domains.trading.read_open_trades", lambda verify_exchange=False: [{"id": "t1"}])
+    monkeypatch.setattr("forven.api_domains.trading.read_open_trades", lambda verify_exchange=False: [{"id": "t1", "execution_type": "live"}])
     monkeypatch.setattr("forven.api_domains.tasks.get_agent_tasks", lambda: [])
     monkeypatch.setattr("forven.api_domains.data.get_datasets_stub", lambda remote_skip=False: [])
     monkeypatch.setattr("forven.api_domains.analytics.get_research_feed_metrics_stub", lambda: {"new_count": 0})
@@ -146,6 +146,32 @@ def test_get_system_heartbeat_nav_indicators_use_frontend_route_keys(monkeypatch
     assert nav["/live-trades"]["count"] == 1
     # No paper sessions in this fixture — the paper tab must stay quiet.
     assert nav["/paper-trades"]["kind"] == "none"
+
+
+def test_live_trades_nav_indicator_excludes_paper_positions():
+    # Regression: read_open_trades returns the UNFILTERED ledger (paper AND live).
+    # The "Live Trades" badge must count only live exposure — 12 open paper
+    # positions with zero live must render NO badge, not "12".
+    open_trades = [
+        {"id": f"E{i:04d}", "execution_type": "paper", "source": "paper"}
+        for i in range(12)
+    ]
+    indicator = control_plane_status._build_live_trades_nav_indicator(open_trades)
+    assert indicator["kind"] == "none"
+    assert indicator["count"] == 0
+
+
+def test_live_trades_nav_indicator_counts_live_and_exchange_only():
+    # execution_type='live' rows and synthetic exchange-only rows (source='exchange',
+    # no execution_type — real HyperLiquid exposure) both count; paper does not.
+    open_trades = [
+        {"id": "L1", "execution_type": "live"},
+        {"id": "hl:mainnet:BTC:long", "source": "exchange"},
+        {"id": "P1", "execution_type": "paper", "source": "paper"},
+    ]
+    indicator = control_plane_status._build_live_trades_nav_indicator(open_trades)
+    assert indicator["kind"] == "count"
+    assert indicator["count"] == 2
 
 
 def test_system_heartbeat_route_sanitizes_nonfinite_values(monkeypatch):

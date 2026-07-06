@@ -23,6 +23,14 @@ from forven.strategies.builtin.rule_engine import (
     validate_rule_spec,
 )
 
+# Reasoning models (e.g. glm-5.2 via opencode-go) spend output tokens "thinking"
+# before emitting the spec — a tight cap truncates the JSON, or empties it
+# entirely when the reasoning alone exhausts the budget. Give generous headroom,
+# then retry once even larger if the first response comes back empty/truncated.
+# For non-reasoning models these are just ceilings (they stop at the spec), so a
+# larger budget costs nothing extra there.
+_NL_SPEC_TOKEN_BUDGETS: tuple[int, ...] = (4000, 8000)
+
 
 def _build_system_prompt() -> str:
     lines: list[str] = []
@@ -93,6 +101,26 @@ def _normalize_spec(obj: object) -> dict:
     }
 
 
+def _parse_failure_message(raw: object, exc: Exception | None) -> str:
+    """Actionable message for a response we couldn't turn into a spec.
+
+    Distinguishes an *empty* reply (the model spent its whole budget reasoning)
+    from *truncated* JSON (it ran out mid-spec), rather than the raw, opaque
+    ``json.loads`` error the UI used to show.
+    """
+    if not str(raw or "").strip():
+        return (
+            "The AI model returned an empty response — it likely used its entire "
+            "output budget reasoning before writing the strategy. Try a shorter, "
+            "simpler description, or choose a non-reasoning model in Settings."
+        )
+    return (
+        "The AI response was cut off before a complete strategy spec was produced. "
+        "Try simplifying the idea or switching models in Settings."
+        + (f" ({exc})" if exc is not None else "")
+    )
+
+
 async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: str = "1h") -> dict:
     """Return ``{valid, spec, errors, warnings, provider}``.
 
@@ -124,22 +152,46 @@ async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: s
         f"Strategy idea:\n{description}\n\n"
         "Return ONLY the JSON rule spec."
     )
-    try:
-        raw = await ai.call_ai(provider, prompt=user, system=system, max_tokens=1600, temperature=0.1)
-    except Exception as exc:  # noqa: BLE001 — surface a friendly message to the UI
-        return {"valid": False, "spec": None, "errors": [f"AI request failed: {exc}"], "warnings": [], "provider": provider}
+    raw: str = ""
+    spec: dict | None = None
+    call_error: Exception | None = None
+    parse_error: Exception | None = None
+    for max_tokens in _NL_SPEC_TOKEN_BUDGETS:
+        try:
+            raw = await ai.call_ai(
+                provider, prompt=user, system=system, max_tokens=max_tokens, temperature=0.1
+            )
+            call_error = None
+        except Exception as exc:  # noqa: BLE001 — an empty/truncated reply now raises here
+            call_error = exc
+            raw = ""
+            continue  # a larger budget may let a reasoning model finish
+        try:
+            spec = _normalize_spec(_extract_json(raw))
+            parse_error = None
+            break
+        except Exception as exc:  # noqa: BLE001 — usually truncated JSON; retry bigger
+            parse_error = exc
 
-    try:
-        spec = _normalize_spec(_extract_json(raw))
-    except Exception as exc:  # noqa: BLE001
+    if spec is not None:
+        errors = validate_rule_spec(spec)
+        return {"valid": len(errors) == 0, "spec": spec, "errors": errors, "warnings": [], "provider": provider}
+
+    if parse_error is not None:
+        # We got text back but couldn't complete a spec — almost always a
+        # reasoning model truncated past its budget. Give the actionable message.
         return {
             "valid": False, "spec": None,
-            "errors": [f"Could not parse a rule spec from the AI response: {exc}"],
+            "errors": [_parse_failure_message(raw, parse_error)],
             "warnings": [], "provider": provider, "raw": str(raw)[:2000],
         }
-
-    errors = validate_rule_spec(spec)
-    return {"valid": len(errors) == 0, "spec": spec, "errors": errors, "warnings": [], "provider": provider}
+    # Never got a usable response at all. call_error now carries the client's
+    # "empty response (truncated at max_tokens)" detail for reasoning models.
+    return {
+        "valid": False, "spec": None,
+        "errors": [f"AI request failed: {call_error}"],
+        "warnings": [], "provider": provider,
+    }
 
 
 __all__ = ["nl_to_rule_spec"]

@@ -1,6 +1,6 @@
 import json
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -12,7 +12,6 @@ from forven.db import (
     create_task_container,
     get_approval,
     get_db,
-    kv_set,
     list_approvals,
     log_activity,
     update_approval,
@@ -23,6 +22,12 @@ from forven.control_plane.models import (
     ApprovalHandoffBody,
     ApprovalTroubleshootBody,
 )
+from forven.dethrone_cooldown import (
+    clear_dethrone_cooldown,
+    dethrone_cooldown_active_until,
+    get_dethrone_cooldown_state,
+    record_dethrone_deny,
+)
 
 _ACTIVE_TASK_STATUSES = {"pending", "running", "blocked"}
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
@@ -31,7 +36,6 @@ _PROMOTION_APPROVAL_TYPE = "strategy_promotion_approval"
 _REGIME_CHAMPION_APPROVAL_TYPE = "regime_champion_promotion"
 _SKILL_UPDATE_APPROVAL_TYPE = "skill_update_proposal"
 _ROUTINE_CREATE_APPROVAL_TYPE = "routine_create"
-_DETHRONE_COOLDOWN_HOURS = 24
 _TASK_SUMMARY_COLUMNS = """
     id,
     display_id,
@@ -313,24 +317,6 @@ def _recommended_mode(
     return "diagnosis"
 
 
-def _dethrone_cooldown_key(strategy_id: str) -> str:
-    return f"forven:dethrone:cooldown:{strategy_id}"
-
-
-def _clear_dethrone_cooldown(strategy_id: str) -> None:
-    if not strategy_id:
-        return
-    kv_set(_dethrone_cooldown_key(strategy_id), None)
-
-
-def _set_dethrone_cooldown(strategy_id: str) -> str:
-    if not strategy_id:
-        return ""
-    until = datetime.now(timezone.utc) + timedelta(hours=_DETHRONE_COOLDOWN_HOURS)
-    kv_set(_dethrone_cooldown_key(strategy_id), until.isoformat())
-    return until.isoformat()
-
-
 def _apply_dethrone_recommendation(
     approval: Mapping[str, object],
     body: ApprovalDecisionBody,
@@ -392,7 +378,7 @@ def _apply_dethrone_recommendation(
     if blocked_reason:
         raise HTTPException(status_code=400, detail=f"Dethrone transition blocked: {blocked_reason}")
 
-    _clear_dethrone_cooldown(strategy_id)
+    clear_dethrone_cooldown(strategy_id)
     return {
         "strategy_id": strategy_id,
         "target_stage": recommended_target,
@@ -671,6 +657,82 @@ def get_approvals_list(
     return _augment_approval_rows(rows)
 
 
+def _strategy_approval_context(target_id: str) -> dict[str, object] | None:
+    """Live decision context for a strategy-targeted approval.
+
+    Fail-soft by contract: any error returns None — the context endpoint must
+    never break because a strategy row or its metrics blob is unhealthy.
+    """
+    strategy_id = str(target_id or "").strip()
+    if not strategy_id:
+        return None
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, display_id, name, display_name, symbol, timeframe, stage, "
+                "stage_changed_at, metrics FROM strategies WHERE id = ?",
+                (strategy_id,),
+            ).fetchone()
+            if not row:
+                return None
+
+            sharpe = None
+            try:
+                metrics = json.loads(row["metrics"]) if row["metrics"] else {}
+                if isinstance(metrics, dict):
+                    for key in ("sharpe", "sharpe_ratio"):
+                        if metrics.get(key) is not None:
+                            sharpe = float(metrics[key])
+                            break
+            except Exception:
+                sharpe = None
+
+            history: dict[str, object] = {
+                "pending": 0,
+                "approved": 0,
+                "denied": 0,
+                "expired": 0,
+                "last_denied_at": None,
+            }
+            for hist_row in conn.execute(
+                "SELECT LOWER(status) AS s, COUNT(*) AS c, MAX(decided_at) AS last_decided "
+                "FROM approvals WHERE approval_type = ? AND target_type = 'strategy' "
+                "AND LOWER(COALESCE(target_id, '')) = LOWER(?) GROUP BY LOWER(status)",
+                (_DETHRONE_APPROVAL_TYPE, strategy_id),
+            ):
+                status = str(hist_row["s"] or "")
+                if status == "pending_approval":
+                    status = "pending"
+                if status in history:
+                    history[status] = int(hist_row["c"])
+                if status == "denied":
+                    history["last_denied_at"] = hist_row["last_decided"]
+
+        cooldown_state = get_dethrone_cooldown_state(strategy_id)
+        active_until = dethrone_cooldown_active_until(strategy_id)
+        return {
+            "strategy": {
+                "id": row["id"],
+                "display_id": row["display_id"],
+                "name": row["name"],
+                "display_name": row["display_name"],
+                "symbol": row["symbol"],
+                "timeframe": row["timeframe"],
+                "stage": row["stage"],
+                "stage_changed_at": row["stage_changed_at"],
+                "sharpe": sharpe,
+            },
+            "dethrone_history": history,
+            "cooldown": {
+                "active": active_until is not None,
+                "until": active_until,
+                "deny_count": cooldown_state.get("deny_count", 0),
+            },
+        }
+    except Exception:
+        return None
+
+
 def get_approval_context(approval_id: int) -> dict[str, object]:
     approval = get_approval(approval_id)
     if not approval:
@@ -679,12 +741,16 @@ def get_approval_context(approval_id: int) -> dict[str, object]:
     enriched = _augment_approval_rows([approval])[0]
     linked_task = enriched.get("linked_task")
     troubleshoot_task = enriched.get("troubleshoot_task")
+    strategy_context = None
+    if str(approval.get("target_type") or "").strip().lower() == "strategy":
+        strategy_context = _strategy_approval_context(str(approval.get("target_id") or ""))
     return {
         "approval": enriched,
         "linked_task": linked_task,
         "troubleshoot_task": troubleshoot_task,
         "linked_task_detail": _task_detail(linked_task if isinstance(linked_task, Mapping) else None),
         "troubleshoot_task_detail": _task_detail(troubleshoot_task if isinstance(troubleshoot_task, Mapping) else None),
+        "strategy_context": strategy_context,
         "recommended_mode": _recommended_mode(
             enriched,
             linked_task if isinstance(linked_task, Mapping) else None,
@@ -971,7 +1037,7 @@ def post_deny_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[str
     if approval_type == _DETHRONE_APPROVAL_TYPE:
         payload = _approval_payload(approval)
         strategy_id = str(payload.get("strategy_id") or approval.get("target_id") or "").strip()
-        cooldown_until = _set_dethrone_cooldown(strategy_id)
+        cooldown_state = record_dethrone_deny(strategy_id)
         log_activity(
             "info",
             "operator",
@@ -979,7 +1045,8 @@ def post_deny_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[str
             {
                 "approval_id": approval_id,
                 "strategy_id": strategy_id,
-                "cooldown_until": cooldown_until or None,
+                "cooldown_until": cooldown_state.get("until"),
+                "deny_count": cooldown_state.get("deny_count"),
                 "feedback": body.feedback,
                 "reason": body.reason,
             },
@@ -989,7 +1056,8 @@ def post_deny_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[str
             "approval_id": approval_id,
             "status": updated["status"] if updated else "denied",
             "strategy_id": strategy_id or None,
-            "cooldown_until": cooldown_until or None,
+            "cooldown_until": cooldown_state.get("until"),
+            "deny_count": cooldown_state.get("deny_count"),
         }
 
     if approval_type == _CRUCIBLE_DETHRONE_APPROVAL_TYPE:
@@ -1099,8 +1167,6 @@ def post_handoff_approval(approval_id: int, body: ApprovalHandoffBody) -> dict[s
 
 def post_user_complete_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[str, object]:
     """Mark the linked task as done by the user and notify the Brain."""
-    from datetime import datetime, timezone
-
     approval = get_approval(approval_id)
     if not approval:
         raise HTTPException(status_code=404, detail=f"Approval {approval_id} not found")

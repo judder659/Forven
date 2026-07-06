@@ -1356,6 +1356,48 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
 
   // Paper trading gates
   {
+    id: 'pipeline.dethrone.paper_min_soak_days',
+    label: 'Dethrone protection: paper soak floor',
+    unit: 'days',
+    default: 7,
+    type: 'number',
+    area: 'lab',
+    subsection: 'lab-pipeline-paper-live-gates',
+    backendSection: 'pipeline',
+    backendPath: 'dethrone.paper_min_soak_days',
+    description:
+      'A paper strategy may not be recommended for dethrone (demotion/archive) until it has soaked this many days — it has to get a chance to prove itself first. Operator force-demotions bypass this.',
+    usedBy: ['forven.brain', 'forven.policy'],
+  },
+  {
+    id: 'pipeline.dethrone.paper_max_soak_days',
+    label: 'Dethrone protection: low-activity extension',
+    unit: 'days',
+    default: 14,
+    type: 'number',
+    area: 'lab',
+    subsection: 'lab-pipeline-paper-live-gates',
+    backendSection: 'pipeline',
+    backendPath: 'dethrone.paper_max_soak_days',
+    description:
+      'Strategies that trade rarely (once a week or less) stay dethrone-protected past the soak floor, up to this many days, until they reach the minimum closed-trade count below.',
+    usedBy: ['forven.brain', 'forven.policy'],
+  },
+  {
+    id: 'pipeline.dethrone.paper_min_closed_trades',
+    label: 'Dethrone protection: min closed trades',
+    unit: 'trades',
+    default: 5,
+    type: 'number',
+    area: 'lab',
+    subsection: 'lab-pipeline-paper-live-gates',
+    backendSection: 'pipeline',
+    backendPath: 'dethrone.paper_min_closed_trades',
+    description:
+      'Closed paper trades (in the current paper stay) that end the low-activity dethrone protection early, between the soak floor and the extension limit.',
+    usedBy: ['forven.brain', 'forven.policy'],
+  },
+  {
     id: 'pipeline.paper_trading.min_paper_days',
     label: 'Paper min duration',
     unit: 'days',

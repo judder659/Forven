@@ -142,7 +142,17 @@ function buildFallbackNavIndicators(heartbeat: SystemHeartbeatResponse): Record<
 
 	// Paper and live each have their own page now, so each carries its own badge:
 	// open live positions on Live Trades, paper session activity on Paper Trades.
-	const liveTrades = Array.isArray(heartbeat.open_trades) ? heartbeat.open_trades : [];
+	// heartbeat.open_trades is the UNFILTERED ledger (paper AND live rows), so the
+	// live badge must exclude paper — otherwise open paper positions inflate it
+	// (e.g. "12" live when zero are live). Synthetic exchange-only rows carry no
+	// execution_type but source='exchange' and are real live exposure, so keep them.
+	const openTrades = Array.isArray(heartbeat.open_trades) ? heartbeat.open_trades : [];
+	const liveTrades = openTrades.filter((trade) => {
+		const executionType = String(trade?.execution_type ?? '').trim().toLowerCase();
+		if (executionType === 'live') return true;
+		if (executionType === 'paper' || executionType === 'replay') return false;
+		return String(trade?.source ?? '').trim().toLowerCase() === 'exchange';
+	});
 	const paperSessions = Array.isArray(heartbeat.paper_sessions) ? heartbeat.paper_sessions : [];
 	const activePaperSessions = paperSessions.filter((session) =>
 		['position_open', 'warming_up', 'watching'].includes(normalizeStatus(session.status)),
