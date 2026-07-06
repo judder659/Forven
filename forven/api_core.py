@@ -481,6 +481,14 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "gemini", "model_id": "gemini-2.5-flash-lite", "label": "Google Gemini 2.5 Flash Lite"},
     {"provider": "gemini", "model_id": "gemini-2.0-flash", "label": "Google Gemini 2.0 Flash"},
     {"provider": "gemini", "model_id": "gemini-1.5-flash", "label": "Google Gemini 1.5 Flash"},
+    # Google's open Gemma models — same endpoint/key as Gemini, but far more
+    # generous free-tier daily quota. Great for simple completions (e.g. the
+    # no-code strategy builder); note Gemma does NOT support tool-calling, so
+    # it's unsuited to the agent tool-loop slots.
+    {"provider": "gemini", "model_id": "gemma-3-27b-it", "label": "Google Gemma 3 27B"},
+    {"provider": "gemini", "model_id": "gemma-3-12b-it", "label": "Google Gemma 3 12B"},
+    {"provider": "gemini", "model_id": "gemma-3-4b-it", "label": "Google Gemma 3 4B"},
+    {"provider": "gemini", "model_id": "gemma-3-1b-it", "label": "Google Gemma 3 1B"},
     # Cerebras / Mistral / xAI are also live-discovered; these seed sensible
     # defaults + a fallback when discovery is unavailable.
     {"provider": "cerebras", "model_id": "llama-3.3-70b", "label": "Cerebras Llama 3.3 70B"},
@@ -575,6 +583,17 @@ def _normalize_model_id(value: object) -> str:
     return normalized
 
 
+def _prettify_gemma_id(model_id: str) -> str:
+    """"gemma-3-27b-it" -> "Gemma 3 27B" (drop the -it instruction-tuned suffix)."""
+    core = model_id[:-3] if model_id.lower().endswith("-it") else model_id
+    words = [
+        (tok.upper() if any(c.isdigit() for c in tok) else tok.capitalize())
+        for tok in core.split("-")
+        if tok
+    ]
+    return " ".join(words) or model_id
+
+
 def _coerce_discovered_model_record(model_id: str, provider: str, label: str | None = None) -> dict:
     normalized_model_id = _normalize_model_id(model_id)
     if not normalized_model_id:
@@ -582,7 +601,12 @@ def _coerce_discovered_model_record(model_id: str, provider: str, label: str | N
     provider_name = _MODEL_PROVIDER_DISPLAY_NAMES.get(provider, provider.capitalize())
     resolved_label = (label or "").strip() or normalized_model_id
     if resolved_label.lower() == normalized_model_id.lower():
-        resolved_label = f"{provider_name} {resolved_label}"
+        # Gemma is served under the "gemini" provider but must NOT be labelled
+        # "Google Gemini gemma-…" — brand it as Gemma so the picker is truthful.
+        if provider == "gemini" and normalized_model_id.lower().startswith("gemma"):
+            resolved_label = f"Google {_prettify_gemma_id(normalized_model_id)}"
+        else:
+            resolved_label = f"{provider_name} {resolved_label}"
     return {
         "provider": provider,
         "model_id": normalized_model_id,
@@ -706,9 +730,13 @@ def _looks_like_groq_discovery_model(model: str) -> bool:
 
 def _looks_like_gemini_discovery_model(model: str) -> bool:
     lowered = model.lower().strip()  # "models/" prefix already stripped upstream
-    if not lowered.startswith("gemini-"):
+    # Google's OpenAI-compatible endpoint serves BOTH Gemini and the open Gemma
+    # models under the same URL/key. Gemma ids look like "gemma-3-27b-it" and get
+    # far more generous free-tier daily quota than Gemini Flash, so surface them
+    # too instead of filtering them out.
+    if not (lowered.startswith("gemini-") or lowered.startswith("gemma-")):
         return False
-    # Gemini's compat /models also lists non-text modalities; keep chat models.
+    # The compat /models also lists non-text modalities; keep chat models only.
     if any(
         tag in lowered
         for tag in (
