@@ -61,7 +61,7 @@
 		try {
 			orphans = await scanOrphans();
 			const total = orphans.orphans.length + orphans.cataloged_missing.length;
-			notice = total === 0 ? 'No storage drift — catalog and parquet are in sync. ✓' : null;
+			notice = total === 0 ? 'All clean — no leftover or missing files. ✓' : null;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Orphan scan failed';
 		} finally {
@@ -94,12 +94,13 @@
 </script>
 
 <div class="border border-[#222] bg-[#050505] p-4">
-	<div class="mb-3 flex items-center justify-between">
-		<h2 class="text-xs font-bold uppercase tracking-widest text-white">Storage &amp; maintenance</h2>
+	<div class="mb-1 flex items-center justify-between">
+		<h2 class="text-xs font-bold uppercase tracking-widest text-white">Data health</h2>
 		<button class="border border-[#333] px-2 py-0.5 text-[11px] text-[#888] hover:bg-[#111] hover:text-white transition-colors" on:click={load} disabled={loading}>
 			{loading ? '…' : 'Refresh'}
 		</button>
 	</div>
+	<p class="mb-3 text-[11px] text-[#555]">How much is stored, whether storage and catalog agree, and what was written recently.</p>
 
 	{#if error}
 		<div class="mb-2 border border-red-900 bg-red-500/5 p-2 text-xs text-red-400">{error}</div>
@@ -136,16 +137,16 @@
 				</div>
 			</div>
 			<div>
-				<div class="text-[#666]">Last ingestion</div>
+				<div class="text-[#666]">Last download</div>
 				<div class="font-mono text-[#888]">{ago(health.last_ingestion_at)}</div>
 			</div>
 		</div>
 
 		<!-- Orphan scan -->
 		<div class="mb-4 border-t border-[#1a1a1a] pt-3">
-			<div class="mb-2 flex items-center justify-between">
+			<div class="mb-1 flex items-center justify-between">
 				<span class="text-xs font-medium text-[#888]">
-					Storage drift
+					Storage check
 					{#if health.orphan_count > 0}
 						<span class="ml-1 border border-yellow-900 px-1.5 py-0.5 text-yellow-400">{health.orphan_count} flagged</span>
 					{/if}
@@ -157,25 +158,28 @@
 						</button>
 					{/if}
 					<button class="border border-[#333] px-2 py-0.5 text-[11px] text-[#888] hover:bg-[#111] hover:text-white transition-colors disabled:opacity-50" on:click={doScan} disabled={scanning || cleaning}>
-						{scanning ? 'scanning…' : 'Scan orphans'}
+						{scanning ? 'scanning…' : 'Scan'}
 					</button>
 				</div>
 			</div>
+			<p class="mb-2 text-[11px] text-[#555]">
+				Finds temp files and half-written data left behind by interrupted downloads. Read-only until you clean up.
+			</p>
 			{#if orphans}
 				{#if orphans.orphans.length === 0 && orphans.cataloged_missing.length === 0}
-					<div class="text-xs text-[#666]">In sync — no orphaned files or missing parquet.</div>
+					<div class="text-xs text-[#666]">All clean — storage and catalog agree.</div>
 				{:else}
 					<div class="space-y-1 text-xs">
 						{#each orphans.orphans as o}
 							<div class="flex items-center justify-between {o.safe_delete ? 'text-yellow-400' : 'text-[#888]'}">
 								<span class="font-mono">{o.symbol}/{o.timeframe}</span>
-								<span class="text-[#666]">{o.reason ?? 'orphan'} · {fmtBytes(o.size_bytes)}{o.safe_delete ? '' : ' · kept'}</span>
+								<span class="text-[#666]">{o.reason ?? 'orphan'} · {fmtBytes(o.size_bytes)}{o.safe_delete ? '' : ' · kept for review'}</span>
 							</div>
 						{/each}
 						{#each orphans.cataloged_missing as m}
 							<div class="flex items-center justify-between text-red-400">
 								<span class="font-mono">{m.symbol}/{m.timeframe}</span>
-								<span class="text-[#666]">cataloged but file missing</span>
+								<span class="text-[#666]">in catalog but file missing</span>
 							</div>
 						{/each}
 					</div>
@@ -185,9 +189,9 @@
 
 		<!-- Recent versions audit trail -->
 		<div class="border-t border-[#1a1a1a] pt-3">
-			<div class="mb-2 text-xs font-medium text-[#888]">Recent ingestion versions</div>
+			<div class="mb-2 text-xs font-medium text-[#888]">Recent data writes</div>
 			{#if versions.length === 0}
-				<div class="text-xs text-[#666]">No version history yet.</div>
+				<div class="text-xs text-[#666]">No writes recorded yet.</div>
 			{:else}
 				<div class="overflow-x-auto">
 					<table class="w-full text-xs">

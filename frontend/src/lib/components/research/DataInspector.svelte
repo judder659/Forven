@@ -309,7 +309,10 @@
 							(progress) => updateDataFetchProgress(progress.message)
 						);
 					}
-					completeDataFetchSuccess(`Finished ${symbol} — ${tfs.length} timeframe${tfs.length > 1 ? 's' : ''}`);
+					completeDataFetchSuccess(
+						`Finished ${symbol} — ${tfs.length} timeframe${tfs.length > 1 ? 's' : ''}`,
+						lastResult?.warning ?? null
+					);
 					dispatch('refresh');
 					if (lastResult) dispatch('fetched', { dataset: lastResult });
 					mode = 'details';

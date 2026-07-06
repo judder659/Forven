@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import duckdb
 import pandas as pd
@@ -115,10 +115,14 @@ class Catalog:
                     start_ts TIMESTAMPTZ,
                     end_ts TIMESTAMPTZ,
                     row_count BIGINT NOT NULL,
+                    fingerprint VARCHAR,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     PRIMARY KEY (source, market, symbol, timeframe, stream)
                 )
                 """
+            )
+            con.execute(
+                "ALTER TABLE series_coverage ADD COLUMN IF NOT EXISTS fingerprint VARCHAR"
             )
             con.execute(
                 """
@@ -195,6 +199,9 @@ class Catalog:
             )
 
     def upsert_series_coverage(self, row: CoverageRow) -> None:
+        # Leaves `fingerprint` NULL (INSERT OR REPLACE resets unlisted columns),
+        # so the next scan_lake re-reads the file instead of trusting a stale
+        # cached-bounds entry.
         with self.connect() as con:
             con.execute(
                 """
@@ -240,9 +247,95 @@ class Catalog:
     def scan_lake(self, data_root: str | Path | None = None) -> list[CoverageRow]:
         root = Path(data_root) if data_root is not None else default_data_root()
         ohlcv_root = root if root.name == "ohlcv" else root / "ohlcv"
-        rows = list(_scan_ohlcv_files(ohlcv_root))
-        for row in rows:
-            self.upsert_series_coverage(row)
+        if not ohlcv_root.exists():
+            return []
+
+        # Incremental: a file whose size+mtime fingerprint matches the stored
+        # coverage row keeps its persisted bounds. Re-aggregating every parquet
+        # made this scan O(lake) per call — 30s+ once the research universe
+        # seeded — and it runs from the catch-up job and plan endpoints.
+        cached: dict[str, tuple[str | None, CoverageRow]] = {}
+        with self.connect() as con:
+            stored = con.execute(
+                """
+                SELECT source, market, symbol, timeframe, stream, path,
+                       start_ts, end_ts, row_count, fingerprint
+                FROM series_coverage
+                WHERE stream = 'candles'
+                """
+            ).fetchall()
+        for values in stored:
+            row = CoverageRow(
+                source=values[0],
+                market=values[1],
+                symbol=values[2],
+                timeframe=values[3],
+                stream=values[4],
+                path=values[5],
+                start_ts=_utc_iso(values[6]),
+                end_ts=_utc_iso(values[7]),
+                row_count=int(values[8] or 0),
+            )
+            cached[row.path] = (values[9], row)
+
+        rows: list[CoverageRow] = []
+        changed: list[tuple[CoverageRow, str]] = []
+        for path in sorted(ohlcv_root.rglob("*.parquet")):
+            parsed = _parse_ohlcv_path(ohlcv_root, path)
+            if parsed is None:
+                continue
+            ref, timeframe = parsed
+            fingerprint = _file_fingerprint(path)
+            prior = cached.get(str(path))
+            if prior is not None and prior[0] is not None and prior[0] == fingerprint:
+                rows.append(prior[1])
+                continue
+            try:
+                start_ts, end_ts, row_count = _read_parquet_bounds(path)
+            except Exception:
+                continue
+            row = CoverageRow(
+                source=ref.source,
+                market=ref.market,
+                symbol=ref.to_fs(),
+                timeframe=timeframe,
+                stream="candles",
+                path=str(path),
+                start_ts=start_ts,
+                end_ts=end_ts,
+                row_count=row_count,
+            )
+            rows.append(row)
+            changed.append((row, fingerprint))
+
+        if changed:
+            # One connection for the whole batch — per-row connects serialized
+            # every row behind the catalog lock (364 open/close cycles per scan).
+            with self.connect() as con:
+                con.executemany(
+                    """
+                    INSERT OR REPLACE INTO series_coverage (
+                        source, market, symbol, timeframe, stream, path,
+                        start_ts, end_ts, row_count, fingerprint, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                    """,
+                    [
+                        [
+                            row.source,
+                            row.market,
+                            row.symbol,
+                            row.timeframe,
+                            row.stream,
+                            row.path,
+                            row.start_ts,
+                            row.end_ts,
+                            row.row_count,
+                            fingerprint,
+                        ]
+                        for row, fingerprint in changed
+                    ],
+                )
         return rows
 
     def upsert_symbol_registry(
@@ -311,34 +404,17 @@ def _read_parquet_bounds(path: Path) -> tuple[str | None, str | None, int]:
     return _utc_iso(row[0]), _utc_iso(row[1]), int(row[2] or 0)
 
 
-def _scan_ohlcv_files(ohlcv_root: Path) -> Iterable[CoverageRow]:
-    if not ohlcv_root.exists():
-        return []
-
-    rows: list[CoverageRow] = []
-    for path in sorted(ohlcv_root.rglob("*.parquet")):
-        parsed = _parse_ohlcv_path(ohlcv_root, path)
-        if parsed is None:
-            continue
-        ref, timeframe = parsed
+def _file_fingerprint(path: Path) -> str:
+    # Covers the cold file AND its tail sidecar — recent appends land in the
+    # tail until compaction, so either changing must invalidate cached bounds.
+    def stamp(target: Path) -> str:
         try:
-            start_ts, end_ts, row_count = _read_parquet_bounds(path)
-        except Exception:
-            continue
-        rows.append(
-            CoverageRow(
-                source=ref.source,
-                market=ref.market,
-                symbol=ref.to_fs(),
-                timeframe=timeframe,
-                stream="candles",
-                path=str(path),
-                start_ts=start_ts,
-                end_ts=end_ts,
-                row_count=row_count,
-            )
-        )
-    return rows
+            st = target.stat()
+        except OSError:
+            return "absent"
+        return f"{st.st_size}:{st.st_mtime_ns}"
+
+    return f"{stamp(path)}|{stamp(Path(str(path) + '.tail'))}"
 
 
 def _parse_ohlcv_path(ohlcv_root: Path, path: Path) -> tuple[SymbolRef, str] | None:

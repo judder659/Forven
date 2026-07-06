@@ -7,6 +7,9 @@ export interface DataFetchState {
 	taskId: string | null;
 	label: string;
 	message: string | null;
+	// Non-fatal completion note (e.g. a venue-cap warning: Kraken only serves the
+	// most recent ~720 candles). Shown alongside a success message.
+	warning: string | null;
 	progress: string;
 	startedAt: number | null;
 	finishedAt: number | null;
@@ -18,6 +21,7 @@ const initialState: DataFetchState = {
 	taskId: null,
 	label: '',
 	message: null,
+	warning: null,
 	progress: '',
 	startedAt: null,
 	finishedAt: null,
@@ -44,6 +48,7 @@ export function startDataFetchTask(label: string, options?: { taskId?: string; i
 		taskId,
 		label,
 		message: null,
+		warning: null,
 		progress: '',
 		startedAt: Date.now(),
 		finishedAt: null,
@@ -62,12 +67,13 @@ export function updateDataFetchProgress(progress: string) {
 	});
 }
 
-export function completeDataFetchSuccess(message: string) {
+export function completeDataFetchSuccess(message: string, warning: string | null = null) {
 	activeAbortController = null;
 	dataFetchState.update((state) => ({
 		...state,
 		status: 'success',
 		message,
+		warning,
 		progress: '',
 		finishedAt: Date.now()
 	}));

@@ -464,7 +464,7 @@ def _tool_fetch_exchange_data(params: dict) -> str:
             exchange_id=exchange,
             limit=bars,
         )
-        return json.dumps({
+        payload = {
             "status": "success",
             "symbol": result.get("symbol", symbol),
             "timeframe": result.get("timeframe", timeframe),
@@ -473,7 +473,12 @@ def _tool_fetch_exchange_data(params: dict) -> str:
             "bars_fetched": result.get("bars_fetched", 0),
             "bars_new": result.get("bars_new", 0),
             "date_range": f"{result.get('start_ts', '?')} to {result.get('end_ts', '?')}",
-        }, indent=2)
+        }
+        if result.get("warning"):
+            # e.g. Kraken only serves the most-recent ~720 candles — tell the
+            # agent so it doesn't assume it got full history.
+            payload["warning"] = result.get("warning")
+        return json.dumps(payload, indent=2)
     except RuntimeError as e:
         if "ccxt is not installed" in str(e):
             return "Error: ccxt library is not installed. Install with: pip install ccxt"

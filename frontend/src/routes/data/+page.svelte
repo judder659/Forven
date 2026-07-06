@@ -183,9 +183,20 @@
 
 	async function loadData(preferred?: { symbol: string; timeframe: string }): Promise<void> {
 		const failures: string[] = [];
+		const datasetsPromise = getDatasets();
+		// Show the dataset list as soon as its own request answers — the tab must
+		// not sit on "Loading..." because one of the six status calls below is slow.
+		void datasetsPromise
+			.then((rows) => {
+				if (Array.isArray(rows)) {
+					datasets = rows;
+					loading = false;
+				}
+			})
+			.catch(() => {});
 		const [settingsResult, datasetsResult, runsResult, dataEngineResult, healthResult, lakeResult, universeResult] = await Promise.allSettled([
 			getSettings(),
-			getDatasets(),
+			datasetsPromise,
 			getIngestionRuns({ limit: 500 }),
 			getDataEngineStatus(),
 			getCollectionHealth(),
@@ -583,6 +594,14 @@
 	$: dataEngineLiveCount = (dataEngineStatus?.streams ?? []).filter((stream) => stream.status === 'connected').length;
 	$: dataEngineSourceCount = dataEngineStatus?.sources?.length ?? 0;
 
+	// Source status comes from a circuit breaker, where "closed" = healthy and
+	// "open" = failing — exactly backwards for a casual reader, so translate.
+	const SOURCE_STATUS_LABEL: Record<string, string> = {
+		closed: 'healthy',
+		open: 'failing',
+		'half-open': 'recovering',
+	};
+
 	onMount(() => {
 		let isDestroyed = false;
 		async function initialLoad() {
@@ -747,174 +766,246 @@
 	{/if}
 
 	{#if activeTab === 'maintenance'}
-	<StorageMaintenance />
-
+	<!-- All three download mechanisms live in ONE card, ordered from broadest
+	     (add markets) to most surgical (fill gaps) — each row says plainly when
+	     to use it, so users don't have to decode seed/backfill/catch-up jargon. -->
 	<section class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden">
 		<div class="px-3 py-2 border-b border-[#1a1a1a]">
-			<div class="text-[11px] uppercase tracking-wider text-gray-400">Research Universe &amp; Deep History</div>
+			<div class="text-[11px] uppercase tracking-wider text-gray-400">Downloads &amp; Coverage</div>
 			<div class="text-[11px] text-gray-500 mt-0.5">
-				Deep perp history for strategy discovery — more assets and more years means more evidence per hypothesis.
+				Three ways to get data: track more markets, extend their history further back, or fill small recent gaps.
 			</div>
 		</div>
-		<div class="grid grid-cols-1 lg:grid-cols-2">
-			<div class="p-3 border-b lg:border-b-0 lg:border-r border-[#171717]">
-				<div class="flex items-center justify-between gap-2 mb-2">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Research Universe</div>
-					<div class="flex gap-2">
-						<button
-							type="button"
-							on:click={handleRefreshRegistry}
-							disabled={universeBusy || universeSeedRunning}
-							class="px-2 py-1 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
-						>Refresh Registry</button>
-						{#if universeSeedRunning}
-							<button
-								type="button"
-								on:click={handleCancelSeed}
-								class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
-							>Cancel Seed</button>
-						{:else}
-							<button
-								type="button"
-								on:click={handleSeedUniverse}
-								disabled={universeBusy}
-								class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
-							>Seed Universe</button>
-						{/if}
-					</div>
-				</div>
-				{#if universeError}
-					<div class="text-[11px] text-red-300 mb-2">{universeError}</div>
-				{/if}
-				{#if universe}
-					<div class="grid grid-cols-3 gap-2 text-center mb-2">
-						<div class="rounded border border-[#1c1c1c] p-2">
-							<div class="text-sm font-semibold text-gray-100">{universe.active.toLocaleString()}</div>
-							<div class="text-[10px] text-gray-500 uppercase">active perps</div>
-						</div>
-						<div class="rounded border border-[#1c1c1c] p-2">
-							<div class="text-sm font-semibold text-gray-100">{universe.plan.length.toLocaleString()}</div>
-							<div class="text-[10px] text-gray-500 uppercase">in plan ({universeMinuteTier} w/ 1m)</div>
-						</div>
-						<div class="rounded border border-[#1c1c1c] p-2">
-							<div class="text-sm font-semibold text-gray-100">{universe.delisted.toLocaleString()}</div>
-							<div class="text-[10px] text-gray-500 uppercase">delisted kept</div>
-						</div>
-					</div>
 
-					<!-- Universe sizing: presets are premades, the number stays editable;
-					     seeding is always manual, so nothing downloads until Seed is clicked. -->
-					<div class="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
-						<span class="text-gray-500 uppercase text-[10px] tracking-wider">Size</span>
-						{#each UNIVERSE_PRESETS as preset}
-							<button
-								type="button"
-								disabled={universeConfigBusy || universeSeedRunning}
-								on:click={() => void applyUniverseSize(preset.size)}
-								class="px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universeSize === preset.size
-									? 'border-cyan-600 text-cyan-200'
-									: 'border-[#2b2b2b] text-gray-400 hover:border-cyan-700 hover:text-gray-200'}"
-								title={`${preset.size} most liquid perps`}
-							>{preset.label} ({preset.size})</button>
-						{/each}
-						<input
-							type="number"
-							min="1"
-							max="500"
-							class="w-16 bg-[#111] border border-[#2b2b2b] rounded px-1.5 py-0.5 text-gray-200"
-							value={universeSize}
-							disabled={universeConfigBusy || universeSeedRunning}
-							on:change={(e) => {
-								const v = Number(e.currentTarget.value);
-								if (Number.isFinite(v) && v >= 1 && v <= 500) void applyUniverseSize(Math.round(v));
-							}}
-							title="Custom universe size (1-500 most liquid perps)"
-						/>
-						<span class="text-gray-500" title="Rough full-seed footprint at this size (perp history + derivatives)">
-							est. {universeEstimate}
-						</span>
+		<!-- 1 · Track more markets (research universe) -->
+		<div class="p-3 border-b border-[#171717]">
+			<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+				<div class="text-xs font-semibold text-gray-200">1 · Track more markets</div>
+				<div class="flex gap-2">
+					<button
+						type="button"
+						on:click={handleRefreshRegistry}
+						disabled={universeBusy || universeSeedRunning}
+						title="Re-read the exchange's list of tradable perpetuals"
+						class="px-2 py-1 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
+					>Refresh symbol list</button>
+					{#if universeSeedRunning}
+						<button
+							type="button"
+							on:click={handleCancelSeed}
+							class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
+						>Cancel</button>
+					{:else}
+						<button
+							type="button"
+							on:click={handleSeedUniverse}
+							disabled={universeBusy}
+							class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
+						>Download history</button>
+					{/if}
+				</div>
+			</div>
+			<div class="text-[11px] text-gray-500 mb-2 leading-snug max-w-3xl">
+				The research universe is the set of most-liquid perpetuals the system studies for strategy discovery.
+				Pick a size, then <span class="text-gray-300">Download history</span> to fetch each one's complete past
+				(price, funding, open interest, basis). Nothing downloads until you click; safe to cancel — everything
+				already saved is kept, and the next run resumes where it stopped.
+			</div>
+			{#if universeError}
+				<div class="text-[11px] text-red-300 mb-2">{universeError}</div>
+			{/if}
+			{#if universe}
+				<div class="grid grid-cols-3 gap-2 text-center mb-2 max-w-md">
+					<div class="rounded border border-[#1c1c1c] p-2" title="Perpetuals currently tradable on the exchange">
+						<div class="text-sm font-semibold text-gray-100">{universe.active.toLocaleString()}</div>
+						<div class="text-[10px] text-gray-500 uppercase">on exchange</div>
+					</div>
+					<div class="rounded border border-[#1c1c1c] p-2" title="Symbols selected for the research universe at the current size ({universeMinuteTier} also get 1-minute bars)">
+						<div class="text-sm font-semibold text-gray-100">{universe.plan.length.toLocaleString()}</div>
+						<div class="text-[10px] text-gray-500 uppercase">selected ({universeMinuteTier} w/ 1m)</div>
+					</div>
+					<div class="rounded border border-[#1c1c1c] p-2" title="Delisted symbols whose history is kept, so research isn't biased toward survivors">
+						<div class="text-sm font-semibold text-gray-100">{universe.delisted.toLocaleString()}</div>
+						<div class="text-[10px] text-gray-500 uppercase">delisted kept</div>
+					</div>
+				</div>
+
+				<!-- Universe sizing: presets are premades, the number stays editable;
+				     seeding is always manual, so nothing downloads until the click. -->
+				<div class="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
+					<span class="text-gray-500 uppercase text-[10px] tracking-wider">Size</span>
+					{#each UNIVERSE_PRESETS as preset}
 						<button
 							type="button"
 							disabled={universeConfigBusy || universeSeedRunning}
-							on:click={toggleUniverseEnabled}
-							class="ml-auto px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universe.config?.enabled === false
-								? 'border-[#2b2b2b] text-gray-500 hover:text-gray-300'
-								: 'border-green-900 text-green-300'}"
-							title="When off, the research universe is not planned or seeded — only your traded symbols keep collecting."
-						>{universe.config?.enabled === false ? 'Universe OFF' : 'Universe ON'}</button>
-					</div>
-					{#if universe.config?.enabled === false}
-						<div class="text-[11px] text-amber-200/80 mb-2">
-							Research universe disabled — no bulk downloads will be planned. Your traded symbols keep collecting normally.
-						</div>
-					{/if}
-					{#if universeSeedRunning && universe.seed.progress}
-						<div class="text-[11px] text-gray-300 mb-1">
-							Seeding {universe.seed.progress.current_symbol} — {universe.seed.progress.done}/{universe.seed.progress.total}
-						</div>
-						<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
-							<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(universe.seed.progress)}%`}></div>
-						</div>
-					{:else if universe.seed.last_error}
-						<div class="text-[11px] text-red-300">Last seed failed: {universe.seed.last_error}</div>
-					{:else if universe.seed.last_result}
-						<div class="text-[11px] text-green-400">
-							Last seed: {String((universe.seed.last_result as Record<string, unknown>).series_seeded ?? 0)} series seeded,
-							{String((universe.seed.last_result as Record<string, unknown>).series_current ?? 0)} already current
-						</div>
-					{:else}
-						<div class="text-[11px] text-gray-500">
-							Seed downloads full Binance-Vision perp history + a live tail for each planned series. Resumable and cancellable.
-						</div>
-					{/if}
-				{:else if !universeError}
-					<div class="text-xs text-gray-500">Loading…</div>
-				{/if}
-			</div>
-			<div class="p-3">
-				<div class="flex items-center justify-between gap-2 mb-2">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Deep History Backfill (Binance Vision)</div>
-					<div class="flex gap-2">
-						{#if bvStatus?.running}
-							<button
-								type="button"
-								on:click={handleCancelBv}
-								class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
-							>{bvStatus?.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
-						{:else}
-							<button
-								type="button"
-								on:click={handleTriggerBv}
-								disabled={bvBusy}
-								class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
-							>Backfill All</button>
-						{/if}
-					</div>
+							on:click={() => void applyUniverseSize(preset.size)}
+							class="px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universeSize === preset.size
+								? 'border-cyan-600 text-cyan-200'
+								: 'border-[#2b2b2b] text-gray-400 hover:border-cyan-700 hover:text-gray-200'}"
+							title={`${preset.size} most liquid perps`}
+						>{preset.label} ({preset.size})</button>
+					{/each}
+					<input
+						type="number"
+						min="1"
+						max="500"
+						class="w-16 bg-[#111] border border-[#2b2b2b] rounded px-1.5 py-0.5 text-gray-200"
+						value={universeSize}
+						disabled={universeConfigBusy || universeSeedRunning}
+						on:change={(e) => {
+							const v = Number(e.currentTarget.value);
+							if (Number.isFinite(v) && v >= 1 && v <= 500) void applyUniverseSize(Math.round(v));
+						}}
+						title="Custom universe size (1-500 most liquid perps)"
+					/>
+					<span class="text-gray-500" title="Rough full-download footprint at this size (perp history + derivatives)">
+						est. {universeEstimate}
+					</span>
+					<button
+						type="button"
+						disabled={universeConfigBusy || universeSeedRunning}
+						on:click={toggleUniverseEnabled}
+						class="ml-auto px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universe.config?.enabled === false
+							? 'border-[#2b2b2b] text-gray-500 hover:text-gray-300'
+							: 'border-green-900 text-green-300'}"
+						title="When off, the research universe is not planned or downloaded — only your traded symbols keep collecting."
+					>{universe.config?.enabled === false ? 'Universe OFF' : 'Universe ON'}</button>
 				</div>
-				{#if bvError}
-					<div class="text-[11px] text-red-300 mb-2">{bvError}</div>
+				{#if universe.config?.enabled === false}
+					<div class="text-[11px] text-amber-200/80 mb-2">
+						Research universe disabled — no bulk downloads will be planned. Your traded symbols keep collecting normally.
+					</div>
 				{/if}
-				{#if bvStatus?.running && bvStatus.progress}
+				{#if universeSeedRunning && universe.seed.progress}
 					<div class="text-[11px] text-gray-300 mb-1">
-						Backfilling {bvStatus.progress.current_symbol} — {bvStatus.progress.done}/{bvStatus.progress.total} symbols
+						Downloading {universe.seed.progress.current_symbol} — {universe.seed.progress.done}/{universe.seed.progress.total}
 					</div>
 					<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
-						<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(bvStatus.progress)}%`}></div>
+						<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(universe.seed.progress)}%`}></div>
 					</div>
-				{:else if bvStatus?.running}
-					<div class="text-[11px] text-gray-300">Backfill running…</div>
-				{:else if bvStatus?.last_error}
-					<div class="text-[11px] text-red-300">Last backfill failed: {bvStatus.last_error}</div>
-				{:else if bvStatus?.last_started_at}
-					<div class="text-[11px] text-green-400">Last backfill: {formatTimestamp(bvStatus.last_started_at)} ✓</div>
-				{:else}
-					<div class="text-[11px] text-gray-500">
-						Fills pre-history (OHLCV / funding / OI / basis) for every stored symbol from Binance Vision archives. Survives restarts; cancellable between symbols.
+				{:else if universe.seed.last_error}
+					<div class="text-[11px] text-red-300">Last run failed: {universe.seed.last_error}</div>
+				{:else if universe.seed.last_result}
+					<div class="text-[11px] text-green-400">
+						Last run: {String((universe.seed.last_result as Record<string, unknown>).series_seeded ?? 0)} series downloaded,
+						{String((universe.seed.last_result as Record<string, unknown>).series_current ?? 0)} already current
 					</div>
 				{/if}
+			{:else if !universeError}
+				<div class="text-xs text-gray-500">Loading…</div>
+			{/if}
+		</div>
+
+		<!-- 2 · Extend history further back (deep-history backfill) -->
+		<div class="p-3 border-b border-[#171717]">
+			<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+				<div class="text-xs font-semibold text-gray-200">2 · Extend history further back</div>
+				<div class="flex gap-2">
+					{#if bvStatus?.running}
+						<button
+							type="button"
+							on:click={handleCancelBv}
+							class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
+						>{bvStatus?.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
+					{:else}
+						<button
+							type="button"
+							on:click={handleTriggerBv}
+							disabled={bvBusy}
+							class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
+						>Extend all symbols</button>
+					{/if}
+				</div>
 			</div>
+			<div class="text-[11px] text-gray-500 mb-2 leading-snug max-w-3xl">
+				Symbols downloaded mid-history stop at their first stored bar. This walks every stored symbol back to
+				its first day on the exchange (price, funding, open interest, basis) using Binance's public archive.
+				Survives restarts; cancelling takes effect between symbols.
+			</div>
+			{#if bvError}
+				<div class="text-[11px] text-red-300 mb-2">{bvError}</div>
+			{/if}
+			{#if bvStatus?.running && bvStatus.progress}
+				<div class="text-[11px] text-gray-300 mb-1">
+					Extending {bvStatus.progress.current_symbol} — {bvStatus.progress.done}/{bvStatus.progress.total} symbols
+				</div>
+				<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
+					<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(bvStatus.progress)}%`}></div>
+				</div>
+			{:else if bvStatus?.running}
+				<div class="text-[11px] text-gray-300">Extending history…</div>
+			{:else if bvStatus?.last_error}
+				<div class="text-[11px] text-red-300">Last run failed: {bvStatus.last_error}</div>
+			{:else if bvStatus?.last_started_at}
+				<div class="text-[11px] text-green-400">Last run: {formatTimestamp(bvStatus.last_started_at)} ✓</div>
+			{/if}
+		</div>
+
+		<!-- 3 · Fill recent gaps (data-engine catch-up) -->
+		<div class="p-3">
+			<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+				<div class="text-xs font-semibold text-gray-200">3 · Fill recent gaps</div>
+				<button
+					type="button"
+					on:click={handlePlanBackfill}
+					disabled={dataEngineLoading}
+					class="px-2 py-1 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
+				>
+					{dataEngineLoading ? 'Checking…' : 'Check for gaps'}
+				</button>
+			</div>
+			<div class="text-[11px] text-gray-500 mb-2 leading-snug max-w-3xl">
+				Tops up bars missed while the app was off and small holes inside stored series. Runs automatically every
+				~10&nbsp;minutes when the Data Engine is on; checking here forces a pass right now.
+			</div>
+			{#if dataEngineStatus && dataEngineStatus.enabled === false}
+				<div class="text-[11px] text-amber-200/80 mb-2">
+					Automatic catch-up is paused — the Data Engine is off. Manual gap-fills here still work; enable it in
+					<a href="/settings#data" class="underline hover:text-amber-100">Settings → Data</a> for hands-free catch-up.
+				</div>
+			{/if}
+			{#if dataEngineError}
+				<div class="text-[11px] text-red-300 mb-2">{dataEngineError}</div>
+			{/if}
+			{#if dataEnginePlan}
+				{#if dataEnginePlan.task_count === 0}
+					<div class="text-xs text-green-400">Everything is current — no gaps found. ✓</div>
+				{:else}
+					<div class="text-xs text-gray-200">
+						{dataEnginePlan.task_count.toLocaleString()} gap{dataEnginePlan.task_count === 1 ? '' : 's'} to fill
+					</div>
+					{#if dataEnginePlan.tasks.length > 0}
+						<div class="mt-2 max-h-24 overflow-auto space-y-1">
+							{#each dataEnginePlan.tasks.slice(0, 6) as task}
+								<div class="font-mono text-[11px] text-gray-400">
+									{task.symbol} {task.timeframe} {task.start_ts} → {task.end_ts}
+								</div>
+							{/each}
+						</div>
+						<button
+							type="button"
+							on:click={handleExecuteBackfill}
+							disabled={dataEngineExecuting}
+							class="mt-2 px-3 py-1.5 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
+						>
+							{dataEngineExecuting
+								? 'Filling…'
+								: dataEngineExecResult
+									? `Fill ${dataEngineCandleRemaining} more`
+									: 'Fill gaps now'}
+						</button>
+					{/if}
+				{/if}
+				{#if dataEngineExecResult}
+					<div class="mt-2 text-[11px] {dataEngineExecResult.failed > 0 ? 'text-yellow-400' : dataEngineExecResult.rows_added > 0 ? 'text-green-400' : 'text-gray-400'}">
+						✓ filled {dataEngineExecResult.executed}, +{dataEngineExecResult.rows_added.toLocaleString()} bars{#if dataEngineExecResult.failed > 0}, {dataEngineExecResult.failed} failed{/if}{#if dataEngineCandleRemaining === 0}, all caught up{/if}
+					</div>
+				{/if}
+			{/if}
 		</div>
 	</section>
+
+	<StorageMaintenance />
 	{/if}
 
 	{#if drillSeries}
@@ -955,12 +1046,17 @@
 			</div>
 		</div>
 	{:else if $dataFetchState.status === 'success' && $dataFetchState.message}
-		<div class="flex items-start justify-between gap-3 border border-green-800 bg-green-950/30 text-green-200 text-xs px-3 py-2 rounded">
-			<div class="min-w-0 font-mono break-words">{$dataFetchState.message}</div>
+		<div class="flex items-start justify-between gap-3 border {$dataFetchState.warning ? 'border-amber-800 bg-amber-950/30 text-amber-200' : 'border-green-800 bg-green-950/30 text-green-200'} text-xs px-3 py-2 rounded">
+			<div class="min-w-0">
+				<div class="font-mono break-words">{$dataFetchState.message}</div>
+				{#if $dataFetchState.warning}
+					<div class="mt-1 break-words text-amber-300">⚠ {$dataFetchState.warning}</div>
+				{/if}
+			</div>
 			<button
 				type="button"
 				on:click={clearDataFetchTask}
-				class="shrink-0 text-green-400 hover:text-white transition-colors"
+				class="shrink-0 {$dataFetchState.warning ? 'text-amber-400' : 'text-green-400'} hover:text-white transition-colors"
 				aria-label="Dismiss download status"
 			>
 				Dismiss
@@ -983,56 +1079,47 @@
 	{/if}
 
 	{#if activeTab === 'maintenance'}
+	<!-- Status-only card: the catch-up ACTIONS live in "Fill recent gaps" above,
+	     so this stays a read-only glance at the collection machinery. -->
 	<section class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden">
-		<div class="px-3 py-2 border-b border-[#1a1a1a] flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-			<div>
-				<div class="text-[11px] uppercase tracking-wider text-gray-400">Data Engine</div>
-				<div class="text-[11px] text-gray-500 mt-0.5">
-					{dataEngineCoverageCount.toLocaleString()} catalog series • {dataEngineLiveCount.toLocaleString()} live streams • {dataEngineSourceCount.toLocaleString()} sources
-				</div>
+		<div class="px-3 py-2 border-b border-[#1a1a1a]">
+			<div class="text-[11px] uppercase tracking-wider text-gray-400">Data Engine Status</div>
+			<div class="text-[11px] text-gray-500 mt-0.5">
+				The machinery behind automatic collection — {dataEngineCoverageCount.toLocaleString()} tracked series • {dataEngineLiveCount.toLocaleString()} live streams • {dataEngineSourceCount.toLocaleString()} sources
 			</div>
-			<button
-				type="button"
-				on:click={handlePlanBackfill}
-				disabled={dataEngineLoading}
-				class="px-3 py-2 text-xs rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
-			>
-				{dataEngineLoading ? 'Planning...' : 'Backfill Plan'}
-			</button>
 		</div>
-		{#if dataEngineError}
-			<div class="px-3 py-2 text-xs text-red-300 border-b border-red-900/40 bg-red-950/20">{dataEngineError}</div>
-		{/if}
 		{#if dataEngineStatus && dataEngineStatus.enabled === false}
 			<div class="px-3 py-2 text-[11px] text-amber-200/90 border-b border-amber-900/40 bg-amber-950/20">
 				The Data Engine is <span class="font-semibold">disabled</span> (this is optional). The standard local data path works without it — enable it in
-				<a href="/settings#data" class="underline hover:text-amber-100">Settings → Data</a> to use catalog streaming and automatic catch-up. The counts below stay at zero until it's on.
+				<a href="/settings#data" class="underline hover:text-amber-100">Settings → Data</a> to use catalog streaming and automatic catch-up. The counts here stay at zero until it's on.
 			</div>
 		{/if}
-		<div class="grid grid-cols-1 lg:grid-cols-3">
+		<div class="grid grid-cols-1 lg:grid-cols-2">
 			<div class="p-3 border-b lg:border-b-0 lg:border-r border-[#171717]">
-				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Source Health</div>
+				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Exchange connections</div>
 				{#if dataEngineStatus?.sources?.length}
 					<div class="space-y-2">
 						{#each dataEngineStatus.sources as source}
 							<div class="flex items-center justify-between gap-3 text-xs">
 								<span class="font-mono text-gray-200">{source.source}</span>
-								<span class={`rounded border px-2 py-0.5 text-[10px] uppercase ${
-									source.status === 'closed'
-										? 'border-green-800 text-green-300'
-										: source.status === 'open'
-											? 'border-red-800 text-red-300'
-											: 'border-yellow-800 text-yellow-300'
-								}`}>{source.status}</span>
+								<span
+									title={`circuit ${source.status}`}
+									class={`rounded border px-2 py-0.5 text-[10px] uppercase ${
+										source.status === 'closed'
+											? 'border-green-800 text-green-300'
+											: source.status === 'open'
+												? 'border-red-800 text-red-300'
+												: 'border-yellow-800 text-yellow-300'
+									}`}>{SOURCE_STATUS_LABEL[source.status] ?? source.status}</span>
 							</div>
 						{/each}
 					</div>
 				{:else}
-					<div class="text-xs text-gray-500">No source health rows yet.</div>
+					<div class="text-xs text-gray-500">No connection history yet.</div>
 				{/if}
 			</div>
-			<div class="p-3 border-b lg:border-b-0 lg:border-r border-[#171717]">
-				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Live Streams</div>
+			<div class="p-3">
+				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Live streams</div>
 				{#if dataEngineStatus?.streams?.length}
 					<div class="space-y-2">
 						{#each dataEngineStatus.streams.slice(0, 5) as stream}
@@ -1043,46 +1130,7 @@
 						{/each}
 					</div>
 				{:else}
-					<div class="text-xs text-gray-500">No live stream buffers are active.</div>
-				{/if}
-			</div>
-			<div class="p-3">
-				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Backfill</div>
-				<div class="text-[11px] text-gray-500 mb-2 leading-snug">
-					Auto catch-up drains this plan every ~10&nbsp;min (toggle in Settings → Data). The button forces a batch now.
-				</div>
-				{#if dataEnginePlan}
-					<div class="text-xs text-gray-200">
-						{dataEnginePlan.task_count.toLocaleString()} planned task{dataEnginePlan.task_count === 1 ? '' : 's'}
-					</div>
-					{#if dataEnginePlan.tasks.length > 0}
-						<div class="mt-2 max-h-24 overflow-auto space-y-1">
-							{#each dataEnginePlan.tasks.slice(0, 6) as task}
-								<div class="font-mono text-[11px] text-gray-400">
-									{task.symbol} {task.timeframe} {task.start_ts} → {task.end_ts}
-								</div>
-							{/each}
-						</div>
-						<button
-							type="button"
-							on:click={handleExecuteBackfill}
-							disabled={dataEngineExecuting}
-							class="mt-2 px-3 py-1.5 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
-						>
-							{dataEngineExecuting
-								? 'Running…'
-								: dataEngineExecResult
-									? `Catch up ${dataEngineCandleRemaining} more`
-									: 'Catch up now'}
-						</button>
-					{/if}
-					{#if dataEngineExecResult}
-						<div class="mt-2 text-[11px] {dataEngineExecResult.failed > 0 ? 'text-yellow-400' : dataEngineExecResult.rows_added > 0 ? 'text-green-400' : 'text-gray-400'}">
-							✓ ran {dataEngineExecResult.executed}, +{dataEngineExecResult.rows_added.toLocaleString()} bars{#if dataEngineExecResult.failed > 0}, {dataEngineExecResult.failed} failed{/if}{#if dataEngineCandleRemaining === 0}, plan drained{/if}
-						</div>
-					{/if}
-				{:else}
-					<div class="text-xs text-gray-500">No backfill plan has been requested this session.</div>
+					<div class="text-xs text-gray-500">No live streams buffering right now.</div>
 				{/if}
 			</div>
 		</div>

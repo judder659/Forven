@@ -35,6 +35,11 @@ export interface Dataset {
 	// Venue identity stamped by the write path (forven_market parquet metadata):
 	// 'perp' | 'spot' | 'unknown' | 'unstamped' (legacy pre-stamping file).
 	market?: string;
+	// Set when the venue could only serve a bounded recent window (e.g. Kraken's
+	// most-recent-~720-candles ceiling) and the request asked for more. `warning`
+	// is a human-readable explanation to show the user.
+	capped?: boolean;
+	warning?: string;
 }
 
 export interface Job {

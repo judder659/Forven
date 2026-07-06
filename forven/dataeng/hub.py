@@ -146,15 +146,12 @@ class DataHub:
 
         coverage: list[dict[str, object]]
         try:
-            catalog = Catalog()
-            # The engine is opt-in / default-off. A full lake rescan opens a fresh
-            # DuckDB connection per parquet, so only pay for it when the engine is
-            # actually enabled; otherwise serve the last-persisted coverage. This
-            # endpoint runs on EVERY Data-page load, so an unconditional scan piled
-            # onto the load that was starving the event loop and dropping the WS.
-            if engine_enabled:
-                catalog.scan_lake()
-            coverage = catalog.list_coverage()
+            # Never rescan the lake here — this endpoint runs on EVERY Data-page
+            # load, and even a gated scan held page loads hostage for 30s+ once
+            # the research universe seeded the lake. Serve the last-persisted
+            # coverage; the catch-up job and the backfill-plan endpoint scan_lake()
+            # before planning, which keeps this snapshot fresh.
+            coverage = Catalog().list_coverage()
         except Exception:
             coverage = []
 

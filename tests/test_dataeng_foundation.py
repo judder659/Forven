@@ -106,6 +106,56 @@ def test_catalog_scan_reads_partitioned_source_paths(tmp_path):
     assert row["end_ts"] == "2026-02-01T00:15:00Z"
 
 
+def test_catalog_scan_skips_unchanged_files_and_rescans_modified(tmp_path, monkeypatch):
+    from forven.dataeng import catalog as catalog_mod
+    from forven.dataeng.catalog import Catalog
+
+    data_root = tmp_path / "data"
+    parquet_path = data_root / "ohlcv" / "BTC-USDT" / "1h.parquet"
+    parquet_path.parent.mkdir(parents=True)
+
+    def write(periods: int) -> None:
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=periods, freq="1h", tz="UTC"),
+                "open": [1.0] * periods,
+                "high": [2.0] * periods,
+                "low": [0.5] * periods,
+                "close": [1.5] * periods,
+                "volume": [10.0] * periods,
+            }
+        ).to_parquet(parquet_path, index=False)
+
+    write(3)
+    catalog = Catalog(tmp_path / "catalog.duckdb")
+
+    reads: list[object] = []
+    real_read = catalog_mod._read_parquet_bounds
+
+    def counting_read(path):
+        reads.append(path)
+        return real_read(path)
+
+    monkeypatch.setattr(catalog_mod, "_read_parquet_bounds", counting_read)
+
+    first = catalog.scan_lake(data_root)
+    assert [row.row_count for row in first] == [3]
+    assert len(reads) == 1
+
+    # Unchanged file: served from the persisted coverage without re-reading.
+    second = catalog.scan_lake(data_root)
+    assert len(reads) == 1
+    assert [row.row_count for row in second] == [3]
+    assert catalog.list_coverage()[0]["row_count"] == 3
+
+    # Modified file (size changes): re-read and coverage updated.
+    write(5)
+    third = catalog.scan_lake(data_root)
+    assert len(reads) == 2
+    assert [row.row_count for row in third] == [5]
+    assert catalog.list_coverage()[0]["row_count"] == 5
+
+
 def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     from forven import api_core
     from forven.dataeng.settings import load_data_engine_settings

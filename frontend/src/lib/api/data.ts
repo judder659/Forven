@@ -168,7 +168,14 @@ export async function fetchData(
 					message: `Finalizing ${symbol} ${timeframe}...`,
 					run,
 				});
-				return getDatasetDetail(symbol, timeframe, signal);
+				const detail = await getDatasetDetail(symbol, timeframe, signal);
+				// getDatasetDetail re-reads the lake and so drops any venue-cap
+				// warning the fetch attached — carry it over from the run.
+				if (run.warning) {
+					detail.warning = run.warning;
+					detail.capped = run.capped ?? true;
+				}
+				return detail;
 			}
 
 			const statusLabel = run.status === 'pending' ? 'Queued' : 'Downloading';
@@ -614,6 +621,10 @@ export interface IngestionRun {
 	bars_fetched: number;
 	bars_new: number;
 	bars_updated: number;
+	// Venue-cap warning (e.g. Kraken's recent-720 ceiling) stamped on completion
+	// when the request reached past what the venue could serve.
+	capped?: boolean;
+	warning?: string | null;
 	error: string | null;
 	prior_version_id: string | null;
 	new_version_id: string | null;
@@ -773,7 +784,10 @@ function toQualityReport(ds: Dataset, q: DataQualityExtended, idx: number): Qual
 }
 
 export async function getDataEngineStatus(): Promise<DataEngineStatus> {
-	return fetchApi('/data/engine/status');
+	// Hard total budget via signal (not timeoutMs): fetchApi retries non-HTTP
+	// failures across every API base candidate, so a per-attempt timeout would
+	// multiply by the candidate count while the Data page waits on this call.
+	return fetchApi('/data/engine/status', { signal: AbortSignal.timeout(15_000) });
 }
 
 export async function planDataEngineBackfill(): Promise<DataEngineBackfillPlan> {

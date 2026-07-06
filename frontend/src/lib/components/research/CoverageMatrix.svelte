@@ -227,13 +227,15 @@
 	{:else if timeframes.length === 0}
 		<div class="text-xs text-gray-500">No {STREAM_LABEL[stream]} series stored yet.</div>
 	{:else}
-		<div class="overflow-x-auto">
+		<!-- Own scroll container: the research universe puts 50+ symbols in this
+		     matrix, so cap the height instead of letting it swallow the page. -->
+		<div class="max-h-[480px] overflow-auto">
 			<table class="w-full border-separate border-spacing-1 text-xs">
 				<thead>
 					<tr>
-						<th class="w-px whitespace-nowrap px-2 py-1 text-left font-medium text-gray-400">symbol</th>
+						<th class="sticky top-0 z-10 w-px whitespace-nowrap bg-[#050505] px-2 py-1 text-left font-medium text-gray-400">symbol</th>
 						{#each timeframes as tf}
-							<th class="px-2 py-1 text-center font-medium text-gray-400">{tf}</th>
+							<th class="sticky top-0 z-10 bg-[#050505] px-2 py-1 text-center font-medium text-gray-400">{tf}</th>
 						{/each}
 					</tr>
 				</thead>
