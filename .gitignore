@@ -204,5 +204,5 @@ err
 # Local-only server scripts (crontab, one-off, per-machine)
 scripts/mode_scheduler.sh
 
-# Local data directory (not tracked in origin)
-data/
+# Local data symlink (not tracked in origin)
+data
