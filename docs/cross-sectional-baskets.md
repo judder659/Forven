@@ -77,3 +77,31 @@ ls_ratio, iv — same availability caveats as DATA_SCHEMA.md).
 `FundingCarryBasket.score = current funding_rate` — pure carry, no price
 signal. Variants (momentum-filtered carry, basis-ranked, OI-crowding) come
 after the pure version's verdict, not before.
+
+## Phase 0 verdict (2026-07-06 run, 28 deep symbols, 2020-01 → 2026-07)
+
+The edge class EXISTS on our data, carry-dominated, and survives stress:
+
+| variant            | sharpe | cagr%  | maxDD% | funding | price | costs |
+|--------------------|-------:|-------:|-------:|--------:|------:|------:|
+| baseline 8h/5legs  |   3.25 |  127.8 |  -33.6 |    7.40 |  1.09 |  2.90 |
+| costs ×2           |   1.55 |   45.8 |  -67.4 |    7.40 |  1.09 |  5.81 |
+| costs ×3           |  -0.12 |   -6.7 |  -96.6 |    7.40 |  1.09 |  8.71 |
+| 24h rebalance      |   3.16 |  119.9 |  -29.2 |    6.00 |  0.70 |  1.34 |
+| 3 legs             |   3.06 |  186.5 |  -53.8 |   10.07 |  0.61 |  3.38 |
+| 8 legs             |   3.07 |   78.7 |  -20.9 |    5.26 |  0.96 |  2.31 |
+
+- Placebo (20 shuffled-rank runs): sharpe −4.1 … −3.0; real beats 20/20.
+- PnL is funding (7.4) not price (1.1): genuine carry, not beta in costume.
+- Yearly: +2020..2023, **−20.5% in 2024**, +2025/26. Regime-dependent: a
+  momentum bull bleeds the short-crowded-longs side faster than carry pays.
+- **Recent regime (2024→now): sharpe 1.09, cagr 27%, maxDD −33.6%** — the
+  honest live expectation after the 2021 funding mania compressed. Still
+  clearly positive, nowhere near the full-period headline.
+- Cost budget: edge dies between 2× and 3× modeled costs at 8h cadence.
+  **24h cadence keeps ~all the edge at less than half the cost** and is the
+  right deployment shape.
+
+Phase 1 must add: HL venue funding for the traded subset (this run used
+Binance funding; we execute on HL), depth-aware leg caps for small caps,
+universe-perturbation (drop-k), and WFA folds on the basket curve.

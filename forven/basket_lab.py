@@ -105,8 +105,18 @@ def build_panel(
             log.info("basket panel: %s has no %s OHLCV — dropped", sym, timeframe)
             continue
         if not isinstance(df.index, pd.DatetimeIndex):
-            ts = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            ts_col = df["timestamp"]
+            ts = (
+                pd.to_datetime(ts_col, unit="ms", utc=True)
+                if pd.api.types.is_numeric_dtype(ts_col)
+                else pd.to_datetime(ts_col, utc=True)
+            )
             df = df.set_index(ts)
+        # The timestamp COLUMN must go once it is the index: enrich() treats a
+        # frame with a timestamp column as a scanner frame and hands back a
+        # RangeIndex — which would align symbols by POSITION, not time, and
+        # silently corrupt every cross-sectional rank.
+        df = df.drop(columns=["timestamp"], errors="ignore")
         df = df[~df.index.duplicated(keep="last")].sort_index()
         try:
             enriched = dm.enrich(df, sym, timeframe, exclude_streams=("liquidations",))
@@ -126,6 +136,11 @@ def build_panel(
     if not closes:
         raise ValueError("basket panel: no usable symbols")
     close = pd.DataFrame(closes).sort_index()
+    if not isinstance(close.index, pd.DatetimeIndex):
+        raise ValueError(
+            "basket panel: index is not a DatetimeIndex — symbols would align "
+            "by position, not time; refusing to build a corrupt panel"
+        )
     return BasketPanel(
         index=close.index,
         open=pd.DataFrame(opens).reindex(close.index),
