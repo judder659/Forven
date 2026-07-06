@@ -18,6 +18,7 @@
 		type AgentProviderWarning,
 	} from '$lib/api';
 	import { addToast } from '$lib/stores/processTracker';
+	import { agentsConfig, isProviderConnected } from '../agentsConfigStore';
 
 	let runtime: ProviderRuntimeHealth[] = [];
 	let warnings: AgentProviderWarning[] = [];
@@ -87,6 +88,21 @@
 		if (state === 'ok') return 'OK';
 		return state || 'Unknown';
 	}
+	/** Providers that the auth system reports as connected — used to suppress stale health entries. */
+	$: connectedProviderNames = new Set(
+		$agentsConfig.providers.filter(isProviderConnected).map((p) => p.provider)
+	);
+
+	/**
+	 * Filter out health entries that show "down" / "auth" for a provider that is
+	 * actually connected in the auth system. The health tracker may have recorded
+	 * the failure before the provider was connected and never re-checked; showing
+	 * it here is misleading.
+	 */
+	$: displayRuntime = runtime.filter(
+		(r) => !(r.state === 'down' && r.kind === 'auth' && connectedProviderNames.has(r.provider))
+	);
+
 	function formatSince(value?: string | number | null): string {
 		if (value === null || value === undefined || value === '') return '';
 		// Backend emits epoch SECONDS as a number; an ISO string is also accepted.
@@ -137,13 +153,13 @@
 
 		{#if loading && runtime.length === 0}
 			<p class="text-sm text-[#666]">Loading provider health…</p>
-		{:else if runtime.length === 0}
+		{:else if displayRuntime.length === 0}
 			<p class="text-sm text-[#666]">
 				No runtime health reported. Providers report state here once they're exercised by agent/Brain calls.
 			</p>
 		{:else}
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-				{#each runtime as r (r.provider)}
+				{#each displayRuntime as r (r.provider)}
 					<div class="border p-4 space-y-2 {stateColor(r.state)}">
 						<div class="flex items-center justify-between gap-2">
 							<span class="font-mono text-sm text-white uppercase">{r.provider}</span>
