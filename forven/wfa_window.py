@@ -58,49 +58,97 @@ def _parse_metrics(blob: object) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _rate_from_metrics(metrics: dict) -> float | None:
-    """Trades per day from a metrics blob carrying total_trades + backtest_months."""
+def _pair_rate(trades: object, months: object) -> float | None:
     try:
-        trades = float(metrics.get("total_trades") or 0)
-        months = float(metrics.get("backtest_months") or 0)
+        t = float(trades or 0)
+        m = float(months or 0)
     except (TypeError, ValueError):
         return None
-    if trades <= 0 or months <= 0:
+    if t <= 0 or m <= 0:
         return None
-    return trades / (months * _DAYS_PER_MONTH)
+    return t / (m * _DAYS_PER_MONTH)
 
 
-def measured_trade_rate(strategy_id: str) -> tuple[float | None, str]:
+def _rate_from_metrics(metrics: dict) -> float | None:
+    """Trades per day from a metrics blob carrying total_trades + backtest_months.
+
+    The TOP-LEVEL total_trades/backtest_months of a compact backtest blob mirror
+    the OOS evaluation window only (e.g. 14 trades over 3.6mo of a 12mo run) —
+    reading them inflated the measured cadence ~1.6x and collapsed the WFA
+    window recommendation from ~47k to ~31k bars (S06127 2026-07-06; the 15m
+    sweep rows compounded it to a 500-day window on S06128). Prefer the
+    combined IS+OOS figures, then the IS+OOS section sums, then the top level.
+    """
+    combined = metrics.get("combined")
+    if isinstance(combined, dict):
+        rate = _pair_rate(combined.get("total_trades"), combined.get("backtest_months"))
+        if rate is not None:
+            return rate
+    ins = metrics.get("in_sample")
+    oos = metrics.get("out_of_sample")
+    if isinstance(ins, dict) and isinstance(oos, dict):
+        try:
+            trades = float(ins.get("total_trades") or 0) + float(oos.get("total_trades") or 0)
+            months = float(ins.get("backtest_months") or 0) + float(oos.get("backtest_months") or 0)
+        except (TypeError, ValueError):
+            trades = months = 0.0
+        rate = _pair_rate(trades, months)
+        if rate is not None:
+            return rate
+    return _pair_rate(metrics.get("total_trades"), metrics.get("backtest_months"))
+
+
+def measured_trade_rate(
+    strategy_id: str, timeframe: str | None = None
+) -> tuple[float | None, str]:
     """(trades per day, source) for a strategy.
 
-    Prefers the strategy's canonical stored metrics; falls back to the most
-    recent completed plain backtest row. Returns (None, "none") when the
-    strategy has never produced a measurable backtest.
+    Prefers the most recent completed plain backtest rows ON THE STRATEGY'S OWN
+    TIMEFRAME, then the stored strategy metrics blob. The blob must NOT win over
+    timeframe-scoped rows: the background timeframe sweep clobbers it with
+    other-timeframe runs (a 15m sweep row made a 1h strategy look ~3.5x its real
+    cadence, shrinking its WFA window to 30-day folds — S06128 2026-07-06), and
+    the blob carries no timeframe field to validate against. Returns
+    (None, "none") when the strategy has never produced a measurable backtest.
     """
     from forven.db import get_db
 
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT metrics FROM strategies WHERE id = ?", (strategy_id,)
-        ).fetchone()
-        rate = _rate_from_metrics(_parse_metrics(row["metrics"])) if row else None
-        if rate is not None:
-            return rate, "strategy_metrics"
-        result = conn.execute(
-            """
+        tf = str(timeframe or "").strip().lower()
+        if not tf:
+            tf_row = conn.execute(
+                "SELECT timeframe FROM strategies WHERE id = ?", (strategy_id,)
+            ).fetchone()
+            tf = str(tf_row["timeframe"] or "").strip().lower() if tf_row else ""
+
+        result_sql = """
             SELECT metrics_json FROM backtest_results
             WHERE strategy_id = ?
               AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
               AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+              {tf_filter}
             ORDER BY datetime(created_at) DESC
             LIMIT 5
-            """,
-            (strategy_id,),
-        ).fetchall()
+        """
+        params: list[object] = [strategy_id]
+        if tf:
+            tf_filter = "AND LOWER(TRIM(COALESCE(timeframe, '1h'))) = ?"
+            params.append(tf)
+        else:
+            tf_filter = ""
+        result = conn.execute(result_sql.format(tf_filter=tf_filter), tuple(params)).fetchall()
+
+        row = conn.execute(
+            "SELECT metrics FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+
     for r in result:
         rate = _rate_from_metrics(_parse_metrics(r["metrics_json"]))
         if rate is not None:
             return rate, "latest_backtest"
+    rate = _rate_from_metrics(_parse_metrics(row["metrics"])) if row else None
+    if rate is not None:
+        return rate, "strategy_metrics"
     return None, "none"
 
 
@@ -135,7 +183,7 @@ def recommended_wfa_window(
     target_fold_trades = max(2 * min_fold_trades, 10)
 
     tf_key = str(timeframe or "").strip().lower()
-    rate_per_day, rate_source = measured_trade_rate(strategy_id)
+    rate_per_day, rate_source = measured_trade_rate(strategy_id, tf_key)
     if rate_per_day and rate_per_day > 0:
         oos_days = target_fold_trades / rate_per_day
     else:

@@ -42,6 +42,83 @@ def test_measured_rate_falls_back_to_latest_backtest(forven_db):
     assert rate > 0
 
 
+def test_measured_rate_ignores_other_timeframe_sweep_rows(forven_db):
+    """S06128 (2026-07-06): the background timeframe sweep clobbered a 1h
+    strategy's metrics blob and latest backtest rows with 15m runs (~3.5x the
+    real cadence), shrinking its WFA window to 30-day folds. The rate must come
+    from rows on the strategy's OWN timeframe, not the blob or newer sweep rows."""
+    with get_db() as conn:
+        # blob clobbered by the 15m sweep: 107 trades over ~12 months
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, status, stage, owner, timeframe, metrics) "
+            "VALUES ('s-sweep', 's-sweep', 'rsi_momentum', 'gauntlet', 'gauntlet', 'brain', '1h', ?)",
+            (json.dumps({"total_trades": 107, "backtest_months": 11.99}),),
+        )
+        # older canonical 1h row: 30 trades over ~12 months (~0.082/day)
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, timeframe, "
+            "metrics_json, config_json, created_at) "
+            "VALUES ('bt-1h', 's-sweep', 'backtest', 'BTC', '1h', ?, '{}', datetime('now', '-1 hour'))",
+            (json.dumps({"total_trades": 30, "backtest_months": 11.99}),),
+        )
+        # newer 15m sweep rows with the inflated cadence
+        for i in range(2):
+            conn.execute(
+                "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, timeframe, "
+                "metrics_json, config_json, created_at) "
+                f"VALUES ('bt-15m-{i}', 's-sweep', 'backtest', 'BTC', '15m', ?, '{{}}', datetime('now'))",
+                (json.dumps({"total_trades": 107, "backtest_months": 11.99}),),
+            )
+    rate, source = measured_trade_rate("s-sweep", "1h")
+    assert source == "latest_backtest"
+    assert 0.07 < rate < 0.10, rate  # the 1h cadence, not the 15m sweep's 0.29/day
+
+    # timeframe resolved from the strategies row when not passed
+    rate2, source2 = measured_trade_rate("s-sweep")
+    assert (rate2, source2) == (rate, source)
+
+    # and the window recommendation reflects the real (slow) cadence
+    rec = recommended_wfa_window("s-sweep", "1h", n_splits=5, train_ratio=0.7)
+    assert rec["window_days"] > 1000, rec
+
+
+def test_measured_rate_uses_combined_counts_not_oos_window_top_level(forven_db):
+    """S06127 (2026-07-06): compact backtest blobs mirror the OOS evaluation
+    window at the TOP level (14 trades / 3.6mo of a 12mo run), which inflated
+    the cadence ~1.6x and collapsed the WFA window from ~47k to ~31k bars. The
+    rate must come from the combined IS+OOS figures."""
+    blob = {
+        # top level mirrors the OOS window: 14 trades over 3.6 months
+        "total_trades": 14,
+        "backtest_months": 3.5962,
+        "in_sample": {"total_trades": 17, "backtest_months": 8.3929},
+        "out_of_sample": {"total_trades": 14, "backtest_months": 3.5962},
+        "combined": {"total_trades": 31, "backtest_months": 11.9891},
+    }
+    with get_db() as conn:
+        _insert_strategy(conn, "s-oos-top", {})
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, timeframe, "
+            "metrics_json, config_json, created_at) "
+            "VALUES ('bt-oos-top', 's-oos-top', 'backtest', 'BTC', '1h', ?, '{}', datetime('now'))",
+            (json.dumps(blob),),
+        )
+    rate, source = measured_trade_rate("s-oos-top", "1h")
+    assert source == "latest_backtest"
+    # 31 trades / 11.99 months ~= 0.085/day — NOT the OOS window's 0.128/day
+    assert 0.075 < rate < 0.095, rate
+
+    # without a combined section, IS+OOS sums are used
+    blob2 = {k: v for k, v in blob.items() if k != "combined"}
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE backtest_results SET metrics_json = ? WHERE result_id = 'bt-oos-top'",
+            (json.dumps(blob2),),
+        )
+    rate2, _ = measured_trade_rate("s-oos-top", "1h")
+    assert 0.075 < rate2 < 0.095, rate2
+
+
 def test_low_frequency_4h_strategy_gets_multi_year_window(forven_db):
     with get_db() as conn:
         _insert_strategy(conn, "s-slow", {"total_trades": 40, "backtest_months": 14.38})
