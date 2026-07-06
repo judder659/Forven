@@ -449,6 +449,52 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.exchange.risk', 'forven.scanner'],
     deepLinkTo: '/risk',
   },
+  // Risk: failed-open retry brake (RETRY-STORM-1). A live open the exchange
+  // rejects is re-attempted by the kernel every scan; these bound the retries.
+  {
+    id: 'risk.live_failed_open_cooldown_minutes',
+    label: 'Failed live open retry cooldown',
+    unit: 'min',
+    default: 15,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_failed_open_cooldown_minutes',
+    description:
+      'After a live order submission FAILS at the exchange, the same strategy + asset + direction may not submit again until this many minutes pass. Stops one rejected signal from re-firing a real order on every scan tick. 0 disables the cooldown.',
+    usedBy: ['forven.exchange.risk'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.live_failed_open_max_attempts',
+    label: 'Failed live open breaker attempts',
+    default: 3,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_failed_open_max_attempts',
+    description:
+      'After this many FAILED live opens for the same strategy + asset + direction inside the breaker window, further attempts stand down until the window drains (a trade_blocked alert fires once). 0 disables the breaker; the per-failure cooldown still applies.',
+    usedBy: ['forven.exchange.risk'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.live_failed_open_window_hours',
+    label: 'Failed live open breaker window',
+    unit: 'h',
+    default: 6,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'live_failed_open_window_hours',
+    description:
+      'Rolling window over which failed live opens are counted toward the breaker. Failures older than this no longer count against the attempt limit.',
+    usedBy: ['forven.exchange.risk'],
+    deepLinkTo: '/risk',
+  },
   {
     id: 'risk.live_correlation_budget_enabled',
     label: 'Live measured-correlation budget',

@@ -2641,6 +2641,10 @@ def _apply_settings_section(section: str, payload: dict) -> dict:
             ("live_max_effective_exposure_pct", 200.0),
             ("live_correlation_window_bars", 720.0),
             ("live_correlation_missing_default", 1.0),
+            # RETRY-STORM-1: failed-open retry brake (forven.exchange.risk.can_open).
+            ("live_failed_open_cooldown_minutes", 15.0),
+            ("live_failed_open_max_attempts", 3.0),
+            ("live_failed_open_window_hours", 6.0),
         ):
             if _pb_key in payload:
                 updates[_pb_key] = _coerce_float(payload.get(_pb_key), _coerce_float(updates.get(_pb_key), _pb_default))

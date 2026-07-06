@@ -3320,9 +3320,14 @@ def _fail_unfilled_open_trade(trade_id: str | None, reason: str | None) -> None:
                 }
             )
             conn.execute(
-                "UPDATE trades SET status = 'FAILED', closed_at = ?, signal_data = ? "
+                "UPDATE trades SET status = 'FAILED', closed_at = ?, failure_reason = ?, signal_data = ? "
                 "WHERE id = ? AND status = 'OPEN'",
-                (get_now().isoformat(), json.dumps(signal_data), tid),
+                (
+                    get_now().isoformat(),
+                    str(reason or "execution open failed"),
+                    json.dumps(signal_data),
+                    tid,
+                ),
             )
     except Exception:
         log.warning("Open-failure cleanup: could not mark trade %s FAILED", tid, exc_info=True)

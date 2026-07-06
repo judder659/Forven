@@ -275,6 +275,156 @@ def _is_strategy_in_loss_cooldown(strategy: str, cooldown_hours: float) -> tuple
         f"{closed_at.isoformat()}. Wait {remaining:.1f}h before reopening."
     )
 
+
+def _get_failed_open_cooldown_minutes(settings: dict) -> float:
+    try:
+        minutes = float(settings.get("live_failed_open_cooldown_minutes", 15) or 0)
+    except Exception:
+        return 15.0
+    return max(0.0, minutes)
+
+
+def _get_failed_open_max_attempts(settings: dict) -> int:
+    try:
+        attempts = int(settings.get("live_failed_open_max_attempts", 3) or 0)
+    except Exception:
+        return 3
+    return max(0, attempts)
+
+
+def _get_failed_open_window_hours(settings: dict) -> float:
+    try:
+        hours = float(settings.get("live_failed_open_window_hours", 6) or 0)
+    except Exception:
+        return 6.0
+    return max(0.0, hours)
+
+
+def _is_strategy_in_failed_open_cooldown(
+    strategy: str, asset: str, direction: str, settings: dict
+) -> tuple[bool, str | None]:
+    """RETRY-STORM-1: brake re-submission after FAILED live opens.
+
+    When a live open FAILS at the exchange the trade row is marked FAILED and its
+    slot freed — but the kernel still wants the position on the next scan, sees no
+    OPEN/CLOSED counterpart, and submits a brand-new REAL order every tick (S05665
+    fired 5 failed submissions in 20 minutes). Two brakes, both Settings-editable:
+
+    - cooldown: after a FAILED open, the same strategy+asset+direction may not
+      re-submit until ``live_failed_open_cooldown_minutes`` passes (0 disables);
+    - breaker: ``live_failed_open_max_attempts`` FAILED opens inside
+      ``live_failed_open_window_hours`` stand the intent down until the window
+      drains (0 attempts disables). The breaker emits a deduped ``trade_blocked``
+      notification so the operator knows retries are suspended, not just failing.
+    """
+    normalized_strategy = str(strategy or "").strip()
+    normalized_asset = str(asset or "").strip().upper()
+    normalized_direction = str(direction or "long").strip().lower() or "long"
+    cooldown_minutes = _get_failed_open_cooldown_minutes(settings)
+    max_attempts = _get_failed_open_max_attempts(settings)
+    window_hours = _get_failed_open_window_hours(settings)
+    if not normalized_strategy or not normalized_asset:
+        return False, None
+    if cooldown_minutes <= 0 and (max_attempts <= 0 or window_hours <= 0):
+        return False, None
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(closed_at, ''), created_at) AS failed_at,
+                   failure_reason
+            FROM trades
+            WHERE status = 'FAILED'
+              AND (
+                COALESCE(NULLIF(strategy_id, ''), strategy) = ?
+                OR strategy = ?
+              )
+              AND UPPER(COALESCE(asset, '')) = ?
+              AND LOWER(COALESCE(direction, 'long')) = ?
+              AND COALESCE(execution_type, 'live') NOT IN ('paper', 'paper_challenger', 'simulation')
+            ORDER BY failed_at DESC
+            LIMIT 50
+            """,
+            (normalized_strategy, normalized_strategy, normalized_asset, normalized_direction),
+        ).fetchall()
+    if not rows:
+        return False, None
+
+    now = get_now()
+    lookback_hours = max(window_hours, cooldown_minutes / 60.0)
+    failures: list[datetime] = []
+    last_reason: str | None = None
+    for row in rows:
+        trade = dict(row)
+        raw = str(trade.get("failed_at") or "").strip()
+        if not raw:
+            continue
+        try:
+            failed_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if failed_at.tzinfo is None:
+            failed_at = failed_at.replace(tzinfo=now.tzinfo)
+        if (now - failed_at).total_seconds() > lookback_hours * 3600.0:
+            continue
+        failures.append(failed_at)
+        if last_reason is None:
+            last_reason = str(trade.get("failure_reason") or "").strip() or None
+    if not failures:
+        return False, None
+
+    reason_suffix = f" Last exchange error: {last_reason}" if last_reason else ""
+
+    # Breaker: too many failures inside the window → stand down until it drains.
+    if max_attempts > 0 and window_hours > 0:
+        in_window = [f for f in failures if (now - f).total_seconds() <= window_hours * 3600.0]
+        if len(in_window) >= max_attempts:
+            message = (
+                f"Failed-open breaker for {normalized_strategy}: {len(in_window)} failed live "
+                f"opens on {normalized_asset} {normalized_direction} in the last {window_hours:g}h "
+                f"(limit {max_attempts}). Standing down until the window drains.{reason_suffix}"
+            )
+            try:
+                from forven.notifications import emit_notification
+
+                emit_notification(
+                    "trade_blocked",
+                    severity="warn",
+                    source="risk",
+                    title=f"Live opens suspended ({normalized_asset})",
+                    summary=message,
+                    body=message,
+                    dedupe_key=(
+                        f"failed_open_breaker:{normalized_strategy}:"
+                        f"{normalized_asset}:{normalized_direction}"
+                    ),
+                    metadata={
+                        "strategy_id": normalized_strategy,
+                        "asset": normalized_asset,
+                        "direction": normalized_direction,
+                        "failed_attempts": len(in_window),
+                        "window_hours": window_hours,
+                    },
+                )
+            except Exception:
+                log.debug("failed-open breaker notification failed", exc_info=True)
+            return True, message
+
+    # Cooldown: the most recent failure must age past the cooldown before retry.
+    if cooldown_minutes > 0:
+        latest = max(failures)
+        elapsed_minutes = (now - latest).total_seconds() / 60.0
+        if elapsed_minutes < cooldown_minutes:
+            remaining = max(cooldown_minutes - elapsed_minutes, 0.0)
+            return True, (
+                f"Failed-open cooldown for {normalized_strategy}: last live open on "
+                f"{normalized_asset} {normalized_direction} FAILED {elapsed_minutes:.1f}m ago. "
+                f"Wait {remaining:.1f}m before retrying.{reason_suffix}"
+            )
+
+    return False, None
+
+
 # Correlation groups — assets in same group are treated as one correlated pool
 CORRELATION_GROUPS = {
     "crypto_major": ["BTC", "ETH", "SOL", "BNB", "AVAX", "LINK", "MATIC"],
@@ -1308,6 +1458,20 @@ def can_open(
         cooling_down, cooldown_reason = _is_strategy_in_loss_cooldown(strategy, cooldown_after_loss_hours)
         if cooling_down:
             return False, 0.0, cooldown_reason or "Strategy is in cooldown after a losing trade."
+
+        # RETRY-STORM-1: after a FAILED live open the kernel reconciler still wants
+        # the position on the next scan (FAILED rows are invisible to its recorded
+        # view) and would submit a fresh REAL order every tick. Brake retries with
+        # a per-failure cooldown plus a stand-down breaker. Live scope only — paper
+        # opens never fail at an exchange. Deliberately NOT skippable via
+        # enforce_risk_caps: this is a safety gate in the same class as the
+        # kill-switch and loss cooldown.
+        if not is_paper_scope:
+            storm_blocked, storm_reason = _is_strategy_in_failed_open_cooldown(
+                strategy, asset, direction, settings
+            )
+            if storm_blocked:
+                return False, 0.0, storm_reason or "Recent failed live opens — retry cooldown active."
 
         # Rule 1: Assets outside a known correlation group are treated as their
         # OWN singleton group (group == asset) so Rules 2-4 still apply — they no

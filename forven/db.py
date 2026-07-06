@@ -1833,6 +1833,10 @@ def _run_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "trades", "timeframe", "TEXT")
     _ensure_column(conn, "trades", "source", "TEXT")
     _ensure_column(conn, "trades", "created_at", "TEXT")
+    # RETRY-STORM-1: first-class exchange rejection reason for FAILED opens (was
+    # buried in the signal_data blob) — read by the failed-open retry brake and
+    # queryable for storm diagnosis.
+    _ensure_column(conn, "trades", "failure_reason", "TEXT")
     _ensure_column(conn, "agent_tasks", "strategy_id", "TEXT")
     _ensure_column(conn, "agent_tasks", "display_id", "TEXT")
     _ensure_column(conn, "agent_tasks", "audit_log", "JSON DEFAULT '[]'")
