@@ -86,6 +86,26 @@ _STREAM_LABEL: dict[str, str] = {
 
 _KNOWN_COLUMNS: frozenset[str] = frozenset(_COLUMN_STREAM)
 
+# --- Cross-asset detection (XASSET-1) ---------------------------------------
+# The backtest frame is strictly SINGLE-symbol: no code path joins a second
+# asset's series onto it (load_multi_exchange_candles exists but has zero
+# callers, and the sandbox import guard rejects multi-asset data_requirements).
+# A strategy reading a second-leg column therefore structurally emits 0 trades
+# and dies at the trades gate — 67 of the 77 cross-asset strategies ever minted
+# are already dead this way, each burning gauntlet compute and poisoning the
+# graveyard with false "no edge" verdicts. Detect the design at precheck time
+# and block it LOUDLY instead. Quoted-literal matching against a fixed shape
+# (same zero-false-positive approach as _columns_in_source).
+_CROSS_ASSET_COLUMN_RE = re.compile(
+    r"""["']("""
+    r"(?:btc|eth|sol|bnb|avax|link|matic|doge|xrp)_"
+    r"(?:close|open|high|low|volume|funding_rate|open_interest|basis)"
+    r"|confirm_(?:close|price|series)"
+    r"|partner_close|pair_close|leg2_close|second_leg_close|spread_leg_close"
+    r""")["']""",
+    re.IGNORECASE,
+)
+
 
 def _stream_fetchable(stream: str) -> bool:
     return _STREAM_FETCH.get(stream) is not None
@@ -179,6 +199,66 @@ def _scan_source_columns(strategy_cls) -> set[str]:
         except (OSError, TypeError):
             continue
     return _columns_in_source(src)
+
+
+def _cross_asset_columns_in_source(src: str) -> set[str]:
+    """Second-leg column literals referenced in ``src`` (see XASSET-1 above)."""
+    if not src:
+        return set()
+    return {m.group(1).lower() for m in _CROSS_ASSET_COLUMN_RE.finditer(src)}
+
+
+def _declared_assets(strategy_cls, asset: str) -> set[str]:
+    """Distinct assets declared via ``data_requirements()``."""
+    assets: set[str] = set()
+    try:
+        tmp = strategy_cls("_preflight", {"_asset": asset})
+        reqs = tmp.data_requirements() or []
+    except Exception:
+        return assets
+    for req in reqs:
+        if isinstance(req, dict):
+            value = str(req.get("asset") or "").strip().upper()
+            if value:
+                assets.add(value)
+    return assets
+
+
+def infer_cross_asset_columns(strategy_cls, asset: str) -> frozenset[str]:
+    """Second-leg columns/assets a strategy needs that no join can supply.
+
+    Union of source-scanned cross-asset column literals and any EXTRA assets
+    declared in ``data_requirements()`` beyond the primary. Non-empty means the
+    design is structurally 0-trade on the single-symbol backtest frame.
+    """
+    if strategy_cls is None:
+        return frozenset()
+    found: set[str] = set()
+    import inspect
+
+    src = ""
+    for target in (inspect.getmodule(strategy_cls), strategy_cls):
+        if target is None:
+            continue
+        try:
+            src = inspect.getsource(target)
+            if src:
+                break
+        except (OSError, TypeError):
+            continue
+    try:
+        found |= _cross_asset_columns_in_source(src)
+    except Exception:
+        pass
+    try:
+        declared = _declared_assets(strategy_cls, asset)
+        primary = str(asset or "").strip().upper().split("/", 1)[0]
+        extra = {a for a in declared if a.split("/", 1)[0] != primary}
+        if declared and extra:
+            found |= {f"second_asset:{a}" for a in sorted(extra)}
+    except Exception:
+        pass
+    return frozenset(found)
 
 
 def infer_required_columns(strategy_cls, asset: str) -> frozenset[str]:
@@ -319,6 +399,28 @@ def evaluate_data_availability(
 
             cls = _resolve_strategy_class(strategy_type)
         if cls is None:
+            return result
+
+        # XASSET-1: a cross-asset/second-leg design can never fire on the
+        # single-symbol backtest frame — block it before any fetch logic.
+        # Reported through missing_unfetchable so every existing caller
+        # (create-route research_only gate, intake data_block_reason, backtest
+        # precheck) handles it without changes.
+        cross_cols = infer_cross_asset_columns(cls, symbol)
+        if cross_cols:
+            who = strategy_id or strategy_type or "strategy"
+            result.required = sorted(cross_cols)
+            result.missing_unfetchable = sorted(cross_cols)
+            result.blocked = True
+            result.ok = False
+            result.error = (
+                f"Cannot backtest {who}: cross-asset substrate unsupported — the "
+                f"strategy reads second-leg data ({_label_columns(sorted(cross_cols))}) "
+                "but the backtest frame is single-symbol and no pair/confirm-leg join "
+                "exists, so entries can structurally never fire (guaranteed 0 trades). "
+                "Keep this design research_only until a cross-asset substrate ships; "
+                "do not substitute a single-asset proxy."
+            )
             return result
 
         required = infer_required_columns(cls, symbol)
