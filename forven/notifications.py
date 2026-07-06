@@ -107,6 +107,40 @@ def update_notification_preferences(payload: Mapping[str, Any]) -> dict[str, Any
     return merged
 
 
+_DISCORD_CONFIGURED_CACHE: tuple[float, bool] | None = None
+_DISCORD_CONFIGURED_TTL_SECONDS = 60.0
+
+
+def _discord_configured() -> bool:
+    """True iff a Discord bot token is configured (env var or config file).
+
+    Presence-only — never decrypts or validates the token; an invalid token
+    should still surface as a real delivery error. Cached briefly (the config
+    file is read per call otherwise) and fail-OPEN: if the check itself errors,
+    delivery proceeds and any genuine problem surfaces through the normal
+    delivery-error path.
+    """
+    global _DISCORD_CONFIGURED_CACHE
+    import time as _time
+
+    now = _time.monotonic()
+    cached = _DISCORD_CONFIGURED_CACHE
+    if cached is not None and (now - cached[0]) < _DISCORD_CONFIGURED_TTL_SECONDS:
+        return cached[1]
+    try:
+        import os as _os
+
+        configured = bool(str(_os.environ.get("DISCORD_TOKEN", "")).strip())
+        if not configured:
+            from forven.config import load_config
+
+            configured = bool(str((load_config() or {}).get("discord_token", "") or "").strip())
+    except Exception:
+        return True  # fail open — see docstring
+    _DISCORD_CONFIGURED_CACHE = (now, configured)
+    return configured
+
+
 def emit_notification(
     event_type: str,
     *,
@@ -139,6 +173,18 @@ def emit_notification(
     event["resolved_channel_name"] = str(policy.get("channel_name") or "").strip() or None
     event["resolved_channel_id"] = str(policy.get("channel_id") or "").strip() or None
     event["send_to_discord"] = bool(policy.get("send_to_discord"))
+
+    # DELIVERY-SOFT-1: most event types default to Discord delivery, but a
+    # fresh install has no bot token — every notification then failed delivery
+    # and wore a red "Discord bot token not found" error, making the product
+    # look broken out of the box. Discord-not-configured is a normal state, not
+    # a delivery failure: resolve to app-only. This is a config-PRESENCE check
+    # (not a provider fallback): the moment a token is configured, the original
+    # policy applies unchanged.
+    if event["send_to_discord"] and not _discord_configured():
+        event["send_to_discord"] = False
+        event["delivery_mode"] = "app_only"
+        event["metadata"] = {**event["metadata"], "discord_skipped": "not_configured"}
     event["dedupe_key"] = str(dedupe_key or _default_dedupe_key(event)).strip() or None
 
     dedupe_hit = _find_recent_duplicate(

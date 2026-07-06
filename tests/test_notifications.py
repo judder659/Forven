@@ -16,6 +16,23 @@ from forven.notifications import (
 )
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _discord_token_configured(monkeypatch):
+    """These tests exercise the Discord DELIVERY machinery (mocked send_sync,
+    failure recording, resend). DELIVERY-SOFT-1 downgrades unconfigured
+    installs to app_only BEFORE delivery, so simulate a configured token here
+    to keep the delivery paths reachable."""
+    import forven.notifications as notifications
+
+    monkeypatch.setenv("DISCORD_TOKEN", "test-token")
+    notifications._DISCORD_CONFIGURED_CACHE = None
+    yield
+    notifications._DISCORD_CONFIGURED_CACHE = None
+
+
 def test_agent_completion_stores_without_discord(monkeypatch):
     init_db()
     sent = []

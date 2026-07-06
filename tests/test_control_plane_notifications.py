@@ -157,3 +157,77 @@ def test_actionable_filter_is_about_content_not_delivery():
     ]
 
     assert [item["id"] for item in filter_actionable_notifications(items)] == [2, 3]
+
+
+# ------------------------------------------------------------ DELIVERY-SOFT-1
+# Discord-not-configured is a normal state, not a delivery failure: a fresh
+# install must not stamp a red "Discord bot token not found" error on every
+# notification.
+
+
+def _reset_discord_configured_cache():
+    import forven.notifications as notifications
+
+    notifications._DISCORD_CONFIGURED_CACHE = None
+
+
+def test_unconfigured_discord_resolves_to_app_only(forven_db, monkeypatch):
+    import forven.notifications as notifications
+
+    monkeypatch.delenv("DISCORD_TOKEN", raising=False)
+    monkeypatch.setattr("forven.config.load_config", lambda: {})
+    _reset_discord_configured_cache()
+
+    stored = notifications.emit_notification(
+        "trade_failed",  # a type whose policy defaults to discord_immediate
+        severity="warning",
+        source="test",
+        title="delivery-soft regression",
+        summary="s",
+        body="b",
+    )
+    assert stored["delivery_mode"] == "app_only"
+    assert not stored.get("delivery_error")
+    assert stored["status"] in {"stored", "new"}
+    assert stored.get("metadata", {}).get("discord_skipped") == "not_configured"
+    _reset_discord_configured_cache()
+
+
+def test_discord_configured_check(monkeypatch):
+    import forven.notifications as notifications
+
+    monkeypatch.setenv("DISCORD_TOKEN", "tok-123")
+    _reset_discord_configured_cache()
+    assert notifications._discord_configured() is True
+
+    monkeypatch.delenv("DISCORD_TOKEN", raising=False)
+    monkeypatch.setattr("forven.config.load_config", lambda: {"discord_token": "abc"})
+    _reset_discord_configured_cache()
+    assert notifications._discord_configured() is True
+
+    monkeypatch.setattr("forven.config.load_config", lambda: {})
+    _reset_discord_configured_cache()
+    assert notifications._discord_configured() is False
+    _reset_discord_configured_cache()
+
+
+def test_configured_discord_keeps_policy(forven_db, monkeypatch):
+    import forven.notifications as notifications
+
+    monkeypatch.setenv("DISCORD_TOKEN", "tok-123")
+    _reset_discord_configured_cache()
+    # Delivery itself is stubbed — we only assert the policy is not downgraded.
+    monkeypatch.setattr(
+        notifications, "_deliver_notification", lambda stored: stored,
+    )
+    stored = notifications.emit_notification(
+        "trade_failed",
+        severity="warning",
+        source="test",
+        title="delivery-soft configured regression",
+        summary="s",
+        body="b",
+    )
+    assert stored["delivery_mode"] == "discord_immediate"
+    assert stored.get("metadata", {}).get("discord_skipped") is None
+    _reset_discord_configured_cache()
