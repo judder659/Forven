@@ -51,6 +51,9 @@
 
 	// Reactive derivation: currentValues = originals + pending (pending wins).
 	// Keep bound to the parent by reassigning the object (triggers reactivity).
+	// The field rows MUST render from this object (not from a helper function
+	// that reads $pendingValues internally — invisible to the compiler, so
+	// programmatic fills like the preset dial would never re-render the rows).
 	$: {
 		const originals: Record<string, unknown> = {};
 		for (const e of areaEntries) originals[e.id] = initialValue(e);
@@ -60,12 +63,6 @@
 			if (e.id in pend) areaPending[e.id] = pend[e.id];
 		}
 		currentValues = { ...currentValues, ...originals, ...areaPending };
-	}
-
-	function displayValue(entry: SettingsEntry): unknown {
-		const pend = $pendingValues;
-		if (entry.id in pend) return pend[entry.id];
-		return initialValue(entry);
 	}
 
 	// --- Throughput preset dial: fills real knob values; active name is DERIVED ---
@@ -219,7 +216,7 @@
 					description={entry.description}
 					unit={entry.unit}
 					defaultValue={entry.default}
-					value={displayValue(entry)}
+					value={currentValues[entry.id]}
 					type={entry.type}
 					options={entry.options ?? []}
 				/>

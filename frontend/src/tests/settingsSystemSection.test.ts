@@ -166,6 +166,19 @@ describe('SettingsSystem throughput preset dial', () => {
 		expect(pend['research.crucible_daily_develop_budget']).toBe(20);
 		// Derived value follows the pending edits before any save.
 		expect(dialSelect().value).toBe('trickle');
+		// The RENDERED inputs must update too — regression guard: rows fed from a
+		// helper that read $pendingValues internally never re-rendered on
+		// programmatic fills (store had the values, UI showed stale ones).
+		const ideationInput = target.querySelector(
+			'input[id="bot-operations.ideation_interval_minutes"]',
+		) as HTMLInputElement;
+		expect(ideationInput).toBeTruthy();
+		expect(ideationInput.value).toBe('480');
+		const budgetInput = target.querySelector(
+			'input[id="research.crucible_daily_develop_budget"]',
+		) as HTMLInputElement;
+		expect(budgetInput).toBeTruthy();
+		expect(budgetInput.value).toBe('20');
 	});
 
 	it('editing one knob away flips the derived value to custom', async () => {
