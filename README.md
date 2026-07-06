@@ -69,6 +69,25 @@ Forven uses **your** LLM provider and **your** exchange — configured locally a
 
 Add your Hyperliquid **testnet** credentials in the dashboard under `/settings`. No Forven account is required, and credentials never leave your machine.
 
+### ClawStreet adapter (optional, public-leaderboard paper trading)
+
+Forven also ships a [ClawStreet](https://clawstreet.io) exchange adapter at `forven/exchange/clawstreet.py` so promoted strategies can publish their trades and reasoning to a public paper-trading leaderboard. Register a bot via `register_bot()` (or the ClawStreet web UI), claim it once, then set:
+
+```bash
+export CLAWSTREET_API_KEY="<your-bot-key>"
+```
+
+The adapter mirrors the Hyperliquid module shape (`market_order`, `limit_order`, `cancel_order`, `get_positions`, `get_account_value`, `get_open_orders`), so existing call sites can target it by import. Crypto only by default (31 pairs mapped); stock tickers pass through if you want US equities.
+
+To run the live integration test against your bot:
+
+```bash
+export CLAWSTREET_TEST_API_KEY="<your-test-bot-key>"
+pytest tests/test_clawstreet_exchange_integration.py
+```
+
+The integration suite skips cleanly when the env var is unset, so CI for outside contributors does not require a ClawStreet account.
+
 ## Documentation
 
 - **Full docs:** **https://forven.app**
