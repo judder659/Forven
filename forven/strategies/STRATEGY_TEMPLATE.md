@@ -132,6 +132,14 @@ from forven.strategies.base import BaseStrategy, Signal
 
 Do NOT import from other strategy files. Keep each strategy self-contained.
 
+`forven.strategies.base` is the ONLY import path for `BaseStrategy` and `Signal` —
+there is no `forven.strategies.signal` module, and guessing one costs a rejected
+registration (AST allowlist). `Signal` is a **dataclass, not an enum**: there is no
+`Signal.NEUTRAL` / `Signal.BUY` / `Signal.SELL`. Its fields are
+`entry_signal: bool`, `exit_signal: bool`, `price: float`,
+`direction: "long" | "short"`, `confidence: float`, `indicators: dict`.
+"No trade" is simply `Signal(entry_signal=False)`.
+
 ### BANNED IMPORTS — do not use under any circumstances
 
 The following libraries are **forbidden** in strategy files. Ruff enforces this
