@@ -21,7 +21,8 @@ export type ForvenProvider =
 	| 'xai'
 	| 'together'
 	| 'opencode-zen'
-	| 'opencode-go';
+	| 'opencode-go'
+	| 'nvidia';
 
 // ============== Forven Classic Compatibility ==============
 
@@ -1564,7 +1565,7 @@ function toLiveWsUrl(base: string): string {
 		const protocol = typeof window !== 'undefined' && window.location?.protocol === 'https:' ? 'wss:' : 'ws:';
 		const host = typeof window !== 'undefined' && window.location?.host
 			? window.location.host
-			: '127.0.0.1:8003';
+			: '127.0.0.1:8004';
 		wsBase = `${protocol}//${host}${base}`;
 	}
 	// SECURITY (audit 2026-06-22, L3): when an API key is configured, pass it so
@@ -1592,7 +1593,7 @@ export function getForvenLiveWebSocketUrls(): string[] {
 	if (typeof window !== 'undefined' && window.location) {
 		const protocol = window.location.protocol || 'http:';
 		const host = window.location.hostname || '127.0.0.1';
-		candidates.add(`${protocol}//${host}:8003/api`);
+		candidates.add(`${protocol}//${host}:8004/api`);
 		if (preferredAbsoluteBases.length === 0) {
 			candidates.add(`${window.location.origin.replace(/\/$/, '')}/api`);
 		}

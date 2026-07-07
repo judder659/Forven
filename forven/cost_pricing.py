@@ -58,6 +58,13 @@ _PRICING: dict[tuple[str, str], tuple[float, float]] = {
     ("zai", "glm-5.1"): (1.00, 3.00),
     # ---- LM Studio (local — free) ----
     ("lmstudio", "local-model"): (0.00, 0.00),
+    # ---- NVIDIA NIM ----
+    ("nvidia", "minimaxai/minimax-m3"): (0.30, 0.40),
+    ("nvidia", "minimaxai/minimax-m2.7"): (0.30, 0.40),
+    ("nvidia", "nvidia/llama-3.3-nemotron-super-49b-v1"): (0.50, 1.50),
+    ("nvidia", "nvidia/llama-3.1-nemotron-nano-8b-v1"): (0.10, 0.30),
+    ("nvidia", "meta/llama-3.3-70b-instruct"): (0.90, 0.90),
+    ("nvidia", "deepseek-ai/deepseek-r1"): (0.50, 2.00),
 }
 
 

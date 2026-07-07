@@ -2926,7 +2926,25 @@ def reconcile_exchange_positions(
                             ),
                         }
                     )
-                matched_open_trade = _first_item(local_trades) if len(local_trades) == 1 else None
+                    # Pick the best-matching trade by direction+size and
+                    # ghost-close the rest so they don't permanently block
+                    # recovery with a stale duplicate_sqlite_trades discrepancy.
+                    exchange_dir = str(position.get("direction") or "").strip().lower()
+                    exchange_sz = abs(float(position.get("size") or 0))
+                    scored = []
+                    for _t in local_trades:
+                        _t_dir = str(_t.get("direction") or "").strip().lower()
+                        _t_sz = abs(float(_t.get("size") or 0))
+                        _dir_penalty = 0 if _t_dir == exchange_dir else 1_000_000
+                        _sz_diff = abs(_t_sz - exchange_sz)
+                        scored.append((_dir_penalty + _sz_diff, _t))
+                    scored.sort(key=lambda _x: _x[0])
+                    _best = scored[0][1]
+                    for _, _trade in scored[1:]:
+                        ghost_trades.append(_trade)
+                    matched_open_trade = _best
+                else:
+                    matched_open_trade = _first_item(local_trades) if len(local_trades) == 1 else None
                 _repair_kwargs = {"account_address": account_address} if account_address else {}
                 protection, open_orders = _repair_position_protection(
                     position,

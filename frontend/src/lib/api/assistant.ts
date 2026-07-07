@@ -1,4 +1,4 @@
-import { ACTIVE_API_BASE, API_BASE, fetchApi } from './core';
+import { ACTIVE_API_BASE, API_BASE, buildAuthHeaders, fetchApi } from './core';
 import type { PageContext } from '$lib/stores/pageContext';
 
 export type AssistantThread = {
@@ -117,7 +117,10 @@ export async function streamAssistantSend(
 	const url = `${resolveStreamBase()}/assistant/threads/${encodeURIComponent(threadId)}/send`;
 	const r = await fetch(url, {
 		method: 'POST',
-		headers: { 'content-type': 'application/json' },
+		headers: {
+			'content-type': 'application/json',
+			...buildAuthHeaders(),
+		},
 		body: JSON.stringify({
 			user_text: userText,
 			page_context: pageContext ?? null,

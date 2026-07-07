@@ -63,7 +63,8 @@
 	 * key" link beside the token input so connecting a new provider is self-serve.
 	 */
 	const PROVIDER_SIGNUP_URLS: Record<string, string> = {
-		'opencode-zen': 'https://opencode.ai/auth'
+		'opencode-zen': 'https://opencode.ai/auth',
+		'nvidia': 'https://build.nvidia.com/explore/discover'
 	};
 
 	async function reload() {

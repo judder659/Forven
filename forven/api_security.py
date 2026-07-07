@@ -253,8 +253,10 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
 def _normalize_origin(value: object) -> str:
     raw = _normalize_secret(value)
-    if not raw or raw == "*":
+    if not raw:
         return ""
+    if raw == "*":
+        return "*"
     parsed = urlsplit(raw)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
@@ -334,7 +336,10 @@ def is_cross_site_state_change(request: Request) -> bool:
         return False
     if source == _request_target_origin(request):
         return False  # same-origin is not CSRF by definition
-    return source not in set(get_allowed_cors_origins())
+    allowed = set(get_allowed_cors_origins())
+    if "*" in allowed:
+        return False  # CORS wildcard — CSRF can't be stricter than CORS
+    return source not in allowed
 
 
 class CsrfOriginMiddleware(BaseHTTPMiddleware):

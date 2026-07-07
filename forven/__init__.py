@@ -6,6 +6,29 @@
 __version__ = "0.1.34"
 
 
+# ---------------------------------------------------------------------------
+# sqlite3 → pysqlite3 override — Debian 11 ships sqlite3 3.34.1, but ChromaDB
+# requires ≥ 3.35.0.  The pysqlite3-binary package bundles a modern libsqlite3
+# (3.51.x) that we inject in place of the stdlib module *before* chromadb (or
+# anything that depends on it) is imported anywhere in the process.
+# ---------------------------------------------------------------------------
+def _install_pysqlite3_override() -> None:
+    try:
+        import pysqlite3  # noqa: F811
+        import sys as _sys
+
+        # Only override if the system version is too old.
+        current = getattr(_sys.modules.get("sqlite3"), "sqlite_version", "")
+        if current and tuple(int(x) for x in current.split(".")) >= (3, 35, 0):
+            return  # nothing to do
+        _sys.modules["sqlite3"] = pysqlite3
+    except ImportError:
+        pass  # pysqlite3 not installed; chromadb will report the version error
+
+
+_install_pysqlite3_override()
+
+
 def _install_ta_import_tripwire() -> None:
     """Raise ModuleNotFoundError if anything tries to `import ta`.
 

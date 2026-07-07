@@ -198,3 +198,11 @@ notes/
 Python/
 _my_hunks.patch
 h01421_section.txt
+approve.py
+err
+
+# Local-only server scripts (crontab, one-off, per-machine)
+scripts/mode_scheduler.sh
+
+# Local data symlink (not tracked in origin)
+data

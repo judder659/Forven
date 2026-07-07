@@ -1136,6 +1136,21 @@ class NvidiaProvider(_OpenAICompatProvider):
 
 
 # ---------------------------------------------------------------------------
+# NVIDIA NIM — OpenAI-compatible model inference API
+# ---------------------------------------------------------------------------
+
+class NVIDIAProvider(_OpenAICompatProvider):
+    """NVIDIA NIM — OpenAI-compatible inference API.
+
+    Endpoint: ``https://integrate.api.nvidia.com/v1/chat/completions``.
+    Auth: ``Bearer nvapi-*`` token.
+    """
+
+    PROVIDER = "nvidia"
+    DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+
+# ---------------------------------------------------------------------------
 # OpenCode Zen / OpenCode GO — OpenAI-compatible coding-model gateways
 # ---------------------------------------------------------------------------
 
@@ -1235,6 +1250,8 @@ def _construct_provider(name: str) -> ToolCallProvider:
         return OpenCodeZenProvider()
     if name == "opencode-go":
         return OpenCodeGoProvider()
+    if name == "nvidia":
+        return NVIDIAProvider()
     if name in ("openai", "codex", "openai-codex"):
         # Auth-aware: ChatGPT OAuth tokens route to the Codex Responses backend,
         # API keys to Chat Completions. A bare OpenAIProvider would send OAuth

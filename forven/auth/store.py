@@ -51,6 +51,7 @@ _ENV_ACCESS_TOKEN_KEYS = {
     "nvidia": ("NVIDIA_API_KEY",),
     "opencode-zen": ("OPENCODE_ZEN_API_KEY", "OPENCODE_API_KEY"),
     "opencode-go": ("OPENCODE_GO_API_KEY",),
+    "nvidia": ("NVIDIA_API_KEY",),
 }
 _ENV_BASE_URL_KEYS = {
     "lmstudio": ("LMSTUDIO_BASE_URL",),
@@ -65,6 +66,7 @@ _ENV_BASE_URL_KEYS = {
     "together": ("TOGETHER_BASE_URL",),
     "opencode-zen": ("OPENCODE_ZEN_BASE_URL",),
     "opencode-go": ("OPENCODE_GO_BASE_URL",),
+    "nvidia": ("NVIDIA_BASE_URL",),
 }
 
 

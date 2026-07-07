@@ -46,12 +46,40 @@ if not IS_WINDOWS:
     import resource
 
 
+def _set_rlimit_safe(rlimit, name: str, soft: int, hard: int) -> None:
+    """Set an rlimit, swallowing non-critical failures so the subprocess is not
+    blocked by a single limit that the host environment refuses (EPERM, EINVAL,
+    RLIM_INFINITY conflict, etc.). Writes a diagnostic to stderr so the parent can
+    surface it, but never crashes the subprocess."""
+    try:
+        resource.setrlimit(rlimit, (soft, hard))
+    except (ValueError, OSError, PermissionError) as exc:
+        # stderr fd is inherited and still open after fork — the parent captures
+        # it via the piped stderr in subprocess.run/Popen.
+        msg = f"[sandbox] Warning: could not set {name}={soft} (hard={hard}): {exc}\n"
+        try:
+            os.write(2, msg.encode("utf-8", errors="replace"))
+        except Exception:
+            pass
+
+
 def _build_posix_preexec(max_memory_mb: int):
     def _apply_limits() -> None:
-        resource.setrlimit(resource.RLIMIT_CPU, (MAX_CPU_SECONDS, MAX_CPU_SECONDS))
-        resource.setrlimit(resource.RLIMIT_AS, (max_memory_mb * 1024 * 1024, max_memory_mb * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_FILE_SIZE_MB * 1024 * 1024, MAX_FILE_SIZE_MB * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_NOFILE, (MAX_OPEN_FILES, MAX_OPEN_FILES))
+        # Each rlimit is set independently so that a failure in one (e.g. AS or
+        # NOFILE denied by the host environment) does not crash the subprocess
+        # with the opaque "Exception occurred in preexec_fn" error.
+        _set_rlimit_safe(resource.RLIMIT_CPU, "RLIMIT_CPU", MAX_CPU_SECONDS, MAX_CPU_SECONDS)
+        _set_rlimit_safe(
+            resource.RLIMIT_AS, "RLIMIT_AS",
+            max_memory_mb * 1024 * 1024,
+            max_memory_mb * 1024 * 1024,
+        )
+        _set_rlimit_safe(
+            resource.RLIMIT_FSIZE, "RLIMIT_FSIZE",
+            MAX_FILE_SIZE_MB * 1024 * 1024,
+            MAX_FILE_SIZE_MB * 1024 * 1024,
+        )
+        _set_rlimit_safe(resource.RLIMIT_NOFILE, "RLIMIT_NOFILE", MAX_OPEN_FILES, MAX_OPEN_FILES)
 
     return _apply_limits
 

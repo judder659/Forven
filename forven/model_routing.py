@@ -28,6 +28,7 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
     "nvidia",
     "opencode-zen",
     "opencode-go",
+    "nvidia",
 )
 _MODEL_ROUTING_STORAGE_KEY = "forven:model-routing"
 _LEGACY_MODEL_ALIASES: dict[str, dict[str, str]] = {}
@@ -53,6 +54,7 @@ _ZAI_PRIMARY_PROVIDER_PRIORITY = [
     # Paid coding-model gateways — below the free tiers by default.
     "opencode-zen",
     "opencode-go",
+    "nvidia",
 ]
 
 # Auxiliary task kinds — small/cheap helper models that run *outside* the
@@ -115,7 +117,8 @@ _DEFAULT_MODEL_ROUTING = {
         "together": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "nvidia": "meta/llama-3.3-70b-instruct",
         "opencode-zen": "grok-code",
-        "opencode-go": "glm-5.2",
+        "opencode-go": "deepseek-v4-flash",
+        "nvidia": "minimaxai/minimax-m3",
     },
     # Every default chain is SELF-ONLY (fail-closed): a slot NEVER silently falls
     # back to a provider the operator didn't choose for it. A throttled/failed
@@ -168,7 +171,10 @@ _DEFAULT_MODEL_ROUTING = {
             {"provider": "opencode-zen", "model_id": "grok-code"},
         ],
         "opencode-go": [
-            {"provider": "opencode-go", "model_id": "glm-5.2"},
+            {"provider": "opencode-go", "model_id": "deepseek-v4-flash"},
+        ],
+        "nvidia": [
+            {"provider": "nvidia", "model_id": "minimaxai/minimax-m3"},
         ],
     },
     "auxiliary": copy.deepcopy(_DEFAULT_AUXILIARY_ROUTING),

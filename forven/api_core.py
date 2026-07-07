@@ -296,6 +296,7 @@ _AUTH_PROVIDER_ENV_VARS = {
     "nvidia": "NVIDIA_API_KEY",
     "opencode-zen": "OPENCODE_ZEN_API_KEY",
     "opencode-go": "OPENCODE_GO_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
 }
 _AUTH_OAUTH_SESSIONS: dict[str, dict[str, dict[str, object]]] = {}
 _AUTH_OAUTH_CALLBACKS: dict[str, dict[str, str]] = {}
@@ -340,6 +341,7 @@ _MODEL_DISCOVERY_ALT_ENDPOINTS = {
     # OpenCode GO has NO /models endpoint (chat-completions only), so it is not
     # listed here — its models are curated in _AGENT_MODEL_CATALOG instead.
     "opencode-zen": ["https://opencode.ai/zen/v1/models"],
+    "nvidia": ["https://integrate.api.nvidia.com/v1/models"],
     # Together is a large gateway; its models are curated in the catalog rather
     # than discovered, to avoid flooding the picker.
 }
@@ -382,6 +384,9 @@ _MODEL_DISCOVERY_HEADERS = {
     "opencode-zen": {
         "Authorization": "Bearer {token}",
     },
+    "nvidia": {
+        "Authorization": "Bearer {token}",
+    },
 }
 
 # Endpoints used by the connection "Test" to verify a key is actually valid
@@ -414,10 +419,12 @@ _MODEL_PROVIDER_DISPLAY_NAMES = {
     "nvidia": "NVIDIA NIM",
     "opencode-zen": "OpenCode Zen",
     "opencode-go": "OpenCode GO",
+    "nvidia": "NVIDIA NIM",
 }
 _LOCAL_PROVIDER_DEFAULT_BASE_URLS = {
     "lmstudio": "http://127.0.0.1:1234",
     "zai": "",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
 }
 
 _AGENT_MODEL_CATALOG = [
@@ -572,6 +579,13 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "openrouter", "model_id": "openrouter/free", "label": "OpenRouter Auto (free, tool-capable router)"},
     {"provider": "openrouter", "model_id": "nvidia/nemotron-3-ultra-550b-a55b", "label": "OpenRouter Nemotron 3 Ultra 550B (paid)"},
     {"provider": "openrouter", "model_id": "openai/gpt-4o-mini", "label": "OpenRouter GPT-4o Mini (paid)"},
+    # NVIDIA NIM: curated catalog (discovery also supported via /v1/models).
+    {"provider": "nvidia", "model_id": "minimaxai/minimax-m3", "label": "NVIDIA NIM MiniMax M3"},
+    {"provider": "nvidia", "model_id": "minimaxai/minimax-m2.7", "label": "NVIDIA NIM MiniMax M2.7"},
+    {"provider": "nvidia", "model_id": "nvidia/llama-3.3-nemotron-super-49b-v1", "label": "NVIDIA NIM Nemotron Super 49B"},
+    {"provider": "nvidia", "model_id": "nvidia/llama-3.1-nemotron-nano-8b-v1", "label": "NVIDIA NIM Nemotron Nano 8B"},
+    {"provider": "nvidia", "model_id": "meta/llama-3.3-70b-instruct", "label": "NVIDIA NIM Llama 3.3 70B"},
+    {"provider": "nvidia", "model_id": "deepseek-ai/deepseek-r1", "label": "NVIDIA NIM DeepSeek R1"},
 ]
 
 

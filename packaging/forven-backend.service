@@ -1,0 +1,18 @@
+[Unit]
+Description=Forven Backend (FastAPI/uvicorn)
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=hms
+Group=hms
+WorkingDirectory=/home/hms/forven
+EnvironmentFile=/home/hms/forven/.env
+ExecStart=/home/hms/forven/.venv/bin/python3.11 -m uvicorn forven.api:app --host 127.0.0.1 --port 8004
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

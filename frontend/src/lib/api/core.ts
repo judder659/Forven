@@ -6,7 +6,7 @@
  * API client for Forven backend
  */
 
-const DEFAULT_API_ORIGIN = 'http://127.0.0.1:8003';
+const DEFAULT_API_ORIGIN = 'http://127.0.0.1:8004';
 const FALLBACK_API_ORIGINS = ['127.0.0.1', 'localhost'];
 const IS_TEST_ENV = Boolean(import.meta.env?.MODE === 'test' || import.meta.env?.VITEST);
 
@@ -23,7 +23,7 @@ function resolveApiBase(): string {
 				// can intermittently disconnect for remote/mobile clients.
 				const protocol = window.location.protocol || 'http:';
 				const host = window.location.hostname || '127.0.0.1';
-				return `${protocol}//${host}:8003/api`;
+				return `${protocol}//${host}:8004/api`;
 			}
 			return `${DEFAULT_API_ORIGIN}${trimTrailingSlash(configuredBase)}`;
 		}
@@ -35,7 +35,7 @@ function resolveApiBase(): string {
 	if (typeof window !== 'undefined' && window.location) {
 		const protocol = window.location.protocol || 'http:';
 		const host = window.location.hostname || '127.0.0.1';
-		return `${protocol}//${host}:8003/api`;
+		return `${protocol}//${host}:8004/api`;
 	}
 	return `${DEFAULT_API_ORIGIN}/api`;
 }
@@ -53,11 +53,11 @@ if (typeof window !== 'undefined' && window.location) {
 
 	BASE_CANDIDATES_RAW.add('/api');
 	BASE_CANDIDATES_RAW.add(`${protocol}//${host}/api`);
-	BASE_CANDIDATES_RAW.add(`${protocol}//${host}:8003/api`);
+	BASE_CANDIDATES_RAW.add(`${protocol}//${host}:8004/api`);
 	BASE_CANDIDATES_RAW.add(`${protocol}//${host}:8000/api`);
 	if (isLocalBrowserHost) {
 		for (const fallbackHost of FALLBACK_API_ORIGINS) {
-			BASE_CANDIDATES_RAW.add(`${protocol}//${fallbackHost}:8003/api`);
+			BASE_CANDIDATES_RAW.add(`${protocol}//${fallbackHost}:8004/api`);
 			BASE_CANDIDATES_RAW.add(`${protocol}//${fallbackHost}:8000/api`);
 		}
 	}
@@ -71,7 +71,7 @@ if (typeof window !== 'undefined' && window.location) {
 	const protocol = window.location.protocol || 'http:';
 	const host = window.location.hostname || '127.0.0.1';
 	const originApi = `${window.location.origin.replace(/\/$/, '')}/api`;
-	const directBackendApi = `${protocol}//${host}:8003/api`;
+	const directBackendApi = `${protocol}//${host}:8004/api`;
 	preferredCandidates = [
 		trimTrailingSlash(API_BASE),
 		directBackendApi,
@@ -248,7 +248,7 @@ function resolveAuthHeaderValue(envKeys: string[], storageKeys: string[]): strin
 	return '';
 }
 
-function buildAuthHeaders(): Record<string, string> {
+export function buildAuthHeaders(): Record<string, string> {
 	const headers: Record<string, string> = {};
 	const apiKey = resolveAuthHeaderValue(
 		['VITE_FORVEN_API_KEY'],

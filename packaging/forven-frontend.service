@@ -1,0 +1,20 @@
+[Unit]
+Description=Forven Frontend (SvelteKit/Vite)
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=hms
+Group=hms
+WorkingDirectory=/home/hms/forven/frontend
+EnvironmentFile=/home/hms/forven/.env
+ExecStart=/home/hms/.local/share/pi-node/node-v22.22.3-linux-x64/bin/npm run dev -- --host :: --port 5173
+Restart=on-failure
+RestartSec=10
+# Ensure npm/node are in PATH
+Environment=PATH=/home/hms/.local/share/pi-node/node-v22.22.3-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
