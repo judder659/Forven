@@ -6474,6 +6474,25 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         _notify_live_open_blocked(strat_id, asset, _rg_why, "regime_gate")
         return f"BLOCKED {asset} live — {_rg_why}"
     size_fraction = float(pos.get("size_fraction") or 0.0)
+    # PORT-LAYER-1: portfolio allocation multiplier — LIVE only, double-flagged
+    # (portfolio_allocator_enabled AND portfolio_allocator_live), neutral 1.0 on
+    # any failure. Scales size_fraction, NEVER sizing_equity: equity is recorded
+    # as kernel_equity_at_entry (the PnL basis) and must stay the true account
+    # value. The scaled fraction flows through every downstream risk gate
+    # (PORT-1 budget, ceilings) so gates check what is actually deployed.
+    portfolio_multiplier = 1.0
+    try:
+        from forven.portfolio_allocator import live_risk_multiplier
+
+        portfolio_multiplier = float(live_risk_multiplier(strat_id))
+    except Exception:
+        portfolio_multiplier = 1.0
+    if portfolio_multiplier != 1.0:
+        size_fraction = min(size_fraction * portfolio_multiplier, 1.0)
+        log.info(
+            "[%s] portfolio allocator scaled live size_fraction x%.3f -> %.6f",
+            strat_id, portfolio_multiplier, size_fraction,
+        )
     units = round(_sizing.position_units(equity=float(sizing_equity), size_fraction=size_fraction, leverage=leverage, entry_price=ref_price), 6)
     if units <= 0:
         return None
@@ -6530,6 +6549,9 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         "kernel_trail_pct": float(kernel_trail_pct) if kernel_trail_pct else None,
         "kernel_regime": pos.get("regime"),
         "direction": direction, "source": "scanner.kernel.live",
+        # PORT-LAYER-1 attribution: the allocation multiplier applied to this
+        # fill (kernel_size_fraction above is the SCALED value actually deployed).
+        "portfolio_risk_multiplier": round(portfolio_multiplier, 4),
     }
     # Pass book only when direction books are active so the books-off path keeps the
     # exact prior signature (book stays NULL = master wallet).

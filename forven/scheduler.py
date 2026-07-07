@@ -44,6 +44,11 @@ _DEFAULT_JOB_IDS = {
     "forven-regime-update",
     "forven-regime-gate-mtm",
     "forven-slippage-monitor",
+    # SEED-DRIFT-1: these two were seeded but missing from this allowlist, so
+    # every reconcile_forven_jobs run silently DELETED them (the testnet harness
+    # and exec-quality watchdog quietly stopped running until the next reseed).
+    "forven-exec-quality-watchdog",
+    "forven-testnet-harness",
     "forven-scanner-signal",
     "forven-scanner-hourly",
     "forven-recalibration",
@@ -83,6 +88,34 @@ _DEFAULT_JOB_IDS = {
     "forven-phantom-sweep",
     "forven-param-optimization",
 }
+
+# PORT-GATE-1: the portfolio layer's jobs exist only while its master switch is
+# on — seeding them unconditionally would leak the dark feature's existence on
+# the scheduler page. _default_job_ids() folds them in when enabled, so
+# reconcile_forven_jobs REMOVES them when the layer is later disabled and
+# RESTORES them (via reseed) when it's enabled. Flipping the flag takes effect
+# on the next scheduler reconcile or restart.
+_PORTFOLIO_JOB_IDS = {
+    "forven-portfolio-allocation",
+    "forven-basket-funding-carry",
+}
+
+
+def _portfolio_layer_on() -> bool:
+    try:
+        from forven.portfolio_allocator import portfolio_layer_enabled
+
+        return bool(portfolio_layer_enabled())
+    except Exception:
+        return False
+
+
+def _default_job_ids() -> set[str]:
+    if _portfolio_layer_on():
+        return _DEFAULT_JOB_IDS | _PORTFOLIO_JOB_IDS
+    return set(_DEFAULT_JOB_IDS)
+
+
 _SUPERSEDED_CRUCIBLE_AGENT_JOB_IDS = {
     "forven-ideation-daily",
 }
@@ -1499,6 +1532,25 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         if kind == "regime_update":
             updated = await _run_sync_job(_run_regime_update_job)
             log.info("Regime update job refreshed market_pot for %d deployed strategy rows", updated)
+            return "ok", None
+
+        # PORT-LAYER-1: measured-risk portfolio allocation snapshot. Internally
+        # flag-gated (no-op unless portfolio_allocator_enabled) and fail-soft.
+        if kind == "portfolio_allocation_refresh":
+            from forven.portfolio_allocator import refresh_portfolio_allocation
+            snapshot = await _run_sync_job(refresh_portfolio_allocation)
+            if snapshot is None:
+                return "ok", "allocator disabled or refresh skipped"
+            return "ok", None
+
+        # PORT-LAYER-2: funding-carry basket forward paper tick. Internally
+        # flag-gated (no-op unless basket_funding_carry_enabled) and fail-soft;
+        # marks/accrues hourly, rebalances on its own cadence (default 24h).
+        if kind == "basket_funding_carry_tick":
+            from forven.basket_runtime import run_basket_tick
+            report = await _run_sync_job(run_basket_tick)
+            if report is None:
+                return "ok", "basket disabled or tick skipped"
             return "ok", None
 
         # Strategy decay tracker — auto-demote degraded paper/deployed strategies
@@ -3142,6 +3194,30 @@ def seed_forven_jobs():
         payload={"kind": "testnet_execution_harness"},
     )
 
+    # PORT-GATE-1: the portfolio layer's jobs are seeded only while its master
+    # switch is on (see _default_job_ids — reconcile removes/restores them when
+    # the flag flips). Each job is additionally no-op unless its own toggle is
+    # enabled, and correlations/panels are cached so the hourly cadence is cheap.
+    if _portfolio_layer_on():
+        add_job(
+            job_id="forven-portfolio-allocation",
+            name="Portfolio Allocation Refresh",
+            schedule_type="interval",
+            schedule_expr="3600000",
+            command="portfolio-allocation",
+            timezone_str="UTC",
+            payload={"kind": "portfolio_allocation_refresh"},
+        )
+        add_job(
+            job_id="forven-basket-funding-carry",
+            name="Funding-Carry Basket Paper Tick",
+            schedule_type="interval",
+            schedule_expr="3600000",
+            command="basket-funding-carry",
+            timezone_str="UTC",
+            payload={"kind": "basket_funding_carry_tick"},
+        )
+
     # 5. Regime + Market Pot refresh — every 4 hours
     add_job(
         job_id="forven-regime-update",
@@ -3601,6 +3677,10 @@ def reconcile_forven_jobs() -> dict[str, int]:
         {"removed": <count>, "added": <count>}
     """
     removed = 0
+    # PORT-GATE-1: expected ids are dynamic — the portfolio layer's jobs count
+    # as defaults only while its master switch is on, so disabling the layer
+    # reaps its jobs here and re-enabling restores them via the reseed below.
+    expected_ids = _default_job_ids()
     with get_db() as conn:
         existing = {row["id"] for row in conn.execute("SELECT id FROM scheduler_jobs")}
         stale_jobs = [
@@ -3610,7 +3690,7 @@ def reconcile_forven_jobs() -> dict[str, int]:
                 job_id.startswith(_LEGACY_DEFAULT_JOB_PREFIXES)
                 or (
                     job_id.startswith("forven-")
-                    and job_id not in _DEFAULT_JOB_IDS
+                    and job_id not in expected_ids
                 )
             )
         ]
@@ -3623,7 +3703,7 @@ def reconcile_forven_jobs() -> dict[str, int]:
 
     with get_db() as conn:
         current_ids = {row["id"] for row in conn.execute("SELECT id FROM scheduler_jobs")}
-    missing = _DEFAULT_JOB_IDS.difference(current_ids)
+    missing = expected_ids.difference(current_ids)
 
     if missing:
         # Full reseed keeps deterministic defaults and restores any removed core jobs.

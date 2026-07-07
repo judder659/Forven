@@ -82,12 +82,17 @@ def build_panel(
     symbols: list[str],
     timeframe: str = "1h",
     extra_columns: tuple[str, ...] = (),
+    tail_bars: int | None = None,
 ) -> BasketPanel:
     """Load + enrich each symbol and align on a shared index.
 
     Symbols missing OHLCV or a funding column are dropped (logged) — the
     engine's eligibility mask handles per-bar NaNs, but a symbol with no
     funding series at all cannot be ranked by any funding-aware strategy.
+
+    ``tail_bars`` trims each symbol to its most recent N bars BEFORE the
+    enrichment join — the forward basket runtime (basket_runtime) only needs a
+    recent window, and trimming first keeps its hourly tick cheap.
     """
     from forven.data import load_parquet
     from forven.data_manager import DataManager
@@ -104,6 +109,8 @@ def build_panel(
         if df is None or df.empty:
             log.info("basket panel: %s has no %s OHLCV — dropped", sym, timeframe)
             continue
+        if tail_bars is not None and len(df) > int(tail_bars):
+            df = df.tail(int(tail_bars))
         if not isinstance(df.index, pd.DatetimeIndex):
             ts_col = df["timestamp"]
             ts = (

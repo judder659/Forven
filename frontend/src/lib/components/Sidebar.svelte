@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { markNavIndicatorSeen, navRouteMetrics, navEventPulses } from '$lib/stores/navMetrics';
 	import NavBadge from '$lib/components/NavBadge.svelte';
@@ -49,6 +50,11 @@
 			icon: 'M12 2L4 5v5c0 4.63 3.2 8.94 8 10 4.8-1.06 8-5.37 8-10V5l-8-3zm-1 11l-2.5-2.5 1.41-1.41L11 10.17l3.09-3.08 1.41 1.41L11 13z'
 		},
 		{
+			label: 'Portfolio',
+			href: '/portfolio',
+			icon: 'M11 2v20c-5.07-.5-9-4.79-9-10s3.93-9.5 9-10zm2.03 0v8.99H22c-.47-4.74-4.24-8.52-8.97-8.99zm0 11.01V22c4.74-.47 8.5-4.25 8.97-8.99h-8.97z'
+		},
+		{
 			label: 'Paper Trades',
 			href: '/paper-trades',
 			icon: 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z'
@@ -64,6 +70,21 @@
 			icon: 'M20 9V7c0-1.1-.9-2-2-2h-3c0-1.66-1.34-3-3-3S9 3.34 9 5H6c-1.1 0-2 .9-2 2v2c-1.66 0-3 1.34-3 3s1.34 3 3 3v4c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4c1.66 0 3-1.34 3-3s-1.34-3-3-3zM7.5 11.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5S9.83 13 9 13s-1.5-.67-1.5-1.5zM16 17H8v-2h8v2zm-1-4c-.83 0-1.5-.67-1.5-1.5S14.17 10 15 10s1.5.67 1.5 1.5S15.83 13 15 13z'
 		},
 	];
+
+	// PORT-GATE-1: the Portfolio entry exists only when the layer's master
+	// switch is on (Settings -> System -> Experimental features).
+	let portfolioLayerEnabled = false;
+	onMount(async () => {
+		try {
+			const { getPortfolioLayerEnabled } = await import('$lib/api/portfolio');
+			portfolioLayerEnabled = await getPortfolioLayerEnabled();
+		} catch {
+			portfolioLayerEnabled = false;
+		}
+	});
+	$: visiblePrimaryLinks = portfolioLayerEnabled
+		? primaryLinks
+		: primaryLinks.filter((l) => l.href !== '/portfolio');
 
 	const managementLinks: NavLink[] = [
 		{
@@ -146,7 +167,7 @@
 
 	<nav aria-label="Primary navigation" class="flex-1 overflow-y-auto px-2 py-4 flex flex-col gap-4">
 		<div class="space-y-1">
-			{#each primaryLinks as link}
+			{#each visiblePrimaryLinks as link}
 				{@const isActive = isRouteActive(link.href, $page.url.pathname)}
 				<a
 					href={link.href}

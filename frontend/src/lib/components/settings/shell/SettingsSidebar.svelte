@@ -2,10 +2,13 @@
   import { SETTINGS_AREAS } from '$lib/settings/manifest';
   export let active: string;
   export let onChange: (id: string) => void = () => {};
+  /** Areas suppressed from the nav (PORT-GATE-1: dark features hide their tab). */
+  export let hiddenAreas: string[] = [];
+  $: visibleAreas = SETTINGS_AREAS.filter((a) => !hiddenAreas.includes(a.id));
 </script>
 
 <nav class="flex flex-col gap-px p-2 border-r border-[#222] min-w-[14rem] sticky top-6 self-start max-h-[calc(100vh-3rem)] overflow-y-auto">
-  {#each SETTINGS_AREAS as area (area.id)}
+  {#each visibleAreas as area (area.id)}
     <button
       type="button"
       aria-current={active === area.id ? 'page' : undefined}

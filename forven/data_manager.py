@@ -1520,6 +1520,25 @@ class DataManager:
                             symbols.add(normalized)
         except Exception as exc:
             log.warning("get_active_symbols failed: %s", exc)
+
+        # PORT-LAYER-2: while the funding-carry basket is enabled, its WHOLE
+        # ranking universe needs keepalive, not just held legs — the tick ranks
+        # every universe symbol, and a stale close/funding print silently
+        # disqualifies it (first real tick: 24/30 symbols stale, basket degraded
+        # to 3 of 5 legs per side). Deliberately OUTSIDE the DB context above:
+        # basket_enabled reads settings on its own connection, and nesting that
+        # inside the active-symbols transaction is both a lock hazard and
+        # order-fragile under test mocks.
+        try:
+            from forven.basket_runtime import basket_enabled, basket_universe_symbols
+
+            if basket_enabled():
+                for sym in basket_universe_symbols():
+                    normalized = self._normalize_keepalive_symbol(sym, require_dataset=True)
+                    if normalized:
+                        symbols.add(normalized)
+        except Exception:
+            log.debug("basket universe keepalive enroll failed", exc_info=True)
         return symbols
 
     # The active-set discovery costs ~1s (DISTINCT over backtest_results with
