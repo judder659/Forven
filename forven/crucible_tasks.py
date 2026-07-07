@@ -106,6 +106,16 @@ def _task_payload_matches_candidate_request(
     payload_hypothesis_id = str(payload.get("hypothesis_id") or "").strip()
     if not payload_crucible_id and not payload_hypothesis_id:
         return False
+    # Agents legitimately hold the DISPLAY id (H01619) where the payload
+    # carries the actual id (HYP-57edc49af1f2) — task prompts reference the
+    # display form. Translate before matching; without this, agents flailed
+    # through id permutations against the same rejection (2026-07-06 reports).
+    payload_display_id = str(payload.get("hypothesis_display_id") or "").strip()
+    if payload_display_id:
+        if normalized_crucible_id == payload_display_id:
+            normalized_crucible_id = payload_hypothesis_id or payload_crucible_id
+        if normalized_hypothesis_id == payload_display_id:
+            normalized_hypothesis_id = payload_hypothesis_id or payload_crucible_id
     payload_ids = {payload_id for payload_id in (payload_crucible_id, payload_hypothesis_id) if payload_id}
     if (
         normalized_hypothesis_id
@@ -153,6 +163,58 @@ def _find_matching_running_candidate_task(
     return {}
 
 
+# Repair/follow-up mints happen AFTER the original develop_candidate task
+# leaves 'running' (Brain reviews the output, then asks the same agent to fix
+# an invalid candidate in a follow-up task that has no trusted payload of its
+# own). Trust keyed strictly to RUNNING tasks deadlocked every such flow —
+# four reports on 2026-07-06 alone (H01619 repair, H-CAND3, H01622 sanitized
+# v2), with agents retrying id permutations against an unexplained rejection.
+# The grace match is bounded: same agent, same crucible payload contract, the
+# task ended recently, and the per-hypothesis strategy spawn cap independently
+# limits mint volume. 'cancelled' stays excluded — the operator said stop.
+CANDIDATE_REPAIR_GRACE_HOURS = 24
+_RECENT_CANDIDATE_STATUSES = ("done", "reviewed", "failed")
+
+
+def _find_matching_recent_candidate_task(
+    normalized_agent_id: str,
+    normalized_crucible_id: str,
+    normalized_hypothesis_id: str,
+) -> dict[str, Any]:
+    if not normalized_agent_id or not normalized_crucible_id:
+        return {}
+    placeholders = ",".join("?" * len(_RECENT_CANDIDATE_STATUSES))
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT agent_id, status, input_data
+            FROM agent_tasks
+            WHERE agent_id = ?
+              AND status IN ({placeholders})
+              AND type = 'develop_candidate'
+              AND datetime(COALESCE(completed_at, started_at, created_at))
+                  >= datetime('now', ?)
+            ORDER BY id DESC
+            LIMIT 40
+            """,
+            (
+                normalized_agent_id,
+                *_RECENT_CANDIDATE_STATUSES,
+                f"-{int(CANDIDATE_REPAIR_GRACE_HOURS)} hours",
+            ),
+        ).fetchall()
+    for row in rows:
+        task = dict(row)
+        payload = _parse_json_object(task.get("input_data"))
+        if _task_payload_matches_candidate_request(
+            payload,
+            normalized_crucible_id,
+            normalized_hypothesis_id,
+        ):
+            return task
+    return {}
+
+
 def validate_candidate_strategy_creation(
     crucible_id: str | None,
     agent_id: str | None,
@@ -184,16 +246,30 @@ def validate_candidate_strategy_creation(
             normalized_agent_id,
             normalized_crucible_id,
             normalized_hypothesis_id,
+        ) or _find_matching_recent_candidate_task(
+            normalized_agent_id,
+            normalized_crucible_id,
+            normalized_hypothesis_id,
         )
         task_agent_id = str(task.get("agent_id") or "").strip()
         task_status = str(task.get("status") or "").strip()
-        if task_status != "running":
+        if not task:
             return CandidateStrategyCreationValidation(
                 False,
-                "Agent-created strategy candidates require a planner-approved running crucible task.",
+                "Agent-created strategy candidates require a planner-approved crucible task: "
+                f"no running or recently-completed (<= {CANDIDATE_REPAIR_GRACE_HOURS}h) "
+                f"develop_candidate task for agent '{normalized_agent_id}' matches "
+                f"crucible_id/hypothesis_id '{normalized_crucible_id}'. Pass the ACTUAL "
+                "hypothesis id (HYP-...) or its display id (Hxxxxx) from the dispatched "
+                "task payload; ad-hoc creation outside a dispatched candidate task is "
+                "not permitted.",
             )
     if task_agent_id != normalized_agent_id:
         fallback_task = _find_matching_running_candidate_task(
+            normalized_agent_id,
+            normalized_crucible_id,
+            normalized_hypothesis_id,
+        ) or _find_matching_recent_candidate_task(
             normalized_agent_id,
             normalized_crucible_id,
             normalized_hypothesis_id,
@@ -223,19 +299,28 @@ def validate_candidate_strategy_creation(
         payload_crucible_id = str(payload.get("crucible_id") or "").strip()
         payload_hypothesis_id = str(payload.get("hypothesis_id") or "").strip()
         if origin_mode not in TRUSTED_CANDIDATE_ORIGINS:
+            # Diagnostic detail: agents burned whole task budgets retrying id
+            # permutations against the bare one-liner (2026-07-06 reports) —
+            # say WHAT the current task carries and what would satisfy the gate.
             return CandidateStrategyCreationValidation(
                 False,
-                "Agent-created strategy candidates require a trusted crucible candidate task.",
+                "Agent-created strategy candidates require a trusted crucible candidate task. "
+                f"Your current task's origin_mode is '{origin_mode or '(none)'}' which is not a "
+                "trusted origin — creation is only permitted inside a dispatched "
+                "develop_candidate task (running, or completed within "
+                f"{CANDIDATE_REPAIR_GRACE_HOURS}h for repairs) for this crucible.",
             )
         if origin_mode == "crucible_planner" and action_kind not in CANDIDATE_ACTION_KINDS:
             return CandidateStrategyCreationValidation(
                 False,
-                "Agent-created strategy candidates require a planner-approved candidate task.",
+                "Agent-created strategy candidates require a planner-approved candidate task "
+                f"(this task's action_kind is '{action_kind or '(none)'}').",
             )
         if origin_mode != "crucible_planner" and action_kind and action_kind not in CANDIDATE_ACTION_KINDS:
             return CandidateStrategyCreationValidation(
                 False,
-                "Agent-created strategy candidates require a trusted candidate task kind.",
+                "Agent-created strategy candidates require a trusted candidate task kind "
+                f"(this task's action_kind is '{action_kind}').",
             )
         if not payload_crucible_id and not payload_hypothesis_id:
             return CandidateStrategyCreationValidation(
@@ -254,11 +339,15 @@ def validate_candidate_strategy_creation(
         ):
             return CandidateStrategyCreationValidation(
                 False,
-                "Agent-created strategy candidates must use the planner-approved crucible_id and hypothesis_id pair.",
+                "Agent-created strategy candidates must use the planner-approved crucible_id and "
+                f"hypothesis_id pair (the dispatched task carries crucible_id="
+                f"'{payload_crucible_id or '(none)'}', hypothesis_id='{payload_hypothesis_id or '(none)'}').",
             )
         return CandidateStrategyCreationValidation(
             False,
-            "Agent-created strategy candidates require a planner-approved matching crucible task.",
+            "Agent-created strategy candidates require a planner-approved matching crucible task "
+            f"(requested '{normalized_crucible_id}'; the dispatched task carries "
+            f"'{payload_crucible_id or payload_hypothesis_id or '(none)'}').",
         )
 
     payload_crucible_id = str(payload.get("crucible_id") or "").strip()

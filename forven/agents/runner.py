@@ -515,6 +515,27 @@ async def _call_with_tools_single(
                 continue
             return (response.text or last_nonempty_text, total_usage)
 
+        # NEVER execute tool calls parsed from a length-truncated turn: the
+        # arguments may have been cut mid-generation and then "repaired" into
+        # valid-but-truncated JSON by the provider/gateway — which silently
+        # wrote mid-sentence-truncated files (2026-07-06 write_file reports,
+        # consistent ~4KB cuts). Tell the model what happened so it retries
+        # with smaller content instead of trusting a phantom success.
+        if response.truncated and response.tool_calls:
+            impl.append_assistant(messages, response)
+            truncation_notice = (
+                "Error: your response hit the output-token limit and this tool call was cut "
+                "mid-generation, so it was NOT executed (its arguments may be truncated). "
+                "Retry with smaller content — for large writes, split the content across "
+                "multiple write_file append calls."
+            )
+            impl.append_tool_results(
+                messages, [(tc.id, truncation_notice) for tc in response.tool_calls]
+            )
+            if transcript is not None:
+                transcript.write("event", content=truncation_notice, tool_round=round_num)
+            continue
+
         # Append assistant message and execute tool calls.
         impl.append_assistant(messages, response)
 
@@ -809,9 +830,21 @@ def _task_tool_output_shows_success(tool_call: dict) -> bool:
     summary = str(tool_call.get("output_summary") or "").strip().lower()
     if not summary:
         return False
+    # Tool errors are returned as strings prefixed "Error:" (tools_core
+    # convention) — classify those first so a success marker inside an error
+    # message can't flip the verdict.
+    if summary.startswith("error"):
+        return False
     if '"ok": true' in summary or '"persisted": true' in summary:
         return True
     if summary.startswith("strategy created:") or "registered successfully" in summary:
+        return True
+    # write_file success phrasings ("Appended N chars to X (verified)" /
+    # "Wrote N chars to X (verified)"). Without these, EVERY successful
+    # write_file was stamped [FAILED] in the tool ledger — agents documented
+    # the tag as "bimodal/unreliable" for a week (L142) and Brain burned
+    # cycles re-verifying writes that had landed fine.
+    if summary.startswith("appended ") or summary.startswith("wrote "):
         return True
     return False
 

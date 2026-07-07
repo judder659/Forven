@@ -309,9 +309,16 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
 @register_tool(
     name="run_backtest",
     description=(
-        "Run a strategy backtest. Any strategy family and params are accepted — composite strategies "
-        "mixing multiple indicator families work seamlessly. Returns trades and "
-        "metrics (Sharpe, win rate, profit factor, max drawdown, fitness score)."
+        # The old text promised "any strategy family ... accepted"; the engine
+        # (correctly) rejects families with no registered runtime class as
+        # orphans, and agents filed the mismatch as an infra bug (2026-07-06,
+        # oi_expansion_momentum). The contract must match the gate.
+        "Run a strategy backtest. strategy_type must be a REGISTERED runtime family: "
+        "a pre-built param family or a custom class registered under "
+        "forven/strategies/custom/. A family with no registered class is rejected as "
+        "an orphan (it would silently produce zero signals) — register the class "
+        "first, or compose from known param families. Returns trades and metrics "
+        "(Sharpe, win rate, profit factor, max drawdown, fitness score)."
     ),
     input_schema={
         "type": "object",
@@ -321,8 +328,9 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
             "strategy_type": {
                 "type": "string",
                 "description": (
-                    "Strategy family name — any pre-built or novel composite family. "
-                    "Composite strategies mixing indicators are encouraged."
+                    "Strategy family name — a pre-built param family or a registered "
+                    "custom class TYPE_NAME. Unregistered/invented family names are "
+                    "rejected (no runtime class = zero signals)."
                 ),
             },
             "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs"},
@@ -428,6 +436,13 @@ def _tool_run_code(code: str) -> str:
                 if validation["lint_issues"]:
                     output += f"Lint issues: {'; '.join(validation['lint_issues'][:5])}\n"
                 exec_r = validation["execution_result"]
+                # The harness prints its diagnostics (incl. the full exception
+                # from generate_signal/instantiation) to STDOUT before exiting
+                # non-zero; dropping stdout here left agents staring at a
+                # truncated mystery ("type obje...") across five consecutive
+                # register failures (2026-07-06 H01614 report).
+                if exec_r.get("stdout"):
+                    output += f"Harness output: {str(exec_r['stdout']).strip()[:1200]}\n"
                 if exec_r["stderr"]:
                     output += f"Error: {exec_r['stderr'][:500]}\n"
                 if validation["code"] != code:

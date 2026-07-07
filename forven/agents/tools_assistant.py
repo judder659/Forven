@@ -53,21 +53,28 @@ _COMMON_FAMILIES = (
     permissions={"brain", "role:risk-manager", None},
 )
 def _tool_get_portfolio_status() -> str:
-    from forven.db import get_open_trades, kv_get
+    from forven.db import get_open_trades
+    from forven.portfolio_status import portfolio_status_snapshot
 
-    status = kv_get("status") or {}
-    equity = status.get("accountEquity", 0) or 0
-    hwm = status.get("highWaterMark", 0) or 0
-    drawdown_pct = ((hwm - equity) / hwm * 100) if hwm else 0.0
+    # Reads the daemon's REAL risk-tick snapshot (KV daemon_state) — the same
+    # numbers the kill-switch and daily-loss guard act on. The previous source
+    # (KV "status", camelCase fields) was never written by anything, so this
+    # tool reported equity=0/HWM=0 forever and risk audits ran blind.
+    snapshot = portfolio_status_snapshot()
     open_trades = get_open_trades() or []
     out = {
-        "kill_switch_active": bool(status.get("killSwitch")),
-        "account_equity": equity,
-        "high_water_mark": hwm,
-        "drawdown_pct": round(drawdown_pct, 2),
-        "daily_pnl": status.get("dailyPnl", 0),
-        "regime": status.get("regime", "unknown"),
-        "fear_greed": status.get("fng"),
+        "kill_switch_active": snapshot["kill_switch_active"],
+        "daily_halt": snapshot["daily_halt"],
+        "account_equity": snapshot["account_equity"],
+        "equity_available": snapshot["equity_available"],
+        "equity_source": snapshot["equity_source"],
+        "high_water_mark": snapshot["high_water_mark"],
+        "drawdown_pct": snapshot["drawdown_pct"],
+        "daily_pnl_pct": snapshot["daily_pnl_pct"],
+        "regime": snapshot["regime"],
+        "fear_greed": snapshot["fear_greed"],
+        "synced_at": snapshot["synced_at"],
+        "daemon_running": snapshot["daemon_running"],
         "open_position_count": len(open_trades),
         "open_positions": [
             {
@@ -488,8 +495,6 @@ def _tool_get_settings_overview() -> str:
     permissions={"brain", None},
 )
 def _tool_get_ops_overview() -> str:
-    from forven.db import kv_get
-
     out: dict = {}
     try:
         from forven.control_plane.ops import get_system_mode_status
@@ -504,11 +509,16 @@ def _tool_get_ops_overview() -> str:
         out["system_error"] = str(exc)
 
     try:
-        status = kv_get("status") or {}
+        from forven.portfolio_status import portfolio_status_snapshot
+
+        snapshot = portfolio_status_snapshot()
         out["risk"] = {
-            "kill_switch_active": bool(status.get("killSwitch")),
-            "account_equity": status.get("accountEquity"),
-            "daily_pnl": status.get("dailyPnl"),
+            "kill_switch_active": snapshot["kill_switch_active"],
+            "daily_halt": snapshot["daily_halt"],
+            "account_equity": snapshot["account_equity"],
+            "equity_available": snapshot["equity_available"],
+            "daily_pnl_pct": snapshot["daily_pnl_pct"],
+            "drawdown_pct": snapshot["drawdown_pct"],
         }
     except Exception as exc:
         out["risk_error"] = str(exc)

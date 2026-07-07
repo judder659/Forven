@@ -391,13 +391,32 @@ def _tool_write_file(path: str, content: str, append: bool = True) -> str:
             "memory/, agents/, narratives/, post_mortems/, lessons/, notes/ "
             "with extension .md/.txt/.json."
         )
+    # Post-write verification via the SAME read path agents use: the tool's
+    # return value is ground truth, not an assumption. Agents spent a week
+    # cross-checking unreliable success/FAILED signals against re-reads
+    # (2026-07-06 reports: appends that "succeeded" but never showed up on
+    # re-read because the divergent-roots resolution hid them).
+    from forven.workspace import read_workspace
+
     if append:
         append_workspace(path, content)
-        return f"Appended to {path}"
+        after = read_workspace(path, optional=True) or ""
+        if content and content.strip() and content.strip() not in after:
+            return (
+                f"Error: append to {path} did not persist "
+                "(post-write verification could not find the content on re-read)"
+            )
+        return f"Appended {len(content)} chars to {path} (file now {len(after)} chars, verified)"
     else:
         from forven.workspace import write_workspace
         write_workspace(path, content)
-        return f"Wrote {path}"
+        after = read_workspace(path, optional=True) or ""
+        if after != content:
+            return (
+                f"Error: write to {path} did not persist "
+                f"(post-write verification read {len(after)} chars, expected {len(content)})"
+            )
+        return f"Wrote {len(content)} chars to {path} (verified)"
 
 @register_tool(
     name="list_local_datasets",
@@ -489,19 +508,40 @@ def _tool_fetch_exchange_data(params: dict) -> str:
 
 @register_tool(
     name="get_local_ohlcv",
-    description="Read OHLCV bars from a local dataset. Use for data analysis and strategy ideation.",
+    description=(
+        "Read OHLCV bars from a local dataset. Use for data analysis and strategy "
+        "ideation. Set include_enrichment=true to join the derivative streams the "
+        "strategy engine sees (funding_rate, open_interest, taker_buy_sell_ratio, "
+        "ls_ratio, basis, iv_btc/iv_eth, liquidation columns) — plain calls return "
+        "OHLCV only, which does NOT mean the enrichment data is missing."
+    ),
     input_schema={
         "type": "object",
         "properties": {
             "symbol": {"type": "string", "description": "Symbol e.g. 'BTC/USDT' or 'BTC-USDT'"},
             "timeframe": {"type": "string", "description": "Timeframe e.g. '1h', '4h', '1d'"},
             "limit": {"type": "integer", "description": "Number of bars to retrieve (default 100, max 1000)"},
+            "include_enrichment": {
+                "type": "boolean",
+                "description": (
+                    "Join derivative enrichment columns (funding/OI/flow/basis/IV) "
+                    "onto the bars, as the strategy engine does. Default false."
+                ),
+            },
         },
         "required": ["symbol", "timeframe"],
     },
 )
-def _tool_get_local_ohlcv(symbol: str, timeframe: str, limit: int = 100) -> str:
-    """Read OHLCV bars from a local dataset."""
+def _tool_get_local_ohlcv(
+    symbol: str, timeframe: str, limit: int = 100, include_enrichment: bool = False
+) -> str:
+    """Read OHLCV bars from a local dataset, optionally enriched.
+
+    Agents refused to mint OI/funding-keyed strategies because this tool's
+    bare OHLCV response read as "enrichment columns don't exist" (2026-07-06
+    H01622 report + data gap) — the columns join at ENGINE time via
+    DataManager.enrich, they were just never surfaced on this read tool.
+    """
     from forven.data import dataset_ohlcv
     try:
         # Max limit 1000 for safety
@@ -510,13 +550,31 @@ def _tool_get_local_ohlcv(symbol: str, timeframe: str, limit: int = 100) -> str:
         data = result.get("data", [])
         if not data:
             return f"No data found for {symbol} {timeframe}"
-        
-        return json.dumps({
+
+        enrichment_error = None
+        if include_enrichment:
+            try:
+                import pandas as pd
+
+                from forven.data_manager import data_manager
+
+                frame = pd.DataFrame(data)
+                enriched = data_manager.enrich(frame, symbol, timeframe)
+                data = json.loads(enriched.to_json(orient="records", date_format="iso"))
+            except Exception as exc:
+                enrichment_error = str(exc)
+
+        payload = {
             "symbol": result["symbol"],
             "timeframe": result["timeframe"],
             "row_count": result["row_count"],
             "bars": data,
-        }, indent=2)
+        }
+        if include_enrichment:
+            payload["enriched"] = enrichment_error is None
+            if enrichment_error:
+                payload["enrichment_error"] = enrichment_error
+        return json.dumps(payload, indent=2)
     except FileNotFoundError:
         return f"Dataset not found: {symbol} {timeframe}. Use list_local_datasets to see what is available."
     except Exception as e:

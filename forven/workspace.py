@@ -2,6 +2,7 @@
 
 import logging
 import shutil
+import threading
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -157,19 +158,25 @@ def write_workspace(filename: str, content: str):
             pass
 
 
-def append_workspace(filename: str, content: str):
-    """Append to a workspace file."""
-    def _append(path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(content)
+_APPEND_LOCK = threading.Lock()
 
-    _append(WORKSPACE_DIR / filename)
-    if LEGACY_WORKSPACE_DIR and LEGACY_WORKSPACE_DIR != WORKSPACE_DIR:
-        try:
-            _append(LEGACY_WORKSPACE_DIR / filename)
-        except Exception:
-            pass
+
+def append_workspace(filename: str, content: str):
+    """Append to a workspace file.
+
+    Reconciles the divergent-roots trap: ``read_workspace`` returns the
+    LONGEST copy across the canonical and legacy roots, while appends
+    previously hit each root independently (legacy failures silently
+    swallowed). Once the roots diverged with the legacy copy ahead, an append
+    landed on the shorter canonical copy and every subsequent read returned
+    the stale legacy copy WITHOUT it — "write_file returned success, the file
+    did not grow" (2026-07-06 agent reports on memory/*.md). Now the append
+    bases on the same best copy the reader resolves, and the RESULT is
+    written to both roots atomically, so reader and writer always agree.
+    """
+    with _APPEND_LOCK:
+        base = read_workspace(filename, optional=True) or ""
+        write_workspace(filename, base + content)
 
 
 def today_memory_path() -> str:

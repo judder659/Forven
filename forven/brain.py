@@ -3757,7 +3757,11 @@ def assign_risk_audit():
     # Exclude Bot Factory paper trades — the live risk audit must not count them
     # as portfolio exposure.
     open_trades = get_open_trades(exclude_bots=True)
-    status = kv_get("status") or {}
+    # Real risk snapshot (KV daemon_state) — the legacy "status" key was never
+    # written, so the audit prompt always claimed the kill switch was inactive.
+    from forven.portfolio_status import portfolio_status_snapshot
+
+    snapshot = portfolio_status_snapshot()
     
     settings = kv_get("forven:settings", {})
     pipeline = kv_get("forven:pipeline_thresholds", {})
@@ -3776,7 +3780,11 @@ def assign_risk_audit():
     prompt = (
         "RISK AUDIT ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ Review portfolio health and exposure.\n\n"
         f"Open positions: {len(open_trades)}\n"
-        f"Kill switch: {'ACTIVE' if status.get('killSwitch') else 'inactive'}\n\n"
+        f"Kill switch: {'ACTIVE' if snapshot['kill_switch_active'] else 'inactive'}\n"
+        f"Account equity: ${snapshot['account_equity']:,.2f}"
+        f" (HWM ${snapshot['high_water_mark']:,.2f},"
+        f" drawdown {snapshot['drawdown_pct']:.1f}%,"
+        f" daily PnL {snapshot['daily_pnl_pct']:+.2f}%)\n\n"
         "Your tasks:\n"
         "1. Review all open positions ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ check if any are approaching stop-loss levels\n"
         "2. Calculate total portfolio exposure and correlation between positions\n"

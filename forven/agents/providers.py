@@ -24,6 +24,15 @@ log = logging.getLogger("forven.agents.providers")
 # Shared data structures
 # ---------------------------------------------------------------------------
 
+# Output-token budget for agent turns. The previous 4096 was routinely hit
+# mid-tool-call by post-mortem / lessons writes (~4KB of write_file content
+# plus narrative plus JSON overhead), producing consistent mid-sentence
+# truncations (three strikes in the week of 2026-07-06). Raising the ceiling
+# reduces the trigger; ProviderResponse.truncated + the runner guard handle
+# the residual case honestly.
+_AGENT_MAX_TOKENS = 8192
+
+
 @dataclass
 class ToolCall:
     """A single tool invocation parsed from an AI response."""
@@ -45,6 +54,13 @@ class ProviderResponse:
     # transcript so the operator can see WHY the agent acted. None when the
     # provider/model exposes no readable reasoning.
     reasoning: str | None = None
+    # True when the provider cut this turn at the output-token limit
+    # (stop_reason "max_tokens" / finish_reason "length"). Tool calls parsed
+    # from such a turn are UNTRUSTWORTHY: some gateways repair the cut JSON
+    # into valid-but-truncated arguments, which silently wrote ~4KB-truncated
+    # files (2026-07-06 write_file reports, mid-sentence cuts). The runner
+    # refuses to execute tool calls from truncated turns.
+    truncated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +126,7 @@ class MiniMaxProvider(ToolCallProvider):
             "model": model_id,
             "messages": messages,
             "system": system,
-            "max_tokens": 4096,
+            "max_tokens": _AGENT_MAX_TOKENS,
             "temperature": 0.7,
             "tools": tools,
         }
@@ -147,13 +163,14 @@ class MiniMaxProvider(ToolCallProvider):
             raw_assistant_message=content_blocks,
             usage=usage,
             reasoning="\n\n".join(thinking_parts) or None,
+            truncated=(stop_reason == "max_tokens"),
         )
 
     async def stream(self, model_id, messages, system, tools, token):
         headers = {"x-api-key": token, "content-type": "application/json"}
         body = {
             "model": model_id, "messages": messages, "system": system,
-            "max_tokens": 4096, "temperature": 0.7, "tools": tools,
+            "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7, "tools": tools,
         }
         async for ev in _stream_anthropic_messages(self.ENDPOINT, headers, body):
             yield ev
@@ -410,6 +427,7 @@ async def _stream_anthropic_messages(endpoint, headers, body):
         text=text, tool_calls=tool_calls,
         stop=(not tool_calls or stop_reason == "end_turn"),
         raw_assistant_message=content_blocks, usage=usage,
+        truncated=(stop_reason == "max_tokens"),
     )}
 
 
@@ -433,7 +451,7 @@ class OpenAIProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": _build_openai_messages(system, messages),
-            "max_tokens": 4096, "temperature": 0.7,
+            "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7,
             "tools": self._openai_tools, "tool_choice": "auto",
         }
         async for ev in _stream_openai_chat(self.ENDPOINT, headers, body, include_usage=True):
@@ -452,7 +470,7 @@ class OpenAIProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": openai_messages,
-            "max_tokens": 4096,
+            "max_tokens": _AGENT_MAX_TOKENS,
             "temperature": 0.7,
             "tools": self._openai_tools,
             "tool_choice": "auto",
@@ -465,6 +483,7 @@ class OpenAIProvider(ToolCallProvider):
 
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
+        finish_reason = str(choice.get("finish_reason") or "").strip().lower()
         assistant_text = _coerce_openai_text(assistant.get("content"))
         # Reasoning models (DeepSeek-R1, o-series via compat gateways, ...)
         # return their chain-of-thought as `reasoning_content`.
@@ -497,6 +516,7 @@ class OpenAIProvider(ToolCallProvider):
             raw_assistant_message=raw_msg,
             usage=usage,
             reasoning=reasoning,
+            truncated=(finish_reason == "length"),
         )
 
     def append_assistant(self, messages, response):
@@ -646,7 +666,7 @@ class LMStudioProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": _build_openai_messages(system, messages),
-            "max_tokens": 4096, "temperature": 0.7,
+            "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7,
             "tools": self._openai_tools, "tool_choice": "auto",
         }
         endpoint = f"{self._get_base_url()}/v1/chat/completions"
@@ -666,7 +686,7 @@ class LMStudioProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": openai_messages,
-            "max_tokens": 4096,
+            "max_tokens": _AGENT_MAX_TOKENS,
             "temperature": 0.7,
             "tools": self._openai_tools,
             "tool_choice": "auto",
@@ -680,6 +700,7 @@ class LMStudioProvider(ToolCallProvider):
 
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
+        finish_reason = str(choice.get("finish_reason") or "").strip().lower()
         assistant_text = _coerce_openai_text(assistant.get("content"))
         reasoning = str(assistant.get("reasoning_content") or "").strip() or None
         raw_tool_calls = assistant.get("tool_calls") or []
@@ -709,6 +730,7 @@ class LMStudioProvider(ToolCallProvider):
             raw_assistant_message=raw_msg,
             usage=usage,
             reasoning=reasoning,
+            truncated=(finish_reason == "length"),
         )
 
     def append_assistant(self, messages, response):
@@ -753,7 +775,7 @@ class ZAIProvider(ToolCallProvider):
             }
             body = {
                 "model": model_id, "messages": messages, "system": system,
-                "max_tokens": 4096, "temperature": 0.7, "tools": tools,
+                "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7, "tools": tools,
             }
             async for ev in _stream_anthropic_messages(f"{base_url}/v1/messages", headers, body):
                 yield ev
@@ -764,7 +786,7 @@ class ZAIProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": _build_openai_messages(system, messages),
-            "max_tokens": 4096, "temperature": 0.7,
+            "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7,
             "tools": self._openai_tools, "tool_choice": "auto",
         }
         async for ev in _stream_openai_chat(f"{base_url}/chat/completions", headers, body, include_usage=False):
@@ -785,7 +807,7 @@ class ZAIProvider(ToolCallProvider):
                 "model": model_id,
                 "messages": messages,
                 "system": system,
-                "max_tokens": 4096,
+                "max_tokens": _AGENT_MAX_TOKENS,
                 "temperature": 0.7,
                 "tools": tools,
             }
@@ -817,6 +839,7 @@ class ZAIProvider(ToolCallProvider):
                 stop=(not tool_calls or stop_reason == "end_turn"),
                 raw_assistant_message=content_blocks,
                 usage=usage,
+                truncated=(stop_reason == "max_tokens"),
             )
 
         if self._openai_tools is None:
@@ -828,7 +851,7 @@ class ZAIProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": openai_messages,
-            "max_tokens": 4096,
+            "max_tokens": _AGENT_MAX_TOKENS,
             "temperature": 0.7,
             "tools": self._openai_tools,
             "tool_choice": "auto",
@@ -841,6 +864,7 @@ class ZAIProvider(ToolCallProvider):
 
         choice = (data.get("choices") or [{}])[0]
         assistant = choice.get("message") or {}
+        finish_reason = str(choice.get("finish_reason") or "").strip().lower()
         assistant_text = _coerce_openai_text(assistant.get("content"))
         reasoning = str(assistant.get("reasoning_content") or "").strip() or None
         if not assistant_text and reasoning:
@@ -872,6 +896,7 @@ class ZAIProvider(ToolCallProvider):
             raw_assistant_message=raw_msg,
             usage=usage,
             reasoning=reasoning,
+            truncated=(finish_reason == "length"),
         )
 
     def append_assistant(self, messages, response):
@@ -956,7 +981,7 @@ class AnthropicProvider(ToolCallProvider):
         }
         body = {
             "model": model_id, "messages": messages, "system": system,
-            "max_tokens": 4096, "temperature": 0.7, "tools": tools,
+            "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7, "tools": tools,
         }
         async for ev in _stream_anthropic_messages(endpoint, headers, body):
             yield ev
@@ -972,7 +997,7 @@ class AnthropicProvider(ToolCallProvider):
             "model": model_id,
             "messages": messages,
             "system": system,
-            "max_tokens": 4096,
+            "max_tokens": _AGENT_MAX_TOKENS,
             "temperature": 0.7,
             "tools": tools,
         }

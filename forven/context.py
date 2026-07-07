@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 
 log = logging.getLogger("forven.context")
 
-from forven.db import get_open_trades, get_recent_trades, get_strategies, kv_get, list_approvals
+from forven.db import get_open_trades, get_recent_trades, get_strategies, list_approvals
 from forven.strategy_diversity import render_failure_taxonomy, render_strategy_diversity_guard
 from forven.workspace import (
     read_operator_profile,
@@ -472,27 +472,36 @@ def _format_recent_trades(limit: int = 20) -> str:
 
 
 def _format_portfolio_status() -> str:
-    """Format portfolio status for context."""
-    status = kv_get("status")
-    if not status:
+    """Format portfolio status for context.
+
+    Reads the daemon's real risk-tick snapshot (KV daemon_state via
+    portfolio_status_snapshot). The previous source (KV "status") was never
+    written by anything, so this section silently vanished from every Brain
+    prompt while the ledger accrued real losses.
+    """
+    from forven.portfolio_status import portfolio_status_snapshot
+
+    snapshot = portfolio_status_snapshot()
+    if not snapshot["equity_available"] and not snapshot["daemon_running"]:
         return ""
 
     lines = ["# PORTFOLIO STATUS"]
 
-    if status.get("killSwitch"):
+    if snapshot["kill_switch_active"]:
         lines.append("**KILL SWITCH ACTIVE**")
+    if snapshot["daily_halt"]:
+        lines.append("**DAILY LOSS HALT ACTIVE**")
 
-    equity = status.get("accountEquity", 0)
-    hwm = status.get("highWaterMark", 0)
-    daily_pnl = status.get("dailyPnl", 0)
-    drawdown = ((hwm - equity) / hwm * 100) if hwm > 0 else 0
+    equity = snapshot["account_equity"]
+    hwm = snapshot["high_water_mark"]
+    lines.append(
+        f"- Equity: ${equity:,.2f} | HWM: ${hwm:,.2f} | Drawdown: {snapshot['drawdown_pct']:.1f}%"
+    )
+    lines.append(f"- Daily PnL: {snapshot['daily_pnl_pct']:+.2f}% of equity")
+    lines.append(f"- Regime: {snapshot['regime']}")
 
-    lines.append(f"- Equity: ${equity:,.2f} | HWM: ${hwm:,.2f} | Drawdown: {drawdown:.1f}%")
-    lines.append(f"- Daily PnL: ${daily_pnl:,.2f}")
-    lines.append(f"- Regime: {status.get('regime', 'unknown')}")
-
-    if status.get("fng"):
-        fng = status["fng"]
+    if snapshot["fear_greed"]:
+        fng = snapshot["fear_greed"]
         lines.append(f"- Fear & Greed: {fng.get('score', '?')} ({fng.get('label', '?')})")
 
     open_trades = get_open_trades(exclude_bots=True)
