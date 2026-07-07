@@ -281,7 +281,6 @@ def _sanitize_execution_axis_values(name: str, values: list) -> list:
 
 
 def _lhs_sample(
-    combos: list[tuple],
     param_ranges: list[list],
     n_samples: int,
     seed: int = _LHS_SEED,
@@ -290,12 +289,18 @@ def _lhs_sample(
 
     Divides each parameter axis into ``n_samples`` strata and picks one value
     per stratum, ensuring even coverage instead of biased first-N truncation.
+    Builds each sampled combo directly from the per-axis value lists — the full
+    cartesian product is never materialized (on fine-grained user/API ranges it
+    can be astronomically large and OOM the process).
     """
     rng = random.Random(seed)
     n_dims = len(param_ranges)
 
-    if n_dims == 0 or n_samples <= 0:
-        return combos[:n_samples]
+    if n_samples <= 0:
+        return []
+    if n_dims == 0:
+        # Zero axes → the product is the single empty combo (backtest base params as-is).
+        return [()]
 
     # For each dimension, divide into n_samples strata
     sampled_indices: list[list[int]] = []
@@ -418,8 +423,14 @@ def grid_search(
         param_ranges.append(values)
         axes.append(("execution", name))
 
-    combos = list(itertools.product(*param_ranges))
-    if not combos:
+    # Count the grid WITHOUT materializing it: fine-grained user/API ranges
+    # (e.g. {min:0, max:100, step:0.01} on a couple of axes) make the cartesian
+    # product astronomically large, and eagerly building
+    # `list(itertools.product(...))` OOMs before any trial budget applies.
+    # _lhs_sample draws combos straight from the per-axis value lists, so the
+    # full product is only ever materialized when it is already within budget.
+    total_combos = math.prod(len(values) for values in param_ranges)
+    if total_combos == 0:
         # An empty product (e.g. an inverted (low, high, step) range or an explicit empty
         # list spec) would make workers = min(N, 0) = 0 and crash ThreadPoolExecutor with
         # "max_workers must be greater than 0". No viable grid → return no results.
@@ -430,19 +441,20 @@ def grid_search(
     # combos can run in the wall-clock target; the explicit trial budget still wins
     # when the operator asked for fewer.
     _grid_workers_n, _grid_feasible, _grid_combo_timeout, _grid_overall_timeout = _grid_execution_budget(
-        strategy_type, bars, len(combos)
+        strategy_type, bars, total_combos
     )
     trial_budget = min(_trial_budget(max_trials), _grid_feasible)
-    if len(combos) > trial_budget:
+    if total_combos > trial_budget:
         # P2-4: Latin Hypercube Sampling instead of deterministic first-N truncation.
-        _total_combos = len(combos)
-        combos = _lhs_sample(combos, param_ranges, trial_budget)
+        combos = _lhs_sample(param_ranges, trial_budget)
         log.info(
             "Grid search %s: %d total combos sampled to %d via LHS (feasible=%d, workers=%d, "
             "combo_timeout=%.0fs, grid_timeout=%.0fs, est_per_backtest=%.1fs)",
-            strategy_id, _total_combos, len(combos), _grid_feasible, _grid_workers_n,
+            strategy_id, total_combos, len(combos), _grid_feasible, _grid_workers_n,
             _grid_combo_timeout, _grid_overall_timeout, _estimate_backtest_seconds(strategy_type, bars),
         )
+    else:
+        combos = list(itertools.product(*param_ranges))  # small by construction: <= trial_budget
 
     # P2-5: Parameter coverage telemetry
     coverage = {}
@@ -459,7 +471,7 @@ def grid_search(
         "Grid search %s: %d/%d combinations for %s objective=%s | coverage: %s",
         strategy_id,
         len(combos),
-        len(list(itertools.product(*param_ranges))),
+        total_combos,
         axis_names,
         normalized_objective,
         json.dumps(coverage),

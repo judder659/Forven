@@ -13,7 +13,7 @@ from forven.backtesting import BacktestingClient
 from forven.db import get_db
 from forven.routers import strategies as strategies_router
 from forven.routers import verdict as verdict_router
-from forven.strategies.optimizer import _get_param_space, grid_search, optimize_strategy
+from forven.strategies.optimizer import _get_param_space, _lhs_sample, grid_search, optimize_strategy
 
 
 def _insert_strategy(strategy_id: str, *, symbol: str = "BTC", timeframe: str = "1h") -> None:
@@ -697,6 +697,70 @@ def test_grid_search_sanitizes_legacy_leverage_axes(monkeypatch):
     assert set(captured_leverage) == {1.0, 2.0}
     assert all(result["params"] == {"rsi_length": 14} for result in results)
     assert all(result["execution_controls"]["leverage"] in {1, 2} for result in results)
+
+
+def test_lhs_sample_draws_from_axes_without_materialized_product():
+    # OOM regression: _lhs_sample must build combos straight from the per-axis
+    # value lists — it never receives (or needs) the full cartesian product.
+    param_ranges = [
+        [round(i * 0.01, 2) for i in range(10_001)],  # 10,001 values
+        list(range(5_000)),
+        [1, 2, 3, 4, 5],
+    ]  # full product = ~2.5e11 combos — materializing it would OOM
+
+    sampled = _lhs_sample(param_ranges, 16)
+
+    assert 1 <= len(sampled) <= 16
+    for combo in sampled:
+        assert len(combo) == 3
+        for dim, value in enumerate(combo):
+            assert value in param_ranges[dim]
+    # Deterministic under the fixed default seed.
+    assert sampled == _lhs_sample(param_ranges, 16)
+
+
+def test_grid_search_huge_grid_never_materializes_product(monkeypatch):
+    # OOM regression: fine-grained {min,max,step} API ranges used to be expanded
+    # into a full `list(itertools.product(...))` BEFORE the trial budget applied.
+    # This grid is ~1e12 combos; the search must sample and complete regardless.
+    evaluated: list[dict] = []
+
+    def _fake_backtest_strategy(**kwargs):
+        evaluated.append(kwargs["params"])
+        return {
+            "metrics": {
+                "total_trades": 10,
+                "sharpe": 1.0,
+                "total_return_pct": 5.0,
+                "win_rate": 50.0,
+                "profit_factor": 1.2,
+            }
+        }
+
+    def _no_candles(**_kwargs):
+        raise RuntimeError("no candle data in tests")
+
+    monkeypatch.setattr("forven.strategies.optimizer.backtest_strategy", _fake_backtest_strategy)
+    monkeypatch.setattr("forven.strategies.backtest.load_backtest_candles", _no_candles)
+
+    results = grid_search(
+        "S-huge-grid",
+        "BTC",
+        "rsi_momentum",
+        {
+            "alpha": {"min": 0.0, "max": 100.0, "step": 0.01},   # 10,001 values
+            "beta": {"min": 0.0, "max": 100.0, "step": 0.01},    # 10,001 values
+            "gamma": {"min": 0, "max": 9_999, "step": 1},        # 10,000 values
+        },
+        bars=240,
+        max_trials=8,
+    )
+
+    assert results
+    assert 1 <= len(evaluated) <= 8
+    # trials_evaluated must reflect the SAMPLED count (DSR deflation input),
+    # not the astronomical full-grid count.
+    assert all(result["trials_evaluated"] == len(evaluated) for result in results)
 
 
 def _isolate_param_space_lookups(monkeypatch, *, registry_obj=None):
