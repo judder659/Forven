@@ -192,6 +192,24 @@ def _module_import_allowed(dotted: str) -> bool:
             return False
     return True
 
+
+def _forbidden_import_message(dotted: str, *, from_import: bool = False) -> str:
+    """Rejection message for a blocked import, self-documenting for forven paths.
+
+    Agents guessing a nonexistent internal module (e.g. ``forven.strategies.signals``
+    for a Signal enum that doesn't exist) burn registration attempts against a bare
+    "not on the allowlist" — name the real strategy-facing surface instead.
+    """
+    shown = f"'from {dotted} import ...'" if from_import else f"'{dotted}'"
+    message = f"Import not on the allowlist: {shown}"
+    if (dotted or "").strip().split(".")[0] == "forven":
+        message += (
+            "; the only strategy-facing forven imports are "
+            + ", ".join(ALLOWED_FORVEN_PREFIXES)
+            + " (BaseStrategy and Signal live in forven.strategies.base)"
+        )
+    return message
+
 FORBIDDEN_CALLS: frozenset[str] = frozenset(
     {
         "eval",
@@ -517,7 +535,7 @@ class _GuardVisitor(ast.NodeVisitor):
                         kind="forbidden_import",
                         lineno=node.lineno,
                         col=node.col_offset,
-                        message=f"Import not on the allowlist: '{alias.name}'",
+                        message=_forbidden_import_message(alias.name),
                         node_repr=ast.dump(node),
                     )
                 )
@@ -544,7 +562,7 @@ class _GuardVisitor(ast.NodeVisitor):
                     kind="forbidden_import",
                     lineno=node.lineno,
                     col=node.col_offset,
-                    message=f"Import not on the allowlist: 'from {module} import ...'",
+                    message=_forbidden_import_message(module, from_import=True),
                     node_repr=ast.dump(node),
                 )
             )

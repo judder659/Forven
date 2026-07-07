@@ -179,7 +179,11 @@ for name, obj in list(globals().items()):
         continue
 
 if not strategy_classes:
-    print("ERROR: No BaseStrategy subclass found")
+    print(
+        "ERROR: No BaseStrategy subclass found. The module must define a class extending "
+        "BaseStrategy (`from forven.strategies.base import BaseStrategy, Signal`) and "
+        "export STRATEGY_CLASS = <that class>."
+    )
     sys.exit(1)
 
 for cls_name, cls in strategy_classes:
@@ -208,13 +212,28 @@ for cls_name, cls in strategy_classes:
     elif isinstance(signal, dict):
         signal_payload = dict(signal)
     else:
-        print(f"ERROR: generate_signal returned invalid type for {{cls_name}}: {{type(signal).__name__}}")
+        # Name the full contract: agents have burned 4+ registration attempts
+        # cycling float/int/np.int64/Series against the bare "invalid type"
+        # message and then guessing a nonexistent Signal-enum module (2026-07-07
+        # S06308 hollow-mint cluster).
+        print(
+            f"ERROR: generate_signal returned invalid type for {{cls_name}}: {{type(signal).__name__}}. "
+            "Return the Signal DATACLASS (`from forven.strategies.base import Signal` -- the only "
+            "allowlisted import path; there is no forven.strategies.signals module) or a dict with "
+            "entry_signal/exit_signal keys. Signal is not an enum (no BUY/SELL/NEUTRAL members): "
+            "no-trade is Signal(), an entry is Signal(entry_signal=True, direction='long', "
+            "price=float(df['close'].iloc[-1])). Never return float/int/numpy scalars/Series."
+        )
         sys.exit(1)
 
     required_signal_keys = {{"entry_signal", "exit_signal"}}
     missing_signal_keys = sorted(required_signal_keys.difference(signal_payload))
     if missing_signal_keys:
-        print(f"ERROR: Missing signal keys for {{cls_name}}: {{', '.join(missing_signal_keys)}}")
+        print(
+            f"ERROR: Missing signal keys for {{cls_name}}: {{', '.join(missing_signal_keys)}}. "
+            "Dict signals need boolean entry_signal AND exit_signal keys; simpler is to return "
+            "Signal(entry_signal=..., exit_signal=...) from forven.strategies.base."
+        )
         sys.exit(1)
 
     for key in ("entry_signal", "exit_signal", "price", "confidence", "direction"):
