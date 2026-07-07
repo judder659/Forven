@@ -820,7 +820,9 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
         SHORT_DIRECTIVE_TEXT,
         develop_budget_remaining,
         next_data_directive,
+        next_survivor_neighborhood_directive,
         next_trade_mode_directive,
+        survivor_directive_text,
     )
 
     daily_budget_remaining = develop_budget_remaining()
@@ -857,6 +859,13 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
                     if data_directive:
                         input_data["data_directive"] = data_directive
                         description = description + DATA_DIRECTIVE_TEXT
+                    # SURV-QUOTA-1: a share of daily develops map the
+                    # neighborhood of this instance's OWN proven survivors —
+                    # instance-relative exploit, never a shipped family pick.
+                    survivor_directive = next_survivor_neighborhood_directive()
+                    if survivor_directive:
+                        input_data["survivor_neighborhood_directive"] = survivor_directive
+                        description = description + survivor_directive_text(survivor_directive)
                 develop_in_flight += 1
         task_id = assign_task(
             action.agent_id,

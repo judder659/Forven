@@ -77,6 +77,23 @@ DATA_DIRECTIVE_TEXT = (
 )
 
 
+def survivor_directive_text(directive: dict[str, Any]) -> str:
+    """Task-description block for a survivor-neighborhood develop (SURV-QUOTA-1)."""
+    return (
+        "\n\nSURVIVOR-NEIGHBORHOOD QUOTA (SURV-QUOTA-1): author THIS candidate as a "
+        f"NEIGHBORHOOD VARIANT of locally-proven survivor {directive.get('display_id')} "
+        f"(family '{directive.get('family')}', type '{directive.get('strategy_type')}', "
+        f"{directive.get('symbol')} {directive.get('timeframe')}). Keep the family's "
+        "entry/exit SKELETON and vary exactly one or two of the axes that transfer: "
+        "a different asset from the research universe, a different timeframe, or a "
+        "different confirmation gate (flow / IV / volume / positioning). Do NOT copy "
+        "its params verbatim and do NOT change the core structure — the point is to "
+        "map the proven edge's neighborhood, not to clone or to wander. This "
+        "survivor earned the slot on THIS instance's own gate evidence; the quota "
+        "never encodes which families are good."
+    )
+
+
 def _discipline() -> dict[str, Any]:
     from forven.research_contract import get_hypothesis_discipline_settings
 
@@ -306,6 +323,7 @@ def allocator_overview(limit: int = 40) -> dict[str, Any]:
     used = develop_budget_used_today()
     total_today, directed_today = _directive_counts_today()
     _, data_directed_today = _directive_counts_today("data_directive")
+    _, survivor_directed_today = _directive_counts_today("survivor_neighborhood_directive")
     quota_pct = float(_discipline()["crucible_short_mode_quota_pct"])
     return {
         "budget": {
@@ -324,6 +342,13 @@ def allocator_overview(limit: int = 40) -> dict[str, Any]:
             "develops_today": total_today,
             "directed_today": data_directed_today,
             "share_pct": round((data_directed_today / total_today) * 100.0, 1) if total_today else 0.0,
+        },
+        "survivor_quota": {
+            "target_pct": float(_discipline()["crucible_survivor_neighborhood_quota_pct"]),
+            "develops_today": total_today,
+            "directed_today": survivor_directed_today,
+            "share_pct": round((survivor_directed_today / total_today) * 100.0, 1) if total_today else 0.0,
+            "eligible_survivors": len(local_survivors()),
         },
         "pool": {
             "total": len(crucibles),
@@ -363,3 +388,113 @@ def next_data_directive() -> str | None:
     if total == 0:
         return "orthogonal_data"
     return "orthogonal_data" if (directed / total) * 100.0 < quota_pct else None
+
+
+# ── survivor-neighborhood quota (SURV-QUOTA-1) ───────────────────────────────
+
+_SURVIVOR_STAGES = ("paper", "paper_trading", "live_graduated", "deployed")
+
+
+def local_survivors(limit: int = 50) -> list[dict[str, Any]]:
+    """This instance's OWN proven survivors — strategies whose gate evidence
+    carried them to the paper stage or beyond. Never seeded, never shipped:
+    a fresh install has none and the quota correctly spends nothing."""
+    from forven.strategy_diversity import infer_strategy_family
+
+    placeholders = ",".join("?" * len(_SURVIVOR_STAGES))
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT id, display_id, name, type, symbol, timeframe, stage
+                   FROM strategies
+                   WHERE LOWER(TRIM(COALESCE(stage, status, ''))) IN ({placeholders})
+                   ORDER BY datetime(updated_at) DESC
+                   LIMIT ?""",
+                (*_SURVIVOR_STAGES, max(int(limit), 1)),
+            ).fetchall()
+    except Exception as exc:
+        log.debug("survivor scan failed: %s", exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        stype = str(row["type"] or "").strip()
+        out.append(
+            {
+                "strategy_id": str(row["id"]),
+                "display_id": str(row["display_id"] or row["id"]),
+                "family": infer_strategy_family(f"{row['name'] or ''} {stype}") or stype or "unknown",
+                "strategy_type": stype,
+                "symbol": str(row["symbol"] or "").strip().upper(),
+                "timeframe": str(row["timeframe"] or "1h").strip().lower(),
+                "stage": str(row["stage"] or ""),
+            }
+        )
+    return out
+
+
+def _survivor_directive_family_counts_today() -> dict[str, int]:
+    """Today's survivor-directed develops grouped by the stamped family."""
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT json_extract(input_data, '$.survivor_neighborhood_directive.family') AS family,
+                          COUNT(*) AS n
+                   FROM agent_tasks
+                   WHERE type = 'develop_candidate'
+                     AND created_at >= strftime('%Y-%m-%dT00:00:00+00:00', 'now')
+                     AND json_extract(input_data, '$.survivor_neighborhood_directive') IS NOT NULL
+                   GROUP BY 1"""
+            ).fetchall()
+        return {str(r["family"] or "unknown"): int(r["n"] or 0) for r in rows}
+    except Exception as exc:
+        log.debug("survivor directive family count failed: %s", exc)
+        return {}
+
+
+def next_survivor_neighborhood_directive() -> dict[str, Any] | None:
+    """A survivor payload when today's survivor-directed share is under quota.
+
+    Callers stamp the returned dict into input_data as
+    ``survivor_neighborhood_directive`` (the counter's source of truth) and
+    append survivor_directive_text() to the task description. Selection
+    honors the per-family cap (survivor_neighborhood_family_cap_pct of the
+    day's survivor slots) so one lucky family cannot monoculture the exploit
+    lane, and prefers the family with the fewest slots used today.
+    """
+    discipline = _discipline()
+    quota_pct = float(discipline["crucible_survivor_neighborhood_quota_pct"])
+    if quota_pct <= 0:
+        return None
+    total, directed = _directive_counts_today("survivor_neighborhood_directive")
+    if total > 0 and (directed / total) * 100.0 >= quota_pct:
+        return None
+
+    survivors = local_survivors()
+    if not survivors:
+        return None
+
+    family_cap_pct = float(discipline["survivor_neighborhood_family_cap_pct"])
+    family_counts = _survivor_directive_family_counts_today()
+    directed_after = sum(family_counts.values()) + 1
+
+    def _family_allowed(family: str) -> bool:
+        if family_cap_pct <= 0 or family_cap_pct >= 100:
+            return True
+        used = family_counts.get(family, 0)
+        return ((used + 1) / directed_after) * 100.0 <= family_cap_pct or used == 0
+
+    eligible = [s for s in survivors if _family_allowed(s["family"])]
+    if not eligible:
+        return None
+    # Fewest slots used today first (round-robins families), then most
+    # recently updated survivor (list order from local_survivors).
+    eligible.sort(key=lambda s: family_counts.get(s["family"], 0))
+    chosen = eligible[0]
+    return {
+        "survivor_id": chosen["strategy_id"],
+        "display_id": chosen["display_id"],
+        "family": chosen["family"],
+        "strategy_type": chosen["strategy_type"],
+        "symbol": chosen["symbol"],
+        "timeframe": chosen["timeframe"],
+    }

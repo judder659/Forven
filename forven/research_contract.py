@@ -130,6 +130,18 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
         # instead of price-only indicators — the graveyard's most-mined
         # field). Independent of the short quota. 0 disables.
         "crucible_orthogonal_data_quota_pct": 40,
+        # SURV-QUOTA-1 (2026-07-07): percent of daily develops reserved for
+        # NEIGHBORHOOD VARIANTS of this instance's OWN proven survivors
+        # (paper/live strategies) — same family skeleton, varied along the
+        # axes known to transfer (asset, timeframe, confirmation gate). The
+        # quota is instance-relative by construction: a fresh install spends
+        # nothing here until it has a survivor, and nothing about WHICH family
+        # to exploit ever ships in the product. 0 disables.
+        "crucible_survivor_neighborhood_quota_pct": 25,
+        # Per-family ceiling WITHIN the survivor quota (percent of the day's
+        # survivor-directed develops one family may consume) — the exploit
+        # lane must not monoculture a single lucky family.
+        "survivor_neighborhood_family_cap_pct": 50,
         # Autonomous-mint dedup (2026-06-10 audit B-16). An agent create_hypothesis
         # is rejected when its title duplicates an active crucible or one disproven
         # within this many days — stops the re-mint/re-disprove churn loop. 0
@@ -166,6 +178,8 @@ _HYPOTHESIS_DISCIPLINE_RANGES: dict[str, tuple[int | float, int | float]] = {
     "crucible_daily_develop_budget": (1, 2000),
     "crucible_short_mode_quota_pct": (0, 100),
     "crucible_orthogonal_data_quota_pct": (0, 100),
+    "crucible_survivor_neighborhood_quota_pct": (0, 100),
+    "survivor_neighborhood_family_cap_pct": (0, 100),
     "disproven_dedup_lookback_days": (0, 365),
     "novelty_graveyard_scale": (1.0, 100.0),
     "novelty_graveyard_min_total": (0, 5000),
