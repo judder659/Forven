@@ -59,6 +59,11 @@ def _state_key(venue: str = "binance") -> str:
 DEFAULT_REBALANCE_HOURS = 24  # Phase 0: 24h keeps ~all edge at 1/3 the turnover
 DEFAULT_N_LEGS = 5
 DEFAULT_GROSS_LEVERAGE = 1.0
+# Incumbency buffer: a held leg keeps its slot while inside the top/bottom
+# (n_legs + buffer) ranks. The clean-data re-validation (2026-07-07) showed
+# daily full re-ranking pays ~26%/yr in costs against ~10-20%/yr gross carry —
+# marginal rank flicker, not signal, drove most of the turnover.
+DEFAULT_RANK_BUFFER = 3
 DEFAULT_UNIVERSE_MIN_BARS = 17520  # mirror the validated deep-universe rule (2y of 1h)
 DEFAULT_MAX_STALE_HOURS = 3.0
 # Funding rates live on an 8h grid (Binance native) and persist until the next
@@ -103,6 +108,7 @@ def _basket_config(settings: dict) -> dict:
     return {
         "rebalance_hours": max(_float_setting(settings, "basket_rebalance_hours", DEFAULT_REBALANCE_HOURS), 1.0),
         "n_legs": max(int(_float_setting(settings, "basket_n_legs", DEFAULT_N_LEGS)), 1),
+        "rank_buffer": max(int(_float_setting(settings, "basket_rank_buffer", DEFAULT_RANK_BUFFER)), 0),
         "gross_leverage": max(_float_setting(settings, "basket_gross_leverage", DEFAULT_GROSS_LEVERAGE), 0.01),
         "universe_min_bars": max(int(_float_setting(settings, "basket_universe_min_bars", DEFAULT_UNIVERSE_MIN_BARS)), 720),
         "trade_cost": (fee_bps + slippage_bps) / 10_000.0,
@@ -243,7 +249,9 @@ def tick_basket(state: dict, panel, now: datetime, config: dict) -> tuple[dict, 
     turnover = 0.0
     due = _rebalance_due(state.get("last_rebalance_at"), now, config["rebalance_hours"])
     if due:
-        target = _target_weights(panel, config, now=now, closes=closes)
+        target = _target_weights(
+            panel, config, now=now, closes=closes, previous_weights=state.get("weights")
+        )
         old = state["weights"]
         traded_symbols = set(old) | set(target)
         turnover = sum(abs(float(target.get(s, 0.0)) - float(old.get(s, 0.0))) for s in traded_symbols)
@@ -282,7 +290,7 @@ def tick_basket(state: dict, panel, now: datetime, config: dict) -> tuple[dict, 
     state["leg_funding"] = leg_funding
     state["config_used"] = {
         key: config.get(key)
-        for key in ("rebalance_hours", "n_legs", "gross_leverage", "fee_bps", "slippage_bps")
+        for key in ("rebalance_hours", "n_legs", "rank_buffer", "gross_leverage", "fee_bps", "slippage_bps")
     }
 
     state["last_tick_at"] = now_iso
@@ -393,13 +401,26 @@ def _rebalance_due(last_rebalance_iso: str | None, now: datetime, rebalance_hour
     return now - last >= timedelta(hours=float(rebalance_hours)) - timedelta(minutes=5)
 
 
-def _target_weights(panel, config: dict, *, now: datetime | None = None, closes=None) -> dict[str, float]:
+def _target_weights(
+    panel,
+    config: dict,
+    *,
+    now: datetime | None = None,
+    closes=None,
+    previous_weights: dict | None = None,
+) -> dict[str, float]:
     """FundingCarryBasket's rule on each symbol's freshest values: long the
     lowest-funding legs, short the highest, dollar-neutral per-leg fractions.
 
     Uses last-within-window values per symbol (see _latest_within) — a funding
     rate persists until its next 8h print, so ranking on it is ranking on the
-    CURRENT rate, not lookahead or staleness."""
+    CURRENT rate, not lookahead or staleness.
+
+    ``previous_weights`` enables the incumbency buffer (select_buffered_legs —
+    the SAME helper the research simulator uses, so forward results stay
+    comparable): held legs keep their slot while inside the top/bottom
+    (n_legs + rank_buffer) ranks instead of churning on marginal flicker.
+    """
     if now is None:
         now = panel.index[-1].to_pydatetime()
     scores = _latest_within(panel.funding, now, config.get("funding_stale_hours", DEFAULT_FUNDING_STALE_HOURS))
@@ -414,11 +435,24 @@ def _target_weights(panel, config: dict, *, now: datetime | None = None, closes=
         return {}
     per_leg = float(config["gross_leverage"]) / (2.0 * n_legs)
     ranked = scores.sort_values()
+
+    from forven.basket_lab import select_buffered_legs
+
+    previous = previous_weights if isinstance(previous_weights, dict) else {}
+    prev_long = {str(s) for s, w in previous.items() if float(w or 0.0) > 0}
+    prev_short = {str(s) for s, w in previous.items() if float(w or 0.0) < 0}
+    long_side, short_side = select_buffered_legs(
+        [str(s) for s in ranked.index],
+        int(config["n_legs"]),
+        int(config.get("rank_buffer", 0)),
+        prev_long,
+        prev_short,
+    )
     target: dict[str, float] = {}
-    for symbol in ranked.index[:n_legs]:
-        target[str(symbol)] = per_leg
-    for symbol in ranked.index[-n_legs:]:
-        target[str(symbol)] = -per_leg
+    for symbol in long_side:
+        target[symbol] = per_leg
+    for symbol in short_side:
+        target[symbol] = -per_leg
     return target
 
 

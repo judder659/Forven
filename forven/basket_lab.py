@@ -251,15 +251,61 @@ def build_panel(
 
 class BasketStrategy:
     """Rank-and-hold basket contract. The engine SHORTS the top-``n_legs``
-    scores and LONGS the bottom-``n_legs``; use only panel data at/before t."""
+    scores and LONGS the bottom-``n_legs``; use only panel data at/before t.
+
+    ``rank_buffer``: incumbency buffer — a held leg keeps its slot while it
+    stays inside the top/bottom (n_legs + rank_buffer) ranks. Cuts the churn
+    where ranks flicker at the margin: the clean-data 2026-07-07 re-validation
+    showed daily full re-ranking pays ~26%/yr in costs against ~10-20%/yr of
+    gross carry. 0 restores the pre-buffer behavior.
+    """
 
     name = "basket"
     rebalance_hours: int = 8
     n_legs: int = 5
     gross_leverage: float = 1.0
+    rank_buffer: int = 3
 
     def score(self, panel: BasketPanel, t: int) -> pd.Series:  # pragma: no cover
         raise NotImplementedError
+
+
+def select_buffered_legs(
+    ranked_symbols: list,
+    n_legs: int,
+    rank_buffer: int,
+    prev_long: set,
+    prev_short: set,
+) -> tuple[list, list]:
+    """Leg selection with an incumbency buffer, shared by the research
+    simulator (run_basket) and the forward paper book (basket_runtime) so the
+    two stay convention-identical.
+
+    ``ranked_symbols`` is ascending by score (lowest first = LONG side).
+    Incumbents keep their slot while inside the top/bottom (n_legs +
+    rank_buffer) zone; open slots fill with the best non-incumbents. The
+    buffer shrinks on small universes so the two zones never overlap.
+    """
+    symbols = list(ranked_symbols)
+    n = len(symbols)
+    legs = min(int(n_legs), n // 2)
+    if legs <= 0:
+        return [], []
+    buffer = max(int(rank_buffer), 0)
+    buffer = min(buffer, max((n - 2 * legs) // 2, 0))
+
+    long_zone = set(symbols[: legs + buffer])
+    short_zone = set(symbols[n - legs - buffer:])
+    keep_long = [s for s in symbols[: legs + buffer] if s in prev_long and s in long_zone][:legs]
+    keep_short = [
+        s for s in reversed(symbols[n - legs - buffer:]) if s in prev_short and s in short_zone
+    ][:legs]
+
+    used = set(keep_long) | set(keep_short)
+    fill_long = [s for s in symbols if s not in used][: legs - len(keep_long)]
+    used |= set(fill_long)
+    fill_short = [s for s in reversed(symbols) if s not in used][: legs - len(keep_short)]
+    return keep_long + fill_long, keep_short + fill_short
 
 
 class FundingCarryBasket(BasketStrategy):
@@ -318,6 +364,8 @@ def run_basket(
     # Sparse rows at fill bars, forward-filled: weights only change at fills.
     w_sparse = pd.DataFrame(np.nan, index=panel.index, columns=symbols)
     rebalances = 0
+    prev_long: set = set()
+    prev_short: set = set()
     for b in range(0, n_bars - 1, rebalance_every):
         scores = strategy.score(panel, b)
         eligible = (
@@ -333,8 +381,16 @@ def run_basket(
         target = pd.Series(0.0, index=symbols)
         if legs > 0:
             ranked = scores.sort_values()
-            target[ranked.index[:legs]] = per_leg  # lowest scores: LONG
-            target[ranked.index[-legs:]] = -per_leg  # highest scores: SHORT
+            long_side, short_side = select_buffered_legs(
+                list(ranked.index),
+                strategy.n_legs,
+                getattr(strategy, "rank_buffer", 0),
+                prev_long,
+                prev_short,
+            )
+            target[long_side] = per_leg  # lowest scores: LONG
+            target[short_side] = -per_leg  # highest scores: SHORT
+            prev_long, prev_short = set(long_side), set(short_side)
             rebalances += 1
         w_sparse.iloc[b + 1] = target
 
@@ -383,6 +439,7 @@ def run_basket(
         "n_legs": strategy.n_legs,
         "rebalance_hours": strategy.rebalance_hours,
         "gross_leverage": strategy.gross_leverage,
+        "rank_buffer": int(getattr(strategy, "rank_buffer", 0)),
     }
     return BasketResult(name=strategy.name, equity=eq, weights=w_matrix, metrics=metrics)
 
