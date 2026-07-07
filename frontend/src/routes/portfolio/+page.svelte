@@ -15,6 +15,7 @@
 		type PortfolioAllocationResponse,
 	} from '$lib/api/portfolio';
 	import type { EquityPoint } from '$lib/api';
+	import { listWallets } from '$lib/api/wallets';
 	import EquityChart from '$lib/components/EquityChart.svelte';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
@@ -28,6 +29,19 @@
 	let armBusy = false;
 	let disarmBusy = false;
 	let confirmingFlatten = false;
+	let walletOptions: string[] = [];
+
+	async function loadWalletOptions() {
+		try {
+			// light=true: labels only, no exchange round-trips — the select must
+			// populate instantly and never hang on a slow balance read.
+			const snapshot = await listWallets(true);
+			walletOptions = snapshot.registered.map((w) => w.label);
+			if (armWallet && !walletOptions.includes(armWallet)) armWallet = '';
+		} catch {
+			walletOptions = [];
+		}
+	}
 
 	async function doArm() {
 		armBusy = true;
@@ -92,6 +106,7 @@
 			basket = b;
 			allocation = a;
 			live = lv;
+			if (lv && !lv.armed) loadWalletOptions();
 			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -726,13 +741,19 @@
 				{:else}
 					<div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end text-[11px]">
 						<label class="space-y-1">
-							<span class="text-[#666] uppercase text-[10px] tracking-wider">Dedicated wallet label</span>
-							<input
-								type="text"
+							<span class="text-[#666] uppercase text-[10px] tracking-wider">Dedicated sub-account</span>
+							<select
 								bind:value={armWallet}
-								placeholder="e.g. basket"
-								class="w-full border border-[#333] bg-[#0a0a0a] px-2 py-1.5 text-white outline-none"
-							/>
+								class="w-full border border-[#333] bg-[#0a0a0a] px-2 py-1.5 text-white outline-none disabled:opacity-50"
+								disabled={walletOptions.length === 0}
+							>
+								<option value="" disabled selected>
+									{walletOptions.length === 0 ? 'No registered wallets' : 'Select a wallet…'}
+								</option>
+								{#each walletOptions as label (label)}
+									<option value={label}>{label}</option>
+								{/each}
+							</select>
 						</label>
 						<label class="space-y-1">
 							<span class="text-[#666] uppercase text-[10px] tracking-wider">Capital (USD)</span>
@@ -762,9 +783,10 @@
 						</button>
 					</div>
 					<p class="text-[10px] text-[#555]">
-						Requires a registered named wallet with no other trades in it (Settings →
-						HyperLiquid → Wallets). Recommendation: don't arm until the paper book has weeks of
-						evidence and its funding share stays dominant.
+						One sub-account holds both sides — longs and shorts are different assets, so the
+						margin nets in a single wallet. It must have no other trades in it; register
+						sub-accounts under Settings → HyperLiquid → Wallets. Recommendation: don't arm until
+						the paper book has weeks of evidence and its funding share stays dominant.
 					</p>
 				{/if}
 
