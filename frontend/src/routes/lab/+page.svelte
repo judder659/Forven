@@ -23,6 +23,7 @@
 		type ManagerRow,
 	} from '$lib/utils/strategy';
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
+	import { setForgeNavList } from '$lib/stores/forgeNav';
 	import StrategyLink from '$lib/components/ui/StrategyLink.svelte';
 	import SortableTh from '$lib/components/ui/SortableTh.svelte';
 	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
@@ -371,6 +372,9 @@
 	function goNextPage() { currentPage = Math.min(pageCount, currentPage + 1); }
 
 	function openContainer(row: ManagerRow) {
+		// Hand the detail page the FULL filtered+sorted order (not just the visible
+		// page) so its prev/next arrows walk exactly what this view shows.
+		setForgeNavList(rowsInView.map((r) => ({ id: r.id, label: r.display_name || r.name })));
 		goto(`/lab/strategy/${encodeURIComponent(row.id)}?returnTo=${encodeURIComponent('/lab')}`);
 	}
 
