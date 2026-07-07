@@ -103,6 +103,45 @@ def post_portfolio_basket_reset(body: ConfirmBody):
     return {"ok": reset_basket_state()}
 
 
+# PORT-LIVE-1: live basket execution arming. Mirrors GO-LIVE-1: typed
+# "GO LIVE" confirmation, a capital amount, and a REQUIRED dedicated named
+# wallet. Disarm optionally flattens the wallet with reduce-only closes.
+@router.get("/api/portfolio/basket/live")
+def get_portfolio_basket_live():
+    _require_portfolio_layer()
+    from forven.basket_live import live_summary
+
+    return {"ok": True, **live_summary()}
+
+
+@router.post("/api/portfolio/basket/golive")
+def post_portfolio_basket_golive(body: dict):
+    _require_portfolio_layer()
+    from fastapi import HTTPException
+
+    from forven.basket_live import arm_basket_live
+
+    try:
+        arming = arm_basket_live(
+            confirm=body.get("confirm"),
+            capital_usd=body.get("capital_usd"),
+            wallet_label=body.get("wallet"),
+            actor="operator_api",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, "arming": arming}
+
+
+@router.post("/api/portfolio/basket/disarm")
+def post_portfolio_basket_disarm(body: dict):
+    _require_portfolio_layer()
+    from forven.basket_live import disarm_basket_live
+
+    result = disarm_basket_live(actor="operator_api", flatten=bool(body.get("flatten")))
+    return {"ok": True, **result}
+
+
 @router.post("/api/system/stop")
 def stop_system():
     return control_plane_ops.stop_system()

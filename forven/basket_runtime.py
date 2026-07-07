@@ -443,6 +443,21 @@ def run_basket_tick(force: bool = False) -> dict | None:
                 report["cost"], report["positions"],
                 " REBALANCED" if report.get("rebalanced") else "",
             )
+            # PORT-LIVE-1: when armed, mirror the fresh paper book into the
+            # dedicated live wallet. Fail-soft — a live hiccup must never
+            # corrupt the paper book that decides the targets.
+            try:
+                from forven.basket_live import basket_live_armed, reconcile_basket_live
+
+                if basket_live_armed():
+                    live_report = reconcile_basket_live()
+                    if live_report is not None:
+                        report["live"] = {
+                            k: live_report.get(k)
+                            for k in ("orders_ok", "orders_failed", "unlistable_symbols", "skipped")
+                        }
+            except Exception:
+                log.warning("basket live reconcile failed", exc_info=True)
         else:
             log.warning("basket tick skipped: %s", report.get("skipped_reason"))
         return report

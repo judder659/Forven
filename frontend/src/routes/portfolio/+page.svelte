@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import {
+		armBasketLive,
+		disarmBasketLive,
+		getBasketLive,
 		getPortfolioAllocation,
 		getPortfolioBasket,
 		getPortfolioLayerEnabled,
 		refreshPortfolioAllocation,
 		resetPortfolioBasket,
 		tickPortfolioBasket,
+		type BasketLiveStatus,
 		type BasketSummary,
 		type PortfolioAllocationResponse,
 	} from '$lib/api/portfolio';
@@ -17,6 +21,49 @@
 
 	let basket: BasketSummary | null = null;
 	let allocation: PortfolioAllocationResponse | null = null;
+	let live: BasketLiveStatus | null = null;
+	let armWallet = '';
+	let armCapital = 500;
+	let armPhrase = '';
+	let armBusy = false;
+	let disarmBusy = false;
+	let confirmingFlatten = false;
+
+	async function doArm() {
+		armBusy = true;
+		actionMessage = '';
+		try {
+			await armBasketLive(armPhrase, armCapital, armWallet);
+			actionMessage = 'Live execution ARMED — the next tick reconciles the wallet.';
+			armPhrase = '';
+			await load();
+		} catch (e) {
+			actionMessage = `Arming refused: ${e instanceof Error ? e.message : e}`;
+		} finally {
+			armBusy = false;
+		}
+	}
+
+	async function doDisarm(flatten: boolean) {
+		if (flatten && !confirmingFlatten) {
+			confirmingFlatten = true;
+			return;
+		}
+		confirmingFlatten = false;
+		disarmBusy = true;
+		actionMessage = '';
+		try {
+			await disarmBasketLive(flatten);
+			actionMessage = flatten
+				? 'Disarmed and flattened — every wallet position was closed reduce-only.'
+				: 'Disarmed — positions left in the wallet; use Disarm + flatten to close them.';
+			await load();
+		} catch (e) {
+			actionMessage = `Disarm failed: ${e instanceof Error ? e.message : e}`;
+		} finally {
+			disarmBusy = false;
+		}
+	}
 	let loading = true;
 	let error = '';
 	let actionMessage = '';
@@ -37,9 +84,14 @@
 				loading = false;
 				return;
 			}
-			const [b, a] = await Promise.all([getPortfolioBasket(), getPortfolioAllocation()]);
+			const [b, a, lv] = await Promise.all([
+				getPortfolioBasket(),
+				getPortfolioAllocation(),
+				getBasketLive().catch(() => null),
+			]);
 			basket = b;
 			allocation = a;
+			live = lv;
 			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -530,6 +582,118 @@
 				</button>
 				{#if confirmingReset}
 					<button class="text-[11px] text-[#666] hover:text-[#888]" on:click={() => (confirmingReset = false)}>cancel</button>
+				{/if}
+			</div>
+
+			<!-- ─────────────── live execution (real money, behind arming) ─────────────── -->
+			<div class={`border p-3 space-y-3 ${live?.armed ? 'border-red-800 bg-[#0a0505]' : 'border-[#222] bg-[#070707]'}`}>
+				<div class="flex items-center justify-between">
+					<div>
+						<h3 class="text-xs font-bold uppercase tracking-wider text-white">
+							Live execution
+							{#if live?.armed}
+								<span class="ml-2 text-[10px] px-2 py-0.5 border border-red-700 text-red-400">ARMED — ${Number(live.capital_usd ?? 0).toLocaleString()} in wallet “{live.wallet_label}”</span>
+							{:else}
+								<span class="ml-2 text-[10px] px-2 py-0.5 border border-[#333] text-[#666]">Not armed — paper only</span>
+							{/if}
+						</h3>
+						<p class="text-[11px] text-[#666]">
+							When armed, each tick mirrors the paper book into a dedicated wallet with real
+							orders: increases go through the liquidity guard, reductions are reduce-only,
+							every order is ceiling-checked and logged below. Losses are confined to that
+							wallet's capital.
+						</p>
+					</div>
+				</div>
+
+				{#if live?.armed}
+					{#if live.last_reconcile}
+						<div class="text-[11px] text-[#888]">
+							Last reconcile {fmtWhen(live.last_reconcile.t)}:
+							<span class="text-emerald-400">{live.last_reconcile.orders_ok} orders ok</span>
+							{#if live.last_reconcile.orders_failed > 0}
+								· <span class="text-red-400">{live.last_reconcile.orders_failed} failed</span>
+							{/if}
+							{#if live.last_reconcile.unlistable > 0}
+								· <span class="text-yellow-500">{live.last_reconcile.unlistable} leg(s) not listed on the venue</span>
+							{/if}
+						</div>
+					{/if}
+					<div class="flex items-center gap-2">
+						<button
+							class="border border-[#333] bg-[#111] px-3 py-1.5 text-xs text-[#aaa] hover:bg-[#1a1a1a] disabled:opacity-50"
+							on:click={() => doDisarm(false)}
+							disabled={disarmBusy}
+						>
+							Disarm (leave positions)
+						</button>
+						<button
+							class={`border px-3 py-1.5 text-xs disabled:opacity-50 ${confirmingFlatten ? 'border-red-700 bg-red-950 text-red-300' : 'border-red-900 bg-[#150808] text-red-400 hover:bg-[#1f0a0a]'}`}
+							on:click={() => doDisarm(true)}
+							disabled={disarmBusy}
+						>
+							{confirmingFlatten ? 'Click again: close ALL wallet positions' : 'Disarm + flatten'}
+						</button>
+						{#if confirmingFlatten}
+							<button class="text-[11px] text-[#666] hover:text-[#888]" on:click={() => (confirmingFlatten = false)}>cancel</button>
+						{/if}
+					</div>
+				{:else}
+					<div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end text-[11px]">
+						<label class="space-y-1">
+							<span class="text-[#666] uppercase text-[10px] tracking-wider">Dedicated wallet label</span>
+							<input
+								type="text"
+								bind:value={armWallet}
+								placeholder="e.g. basket"
+								class="w-full border border-[#333] bg-[#0a0a0a] px-2 py-1.5 text-white outline-none"
+							/>
+						</label>
+						<label class="space-y-1">
+							<span class="text-[#666] uppercase text-[10px] tracking-wider">Capital (USD)</span>
+							<input
+								type="number"
+								bind:value={armCapital}
+								min="50"
+								step="50"
+								class="w-full border border-[#333] bg-[#0a0a0a] px-2 py-1.5 text-white outline-none"
+							/>
+						</label>
+						<label class="space-y-1">
+							<span class="text-[#666] uppercase text-[10px] tracking-wider">Type GO LIVE to confirm</span>
+							<input
+								type="text"
+								bind:value={armPhrase}
+								placeholder="GO LIVE"
+								class="w-full border border-[#333] bg-[#0a0a0a] px-2 py-1.5 text-white outline-none"
+							/>
+						</label>
+						<button
+							class="border border-red-900 bg-[#150808] px-3 py-1.5 text-xs text-red-400 hover:bg-[#1f0a0a] disabled:opacity-40"
+							on:click={doArm}
+							disabled={armBusy || armPhrase.trim().toUpperCase() !== 'GO LIVE' || !armWallet.trim() || armCapital <= 0}
+						>
+							{armBusy ? 'Arming…' : 'ARM LIVE EXECUTION'}
+						</button>
+					</div>
+					<p class="text-[10px] text-[#555]">
+						Requires a registered named wallet with no other trades in it (Settings →
+						HyperLiquid → Wallets). Recommendation: don't arm until the paper book has weeks of
+						evidence and its funding share stays dominant.
+					</p>
+				{/if}
+
+				{#if (live?.ledger ?? []).length > 0}
+					<details class="text-[11px]">
+						<summary class="cursor-pointer text-[#666] hover:text-[#888] uppercase text-[10px] tracking-wider">Execution ledger ({(live?.ledger ?? []).length} recent)</summary>
+						<div class="mt-1 space-y-0.5 max-h-48 overflow-y-auto">
+							{#each live?.ledger ?? [] as entry}
+								<div class="text-[#777] font-mono text-[10px] border-b border-[#141414] py-0.5">
+									{JSON.stringify(entry)}
+								</div>
+							{/each}
+						</div>
+					</details>
 				{/if}
 			</div>
 		</div>
