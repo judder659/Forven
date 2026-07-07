@@ -147,6 +147,21 @@ def _get_risk_limits() -> dict[str, float]:
     return base_limits
 
 
+def max_risk_per_trade_limit() -> float:
+    """The ACTIVE per-trade risk cap as an equity fraction (0.02 = 2%).
+
+    Mode-aware (testnet vs mainnet profile) and honoring the operator's
+    max_risk_per_trade_pct / legacy max_position_size_pct override. This is
+    the same number can_open's Rule 0b enforces; exposed so profile SELECTION
+    (gauntlet execution-profile stamping) can constrain its search grid to
+    policy — kernel-parity callers legitimately skip the order-time cap
+    (enforce_risk_caps=False mirrors the frozen profile), so a profile above
+    the cap must never be stamped in the first place (S05215 shipped to paper
+    at 3% against a 2% cap, 2026-07-06).
+    """
+    return float(_get_risk_limits()["max_risk_per_trade"])
+
+
 def _load_risk_settings() -> dict:
     """Return persisted settings as a plain dict."""
     try:
