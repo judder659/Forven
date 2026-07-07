@@ -29,11 +29,11 @@ Safety architecture (each layer independent):
   the venue doesn't list), so paper-vs-live divergence is visible, never
   silent.
 
-Venue caveat, stated where it belongs: the paper book ranks BINANCE funding
-(the lake's series); live fills happen on Hyperliquid, whose listings and
-funding rates differ. The executor mirrors the paper book's POSITIONS —
-unlistable legs are skipped and reported. A future revision can rank
-venue-native funding.
+Venue note (PORT-HLFUND-1): live fills happen on Hyperliquid, so the
+executor mirrors the HL-NATIVE paper book — the one ranked on Hyperliquid's
+own funding snapshots — never the Binance-ranked research book (cross-venue
+funding diverges: sign agreement ~74%, correlation ~0.5). Legs the venue
+doesn't list are skipped and reported in the ledger.
 """
 
 from __future__ import annotations
