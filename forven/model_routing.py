@@ -56,24 +56,20 @@ _ZAI_PRIMARY_PROVIDER_PRIORITY = [
 ]
 
 # Auxiliary task kinds — small/cheap helper models that run *outside* the
-# primary Brain reasoning path. Compression and recall favor a fast/cheap
-# model; skill extraction and post-mortem need stronger reasoning, so they
-# default to a Sonnet-class model.
+# primary Brain reasoning path. Recall and approval favor a fast/cheap model;
+# skill extraction needs stronger reasoning, so it defaults to a Sonnet-class
+# model. Every kind listed here MUST have a consumer that calls
+# ``get_auxiliary_routing(kind)`` — the historical "compression" and
+# "post_mortem" slots were removed because nothing ever read them (post-mortems
+# run as agent tasks on the quant-researcher's model), yet models parked there
+# still counted as SELECTED in the spend-safety gate.
 AUXILIARY_TASK_KINDS: tuple[str, ...] = (
-    "compression",
     "recall",
     "skill_extraction",
-    "post_mortem",
     "approval",
 )
 
 _DEFAULT_AUXILIARY_ROUTING: dict[str, dict[str, str | None]] = {
-    "compression": {
-        "provider": "openrouter",
-        "model_id": "openai/gpt-4o-mini",
-        "base_url": None,
-        "api_key": None,
-    },
     "recall": {
         "provider": "openrouter",
         "model_id": "openai/gpt-4o-mini",
@@ -81,12 +77,6 @@ _DEFAULT_AUXILIARY_ROUTING: dict[str, dict[str, str | None]] = {
         "api_key": None,
     },
     "skill_extraction": {
-        "provider": "openrouter",
-        "model_id": "anthropic/claude-3-5-sonnet",
-        "base_url": None,
-        "api_key": None,
-    },
-    "post_mortem": {
         "provider": "openrouter",
         "model_id": "anthropic/claude-3-5-sonnet",
         "base_url": None,
