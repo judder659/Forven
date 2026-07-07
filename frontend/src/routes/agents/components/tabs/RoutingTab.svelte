@@ -57,7 +57,6 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import { agentsConfig, selectableModelOptions } from '../agentsConfigStore';
 	import ModelSlotPicker from './ModelSlotPicker.svelte';
-	import ModelPicker from './ModelPicker.svelte';
 	import DirtyBar from '../DirtyBar.svelte';
 
 	// Notify the host page when this tab gains/loses unsaved edits, so it can
@@ -119,32 +118,58 @@
 
 	// ---- Bulk "set every agent to one model" -------------------------------- //
 	// The clone-to-all the operator wanted: switching models shouldn't mean
-	// re-picking the dropdown on every agent. Pick a model here, hit Apply, and it
-	// becomes the PRIMARY for every agent (the Brain included — which also derives
-	// the default model), marking each changed agent dirty so the one tab-wide Save
-	// persists them together. Per-agent fallback chains are left untouched.
+	// re-picking the dropdown on every agent. Pick a primary model AND an ordered
+	// fallback chain here, hit Apply, and every agent below gets both (the Brain
+	// included — which also derives the default model), marking each changed agent
+	// dirty so the one tab-wide Save persists them together. An EMPTY bulk chain
+	// deliberately leaves each agent's existing fallbacks untouched, so a quick
+	// primary-only swap can never wipe configured chains.
 	let bulkKey = '';
+	let bulkFallbacks: string[] = [];
+
+	function onBulkChange(e: CustomEvent<{ value: string; fallbacks: string[] }>) {
+		bulkKey = e.detail.value;
+		bulkFallbacks = e.detail.fallbacks;
+	}
+
+	function sameChain(a: string[], b: string[]): boolean {
+		return a.length === b.length && a.every((k, i) => k === b[i]);
+	}
 
 	function applyModelToAllAgents() {
 		if (!bulkKey || agentRows.length === 0) return;
+		const applyChain = bulkFallbacks.length > 0;
 		const nextKey = { ...agentKey };
+		const nextFallbacks = { ...agentFallbacks };
 		const nextDirty = { ...agentDirty };
 		let changed = 0;
 		for (const row of agentRows) {
-			if ((nextKey[row.id] ?? '') === bulkKey) continue;
+			const keySame = (nextKey[row.id] ?? '') === bulkKey;
+			const chainSame = !applyChain || sameChain(nextFallbacks[row.id] ?? [], bulkFallbacks);
+			if (keySame && chainSame) continue;
 			nextKey[row.id] = bulkKey;
+			if (applyChain) nextFallbacks[row.id] = [...bulkFallbacks];
 			nextDirty[row.id] = true;
 			changed += 1;
 		}
 		agentKey = nextKey;
+		agentFallbacks = nextFallbacks;
 		agentDirty = nextDirty;
 		if (changed > 0) {
+			const chainNote = applyChain
+				? ` + ${bulkFallbacks.length} fallback${bulkFallbacks.length === 1 ? '' : 's'}`
+				: '';
 			addToast(
-				`Set ${changed} agent${changed === 1 ? '' : 's'} to ${labelForOptionKey(bulkKey)} — review, then Save.`,
+				`Set ${changed} agent${changed === 1 ? '' : 's'} to ${labelForOptionKey(bulkKey)}${chainNote} — review, then Save.`,
 				'success'
 			);
 		} else {
-			addToast('Every agent was already on that model.', 'info');
+			addToast(
+				applyChain
+					? 'Every agent already had that model and fallback chain.'
+					: 'Every agent was already on that model.',
+				'info'
+			);
 		}
 	}
 
@@ -509,29 +534,30 @@
 			default model for any routing slot below with no explicit choice.
 		</p>
 		{#if agentRows.length > 0 && !noneSelectable}
-			<div class="flex flex-wrap items-end gap-2 border border-[#1a1a1a] bg-[#050505] px-3 py-2">
-				<div class="flex-1 min-w-[220px]">
-					<span class="block text-[10px] text-[#666] uppercase tracking-wider mb-1">
-						Set every agent to
-					</span>
-					<ModelPicker
+			<div class="space-y-2">
+				<ul>
+					<ModelSlotPicker
+						label="Set every agent to"
+						description="Pick a primary model — and optionally a fallback chain — then apply both to every agent below. An empty chain here leaves each agent's existing fallbacks untouched."
 						value={bulkKey}
+						fallbacks={bulkFallbacks}
 						{selectable}
 						allowUnset
 						unsetLabel="— pick a model —"
-						showStaleWarning={false}
-						on:change={(e) => (bulkKey = e.detail.value)}
+						on:change={onBulkChange}
 					/>
+				</ul>
+				<div class="flex justify-end">
+					<button
+						type="button"
+						on:click={applyModelToAllAgents}
+						disabled={!bulkKey}
+						class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
+						title="Set this model (and fallback chain, if one is picked) for every agent below. An empty chain leaves existing chains as-is; nothing saves until you hit Save."
+					>
+						Apply to all {agentRows.length}
+					</button>
 				</div>
-				<button
-					type="button"
-					on:click={applyModelToAllAgents}
-					disabled={!bulkKey}
-					class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
-					title="Set this model as the primary for every agent below. Fallback chains are left as-is; nothing saves until you hit Save."
-				>
-					Apply to all {agentRows.length}
-				</button>
 			</div>
 		{/if}
 		{#if agentRows.length === 0}

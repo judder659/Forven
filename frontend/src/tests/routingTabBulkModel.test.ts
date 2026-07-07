@@ -145,4 +145,42 @@ describe('RoutingTab — set every agent to one model', () => {
 			model_id: 'claude-opus-4-8',
 		});
 	});
+
+	it('applies the bulk fallback chain to every agent; Save writes each agent:<id> chain', async () => {
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(RoutingTab, { target, props: {} });
+		await flush();
+
+		// Bulk primary → Opus.
+		const bulk = bySelectFirstOption('pick a model');
+		bulk.value = OPUS;
+		bulk.dispatchEvent(new Event('change', { bubbles: true }));
+		await flush();
+
+		// Bulk fallback → Sonnet. The bulk card renders above the per-agent rows,
+		// so its add-fallback select and its Add button are first in the DOM.
+		const addSelect = bySelectFirstOption('pick a connected');
+		addSelect.value = SONNET;
+		addSelect.dispatchEvent(new Event('change', { bubbles: true }));
+		await flush();
+		byButtonText('Add').click();
+		await flush();
+
+		byButtonText('Apply to all').click();
+		await flush();
+
+		byButtonText('Save changes').click();
+		await flush();
+
+		// Every agent's chain is written under its agent:<id> slot key.
+		expect(apiMocks.updateForvenModelPolicy).toHaveBeenCalledTimes(1);
+		const payload = apiMocks.updateForvenModelPolicy.mock.calls[0][0];
+		const sonnetChain = [{ provider: 'anthropic', model_id: 'claude-sonnet-5' }];
+		expect(payload.fallback_chains['agent:brain']).toEqual(sonnetChain);
+		expect(payload.fallback_chains['agent:alpha']).toEqual(sonnetChain);
+		// Brain's primary was already Opus, so only Alpha's model row is PATCHed —
+		// the chain-only change on Brain rides in the policy write alone.
+		expect(apiMocks.updateForvenAgentModel).toHaveBeenCalledTimes(1);
+	});
 });
