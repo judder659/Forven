@@ -43,6 +43,7 @@ _DEFAULT_JOB_IDS = {
     "forven-weekly-review",
     "forven-regime-update",
     "forven-regime-gate-mtm",
+    "forven-portfolio-allocation",
     "forven-slippage-monitor",
     "forven-scanner-signal",
     "forven-scanner-hourly",
@@ -1499,6 +1500,15 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         if kind == "regime_update":
             updated = await _run_sync_job(_run_regime_update_job)
             log.info("Regime update job refreshed market_pot for %d deployed strategy rows", updated)
+            return "ok", None
+
+        # PORT-LAYER-1: measured-risk portfolio allocation snapshot. Internally
+        # flag-gated (no-op unless portfolio_allocator_enabled) and fail-soft.
+        if kind == "portfolio_allocation_refresh":
+            from forven.portfolio_allocator import refresh_portfolio_allocation
+            snapshot = await _run_sync_job(refresh_portfolio_allocation)
+            if snapshot is None:
+                return "ok", "allocator disabled or refresh skipped"
             return "ok", None
 
         # Strategy decay tracker — auto-demote degraded paper/deployed strategies
@@ -3140,6 +3150,19 @@ def seed_forven_jobs():
         command="testnet-harness",
         timezone_str="America/Halifax",
         payload={"kind": "testnet_execution_harness"},
+    )
+
+    # PORT-LAYER-1: hourly portfolio allocation snapshot (weights, book vol,
+    # virtual book). No-op unless portfolio_allocator_enabled; correlations are
+    # TTL-cached so the hourly cadence is cheap.
+    add_job(
+        job_id="forven-portfolio-allocation",
+        name="Portfolio Allocation Refresh",
+        schedule_type="interval",
+        schedule_expr="3600000",
+        command="portfolio-allocation",
+        timezone_str="UTC",
+        payload={"kind": "portfolio_allocation_refresh"},
     )
 
     # 5. Regime + Market Pot refresh — every 4 hours

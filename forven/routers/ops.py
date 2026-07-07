@@ -29,6 +29,30 @@ def get_testnet_harness_last():
     return get_last_harness_report()
 
 
+# PORT-LAYER-1: measured-risk portfolio allocation (weights, book vol, virtual
+# book). GET reads the persisted hourly snapshot; POST recomputes on demand
+# (force=True so operators can preview while the allocator flag is still off —
+# the live sizing hook independently requires both flags).
+@router.get("/api/portfolio/allocation")
+def get_portfolio_allocation():
+    from forven.portfolio_allocator import allocator_enabled, allocator_live_enabled, get_allocation_snapshot
+
+    return {
+        "ok": True,
+        "enabled": allocator_enabled(),
+        "live_sizing_enabled": allocator_live_enabled(),
+        "snapshot": get_allocation_snapshot(),
+    }
+
+
+@router.post("/api/portfolio/allocation/refresh")
+def post_portfolio_allocation_refresh():
+    from forven.portfolio_allocator import refresh_portfolio_allocation
+
+    snapshot = refresh_portfolio_allocation(force=True)
+    return {"ok": snapshot is not None, "snapshot": snapshot}
+
+
 @router.post("/api/system/stop")
 def stop_system():
     return control_plane_ops.stop_system()

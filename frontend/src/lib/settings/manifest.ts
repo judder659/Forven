@@ -449,6 +449,96 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.exchange.risk', 'forven.scanner'],
     deepLinkTo: '/risk',
   },
+  // PORT-LAYER-1: measured-risk portfolio allocation. Publishes per-strategy
+  // risk multipliers from realized vol + correlations; paper sandboxes are
+  // never scaled (they are the backtest-parity measurement instruments).
+  {
+    id: 'risk.portfolio_allocator_enabled',
+    label: 'Portfolio allocator',
+    default: false,
+    type: 'toggle',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'portfolio_allocator_enabled',
+    description:
+      'Compute measured-risk allocation weights across the paper/live cohort every hour (realized vol, strategy correlations, optional book vol target) and publish them with a retrospective virtual-book comparison. Measurement only — sizing is unchanged until "Portfolio allocator sizes live" is also enabled.',
+    usedBy: ['forven.portfolio_allocator', 'forven.scheduler'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.portfolio_allocator_live',
+    label: 'Portfolio allocator sizes live',
+    default: false,
+    type: 'toggle',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'portfolio_allocator_live',
+    description:
+      'Apply the published risk multipliers to LIVE position sizing (scales each live entry’s size fraction; all hard risk gates still check the scaled size). Requires the allocator itself to be enabled; any unmeasured strategy or stale snapshot falls back to neutral 1.0. Paper sizing is never touched.',
+    usedBy: ['forven.scanner', 'forven.portfolio_allocator'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.portfolio_lookback_days',
+    label: 'Portfolio allocator lookback',
+    unit: 'days',
+    default: 60,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'portfolio_lookback_days',
+    description:
+      'Trailing window of realized kernel parity trades used to measure each strategy’s volatility and the strategy-pair correlations. Shorter adapts faster; longer is more stable. Minimum 14.',
+    usedBy: ['forven.portfolio_allocator'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.portfolio_target_book_vol_pct',
+    label: 'Portfolio target book volatility',
+    unit: '%/yr',
+    default: 0,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'portfolio_target_book_vol_pct',
+    description:
+      'Annualized volatility target for the combined book: all multipliers are scaled toward it (bounded by the min/max multiplier clamps). 0 disables vol targeting — weights are relative-risk only.',
+    usedBy: ['forven.portfolio_allocator'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.portfolio_min_risk_multiplier',
+    label: 'Portfolio min risk multiplier',
+    default: 0.25,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'portfolio_min_risk_multiplier',
+    description:
+      'Floor on any strategy’s allocation multiplier (1.0 = the legacy flat allocation). Stops the allocator from starving a strategy below a usable size.',
+    usedBy: ['forven.portfolio_allocator'],
+    deepLinkTo: '/risk',
+  },
+  {
+    id: 'risk.portfolio_max_risk_multiplier',
+    label: 'Portfolio max risk multiplier',
+    default: 2.0,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-loss-limits',
+    backendSection: 'risk',
+    backendPath: 'portfolio_max_risk_multiplier',
+    description:
+      'Ceiling on any strategy’s allocation multiplier. Bounds how much extra risk the allocator can concentrate into one strategy, independent of the hard per-trade risk caps (which always apply to the scaled size).',
+    usedBy: ['forven.portfolio_allocator'],
+    deepLinkTo: '/risk',
+  },
+
   // Risk: failed-open retry brake (RETRY-STORM-1). A live open the exchange
   // rejects is re-attempted by the kernel every scan; these bound the retries.
   {
