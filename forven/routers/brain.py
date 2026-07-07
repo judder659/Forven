@@ -416,7 +416,7 @@ class _AuxiliaryUpdateBody(BaseModel):
 
 @router.get("/auxiliary")
 def get_auxiliary_endpoint() -> dict[str, Any]:
-    """Return the four auxiliary slots (compression / recall / skill_extraction / post_mortem)."""
+    """Return the auxiliary slots (recall / skill_extraction / approval)."""
     policy = get_model_routing()
     aux = policy.get("auxiliary") or {}
     return {

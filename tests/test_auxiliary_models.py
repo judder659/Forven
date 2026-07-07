@@ -1,7 +1,7 @@
 """Phase 1 (P1-T11) — auxiliary model routing tests.
 
 Asserts the ``auxiliary`` block in the model-routing policy:
-- Defaults are seeded for compression, recall, skill_extraction, post_mortem.
+- Defaults are seeded for recall, skill_extraction, approval.
 - ``get_auxiliary_routing`` returns ``{provider, model_id, base_url, api_key}``.
 - Updating one auxiliary key via ``update_model_routing`` does not blow away
   the other three.
@@ -92,7 +92,7 @@ def test_update_one_auxiliary_key_preserves_others(forven_db):
     assert routing["api_key"] == "sk-test"
 
     # Other kinds still match defaults.
-    for kind in ("compression", "skill_extraction", "post_mortem"):
+    for kind in ("skill_extraction", "approval"):
         default = _DEFAULT_AUXILIARY_ROUTING[kind]
         live = get_auxiliary_routing(kind)
         assert live["provider"] == default["provider"]
@@ -129,7 +129,7 @@ def test_bad_shaped_auxiliary_entry_falls_back_to_default(forven_db):
         "fallback_chains": {},
         "auxiliary": {
             "recall": {"provider": "openrouter"},  # missing model_id
-            "compression": {"model_id": "x"},  # missing provider
+            "approval": {"model_id": "x"},  # missing provider
             "skill_extraction": {"provider": "openrouter", "model_id": "anthropic/claude-3-5-sonnet"},
         },
     }
@@ -138,23 +138,23 @@ def test_bad_shaped_auxiliary_entry_falls_back_to_default(forven_db):
     policy = get_model_routing()
     # Bad entries fell back to seeded defaults.
     recall_default = _DEFAULT_AUXILIARY_ROUTING["recall"]
-    compression_default = _DEFAULT_AUXILIARY_ROUTING["compression"]
+    approval_default = _DEFAULT_AUXILIARY_ROUTING["approval"]
     assert policy["auxiliary"]["recall"]["model_id"] == recall_default["model_id"]
-    assert policy["auxiliary"]["compression"]["provider"] == compression_default["provider"]
+    assert policy["auxiliary"]["approval"]["provider"] == approval_default["provider"]
     # Good entry survived.
     assert policy["auxiliary"]["skill_extraction"]["provider"] == "openrouter"
 
 
 def test_per_task_base_url_and_api_key_round_trip(forven_db):
     policy = get_model_routing()
-    policy["auxiliary"]["compression"] = {
+    policy["auxiliary"]["approval"] = {
         "provider": "openai",
         "model_id": "gpt-4o-mini",
         "base_url": "https://my-proxy.example.com/v1",
         "api_key": "sk-proxy",
     }
     update_model_routing(policy)
-    rt = get_auxiliary_routing("compression")
+    rt = get_auxiliary_routing("approval")
     assert rt["base_url"] == "https://my-proxy.example.com/v1"
     assert rt["api_key"] == "sk-proxy"
 
@@ -166,13 +166,13 @@ def test_unsupported_provider_in_auxiliary_is_rejected(forven_db):
         "default_models": {"openai": "gpt-5.2"},
         "fallback_chains": {},
         "auxiliary": {
-            "post_mortem": {"provider": "fakeco", "model_id": "fakeco/x1"},
+            "skill_extraction": {"provider": "fakeco", "model_id": "fakeco/x1"},
         },
     }
     kv_set(_MODEL_ROUTING_STORAGE_KEY, bad)
-    rt = get_auxiliary_routing("post_mortem")
-    assert rt["provider"] == _DEFAULT_AUXILIARY_ROUTING["post_mortem"]["provider"]
-    assert rt["model_id"] == _DEFAULT_AUXILIARY_ROUTING["post_mortem"]["model_id"]
+    rt = get_auxiliary_routing("skill_extraction")
+    assert rt["provider"] == _DEFAULT_AUXILIARY_ROUTING["skill_extraction"]["provider"]
+    assert rt["model_id"] == _DEFAULT_AUXILIARY_ROUTING["skill_extraction"]["model_id"]
 
 
 # --------------------------------------------------------------------------- #
@@ -206,7 +206,7 @@ def _connect_and_select(monkeypatch, providers: set[str]) -> None:
 
 
 def test_aux_routing_diverts_only_to_connected_and_callable_provider(forven_db, monkeypatch):
-    """All five aux kinds default to openrouter. With openrouter uncredentialed
+    """All aux kinds default to openrouter. With openrouter uncredentialed
     but openai CONNECTED + SELECTED (its default model gpt-5.2 is a routing
     selection), routing must divert to openai with its default model."""
     # openrouter (the routed provider) has no usable credentials.

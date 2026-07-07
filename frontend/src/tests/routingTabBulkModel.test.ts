@@ -102,6 +102,15 @@ function byButtonText(match: string): HTMLButtonElement {
 	return found as HTMLButtonElement;
 }
 
+// A ModelSlotPicker card, located by its <h3> label — lets a test scope
+// selects/buttons to one card instead of counting DOM order across the page.
+function cardByLabel(match: string): HTMLElement {
+	const cards = Array.from(target.querySelectorAll('li'));
+	const found = cards.find((li) => (li.querySelector('h3')?.textContent || '').includes(match));
+	if (!found) throw new Error(`no slot card labelled "${match}"`);
+	return found as HTMLElement;
+}
+
 describe('RoutingTab — set every agent to one model', () => {
 	it('renders the bulk control once agents load', async () => {
 		target = document.createElement('div');
@@ -182,5 +191,53 @@ describe('RoutingTab — set every agent to one model', () => {
 		// Brain's primary was already Opus, so only Alpha's model row is PATCHed —
 		// the chain-only change on Brain rides in the policy write alone.
 		expect(apiMocks.updateForvenAgentModel).toHaveBeenCalledTimes(1);
+	});
+
+	it('applies the bulk model + chain to every auxiliary task and saves them', async () => {
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(RoutingTab, { target, props: {} });
+		await flush();
+
+		// Work inside the aux bulk card only — DOM order across the page is not
+		// something this test should depend on.
+		const card = cardByLabel('Set every auxiliary task to');
+		const [primary, addFallback] = Array.from(card.querySelectorAll('select'));
+		primary.value = SONNET;
+		primary.dispatchEvent(new Event('change', { bubbles: true }));
+		await flush();
+		addFallback.value = OPUS;
+		addFallback.dispatchEvent(new Event('change', { bubbles: true }));
+		await flush();
+		const addBtn = Array.from(card.querySelectorAll('button')).find(
+			(b) => (b.textContent || '').trim() === 'Add'
+		) as HTMLButtonElement;
+		addBtn.click();
+		await flush();
+
+		// The aux section has 3 slots, so its Apply button is "Apply to all 3".
+		byButtonText('Apply to all 3').click();
+		await flush();
+
+		byButtonText('Save changes').click();
+		await flush();
+
+		// All three aux kinds are saved with the bulk primary…
+		expect(apiMocks.updateBrainAuxiliary).toHaveBeenCalledTimes(1);
+		const auxPayload = apiMocks.updateBrainAuxiliary.mock.calls[0][0];
+		for (const kind of ['recall', 'skill_extraction', 'approval']) {
+			expect(auxPayload[kind]).toEqual({
+				provider: 'anthropic',
+				model_id: 'claude-sonnet-5',
+				base_url: null,
+				api_key: null,
+			});
+		}
+		// …and the bulk chain lands under each aux:<kind> slot key.
+		const policyPayload = apiMocks.updateForvenModelPolicy.mock.calls[0][0];
+		const opusChain = [{ provider: 'anthropic', model_id: 'claude-opus-4-8' }];
+		for (const kind of ['recall', 'skill_extraction', 'approval']) {
+			expect(policyPayload.fallback_chains[`aux:${kind}`]).toEqual(opusChain);
+		}
 	});
 });

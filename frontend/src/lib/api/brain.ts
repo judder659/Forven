@@ -278,10 +278,9 @@ export async function recallSimilarSituation(
 // --------------------------------------------------------------------------- //
 
 export type BrainAuxiliaryTaskKind =
-	| 'compression'
 	| 'recall'
 	| 'skill_extraction'
-	| 'post_mortem';
+	| 'approval';
 
 export interface BrainAuxiliaryEntry {
 	provider: string | null;
