@@ -367,6 +367,11 @@ _PARAM_ALIASES = {
 
         "entry_period": "donchian_period",
 
+        # "channel period" is the textbook name for the Donchian lookback; users
+        # setting it got a silent no-op (2026-07-08 report: channel_period:40
+        # produced a backtest identical to the 20-period default).
+        "channel_period": "donchian_period",
+
         "donchian_exit_period": "exit_period",
 
         "ema_regime": "ema_period",

@@ -165,6 +165,15 @@ def test_resolve_strategy_family_handles_versioned_runtime_types():
     assert resolve_strategy_family("macd") == "macd"
 
 
+def test_donchian_channel_period_alias_maps_to_donchian_period():
+    # "channel period" is the textbook Donchian lookback name; it used to be a
+    # silent no-op (2026-07-08 report: channel_period:40 backtested identical
+    # to the 20-period default).
+    canonical = canonicalize_params("donchian", {"channel_period": 40})
+
+    assert canonical.params["donchian_period"] == 40
+
+
 def test_donchian_runtime_type_canonicalizes_regime_breakout_aliases():
     canonical, meta = canonicalize_params_with_metadata(
         "donchian_regime",

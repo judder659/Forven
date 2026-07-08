@@ -7197,16 +7197,19 @@ def _scan_asset_group(
                         )
                         continue
 
-                    # T01099 FIX: Apply BOTH adx_min AND adx_cap bounds (matching backtest.py)
-                    adx_min_val = adx_min if adx_min is not None else float(strategy_params.get("adx_min", 0))
-                    if adx_cap is not None and live_adx is not None:
-                        if live_adx >= adx_cap or live_adx < adx_min_val:
+                    # T01099 FIX: Apply BOTH adx_min AND adx_cap bounds (matching backtest.py).
+                    # adx_min must gate even WITHOUT a cap — trend strategies set adx_min
+                    # alone, and nesting it under the cap check silently dropped it.
+                    adx_min_val = adx_min if adx_min is not None else float(strategy_params.get("adx_min", 0) or 0)
+                    if live_adx is not None and (adx_cap is not None or adx_min_val > 0):
+                        if (adx_cap is not None and live_adx >= adx_cap) or live_adx < adx_min_val:
+                            cap_label = f"{adx_cap:.1f}" if adx_cap is not None else "none"
                             log.info(
-                                "[%s] SKIPPED — regime ADX bounds (ADX=%.1f, min=%.1f, max=%.1f)",
+                                "[%s] SKIPPED — regime ADX bounds (ADX=%.1f, min=%.1f, max=%s)",
                                 strat_id,
                                 live_adx,
                                 adx_min_val,
-                                adx_cap,
+                                cap_label,
                             )
                             results.append(
                                 _blocked_scan_row(
@@ -7214,7 +7217,7 @@ def _scan_asset_group(
                                     strategy_for_signal,
                                     (
                                         f"regime ADX bounds: ADX={live_adx:.1f}, "
-                                        f"min={adx_min_val:.1f}, max={adx_cap:.1f}"
+                                        f"min={adx_min_val:.1f}, max={cap_label}"
                                     ),
                                     asset=asset,
                                     live_prices=live_prices,

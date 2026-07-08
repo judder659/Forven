@@ -46,7 +46,7 @@ import json
 # data-substrate rebuild that invalidates comparisons against prior verdicts
 # (verdicts are only evidence relative to the data they were scored on) — and
 # add a matching ENGINE_VERSION_LOG entry (test-enforced).
-BACKTEST_ENGINE_VERSION = 2
+BACKTEST_ENGINE_VERSION = 3
 
 # Append-only changelog: one entry per version, newest last. The unit test
 # asserts the newest entry matches BACKTEST_ENGINE_VERSION so a bump can never
@@ -70,6 +70,17 @@ ENGINE_VERSION_LOG: tuple[dict, ...] = (
             "seed, DVOL backfill to 2021-03, and coverage-aware liquidation "
             "fill (pre-capture bars NaN, not fake zeros). Verdicts scored on "
             "the pre-rebuild data are stale evidence against the current lake."
+        ),
+    },
+    {
+        "version": 3,
+        "date": "2026-07-08",
+        "summary": (
+            "Regime-gate adx_min fix: adx_min was only enforced when an adx_cap "
+            "was also present, so trend strategies setting adx_min alone ran "
+            "unfiltered (user report: Donchian +adx_min:25 backtested identical "
+            "to no filter). It now gates entries and forces exits on its own. "
+            "Any strategy stamping adx_min without adx_max scores differently."
         ),
     },
 )

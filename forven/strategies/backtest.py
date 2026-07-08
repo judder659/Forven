@@ -6007,7 +6007,7 @@ def _build_regime_gate_masks(
     )
 
 
-    if not compatible_regimes and adx_cap is None:
+    if not compatible_regimes and adx_cap is None and adx_min is None:
 
 
         return (
@@ -6055,7 +6055,7 @@ def _build_regime_gate_masks(
 
 
 
-    if adx_cap is not None:
+    if adx_cap is not None or adx_min is not None:
 
 
         adx_period = int(runtime_params.get("adx_period", 14))
@@ -6064,9 +6064,14 @@ def _build_regime_gate_masks(
         adx_source = df["adx_val"] if "adx_val" in df.columns else compute_adx(df, adx_period)
 
 
-        # T01099 FIX: Apply BOTH adx_min AND adx_max bounds
-        adx_min_val = float(runtime_params.get("adx_min", 0))
-        allowed_by_adx = (adx_source >= adx_min_val) & (adx_source <= float(adx_cap))
+        # T01099 FIX: Apply BOTH adx_min AND adx_max bounds. adx_min must gate even
+        # WITHOUT a cap — trend strategies set adx_min alone, and nesting it under
+        # the cap branch silently dropped it (user report 2026-07-08: three Donchian
+        # variants with/without adx_min:25 produced bit-identical backtests).
+        adx_min_val = float(adx_min) if adx_min is not None else 0.0
+        allowed_by_adx = adx_source >= adx_min_val
+        if adx_cap is not None:
+            allowed_by_adx &= adx_source <= float(adx_cap)
         allowed_by_adx = allowed_by_adx.fillna(False)
         entry_allowed &= allowed_by_adx
 
