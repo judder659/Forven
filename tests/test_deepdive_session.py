@@ -50,6 +50,56 @@ def test_run_turn_persists_user_and_assistant(thread, monkeypatch):
     assert any(e["type"] == "assistant_token" for e in events)
 
 
+def test_round_limit_soft_landing(thread, monkeypatch):
+    from forven import deepdive_session
+
+    seen = {"forced": False}
+
+    async def fake_invoke(messages, strategy_id):
+        wrap_requested = any(
+            "do not call any more tools" in str(m.get("content", "")).lower()
+            for m in messages
+            if m.get("role") == "user"
+        )
+        if wrap_requested:
+            seen["forced"] = True
+            return {
+                "content": "Out of rounds — summary here. Continue?",
+                # A stubborn tool call in the forced final must be ignored.
+                "tool_calls": [{"id": "tx", "name": "deepdive_read_code", "input": {}}],
+                "cost_usd": 0.0,
+                "model": "stub",
+            }
+        # Never stops calling tools on its own — only the cap ends the turn.
+        return {
+            "content": "working...",
+            "tool_calls": [{"id": "t1", "name": "deepdive_read_code", "input": {}}],
+            "cost_usd": 0.0,
+            "model": "stub",
+        }
+
+    async def fake_dispatch(name, tool_input):
+        return "ok"
+
+    monkeypatch.setattr(deepdive_session, "_invoke_llm", fake_invoke)
+    monkeypatch.setattr(deepdive_session, "_dispatch_tool", fake_dispatch)
+    monkeypatch.setattr(deepdive_session, "max_tool_rounds", lambda: 3)
+
+    events = []
+    async def collect():
+        async for ev in deepdive_session.run_turn(thread["id"], user_text="big job"):
+            events.append(ev)
+    asyncio.run(collect())
+
+    types = [e["type"] for e in events]
+    assert "error" not in types, f"soft landing must not error: {events[-1]}"
+    assert types[-1] == "done"
+    assert seen["forced"]
+    msgs = list_messages(thread["id"])
+    assert msgs[-1]["role"] == "assistant"
+    assert "Continue?" in msgs[-1]["content"]
+
+
 def test_unknown_thread_emits_error(forven_db, monkeypatch):
     from forven import deepdive_session
     events = []

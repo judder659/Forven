@@ -117,6 +117,7 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'system-remote-engine', area: 'system', label: 'Remote engine', description: 'Offload backtests to a remote engine process.' },
   { id: 'system-throughput', area: 'system', label: 'Throughput', description: 'One preset dial (Trickle / Conserve / Balanced / Max) over agent cadences and the daily develop budget — turn it down to cut AI call volume on rate-limited providers.', advanced: true },
   { id: 'system-resource-tuning', area: 'system', label: 'Resource tuning', description: 'Worker counts, claim limits, drain mode, and other backpressure knobs.', advanced: true },
+  { id: 'system-assistant', area: 'system', label: 'Assistant', description: 'In-app chat assistant limits.' },
   { id: 'system-telemetry', area: 'system', label: 'Health & telemetry', description: 'Health checks, alert thresholds, and regime detection flags.' },
   { id: 'system-db-maintenance', area: 'system', label: 'Database maintenance', description: 'Retention windows for log/result tables and the optional daily VACUUM job.' },
 
@@ -2575,6 +2576,22 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.gauntlet.engine', 'forven.scheduler'],
     advanced: true,
   },
+  // Assistant
+  {
+    id: 'agents.assistant_max_tool_rounds',
+    label: 'Chat tool rounds',
+    unit: 'rounds',
+    default: 12,
+    type: 'number',
+    area: 'system',
+    subsection: 'system-assistant',
+    backendSection: 'agents',
+    backendPath: 'assistant_max_tool_rounds',
+    description:
+      'Max tool-call rounds per chat turn for the in-app assistant and strategy deep-dives (2-40). Each round is a full model call whose cost grows with the turn, so this is the runaway brake; on hitting it the assistant now wraps up with a summary instead of erroring.',
+    usedBy: ['forven.assistant_session', 'forven.deepdive_session'],
+  },
+
   {
     id: 'bot-operations.pipeline_saturation_threshold',
     label: 'Pipeline saturation threshold',
