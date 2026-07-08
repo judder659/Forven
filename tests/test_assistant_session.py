@@ -215,6 +215,79 @@ def test_cost_cap_blocks_turn(forven_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Round limit: wrap-up nudge, then a forced no-tools final answer (soft
+# landing) instead of the old dead-turn max_rounds error
+# ---------------------------------------------------------------------------
+
+def test_round_limit_soft_landing(forven_db, monkeypatch):
+    thread = adb.create_or_get_active_thread("global", None)
+    seen = {"nudged": False, "forced_final": False}
+
+    async def fake_stream(llm_messages, system, tools):
+        forced = any(
+            "do not call any more tools" in str(m.get("content", "")).lower()
+            for m in llm_messages
+            if m.get("role") == "user"
+        )
+        if forced:
+            seen["forced_final"] = True
+            yield ("text", "Out of rounds — created S00042 so far. Continue?")
+            yield ("final", {
+                "content": "Out of rounds — created S00042 so far. Continue?",
+                # A stubborn model that STILL tries to call a tool — the soft
+                # landing must ignore it and end the turn.
+                "tool_calls": [{"id": "tx", "name": "assistant_run_backtest", "input": {}}],
+                "cost_usd": 0.0, "model": "test/model",
+            })
+            return
+        if any(
+            "start wrapping up" in str(m.get("content", "")).lower()
+            for m in llm_messages
+            if m.get("role") == "user"
+        ):
+            seen["nudged"] = True
+        # Never stops calling tools on its own — only the cap ends the turn.
+        yield ("final", {
+            "content": "working...",
+            "tool_calls": [{"id": "t1", "name": "assistant_run_backtest", "input": {"strategy_id": "S00042"}}],
+            "cost_usd": 0.0, "model": "test/model",
+        })
+
+    async def fake_execute(name, tool_input):
+        return '{"ok": true}'
+
+    monkeypatch.setattr(asess, "_invoke_llm_stream", fake_stream)
+    monkeypatch.setattr(asess, "execute_tool", fake_execute)
+    monkeypatch.setattr(asess, "max_tool_rounds", lambda: 3)
+
+    events = _collect(thread["id"], user_text="do a big multi-step job")
+    types = [e["type"] for e in events]
+
+    assert "error" not in types, f"soft landing must not error: {events[-1]}"
+    assert types[-1] == "done"
+    assert seen["nudged"], "wrap-up nudge should fire before the last round"
+    assert seen["forced_final"], "final answer must be forced after the cap"
+    msgs = adb.list_messages(thread["id"])
+    assert msgs[-1]["role"] == "assistant"
+    assert "Continue?" in msgs[-1]["content"]
+
+
+def test_max_tool_rounds_setting_bounds(forven_db, monkeypatch):
+    from forven.deepdive_session import max_tool_rounds
+
+    import forven.api_core as core
+
+    monkeypatch.setattr(core, "get_settings", lambda: {"assistant_max_tool_rounds": 999})
+    assert max_tool_rounds() == 40  # upper bound
+    monkeypatch.setattr(core, "get_settings", lambda: {"assistant_max_tool_rounds": 0})
+    assert max_tool_rounds() == 12  # falsy -> default
+    monkeypatch.setattr(core, "get_settings", lambda: {"assistant_max_tool_rounds": 1})
+    assert max_tool_rounds() == 2  # lower bound
+    monkeypatch.setattr(core, "get_settings", lambda: {"assistant_max_tool_rounds": 18})
+    assert max_tool_rounds() == 18
+
+
+# ---------------------------------------------------------------------------
 # Page-awareness: the structured page context lands in the system prompt
 # ---------------------------------------------------------------------------
 

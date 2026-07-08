@@ -1838,6 +1838,12 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     # non-critical findings (high/medium/low) fail closed instead of warn-allow.
     # Backend-only — there is no UI control for this.
     "sandbox_shell_guard_strict": False,
+    # Per-turn tool-round cap for the in-app assistant chat AND deepdive
+    # sessions (each round = one full model call whose input grows with every
+    # prior round, and with actions enabled each round can create real pipeline
+    # objects). On hitting the cap the turn now lands softly (forced no-tools
+    # final answer) instead of erroring. Bounded 2-40 at read time.
+    "assistant_max_tool_rounds": 12,
     "updated_at": _now(),
 }
 
@@ -2824,6 +2830,13 @@ def _apply_settings_section(section: str, payload: dict) -> dict:
         # A disabled backup carries no model.
         if updates.get("backup_ai_provider") == "none":
             updates["backup_ai_model"] = ""
+        if "assistant_max_tool_rounds" in payload:
+            updates["assistant_max_tool_rounds"] = _coerce_bounded_int(
+                payload.get("assistant_max_tool_rounds"),
+                updates.get("assistant_max_tool_rounds", 12),
+                2,
+                40,
+            )
 
     elif section == "notifications":
         if "discord_bot_token" in payload:

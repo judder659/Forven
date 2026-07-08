@@ -33,17 +33,25 @@ from forven.assistant_db import (
     list_messages,
     thread_cost_total,
 )
-# Reuse the provider-format converters (pure functions) from the deepdive engine.
+# Reuse the provider-format converters (pure functions) and the shared
+# tool-round policy (operator-tunable cap + wrap-up/forced-final texts) from
+# the deepdive engine.
 from forven.deepdive_session import (
     _ANTHROPIC_FORMAT_PROVIDERS,
     _to_anthropic_messages,
     _to_openai_messages,
+    FORCED_FINAL_INSTRUCTION,
+    WRAP_UP_NUDGE,
+    WRAP_UP_ROUNDS_LEFT,
+    max_tool_rounds,
 )
 from forven.db import kv_get
 
 log = logging.getLogger("forven.assistant")
 
-MAX_TOOL_ROUNDS = 8
+# Fallback only — the live cap is max_tool_rounds() (Settings > System >
+# Assistant > "Chat tool rounds").
+MAX_TOOL_ROUNDS = 12
 # Cap how much history we replay to the model per turn (bounds cost on a
 # long-lived global thread). The converters tolerate a tool row that lands at
 # the cut boundary without a preceding assistant.
@@ -294,7 +302,14 @@ async def run_turn(
         llm_messages: list[dict] = [{"role": "system", "content": system}]
         llm_messages.extend(_history_to_llm_messages(history))
 
-        for _round in range(MAX_TOOL_ROUNDS):
+        rounds_cap = max_tool_rounds()
+        for _round in range(rounds_cap):
+            if _round == rounds_cap - WRAP_UP_ROUNDS_LEFT and rounds_cap > WRAP_UP_ROUNDS_LEFT:
+                # In-flight steering only — not persisted to the thread.
+                llm_messages.append({
+                    "role": "user",
+                    "content": WRAP_UP_NUDGE.format(rounds_left=WRAP_UP_ROUNDS_LEFT),
+                })
             # Stream this round's tokens to the client as they arrive.
             content_parts: list[str] = []
             result: dict | None = None
@@ -394,7 +409,35 @@ async def run_turn(
                     if route:
                         yield {"type": "navigate", "route": route}
 
-        yield {"type": "error", "code": "max_rounds", "message": f"hit {MAX_TOOL_ROUNDS} round limit"}
+        # Out of tool rounds — land softly: force one final answer so the user
+        # gets a summary + "continue?" instead of a dead turn. The tool list is
+        # unchanged (providers cache it per loop, and some reject an empty
+        # array); termination is guaranteed by IGNORING any tool calls below.
+        log.warning("Assistant thread %s hit %d tool rounds; forcing final answer", thread_id, rounds_cap)
+        llm_messages.append({"role": "user", "content": FORCED_FINAL_INSTRUCTION})
+        final_parts: list[str] = []
+        final_result: dict | None = None
+        async for kind, payload in _invoke_llm_stream(llm_messages, system, tools):
+            if kind == "text":
+                if payload:
+                    final_parts.append(payload)
+                    yield {"type": "assistant_token", "content": payload}
+            elif kind == "final":
+                final_result = payload
+        final_text = ""
+        if final_result is not None and not final_result.get("error"):
+            final_text = (final_result.get("content") or "".join(final_parts)).strip()
+        if final_text:
+            # Any tool calls in the forced final are deliberately ignored.
+            final_msg = append_message(
+                thread_id, role="assistant", content=final_text,
+                cost_usd=(final_result or {}).get("cost_usd"),
+                model=(final_result or {}).get("model"),
+            )
+            yield {"type": "done", "message_id": final_msg["id"]}
+            return
+
+        yield {"type": "error", "code": "max_rounds", "message": f"hit {rounds_cap} round limit"}
     except Exception as exc:
         log.exception("assistant turn failed")
         yield {"type": "error", "code": "internal", "message": str(exc)}

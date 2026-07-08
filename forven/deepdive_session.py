@@ -14,7 +14,35 @@ from forven.deepdive_db import (
 
 log = logging.getLogger("forven.deepdive")
 
-MAX_TOOL_ROUNDS = 8
+# Fallback when the setting is unreadable; the live value is
+# Settings > System > Assistant > "Chat tool rounds" (assistant_max_tool_rounds),
+# shared by the in-app assistant and deepdive sessions.
+MAX_TOOL_ROUNDS = 12
+_TOOL_ROUNDS_MIN, _TOOL_ROUNDS_MAX = 2, 40
+# How many rounds before the cap the model is told to start wrapping up.
+WRAP_UP_ROUNDS_LEFT = 2
+
+WRAP_UP_NUDGE = (
+    "Note: only {rounds_left} tool rounds remain in this turn. Start wrapping up: "
+    "finish the most important remaining work and prepare your final answer."
+)
+FORCED_FINAL_INSTRUCTION = (
+    "Tool-round limit reached for this turn — do not call any more tools. "
+    "Summarize what you accomplished, list anything left unfinished, and ask "
+    "the operator whether to continue in a follow-up message."
+)
+
+
+def max_tool_rounds() -> int:
+    """Operator-tunable per-turn tool-round cap (bounded so a typo can't
+    unleash an unbounded loop or strangle the chat to nothing)."""
+    try:
+        from forven.api_core import get_settings
+
+        raw = int(get_settings().get("assistant_max_tool_rounds") or MAX_TOOL_ROUNDS)
+    except Exception:
+        return MAX_TOOL_ROUNDS
+    return max(_TOOL_ROUNDS_MIN, min(raw, _TOOL_ROUNDS_MAX))
 
 # Providers that accept Anthropic Messages format (tool_use / tool_result blocks).
 _ANTHROPIC_FORMAT_PROVIDERS = {"anthropic", "minimax"}
@@ -329,7 +357,14 @@ async def run_turn(thread_id: str, *, user_text: str) -> AsyncIterator[dict]:
         ]
         llm_messages.extend(_history_to_llm_messages(history))
 
-        for _round in range(MAX_TOOL_ROUNDS):
+        rounds_cap = max_tool_rounds()
+        for _round in range(rounds_cap):
+            if _round == rounds_cap - WRAP_UP_ROUNDS_LEFT and rounds_cap > WRAP_UP_ROUNDS_LEFT:
+                # In-flight steering only — not persisted to the thread.
+                llm_messages.append({
+                    "role": "user",
+                    "content": WRAP_UP_NUDGE.format(rounds_left=WRAP_UP_ROUNDS_LEFT),
+                })
             result = await _invoke_llm(llm_messages, thread["strategy_id"])
             content = result.get("content", "") or ""
             tool_calls = result.get("tool_calls") or []
@@ -384,10 +419,32 @@ async def run_turn(thread_id: str, *, user_text: str) -> AsyncIterator[dict]:
                 })
                 yield {"type": "tool_result", "name": tc_name, "output": str(output)[:500]}
 
+        # Out of tool rounds — land softly: force one final no-tools answer so
+        # the user gets a summary + "continue?" instead of a dead turn.
+        log.warning("Deepdive thread %s hit %d tool rounds; forcing final answer", thread_id, rounds_cap)
+        llm_messages.append({"role": "user", "content": FORCED_FINAL_INSTRUCTION})
+        try:
+            final = await _invoke_llm(llm_messages, thread["strategy_id"])
+        except Exception as exc:  # pragma: no cover - defensive
+            final = {"content": "", "error": str(exc)}
+        final_text = (final.get("content") or "").strip()
+        if final_text and not final.get("error"):
+            # Any tool calls in the forced final are deliberately ignored.
+            final_msg = append_message(
+                thread_id,
+                role="assistant",
+                content=final_text,
+                cost_usd=final.get("cost_usd"),
+                model=final.get("model"),
+            )
+            yield {"type": "assistant_token", "content": final_text}
+            yield {"type": "done", "message_id": final_msg["id"]}
+            return
+
         yield {
             "type": "error",
             "code": "max_rounds",
-            "message": f"hit {MAX_TOOL_ROUNDS} round limit",
+            "message": f"hit {rounds_cap} round limit",
         }
     except Exception as exc:
         log.exception("deepdive turn failed")
