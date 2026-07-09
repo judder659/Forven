@@ -7021,11 +7021,17 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                     out.append(f"BLOCKED {asset} {label} open — stale candle data (feed may be down)")
                     continue
                 if not is_live:
-                    # RISK-1: honor operator STOP / kill-switch / daily-loss-halt /
-                    # cooldown on the now-default kernel paper open path (the legacy
-                    # paper path gates via can_open; this one did not). Backfill opens
-                    # (historical completed trades) go straight to the applier, NOT
-                    # through this branch, so the recorded paper history stays faithful.
+                    # RISK-1: honor the paper-scope safety gates (per-strategy
+                    # concurrency, one-per-asset, cooldown) on the now-default
+                    # kernel paper open path (the legacy paper path gates via
+                    # can_open; this one did not). Backfill opens (historical
+                    # completed trades) go straight to the applier, NOT through
+                    # this branch, so the recorded paper history stays faithful.
+                    # NOTE (PAPER-HALT-1): can_open deliberately does NOT apply
+                    # the real-capital halts (kill-switch / daily-loss / recovery
+                    # / operator pause) to paper scope — paper is fully decoupled
+                    # and keeps trading through a halt so its track record has no
+                    # drawdown-induced gaps.
                     try:
                         from forven.exchange.risk import can_open as _can_open_gate
                         _g_ok, _g_alloc, _g_why = _can_open_gate(

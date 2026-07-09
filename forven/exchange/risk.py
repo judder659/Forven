@@ -1290,6 +1290,8 @@ def can_open(
     position authoritatively (mirroring the backtest's execution profile) and
     want the safety GATES (kill-switch, daily-loss, margin, one-per-asset,
     cooldown) without a size cap. Defaults True to preserve all legacy behavior.
+    (Note: the kill-switch / daily-loss / recovery halts apply to LIVE scope
+    only — paper scope is fully decoupled from them, see Rule 0 / PAPER-HALT-1.)
 
     execution_type selects the scope for the concurrency / one-per-asset /
     portfolio-budget checks:
@@ -1317,10 +1319,21 @@ def can_open(
         if risk_pct is None:
             risk_pct = per_strategy_max
 
-        # Rule 0: Kill-switch and daily loss gate
-        allowed, reason = is_trading_allowed()
-        if not allowed:
-            return False, 0.0, reason
+        # Rule 0: Kill-switch and daily loss gate.
+        # PAPER-HALT-1: paper is a simulation sandbox with no real capital at
+        # stake. Every halt gated by is_trading_allowed() (operator system
+        # pause, startup exchange recovery, drawdown kill-switch, daily-loss
+        # halt) exists to protect REAL capital, so NONE of them may block a
+        # paper open. Halting paper only punches gaps into the very track record
+        # the promotion gates later read, and a FALSE kill-switch trip on a
+        # glitched real-wallet read (see the 2026-06-29 incident) would silently
+        # freeze all paper research. Paper is fully decoupled and runs
+        # regardless; only a dedicated paper-specific pause should ever stop it.
+        _halt_scope = str(execution_type or "").strip().lower()
+        if _halt_scope not in _PAPER_EXECUTION_TYPES:
+            allowed, reason = is_trading_allowed()
+            if not allowed:
+                return False, 0.0, reason
 
         # Rule 0b: Per-trade risk cap (skipped when the caller sizes
         # authoritatively, e.g. mirroring the backtest — enforce_risk_caps=False).

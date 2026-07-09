@@ -185,6 +185,26 @@ class TestKillSwitch:
         assert allowed is False
         assert "Kill-switch" in reason
 
+    def test_kill_switch_does_not_block_paper_opens(self, forven_db):
+        # PAPER-HALT-1: the real-capital kill-switch must NOT gate paper opens.
+        # Paper is a simulation sandbox — halting it only punches gaps into the
+        # track record the promotion gates read, and a FALSE trip on a glitched
+        # real-wallet read would freeze all paper research. Live is still blocked.
+        update_equity(10000.0)
+        update_equity(8900.0)  # trips the kill-switch
+        assert is_trading_allowed()[0] is False  # gate is genuinely active
+
+        live_ok, _, live_why = can_open(
+            "BTC", "long", "S-LIVE", execution_type="live", enforce_risk_caps=False,
+        )
+        assert live_ok is False and "Kill-switch" in live_why
+
+        for scope in ("paper", "paper_challenger", "simulation"):
+            paper_ok, _, paper_why = can_open(
+                "BTC", "long", "S-PAPER", execution_type=scope, enforce_risk_caps=False,
+            )
+            assert paper_ok is True, f"{scope} was wrongly blocked: {paper_why}"
+
     def test_kill_switch_reset(self, forven_db):
         update_equity(10000.0)
         update_equity(8900.0)  # triggers kill switch (11% drawdown)
