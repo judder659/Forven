@@ -275,3 +275,57 @@ def test_trade_mode_injected_for_short_only_class(monkeypatch):
     params = _json.loads(row["params"])
     assert params["trade_mode"] == "both"
     assert params["lookback"] == 20
+
+
+def test_trade_mode_both_clamped_for_long_only_class(monkeypatch):
+    """TRADE-MODE-4: minting a long-only archetype with trade_mode='both'
+    stamped into params (a misapplied CRUX-1 short/both directive) clamps it to
+    long_only at mint, instead of persisting an un-runnable config the crucible
+    backtest hard-fails and then archives."""
+    import forven.strategies.registry as registry
+    from forven.db import create_strategy_container
+
+    class FakeLong:  # no supported_trade_modes override -> long_only only
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(registry, "discover", lambda: None)
+    monkeypatch.setattr(registry, "_TYPE_MAP", {"fake_long": FakeLong})
+
+    with get_db() as conn:
+        sid, _, _ = create_strategy_container(
+            conn=conn, name="t", type_="fake_long", symbol="BTC",
+            timeframe="1h", params={"trade_mode": "both", "lookback": 20},
+        )
+        row = conn.execute("SELECT params FROM strategies WHERE id=?", (sid,)).fetchone()
+    import json as _json
+
+    params = _json.loads(row["params"])
+    assert params["trade_mode"] == "long_only"
+    assert params["lookback"] == 20
+
+
+def test_trade_mode_both_preserved_for_dual_side_class(monkeypatch):
+    """TRADE-MODE-4 must NOT clamp a class that genuinely declares 'both'."""
+    import forven.strategies.registry as registry
+    from forven.db import create_strategy_container
+
+    class FakeBoth:
+        supported_trade_modes = {"long_only", "both"}
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(registry, "discover", lambda: None)
+    monkeypatch.setattr(registry, "_TYPE_MAP", {"fake_both": FakeBoth})
+
+    with get_db() as conn:
+        sid, _, _ = create_strategy_container(
+            conn=conn, name="t", type_="fake_both", symbol="BTC",
+            timeframe="1h", params={"trade_mode": "both", "lookback": 20},
+        )
+        row = conn.execute("SELECT params FROM strategies WHERE id=?", (sid,)).fetchone()
+    import json as _json
+
+    params = _json.loads(row["params"])
+    assert params["trade_mode"] == "both"

@@ -1002,6 +1002,22 @@ def resolve_backtest_trade_mode(
     if resolved == "both" and "both" not in supported:
         if explicit_mode is None and allow_shorting and "short_only" in supported:
             resolved = "short_only"
+        elif explicit_mode is None:
+            # TRADE-MODE-3: the 'both' was NOT an explicit caller override — it
+            # came from the strategy's OWN params/default on a class that can't
+            # run both. The real case: a long-only built-in archetype (macd,
+            # williams_r, ...) that had trade_mode='both' stamped into its params
+            # by a CRUX-1 short/both authoring directive it couldn't actually
+            # honor. That is an internally-inconsistent config, not a deliberate
+            # request. Hard-failing it makes the deterministic crucible /
+            # validation backtest error, which the pipeline classifies terminal
+            # (_DETERMINISTIC_ERROR_TOKENS) and ARCHIVES the strategy over a
+            # config technicality (the 2026-07-08 alert wave). 'both' subsumes
+            # the long side, so clamp to a runnable side and evaluate the
+            # strategy ON MERIT instead. long_only is always supported; a
+            # short-capable-only class falls back to short_only. The strict guard
+            # is UNCHANGED for an explicit override (explicit_mode is not None).
+            resolved = "long_only" if "long_only" in supported else "short_only"
         else:
             return resolved, (
                 f"Strategy '{strategy_type or getattr(strategy_obj, 'strategy_type', '<unknown>')}' "

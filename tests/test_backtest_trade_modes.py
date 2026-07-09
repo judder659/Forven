@@ -370,3 +370,19 @@ def test_request_override_on_undeclared_class_still_rejected():
     )
     assert err is not None
     assert "does not support trade_mode='both'" in err
+
+
+def test_param_derived_both_on_long_only_clamps_instead_of_erroring():
+    # TRADE-MODE-3: when 'both' is NOT an explicit override but comes from the
+    # strategy's own params (requested_trade_mode=None) on a long-only archetype
+    # that can't run it — the crucible/validation path for a macd/williams_r with
+    # trade_mode='both' stamped in — clamp to the runnable long side and evaluate
+    # on merit, rather than erroring (which archived the strategy). Contrast with
+    # test_request_override_on_undeclared_class_still_rejected: an EXPLICIT 'both'
+    # override on the same class still errors.
+    obj = _UndeclaredLongOnlyStrategy("s-undeclared", {})
+    mode, err = backtest_mod.resolve_backtest_trade_mode(
+        None, strategy_type="undeclared_long_only_dummy", params={"trade_mode": "both"}, strategy_obj=obj,
+    )
+    assert err is None, err
+    assert mode == "long_only"

@@ -4876,6 +4876,50 @@ def create_strategy_container(
                 params["trade_mode"] = "both" if "both" in modes else sorted(modes)[0]
         except Exception:
             pass
+    elif str(params.get("trade_mode") or "").strip().lower() == "both":
+        # TRADE-MODE-4 (2026-07-08): the inverse of TRADE-MODE-1. When params
+        # carry trade_mode='both' that the archetype CANNOT run — a long-only
+        # built-in (macd, williams_r, ...) stamped with 'both' by a CRUX-1
+        # short/both authoring directive it can't honor — clamp to the runnable
+        # long side at MINT. Left as-is, the deterministic crucible/validation
+        # backtest hard-fails "does not support trade_mode='both'", which the
+        # pipeline classifies terminal (_DETERMINISTIC_ERROR_TOKENS) and ARCHIVES
+        # the whole strategy over a config technicality (the 2026-07-08 alert
+        # wave). Clamping here makes the stored config internally consistent and
+        # mirrors the backtest-time clamp (resolve_backtest_trade_mode
+        # TRADE-MODE-3) at the source. A dual-side class that genuinely declares
+        # 'both' supports it and is untouched; short_only is left as-is (a
+        # long-only archetype has no faithful short interpretation — a clean
+        # failure beats a silent long-for-short swap). Best-effort and only for
+        # archetypes we can POSITIVELY introspect (registry hit + probe); any
+        # introspection failure leaves params for the backtest-time clamp.
+        try:
+            from forven.strategies.registry import _TYPE_MAP, discover
+
+            discover()
+            cls = _TYPE_MAP.get(str(type_ or "").strip())
+            if cls is not None:
+                from forven.strategies.backtest import (
+                    get_strategy_supported_trade_modes,
+                )
+
+                try:
+                    probe = cls("__trade_mode_probe__", dict(params))
+                except Exception:
+                    probe = None
+                supported = get_strategy_supported_trade_modes(
+                    strategy_type=type_, params=params, strategy_obj=probe,
+                )
+                if "both" not in supported:
+                    params["trade_mode"] = "long_only"
+                    log.warning(
+                        "create_strategy_container: archetype %r does not support "
+                        "trade_mode='both' — clamped to long_only at mint "
+                        "(TRADE-MODE-4)",
+                        type_,
+                    )
+        except Exception:
+            pass
     # RISK-PARITY-1: lift unit-unambiguous top-level risk params (time_stop_bars)
     # into the honored execution_profile channel at mint, so the engine actually
     # enforces them in backtest/paper/live instead of leaving them silently inert
