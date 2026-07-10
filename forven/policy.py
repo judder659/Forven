@@ -2377,7 +2377,13 @@ def evaluate_promotion(
         div_ok, div_reason = _evaluate_source_divergence_gate(strategy_id, general_settings)
         if not div_ok:
             stage_label = "gauntlet" if normalized_to == "paper" else "paper"
-            _log_gate_rejection_record(strategy_id, stage_label, div_reason, config)
+            # Honor record_rejection like every other gate site: read-only
+            # evaluations (the Forge status endpoint polls this every 10s per
+            # open detail page) must never feed the gate_rejections log — an
+            # unconditional write here let 5 page VIEWS of a pending-
+            # reconciliation strategy trip the repeated-failure auto-archive.
+            if record_rejection:
+                _log_gate_rejection_record(strategy_id, stage_label, div_reason, config)
             return False, div_reason
 
     # Guardrail 6: Active strategy correlation check (S00291)
@@ -2531,6 +2537,15 @@ def _extract_reason_code(reason_text: str) -> str:
     # text matching that previously carved these out of the dethrone counter.
     if text.startswith("insufficient paper"):
         return "insufficient_paper_evidence"
+    # Source-reconciliation evidence-ABSENCE: the out-of-band job has not computed
+    # (or has let go stale) a divergence reading for this symbol/timeframe. That
+    # says nothing about edge quality or actual venue divergence, so it must not
+    # share the counting source_divergence_reject bucket — with block_when_missing
+    # defaulting on, a never-reconciled pair would otherwise mass-archive its
+    # whole gauntlet cohort in 5 routine evaluations. A MEASURED divergence above
+    # threshold still counts below.
+    if "source reconciliation pending" in text or "source reconciliation unavailable" in text:
+        return "source_reconciliation_pending"
     if "divergence" in text:
         return "source_divergence_reject"
     if "overfit" in text:
@@ -2686,6 +2701,11 @@ _EVIDENCE_ABSENCE_REASON_CODES = {
     # was undersized for the strategy's trade cadence. Re-runnable, says nothing
     # about edge quality (S06127 2026-07-06).
     "wfa_window_insufficient",
+    # The source-reconciliation job hasn't produced a fresh divergence reading for
+    # the strategy's symbol/timeframe (block_when_missing default). Resolves when
+    # the job runs — never a merit failure. Measured divergence rejections keep
+    # the counting source_divergence_reject code.
+    "source_reconciliation_pending",
 }
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _DETHRONE_MANUAL_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
