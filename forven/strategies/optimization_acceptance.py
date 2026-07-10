@@ -353,7 +353,9 @@ def evaluate_optimization_candidate(
         or str(current_params.get("timeframe") or "").strip()
         or None
     )
-    resolved_leverage = float(leverage if leverage is not None else (current_params.get("leverage") or 3.0) or 3.0)
+    from forven.strategies.backtest import resolve_leverage
+
+    resolved_leverage = resolve_leverage(current_params, explicit=leverage)
 
     # Source ONE execution profile from the live baseline (the deployment context)
     # and judge BOTH sides on it. The optimizer never sweeps execution controls,

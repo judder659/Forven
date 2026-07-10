@@ -221,14 +221,25 @@ def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_
     - Boundary: ``observed_at == as_of`` is treated as already-superseded (strict
       ``>``), so ``as_of(T)`` returns the value in force during ``[start, T)``.
     """
-    if main_frame is None or main_frame.empty:
-        return main_frame
-    revisions = read_revisions(symbol, timeframe)
-    if revisions is None or revisions.empty:
-        return main_frame
-
     as_of_ts = pd.Timestamp(as_of)
     as_of_ts = as_of_ts.tz_localize("UTC") if as_of_ts.tzinfo is None else as_of_ts.tz_convert("UTC")
+
+    if main_frame is None or main_frame.empty:
+        return main_frame
+
+    # Appended bars have no revision row. Remove candles timestamped after the
+    # requested instant before overlaying restatements, otherwise an old as-of run
+    # silently sees bars appended later. (Candle-close eligibility remains the
+    # execution engine's responsibility because lake timestamps are source-specific.)
+    result = main_frame.copy()
+    result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True, errors="coerce")
+    result = result[result["timestamp"] <= as_of_ts].copy()
+    if result.empty:
+        return result
+
+    revisions = read_revisions(symbol, timeframe)
+    if revisions is None or revisions.empty:
+        return result
 
     revs = revisions.copy()
     revs["observed_at"] = pd.to_datetime(revs["observed_at"], utc=True, errors="coerce")
@@ -236,7 +247,7 @@ def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_
     revs["seq"] = pd.to_numeric(revs["seq"], errors="coerce").fillna(0)
     qualifying = revs[revs["observed_at"] > as_of_ts]
     if qualifying.empty:
-        return main_frame
+        return result
 
     # Per timestamp: the value in force at as_of is the one superseded EARLIEST after
     # as_of — the smallest observed_at strictly greater than as_of. If a bar was
@@ -251,8 +262,6 @@ def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_
         .first()
     )
 
-    result = main_frame.copy()
-    result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True, errors="coerce")
     overlay = picked.set_index("timestamp")
     for ts, row in overlay.iterrows():
         mask = result["timestamp"] == ts

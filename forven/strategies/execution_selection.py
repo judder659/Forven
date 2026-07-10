@@ -168,6 +168,9 @@ def _run_candidate(
     slippage_bps: float | None,
     leverage: float | None,
     initial_capital: float,
+    as_of: str | None,
+    start_date: str | None,
+    end_date: str | None,
 ) -> dict | None:
     """One confirmation backtest under the shared kernel with the given profile."""
     from forven.strategies.backtest import backtest_strategy
@@ -187,6 +190,9 @@ def _run_candidate(
         initial_capital=initial_capital,
         persist_legacy_run=False,
         sync_strategy_state=False,
+        as_of=as_of,
+        start_date=start_date,
+        end_date=end_date,
     )
     if not isinstance(result, dict) or result.get("error"):
         return None
@@ -222,6 +228,9 @@ def select_execution_profile(
     initial_capital: float = 10000.0,
     candidates: list[dict | None] | None = None,
     lean: bool = False,
+    as_of: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict:
     """Pick the best risk engine for a strategy by a risk-adjusted objective.
 
@@ -261,6 +270,9 @@ def select_execution_profile(
             slippage_bps=slippage_bps,
             leverage=leverage,
             initial_capital=initial_capital,
+            as_of=as_of,
+            start_date=start_date,
+            end_date=end_date,
         )
         if res is None:
             continue

@@ -176,15 +176,15 @@ def _persist_agent_backtest(
     result: dict,
     fitness: float,
 ) -> tuple[bool, str | None]:
-    strategy_row, merged_metrics = _load_strategy_context(strategy_id)
+    strategy_row, _strategy_metrics = _load_strategy_context(strategy_id)
     if not strategy_row:
         return False, None
 
     metrics = result.get("metrics")
     if not isinstance(metrics, dict):
         metrics = {}
-    merged_metrics.update(metrics)
-    merged_metrics["fitness"] = float(fitness)
+    persisted_metrics = dict(metrics)
+    persisted_metrics["fitness"] = float(fitness)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     job_id = f"agent_bt_{uuid4().hex[:12]}"
@@ -205,8 +205,6 @@ def _persist_agent_backtest(
     }
 
     from forven.api_core import _persist_backtest_result_row, _write_backtest_result_artifacts
-    from forven.strategies.backtest import _sync_strategy_metrics_and_promote_if_eligible
-
     _persist_backtest_result_row(
         result_id=result_id,
         strategy_id=strategy_id,
@@ -215,7 +213,7 @@ def _persist_agent_backtest(
         timeframe=resolved_timeframe,
         start_date=str(result.get("start_date") or "").strip() or None,
         end_date=str(result.get("end_date") or "").strip() or None,
-        metrics=merged_metrics,
+        metrics=persisted_metrics,
         config=config_payload,
         created_at=now_iso,
     )
@@ -228,7 +226,7 @@ def _persist_agent_backtest(
             asset=symbol,
             strategy_type=str(strategy_type or strategy_row.get("type") or "").strip(),
             params=params if isinstance(params, dict) else {},
-            metrics=merged_metrics,
+            metrics=persisted_metrics,
             fitness=float(fitness),
             strategy_name=strategy_name,
             config=config_payload,
@@ -244,12 +242,6 @@ def _persist_agent_backtest(
         )
     except Exception:
         pass
-
-    _sync_strategy_metrics_and_promote_if_eligible(
-        strategy_id,
-        merged_metrics,
-        promotion_reason="Agent backtest completed",
-    )
 
     return True, result_id
 
@@ -335,6 +327,9 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
             },
             "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs"},
             "bars": {"type": "integer", "description": "Number of bars to backtest against (default 8760 = 365 days of 1h). ALWAYS use at least 8760 bars (1 year) for reliable results."},
+            "start_date": {"type": "string", "description": "Optional inclusive UTC window start."},
+            "end_date": {"type": "string", "description": "Optional inclusive UTC window end."},
+            "as_of": {"type": "string", "description": "Optional point-in-time data cutoff."},
         },
         "required": ["asset", "strategy_type", "params"],
     },
@@ -368,6 +363,10 @@ def _tool_run_backtest(params: dict) -> str:
             timeframe=params.get("timeframe", "1h"),
             persist_legacy_run=False,
             regime_gate=False,
+            sync_strategy_state=False,
+            start_date=params.get("start_date"),
+            end_date=params.get("end_date"),
+            as_of=params.get("as_of"),
         )
 
         if result.get("error"):

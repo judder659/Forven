@@ -227,21 +227,38 @@ def test_validation_optimization_uses_best_sweep_timeframe(forven_db, monkeypatc
     workflow = create_or_get_workflow(strategy_id=strategy_id, created_by="pytest", settings_snapshot=build_settings_snapshot())
     detail = get_workflow_detail(workflow["id"])
     opt_step = next(step for step in detail["steps"] if step["step_key"] == "validation_optimization")
+    from forven.engine_provenance import BACKTEST_ENGINE_VERSION
+    from forven.gauntlet.tasks import _workflow_as_of
+
     with get_db() as conn:
+        strategy_params = __import__("json").loads(
+            conn.execute("SELECT params FROM strategies WHERE id = ?", (strategy_id,)).fetchone()["params"]
+        )
+        current_config = __import__("json").dumps(
+            {
+                "engine_version": BACKTEST_ENGINE_VERSION,
+                "params": strategy_params,
+                "as_of": _workflow_as_of(workflow),
+            }
+        )
         conn.execute(
             """
             INSERT INTO backtest_results (
                 result_id, strategy_id, result_type, symbol, timeframe, metrics_json, config_json, created_at
             )
             VALUES
-              ('BT-1H', ?, 'backtest', 'BTC/USDT', '1h', ?, '{}', '2026-04-23T00:00:00+00:00'),
-              ('BT-4H', ?, 'backtest', 'BTC/USDT', '4h', ?, '{}', '2026-04-23T00:01:00+00:00')
+              ('BT-1H', ?, 'backtest', 'BTC/USDT', '1h', ?, ?, ?),
+              ('BT-4H', ?, 'backtest', 'BTC/USDT', '4h', ?, ?, ?)
             """,
             (
                 strategy_id,
                 '{"sharpe_ratio": 0.4, "total_trades": 10}',
+                current_config,
+                workflow["created_at"],
                 strategy_id,
                 '{"sharpe_ratio": 1.8, "total_trades": 20}',
+                current_config,
+                workflow["created_at"],
             ),
         )
 
@@ -275,21 +292,35 @@ def test_quick_screen_gate_rescues_strategy_on_best_timeframe(forven_db):
     )
     detail = get_workflow_detail(workflow["id"])
     gate_step = next(s for s in detail["steps"] if s["step_key"] == "quick_screen_gate")
+    from forven.engine_provenance import BACKTEST_ENGINE_VERSION
+    from forven.gauntlet.tasks import _workflow_as_of
 
     # 1h: only 8 trades -> rejected by the brain's min-trades guardrail. 4h: 35 trades
     # with a healthy edge -> passes. best-of-N must pick 4h (higher sharpe-first score).
     with get_db() as conn:
+        strategy_params = __import__("json").loads(
+            conn.execute("SELECT params FROM strategies WHERE id = ?", (strategy_id,)).fetchone()["params"]
+        )
+        current_config = __import__("json").dumps(
+            {
+                "engine_version": BACKTEST_ENGINE_VERSION,
+                "params": strategy_params,
+                "as_of": _workflow_as_of(workflow),
+            }
+        )
         conn.execute(
             """
             INSERT INTO backtest_results
                 (result_id, strategy_id, result_type, symbol, timeframe, metrics_json, config_json, created_at)
             VALUES
-              ('BT-1H', ?, 'backtest', 'BTC/USDT', '1h', ?, '{}', '2026-04-23T00:00:00+00:00'),
-              ('BT-4H', ?, 'backtest', 'BTC/USDT', '4h', ?, '{}', '2026-04-23T00:01:00+00:00')
+              ('BT-1H', ?, 'backtest', 'BTC/USDT', '1h', ?, ?, ?),
+              ('BT-4H', ?, 'backtest', 'BTC/USDT', '4h', ?, ?, ?)
             """,
             (
                 strategy_id, '{"sharpe_ratio": 0.2, "total_trades": 8, "profit_factor": 1.05, "win_rate": 0.5}',
+                current_config, workflow["created_at"],
                 strategy_id, '{"sharpe_ratio": 1.4, "total_trades": 35, "profit_factor": 1.6, "win_rate": 0.55}',
+                current_config, workflow["created_at"],
             ),
         )
 
@@ -479,6 +510,10 @@ def test_paper_promotion_gate_uses_unified_status_and_transition(forven_db, monk
         return {"from": "gauntlet", "to": "paper"}
 
     monkeypatch.setattr("forven.gauntlet.tasks._transition_to_paper", _fake_transition)
+    monkeypatch.setattr(
+        "forven.gauntlet.tasks._select_and_persist_execution_profile",
+        lambda *_args, **_kwargs: {"skipped": True, "reason": "covered separately"},
+    )
     gate_step = next(item for item in detail["steps"] if item["step_key"] == "paper_promotion_gate")
 
     from forven.gauntlet.tasks import run_paper_promotion_gate

@@ -289,7 +289,9 @@ def _manual_paper_close_pnl_override(trade: dict, exit_price: float) -> tuple[di
         slip_bps = max(float(settings.get("backtest_slippage_bps", 2.0) or 2.0), 0.0)
     except (TypeError, ValueError):
         fee_bps, slip_bps = 4.5, 2.0
-    drag = 2.0 * (fee_bps + slip_bps) / 10000.0 * max(lev, 0.0)
+    drag_at_entry = 2.0 * (fee_bps + slip_bps) / 10000.0 * max(lev, 0.0)
+    exit_notional_ratio = float(exit_price) / entry
+    drag = drag_at_entry * 0.5 * (1.0 + exit_notional_ratio)
     pnl_eq = (((float(exit_price) - entry) / entry) * sign * lev - drag) * float(size_frac)
     equity_at_entry = _coerce_optional_float(sd.get("kernel_equity_at_entry")) or 10000.0
     pnl_usd = round(equity_at_entry * pnl_eq, 4)
@@ -301,6 +303,7 @@ def _manual_paper_close_pnl_override(trade: dict, exit_price: float) -> tuple[di
         cost_breakdown_usd(
             equity_at_entry=equity_at_entry, leverage=lev, size_fraction=float(size_frac),
             fee_bps=fee_bps, slippage_bps=slip_bps, net_pnl_usd=pnl_usd,
+            exit_notional_ratio=exit_notional_ratio,
         ),
     )
 

@@ -3560,6 +3560,7 @@ class OptimizationSubmitBody(BaseModel):
     execution_profile: dict | None = None
     execution_parameter_ranges: dict | None = None
     lifecycle_id: str | None = None
+    as_of: str | None = Field(default=None, max_length=64)
 
 
 StrategyPromoteBody = lifecycle_service.StrategyPromoteBody
@@ -10428,6 +10429,26 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
             params = getattr(instance, "default_params", {})
             if isinstance(params, dict):
                 default_params = dict(params)
+            from forven.strategies.lookahead_probe import detect_execution_crash, detect_lookahead
+
+            leak_reason = detect_lookahead(instance)
+            crash_reason = detect_execution_crash(instance)
+            if leak_reason or crash_reason:
+                registered = False
+                reset()
+                try:
+                    os.remove(manual_path)
+                except OSError:
+                    pass
+                reasons = [reason for reason in (leak_reason, crash_reason) if reason]
+                return {
+                    "valid": False,
+                    "registered": False,
+                    "strategy_name": type_name,
+                    "default_params": {},
+                    "errors": [f"Causality/runtime probe rejected the strategy: {reason}" for reason in reasons],
+                    "warnings": warnings,
+                }
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"Registered, but could not read default_params: {exc}")
     except Exception as exc:  # noqa: BLE001
@@ -10483,6 +10504,17 @@ def send_manual_strategy_to_forge(body: SendToForgeBody) -> dict:
             )
         strategy_type = type_name
         params = dict(body.params) if isinstance(body.params, dict) else {}
+        try:
+            from forven.strategies.lookahead_probe import detect_execution_crash, detect_lookahead
+
+            probe = _TYPE_MAP[type_name](type_name, params)
+            leak_reason = detect_lookahead(probe)
+            crash_reason = detect_execution_crash(probe)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Strategy validation probe failed: {exc}") from exc
+        if leak_reason or crash_reason:
+            detail = "; ".join(reason for reason in (leak_reason, crash_reason) if reason)
+            raise HTTPException(status_code=400, detail=f"Strategy rejected by Forge intake: {detail}")
         params.setdefault("_asset", asset)
         source_ref = f"manual_backtest:custom/manual_{type_name}.py"
         name = (body.name or "").strip() or f"{asset} {type_name}"
@@ -11333,6 +11365,7 @@ def post_optimization_submit(body: OptimizationSubmitBody):
     body_objective = body.objective
     body_start = body.start
     body_end = body.end
+    body_as_of = body.as_of
 
     def _run_optimization_background() -> None:
         try:
@@ -11356,6 +11389,7 @@ def post_optimization_submit(body: OptimizationSubmitBody):
                 slippage_bps=body.slippage_bps,
                 initial_capital=body.initial_capital,
                 leverage=body.leverage,
+                as_of=body_as_of,
             )
 
             if not isinstance(opt_result, dict) or opt_result.get("error"):
@@ -11410,6 +11444,10 @@ def post_optimization_submit(body: OptimizationSubmitBody):
                 "best_objective_value": best_objective_value,
                 "wfa_verdict": opt_result.get("wfa_verdict"),
                 "validated": opt_result.get("validated"),
+                "holdout_applied": opt_result.get("holdout_applied"),
+                "selection_window": opt_result.get("selection_window"),
+                "validation_window": opt_result.get("validation_window"),
+                "as_of": body_as_of,
                 "top_results": opt_result.get("top_results"),
                 "job_id": job_id,
                 "status": "succeeded",
@@ -11894,6 +11932,10 @@ def post_backtesting_run(body: dict):
                         slippage_bps=body.get("slippage_bps"),
                         initial_capital=body.get("initial_capital"),
                         execution_controls=manual_execution_controls or None,
+                        start_date=body.get("start") or body.get("start_date"),
+                        end_date=body.get("end") or body.get("end_date"),
+                        as_of=body.get("as_of"),
+                        sync_strategy_state=False,
                     )
                     if isinstance(result, dict) and not result.get("error"):
                         persisted = _persist_completed_backtest_run(

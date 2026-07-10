@@ -4,7 +4,13 @@ import math
 
 import pytest
 
-from forven.strategies.backtest import _compute_basic_metrics, compute_metrics
+import pandas as pd
+
+from forven.strategies.backtest import (
+    _build_equity_curve_from_trades,
+    _compute_basic_metrics,
+    compute_metrics,
+)
 
 
 def test_compute_basic_metrics_uses_compounded_equity_curve():
@@ -97,3 +103,81 @@ def test_sharpe_annualization_uses_timeframe():
     # hourly / daily ratio should be sqrt(8760/365) = sqrt(24) ~ 4.9
     ratio = sharpe_1h / sharpe_1d
     assert ratio == pytest.approx(math.sqrt(24), rel=0.01)
+
+
+def test_mark_to_market_curve_captures_intratrade_drawdown():
+    idx = pd.date_range("2025-01-01", periods=4, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 50.0, 110.0],
+            "high": [100.0, 100.0, 55.0, 110.0],
+            "low": [100.0, 100.0, 50.0, 110.0],
+            "close": [100.0, 100.0, 50.0, 110.0],
+            "volume": [1.0] * 4,
+        },
+        index=idx,
+    )
+    trades = [
+        {
+            "entry_time": str(idx[1]),
+            "exit_time": str(idx[3]),
+            "entry_price": 100.0,
+            "exit_price": 110.0,
+            "direction": "long",
+            "leverage": 1.0,
+            "size_fraction_raw": 1.0,
+            "pnl_pct": 0.10,
+            "bars_held": 2,
+        }
+    ]
+
+    curve = _build_equity_curve_from_trades(trades, df, 10_000.0)
+    metrics = compute_metrics(trades, total_bars=len(df), equity_curve=curve)
+
+    assert curve[2]["equity"] == pytest.approx(5_000.0)
+    assert float(metrics["total_return_pct"]) == pytest.approx(0.10)
+    assert float(metrics["max_drawdown_pct"]) == pytest.approx(0.50)
+
+
+def test_simultaneous_hedged_exits_are_additive_not_sequentially_compounded():
+    idx = pd.date_range("2025-01-01", periods=2, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 100.0],
+            "high": [100.0, 100.0],
+            "low": [100.0, 100.0],
+            "close": [100.0, 100.0],
+            "volume": [1.0, 1.0],
+        },
+        index=idx,
+    )
+    trades = [
+        {
+            "entry_time": str(idx[0]),
+            "exit_time": str(idx[1]),
+            "entry_price": 100.0,
+            "exit_price": 110.0,
+            "direction": "long",
+            "leverage": 1.0,
+            "size_fraction_raw": 1.0,
+            "pnl_pct": 0.10,
+            "bars_held": 1,
+        },
+        {
+            "entry_time": str(idx[0]),
+            "exit_time": str(idx[1]),
+            "entry_price": 100.0,
+            "exit_price": 90.0,
+            "direction": "short",
+            "leverage": 1.0,
+            "size_fraction_raw": 1.0,
+            "pnl_pct": 0.10,
+            "bars_held": 1,
+        },
+    ]
+
+    curve = _build_equity_curve_from_trades(trades, df, 10_000.0)
+    metrics = compute_metrics(trades, total_bars=len(df), equity_curve=curve)
+
+    assert curve[-1]["equity"] == pytest.approx(12_000.0)
+    assert float(metrics["total_return_pct"]) == pytest.approx(0.20)

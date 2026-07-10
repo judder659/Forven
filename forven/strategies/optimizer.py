@@ -353,6 +353,7 @@ def grid_search(
     fee_bps: float | None = None,
     slippage_bps: float | None = None,
     initial_capital: float | None = None,
+    as_of: str | None = None,
 ) -> list[dict]:
     """Exhaustive grid search over parameter ranges.
 
@@ -490,6 +491,7 @@ def grid_search(
             timeframe=_resolved_tf,
             start_date=start_date,
             end_date=end_date,
+            as_of=as_of,
         )
         log.info("Grid search pre-loaded %d candles for %s @ %s", len(shared_candles), asset, _resolved_tf)
     except Exception as exc:
@@ -531,6 +533,7 @@ def grid_search(
                 slippage_bps=slippage_bps,
                 initial_capital=initial_capital,
                 execution_controls=trial_execution_controls or None,
+                as_of=as_of,
             )
             if bt.get("error"):
                 return None
@@ -679,6 +682,7 @@ def optimize_strategy(
     slippage_bps: float | None = None,
     initial_capital: float | None = None,
     leverage: float | None = None,
+    as_of: str | None = None,
 ) -> dict:
     """Optimize a strategy: grid search + WFA validation on best params.
 
@@ -760,15 +764,53 @@ def optimize_strategy(
     resolved_execution_param_space = _normalize_explicit_param_space(execution_param_space)
     normalized_objective = _normalize_objective(objective)
 
-    # Step 1: Grid search
+    # Keep parameter selection and the final decision evidence disjoint. For a
+    # sufficiently long window, the grid sees the chronological first 70% and WFA
+    # sees only the untouched final 30%. Short explicit/unit-test windows retain the
+    # legacy single-window behavior because they cannot support two 420-bar samples.
+    selection_bars = int(bars)
+    selection_start = start_date
+    selection_end = end_date
+    validation_bars = min(int(bars), 1440)
+    validation_start = start_date
+    validation_end = end_date
+    holdout_applied = False
+    if int(bars) >= 840:
+        try:
+            from forven.strategies.backtest import load_backtest_candles
+
+            split_frame = load_backtest_candles(
+                asset=asset,
+                bars=int(bars),
+                timeframe=timeframe or "1h",
+                start_date=start_date,
+                end_date=end_date,
+                as_of=as_of,
+            )
+            if len(split_frame) >= 840:
+                holdout_bars = max(420, int(len(split_frame) * 0.30))
+                holdout_bars = min(holdout_bars, len(split_frame) - 420)
+                split_at = len(split_frame) - holdout_bars
+                selection_bars = split_at
+                validation_bars = holdout_bars
+                selection_start = split_frame.index[0].isoformat()
+                selection_end = split_frame.index[split_at - 1].isoformat()
+                validation_start = split_frame.index[split_at].isoformat()
+                validation_end = split_frame.index[-1].isoformat()
+                holdout_applied = True
+        except Exception as exc:
+            log.warning("Optimization holdout split unavailable for %s: %s", strategy_id, exc)
+
+    # Step 1: Grid search on selection data only.
     try:
         grid_results = grid_search(
-            strategy_id, asset, strategy_type, resolved_param_space, bars=bars,
+            strategy_id, asset, strategy_type, resolved_param_space, bars=selection_bars,
             timeframe=timeframe,
+            regime_gate=False,
             objective=normalized_objective,
             max_trials=n_trials,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=selection_start,
+            end_date=selection_end,
             base_params=base_params,
             execution_controls=exec_controls,
             execution_param_space=resolved_execution_param_space,
@@ -776,6 +818,7 @@ def optimize_strategy(
             slippage_bps=slippage_bps,
             initial_capital=initial_capital,
             leverage=leverage,
+            as_of=as_of,
         )
     except TimeoutError as exc:
         detail = str(exc).strip() or "Grid search timed out"
@@ -794,8 +837,8 @@ def optimize_strategy(
         best.get("execution_controls") or {},
     )
 
-    # Step 2: WFA validation on best params (cap at 1440 bars = 60 days @ 1h).
-    wfa_bars = min(bars, 1440)
+    # Step 2: WFA validation on the untouched chronological holdout.
+    wfa_bars = min(validation_bars, 1440)
     best_full_params = best.get("full_params") if isinstance(best.get("full_params"), dict) else best["params"]
     best_execution_controls = best.get("full_execution_controls") if isinstance(best.get("full_execution_controls"), dict) else exec_controls
     # Size the fold count so each in-sample slice clears the worker's warmup+min-eval
@@ -817,13 +860,14 @@ def optimize_strategy(
             total_bars=wfa_bars,
             n_splits=wfa_folds,
             timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=validation_start,
+            end_date=validation_end,
             leverage=wfa_leverage,
             fee_bps=fee_bps,
             slippage_bps=slippage_bps,
             initial_capital=float(initial_capital or 10000.0),
             execution_controls=best_execution_controls,
+            as_of=as_of,
         )
     except TimeoutError as exc:
         detail = str(exc).strip() or "Walk-forward validation timed out"
@@ -868,6 +912,10 @@ def optimize_strategy(
         "trial_sharpe_var": best.get("trial_sharpe_var"),
         "trial_sharpe_count": best.get("trial_sharpe_count"),
         "top_results": grid_results[:3],
+        "holdout_applied": holdout_applied,
+        "selection_window": {"start": selection_start, "end": selection_end, "bars": selection_bars},
+        "validation_window": {"start": validation_start, "end": validation_end, "bars": wfa_bars},
+        "as_of": as_of,
     }
 
     log.info(

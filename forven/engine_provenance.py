@@ -46,7 +46,7 @@ import json
 # data-substrate rebuild that invalidates comparisons against prior verdicts
 # (verdicts are only evidence relative to the data they were scored on) — and
 # add a matching ENGINE_VERSION_LOG entry (test-enforced).
-BACKTEST_ENGINE_VERSION = 3
+BACKTEST_ENGINE_VERSION = 4
 
 # Append-only changelog: one entry per version, newest last. The unit test
 # asserts the newest entry matches BACKTEST_ENGINE_VERSION so a bump can never
@@ -81,6 +81,16 @@ ENGINE_VERSION_LOG: tuple[dict, ...] = (
             "unfiltered (user report: Donchian +adx_min:25 backtested identical "
             "to no filter). It now gates entries and forces exits on its own. "
             "Any strategy stamping adx_min without adx_max scores differently."
+        ),
+    },
+    {
+        "version": 4,
+        "date": "2026-07-10",
+        "summary": (
+            "Backtest correctness re-baseline: entry-bar protective exits and "
+            "liquidation, shared hedged exposure, exit-notional fee/slippage, "
+            "mark-to-market portfolio return/drawdown, chronological purged WFA, "
+            "disjoint optimizer holdout, and point-in-time appended-bar filtering."
         ),
     },
 )

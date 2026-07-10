@@ -684,6 +684,7 @@ def _load_rerun_candles(
     start_date: str | None = None,
     end_date: str | None = None,
     max_bars: int = _RERUN_MAX_BARS,
+    as_of: str | None = None,
 ):
     """Load candles for a robustness rerun over the strategy's ACTUAL window.
 
@@ -698,12 +699,21 @@ def _load_rerun_candles(
     candles = None
     if start_date and end_date:
         candles = load_backtest_candles(
-            asset=symbol, timeframe=timeframe, start_date=start_date, end_date=end_date
+            asset=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+            as_of=as_of,
         )
         if candles is not None and not candles.empty and len(candles) > max_bars:
             candles = candles.tail(max_bars)
     if candles is None or candles.empty:
-        candles = load_backtest_candles(asset=symbol, timeframe=timeframe, bars=max_bars)
+        candles = load_backtest_candles(
+            asset=symbol,
+            timeframe=timeframe,
+            bars=max_bars,
+            as_of=as_of,
+        )
     return candles
 
 
@@ -764,6 +774,7 @@ class WalkForwardBody(BaseModel):
     train_ratio: float = 0.7
     start_date: str | None = None
     end_date: str | None = None
+    as_of: str | None = None
 
 
 class MonteCarloBody(BaseModel):
@@ -779,6 +790,7 @@ class ParamJitterBody(BaseModel):
     # Requested reruns. The effective count is min(this, param_jitter_max_iterations)
     # so a large request can't overrun the step timeout (see _run_param_jitter_analysis).
     n_iterations: int = 30
+    as_of: str | None = None
 
 
 class CostStressBody(BaseModel):
@@ -790,6 +802,7 @@ class CostStressBody(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     baseline_result_id: str | None = None
+    as_of: str | None = None
 
 
 class RegimeSplitBody(BaseModel):
@@ -877,6 +890,7 @@ def _run_walk_forward_analysis(body: WalkForwardBody) -> dict:
         in_sample_pct=body.train_ratio,
         start_date=body.start_date,
         end_date=body.end_date,
+        as_of=body.as_of,
     )
     if not isinstance(result, dict):
         raise HTTPException(500, "Walk-forward analysis returned an invalid payload")
@@ -1015,8 +1029,15 @@ def _run_monte_carlo_analysis(body: MonteCarloBody) -> dict:
         final_return_pct = ((equity[-1] - body.initial_capital) / body.initial_capital) * 100.0
         final_returns.append(float(final_return_pct))
 
-        peak = np.maximum.accumulate(equity)
-        drawdown_pct = np.where(peak > 0, (peak - equity) / peak * 100.0, 0.0)
+        # Include the pre-trade starting balance in the peak path. Otherwise a loss
+        # on the first sampled trade becomes the initial peak and its drawdown vanishes.
+        equity_with_initial = np.concatenate(([float(body.initial_capital)], equity))
+        peak = np.maximum.accumulate(equity_with_initial)
+        drawdown_pct = np.where(
+            peak > 0,
+            (peak - equity_with_initial) / peak * 100.0,
+            0.0,
+        )
         max_drawdowns.append(float(np.nanmax(drawdown_pct)) if drawdown_pct.size else 0.0)
 
         if len(sampled) > 1 and np.std(sampled) > 0:
@@ -1172,6 +1193,7 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
         start_date=baseline_context.get("start_date"),
         end_date=baseline_context.get("end_date"),
         max_bars=jitter_max_bars,
+        as_of=body.as_of,
     )
     if candles.empty:
         raise HTTPException(400, "No candle data available for parameter jitter reruns.")
@@ -1244,6 +1266,7 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
             candles_df=candles,
             regime_gate=False,  # Robustness tests evaluate param stability, not regime fit
             sync_strategy_state=False,  # perturbed params must never overwrite stored metrics or auto-promote
+            as_of=body.as_of,
         )
 
     # Deadline generous enough to COMPLETE the (now feasibly-sized) sample at the estimated
@@ -1416,6 +1439,7 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         start_date=win_start,
         end_date=win_end,
         max_bars=cost_stress_max_bars,
+        as_of=body.as_of,
     )
     if candles.empty:
         raise HTTPException(400, "No candle data available for cost-stress reruns.")
@@ -1435,6 +1459,7 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         # Canonical params, but a short 720-bar window (and possibly non-default
         # fees) — this rerun's metrics must not refresh the strategy row.
         sync_strategy_state=False,
+        as_of=body.as_of,
     )
     baseline_error = str(baseline_run.get("error") or "").strip()
     if baseline_error:
@@ -1453,6 +1478,7 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         candles_df=candles,
         regime_gate=False,  # Cost-stress tests parameter sensitivity, not regime fit
         sync_strategy_state=False,  # stressed costs must never overwrite stored metrics or auto-promote
+        as_of=body.as_of,
     )
     stressed_error = str(stressed_run.get("error") or "").strip()
     if stressed_error:

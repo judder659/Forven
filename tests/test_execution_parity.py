@@ -28,6 +28,8 @@ import pytest
 
 from forven.strategies.backtest import _run_directional_signal_series
 from forven.strategies.base import DirectionalSignals
+from forven.strategies.execution_kernel import simulate
+from forven.strategies.sizing import normalize_execution_controls
 
 
 WARMUP = 5
@@ -201,3 +203,85 @@ def test_harness_exercises_all_exit_reasons():
                     reasons.add(t["exit_reason"])
     for expected in ("stop_loss", "take_profit", "trailing_stop", "time_stop", "signal"):
         assert expected in reasons, f"harness never triggered exit_reason={expected!r}; got {sorted(reasons)}"
+
+
+def test_entry_bar_stop_is_enforced_after_next_open_fill():
+    """A position filled at the entry-bar open is exposed to the rest of that bar."""
+    idx = pd.date_range("2025-01-01", periods=5, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [100.0] * 5,
+            "high": [100.0] * 5,
+            "low": [100.0, 100.0, 100.0, 50.0, 100.0],
+            "close": [100.0] * 5,
+            "volume": [1_000.0] * 5,
+        },
+        index=idx,
+    )
+    entries = pd.Series(False, index=idx)
+    entries.iloc[2] = True  # signal bar 2 -> fill at bar 3 open
+    false = pd.Series(False, index=idx)
+    signals = DirectionalSignals(entries, false.copy(), false.copy(), false.copy())
+    ec = normalize_execution_controls(
+        {"sizing_mode": "full", "stop_loss_pct": 10.0}
+    )
+    assert ec is not None
+
+    result = simulate(
+        df,
+        signals,
+        warmup=1,
+        leverage=1.0,
+        regimes=None,
+        round_trip_drag=0.0,
+        trade_mode="long_only",
+        allowed_modes=("long",),
+        ec=ec,
+        initial_capital=10_000.0,
+    )
+
+    assert len(result.closed_trades) == 1
+    trade = result.closed_trades[0]
+    assert trade["entry_bar"] == 3
+    assert trade["exit_time"] == str(idx[3])
+    assert trade["exit_reason"] == "stop_loss"
+    assert trade["exit_price"] == pytest.approx(90.0)
+
+
+def test_both_mode_shares_one_portfolio_allocation():
+    idx = pd.date_range("2025-01-01", periods=5, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [100.0] * 5,
+            "high": [100.0] * 5,
+            "low": [100.0] * 5,
+            "close": [100.0] * 5,
+            "volume": [1_000.0] * 5,
+        },
+        index=idx,
+    )
+    entries = pd.Series(False, index=idx)
+    entries.iloc[2] = True
+    false = pd.Series(False, index=idx)
+    signals = DirectionalSignals(entries, false.copy(), entries.copy(), false.copy())
+    ec = normalize_execution_controls(
+        {"sizing_mode": "full", "time_stop_bars": 1}
+    )
+    assert ec is not None
+
+    result = simulate(
+        df,
+        signals,
+        warmup=1,
+        leverage=1.0,
+        regimes=None,
+        round_trip_drag=0.0,
+        trade_mode="both",
+        allowed_modes=("long", "short"),
+        ec=ec,
+        initial_capital=10_000.0,
+    )
+
+    assert len(result.closed_trades) == 2
+    assert sum(float(t["size_fraction_raw"]) for t in result.closed_trades) == pytest.approx(1.0)
+    assert {float(t["size_fraction_raw"]) for t in result.closed_trades} == {0.5}

@@ -5878,7 +5878,9 @@ def _kernel_close_recorded(
         _size_frac = _coerce_positive_float(sd.get("kernel_size_fraction")) or 1.0
         _fee_bps = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
         _slip_bps = max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)
-        _drag = 2.0 * (_fee_bps + _slip_bps) / 10000.0 * max(_lev, 0.0)
+        _drag_at_entry = 2.0 * (_fee_bps + _slip_bps) / 10000.0 * max(_lev, 0.0)
+        _exit_notional_ratio = (exit_price / _our_entry) if _our_entry > 0 else 1.0
+        _drag = _drag_at_entry * 0.5 * (1.0 + _exit_notional_ratio)
         # Funding over the ACTUAL holding window — the kernel's own funding pass
         # (_apply_funding_to_trades) only covers a FAITHFUL trade's historical bar range,
         # which doesn't describe a fill-now position's real (current-mark) entry/exit.
@@ -5912,6 +5914,7 @@ def _kernel_close_recorded(
                     equity_at_entry=equity_at_entry, leverage=_lev, size_fraction=_size_frac,
                     fee_bps=_fee_bps, slippage_bps=_slip_bps,
                     funding_gain_pct=_funding_pct, net_pnl_usd=_pnl_usd_eq,
+                    exit_notional_ratio=_exit_notional_ratio,
                 ),
             },
             pnl_override={
@@ -5956,6 +5959,7 @@ def _kernel_close_recorded(
                 fee_bps=_fee_bps_f, slippage_bps=_slip_bps_f,
                 funding_gain_pct=float(trade.get("funding_cost_pct") or 0.0),
                 net_pnl_usd=pnl_usd,
+                exit_notional_ratio=(exit_price / float(trade.get("entry_price") or exit_price)),
             ),
         },
         pnl_override={

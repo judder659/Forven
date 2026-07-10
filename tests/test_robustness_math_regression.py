@@ -276,6 +276,12 @@ def test_monte_carlo_on_percent_point_trades_produces_bounded_equity(forven_db):
     assert 10.0 < result["prob_profitable"] < 99.0
 
 
+def test_monte_carlo_counts_first_trade_loss_from_initial_equity(forven_db):
+    result = _run_mc_with_trades([{"return_pct": -10.0}], n_simulations=20)
+
+    assert result["drawdown_distribution"]["p50"] == pytest.approx(10.0)
+
+
 def test_monte_carlo_verdict_uses_profitable_paths_and_drawdown_cap(forven_db):
     """The original-return percentile is diagnostic, not the hard pass/fail gate.
 

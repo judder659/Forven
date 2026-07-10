@@ -77,7 +77,7 @@ def _insert_result(
         )
 
 
-def test_agent_run_backtest_persists_result_and_syncs_strategy(forven_db, monkeypatch):
+def test_agent_run_backtest_persists_result_without_mutating_strategy(forven_db, monkeypatch):
     _insert_strategy("s-agent-backtest", stage="quick_screen")
 
     def _fake_backtest_strategy(**_kwargs):
@@ -131,11 +131,10 @@ def test_agent_run_backtest_persists_result_and_syncs_strategy(forven_db, monkey
     assert result_row["result_type"] == "backtest"
     assert result_row["symbol"] == "BTC"
     assert result_row["timeframe"] == "1h"
-    assert strategy_row["stage"] == "gauntlet"
-    assert strategy_row["status"] == "gauntlet"
+    assert strategy_row["stage"] == "quick_screen"
+    assert strategy_row["status"] == "quick_screen"
     stored_metrics = json.loads(strategy_row["metrics"] or "{}")
-    assert float(stored_metrics["sharpe"]) == 1.8
-    assert float(stored_metrics["fitness"]) > 0
+    assert stored_metrics == {}
 
 
 def test_agent_verdict_persistence_normalizes_gauntlet_aliases(forven_db):

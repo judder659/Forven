@@ -318,6 +318,9 @@ def test_post_backtesting_run_local_forwards_body_execution_controls(forven_db, 
                 "initial_capital": 25000,
                 "fee_bps": 7.5,
                 "slippage_bps": 3.0,
+                "start": "2025-01-01T00:00:00Z",
+                "end": "2025-02-01T00:00:00Z",
+                "as_of": "2025-02-02T00:00:00Z",
             }
         )
 
@@ -330,6 +333,10 @@ def test_post_backtesting_run_local_forwards_body_execution_controls(forven_db, 
         "risk_per_trade": 0.02,
         "stop_loss_pct": 2.0,
     }
+    assert captured["start_date"] == "2025-01-01T00:00:00Z"
+    assert captured["end_date"] == "2025-02-01T00:00:00Z"
+    assert captured["as_of"] == "2025-02-02T00:00:00Z"
+    assert captured["sync_strategy_state"] is False
 
 
 def test_post_backtesting_run_local_persists_result_rows_for_agent_flow(forven_db, monkeypatch):

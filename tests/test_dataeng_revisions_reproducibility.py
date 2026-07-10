@@ -111,6 +111,19 @@ def test_reconstruct_as_of_no_revisions_is_identity(lake):
     assert _close_at(out) == 3.0
 
 
+def test_reconstruct_as_of_excludes_future_appended_bars_without_revisions(lake):
+    main = _frame(
+        [
+            _bar(pd.Timestamp("2026-01-01T12:00:00Z"), 1.0, 1.0, 1.0, 1.0, 10),
+            _bar(pd.Timestamp("2026-01-01T13:00:00Z"), 2.0, 2.0, 2.0, 2.0, 10),
+        ]
+    )
+
+    out = reconstruct_as_of(main, SYMBOL, TF, "2026-01-01T12:30:00Z")
+
+    assert list(out["close"]) == [1.0]
+
+
 # --------------------------- as_of consumer wiring ---------------------------
 
 def test_load_parquet_as_of_reconstructs(lake):
