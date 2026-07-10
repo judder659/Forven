@@ -2528,17 +2528,25 @@ def _apply_settings_section(section: str, payload: dict) -> dict:
             if requested == "live" and is_beta_build():
                 log.warning("refusing trading_mode=live in beta build; coercing to paper")
                 requested = "paper"
-            updates["trading_mode"] = requested
             # CFG-1: the visible 'Trading mode' select must actually arm/disarm the
             # engine. The execution path reads config.get_execution_mode()
             # (config.json execution_mode), NOT this KV key, so without this the
             # control was a no-op and the dashboard could misreport live vs paper.
-            # Keep them in sync; wrapped so a beta-build refusal can't 500 the save.
+            # MODE-SPLIT-1: enforcement is the gatekeeper — persist this KV
+            # mirror only AFTER set_execution_mode accepts. Previously a
+            # refused 'live' was stored anyway, so Settings displayed live
+            # while the runtime stayed paper. A refusal is a loud 400 the
+            # save bar surfaces, never a silently-divergent stored value.
             try:
                 from forven.config import set_execution_mode
                 set_execution_mode(requested)
             except Exception as exc:
-                log.warning("could not sync execution_mode to trading_mode=%s: %s", requested, exc)
+                log.warning("refusing to persist trading_mode=%s: %s", requested, exc)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"trading_mode '{requested}' was not applied: {exc}",
+                ) from exc
+            updates["trading_mode"] = requested
 
     elif section == "initial-capital":
         if "initial_capital" in payload:
