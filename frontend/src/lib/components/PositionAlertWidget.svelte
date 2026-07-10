@@ -19,6 +19,14 @@
 
 	let positionAlerts: PositionAlert[] = [];
 
+	// With many open positions the per-position cards stacked indefinitely and
+	// buried the Risk/Data panels under alerts. Show ONE card; the rest
+	// collapse behind an "N more positions open" bar until expanded.
+	let stackExpanded = false;
+	$: visibleAlerts = stackExpanded ? positionAlerts : positionAlerts.slice(0, 1);
+	$: hiddenCount = positionAlerts.length - visibleAlerts.length;
+	$: if (positionAlerts.length <= 1) stackExpanded = false;
+
 	let dismissedPositionTokens = new Set<string>();
 	let positionAlertPoller: RealtimeRefreshController | null = null;
 	let positionAlertInFlight = false;
@@ -185,7 +193,7 @@
 </script>
 
 {#if $snoozeUntil <= Date.now()}
-	{#each positionAlerts as alert (alert.token)}
+	{#each visibleAlerts as alert (alert.token)}
 		<div
 			class="pointer-events-auto bg-[#050505] border border-emerald-900 px-4 py-3 min-w-[280px] max-w-sm"
 			transition:fly={{ x: 300, duration: 250 }}
@@ -258,4 +266,30 @@
 			</a>
 		</div>
 	{/each}
+	{#if hiddenCount > 0 || stackExpanded}
+		<button
+			class="pointer-events-auto bg-[#050505] border border-emerald-900 px-4 py-2 min-w-[280px] max-w-sm text-[10px] uppercase tracking-wider text-emerald-400 font-bold text-left hover:bg-[#111] transition-colors flex items-center justify-between gap-2"
+			transition:fly={{ x: 300, duration: 250 }}
+			on:click={() => (stackExpanded = !stackExpanded)}
+		>
+			<span>
+				{#if stackExpanded}
+					Collapse — {positionAlerts.length} positions open
+				{:else}
+					{hiddenCount} more {hiddenCount === 1 ? 'position' : 'positions'} open
+				{/if}
+			</span>
+			<svg
+				class="w-3 h-3 shrink-0 transition-transform {stackExpanded ? '' : 'rotate-180'}"
+				viewBox="0 0 20 20"
+				fill="currentColor"
+			>
+				<path
+					fill-rule="evenodd"
+					d="M5.23 12.21a.75.75 0 001.06.02L10 8.832l3.71 3.398a.75.75 0 101.02-1.1l-4.22-3.865a.75.75 0 00-1.02 0L5.25 11.13a.75.75 0 00-.02 1.08z"
+					clip-rule="evenodd"
+				/>
+			</svg>
+		</button>
+	{/if}
 {/if}

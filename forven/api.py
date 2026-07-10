@@ -421,8 +421,18 @@ async def lifespan(_app: FastAPI):
     # Run critical background loops from the API process as a fallback when the
     # Discord bot runtime is unavailable. A file lock ensures only one API
     # process owns these loops.
+    # FORVEN_API_CONTROL_PLANE_ONLY=1 skips ALL in-process runtime workers
+    # (scheduler, agent/brain loops, data/risk daemon) so the API boots as a
+    # pure control plane — used by the Playwright e2e harness to get a
+    # deterministic, network-quiet backend. Never set this on a real install:
+    # without a separate `forven daemon start` nothing trades or ticks.
     try:
-        if acquire_runtime_worker_lock():
+        if _env_bool("FORVEN_API_CONTROL_PLANE_ONLY", False):
+            log.info(
+                "FORVEN_API_CONTROL_PLANE_ONLY=1: skipping in-process runtime "
+                "workers (scheduler/agent/brain/daemon loops)"
+            )
+        elif acquire_runtime_worker_lock():
             _api_runtime_lock_held = True
             from forven.scheduler import reset_scheduler_job_locks, run_scheduler_loop
 

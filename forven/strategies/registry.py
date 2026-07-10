@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import pkgutil
+import re
 import threading
 import time
 from collections.abc import Mapping
@@ -88,6 +89,32 @@ class RegistryTypeError(Exception):
     """
 
 
+# Every registered runtime type must be identifier-shaped. All 76 builtin
+# TYPE_NAMEs are lowercase snake_case and imported modules register as
+# ``imported__<module>``, so this rejects only genuine garbage — the observed
+# failure was a codegen'd TYPE_NAME declared as a @property, whose class-level
+# getattr yields the property OBJECT and str() turns it into
+# "<property object at 0x...>", which then rendered verbatim in the Strategy
+# Creator catalog.
+_TYPE_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _type_name_validation_error(strategy_type: object) -> str | None:
+    """One-line diagnostic if the type name is unusable, else None."""
+    if not isinstance(strategy_type, str):
+        return (
+            f"TYPE_NAME must be a plain string, got {type(strategy_type).__name__} "
+            f"{strategy_type!r} (a TYPE_NAME declared as a @property resolves to the "
+            "property object itself — declare it as a class attribute string)"
+        )
+    if not _TYPE_NAME_PATTERN.fullmatch(strategy_type):
+        return (
+            f"TYPE_NAME {strategy_type!r} is not a valid identifier "
+            "(letters, digits and underscores only, max 64 chars)"
+        )
+    return None
+
+
 def register_type(strategy_type: str, cls: type[BaseStrategy], *, raise_on_skip: bool = False):
     """Register a strategy class for a given type string.
 
@@ -97,6 +124,9 @@ def register_type(strategy_type: str, cls: type[BaseStrategy], *, raise_on_skip:
     rather than re-warned on every discover.
     """
     errors = _registry_type_validation_errors(cls)
+    name_error = _type_name_validation_error(strategy_type)
+    if name_error:
+        errors = [name_error, *errors]
     if errors:
         if raise_on_skip:
             raise RegistryTypeError(
@@ -536,8 +566,10 @@ def _register_module_type_tolerant(module, *, raise_on_skip: bool = False) -> No
     type_name = getattr(module, "TYPE_NAME", None)
 
     # Explicit, well-formed declaration → preserve existing behavior exactly.
+    # Passed raw (no str() coercion) so a non-string TYPE_NAME gets the precise
+    # register_type diagnostic instead of being smuggled in as its repr.
     if isinstance(cls, type) and type_name:
-        register_type(str(type_name), cls, raise_on_skip=raise_on_skip)
+        register_type(type_name, cls, raise_on_skip=raise_on_skip)
         return
 
     # Tolerant fallback (gap-fill only). Resolve the class first.
@@ -557,9 +589,10 @@ def _register_module_type_tolerant(module, *, raise_on_skip: bool = False) -> No
         type_name = getattr(cls, "TYPE_NAME", None)
     if not type_name:
         return
-    type_name = str(type_name)
-    if type_name in _TYPE_MAP:
+    if isinstance(type_name, str) and type_name in _TYPE_MAP:
         # Never override an already-registered type from the tolerant path.
+        # (Non-strings can never be registered, so they skip straight to the
+        # register_type name validation for a precise diagnostic.)
         return
     register_type(type_name, cls, raise_on_skip=raise_on_skip)
 

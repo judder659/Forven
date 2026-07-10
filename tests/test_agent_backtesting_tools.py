@@ -84,14 +84,21 @@ def test_agent_run_backtest_persists_result_and_syncs_strategy(forven_db, monkey
         return {
             "start_date": "2025-01-01T00:00:00+00:00",
             "end_date": "2026-01-01T00:00:00+00:00",
-                "metrics": {
-                    "total_trades": 120,
-                    "win_rate": 0.57,
-                    "sharpe": 1.8,
-                    "profit_factor": 1.9,
-                    "max_drawdown_pct": 0.08,
-                    "total_return_pct": 14.0,
+            "metrics": {
+                "total_trades": 120,
+                "win_rate": 0.57,
+                "sharpe": 1.8,
+                "profit_factor": 1.9,
+                "max_drawdown_pct": 0.08,
+                "total_return_pct": 14.0,
                 "robustness_score": 82,
+                # Real backtest_strategy output ALWAYS carries IS/OOS blocks;
+                # the degeneracy-aware best-of rule in
+                # _sync_strategy_metrics_and_promote_if_eligible reads
+                # in_sample.total_trades and treats a missing block as a
+                # zero-IS-trades degenerate slice (which never promotes).
+                "in_sample": {"total_trades": 80, "sharpe": 1.6, "profit_factor": 1.8, "win_rate": 0.56},
+                "out_of_sample": {"total_trades": 40, "sharpe": 1.8, "profit_factor": 1.9, "win_rate": 0.57},
             },
             "trades": [],
         }

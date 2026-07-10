@@ -244,3 +244,36 @@ class TestDataEngineNestedPartialSave:
         # Nested defaults still filled for genuinely-missing keys (source
         # reconciliation now defaults ON — the Binance↔HL divergence safety net).
         assert des["source_reconciliation"]["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# MODE-SPLIT-1: a requested trading_mode is persisted only after enforcement
+# (config.set_execution_mode) accepts it. Previously a refused 'live' was
+# stored in the settings blob anyway, so Settings displayed "live" while the
+# runtime stayed paper.
+# ---------------------------------------------------------------------------
+
+
+class TestTradingModePersistAfterAccept:
+    def test_rejected_live_is_a_400_and_never_persisted(self, forven_db):
+        from forven.config import get_execution_mode
+
+        with pytest.raises(HTTPException) as exc_info:
+            put_settings_section("trading-mode", {"trading_mode": "live"})
+        assert exc_info.value.status_code == 400
+        assert "live" in str(exc_info.value.detail)
+        # The stored mirror and the enforced mode both still say paper.
+        assert _load_settings_payload()["trading_mode"] == "paper"
+        assert get_execution_mode() == "paper"
+        assert get_settings()["trading_mode"] == "paper"
+
+    def test_paper_save_round_trips(self, forven_db):
+        result = put_settings_section("trading-mode", {"trading_mode": "paper"})
+        assert result["trading_mode"] == "paper"
+        assert _load_settings_payload()["trading_mode"] == "paper"
+
+    def test_beta_build_coerces_live_to_paper_without_erroring(self, forven_db, monkeypatch):
+        monkeypatch.setenv("FORVEN_ENV", "beta")
+        result = put_settings_section("trading-mode", {"trading_mode": "live"})
+        assert result["trading_mode"] == "paper"
+        assert _load_settings_payload()["trading_mode"] == "paper"
