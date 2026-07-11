@@ -714,7 +714,17 @@ def _best_sweep_result(
     author-declared/default timeframe. ``run_quick_screen_gate`` uses it (since the
     timeframe_sweep now runs before the gate, definition v3) and so does
     ``run_validation_optimization``. Rows with empty metrics are ignored; if none are
-    usable the fallback timeframe is returned with no result and empty metrics."""
+    usable the fallback timeframe is returned with no result and empty metrics.
+
+    Prefer-declared bias: the declared timeframe (``fallback_tf``) is the reference
+    context. A NON-declared timeframe wins the crown only when it beats the declared
+    context's score AND carries positive Sharpe — a negative off-declared context must
+    never displace the author's timeframe (S06895, 2026-07-11: the declared-4h row
+    missed the degeneracy floor by one trade and the strategy was crowned, judged,
+    and merit-archived on a Sharpe −2.40 1h context it never declared). When the
+    declared row exists but is degeneracy-skipped and every survivor is negative,
+    the declared context is returned rather than crowning a negative one. A genuinely
+    better positive off-declared timeframe still wins — the enhancement stands."""
     from forven.db import get_db
 
     with get_db() as conn:
@@ -730,9 +740,21 @@ def _best_sweep_result(
         ).fetchall()
 
     best_tf = str(fallback_tf or "1h").strip() or "1h"
+    # The author's declaration comes from the IMMUTABLE params (_timeframe) when
+    # available: strategies.timeframe (fallback_tf) is overwritten by
+    # _persist_quick_screen_winner, so after one legitimate crowning a re-sweep
+    # reading only the column would defend the previously-crowned timeframe
+    # instead of the author's.
+    declared_display = (
+        str((params or {}).get("_timeframe") or "").strip() or best_tf
+    )
+    declared_tf = declared_display.lower()
     best_result_id: str | None = None
     best_metrics: dict[str, Any] = {}
     best_score = float("-inf")
+    best_sharpe = float("-inf")
+    declared_score = float("-inf")
+    declared_pick: tuple[str, str | None, dict[str, Any]] | None = None
     # Least-degenerate fallback, used ONLY if no context clears the validity floor —
     # so a strategy that genuinely can't trade anywhere is judged (and failed) on its
     # most-traded context, never crowned by a lucky 4-trade slice.
@@ -763,11 +785,31 @@ def _best_sweep_result(
         if is_degenerate_backtest_metrics(metrics):
             continue
         score = sharpe * 10.0 + min(trades, 100.0) * 0.01 + total_return * 0.01
+        if tf.lower() == declared_tf and score > declared_score:
+            declared_score = score
+            declared_pick = (tf, rid, metrics)
         if score > best_score:
             best_score = score
+            best_sharpe = float(sharpe)
             best_tf, best_result_id, best_metrics = tf, rid, metrics
+    # No context cleared the validity floor: judge on the most-traded context
+    # (never crowned by a lucky slice — see fb comment above).
     if best_score == float("-inf"):
         return fb_tf, fb_result_id, fb_metrics
+    # Prefer-declared bias (see docstring). Declared rows join the same global
+    # max, so when the winner is off-declared the load-bearing quality bar is
+    # POSITIVE Sharpe (the score comparison only breaks exact ties).
+    if declared_pick is not None and best_tf.lower() != declared_tf:
+        if not (best_score > declared_score and best_sharpe > 0.0):
+            return declared_pick
+    if declared_pick is None and best_sharpe <= 0.0:
+        # Every survivor is negative and the declared context is unmeasured
+        # (absent or degeneracy-skipped): return the declared timeframe
+        # UNMEASURED — no result id, no metrics — so the caller's gate takes the
+        # retryable missing-evidence path instead of judging/persisting a
+        # context the author never declared, or contaminating strategies.metrics
+        # with a degenerate lucky slice.
+        return declared_display, None, {}
     return best_tf, best_result_id, best_metrics
 
 

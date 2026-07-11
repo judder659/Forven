@@ -118,6 +118,8 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
             (strategy_id,),
         ).fetchall()
 
+    from forven.policy import is_errored_validation_row, is_nonresult_wfa_row
+
     latest: dict[str, dict[str, Any]] = {}
     for row in rows:
         result_type = str(row["result_type"] or "").strip().lower()
@@ -126,6 +128,19 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
             continue
         metrics = _parse_json(row["metrics_json"], {})
         config = _parse_json(row["config_json"], {})
+        # Skip-don't-claim, mirroring the paper-gate extractor: an errored/
+        # timed-out row or a completed 0-fold walk_forward measured nothing and
+        # must not displace an older genuine result as "latest" — otherwise
+        # run_paper_promotion_gate merit-fails on a phantom verdict the policy
+        # gate itself would ignore. Pending/running rows still surface (this
+        # reader also drives the live status display).
+        if is_errored_validation_row(
+            metrics if isinstance(metrics, dict) else {},
+            config if isinstance(config, dict) else {},
+        ):
+            continue
+        if step_key == "walk_forward" and is_nonresult_wfa_row(metrics):
+            continue
         verdict = metrics.get("verdict") if isinstance(metrics, dict) else None
         # A walk-forward run where EVERY fold is below wfa_min_fold_trades judged
         # nothing — the window was too short for the strategy's trade rate. Its
