@@ -3612,6 +3612,31 @@ def kv_set(key: str, value):
         )
 
 
+def kv_set_many(items: dict) -> None:
+    """Write several KV keys inside ONE transaction (all-or-nothing).
+
+    A settings mutation touches multiple KV keys (the main settings blob plus
+    the encrypted-secrets blob, or the pipeline payload plus its WIP-cap
+    mirrors). Persisting them via separate ``kv_set`` calls leaves a window
+    where a crash or lock failure between writes diverges enforcement from
+    display. Committing every touched key on a single connection closes that
+    window: either the whole logical mutation lands or none of it does.
+
+    Values are already-final Python objects (JSON-serializable). Callers that
+    encrypt secrets must pass the ENCRYPTED value here — this helper does not
+    transform values, it only serializes and writes them atomically.
+    """
+    if not items:
+        return
+    now = _now()
+    with get_db() as conn:
+        for key, value in items.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
+                (str(key), json.dumps(value), now),
+            )
+
+
 def live_equity_baseline_kv_key(strategy_id: str) -> str:
     """KV key holding a live strategy's go-live account equity baseline.
 
