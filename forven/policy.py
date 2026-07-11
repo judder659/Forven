@@ -3522,7 +3522,12 @@ def _evaluate_quick_screen_gate(strategy_id: str, config: dict) -> tuple[bool, s
         return False, reason
 
     # === S00552 GUARDRAIL 4: Win Rate Trap Detection (WR > 60% but PF < 1.0) ===
-    win_rate = float(out_of_sample.get("win_rate", out_of_sample.get("winRate", 0.0)) or 0.0)
+    # WIN-RATE-UNIT-1: compute_metrics emits win_rate as a 0-1 RATIO, but legacy
+    # blobs may carry it as percent points (57.0). Normalize to percent points so
+    # the > 60% comparisons below fire for EITHER stored unit (values <= 1.0 are
+    # scaled x100 as ratios; > 1.0 are already percent). Without this the ratio
+    # form (0.79) never trips the > 60.0 guards — a silent lookahead escape hatch.
+    win_rate = _to_percent_points(out_of_sample.get("win_rate", out_of_sample.get("winRate", 0.0)))
     min_pf = min(is_pf, oos_pf) if has_distinct_oos else is_pf
     if has_distinct_oos and win_rate > 60.0 and min_pf < 1.0:
         return False, f"S00552 REJECT: Win rate trap detected - WR {win_rate:.1f}% but PF {min_pf:.2f} < 1.0 (likely curve-fitted)"
