@@ -1291,6 +1291,63 @@ def requeue_stale_engine_artifacts(*, limit: int = 20, revive_limit: int = _ENGI
                     kv_set(marker_key, {"at": now, "action": "skipped_execution_crash", "reason": crash_reason})
                     continue
 
+                # LOOKAHEAD-REENTRY-2: the crash-probe above only catches strategies
+                # that raise on execution — it does NOT catch a future-bar data leak
+                # (e.g. .shift(-1)), which runs cleanly but makes both IS and OOS
+                # slices impossibly good, defeating the overfit/win-rate-trap gates.
+                # The lookahead probe runs at registration intake but not on this
+                # re-entry, so a stale-engine revival would smuggle a leaking
+                # strategy back into quick_screen WITHOUT the causality check every
+                # fresh strategy passes. PR#63 added the same re-probe to the brain's
+                # research-recovery re-entry; mirror it here at the sibling choke
+                # point. Import brain.py's helper lazily (this loop already does that
+                # for transition_stage just below) to avoid the gauntlet<->brain
+                # import cycle. A leak returns a reason string (park archived); an
+                # infra fault returns None (helper fails OPEN — never blocks a
+                # legitimate revival on the probe's own bug).
+                #
+                # The helper needs the strategy's type + params; the candidate row
+                # only carries id + stage, so load them here (the helper itself is
+                # fail-open on an unresolvable class, so a missing row degrades to a
+                # None reason = revive, matching the crash-probe's fail-open stance).
+                lk_stype, lk_params = "", {}
+                try:
+                    with get_db() as conn:
+                        srow = conn.execute(
+                            "SELECT type, params FROM strategies WHERE id = ?", (strategy_id,)
+                        ).fetchone()
+                    if srow is not None:
+                        lk_stype = str(srow["type"] or "").strip()
+                        raw_params = srow["params"]
+                        if isinstance(raw_params, (str, bytes, bytearray)):
+                            import json as _json
+
+                            try:
+                                raw_params = _json.loads(raw_params)
+                            except Exception:
+                                raw_params = {}
+                        lk_params = raw_params if isinstance(raw_params, dict) else {}
+                except Exception:
+                    # A load fault is not evidence of a leak — fall through with the
+                    # empty defaults; the helper fails open on an unresolvable class.
+                    lk_stype, lk_params = "", {}
+
+                from forven.brain import _reentry_lookahead_reason
+
+                lookahead_reason = _reentry_lookahead_reason(strategy_id, lk_stype, lk_params)
+                if lookahead_reason:
+                    log.warning(
+                        "Engine re-baseline: NOT reviving %s — lookahead re-probe rejected: %s",
+                        strategy_id, lookahead_reason,
+                    )
+                    with get_db() as conn:
+                        conn.execute(
+                            "UPDATE strategies SET status_reason = ? WHERE id = ?",
+                            ("lookahead_blocked:tier2:lookahead", strategy_id),
+                        )
+                    kv_set(marker_key, {"at": now, "action": "skipped_lookahead", "reason": lookahead_reason})
+                    continue
+
                 from forven.brain import transition_stage
 
                 # archived -> quick_screen is the standard (ungated) revival

@@ -620,6 +620,14 @@ async def _call_with_tools_single(
 
 _AGENT_TASK_TIMEOUT_SECONDS = DEFAULT_AGENT_TASK_TIMEOUT_SECONDS  # 15-minute hard wall-clock limit per task
 _BRAIN_CALLBACK_MAX_PENDING = 10  # Don't queue brain callbacks if queue is already this deep
+# A saturated brain queue drops MANY callbacks in quick succession (every agent
+# that completes while the backlog persists), so alert on the coverage problem at
+# most once per window rather than once per drop. Module-level timestamp — reset
+# on process restart, which is the right scope (a fresh backlog deserves a fresh
+# alert). Not persisted to KV: the log_activity/emit_notification records are the
+# durable trail; this only debounces the emit.
+_BRAIN_CALLBACK_DROP_ALERT_COOLDOWN_MINUTES = 30
+_last_brain_callback_drop_alert_ts = 0.0
 
 
 def _walk_exception_chain(error: Exception):
@@ -779,16 +787,56 @@ def _resolve_task_timeout_seconds(task_type: str) -> int:
     return resolve_agent_task_timeout_seconds(task_type, settings=settings)
 
 
+def _emit_brain_callback_drop_alert(agent_id: str, task_title: str, backlog: int) -> None:
+    """Raise a throttled, visible alert that a completion callback was dropped.
+
+    A dropped callback means an agent's finished work is never reviewed by the
+    brain — silent work loss the operator can't see unless it's surfaced. But a
+    saturated queue drops MANY callbacks back-to-back, so debounce on a
+    module-level timestamp: emit at most one alert per cooldown window naming the
+    latest dropped task + the backlog depth (the coverage problem), rather than
+    flooding the alerts panel with one per drop.
+    """
+    global _last_brain_callback_drop_alert_ts
+    now = datetime.now(timezone.utc).timestamp()
+    if now - _last_brain_callback_drop_alert_ts < _BRAIN_CALLBACK_DROP_ALERT_COOLDOWN_MINUTES * 60:
+        return
+    _last_brain_callback_drop_alert_ts = now
+    detail = (
+        f"Brain review queue saturated ({backlog} pending) — completed agent work "
+        f"is not being reviewed. Most recent dropped callback: agent {agent_id} "
+        f"task '{task_title}'. Drain the brain queue or raise the backlog cap."
+    )
+    log_activity("warning", f"agent:{agent_id}", detail)
+    try:
+        from forven.notifications import emit_notification
+
+        emit_notification(
+            "agent_alert",
+            severity="warning",
+            source="agents",
+            title="Brain review queue saturated — agent work unreviewed",
+            summary=f"{backlog} pending; latest drop: {task_title}",
+            body=detail,
+            dedupe_key="brain_callback_backlog",
+        )
+    except Exception:  # a notification-store fault must never break task completion
+        log.debug("Brain callback drop notification failed", exc_info=True)
+
+
 def _maybe_queue_brain_callback(conn, agent_id: str, task: dict, target_channel) -> bool:
     """Queue a brain callback only if the brain queue isn't already overloaded."""
     pending_count = conn.execute(
         "SELECT COUNT(*) as c FROM tasks WHERE type='brain_invoke' AND status='pending'"
     ).fetchone()["c"]
     if pending_count >= _BRAIN_CALLBACK_MAX_PENDING:
-        log.info(
-            "Skipping brain callback for agent %s task '%s' — brain queue full (%d pending)",
-            agent_id, task.get("title", ""), pending_count,
+        task_title = str(task.get("title", "") or "Untitled")
+        log.warning(
+            "Skipping brain callback for agent %s task '%s' — brain queue full (%d pending); "
+            "completed work will not be reviewed until the queue drains",
+            agent_id, task_title, pending_count,
         )
+        _emit_brain_callback_drop_alert(agent_id, task_title, int(pending_count))
         return False
     create_pending_task(
         conn,

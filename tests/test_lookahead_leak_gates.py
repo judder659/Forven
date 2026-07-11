@@ -293,3 +293,123 @@ def test_detect_lookahead_blocks_strategy_originated_probe_errors():
     reason = detect_lookahead(_Boom())
     assert reason is not None
     assert "causal execution could not be verified" in reason
+
+
+# ================= GATE B: engine-revival re-entry (LOOKAHEAD-REENTRY-2) =================
+# PR#63 added a lookahead re-probe to the brain's research-recovery re-entry
+# (brain.try_research_recovery via brain._reentry_lookahead_reason). The OTHER
+# re-entry path — the engine-version-staleness revival in
+# gauntlet.engine.requeue_stale_engine_artifacts — gated only on
+# detect_execution_crash (a raise), so a clean-running future-bar leak could be
+# revived back into quick_screen WITHOUT the causality check. It now runs the same
+# re-probe at that choke point. These tests mirror the brain-recovery tests: a leak
+# blocks the revival (archived, status_reason lookahead_blocked:tier2:lookahead); an
+# inconclusive probe (helper returns None) never blocks a legitimate revival.
+
+from forven.db import create_strategy_container, kv_get  # noqa: E402
+from forven.engine_provenance import BACKTEST_ENGINE_VERSION  # noqa: E402
+
+_STALE_VERSION = BACKTEST_ENGINE_VERSION + 1000  # explicitly stamped, never current
+
+
+def _revival_strategy(stage="archived", name="Revival Leak Test"):
+    with get_db() as conn:
+        strategy_id, _display_id, _base_id = create_strategy_container(
+            conn=conn,
+            name=name,
+            type_="rsi_momentum",
+            symbol="ETH/USDT",
+            timeframe="1h",
+            params={"rsi_period": 14},
+            stage="quick_screen",
+        )
+        if stage != "quick_screen":
+            conn.execute(
+                "UPDATE strategies SET stage = ?, stage_changed_at = ? WHERE id = ?",
+                (stage, datetime.now(timezone.utc).isoformat(), strategy_id),
+            )
+    return strategy_id
+
+
+def _insert_stale_verdict(strategy_id, *, result_id, verdict="FAIL"):
+    from forven.api_core import _persist_backtest_result_row
+
+    _persist_backtest_result_row(
+        result_id=result_id,
+        strategy_id=strategy_id,
+        result_type="walk_forward",
+        symbol="ETH/USDT",
+        timeframe="1h",
+        start_date=None,
+        end_date=None,
+        metrics={"status": "succeeded", "verdict": verdict},
+        config={"status": "succeeded", "engine_version": _STALE_VERSION},
+    )
+
+
+def _make_failed_gate_archive(name):
+    """An archived strategy with a failed_gate workflow + a stale-engine verdict —
+    exactly the shape the revival sweep would otherwise un-archive."""
+    from forven.gauntlet.settings import build_settings_snapshot
+    from forven.gauntlet.store import create_or_get_workflow
+
+    strategy_id = _revival_strategy(stage="archived", name=name)
+    workflow = create_or_get_workflow(
+        strategy_id=strategy_id, created_by="pytest", settings_snapshot=build_settings_snapshot()
+    )
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE gauntlet_workflows SET status = 'failed_gate' WHERE id = ?", (workflow["id"],)
+        )
+    _insert_stale_verdict(strategy_id, result_id=f"r-{name}", verdict="FAIL")
+    return strategy_id, workflow["id"]
+
+
+def _stage_of(strategy_id):
+    with get_db() as conn:
+        row = conn.execute("SELECT stage, status_reason FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+    return row["stage"], row["status_reason"]
+
+
+def test_engine_revival_blocks_lookahead_leak(forven_db, monkeypatch):
+    """A stale-engine revival candidate whose re-probe reports a leak is NOT
+    revived: it stays archived with the lookahead status_reason and a
+    skipped_lookahead marker (mirrors the crash-probe skip)."""
+    import forven.brain as brain
+    from forven.gauntlet.engine import requeue_stale_engine_artifacts
+
+    strategy_id, _wf = _make_failed_gate_archive("leak-revival")
+    # Force the re-probe (imported lazily from brain inside the sweep) to report a
+    # leak — mock the source so the test is deterministic and offline.
+    monkeypatch.setattr(
+        brain, "_reentry_lookahead_reason",
+        lambda sid, stype, params: "Lookahead leak: causal signal flips when future bars withheld",
+    )
+
+    summary = requeue_stale_engine_artifacts(limit=10)
+
+    assert summary["revived"] == 0
+    stage, status_reason = _stage_of(strategy_id)
+    assert stage == "archived"
+    assert status_reason == "lookahead_blocked:tier2:lookahead"
+    marker = kv_get(f"forven:engine_rebaseline:v{BACKTEST_ENGINE_VERSION}:{strategy_id}")
+    assert marker and marker["action"] == "skipped_lookahead"
+
+
+def test_engine_revival_proceeds_when_probe_is_clean(forven_db, monkeypatch):
+    """A clean re-probe (helper returns None — no leak, or an inconclusive infra
+    fault) never blocks a legitimate revival: the strategy is revived normally."""
+    import forven.brain as brain
+    from forven.gauntlet.engine import requeue_stale_engine_artifacts
+
+    strategy_id, _wf = _make_failed_gate_archive("clean-revival")
+    # None = no leak / inconclusive — the sweep must revive as before.
+    monkeypatch.setattr(brain, "_reentry_lookahead_reason", lambda sid, stype, params: None)
+
+    summary = requeue_stale_engine_artifacts(limit=10)
+
+    assert summary["revived"] == 1
+    stage, _status_reason = _stage_of(strategy_id)
+    assert stage == "quick_screen"
+    marker = kv_get(f"forven:engine_rebaseline:v{BACKTEST_ENGINE_VERSION}:{strategy_id}")
+    assert marker and marker["action"] == "revived"

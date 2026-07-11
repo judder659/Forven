@@ -382,3 +382,83 @@ def test_measured_divergence_rejection_still_counts(forven_db):
     ok, _ = evaluate_promotion("S-DIV", "gauntlet", "paper", record_rejection=True)
     assert ok is False
     assert {r["reason_code"] for r in _rejection_rows("S-DIV")} == {"source_divergence_reject"}
+
+
+# --------------------------- coverage asymmetry (job discovery) ---------------------------
+# The precompute job originally scanned only capital-bearing stages, but the gate
+# fires at gauntlet->paper for pairs that may not be covered yet (a quick_screen
+# strategy one promotion from gauntlet, or a gauntlet pair whose symbol has no
+# prior capital strategy). Those pairs then hit the gate with no reading and stick
+# on "Source reconciliation pending" forever, with nothing telling the operator the
+# blocker is JOB COVERAGE, not divergence. The job now (a) discovers pre-capital
+# pipeline pairs too (capital pairs ordered first under the cap) and (b) names any
+# uncovered active-pipeline pair after each sweep.
+
+
+def _activity_rows(source="data"):
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT level, message, data FROM activity_log WHERE source = ? ORDER BY id",
+            (source,),
+        ).fetchall()
+
+
+def test_quick_screen_pair_enters_the_sweep_plan(forven_db):
+    """A quick_screen strategy's (symbol, timeframe) must be discovered for
+    reconciliation — it is one promotion from the gate that reads the reading."""
+    _seed_strategy(strategy_id="S-QS", symbol="LINK/USDT", timeframe="4h", stage="quick_screen")
+    pairs = sr._active_symbol_timeframes(limit=200)
+    assert ("LINK/USDT", "4h") in pairs
+
+
+def test_capital_pairs_win_under_the_cap(forven_db):
+    """Under a tight pair cap, capital-bearing stages are reconciled FIRST so a
+    quick_screen pair never starves a paper pair of its reading."""
+    _seed_strategy(strategy_id="S-PAPER", symbol="BTC/USDT", timeframe="1h", stage="paper")
+    _seed_strategy(strategy_id="S-QS", symbol="ETH/USDT", timeframe="1h", stage="quick_screen")
+    # limit=1 must keep the capital-bearing (paper) pair, not the quick_screen one.
+    pairs = sr._active_symbol_timeframes(limit=1)
+    assert pairs == [("BTC/USDT", "1h")]
+
+
+def test_symbol_held_in_both_capital_and_precapital_counts_as_capital(forven_db):
+    """A pair present in BOTH a capital stage and quick_screen collapses to its
+    capital priority, so it is never dropped in favour of a pure-precapital pair."""
+    _seed_strategy(strategy_id="S-PAPER", symbol="BTC/USDT", timeframe="1h", stage="paper")
+    _seed_strategy(strategy_id="S-QS-DUP", symbol="BTC/USDT", timeframe="1h", stage="quick_screen")
+    _seed_strategy(strategy_id="S-QS-OTHER", symbol="ETH/USDT", timeframe="1h", stage="quick_screen")
+    pairs = sr._active_symbol_timeframes(limit=1)
+    assert pairs == [("BTC/USDT", "1h")]
+
+
+def test_coverage_gap_warns_on_uncovered_pipeline_pair(forven_db, monkeypatch):
+    """An active-pipeline pair with NO stored reading produces the coverage-gap
+    warning (log.warning + a 'coverage_gap' activity row), so 'pending' blockers
+    read as a coverage problem, not divergence."""
+    _seed_strategy(strategy_id="S-GAP", symbol="DOGE/USDT", timeframe="1h", stage="quick_screen")
+    # Neutralize the actual reconcile so the test is deterministic and offline: the
+    # pair is discovered but no reading is written, leaving a coverage gap.
+    monkeypatch.setattr(
+        sr, "reconcile_one",
+        lambda *a, **k: {"status": "fetch_error", "symbol": a[0], "timeframe": a[1]},
+    )
+    monkeypatch.setattr(sr, "kv_set_best_effort", lambda *a, **k: True)  # persist nothing
+
+    summary = sr.run_source_reconciliation_job()
+
+    assert summary["coverage_gaps"] >= 1
+    gap_rows = [r for r in _activity_rows("data")
+                if "source_reconciliation_coverage_gap" in str(r["data"] or "")]
+    assert len(gap_rows) == 1
+    assert gap_rows[0]["level"] == "warning"
+    assert "DOGE/USDT" in gap_rows[0]["message"]
+
+
+def test_no_coverage_gap_when_reading_exists(forven_db):
+    """A pair WITH a stored reading is not a coverage gap — no gap warning."""
+    _seed_strategy(strategy_id="S-COV", symbol="BTC/USDT", timeframe="1h", stage="gauntlet")
+    _seed_divergence("BTC/USDT", "1h", status="ok", max_pct=0.3)
+
+    gaps = sr._coverage_gap_pairs()
+
+    assert ("BTC/USDT", "1h") not in gaps
