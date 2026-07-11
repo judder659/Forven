@@ -311,7 +311,7 @@ class TestKillSwitchSlippageM8:
     def test_residual_helper(self):
         from forven.exchange.risk import _close_residual_size
         assert _close_residual_size({"requested_size": 1.0, "filled_size": 0.3}, 1.0) == pytest.approx(0.7)
-        assert _close_residual_size({"requested_size": 1.0, "filled_size": None}, 1.0) == 0.0
+        assert _close_residual_size({"requested_size": 1.0, "filled_size": None}, 1.0) == 1.0
         assert _close_residual_size({"requested_size": 1.0, "filled_size": 1.0}, 1.0) == 0.0
 
     def test_no_fill_ioc_detected_as_error_so_escalation_fires(self):

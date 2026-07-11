@@ -108,6 +108,11 @@ def _force_cached_mid_in_manual_fills(monkeypatch):
 
     monkeypatch.setattr(md, "fetch_binance_prices", _venue_unavailable)
     monkeypatch.setattr(md, "resolve_market_data_source", lambda: "binance")
+    # Live manual opens must configure venue leverage before entry. Individual
+    # tests override this when exercising the fail-closed branch.
+    import forven.exchange.hyperliquid as hl
+
+    monkeypatch.setattr(hl, "set_leverage", lambda *a, **k: {"status": "ok"})
 
 
 def _get_trade(trade_id: str) -> dict | None:
@@ -347,7 +352,7 @@ def test_live_close_places_order_and_clean_reason(forven_db, monkeypatch):
 
     def _fake_close(asset, size, side="sell", testnet=True, **kw):
         calls["close"] = (asset, size, side)
-        return {"exit_price": 110.0, "order_id": "OID-EXIT"}
+        return {"exit_price": 110.0, "filled_size": size, "order_id": "OID-EXIT"}
 
     monkeypatch.setattr(hl, "close_position", _fake_close)
     monkeypatch.setattr(pc, "_live_testnet", lambda: True)
@@ -361,6 +366,50 @@ def test_live_close_places_order_and_clean_reason(forven_db, monkeypatch):
     assert sd["close_reason"] == "manual_close"
     assert not any(t in sd["close_reason"].lower() for t in SYNTHETIC_REASON_TOKENS)
     assert sd["exit_exchange_order_id"] == "OID-EXIT"
+
+
+def test_live_close_partial_fill_keeps_residual_open(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+
+    _insert_paper_strategy()
+    _insert_live_trade("L-PARTIAL", direction="long", size=1.0, entry_price=100.0)
+    _set_mid("BTC", 105.0)
+    monkeypatch.setattr(
+        hl,
+        "close_position",
+        lambda *a, **k: {"exit_price": 105.0, "filled_size": 0.4, "order_id": "OID-PART"},
+    )
+
+    pc.close_paper_position(STRATEGY_ID)
+
+    trade = _get_trade("L-PARTIAL")
+    assert trade["status"] == "OPEN"
+    assert trade["size"] == pytest.approx(0.6)
+    sd = json.loads(trade["signal_data"])
+    assert sd["pending_close_reconcile"] is True
+    assert sd["close_execution_outcome"] == "partial"
+    assert sd["close_residual_size"] == pytest.approx(0.6)
+
+
+def test_live_partial_close_books_only_confirmed_size(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+    from forven.db import get_db
+
+    _insert_paper_strategy()
+    _insert_live_trade("L-REDUCE", direction="long", size=2.0, entry_price=100.0)
+    _set_mid("BTC", 105.0)
+    monkeypatch.setattr(
+        hl,
+        "close_position",
+        lambda *a, **k: {"exit_price": 105.0, "filled_size": 0.4, "order_id": "OID-REDUCE"},
+    )
+
+    pc.partial_close_paper_position(STRATEGY_ID, pct=50.0)
+
+    assert _get_trade("L-REDUCE")["size"] == pytest.approx(1.6)
+    with get_db() as conn:
+        child = conn.execute("SELECT * FROM trades WHERE signal_data LIKE '%partial_of%'").fetchone()
+    assert dict(child)["size"] == pytest.approx(0.4)
 
 
 def test_live_open_respects_gate(forven_db, monkeypatch):
@@ -527,6 +576,153 @@ def test_live_open_places_market_order_and_registers(forven_db, monkeypatch):
     assert registered.get("called") is True
 
 
+def test_live_open_sets_leverage_before_market_order(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+
+    _insert_paper_strategy()
+    _set_mid("BTC", 100.0)
+    monkeypatch.setattr(pc, "_session_is_live", lambda session: True)
+    monkeypatch.setattr(pc.risk_mod, "can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(pc.risk_mod, "register", lambda *a, **k: None)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        hl,
+        "set_leverage",
+        lambda asset, leverage, **kw: calls.append(f"leverage:{asset}:{leverage}") or {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        hl,
+        "market_order",
+        lambda asset, side, size, **kw: calls.append("market")
+        or {"entry_price": 100.0, "filled_size": size, "entry_order_id": "OID-LEV"},
+    )
+
+    pc.open_manual_position(
+        STRATEGY_ID, direction="long", size=1.0, leverage=3.0, stop_loss_price=95.0
+    )
+
+    assert calls == ["leverage:BTC:3.0", "market"]
+
+
+def test_live_open_unknown_fill_stays_pending_reconcile(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+    from forven.db import get_db
+
+    _insert_paper_strategy()
+    _set_mid("BTC", 100.0)
+    monkeypatch.setattr(pc, "_session_is_live", lambda session: True)
+    monkeypatch.setattr(pc.risk_mod, "can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(pc.risk_mod, "register", lambda *a, **k: None)
+    monkeypatch.setattr(
+        hl,
+        "market_order",
+        lambda *a, **k: {
+            "entry_price": 103.0,
+            "filled_size": 1.0,
+            "entry_order_id": "OID-UNKNOWN",
+            "fill_price_unknown": True,
+        },
+    )
+
+    pc.open_manual_position(STRATEGY_ID, direction="long", size=1.0, stop_loss_price=95.0)
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM trades WHERE strategy_id = ? AND status = 'OPEN'", (STRATEGY_ID,)
+        ).fetchone()
+    trade = dict(row)
+    sd = json.loads(trade["signal_data"])
+    assert trade["entry_price"] == pytest.approx(100.0)
+    assert sd["pending_open_reconcile"] is True
+    assert sd["entry_finalization_state"] == "reconcile_required"
+    assert sd["open_fill_unconfirmed_price"] == pytest.approx(103.0)
+
+
+def test_live_open_leverage_failure_blocks_market_order(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+    from fastapi import HTTPException
+
+    _insert_paper_strategy()
+    _set_mid("BTC", 100.0)
+    monkeypatch.setattr(pc, "_session_is_live", lambda session: True)
+    monkeypatch.setattr(pc.risk_mod, "can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(hl, "set_leverage", lambda *a, **k: {"error": "venue rejected"})
+    placed: list[bool] = []
+    monkeypatch.setattr(hl, "market_order", lambda *a, **k: placed.append(True))
+
+    with pytest.raises(HTTPException, match="Could not set exchange leverage"):
+        pc.open_manual_position(STRATEGY_ID, direction="long", size=1.0, stop_loss_price=95.0)
+    assert placed == []
+
+
+def test_live_open_db_failure_enters_recovery_and_pauses_path(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+    from fastapi import HTTPException
+
+    _insert_paper_strategy()
+    _set_mid("BTC", 100.0)
+    monkeypatch.setattr(pc, "_session_is_live", lambda session: True)
+    monkeypatch.setattr(pc.risk_mod, "can_open", lambda *a, **k: (True, 0.01, "ok"))
+    monkeypatch.setattr(
+        hl,
+        "market_order",
+        lambda *a, **k: {
+            "entry_price": 100.0,
+            "filled_size": 0.4,
+            "entry_order_id": "OID-ORPHAN",
+            "stop_order_id": "OID-PROTECTED",
+        },
+    )
+    monkeypatch.setattr(
+        pc,
+        "_open_trade_db_safe",
+        lambda **kw: (_ for _ in ()).throw(HTTPException(status_code=502, detail="db locked")),
+    )
+    recovery: dict = {}
+    monkeypatch.setattr(pc, "_recover_unpersisted_manual_entry", lambda **kw: recovery.update(kw))
+
+    with pytest.raises(HTTPException, match="db locked"):
+        pc.open_manual_position(STRATEGY_ID, direction="long", size=1.0, stop_loss_price=95.0)
+
+    assert recovery["entry_oid"] == "OID-ORPHAN"
+    assert recovery["stop_oid"] == "OID-PROTECTED"
+    assert recovery["size"] == pytest.approx(0.4)
+
+
+def test_unpersisted_manual_entry_pauses_and_emits_critical(forven_db, monkeypatch):
+    import forven.exchange.hyperliquid as hl
+    import forven.notifications as notifications
+    import forven.system_pause as system_pause
+
+    paused: list[bool] = []
+    emitted: dict = {}
+    monkeypatch.setattr(hl, "place_protective_stop", lambda *a, **k: {"error": "no position"})
+    monkeypatch.setattr(
+        system_pause, "set_system_paused", lambda value, **kw: paused.append(value) or {}
+    )
+    monkeypatch.setattr(
+        notifications, "emit_notification", lambda event_type, **kw: emitted.update(event_type=event_type, **kw)
+    )
+
+    pc._recover_unpersisted_manual_entry(
+        asset="BTC",
+        direction="long",
+        size=0.4,
+        stop_loss_price=95.0,
+        entry_oid="OID-ORPHAN",
+        stop_oid=None,
+        testnet=True,
+        vault=None,
+        reason="db locked",
+    )
+
+    assert paused == [True]
+    assert emitted["event_type"] == "trade_fill_persistence_failed"
+    assert emitted["severity"] == "critical"
+    assert emitted["dedupe_key"] == "manual-unpersisted:OID-ORPHAN"
+
+
 def test_live_adjust_stop_places_protective_stop(forven_db, monkeypatch):
     import forven.exchange.hyperliquid as hl
 
@@ -549,6 +745,57 @@ def test_live_adjust_stop_places_protective_stop(forven_db, monkeypatch):
     sd = json.loads(_get_trade("L200")["signal_data"])
     assert sd["stop_loss_price"] == 95.0
     assert sd["exchange_stop_order_id"] == "OID-STOP-2"
+
+
+def test_manual_stop_replace_places_before_cancel(forven_db, monkeypatch):
+    _insert_paper_strategy()
+    _insert_live_trade("L-STOP", direction="long", size=1.0, entry_price=100.0)
+    _set_mid("BTC", 100.0)
+    pc._update_open_trade_signal_data(
+        "L-STOP", {"exchange_stop_order_id": "OLD-STOP", "stop_loss_price": 94.0}
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        pc,
+        "_place_live_protective",
+        lambda *a, **k: calls.append("place") or "NEW-STOP",
+    )
+    monkeypatch.setattr(
+        pc,
+        "_cancel_live_order",
+        lambda *a, **k: calls.append("cancel") or True,
+    )
+
+    pc.adjust_stop_loss(STRATEGY_ID, price=95.0)
+
+    assert calls == ["place", "cancel"]
+    assert json.loads(_get_trade("L-STOP")["signal_data"])["exchange_stop_order_id"] == "NEW-STOP"
+
+
+def test_manual_stop_replace_failure_keeps_old_stop(forven_db, monkeypatch):
+    from fastapi import HTTPException
+
+    _insert_paper_strategy()
+    _insert_live_trade("L-STOP-FAIL", direction="long", size=1.0, entry_price=100.0)
+    _set_mid("BTC", 100.0)
+    pc._update_open_trade_signal_data(
+        "L-STOP-FAIL", {"exchange_stop_order_id": "OLD-STOP", "stop_loss_price": 94.0}
+    )
+    cancelled: list[str] = []
+    monkeypatch.setattr(
+        pc,
+        "_place_live_protective",
+        lambda *a, **k: (_ for _ in ()).throw(HTTPException(status_code=502, detail="rejected")),
+    )
+    monkeypatch.setattr(pc, "_cancel_live_order", lambda asset, oid, vault=None: cancelled.append(oid) or True)
+
+    with pytest.raises(HTTPException):
+        pc.adjust_stop_loss(STRATEGY_ID, price=95.0)
+
+    assert cancelled == []
+    sd = json.loads(_get_trade("L-STOP-FAIL")["signal_data"])
+    assert sd["exchange_stop_order_id"] == "OLD-STOP"
+    assert sd["stop_loss_price"] == pytest.approx(94.0)
 
 
 # ── Sub-account (direction book) routing ────────────────────────────────────
@@ -612,7 +859,7 @@ def test_live_close_routes_to_trade_book(forven_db, monkeypatch):
 
     def _fake_close(asset, size, side="sell", testnet=True, vault_address=None, **kw):
         seen["vault"] = vault_address
-        return {"exit_price": 90.0, "order_id": "OID-EXIT"}
+        return {"exit_price": 90.0, "filled_size": size, "order_id": "OID-EXIT"}
 
     monkeypatch.setattr(hl, "close_position", _fake_close)
 

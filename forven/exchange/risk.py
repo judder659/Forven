@@ -1876,23 +1876,14 @@ def _extract_close_price(result: object) -> float | None:
 def _close_residual_size(result: object, fallback_requested: float) -> float:
     """M8: unfilled size left after a (no-error) close response.
 
-    Returns 0.0 when the fill size is unknown (don't over-escalate) or when only
-    dust remains. Used by the kill-switch to roll a partial fill into the next,
-    wider slippage tier instead of declaring a partial 'closed'.
+    An unknown fill size is the full requested residual.  Reduce-only retries
+    cannot reverse the position, while assuming an ambiguous response completed
+    can make the kill-switch close local state around real venue exposure.
     """
-    if not isinstance(result, dict):
-        return 0.0
-    filled = result.get("filled_size")
-    if filled is None:
-        return 0.0  # unknown fill -> assume complete (preserve prior behavior)
-    try:
-        req = result.get("requested_size")
-        req_f = float(req) if req is not None else float(fallback_requested)
-        residual = req_f - abs(float(filled))
-    except (TypeError, ValueError):
-        return 0.0
-    dust = max(1e-9, abs(req_f) * 1e-6)
-    return residual if residual > dust else 0.0
+    from forven.execution_results import parse_close_receipt
+
+    receipt = parse_close_receipt(result, fallback_requested)
+    return receipt.residual_size
 
 
 def _close_result_error(result: object) -> str | None:

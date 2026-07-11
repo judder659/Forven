@@ -1637,7 +1637,11 @@ def cancel_order(asset: str, oid: int, testnet: bool = True, vault_address: str 
 
     _assert_execution_allowed(testnet)
     exchange, info, address = _exchange_for_trading(testnet, vault_address=vault_address)
-    return _submit("order_cancel", hl_trade_breaker, exchange.cancel, asset.upper(), oid)
+    result = _submit("order_cancel", hl_trade_breaker, exchange.cancel, asset.upper(), oid)
+    nested_error = _first_status_error(result) if isinstance(result, dict) else None
+    if nested_error and not result.get("error"):
+        return {**result, "error": nested_error}
+    return result
 
 
 def place_protective_stop(

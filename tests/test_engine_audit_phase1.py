@@ -68,6 +68,22 @@ def test_place_take_profit_fails_closed_on_rejection(monkeypatch):
     assert "take_profit_order_id" not in res
 
 
+def test_cancel_order_surfaces_nested_exchange_rejection(monkeypatch):
+    pytest.importorskip("hyperliquid")
+    import forven.exchange.hyperliquid as hl
+
+    class _Ex:
+        def cancel(self, *a, **k):
+            return {
+                "status": "ok",
+                "response": {"data": {"statuses": [{"error": "order not found"}]}},
+            }
+
+    _patch_hl(monkeypatch, hl, _Ex())
+    result = hl.cancel_order("BTC", 123)
+    assert result["error"] == "order not found"
+
+
 def test_market_order_keeps_fill_when_stop_leg_rejected(monkeypatch):
     pytest.importorskip("hyperliquid")
     import forven.exchange.hyperliquid as hl

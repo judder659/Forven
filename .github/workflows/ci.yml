@@ -93,6 +93,19 @@ jobs:
             tests/test_daemon_price_freshness.py \
             tests/test_loop_starvation_fixes.py
 
+      # Real-money execution integrity: ambiguous/partial IOC responses must
+      # never release local exposure or remove the last protective order.
+      - name: Run capital-integrity regression tests
+        run: |
+          python -m pytest -q \
+            tests/test_execution_results.py \
+            tests/test_paper_control.py \
+            tests/test_open_trades_exchange_verification.py \
+            tests/test_live_entry_finalization.py \
+            tests/test_kill_switch_close_integrity.py \
+            tests/test_mtier_hardening.py \
+            tests/test_engine_audit_phase1.py
+
       # Data-engine regression gate — locks in the 2026-07 data hardening + edge-data
       # expansion (tail-append storage, perp canonicalization, causality shifts,
       # quality gates, fingerprints, symbol registry, basis/IV streams, kernel

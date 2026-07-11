@@ -16,6 +16,7 @@ from forven.db import (
 )
 from forven.exchange import hyperliquid as hl
 from forven.exchange.risk import release, sync_from_trades
+from forven.execution_results import parse_close_receipt
 from forven.trade_state import (
     close_trade_record,
     is_local_only_paper_trade,
@@ -1029,9 +1030,20 @@ def _force_close_exchange_backed_trade(trade_id: str, body) -> dict[str, object]
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
-    exit_price = _coerce_optional_float(close_result.get("close_price"))
-    if exit_price is None:
-        exit_price = _coerce_optional_float(close_result.get("mid"))
+    receipt = parse_close_receipt(close_result, float(size))
+    if receipt.outcome != "filled" or receipt.fill_price is None:
+        return {
+            "ok": False,
+            "pending_close_reconcile": True,
+            "error": "Exchange close was not confirmed complete; protective orders were retained.",
+            "trade_id": trade_id,
+            "asset": asset,
+            "direction": direction,
+            "filled_size": receipt.filled_size,
+            "residual_size": receipt.residual_size,
+            "source": "exchange",
+        }
+    exit_price = receipt.fill_price
     close_order_id = close_result.get("order_id") or close_result.get("orderId") or close_result.get("oid")
     close_note = str(body.reason or "").strip() or None
 
@@ -1122,14 +1134,13 @@ def force_close_trade(trade_id: str, body):
 
     close_order_id = close_result.get("order_id") or close_result.get("orderId") or close_result.get("oid")
     close_note = str(body.reason or "").strip() or None
-    actual_exit_price = _coerce_optional_float(close_result.get("exit_price"))
-    if actual_exit_price is None:
-        actual_exit_price = _coerce_optional_float(close_result.get("fill_price"))
+    receipt = parse_close_receipt(close_result, size)
+    actual_exit_price = receipt.fill_price
     pending_close_price = _coerce_optional_float(close_result.get("close_price"))
     if pending_close_price is None:
         pending_close_price = _coerce_optional_float(close_result.get("mid"))
 
-    if actual_exit_price is not None:
+    if receipt.outcome == "filled" and actual_exit_price is not None:
         closed = close_trade_record(
             trade_id,
             signal_exit_price=actual_exit_price,
@@ -1173,6 +1184,13 @@ def force_close_trade(trade_id: str, body):
             "source": "sqlite",
         }
 
+    if receipt.outcome == "partial":
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE trades SET size = ? WHERE id = ? AND status = 'OPEN'",
+                (round(receipt.residual_size, 8), trade_id),
+            )
+
     pending = mark_trade_pending_close_reconcile(
         trade_id,
         signal_exit_price=pending_close_price,
@@ -1183,6 +1201,9 @@ def force_close_trade(trade_id: str, body):
             "manual_close_note": close_note,
             "exit_exchange_order_id": str(close_order_id) if close_order_id is not None else None,
             "pending_close_requested_execution_price": pending_close_price,
+            "close_execution_outcome": receipt.outcome,
+            "close_filled_size": receipt.filled_size,
+            "close_residual_size": receipt.residual_size,
         },
     )
     if not pending or not pending.get("updated"):
@@ -1210,6 +1231,9 @@ def force_close_trade(trade_id: str, body):
         "direction": direction,
         "close_side": close_side,
         "pending_close_reconcile": True,
+        "close_execution_outcome": receipt.outcome,
+        "filled_size": receipt.filled_size,
+        "residual_size": receipt.residual_size,
         "requested_exit_price": round(float(pending_close_price), 8) if pending_close_price is not None else None,
         "closed_at": None,
         "source": "sqlite",

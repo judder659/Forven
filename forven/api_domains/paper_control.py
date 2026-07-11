@@ -38,6 +38,7 @@ from fastapi import HTTPException
 from forven.api_domains import paper as paper_domain
 from forven.api_domains import trading as trading_domain
 from forven.db import get_db, kv_get, next_container_id
+from forven.execution_results import parse_close_receipt
 from forven.exchange import books as books_mod
 from forven.exchange import risk as risk_mod
 from forven.sim.clock import get_now
@@ -359,14 +360,15 @@ def _live_close_trade(trade: dict, *, close_reason: str, note: str | None = None
         raise HTTPException(status_code=502, detail=str(result["error"]))
 
     order_id = result.get("order_id") or result.get("oid")
-    fill = _coerce_optional_float(result.get("exit_price")) or _coerce_optional_float(result.get("fill_price"))
+    receipt = parse_close_receipt(result, size)
+    fill = receipt.fill_price
     extra = {
         "source": "manual",
         "manually_closed_at": _iso_now(),
         "manual_close_note": note,
         "exit_exchange_order_id": str(order_id) if order_id is not None else None,
     }
-    if fill is not None:
+    if receipt.outcome == "filled" and fill is not None:
         closed = close_trade_record(
             str(trade["id"]),
             signal_exit_price=fill,
@@ -381,9 +383,31 @@ def _live_close_trade(trade: dict, *, close_reason: str, note: str | None = None
         _safe_release(str(trade["id"]))
         return
 
-    # No immediate fill — record the requested close and let the reconciler finalize
-    # once the exchange confirms flat (mirrors force_close_trade's deferred path).
+    if receipt.outcome == "partial":
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE trades SET size = ? WHERE id = ? AND status = 'OPEN'",
+                (round(receipt.residual_size, 8), str(trade["id"])),
+            )
+        extra.update(
+            {
+                "partial_close": True,
+                "partial_close_filled": receipt.filled_size,
+                "partial_close_residual": receipt.residual_size,
+                "partial_close_at": _iso_now(),
+            }
+        )
+
+    # Partial, unfilled, or ambiguous response: keep the residual OPEN and let
+    # reconciliation confirm exchange-flat before releasing local risk state.
     pending_price = _coerce_optional_float(result.get("close_price")) or _coerce_optional_float(result.get("mid"))
+    extra.update(
+        {
+            "close_execution_outcome": receipt.outcome,
+            "close_filled_size": receipt.filled_size,
+            "close_residual_size": receipt.residual_size,
+        }
+    )
     pending = mark_trade_pending_close_reconcile(
         str(trade["id"]),
         signal_exit_price=pending_price,
@@ -433,8 +457,12 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
     if close_qty >= size:
         return close_paper_position(session_id, reason="manual_partial_close (full)")
 
+    booked_close_qty = close_qty
     if _trade_is_live(trade):
-        fill = _live_reduce(trade, close_qty)
+        live_fill = _live_reduce(trade, close_qty)
+        if live_fill is None:
+            return _refresh(session_id)
+        fill, booked_close_qty = live_fill
     else:
         fill = _fresh_manual_mark(session, trade)
 
@@ -447,7 +475,7 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
     direction = _normalize_trade_direction(trade.get("direction"))
     leverage = _coerce_optional_float(trade.get("leverage")) or 1.0
     signed = 1.0 if direction == "long" else -1.0
-    pnl_usd = (fill - entry) * close_qty * signed
+    pnl_usd = (fill - entry) * booked_close_qty * signed
     pnl_pct = ((fill - entry) / entry) * signed * leverage if entry > 0 else 0.0
 
     parent_id = str(trade["id"])
@@ -481,7 +509,7 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
                 entry,
                 fill,
                 fill,
-                round(close_qty, 8),
+                round(booked_close_qty, 8),
                 trade.get("risk_pct"),
                 leverage,
                 round(pnl_usd, 4),
@@ -494,6 +522,7 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
             ),
         )
 
+        residual_size = round(max(size - booked_close_qty, 0.0), 8)
         # Shrink the parent and append an audit entry. The parent's `source` is left
         # untouched: a partial close does not hand the residual to the operator (use
         # Pause for that) — the strategy keeps managing what's left. A live position's
@@ -505,7 +534,8 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
         audit.append(
             {
                 "child_id": child_id,
-                "qty": round(close_qty, 8),
+                "qty": round(booked_close_qty, 8),
+                "requested_qty": round(close_qty, 8),
                 "exit_price": fill,
                 "pnl_usd": round(pnl_usd, 4),
                 "at": closed_at,
@@ -514,14 +544,18 @@ def partial_close_paper_position(session_id: str, qty=None, pct=None) -> dict:
         parent_sd["partial_closes"] = audit
         conn.execute(
             "UPDATE trades SET size = ?, signal_data = ? WHERE id = ?",
-            (round(size - close_qty, 8), json.dumps(parent_sd), parent_id),
+            (residual_size, json.dumps(parent_sd), parent_id),
         )
 
     return _refresh(session_id)
 
 
-def _live_reduce(trade: dict, close_qty: float) -> float:
-    """Reduce a live position by ``close_qty`` with a reduce-only market order; return fill."""
+def _live_reduce(trade: dict, close_qty: float) -> tuple[float, float] | None:
+    """Reduce a live position and return confirmed ``(price, filled_size)``.
+
+    Ambiguous and unfilled responses are left for reconciliation so an operator
+    retry cannot double-book an exchange outcome that was never confirmed.
+    """
     asset = str(trade.get("asset") or "").strip().upper()
     direction = _normalize_trade_direction(trade.get("direction"))
     close_side = "sell" if direction == "long" else "buy"
@@ -535,10 +569,22 @@ def _live_reduce(trade: dict, close_qty: float) -> float:
         raise HTTPException(status_code=502, detail=f"Exchange partial close failed: {exc}") from exc
     if isinstance(result, dict) and result.get("error"):
         raise HTTPException(status_code=502, detail=str(result["error"]))
-    fill = _coerce_optional_float(result.get("exit_price")) or _coerce_optional_float(result.get("fill_price"))
-    if fill is None or fill <= 0:
-        raise HTTPException(status_code=502, detail="Partial close did not return a fill price; try again.")
-    return float(fill)
+    receipt = parse_close_receipt(result, close_qty)
+    if receipt.outcome in {"unknown", "unfilled"} or receipt.fill_price is None or not receipt.filled_size:
+        mark_trade_pending_close_reconcile(
+            str(trade["id"]),
+            signal_exit_price=_coerce_optional_float(result.get("mid")),
+            close_reason="manual_partial_close",
+            close_price_source="manual_partial_close_requested",
+            requested_at=_iso_now(),
+            extra_signal_data={
+                "close_execution_outcome": receipt.outcome,
+                "close_requested_size": close_qty,
+                "close_filled_size": receipt.filled_size,
+            },
+        )
+        return None
+    return float(receipt.fill_price), float(receipt.filled_size)
 
 
 # --------------------------------------------------------------------------- #
@@ -669,7 +715,7 @@ def _live_open(
         raise HTTPException(status_code=400, detail="A live position requires a protective stop_loss_price.")
 
     testnet = _live_testnet()
-    from forven.exchange.hyperliquid import get_account_value, market_order
+    from forven.exchange.hyperliquid import get_account_value, market_order, set_leverage
 
     resolved_size = _coerce_optional_float(size)
     if resolved_size is None or resolved_size <= 0:
@@ -697,6 +743,18 @@ def _live_open(
     if not _halt_ok:
         raise HTTPException(status_code=409, detail=f"Trading halted — {_halt_reason}")
 
+    try:
+        leverage_result = set_leverage(
+            asset, float(leverage), testnet=testnet, vault_address=vault
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not set exchange leverage: {exc}") from exc
+    if isinstance(leverage_result, dict) and leverage_result.get("error"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not set exchange leverage: {leverage_result.get('error')}",
+        )
+
     side = "buy" if direction == "long" else "sell"
     normalized_idempotency_key = str(idempotency_key or "").strip()[:160] or None
     try:
@@ -715,7 +773,13 @@ def _live_open(
     if isinstance(result, dict) and result.get("error"):
         raise HTTPException(status_code=502, detail=str(result["error"]))
 
-    fill = _coerce_optional_float(result.get("entry_price")) or _fresh_manual_mark(_resolve_session(session_id))
+    fill_unknown = bool(result.get("fill_price_unknown"))
+    reported_entry = _coerce_optional_float(result.get("entry_price"))
+    fill = (
+        _fresh_manual_mark(_resolve_session(session_id))
+        if fill_unknown
+        else reported_entry or _fresh_manual_mark(_resolve_session(session_id))
+    )
     filled_size = _coerce_optional_float(result.get("filled_size")) or float(resolved_size)
     entry_oid = result.get("entry_order_id") or result.get("order_id")
     stop_oid = result.get("stop_order_id")
@@ -727,6 +791,16 @@ def _live_open(
         "entry_exchange_order_id": str(entry_oid) if entry_oid is not None else None,
         "exchange_order_id": str(entry_oid) if entry_oid is not None else None,
     }
+    if fill_unknown:
+        signal_data.update(
+            {
+                "pending_open_reconcile": True,
+                "pending_open_reconcile_at": _iso_now(),
+                "entry_finalization_state": "reconcile_required",
+                "open_fill_unconfirmed_price": reported_entry,
+                "requested_size": float(resolved_size),
+            }
+        )
     if normalized_idempotency_key:
         signal_data["manual_open_idempotency_key"] = normalized_idempotency_key
     if stop_loss_price:
@@ -741,29 +815,57 @@ def _live_open(
         if tp_oid is not None:
             signal_data["exchange_take_profit_order_id"] = str(tp_oid)
 
-    trade_id = _open_trade_db_safe(
-        strategy_id=strategy_id, asset=asset, direction=direction, entry=fill,
-        size=float(filled_size), risk_pct=float(risk_fraction or 0.0),
-        leverage=leverage, signal_data=signal_data, execution_type="live", book=book,
-    )
     try:
-        from forven.scanner import _update_trade_fill
+        trade_id = _open_trade_db_safe(
+            strategy_id=strategy_id, asset=asset, direction=direction, entry=fill,
+            size=float(filled_size), risk_pct=float(risk_fraction or 0.0),
+            leverage=leverage, signal_data=signal_data, execution_type="live", book=book,
+        )
+    except HTTPException as exc:
+        _recover_unpersisted_manual_entry(
+            asset=asset,
+            direction=direction,
+            size=float(filled_size),
+            stop_loss_price=float(_parsed_stop),
+            entry_oid=entry_oid,
+            stop_oid=stop_oid,
+            testnet=testnet,
+            vault=vault,
+            reason=str(exc.detail),
+        )
+        raise
 
-        _update_trade_fill(
-            trade_id=trade_id, fill_price=fill, fill_kind="entry",
+    if not fill_unknown:
+        from forven.scanner import _pause_after_live_fill_persistence_failure, _persist_live_entry_fill
+
+        if not _persist_live_entry_fill(
+            trade_id=trade_id,
+            fill_price=fill,
             signal_price=fill,
             exchange_order_id=str(entry_oid) if entry_oid is not None else None,
             filled_size=filled_size,
-        )
-    except Exception:  # noqa: BLE001 - fill bookkeeping is best-effort; entry_price is already set
-        log.warning("manual live open %s: fill bookkeeping failed", trade_id, exc_info=True)
+            mark_price=None,
+        ):
+            _pause_after_live_fill_persistence_failure(
+                trade_id=trade_id,
+                asset=asset,
+                direction=direction,
+                error="manual live entry fill metadata could not be committed",
+            )
     try:
         risk_mod.register(
             trade_id, asset, direction, strategy_id, float(risk_fraction or 0.0),
             float(fill), execution_type="live", book=book,
         )
-    except Exception:  # noqa: BLE001
-        log.warning("manual live open %s: risk register failed", trade_id, exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        from forven.scanner import _pause_after_live_fill_persistence_failure
+
+        _pause_after_live_fill_persistence_failure(
+            trade_id=trade_id,
+            asset=asset,
+            direction=direction,
+            error=f"manual live risk registration failed: {exc}",
+        )
     # #4: a protective leg the exchange REJECTED on the bracket entry (entry filled, stop
     # bounced) must not be recorded as a normally-protected position. Re-arm it immediately
     # (and alert if the stop still can't be armed) — mirroring the scanner's open path.
@@ -777,6 +879,72 @@ def _live_open(
             testnet=testnet, vault=vault,
         )
     log.info("Manual LIVE open %s %s %s size=%s @ %s", trade_id, direction, asset, filled_size, fill)
+
+
+def _recover_unpersisted_manual_entry(
+    *,
+    asset: str,
+    direction: str,
+    size: float,
+    stop_loss_price: float,
+    entry_oid,
+    stop_oid,
+    testnet: bool,
+    vault: str | None,
+    reason: str,
+) -> None:
+    """Pause new opens and best-effort protect an entry missing local ownership."""
+    recovery_id = f"manual-unpersisted:{entry_oid or asset}"
+    stop_detail = f"existing stop order {stop_oid}" if stop_oid is not None else "stop status unknown"
+    if stop_oid is None:
+        try:
+            from forven.exchange.hyperliquid import place_protective_stop
+
+            kwargs: dict = {"testnet": testnet}
+            if vault:
+                kwargs["vault_address"] = vault
+            stop_result = place_protective_stop(
+                asset, direction, size, stop_loss_price, **kwargs
+            )
+            if isinstance(stop_result, dict) and not stop_result.get("error") and stop_result.get("stop_order_id"):
+                stop_detail = f"emergency stop order {stop_result['stop_order_id']} placed"
+            else:
+                stop_detail = f"emergency stop placement failed: {(stop_result or {}).get('error') if isinstance(stop_result, dict) else stop_result}"
+        except Exception as exc:  # noqa: BLE001
+            stop_detail = f"emergency stop placement raised: {exc}"
+
+    try:
+        from forven.system_pause import set_system_paused
+
+        set_system_paused(True, paused_at=_iso_now())
+    except Exception:  # noqa: BLE001
+        log.critical("Could not pause after unpersisted manual entry", exc_info=True)
+
+    log.critical(
+        "Manual live entry %s %s may have filled but local trade creation failed; "
+        "new opens paused. %s. reason=%s",
+        asset,
+        direction,
+        stop_detail,
+        reason,
+    )
+    try:
+        from forven.notifications import emit_notification
+
+        emit_notification(
+            "trade_fill_persistence_failed",
+            severity="critical",
+            source="manual",
+            title=f"Manual live entry requires recovery ({asset})",
+            summary=(
+                f"{asset} {direction} may have filled but no local trade row was created; "
+                "new opens were paused."
+            ),
+            body=f"entry_order={entry_oid}; {stop_detail}; reason={reason}",
+            dedupe_key=recovery_id,
+        )
+    except Exception:  # noqa: BLE001
+        log.error("Could not emit unpersisted manual-entry notification", exc_info=True)
 
 
 def _open_trade_db_safe(
@@ -833,8 +1001,11 @@ def _adjust_protective(session_id: str, session: dict, trade: dict, kind: str, p
 
     if parsed is None:
         # Clear the level (and cancel the resting exchange order, if live).
-        if live and existing_oid:
-            _cancel_live_order(trade.get("asset"), existing_oid, vault)
+        if live and existing_oid and not _cancel_live_order(trade.get("asset"), existing_oid, vault):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Exchange {kind.replace('_', ' ')} cancellation failed; the existing order was kept locally.",
+            )
         _update_open_trade_signal_data(
             trade_id, {source_key: "manual", ts_key: _iso_now()}, removals=(price_key, oid_key)
         )
@@ -847,28 +1018,37 @@ def _adjust_protective(session_id: str, session: dict, trade: dict, kind: str, p
 
     updates = {price_key: float(parsed), source_key: "manual", ts_key: _iso_now()}
     if live:
-        # Replace the resting exchange order on the position's sub-account: cancel
-        # the old one, place the new.
-        if existing_oid:
-            _cancel_live_order(trade.get("asset"), existing_oid, vault)
+        # PLACE-BEFORE-CANCEL: a rejected replacement must leave the old resting
+        # protection intact.  If old-order cancellation fails, retain its id in
+        # signal_data so reconciliation can retire it later.
         new_oid = _place_live_protective(kind, trade, float(parsed), vault)
-        if new_oid is not None:
-            updates[oid_key] = str(new_oid)
-        else:
-            updates.pop(oid_key, None)
+        if new_oid is None:
+            raise HTTPException(status_code=502, detail=f"Exchange {kind.replace('_', ' ')} placement returned no order id.")
+        updates[oid_key] = str(new_oid)
+        if existing_oid and not _cancel_live_order(trade.get("asset"), existing_oid, vault):
+            pending_ids = sd.get("protective_cancel_pending_order_ids")
+            pending_ids = list(pending_ids) if isinstance(pending_ids, list) else []
+            if str(existing_oid) not in pending_ids:
+                pending_ids.append(str(existing_oid))
+            updates["protective_cancel_pending_order_ids"] = pending_ids
         if kind == "stop_loss":
             updates["exchange_stop_requested"] = True
     _update_open_trade_signal_data(trade_id, updates)
     return _refresh(session_id)
 
 
-def _cancel_live_order(asset, oid, vault_address: str | None = None) -> None:
+def _cancel_live_order(asset, oid, vault_address: str | None = None) -> bool:
     try:
         from forven.exchange.hyperliquid import cancel_order
 
-        cancel_order(str(asset).upper(), int(oid), testnet=_live_testnet(), vault_address=vault_address)
-    except Exception:  # noqa: BLE001 - a stale/already-filled order is fine to ignore
+        result = cancel_order(str(asset).upper(), int(oid), testnet=_live_testnet(), vault_address=vault_address)
+        if isinstance(result, dict) and result.get("error"):
+            log.warning("cancel_order(%s, %s) rejected during manual adjust: %s", asset, oid, result.get("error"))
+            return False
+        return True
+    except Exception:  # noqa: BLE001
         log.warning("cancel_order(%s, %s) failed during manual adjust", asset, oid, exc_info=True)
+        return False
 
 
 def _place_live_protective(kind: str, trade: dict, price: float, vault_address: str | None = None):

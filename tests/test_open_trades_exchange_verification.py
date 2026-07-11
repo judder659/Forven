@@ -334,7 +334,8 @@ def test_force_close_trade_closes_exchange_backed_position(forven_db, monkeypatc
     monkeypatch.setattr(
         "forven.exchange.hyperliquid.close_position",
         lambda asset, size, side, testnet=True: {
-            "close_price": 110.0,
+            "exit_price": 110.0,
+            "filled_size": size,
             "order_id": "close-123",
         },
     )
@@ -375,6 +376,63 @@ def test_force_close_trade_closes_exchange_backed_position(forven_db, monkeypatc
     assert result["cancelled_reduce_only_orders"] == 1
     assert cancelled == [("BTC", 101, True)]
     assert logged and "exchange-backed position" in logged[0][2]
+
+
+def test_force_close_exchange_backed_unknown_fill_keeps_protection(forven_db, monkeypatch):
+    cancelled: list[int] = []
+    monkeypatch.setattr(
+        trading_domain,
+        "_extract_exchange_open_positions",
+        lambda testnet=True: [_sample_exchange_position()],
+    )
+    monkeypatch.setattr(
+        "forven.exchange.hyperliquid.close_position",
+        lambda *a, **k: {"close_price": 49_000.0, "order_id": "OID-UNKNOWN"},
+    )
+    monkeypatch.setattr(
+        "forven.exchange.hyperliquid.cancel_order",
+        lambda asset, oid, testnet=True: cancelled.append(oid) or {"ok": True},
+    )
+
+    result = trading_domain.force_close_trade(
+        "hl:testnet:BTC:long", SimpleNamespace(reason="unknown IOC outcome")
+    )
+
+    assert result["ok"] is False
+    assert result["pending_close_reconcile"] is True
+    assert result["residual_size"] == 1.0
+    assert cancelled == []
+
+
+def test_force_close_local_partial_fill_keeps_residual_open(forven_db, monkeypatch):
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO trades
+            (id, strategy, strategy_id, asset, direction, entry_price,
+             signal_entry_price, fill_entry_price, size, risk_pct, leverage,
+             status, execution_type, source, signal_data, opened_at)
+            VALUES ('T-PARTIAL', 'S-PARTIAL', 'S-PARTIAL', 'BTC', 'long',
+                    100, 100, 100, 1, 0.01, 1, 'OPEN', 'live', 'manual', '{}', datetime('now'))
+            """
+        )
+    monkeypatch.setattr(trading_domain, "_resolve_exchange_testnet", lambda: True)
+    monkeypatch.setattr(
+        "forven.exchange.hyperliquid.close_position",
+        lambda *a, **k: {"exit_price": 105.0, "filled_size": 0.4, "order_id": "OID-PART"},
+    )
+
+    result = trading_domain.force_close_trade(
+        "T-PARTIAL", SimpleNamespace(reason="partial IOC")
+    )
+
+    assert result["pending_close_reconcile"] is True
+    assert result["close_execution_outcome"] == "partial"
+    assert result["residual_size"] == 0.6
+    with get_db() as conn:
+        row = conn.execute("SELECT status, size, signal_data FROM trades WHERE id = 'T-PARTIAL'").fetchone()
+    assert row["status"] == "OPEN"
+    assert row["size"] == 0.6
 
 
 def test_force_close_route_raises_on_failure(forven_db, monkeypatch):
