@@ -203,6 +203,13 @@ def _gauntlet_entry_guardrails(strategy_id: str, metrics: dict) -> tuple[bool, s
         robustness = robustness * 100.0
     if max_drawdown is not None and abs(max_drawdown) <= 1.0:
         max_drawdown = max_drawdown * 100.0
+    # WIN-RATE-UNIT-1: compute_metrics emits win_rate as a 0-1 RATIO, but legacy
+    # blobs may carry it as percent points (79.0). Normalize to percent points so
+    # Guard 6's "> 70%" tail-risk comparison fires for EITHER stored unit; the
+    # ratio form (0.79) would otherwise never exceed 70 and silently pass a
+    # curve-fitted high-win-rate strategy into the gauntlet.
+    if win_rate is not None and abs(win_rate) <= 1.0:
+        win_rate = win_rate * 100.0
 
     # Guard 1: Hard Sanity Check on IS Sharpe. Was a hardcoded 0.3 auto-reject that
     # no Settings knob could relax; now wired to gauntlet.hard_min_is_sharpe
@@ -4048,6 +4055,38 @@ def run_gauntlet_backtest_migration():
     kv_set(flag_key, True)
 
 
+def _reentry_lookahead_reason(strategy_id: str, strategy_type: str, params: dict) -> str | None:
+    """Return a rejection reason if the strategy reads future bars, else None.
+
+    Lifecycle re-entry (research recovery) safety net: the lookahead / data-leak
+    probe runs at registration intake but not on re-entry, so a recovered
+    strategy would otherwise skip the causality check every fresh strategy passes.
+
+    Preserves the PR#60 rejection/inconclusive split established in
+    ``detect_lookahead``: a leak (or a strategy-authoring fault raised inside the
+    strategy's own module) returns a reason string (REJECTION); a probe
+    INFRASTRUCTURE fault returns None (INCONCLUSIVE), so an environmental crash
+    never converts a recoverable strategy into a rejection.
+
+    Fail-OPEN on resolution/instantiation faults: if the class can't be resolved
+    or built here (a probe-side fault, not a strategy fault), return None so
+    recovery is never blocked on this net's own bug — mirrors
+    ``gauntlet.engine._strategy_reproducibly_crashes``.
+    """
+    try:
+        from forven.strategies.backtest import _resolve_strategy_class
+        from forven.strategies.lookahead_probe import detect_lookahead
+
+        cls = _resolve_strategy_class(strategy_type)
+        if cls is None:
+            return None
+        probe = cls(strategy_id, params if isinstance(params, dict) else {})
+        return detect_lookahead(probe)
+    except Exception:  # never block a recovery on a probe-infrastructure fault
+        log.debug("Research recovery lookahead re-probe inconclusive for %s", strategy_id, exc_info=True)
+        return None
+
+
 def try_research_recovery(strategy_id: str) -> dict:
     """Re-certify a research_only strategy and promote to quick_screen if it passes.
 
@@ -4118,7 +4157,36 @@ def try_research_recovery(strategy_id: str) -> dict:
             )
         return {"promoted": False, "reason": block_reason}
 
-    # Certification + data availability passed — promote via transition_stage
+    # LOOKAHEAD-REENTRY-1: the lookahead / data-leak probe runs at registration
+    # intake but NOT on lifecycle re-entry — so a strategy parked to research_only
+    # and later recovered would re-enter quick_screen WITHOUT the causality check
+    # that gates first-time entry. A future-bar leak (e.g. .shift(-1)) makes both
+    # IS and OOS slices amazing, defeating the overfit/win-rate-trap detectors, so
+    # the probe is the primary catch. Re-probe here, at the same choke point that
+    # already re-runs certification + data availability, so recovery cannot smuggle
+    # a leaking strategy past a check every fresh strategy must pass.
+    lookahead_reason = _reentry_lookahead_reason(strategy_id, strategy_type, params)
+    if lookahead_reason:
+        # A leak / strategy-authoring fault is a QUARANTINE reason, not a
+        # repeated-failure archive count — park with a tier-classified reason,
+        # mirroring the certification-failure branch above. Probe INFRASTRUCTURE
+        # faults never reach here: detect_lookahead returns None for them, so an
+        # environmental probe crash stays inconclusive/retryable (recovery is
+        # re-attempted on the next sweep) rather than becoming a rejection.
+        from forven.strategies.certification import classify_failure_tier
+        tier, canonical = classify_failure_tier(lookahead_reason)
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE strategies SET status_reason = ? WHERE id = ?",
+                (f"lookahead_blocked:tier{tier}:{canonical}", strategy_id),
+            )
+        log.warning(
+            "Research recovery: NOT reviving %s — lookahead re-probe rejected: %s",
+            strategy_id, lookahead_reason,
+        )
+        return {"promoted": False, "reason": lookahead_reason}
+
+    # Certification + data availability + causality passed — promote via transition_stage
     result = transition_stage(
         strategy_id=strategy_id,
         target_stage="quick_screen",

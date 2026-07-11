@@ -2625,6 +2625,62 @@ def test_research_recovery_on_edit_promotes_if_certified(forven_db):
     assert row["stage"] == "quick_screen"
 
 
+def test_research_recovery_reprobes_lookahead_and_parks_on_leak(forven_db, monkeypatch):
+    # LOOKAHEAD-REENTRY-1: recovery must re-run the causality probe every fresh
+    # strategy passes at intake. Certification + data-availability pass (valid
+    # rsi_momentum), but the lookahead re-probe reports a leak → recovery must
+    # NOT promote; the strategy stays research_only with a lookahead status_reason,
+    # classified as a quarantine (not a repeated-failure archive count).
+    from forven.brain import try_research_recovery
+    import forven.strategies.lookahead_probe as lookahead_probe
+
+    _insert_strategy("s-recov-leak", stage="research_only")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = 's-recov-leak'",
+            (json.dumps({"rsi_threshold": 30, "lookback_period": 14}),),
+        )
+
+    leak_reason = (
+        "Lookahead detected: vectorized signal at bar t=-20 changes when future "
+        "bars are withheld (long_entries) -- strategy reads future data; rejected"
+    )
+    monkeypatch.setattr(lookahead_probe, "detect_lookahead", lambda _obj: leak_reason)
+
+    result = try_research_recovery("s-recov-leak")
+    assert result.get("promoted") is False
+    assert "lookahead" in (result.get("reason") or "").lower()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT stage, status_reason FROM strategies WHERE id = 's-recov-leak'"
+        ).fetchone()
+    assert row["stage"] == "research_only"
+    assert (row["status_reason"] or "").startswith("lookahead_blocked:")
+    # Quarantine classification: a leak is a structural (tier2) quarantine.
+    assert "tier2:lookahead" in row["status_reason"]
+
+
+def test_research_recovery_promotes_when_lookahead_probe_passes(forven_db, monkeypatch):
+    # Same setup, but the re-probe reports no leak → recovery proceeds as before.
+    from forven.brain import try_research_recovery
+    import forven.strategies.lookahead_probe as lookahead_probe
+
+    _insert_strategy("s-recov-clean", stage="research_only")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = 's-recov-clean'",
+            (json.dumps({"rsi_threshold": 30, "lookback_period": 14}),),
+        )
+
+    monkeypatch.setattr(lookahead_probe, "detect_lookahead", lambda _obj: None)
+
+    result = try_research_recovery("s-recov-clean")
+    assert result.get("promoted") is True
+    with get_db() as conn:
+        row = conn.execute("SELECT stage FROM strategies WHERE id = 's-recov-clean'").fetchone()
+    assert row["stage"] == "quick_screen"
+
+
 def test_research_recovery_on_edit_debounce_5min(forven_db):
     from forven.api_core import _try_research_recovery_on_edit
     _insert_strategy("s-debounce", stage="research_only")

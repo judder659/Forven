@@ -140,6 +140,11 @@ FAILURE_TIERS: dict[str, int] = {
     # Tier 2 — structural issues, lower recovery priority
     "code_error": 2,
     "pattern_invalid": 2,
+    # A future-bar leak is a structural quarantine, not a param-tweak fix; give it
+    # a stable canonical key so a lookahead rejection classifies deterministically
+    # (the raw probe reason otherwise defaults to tier 2 with the whole message as
+    # the canonical, producing an unbounded status_reason).
+    "lookahead": 2,
 }
 
 

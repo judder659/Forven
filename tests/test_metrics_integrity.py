@@ -90,6 +90,63 @@ class TestGuardrailQuarantine:
         assert "(reject)" not in reason
 
 
+class TestGauntletEntryWinRateUnit:
+    """WIN-RATE-UNIT-1: Guard 6 tail-risk detection (win_rate > 70% + PF < 1.5)
+    must fire whether win_rate is stored as a 0-1 RATIO or as percent points.
+
+    compute_metrics emits win_rate as a ratio; the guard compared against 70, so
+    the ratio form (0.75) could never trip it — a curve-fitted high-win-rate
+    strategy sailed into the gauntlet. The guard now normalizes to percent points.
+    """
+
+    @staticmethod
+    def _metrics_passing_up_to_guard6(win_rate, profit_factor):
+        # Clears Guards 1-5 and 7 so only Guard 6 (tail-risk) can bite:
+        # IS Sharpe 1.2 (> 0.5), OOS 1.0 (<= 2x IS, no divergence), 120 trades
+        # (>= 100), robustness 0.70 -> 70 (>= 60), max_dd 0.10 -> 10% (<= 25%).
+        return {
+            "in_sample": {"sharpe": 1.2, "total_trades": 120},
+            "out_of_sample": {"sharpe": 1.0, "total_trades": 40},
+            "total_trades": 120,
+            "sharpe": 1.2,
+            "win_rate": win_rate,
+            "profit_factor": profit_factor,
+            "robustness_score": 0.70,
+            "max_drawdown_pct": 0.10,
+        }
+
+    def test_tail_risk_fires_ratio_form(self):
+        from forven.brain import _gauntlet_entry_guardrails
+
+        can_proceed, reason = _gauntlet_entry_guardrails(
+            "S-wr-ratio", self._metrics_passing_up_to_guard6(0.75, 1.3)
+        )
+        assert can_proceed is False, reason
+        assert "tail risk" in reason.lower(), reason
+        assert "75.0%" in reason, reason  # printed as percent, not raw 0.75
+
+    def test_tail_risk_fires_percent_form(self):
+        from forven.brain import _gauntlet_entry_guardrails
+
+        can_proceed, reason = _gauntlet_entry_guardrails(
+            "S-wr-pct", self._metrics_passing_up_to_guard6(75.0, 1.3)
+        )
+        assert can_proceed is False, reason
+        assert "tail risk" in reason.lower(), reason
+        assert "75.0%" in reason, reason
+
+    def test_healthy_win_rate_ratio_passes(self):
+        from forven.brain import _gauntlet_entry_guardrails
+
+        # win_rate 0.55 (= 55%) + PF 1.3: below the 70% trigger — Guard 6 must not
+        # fire, and with all other guards cleared the strategy proceeds.
+        can_proceed, reason = _gauntlet_entry_guardrails(
+            "S-wr-healthy", self._metrics_passing_up_to_guard6(0.55, 1.3)
+        )
+        assert can_proceed is True, reason
+        assert "tail risk" not in reason.lower(), reason
+
+
 class TestSweepTreatsHoldAsNonTerminal:
     def test_data_quality_hold_is_not_terminal(self):
         from forven.evolution import _is_terminal_quick_screen_gate_failure
