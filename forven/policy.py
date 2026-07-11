@@ -16,6 +16,38 @@ from forven.util import normalize_stage
 
 log = logging.getLogger("forven.policy")
 
+
+class GateRejection(str):
+    """A gate-rejection reason string that carries its taxonomy code STRUCTURALLY.
+
+    Rejection reasons flow from ~84 ``return False, "<reason>"`` sites through the
+    gate-evaluation tuples into ``_log_gate_rejection_record``, which decides via
+    ``_check_repeated_failure_auto_archive`` whether the rejection COUNTS toward the
+    5-strike auto-archive or is EXEMPT (evidence-absence: tests not run, work in
+    flight, stale/pending artifacts). That decision historically rode on SUBSTRING
+    MATCHING of the human prose (``_extract_reason_code``) — so any reword of an
+    exempt rejection silently reclassified it as a COUNTING merit failure and
+    wrongly archived healthy strategies (S06127 fold-density 2026-07-06; the
+    source-reconciliation-pending case 2026-07-10).
+
+    This subclass is a drop-in ``str`` (wire-compatible with every f-string, DB
+    binding, ``.lower()`` and comparison downstream), so existing tuple consumers
+    are unaffected. Evidence-absence sites construct it with an explicit
+    ``reason_code=`` so classification travels with the value and never depends on
+    prose. Plain-string sites keep working through the text-matcher fallback in
+    ``_resolve_reason_code``. The tripwire test in tests/test_reason_code_drift.py
+    fails if an exempt rejection is reworded without carrying its code.
+    """
+
+    __slots__ = ("reason_code",)
+    reason_code: str | None
+
+    def __new__(cls, text: str, reason_code: str | None = None) -> "GateRejection":
+        obj = super().__new__(cls, text)
+        obj.reason_code = reason_code
+        return obj
+
+
 DEFAULT_PIPELINE_CONFIG = {
     # Active stance preset (relaxed | default | strict | custom). The Default preset
     # IS this DEFAULT_PIPELINE_CONFIG; relaxed/strict are deltas applied in
@@ -1044,7 +1076,10 @@ def _check_artifact_ordering(strategy_id: str, required_types: list[str] | None 
     for vt in validation_types:
         vt_time = timestamps.get(vt, "")
         if vt_time and opt_time and vt_time < opt_time:
-            return False, f"Ordering violation: {vt} was run before optimization — re-run after optimization"
+            return False, GateRejection(
+                f"Ordering violation: {vt} was run before optimization — re-run after optimization",
+                reason_code="stale_validation",
+            )
 
     return True, "Artifact ordering is correct"
 
@@ -1095,7 +1130,10 @@ def _check_validation_freshness(strategy_id: str, required_types: list[str] | No
     if stale:
         return (
             False,
-            f"Stale validation tests (run before latest optimization): {', '.join(stale)}",
+            GateRejection(
+                f"Stale validation tests (run before latest optimization): {', '.join(stale)}",
+                reason_code="stale_validation",
+            ),
         )
     return True, "All validation tests are fresh"
 
@@ -1141,8 +1179,11 @@ def _check_engine_artifact_freshness(strategy_id: str, required_types: list[str]
     if stale:
         return (
             False,
-            f"Validation artifacts predate the current engine version "
-            f"(v{BACKTEST_ENGINE_VERSION}) and are queued for re-validation: {', '.join(stale)}",
+            GateRejection(
+                f"Validation artifacts predate the current engine version "
+                f"(v{BACKTEST_ENGINE_VERSION}) and are queued for re-validation: {', '.join(stale)}",
+                reason_code="stale_engine_artifacts",
+            ),
         )
     return True, "All validation artifacts match the current engine version"
 
@@ -1208,8 +1249,11 @@ def _check_validation_in_flight(strategy_id: str, config: dict | None = None) ->
     if in_flight:
         return (
             False,
-            f"Validation in flight: {', '.join(in_flight)} still running — "
-            f"promotion deferred until the verdict lands",
+            GateRejection(
+                f"Validation in flight: {', '.join(in_flight)} still running — "
+                f"promotion deferred until the verdict lands",
+                reason_code="validation_in_flight",
+            ),
         )
     return True, "No validation tests in flight"
 
@@ -1228,8 +1272,11 @@ def _check_artifact_rows_exist(strategy_id: str, required_types: list[str]) -> t
     if missing:
         return (
             False,
-            f"Missing passing persisted artifact rows for: {', '.join(missing)}. "
-            f"Run or rerun these tests until the saved verdicts pass.",
+            GateRejection(
+                f"Missing passing persisted artifact rows for: {', '.join(missing)}. "
+                f"Run or rerun these tests until the saved verdicts pass.",
+                reason_code="missing_evidence",
+            ),
         )
     # Two-tier transparency: a walk_forward row can pass the PAPER tier (fold
     # pass-rate over judgeable folds) while its strict artifact verdict is FAIL
@@ -1396,7 +1443,10 @@ def _check_paper_duration(strategy_id: str) -> tuple:
         extra = {"current": days, "threshold": min_days, "direction": "gte", "unit": "days"}
         if days >= min_days:
             return True, f"Paper duration: {days}/{min_days} days", extra
-        return False, f"Insufficient paper duration: {days}/{min_days} days", extra
+        return False, GateRejection(
+            f"Insufficient paper duration: {days}/{min_days} days",
+            reason_code="insufficient_paper_evidence",
+        ), extra
     except Exception:
         return False, "Could not parse stage timestamp"
 
@@ -1441,7 +1491,10 @@ def _check_paper_trades(strategy_id: str) -> tuple:
     extra = {"current": total, "threshold": min_trades, "direction": "gte", "unit": "trades"}
     if total >= min_trades:
         return True, f"Paper trades: {total}/{min_trades}", extra
-    return False, f"Insufficient paper trades: {total}/{min_trades}", extra
+    return False, GateRejection(
+        f"Insufficient paper trades: {total}/{min_trades}",
+        reason_code="insufficient_paper_evidence",
+    ), extra
 
 
 def _check_paper_return(strategy_id: str) -> tuple:
@@ -2243,9 +2296,10 @@ def _evaluate_source_divergence_gate(strategy_id: str, general_settings: Any) ->
 
     def _missing(reason: str) -> tuple[bool, str]:
         if block_when_missing:
-            return False, (
+            return False, GateRejection(
                 f"Source reconciliation pending ({reason}) — divergence not yet "
-                f"computed for {symbol} {timeframe}"
+                f"computed for {symbol} {timeframe}",
+                reason_code="source_reconciliation_pending",
             )
         return True, f"source reconciliation unavailable ({reason}) — allowing"
 
@@ -2546,6 +2600,13 @@ def _extract_reason_code(reason_text: str) -> str:
     # threshold still counts below.
     if "source reconciliation pending" in text or "source reconciliation unavailable" in text:
         return "source_reconciliation_pending"
+    # "Gauntlet missing (verdict evidence|required verdict tests)": absence of a
+    # persisted verdict, not a walk-forward MERIT reject. Matched before the "walk"
+    # +"forward" branch below, which would otherwise text-match the test-name list
+    # (e.g. "...: walk_forward") to the COUNTING wfa_reject code. Live sites carry
+    # missing_evidence structurally; this protects historical prose-only DB rows.
+    if "missing" in text and "verdict" in text:
+        return "missing_evidence"
     if "divergence" in text:
         return "source_divergence_reject"
     if "overfit" in text:
@@ -2592,6 +2653,20 @@ def _extract_reason_code(reason_text: str) -> str:
     return "gate_reject"
 
 
+def _resolve_reason_code(reason: str) -> str:
+    """Resolve a rejection's taxonomy code, preferring a STRUCTURAL code.
+
+    A :class:`GateRejection` carries its code from the rejection site, so an
+    evidence-absence classification never depends on prose matching (goal 1/2).
+    Plain strings — including historical ``gate_rejections`` DB rows, which store
+    prose only — fall back to the ``_extract_reason_code`` text matcher (goal 4).
+    """
+    code = getattr(reason, "reason_code", None)
+    if code:
+        return code
+    return _extract_reason_code(str(reason))
+
+
 def _load_metrics_snapshot_for_rejection(strategy_id: str) -> dict | None:
     """Load a compact metrics snapshot for rejection logging."""
     try:
@@ -2619,7 +2694,9 @@ def _log_gate_rejection_record(strategy_id: str, gate: str, reason_text: str, co
     """P0-2/P3-1: Log structured gate rejection with failure taxonomy fields."""
     from forven.engine_provenance import BACKTEST_ENGINE_VERSION
 
-    reason_code = _extract_reason_code(reason_text)
+    # Prefer the structural code carried by a GateRejection (exempt-class rejections
+    # never re-parse prose); fall back to text matching for plain strings.
+    reason_code = _resolve_reason_code(reason_text)
     metrics_snapshot = _load_metrics_snapshot_for_rejection(strategy_id)
     # Provenance: which engine produced the numbers this rejection judged. Lets
     # triage distinguish "rejected by the current engine" from "rejected on
@@ -3407,7 +3484,9 @@ def _evaluate_quick_screen_gate(strategy_id: str, config: dict) -> tuple[bool, s
 
     metrics = _load_metrics_blob(row)
     if not metrics:
-        return False, "No quick-screen metrics available"
+        return False, GateRejection(
+            "No quick-screen metrics available", reason_code="no_metrics_error"
+        )
 
     # Fast sanity check: reject strategies with zero trades (can't produce signals)
     total_trades = int(metrics.get("total_trades", 0) or 0)
@@ -3770,7 +3849,10 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
     if artifact_counts["optimization"] <= 0 and artifact_counts["walk_forward"] <= 0:
         return (
             False,
-            "Gauntlet requires at least one persisted optimization or walk-forward run before promotion to paper",
+            GateRejection(
+                "Gauntlet requires at least one persisted optimization or walk-forward run before promotion to paper",
+                reason_code="artifacts_pending",
+            ),
         )
     inflight_ok, inflight_msg = _check_validation_in_flight(strategy_id, config)
     if not inflight_ok:
@@ -3787,7 +3869,9 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
 
     metrics = _load_metrics_blob(row)
     if not metrics:
-        return False, "No gauntlet metrics available"
+        return False, GateRejection(
+            "No gauntlet metrics available", reason_code="no_metrics_error"
+        )
 
     target_metrics = _unwrap_metrics_dict(metrics.get("out_of_sample", metrics))
 
@@ -3912,9 +3996,10 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
             # trade-frequency-aware default window (forven.wfa_window) makes the
             # re-run produce judgeable folds.
             _min_fold_trades_msg = int((rob_thresholds or {}).get("wfa_min_fold_trades", 5) or 5)
-            return False, (
+            return False, GateRejection(
                 "S00552 BLOCK: walk-forward window insufficient — no OOS fold reached "
-                f"{_min_fold_trades_msg} trades; re-run WFA on the trade-frequency-aware window"
+                f"{_min_fold_trades_msg} trades; re-run WFA on the trade-frequency-aware window",
+                reason_code="wfa_window_insufficient",
             )
         # F4(b): at the paper gate the WFA fold-consistency floor fires whenever
         # walk_forward actually ran — narrowing required_tests must NOT disable a
@@ -3933,9 +4018,10 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
             # above (only N-of-min judgeable folds instead of zero): actionable
             # re-run, not a merit failure — taxonomy maps it to the counter-exempt
             # wfa_window_insufficient code.
-            return False, (
+            return False, GateRejection(
                 f"S00552 REJECT: Walk-forward has {wfa_folds} folds, requires minimum "
-                f"{wfa_thresholds['min_folds']}; re-run WFA on the trade-frequency-aware window"
+                f"{wfa_thresholds['min_folds']}; re-run WFA on the trade-frequency-aware window",
+                reason_code="wfa_window_insufficient",
             )
         # Single source of truth for the WFA fold-pass-rate floor: the same
         # robustness_thresholds.wfa_fold_pass_rate_min the composite scorer uses
@@ -4048,10 +4134,16 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
     available_tests = set(verdict_payloads)
     if not available_tests:
         missing = ", ".join(sorted(required_tests))
-        return False, f"Gauntlet missing verdict evidence for required tests: {missing}"
+        return False, GateRejection(
+            f"Gauntlet missing verdict evidence for required tests: {missing}",
+            reason_code="missing_evidence",
+        )
     missing = sorted(required_tests.difference(available_tests))
     if missing:
-        return False, f"Gauntlet missing required verdict tests: {', '.join(missing)}"
+        return False, GateRejection(
+            f"Gauntlet missing required verdict tests: {', '.join(missing)}",
+            reason_code="missing_evidence",
+        )
     failing = sorted(
         test_name
         for test_name in required_tests
@@ -4169,13 +4261,17 @@ def _evaluate_paper_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
         except Exception:
             started = None
     if started is None:
-        return False, (
+        return False, GateRejection(
             "Paper stage entry time unknown (stage_changed_at missing or unparseable) — "
-            "failing closed: paper duration and trade-evidence window cannot be verified"
+            "failing closed: paper duration and trade-evidence window cannot be verified",
+            reason_code="insufficient_paper_evidence",
         )
     days_in_stage = (datetime.now(timezone.utc) - started).days
     if days_in_stage < min_days:
-        return False, f"Insufficient paper duration: {days_in_stage}/{min_days} days"
+        return False, GateRejection(
+            f"Insufficient paper duration: {days_in_stage}/{min_days} days",
+            reason_code="insufficient_paper_evidence",
+        )
 
     params: list[object] = [strategy_id, stage_since]
     where_since = " AND datetime(closed_at) >= datetime(?)"
@@ -4211,7 +4307,10 @@ def _evaluate_paper_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
     )
 
     if total_trades < min_trades:
-        return False, f"Insufficient paper sample: {total_trades}/{min_trades} closed trades"
+        return False, GateRejection(
+            f"Insufficient paper sample: {total_trades}/{min_trades} closed trades",
+            reason_code="insufficient_paper_evidence",
+        )
 
     # === S00152: Load and validate backtest metrics for overfitting guardrails ===
     # Only evaluate these once the strategy has accumulated sufficient forward paper evidence.

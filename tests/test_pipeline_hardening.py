@@ -594,7 +594,12 @@ def test_transition_stage_keeps_paper_when_live_graduation_gate_fails(forven_db)
     assert transition["from"] == "paper"
     assert transition["to"] == "paper"
     assert transition["requested_to"] == "live_graduated"
-    assert "Insufficient paper duration" in str(transition["blocked_reason"])
+    # PR#60 (strict-live robustness battery) now fires BEFORE the paper-duration
+    # check: a paper->live promotion with no usable gauntlet verdict artifacts is
+    # blocked on absent robustness evidence, not on warm-up duration. The contract
+    # this test locks is unchanged — a not-ready promotion is blocked and stays
+    # paper — only the (correct, earlier) reason moved.
+    assert "Live gate" in str(transition["blocked_reason"])
 
     with get_db() as conn:
         row = conn.execute(
@@ -610,7 +615,7 @@ def test_transition_stage_keeps_paper_when_live_graduation_gate_fails(forven_db)
     assert row["status"] == "paper"
     assert event["from_state"] == "paper"
     assert event["to_state"] == "paper"
-    assert event["reason"].startswith("Gate failure: Insufficient paper duration:")
+    assert event["reason"].startswith("Gate failure: Live gate")
     details = json.loads(event["details_json"] or "{}")
     assert details["motion"] == "gate_failure"
     assert details["requested_stage"] == "live_graduated"
@@ -635,7 +640,10 @@ def test_brain_promote_strategy_returns_false_when_live_gate_blocks(forven_db):
     success, reason = brain_promote_strategy("s-brain-paper-blocked", "live_graduated")
 
     assert success is False
-    assert "paper" in reason.lower()
+    # PR#60 strict-live gate: no gauntlet verdict artifacts -> blocked on absent
+    # robustness evidence (fires before the warm-up checks). The contract is the
+    # block + stay-in-paper below, not the specific gate wording.
+    assert "live gate" in reason.lower()
 
     with get_db() as conn:
         row = conn.execute(
@@ -744,7 +752,10 @@ def test_gate_rejection_does_not_fetch_market_data(forven_db, monkeypatch):
     ok, reason = evaluate_promotion("s-reject-no-fetch", "paper", "live_graduated")
 
     assert ok is False
-    assert "paper" in reason.lower()
+    # The strategy has no gauntlet verdict artifacts, so the strict-live gate blocks
+    # it (PR#60); the exact reason is incidental to this test — the invariant is that
+    # rejection logging performed no market-data fetch.
+    assert "live gate" in reason.lower()
     assert fetch_calls == [], (
         f"gate rejection performed {len(fetch_calls)} market-data fetch(es); "
         "regime enrichment must be cache-only"
