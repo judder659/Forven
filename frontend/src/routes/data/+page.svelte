@@ -649,9 +649,16 @@
 
 		// Keep the maintenance operations panels live while a long job runs
 		// (universe seed / deep-history backfill) — per-symbol progress updates.
+		// In-flight guard mirrors `polling` above so a load that runs longer than
+		// the 4s interval can't stack overlapping requests.
+		let opsPolling = false;
 		const opsInterval = setInterval(() => {
-			if (isDestroyed || activeTab !== 'maintenance') return;
-			if (universe?.seed?.running || bvStatus?.running) void loadOpsPanels();
+			if (isDestroyed || opsPolling || activeTab !== 'maintenance') return;
+			if (!(universe?.seed?.running || bvStatus?.running)) return;
+			opsPolling = true;
+			loadOpsPanels().finally(() => {
+				opsPolling = false;
+			});
 		}, 4000);
 
 		return () => {

@@ -574,6 +574,35 @@ TYPE_NAME = "my_strategy"
 		};
 	}
 
+	// Persist the "tested" library status optimistically: flip the local card to
+	// 'tested' immediately so the UI reflects the just-run backtest, then reconcile
+	// with the backend. If the persist fails, revert the optimistic status and warn
+	// so the card can't show 'tested' while the backend still holds the old status.
+	async function persistTestedStatus(libraryId: string, resultId: string) {
+		const idx = library.findIndex((l) => l.id === libraryId);
+		const previousStatus = idx >= 0 ? library[idx].status : null;
+		if (idx >= 0 && library[idx].status !== 'tested') {
+			library[idx] = { ...library[idx], status: 'tested', last_result_id: resultId };
+			library = library;
+		}
+		try {
+			const updated = await updateLibraryStrategy(libraryId, { status: 'tested', last_result_id: resultId });
+			const i = library.findIndex((l) => l.id === libraryId);
+			if (i >= 0) {
+				library[i] = updated;
+				library = library;
+			}
+		} catch (err) {
+			const i = library.findIndex((l) => l.id === libraryId);
+			if (i >= 0 && previousStatus !== null) {
+				library[i] = { ...library[i], status: previousStatus };
+				library = library;
+			}
+			console.warn('Failed to persist library status', err);
+			addToast('Could not persist library status — the card status may be out of date', 'warning');
+		}
+	}
+
 	async function runBacktest() {
 		const error = validateRun();
 		if (error) {
@@ -593,7 +622,7 @@ TYPE_NAME = "my_strategy"
 			addToast(`Backtest ${job.status === 'succeeded' ? 'completed' : 'queued'}`, job.status === 'succeeded' ? 'success' : 'info');
 			if (job.result_id) {
 				lastResultId = job.result_id;
-				if (currentLibraryId) updateLibraryStrategy(currentLibraryId, { status: 'tested', last_result_id: job.result_id }).catch(() => {});
+				if (currentLibraryId) void persistTestedStatus(currentLibraryId, job.result_id);
 				resultLoading = true;
 				try {
 					inlineResult = await getResult(job.result_id);
@@ -616,7 +645,17 @@ TYPE_NAME = "my_strategy"
 
 	onMount(async () => {
 		try {
-			const [inds, syms] = await Promise.all([getIndicators(), getSymbols().catch(() => [])]);
+			// Symbol suggestions are non-essential: keep the empty-array fallback so the
+			// page still renders, but surface the failure instead of silently showing an
+			// empty dropdown with no signal.
+			const [inds, syms] = await Promise.all([
+				getIndicators(),
+				getSymbols().catch((err) => {
+					console.warn('Failed to load symbol suggestions', err);
+					addToast('Could not load symbol suggestions — you can still type a symbol manually', 'warning');
+					return [] as string[];
+				}),
+			]);
 			indicators = inds;
 			symbolSuggestions = syms;
 		} catch (err) {

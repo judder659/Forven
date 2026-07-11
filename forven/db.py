@@ -1328,6 +1328,12 @@ POST_MIGRATION_INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_trades_strategy_id ON trades (strategy_id);
 CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades (strategy);
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);
+-- Partial composite index for _has_open_book_routed_trades(), which runs on
+-- every settings mutation: SELECT 1 FROM trades WHERE status = 'OPEN' AND book
+-- IS NOT NULL AND book != '' AND book != 'main'. idx_trades_status alone forces
+-- a scan of all OPEN rows; this partial index restricts to OPEN rows and orders
+-- them by book so the residual book filters resolve without a full-open scan.
+CREATE INDEX IF NOT EXISTS idx_trades_open_book ON trades (status, book) WHERE status = 'OPEN';
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
 CREATE INDEX IF NOT EXISTS idx_tasks_type_status ON tasks (type, status);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks (status);
