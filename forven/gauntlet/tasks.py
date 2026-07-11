@@ -714,7 +714,17 @@ def _best_sweep_result(
     author-declared/default timeframe. ``run_quick_screen_gate`` uses it (since the
     timeframe_sweep now runs before the gate, definition v3) and so does
     ``run_validation_optimization``. Rows with empty metrics are ignored; if none are
-    usable the fallback timeframe is returned with no result and empty metrics."""
+    usable the fallback timeframe is returned with no result and empty metrics.
+
+    Prefer-declared bias: the declared timeframe (``fallback_tf``) is the reference
+    context. A NON-declared timeframe wins the crown only when it beats the declared
+    context's score AND carries positive Sharpe — a negative off-declared context must
+    never displace the author's timeframe (S06895, 2026-07-11: the declared-4h row
+    missed the degeneracy floor by one trade and the strategy was crowned, judged,
+    and merit-archived on a Sharpe −2.40 1h context it never declared). When the
+    declared row exists but is degeneracy-skipped and every survivor is negative,
+    the declared context is returned rather than crowning a negative one. A genuinely
+    better positive off-declared timeframe still wins — the enhancement stands."""
     from forven.db import get_db
 
     with get_db() as conn:
@@ -730,9 +740,15 @@ def _best_sweep_result(
         ).fetchall()
 
     best_tf = str(fallback_tf or "1h").strip() or "1h"
+    declared_tf = best_tf.lower()
     best_result_id: str | None = None
     best_metrics: dict[str, Any] = {}
     best_score = float("-inf")
+    best_sharpe = float("-inf")
+    declared_score = float("-inf")
+    declared_pick: tuple[str, str | None, dict[str, Any]] | None = None
+    declared_degen_pick: tuple[str, str | None, dict[str, Any]] | None = None
+    declared_degen_trades = -1.0
     # Least-degenerate fallback, used ONLY if no context clears the validity floor —
     # so a strategy that genuinely can't trade anywhere is judged (and failed) on its
     # most-traded context, never crowned by a lucky 4-trade slice.
@@ -761,11 +777,30 @@ def _best_sweep_result(
         # strategy's stored metrics (the gate then reads IS Sharpe 0.00 and rejects).
         # Such a slice can never be the sweep winner.
         if is_degenerate_backtest_metrics(metrics):
+            if tf.lower() == declared_tf and float(trades) > declared_degen_trades:
+                declared_degen_pick = (tf, rid, metrics)
+                declared_degen_trades = float(trades)
             continue
         score = sharpe * 10.0 + min(trades, 100.0) * 0.01 + total_return * 0.01
+        if tf.lower() == declared_tf and score > declared_score:
+            declared_score = score
+            declared_pick = (tf, rid, metrics)
         if score > best_score:
             best_score = score
+            best_sharpe = float(sharpe)
             best_tf, best_result_id, best_metrics = tf, rid, metrics
+    # Prefer-declared bias (see docstring): an off-declared winner must BEAT the
+    # declared context and carry positive Sharpe, else the declared context stands.
+    if declared_pick is not None and best_tf.lower() != declared_tf:
+        if not (best_score > declared_score and best_sharpe > 0.0):
+            return declared_pick
+    if (
+        declared_pick is None
+        and declared_degen_pick is not None
+        and best_score != float("-inf")
+        and best_sharpe <= 0.0
+    ):
+        return declared_degen_pick
     if best_score == float("-inf"):
         return fb_tf, fb_result_id, fb_metrics
     return best_tf, best_result_id, best_metrics
