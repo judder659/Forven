@@ -29,6 +29,7 @@ from forven.db import (
     format_prefixed_id,
     _extract_numeric_suffix,
     update_display_id,
+    verify_evidence_before_reject,
     verify_fitness_before_archive,
     log_pipeline_container_transition,
 )
@@ -2010,7 +2011,14 @@ def transition_stage(
                 # leave the strategy non-canonical but still active.
                 clear_canonical_on_commit = True
 
-        # Guardrail #1: Verify fitness before archive (skip for force-bypass)
+        # Guardrail #1: Verify evidence before a terminal transition (skip for
+        # force-bypass). `rejected` is just as terminal as `archived` — without a
+        # guard a strategy that never produced metrics (orphaned runtime, infra
+        # failure) gets a no-evidence terminal reject (the S06890 case, 2026-07-11).
+        # `rejected` uses the evidence-only variant (no fitness-key requirement —
+        # gate-failure rejects legitimately carry metrics but no scored fitness).
+        # Real losing metrics still reject normally; a stuck no-metrics strategy is
+        # reaped by the 7-day quick_screen stale sweep.
         if normalized_target == "archived" and not force:
             can_archive, error_msg = verify_fitness_before_archive(strategy_id)
             if not can_archive:
@@ -2027,6 +2035,13 @@ def transition_stage(
                 details={"reason": reason, "actor": actor},
                 conn=conn,
             )
+        elif normalized_target == "rejected" and not force:
+            can_reject, error_msg = verify_evidence_before_reject(strategy_id)
+            if not can_reject:
+                return _record_blocked_transition(
+                    block_reason=error_msg,
+                    motion="archive_rejected_ghost_protection",
+                )
         elif normalized_target == "archived":
             event_reason = _build_retirement_reason(
                 current_stage=current_stage,

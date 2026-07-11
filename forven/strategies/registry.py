@@ -499,7 +499,7 @@ def _ensure_active_db_strategy_modules() -> None:
         from forven.db import get_db
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT type AS stype, source_ref FROM strategies "
+                "SELECT type AS stype, runtime_type AS rtype, source_ref FROM strategies "
                 "WHERE LOWER(TRIM(COALESCE(stage, ''))) IN "
                 "('paper', 'paper_trading', 'live_graduated', 'deployed', 'gauntlet', 'quick_screen') "
                 "AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('archived', 'rejected')"
@@ -510,10 +510,18 @@ def _ensure_active_db_strategy_modules() -> None:
     loaded = 0
     for row in rows:
         stype = str(row["stype"] or "").strip()
+        rtype = str(row["rtype"] or "").strip()
         # Untrusted-origin (imported, sandbox-only) types are NEVER imported into the
-        # trusted parent — their class lives only in the worker. Skip so this sweep
-        # can't even attempt an in-process import of an imported module.
-        if not stype or stype in _TYPE_MAP or stype.startswith(IMPORTED_TYPE_PREFIX):
+        # trusted parent — their class lives only in the worker. Dropzone rows carry
+        # the imported__ prefix in runtime_type while their bare `type` keeps the
+        # author's TYPE_NAME, so both columns must be checked or the sweep attempts a
+        # doomed forven.strategies.custom.dropzone_* import for every imported row.
+        if (
+            not stype
+            or stype in _TYPE_MAP
+            or stype.startswith(IMPORTED_TYPE_PREFIX)
+            or rtype.startswith(IMPORTED_TYPE_PREFIX)
+        ):
             continue
         src = str(row["source_ref"] or "").strip()
         if not src:

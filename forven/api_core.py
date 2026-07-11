@@ -9469,9 +9469,19 @@ def _resolve_backtest_context_from_results(
 
 
 def _normalize_strategy_type(value: object) -> str | None:
-    normalized = str(value or "").strip().lower()
-    if not normalized:
+    raw = str(value or "").strip()
+    if not raw:
         return None
+    from forven.strategies.sandbox_proxy import is_sandbox_only_type
+
+    # Namespaced sandbox types are exact worker-registry keys: case-sensitive and
+    # never family-aliased. Lowercasing one breaks the worker lookup for a
+    # mixed-case imported module (silent 0-signal runs), and the family alias /
+    # *_orb collapse below would execute the WRONG builtin class for an imported
+    # strategy whose module name ends in a family token.
+    if is_sandbox_only_type(raw):
+        return raw
+    normalized = raw.lower()
     aliases = {
         "bb": "bollinger",
         "bollinger_band": "bollinger",
@@ -9594,6 +9604,37 @@ def _resolve_backtesting_strategy_type(
         if normalized_inferred:
             return normalized_inferred
     return _normalize_strategy_type(_infer_strategy_type_from_name(strategy_name))
+
+
+def resolve_execution_strategy_type(strategy_row: object) -> str | None:
+    """Return the column that names the EXECUTABLE type for a strategies row.
+
+    Dropzone/imported strategies carry a bare ``type`` (the author's TYPE_NAME)
+    plus a namespaced ``runtime_type`` (``imported__<module>``) that routes
+    execution through the sandbox worker. Execution entry points must resolve
+    the runtime_type: the bare type's source file was moved to ``imported/`` at
+    registration, so resolving it scans ``custom/`` and lands on the orphan
+    guard.
+    """
+    from forven.strategies.sandbox_proxy import is_sandbox_only_type
+
+    if strategy_row is None:
+        return None
+
+    def _column(key: str) -> object:
+        try:
+            if isinstance(strategy_row, dict):
+                return strategy_row.get(key)
+            return strategy_row[key]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+    runtime_type = str(_column("runtime_type") or "").strip()
+    if runtime_type and is_sandbox_only_type(runtime_type):
+        return runtime_type
+    bare = _column("type")
+    text = str(bare).strip() if bare is not None else ""
+    return text or None
 
 
 def _infer_strategy_context_from_task_audit(strategy_id: str) -> dict | None:
@@ -10297,7 +10338,7 @@ def post_backtest_preview(body: BacktestPreviewBody):
         row = _require_existing_strategy_row(requested)
         if isinstance(row, dict):
             base_params = _parse_strategy_params_blob(row.get("params")) or {}
-            explicit_type = row.get("type")
+            explicit_type = resolve_execution_strategy_type(row)
             if not (asset and asset.strip()):
                 asset = _extract_base_asset_symbol(str(row.get("symbol") or body.symbol))
     except Exception:
@@ -10935,7 +10976,7 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
     requested_params = body.params if isinstance(body.params, dict) else {}
     merged_params = {**base_params, **requested_params}
     strategy_type = _resolve_backtesting_strategy_type(
-        explicit_type=strategy_row.get("type"),
+        explicit_type=resolve_execution_strategy_type(strategy_row),
         strategy_name=strategy_name or strategy_id,
         params=merged_params,
         payload=strategy_definition_json,
@@ -11296,7 +11337,7 @@ def post_optimization_submit(body: OptimizationSubmitBody):
                 base_params = dict(audit_params)
                 inferred_params_for_backfill = dict(audit_params)
     strategy_type = _resolve_backtesting_strategy_type(
-        explicit_type=strategy_row.get("type"),
+        explicit_type=resolve_execution_strategy_type(strategy_row),
         strategy_name=strategy_name or strategy_id,
         params=base_params,
         payload=body.definition_json,
@@ -11935,7 +11976,8 @@ def post_backtesting_run(body: dict):
                 if _bt_leverage is None:
                     _bt_leverage = _coerce_float(merged_params.get("leverage"), None)
                 strategy_type = _resolve_backtesting_strategy_type(
-                    explicit_type=body.get("strategy_type") or (strategy_row.get("type") if strategy_row else None),
+                    explicit_type=body.get("strategy_type")
+                    or (resolve_execution_strategy_type(strategy_row) if strategy_row else None),
                     strategy_name=(strategy_row.get("name") if strategy_row else strategy_id) or strategy_id,
                     params=merged_params,
                     payload={

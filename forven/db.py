@@ -7442,41 +7442,94 @@ def log_pipeline_container_transition(
         )
 
 
+def _terminal_evidence_error(
+    strategy_id: str,
+    *,
+    require_fitness: bool,
+    no_metrics_msg: str,
+    invalid_json_msg: str,
+    no_perf_msg: str,
+) -> str:
+    """Shared ghost-protection core for terminal transitions: returns the
+    blocking error message, or "" when the strategy carries real evidence.
+    One definition so the archive and reject guards can never drift on what
+    counts as evidence."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT metrics FROM strategies WHERE id = ?",
+            (strategy_id,),
+        ).fetchone()
+
+        if not row:
+            return f"Strategy {strategy_id} not found"
+
+        metrics_json = row[0]
+        if not metrics_json:
+            return no_metrics_msg
+
+        try:
+            metrics = json.loads(metrics_json) if isinstance(metrics_json, str) else metrics_json
+        except Exception:
+            return invalid_json_msg
+
+        if not isinstance(metrics, dict) or not metrics:
+            return no_metrics_msg
+
+        if require_fitness and metrics.get("fitness") is None:
+            return (
+                f"Strategy {strategy_id} has NULL fitness - archive REJECTED "
+                "(ghost container protection)"
+            )
+
+        # Critical performance metrics (handle both key name variants)
+        has_sharpe = metrics.get("sharpe") is not None or metrics.get("sharpe_ratio") is not None
+        has_return = metrics.get("total_return_pct") is not None or metrics.get("total_return") is not None
+        if not has_sharpe and not has_return:
+            return no_perf_msg
+
+        return ""
+
+
 def verify_fitness_before_archive(strategy_id: str) -> tuple[bool, str]:
     """
     Pre-Archival Metric Verification (Guardrail #1).
     REJECT archive if fitness is NULL or missing.
     Returns (can_archive, error_message).
     """
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT metrics FROM strategies WHERE id = ?",
-            (strategy_id,),
-        ).fetchone()
-        
-        if not row:
-            return False, f"Strategy {strategy_id} not found"
-        
-        metrics_json = row[0]
-        if not metrics_json:
-            return False, f"Strategy {strategy_id} has no metrics - archive REJECTED"
-        
-        try:
-            metrics = json.loads(metrics_json) if isinstance(metrics_json, str) else metrics_json
-        except Exception:
-            return False, f"Strategy {strategy_id} has invalid metrics JSON"
-        
-        fitness = metrics.get("fitness")
-        if fitness is None:
-            return False, f"Strategy {strategy_id} has NULL fitness - archive REJECTED (ghost container protection)"
-        
-        # Also check for critical metrics (handle both key name variants)
-        has_sharpe = metrics.get("sharpe") is not None or metrics.get("sharpe_ratio") is not None
-        has_return = metrics.get("total_return_pct") is not None or metrics.get("total_return") is not None
-        if not has_sharpe and not has_return:
-            return False, f"Strategy {strategy_id} has no valid performance metrics - archive REJECTED"
-        
-        return True, ""
+    error = _terminal_evidence_error(
+        strategy_id,
+        require_fitness=True,
+        no_metrics_msg=f"Strategy {strategy_id} has no metrics - archive REJECTED",
+        invalid_json_msg=f"Strategy {strategy_id} has invalid metrics JSON",
+        no_perf_msg=f"Strategy {strategy_id} has no valid performance metrics - archive REJECTED",
+    )
+    return (error == ""), error
+
+
+def verify_evidence_before_reject(strategy_id: str) -> tuple[bool, str]:
+    """Ghost protection for the `rejected` terminal, mirroring
+    verify_fitness_before_archive WITHOUT the fitness-key requirement: `rejected`
+    is reached by gate failures where metrics exist but no fitness was ever
+    scored, so demanding the fitness key would block legitimate merit rejects.
+    Blocks only rejects with NO metrics / NO performance evidence — a strategy
+    that never got a fair run (orphaned runtime, infra failure) must not be
+    terminally rejected on the absence of evidence.
+    Returns (can_reject, error_message)."""
+    error = _terminal_evidence_error(
+        strategy_id,
+        require_fitness=False,
+        no_metrics_msg=(
+            f"Strategy {strategy_id} has no metrics - terminal reject blocked (ghost protection)"
+        ),
+        invalid_json_msg=(
+            f"Strategy {strategy_id} has invalid metrics JSON - terminal reject blocked"
+        ),
+        no_perf_msg=(
+            f"Strategy {strategy_id} has no valid performance metrics - "
+            "terminal reject blocked (ghost protection)"
+        ),
+    )
+    return (error == ""), error
 
 
 def detect_ghost_containers() -> list[dict]:
