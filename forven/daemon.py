@@ -170,6 +170,35 @@ _BOOK_EQUITY_CACHE: dict[str, float] = {}
 _LAST_BOOKS_ENABLED: bool = False
 _BOOKS_DISABLED_STREAK: int = 0
 _BOOKS_OFF_CONFIRM_TICKS: int = 3
+# DRAIN-1: per-account CLEAN-zero streak. A read that SUCCEEDS (no exception) and
+# reports ~0 equity is TRUTH — an operator draining/defunding a wallet — not a
+# transient glitch. Substituting last-known-good forever keeps the aggregate
+# inflated and the HWM high; when the cache finally clears (restart) the sudden
+# drop computes a phantom drawdown and trips a false kill-switch. So after a few
+# CONSECUTIVE clean-zero reads on an account that previously had funds we ACCEPT
+# the zero, purge its cache entry, and signal the risk engine to re-baseline the
+# step-down (a drain, not a loss). A raised/errored read never counts toward this
+# streak (that stays on the last-known-good path); a positive read resets it.
+# The streak requirement — not the magnitude — is what distinguishes a drain from
+# a trading loss, so a genuine loss still flows through as drawdown.
+_BOOK_CLEAN_ZERO_STREAK: dict[str, int] = {}
+_BOOK_CLEAN_ZERO_CONFIRM_TICKS: int = 3
+
+
+def clear_book_equity_cache() -> int:
+    """DRAIN-1: purge the per-account last-known-good equity cache (and clean-zero
+    streaks). The operator equity re-baseline action calls this so the documented
+    recovery path fully resets the stale substitution state — otherwise a wallet
+    the operator intentionally drained keeps getting its old balance substituted
+    from cache, re-inflating the aggregate the operator just re-baselined away.
+    Returns the number of cached account entries cleared."""
+    n = len(_BOOK_EQUITY_CACHE)
+    _BOOK_EQUITY_CACHE.clear()
+    _BOOK_CLEAN_ZERO_STREAK.clear()
+    if n:
+        log.info("book equity: cleared %d cached last-known-good account entr%s (operator re-baseline)",
+                 n, "y" if n == 1 else "ies")
+    return n
 
 
 def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
@@ -1189,6 +1218,7 @@ def _book_aware_account_value(testnet: bool = True) -> dict | None:
     skips this tick rather than acting on incomplete data.
     """
     global _LAST_BOOKS_ENABLED, _BOOKS_DISABLED_STREAK
+    drain_accepted = False  # DRAIN-1: a clean-zero streak purged an inflated cache this tick
     try:
         from forven.exchange import books
 
@@ -1272,6 +1302,7 @@ def _book_aware_account_value(testnet: bool = True) -> dict | None:
                 err_reason = f"{type(exc).__name__}: {exc}"
             if val > 0:
                 _BOOK_EQUITY_CACHE[key] = val  # last-known-good
+                _BOOK_CLEAN_ZERO_STREAK.pop(key, None)  # DRAIN-1: real funds -> reset streak
                 total_val += val
                 books_equity[label] = round(val, 2)
                 breakdown.append(f"{key}=${val:,.2f}(live)")
@@ -1282,17 +1313,51 @@ def _book_aware_account_value(testnet: bool = True) -> dict | None:
                 if raised:
                     read_failed = True
                 cached = _BOOK_EQUITY_CACHE.get(key)
-                if cached is not None and cached > 0:
-                    # Had funds before, now reads 0/failed => transient glitch.
-                    # Substitute last-known-good so it can't fake a drawdown.
+                # DRAIN-1: a read that SUCCEEDED and reports ~0 is a CLEAN zero
+                # (truth), not a transient glitch. Track a consecutive-clean-zero
+                # streak per account; a raised/errored read is NOT clean and never
+                # advances (or resets) it — that path keeps riding last-known-good.
+                clean_zero = (not raised)
+                if clean_zero:
+                    zstreak = _BOOK_CLEAN_ZERO_STREAK.get(key, 0) + 1
+                    _BOOK_CLEAN_ZERO_STREAK[key] = zstreak
+                else:
+                    zstreak = _BOOK_CLEAN_ZERO_STREAK.get(key, 0)
+                if (
+                    cached is not None and cached > 0
+                    and clean_zero
+                    and zstreak >= _BOOK_CLEAN_ZERO_CONFIRM_TICKS
+                ):
+                    # Confirmed drain: the exchange has reported ~0 for this account
+                    # cleanly N times running. Accept the zero, PURGE the stale
+                    # last-known-good so it stops inflating the aggregate, and flag
+                    # the tick so the risk engine re-baselines the step-down instead
+                    # of counting an operator drain as a drawdown (see update_equity's
+                    # rebaseline hook). A raised read never reaches here.
+                    _BOOK_EQUITY_CACHE.pop(key, None)
+                    _BOOK_CLEAN_ZERO_STREAK.pop(key, None)
+                    drain_accepted = True
+                    books_equity[label] = 0.0
+                    breakdown.append(f"{key}=$0(DRAINED,{zstreak} clean reads)")
+                    log.warning(
+                        "book equity: ACCEPTED clean-zero DRAIN for %s after %d "
+                        "consecutive clean reads — purged cached $%.2f; re-baselining "
+                        "the equity step-down (operator drain, not a drawdown)",
+                        key, zstreak, cached,
+                    )
+                elif cached is not None and cached > 0:
+                    # Had funds before, now reads 0/failed but not yet a confirmed
+                    # drain => transient glitch (or a drain still building its
+                    # streak). Substitute last-known-good so it can't fake a drawdown.
                     total_val += cached
                     books_equity[label] = round(float(cached), 2)
                     substituted = True
-                    breakdown.append(f"{key}=${cached:,.2f}(CACHED)")
+                    _zsuffix = f", clean-zero streak {zstreak}/{_BOOK_CLEAN_ZERO_CONFIRM_TICKS}" if clean_zero else ""
+                    breakdown.append(f"{key}=${cached:,.2f}(CACHED{_zsuffix})")
                     log.warning(
-                        "book equity: SUBSTITUTED cached $%.2f for %s (live read %s) — "
+                        "book equity: SUBSTITUTED cached $%.2f for %s (live read %s%s) — "
                         "stale cache can poison the aggregate",
-                        cached, key, err_reason or "returned 0/non-positive",
+                        cached, key, err_reason or "returned 0/non-positive", _zsuffix,
                     )
                 elif raised:
                     # Read ERRORED with no history => genuinely unknown; skip tick.
@@ -1302,7 +1367,8 @@ def _book_aware_account_value(testnet: bool = True) -> dict | None:
                     # else: read returned 0 with no history => a legitimately EMPTY
                     # account (e.g. master drained, all capital in the sub-accounts).
                     # Count it as $0 — do NOT mark unreliable, or the daemon could
-                    # never compute equity for a valid empty-master config.
+                    # never compute equity for a valid empty-master config. No cache
+                    # to purge, so the clean-zero streak just harmlessly accrues.
                     breakdown.append(f"{key}=$0(empty)")
         if unreliable or total_val <= 0:
             log.warning(
@@ -1322,6 +1388,9 @@ def _book_aware_account_value(testnet: bool = True) -> dict | None:
             "totalRawUsd": total_val,
             "source": source_label,
             "books": books_equity,
+            # DRAIN-1: signals update_equity to re-baseline the (lower) step-down
+            # instead of computing a drawdown against the pre-drain HWM.
+            "drain_accepted": drain_accepted,
         }
     except Exception:
         # Hard failure: skip rather than fall back to a master-only value that
@@ -1461,6 +1530,10 @@ async def _run_risk_cycle() -> dict:
             return snapshot
         snapshot["equity"] = equity
         equity_source = acct.get("source", "exchange")
+        # DRAIN-1: an accepted clean-zero drain is a genuine step-down in at-risk
+        # capital, not a loss — re-baseline the HWM/daily start to it so the drop
+        # can't compute a phantom drawdown and trip the kill-switch.
+        drain_accepted = bool(acct.get("drain_accepted"))
 
         risk_check = await _to_thread_with_timeout(
             "daemon.update_equity",
@@ -1468,6 +1541,7 @@ async def _run_risk_cycle() -> dict:
             update_equity,
             equity,
             equity_source,
+            rebaseline=drain_accepted,
         )
         if not isinstance(risk_check, dict):
             return snapshot

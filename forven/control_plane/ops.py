@@ -996,7 +996,17 @@ def post_equity_rebaseline(body: ConfirmBody) -> dict[str, object]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "equity": equity, **result}
+    # DRAIN-1: also purge the daemon's last-known-good book-equity cache. Without
+    # this, a wallet the operator intentionally drained keeps getting its stale
+    # balance substituted from cache on the next tick, re-inflating the aggregate
+    # the operator just re-baselined away — the recovery path wouldn't fully reset.
+    try:
+        from forven.daemon import clear_book_equity_cache
+        cleared = clear_book_equity_cache()
+    except Exception as exc:
+        log.warning("Equity re-baseline: could not clear book-equity cache: %s", exc)
+        cleared = 0
+    return {"ok": True, "equity": equity, "book_equity_cache_cleared": cleared, **result}
 
 
 def post_kill_switch_toggle(body: dict) -> dict[str, object]:

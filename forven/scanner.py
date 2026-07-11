@@ -16,6 +16,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -3292,45 +3293,93 @@ def _fail_unfilled_open_trade(trade_id: str | None, reason: str | None) -> None:
     tid = str(trade_id or "").strip()
     if not tid:
         return
-    try:
-        with get_db() as conn:
-            row = conn.execute(
-                "SELECT status, fill_entry_price, signal_data FROM trades WHERE id = ?",
-                (tid,),
-            ).fetchone()
-            if not row or str(row["status"] or "").strip().upper() != "OPEN":
-                return  # already resolved — idempotent
-            fill_entry = row["fill_entry_price"]
-            try:
-                if fill_entry is not None and float(fill_entry) > 0:
-                    return  # entry actually filled → real position, do not fail it
-            except (TypeError, ValueError):
-                pass
-            try:
-                signal_data = json.loads(row["signal_data"]) if row["signal_data"] else {}
-            except Exception:
-                signal_data = {}
-            if not isinstance(signal_data, dict):
-                signal_data = {}
-            signal_data.update(
-                {
-                    "open_execution_failed": True,
-                    "open_execution_failure_reason": str(reason or "execution open failed"),
-                    "open_execution_failed_at": get_now().isoformat(),
-                }
-            )
-            conn.execute(
-                "UPDATE trades SET status = 'FAILED', closed_at = ?, failure_reason = ?, signal_data = ? "
-                "WHERE id = ? AND status = 'OPEN'",
-                (
-                    get_now().isoformat(),
-                    str(reason or "execution open failed"),
-                    json.dumps(signal_data),
-                    tid,
-                ),
-            )
-    except Exception:
-        log.warning("Open-failure cleanup: could not mark trade %s FAILED", tid, exc_info=True)
+    # RETRY-STORM-2: capture the trade's identity for the in-memory cooldown
+    # fallback (below) so the cooldown can still engage even if the FAILED write is
+    # ultimately dropped. Populated from the row read on the first attempt.
+    cooldown_strategy = ""
+    cooldown_asset = ""
+    cooldown_direction = ""
+    marked_failed = False
+
+    # RETRY-STORM-2: the FAILED mark is safety-critical — it is the ONLY signal the
+    # scanner's failed-open cooldown reads to brake re-submission. A dropped write
+    # (busy/locked DB) leaves the trade OPEN/absent, the cooldown never engages, and
+    # the scanner fires a fresh REAL order every tick (retry-storm / duplicate
+    # exposure). So retry the write with backoff (blocking, mirroring how
+    # safety-critical risk transitions persist) before giving up.
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            with get_db() as conn:
+                row = conn.execute(
+                    "SELECT status, fill_entry_price, signal_data, "
+                    "COALESCE(NULLIF(strategy_id, ''), strategy) AS sid, asset, direction "
+                    "FROM trades WHERE id = ?",
+                    (tid,),
+                ).fetchone()
+                if not row:
+                    return  # gone — nothing to fail
+                cooldown_strategy = str(row["sid"] or "").strip()
+                cooldown_asset = str(row["asset"] or "").strip()
+                cooldown_direction = str(row["direction"] or "long").strip().lower() or "long"
+                if str(row["status"] or "").strip().upper() != "OPEN":
+                    return  # already resolved — idempotent
+                fill_entry = row["fill_entry_price"]
+                try:
+                    if fill_entry is not None and float(fill_entry) > 0:
+                        return  # entry actually filled → real position, do not fail it
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    signal_data = json.loads(row["signal_data"]) if row["signal_data"] else {}
+                except Exception:
+                    signal_data = {}
+                if not isinstance(signal_data, dict):
+                    signal_data = {}
+                signal_data.update(
+                    {
+                        "open_execution_failed": True,
+                        "open_execution_failure_reason": str(reason or "execution open failed"),
+                        "open_execution_failed_at": get_now().isoformat(),
+                    }
+                )
+                conn.execute(
+                    "UPDATE trades SET status = 'FAILED', closed_at = ?, failure_reason = ?, signal_data = ? "
+                    "WHERE id = ? AND status = 'OPEN'",
+                    (
+                        get_now().isoformat(),
+                        str(reason or "execution open failed"),
+                        json.dumps(signal_data),
+                        tid,
+                    ),
+                )
+            marked_failed = True
+            break
+        except Exception as exc:  # noqa: PERF203 — retry loop is the point
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.25 * (2 ** attempt))  # 0.25s, 0.5s backoff
+                continue
+
+    # RETRY-STORM-2: when the durable FAILED write could NOT be confirmed, register
+    # the process-local cooldown so re-submission is still braked within this
+    # process. On a successful write we DON'T register it — the DB row is the
+    # authoritative cooldown source and behavior stays identical to today.
+    if not marked_failed and cooldown_strategy and cooldown_asset:
+        try:
+            from forven.exchange.risk import register_failed_open_inmem_cooldown
+            register_failed_open_inmem_cooldown(cooldown_strategy, cooldown_asset, cooldown_direction)
+        except Exception:
+            log.debug("Open-failure cleanup: could not register in-memory cooldown", exc_info=True)
+
+    if not marked_failed:
+        log.error(
+            "Open-failure cleanup: could NOT persist FAILED mark for trade %s after retries (%s). "
+            "Relying on the in-memory failed-open cooldown (%s %s %s) to brake re-submission "
+            "until the process restarts or the DB write recovers.",
+            tid, last_exc, cooldown_strategy or "?", cooldown_asset or "?", cooldown_direction or "?",
+            exc_info=last_exc is not None,
+        )
         return
     # release() takes the position lock and opens its own connection, so call it
     # outside the update transaction above to avoid nested-connection lock contention.

@@ -13,6 +13,7 @@ import pytest
 
 from forven.db import kv_get, kv_set
 from forven.exchange import risk
+from forven.sim.clock import get_today
 
 
 # ---------------------------------------------------------------- jump guard
@@ -70,6 +71,70 @@ def test_basis_change_rebaselines_poisoned_hwm(forven_db):
     assert state["high_water_mark"] == pytest.approx(610.0)
     daily = kv_get("daily_risk", {})
     assert daily["start_equity"] == pytest.approx(610.0)
+
+
+# ------------------------------------------------- DRAIN-1: accepted wallet drain
+
+
+def _seed_live_state(hwm, last, *, source="books_only", kill=False, halt=False):
+    kv_set("risk_state", {
+        "high_water_mark": hwm,
+        "last_equity": last,
+        "equity_source": source,
+        "kill_switch_active": kill,
+        "daily_loss_halt": halt,
+        "drawdown_pct": 0.0,
+    })
+
+
+def test_drain_rebaseline_reanchors_step_down_no_killswitch(forven_db):
+    """An accepted clean-zero DRAIN (same basis, lower equity) re-anchors the HWM to
+    the drained equity instead of computing a drawdown against the pre-drain peak —
+    so the step-down can't trip the kill-switch."""
+    _seed_live_state(675.0, 675.0, source="books_only")
+    result = risk.update_equity(359.0, "books_only", rebaseline=True)  # master drained
+    assert result.get("action") is None and result.get("kill_switch") is False
+    assert result["high_water_mark"] == pytest.approx(359.0)
+    assert result["drawdown_pct"] == pytest.approx(0.0)
+    daily = kv_get("daily_risk", {})
+    assert daily["start_equity"] == pytest.approx(359.0)
+
+
+def test_same_basis_drop_without_drain_flag_still_draws_down(forven_db):
+    """Without the drain flag, the SAME lower reading is a genuine loss: it computes
+    drawdown against the peak (and a large enough drop fires the kill-switch). This
+    is the contrast that proves the drain path doesn't blanket-suppress losses."""
+    _seed_live_state(675.0, 675.0, source="books_only")
+    result = risk.update_equity(359.0, "books_only")  # rebaseline defaults False
+    # 47% drawdown on the 10% testnet cap -> kill-switch fires.
+    assert result["high_water_mark"] == pytest.approx(675.0)  # peak NOT moved
+    assert result["drawdown_pct"] == pytest.approx((675.0 - 359.0) / 675.0, rel=1e-3)
+    assert result.get("kill_switch") is True
+
+
+def test_drain_rebaseline_preserves_fired_daily_halt(forven_db):
+    """A drain re-baseline must NEVER lift an already-fired daily-loss halt
+    (RISK-STATE-1) — only an initial paper->live connect clears halts."""
+    kv_set("risk_state", {  # keep halt dated today so it isn't cleared on rollover
+        "high_water_mark": 675.0, "last_equity": 675.0, "equity_source": "books_only",
+        "kill_switch_active": False, "daily_loss_halt": True,
+        "daily_loss_halt_date": get_today().isoformat(),
+        "drawdown_pct": 0.0,
+    })
+    risk.update_equity(359.0, "books_only", rebaseline=True)
+    state = kv_get("risk_state", {})
+    assert state["daily_loss_halt"] is True  # halt held through the drain re-baseline
+
+
+def test_drain_flag_ignored_for_paper_basis(forven_db):
+    """A paper/sim 'drain' has no real-capital meaning — the rebaseline hook is only
+    honored for real-capital sources, so a paper source never re-anchors off it."""
+    _seed_live_state(10_000.0, 10_000.0, source="paper")
+    result = risk.update_equity(5_000.0, "paper", rebaseline=True)
+    # Paper still tracks drawdown for display but the HWM is NOT re-anchored by the
+    # drain flag (and paper never halts anyway — PAPER-HALT-2).
+    assert result["high_water_mark"] == pytest.approx(10_000.0)
+    assert result.get("kill_switch") is False
 
 
 # ------------------------------------------------- operator re-baseline
@@ -198,7 +263,7 @@ def test_risk_cycle_drops_rejected_sample_from_mirrors(forven_db, daemon_books, 
 
     monkeypatch.setattr(
         daemon, "update_equity",
-        lambda eq, src: {"rejected": True, "reject_reason": "test", "kill_switch": False},
+        lambda eq, src, **_kw: {"rejected": True, "reject_reason": "test", "kill_switch": False},
     )
     snapshot = asyncio.run(daemon._run_risk_cycle())
     assert snapshot["equity"] is None

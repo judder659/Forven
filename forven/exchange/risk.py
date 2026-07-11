@@ -315,6 +315,87 @@ def _get_failed_open_window_hours(settings: dict) -> float:
     return max(0.0, hours)
 
 
+# RETRY-STORM-2: in-memory fallback for the failed-open cooldown. The DB FAILED
+# mark is what the cooldown query below reads; if that write is dropped (a busy /
+# locked DB while the scanner is hammering it), the trade never shows FAILED, the
+# cooldown never engages, and the scanner re-submits a REAL order every tick — a
+# retry-storm against the exchange with possible duplicate exposure. So the
+# failure-marking path (scanner._fail_unfilled_open_trade) ALSO records the failed
+# open here, keyed by (strategy, asset, direction) -> last-failure timestamp, and
+# this cooldown check consults it alongside the DB. It only holds within this
+# process (a restart both wipes it AND re-reads the DB), which is exactly the
+# window the DB write was meant to cover. Bounded: expired entries are pruned on
+# every read/write so the map can't grow without bound.
+_FAILED_OPEN_INMEM_COOLDOWN: dict[tuple[str, str, str], datetime] = {}
+_FAILED_OPEN_INMEM_LOCK = threading.Lock()
+# Absolute cap so a pathological churn of distinct keys can't grow the map even
+# before any entry expires; oldest entries are evicted first.
+_FAILED_OPEN_INMEM_MAX_ENTRIES = 512
+
+
+def _failed_open_inmem_key(strategy: str, asset: str, direction: str) -> tuple[str, str, str]:
+    return (
+        str(strategy or "").strip(),
+        str(asset or "").strip().upper(),
+        str(direction or "long").strip().lower() or "long",
+    )
+
+
+def _prune_failed_open_inmem(now: datetime, window_seconds: float) -> None:
+    """Drop entries older than the cooldown window (caller holds the lock)."""
+    if window_seconds <= 0:
+        _FAILED_OPEN_INMEM_COOLDOWN.clear()
+        return
+    stale = [
+        key for key, ts in _FAILED_OPEN_INMEM_COOLDOWN.items()
+        if (now - ts).total_seconds() > window_seconds
+    ]
+    for key in stale:
+        _FAILED_OPEN_INMEM_COOLDOWN.pop(key, None)
+    # Hard cap: evict oldest first if the live set is still too large.
+    if len(_FAILED_OPEN_INMEM_COOLDOWN) > _FAILED_OPEN_INMEM_MAX_ENTRIES:
+        for key, _ts in sorted(_FAILED_OPEN_INMEM_COOLDOWN.items(), key=lambda kv: kv[1])[
+            : len(_FAILED_OPEN_INMEM_COOLDOWN) - _FAILED_OPEN_INMEM_MAX_ENTRIES
+        ]:
+            _FAILED_OPEN_INMEM_COOLDOWN.pop(key, None)
+
+
+def register_failed_open_inmem_cooldown(
+    strategy: str, asset: str, direction: str, *, when: datetime | None = None
+) -> None:
+    """RETRY-STORM-2: record a failed live open in the process-local cooldown map.
+
+    Called by the failure-marking path when the durable DB FAILED mark could not be
+    confirmed, so the cooldown still holds within this process. Safe to call even
+    when the DB write DID succeed (belt-and-braces) — the DB and in-memory paths
+    dedupe on the same window. No-op for an empty strategy/asset."""
+    key = _failed_open_inmem_key(strategy, asset, direction)
+    if not key[0] or not key[1]:
+        return
+    ts = when or get_now()
+    with _FAILED_OPEN_INMEM_LOCK:
+        # Prune against a generous window (the longest cooldown/breaker lookback we
+        # might reasonably use) so the map stays bounded regardless of settings.
+        _prune_failed_open_inmem(ts, 24 * 3600.0)
+        _FAILED_OPEN_INMEM_COOLDOWN[key] = ts
+
+
+def _failed_open_inmem_remaining_minutes(
+    strategy: str, asset: str, direction: str, cooldown_minutes: float, now: datetime
+) -> float:
+    """Minutes still to wait per the in-memory cooldown (0 if none / expired)."""
+    if cooldown_minutes <= 0:
+        return 0.0
+    key = _failed_open_inmem_key(strategy, asset, direction)
+    with _FAILED_OPEN_INMEM_LOCK:
+        _prune_failed_open_inmem(now, cooldown_minutes * 60.0)
+        ts = _FAILED_OPEN_INMEM_COOLDOWN.get(key)
+    if ts is None:
+        return 0.0
+    elapsed_minutes = (now - ts).total_seconds() / 60.0
+    return max(cooldown_minutes - elapsed_minutes, 0.0)
+
+
 def _is_strategy_in_failed_open_cooldown(
     strategy: str, asset: str, direction: str, settings: dict
 ) -> tuple[bool, str | None]:
@@ -343,29 +424,36 @@ def _is_strategy_in_failed_open_cooldown(
     if cooldown_minutes <= 0 and (max_attempts <= 0 or window_hours <= 0):
         return False, None
 
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT COALESCE(NULLIF(closed_at, ''), created_at) AS failed_at,
-                   failure_reason
-            FROM trades
-            WHERE status = 'FAILED'
-              AND (
-                COALESCE(NULLIF(strategy_id, ''), strategy) = ?
-                OR strategy = ?
-              )
-              AND UPPER(COALESCE(asset, '')) = ?
-              AND LOWER(COALESCE(direction, 'long')) = ?
-              AND COALESCE(execution_type, 'live') NOT IN ('paper', 'paper_challenger', 'simulation')
-            ORDER BY failed_at DESC
-            LIMIT 50
-            """,
-            (normalized_strategy, normalized_strategy, normalized_asset, normalized_direction),
-        ).fetchall()
-    if not rows:
-        return False, None
-
     now = get_now()
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                """
+                SELECT COALESCE(NULLIF(closed_at, ''), created_at) AS failed_at,
+                       failure_reason
+                FROM trades
+                WHERE status = 'FAILED'
+                  AND (
+                    COALESCE(NULLIF(strategy_id, ''), strategy) = ?
+                    OR strategy = ?
+                  )
+                  AND UPPER(COALESCE(asset, '')) = ?
+                  AND LOWER(COALESCE(direction, 'long')) = ?
+                  AND COALESCE(execution_type, 'live') NOT IN ('paper', 'paper_challenger', 'simulation')
+                ORDER BY failed_at DESC
+                LIMIT 50
+                """,
+                (normalized_strategy, normalized_strategy, normalized_asset, normalized_direction),
+            ).fetchall()
+    except Exception:
+        # RETRY-STORM-2: if even READING the FAILED rows fails (locked/busy DB), fall
+        # through to the in-memory cooldown rather than treating the strategy as clear.
+        log.warning(
+            "failed-open cooldown: DB read failed for %s %s %s; relying on in-memory cooldown",
+            normalized_strategy, normalized_asset, normalized_direction, exc_info=True,
+        )
+        rows = []
+
     lookback_hours = max(window_hours, cooldown_minutes / 60.0)
     failures: list[datetime] = []
     last_reason: str | None = None
@@ -386,6 +474,18 @@ def _is_strategy_in_failed_open_cooldown(
         if last_reason is None:
             last_reason = str(trade.get("failure_reason") or "").strip() or None
     if not failures:
+        # RETRY-STORM-2: the durable FAILED mark may have been dropped (busy DB).
+        # Consult the process-local fallback so a failed open still cools down.
+        inmem_remaining = _failed_open_inmem_remaining_minutes(
+            normalized_strategy, normalized_asset, normalized_direction, cooldown_minutes, now
+        )
+        if inmem_remaining > 0:
+            return True, (
+                f"Failed-open cooldown for {normalized_strategy}: a recent live open on "
+                f"{normalized_asset} {normalized_direction} FAILED (in-memory fallback — the "
+                f"durable failure mark could not be persisted). Wait {inmem_remaining:.1f}m "
+                "before retrying."
+            )
         return False, None
 
     reason_suffix = f" Last exchange error: {last_reason}" if last_reason else ""
@@ -3687,7 +3787,7 @@ def _get_live_risk_state() -> dict:
         return dict(state) if isinstance(state, dict) else dict(default_state)
 
 
-def update_equity(account_equity: float, source: str = "exchange") -> dict:
+def update_equity(account_equity: float, source: str = "exchange", *, rebaseline: bool = False) -> dict:
     """Update equity tracking. Call this every daemon tick.
 
     Updates the high-water mark, checks drawdown kill-switch,
@@ -3696,6 +3796,15 @@ def update_equity(account_equity: float, source: str = "exchange") -> dict:
     Args:
         account_equity: Current account equity in USD.
         source: "exchange" for real exchange data, "paper" for paper-mode fallback.
+        rebaseline: DRAIN-1. When the caller has already established that this
+            (lower) equity reflects an INTENTIONAL operator drain of at-risk
+            capital — not a trading loss — re-anchor the HWM / daily-start to it
+            (same mechanism as a basis change) so the step-down cannot compute a
+            phantom drawdown and trip the kill-switch. Never lifts an already-fired
+            daily-loss halt. The caller (daemon's book-aware read) only sets this
+            after a confirmed consecutive-clean-zero streak, so a genuine loss —
+            which arrives as a lower-but-nonzero clean read — still flows through
+            as drawdown.
 
     Returns:
         {
@@ -3709,7 +3818,7 @@ def update_equity(account_equity: float, source: str = "exchange") -> dict:
         }
     """
     with _RISK_STATE_LOCK:
-        return _update_equity_locked(account_equity, source)
+        return _update_equity_locked(account_equity, source, rebaseline=rebaseline)
 
 
 def _recompute_daily_halt_from_equity(account_equity: float) -> bool:
@@ -3890,7 +3999,7 @@ def _rejected_equity_result(state: dict, reason: str) -> dict:
     }
 
 
-def _update_equity_locked(account_equity: float, source: str) -> dict:
+def _update_equity_locked(account_equity: float, source: str, *, rebaseline: bool = False) -> dict:
     state = _get_risk_state()
     prev_last_equity = float(state.get("last_equity") or 0.0)  # KS-CACHE-LOG: detect sharp accepted moves
 
@@ -3989,6 +4098,35 @@ def _update_equity_locked(account_equity: float, source: str) -> dict:
         if _initial_live_connect:
             state["daily_loss_halt"] = False
             state["daily_loss_halt_date"] = None
+        kv_set_best_effort(
+            sim_kv_key("daily_risk"),
+            {"date": today, "start_equity": account_equity},
+            timeout_seconds=_RISK_WRITE_TIMEOUT_SECONDS,
+        )
+
+    # DRAIN-1: an INTENTIONAL operator drain/defund of a real-capital wallet is a
+    # step-down in at-risk capital, NOT a trading loss. Without this, the accepted
+    # lower equity computes a large drawdown against the pre-drain HWM and trips a
+    # false kill-switch (either immediately or when the substitution cache clears at
+    # restart). Re-anchor the HWM / daily-start to the drained equity — same as a
+    # basis change — but NEVER lift an already-fired daily-loss halt (RISK-STATE-1).
+    # Only honored for real-capital bases: a paper/sim "drain" has no live meaning.
+    # The caller gates this behind a confirmed consecutive-clean-zero streak, so a
+    # genuine loss (a lower-but-nonzero clean read) never sets rebaseline and still
+    # flows through the drawdown math below.
+    if rebaseline and _is_real_capital_equity_source(source) and hwm > 0 and account_equity < hwm:
+        log.warning(
+            "Equity re-baselined for an ACCEPTED wallet DRAIN (source=%s): HWM $%.2f -> $%.2f, "
+            "daily start reset (operator defund, not a drawdown).",
+            source, hwm, account_equity,
+        )
+        log_activity("warning", "risk", (
+            f"Re-baselined equity for an accepted wallet drain ({source}): "
+            f"HWM ${hwm:,.2f} -> ${account_equity:,.2f}, daily start reset. "
+            "Kill-switch / daily-halt unchanged; a drain is not a drawdown."
+        ))
+        hwm = account_equity
+        state["high_water_mark"] = hwm
         kv_set_best_effort(
             sim_kv_key("daily_risk"),
             {"date": today, "start_equity": account_equity},

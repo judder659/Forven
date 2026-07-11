@@ -12,9 +12,19 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
+import pytest
+
 from forven.db import get_db, kv_set
 from forven.exchange import risk
 from forven.sim.clock import get_now
+
+
+@pytest.fixture(autouse=True)
+def _reset_inmem_cooldown():
+    """RETRY-STORM-2: the in-memory failed-open cooldown is module-level state."""
+    risk._FAILED_OPEN_INMEM_COOLDOWN.clear()
+    yield
+    risk._FAILED_OPEN_INMEM_COOLDOWN.clear()
 
 
 def _skip_margin_fetch(monkeypatch):
@@ -187,3 +197,128 @@ def test_paper_failed_rows_do_not_count(forven_db, monkeypatch):
                             execution_type="paper")
     allowed, _, why = risk.can_open("BTC", "long", "S-A", execution_type="live")
     assert allowed, why
+
+
+# ----------------------------------------------- RETRY-STORM-2: durable-or-loud
+
+
+def test_dropped_failed_write_falls_back_to_inmem_cooldown(forven_db, monkeypatch, caplog):
+    """If the durable FAILED mark can't be persisted (busy/locked DB), the scanner's
+    failed-open cooldown must STILL engage via the process-local fallback so the
+    kernel doesn't retry a real order every tick. And it must log an error."""
+    from forven import scanner
+
+    _skip_margin_fetch(monkeypatch)
+    _set_brake_settings(cooldown_minutes=15, max_attempts=3)
+    # A live OPEN trade that the exchange open failed on.
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO trades (id, strategy, strategy_id, asset, direction, entry_price, size, "
+            "status, execution_type, signal_data, opened_at) "
+            "VALUES ('E-DROP', 'S-Z', 'S-Z', 'BTC', 'long', 100.0, 1.0, 'OPEN', 'live', '{}', ?)",
+            (get_now().isoformat(),),
+        )
+
+    # Force the FAILED UPDATE to fail while letting the identity SELECT succeed: wrap
+    # the real connection so its execute() raises only on the FAILED write. This
+    # simulates a busy/locked DB dropping the safety-critical mark. sqlite3.Cursor is
+    # immutable, so proxy at the connection level via scanner.get_db instead.
+    import contextlib
+    import sqlite3 as _sqlite3
+    from forven import db as _dbmod
+
+    class _FlakyConn:
+        def __init__(self, real):
+            self._real = real
+
+        def execute(self, sql, *a, **kw):
+            if sql.strip().upper().startswith("UPDATE TRADES SET STATUS = 'FAILED'"):
+                raise _sqlite3.OperationalError("database is locked")
+            return self._real.execute(sql, *a, **kw)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    @contextlib.contextmanager
+    def flaky_get_db():
+        with _dbmod.get_db() as real:
+            yield _FlakyConn(real)
+
+    monkeypatch.setattr("forven.scanner.get_db", flaky_get_db)
+    monkeypatch.setattr("forven.scanner.time.sleep", lambda *_a, **_k: None)  # no real backoff wait
+
+    with caplog.at_level("ERROR"):
+        scanner._fail_unfilled_open_trade("E-DROP", "exchange rejected order")
+
+    # The trade is still OPEN (write dropped) — proving the DB cooldown would NOT
+    # engage on its own — but the failure path logged loud AND registered the
+    # process-local fallback keyed to the dropped trade's identity.
+    with get_db() as conn:
+        row = dict(conn.execute("SELECT status FROM trades WHERE id='E-DROP'").fetchone())
+    assert row["status"] == "OPEN"  # durable mark never landed
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "could NOT persist FAILED mark" in msgs  # logged loud
+    assert risk._failed_open_inmem_key("S-Z", "BTC", "long") in risk._FAILED_OPEN_INMEM_COOLDOWN
+
+    # can_open is braked by the IN-MEMORY cooldown even though NO FAILED row exists
+    # for S-Z/BTC/long. Provide a live aggregate equity so any upstream fail-closed
+    # equity gate passes and we reach the failed-open cooldown gate.
+    monkeypatch.setattr(risk, "_live_aggregate_equity", lambda *a, **k: 10_000.0)
+    allowed, _, why = risk.can_open("BTC", "long", "S-Z", execution_type="live")
+    assert not allowed
+    assert "Failed-open cooldown" in why and "in-memory" in why
+
+
+def test_inmem_cooldown_scoped_and_expires(forven_db, monkeypatch):
+    _skip_margin_fetch(monkeypatch)
+    _set_brake_settings(cooldown_minutes=15, max_attempts=0)
+    # Register directly with a stale timestamp -> already expired.
+    risk.register_failed_open_inmem_cooldown(
+        "S-Z", "BTC", "long", when=get_now() - timedelta(minutes=30)
+    )
+    allowed, _, _why = risk.can_open("BTC", "long", "S-Z", execution_type="live")
+    assert allowed  # expired entry does not block
+
+    # Fresh entry blocks, but only the exact strategy+asset+direction.
+    risk.register_failed_open_inmem_cooldown("S-Z", "BTC", "long")
+    blocked, _, _ = risk.can_open("BTC", "long", "S-Z", execution_type="live")
+    assert not blocked
+    for asset, direction, strat in [("ETH", "long", "S-Z"), ("BTC", "short", "S-Z"), ("BTC", "long", "S-Y")]:
+        ok, _, why = risk.can_open(asset, direction, strat, execution_type="live")
+        assert ok, why
+
+
+def test_inmem_cooldown_not_used_when_write_succeeds(forven_db, monkeypatch):
+    """When the FAILED write DOES persist, behavior is identical to today: the DB
+    cooldown engages and NO in-memory entry is registered (the DB is authoritative)."""
+    from forven import scanner
+
+    _skip_margin_fetch(monkeypatch)
+    _set_brake_settings(cooldown_minutes=15, max_attempts=3)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO trades (id, strategy, strategy_id, asset, direction, entry_price, size, "
+            "status, execution_type, signal_data, opened_at) "
+            "VALUES ('E-OK', 'S-W', 'S-W', 'BTC', 'long', 100.0, 1.0, 'OPEN', 'live', '{}', ?)",
+            (get_now().isoformat(),),
+        )
+    scanner._fail_unfilled_open_trade("E-OK", "exchange rejected")
+
+    with get_db() as conn:
+        row = dict(conn.execute("SELECT status FROM trades WHERE id='E-OK'").fetchone())
+    assert row["status"] == "FAILED"  # durable mark landed
+    assert not risk._FAILED_OPEN_INMEM_COOLDOWN  # no fallback registered on success
+
+    allowed, _, why = risk.can_open("BTC", "long", "S-W", execution_type="live")
+    assert not allowed and "Failed-open cooldown" in why  # DB path blocks as before
+
+
+def test_inmem_cooldown_bounded_prune(forven_db):
+    """The in-memory map prunes expired entries so it can't grow without bound."""
+    stale = get_now() - timedelta(hours=48)
+    for i in range(50):
+        risk.register_failed_open_inmem_cooldown(f"S-{i}", "BTC", "long", when=stale)
+    # A fresh registration prunes the 48h-stale entries (register prunes at 24h).
+    risk.register_failed_open_inmem_cooldown("S-FRESH", "BTC", "long")
+    assert len(risk._FAILED_OPEN_INMEM_COOLDOWN) == 1
+    assert risk._failed_open_inmem_key("S-FRESH", "BTC", "long") in risk._FAILED_OPEN_INMEM_COOLDOWN

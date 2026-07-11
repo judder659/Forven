@@ -108,3 +108,112 @@ def test_substitution_is_logged_for_diagnosis(monkeypatch, caplog):
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "SUBSTITUTED" in msgs and "__master__" in msgs  # names the failing wallet + cached value
     assert "DEGRADED" in msgs  # full per-wallet composition evidence line
+
+
+# ---------------------------------------------- DRAIN-1: clean-zero wallet drains
+
+
+@pytest.fixture(autouse=True)
+def _reset_clean_zero_streaks():
+    dmn._BOOK_CLEAN_ZERO_STREAK.clear()
+    yield
+    dmn._BOOK_CLEAN_ZERO_STREAK.clear()
+
+
+def test_transient_failed_read_still_substitutes_no_drain(monkeypatch):
+    # A RAISED read (timeout) must NEVER count toward the clean-zero drain streak —
+    # even repeatedly. It stays on the last-known-good substitution path forever so
+    # a persistent transient glitch can't fake an accepted drain.
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 329.0, "0xshort": 30.0})
+    dmn._book_aware_account_value(testnet=True)  # seed cache
+    for _ in range(6):
+        _stub_reads(monkeypatch, {"__master__": RuntimeError("read timeout"), "0xlong": 329.0, "0xshort": 30.0})
+        out = dmn._book_aware_account_value(testnet=True)
+    assert out is not None
+    assert out["accountValue"] == pytest.approx(675.0)  # still substituted, never drained
+    assert out.get("drain_accepted") is False
+    assert dmn._BOOK_EQUITY_CACHE.get("__master__") == pytest.approx(316.0)  # cache intact
+
+
+def test_clean_zero_streak_accepts_drain_and_purges_cache(monkeypatch):
+    # A read that SUCCEEDS and reports 0 is a CLEAN zero. After N consecutive clean
+    # zeros the drain is accepted: the cache entry is purged and the aggregate
+    # reflects the drain (no longer inflated by the substituted balance).
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 329.0, "0xshort": 30.0})
+    assert dmn._book_aware_account_value(testnet=True)["accountValue"] == pytest.approx(675.0)
+
+    # Ticks 1..2: master reads clean 0 -> still substituted (streak building).
+    for expected_streak in (1, 2):
+        _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+        out = dmn._book_aware_account_value(testnet=True)
+        assert out["accountValue"] == pytest.approx(675.0)  # cached $316 still in
+        assert out.get("drain_accepted") is False
+        assert dmn._BOOK_CLEAN_ZERO_STREAK.get("__master__") == expected_streak
+
+    # Tick 3: streak hits the confirm threshold -> ACCEPT the drain.
+    _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+    out = dmn._book_aware_account_value(testnet=True)
+    assert out["accountValue"] == pytest.approx(359.0)  # 329 + 30, master drained
+    assert out.get("drain_accepted") is True
+    assert "__master__" not in dmn._BOOK_EQUITY_CACHE  # cache purged
+    assert "__master__" not in dmn._BOOK_CLEAN_ZERO_STREAK  # streak reset
+
+
+def test_positive_read_resets_clean_zero_streak(monkeypatch):
+    # A drain streak that is INTERRUPTED by a real positive read must reset — funds
+    # came back, so it was never a drain.
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 329.0, "0xshort": 30.0})
+    dmn._book_aware_account_value(testnet=True)
+    for _ in range(2):
+        _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+        dmn._book_aware_account_value(testnet=True)
+    assert dmn._BOOK_CLEAN_ZERO_STREAK.get("__master__") == 2
+    # Funds return -> streak clears, cache re-seeded.
+    _stub_reads(monkeypatch, {"__master__": 300.0, "0xlong": 329.0, "0xshort": 30.0})
+    out = dmn._book_aware_account_value(testnet=True)
+    assert out["accountValue"] == pytest.approx(659.0)
+    assert "__master__" not in dmn._BOOK_CLEAN_ZERO_STREAK
+    # A later single clean-zero must NOT immediately drain (streak restarts at 1).
+    _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+    out = dmn._book_aware_account_value(testnet=True)
+    assert out["accountValue"] == pytest.approx(659.0)  # substituted $300 again
+    assert out.get("drain_accepted") is False
+
+
+def test_genuine_partial_loss_still_flows_no_drain(monkeypatch):
+    # A clean read that is LOWER but non-zero is a real trading loss, not a drain:
+    # it flows straight through as the aggregate with no cache purge / drain flag.
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 329.0, "0xshort": 30.0})
+    dmn._book_aware_account_value(testnet=True)
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 150.0, "0xshort": 30.0})  # long lost half
+    out = dmn._book_aware_account_value(testnet=True)
+    assert out["accountValue"] == pytest.approx(496.0)  # reflects the loss
+    assert out.get("drain_accepted") is False
+    assert not dmn._BOOK_CLEAN_ZERO_STREAK  # a non-zero read never advances the streak
+
+
+def test_accepted_drain_is_logged(monkeypatch, caplog):
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 329.0, "0xshort": 30.0})
+    dmn._book_aware_account_value(testnet=True)
+    for _ in range(2):
+        _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+        dmn._book_aware_account_value(testnet=True)
+    _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+    with caplog.at_level("WARNING"):
+        dmn._book_aware_account_value(testnet=True)
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "DRAIN" in msgs and "__master__" in msgs
+
+
+def test_clear_book_equity_cache_purges_everything(monkeypatch):
+    _stub_reads(monkeypatch, {"__master__": 316.0, "0xlong": 329.0, "0xshort": 30.0})
+    dmn._book_aware_account_value(testnet=True)
+    assert dmn._BOOK_EQUITY_CACHE  # seeded
+    # Seed a partial clean-zero streak too.
+    _stub_reads(monkeypatch, {"__master__": 0.0, "0xlong": 329.0, "0xshort": 30.0})
+    dmn._book_aware_account_value(testnet=True)
+    assert dmn._BOOK_CLEAN_ZERO_STREAK
+    n = dmn.clear_book_equity_cache()
+    assert n >= 1
+    assert not dmn._BOOK_EQUITY_CACHE
+    assert not dmn._BOOK_CLEAN_ZERO_STREAK
