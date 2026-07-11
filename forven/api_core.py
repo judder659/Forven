@@ -9596,6 +9596,37 @@ def _resolve_backtesting_strategy_type(
     return _normalize_strategy_type(_infer_strategy_type_from_name(strategy_name))
 
 
+def resolve_execution_strategy_type(strategy_row: object) -> str | None:
+    """Return the column that names the EXECUTABLE type for a strategies row.
+
+    Dropzone/imported strategies carry a bare ``type`` (the author's TYPE_NAME)
+    plus a namespaced ``runtime_type`` (``imported__<module>``) that routes
+    execution through the sandbox worker. Execution entry points must resolve
+    the runtime_type: the bare type's source file was moved to ``imported/`` at
+    registration, so resolving it scans ``custom/`` and lands on the orphan
+    guard.
+    """
+    from forven.strategies.sandbox_proxy import is_sandbox_only_type
+
+    if strategy_row is None:
+        return None
+
+    def _column(key: str) -> object:
+        try:
+            if isinstance(strategy_row, dict):
+                return strategy_row.get(key)
+            return strategy_row[key]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+    runtime_type = str(_column("runtime_type") or "").strip()
+    if runtime_type and is_sandbox_only_type(runtime_type):
+        return runtime_type
+    bare = _column("type")
+    text = str(bare).strip() if bare is not None else ""
+    return text or None
+
+
 def _infer_strategy_context_from_task_audit(strategy_id: str) -> dict | None:
     target = str(strategy_id or "").strip()
     if not target:
@@ -10935,7 +10966,7 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
     requested_params = body.params if isinstance(body.params, dict) else {}
     merged_params = {**base_params, **requested_params}
     strategy_type = _resolve_backtesting_strategy_type(
-        explicit_type=strategy_row.get("type"),
+        explicit_type=resolve_execution_strategy_type(strategy_row),
         strategy_name=strategy_name or strategy_id,
         params=merged_params,
         payload=strategy_definition_json,
@@ -11935,7 +11966,8 @@ def post_backtesting_run(body: dict):
                 if _bt_leverage is None:
                     _bt_leverage = _coerce_float(merged_params.get("leverage"), None)
                 strategy_type = _resolve_backtesting_strategy_type(
-                    explicit_type=body.get("strategy_type") or (strategy_row.get("type") if strategy_row else None),
+                    explicit_type=body.get("strategy_type")
+                    or (resolve_execution_strategy_type(strategy_row) if strategy_row else None),
                     strategy_name=(strategy_row.get("name") if strategy_row else strategy_id) or strategy_id,
                     params=merged_params,
                     payload={

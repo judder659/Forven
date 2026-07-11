@@ -442,15 +442,27 @@ def _load_strategy_row(strategy_id: str):
 
 
 def _extract_strategy_info(row) -> tuple[str, dict]:
+    from forven.strategies.sandbox_proxy import is_sandbox_only_type
+
     strategy_type: str = ""
-    for col in ("strategy_type", "type"):
-        try:
-            value = row[col]
-            if value:
-                strategy_type = str(value)
-                break
-        except (IndexError, KeyError):
-            continue
+    # Imported/dropzone rows execute under their namespaced runtime_type; the
+    # bare `type` has no source in custom/ (moved to imported/ at registration)
+    # and resolves to the orphan guard.
+    try:
+        runtime_type = str(row["runtime_type"] or "").strip()
+    except (IndexError, KeyError):
+        runtime_type = ""
+    if runtime_type and is_sandbox_only_type(runtime_type):
+        strategy_type = runtime_type
+    if not strategy_type:
+        for col in ("strategy_type", "type"):
+            try:
+                value = row[col]
+                if value:
+                    strategy_type = str(value)
+                    break
+            except (IndexError, KeyError):
+                continue
 
     raw_params: str | dict = "{}"
     for col in ("params", "params_json", "definition_json"):
