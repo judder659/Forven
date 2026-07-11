@@ -435,6 +435,50 @@ def _quick_screen_defer_to_optimization() -> bool:
         return False
 
 
+def _declared_tf_metrics_for_judgment(
+    strategy_id: str,
+    timeframe: str,
+    *,
+    params: dict[str, Any] | None,
+    since: str | None,
+    as_of: str | None,
+) -> dict[str, Any]:
+    """Newest current-artifact backtest metrics at the DECLARED timeframe, for the
+    quick-screen gate to JUDGE (never persist) when the sweep selector returned the
+    declared context unmeasured. Degenerate rows are eligible here on purpose: a
+    sparse declared slice is judged on its own numbers by the gate (whose
+    testing_mode deferral and downstream full-history robustness do the real
+    vetting) instead of the strategy being judged on an off-declared context or on
+    stale stored metrics. Returns {} when no current row exists at that timeframe."""
+    from forven.db import get_db
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT result_id, timeframe, metrics_json, config_json, created_at
+            FROM backtest_results
+            WHERE strategy_id = ?
+              AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
+              AND LOWER(TRIM(COALESCE(timeframe, ''))) = ?
+              AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+            ORDER BY datetime(created_at) DESC
+            """,
+            (strategy_id, str(timeframe or "").strip().lower()),
+        ).fetchall()
+    for row in rows:
+        if params is not None and not _current_sweep_artifact(
+            row,
+            params=params,
+            since=since,
+            as_of=as_of,
+        ):
+            continue
+        metrics = _loads(row["metrics_json"], {})
+        if isinstance(metrics, dict) and metrics:
+            return metrics
+    return {}
+
+
 def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
     settings = _workflow_settings(workflow)
     quick_cfg = settings.get("quick_screen") if isinstance(settings.get("quick_screen"), dict) else {}
@@ -457,12 +501,14 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
         row = _strategy_row(strategy_id)
         fallback_tf = str(row.get("timeframe") or "") if row else ""
         row_params = _loads((row or {}).get("params"), {})
+        since = str(workflow.get("created_at") or "").strip() or None
+        as_of = _workflow_as_of(workflow)
         best_tf, _best_result_id, best_metrics = _best_sweep_result(
             strategy_id,
             fallback_tf or "1h",
             params=row_params if isinstance(row_params, dict) else {},
-            since=str(workflow.get("created_at") or "").strip() or None,
-            as_of=_workflow_as_of(workflow),
+            since=since,
+            as_of=as_of,
         )
         if best_metrics:
             metrics = best_metrics
@@ -470,6 +516,53 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
             # brain guardrails (which read strategies.metrics) judge the best timeframe,
             # and every downstream step (optimization/confirmation/paper) runs on it.
             _persist_quick_screen_winner(strategy_id, best_tf, best_metrics)
+        elif str(best_tf or "").strip().lower() != (fallback_tf or "1h").strip().lower():
+            # The selector returned the DECLARED timeframe UNMEASURED: its slice was
+            # degenerate/absent and every off-declared survivor was negative. Judging
+            # screen_metrics here (produced on the stored, off-declared timeframe)
+            # would recreate the off-declared merit-fail one layer above the selector
+            # that just refused it (S06895 re-adjudication, 2026-07-11: gate failed
+            # on the 1h screen run after the selector correctly refused to crown 1h).
+            declared_metrics = _declared_tf_metrics_for_judgment(
+                strategy_id,
+                str(best_tf),
+                params=row_params if isinstance(row_params, dict) else {},
+                since=since,
+                as_of=as_of,
+            )
+            if declared_metrics:
+                # Judge the declared slice WITHOUT persisting it: it missed the
+                # degeneracy floor, so it must not contaminate strategies.metrics.
+                # The gate's own checks (and the testing_mode deferral) decide, and
+                # the full-history robustness suite remains the real judge downstream.
+                metrics = declared_metrics
+            else:
+                submit_note = "resubmitted declared-timeframe backtest"
+                try:
+                    from forven.api_core import BacktestSubmitBody, stage_backtest_duration_days
+
+                    _submit_backtest(
+                        BacktestSubmitBody(
+                            strategy_id=str(row["id"]) if row else strategy_id,
+                            strategy_name=(row or {}).get("name"),
+                            symbol=(row or {}).get("symbol") or "BTC/USDT",
+                            timeframe=str(best_tf),
+                            params=row_params if isinstance(row_params, dict) else {},
+                            duration_days=stage_backtest_duration_days("timeframe_sweep"),
+                            as_of=as_of,
+                        ),
+                        skip_auto_trash=True,
+                    )
+                except Exception as submit_exc:  # noqa: BLE001 — retry loop handles it
+                    submit_note = f"declared-timeframe resubmission failed: {submit_exc}"
+                return {
+                    "status": "blocked_runtime",
+                    "message": (
+                        f"declared-timeframe ({best_tf}) evidence missing — declared slice "
+                        f"absent and all off-declared contexts negative; {submit_note}"
+                    ),
+                    "retryable": True,
+                }
     except Exception as exc:  # noqa: BLE001 - enhancement must never break the gate
         log.warning(
             "quick_screen_gate: best-of-N selection failed for %s, using quick_screen result: %s",
