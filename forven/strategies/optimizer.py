@@ -906,7 +906,14 @@ def optimize_strategy(
         "strategy_id": strategy_id,
         "asset": asset,
         "strategy_type": strategy_type,
-        "best_params": best["params"],
+        # A degenerate grid (zero axes — e.g. a sandbox-only strategy with no
+        # captured _parameter_space) records no per-axis overrides, so
+        # best["params"] is {}. Report the evaluated FULL params as best then:
+        # "no better params found; best = the author's stored params". An empty
+        # best_params here left the persisted row unreadable to the gauntlet's
+        # _best_params_from_optimization_payload, which resubmitted the
+        # optimization forever (S06895's third run, 2026-07-12).
+        "best_params": best["params"] or dict(best_full_params or {}),
         "best_full_params": best_full_params,
         "best_execution_controls": best.get("execution_controls") or {},
         "best_execution_profile": best_execution_controls,

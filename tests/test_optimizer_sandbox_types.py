@@ -102,3 +102,47 @@ def test_non_sandbox_orphan_still_errors(forven_db):
         timeframe="1h",
     )
     assert "orphan" in str(result.get("error") or "")
+
+
+def test_degenerate_grid_reports_full_params_as_best(forven_db, monkeypatch):
+    """A zero-axis grid records no per-axis overrides (params={}), which left the
+    persisted optimization row unreadable to the gauntlet's best-params extractor
+    and made run_validation_optimization resubmit forever. The degenerate result
+    must report the evaluated FULL params as best."""
+    base = {"fz_win": 180, "ema_fast": 21, "_timeframe": "4h"}
+
+    def _fake_grid_search(strategy_id, asset, strategy_type, param_space, **kwargs):
+        return [
+            {
+                "params": {},  # zero-axis combo: no overrides
+                "full_params": dict(base),
+                "metrics": {"sharpe_ratio": 1.0, "total_trades": 20},
+                "objective_value": 1.0,
+                "fitness": 1.0,
+            }
+        ]
+
+    monkeypatch.setattr(optimizer_mod, "grid_search", _fake_grid_search)
+    monkeypatch.setattr(
+        optimizer_mod,
+        "walk_forward",
+        lambda *_a, **_k: {
+            "verdict": "PASS",
+            "splits": [],
+            "aggregate_oos": {"sharpe": 1.0, "total_trades": 20},
+        },
+    )
+
+    result = optimize_strategy(
+        "S-OPT-SBX3",
+        asset="BTC",
+        strategy_type=_SANDBOX_TYPE,
+        bars=500,
+        base_params=dict(base),
+        timeframe="4h",
+    )
+
+    assert not result.get("error"), result.get("error")
+    assert result.get("best_params") == base, (
+        "degenerate grid must report the evaluated full params as best_params"
+    )
