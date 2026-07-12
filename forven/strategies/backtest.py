@@ -476,17 +476,29 @@ def _isolated_walk_forward_worker(
     """
     strategy_obj = None
     checker = SIGNAL_CHECKERS.get(family_strategy_type)
-    # Load only the registry slice this walk-forward needs: built-in strategies skip
-    # the ~12s custom-module import+AST-scan that full discover() pays on every spawn.
-    cls = _resolve_worker_strategy_class(original_strategy_type, family_strategy_type)
-    if cls:
-        try:
-            strategy_obj = cls(strategy_id, params)
-        except Exception as e:
-            return {"error": f"Failed to instantiate strategy: {e}"}
+    from forven.strategies.sandbox_proxy import SandboxOnlyStrategy, is_sandbox_only_type
 
-    if strategy_obj is None and not checker and family_strategy_type not in _VECTORIZABLE_TYPES:
-        return {"error": f"Unknown strategy type: {original_strategy_type}"}
+    if is_sandbox_only_type(original_strategy_type):
+        # Untrusted-origin (imported) strategy: NEVER resolve/instantiate its real
+        # class in this process. Build the non-executing proxy — run_strategy_execution
+        # force-routes its signal generation to the locked-down sandbox worker. Same
+        # branch as _isolated_backtest_worker; its absence here made every sandbox
+        # strategy's persisted walk-forward error "Unknown strategy type" once the
+        # robustness path resolved the namespaced runtime_type (S06895, 2026-07-12).
+        strategy_obj = SandboxOnlyStrategy(strategy_id, params, runtime_type=original_strategy_type)
+        checker = None
+    else:
+        # Load only the registry slice this walk-forward needs: built-in strategies skip
+        # the ~12s custom-module import+AST-scan that full discover() pays on every spawn.
+        cls = _resolve_worker_strategy_class(original_strategy_type, family_strategy_type)
+        if cls:
+            try:
+                strategy_obj = cls(strategy_id, params)
+            except Exception as e:
+                return {"error": f"Failed to instantiate strategy: {e}"}
+
+        if strategy_obj is None and not checker and family_strategy_type not in _VECTORIZABLE_TYPES:
+            return {"error": f"Unknown strategy type: {original_strategy_type}"}
 
     splits = []
     all_oos_trades = []

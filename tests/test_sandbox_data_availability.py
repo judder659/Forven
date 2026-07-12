@@ -38,3 +38,49 @@ def test_non_sandbox_unresolvable_type_still_blocks(forven_db, monkeypatch):
     )
     assert result.blocked is True
     assert "could not be resolved" in str(result.error)
+
+
+def test_walk_forward_worker_builds_sandbox_proxy(forven_db, monkeypatch):
+    """The isolated walk-forward worker must build the SandboxOnlyStrategy proxy
+    for imported types — same branch as the IS/OOS backtest worker. Its absence
+    errored every sandbox strategy's persisted walk-forward with 'Unknown
+    strategy type' once robustness resolved the namespaced runtime_type."""
+    import numpy as np
+    import pandas as pd
+
+    from forven.strategies import backtest as bt
+
+    n = 500
+    idx = pd.date_range("2025-01-01", periods=n, freq="4h")
+    close = 100 + np.cumsum(np.random.default_rng(3).normal(0, 0.5, n))
+    df = pd.DataFrame(
+        {"open": close, "high": close + 0.5, "low": close - 0.5, "close": close, "volume": 1000},
+        index=idx,
+    )
+
+    captured: dict = {}
+
+    def _fake_execution(strategy_obj, frame, **_kwargs):
+        captured["runtime_type"] = getattr(strategy_obj, "runtime_type", None)
+        empty = pd.Series(False, index=frame.index, dtype=bool)
+        return empty, empty
+
+    monkeypatch.setattr(bt, "run_strategy_execution", _fake_execution)
+
+    result = bt._isolated_walk_forward_worker(
+        strategy_id="S-WFSBX",
+        original_strategy_type="imported__dropzone_x_deadbeef",
+        family_strategy_type="x",
+        params={"_timeframe": "4h"},
+        df=df,
+        leverage=1.0,
+        fee_bps=4.5,
+        slippage_bps=2.0,
+        regime_gate=False,
+        warmup=50,
+        resolved_timeframe="4h",
+        resolved_n_splits=2,
+        resolved_in_sample_pct=0.7,
+    )
+
+    assert "Unknown strategy type" not in str(result.get("error") or ""), result.get("error")
