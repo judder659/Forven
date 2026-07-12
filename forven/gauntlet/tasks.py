@@ -1258,10 +1258,48 @@ def run_confirmation_backtest(workflow: dict[str, Any], step: dict[str, Any]) ->
         return _classify_exception(exc)
     if not isinstance(response, dict):
         return {"status": "blocked_runtime", "message": "confirmation backtest returned invalid response", "retryable": True}
+    confirmation_metrics = (
+        response.get("metrics")
+        if isinstance(response.get("metrics"), dict)
+        else _load_result_metrics(response.get("result_id"))
+    )
+    # When the strategy row carries NO performance metrics — the quick-screen gate
+    # deliberately does not persist a degeneracy-skipped declared-TF slice — promote
+    # this confirmation run's metrics as the canonical blob: it is the
+    # POST-optimization run at the declared timeframe over the full IS+OOS window,
+    # exactly the sample the paper (capital) gate needs to judge. Without it the
+    # gate fails closed with "no trade-count metric" despite eleven green steps
+    # (S06895, 2026-07-12). Rows that already carry performance metrics (the normal
+    # sweep-winner path) are left untouched.
+    try:
+        if isinstance(confirmation_metrics, dict) and confirmation_metrics:
+            from forven.policy import _resolve_full_sample_trade_count
+
+            current_blob = _loads(
+                (_strategy_row(str(row["id"])) or {}).get("metrics"), {}
+            )
+            if not isinstance(current_blob, dict):
+                current_blob = {}
+            if _resolve_full_sample_trade_count(current_blob) is None:
+                # Overlay the existing blob (robustness score fields written by
+                # _recalculate_robustness_score) so the backfill adds performance
+                # metrics without erasing the validation bookkeeping.
+                merged = dict(confirmation_metrics)
+                merged.update(current_blob)
+                _persist_quick_screen_winner(
+                    str(row["id"]),
+                    str(row.get("timeframe") or "1h"),
+                    merged,
+                )
+    except Exception as exc:  # noqa: BLE001 — canonical-metrics backfill is best-effort
+        log.warning(
+            "confirmation_backtest: canonical-metrics backfill failed for %s: %s",
+            row.get("id"), exc,
+        )
     return {
         "status": "passed",
         "result_id": response.get("result_id"),
-        "metrics": response.get("metrics") if isinstance(response.get("metrics"), dict) else _load_result_metrics(response.get("result_id")),
+        "metrics": confirmation_metrics,
         "execution_profile_selection": profile_selection,
     }
 
