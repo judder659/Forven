@@ -2278,6 +2278,24 @@ def _recalculate_robustness_score(strategy_id: str) -> None:
                     metrics = json.loads(existing["metrics"] or "{}")
                 except Exception:
                     metrics = {}
+                # MCP/dropzone-registered strategies can reach the gauntlet with a
+                # robustness-only metrics blob: registration never stamps performance
+                # metrics, and the artifact-driven quick_screen->gauntlet fast-path
+                # (_reconcile_stage_after_validation) skips the sweep that would.
+                # The paper gate then fails closed with "no trade-count metric"
+                # despite every artifact being green (S07680/S07681/S07689/S07678,
+                # 2026-07-17). Mirror the confirmation-step backfill
+                # (gauntlet.tasks.run_confirmation_backtest): promote the latest
+                # plain-backtest metrics as the performance base, existing keys
+                # winning so validation bookkeeping is never erased.
+                from forven.policy import _resolve_full_sample_trade_count
+
+                if _resolve_full_sample_trade_count(metrics) is None:
+                    backfill = _latest_plain_backtest_metrics(conn, strategy_id)
+                    if backfill:
+                        merged = dict(backfill)
+                        merged.update(metrics)
+                        metrics = merged
                 metrics["composite_robustness_score"] = score
                 metrics["robustness_tests_passed"] = passed
                 metrics["robustness_tests_total"] = canonical_total
@@ -2306,6 +2324,45 @@ def _recalculate_robustness_score(strategy_id: str) -> None:
                 )
     except Exception as exc:
         log.warning("Failed to recalculate robustness score for %s: %s", strategy_id, exc)
+
+
+def _latest_plain_backtest_metrics(conn, strategy_id: str) -> dict:
+    """Latest plain-backtest metrics blob that carries a usable trade count.
+
+    Prefers rows on the strategy's stored timeframe (a probing run at another
+    TF must not become the canonical sample), falling back to any timeframe.
+    Returns {} when no candidate row has a trade-count signal.
+    """
+    from forven.policy import _resolve_full_sample_trade_count
+
+    strat = conn.execute(
+        "SELECT timeframe FROM strategies WHERE id = ?", (strategy_id,)
+    ).fetchone()
+    strat_tf = str((strat["timeframe"] if strat else "") or "").strip().lower()
+
+    rows = conn.execute(
+        """SELECT metrics_json, timeframe FROM backtest_results
+           WHERE strategy_id = ?
+             AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+             AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) IN ('backtest', '')
+           ORDER BY datetime(created_at) DESC
+           LIMIT 25""",
+        (strategy_id,),
+    ).fetchall()
+
+    fallback: dict = {}
+    for row in rows:
+        candidate = _parse_json_object(row["metrics_json"])
+        if not isinstance(candidate, dict) or not candidate:
+            continue
+        if _resolve_full_sample_trade_count(candidate) is None:
+            continue
+        row_tf = str(row["timeframe"] or "").strip().lower()
+        if strat_tf and row_tf == strat_tf:
+            return candidate
+        if not fallback:
+            fallback = candidate
+    return fallback
 
 
 def _canonicalize_required_validation_type(name: object) -> str:

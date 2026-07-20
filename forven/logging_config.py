@@ -82,6 +82,15 @@ def setup_rotating_file_logger(
     handlers.append(file_handler)
 
     if also_stdout:
+        # Windows consoles/redirects default to cp1252; a log message containing
+        # e.g. '→' then raises UnicodeEncodeError inside logging and the whole
+        # line is replaced by a "--- Logging error ---" traceback (observed
+        # masking backend diagnostics 2026-07-17). Reconfigure the stream to
+        # UTF-8 with replacement so console logging can never throw on content.
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass  # non-TextIOWrapper stand-ins (tests, captured streams)
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         handlers.append(stream_handler)
