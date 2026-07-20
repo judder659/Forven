@@ -262,10 +262,25 @@ _DETERMINISTIC_ERROR_TOKENS = (
     "does not support trade_mode",
 )
 
+# Process-teardown signatures checked BEFORE the deterministic tokens: a run that
+# died because the hosting interpreter/executor was shutting down mid-flight says
+# nothing about the strategy, but its message often EMBEDS a deterministic token
+# (e.g. "Indicator execution failed during in-sample: failed to serialize input
+# frame: cannot schedule new futures after interpreter shutdown") and would be
+# scored failed_gate -> archived. The 2026-07-19/20 zombie-backend incident
+# archived S05073/S07583/S07595/S07537/S07519 exactly this way.
+_INFRA_ERROR_TOKENS = (
+    "cannot schedule new futures",
+    "interpreter shutdown",
+    "event loop is closed",
+)
+
 
 def _classify_exception(exc: Exception) -> dict[str, Any]:
     detail = str(getattr(exc, "detail", exc))
     lowered = detail.lower()
+    if any(token in lowered for token in _INFRA_ERROR_TOKENS):
+        return {"status": "blocked_runtime", "message": detail, "retryable": True}
     if isinstance(exc, (NameError, AttributeError, TypeError, KeyError)) or any(
         token in lowered for token in _DETERMINISTIC_ERROR_TOKENS
     ):

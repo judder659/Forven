@@ -78,6 +78,34 @@ def test_trade_mode_unsupported_is_terminal_not_retryable():
     assert transient["retryable"] is True
 
 
+def test_interpreter_shutdown_is_infra_not_merit_failure():
+    """A run that died because the hosting process was tearing down says nothing
+    about the strategy. Its message often embeds a deterministic token (the
+    2026-07-19/20 zombie-backend incident produced 'Indicator execution failed
+    during in-sample: ... cannot schedule new futures after interpreter shutdown'
+    and archived five strategies as failed_gate) — the infra signature must win."""
+    from forven.gauntlet.tasks import _classify_exception
+
+    for msg in (
+        "Indicator execution failed during in-sample: failed to serialize input "
+        "frame: cannot schedule new futures after interpreter shutdown",
+        "cannot schedule new futures after shutdown",
+        "Event loop is closed",
+    ):
+        # RuntimeError and TypeError both occur in the wild; the infra signature
+        # must also beat the deterministic isinstance(TypeError) branch.
+        for exc in (RuntimeError(msg), TypeError(msg)):
+            verdict = _classify_exception(exc)
+            assert verdict["status"] == "blocked_runtime", msg
+            assert verdict["retryable"] is True, msg
+
+    # Control: a plain indicator failure without an infra signature is still a
+    # terminal strategy defect.
+    verdict = _classify_exception(ValueError("Indicator execution failed during in-sample: division by zero"))
+    assert verdict["status"] == "failed_gate"
+    assert verdict["retryable"] is False
+
+
 def test_quick_screen_pass_advances_to_gate(forven_db, monkeypatch):
     kv_set("forven:pipeline:settings", {"gauntlet_auto_quick_screen_enabled": True})
     created = create_lifecycle_strategy(

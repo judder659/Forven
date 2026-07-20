@@ -331,6 +331,47 @@ function Stop-ExistingBotProcesses {
     }
 }
 
+function Get-BackendProcessIds {
+    # Every backend uvicorn process for THIS repo, listener or not. A backend
+    # whose main thread died closes its listener but can survive as a zombie
+    # (background threads wedge interpreter teardown) while still holding the
+    # runtime-worker and daemon file locks - reaping only the port listeners
+    # leaves it alive and the replacement backend then boots with no background
+    # loops.
+    $escapedRepoRoot = [Regex]::Escape($script:RepoRoot)
+    try {
+        return @(
+            Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction Stop |
+                Where-Object {
+                    $cmd = [string]$_.CommandLine
+                    $cmd -match $escapedRepoRoot -and $cmd -match 'uvicorn' -and $cmd -match 'forven\.api'
+                } |
+                Select-Object -ExpandProperty ProcessId -Unique
+        )
+    } catch {
+        Write-WarnMessage "Backend process discovery failed: $($_.Exception.Message)"
+        return @()
+    }
+}
+
+function Stop-ZombieBackendProcesses {
+    param([int[]]$KeepProcessIds = @())
+
+    $keep = @($KeepProcessIds | Where-Object { $_ -and $_ -gt 0 })
+    $zombiePids = @(Get-BackendProcessIds | Where-Object { $keep -notcontains $_ })
+    if ($zombiePids.Count -eq 0) { return }
+    Write-WarnMessage "Reaping non-listening backend process(es): $($zombiePids -join ', ')"
+    foreach ($procId in $zombiePids) {
+        try {
+            Stop-Process -Id ([int]$procId) -Force -ErrorAction Stop
+        } catch {
+            if (Get-Process -Id ([int]$procId) -ErrorAction SilentlyContinue) {
+                Write-WarnMessage "Backend zombie PID $procId could not be stopped: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
 function Get-DaemonProcessIds {
     $escapedRepoRoot = [Regex]::Escape($script:RepoRoot)
     try {
@@ -707,10 +748,14 @@ function Start-BackendService {
     if (-not $portFreed) {
         if (Test-HttpHealthy -Url $backendHealth) {
             Write-Info "Port $backendPort still occupied but backend is healthy - reusing existing service."
+            Stop-ZombieBackendProcesses -KeepProcessIds @(Get-ListeningProcessIds -Port $backendPort)
             return $null
         }
         Throw-StartAllError "Port $backendPort occupied by unkillable process and service is not healthy."
     }
+    # Port is free; any backend process still alive is a zombie holding the
+    # runtime-worker/daemon locks the fresh backend needs.
+    Stop-ZombieBackendProcesses
     Write-Info "Starting backend on ${backendHost}:$backendPort ..."
     $proc = Start-LoggedProcess -FilePath $python -CommandArgs @("-m","uvicorn","--app-dir",$script:RepoRoot,"forven.api:app","--host",$backendHost,"--port",$backendPort.ToString(),"--workers",$backendWorkers.ToString()) `
         -WorkingDirectory $script:RepoRoot -StdOutPath $backendLog -StdErrPath $backendErr
