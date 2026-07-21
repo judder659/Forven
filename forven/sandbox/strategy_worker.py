@@ -52,6 +52,7 @@ import pandas as pd
 
 from forven.sandbox import (
     IS_WINDOWS,
+    NO_WINDOW_CREATION_FLAGS,
     PYTHON_EXE,
     REPO_ROOT,
     _BLAS_THREAD_ENV,
@@ -428,6 +429,7 @@ class _PersistentWorker:
             env=env,
             cwd=str(REPO_ROOT),
             preexec_fn=(None if IS_WINDOWS else _build_posix_preexec(PERSISTENT_MAX_MEMORY_MB)),
+            creationflags=NO_WINDOW_CREATION_FLAGS,
         )
         if IS_WINDOWS:
             self._job, self._kernel32 = _create_windows_job_object(PERSISTENT_MAX_MEMORY_MB)
@@ -662,6 +664,7 @@ def validate_custom_module_isolated(
             env=env,
             cwd=str(REPO_ROOT),
             preexec_fn=(None if IS_WINDOWS else _build_posix_preexec(PERSISTENT_MAX_MEMORY_MB)),
+            creationflags=NO_WINDOW_CREATION_FLAGS,
         )
         job = kernel32 = None
         if IS_WINDOWS:

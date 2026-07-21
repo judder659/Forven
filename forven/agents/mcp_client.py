@@ -294,6 +294,16 @@ async def connect(config: MCPServerConfig) -> MCPSession:
                 raise MCPProtocolError("stdio config requires command")
             scrubbed_extra = _scrub_user_env(config.env)
             env = build_subprocess_env(extra=scrubbed_extra)
+            # CONSOLE-2: CREATE_NO_WINDOW on Windows — the supervised backend is
+            # console-detached, so a stdio MCP server spawned without it pops a
+            # visible console window.
+            _spawn_kwargs = {}
+            if os.name == "nt":
+                import subprocess as _subprocess
+
+                _spawn_kwargs["creationflags"] = getattr(
+                    _subprocess, "CREATE_NO_WINDOW", 0x08000000
+                )
             session.proc = await asyncio.create_subprocess_exec(
                 config.command,
                 *config.args,
@@ -301,6 +311,7 @@ async def connect(config: MCPServerConfig) -> MCPSession:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                **_spawn_kwargs,
             )
         elif config.transport == "http":
             if not config.url:

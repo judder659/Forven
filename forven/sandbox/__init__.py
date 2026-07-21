@@ -27,6 +27,14 @@ TIMEOUT_SECONDS = 60
 IS_WINDOWS = sys.platform == "win32"
 PYTHON_EXE = sys.executable or "python"
 
+# CONSOLE-2: the supervised backend runs console-detached, so a console-subsystem
+# child spawned without this flag allocates a fresh VISIBLE console window.
+# CREATE_NO_WINDOW only — never combine with DETACHED_PROCESS, which Windows lets
+# override CREATE_NO_WINDOW (see bot_factory.manager). No-op on POSIX.
+NO_WINDOW_CREATION_FLAGS = (
+    getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0
+)
+
 # Cap BLAS thread pools in sandbox subprocesses. NumPy/pandas pull in
 # OpenBLAS (and sometimes MKL/OMP), each of which allocates per-thread
 # workspaces on import — one per CPU core by default. On a many-core host
@@ -223,6 +231,7 @@ def run_code(
                     cmd, shell=False,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                     env=env, cwd=str(REPO_ROOT),
+                    creationflags=NO_WINDOW_CREATION_FLAGS,
                 )
             except Exception as exc:
                 return {
@@ -313,6 +322,7 @@ def lint_code(code: str) -> dict:
         check = subprocess.run(
             [PYTHON_EXE, "-m", "ruff", "check", script_path, "--output-format=text"],
             capture_output=True, text=True, timeout=15,
+            creationflags=NO_WINDOW_CREATION_FLAGS,
         )
         issues = [line for line in check.stdout.strip().split("\n") if line.strip()]
 
@@ -324,6 +334,7 @@ def lint_code(code: str) -> dict:
             subprocess.run(
                 [PYTHON_EXE, "-m", "ruff", "check", "--fix", fix_path],
                 capture_output=True, timeout=15,
+                creationflags=NO_WINDOW_CREATION_FLAGS,
             )
             try:
                 fixed_code = Path(fix_path).read_text(encoding="utf-8")
