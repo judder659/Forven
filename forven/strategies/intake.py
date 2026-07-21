@@ -215,8 +215,12 @@ def scan_custom_strategies(*, register: bool = False) -> dict:
         if not modname or modname == "__init__":
             continue
 
+        module_status = custom_strategy_status(modname)
+        if module_status == "ignored":
+            continue
+
         report.scanned += 1
-        if custom_strategy_status(modname) == "archived" and not include_archived:
+        if module_status == "archived" and not include_archived:
             report.already_known += 1
             continue
 
