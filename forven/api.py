@@ -932,6 +932,39 @@ if __name__ == "__main__":
     # Fail closed: never expose an unauthenticated API beyond loopback.
     assert_safe_bind_host(bind_host)
 
+    # CONSOLE-1: a SUPERVISED backend must not share the operator's console.
+    # Children spawned by start_all/watchdog inherit the console of the window
+    # that launched them, so an operator's Ctrl+C (or closing the start_all
+    # window) is ALSO delivered to the backend. One Ctrl+C triggers an unnoticed
+    # graceful shutdown; a second one hits uvicorn's force-exit, which skips the
+    # lifespan shutdown and leaves non-daemon threads wedging interpreter
+    # teardown (the 2026-07-21 10:16/10:27 reaper fires, on Selector loops, with
+    # no exception and no shutdown logs). Supervised runs are detectable by
+    # their redirected stderr (a file, not a terminal); dev runs in a real
+    # terminal keep their console so Ctrl+C still works. FORVEN_KEEP_CONSOLE=1
+    # is the escape hatch. Supervisors stop a detached backend via process
+    # termination, which is the crash-consistent path the boot reconcile
+    # already covers.
+    if (
+        sys.platform.startswith("win")
+        and os.environ.get("FORVEN_KEEP_CONSOLE", "").strip() != "1"
+    ):
+        try:
+            _stderr_is_tty = bool(sys.stderr and sys.stderr.isatty())
+        except Exception:
+            _stderr_is_tty = False
+        if not _stderr_is_tty:
+            try:
+                import ctypes
+
+                if ctypes.windll.kernel32.FreeConsole():
+                    log.info(
+                        "Detached from the launcher console (supervised run) — "
+                        "operator console events can no longer reach this process."
+                    )
+            except Exception:
+                log.warning("Could not detach from the launcher console", exc_info=True)
+
     # LOOP-1: run the server on a loop WE create. uvicorn's loop factory
     # hard-codes ProactorEventLoop on win32 (uvicorn>=0.49 asyncio_loop_factory),
     # silently defeating the WindowsSelectorEventLoopPolicy this module sets for
@@ -955,7 +988,8 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(_serve())
-    except (KeyboardInterrupt, SystemExit):
+    except (KeyboardInterrupt, SystemExit) as _exc:
+        log.warning("uvicorn serve loop stopped by %s", type(_exc).__name__)
         raise
     except BaseException:
         log.critical(
