@@ -62,14 +62,18 @@ def test_sim_basis_never_arms_kill_switch(forven_db):
 def test_real_capital_basis_still_arms_kill_switch(forven_db):
     """The protection must remain fully intact for real capital."""
     update_equity(10_000.0, source="books_aggregate")
-    result = update_equity(5_000.0, source="books_aggregate")
+    update_equity(5_000.0, source="books_aggregate")  # breach 1/3
+    update_equity(5_000.0, source="books_aggregate")  # breach 2/3
+    result = update_equity(5_000.0, source="books_aggregate")  # breach 3/3
     assert result["kill_switch"] is True
     assert _risk_state().get("kill_switch_active")
 
 
 def test_real_capital_basis_still_arms_daily_halt(forven_db):
     update_equity(10_000.0, source="exchange")
-    result = update_equity(9_400.0, source="exchange")  # -6% <= default -5% limit
+    update_equity(9_400.0, source="exchange")  # -6% <= -5% limit — breach 1/3
+    update_equity(9_400.0, source="exchange")  # breach 2/3
+    result = update_equity(9_400.0, source="exchange")  # breach 3/3 — latches
     assert result["daily_halt"] is True
     assert _risk_state().get("daily_loss_halt")
 
@@ -93,7 +97,8 @@ def test_real_halt_survives_subsequent_paper_samples(forven_db):
     """An armed real-capital kill-switch is not cleared or re-armed by paper
     samples arriving afterwards (paper-mode session continuing)."""
     update_equity(10_000.0, source="books_aggregate")
-    update_equity(5_000.0, source="books_aggregate")
+    for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+        update_equity(5_000.0, source="books_aggregate")
     assert _risk_state().get("kill_switch_active")
     result = update_equity(10_000.0, source="paper")
     # Sample is ignored/state preserved: the real halt stands until manual reset.

@@ -106,9 +106,12 @@ def test_same_basis_drop_without_drain_flag_still_draws_down(forven_db):
     is the contrast that proves the drain path doesn't blanket-suppress losses."""
     _seed_live_state(675.0, 675.0, source="books_only")
     result = risk.update_equity(359.0, "books_only")  # rebaseline defaults False
-    # 47% drawdown on the 10% testnet cap -> kill-switch fires.
+    # 47% drawdown on the 10% testnet cap -> kill-switch fires after the
+    # HALT-CONFIRM-1 window (3 consecutive breaching ticks).
     assert result["high_water_mark"] == pytest.approx(675.0)  # peak NOT moved
     assert result["drawdown_pct"] == pytest.approx((675.0 - 359.0) / 675.0, rel=1e-3)
+    risk.update_equity(359.0, "books_only")  # breach 2/3
+    result = risk.update_equity(359.0, "books_only")  # breach 3/3 — latches
     assert result.get("kill_switch") is True
 
 

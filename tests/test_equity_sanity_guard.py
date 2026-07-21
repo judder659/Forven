@@ -85,7 +85,9 @@ def test_sustained_large_jump_stays_rejected_and_alerts(forven_db):
 def test_real_drawdown_still_fires_kill_switch(forven_db):
     """The guard must not suppress a legitimate kill-switch on a real drawdown."""
     risk.update_equity(1000.0, source="exchange")          # HWM 1000
-    result = risk.update_equity(800.0, source="exchange")  # 20% dd > 10% testnet cap
+    risk.update_equity(800.0, source="exchange")  # 20% dd > 10% cap — breach 1/3
+    risk.update_equity(800.0, source="exchange")  # breach 2/3
+    result = risk.update_equity(800.0, source="exchange")  # breach 3/3 — latches
 
     assert result.get("rejected") is not True
     assert result["action"] == "kill_switch"

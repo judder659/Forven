@@ -3664,6 +3664,38 @@ def _execute_direct(
             _halt_ok, _halt_reason = is_trading_allowed()
             if not _halt_ok:
                 raise RuntimeError(f"refusing to open {trade_id}: trading halted — {_halt_reason}")
+        # LIVE-CLAMP-1 backstop: no real-capital open may risk more than the
+        # per-trade cap of real account equity at its protective stop, whichever
+        # caller sized it — kernel mirror-parity sizing deliberately skips the
+        # risk-budget caps, so this is the final hard bound on a single order's
+        # loss-at-stop. Fail closed when the cap or real equity can't resolve.
+        # Sim and testnet orders are exempt (no real capital at risk).
+        if not is_sim_active() and not testnet:
+            try:
+                _cap = _coerce_positive_float((get_risk_status().get("limits") or {}).get("max_risk_per_trade"))
+            except Exception:
+                _cap = None
+            _real_equity = _coerce_positive_float(_get_real_account_equity())
+            if not _cap or not _real_equity:
+                raise RuntimeError(
+                    f"refusing to open {trade_id}: live risk clamp cannot resolve "
+                    f"max_risk_per_trade ({_cap}) or real account equity ({_real_equity}) — fail closed"
+                )
+            _stop_dist = (
+                abs(float(price) - float(stop_loss))
+                if stop_loss is not None
+                else float(price) * 0.03  # no-stop conservative floor, mirrors the budget check
+            )
+            _loss_at_stop = float(size) * _stop_dist
+            _risk_budget_usd = float(_cap) * float(_real_equity)
+            # 2% slack + a cent so an order clamped exactly to the cap upstream
+            # cannot be re-refused on float noise.
+            if _loss_at_stop > _risk_budget_usd * 1.02 + 0.01:
+                raise RuntimeError(
+                    f"refusing to open {trade_id}: loss-at-stop ${_loss_at_stop:,.2f} "
+                    f"(size {float(size):g} x stop distance {_stop_dist:g}) exceeds the "
+                    f"per-trade cap {float(_cap):.2%} of real equity ${float(_real_equity):,.2f}"
+                )
         # B2: set + confirm leverage/margin mode on the routed account BEFORE the
         # entry, so the position uses the leverage our risk/stop math assumes
         # instead of the venue default (often 20-40x). Fail closed if it can't be
@@ -6702,12 +6734,70 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         _add_risk = abs(float(ref_price) - float(stop_price)) * float(units)
     else:
         _add_risk = _add_notional * 0.03  # no stop known — conservative floor (mirrors risk._BUDGET_NO_STOP_RISK_FRAC)
+    # LIVE-CLAMP-1: per-trade risk cap at live order entry. Kernel mirror-parity
+    # sizing deliberately skips the risk-budget caps (enforce_risk_caps=False
+    # above), so nothing else bounds a single order's loss-at-stop as a fraction
+    # of real equity — the notional ceiling and aggregate budget bound exposure,
+    # not per-trade risk. Scale units down so loss-at-stop <= max_risk_per_trade
+    # of REAL account equity; fail closed when the cap or equity can't resolve.
+    _real_equity = _coerce_positive_float(_get_real_account_equity())
+    try:
+        _rc_cap = _coerce_positive_float((get_risk_status().get("limits") or {}).get("max_risk_per_trade"))
+    except Exception:
+        _rc_cap = None
+    if not _rc_cap or not _real_equity:
+        _why = (
+            f"live per-trade risk clamp cannot resolve max_risk_per_trade ({_rc_cap}) "
+            f"or real account equity ({_real_equity}) — fail closed"
+        )
+        log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _why)
+        _notify_live_open_blocked(strat_id, asset, _why, "risk_clamp_unresolved")
+        return f"BLOCKED {asset} live — {_why}"
+    _risk_budget_usd = float(_rc_cap) * float(_real_equity)
+    _live_clamp_meta = None
+    if _add_risk > _risk_budget_usd + 1e-9:
+        _scale = _risk_budget_usd / _add_risk
+        _clamped_units = round(float(units) * _scale, 6)
+        if _clamped_units <= 0:
+            _why = (
+                f"per-trade risk clamp reduced size to zero (loss-at-stop "
+                f"${_add_risk:,.2f} vs cap ${_risk_budget_usd:,.2f})"
+            )
+            log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _why)
+            _notify_live_open_blocked(strat_id, asset, _why, "risk_clamp")
+            return f"BLOCKED {asset} live — {_why}"
+        _live_clamp_meta = {
+            "planned_units": float(units),
+            "clamped_units": _clamped_units,
+            "loss_at_stop_usd": round(_add_risk, 4),
+            "cap_usd": round(_risk_budget_usd, 4),
+            "max_risk_per_trade": float(_rc_cap),
+        }
+        log.warning(
+            "[%s] LIVE-CLAMP-1: %s units %.6f -> %.6f (loss-at-stop $%.2f > cap $%.2f = %.2f%% of $%.2f)",
+            strat_id, asset, units, _clamped_units, _add_risk, _risk_budget_usd,
+            _rc_cap * 100, _real_equity,
+        )
+        try:
+            log_activity(
+                "warning", "scanner",
+                f"LIVE-CLAMP-1: {asset} ({strat_id}) size clamped to the per-trade "
+                f"risk cap ({_rc_cap:.2%} of real equity)",
+            )
+        except Exception:
+            pass
+        units = _clamped_units
+        _add_notional = float(units) * float(ref_price)
+        if stop_price:
+            _add_risk = abs(float(ref_price) - float(stop_price)) * float(units)
+        else:
+            _add_risk = _add_notional * 0.03
     # BOOK-BUDGET-1: the order draws on ONE wallet — pass the routed book and its
     # balance (sizing_equity was narrowed to exactly that above) so admission is
     # also checked against the wallet's own capacity, not just the aggregate.
     _pb_ok, _pb_why = check_live_portfolio_budget(
         asset, direction, add_risk_usd=_add_risk, add_notional_usd=_add_notional,
-        equity=_get_real_account_equity(),
+        equity=_real_equity,
         book=open_book,
         book_equity_usd=(float(sizing_equity) if (books_on and open_book) else None),
     )
@@ -6737,6 +6827,8 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         # fill (kernel_size_fraction above is the SCALED value actually deployed).
         "portfolio_risk_multiplier": round(portfolio_multiplier, 4),
     }
+    if _live_clamp_meta:
+        signal_data["live_risk_clamp"] = _live_clamp_meta
     # Pass book only when direction books are active so the books-off path keeps the
     # exact prior signature (book stays NULL = master wallet).
     _open_extra = {"book": open_book} if open_book is not None else {}

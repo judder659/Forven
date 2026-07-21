@@ -3941,22 +3941,26 @@ def _recompute_daily_halt_from_equity(account_equity: float) -> bool:
             return False
         daily_pnl_pct = (acct - start_eq) / start_eq
         if daily_pnl_pct <= -daily_loss_limit:
-            state["daily_loss_halt"] = True
-            state["daily_loss_halt_date"] = today
-            # best-effort: this runs under can_open's _POSITION_LOCK, so avoid a
-            # blocking write that could stall every other can_open/register on
-            # the SQLite busy_timeout. The current open is already refused via
-            # the True return; the daemon's update_equity re-fires + persists the
-            # halt authoritatively on the next tick if this write is dropped.
-            _save_risk_state(state, best_effort=True)
-            log_activity(
-                "warning",
-                "risk",
-                (
-                    f"Daily loss limit reached at open ({daily_pnl_pct:.1%} <= "
-                    f"-{daily_loss_limit:.1%}); no new positions until tomorrow."
-                ),
-            )
+            # HALT-CONFIRM-1: refuse THIS open (True return) but do NOT latch the
+            # all-day halt from a single read — a plausible-but-wrong equity
+            # sample at open time is the same phantom class as the 2026-07-14
+            # tick-path halt. The daemon's update_equity latches authoritatively
+            # after _HALT_CONFIRM_TICKS consecutive breaching ticks; until then
+            # every open re-derives this check and stays refused while the
+            # breach persists. Log once per day so refusals stay visible without
+            # per-attempt spam.
+            if state.get("daily_open_breach_logged_date") != today:
+                state["daily_open_breach_logged_date"] = today
+                _save_risk_state(state, best_effort=True)
+                log_activity(
+                    "warning",
+                    "risk",
+                    (
+                        f"Daily loss limit reached at open ({daily_pnl_pct:.1%} <= "
+                        f"-{daily_loss_limit:.1%}); refusing new positions (halt latches "
+                        f"after {_HALT_CONFIRM_TICKS} confirming equity ticks)."
+                    ),
+                )
             return True
     return False
 
@@ -3967,6 +3971,12 @@ def _recompute_daily_halt_from_equity(account_equity: float) -> bool:
 # garbage peak and latches a permanent FALSE kill-switch (all trading halted on a
 # phantom loss). We reject such samples up front and self-heal a corrupted stored
 # HWM on the next good tick.
+# HALT-CONFIRM-1: consecutive breaching equity ticks required before the
+# kill-switch / daily-loss halt LATCHES (mirrors the drain detector's 3-clean
+# confirmation). Open-time protection is not gated: M9 refuses new opens from
+# the first breaching read.
+_HALT_CONFIRM_TICKS = 3
+
 _MAX_PLAUSIBLE_EQUITY = 1e12  # $1T — no real or testnet account reaches this
 _EQUITY_JUMP_REJECT_MULT = 100.0  # a single-tick 100x jump from the last good equity is suspect
 # EQ-BASIS-3: after this many consecutive rejects, ALERT the operator instead of
@@ -4309,40 +4319,69 @@ def _update_equity_locked(account_equity: float, source: str, *, rebaseline: boo
         _save_risk_state(state, best_effort=True)
         return result
 
+    # HALT-CONFIRM-1: latch real-capital halts only after N CONSECUTIVE breaching
+    # ticks. A single plausible-but-wrong equity read (the 2026-07-14 phantom
+    # -5.2% halt: one $945.79 read minutes after a live open, real equity fine)
+    # used to latch the daily halt / kill-switch instantly, while the drain
+    # detector already demands 3 clean confirmations for the far-less-destructive
+    # rebaseline. Confirmation gates only the persistent latch (and the
+    # kill-switch's close-all): the M9 open-path check still refuses NEW opens on
+    # the very first breaching read, so the un-confirmed window blocks entries
+    # without flattening the book on a phantom.
     kill_switch_enabled = kv_get("kill_switch_enabled", True)
     if drawdown_pct >= max_drawdown and kill_switch_enabled:
-        state["kill_switch_active"] = True
-        state["kill_switch_triggered_at"] = get_now().isoformat()
-        result["kill_switch"] = True
-        result["action"] = "kill_switch"
-        _save_risk_state(state)
+        _ks_streak = int(state.get("kill_switch_breach_streak") or 0) + 1
+        state["kill_switch_breach_streak"] = _ks_streak
+        if _ks_streak >= _HALT_CONFIRM_TICKS:
+            state["kill_switch_breach_streak"] = 0
+            state["kill_switch_active"] = True
+            state["kill_switch_triggered_at"] = get_now().isoformat()
+            result["kill_switch"] = True
+            result["action"] = "kill_switch"
+            _save_risk_state(state)
 
-        log.critical(
-            "KILL SWITCH TRIGGERED - drawdown %.1f%% (equity $%.2f, HWM $%.2f, source=%s)",
-            drawdown_pct * 100, account_equity, hwm, source,
+            log.critical(
+                "KILL SWITCH TRIGGERED - drawdown %.1f%% (equity $%.2f, HWM $%.2f, source=%s)",
+                drawdown_pct * 100, account_equity, hwm, source,
+            )
+            log_activity("critical", "risk", (
+                f"KILL SWITCH: drawdown {drawdown_pct:.1%} from HWM ${hwm:,.2f}. "
+                f"Equity: ${account_equity:,.2f} (source={source}). All positions will be closed."
+            ))
+            return result
+        log.warning(
+            "kill-switch breach %d/%d awaiting confirmation - drawdown %.1f%% (equity $%.2f, HWM $%.2f, source=%s)",
+            _ks_streak, _HALT_CONFIRM_TICKS, drawdown_pct * 100, account_equity, hwm, source,
         )
-        log_activity("critical", "risk", (
-            f"KILL SWITCH: drawdown {drawdown_pct:.1%} from HWM ${hwm:,.2f}. "
-            f"Equity: ${account_equity:,.2f} (source={source}). All positions will be closed."
-        ))
-        return result
+    elif state.get("kill_switch_breach_streak"):
+        state["kill_switch_breach_streak"] = 0
 
     if daily_pnl_pct <= -daily_loss_limit and not state.get("daily_loss_halt"):
-        state["daily_loss_halt"] = True
-        state["daily_loss_halt_date"] = today
-        result["daily_halt"] = True
-        result["action"] = "daily_halt"
-        _save_risk_state(state)
+        _dh_streak = int(state.get("daily_halt_breach_streak") or 0) + 1
+        state["daily_halt_breach_streak"] = _dh_streak
+        if _dh_streak >= _HALT_CONFIRM_TICKS:
+            state["daily_halt_breach_streak"] = 0
+            state["daily_loss_halt"] = True
+            state["daily_loss_halt_date"] = today
+            result["daily_halt"] = True
+            result["action"] = "daily_halt"
+            _save_risk_state(state)
 
+            log.warning(
+                "DAILY LOSS LIMIT - PnL %.1f%% (start $%.2f, now $%.2f)",
+                daily_pnl_pct * 100, start_eq, account_equity,
+            )
+            log_activity("warning", "risk", (
+                f"Daily loss limit hit: {daily_pnl_pct:.1%} (start ${start_eq:,.2f}, "
+                f"now ${account_equity:,.2f}). No new positions until tomorrow."
+            ))
+            return result
         log.warning(
-            "DAILY LOSS LIMIT - PnL %.1f%% (start $%.2f, now $%.2f)",
-            daily_pnl_pct * 100, start_eq, account_equity,
+            "daily-loss breach %d/%d awaiting confirmation - PnL %.1f%% (start $%.2f, now $%.2f)",
+            _dh_streak, _HALT_CONFIRM_TICKS, daily_pnl_pct * 100, start_eq, account_equity,
         )
-        log_activity("warning", "risk", (
-            f"Daily loss limit hit: {daily_pnl_pct:.1%} (start ${start_eq:,.2f}, "
-            f"now ${account_equity:,.2f}). No new positions until tomorrow."
-        ))
-        return result
+    elif state.get("daily_halt_breach_streak"):
+        state["daily_halt_breach_streak"] = 0
 
     # Routine tick: drawdown/daily-PnL decision is already in `result`, so a
     # dropped snapshot under contention is harmless — the next tick refreshes.
