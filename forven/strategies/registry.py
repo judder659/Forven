@@ -415,6 +415,26 @@ def discover(include_custom: bool = True):
     _discovered = _builtin_discovered and _custom_discovered
 
 
+def imported_module_exists(runtime_type: object) -> bool:
+    """Parent-safe existence probe for an untrusted-origin (imported) type.
+
+    True iff the namespaced type maps to a real module file under
+    ``forven/strategies/imported/``. Pure filesystem check — the module is NEVER
+    imported here (author-controlled code must only execute in the sandbox
+    worker). Used by the certification gate and the scanner load gate so a
+    genuinely imported strategy is executable via the worker proxy while a
+    fabricated ``imported__*`` name (the PHANTOM-1 class) still fails closed.
+    """
+    name = str(runtime_type or "").strip()
+    if not name.startswith(IMPORTED_TYPE_PREFIX):
+        return False
+    module = name[len(IMPORTED_TYPE_PREFIX):]
+    # Module names are generated slugs; refuse anything path-traversal-shaped.
+    if not module or not all(ch.isalnum() or ch == "_" for ch in module):
+        return False
+    return (Path(__file__).resolve().parent / "imported" / f"{module}.py").is_file()
+
+
 def imported_runtime_type(module_name: str) -> str:
     """The namespaced runtime-type key for an untrusted-origin (imported) strategy.
 

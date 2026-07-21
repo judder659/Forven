@@ -5427,7 +5427,17 @@ def _load_deployed_strategies() -> dict:
                 load_diagnostics[sid] = diagnostic
                 continue
 
-            if stype not in SIGNAL_CHECKERS and resolved_runtime_type not in _TYPE_MAP:
+            # Untrusted-origin (imported__*) types are executable by design via
+            # the sandbox worker proxy and NEVER appear in the parent _TYPE_MAP —
+            # blocking them here silently quarantined every dropzone import from
+            # paper execution (S06898/S07678/S07689, 2026-07-21). Exempt them iff
+            # the module file really exists (fabricated names still block).
+            from forven.strategies.registry import imported_module_exists as _imported_exists
+            if (
+                stype not in SIGNAL_CHECKERS
+                and resolved_runtime_type not in _TYPE_MAP
+                and not _imported_exists(resolved_runtime_type)
+            ):
                 diagnostic["blocked_reason"] = f"runtime type '{resolved_runtime_type}' is not registered"
                 diagnostic["last_runtime_error"] = diagnostic["blocked_reason"]
                 diagnostic["execution_decision"] = "blocked"

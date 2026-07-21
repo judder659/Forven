@@ -935,6 +935,19 @@ def is_known_runtime_type(
     """
     if not strategy_type:
         return False
+    try:
+        # Untrusted-origin (imported__*) types have a CONCRETE runtime — the
+        # sandbox worker proxy — but by design never appear in the parent's
+        # _TYPE_MAP (the class only exists in the worker). Certify them iff the
+        # module file actually exists so a fabricated imported__* name (the
+        # PHANTOM-1 class) still fails closed. Lazy import: registry imports params.
+        from forven.strategies.registry import IMPORTED_TYPE_PREFIX, imported_module_exists
+
+        if str(strategy_type).strip().startswith(IMPORTED_TYPE_PREFIX):
+            return imported_module_exists(strategy_type)
+    except Exception:
+        if require_runtime_class:
+            return False
     if not require_runtime_class and is_known_strategy_family(strategy_type):
         return True
     try:
