@@ -344,7 +344,7 @@ function Get-BackendProcessIds {
             Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction Stop |
                 Where-Object {
                     $cmd = [string]$_.CommandLine
-                    $cmd -match $escapedRepoRoot -and $cmd -match 'uvicorn' -and $cmd -match 'forven\.api'
+                    $cmd -match $escapedRepoRoot -and $cmd -match 'forven\.api'
                 } |
                 Select-Object -ExpandProperty ProcessId -Unique
         )
@@ -757,7 +757,11 @@ function Start-BackendService {
     # runtime-worker/daemon locks the fresh backend needs.
     Stop-ZombieBackendProcesses
     Write-Info "Starting backend on ${backendHost}:$backendPort ..."
-    $proc = Start-LoggedProcess -FilePath $python -CommandArgs @("-m","uvicorn","--app-dir",$script:RepoRoot,"forven.api:app","--host",$backendHost,"--port",$backendPort.ToString(),"--workers",$backendWorkers.ToString()) `
+    # LOOP-1: launch via the module entry so the serve loop is a SelectorEventLoop
+    # (see forven/api.py __main__) — `-m uvicorn` hard-codes Proactor on Windows.
+    # Host comes from FORVEN_BIND_HOST/FORVEN_HOST (resolved_bind_host mirrors the
+    # same precedence as $backendHost above).
+    $proc = Start-LoggedProcess -FilePath $python -CommandArgs @("-m","forven.api","--port",$backendPort.ToString()) `
         -WorkingDirectory $script:RepoRoot -StdOutPath $backendLog -StdErrPath $backendErr
     if (-not (Wait-ForHttp -Url $backendHealth -Label "Backend")) {
         if (Test-Path $backendErr) { Get-Content $backendErr -Tail 120 }

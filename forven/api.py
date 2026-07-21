@@ -931,4 +931,35 @@ if __name__ == "__main__":
     bind_host = resolved_bind_host()
     # Fail closed: never expose an unauthenticated API beyond loopback.
     assert_safe_bind_host(bind_host)
-    uvicorn.run(app, host=bind_host, port=port, workers=1)
+
+    # LOOP-1: run the server on a loop WE create. uvicorn's loop factory
+    # hard-codes ProactorEventLoop on win32 (uvicorn>=0.49 asyncio_loop_factory),
+    # silently defeating the WindowsSelectorEventLoopPolicy this module sets for
+    # WS stability — the Proactor _call_connection_lost socket.shutdown race
+    # (ConnectionResetError WinError 10054 in a loop callback) can kill the serve
+    # loop under WebSocket churn, observed as the 2026-07-21 backend restart
+    # storm. asyncio.run() honors the policy, so the serve loop is a
+    # SelectorEventLoop here. Crashes are logged to the rotating api.log BEFORE
+    # the process dies — per-boot stderr truncation destroyed every prior
+    # traceback of this class.
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    _config = uvicorn.Config(app, host=bind_host, port=port, workers=1)
+    _server = uvicorn.Server(_config)
+
+    async def _serve() -> None:
+        log.info(
+            "uvicorn serve loop: %s", type(asyncio.get_running_loop()).__name__
+        )
+        await _server.serve()
+
+    try:
+        asyncio.run(_serve())
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        log.critical(
+            "uvicorn serve loop crashed; exiting so the supervisor restarts a "
+            "working backend.", exc_info=True,
+        )
+        raise

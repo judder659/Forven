@@ -72,7 +72,7 @@ function Get-BackendProcessIds {
         $procs = Get-CimInstance Win32_Process -Filter "Name like 'python%'" -ErrorAction SilentlyContinue |
             Where-Object {
                 $cmd = [string]$_.CommandLine
-                $cmd -match "uvicorn" -and $cmd -match "forven\.api" -and $cmd.ToLowerInvariant().Contains($RepoRoot.ToLowerInvariant())
+                $cmd -match "forven\.api" -and $cmd.ToLowerInvariant().Contains($RepoRoot.ToLowerInvariant())
             }
         foreach ($proc in @($procs)) {
             if ($proc -and $proc.ProcessId) { $result += [int]$proc.ProcessId }
@@ -429,7 +429,7 @@ try {
         $backendLog = Join-Path $logRoot "unified_backend.log"
         $backendErr = Join-Path $logRoot "unified_backend.err.log"
         $proc = Start-Process -FilePath $python `
-            -ArgumentList @("-m","uvicorn","--app-dir",$RepoRoot,"forven.api:app","--host",$BackendHost,"--port",$BackendPort.ToString(),"--workers","1") `
+            -ArgumentList @("-m","forven.api","--port",$BackendPort.ToString()) `
             -WorkingDirectory $RepoRoot -RedirectStandardOutput $backendLog -RedirectStandardError $backendErr `
             -WindowStyle Hidden -PassThru
         Write-Log ("Backend started as PID " + $proc.Id)
