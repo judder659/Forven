@@ -4380,7 +4380,10 @@ def manage_positions(
         account_equity = _get_account_equity()
 
     def _close_via_execution(trade, exit_price: float, pnl_pct: float, close_reason: str | None = None) -> bool:
-        if paper_test_local_execution:
+        # LANE-1: a paper-typed row must NEVER receive a real exchange close, even when
+        # the STRATEGY is live-stage (a promotion with an open paper position) — the
+        # order would reject on a flat wallet or reduce an unrelated real position.
+        if paper_test_local_execution or _recorded_row_execution_lane(trade) == "paper":
             # Simulate fill recording for paper trades
             _update_trade_fill(
                 trade_id=str(trade["id"]),
@@ -6428,6 +6431,14 @@ def _kernel_close_orphan(action, *, last_close: float, last_time: str) -> str | 
     row = (action.recorded or {}).get("_row")
     if row is None or not last_close or last_close <= 0:
         return None
+    # LANE-1: never locally flat-close a LIVE-typed row — the exchange position would
+    # survive the local "close" and sit unmanaged. Hold it for operator review.
+    if _recorded_row_execution_lane(row) == "live":
+        log.warning(
+            "KERNEL-CONVERGE: recorded OPEN %s (%s) is live-typed — never flat-closed "
+            "locally; held for operator review", row.get("asset"), row.get("id"),
+        )
+        return None
     # A LATE hop-in is owned by the re-anchored stop/target monitor, never the converge
     # path: flattening it at the last bar would bypass its real (re-anchored) stop and
     # close at an arbitrary current price. Leave it for _kernel_handle_late_entry_exits.
@@ -6460,6 +6471,14 @@ def _kernel_close_cross_asset_orphan(row: dict) -> str | None:
     trade_id = row.get("id")
     entry_price = _coerce_positive_float(row.get("fill_entry_price")) or _coerce_positive_float(row.get("entry_price"))
     if not trade_id or entry_price is None:
+        return None
+    # LANE-1: a live-typed row is a REAL position — a local flat-close would strand it
+    # on-exchange. Hold it (the live lane's cross-asset branch surfaces these).
+    if _recorded_row_execution_lane(row) == "live":
+        log.warning(
+            "KERNEL-CROSS-ASSET: recorded OPEN %s (%s) is live-typed — never flat-closed "
+            "locally; held for operator review", row.get("asset"), trade_id,
+        )
         return None
     # A late hop-in is owned by its own re-anchored stop monitor — never auto-flatten it here.
     if parse_trade_signal_data(row.get("signal_data")).get("late_entry"):
@@ -6627,6 +6646,51 @@ def _live_kernel_execution_enabled() -> bool:
     live_kernel_execution=false to fall back to the legacy live engine.
     """
     return _scanner_bool_setting("live_kernel_execution", True)
+
+
+# LANE-1: execution lanes for RECORDED trade rows. An action that targets an
+# existing row must follow the ROW's execution_type, not the strategy's current
+# stage: a strategy promoted to live with an open paper trade (or demoted to paper
+# with an open live one) otherwise gets the wrong applier — a REAL reduce-only
+# order fired at a local-only paper row (rejected while the wallet is flat, but
+# REDUCING an unrelated real position when one exists), or a real position
+# "closed" locally and stranded on the exchange.
+_PAPER_LANE_EXECUTION_TYPES = ("paper", "paper_challenger", "simulation")
+
+
+def _recorded_row_execution_lane(row) -> str | None:
+    """'paper' | 'live' for a recorded trade row; None for missing/unknown types
+    (legacy rows predate the stamp — those keep the strategy-lane behavior)."""
+    if not isinstance(row, dict):
+        return None
+    exec_type = str(row.get("execution_type") or "").strip().lower()
+    if exec_type in _PAPER_LANE_EXECUTION_TYPES:
+        return "paper"
+    if exec_type == "live":
+        return "live"
+    return None
+
+
+def _kernel_action_execution_lane(action) -> str | None:
+    rec = getattr(action, "recorded", None)
+    row = rec.get("_row") if isinstance(rec, dict) else None
+    return _recorded_row_execution_lane(row)
+
+
+def _kernel_row_dispatch(action, is_live: bool) -> str:
+    """'paper' | 'live' | 'hold' — which applier a close/backfill/refresh action gets.
+
+    The row's lane wins over the strategy's lane. The one asymmetry: a live-typed
+    row in the PAPER lane is HELD, not closed — the paper lane must never place a
+    real order (the paper-test "no real orders" contract), and a local close would
+    strand the exchange position, which is strictly worse than holding it for the
+    operator."""
+    row_lane = _kernel_action_execution_lane(action)
+    if row_lane == "paper" and is_live:
+        return "paper"
+    if row_lane == "live" and not is_live:
+        return "hold"
+    return "live" if is_live else "paper"
 
 
 def _is_live_kernel_stage(strat: dict) -> bool:
@@ -7381,14 +7445,40 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                 msg = open_applier(strat_id, strat, a, sizing_equity=sizing_equity, leverage=leverage,
                                    current_price=hop_price, current_time=hop_time)
             elif a.kind in ("close", "backfill"):
-                msg = close_applier(
-                    strat_id, strat, a, current_price=hop_price, current_time=hop_time,
-                    funding_df=df, timeframe=timeframe,
-                )
+                # LANE-1: a close that targets a RECORDED row follows the ROW's
+                # execution lane, not the strategy's stage — a promotion/demotion
+                # with an open position would otherwise cross the paper/live order
+                # paths (a real reduce-only order fired at a paper row, or a real
+                # position closed locally and stranded).
+                _dispatch = _kernel_row_dispatch(a, is_live)
+                if _dispatch == "hold":
+                    log.warning(
+                        "[%s] kernel paper: recorded OPEN %s row is live-typed — a local close "
+                        "would strand the exchange position; held for operator review",
+                        strat_id, asset,
+                    )
+                    msg = f"HELD {asset} close — live-typed row in the paper lane (close it via the live flow)"
+                else:
+                    if is_live and _dispatch == "paper":
+                        log.warning(
+                            "[%s] kernel live: recorded %s row is paper-typed — routing close via "
+                            "the paper path (no real order)",
+                            strat_id, asset,
+                        )
+                    msg = (_kernel_close_live_trade if _dispatch == "live" else _kernel_close_paper_trade)(
+                        strat_id, strat, a, current_price=hop_price, current_time=hop_time,
+                        funding_df=df, timeframe=timeframe,
+                    )
             elif a.kind == "refresh":
                 # LIVE-TRAIL-1: the live refresh mirrors the kernel's ratcheted trailing
                 # stop onto the resting exchange order; the paper refresh is display-only.
-                msg = _kernel_refresh_live_trade(strat_id, a) if is_live else _kernel_refresh_paper_trade(a)
+                # LANE-1: same row-lane dispatch as closes — never touch a real resting
+                # order for a paper row, never locally re-stamp a live row from paper.
+                _dispatch = _kernel_row_dispatch(a, is_live)
+                if _dispatch == "hold":
+                    msg = None
+                else:
+                    msg = _kernel_refresh_live_trade(strat_id, a) if _dispatch == "live" else _kernel_refresh_paper_trade(a)
             elif a.kind == "orphan_close":
                 msg = _kernel_close_orphan(a, last_close=last_close, last_time=last_time)
             else:

@@ -605,6 +605,23 @@ def _resolve_live_equity_baseline(strategy_id: str) -> float | None:
     return None
 
 
+def _filter_session_lane_trades(trades: list[dict], *, is_deployed: bool) -> list[dict]:
+    """A deployed/live card shows ONLY live-typed trades.
+
+    After a promotion the strategy's paper history (and any open paper position)
+    would otherwise "carry over" into the Live Trades view and render as live
+    results. PAPER cards are deliberately NOT filtered: a demoted strategy with a
+    live position still open must keep that position visible/reachable through the
+    manual controls (which dispatch on the TRADE's execution_type) — hiding it
+    would strand the one position the operator most needs to manage."""
+    if not is_deployed:
+        return trades
+    return [
+        trade for trade in trades
+        if str((trade or {}).get("execution_type") or "").strip().lower() == "live"
+    ]
+
+
 def _collect_compat_paper_sessions(
     include_deployed: bool = False,
     session_limit: int | None = None,
@@ -696,6 +713,9 @@ def _collect_compat_paper_sessions(
         symbol = str(strategy_row.get("symbol") or "").strip().upper() or "BTC/USDT"
         timeframe = str(strategy_row.get("timeframe") or "").strip() or "1h"
 
+        stage_status = core._to_core_status(str(strategy_row.get("stage") or strategy_row.get("status") or "")) or ""
+        is_deployed = stage_status == "live_graduated"
+
         keys = _strategy_trade_keys(strategy_row)
         matched_trades = [
             trade
@@ -703,6 +723,9 @@ def _collect_compat_paper_sessions(
             if _matches_strategy_trade(trade, keys)
             and _trade_belongs_to_strategy_incarnation(trade, strategy_row)
         ]
+        # LANE-1: the card reflects ONLY its current lane's trades (see
+        # _filter_session_lane_trades) — position, history, and PnL summary alike.
+        matched_trades = _filter_session_lane_trades(matched_trades, is_deployed=is_deployed)
 
         open_trades = [
             trade
@@ -788,8 +811,6 @@ def _collect_compat_paper_sessions(
             or 1.0
         )
 
-        stage_status = core._to_core_status(str(strategy_row.get("stage") or strategy_row.get("status") or "")) or ""
-        is_deployed = stage_status == "live_graduated"
         total_pnl = total_closed_pnl + unrealized_pnl
 
         # Capital semantics differ by stage:
