@@ -61,8 +61,9 @@ def test_kernel_open_live_places_real_order(monkeypatch):
     assert calls["x"]["action"] == "open"
     assert calls["x"]["direction"] == "long"
     assert calls["x"]["asset"] == "BTC"
-    # units = equity*leverage*size_fraction/price = 10000*2*0.5/100 = 100
-    assert calls["x"]["size"] == pytest.approx(100.0)
+    # units = equity*leverage*size_fraction/price = 10000*2*0.5/100 = 100, then
+    # LIVE-CLAMP-1 caps loss-at-stop at 2% of equity: $200/$3-per-unit = 66.67
+    assert calls["x"]["size"] == pytest.approx(200.0 / 3.0, rel=1e-4)
     assert calls["x"]["stop"] == 97.0 and calls["x"]["tp"] == 105.0
     assert "LIVE-KERNEL-OPEN" in msg
 
