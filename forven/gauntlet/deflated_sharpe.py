@@ -273,6 +273,35 @@ def compute_strategy_dsr(strategy_id: str, *, default_trials: int | None = None)
             except (TypeError, ValueError):
                 default_trials = 50
 
+        # DSR-FREEZE-1: an operator-owned (paper/live) strategy's DSR stamp is
+        # promotion EVIDENCE — the number capital was committed on. The
+        # write-through below used to re-score it on every status read off
+        # whatever the LATEST backtest row happened to be (a revalidation
+        # window, not the promotion sample), silently flipping a live
+        # strategy's headline statistic (S06325: 0.46 -> 0.01 while live,
+        # 2026-07-21) — an unstable input for anything weighing demotion
+        # evidence. Mirror the stored-metrics freeze: locked stages return
+        # the stored stamp and never recompute/overwrite.
+        with get_db() as conn:
+            strat = conn.execute(
+                "SELECT stage, status, deflated_sharpe, deflated_sharpe_at "
+                "FROM strategies WHERE id = ?",
+                (strategy_id,),
+            ).fetchone()
+        if strat is not None:
+            from forven.brain import stage_is_param_locked
+
+            if stage_is_param_locked(strat["stage"] or strat["status"]):
+                stored = strat["deflated_sharpe"]
+                if stored is None:
+                    return None
+                return {
+                    "dsr": float(stored),
+                    "frozen_stamp": True,
+                    "stamped_at": strat["deflated_sharpe_at"],
+                    "trials_source": "frozen_stamp",
+                }
+
         with get_db() as conn:
             bt = conn.execute(
                 """SELECT result_id FROM backtest_results
