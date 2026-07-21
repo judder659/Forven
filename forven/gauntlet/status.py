@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from forven.gauntlet.models import ROBUSTNESS_STEP_KEYS, STEP_TERMINAL_STATUSES
 from forven.gauntlet.settings import build_settings_snapshot, normalize_required_tests
 from forven.gauntlet.store import get_latest_workflow_for_strategy, get_workflow_detail
 from forven.util import normalize_stage
+
+log = logging.getLogger("forven.gauntlet.status")
 
 _RESULT_TYPE_TO_STEP = {
     "walk_forward": "walk_forward",
@@ -304,19 +307,37 @@ def get_strategy_gauntlet_status(strategy_id: str) -> dict[str, Any]:
     strategy_metrics = _parse_json(strategy.get("metrics"), {})
     if not isinstance(strategy_metrics, dict):
         strategy_metrics = {}
-    composite = strategy_metrics.get("composite_robustness_score")
-    if composite is None:
-        composite = strategy_metrics.get("robustness_score") or strategy_metrics.get("robustness") or strategy_metrics.get("gauntlet_score")
-    # Scale-blend guard: legacy writers stored these keys as 0-1 fractions (every
-    # pre-v3 `robustness` value in prod is <= 1.0) while this payload's contract —
-    # and the floor it is compared against — is 0-100. Mirror the frontend history
-    # readers' convention (abs(v) <= 1 -> x100) so a legacy 0.726 surfaces as 72.6
-    # instead of rendering as "0.7 / 100" and false-failing the floor.
+    # LIVE composite: score the CURRENT artifacts instead of trusting the stored
+    # stamp. Paper/live strategies have FROZEN stored metrics (the recalc's
+    # metric-sync deliberately skips operator-owned stages), so the stored value
+    # pins at its pre-promotion state forever while the per-test chips above read
+    # the live artifacts — ~40 prod strategies rendered "0.0 / 100" beside 5/5
+    # PASS chips. The stored value stays as the fallback for scorer errors and
+    # strategies with no artifacts.
+    composite = None
     try:
-        if composite is not None and abs(float(composite)) <= 1.0:
-            composite = round(float(composite) * 100.0, 1)
-    except (TypeError, ValueError):
-        pass
+        from forven.routers.robustness import compute_composite_robustness_score
+
+        computed = compute_composite_robustness_score(strategy_id)
+        if computed is not None:
+            composite = float(computed["score"])
+    except Exception as exc:
+        log.debug("live composite computation failed for %s: %s", strategy_id, exc)
+    if composite is None:
+        composite = strategy_metrics.get("composite_robustness_score")
+        if composite is None:
+            composite = strategy_metrics.get("robustness_score") or strategy_metrics.get("robustness") or strategy_metrics.get("gauntlet_score")
+        # Scale-blend guard (fallback path only — the live score above is 0-100 by
+        # construction): legacy writers stored these keys as 0-1 fractions (every
+        # pre-v3 `robustness` value in prod is <= 1.0) while this payload's contract —
+        # and the floor it is compared against — is 0-100. Mirror the frontend history
+        # readers' convention (abs(v) <= 1 -> x100) so a legacy 0.726 surfaces as 72.6
+        # instead of rendering as "0.7 / 100" and false-failing the floor.
+        try:
+            if composite is not None and abs(float(composite)) <= 1.0:
+                composite = round(float(composite) * 100.0, 1)
+        except (TypeError, ValueError):
+            pass
 
     min_robustness = gauntlet_cfg.get("min_robustness_score")
     try:
