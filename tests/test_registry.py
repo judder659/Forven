@@ -265,6 +265,72 @@ def test_custom_catalog_marks_versioned_modules_archived():
     assert custom_strategy_status("rsi_momentum") == "active"
     assert custom_strategy_status("rsi_momentum_s00293") == "archived"
     assert custom_strategy_status("S00224_bollinger") == "archived"
+    assert custom_strategy_status("_probe_signal_fields") == "ignored"
+
+
+def test_discover_ignores_private_custom_modules(monkeypatch):
+    registry_mod.reset()
+    loaded: list[str] = []
+
+    monkeypatch.setattr(registry_mod, "_builtin_discovered", True)
+    monkeypatch.setattr(
+        registry_mod.pkgutil,
+        "iter_modules",
+        lambda _path: [(None, "_private_probe", False), (None, "public_strategy", False)],
+    )
+    monkeypatch.setattr(registry_mod, "_load_custom_strategy_module", loaded.append)
+    monkeypatch.setattr(registry_mod, "_ensure_active_db_strategy_modules", lambda: None)
+
+    registry_mod.discover()
+
+    assert loaded == ["public_strategy"]
+
+
+def test_discover_quarantines_custom_system_exit(monkeypatch):
+    registry_mod.reset()
+    loaded: list[str] = []
+
+    def _load(modname: str) -> None:
+        loaded.append(modname)
+        if modname == "bad_strategy":
+            raise SystemExit(0)
+
+    monkeypatch.setattr(registry_mod, "_builtin_discovered", True)
+    monkeypatch.setattr(
+        registry_mod.pkgutil,
+        "iter_modules",
+        lambda _path: [(None, "bad_strategy", False), (None, "good_strategy", False)],
+    )
+    monkeypatch.setattr(registry_mod, "_load_custom_strategy_module", _load)
+    monkeypatch.setattr(registry_mod, "_ensure_active_db_strategy_modules", lambda: None)
+
+    registry_mod.discover()
+
+    assert loaded == ["bad_strategy", "good_strategy"]
+    assert "bad_strategy" in registry_mod._FAILED_CUSTOM_MODULES
+
+
+def test_prebuilt_catalog_skips_strategy_constructor_system_exit(monkeypatch):
+    class ExitStrategy:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise SystemExit(0)
+
+    ExitStrategy.__module__ = "forven.strategies.builtin.test_exit"
+    monkeypatch.setattr(registry_mod, "discover", lambda **_kwargs: None)
+    monkeypatch.setattr(registry_mod, "_TYPE_MAP", {"exit_strategy": ExitStrategy})
+
+    assert get_prebuilt_catalog() == []
+
+
+def test_prebuilt_catalog_excludes_custom_registry_types(monkeypatch):
+    class CustomStrategy:
+        pass
+
+    CustomStrategy.__module__ = "forven.strategies.custom.generated"
+    monkeypatch.setattr(registry_mod, "discover", lambda **_kwargs: None)
+    monkeypatch.setattr(registry_mod, "_TYPE_MAP", {"custom_strategy": CustomStrategy})
+
+    assert get_prebuilt_catalog() == []
 
 
 def test_resolve_runtime_type_loads_archived_custom_module_by_exact_name():

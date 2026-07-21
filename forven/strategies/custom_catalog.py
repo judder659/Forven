@@ -19,7 +19,10 @@ def include_archived_custom_strategies() -> bool:
 
 def custom_strategy_status(module_name: str) -> str:
     normalized = str(module_name or "").strip()
-    if not normalized or normalized == "__init__":
+    # Leading-underscore modules are private helpers/probes, not discoverable
+    # strategies.  Treating them as entries allowed a leftover diagnostic probe
+    # with ``raise SystemExit`` in its constructor to enter the live registry.
+    if not normalized or normalized.startswith("_"):
         return "ignored"
     for pattern in _ARCHIVED_NAME_PATTERNS:
         if pattern.match(normalized):

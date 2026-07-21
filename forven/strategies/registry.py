@@ -365,17 +365,22 @@ def discover(include_custom: bool = True):
         include_archived = include_archived_custom_strategies()
         loaded_custom = 0
         skipped_archived = 0
+        skipped_ignored = 0
         skipped_errors = 0
         skipped_known_broken = 0
         for _importer, modname, _ispkg in pkgutil.iter_modules(custom.__path__):
             if not modname or modname == "__init__":
+                continue
+            module_status = custom_strategy_status(modname)
+            if module_status == "ignored":
+                skipped_ignored += 1
                 continue
             # Already known to fail import this process — skip silently so a
             # broken module isn't re-imported (and re-warned) on every discover.
             if modname in _FAILED_CUSTOM_MODULES:
                 skipped_known_broken += 1
                 continue
-            if custom_strategy_status(modname) == "archived":
+            if module_status == "archived":
                 _ARCHIVED_CUSTOM_MODULES[modname.lower()] = modname
                 if not include_archived:
                     skipped_archived += 1
@@ -383,7 +388,7 @@ def discover(include_custom: bool = True):
             try:
                 _load_custom_strategy_module(modname)
                 loaded_custom += 1
-            except Exception as e:
+            except (Exception, SystemExit) as e:
                 _FAILED_CUSTOM_MODULES.add(modname)
                 # Warn once per module per process; stay quiet on later discovers.
                 if modname not in _FAILED_CUSTOM_LOGGED:
@@ -391,9 +396,10 @@ def discover(include_custom: bool = True):
                     log.warning("Skipping custom strategy module %s: %s", modname, e)
                 skipped_errors += 1
         log.info(
-            "Custom strategies loaded: %d module(s), %d archived skipped, %d errors skipped, "
-            "%d known-broken skipped, %d total types now",
+            "Custom strategies loaded: %d module(s), %d private ignored, %d archived skipped, "
+            "%d errors skipped, %d known-broken skipped, %d total types now",
             loaded_custom,
+            skipped_ignored,
             skipped_archived,
             skipped_errors,
             skipped_known_broken,
@@ -474,7 +480,7 @@ def _discover_imported_modules() -> None:
             if errors:
                 raise RegistryTypeError("; ".join(errors))
             _TYPE_MAP[imported_runtime_type(modname)] = cls
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             if modname not in _FAILED_CUSTOM_LOGGED:
                 _FAILED_CUSTOM_LOGGED.add(modname)
                 log.warning("Skipping imported strategy module %s: %s", modname, e)
@@ -552,7 +558,7 @@ def _ensure_active_db_strategy_modules() -> None:
         try:
             _load_custom_strategy_module(modname)
             loaded += 1
-        except Exception as exc:  # noqa: BLE001 - quarantine a broken module, warn once
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - quarantine broken extension code
             _FAILED_CUSTOM_MODULES.add(modname)
             if modname not in _FAILED_CUSTOM_LOGGED:
                 _FAILED_CUSTOM_LOGGED.add(modname)
@@ -736,7 +742,7 @@ def _load_archived_custom_runtime_type(runtime_name: str) -> bool:
         return False
     try:
         _load_custom_strategy_module(module_name)
-    except (RegistryTypeError, ImportError):
+    except (RegistryTypeError, ImportError, SystemExit):
         # Broken/guard-rejected archived module — don't let the error escape the
         # runtime-type resolver (the type simply stays unresolved), and remember
         # the failure so every later hydrate doesn't re-read and re-execute the
@@ -847,7 +853,7 @@ def _load_db_strategies(target: dict):
                     )
                     _inject_regime_metadata(strategy, compatible_regimes, is_all_rounder)
                     target[sid] = strategy
-                except Exception as row_exc:
+                except (Exception, SystemExit) as row_exc:
                     dedupe_key = (sid, str(row_exc))
                     if dedupe_key in _BAD_ROW_LOGGED:
                         log.debug("Skipping bad strategy row %s: %s", sid, row_exc)
