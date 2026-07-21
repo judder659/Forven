@@ -19,7 +19,7 @@ import signal
 import subprocess
 import sqlite3
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -133,10 +133,17 @@ def _get_bot_lock_age_seconds() -> float | None:
 def _start_bot() -> int | None:
     """Start the bot process in the background. Returns the new PID."""
     try:
+        # CONSOLE-2: CREATE_NO_WINDOW, not DETACHED_PROCESS — a detached child has
+        # no console at all, so every console-subsystem process IT spawns pops a
+        # visible console window (and Windows ignores CREATE_NO_WINDOW when
+        # DETACHED_PROCESS is set — see bot_factory.manager). With NO_WINDOW the
+        # child owns its own hidden console: still isolated from this console's
+        # Ctrl+C/close, but its children inherit the hidden console silently.
         proc = subprocess.Popen(
             BOT_START_CMD,
             cwd=str(Path(__file__).resolve().parent.parent),
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

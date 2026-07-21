@@ -147,6 +147,7 @@ async def _kill_shell_process_tree(proc: asyncio.subprocess.Process) -> None:
                 "/F",
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
             )
             await asyncio.wait_for(killer.wait(), timeout=5)
         except Exception:
@@ -269,7 +270,13 @@ async def _tool_run_shell(command: str) -> str:
                     f"(H-S3 strict mode). Set FORVEN_SHELL_STRICT_ALLOWLIST=0 to disable."
                 )
 
-    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    # CONSOLE-2: CREATE_NO_WINDOW alongside the process group — the supervised
+    # backend is console-detached, so a shell child without it pops a visible
+    # console window per command. Never DETACHED_PROCESS (overrides NO_WINDOW).
+    creationflags = (
+        (subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
+        if os.name == "nt" else 0
+    )
     start_new_session = os.name != "nt"
     async with _get_shell_tool_semaphore():
         proc = await asyncio.create_subprocess_shell(

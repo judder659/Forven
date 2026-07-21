@@ -250,9 +250,12 @@ def _kill_executor_processes(executor):
     for pid in list(executor._processes.keys()):
         try:
             if sys.platform == "win32":
-                # Use taskkill on Windows - more reliable than os.kill
+                # Use taskkill on Windows - more reliable than os.kill.
+                # CONSOLE-2: CREATE_NO_WINDOW, or the console-detached backend
+                # pops a visible console window per kill.
                 subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                             capture_output=True, timeout=5)
+                             capture_output=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
             else:
                 os.kill(pid, signal.SIGKILL)
         except (subprocess.SubprocessError, OSError):

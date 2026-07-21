@@ -957,10 +957,35 @@ if __name__ == "__main__":
             try:
                 import ctypes
 
-                if ctypes.windll.kernel32.FreeConsole():
+                _k32 = ctypes.windll.kernel32
+                if _k32.FreeConsole():
                     log.info(
                         "Detached from the launcher console (supervised run) — "
                         "operator console events can no longer reach this process."
+                    )
+                # CONSOLE-2: a console-LESS process makes every console-subsystem
+                # child (sandbox workers, multiprocessing backtest pools, taskkill,
+                # ruff, MCP servers) allocate a fresh VISIBLE console window — the
+                # "random python windows" regression CONSOLE-1 introduced. The
+                # multiprocessing pools can't pass creationflags, so the only
+                # complete fix is here at the parent: re-anchor on a PRIVATE
+                # console of our own and hide its window. Operator console events
+                # still cannot reach us (their console is no longer ours), and all
+                # children quietly inherit this hidden one. The AllocConsole window
+                # may flash for an instant at boot before ShowWindow hides it —
+                # once per backend start, not per child spawn.
+                if _k32.AllocConsole():
+                    _hwnd = _k32.GetConsoleWindow()
+                    if _hwnd:
+                        ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+                    log.info(
+                        "Re-anchored on a private hidden console — child processes "
+                        "inherit it instead of popping console windows."
+                    )
+                else:
+                    log.warning(
+                        "AllocConsole failed after detach — console-subsystem child "
+                        "processes will open visible console windows."
                     )
             except Exception:
                 log.warning("Could not detach from the launcher console", exc_info=True)
