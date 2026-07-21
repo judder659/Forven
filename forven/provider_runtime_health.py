@@ -120,10 +120,68 @@ def record_call_failure(provider: str, error: BaseException) -> None:
     record_provider_event(p, kind, msg)
 
 
+# PROV-HEALTH-2: how long an entry for a DISCONNECTED provider stays visible
+# after its last event. A straggler call to a disconnected provider must stay
+# loud while it is actually happening (each attempt refreshes last_event_at);
+# once the calls stop, the tile retires.
+_DISCONNECTED_GRACE_SECONDS = 15 * 60
+
+
+def _connected_providers() -> set[str] | None:
+    """Providers connected in-app. ``None`` on any read error — fail OPEN:
+    better to keep showing every tile than to hide a real failure because the
+    config read broke.
+
+    Deliberately NOT "connected or referenced": the routing policy seeds a
+    default-model entry for every known provider and the enabled-models list
+    keeps free-tier rows around, so reference-based retention would keep every
+    tile forever. A disconnected provider cannot be spent on (the allowed-pairs
+    gate fails closed), so its health is only interesting while something is
+    still actively attempting it — which the recency grace covers.
+    """
+    try:
+        from forven.model_selection import list_connected_providers
+
+        return {str(p or "").strip().lower() for p in list_connected_providers() if p}
+    except Exception:  # pragma: no cover — never let a config read break the health view
+        return None
+
+
 def get_provider_health_runtime() -> list[dict]:
-    """All recorded per-provider runtime health entries (most-degraded first)."""
+    """Recorded per-provider runtime health entries (most-degraded first).
+
+    PROV-HEALTH-2: entries used to live forever — a provider the operator had
+    disconnected kept its last DOWN/degraded tile indefinitely ("why is
+    OpenRouter still appearing?"), with no expiry, no reconciliation against
+    the current configuration, and no dismiss. Entries for providers that are
+    no longer connected are now garbage-collected once their last event is
+    older than a grace window; a provider that is still being CALLED keeps
+    refreshing its last_event_at and stays visible (the fail-loud purpose of
+    this store), and connected providers always show their state.
+    """
+    store = _load()
+    connected = _connected_providers()
+    if connected is not None:
+        now = time.time()
+        keep: dict = {}
+        for name, entry in store.items():
+            provider = str(name or "").strip().lower()
+            last_event = entry.get("last_event_at") if isinstance(entry, dict) else None
+            try:
+                recent = (now - float(last_event)) <= _DISCONNECTED_GRACE_SECONDS
+            except (TypeError, ValueError):
+                recent = False
+            if provider in connected or recent:
+                keep[name] = entry
+        if len(keep) != len(store):
+            try:
+                kv_set(_KEY, keep)
+            except Exception:  # pragma: no cover — GC is best-effort
+                pass
+        store = keep
+
     order = {"down": 0, "degraded": 1, "ok": 2}
-    entries = list(_load().values())
+    entries = list(store.values())
     entries.sort(key=lambda e: order.get(str(e.get("state")), 3))
     return entries
 

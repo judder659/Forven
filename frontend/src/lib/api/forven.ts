@@ -1463,6 +1463,20 @@ export async function reconcileAgentProviders(): Promise<{
 	return fetchApi('/agents/reconcile-providers', { method: 'POST' });
 }
 
+/**
+ * Dismiss runtime provider-health entries — one provider, or all when omitted.
+ * Returns the refreshed runtime list. A new call event re-creates the tile.
+ */
+export async function clearProviderHealth(provider?: string): Promise<{
+	cleared: string;
+	runtime: ProviderRuntimeHealth[];
+}> {
+	return fetchApi('/agents/provider-health/clear', {
+		method: 'POST',
+		body: JSON.stringify(provider ? { provider } : {}),
+	});
+}
+
 export async function runSignalScanNow(): Promise<ManualScannerRunResponse> {
 	return fetchApi('/system/scanner/signal-run', { method: 'POST' });
 }
