@@ -164,15 +164,34 @@ class TestKillSwitch:
     """Kill-switch triggers and resets."""
 
     def test_kill_switch_triggers_on_drawdown(self, forven_db):
-        # Set HWM high, then report low equity
+        # Set HWM high, then report low equity. HALT-CONFIRM-1: a single
+        # breaching tick must NOT latch — 3 consecutive breaches fire it.
         update_equity(10000.0)  # sets HWM
-        result = update_equity(8900.0)  # 11% drawdown > 10% limit
+        first = update_equity(8900.0)  # 11% drawdown > 10% limit (breach 1/3)
+        assert first["kill_switch"] is False and first["action"] is None
+        second = update_equity(8900.0)  # breach 2/3
+        assert second["kill_switch"] is False and second["action"] is None
+        result = update_equity(8900.0)  # breach 3/3 — latches
         assert result["action"] == "kill_switch"
         assert result["kill_switch"] is True
 
+    def test_kill_switch_breach_streak_resets_on_recovery(self, forven_db):
+        # HALT-CONFIRM-1: a clean tick between breaches resets the streak, so
+        # isolated phantom reads can never accumulate into a latch.
+        update_equity(10000.0)
+        update_equity(8900.0)  # breach 1/3
+        update_equity(8900.0)  # breach 2/3
+        recovered = update_equity(9800.0)  # clean tick — streak resets
+        assert recovered["kill_switch"] is False
+        update_equity(8900.0)  # breach 1/3 again
+        result = update_equity(8900.0)  # breach 2/3 — must still be unlatched
+        assert result["kill_switch"] is False and result["action"] is None
+
     def test_kill_switch_stays_active(self, forven_db):
         update_equity(10000.0)
-        update_equity(8900.0)  # triggers
+        update_equity(8900.0)  # breach 1/3
+        update_equity(8900.0)  # breach 2/3
+        update_equity(8900.0)  # breach 3/3 — triggers
         # Subsequent calls should still show kill_switch=True
         result = update_equity(9500.0)
         assert result["kill_switch"] is True
@@ -180,7 +199,8 @@ class TestKillSwitch:
 
     def test_kill_switch_blocks_trading(self, forven_db):
         update_equity(10000.0)
-        update_equity(8900.0)
+        for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+            update_equity(8900.0)
         allowed, reason = is_trading_allowed()
         assert allowed is False
         assert "Kill-switch" in reason
@@ -191,7 +211,8 @@ class TestKillSwitch:
         # track record the promotion gates read, and a FALSE trip on a glitched
         # real-wallet read would freeze all paper research. Live is still blocked.
         update_equity(10000.0)
-        update_equity(8900.0)  # trips the kill-switch
+        for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+            update_equity(8900.0)  # trips the kill-switch
         assert is_trading_allowed()[0] is False  # gate is genuinely active
 
         live_ok, _, live_why = can_open(
@@ -207,7 +228,8 @@ class TestKillSwitch:
 
     def test_kill_switch_reset(self, forven_db):
         update_equity(10000.0)
-        update_equity(8900.0)  # triggers kill switch (11% drawdown)
+        for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+            update_equity(8900.0)  # triggers kill switch (11% drawdown)
         reset_kill_switch()
         allowed, _ = is_trading_allowed()
         assert allowed is True
@@ -225,8 +247,9 @@ class TestKillSwitch:
         should re-baseline HWM so the same equity doesn't re-trigger."""
         update_equity(10000.0)
         # Gradual decline through multiple ticks (not a source change)
-        update_equity(7000.0)
-        result = update_equity(5500.0)  # 45% drawdown > 10% threshold
+        update_equity(7000.0)  # breach 1/3
+        update_equity(5500.0)  # breach 2/3
+        result = update_equity(5500.0)  # breach 3/3 — 45% drawdown latches
         assert result["kill_switch"] is True
 
         # Operator resets
@@ -243,7 +266,8 @@ class TestKillSwitch:
         from forven.db import kv_get, kv_set
 
         update_equity(10000.0)
-        update_equity(8900.0)  # triggers kill switch
+        for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+            update_equity(8900.0)  # triggers kill switch
 
         # Manually set daily halt to simulate both being active
         state = kv_get("risk_state", {})
@@ -300,7 +324,9 @@ class TestKillSwitch:
     def test_exchange_to_exchange_still_triggers(self, forven_db):
         """Real drawdown on the exchange still triggers the kill switch."""
         update_equity(10000.0, source="exchange")
-        result = update_equity(8900.0, source="exchange")  # 11% drawdown
+        update_equity(8900.0, source="exchange")  # 11% drawdown, breach 1/3
+        update_equity(8900.0, source="exchange")  # breach 2/3
+        result = update_equity(8900.0, source="exchange")  # breach 3/3
         assert result["kill_switch"] is True
         assert result["action"] == "kill_switch"
 
@@ -378,7 +404,9 @@ class TestKillSwitchToggle:
         update_equity(10000.0)
         update_equity(8900.0)  # does not trigger while disabled
         set_kill_switch_enabled(True)
-        result = update_equity(8800.0)  # 12% drawdown, now enabled
+        update_equity(8800.0)  # 12% drawdown, now enabled — breach 1/3
+        update_equity(8800.0)  # breach 2/3
+        result = update_equity(8800.0)  # breach 3/3 — latches
         assert result["kill_switch"] is True
         assert result["action"] == "kill_switch"
 
@@ -407,13 +435,16 @@ class TestDailyLossLimit:
 
     def test_daily_loss_triggers(self, forven_db):
         update_equity(10000.0)  # sets daily start
-        result = update_equity(9400.0)  # -6% > 5% limit
+        update_equity(9400.0)  # -6% > 5% limit — breach 1/3
+        update_equity(9400.0)  # breach 2/3
+        result = update_equity(9400.0)  # breach 3/3 — latches
         assert result["action"] == "daily_halt"
         assert result["daily_halt"] is True
 
     def test_daily_loss_blocks_trading(self, forven_db):
         update_equity(10000.0)
-        update_equity(9400.0)
+        for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+            update_equity(9400.0)
         allowed, reason = is_trading_allowed()
         assert allowed is False
         assert "Daily loss" in reason
@@ -510,7 +541,8 @@ class TestCanOpen:
 
     def test_blocks_when_kill_switch_active(self, forven_db):
         update_equity(10000.0)
-        update_equity(8900.0)  # trigger kill switch
+        for _ in range(3):  # HALT-CONFIRM-1: 3 breaches latch
+            update_equity(8900.0)  # trigger kill switch
         allowed, risk, reason = can_open("BTC", "long", "test_strat")
         assert allowed is False
         assert "Kill-switch" in reason

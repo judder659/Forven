@@ -338,7 +338,11 @@ class TestDailyHaltOpenPathM9:
         monkeypatch.setattr(risk, "_get_risk_limits", lambda: {**_orig, "daily_loss_limit": 0.05})
         kv_set(sim_kv_key("daily_risk"), {"date": get_today().isoformat(), "start_equity": 10000.0})
         assert risk._recompute_daily_halt_from_equity(9400.0) is True  # -6% <= -5%
-        assert risk._get_live_risk_state().get("daily_loss_halt") is True
+        # HALT-CONFIRM-1: the open is refused, but a single read must no longer
+        # LATCH the all-day halt — update_equity latches after 3 confirming ticks.
+        assert risk._get_live_risk_state().get("daily_loss_halt") is not True
+        # The refusal is re-derived on every open attempt while the breach holds.
+        assert risk._recompute_daily_halt_from_equity(9400.0) is True
 
     def test_no_halt_when_within_limit(self, forven_db, monkeypatch):
         import forven.exchange.risk as risk
