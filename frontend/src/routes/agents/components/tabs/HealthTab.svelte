@@ -12,6 +12,7 @@
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import {
+		clearProviderHealth,
 		getProviderHealth,
 		reconcileAgentProviders,
 		type ProviderRuntimeHealth,
@@ -38,6 +39,21 @@
 			error = e instanceof Error ? e.message : 'Failed to load provider health';
 		} finally {
 			loading = false;
+		}
+	}
+
+	let dismissing: string | null = null;
+
+	async function dismiss(provider: string) {
+		dismissing = provider;
+		try {
+			const res = await clearProviderHealth(provider);
+			runtime = res.runtime ?? [];
+			addToast(`Dismissed ${provider} health entry — a new call event re-creates it.`, 'success');
+		} catch (e) {
+			addToast(e instanceof Error ? e.message : 'Failed to dismiss entry', 'error');
+		} finally {
+			dismissing = null;
 		}
 	}
 
@@ -161,9 +177,25 @@
 						{#if r.fallback_to}
 							<p class="text-xs text-yellow-400">Falling back to <span class="font-mono">{r.fallback_to}</span></p>
 						{/if}
-						{#if r.since && formatSince(r.since)}
-							<p class="text-[10px] text-[#555]">since {formatSince(r.since)}</p>
-						{/if}
+						<div class="flex items-end justify-between gap-2">
+							<div class="text-[10px] text-[#555] space-y-0.5">
+								{#if r.since && formatSince(r.since)}
+									<p>since {formatSince(r.since)}</p>
+								{/if}
+								{#if r.last_event_at && formatSince(r.last_event_at)}
+									<p>last attempt {formatSince(r.last_event_at)}</p>
+								{/if}
+							</div>
+							<button
+								type="button"
+								on:click={() => dismiss(r.provider)}
+								disabled={dismissing === r.provider}
+								class="terminal-button text-[10px] px-2 py-0.5 disabled:opacity-60"
+								title="Remove this entry. A new call event re-creates it — dismissing never hides an active failure for long."
+							>
+								{dismissing === r.provider ? '…' : 'Dismiss'}
+							</button>
+						</div>
 					</div>
 				{/each}
 			</div>

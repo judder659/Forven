@@ -45,6 +45,20 @@ def get_agent_provider_health():
     return {"warnings": warnings, "count": len(warnings), "runtime": runtime}
 
 
+@router.post("/api/agents/provider-health/clear")
+def post_clear_provider_health(body: dict | None = None):
+    """Dismiss runtime provider-health entries (one provider, or all).
+
+    Covers the case auto-retirement (PROV-HEALTH-2) can't: a provider that is
+    still connected/referenced but idle, carrying an old degraded/down tile the
+    operator has already dealt with. A new event re-creates the tile."""
+    from forven.provider_runtime_health import clear_provider_health, get_provider_health_runtime
+
+    provider = str((body or {}).get("provider") or "").strip().lower() or None
+    clear_provider_health(provider)
+    return {"cleared": provider or "all", "runtime": get_provider_health_runtime()}
+
+
 @router.post("/api/agents/reconcile-providers")
 def post_reconcile_agent_providers():
     """Repoint credential-less agents to a configured provider (wizard/manual)."""

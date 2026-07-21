@@ -393,6 +393,7 @@ export {
 	getForvenModelPolicy,
 	updateForvenModelPolicy,
 	getProviderHealth,
+	clearProviderHealth,
 	updateForvenAgentModel,
 	getForvenBacktestingStatus,
 	getSystemStatus,
