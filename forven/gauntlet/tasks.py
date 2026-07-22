@@ -1565,6 +1565,13 @@ def _window_supports_wfa_folds(start: str, end: str, timeframe: str) -> bool:
     forwarding one smaller than the floor to the persisted FULL-HISTORY
     walk-forward can only ever error ('109 bars requested (need 420+)',
     S06895's fourth run, 2026-07-12)."""
+    span_bars = _window_span_bars(start, end, timeframe)
+    if span_bars is None:
+        return True  # unparseable window: let the runner decide
+    return span_bars >= 420
+
+
+def _window_span_bars(start: str, end: str, timeframe: str) -> int | None:
     from datetime import datetime
 
     from forven.api_core import _timeframe_to_minutes
@@ -1573,10 +1580,69 @@ def _window_supports_wfa_folds(start: str, end: str, timeframe: str) -> bool:
         s = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
         e = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
         minutes_per_bar = max(_timeframe_to_minutes(str(timeframe or "1h")), 1)
-        span_bars = (e - s).total_seconds() / 60.0 / minutes_per_bar
-        return span_bars >= 420
-    except Exception:  # noqa: BLE001 — unparseable window: let the runner decide
-        return True
+        return int((e - s).total_seconds() / 60.0 / minutes_per_bar)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _dated_wfa_window_issue(
+    strategy_id: str,
+    start: str,
+    end: str,
+    timeframe: str,
+    *,
+    n_splits: int,
+    train_ratio: float,
+) -> str | None:
+    """Reason the optimizer's dated validation window cannot judge WFA folds, or None.
+
+    Two structural floors (absence of evidence, never merit):
+      * the 420-bar fold floor — below it the runner hard-errors; and
+      * expected OOS trades per fold at the strategy's MEASURED cadence — a
+        window can clear 420 bars yet still hand a low-frequency strategy OOS
+        folds of 0–1 trades. S07680 (2026-07-19/20): ~118 days at 1h passed the
+        bar floor, but at ~2.5 trades/month its 5 × ~7-day OOS folds could never
+        reach wfa_min_fold_trades, so the verdict was FAIL by construction and
+        both operator revivals were re-archived by the same window. Trades per
+        fold, not bars, decide whether a fold is judgeable. Without a measured
+        trade rate the dated window is kept — the bar floor is the only
+        structural fact available (and the existing behavior).
+    """
+    if not _window_supports_wfa_folds(start, end, timeframe):
+        return "optimizer validation window too small for folds"
+    span_bars = _window_span_bars(start, end, timeframe)
+    if span_bars is None:
+        return None
+    try:
+        from forven.api_core import _timeframe_to_minutes
+        from forven.policy import load_pipeline_config
+        from forven.wfa_window import measured_trade_rate
+
+        rate_per_day, rate_source = measured_trade_rate(strategy_id, timeframe)
+        if not rate_per_day or rate_per_day <= 0:
+            # Never-measured cadence: the bar floor is the only structural fact
+            # available — keep the dated window rather than guess.
+            return None
+        rob = load_pipeline_config().get("robustness_thresholds", {})
+        min_fold_trades = int(rob.get("wfa_min_fold_trades", 5) or 5)
+        minutes_per_bar = max(_timeframe_to_minutes(str(timeframe or "1h")), 1)
+        window_days = span_bars * minutes_per_bar / (24.0 * 60.0)
+        oos_days_per_fold = window_days * (1.0 - train_ratio) / max(n_splits, 1)
+        expected_fold_trades = rate_per_day * oos_days_per_fold
+        if expected_fold_trades < min_fold_trades:
+            return (
+                f"optimizer validation window ({window_days:.0f} days) expects only "
+                f"~{expected_fold_trades:.1f} OOS trades per fold at the measured cadence "
+                f"(~{rate_per_day * 30.44:.1f}/mo, {rate_source}) — below "
+                f"wfa_min_fold_trades={min_fold_trades}, so folds cannot be judged"
+            )
+    except Exception as exc:  # noqa: BLE001 — sizing must never block the step
+        log.warning(
+            "walk_forward %s: trade-frequency window check failed (keeping dated window): %s",
+            strategy_id,
+            exc,
+        )
+    return None
 
 
 def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
@@ -1587,21 +1653,28 @@ def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
     wf_cfg = settings.get("walk_forward") if isinstance(settings.get("walk_forward"), dict) else {}
     _selection_window, validation_window = _workflow_optimization_windows(workflow)
     tf = str(row.get("timeframe") or "1h")
+    n_splits = int(wf_cfg.get("n_folds") or 5)
+    train_ratio = float(wf_cfg.get("in_sample_pct") or 0.7)
     start_date = str(validation_window.get("start") or "").strip() or None
     end_date = str(validation_window.get("end") or "").strip() or None
-    if start_date and end_date and not _window_supports_wfa_folds(start_date, end_date, tf):
+    if start_date and end_date:
         # The persisted walk-forward is the FULL-HISTORY edge-existence test; the
         # anti-leak validation on the optimizer's holdout already ran inside the
         # optimizer itself. Fall back to the windowless trade-frequency-sized
         # window (the path every successful WFA has used) rather than submitting
-        # a window that structurally cannot produce the fold floor.
-        log.info(
-            "walk_forward %s: optimizer validation window too small for folds at %s — "
-            "running full-history windowless WFA instead",
-            row["id"], tf,
+        # a window that structurally cannot judge folds — too few bars OR too few
+        # expected trades per OOS fold at the strategy's measured cadence.
+        window_issue = _dated_wfa_window_issue(
+            str(row["id"]), start_date, end_date, tf,
+            n_splits=n_splits, train_ratio=train_ratio,
         )
-        start_date = None
-        end_date = None
+        if window_issue:
+            log.info(
+                "walk_forward %s: %s — running full-history windowless WFA instead",
+                row["id"], window_issue,
+            )
+            start_date = None
+            end_date = None
     try:
         from forven.routers.robustness import WalkForwardBody
 
@@ -1610,8 +1683,8 @@ def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
                 strategy_id=str(row["id"]),
                 symbol=str(row.get("symbol") or "BTC/USDT"),
                 timeframe=tf,
-                n_splits=int(wf_cfg.get("n_folds") or 5),
-                train_ratio=float(wf_cfg.get("in_sample_pct") or 0.7),
+                n_splits=n_splits,
+                train_ratio=train_ratio,
                 start_date=start_date,
                 end_date=end_date,
                 as_of=_workflow_as_of(workflow),
