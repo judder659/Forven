@@ -34,8 +34,20 @@ def test_absent_or_blank_falls_back_to_1h():
 def test_unsupported_or_typod_timeframe_falls_back_to_1h():
     # Unsupported / no-data intervals must NOT be stored verbatim -- they would
     # wedge the gauntlet on an "unsupported interval" error. They fall back to 1h.
-    for bad in ("3h", "2h", "12h", "1w", "60m", "weekly", "1H_typo"):
+    # The authority is market_data.INTERVAL_TO_MS (what the data layer can
+    # actually fetch), NOT a list hardcoded here — it has grown over time, and a
+    # frozen list would start failing legitimate intervals as the lake widens.
+    for bad in ("3h", "60m", "weekly", "1H_typo", "", "0h", "1y"):
         assert _intended_timeframe({"_timeframe": bad}) == "1h", bad
+
+
+def test_data_layer_supported_timeframes_are_stored_verbatim():
+    # The complement of the case above: anything the data layer CAN fetch must be
+    # preserved, or a 2h/12h edge silently gets quick-screened at 1h.
+    from forven.market_data import INTERVAL_TO_MS
+
+    for good in sorted(INTERVAL_TO_MS):
+        assert _intended_timeframe({"_timeframe": good}) == good, good
 
 
 def test_timeframe_is_normalized_lowercase_stripped():

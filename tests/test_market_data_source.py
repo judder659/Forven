@@ -65,13 +65,27 @@ def test_fetch_binance_prices_keyed_by_bare_coin(monkeypatch):
     assert all(isinstance(v, float) for v in prices.values())
 
 
+def _patch_candle_exchange(monkeypatch, rows):
+    """Pin the OHLCV source for fetch_binance_candles.
+
+    It resolves its client through resolve_binance_market (perp-canonical: the
+    USD-M futures client when the base has a listed perp, else spot), so patching
+    _binance_exchange alone no longer intercepts it — the futures client is used
+    for BTC and the fake never gets called, yielding an empty frame.
+    """
+    fake = _FakeExchange(rows)
+    monkeypatch.setattr(md, "_binance_exchange", lambda: fake)
+    monkeypatch.setattr(md, "resolve_binance_market", lambda coin: (fake, "BTC/USDT", "spot"))
+    return fake
+
+
 def test_fetch_binance_candles_drops_unclosed_bar(monkeypatch):
     interval_ms = 3_600_000
     end = 10 * interval_ms  # fixed reference so the test is deterministic
     # bars at open times 0..10; the bar opening at `end` (10*interval) is still
     # forming (closes at 11*interval > end) and must be dropped.
     rows = [[i * interval_ms, 1.0 + i, 2.0 + i, 0.5 + i, 1.5 + i, 10 + i] for i in range(0, 11)]
-    monkeypatch.setattr(md, "_binance_exchange", lambda: _FakeExchange(rows))
+    _patch_candle_exchange(monkeypatch, rows)
     df = md.fetch_binance_candles("BTC", bars=5, interval="1h", end_time=end)
     assert list(df.columns) == ["open", "high", "low", "close", "volume"]
     assert len(df) == 5  # tail(5)
@@ -88,7 +102,7 @@ def test_fetch_binance_candles_include_unclosed_keeps_forming_bar(monkeypatch):
     interval_ms = 3_600_000
     end = 10 * interval_ms
     rows = [[i * interval_ms, 1.0 + i, 2.0 + i, 0.5 + i, 1.5 + i, 10 + i] for i in range(0, 11)]
-    monkeypatch.setattr(md, "_binance_exchange", lambda: _FakeExchange(rows))
+    _patch_candle_exchange(monkeypatch, rows)
     closed = md.fetch_binance_candles("BTC", bars=20, interval="1h", end_time=end)
     live = md.fetch_binance_candles("BTC", bars=20, interval="1h", end_time=end, include_unclosed=True)
     assert int(closed.index[-1].value // 1_000_000) == 9 * interval_ms   # forming bar dropped

@@ -51,7 +51,10 @@ def _attach_passing_child(hypothesis_id: str, *, sid_seed: int, symbol: str, sha
             type_="rsi",
             symbol=symbol,
             timeframe="1h",
-            params={},
+            # Distinct params per child: DUP-1 refuses a second strategy into a
+            # TRADING stage with identical type+symbol+timeframe+params, and these
+            # fixtures put multiple children in the same (symbol, timeframe) cell.
+            params={"rsi_period": 14 + sid_seed},
             stage="paper",
             hypothesis_id=hypothesis_id,
             strategy_id=f"S{60000 + sid_seed:05d}",

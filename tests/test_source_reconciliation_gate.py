@@ -76,11 +76,27 @@ def test_ts_close_frame_aligns_across_representations():
 
 # --------------------------- reconcile_one ---------------------------
 
-def _patch_sources(monkeypatch, lake_closes, hl_closes, source="binance"):
-    monkeypatch.setattr(sr, "load_parquet", lambda s, t: _lake_frame(lake_closes))
-    monkeypatch.setattr(sr, "get_dataset_source", lambda s, t: source)
+def _patch_sources(monkeypatch, lake_closes, hl_closes, source="binance", stored_closes=None):
+    """Pin BOTH live-frame sources reconcile_one can use.
+
+    reconcile_one prefers the STORED HyperLiquid venue series
+    (forven.data.load_venue_frame, collected hourly by the venue-collect job) and
+    only falls back to a live fetch when that series is missing or too short.
+    Patching just the fetch leaves the stored path reading the real data lake,
+    whose real timestamps never overlap these synthetic 2026-01-01 frames — every
+    assertion then fails as 'insufficient_overlap'. ``stored_closes=None`` forces
+    the live-fetch fallback; pass a list to exercise the stored-series path.
+    """
+    import forven.data as fdata
     import forven.market_data as md
 
+    monkeypatch.setattr(sr, "load_parquet", lambda s, t: _lake_frame(lake_closes))
+    monkeypatch.setattr(sr, "get_dataset_source", lambda s, t: source)
+    monkeypatch.setattr(
+        fdata,
+        "load_venue_frame",
+        lambda *a, **k: (None if stored_closes is None else _hl_frame(stored_closes)),
+    )
     monkeypatch.setattr(md, "fetch_hyperliquid_candles", lambda coin, **kw: _hl_frame(hl_closes))
 
 
@@ -93,6 +109,30 @@ def test_reconcile_one_ok_low_divergence(monkeypatch):
     assert out["max_divergence_pct"] == pytest.approx(0.0, abs=1e-9)
     assert out["backtest_source"] == "binance"
     assert out["live_venue"] == "hyperliquid"
+
+
+def test_reconcile_one_prefers_stored_venue_series_over_live_fetch(monkeypatch):
+    """The stored HL venue series wins when it covers min_overlap_bars.
+
+    Reconciliation should work from persisted closed-bar data and survive venue-API
+    hiccups; the live fetch is only the fallback. Here the stored series diverges
+    10% and the live fetch matches the lake exactly — reading the live fetch would
+    report 0% and silently hide real divergence.
+    """
+    lake = [100.0 + i for i in range(50)]
+    _patch_sources(monkeypatch, lake, hl_closes=lake, stored_closes=[c * 1.10 for c in lake])
+    out = sr.reconcile_one("BTC/USDT", "1h", min_overlap_bars=20)
+    assert out["status"] == "ok"
+    assert out["max_divergence_pct"] == pytest.approx(10.0, rel=1e-3)
+
+
+def test_reconcile_one_falls_back_to_live_fetch_when_stored_series_too_short(monkeypatch):
+    """A stored series shorter than min_overlap_bars must not pre-empt the fetch."""
+    lake = [100.0 + i for i in range(50)]
+    _patch_sources(monkeypatch, lake, hl_closes=lake, stored_closes=lake[:5])
+    out = sr.reconcile_one("BTC/USDT", "1h", min_overlap_bars=20)
+    assert out["status"] == "ok"
+    assert out["overlap_bars"] == 50
 
 
 def test_reconcile_one_high_divergence(monkeypatch):
@@ -124,9 +164,15 @@ def test_reconcile_one_same_venue_short_circuits(monkeypatch):
 
 
 def test_reconcile_one_fetch_error(monkeypatch):
+    """No stored venue series AND a failing live fetch -> fetch_error (not a pass)."""
+    import forven.data as fdata
+    import forven.market_data as md
+
     monkeypatch.setattr(sr, "load_parquet", lambda s, t: _lake_frame([100.0] * 30))
     monkeypatch.setattr(sr, "get_dataset_source", lambda s, t: "binance")
-    import forven.market_data as md
+    # Without this the stored HL series (real lake data) satisfies the live side
+    # and the fetch is never attempted, so the failure under test never happens.
+    monkeypatch.setattr(fdata, "load_venue_frame", lambda *a, **k: None)
 
     def _boom(coin, **kw):
         raise RuntimeError("hyperliquid down")

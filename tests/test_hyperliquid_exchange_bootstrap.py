@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 import json
-import sys
 import types
 
 import pytest
+
+from tests.hl_sdk_sandbox import swapped_hyperliquid_sdk
 
 
 class _DummyHttpResponse:
@@ -83,20 +83,23 @@ def hl_exchange_module(monkeypatch):
     root.info = info_mod
     root.utils = utils_mod
 
-    monkeypatch.setitem(sys.modules, "hyperliquid", root)
-    monkeypatch.setitem(sys.modules, "hyperliquid.exchange", exchange_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.info", info_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.utils", utils_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.utils.constants", constants_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.utils.types", types_mod)
-
-    sys.modules.pop("forven.exchange.hyperliquid", None)
-    import forven.exchange.hyperliquid as hl
-
-    module = importlib.reload(hl)
-    module._exchange_calls = exchange_calls
-    yield module
-    sys.modules.pop("forven.exchange.hyperliquid", None)
+    # Restoration is delegated so BOTH bindings (sys.modules and the
+    # forven.exchange package attribute) go back. The previous teardown popped
+    # only sys.modules, leaving this fake-SDK module bound as
+    # forven.exchange.hyperliquid for the rest of the session — which is what made
+    # nine test_reconcile_sweep cases fail with "skipped_exchange_unreachable"
+    # whenever the full suite ran, while both files passed in isolation.
+    fake_sdk = {
+        "hyperliquid": root,
+        "hyperliquid.exchange": exchange_mod,
+        "hyperliquid.info": info_mod,
+        "hyperliquid.utils": utils_mod,
+        "hyperliquid.utils.constants": constants_mod,
+        "hyperliquid.utils.types": types_mod,
+    }
+    with swapped_hyperliquid_sdk(fake_sdk) as module:
+        module._exchange_calls = exchange_calls
+        yield module
 
 
 def test_get_exchange_retries_with_sanitized_spot_meta(hl_exchange_module, monkeypatch):

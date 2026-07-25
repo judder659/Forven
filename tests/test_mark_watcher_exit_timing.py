@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import forven.mark_watcher as mw
 import forven.scanner as sc
 from forven.db import get_db
+from forven.strategies.execution_kernel import _trade_drag, round_trip_drag
 
 
 def _open_paper_trade(
@@ -108,8 +109,13 @@ def test_mark_fill_close_stamps_touch_moment_and_recomputes_pnl(forven_db):
     assert out["status"] == "CLOSED"
     assert out["closed_at"] == "2026-07-02T10:45:12+00:00"  # the touch, not a bar edge
     assert abs(float(out["exit_price"]) - 81.345) < 1e-9  # filled AT the level
-    # Entry-based NET recompute, kernel convention: price return minus round-trip drag.
-    expected = (81.345 - 74.0) / 74.0 - 2.0 * (4.5 + 2.0) / 10000.0
+    # Entry-based NET recompute, kernel convention: price return minus drag. The
+    # drag is two-legged (half on the entry notional, half on the EXIT notional),
+    # so it must come from the kernel's own helper — a flat 2*(fee+slip) is the
+    # pre-v4 model and is off by ~6.5e-5 here.
+    expected = (81.345 - 74.0) / 74.0 - _trade_drag(
+        round_trip_drag(4.5, 2.0, 1.0), 74.0, 81.345
+    )
     assert abs(float(out["pnl_pct"]) - expected) < 1e-6
 
 

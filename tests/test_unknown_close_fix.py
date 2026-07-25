@@ -35,7 +35,7 @@ def _insert_paper_trade(
     asset: str = "SOL",
     direction: str = "long",
     size: float = 10.0,
-    entry_price: float = 72.0,
+    entry_price: float | None = 72.0,
     signal_exit_price: float | None = None,
     signal_data: dict | None = None,
     opened_at: str | None = None,
@@ -140,12 +140,42 @@ def test_sweep_closes_local_paper_with_resolved_price(forven_db):
     assert sd["close_incomplete"] is False
 
 
-def test_sweep_marks_incomplete_only_when_no_price_anywhere(forven_db):
-    """With NO recoverable price anywhere, the sweep must still close (so the book
-    doesn't hang) but flag it incomplete — never fabricate a fill."""
+def test_sweep_falls_back_to_entry_price_for_a_local_paper_close(forven_db):
+    """No pending price and no signal_exit_price still yields a COMPLETE close.
+
+    A local paper trade never reached an exchange, so there is no fill to wait
+    for and it can always be priced: live-cache mark, else the recorded entry —
+    a neutral 0-PnL close. Writing exit_price=None here instead produced the
+    E0006-E0016 "closed with no PnL" rows, which drop out of the equity curve AND
+    the promotion gate.
+    """
     _insert_paper_trade(
         "P-SWEEP-NONE",
         asset="SOL",
+        entry_price=72.0,
+        signal_exit_price=None,
+        signal_data={
+            "pending_close_reconcile": True,
+            "pending_close_reconcile_at": _iso(60),
+        },
+    )
+
+    scanner_mod.sweep_pending_close_reconcile()
+    trade = _get_trade("P-SWEEP-NONE")
+    assert trade["status"] == "CLOSED"
+    assert trade["exit_price"] == 72.0          # priced at entry, not fabricated
+    sd = json.loads(trade["signal_data"])
+    assert sd["close_incomplete"] is False
+
+
+def test_sweep_marks_incomplete_only_when_no_price_anywhere(forven_db):
+    """With NO recoverable price anywhere — not even an entry — the sweep must
+    still close (so the book doesn't hang) but flag it incomplete rather than
+    fabricate a fill."""
+    _insert_paper_trade(
+        "P-SWEEP-NONE",
+        asset="SOL",
+        entry_price=None,
         signal_exit_price=None,
         signal_data={
             "pending_close_reconcile": True,

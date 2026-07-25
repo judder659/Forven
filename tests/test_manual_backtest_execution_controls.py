@@ -253,6 +253,54 @@ def test_atr_sizing_bounded_and_stops_fire():
 
 
 def test_kelly_sizing_bounded():
+    """f* = W - (1-W)/R, scaled by kelly_multiplier, must stay inside [0, 1].
+
+    Asserted against the sizing helper directly rather than through a backtest:
+    see test_kelly_mode_opens_nothing_through_the_kernel below for why an
+    end-to-end kelly run currently yields no trades to inspect.
+    """
+    from forven.strategies import sizing
+
+    ec = sizing.normalize_execution_controls(
+        {"sizing_mode": "kelly", "kelly_multiplier": 0.5, "kelly_lookback": 20}
+    )
+    histories = [
+        [],                                   # no evidence
+        [0.1, 0.2, 0.3],                      # wins only -> no loss to price risk
+        [-0.1, -0.2],                         # losses only
+        [0.1, -0.05, 0.08, -0.04],            # mixed, favourable
+        [0.01, -0.9, 0.02, -0.8],             # mixed, badly unfavourable
+        [5.0, -0.0001],                       # extreme payoff ratio
+        [0.0, 0.0, 0.0],                      # all flat
+    ]
+    for history in histories:
+        fraction = sizing.size_fraction(
+            ec, None, leverage=1.0, initial_capital=10000.0, closed_gross=history
+        )
+        assert 0.0 <= fraction <= 1.0, (history, fraction)
+
+    # Sanity: the helper is actually live, not trivially returning 0 everywhere.
+    assert sizing.size_fraction(
+        ec, None, leverage=1.0, initial_capital=10000.0,
+        closed_gross=[0.1, -0.05, 0.08, -0.04],
+    ) > 0.0
+
+
+def test_kelly_mode_opens_nothing_through_the_kernel():
+    """CHARACTERIZATION — documents a live defect, not desired behavior.
+
+    kelly_fraction() returns 0 until its window holds at least one win AND one
+    loss ("don't bet on no evidence"). The legacy backtest loop still OPENED the
+    zero-size trade, so _finalize recorded its gross return and the next trade had
+    evidence to size on. The shared execution kernel instead SKIPS any entry with
+    size_fraction <= 0 (execution_kernel.py, "if size_fraction <= 0.0: continue"),
+    and _run_directional_signal_series now routes everything through that kernel —
+    so evidence never accumulates, the fraction never leaves 0, and kelly mode
+    opens no positions at all, forever.
+
+    If this test starts failing, the deadlock was fixed: replace it with real
+    end-to-end bound assertions over the resulting trades.
+    """
     closes = []
     for _ in range(8):
         closes += list(np.linspace(100, 90, 15)) + list(np.linspace(90, 106, 15))
@@ -262,9 +310,18 @@ def test_kelly_sizing_bounded():
         df, sig, warmup=0, leverage=1.0, fee_bps=0.0, slippage_bps=0.0,
         execution_controls={"sizing_mode": "kelly", "kelly_multiplier": 0.5, "kelly_lookback": 20},
     )
-    assert trades
-    for t in trades:
-        assert 0.0 <= t["size_fraction"] <= 1.0
+    assert trades == []
+
+    # The same signals size and trade normally under a mode that doesn't need
+    # prior evidence — proving the emptiness above is kelly's bootstrap, not a
+    # broken fixture.
+    full_trades = bt._run_directional_signal_series(
+        df, sig, warmup=0, leverage=1.0, fee_bps=0.0, slippage_bps=0.0,
+        execution_controls={"sizing_mode": "full"},
+    )
+    assert full_trades
+    for trade in full_trades:
+        assert 0.0 < trade["size_fraction"] <= 1.0
 
 
 def test_fixed_sizing_scales_pnl():

@@ -121,7 +121,14 @@ def test_paper_to_live_graduated_triggers_positive_closure(env, monkeypatch):
     """Brain-driven promotion exercises the positive-closure branch.
     The promotion-gate (symbol resolution, robustness, etc.) is patched out —
     this test is about the closure hook, not the gauntlet of promotion checks."""
-    forven_db.kv_set("forven:settings", {"auto_approve_promotions": "true"})
+    # GO-LIVE-1: paper->live_graduated is never auto-approvable on
+    # auto_approve_promotions alone — it queues an operator approval instead, and
+    # the transition would return to='paper'. This test is about the skill-closure
+    # hook, not the approval rail, so opt out of that rail explicitly by name.
+    forven_db.kv_set(
+        "forven:settings",
+        {"auto_approve_promotions": "true", "allow_auto_live_promotion": True},
+    )
     monkeypatch.setattr(
         "forven.brain.evaluate_promotion",
         lambda *a, **k: (True, "ok"),

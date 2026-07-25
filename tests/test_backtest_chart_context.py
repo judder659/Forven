@@ -265,6 +265,11 @@ def test_chart_context_warns_when_local_ohlcv_is_missing(forven_db, _isolate_for
 
 	import forven.api_core as api_core
 
+	# create_strategy_container refuses a symbol that is in neither the data lake
+	# nor the symbol registry, and this test's whole point is that the 1h series is
+	# absent. Seed BTC at a DIFFERENT timeframe so the symbol is known to be a real
+	# market, while the 1h series the chart asks for stays genuinely missing.
+	_seed_local_candles(symbol="BTC", timeframe="4h")
 	strategy_id = _seed_strategy(strategy_type="macd", params={"fast": 12, "slow": 26, "signal": 9})
 	_insert_result_row(
 		result_id="missing-ohlcv",
@@ -320,9 +325,11 @@ def test_chart_context_fetches_remote_ohlcv_when_local_dataset_is_unreadable(for
 	import forven.api_core as api_core
 	import forven.data as data_mod
 
-	monkeypatch.setattr(data_mod, "pa", None)
-	monkeypatch.setattr(data_mod, "pq", None)
-
+	# NOTE: pyarrow is deliberately NOT disabled here. "Unreadable" in this test
+	# means a CORRUPT parquet file (the broken bytes below); the refetched frame
+	# still has to be written and read back through pyarrow, so nulling data_mod.pa
+	# / data_mod.pq would make the remote fetch unreadable too and yield 0 bars.
+	# The pyarrow-missing case is covered by the preceding test.
 	unreadable_path = data_mod.parquet_path("DOT/USDT", "1h")
 	unreadable_path.parent.mkdir(parents=True, exist_ok=True)
 	unreadable_path.write_bytes(b"PAR1broken-dot-data")

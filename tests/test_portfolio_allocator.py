@@ -230,9 +230,15 @@ def _mock_live_open_path(monkeypatch, scanner, calls):
 def _live_open(scanner):
     from forven.strategies.paper_reconcile import ReconcileAction
 
+    # stop_price is deliberately TIGHT (0.5% away). LIVE-CLAMP-1 caps live entries
+    # at 2% of equity ($200 here) of loss-at-stop; a 3-point stop would clamp
+    # 100 units -> 66.67 and 200 units -> 66.67, so both allocator assertions below
+    # would be measuring the clamp instead of the allocation multiplier. At $0.50
+    # of risk per unit even the fully-scaled 200-unit case risks $100 and stays
+    # under the cap, leaving the multiplier as the only thing moving the size.
     action = ReconcileAction(
         "open", "long", "2024-01-01T00:00:00+00:00",
-        position={"entry_price": 100.0, "size_fraction": 0.5, "stop_price": 97.0,
+        position={"entry_price": 100.0, "size_fraction": 0.5, "stop_price": 99.5,
                   "target_price": 105.0, "entry_bar": 10},
     )
     return scanner._kernel_open_live_trade(

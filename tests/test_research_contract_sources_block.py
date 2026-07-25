@@ -1,9 +1,9 @@
 from forven.research_contract import get_research_sources_block, default_research_settings
 
 
-def test_defaults_contain_all_four_sources():
+def test_defaults_contain_every_gated_source():
     block = default_research_settings()["research_sources"]
-    assert set(block.keys()) == {"reddit", "blog", "github", "forum"}
+    assert set(block.keys()) == {"reddit", "blog", "podcast", "github", "forum"}
     # Enabled by default — matches youtube, which has no per-source gate.
     # Operators can still disable individual sources via the Research Settings UI.
     assert all(block[k]["enabled"] is True for k in block)

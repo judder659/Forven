@@ -788,8 +788,12 @@ class TestCloseAllPositionsPartialFailure:
         # Real close_position responses carry exit_price (the actual avgPx fill) and
         # mid alongside close_price (the padded IOC LIMIT). The booked price must be
         # the FILL — booking close_price fabricated off-market exits (E0001/E0002).
+        # filled_size is REQUIRED for the close to count as complete: an IOC
+        # response without it is ambiguous, and execution_results.parse_close_receipt
+        # deliberately treats the whole requested size as residual rather than
+        # releasing local exposure the venue may still be holding.
         fake_hl.close_position = lambda coin, size, side, **kwargs: {
-            "close_price": 51500, "exit_price": 50000, "mid": 49990,
+            "close_price": 51500, "exit_price": 50000, "mid": 49990, "filled_size": size,
         }
 
         with patch.dict(sys.modules, {"forven.exchange.hyperliquid": fake_hl}):
@@ -910,7 +914,10 @@ class TestCloseAllPositionsPartialFailure:
         }
         responses = [
             {"error": "temporary timeout"},
-            {"close_price": 1.29, "exit_price": 1.25, "mid": 1.249, "status": "ok"},
+            # filled_size confirms the venue quantity — without it the retry loop
+            # correctly reads the close as unconfirmed and keeps widening.
+            {"close_price": 1.29, "exit_price": 1.25, "mid": 1.249, "status": "ok",
+             "filled_size": 3.0},
         ]
         calls: list[tuple[str, float, str]] = []
 

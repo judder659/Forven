@@ -26,11 +26,15 @@ def test_run_brain_task_uses_saved_brain_agent_selection_by_default(forven_db, m
 
     captured: dict[str, str] = {}
 
-    async def _fake_call_with_tools(provider, model, messages, context, tools=None):
+    # Mirrors agents.runner._call_with_tools: it also takes agent_id/trace/
+    # transcript and returns (text, usage). **kwargs keeps this stub from
+    # breaking the next time a keyword is threaded through the brain call.
+    async def _fake_call_with_tools(provider, model, messages, context, tools=None, **kwargs):
         captured["provider"] = provider
         captured["model"] = model
         captured["message"] = messages[-1]["content"]
-        return "ok"
+        captured["agent_id"] = kwargs.get("agent_id")
+        return "ok", {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
 
     monkeypatch.setattr("forven.context.build_brain_context", lambda *_: "ctx")
     monkeypatch.setattr("forven.brain._get_completed_agent_tasks", lambda: [])
@@ -67,10 +71,10 @@ def test_run_brain_task_respects_explicit_payload_override(forven_db, monkeypatc
 
     captured: dict[str, str] = {}
 
-    async def _fake_call_with_tools(provider, model, messages, context, tools=None):
+    async def _fake_call_with_tools(provider, model, messages, context, tools=None, **kwargs):
         captured["provider"] = provider
         captured["model"] = model
-        return "ok"
+        return "ok", {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
 
     monkeypatch.setattr("forven.context.build_brain_context", lambda *_: "ctx")
     monkeypatch.setattr("forven.brain._get_completed_agent_tasks", lambda: [])

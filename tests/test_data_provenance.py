@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 import forven.data_provenance as dp
+from forven.engine_provenance import BACKTEST_ENGINE_VERSION
 
 
 @pytest.fixture()
@@ -102,7 +103,18 @@ def test_verdict_reader_refuses_stale_data_rows(forven_db, monkeypatch):
             (
                 "cs-stale",
                 json.dumps({"status": "succeeded", "verdict": "PASS", "degradation_pct": 5.0}),
-                json.dumps({"engine_version": 2, dp.DATA_FINGERPRINT_KEY: "oldsemantics"}),
+                # Stamp the CURRENT engine version, not a literal: this test isolates
+                # DATA provenance, so the row must not also be rejected as
+                # engine-stale. A hardcoded version silently turns this into a
+                # vacuous test on the next engine re-baseline (v2->v5 did exactly
+                # that — the negative assertion kept passing for the wrong reason
+                # while the positive one failed).
+                json.dumps(
+                    {
+                        "engine_version": BACKTEST_ENGINE_VERSION,
+                        dp.DATA_FINGERPRINT_KEY: "oldsemantics",
+                    }
+                ),
             ),
         )
 

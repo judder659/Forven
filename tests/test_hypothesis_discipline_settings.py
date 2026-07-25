@@ -111,6 +111,10 @@ def test_block_missing_returns_all_defaults() -> None:
         # CRUX-1 allocator knobs.
         "crucible_daily_develop_budget": 150,
         "crucible_short_mode_quota_pct": 30,
+        "crucible_orthogonal_data_quota_pct": 40,
+        # SURV-QUOTA-1 instance-relative survivor-neighborhood quota.
+        "crucible_survivor_neighborhood_quota_pct": 25,
+        "survivor_neighborhood_family_cap_pct": 50,
     }
 
 

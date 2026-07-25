@@ -89,7 +89,13 @@ def test_max_rounds_emits_error(thread, monkeypatch):
             events.append(ev)
     asyncio.run(collect())
 
-    assert any(e["type"] == "error" and e.get("code") == "max_rounds" for e in events)
+    # CHAT-ROUNDS-1: exhausting the tool-round cap is a SOFT landing, not a dead
+    # turn. The session forces one final no-tools answer so the user gets a
+    # summary + "continue?" instead of an error event. The old max_rounds error is
+    # now only the fallback when that forced final itself fails.
+    assert not any(e.get("code") == "max_rounds" for e in events)
+    assert events[-1]["type"] == "done"
+    assert any(e["type"] == "assistant_token" and e["content"] for e in events)
 
 
 def test_dispatch_rejects_non_deepdive_tool(forven_db):

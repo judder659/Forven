@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import pathlib
 import sys
 
 from forven.ai_dropzone_sessions import (
@@ -120,38 +121,45 @@ def test_get_session_and_session_exists(forven_db):
     assert get_session("ADZ-9999") is None
 
 
-def test_register_custom_strategy_file_tags_session(forven_db, monkeypatch, tmp_path):
+def test_register_custom_strategy_file_tags_session(forven_db):
     sess = create_session(label="intake-session")
 
-    temp_custom_dir = tmp_path / "custom"
-    temp_custom_dir.mkdir()
-    strategy_file = temp_custom_dir / "btc_ai_dropzone_wave_test.py"
+    # register_custom_strategy_file validates in a sandbox SUBPROCESS that
+    # re-imports forven.strategies.custom from scratch, so a monkeypatched
+    # __path__ in this process is invisible to it. The module has to live in the
+    # real package dir for the call to resolve.
+    modname = "forven.strategies.custom.btc_ai_dropzone_wave_test"
+    real_custom_dir = pathlib.Path(custom_pkg.__file__).parent
+    strategy_file = real_custom_dir / "btc_ai_dropzone_wave_test.py"
     _write_custom_strategy(strategy_file)
-
-    monkeypatch.setattr(custom_pkg, "__path__", [str(temp_custom_dir)])
-    monkeypatch.setattr(custom_pkg, "__file__", str(temp_custom_dir / "__init__.py"))
 
     registry.reset()
     importlib.invalidate_caches()
-    sys.modules.pop("forven.strategies.custom.btc_ai_dropzone_wave_test", None)
+    sys.modules.pop(modname, None)
 
-    result = intake_mod.register_custom_strategy_file(
-        file_path=str(strategy_file), session_id=sess["id"]
-    )
+    try:
+        result = intake_mod.register_custom_strategy_file(
+            file_path=str(strategy_file), session_id=sess["id"]
+        )
 
-    assert result["session_id"] == sess["id"]
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT dropzone_session_id FROM strategies WHERE id = ?",
-            (result["strategy_id"],),
-        ).fetchone()
-    assert row is not None
-    assert str(row["dropzone_session_id"]) == sess["id"]
+        assert result["session_id"] == sess["id"]
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT dropzone_session_id FROM strategies WHERE id = ?",
+                (result["strategy_id"],),
+            ).fetchone()
+        assert row is not None
+        assert str(row["dropzone_session_id"]) == sess["id"]
 
-    detail = get_session_detail(sess["id"])
-    assert detail is not None
-    assert detail["strategy_count"] == 1
-    assert detail["strategies"][0]["id"] == result["strategy_id"]
+        detail = get_session_detail(sess["id"])
+        assert detail is not None
+        assert detail["strategy_count"] == 1
+        assert detail["strategies"][0]["id"] == result["strategy_id"]
+    finally:
+        strategy_file.unlink(missing_ok=True)
+        sys.modules.pop(modname, None)
+        registry.reset()
+        importlib.invalidate_caches()
 
 
 def test_register_custom_strategy_file_rejects_unknown_session(forven_db, monkeypatch, tmp_path):

@@ -24,13 +24,31 @@ import pytest
 
 import forven.scanner as sc
 from forven.db import get_db
-from forven.strategies.execution_kernel import KernelResult
+from forven.strategies.execution_kernel import KernelResult, _trade_drag, round_trip_drag
 from forven.strategies.paper_reconcile import ReconcileAction, reconcile
 
 CUTOFF = "2026-06-26 16:00:00+00:00"
 WINDOW = "2026-05-01 00:00:00+00:00"
 STALE_ENTRY = "2026-06-01 04:00:00+00:00"   # ~25 days before the cutoff
 STRAT = {"asset": "ETH", "params": {"execution_profile": {"risk_per_trade": 0.01}}}
+
+# Default paper cost assumptions these fixtures run under: 4.5bps fee + 2.0bps
+# slippage per leg at 1x leverage.
+FEE_BPS = 4.5
+SLIPPAGE_BPS = 2.0
+
+
+def _expected_price_leg(entry: float, exit_price: float, size_fraction: float, *, leverage: float = 1.0) -> float:
+    """Net (post-cost) equity-fraction PnL for a SHORT leg, kernel-exact.
+
+    Costs are NOT a flat round-trip rate: ``execution_kernel._trade_drag`` charges
+    half on the entry notional and half on the EXIT notional, so the drag depends
+    on where the trade closed. Restating a flat ``2*(fee+slip)`` here is what
+    silently rotted these expectations across the v4 cost re-baseline — deriving
+    from the kernel's own helper keeps them pinned to the real model.
+    """
+    drag = _trade_drag(round_trip_drag(FEE_BPS, SLIPPAGE_BPS, leverage), entry, exit_price)
+    return ((entry - exit_price) / entry * leverage - drag) * size_fraction
 
 
 def _kr(open_pos=None, closed=None):
@@ -131,8 +149,7 @@ def test_fill_now_close_recomputes_equity_fraction_pnl_and_flags_it(forven_db):
         out = dict(c.execute(
             "SELECT status, pnl_pct, net_pnl_pct, closed_at, signal_data FROM trades WHERE id=?",
             (tid,)).fetchone())
-    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
-    expected_eq = ((1590.0 - 1500.0) / 1590.0 - drag) * 0.5          # net, scaled by size_fraction
+    expected_eq = _expected_price_leg(1590.0, 1500.0, 0.5)          # net, scaled by size_fraction
     assert out["status"] == "CLOSED"
     assert out["closed_at"] == "2026-06-27T16:00:00+00:00"           # kernel exit-bar time
     assert out["pnl_pct"] == pytest.approx(expected_eq, rel=0.02)    # from OUR entry, equity-fraction
@@ -215,8 +232,7 @@ def test_fill_now_close_charges_funding_over_actual_holding_window(forven_db):
     )
     with get_db() as c:
         out = dict(c.execute("SELECT pnl_pct, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
-    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
-    price_leg = ((1590.0 - 1550.0) / 1590.0 - drag) * 0.5
+    price_leg = _expected_price_leg(1590.0, 1550.0, 0.5)
     expected_funding = 0.02 * 1.0 * 1.0 * 0.5  # funding_sum(0.01+0.01) * hours(1h) * lev(1) * size_fraction(0.5)
     assert out["pnl_pct"] == pytest.approx(price_leg + expected_funding, rel=1e-4)
     sd = json.loads(out["signal_data"])
@@ -241,8 +257,7 @@ def test_fill_now_close_funding_gated_by_setting(forven_db, monkeypatch):
     )
     with get_db() as c:
         out = dict(c.execute("SELECT pnl_pct, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
-    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
-    price_leg = ((1590.0 - 1550.0) / 1590.0 - drag) * 0.5
+    price_leg = _expected_price_leg(1590.0, 1550.0, 0.5)
     assert out["pnl_pct"] == pytest.approx(price_leg, rel=1e-4)
     assert json.loads(out["signal_data"])["funding_cost_pct"] == 0.0
 
@@ -333,8 +348,7 @@ def test_monitor_price_exit_also_charges_funding(forven_db):
         out = dict(c.execute(
             "SELECT pnl_pct, fill_exit_price, signal_data FROM trades WHERE id=?", (tid,)).fetchone())
     stop_price = _expected_short_stop(1590.0)
-    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
-    price_leg = ((1590.0 - stop_price) / 1590.0 - drag) * 0.5
+    price_leg = _expected_price_leg(1590.0, stop_price, 0.5)
     # The intrabar breach closes at the 14:00 bar's CLOSE (15:00), so the funding window
     # [12:00, 15:00) covers the 12:00, 13:00 AND 14:00 bars (0.03 total funding rate) —
     # the position really was held through the breach bar's funding hour.
@@ -543,8 +557,7 @@ def test_fill_now_close_uses_current_mark_for_signal_exit(forven_db):
         out = dict(c.execute(
             "SELECT status, pnl_pct, closed_at, fill_exit_price, signal_data FROM trades WHERE id=?",
             (tid,)).fetchone())
-    drag = 2.0 * (4.5 + 2.0) / 10000.0 * 1.0
-    expected_eq = ((1590.0 - 1550.0) / 1590.0 - drag) * 0.5
+    expected_eq = _expected_price_leg(1590.0, 1550.0, 0.5)
     assert out["status"] == "CLOSED"
     assert out["closed_at"] == "2026-06-27T12:05:00+00:00"            # current time, NOT kernel's 16:00
     assert out["fill_exit_price"] == pytest.approx(1550.0)            # current mark, NOT kernel's 1500

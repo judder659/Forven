@@ -116,7 +116,15 @@ def test_kernel_net_pnl_subtracts_drag_exactly_once():
     assert len(res.closed_trades) == 1
     t = res.closed_trades[0]
     assert t["exit_reason"] == "signal"
-    assert t["pnl_pct"] == pytest.approx(0.097, abs=1e-9)  # 0.10 gross - 0.003 drag, drag applied ONCE
+    # Drag is charged ONCE, as two legs: half on the entry notional and half on
+    # the EXIT notional (ek._trade_drag scales the exit leg by exit/entry). At
+    # entry 100 -> exit 110 that is 0.003 * 0.5 * (1 + 1.10) = 0.00315, so net is
+    # 0.10 gross - 0.00315. Asserting the formula rather than a literal keeps
+    # this honest if the cost model is re-baselined again — a flat single-leg
+    # charge (the pre-v4 model) or a double-charge both still fail.
+    expected_drag = drag * 0.5 * (1.0 + 110.0 / 100.0)
+    assert expected_drag == pytest.approx(0.00315, abs=1e-12)
+    assert t["pnl_pct"] == pytest.approx(0.10 - expected_drag, abs=1e-9)
 
 
 def test_atr_entry_sizing_has_no_lookahead():
@@ -135,16 +143,38 @@ def test_atr_entry_sizing_has_no_lookahead():
         (107, 110, 105, 108),  # 8 — signal here → enter at bar 9 open
     ]
     normal_last = base + [(108, 109, 107, 108)]           # tame entry bar
-    wild_last = base + [(108, 250, 5, 108)]               # same OPEN, enormous range
+    wide_high = base + [(108, 250, 107, 108)]             # same OPEN, enormous UP range
+    wild_last = base + [(108, 250, 5, 108)]               # same OPEN, range pierces the stop
     sig = _long_signals(10, entries=[8], exits=[])
     ec = sizing.normalize_execution_controls(
         {"sizing_mode": "atr", "risk_per_trade": 0.02, "atr_stop_multiplier": 2.0}
     )
-    res_a = _simulate(_frame(normal_last), sig, ec)
-    res_b = _simulate(_frame(wild_last), sig, ec)
-    pos_a = res_a.open_positions["long"]
-    pos_b = res_b.open_positions["long"]
-    assert pos_a["entry_price"] == pos_b["entry_price"] == 108.0
-    # sizing + stop must be identical — they read the prior closed bar's ATR, not bar 9's.
-    assert pos_a["size_fraction"] == pos_b["size_fraction"]
-    assert pos_a["stop_price"] == pos_b["stop_price"]
+
+    def _entry_facts(res):
+        """Entry-time sizing facts, whether the position survived the bar or not.
+
+        A position that stops out INTRA-BAR is gone from open_positions by the
+        end of the run, so reading only open_positions conflates "sizing changed"
+        with "the bar happened to touch the stop". The stop of a closed-at-stop
+        trade is its exit_price.
+        """
+        pos = res.open_positions.get("long")
+        if pos is not None:
+            return pos["entry_price"], pos["size_fraction"], pos["stop_price"]
+        trade = res.closed_trades[0]
+        assert trade["exit_reason"] == "stop_loss"
+        return trade["entry_price"], trade["size_fraction"], trade["exit_price"]
+
+    entry_a, size_a, stop_a = _entry_facts(_simulate(_frame(normal_last), sig, ec))
+    entry_b, size_b, stop_b = _entry_facts(_simulate(_frame(wide_high), sig, ec))
+    entry_c, size_c, stop_c = _entry_facts(_simulate(_frame(wild_last), sig, ec))
+
+    assert entry_a == entry_b == entry_c == 108.0
+    # Sizing + stop read the prior CLOSED bar's ATR, never bar 9's own high/low.
+    # A 250-high leaves the position open; a 5-low pierces the stop and closes it
+    # intra-bar — but in both cases the entry decision must be byte-identical to
+    # the tame bar, because none of that was knowable at the open.
+    assert size_a == size_b
+    assert stop_a == stop_b
+    assert size_c == pytest.approx(size_a, rel=1e-3)  # closed rows round size_fraction
+    assert stop_c == pytest.approx(stop_a, abs=1e-9)

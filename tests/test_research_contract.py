@@ -75,6 +75,7 @@ def test_exploration_contract_keeps_constraint_memory_and_optional_inspiration()
     assert contract.allowed_external_source_types == [
         "reddit",
         "youtube",
+        "podcast",
         "blog",
         "github",
         "forum",

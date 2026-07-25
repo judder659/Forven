@@ -22,11 +22,17 @@ def _seed_passing_children(hypothesis_id: str, n: int = 4) -> None:
         for i in range(n):
             sym, tf = cells[i % len(cells)]
             sid = f"S_VW_{i}"
+            # Stage must be one of hypothesis_verdict._PASSING_STAGES for the child
+            # to count toward the hit rate. 'gauntlet' is still IN FLIGHT, so a
+            # window of gauntlet children yields hit_rate 0.0 and a 'researching'
+            # mathematical floor — and since the LLM auditor can only DOWNGRADE
+            # that floor, a 'proven' LLM response gets clamped and the memo reads
+            # 'researching'. Seed the stage these children are supposed to model.
             conn.execute(
                 """INSERT INTO strategies (id, display_id, name, type, symbol, timeframe,
                    stage, status, hypothesis_id, owner, params, metrics, verdict,
                    created_at, updated_at)
-                   VALUES (?, ?, 'n', 'rsi', ?, ?, 'gauntlet', 'active', ?, 'brain',
+                   VALUES (?, ?, 'n', 'rsi', ?, ?, 'paper', 'active', ?, 'brain',
                            '{}', '{}', '{}', datetime('now'), datetime('now'))""",
                 (sid, sid, sym, tf, hypothesis_id),
             )
@@ -95,13 +101,31 @@ def test_write_verdict_memo_malformed_json_leaves_status(forven_db):
     assert n == 0
 
 
-def test_write_verdict_memo_llm_exception_leaves_status(forven_db):
+def test_write_verdict_memo_llm_exception_falls_back_to_mathematical_floor(forven_db):
+    """An LLM outage must not freeze the hypothesis pipeline OR invent a verdict.
+
+    The auditor only ever DOWNGRADES the deterministic floor, so when it is
+    unavailable the floor stands on its own. With no children the floor is
+    'researching', so the hypothesis is left exactly where it was — but the memo
+    records that the auditor was skipped rather than silently implying it ran.
+    """
     from forven.hypothesis_verdict import write_verdict_memo
     hyp = _hyp()
     with patch("forven.hypothesis_verdict._call_llm", side_effect=RuntimeError("rate limit")):
         result = write_verdict_memo(hyp["id"])
-    assert result["ok"] is False
-    assert result["error_code"] == "llm_call_failed"
+    assert result["ok"] is True
+    assert result["hypothesis"]["status"] == "researching"   # unchanged, not promoted
+
+    with get_db() as conn:
+        memo_row = conn.execute(
+            "SELECT payload FROM hypothesis_verdict_memos WHERE hypothesis_id = ? "
+            "ORDER BY rowid DESC LIMIT 1",
+            (hyp["id"],),
+        ).fetchone()
+    memo = json.loads(memo_row["payload"])
+    assert memo["llm_unavailable"] is True
+    assert memo["llm_verdict"] is None
+    assert "rate limit" in memo["llm_error"]
 
 
 def test_write_verdict_memo_missing_hypothesis_returns_error(forven_db):

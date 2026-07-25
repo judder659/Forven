@@ -60,7 +60,11 @@ def test_startup_recovery_preflight_blocks_on_reconciliation_issues(monkeypatch)
     assert recovery["recovery_network"] == "testnet"
     assert "New entries remain blocked." in recovery["recovery_summary"]
     assert state["account_equity"] == 986.2
-    assert state["exchange_account"] == {
+    # Subset match, not exact equality: the snapshot carries a per-book breakdown
+    # ("books") alongside the aggregate, and pinning the whole dict makes every
+    # future additive field a failure in a test that is about recovery blocking.
+    account = state["exchange_account"]
+    for key, expected in {
         "accountValue": 986.2,
         "totalMarginUsed": 16.19,
         "totalNtlPos": 323.17,
@@ -68,7 +72,8 @@ def test_startup_recovery_preflight_blocks_on_reconciliation_issues(monkeypatch)
         "source": "exchange",
         "network": "testnet",
         "synced_at": state["account_equity_synced_at"],
-    }
+    }.items():
+        assert account[key] == expected, key
 
 
 def test_startup_recovery_preflight_skips_without_credentials_in_paper(monkeypatch):

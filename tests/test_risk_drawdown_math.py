@@ -1,7 +1,7 @@
 """Risk math checks for drawdown and high-water mark tracking."""
 
 from forven.db import kv_get
-from forven.exchange.risk import update_equity
+from forven.exchange.risk import _HALT_CONFIRM_TICKS, update_equity
 
 
 def test_drawdown_percent_tracks_high_water_mark(forven_db):
@@ -25,22 +25,64 @@ def test_drawdown_percent_tracks_high_water_mark(forven_db):
     assert fourth["action"] is None
 
 
-def test_kill_switch_triggers_exactly_at_drawdown_threshold(forven_db):
-    # Establish HWM at 10,000 then drop exactly 10%.
+def test_kill_switch_does_not_latch_on_a_single_breaching_tick(forven_db):
+    # HALT-CONFIRM-1: one breaching equity sample must NOT latch the kill switch.
+    # A single plausible-but-wrong read (the 2026-07-14 phantom-halt class) would
+    # otherwise stop all trading on a loss that never happened.
     update_equity(10000.0)
-    result = update_equity(9000.0)
-    assert result["drawdown_pct"] == 0.1
-    assert result["kill_switch"] is True
-    assert result["action"] == "kill_switch"
+    first = update_equity(9000.0)
+    assert first["drawdown_pct"] == 0.1        # breach is measured...
+    assert first["kill_switch"] is False       # ...but not latched
+    assert first["action"] is None
 
 
-def test_daily_loss_halt_triggers_exactly_at_limit(forven_db):
+def test_kill_switch_latches_after_confirming_ticks(forven_db):
+    # ...and it MUST still fire once the breach is confirmed, or the drawdown
+    # protection does not exist. Latches on the _HALT_CONFIRM_TICKS-th
+    # consecutive breaching tick.
+    update_equity(10000.0)
+    results = [update_equity(9000.0) for _ in range(_HALT_CONFIRM_TICKS)]
+
+    for early in results[:-1]:
+        assert early["kill_switch"] is False
+    final = results[-1]
+    assert final["drawdown_pct"] == 0.1
+    assert final["kill_switch"] is True
+    assert final["action"] == "kill_switch"
+
+
+def test_kill_switch_streak_resets_on_a_clean_tick(forven_db):
+    # The confirmation must be CONSECUTIVE: a recovering tick in the middle
+    # restarts the count, so an intermittent bad sample can never accumulate
+    # its way to a latch.
+    update_equity(10000.0)
+    for _ in range(_HALT_CONFIRM_TICKS - 1):
+        assert update_equity(9000.0)["kill_switch"] is False
+    assert update_equity(9800.0)["kill_switch"] is False   # clean tick resets
+    for _ in range(_HALT_CONFIRM_TICKS - 1):
+        assert update_equity(9000.0)["kill_switch"] is False
+    assert update_equity(9000.0)["kill_switch"] is True    # full streak from scratch
+
+
+def test_daily_loss_halt_does_not_latch_on_a_single_breaching_tick(forven_db):
     # Daily start equity set on first call; second call lands exactly at -5%.
     update_equity(10000.0)
-    result = update_equity(9500.0)
-    assert result["daily_pnl_pct"] == -0.05
-    assert result["daily_halt"] is True
-    assert result["action"] == "daily_halt"
+    first = update_equity(9500.0)
+    assert first["daily_pnl_pct"] == -0.05
+    assert first["daily_halt"] is False
+    assert first["action"] is None
+
+
+def test_daily_loss_halt_latches_after_confirming_ticks(forven_db):
+    update_equity(10000.0)
+    results = [update_equity(9500.0) for _ in range(_HALT_CONFIRM_TICKS)]
+
+    for early in results[:-1]:
+        assert early["daily_halt"] is False
+    final = results[-1]
+    assert final["daily_pnl_pct"] == -0.05
+    assert final["daily_halt"] is True
+    assert final["action"] == "daily_halt"
 
 
 def test_update_equity_persists_drawdown_and_daily_snapshot(forven_db):

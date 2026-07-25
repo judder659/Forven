@@ -37,7 +37,12 @@ def _make_strategy(
             type_="rsi",
             symbol=symbol,
             timeframe=timeframe,
-            params={},
+            # DUP-1 refuses creating a second strategy into a TRADING stage with
+            # identical type+symbol+timeframe+params (it would double exposure on
+            # every signal). These fixtures deliberately put two strategies in the
+            # same (symbol, timeframe) cell, so their params must differ — as two
+            # genuinely distinct candidates' would.
+            params={"rsi_period": 14 + sid_seed},
             stage=stage,
             hypothesis_id=hypothesis_id,
             strategy_id=f"S{50000 + sid_seed:05d}",

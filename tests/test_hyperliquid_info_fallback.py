@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 import json
-import sys
 import types
 
 import pytest
+
+from tests.hl_sdk_sandbox import swapped_hyperliquid_sdk
 
 
 class _DummyHttpResponse:
@@ -24,8 +24,25 @@ class _DummyHttpResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
-@pytest.fixture
-def hl_module(monkeypatch):
+_FAKE_SDK_MODULE_NAMES = (
+    "hyperliquid",
+    "hyperliquid.exchange",
+    "hyperliquid.info",
+    "hyperliquid.utils",
+    "hyperliquid.utils.constants",
+    "hyperliquid.utils.types",
+)
+
+
+def _build_fake_sdk() -> dict[str, types.ModuleType]:
+    """A stand-in `hyperliquid` SDK whose Info() bootstrap always blows up.
+
+    Must mirror EVERY symbol forven/exchange/hyperliquid.py imports at module
+    scope, or the reload below dies with ModuleNotFoundError before any test
+    body runs. `Cloid` (hyperliquid.utils.types) was added to the connector for
+    idempotent client order ids and is easy to miss here — if this fixture ever
+    errors at setup again, diff its imports against the connector's.
+    """
     root = types.ModuleType("hyperliquid")
     root.__path__ = []
 
@@ -49,27 +66,57 @@ def hl_module(monkeypatch):
     info_mod.Info = _BrokenInfo
 
     utils_mod = types.ModuleType("hyperliquid.utils")
+    utils_mod.__path__ = []
     constants_mod = types.ModuleType("hyperliquid.utils.constants")
     constants_mod.TESTNET_API_URL = "https://test.hyperliquid.local"
     constants_mod.MAINNET_API_URL = "https://main.hyperliquid.local"
-    utils_mod.constants = constants_mod
 
+    types_mod = types.ModuleType("hyperliquid.utils.types")
+
+    class _DummyCloid:
+        def __init__(self, raw: str):
+            self._raw = str(raw)
+
+        @classmethod
+        def from_str(cls, raw: str) -> "_DummyCloid":
+            return cls(raw)
+
+        def to_raw(self) -> str:
+            return self._raw
+
+        def __eq__(self, other) -> bool:
+            return isinstance(other, _DummyCloid) and other._raw == self._raw
+
+        def __repr__(self) -> str:  # pragma: no cover - debugging aid
+            return f"Cloid({self._raw!r})"
+
+    types_mod.Cloid = _DummyCloid
+
+    utils_mod.constants = constants_mod
+    utils_mod.types = types_mod
     root.exchange = exchange_mod
     root.info = info_mod
     root.utils = utils_mod
 
-    monkeypatch.setitem(sys.modules, "hyperliquid", root)
-    monkeypatch.setitem(sys.modules, "hyperliquid.exchange", exchange_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.info", info_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.utils", utils_mod)
-    monkeypatch.setitem(sys.modules, "hyperliquid.utils.constants", constants_mod)
+    return {
+        "hyperliquid": root,
+        "hyperliquid.exchange": exchange_mod,
+        "hyperliquid.info": info_mod,
+        "hyperliquid.utils": utils_mod,
+        "hyperliquid.utils.constants": constants_mod,
+        "hyperliquid.utils.types": types_mod,
+    }
 
-    sys.modules.pop("forven.exchange.hyperliquid", None)
-    import forven.exchange.hyperliquid as hl
 
-    module = importlib.reload(hl)
-    yield module
-    sys.modules.pop("forven.exchange.hyperliquid", None)
+@pytest.fixture
+def hl_module():
+    """The connector imported against a broken-SDK stand-in, fully restored after.
+
+    Restoration is delegated to swapped_hyperliquid_sdk because getting it wrong
+    is invisible here and fatal elsewhere — see that module's docstring.
+    """
+    with swapped_hyperliquid_sdk(_build_fake_sdk()) as module:
+        yield module
 
 
 def test_get_account_value_uses_direct_info_fallback_when_sdk_bootstrap_breaks(hl_module, monkeypatch):
@@ -119,18 +166,32 @@ def test_get_account_value_uses_direct_info_fallback_when_sdk_bootstrap_breaks(h
     assert account["withdrawable"] == 1002.68
 
 
-def test_build_info_client_logs_fallback_warning_once_per_process(hl_module, monkeypatch):
+def test_build_info_client_logs_fallback_notice_once_per_process(hl_module, monkeypatch):
     hl = hl_module
+    infos: list[str] = []
     warnings: list[str] = []
 
-    def _fake_warning(message, *args):
-        warnings.append(message % args if args else str(message))
+    def _record(sink):
+        def _log(message, *args):
+            sink.append(message % args if args else str(message))
 
-    monkeypatch.setattr(hl.log, "warning", _fake_warning)
+        return _log
+
+    monkeypatch.setattr(hl.log, "info", _record(infos))
+    monkeypatch.setattr(hl.log, "warning", _record(warnings))
 
     first = hl._build_info_client("https://test.hyperliquid.local")
     second = hl._build_info_client("https://test.hyperliquid.local")
 
     assert first is second
     assert first.__class__.__name__ == "_HyperliquidDirectInfoClient"
-    assert len(warnings) == 1
+
+    # The once-per-process contract: the SDK bootstrap failure is announced on
+    # the FIRST build and suppressed thereafter (_warn_once keys on the url).
+    fallback_notices = [m for m in infos if "direct /info fallback client" in m]
+    assert len(fallback_notices) == 1
+
+    # Deliberately INFO, not WARNING: the testnet spot-meta "list index out of
+    # range" quirk is transparently handled by the direct /info client, and
+    # logging it at WARNING made operators think a healthy exchange was broken.
+    assert warnings == []

@@ -31,9 +31,18 @@ from forven.policy import (
     load_pipeline_config,
     save_pipeline_config,
 )
+from tests.gauntlet_artifact_fixtures import insert_gauntlet_artifacts
 
 
-def _insert_strategy(conn, sid, *, metrics=None, stage="paper_trading", stage_changed_at="DEFAULT"):
+def _insert_strategy(
+    conn,
+    sid,
+    *,
+    metrics=None,
+    stage="paper_trading",
+    stage_changed_at="DEFAULT",
+    with_artifacts=None,
+):
     if stage_changed_at == "DEFAULT":
         stage_changed_at = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     conn.execute(
@@ -50,16 +59,41 @@ def _insert_strategy(conn, sid, *, metrics=None, stage="paper_trading", stage_ch
         ),
     )
     conn.commit()
+    # A strategy sitting in paper_trading reached that stage THROUGH the gauntlet,
+    # so it has persisted validation artifacts. The paper->live gate now requires
+    # them (_strict_robustness_reject rejects with "robustness evidence
+    # unavailable" before any PF/overfitting arithmetic runs), so a fixture
+    # without them asserts nothing about the knob under test.
+    if with_artifacts is None:
+        with_artifacts = stage == "paper_trading"
+    if with_artifacts:
+        insert_gauntlet_artifacts(conn, sid)
 
 
 def _insert_paper_trades(conn, sid, pnls):
     base = datetime.now(timezone.utc) - timedelta(days=20)
+    # policy._PARITY_PNL_FILTER only counts rows whose signal_data marks pnl_pct as
+    # a NET equity fraction — the shared-kernel parity contract. Rows without the
+    # marker are legacy margin-fraction numbers and are excluded from every gate
+    # sample, so an unmarked fixture reads as "0/10 closed trades".
+    signal_data = json.dumps({"pnl_is_equity_fraction": 1})
     for i, pnl in enumerate(pnls):
         closed_at = (base + timedelta(hours=i)).isoformat()
         conn.execute(
             "INSERT INTO trades (id, strategy_id, strategy, asset, direction, status, pnl_pct, "
-            "execution_type, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (f"t-{sid}-{i}", sid, sid, "BTC/USDT", "long", "CLOSED", pnl, "paper", closed_at),
+            "execution_type, closed_at, signal_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"t-{sid}-{i}",
+                sid,
+                sid,
+                "BTC/USDT",
+                "long",
+                "CLOSED",
+                pnl,
+                "paper",
+                closed_at,
+                signal_data,
+            ),
         )
     conn.commit()
 
@@ -386,6 +420,8 @@ def test_check_paper_trades_window_falls_back_to_created_at(forven_db):
             )
         conn.commit()
 
-    ok, detail = policy._check_paper_trades("p-window-fallback")
+    # _check_paper_trades returns (ok, detail, extra) — `extra` is the progress
+    # payload the readiness UI renders (current/threshold/direction/unit).
+    ok, detail, _extra = policy._check_paper_trades("p-window-fallback")
     assert not ok
-    assert detail.startswith("Insufficient paper trades: 0/")
+    assert str(detail).startswith("Insufficient paper trades: 0/")

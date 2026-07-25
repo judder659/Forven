@@ -19,6 +19,7 @@ from forven.policy import (
     _evaluate_quick_screen_gate,
     load_pipeline_config,
 )
+from tests.gauntlet_artifact_fixtures import insert_gauntlet_artifacts
 
 
 def _insert_strategy(conn, sid, *, metrics=None, stage="paper_trading", stage_changed_at="DEFAULT"):
@@ -34,16 +35,26 @@ def _insert_strategy(conn, sid, *, metrics=None, stage="paper_trading", stage_ch
         ),
     )
     conn.commit()
+    # A paper-stage strategy reached that stage through the gauntlet, so it has
+    # persisted validation artifacts. Without them the paper->live gate short-
+    # circuits on "robustness evidence unavailable" and never reaches the
+    # forward-edge floors these tests assert.
+    if stage == "paper_trading":
+        insert_gauntlet_artifacts(conn, sid)
 
 
 def _insert_paper_trades(conn, sid, pnls):
     base = datetime.now(timezone.utc) - timedelta(days=20)
+    # policy._PARITY_PNL_FILTER only counts rows whose signal_data marks pnl_pct
+    # as a NET equity fraction (the shared-kernel parity contract); unmarked rows
+    # are excluded from every gate sample.
+    signal_data = json.dumps({"pnl_is_equity_fraction": 1})
     for i, pnl in enumerate(pnls):
         conn.execute(
             "INSERT INTO trades (id, strategy_id, strategy, asset, direction, status, pnl_pct, "
-            "execution_type, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "execution_type, closed_at, signal_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (f"t-{sid}-{i}", sid, sid, "BTC/USDT", "long", "CLOSED", pnl, "paper",
-             (base + timedelta(hours=i)).isoformat()),
+             (base + timedelta(hours=i)).isoformat(), signal_data),
         )
     conn.commit()
 

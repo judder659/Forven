@@ -180,7 +180,10 @@ def test_run_agent_task_uses_research_context_for_research_tasks(forven_db, monk
         calls.append(("research", contract.lane, list(contract.available_datasets)))
         return "research-context"
 
-    async def _fake_call_with_tools(provider, model_id, messages, system, tools=None):
+    # **kwargs absorbs agent_id/trace/transcript — the real _call_with_tools takes
+    # them, and a stub with a frozen signature turns a passing test into a
+    # swallowed TypeError that surfaces only as a missing "response" key.
+    async def _fake_call_with_tools(provider, model_id, messages, system, tools=None, **kwargs):
         calls.append(("call", system))
         return ("done", {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
 
