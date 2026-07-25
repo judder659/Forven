@@ -54,7 +54,7 @@ dependencies = [
 
 [project.optional-dependencies]
 discord = ["discord.py>=2.3"]
-test = ["pytest>=8.0", "pytest-asyncio>=1.3,<2"]
+test = ["pytest>=8.0", "pytest-asyncio>=1.3,<2", "pytest-xdist>=3.6"]
 
 [project.scripts]
 forven = "forven.cli:cli"

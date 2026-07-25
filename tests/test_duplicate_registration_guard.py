@@ -65,9 +65,16 @@ def test_promotion_gate_blocks_duplicate_into_trading_stage(forven_db, monkeypat
     trading must be blocked from entering paper (this is exactly how S05275/S05276
     became doubled exposure)."""
     import forven.brain as brain
+    import forven.strategies.registry as registry
 
     monkeypatch.setattr(brain, "verify_backtest_exists_for_stage_transition",
                         lambda *a, **k: (True, ""))
+    # 'donchian_breakout' is only a REGISTERED runtime type on a machine carrying
+    # local (gitignored) custom strategy modules. On a clean checkout — CI, or any
+    # fresh clone — transition_stage's runtime-loadability gate fires first and the
+    # DUP-1 gate under test is never reached. Stub the loadability check so this
+    # test measures the duplicate guard rather than the operator's scratch dir.
+    monkeypatch.setattr(registry, "runtime_unloadable_reason", lambda *a, **k: None)
     with get_db() as conn:
         _create(conn, stage="paper")
         sid2, _, _ = _create(conn, stage="gauntlet")

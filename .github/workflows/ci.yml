@@ -44,7 +44,7 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     steps:
       - name: Check out repository
@@ -68,87 +68,21 @@ jobs:
       - name: Collect backend tests
         run: python -m pytest --collect-only -q
 
-      - name: Run backend release stability tests
-        run: |
-          python -m pytest -q \
-            tests/test_db_kv_bootstrap.py \
-            tests/test_bot_loop_resilience.py \
-            tests/test_bot_stale_recovery_loop.py \
-            tests/test_discord_owner_guard.py \
-            tests/test_notification_renderers.py \
-            tests/test_brain_router.py \
-            tests/test_lab_worker_service.py \
-            tests/test_url_ingest.py \
-            tests/test_url_ingest_research_enqueue.py \
-            tests/test_scheduler_background_jobs.py \
-            tests/test_gauntlet_legitimacy.py \
-            tests/test_robustness_router.py \
-            tests/test_pipeline_hardening.py::test_failed_walk_forward_verdict_is_fold_rescued_when_oos_folds_pass \
-            tests/test_pipeline_hardening.py::test_evaluate_promotion_accepts_persisted_validation_artifacts_for_paper \
-            tests/test_pipeline_hardening.py::test_evaluate_promotion_blocks_failed_required_verdict_tests_for_paper
-
-      - name: Run async runtime regression tests
-        run: |
-          python -m pytest -q \
-            tests/test_daemon_price_freshness.py \
-            tests/test_loop_starvation_fixes.py
-
-      # Real-money execution integrity: ambiguous/partial IOC responses must
-      # never release local exposure or remove the last protective order.
-      - name: Run capital-integrity regression tests
-        run: |
-          python -m pytest -q \
-            tests/test_execution_results.py \
-            tests/test_paper_control.py \
-            tests/test_open_trades_exchange_verification.py \
-            tests/test_live_entry_finalization.py \
-            tests/test_kill_switch_close_integrity.py \
-            tests/test_mtier_hardening.py \
-            tests/test_engine_audit_phase1.py
-
-      # Data-engine regression gate — locks in the 2026-07 data hardening + edge-data
-      # expansion (tail-append storage, perp canonicalization, causality shifts,
-      # quality gates, fingerprints, symbol registry, basis/IV streams, kernel
-      # intra-bar arbitration) AND the hub/legacy engine-on parity suite, which is the
-      # stated prerequisite for flipping data_engine.enabled. Network-free: the
-      # autobackfill/registry network paths are pytest-gated, everything runs on tmp
-      # lakes (~90s).
-      - name: Run data-engine regression tests
-        run: |
-          python -m pytest -q \
-            tests/test_data_hardening.py \
-            tests/test_data_remaining_phases.py \
-            tests/test_research_universe.py \
-            tests/test_edge_data_runs.py \
-            tests/test_data_manager.py \
-            tests/test_data_coverage.py \
-            tests/test_dataeng_foundation.py \
-            tests/test_enrichment_causality.py \
-            tests/test_enrich_backtest_frame.py \
-            tests/test_data_engine_p2_hardening.py \
-            tests/test_orderflow_lookahead.py \
-            tests/test_binance_vision.py \
-            tests/test_keepalive_staleness.py \
-            tests/test_ohlcv_keepalive_gate.py \
-            tests/test_data_root_unified.py
-
-      # Security regression gate — locks in the 2026-06 security-hardening work so a
-      # regression fails the PR. Fast (~10s), no sandbox-worker subprocess / heavy data
-      # deps, so it is safe on the CI runner. Covers: the AST guard (every confirmed
-      # bypass family stays blocked; the R3-de-allowlisted forven.scanner/data/
-      # data_manager/sentiment stay rejected; the indicator facade stays allowed), the
-      # strategy-worker DB jail, the custom-module intake guard, secret redaction, the
-      # SIZE-1 stop-floor, and the KCOPY-3 impure-strategy fail-closed.
-      - name: Run security regression tests
-        run: |
-          python -m pytest -q \
-            tests/test_sandbox_ast_guard.py \
-            tests/test_ast_guard_bypasses.py \
-            tests/test_strategy_worker_db_jail.py \
-            tests/test_registry_custom_module_guard.py \
-            tests/test_redact.py \
-            tests/test_sizing.py \
-            tests/test_per_bar_kernel_adapter.py
+      # The WHOLE suite gates now, not a hand-curated allowlist. It previously ran
+      # 44 of 546 files (810 of 5769 tests); the ungated 86% accumulated 69
+      # failures against deliberate product changes nobody was told about --
+      # including the only tests asserting that the kill switch fires, that the
+      # paper->live gate enforces its floors, and that the funding math is right.
+      # A curated list cannot notice the test it was never given.
+      #
+      # -n auto shards across the runner's cores (the suite is ~28m serial).
+      # --dist loadfile keeps each FILE on one worker: several suites share
+      # module-level state (the HyperLiquid SDK fixtures rebuild
+      # forven.exchange.hyperliquid), so splitting a file across workers is not
+      # safe yet. Order-independence is not something this suite has earned;
+      # revisit --dist load once it has.
+      - name: Run backend test suite
+        run: python -m pytest -q -n auto --dist loadfile
 
   frontend:
     runs-on: ubuntu-latest

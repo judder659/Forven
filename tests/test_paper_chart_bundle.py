@@ -139,7 +139,16 @@ def test_short_only_strategy_emits_full_history_triggers():
     only strategy produced ZERO trades → NO trigger triangles (the 'no triangles on the
     chart' bug). The trade mode must be resolved from the strategy."""
     import numpy as np
-    from forven.strategies.custom.ETH_emabreakatrshort_s157270 import STRATEGY_CLASS
+
+    # forven/strategies/custom/ is gitignored user scratch: this module exists only
+    # on a machine that authored it, so a clean checkout (CI, a fresh clone) cannot
+    # import it. Skip rather than fail — the regression is real, but it can only be
+    # exercised where the strategy file is present.
+    custom = pytest.importorskip(
+        "forven.strategies.custom.ETH_emabreakatrshort_s157270",
+        reason="local custom strategy module not present in this checkout",
+    )
+    STRATEGY_CLASS = custom.STRATEGY_CLASS
 
     n = 600
     idx = pd.date_range("2026-05-01", periods=n, freq="1h", tz="UTC")
