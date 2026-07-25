@@ -88,16 +88,32 @@ def test_callback_listener_notifies_callback_side_effect():
         listener.shutdown()
 
 
+def _free_port() -> int:
+    """A port nobody is using, chosen by the OS.
+
+    These tests used to hardcode 1455. On Linux a just-closed listener leaves the
+    port in TIME_WAIT, so a plain bind() to the same number fails with
+    EADDRINUSE (errno 98) — Windows is more forgiving, which is why it only ever
+    broke in CI. Asking the kernel for a fresh port per test removes both the
+    TIME_WAIT race and any collision with whatever else the runner has open.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
 def test_callback_listener_shutdown_releases_port():
     from forven.auth.callback_listener import LoopbackCallbackListener
 
-    listener = LoopbackCallbackListener(port=1455, ttl_seconds=10)
+    port = _free_port()
+    listener = LoopbackCallbackListener(port=port, ttl_seconds=10)
     listener.start()
     listener.shutdown()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("127.0.0.1", 1455))
+        sock.bind(("127.0.0.1", port))
     finally:
         sock.close()
 
@@ -105,11 +121,16 @@ def test_callback_listener_shutdown_releases_port():
 def test_callback_listener_bind_failure_signaled():
     from forven.auth.callback_listener import LoopbackCallbackListener
 
+    port = _free_port()
     blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    blocker.bind(("127.0.0.1", 1455))
+    # Deliberately NO SO_REUSEADDR here: the blocker must hold the port
+    # EXCLUSIVELY so the listener's bind genuinely fails. On Windows
+    # SO_REUSEADDR behaves like SO_REUSEPORT and would let the listener bind the
+    # same port anyway, making this assert vacuous.
+    blocker.bind(("127.0.0.1", port))
     blocker.listen(1)
     try:
-        listener = LoopbackCallbackListener(port=1455, ttl_seconds=2)
+        listener = LoopbackCallbackListener(port=port, ttl_seconds=2)
         ok = listener.start()
         assert ok is False
         assert listener.bind_error is not None

@@ -51,7 +51,11 @@ def test_walk_forward_returns_valid_structure(monkeypatch, forven_db):
     def _full_candles(*_args, **_kwargs):
         return _fake_ohlcv(1000)
 
-    monkeypatch.setattr("forven.scanner.fetch_candles", _full_candles)
+    # walk_forward loads through backtest.load_backtest_candles, NOT
+    # scanner.fetch_candles — stubbing the latter is decorative and lets the real
+    # loader run, which falls through the (empty on CI) lake to a live Binance
+    # fetch and dies on HTTP 451 from a geo-blocked runner.
+    monkeypatch.setattr("forven.strategies.backtest.load_backtest_candles", _full_candles)
 
     result = walk_forward(
         strategy_id="wf-valid",
@@ -95,7 +99,11 @@ def test_walk_forward_gap_reduces_effective_oos(monkeypatch, forven_db):
     def _candles(*_args, **_kwargs):
         return _fake_ohlcv(1000)
 
-    monkeypatch.setattr("forven.scanner.fetch_candles", _candles)
+    # walk_forward loads through backtest.load_backtest_candles, NOT
+    # scanner.fetch_candles — stubbing the latter is decorative and lets the real
+    # loader run, which falls through the (empty on CI) lake to a live Binance
+    # fetch and dies on HTTP 451 from a geo-blocked runner.
+    monkeypatch.setattr("forven.strategies.backtest.load_backtest_candles", _candles)
 
     baseline = walk_forward("wf-gap", "BTC", "rsi_momentum", {}, total_bars=1000, n_splits=2)
     gapped = walk_forward(

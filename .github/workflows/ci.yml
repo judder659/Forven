@@ -61,6 +61,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-ci.txt
+          # Install the package itself (deps already pinned above, hence --no-deps).
+          # Without this `forven` is importable only because pytest runs from the
+          # repo root -- a SUBPROCESS does not inherit that, so the sandbox
+          # (forven/sandbox) fails with "No module named 'forven'" and every test
+          # that executes strategy code through it dies. Only visible once the
+          # whole suite gates; the previous 44-file allowlist ran none of them.
+          python -m pip install -e . --no-deps
 
       - name: Run Ruff
         run: ruff check forven tests
