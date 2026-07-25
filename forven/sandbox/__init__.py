@@ -18,7 +18,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Resource limits (ulimit only applies to Linux)
 MAX_CPU_SECONDS = 30
-MAX_MEMORY_MB = 512
+# NOTE: on POSIX this is applied as RLIMIT_AS, which caps VIRTUAL ADDRESS SPACE,
+# not resident memory. numpy/pandas reserve far more address space than they ever
+# fault in (BLAS thread arenas, mmap'd allocator pools), so the previous 512 MB
+# made `import pandas` itself fail inside the sandbox on Linux — every self-heal
+# validation and manual-strategy registration was dead on that platform, and
+# every strategy starts with `import pandas as pd`. Windows was unaffected
+# (Job Object caps commit, not reserve), which is why it went unnoticed.
+# 2048 matches strategy_worker.PERSISTENT_MAX_MEMORY_MB, the value the sibling
+# sandbox path in this same package already runs with; it is still a hard cap.
+MAX_MEMORY_MB = 2048
 MAX_FILE_SIZE_MB = 10
 MAX_OPEN_FILES = 32
 MAX_ACTIVE_CHILD_PROCESSES = 4  # H-S4: limit fork-bomb / process-storm risk
