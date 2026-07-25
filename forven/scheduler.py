@@ -44,11 +44,15 @@ _DEFAULT_JOB_IDS = {
     "forven-regime-update",
     "forven-regime-gate-mtm",
     "forven-slippage-monitor",
-    # SEED-DRIFT-1: these two were seeded but missing from this allowlist, so
+    # SEED-DRIFT-1: these were seeded but missing from this allowlist, so
     # every reconcile_forven_jobs run silently DELETED them (the testnet harness
     # and exec-quality watchdog quietly stopped running until the next reseed).
+    # forven-live-graduation-scan (LIVE-LOOP-1) was a later instance of the same
+    # defect: seeded by seed_forven_jobs, reaped by the very next reconcile, so
+    # the paper->live recommender never stayed on its daily schedule.
     "forven-exec-quality-watchdog",
     "forven-testnet-harness",
+    "forven-live-graduation-scan",
     "forven-scanner-signal",
     "forven-scanner-hourly",
     "forven-recalibration",

@@ -1,4 +1,7 @@
+import os
+
 from fastapi import APIRouter
+from fastapi.responses import FileResponse
 
 from forven import api_core as core
 from forven.control_plane import status as control_plane_status
@@ -9,6 +12,21 @@ router = APIRouter(tags=["status"])
 
 @router.get("/")
 def root():
+    """Service info — or the SPA index when a prebuilt frontend is configured.
+
+    api.py mounts StaticFiles(html=True) at "/" for the packaged build, but a
+    mount is registered LAST and this route still wins: FastAPI keeps included
+    routers as internal `_IncludedRouter` wrappers rather than flattening them
+    into app.router.routes, so api.py's "drop any route whose path == '/'"
+    filter matches nothing and silently leaves this handler shadowing the SPA
+    index. Serving index.html here fixes that without reaching into FastAPI
+    internals; every other SPA asset and deep link still resolves via the mount.
+    """
+    frontend_dir = os.environ.get("FORVEN_FRONTEND_DIR")
+    if frontend_dir:
+        index_path = os.path.join(frontend_dir, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path)
     return control_plane_status.root()
 
 

@@ -831,17 +831,19 @@ async def shutdown(request: Request):
 
 
 # Serve the prebuilt SvelteKit bundle at "/" when FORVEN_FRONTEND_DIR points to
-# a real directory. Mount is registered last so explicit API routes always win.
-# The status_router's bare "GET /" would otherwise shadow the SPA index, so we
-# remove it from app.routes before adding the mount.
+# a real directory. Mount is registered last so explicit API routes always win,
+# and html=True makes StaticFiles resolve SPA deep links to index.html.
+#
+# The bare "GET /" is NOT handled here. FastAPI keeps included routers as internal
+# `_IncludedRouter` wrappers instead of flattening their APIRoutes into
+# app.router.routes, so the filter that used to live here ("drop any route whose
+# path == '/'") matched nothing and left routers/status.py:root() shadowing the SPA
+# index — the packaged app served API JSON at "/". That route now serves index.html
+# itself when this env var is set; see routers/status.py.
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 _frontend_dir = os.environ.get("FORVEN_FRONTEND_DIR")
 if _frontend_dir and os.path.isdir(_frontend_dir):
-    app.router.routes = [
-        r for r in app.router.routes
-        if not (getattr(r, "path", None) == "/" and "GET" in (getattr(r, "methods", None) or set()))
-    ]
     app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
 
 
