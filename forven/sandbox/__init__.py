@@ -29,7 +29,14 @@ MAX_CPU_SECONDS = 30
 # sandbox path in this same package already runs with; it is still a hard cap.
 MAX_MEMORY_MB = 2048
 MAX_FILE_SIZE_MB = 10
-MAX_OPEN_FILES = 32
+# Applied on POSIX as RLIMIT_NOFILE. 32 descriptors cannot get through
+# `import pandas`: CPython's import machinery, numpy's several shared objects and
+# the BLAS/LAPACK libraries behind them open well over that before any strategy
+# code runs. Windows never applies this (the preexec is POSIX-only), which is why
+# the limit looked fine on the author's machine. This bounds descriptor
+# exhaustion, not capability — the meaningful confinement is the env allowlist,
+# the AST guard, and the filesystem/CPU caps.
+MAX_OPEN_FILES = 256
 MAX_ACTIVE_CHILD_PROCESSES = 4  # H-S4: limit fork-bomb / process-storm risk
 TIMEOUT_SECONDS = 60
 
