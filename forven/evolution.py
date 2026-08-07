@@ -31,6 +31,7 @@ from forven.db import (
     kv_get,
     kv_set,
     log_activity,
+    normalize_strategy_symbol_strict,
 )
 from forven.util import normalize_stage
 from forven.policy import evaluate_promotion, score_strategy, compute_live_metrics, check_promotion_readiness
@@ -2122,6 +2123,10 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
                     raise RuntimeError(str(first_failure))
 
                 selected_symbol = str(best_validation.get("symbol") or symbol).strip().upper() or symbol
+                # SYMBOL-DUP-2: write-back bypasses the mint normaliser — repair
+                # a bare/dashed context symbol so a spelling split cannot
+                # re-enter the registry here (strict: unrepairable stays as-is).
+                selected_symbol = normalize_strategy_symbol_strict(selected_symbol) or selected_symbol
                 selected_timeframe = _normalize_timeframe(str(best_validation.get("timeframe") or timeframe).strip(), timeframe)
                 metrics = best_validation.get("metrics") if isinstance(best_validation.get("metrics"), dict) else {}
                 context_fitness = _to_float(best_validation.get("fitness"), 0.0)

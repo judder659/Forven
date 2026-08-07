@@ -709,6 +709,8 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         "relaxed_trade_filters_enabled", "paper_test_mode_enabled",
         "paper_test_high_activity_enabled", "paper_test_bypass_gates_enabled",
         "paper_test_local_execution_only",
+        # PORT-DEDUP-1: cross-strategy paper clone-signal guard
+        "paper_cross_strategy_dedup_enabled", "paper_cross_strategy_dedup_window_seconds",
     }),
 }
 
@@ -767,6 +769,9 @@ _SETTINGS_SECTION_NUMERIC_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
         # Whole percent of the member's challenge slice; the mirror caps its
         # own read at 10% (mirror_risk_fraction), the rail matches.
         "propr_mirror_risk_pct": (0.0001, 10.0),
+        # PORT-DEDUP-1: 0 disables the window outright; a day is the sane ceiling
+        # (beyond that it is a concurrency cap, which lives in risk.py, not here).
+        "paper_cross_strategy_dedup_window_seconds": (0.0, 86400.0),
     },
 }
 

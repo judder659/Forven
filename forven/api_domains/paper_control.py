@@ -1036,10 +1036,16 @@ def _open_trade_db_safe(
     from forven.scanner import _open_trade_db
 
     try:
+        # cross_strategy_dedup=False: every caller here is a MANUAL operator
+        # entry (paper control / recovery). A human deliberately duplicating a
+        # strategy's bet is intent, not the clone-signal race PORT-DEDUP-1
+        # exists to stop — and a recovery re-entry must never be refused
+        # because some strategy traded the same asset minutes earlier.
         return _open_trade_db(
             strat_id=strategy_id, asset=asset, direction=direction, entry=entry,
             size=size, risk_pct=risk_pct, leverage=leverage,
             signal_data=signal_data, execution_type=execution_type, book=book,
+            cross_strategy_dedup=False,
         )
     except Exception as exc:  # noqa: BLE001
         if "idx_trades_unique_open" in str(exc):

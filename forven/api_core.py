@@ -1749,6 +1749,19 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
                 payload.get("paper_test_local_execution_only"),
                 bool(updates.get("paper_test_local_execution_only", True)),
             )
+        # PORT-DEDUP-1: cross-strategy paper clone-signal guard (read by
+        # forven.scanner._open_trade_db via _scanner_bool/float_setting).
+        if "paper_cross_strategy_dedup_enabled" in payload:
+            updates["paper_cross_strategy_dedup_enabled"] = _coerce_bool(
+                payload.get("paper_cross_strategy_dedup_enabled"),
+                bool(updates.get("paper_cross_strategy_dedup_enabled", True)),
+            )
+        if "paper_cross_strategy_dedup_window_seconds" in payload:
+            updates["paper_cross_strategy_dedup_window_seconds"] = max(
+                0.0, min(86400.0, _coerce_float(
+                    payload.get("paper_cross_strategy_dedup_window_seconds"), 900.0
+                ))
+            )
 
     elif section == "strategy":
         # The legacy single-strategy fields (strategy_name / strategy_symbol /

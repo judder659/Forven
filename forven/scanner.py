@@ -4344,12 +4344,41 @@ def _clean_signal_data(d: dict) -> dict:
             cleaned[k] = v
     return cleaned
 
+class CrossStrategyDuplicateSignal(Exception):
+    """PORT-DEDUP-1: a DIFFERENT strategy already recorded the same paper
+    (asset, direction) bet inside the dedup window, so this open would add a
+    clone leg, not an independent position.
+
+    The per-strategy unique-open index cannot catch this: it is keyed on the
+    strategy, so N strategies emitting one signal all pass it and the book
+    piles N copies of the same trade (2026-07-26..08-07 streak: 55 of 160
+    paper trades were 2nd-or-later copies of an identical entry, 39% of the
+    loss). Callers treat this like the IntegrityError duplicate guard — skip
+    the open, keep the scan loop alive."""
+
+    def __init__(
+        self, asset: str, direction: str,
+        blocking_trade_id: str, blocking_strategy: str, window_seconds: float,
+    ):
+        self.asset = asset
+        self.direction = direction
+        self.blocking_trade_id = blocking_trade_id
+        self.blocking_strategy = blocking_strategy
+        self.window_seconds = window_seconds
+        super().__init__(
+            f"cross-strategy duplicate signal: {blocking_strategy} already recorded "
+            f"{blocking_trade_id} ({asset} {direction}) within the last "
+            f"{int(window_seconds)}s — one signal, one position"
+        )
+
+
 def _open_trade_db(
     strat_id: str, asset: str, direction: str, entry: float,
     size: float, risk_pct: float, leverage: float, signal_data: dict,
     execution_type: str = "live",
     book: str | None = None,
     opened_at: str | None = None,
+    cross_strategy_dedup: bool = True,
 ) -> str:
     """Record a new trade in SQLite. Returns trade ID.
 
@@ -4375,6 +4404,44 @@ def _open_trade_db(
             if isinstance(signal_data, dict) and "regime_confidence" not in signal_data:
                 signal_data["regime_confidence"] = round(float(cached_state.confidence), 3)
     with get_db() as conn:
+        # PORT-DEDUP-1: collapse cross-strategy clone signals at the choke point
+        # every open path funnels through. Scoped to execution_type 'paper'
+        # exactly: live pools already enforce one-net-position-per-asset in
+        # can_open, and simulation/soak lanes are isolated sandboxes. Window is
+        # measured against created_at (recording time) rather than opened_at —
+        # kernel late hop-ins backdate opened_at to the historical entry bar,
+        # which would defeat a "fired together" comparison. ANY status counts:
+        # a clone that already stopped out inside the window is the same doomed
+        # signal, not new information. Manual operator entries pass
+        # cross_strategy_dedup=False — a human duplicating a bet on purpose is
+        # not a race. Check-then-insert (not an index) because a time window
+        # cannot be expressed as a UNIQUE constraint; the scanner's open paths
+        # run sequentially in-process, which is the race the streak evidence
+        # shows (clones landed seconds apart from one scan cycle).
+        if (
+            cross_strategy_dedup
+            and execution_type == "paper"
+            and _scanner_bool_setting("paper_cross_strategy_dedup_enabled", True)
+        ):
+            _dedup_window_s = _scanner_float_setting(
+                "paper_cross_strategy_dedup_window_seconds", 900.0
+            )
+            if _dedup_window_s > 0:
+                _dup_row = conn.execute(
+                    """SELECT id, COALESCE(NULLIF(strategy_id, ''), strategy) AS sid
+                    FROM trades
+                    WHERE execution_type = 'paper' AND asset = ? AND direction = ?
+                      AND COALESCE(NULLIF(strategy_id, ''), strategy) <> ?
+                      AND (julianday('now') - julianday(COALESCE(NULLIF(created_at, ''), opened_at)))
+                          * 86400.0 <= ?
+                    ORDER BY id DESC LIMIT 1""",
+                    (asset, direction, strat_id, float(_dedup_window_s)),
+                ).fetchone()
+                if _dup_row is not None:
+                    raise CrossStrategyDuplicateSignal(
+                        asset, direction, str(_dup_row["id"]), str(_dup_row["sid"]),
+                        float(_dedup_window_s),
+                    )
         # The "E" counter can fall behind the real trade ids when a row is inserted
         # out-of-band (e.g. exchange-recovery) without bumping container_counters.
         # When that happens next_container_id() hands back an ALREADY-USED id, the
@@ -5281,6 +5348,31 @@ def manage_positions(
                     execution_type=execution_type,
                     **_open_extra,
                 )
+            except CrossStrategyDuplicateSignal as dup_exc:
+                # PORT-DEDUP-1: a different strategy already recorded this same
+                # (asset, direction) bet inside the dedup window — this open
+                # would be a clone leg. Skip it exactly like the unique-open
+                # duplicate below; log_activity so "why didn't S0xxxx trade?"
+                # is answerable from the activity log (the armed
+                # min_paper_trades gate makes censored opens promotion-relevant).
+                strategy_diag["execution_decision"] = "blocked"
+                strategy_diag["blocked_reason"] = (
+                    f"cross-strategy duplicate signal (clone of {dup_exc.blocking_trade_id} "
+                    f"by {dup_exc.blocking_strategy})"
+                )
+                actions.append(
+                    f"BLOCKED {strat['asset']} - cross-strategy duplicate signal"
+                )
+                log_activity(
+                    "warning", "scanner",
+                    f"Cross-strategy duplicate signal blocked for {strat_id} "
+                    f"{strat['asset']} {direction}: {dup_exc.blocking_strategy} already "
+                    f"recorded {dup_exc.blocking_trade_id} within "
+                    f"{int(dup_exc.window_seconds)}s (PORT-DEDUP-1).",
+                )
+                if diagnostics is not None:
+                    diagnostics[strat_id] = strategy_diag
+                return actions
             except sqlite3.IntegrityError:
                 # M1: the partial UNIQUE index on OPEN trades rejected a second
                 # identical (strategy, asset, direction) open. Either a concurrent
@@ -6069,6 +6161,20 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
             float(alloc_risk), float(leverage), signal_data, execution_type="paper",
             opened_at=opened_at_val,  # late hop-in: current bar time; else the kernel entry-BAR time
         )
+    except CrossStrategyDuplicateSignal as dup_exc:
+        # PORT-DEDUP-1: another strategy already recorded this identical bet
+        # inside the dedup window — skip the clone leg, keep the kernel loop
+        # alive. log_activity (not just log): with min_paper_trades armed,
+        # censored opens are promotion evidence someone will ask about.
+        log.warning("[%s] kernel paper: %s", strat_id, dup_exc)
+        log_activity(
+            "warning", "scanner",
+            f"Cross-strategy duplicate signal blocked for {strat_id} {asset} "
+            f"{direction}: {dup_exc.blocking_strategy} already recorded "
+            f"{dup_exc.blocking_trade_id} within {int(dup_exc.window_seconds)}s "
+            "(PORT-DEDUP-1).",
+        )
+        return None
     except sqlite3.IntegrityError:
         # A position for this strategy/asset/direction is already OPEN (the unique-open
         # partial index). Don't crash the scan loop and drop the cycle — the existing

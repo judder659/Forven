@@ -4801,6 +4801,30 @@ def log_tool_call(
 _TRADING_STAGES = frozenset({"paper", "live", "live_graduated", "deployed"})
 
 
+def _duplicate_symbol_variants(symbol: str, params: dict | None = None) -> list[str]:
+    """SYMBOL-DUP-2: every stored spelling that names the same market as
+    ``symbol``, for the duplicate check's comparison.
+
+    Mint-time normalisation only landed 2026-07-02, so legacy rows still hold
+    bare ('ETH'), dashed ('ETH-USDT') or glued ('ETHUSDT') forms — and exact
+    string equality let 'ETH' and 'ETH/USDT' register AND promote as two
+    strategies trading the identical signal (S06298/S06299, S06538/S06539:
+    fills fractions of a second apart, P&L identical to the cent). The bare
+    base is a variant only for the default USDT quote: a bare legacy row is
+    ambiguous, and colliding it with the default-quote market is the safe
+    reading — refusing a possible duplicate beats doubling exposure."""
+    raw = str(symbol or "").strip().upper()
+    variants = {raw} if raw else set()
+    canonical = normalize_strategy_symbol_strict(raw, params)
+    if canonical:
+        base, _, quote = canonical.partition("/")
+        variants.update({canonical, f"{base}-{quote}", f"{base}{quote}"})
+        if quote == "USDT":
+            variants.add(base)
+    variants.discard("")
+    return sorted(variants) if variants else [raw]
+
+
 def find_duplicate_trading_strategy(
     conn: sqlite3.Connection,
     *,
@@ -4812,13 +4836,18 @@ def find_duplicate_trading_strategy(
 ) -> str | None:
     """The id of an existing TRADING-stage strategy with the identical
     type + symbol + timeframe + params, or None. Canonical (sorted-key) JSON
-    comparison so key order can't defeat the check."""
+    comparison so key order can't defeat the check; canonical symbol-variant
+    matching (SYMBOL-DUP-2) so a spelling difference ('ETH' vs 'ETH/USDT')
+    can't either."""
     params_canon = json.dumps(params or {}, sort_keys=True)
     stage_ph = ",".join("?" for _ in _TRADING_STAGES)
+    sym_variants = _duplicate_symbol_variants(symbol, params)
+    sym_ph = ",".join("?" for _ in sym_variants)
     for row in conn.execute(
-        f"SELECT id, params FROM strategies WHERE type = ? AND symbol = ? AND timeframe = ? "
+        f"SELECT id, params FROM strategies WHERE type = ? "
+        f"AND UPPER(TRIM(COALESCE(symbol, ''))) IN ({sym_ph}) AND timeframe = ? "
         f"AND LOWER(COALESCE(stage, '')) IN ({stage_ph})",
-        (str(type_ or ""), str(symbol or ""), str(timeframe or "1h"), *sorted(_TRADING_STAGES)),
+        (str(type_ or ""), *sym_variants, str(timeframe or "1h"), *sorted(_TRADING_STAGES)),
     ).fetchall():
         if exclude_id and str(row["id"]) == str(exclude_id):
             continue
@@ -6953,6 +6982,11 @@ def auto_assign_best_symbol_timeframe(strategy_id: str) -> tuple[str, str] | Non
     best_symbol, best_timeframe, fitness, _ = resolve_best_symbol_timeframe(strategy_id)
     if not best_symbol or not best_timeframe or fitness <= 0:
         return None
+    # SYMBOL-DUP-2: this write-back bypasses the mint-time normaliser, so a
+    # bare/dashed backtest-context symbol would reintroduce exactly the spelling
+    # split the duplicate check guards against. Repair when repairable; an
+    # unrepairable value stays as-is (strict, never the BTC/USDT fallback).
+    best_symbol = normalize_strategy_symbol_strict(best_symbol) or best_symbol
 
     with get_db() as conn:
         row = conn.execute(
