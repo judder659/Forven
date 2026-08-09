@@ -143,13 +143,35 @@ def test_unreadable_orders_skip_attribution(forven_db):
     assert state["TA"]["status"] == "open", "attribution must wait, never guess"
 
 
+def test_attribution_books_partial_stop_fills_cumulatively(forven_db):
+    """A partially-filled stop shrinks the leg's ledger claim by the newly
+    filled delta only — the venue reports cumulative totals, so re-reads must
+    not double-shrink."""
+    state = {"TA": _leg(1.0, stop_id="o-stop-A")}
+    order = {"orderId": "o-stop-A", "status": "partially_filled", "cumulativeQuantity": "0.5"}
+    propr = FakePropr(orders=[order])
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+    assert state["TA"]["status"] == "open"
+    assert abs(state["TA"]["quantity"] - 0.5) < 1e-9
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+    assert abs(state["TA"]["quantity"] - 0.5) < 1e-9, "same cumulative total must not double-shrink"
+
+    order["cumulativeQuantity"] = "0.8"
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+    assert abs(state["TA"]["quantity"] - 0.2) < 1e-9
+
+
 # ---------------------------------------------------------------------------
 # Close pass: clamp to the venue quantity other legs do not claim
 # ---------------------------------------------------------------------------
 
-def test_close_refuses_when_other_legs_claim_the_whole_position(forven_db):
-    """A's stop filled venue-side moments ago (attribution not yet run): the
-    venue holds exactly B's share. A's close must not touch it."""
+def test_close_defers_when_the_deficit_cannot_be_attributed(forven_db):
+    """The venue holds less than the same-side claims but is not flat: which
+    leg was consumed is unknowable from position data alone. A must neither
+    close into B's share nor retire itself on a guess — defer and let the
+    order-status attribution pass resolve identity."""
     state = {
         "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
         "TB": _leg(0.6, stop_id="o-stop-B"),
@@ -159,15 +181,36 @@ def test_close_refuses_when_other_legs_claim_the_whole_position(forven_db):
     pm._mirror_close(propr, "TA", state["TA"], NOW, state)
 
     assert propr.close_calls == [], "closing trade A must never close trade B"
-    assert state["TA"]["status"] == "closed"
-    assert state["TA"]["venue_position_missing"] is True
-    assert "consumed venue-side" in state["TA"]["reason"]
+    assert state["TA"]["status"] == "open", "an unattributable deficit must not retire the leg"
+    assert propr.cancelled == [], "brackets on a possibly-live leg must not be cancelled"
+    assert "cannot be attributed" in state["TA"]["reason"]
     assert state["TB"]["status"] == "open"
 
 
-def test_close_clamps_to_unclaimed_venue_quantity(forven_db):
+def test_close_retires_the_leg_when_the_venue_side_is_flat(forven_db):
+    """No position at all on this side: the leg's share is definitively gone,
+    whichever order consumed it."""
     state = {
-        "TA": _leg(1.0, stop_id="o-stop-A"),
+        "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(positions=[])
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert propr.close_calls == []
+    assert state["TA"]["status"] == "closed"
+    assert state["TA"]["venue_position_missing"] is True
+    assert "consumed venue-side" in state["TA"]["reason"]
+
+
+def test_close_clamps_and_keeps_the_residual_open_and_bracketed(forven_db):
+    """Codex P1 on #116: B's stop may have PARTIALLY filled without the ledger
+    knowing, so the deficit behind the clamp cannot be assumed to be A's. A
+    clamped close that fills must keep A's residual claim open and bracketed —
+    never mark the whole leg closed."""
+    state = {
+        "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
         "TB": _leg(0.6, stop_id="o-stop-B"),
     }
     propr = FakePropr(
@@ -180,9 +223,10 @@ def test_close_clamps_to_unclaimed_venue_quantity(forven_db):
     assert len(propr.close_calls) == 1
     _, size, _ = propr.close_calls[0]
     assert abs(size - 0.6) < 1e-9, "the close must ask only for the unclaimed venue quantity"
-    assert state["TA"]["status"] == "closed"
-    assert state["TA"]["closed_quantity"] == 0.6
-    assert "clamped close" in state["TA"]["reason"]
+    assert state["TA"]["status"] == "open", "the residual claim must stay tracked"
+    assert abs(state["TA"]["quantity"] - 0.4) < 1e-9
+    assert state["TA"]["partial_close_filled"] == 0.6
+    assert propr.cancelled == [], "the residual's protective brackets must stay armed"
 
 
 def test_close_defers_on_unreadable_venue_with_shared_side(forven_db):

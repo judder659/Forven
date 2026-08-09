@@ -931,35 +931,57 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime, state: dict 
                     _num(pos.get("quantity")) or _num(pos.get("size")) or _num(pos.get("szi")) or 0.0
                 )
         other_claims = sum(float(_num(e.get("quantity")) or 0.0) for _, e in others)
-        closable = min(quantity, max(0.0, venue_qty - other_claims))
-        if closable <= 0:
+        if venue_qty <= 1e-12:
+            # The whole side is flat: this leg's share is definitively gone,
+            # whatever consumed it. (The sibling legs resolve through their own
+            # closes / the venue_missing hysteresis.)
             entry.update({
                 "status": "closed",
                 "reason": (
-                    f"consumed venue-side: {key[0]} {key[1]} holds {venue_qty:.10g} and other "
-                    f"mirrored legs claim {other_claims:.10g} — nothing of this leg is left to "
-                    "reduce (its stop most likely filled into the netted position)"
+                    f"consumed venue-side: the venue holds no {key[1]} {key[0]} position "
+                    "at all — nothing of this leg is left to reduce"
                 ),
                 "venue_position_missing": True,
                 "closed_at": now.isoformat(),
             })
             _cancel_bracket_legs(propr, asset, entry)
             log.warning(
-                "Propr mirror: close for trade %s skipped — venue %s %s quantity %.10g is fully "
-                "claimed by other mirrored legs (%.10g); recording the leg as consumed venue-side",
-                trade_id, key[0], key[1], venue_qty, other_claims,
+                "Propr mirror: close for trade %s skipped — venue side %s %s is flat; "
+                "recording the leg as consumed venue-side", trade_id, key[0], key[1],
             )
+            return
+        closable = min(quantity, venue_qty - other_claims)
+        if closable <= 0:
+            # The venue holds LESS than the same-side claims but is not flat:
+            # some leg was (partly) consumed, and which one is unknowable from
+            # position data alone. Guessing here retires brackets on a possibly
+            # live leg — defer instead and let the attribution pass (which
+            # reads per-order status) resolve identity. Bounded, so a
+            # persistent mismatch still alarms as close_failed.
+            attempts = int(entry.get("close_attempts") or 0) + 1
+            entry["close_attempts"] = attempts
+            entry["reason"] = (
+                f"deferred: venue {key[0]} {key[1]} holds {venue_qty:.10g} against "
+                f"{other_claims + quantity:.10g} of same-side mirror claims — the deficit "
+                "cannot be attributed to a specific leg yet"
+            )
+            if attempts >= MAX_CLOSE_ATTEMPTS:
+                entry["status"] = "close_failed"
+                log.error("Propr mirror: close for trade %s FAILED after %d attempts: %s",
+                          trade_id, attempts, entry["reason"])
+                _notify_mirror_failure(trade_id, entry, "close")
             return
         if closable < quantity:
             clamped_from = quantity
-            quantity = closable
             log.warning(
                 "Propr mirror: clamping close for trade %s from %.10g to %.10g — venue %s %s "
-                "holds %.10g and other mirrored legs claim %.10g",
-                trade_id, clamped_from, quantity, key[0], key[1], venue_qty, other_claims,
+                "holds %.10g and other mirrored legs claim %.10g; the residual stays open "
+                "and bracketed",
+                trade_id, quantity, closable, key[0], key[1], venue_qty, other_claims,
             )
 
-    result = propr.close_position(asset, quantity, "sell" if direction == "long" else "buy")
+    ask_qty = quantity if clamped_from is None else closable
+    result = propr.close_position(asset, ask_qty, "sell" if direction == "long" else "buy")
 
     # A no-position reject is terminal on the FIRST attempt: the venue has
     # nothing this reduce-only close could reduce — the leg is already flat
@@ -1005,22 +1027,26 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime, state: dict 
     # The venue-quantized size the adapter actually asked for; anything it could
     # not accept is dust below one size step, not a leg we can retry.
     _requested = _num((result or {}).get("requested_size")) if isinstance(result, dict) else None
-    _fillable = _requested if (_requested is not None and _requested <= quantity) else quantity
+    _fillable = _requested if (_requested is not None and _requested <= ask_qty) else ask_qty
     _tolerance = max(_fillable * _CLOSE_FILL_TOLERANCE_FRAC, 1e-9)
     # Only a CLEAN payload may shrink the mirrored quantity: on an errored one the
     # reported fill is not trustworthy, and a reduce-only close asking for more
     # than is left is harmless (the venue caps it) while asking for too little
-    # strands the remainder.
-    _short_fill = not _errored and filled is not None and (filled + _tolerance) < _fillable
-    if not _errored and not _short_fill and (filled is not None or not _fill_reported):
+    # strands the remainder. A CLAMPED close measures the fill against the
+    # LEDGER quantity, not the order: even a fully-filled clamped order leaves
+    # a residual claim, which must stay open and bracketed (the partial branch)
+    # rather than be retired on a guess about who consumed the deficit — and a
+    # clamped close with no fill confirmation retries instead of assuming.
+    _close_target = _fillable if clamped_from is None else quantity
+    _short_fill = not _errored and filled is not None and (filled + _tolerance) < _close_target
+    if (
+        not _errored and not _short_fill
+        and (filled is not None or not _fill_reported)
+        and clamped_from is None
+    ):
         entry.update({
             "status": "closed",
-            "reason": (
-                None if clamped_from is None else (
-                    f"clamped close: {quantity:.10g} of the ledger's {clamped_from:.10g} was "
-                    "still on the venue — the remainder had been consumed venue-side"
-                )
-            ),
+            "reason": None,
             "exit_price": result.get("exit_price"),
             "closed_quantity": filled,
             "closed_at": now.isoformat(),
@@ -1074,10 +1100,11 @@ def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict
     the venue consumed exactly this leg's share — retire it as closed at the
     recorded fill price and cancel the surviving sibling leg.
 
-    ``filled`` only: a partially-filled stop leaves real quantity on the
-    venue, which the close-time clamp in ``_mirror_close`` accounts for. An
-    unreadable order book skips the pass entirely (attribution can wait a
-    tick; a wrong retire cannot be waited back)."""
+    ``filled`` retires the leg outright; ``partially_filled`` shrinks the
+    leg's ledger claim by the newly-filled delta (cumulative-tracked) while
+    keeping it open and bracketed, so sibling closes clamp against fresh
+    claims. An unreadable order book skips the pass entirely (attribution can
+    wait a tick; a wrong retire cannot be waited back)."""
     open_legs = [
         (tid, e) for tid, e in state.items()
         if isinstance(e, dict) and e.get("status") == "open"
@@ -1098,7 +1125,33 @@ def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict
         for leg_key, label in (("stop_order_id", "stop"), ("take_profit_order_id", "take-profit")):
             oid = entry.get(leg_key)
             order = orders.get(str(oid)) if oid else None
-            if order is None or propr.order_status(order) != "filled":
+            if order is None:
+                continue
+            status = propr.order_status(order)
+            if status == "partially_filled":
+                # Book the partially-filled bracket against THIS leg's claim so
+                # sibling closes clamp against fresh numbers (Codex P1 on #116).
+                # Cumulative-tracked: the venue reports total filled, we shrink
+                # by the newly-filled delta only.
+                filled_so_far = float(propr.order_filled_size(order) or 0.0)
+                accounted = float(_num(entry.get("bracket_partial_accounted")) or 0.0)
+                delta = filled_so_far - accounted
+                if delta > 1e-12:
+                    remaining = max(0.0, float(_num(entry.get("quantity")) or 0.0) - delta)
+                    entry["quantity"] = round(remaining, 10)
+                    entry["bracket_partial_accounted"] = filled_so_far
+                    entry["reason"] = (
+                        f"{label} order {oid} partially filled venue-side "
+                        f"({filled_so_far:.10g} total) — leg claim reduced to "
+                        f"{remaining:.10g}, still open and bracketed"
+                    )
+                    log.warning(
+                        "Propr mirror: %s for trade %s partially filled venue-side "
+                        "(%.10g total) — shrinking the leg's claim to %.10g",
+                        label, trade_id, filled_so_far, remaining,
+                    )
+                continue
+            if status != "filled":
                 continue
             entry.update({
                 "status": "closed",
