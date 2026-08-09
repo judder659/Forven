@@ -883,6 +883,11 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime, state: dict 
     quantity = float(entry.get("quantity") or 0)
     if quantity <= 0:
         entry.update({"status": "closed", "reason": "nothing to close (zero mirrored quantity)"})
+        # A zero-claim leg can still carry live bracket orders (e.g. its claim
+        # was consumed piecemeal by partial fills) — a terminal record must not
+        # strand a resting reduce-only order that can fire into another leg's
+        # share of the netted position.
+        _cancel_bracket_legs(propr, asset, entry)
         return
 
     # PROPR-LEG-2 (Codex P1 on #113): when another tracked-open leg shares the
@@ -1131,15 +1136,44 @@ def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict
             if status == "partially_filled":
                 # Book the partially-filled bracket against THIS leg's claim so
                 # sibling closes clamp against fresh numbers (Codex P1 on #116).
-                # Cumulative-tracked: the venue reports total filled, we shrink
-                # by the newly-filled delta only.
+                # Cumulative-tracked PER BRACKET (stop and TP can both partially
+                # fill): the venue reports total filled, we shrink by the
+                # newly-filled delta only.
                 filled_so_far = float(propr.order_filled_size(order) or 0.0)
-                accounted = float(_num(entry.get("bracket_partial_accounted")) or 0.0)
+                accounted_key = f"bracket_partial_accounted_{leg_key}"
+                accounted = float(_num(entry.get(accounted_key)) or 0.0)
                 delta = filled_so_far - accounted
                 if delta > 1e-12:
                     remaining = max(0.0, float(_num(entry.get("quantity")) or 0.0) - delta)
+                    entry[accounted_key] = filled_so_far
+                    if remaining <= 1e-12:
+                        # The bracket consumed the whole claim piecemeal. Retire
+                        # NOW, with the sibling bracket cancelled — a qty-0 leg
+                        # left "open" would be closed by the zero-quantity close
+                        # branch, stranding a live reduce-only sibling on the
+                        # venue that can fire into another leg's share.
+                        entry.update({
+                            "status": "closed",
+                            "reason": (
+                                f"{label} order {oid} filled the leg's whole claim in "
+                                "partial fills — retired venue-side"
+                            ),
+                            "exit_price": propr.order_fill_price(order),
+                            "closed_quantity": filled_so_far,
+                            "closed_at": now.isoformat(),
+                            "bracket_filled": label,
+                        })
+                        summary["bracket_filled"] = summary.get("bracket_filled", 0) + 1
+                        log.warning(
+                            "Propr mirror: %s for trade %s consumed the whole claim in "
+                            "partial fills — retiring the leg and cancelling its sibling",
+                            label, trade_id,
+                        )
+                        _cancel_bracket_legs(
+                            propr, propr.normalize_asset(str(entry.get("asset") or "")), entry
+                        )
+                        break
                     entry["quantity"] = round(remaining, 10)
-                    entry["bracket_partial_accounted"] = filled_so_far
                     entry["reason"] = (
                         f"{label} order {oid} partially filled venue-side "
                         f"({filled_so_far:.10g} total) — leg claim reduced to "

@@ -163,6 +163,34 @@ def test_attribution_books_partial_stop_fills_cumulatively(forven_db):
     assert abs(state["TA"]["quantity"] - 0.2) < 1e-9
 
 
+def test_partial_fills_consuming_the_whole_claim_retire_the_leg(forven_db):
+    """A claim ground to zero by partial fills must retire the leg with its
+    sibling bracket cancelled — a qty-0 'open' leg would otherwise terminate
+    through the zero-quantity close branch with a live reduce-only TP still
+    resting on the venue."""
+    state = {"TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A")}
+    propr = FakePropr(orders=[
+        {"orderId": "o-stop-A", "status": "partially_filled", "cumulativeQuantity": "1.0"},
+    ])
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert state["TA"]["status"] == "closed"
+    assert state["TA"]["bracket_filled"] == "stop"
+    assert "o-tp-A" in propr.cancelled, "the sibling bracket must not be stranded"
+
+
+def test_zero_quantity_close_cancels_stranded_brackets(forven_db):
+    state = {"TA": _leg(0.0, stop_id="o-stop-A", tp_id="o-tp-A")}
+    propr = FakePropr()
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert state["TA"]["status"] == "closed"
+    assert propr.close_calls == []
+    assert "o-stop-A" in propr.cancelled and "o-tp-A" in propr.cancelled
+
+
 # ---------------------------------------------------------------------------
 # Close pass: clamp to the venue quantity other legs do not claim
 # ---------------------------------------------------------------------------
