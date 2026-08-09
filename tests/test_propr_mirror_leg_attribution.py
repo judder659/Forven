@@ -70,6 +70,11 @@ class FakePropr:
         self.rearmed.append((asset, direction, size, stop_price))
         return {"stop_order_id": f"o-stop-rearmed-{len(self.rearmed)}"}
 
+    def place_take_profit(self, asset, direction, size, price):
+        self.tp_placed = getattr(self, "tp_placed", [])
+        self.tp_placed.append((asset, direction, size, price))
+        return {"take_profit_order_id": f"o-tp-resized-{len(self.tp_placed)}"}
+
 
 def _leg(qty, stop_id="o-stop", tp_id=None, asset="ETH", direction="long", stop_price=1900.0):
     return {
@@ -151,6 +156,80 @@ def test_attribution_books_partial_stop_fills_cumulatively(forven_db):
     order["cumulativeQuantity"] = "0.8"
     pm._retire_bracket_filled_legs(propr, state, NOW, {})
     assert abs(state["TA"]["quantity"] - 0.2) < 1e-9
+
+
+def test_partial_stop_fill_resizes_the_surviving_take_profit(forven_db):
+    """PROPR-LEG-3: after a partial stop fill the TP still rests at the
+    ORIGINAL size — triggered against the netted position it would consume the
+    residual plus a sibling's share. It must be cancelled and re-placed at the
+    residual."""
+    state = {"TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A")}
+    propr = FakePropr(orders=[
+        {"orderId": "o-stop-A", "status": "partially_filled", "cumulativeQuantity": "0.5"},
+        {"orderId": "o-tp-A", "status": "open", "triggerPrice": "2200"},
+    ])
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert abs(state["TA"]["quantity"] - 0.5) < 1e-9
+    assert "o-tp-A" in propr.cancelled, "the oversized take-profit must be cancelled"
+    assert getattr(propr, "tp_placed", []), "the take-profit must be re-placed"
+    _, _, size, price = propr.tp_placed[-1]
+    assert abs(size - 0.5) < 1e-9 and price == 2200.0
+    assert state["TA"]["take_profit_order_id"].startswith("o-tp-resized")
+
+
+def test_partial_tp_fill_rearms_the_stop_at_the_residual(forven_db):
+    """The mirror image: a partial TP fill leaves the STOP oversized — and the
+    stop is the protection, so it must be re-armed at the residual, never just
+    dropped."""
+    state = {"TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A")}
+    propr = FakePropr(orders=[
+        {"orderId": "o-tp-A", "status": "partially_filled", "cumulativeQuantity": "0.4"},
+        {"orderId": "o-stop-A", "status": "open", "triggerPrice": "1900"},
+    ])
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert abs(state["TA"]["quantity"] - 0.6) < 1e-9
+    assert "o-stop-A" in propr.cancelled
+    assert getattr(propr, "rearmed", []), "the stop must be re-armed for the residual"
+    assert abs(propr.rearmed[-1][2] - 0.6) < 1e-9
+    assert state["TA"]["stop_order_id"].startswith("o-stop-rearmed")
+
+
+def test_close_failed_sibling_still_counts_as_a_claim(forven_db):
+    """Codex P1 (#116 round 2b): a close_failed sibling's close was never
+    confirmed — its venue share may be live. Dropping it from the clamp would
+    hand this close the sole-leg full-quantity path, the exact blind close this
+    module exists to prevent."""
+    state = {
+        "TA": _leg(1.0, stop_id="o-stop-A"),
+        "TB": {**_leg(0.6, stop_id="o-stop-B"), "status": "close_failed"},
+    }
+    propr = FakePropr(positions=[{"asset": "ETH", "positionSide": "long", "quantity": "0.6"}])
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert propr.close_calls == [], (
+        "a close_failed sibling's possible venue share must not be closed into"
+    )
+    assert state["TA"]["status"] == "open"
+    assert "cannot be attributed" in state["TA"]["reason"]
+
+
+def test_venue_missing_releases_a_close_failed_claim(forven_db):
+    """The release valve for the rule above: venue state proving the side flat
+    retires the close_failed leg, so its claim stops deferring siblings."""
+    state = {"TB": {**_leg(0.6, stop_id="o-stop-B"), "status": "close_failed"}}
+    propr = FakePropr()
+    summary: dict = {}
+
+    for _ in range(3):
+        pm._retire_venue_missing_legs(propr, state, set(), NOW, summary)
+
+    assert state["TB"]["status"] == "venue_missing"
+    assert summary.get("venue_missing") == 1
 
 
 def test_partial_fills_consuming_the_whole_claim_retire_the_leg(forven_db):
