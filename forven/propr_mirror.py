@@ -877,13 +877,88 @@ def _cancel_bracket_legs(propr, asset: str, entry: dict) -> None:
                 log.debug("Propr mirror: bracket cancel %s failed: %s", leg_id, exc)
 
 
-def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
+def _mirror_close(propr, trade_id: str, entry: dict, now: datetime, state: dict | None = None) -> None:
     asset = propr.normalize_asset(str(entry.get("asset") or ""))
     direction = str(entry.get("direction") or "").strip().lower()
     quantity = float(entry.get("quantity") or 0)
     if quantity <= 0:
         entry.update({"status": "closed", "reason": "nothing to close (zero mirrored quantity)"})
         return
+
+    # PROPR-LEG-2 (Codex P1 on #113): when another tracked-open leg shares the
+    # SAME side of this netted position, a reduce-only close sized off this
+    # leg's ledger quantity can consume the OTHER leg's share (this leg's stop
+    # may have filled venue-side between attribution passes). Close only what
+    # the venue holds beyond the other legs' claims; if nothing is left, the
+    # venue already consumed this leg. The ambiguity only exists with another
+    # same-side leg — a sole leg keeps the plain path, where a reduce-only
+    # close is harmless by construction. ``state`` is optional only for older
+    # callers/tests; the tick always passes it.
+    key = _position_key(propr, entry.get("asset"), entry.get("direction"))
+    others = [
+        (tid, e) for tid, e in (state or {}).items()
+        if tid != trade_id and isinstance(e, dict) and e.get("status") == "open"
+        and _position_key(propr, e.get("asset"), e.get("direction")) == key
+    ]
+    clamped_from = None
+    if others:
+        try:
+            positions = propr.raw_positions() or []
+        except Exception as exc:
+            # Unreadable venue + shared side: deferring is the only close that
+            # cannot be wrong. Burns a bounded attempt so a persistent outage
+            # still surfaces as close_failed instead of deferring forever.
+            attempts = int(entry.get("close_attempts") or 0) + 1
+            entry["close_attempts"] = attempts
+            entry["reason"] = (
+                f"venue positions unreadable ({exc}) — deferring: another mirrored "
+                f"leg shares this {key[0]} {key[1]} position and a blind close could "
+                "consume its share"
+            )
+            if attempts >= MAX_CLOSE_ATTEMPTS:
+                entry["status"] = "close_failed"
+                log.error("Propr mirror: close for trade %s FAILED after %d attempts: %s",
+                          trade_id, attempts, entry["reason"])
+                _notify_mirror_failure(trade_id, entry, "close")
+            return
+        venue_qty = 0.0
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            pos_asset = propr.normalize_asset(str(pos.get("asset") or pos.get("coin") or ""))
+            if pos_asset == key[0] and propr.position_side(pos) == key[1]:
+                venue_qty += abs(
+                    _num(pos.get("quantity")) or _num(pos.get("size")) or _num(pos.get("szi")) or 0.0
+                )
+        other_claims = sum(float(_num(e.get("quantity")) or 0.0) for _, e in others)
+        closable = min(quantity, max(0.0, venue_qty - other_claims))
+        if closable <= 0:
+            entry.update({
+                "status": "closed",
+                "reason": (
+                    f"consumed venue-side: {key[0]} {key[1]} holds {venue_qty:.10g} and other "
+                    f"mirrored legs claim {other_claims:.10g} — nothing of this leg is left to "
+                    "reduce (its stop most likely filled into the netted position)"
+                ),
+                "venue_position_missing": True,
+                "closed_at": now.isoformat(),
+            })
+            _cancel_bracket_legs(propr, asset, entry)
+            log.warning(
+                "Propr mirror: close for trade %s skipped — venue %s %s quantity %.10g is fully "
+                "claimed by other mirrored legs (%.10g); recording the leg as consumed venue-side",
+                trade_id, key[0], key[1], venue_qty, other_claims,
+            )
+            return
+        if closable < quantity:
+            clamped_from = quantity
+            quantity = closable
+            log.warning(
+                "Propr mirror: clamping close for trade %s from %.10g to %.10g — venue %s %s "
+                "holds %.10g and other mirrored legs claim %.10g",
+                trade_id, clamped_from, quantity, key[0], key[1], venue_qty, other_claims,
+            )
+
     result = propr.close_position(asset, quantity, "sell" if direction == "long" else "buy")
 
     # A no-position reject is terminal on the FIRST attempt: the venue has
@@ -940,7 +1015,12 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
     if not _errored and not _short_fill and (filled is not None or not _fill_reported):
         entry.update({
             "status": "closed",
-            "reason": None,
+            "reason": (
+                None if clamped_from is None else (
+                    f"clamped close: {quantity:.10g} of the ledger's {clamped_from:.10g} was "
+                    "still on the venue — the remainder had been consumed venue-side"
+                )
+            ),
             "exit_price": result.get("exit_price"),
             "closed_quantity": filled,
             "closed_at": now.isoformat(),
@@ -980,6 +1060,66 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
             log.error("Propr mirror: close for trade %s FAILED after %d attempts: %s",
                       trade_id, attempts, entry["reason"])
             _notify_mirror_failure(trade_id, entry, "close")
+
+
+def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict) -> None:
+    """PROPR-LEG-2 (Codex P1 on #113): per-LEG stop/take-profit fill attribution.
+
+    Propr nets one position per asset, so when two mirrored legs share the
+    SAME side a venue stop fill on leg A leaves the aggregate position
+    present — the (asset, side)-keyed venue_missing check can never see it,
+    A keeps reporting open, and A's eventual mirror close would reduce what
+    is by then B's share of the netted position. The leg's OWN bracket
+    orders are its venue identity: a stop/TP order reported ``filled`` means
+    the venue consumed exactly this leg's share — retire it as closed at the
+    recorded fill price and cancel the surviving sibling leg.
+
+    ``filled`` only: a partially-filled stop leaves real quantity on the
+    venue, which the close-time clamp in ``_mirror_close`` accounts for. An
+    unreadable order book skips the pass entirely (attribution can wait a
+    tick; a wrong retire cannot be waited back)."""
+    open_legs = [
+        (tid, e) for tid, e in state.items()
+        if isinstance(e, dict) and e.get("status") == "open"
+        and (e.get("stop_order_id") or e.get("take_profit_order_id"))
+    ]
+    if not open_legs:
+        return
+    try:
+        orders: dict[str, dict] = {}
+        for order in propr.list_orders() or []:
+            oid = propr.order_id(order)
+            if oid:
+                orders[str(oid)] = order
+    except Exception as exc:
+        log.debug("Propr mirror: order read failed — skipping leg attribution: %s", exc)
+        return
+    for trade_id, entry in open_legs:
+        for leg_key, label in (("stop_order_id", "stop"), ("take_profit_order_id", "take-profit")):
+            oid = entry.get(leg_key)
+            order = orders.get(str(oid)) if oid else None
+            if order is None or propr.order_status(order) != "filled":
+                continue
+            entry.update({
+                "status": "closed",
+                "reason": (
+                    f"{label} order {oid} filled venue-side — the venue consumed this "
+                    "leg's share of the netted position"
+                ),
+                "exit_price": propr.order_fill_price(order),
+                "closed_quantity": propr.order_filled_size(order) or entry.get("quantity"),
+                "closed_at": now.isoformat(),
+                "bracket_filled": label,
+            })
+            summary["bracket_filled"] = summary.get("bracket_filled", 0) + 1
+            log.warning(
+                "Propr mirror: %s for trade %s filled venue-side — retiring the leg "
+                "and cancelling its sibling bracket order", label, trade_id,
+            )
+            _cancel_bracket_legs(
+                propr, propr.normalize_asset(str(entry.get("asset") or "")), entry
+            )
+            break
 
 
 def _retire_venue_missing_legs(propr, state: dict, venue_keys: set, now: datetime, summary: dict) -> None:
@@ -1146,6 +1286,10 @@ def mirror_tick() -> dict:
 
     # --- venue reconcile: state is bookkeeping, the venue is the truth -------
     _reconcile_unmanaged_positions(propr, state, now, summary)
+    # PROPR-LEG-2: attribute venue-side stop/TP fills to their exact leg BEFORE
+    # the close pass, so a consumed leg is retired instead of closing into a
+    # same-side sibling's share of the netted position.
+    _retire_bracket_filled_legs(propr, state, now, summary)
 
     # --- close pass first: reducing risk always outranks adding it ----------
     for trade_id, entry in list(state.items()):
@@ -1155,7 +1299,7 @@ def mirror_tick() -> dict:
         if source_status == "OPEN":
             continue
         try:
-            _mirror_close(propr, trade_id, entry, now)
+            _mirror_close(propr, trade_id, entry, now, state)
             summary["closed" if entry.get("status") == "closed" else "errors"] += 1
         except Exception as exc:
             summary["errors"] += 1
