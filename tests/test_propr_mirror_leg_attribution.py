@@ -57,22 +57,6 @@ class FakePropr:
             raise self.orders_book
         return self.orders_book
 
-    # Mirrors the forven.exchange.propr public order-row aliases.
-    def order_id(self, order):
-        value = order.get("orderId") or order.get("id")
-        return str(value) if value is not None else None
-
-    def order_status(self, order):
-        return str(order.get("status") or "").strip().lower()
-
-    def order_fill_price(self, order):
-        value = order.get("averageFillPrice")
-        return float(value) if value else None
-
-    def order_filled_size(self, order):
-        value = order.get("cumulativeQuantity")
-        return float(value) if value not in (None, "") else None
-
     def close_position(self, asset, size, side):
         self.close_calls.append((asset, size, side))
         return self.close_result
@@ -81,8 +65,13 @@ class FakePropr:
         self.cancelled.append(oid)
         return {}
 
+    def place_protective_stop(self, asset, direction, size, stop_price):
+        self.rearmed = getattr(self, "rearmed", [])
+        self.rearmed.append((asset, direction, size, stop_price))
+        return {"stop_order_id": f"o-stop-rearmed-{len(self.rearmed)}"}
 
-def _leg(qty, stop_id="o-stop", tp_id=None, asset="ETH", direction="long"):
+
+def _leg(qty, stop_id="o-stop", tp_id=None, asset="ETH", direction="long", stop_price=1900.0):
     return {
         "status": "open",
         "asset": asset,
@@ -90,6 +79,7 @@ def _leg(qty, stop_id="o-stop", tp_id=None, asset="ETH", direction="long"):
         "quantity": qty,
         "stop_order_id": stop_id,
         "take_profit_order_id": tp_id,
+        "stop_price": stop_price,
     }
 
 
@@ -198,8 +188,9 @@ def test_zero_quantity_close_cancels_stranded_brackets(forven_db):
 def test_close_defers_when_the_deficit_cannot_be_attributed(forven_db):
     """The venue holds less than the same-side claims but is not flat: which
     leg was consumed is unknowable from position data alone. A must neither
-    close into B's share nor retire itself on a guess — defer and let the
-    order-status attribution pass resolve identity."""
+    close into B's share nor retire itself on a guess — defer, and since the
+    close protocol cancels A's brackets up front, re-arm A's stop while it
+    waits."""
     state = {
         "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
         "TB": _leg(0.6, stop_id="o-stop-B"),
@@ -210,8 +201,11 @@ def test_close_defers_when_the_deficit_cannot_be_attributed(forven_db):
 
     assert propr.close_calls == [], "closing trade A must never close trade B"
     assert state["TA"]["status"] == "open", "an unattributable deficit must not retire the leg"
-    assert propr.cancelled == [], "brackets on a possibly-live leg must not be cancelled"
     assert "cannot be attributed" in state["TA"]["reason"]
+    assert propr.rearmed, "the deferred leg must get its stop re-armed"
+    assert state["TA"]["stop_order_id"].startswith("o-stop-rearmed"), (
+        "the entry must track the re-armed stop id"
+    )
     assert state["TB"]["status"] == "open"
 
 
@@ -254,7 +248,55 @@ def test_close_clamps_and_keeps_the_residual_open_and_bracketed(forven_db):
     assert state["TA"]["status"] == "open", "the residual claim must stay tracked"
     assert abs(state["TA"]["quantity"] - 0.4) < 1e-9
     assert state["TA"]["partial_close_filled"] == 0.6
-    assert propr.cancelled == [], "the residual's protective brackets must stay armed"
+    assert propr.rearmed, "the residual must get its stop re-armed after the bracket cancel"
+    assert abs(propr.rearmed[-1][2] - 0.4) < 1e-9, "the re-armed stop must cover the residual"
+
+
+def test_close_retires_the_leg_when_its_own_stop_fills_in_the_race_window(forven_db):
+    """RACE-1: the leg's stop filled between the last attribution pass and the
+    close — the cancel-and-verify step must catch it and retire the leg instead
+    of submitting a close that would consume the sibling's share."""
+    state = {
+        "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(
+        positions=[{"asset": "ETH", "positionSide": "long", "quantity": "0.6"}],
+        orders=[{"orderId": "o-stop-A", "status": "filled",
+                 "averageFillPrice": "1900", "cumulativeQuantity": "1.0"}],
+    )
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert propr.close_calls == [], "a leg consumed by its own stop must not also be closed"
+    assert state["TA"]["status"] == "closed"
+    assert state["TA"]["bracket_filled"] == "stop"
+    assert state["TA"]["exit_price"] == 1900.0
+    assert state["TB"]["status"] == "open"
+
+
+def test_close_books_a_race_window_partial_fill_before_sizing(forven_db):
+    """RACE-1: a stop that PARTIALLY filled in the race window shrinks the
+    claim before the clamp is computed, so the submitted close never asks for
+    quantity the bracket already took."""
+    state = {
+        "TA": _leg(1.0, stop_id="o-stop-A"),
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(
+        # Venue: 1.9 total. A's stop took 0.3 (A's real claim now 0.7).
+        positions=[{"asset": "ETH", "positionSide": "long", "quantity": "1.3"}],
+        orders=[{"orderId": "o-stop-A", "status": "partially_filled",
+                 "cumulativeQuantity": "0.3"}],
+        close_result={"filled_size": 0.7, "requested_size": 0.7, "exit_price": 2050.0},
+    )
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert len(propr.close_calls) == 1
+    _, size, _ = propr.close_calls[0]
+    assert abs(size - 0.7) < 1e-9, "the close must ask for the bracket-adjusted claim"
+    assert state["TA"]["status"] == "closed"
 
 
 def test_close_defers_on_unreadable_venue_with_shared_side(forven_db):

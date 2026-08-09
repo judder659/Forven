@@ -575,16 +575,6 @@ def list_orders(limit: int | None = None) -> list[dict]:
     ))
 
 
-# Public aliases: every consumer of ``list_orders()`` rows must interpret them
-# exactly as this adapter does — the same precedent as ``position_side`` for
-# ``raw_positions()`` rows. The mirror's leg attribution (PROPR-LEG-2) reads
-# these.
-order_id = _order_id
-order_status = _order_status
-order_fill_price = _order_fill_price
-order_filled_size = _order_filled_size
-
-
 def list_trades(limit: int | None = None) -> list[dict]:
     account_id, _ = resolve_account()
     params = {"limit": limit} if limit else None
