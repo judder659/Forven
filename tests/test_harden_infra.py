@@ -15,8 +15,10 @@ that LOOKED like it was working:
          off a KV key that is silently dropped under lock contention. The gate
          now needs staleness past 2x the scheduler's own 900s tick watchdog,
          computed the way health_monitor computes it, held for 5 consecutive
-         cycles, AND a failing /api/health probe — a backend that still answers
-         /api/health is escalated to a human, never killed.
+         cycles, AND either a failing /api/health probe or direct evidence that
+         the critical live execution scanner is overdue. A backend that still
+         answers /api/health without that exact evidence is escalated to a
+         human, never killed.
 * OPS-3  `Start-Process -Redirect*` truncates its target on open, so the only
          record of why the backend died was destroyed by the restart.
 * OPS-6  start_all's restart / backoff / permanent-disable decisions existed
@@ -359,32 +361,37 @@ foreach ($cycle in 1..3) {
 
 
 @pytest.mark.skipif(_powershell() is None, reason="no pwsh/powershell on this machine")
-def test_ops2_a_backend_serving_api_health_is_never_killed_for_a_scheduler_stall() -> None:
-    """The money-path guard: a live backend passing /api/health is escalated, not killed.
+def test_ops2_a_healthy_backend_requires_an_overdue_live_scanner_to_restart() -> None:
+    """The money-path guard needs direct live-lane evidence before a healthy restart.
 
     Bouncing it aborts in-flight jobs and open-order bookkeeping — the sibling
     supervisor at start_all.ps1 refuses for the same reason ("A live+listening
-    backend that fails a few probes is almost always mid-job").
+    backend that fails a few probes is almost always mid-job"). The one narrow
+    exception is a sustained scheduler stall with the critical live execution
+    job itself provably overdue.
     """
     script = _extract_prelude(WATCHDOG, *_STALL_FUNCS) + """
 # Two HOURS of staleness: as unambiguous as this signal ever gets.
 $wedged = '{"scheduler_heartbeat_age_seconds": 7200, "last_error": "", "last_error_age_seconds": null, "stuck_job_count": 0, "hard_timeout_job_count": 0}' | ConvertFrom-Json
 $reason = [string](Resolve-SchedulerStallReason -Health $wedged -ThresholdSeconds 1800)
 Write-Output ('REASON=' + $reason)
-Write-Output ('HEALTHY_AT_LIMIT=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 5 -StallLimit 5 -BackendHealthy $true))
-Write-Output ('HEALTHY_FOREVER=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 500 -StallLimit 5 -BackendHealthy $true))
+Write-Output ('HEALTHY_NO_EVIDENCE=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 500 -StallLimit 5 -BackendHealthy $true))
+Write-Output ('HEALTHY_SCANNER_BELOW_LIMIT=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 4 -StallLimit 5 -BackendHealthy $true -CriticalLiveScannerOverdue $true))
+Write-Output ('HEALTHY_SCANNER_AT_LIMIT=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 5 -StallLimit 5 -BackendHealthy $true -CriticalLiveScannerOverdue $true))
 Write-Output ('SICK_BELOW_LIMIT=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 4 -StallLimit 5 -BackendHealthy $false))
 Write-Output ('SICK_AT_LIMIT=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason $reason -StallCycles 5 -StallLimit 5 -BackendHealthy $false))
-Write-Output ('BOT_OWNS_RUNTIME=' + (Resolve-SchedulerStallAction -RuntimeOwner 'bot' -StallReason $reason -StallCycles 500 -StallLimit 5 -BackendHealthy $false))
+Write-Output ('BOT_OWNS_RUNTIME=' + (Resolve-SchedulerStallAction -RuntimeOwner 'bot' -StallReason $reason -StallCycles 500 -StallLimit 5 -BackendHealthy $false -CriticalLiveScannerOverdue $true))
 Write-Output ('NO_REASON=' + (Resolve-SchedulerStallAction -RuntimeOwner 'api' -StallReason '' -StallCycles 500 -StallLimit 5 -BackendHealthy $false))
 """
     result = _run_powershell(script)
     assert result.returncode == 0, result.stderr
     assert "REASON=scheduler heartbeat stale" in result.stdout, result.stdout
     for expected in (
-        # A healthy backend NEVER reaches restart-backend, at any cycle count.
-        "HEALTHY_AT_LIMIT=notify",
-        "HEALTHY_FOREVER=notify",
+        # A healthy backend without exact live-scanner evidence stays notify-only.
+        "HEALTHY_NO_EVIDENCE=notify",
+        # Exact evidence still gets the full sustained-stall debounce.
+        "HEALTHY_SCANNER_BELOW_LIMIT=observe",
+        "HEALTHY_SCANNER_AT_LIMIT=restart-backend",
         # A sick backend still gets the full debounce.
         "SICK_BELOW_LIMIT=observe",
         "SICK_AT_LIMIT=restart-backend",
@@ -414,6 +421,19 @@ def test_ops2_the_healthy_stall_path_escalates_to_a_human() -> None:
     assert "try {" in helper and "} catch {" in helper, (
         "a broken notification pipeline must not take the watchdog cycle down"
     )
+
+
+def test_ops2_snapshot_requires_the_exact_live_execution_scanner_to_be_overdue() -> None:
+    text = _read(WATCHDOG)
+    snapshot = text.split("function Get-RuntimeHealthSnapshot {", 1)[1].split(
+        "function Get-BotProcessIds {", 1
+    )[0]
+
+    assert "forven-scanner-hourly" in snapshot
+    assert "critical_live_scanner_overdue" in snapshot
+    assert "critical_live_scanner_due_age_seconds" in snapshot
+    assert "critical_scanner_due_age > 300" in snapshot
+    assert 'Get-SnapshotValue $runtimeHealth "critical_live_scanner_overdue"' in text
 
 
 @pytest.mark.skipif(_powershell() is None, reason="no pwsh/powershell on this machine")

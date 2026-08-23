@@ -421,7 +421,8 @@ function Resolve-SchedulerStallAction {
         [string]$StallReason,
         [int]$StallCycles,
         [int]$StallLimit,
-        [bool]$BackendHealthy
+        [bool]$BackendHealthy,
+        [bool]$CriticalLiveScannerOverdue = $false
     )
 
     # Attributing a scheduler stall to the backend (OPS-2) does NOT mean
@@ -434,15 +435,19 @@ function Resolve-SchedulerStallAction {
     #   1. runtime_owner = api                    (the backend owns the state)
     #   2. staleness past $SchedulerStallThresholdSeconds (2x the scheduler's own watchdog)
     #   3. >= $StallLimit consecutive cycles      (~10 min of re-observation)
-    #   4. the backend is NOT serving /api/health (it is genuinely sick)
-    # A backend that still answers /api/health is NEVER killed for scheduler
-    # staleness: the scheduler has its own in-process circuit breaker for a real
-    # wedge, and a false positive here costs live money. That case returns
-    # "notify" - escalate to a human, do not reach for Stop-BackendProcesses.
+    #   4. either the backend is NOT serving /api/health (it is genuinely sick),
+    #      OR the critical live execution scanner is itself overdue.
+    # The second branch covers a narrower failure class observed on 2026-08-23:
+    # /api/health and the event loop were healthy while the scheduler coroutine
+    # was parked for hours and the live execution job stopped running. The
+    # exact job's overdue next_run_at is required here; generic overdue counts,
+    # old best-effort heartbeats, or a healthy API alone are not enough to kill
+    # the trading process. Missing/ambiguous scanner evidence fails safe to the
+    # existing human-notification path.
     if ([string]::IsNullOrWhiteSpace($StallReason)) { return "none" }
     if ($RuntimeOwner -ne "api") { return "none" }
     if ($StallCycles -lt $StallLimit) { return "observe" }
-    if ($BackendHealthy) { return "notify" }
+    if ($BackendHealthy -and -not $CriticalLiveScannerOverdue) { return "notify" }
     return "restart-backend"
 }
 
@@ -531,6 +536,28 @@ with get_db() as conn:
         "SELECT MAX(running_since) FROM scheduler_jobs "
         "WHERE running_since IS NOT NULL AND TRIM(running_since) != ''"
     ).fetchone()[0])
+    critical_scanner_row = conn.execute(
+        "SELECT enabled, next_run_at, running_since FROM scheduler_jobs WHERE id = ?",
+        ('forven-scanner-hourly',),
+    ).fetchone()
+
+critical_scanner_next_run = (
+    parse_ts(critical_scanner_row['next_run_at']) if critical_scanner_row is not None else None
+)
+critical_scanner_due_age = (
+    None if critical_scanner_next_run is None
+    else max(0, int((now - critical_scanner_next_run).total_seconds()))
+)
+# Five minutes matches control_plane.status's overdue-job grace. A running row
+# still counts after this point: the live scanner's own hard timeout is 180s,
+# while the outer PowerShell gate additionally requires >1800s of scheduler
+# staleness plus five consecutive observations before it can restart anything.
+critical_live_scanner_overdue = bool(
+    critical_scanner_row is not None
+    and int(critical_scanner_row['enabled'] or 0) == 1
+    and critical_scanner_due_age is not None
+    and critical_scanner_due_age > 300
+)
 
 # Scheduler freshness = the MAX of every heartbeat the loop writes, exactly as
 # forven/health_monitor.py::check_scheduler computes it (health_monitor.py:343-370
@@ -567,6 +594,8 @@ snapshot = {
     "last_error_age_seconds": None if last_error_at is None else max(0, int((now - last_error_at).total_seconds())),
     "stuck_job_count": stuck_job_count,
     "hard_timeout_job_count": hard_timeout_job_count,
+    "critical_live_scanner_overdue": critical_live_scanner_overdue,
+    "critical_live_scanner_due_age_seconds": critical_scanner_due_age,
 }
 print(json.dumps(snapshot))
 '@
@@ -761,15 +790,16 @@ try {
     $schedulerStallAction = Resolve-SchedulerStallAction `
         -RuntimeOwner $runtimeOwner -StallReason ([string]$schedulerStallReason) `
         -StallCycles $schedulerStallCycles -StallLimit $schedulerStallLimit `
-        -BackendHealthy ([bool]$backendHealthy)
+        -BackendHealthy ([bool]$backendHealthy) `
+        -CriticalLiveScannerOverdue ([bool](Get-SnapshotValue $runtimeHealth "critical_live_scanner_overdue"))
     if ($schedulerStallAction -eq "observe") {
         Write-Log ("Backend scheduler stalled (" + $schedulerStallReason + ", " + $schedulerStallCycles + "/" + $schedulerStallLimit + " cycles) - not restarting yet.")
     } elseif ($schedulerStallAction -eq "notify") {
         if ($schedulerStallCycles -eq $schedulerStallLimit) {
             Send-WatchdogNotification `
-                -Title "Scheduler stalled on a HEALTHY backend" `
+                -Title "Scheduler stalled on a healthy backend" `
                 -DedupeKey "watchdog:scheduler_stall:backend" `
-                -Summary ("The backend scheduler has been stalled (" + $schedulerStallReason + ") for " + $schedulerStallCycles + " consecutive watchdog cycles, but the backend is still serving /api/health. The watchdog will NOT restart it automatically - a restart aborts in-flight jobs on the live trading process. Investigate the scheduler loop.")
+                -Summary ("The backend scheduler has been stalled (" + $schedulerStallReason + ") for " + $schedulerStallCycles + " consecutive watchdog cycles, but the backend is still serving /api/health and the critical live execution scanner is not provably overdue. The watchdog will NOT restart it automatically - a restart aborts in-flight jobs on the live trading process. Investigate the scheduler loop.")
         }
         Write-LogThrottled -Key "scheduler_stall_healthy" -IntervalSeconds 3600 `
             -Message ("Backend scheduler stalled (" + $schedulerStallReason + ", " + $schedulerStallCycles + " cycles) but /api/health is passing - NOT restarting; operator action required.")
@@ -786,7 +816,12 @@ try {
         } elseif ($backendListeners.Count -eq 0) {
             "Backend DOWN (no listener, healthy=" + $backendHealthy + ") - restarting"
         } elseif ($null -ne $backendSchedulerStall) {
-            "Backend unhealthy (" + $backendSchedulerStall + " for " + $schedulerStallCycles + " cycles AND /api/health failing; runtime_owner=api) - restarting"
+            $scannerEvidence = [bool](Get-SnapshotValue $runtimeHealth "critical_live_scanner_overdue")
+            if ($backendHealthy -and $scannerEvidence) {
+                "Backend scheduler stalled (" + $backendSchedulerStall + " for " + $schedulerStallCycles + " cycles; critical live execution scanner overdue despite healthy /api/health; runtime_owner=api) - restarting"
+            } else {
+                "Backend unhealthy (" + $backendSchedulerStall + " for " + $schedulerStallCycles + " cycles AND /api/health failing; runtime_owner=api) - restarting"
+            }
         } else {
             "Backend hung (" + $probeFailures + " consecutive failed probes with a live listener) - restarting"
         }
