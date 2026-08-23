@@ -27,10 +27,11 @@ NOW = datetime(2026, 8, 9, 12, 0, tzinfo=timezone.utc)
 class FakePropr:
     """The slice of the adapter surface the mirror touches, call-recording."""
 
-    def __init__(self, positions=None, orders=None, close_result=None):
+    def __init__(self, positions=None, orders=None, close_result=None, cancel_results=None):
         self.positions = [] if positions is None else positions
         self.orders_book = [] if orders is None else orders
         self.close_result = close_result
+        self.cancel_results = {} if cancel_results is None else cancel_results
         self.close_calls = []
         self.cancelled = []
 
@@ -63,7 +64,7 @@ class FakePropr:
 
     def cancel_order(self, asset, oid):
         self.cancelled.append(oid)
-        return {}
+        return self.cancel_results.get(str(oid), {})
 
     def place_protective_stop(self, asset, direction, size, stop_price):
         self.rearmed = getattr(self, "rearmed", [])
@@ -113,6 +114,37 @@ def test_stop_fill_retires_only_the_filled_leg(forven_db):
     assert "o-tp-A" in propr.cancelled, "the surviving sibling leg must be cancelled"
     assert state["TB"]["status"] == "open", "the sibling LEG must not be retired"
     assert summary["bracket_filled"] == 1
+
+
+def test_retired_leg_retries_a_failed_sibling_bracket_cancellation(forven_db):
+    """A terminal leg must not forget an orphan that can reduce its sibling."""
+    state = {
+        "TA": _leg(0.5, stop_id="o-stop-A", tp_id="o-tp-A"),
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(
+        orders=[
+            {"orderId": "o-stop-A", "status": "filled",
+             "averageFillPrice": "1900", "cumulativeQuantity": "0.5"},
+            {"orderId": "o-tp-A", "status": "open"},
+        ],
+        cancel_results={"o-tp-A": {"error": "cancel endpoint unavailable"}},
+    )
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert state["TA"]["status"] == "closed"
+    assert state["TA"]["bracket_cancel_pending"] == {
+        "take_profit_order_id": "cancel endpoint unavailable"
+    }
+
+    propr.cancel_results["o-tp-A"] = {"cancelled": True}
+    summary: dict = {}
+    pm._retry_pending_bracket_cancellations(propr, state, summary)
+
+    assert "bracket_cancel_pending" not in state["TA"]
+    assert "bracket_cancel_error" not in state["TA"]
+    assert summary["bracket_cancel_recovered"] == 1
 
 
 def test_take_profit_fill_retires_the_leg(forven_db):
@@ -196,6 +228,36 @@ def test_partial_tp_fill_rearms_the_stop_at_the_residual(forven_db):
     assert getattr(propr, "rearmed", []), "the stop must be re-armed for the residual"
     assert abs(propr.rearmed[-1][2] - 0.6) < 1e-9
     assert state["TA"]["stop_order_id"].startswith("o-stop-rearmed")
+
+
+def test_partial_tp_fill_retries_a_failed_residual_stop_rearm(forven_db):
+    state = {"TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A")}
+    propr = FakePropr(orders=[
+        {"orderId": "o-tp-A", "status": "partially_filled", "cumulativeQuantity": "0.4"},
+        {"orderId": "o-stop-A", "status": "open", "triggerPrice": "1900"},
+    ])
+    attempts = {"count": 0}
+
+    def rearm_after_one_failure(asset, direction, size, stop_price):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return {"error": "stop endpoint unavailable"}
+        return {"stop_order_id": "o-stop-recovered"}
+
+    propr.place_protective_stop = rearm_after_one_failure
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert state["TA"]["stop_unarmed"] is True
+    assert state["TA"]["bracket_resize_pending"]["filled_leg_key"] == "take_profit_order_id"
+    assert state["TA"]["stop_order_id"] is None
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert attempts["count"] == 2
+    assert state["TA"]["stop_order_id"] == "o-stop-recovered"
+    assert "stop_unarmed" not in state["TA"]
+    assert "bracket_resize_pending" not in state["TA"]
 
 
 def test_close_failed_sibling_still_counts_as_a_claim(forven_db):
@@ -286,6 +348,55 @@ def test_close_defers_when_the_deficit_cannot_be_attributed(forven_db):
         "the entry must track the re-armed stop id"
     )
     assert state["TB"]["status"] == "open"
+
+
+def test_close_defers_when_own_stop_cancellation_is_unverified(forven_db):
+    """A failed stop cancellation plus an open order must never race a close.
+
+    Re-arming here would be equally unsafe: the old stop may still be live, so
+    two reduce-only stops could later consume the sibling's netted share.
+    """
+    state = {
+        "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(
+        positions=[{"asset": "ETH", "positionSide": "long", "quantity": "1.6"}],
+        orders=[
+            {"orderId": "o-stop-A", "status": "open"},
+            {"orderId": "o-tp-A", "status": "cancelled"},
+        ],
+        close_result={"filled_size": 1.0, "requested_size": 1.0},
+        cancel_results={"o-stop-A": {"error": "cancel endpoint unavailable"}},
+    )
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert propr.close_calls == []
+    assert state["TA"]["status"] == "open"
+    assert state["TA"]["bracket_cancel_unverified"] == ["stop_order_id"]
+    assert "bracket cancellation unverified" in state["TA"]["reason"]
+    assert not hasattr(propr, "rearmed"), "an uncertain live stop must not be duplicated"
+
+
+def test_close_accepts_a_fresh_terminal_order_row_after_cancel_error(forven_db):
+    """A cancel transport error is resolved by a fresh terminal order state."""
+    state = {
+        "TA": _leg(1.0, stop_id="o-stop-A"),
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(
+        positions=[{"asset": "ETH", "positionSide": "long", "quantity": "1.6"}],
+        orders=[{"orderId": "o-stop-A", "status": "cancelled"}],
+        close_result={"filled_size": 1.0, "requested_size": 1.0, "exit_price": 2050.0},
+        cancel_results={"o-stop-A": {"error": "cancel response lost"}},
+    )
+
+    pm._mirror_close(propr, "TA", state["TA"], NOW, state)
+
+    assert len(propr.close_calls) == 1
+    assert state["TA"]["status"] == "closed"
+    assert "bracket_cancel_unverified" not in state["TA"]
 
 
 def test_close_defers_a_single_flat_side_read_until_venue_missing_is_corroborated(forven_db):
@@ -385,6 +496,35 @@ def test_close_books_a_race_window_partial_fill_before_sizing(forven_db):
     _, size, _ = propr.close_calls[0]
     assert abs(size - 0.7) < 1e-9, "the close must ask for the bracket-adjusted claim"
     assert state["TA"]["status"] == "closed"
+
+
+def test_partial_fill_does_not_duplicate_a_sibling_whose_cancel_failed(forven_db):
+    """Resize only after positive cancellation; otherwise the old bracket may live."""
+    state = {"TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A")}
+    propr = FakePropr(
+        orders=[
+            {"orderId": "o-stop-A", "status": "partially_filled",
+             "cumulativeQuantity": "0.3"},
+            {"orderId": "o-tp-A", "status": "open", "triggerPrice": "2200"},
+        ],
+        cancel_results={"o-tp-A": {"error": "cancel endpoint unavailable"}},
+    )
+
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert state["TA"]["quantity"] == 0.7
+    assert state["TA"]["take_profit_order_id"] == "o-tp-A"
+    assert "could not verify cancellation" in state["TA"]["bracket_resize_error"]
+    assert state["TA"]["bracket_resize_pending"]["filled_leg_key"] == "stop_order_id"
+    assert not hasattr(propr, "tp_placed"), "never place a duplicate take-profit"
+
+    propr.cancel_results["o-tp-A"] = {"cancelled": True}
+    pm._retire_bracket_filled_legs(propr, state, NOW, {})
+
+    assert "bracket_resize_pending" not in state["TA"]
+    assert "bracket_resize_error" not in state["TA"]
+    assert state["TA"]["take_profit_order_id"].startswith("o-tp-resized")
+    assert propr.tp_placed[-1][2] == 0.7
 
 
 def test_close_defers_on_unreadable_venue_with_shared_side(forven_db):

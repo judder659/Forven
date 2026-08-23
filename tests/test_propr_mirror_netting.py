@@ -104,6 +104,60 @@ def test_open_defers_on_an_opposite_side_tracked_leg(forven_db, monkeypatch):
     assert propr.orders == []
 
 
+def test_open_defers_on_an_opposite_side_close_failed_claim(forven_db, monkeypatch):
+    """An unconfirmed close remains real exposure even after retries stop."""
+    monkeypatch.setattr(pm, "mirror_roster", lambda: {"S1": "t"})
+    propr = FakePropr()
+    state = {"E1": {"status": "close_failed", "asset": "ETH", "direction": "short"}}
+
+    pm._mirror_open(propr, _row(direction="long"), state, 5000.0, NOW)
+
+    assert state["T1"]["status"] == "pending"
+    assert "netting conflict" in state["T1"]["reason"]
+    assert propr.orders == []
+
+
+def test_open_defers_while_any_retired_bracket_cleanup_is_pending(forven_db, monkeypatch):
+    """A stray reduce-only order can consume a new same-side leg on a netted book."""
+    monkeypatch.setattr(pm, "mirror_roster", lambda: {"S1": "t"})
+    propr = FakePropr()
+    state = {
+        "E1": {
+            "status": "closed",
+            "asset": "ETH",
+            "direction": "long",
+            "take_profit_order_id": "o-tp-E1",
+            "bracket_cancel_pending": {"take_profit_order_id": "venue unavailable"},
+        }
+    }
+
+    pm._mirror_open(propr, _row(direction="long"), state, 5000.0, NOW)
+
+    assert state["T1"]["status"] == "pending"
+    assert "bracket cleanup pending" in state["T1"]["reason"]
+    assert propr.orders == []
+
+
+def test_open_defers_while_an_open_leg_bracket_resize_is_pending(forven_db, monkeypatch):
+    monkeypatch.setattr(pm, "mirror_roster", lambda: {"S1": "t"})
+    propr = FakePropr()
+    state = {
+        "E1": {
+            "status": "open",
+            "asset": "ETH",
+            "direction": "long",
+            "take_profit_order_id": "o-tp-E1",
+            "bracket_resize_pending": {"filled_leg_key": "stop_order_id"},
+        }
+    }
+
+    pm._mirror_open(propr, _row(direction="long"), state, 5000.0, NOW)
+
+    assert state["T1"]["status"] == "pending"
+    assert "bracket cleanup pending" in state["T1"]["reason"]
+    assert propr.orders == []
+
+
 def test_open_defers_on_an_opposite_side_venue_position(forven_db, monkeypatch):
     """The venue book is checked too — a hand-placed or unmanaged opposite leg
     must block the open exactly like a tracked one."""
@@ -274,6 +328,21 @@ def test_venue_read_failure_never_counts_as_missing(forven_db):
     assert "venue_missing_ticks" not in state["E1"]
 
 
+def test_close_failed_claim_is_still_tracked_by_unmanaged_reconciliation(forven_db):
+    propr = FakePropr(
+        positions=[{"asset": "ETH", "positionSide": "short", "quantity": "0.5"}]
+    )
+    state = {
+        "E1": {"status": "close_failed", "asset": "ETH", "direction": "short"}
+    }
+    summary: dict = {}
+
+    pm._reconcile_unmanaged_positions(propr, state, NOW, summary)
+
+    assert "unmanaged" not in summary
+    assert pm.get_unmanaged_state() == {}
+
+
 def test_retired_leg_is_pruned_like_other_terminal_records(forven_db, monkeypatch):
     """venue_missing joins the terminal statuses the tick loop ages out."""
     import forven.sim.clock as sim_clock
@@ -290,3 +359,120 @@ def test_retired_leg_is_pruned_like_other_terminal_records(forven_db, monkeypatc
     pm.mirror_tick()
 
     assert "E1" not in pm.get_state()
+
+
+def test_close_failed_claim_does_not_age_out_while_venue_exposure_remains(
+    forven_db, monkeypatch
+):
+    """Retention must never erase an unresolved live venue claim."""
+    import forven.sim.clock as sim_clock
+    from forven.exchange import propr
+
+    monkeypatch.setattr(pm, "propr_enabled", lambda: True)
+    monkeypatch.setattr(pm, "mirror_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(pm, "mirror_roster", lambda *a, **k: {"S1": "t"})
+    monkeypatch.setattr(pm, "_roster_trades", lambda *_a, **_k: [])
+    monkeypatch.setattr(pm, "_evaluate_halt", lambda *_a, **_k: None)
+    monkeypatch.setattr(sim_clock, "is_sim_active", lambda: False)
+    monkeypatch.setattr(
+        propr,
+        "raw_positions",
+        lambda: [{"asset": "ETH", "positionSide": "short", "quantity": "0.5"}],
+    )
+    monkeypatch.setattr(propr, "get_account_value", lambda: {"accountValue": "5000"})
+
+    stale = (NOW - timedelta(days=pm._STATE_RETENTION_DAYS + 1)).isoformat()
+    pm._save_state({
+        "E1": {
+            "status": "close_failed",
+            "asset": "ETH",
+            "direction": "short",
+            "risk_usd": 40.0,
+            "recorded_at": stale,
+        }
+    })
+
+    pm.mirror_tick()
+
+    assert pm.get_state()["E1"]["status"] == "close_failed"
+
+
+def test_terminal_record_with_pending_bracket_cleanup_does_not_age_out(
+    forven_db, monkeypatch
+):
+    """The order id must survive retention so cancellation can keep retrying."""
+    import forven.sim.clock as sim_clock
+    from forven.exchange import propr
+
+    monkeypatch.setattr(pm, "propr_enabled", lambda: True)
+    monkeypatch.setattr(pm, "mirror_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(pm, "mirror_roster", lambda *a, **k: {"S1": "t"})
+    monkeypatch.setattr(pm, "_roster_trades", lambda *_a, **_k: [])
+    monkeypatch.setattr(pm, "_evaluate_halt", lambda *_a, **_k: None)
+    monkeypatch.setattr(sim_clock, "is_sim_active", lambda: False)
+    monkeypatch.setattr(propr, "raw_positions", lambda: [])
+    monkeypatch.setattr(propr, "get_account_value", lambda: {"accountValue": "5000"})
+    monkeypatch.setattr(
+        propr,
+        "cancel_order",
+        lambda *_a, **_k: {"error": "cancel endpoint unavailable"},
+    )
+
+    stale = (NOW - timedelta(days=pm._STATE_RETENTION_DAYS + 1)).isoformat()
+    pm._save_state({
+        "E1": {
+            "status": "closed",
+            "asset": "ETH",
+            "direction": "long",
+            "take_profit_order_id": "o-tp-E1",
+            "bracket_cancel_pending": {"take_profit_order_id": "venue unavailable"},
+            "recorded_at": stale,
+        }
+    })
+
+    pm.mirror_tick()
+
+    assert pm.get_state()["E1"]["bracket_cancel_pending"]
+
+
+def test_close_failed_claim_still_consumes_the_open_risk_budget(forven_db, monkeypatch):
+    import forven.sim.clock as sim_clock
+    from forven.exchange import propr
+    from forven.exchange import risk
+
+    monkeypatch.setattr(pm, "propr_enabled", lambda: True)
+    monkeypatch.setattr(pm, "mirror_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(pm, "mirror_roster", lambda *a, **k: {"S1": "t"})
+    monkeypatch.setattr(pm, "_roster_trades", lambda *_a, **_k: [_row(trade_id="T2")])
+    monkeypatch.setattr(
+        pm,
+        "_evaluate_halt",
+        lambda *_a, **_k: {"halted": False, "daily_halt_at_usd": 100.0, "daily_loss": 0.0},
+    )
+    monkeypatch.setattr(sim_clock, "is_sim_active", lambda: False)
+    monkeypatch.setattr(
+        propr,
+        "raw_positions",
+        lambda: [{"asset": "ETH", "positionSide": "long", "quantity": "0.5"}],
+    )
+    monkeypatch.setattr(propr, "get_account_value", lambda: {"accountValue": "5000"})
+    monkeypatch.setattr(risk, "is_trading_allowed", lambda: (True, "OK"))
+
+    captured: dict = {}
+
+    def capture_open(_propr, _row_data, _state, _equity, _now, risk_budget=None):
+        captured.update(risk_budget or {})
+
+    monkeypatch.setattr(pm, "_mirror_open", capture_open)
+    pm._save_state({
+        "E1": {
+            "status": "close_failed",
+            "asset": "ETH",
+            "direction": "long",
+            "risk_usd": 40.0,
+        }
+    })
+
+    pm.mirror_tick()
+
+    assert captured["remaining"] == 60.0
