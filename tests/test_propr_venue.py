@@ -356,6 +356,36 @@ def test_cancel_reaches_the_venue_after_conversion(monkeypatch):
     assert "reached the venue" in result["error"]
 
 
+def test_get_order_uses_exact_history_filter_and_verifies_the_id(monkeypatch):
+    from forven.exchange import propr
+
+    monkeypatch.setattr(
+        propr, "resolve_account", lambda force_refresh=False: ("acct-1", "att-1")
+    )
+    calls = []
+
+    def fake_request(method, path, *, breaker, params=None, **kwargs):
+        calls.append({"method": method, "path": path, "params": params})
+        return {
+            "orders": [
+                {"orderId": "older-neighbour", "status": "filled"},
+                {"orderId": "wanted-order", "status": "cancelled"},
+            ]
+        }
+
+    monkeypatch.setattr(propr, "_request", fake_request)
+
+    assert propr.get_order("wanted-order") == {
+        "orderId": "wanted-order",
+        "status": "cancelled",
+    }
+    assert calls == [{
+        "method": "GET",
+        "path": "/accounts/acct-1/orders",
+        "params": {"orderId": "wanted-order", "limit": 20, "offset": 0},
+    }]
+
+
 # ---------------------------------------------------------------------------
 # Order payload contract (HTTP fully mocked)
 # ---------------------------------------------------------------------------

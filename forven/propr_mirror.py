@@ -884,7 +884,12 @@ def _rearm_or_close_unprotected(
 
 
 def _cancel_bracket_legs(
-    propr, asset: str, entry: dict, *, trade_id: str | None = None
+    propr,
+    asset: str,
+    entry: dict,
+    *,
+    trade_id: str | None = None,
+    skip_leg_keys: set[str] | None = None,
 ) -> dict[str, str]:
     """Cancel a retired leg's resting stop/TP orders and retain failures.
 
@@ -894,6 +899,8 @@ def _cancel_bracket_legs(
     later mirror ticks instead of being forgotten with the retired leg."""
     failures: dict[str, str] = {}
     for leg_key in ("stop_order_id", "take_profit_order_id"):
+        if skip_leg_keys and leg_key in skip_leg_keys:
+            continue
         leg_id = entry.get(leg_key)
         if leg_id:
             try:
@@ -906,18 +913,48 @@ def _cancel_bracket_legs(
                     # The adapter's 400 deliberately conflates two materially
                     # different outcomes. An explicit terminal cancellation is
                     # safe; filled/partial/open/absent/unreadable is not. This
-                    # entry is already terminal, so the later attribution pass
-                    # will not inspect its brackets and cannot safely absorb an
-                    # orphan fill into the leg's claim. Keep cleanup pending —
-                    # and same-asset opens blocked — until a fresh order read
-                    # proves that the bracket can no longer reduce a sibling.
-                    orders = _read_order_rows(propr)
-                    order = orders.get(str(leg_id)) if orders is not None else None
+                    # Query this exact id: the venue's unfiltered list is a
+                    # window and can omit older terminal orders. This entry is
+                    # already terminal, so an unattributed fill must stay
+                    # fail-closed. A fill already booked to this same leg is
+                    # safe: it is terminal and has consumed the intended claim.
+                    readable, order = _read_order_row(propr, str(leg_id))
                     status = _order_row_status(order) if order else ""
-                    if status not in ("cancelled", "canceled", "rejected", "expired"):
+                    attributed_label = (
+                        "stop" if leg_key == "stop_order_id" else "take-profit"
+                    )
+                    attributed_fill = (
+                        status == "filled"
+                        and str(entry.get("bracket_filled") or "").strip().lower()
+                        == attributed_label
+                    )
+                    if (
+                        status not in ("cancelled", "canceled", "rejected", "expired")
+                        and not attributed_fill
+                    ):
+                        fresh_state = status or ("absent" if readable else "unreadable")
                         failures[leg_key] = (
                             "cancel response was already-filled-or-cancelled but the fresh "
-                            f"order state was {status or 'absent'}"
+                            f"order state was {fresh_state}"
+                        )
+                    else:
+                        terminal_at = (
+                            order.get("cancelledAt")
+                            or order.get("canceledAt")
+                            or order.get("filledAt")
+                            or order.get("updatedAt")
+                            or "<timestamp unavailable>"
+                        )
+                        log.warning(
+                            "Propr mirror: exact order history verified retired trade %s "
+                            "bracket %s as %s at %s%s — cleanup cleared",
+                            trade_id or "<unknown>",
+                            leg_id,
+                            status,
+                            terminal_at,
+                            " (fill already attributed to this leg)"
+                            if attributed_fill
+                            else "",
                         )
             except Exception as exc:
                 failures[leg_key] = str(exc)
@@ -1370,7 +1407,7 @@ def _order_row_trigger_price(order: dict) -> float | None:
 
 
 def _read_order_rows(propr) -> dict[str, dict] | None:
-    """order id -> row for every order the venue lists, or None when the
+    """Order id -> row for the venue's current listing window, or None when the
     listing is unreadable (callers must treat that as unverifiable, never as
     empty)."""
     try:
@@ -1383,6 +1420,26 @@ def _read_order_rows(propr) -> dict[str, dict] | None:
     except Exception as exc:
         log.debug("Propr mirror: order read failed: %s", exc)
         return None
+
+
+def _read_order_row(propr, order_id: str) -> tuple[bool, dict | None]:
+    """Return (readable, exact row) without treating a list window as history."""
+    wanted = str(order_id)
+    getter = getattr(propr, "get_order", None)
+    if callable(getter):
+        try:
+            order = getter(wanted)
+            if order is None:
+                return True, None
+            if not isinstance(order, dict) or _order_row_id(order) != wanted:
+                log.error("Propr mirror: exact order read returned a mismatched row for %s", wanted)
+                return False, None
+            return True, order
+        except Exception as exc:
+            log.debug("Propr mirror: exact order read failed for %s: %s", wanted, exc)
+            return False, None
+    rows = _read_order_rows(propr)
+    return rows is not None, rows.get(wanted) if rows is not None else None
 
 
 def _resize_sibling_bracket(propr, trade_id: str, entry: dict, filled_leg_key: str,
@@ -1580,7 +1637,7 @@ def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict
                         )
                         _cancel_bracket_legs(
                             propr, propr.normalize_asset(str(entry.get("asset") or "")), entry,
-                            trade_id=trade_id,
+                            trade_id=trade_id, skip_leg_keys={leg_key},
                         )
                         break
                     entry["quantity"] = round(remaining, 10)
@@ -1619,7 +1676,7 @@ def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict
             )
             _cancel_bracket_legs(
                 propr, propr.normalize_asset(str(entry.get("asset") or "")), entry,
-                trade_id=trade_id,
+                trade_id=trade_id, skip_leg_keys={leg_key},
             )
             break
 
