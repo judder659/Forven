@@ -1156,6 +1156,83 @@ def _force_close_exchange_backed_trade(trade_id: str, body) -> dict[str, object]
     }
 
 
+def _force_close_local_paper_trade(trade_id: str, trade: dict, body) -> dict:
+    """Close a local-only paper-lane row at the current mark, entirely
+    off-exchange (PAPER-CLOSE-1). Mirrors close_open_paper_trades_for_strategy,
+    the lifecycle paper-close path: the mark comes from the CONFIGURED
+    market-data source via _fresh_mark_price (which refuses stale or
+    unavailable prices — a Binance-priced paper book must not book exits
+    against Hyperliquid mids), and kernel-managed rows book P&L through the
+    kernel's net cost convention so a gross-P&L close cannot inflate the paper
+    sandbox equity that sizes subsequent trades. No fresh mark → refuse with
+    no state change; the operator can simply retry."""
+    from forven.trade_state import _fresh_mark_price
+
+    asset = str(trade.get("asset") or "").strip().upper()
+    direction = str(trade.get("direction") or "long").strip().lower()
+    mark = _fresh_mark_price(asset)
+    if mark is None:
+        return {
+            "ok": False,
+            "error": (
+                f"no fresh mark for {asset} from the configured market-data source — "
+                "a paper force-close needs a trustworthy price; retry shortly"
+            ),
+        }
+
+    pnl_override, cost_signal_data = None, None
+    try:
+        from forven.api_domains.paper_control import _manual_paper_close_pnl_override
+
+        pnl_override, cost_signal_data = _manual_paper_close_pnl_override(trade, mark)
+    except Exception:
+        pnl_override, cost_signal_data = None, None
+
+    close_note = str(body.reason or "").strip() or None
+    closed = close_trade_record(
+        trade_id,
+        signal_exit_price=mark,
+        exit_price=mark,
+        close_reason="manual_force_close",
+        close_price_source="paper_mark",
+        closed_at=_now(),
+        extra_signal_data={
+            "manual_close_note": close_note,
+            **(cost_signal_data or {}),
+        },
+        pnl_override=pnl_override,
+    )
+    if not closed or not closed.get("updated"):
+        return {"ok": False, "error": "Failed to persist force-close"}
+    release(trade_id)
+    log_activity(
+        "warning",
+        "api",
+        f"Manual force-close executed for paper trade {trade_id} (local close, no exchange order)",
+        {
+            "trade_id": trade_id,
+            "asset": asset,
+            "direction": direction,
+            "size": float(trade.get("size") or 0.0),
+            "exit_price": closed.get("exit_price"),
+            "reason": close_note or "manual_force_close",
+            "execution_type": str(trade.get("execution_type") or ""),
+        },
+    )
+    return {
+        "ok": True,
+        "trade_id": trade_id,
+        "asset": asset,
+        "direction": direction,
+        "close_side": "sell" if direction == "long" else "buy",
+        "exit_price": round(float(closed["exit_price"]), 8) if closed.get("exit_price") is not None else None,
+        "pnl_pct": round(float(closed["pnl_pct"]), 6) if closed.get("pnl_pct") is not None else None,
+        "pnl_usd": round(float(closed["pnl_usd"]), 4) if closed.get("pnl_usd") is not None else None,
+        "closed_at": closed.get("closed_at"),
+        "source": "paper_local",
+    }
+
+
 def force_close_trade(trade_id: str, body):
     trade_id = trade_id.strip()
     if not trade_id:
@@ -1178,6 +1255,17 @@ def force_close_trade(trade_id: str, body):
         return {"ok": False, "error": "Trade asset is missing"}
     if size <= 0:
         return {"ok": False, "error": "Trade size must be > 0"}
+
+    # PAPER-CLOSE-1: a local-only paper row is a DB record, not a venue
+    # position — its force-close must never reach the exchange. 2026-08-07:
+    # this path sent nine reduce-only close orders to Hyperliquid MAINNET for
+    # paper-lane rows during an operator sweep; every one was rejected only
+    # because the master wallet happened to hold no reducible position. Trades
+    # carrying an exchange correlation id (including paper bot-test fills)
+    # stay on the exchange path below — those DID place venue orders and must
+    # be closed and reconciled there.
+    if is_local_only_paper_trade(trade):
+        return _force_close_local_paper_trade(trade_id, trade, body)
 
     close_side = "sell" if direction == "long" else "buy"
     testnet = _resolve_exchange_testnet()

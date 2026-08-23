@@ -17,7 +17,7 @@ from forven.lab_models import (
     DispatchPaperIntentRequest,
     DispatchPaperIntentResponse,
 )
-from forven.scanner import _open_trade_db
+from forven.scanner import CrossStrategyDuplicateSignal, _open_trade_db
 from forven.trade_state import close_trade_record
 
 _ACTION_ALIASES: dict[str, str] = {
@@ -303,39 +303,50 @@ def dispatch_paper_intent(request: DispatchPaperIntentRequest) -> DispatchPaperI
                 fill_price = signal_price
                 feedback_details["existing_trade_id"] = str(existing_trade.get("id") or "")
             else:
-                trade_id = _open_trade_db(
-                    strat_id=champion_strategy_id,
-                    asset=asset,
-                    direction=direction,
-                    entry=signal_price,
-                    size=intent_payload["size"],
-                    risk_pct=intent_payload["risk_pct"],
-                    leverage=intent_payload["leverage"],
-                    signal_data={
-                        "source": "lab_regime_dispatch",
-                        "selection_event_id": selected_event_id,
-                        "intent_id": intent.id,
-                        "regime": regime,
-                        "confidence": confidence,
-                        "strategy_candidate_key": candidate_key,
-                        "champion_strategy_key": champion_strategy_key,
-                        "trade_mode": trade_mode,
-                        "position_model": position_model,
-                        **intent_payload["meta_json"],
-                    },
-                    execution_type="paper",
-                )
-                register(
-                    trade_id=trade_id,
-                    asset=asset,
-                    direction=direction,
-                    strategy=champion_strategy_id,
-                    risk_pct=float(intent_payload["risk_pct"]),
-                    entry_price=signal_price,
-                    execution_type="paper",
-                )
-                fill_price = signal_price
-                execution_status = "filled"
+                try:
+                    trade_id = _open_trade_db(
+                        strat_id=champion_strategy_id,
+                        asset=asset,
+                        direction=direction,
+                        entry=signal_price,
+                        size=intent_payload["size"],
+                        risk_pct=intent_payload["risk_pct"],
+                        leverage=intent_payload["leverage"],
+                        signal_data={
+                            "source": "lab_regime_dispatch",
+                            "selection_event_id": selected_event_id,
+                            "intent_id": intent.id,
+                            "regime": regime,
+                            "confidence": confidence,
+                            "strategy_candidate_key": candidate_key,
+                            "champion_strategy_key": champion_strategy_key,
+                            "trade_mode": trade_mode,
+                            "position_model": position_model,
+                            **intent_payload["meta_json"],
+                        },
+                        execution_type="paper",
+                    )
+                except CrossStrategyDuplicateSignal as dup_exc:
+                    # PORT-DEDUP-1: another strategy already recorded this bet
+                    # inside the dedup window. A clean rejection, not a failure
+                    # — the generic except below would mislabel it "failed".
+                    execution_status = "rejected"
+                    reason = "cross_strategy_duplicate_signal"
+                    fill_price = signal_price
+                    feedback_details["blocking_trade_id"] = dup_exc.blocking_trade_id
+                    feedback_details["blocking_strategy"] = dup_exc.blocking_strategy
+                else:
+                    register(
+                        trade_id=trade_id,
+                        asset=asset,
+                        direction=direction,
+                        strategy=champion_strategy_id,
+                        risk_pct=float(intent_payload["risk_pct"]),
+                        entry_price=signal_price,
+                        execution_type="paper",
+                    )
+                    fill_price = signal_price
+                    execution_status = "filled"
         else:
             close_direction = "long" if action == "long_exit" else "short"
             open_trade = _find_open_trade(champion_strategy_id, asset, close_direction)

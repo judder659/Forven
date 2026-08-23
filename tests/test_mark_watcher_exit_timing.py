@@ -179,6 +179,11 @@ def test_watcher_closes_manual_paper_position(forven_db):
 
 
 def test_watcher_skips_paused_live_and_untouched(forven_db):
+    # This test needs two paper SOL positions from different strategies at
+    # once; PORT-DEDUP-1 would collapse the second as a clone signal, which is
+    # not what is under test here — disable the guard for this scenario.
+    from forven.db import kv_set
+    kv_set("forven:settings", {"paper_cross_strategy_dedup_enabled": False})
     mw.invalidate_armed_cache()
     paused = _open_paper_trade(strat_id="S-W5", sd_extra={"manual_pause": True})
     live = _open_paper_trade(strat_id="S-W6", execution_type="live")
