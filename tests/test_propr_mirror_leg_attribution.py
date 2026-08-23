@@ -147,6 +147,57 @@ def test_retired_leg_retries_a_failed_sibling_bracket_cancellation(forven_db):
     assert summary["bracket_cancel_recovered"] == 1
 
 
+def test_retired_leg_disambiguates_already_filled_or_cancelled_before_cleanup(forven_db):
+    """A terminal leg is excluded from attribution, so an ambiguous cancel
+    cannot be cleared until the order book proves the bracket was cancelled."""
+    state = {
+        "TA": {
+            **_leg(0.5, stop_id="o-stop-A", tp_id=None),
+            "status": "closed",
+            "bracket_cancel_pending": {"stop_order_id": "previous failure"},
+        },
+        "TB": _leg(0.6, stop_id="o-stop-B"),
+    }
+    propr = FakePropr(
+        orders=[{"orderId": "o-stop-A", "status": "filled"}],
+        cancel_results={
+            "o-stop-A": {"cancelled": False, "already_filled_or_cancelled": True}
+        },
+    )
+    summary: dict = {}
+
+    pm._retry_pending_bracket_cancellations(propr, state, summary)
+
+    assert "fresh order state was filled" in state["TA"]["bracket_cancel_pending"][
+        "stop_order_id"
+    ]
+    assert summary["bracket_cancel_pending"] == 1
+    assert pm._netting_conflict(propr, state, "TC", "ETH", "long") is not None
+
+    propr.orders_book = [{"orderId": "o-stop-A", "status": "cancelled"}]
+    pm._retry_pending_bracket_cancellations(propr, state, summary)
+
+    assert "bracket_cancel_pending" not in state["TA"]
+    assert "bracket_cancel_error" not in state["TA"]
+    assert summary["bracket_cancel_recovered"] == 1
+
+
+def test_retired_leg_keeps_ambiguous_absent_order_pending(forven_db):
+    """An absent row is not proof of cancellation: the venue may omit fills."""
+    entry = {**_leg(0.5, stop_id="o-stop-A", tp_id=None), "status": "closed"}
+    propr = FakePropr(
+        orders=[],
+        cancel_results={
+            "o-stop-A": {"cancelled": False, "already_filled_or_cancelled": True}
+        },
+    )
+
+    failures = pm._cancel_bracket_legs(propr, "ETH", entry, trade_id="TA")
+
+    assert "fresh order state was absent" in failures["stop_order_id"]
+    assert entry["bracket_cancel_pending"] == failures
+
+
 def test_take_profit_fill_retires_the_leg(forven_db):
     state = {"TA": _leg(0.5, stop_id="o-stop-A", tp_id="o-tp-A")}
     propr = FakePropr(orders=[

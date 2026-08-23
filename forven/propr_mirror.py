@@ -902,6 +902,23 @@ def _cancel_bracket_legs(
                     failures[leg_key] = "venue returned no cancellation result"
                 elif cancelled.get("error"):
                     failures[leg_key] = str(cancelled["error"])
+                elif cancelled.get("already_filled_or_cancelled"):
+                    # The adapter's 400 deliberately conflates two materially
+                    # different outcomes. An explicit terminal cancellation is
+                    # safe; filled/partial/open/absent/unreadable is not. This
+                    # entry is already terminal, so the later attribution pass
+                    # will not inspect its brackets and cannot safely absorb an
+                    # orphan fill into the leg's claim. Keep cleanup pending —
+                    # and same-asset opens blocked — until a fresh order read
+                    # proves that the bracket can no longer reduce a sibling.
+                    orders = _read_order_rows(propr)
+                    order = orders.get(str(leg_id)) if orders is not None else None
+                    status = _order_row_status(order) if order else ""
+                    if status not in ("cancelled", "canceled", "rejected", "expired"):
+                        failures[leg_key] = (
+                            "cancel response was already-filled-or-cancelled but the fresh "
+                            f"order state was {status or 'absent'}"
+                        )
             except Exception as exc:
                 failures[leg_key] = str(exc)
     if failures:
