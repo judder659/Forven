@@ -9,8 +9,8 @@ share of the netted position. Closing trade A must never close trade B:
 * a leg whose own stop/TP order reports ``filled`` is retired at the fill,
   and only that leg;
 * a close is clamped to the venue quantity NOT claimed by other tracked
-  same-side legs, refusing entirely (consumed venue-side) when nothing of
-  this leg is left;
+  same-side legs, deferring to the venue-missing hysteresis when one positions
+  read reports the whole side flat;
 * an unreadable venue defers the close when — and only when — another
   same-side leg makes a blind close dangerous.
 """
@@ -288,9 +288,8 @@ def test_close_defers_when_the_deficit_cannot_be_attributed(forven_db):
     assert state["TB"]["status"] == "open"
 
 
-def test_close_retires_the_leg_when_the_venue_side_is_flat(forven_db):
-    """No position at all on this side: the leg's share is definitively gone,
-    whichever order consumed it."""
+def test_close_defers_a_single_flat_side_read_until_venue_missing_is_corroborated(forven_db):
+    """One partial positions response must not consume a real, now-unprotected leg."""
     state = {
         "TA": _leg(1.0, stop_id="o-stop-A", tp_id="o-tp-A"),
         "TB": _leg(0.6, stop_id="o-stop-B"),
@@ -300,9 +299,19 @@ def test_close_retires_the_leg_when_the_venue_side_is_flat(forven_db):
     pm._mirror_close(propr, "TA", state["TA"], NOW, state)
 
     assert propr.close_calls == []
-    assert state["TA"]["status"] == "closed"
-    assert state["TA"]["venue_position_missing"] is True
-    assert "consumed venue-side" in state["TA"]["reason"]
+    assert state["TA"]["status"] == "open"
+    assert state["TA"]["close_attempts"] == 1
+    assert "venue_missing corroboration" in state["TA"]["reason"]
+    assert propr.rearmed, "the possibly-real residual must keep a protective stop"
+    assert state["TA"]["stop_order_id"].startswith("o-stop-rearmed")
+
+    summary: dict = {}
+    for _ in range(pm._VENUE_MISSING_TICKS):
+        pm._retire_venue_missing_legs(propr, state, set(), NOW, summary)
+
+    assert state["TA"]["status"] == "venue_missing"
+    assert state["TB"]["status"] == "venue_missing"
+    assert summary["venue_missing"] == 2
 
 
 def test_close_clamps_and_keeps_the_residual_open_and_bracketed(forven_db):

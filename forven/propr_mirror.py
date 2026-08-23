@@ -1065,23 +1065,18 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime, state: dict 
                 )
         other_claims = sum(float(_num(e.get("quantity")) or 0.0) for _, e in others)
         if venue_qty <= 1e-12:
-            # The whole side is flat: this leg's share is definitively gone,
-            # whatever consumed it. (The sibling legs resolve through their own
-            # closes / the venue_missing hysteresis.)
-            entry.update({
-                "status": "closed",
-                "reason": (
-                    f"consumed venue-side: the venue holds no {key[1]} {key[0]} position "
-                    "at all — nothing of this leg is left to reduce"
-                ),
-                "venue_position_missing": True,
-                "closed_at": now.isoformat(),
-            })
-            _cancel_bracket_legs(propr, asset, entry)
-            log.warning(
-                "Propr mirror: close for trade %s skipped — venue side %s %s is flat; "
-                "recording the leg as consumed venue-side", trade_id, key[0], key[1],
-            )
+            # One flat read is NOT proof: _retire_venue_missing_legs demands
+            # _VENUE_MISSING_TICKS consecutive misses precisely because a
+            # single partial positions response can omit a real leg. Defer —
+            # the venue_missing hysteresis retires the leg (and releases its
+            # claim) once the flat side is corroborated, and the re-armed stop
+            # keeps any REAL residual protected meanwhile (a reduce-only stop
+            # on a truly flat side is inert and is cancelled at retire time).
+            _defer_close(trade_id, entry, (
+                f"venue side {key[0]} {key[1]} reads flat — deferring for "
+                "venue_missing corroboration before treating the leg as consumed"
+            ))
+            _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
             return
         closable = min(quantity, venue_qty - other_claims)
         if closable <= 0:
