@@ -247,6 +247,11 @@ _AUTONOMY_DB_LOCK_FAILURE_LIMIT = 3
 _RESTART_RECOVERY_ERROR_LIKE = "recovered after process restarted%"
 _BACKGROUND_SCHEDULER_JOB_KINDS = {
     "evolution_testing",
+    # Graduation ends with a research-recovery sweep that may re-certify every
+    # research-only strategy when none promotes. Keep that unbounded, CPU/DB-
+    # heavy work off the inline due-job drain so it cannot hold the critical
+    # execution scanner behind it.
+    "evolution_graduation",
     "crucible_planner",
     "param_optimization",
     "data_manager_backfill",

@@ -105,6 +105,83 @@ def test_tick_does_not_block_due_queue_on_long_evolution_job(monkeypatch, forven
     asyncio.run(scenario())
 
 
+def test_graduation_sweep_does_not_block_live_scanner(monkeypatch, forven_db):
+    """An unbounded research-recovery sweep must not starve live execution."""
+    now = datetime.now(timezone.utc)
+    _insert_scheduler_job(
+        "forven-paper-graduation",
+        (now - timedelta(minutes=10)).isoformat(),
+        {"kind": "evolution_graduation"},
+    )
+    _insert_scheduler_job(
+        "forven-scanner-hourly",
+        (now - timedelta(minutes=5)).isoformat(),
+        {"kind": "scanner_execution"},
+    )
+
+    assert "evolution_graduation" in scheduler._BACKGROUND_SCHEDULER_JOB_KINDS
+    scheduler._SCHEDULER_BACKGROUND_TASKS.clear()
+    scheduler._SCHEDULER_BACKGROUND_JOB_IDS.clear()
+    monkeypatch.setattr(scheduler, "_apply_runtime_scheduler_overrides", lambda: None)
+    monkeypatch.setattr(
+        scheduler,
+        "_load_runtime_task_timeout_settings",
+        lambda: {
+            "agent_task_timeout_minutes": 25,
+            "stale_recovery_minutes": 7,
+            "gauntlet_stale_minutes": 30,
+        },
+    )
+    monkeypatch.setattr(
+        scheduler, "reap_long_running_agent_tasks", lambda *_args, **_kwargs: 0
+    )
+    monkeypatch.setattr(
+        scheduler, "recover_stale_running_tasks", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(scheduler, "_expire_old_pending_tasks", lambda: None)
+    monkeypatch.setattr(scheduler, "is_user_active", lambda: False)
+    monkeypatch.setattr(scheduler, "is_autonomy_paused", lambda: False)
+    monkeypatch.setattr(scheduler, "is_generation_paused", lambda: False)
+
+    calls: list[str] = []
+
+    async def scenario() -> None:
+        release_graduation = asyncio.Event()
+
+        async def fake_run_job(job: dict) -> tuple[str, str | None]:
+            job_id = str(job["id"])
+            calls.append(job_id)
+            if job_id == "forven-paper-graduation":
+                await release_graduation.wait()
+            return "ok", None
+
+        monkeypatch.setattr(scheduler, "run_job", fake_run_job)
+        try:
+            await scheduler.tick()
+            await asyncio.sleep(0)
+
+            assert "forven-paper-graduation" in calls
+            assert "forven-scanner-hourly" in calls
+            scanner_row = _read_scheduler_job("forven-scanner-hourly")
+            graduation_row = _read_scheduler_job("forven-paper-graduation")
+            assert scanner_row["running_since"] is None
+            assert scanner_row["last_status"] == "ok"
+            assert graduation_row["running_since"]
+            assert (
+                "forven-paper-graduation"
+                in scheduler._SCHEDULER_BACKGROUND_JOB_IDS
+            )
+        finally:
+            release_graduation.set()
+            tasks = list(scheduler._SCHEDULER_BACKGROUND_TASKS)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            scheduler._SCHEDULER_BACKGROUND_TASKS.clear()
+            scheduler._SCHEDULER_BACKGROUND_JOB_IDS.clear()
+
+    asyncio.run(scenario())
+
+
 def test_tick_does_not_block_due_queue_on_promotion_loop(monkeypatch, forven_db):
     now = datetime.now(timezone.utc)
     _insert_scheduler_job(
