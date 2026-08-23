@@ -147,6 +147,11 @@ MAX_OPEN_ATTEMPTS = 3
 MAX_CLOSE_ATTEMPTS = 10
 _STATE_RETENTION_DAYS = 7
 
+# A terminal close failure is not proof that venue exposure disappeared. Keep
+# treating that leg as a live claim until bracket attribution or corroborated
+# venue absence retires it.
+_UNRESOLVED_CLAIM_STATUSES = frozenset({"open", "close_failed"})
+
 # The venue's "position_not_found_or_not_open" reject. On a reduce-only close
 # it means there is nothing left to reduce — the leg is already flat (its stop
 # filled first, or per-asset netting consumed it) — so retrying can never
@@ -610,8 +615,11 @@ def _size_mirror_order(
     return size, None
 
 
-def _notify_mirror_failure(trade_id: str, entry: dict, kind: str) -> None:
+def _notify_mirror_failure(
+    trade_id: str, entry: dict, kind: str, *, reason: str | None = None
+) -> None:
     """Terminal mirror failures must reach the operator, not just the page."""
+    detail = str(reason or entry.get("reason") or "")
     try:
         from forven.notifications import emit_notification
         emit_notification(
@@ -621,9 +629,9 @@ def _notify_mirror_failure(trade_id: str, entry: dict, kind: str) -> None:
             title=f"Propr mirror {kind} failed ({entry.get('asset')})",
             summary=(
                 f"{entry.get('strategy')} {entry.get('asset')} {entry.get('direction')} "
-                f"(trade {trade_id}): {entry.get('reason')}"
+                f"(trade {trade_id}): {detail}"
             ),
-            body=str(entry.get("reason") or ""),
+            body=detail,
             dedupe_key=f"propr_mirror_failure:{trade_id}:{kind}",
         )
     except Exception as exc:
@@ -669,7 +677,15 @@ def _netting_conflict(propr, state: dict, trade_id: str, asset: str, direction: 
     for other_id, other in state.items():
         if other_id == trade_id or not isinstance(other, dict):
             continue
-        if other.get("status") != "open":
+        other_asset = propr.normalize_asset(str(other.get("asset") or ""))
+        if other_asset == asset and (
+            other.get("bracket_cancel_pending") or other.get("bracket_resize_pending")
+        ):
+            return (
+                f"bracket cleanup pending: mirrored trade {other_id} still has an "
+                f"unverified reduce-only order on {asset}"
+            )
+        if other.get("status") not in _UNRESOLVED_CLAIM_STATUSES:
             continue
         if _position_key(propr, other.get("asset"), other.get("direction")) == (asset, opposite):
             return (
@@ -790,6 +806,10 @@ def _mirror_open(
             "entry_order_id": result.get("entry_order_id"),
             "stop_order_id": result.get("stop_order_id"),
             "take_profit_order_id": result.get("take_profit_order_id"),
+            # RACE-1: the close path cancels brackets before reducing and must
+            # be able to RE-ARM the stop if the close then defers — keep the
+            # level it would re-arm at.
+            "stop_price": float(stop_price),
             "risk_usd": risk_usd,
             "opened_at": now.isoformat(),
         })
@@ -863,28 +883,344 @@ def _rearm_or_close_unprotected(
         entry["reason"] = f"unprotected and emergency close raised: {exc}"
 
 
-def _cancel_bracket_legs(propr, asset: str, entry: dict) -> None:
-    """Best-effort cancel of a retired leg's resting stop/TP orders.
+def _cancel_bracket_legs(
+    propr, asset: str, entry: dict, *, trade_id: str | None = None
+) -> dict[str, str]:
+    """Cancel a retired leg's resting stop/TP orders and retain failures.
 
     The bracket legs are reduce-only so they can never re-open a position,
-    but cancel them anyway to keep the order book tidy."""
+    but on a netted venue an orphan can still reduce a same-side sibling. A
+    failed cancellation therefore remains durable state and is retried on
+    later mirror ticks instead of being forgotten with the retired leg."""
+    failures: dict[str, str] = {}
     for leg_key in ("stop_order_id", "take_profit_order_id"):
         leg_id = entry.get(leg_key)
         if leg_id:
             try:
-                propr.cancel_order(asset, leg_id)
+                cancelled = propr.cancel_order(asset, leg_id)
+                if not isinstance(cancelled, dict):
+                    failures[leg_key] = "venue returned no cancellation result"
+                elif cancelled.get("error"):
+                    failures[leg_key] = str(cancelled["error"])
+                elif cancelled.get("already_filled_or_cancelled"):
+                    # The adapter's 400 deliberately conflates two materially
+                    # different outcomes. An explicit terminal cancellation is
+                    # safe; filled/partial/open/absent/unreadable is not. This
+                    # entry is already terminal, so the later attribution pass
+                    # will not inspect its brackets and cannot safely absorb an
+                    # orphan fill into the leg's claim. Keep cleanup pending —
+                    # and same-asset opens blocked — until a fresh order read
+                    # proves that the bracket can no longer reduce a sibling.
+                    orders = _read_order_rows(propr)
+                    order = orders.get(str(leg_id)) if orders is not None else None
+                    status = _order_row_status(order) if order else ""
+                    if status not in ("cancelled", "canceled", "rejected", "expired"):
+                        failures[leg_key] = (
+                            "cancel response was already-filled-or-cancelled but the fresh "
+                            f"order state was {status or 'absent'}"
+                        )
             except Exception as exc:
-                log.debug("Propr mirror: bracket cancel %s failed: %s", leg_id, exc)
+                failures[leg_key] = str(exc)
+    if failures:
+        entry["bracket_cancel_pending"] = failures
+        detail = "; ".join(
+            f"{leg_key}: {reason}" for leg_key, reason in sorted(failures.items())
+        )
+        entry["bracket_cancel_error"] = detail
+        log.error(
+            "Propr mirror: retired leg %s still has unverified bracket order(s): %s",
+            trade_id or "<unknown>", detail,
+        )
+        if trade_id:
+            _notify_mirror_failure(
+                trade_id, entry, "bracket cancellation", reason=detail
+            )
+    else:
+        entry.pop("bracket_cancel_pending", None)
+        entry.pop("bracket_cancel_error", None)
+    return failures
 
 
-def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
+def _retry_pending_bracket_cancellations(propr, state: dict, summary: dict) -> None:
+    """Retry orphan-order cleanup retained on otherwise terminal legs."""
+    for trade_id, entry in state.items():
+        if not isinstance(entry, dict) or not entry.get("bracket_cancel_pending"):
+            continue
+        asset = propr.normalize_asset(str(entry.get("asset") or ""))
+        if _cancel_bracket_legs(propr, asset, entry, trade_id=str(trade_id)):
+            summary["bracket_cancel_pending"] = summary.get("bracket_cancel_pending", 0) + 1
+        else:
+            summary["bracket_cancel_recovered"] = summary.get("bracket_cancel_recovered", 0) + 1
+
+
+def _defer_close(trade_id: str, entry: dict, reason: str) -> None:
+    """Bounded deferral bookkeeping for a close that must not be placed yet."""
+    attempts = int(entry.get("close_attempts") or 0) + 1
+    entry["close_attempts"] = attempts
+    entry["reason"] = reason
+    if attempts >= MAX_CLOSE_ATTEMPTS:
+        entry["status"] = "close_failed"
+        log.error("Propr mirror: close for trade %s FAILED after %d attempts: %s",
+                  trade_id, attempts, entry["reason"])
+        _notify_mirror_failure(trade_id, entry, "close")
+
+
+def _rearm_deferred_leg(propr, trade_id: str, entry: dict, asset: str, direction: str) -> None:
+    """RACE-1 companion: a deferred or partially-closed leg whose brackets were
+    already cancelled is real exposure with no stop until the next tick. Re-arm
+    the stop at the entry's stored level; a leg that cannot be re-armed gets a
+    critical notification rather than silent nakedness."""
+    stop_price = _num(entry.get("stop_price"))
+    quantity = _num(entry.get("quantity")) or 0.0
+    if stop_price and quantity > 0:
+        rearmed = None
+        try:
+            rearmed = propr.place_protective_stop(asset, direction, quantity, float(stop_price))
+        except Exception as exc:
+            rearmed = {"error": str(exc)}
+        if isinstance(rearmed, dict) and not rearmed.get("error") and rearmed.get("stop_order_id"):
+            entry["stop_order_id"] = str(rearmed["stop_order_id"])
+            entry.pop("stop_unarmed", None)
+            log.warning(
+                "Propr mirror: re-armed the stop for trade %s while its close waits", trade_id
+            )
+            return
+    entry["stop_unarmed"] = True
+    log.critical(
+        "Propr mirror: %s %s (trade %s) is waiting to close WITHOUT brackets — "
+        "stop re-arm unavailable (stored stop %s)", asset, direction, trade_id,
+        entry.get("stop_price"),
+    )
+    try:
+        from forven.notifications import emit_notification
+        emit_notification(
+            "propr_mirror_unprotected",
+            severity="critical",
+            source="propr_mirror",
+            title=f"Propr mirror leg unprotected while closing ({asset})",
+            summary=(
+                f"{entry.get('strategy')} {asset} {direction} (trade {trade_id}): brackets "
+                "were cancelled ahead of a close that then had to wait, and the stop could "
+                "not be re-armed."
+            ),
+            body=str(entry.get("reason") or ""),
+            dedupe_key=f"propr_mirror_unprotected:{trade_id}",
+        )
+    except Exception as exc:
+        log.debug("Could not emit propr mirror unprotected notification: %s", exc)
+
+
+def _mirror_close(propr, trade_id: str, entry: dict, now: datetime, state: dict | None = None) -> None:
     asset = propr.normalize_asset(str(entry.get("asset") or ""))
     direction = str(entry.get("direction") or "").strip().lower()
     quantity = float(entry.get("quantity") or 0)
     if quantity <= 0:
         entry.update({"status": "closed", "reason": "nothing to close (zero mirrored quantity)"})
+        # A zero-claim leg can still carry live bracket orders (e.g. its claim
+        # was consumed piecemeal by partial fills) — a terminal record must not
+        # strand a resting reduce-only order that can fire into another leg's
+        # share of the netted position.
+        _cancel_bracket_legs(propr, asset, entry, trade_id=trade_id)
         return
-    result = propr.close_position(asset, quantity, "sell" if direction == "long" else "buy")
+
+    # PROPR-LEG-2 (Codex P1 on #113): when another tracked-open leg shares the
+    # SAME side of this netted position, a reduce-only close sized off this
+    # leg's ledger quantity can consume the OTHER leg's share (this leg's stop
+    # may have filled venue-side between attribution passes). Close only what
+    # the venue holds beyond the other legs' claims; if nothing is left, the
+    # venue already consumed this leg. The ambiguity only exists with another
+    # same-side leg — a sole leg keeps the plain path, where a reduce-only
+    # close is harmless by construction. ``state`` is optional only for older
+    # callers/tests; the tick always passes it.
+    key = _position_key(propr, entry.get("asset"), entry.get("direction"))
+    # close_failed siblings count as claims (Codex P1 on #116, round 2b): an
+    # unconfirmed close means the sibling's venue share may still be live, and
+    # dropping it from the clamp would hand this close the sole-leg path — the
+    # blind full-quantity close this function exists to prevent. The claim
+    # clears when venue state proves it flat (venue_missing / a flat side) or
+    # a bracket fill retires it.
+    others = [
+        (tid, e) for tid, e in (state or {}).items()
+        if tid != trade_id and isinstance(e, dict)
+        and e.get("status") in _UNRESOLVED_CLAIM_STATUSES
+        and _position_key(propr, e.get("asset"), e.get("direction")) == key
+    ]
+    clamped_from = None
+    if others:
+        # RACE-1 (Codex P1 on #116, round 2): between any snapshot and the
+        # close submission this leg's OWN brackets can fill — most likely on
+        # exactly the price move that closed the source trade — and a bracket
+        # fill after sizing double-reduces this leg's claim, with the excess
+        # coming out of the sibling's share. So cancel own brackets FIRST and
+        # verify their final state: once confirmed cancelled they can never
+        # fill mid-close. Sibling-bracket races stay safe by arithmetic — a
+        # sibling fill reduces the venue quantity and that sibling's claim
+        # equally, leaving the clamp margin intact.
+        cancel_errors: dict[str, str] = {}
+        for leg_key in ("stop_order_id", "take_profit_order_id"):
+            oid = entry.get(leg_key)
+            if not oid:
+                continue
+            try:
+                cancelled = propr.cancel_order(asset, oid)
+                if not isinstance(cancelled, dict):
+                    cancel_errors[leg_key] = "venue returned no cancellation result"
+                elif cancelled.get("error"):
+                    cancel_errors[leg_key] = str(cancelled["error"])
+                elif cancelled.get("already_filled_or_cancelled"):
+                    cancel_errors[leg_key] = (
+                        "venue says already filled or cancelled; order state not yet confirmed"
+                    )
+            except Exception as exc:
+                cancel_errors[leg_key] = str(exc)
+                log.debug("Propr mirror: bracket cancel %s before close failed: %s", oid, exc)
+        orders = _read_order_rows(propr)
+        if orders is None:
+            _defer_close(trade_id, entry, (
+                "bracket cancellation/order state is unverified because the order book is "
+                "unreadable — cannot prove a bracket will not race the close; deferring"
+            ))
+            if cancel_errors:
+                entry["bracket_cancel_unverified"] = sorted(cancel_errors)
+                _notify_mirror_failure(trade_id, entry, "bracket cancellation")
+            # A successfully-cancelled stop must be replaced while the close
+            # waits. An errored/ambiguous stop may still be live, so placing a
+            # duplicate could consume a sibling claim later.
+            if "stop_order_id" not in cancel_errors:
+                _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+            return
+        for leg_key, label in (("stop_order_id", "stop"), ("take_profit_order_id", "take-profit")):
+            oid = entry.get(leg_key)
+            order = orders.get(str(oid)) if oid else None
+            if order is None:
+                # Absent from the listing after a cancel that raised nothing:
+                # it was resting and is now gone — no fill to account.
+                continue
+            status = _order_row_status(order)
+            if status == "filled":
+                entry.update({
+                    "status": "closed",
+                    "reason": (
+                        f"{label} order {oid} filled in the close race window — the venue "
+                        "consumed this leg's share before the mirror close was placed"
+                    ),
+                    "exit_price": _order_row_fill_price(order),
+                    "closed_quantity": _order_row_filled_size(order) or entry.get("quantity"),
+                    "closed_at": now.isoformat(),
+                    "bracket_filled": label,
+                })
+                log.warning(
+                    "Propr mirror: %s for trade %s filled before its close could be "
+                    "placed — retiring the leg instead of closing", label, trade_id,
+                )
+                return
+            if status in ("cancelled", "canceled", "rejected", "expired"):
+                # Even if the cancellation call itself failed, the fresh order
+                # row proves this bracket can no longer race the close.
+                cancel_errors.pop(leg_key, None)
+                continue
+            if status == "partially_filled":
+                filled_so_far = float(_order_row_filled_size(order) or 0.0)
+                accounted_key = f"bracket_partial_accounted_{leg_key}"
+                accounted = float(_num(entry.get(accounted_key)) or 0.0)
+                delta = filled_so_far - accounted
+                if delta > 1e-12:
+                    entry[accounted_key] = filled_so_far
+                    quantity = max(0.0, quantity - delta)
+                    entry["quantity"] = round(quantity, 10)
+        if quantity <= 1e-12:
+            entry.update({
+                "status": "closed",
+                "reason": "brackets consumed the whole claim before the close was placed",
+                "closed_at": now.isoformat(),
+            })
+            return
+        if cancel_errors:
+            failed_legs = ", ".join(sorted(cancel_errors))
+            details = "; ".join(
+                f"{leg_key}: {reason}" for leg_key, reason in sorted(cancel_errors.items())
+            )
+            _defer_close(trade_id, entry, (
+                f"bracket cancellation unverified ({failed_legs}) — deferring to avoid "
+                f"a bracket/close race that could consume a sibling claim: {details}"
+            ))
+            entry["bracket_cancel_unverified"] = sorted(cancel_errors)
+            log.error(
+                "Propr mirror: close for trade %s deferred because bracket cancellation "
+                "could not be verified: %s", trade_id, details,
+            )
+            _notify_mirror_failure(trade_id, entry, "bracket cancellation")
+            # Re-arm only when the old stop is known not to be live. If its
+            # cancellation is the uncertainty, another reduce-only stop could
+            # later fire as well and consume a same-side sibling's share.
+            if "stop_order_id" not in cancel_errors:
+                _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+            return
+        entry.pop("bracket_cancel_unverified", None)
+        try:
+            positions = propr.raw_positions() or []
+        except Exception:
+            # Unreadable venue + shared side: deferring is the only close that
+            # cannot be wrong. Brackets are already cancelled, so re-arm the
+            # stop while we wait. Bounded, so a persistent outage still
+            # surfaces as close_failed instead of deferring forever.
+            _defer_close(trade_id, entry, (
+                f"venue positions unreadable — deferring: another mirrored leg shares "
+                f"this {key[0]} {key[1]} position and a blind close could consume its share"
+            ))
+            _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+            return
+        venue_qty = 0.0
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            pos_asset = propr.normalize_asset(str(pos.get("asset") or pos.get("coin") or ""))
+            if pos_asset == key[0] and propr.position_side(pos) == key[1]:
+                venue_qty += abs(
+                    _num(pos.get("quantity")) or _num(pos.get("size")) or _num(pos.get("szi")) or 0.0
+                )
+        other_claims = sum(float(_num(e.get("quantity")) or 0.0) for _, e in others)
+        if venue_qty <= 1e-12:
+            # One flat read is NOT proof: _retire_venue_missing_legs demands
+            # _VENUE_MISSING_TICKS consecutive misses precisely because a
+            # single partial positions response can omit a real leg. Defer —
+            # the venue_missing hysteresis retires the leg (and releases its
+            # claim) once the flat side is corroborated, and the re-armed stop
+            # keeps any REAL residual protected meanwhile (a reduce-only stop
+            # on a truly flat side is inert and is cancelled at retire time).
+            _defer_close(trade_id, entry, (
+                f"venue side {key[0]} {key[1]} reads flat — deferring for "
+                "venue_missing corroboration before treating the leg as consumed"
+            ))
+            _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+            return
+        closable = min(quantity, venue_qty - other_claims)
+        if closable <= 0:
+            # The venue holds LESS than the same-side claims but is not flat:
+            # some leg was (partly) consumed, and which one is unknowable from
+            # position data alone. Guessing here retires brackets on a possibly
+            # live leg — defer instead and let the attribution pass (which
+            # reads per-order status) resolve identity. Bounded, so a
+            # persistent mismatch still alarms as close_failed. Brackets are
+            # already cancelled, so re-arm the stop while we wait.
+            _defer_close(trade_id, entry, (
+                f"deferred: venue {key[0]} {key[1]} holds {venue_qty:.10g} against "
+                f"{other_claims + quantity:.10g} of same-side mirror claims — the deficit "
+                "cannot be attributed to a specific leg yet"
+            ))
+            _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+            return
+        if closable < quantity:
+            clamped_from = quantity
+            log.warning(
+                "Propr mirror: clamping close for trade %s from %.10g to %.10g — venue %s %s "
+                "holds %.10g and other mirrored legs claim %.10g; the residual stays open "
+                "and bracketed",
+                trade_id, quantity, closable, key[0], key[1], venue_qty, other_claims,
+            )
+
+    ask_qty = quantity if clamped_from is None else closable
+    result = propr.close_position(asset, ask_qty, "sell" if direction == "long" else "buy")
 
     # A no-position reject is terminal on the FIRST attempt: the venue has
     # nothing this reduce-only close could reduce — the leg is already flat
@@ -904,7 +1240,7 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
             "venue_position_missing": True,
             "closed_at": now.isoformat(),
         })
-        _cancel_bracket_legs(propr, asset, entry)
+        _cancel_bracket_legs(propr, asset, entry, trade_id=trade_id)
         log.warning(
             "Propr mirror: close for trade %s found no venue position (13065) — "
             "recording the leg as already closed", trade_id,
@@ -930,14 +1266,23 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
     # The venue-quantized size the adapter actually asked for; anything it could
     # not accept is dust below one size step, not a leg we can retry.
     _requested = _num((result or {}).get("requested_size")) if isinstance(result, dict) else None
-    _fillable = _requested if (_requested is not None and _requested <= quantity) else quantity
+    _fillable = _requested if (_requested is not None and _requested <= ask_qty) else ask_qty
     _tolerance = max(_fillable * _CLOSE_FILL_TOLERANCE_FRAC, 1e-9)
     # Only a CLEAN payload may shrink the mirrored quantity: on an errored one the
     # reported fill is not trustworthy, and a reduce-only close asking for more
     # than is left is harmless (the venue caps it) while asking for too little
-    # strands the remainder.
-    _short_fill = not _errored and filled is not None and (filled + _tolerance) < _fillable
-    if not _errored and not _short_fill and (filled is not None or not _fill_reported):
+    # strands the remainder. A CLAMPED close measures the fill against the
+    # LEDGER quantity, not the order: even a fully-filled clamped order leaves
+    # a residual claim, which must stay open and bracketed (the partial branch)
+    # rather than be retired on a guess about who consumed the deficit — and a
+    # clamped close with no fill confirmation retries instead of assuming.
+    _close_target = _fillable if clamped_from is None else quantity
+    _short_fill = not _errored and filled is not None and (filled + _tolerance) < _close_target
+    if (
+        not _errored and not _short_fill
+        and (filled is not None or not _fill_reported)
+        and clamped_from is None
+    ):
         entry.update({
             "status": "closed",
             "reason": None,
@@ -945,7 +1290,7 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
             "closed_quantity": filled,
             "closed_at": now.isoformat(),
         })
-        _cancel_bracket_legs(propr, asset, entry)
+        _cancel_bracket_legs(propr, asset, entry, trade_id=trade_id)
         log.info("Propr mirror CLOSE %s %s for trade %s", asset, direction, trade_id)
     else:
         attempts = int(entry.get("close_attempts") or 0) + 1
@@ -962,11 +1307,11 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
                 entry["exit_price"] = result.get("exit_price")
             entry["reason"] = (
                 f"partial close ({float(filled or 0.0):.10g}/{_fillable:.10g}) — residual "
-                f"{residual:.10g} still open and still bracketed (retrying reduce-only)"
+                f"{residual:.10g} still open (retrying reduce-only)"
             )
             log.warning(
                 "Propr mirror PARTIAL close %s %s for trade %s: filled %s of %s, residual %s "
-                "kept open + protected", asset, direction, trade_id, filled, _fillable, residual,
+                "kept open", asset, direction, trade_id, filled, _fillable, residual,
             )
         elif isinstance(result, dict) and not result.get("error"):
             entry["reason"] = (
@@ -980,6 +1325,303 @@ def _mirror_close(propr, trade_id: str, entry: dict, now: datetime) -> None:
             log.error("Propr mirror: close for trade %s FAILED after %d attempts: %s",
                       trade_id, attempts, entry["reason"])
             _notify_mirror_failure(trade_id, entry, "close")
+        # RACE-1: on the multi-leg path the brackets were cancelled ahead of
+        # the close — any outcome that leaves quantity on the venue (partial
+        # residual, unconfirmed fill, rejected close) is unprotected until the
+        # retry lands. Re-arm the stop for whatever claim remains.
+        if others and float(_num(entry.get("quantity")) or 0.0) > 0:
+            _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+
+
+# Order-row readers, local to the mirror because forven/exchange/ is
+# off-limits without explicit instruction (AGENTS.md "Do NOT"). The key lists
+# mirror forven.exchange.propr's private _order_* readers — keep them in sync.
+def _order_row_id(order: dict) -> str | None:
+    value = order.get("orderId") or order.get("order_id") or order.get("id")
+    return str(value) if value is not None else None
+
+
+def _order_row_status(order: dict) -> str:
+    return str(order.get("status") or "").strip().lower()
+
+
+def _order_row_fill_price(order: dict) -> float | None:
+    for key in ("averageFillPrice", "average_fill_price", "avgFillPrice", "fillPrice"):
+        value = _num(order.get(key))
+        if value and value > 0:
+            return float(value)
+    return None
+
+
+def _order_row_filled_size(order: dict) -> float | None:
+    for key in ("cumulativeQuantity", "cumulative_quantity", "filledQuantity", "executedQuantity"):
+        value = _num(order.get(key))
+        if value is not None:
+            return float(value)
+    return None
+
+
+def _order_row_trigger_price(order: dict) -> float | None:
+    for key in ("triggerPrice", "trigger_price", "stopPrice", "stop_price", "price"):
+        value = _num(order.get(key))
+        if value and value > 0:
+            return float(value)
+    return None
+
+
+def _read_order_rows(propr) -> dict[str, dict] | None:
+    """order id -> row for every order the venue lists, or None when the
+    listing is unreadable (callers must treat that as unverifiable, never as
+    empty)."""
+    try:
+        rows: dict[str, dict] = {}
+        for order in propr.list_orders() or []:
+            oid = _order_row_id(order)
+            if oid:
+                rows[oid] = order
+        return rows
+    except Exception as exc:
+        log.debug("Propr mirror: order read failed: %s", exc)
+        return None
+
+
+def _resize_sibling_bracket(propr, trade_id: str, entry: dict, filled_leg_key: str,
+                            orders: dict, remaining: float) -> None:
+    """PROPR-LEG-3: after a partial bracket fill shrinks a leg's claim, the
+    SURVIVING bracket still rests at the original size — on a netted book its
+    trigger would reduce the residual plus a sibling leg's share. Cancel it and
+    re-place at the residual: a stop that cannot be re-placed raises the
+    critical unprotected notification; a take-profit that cannot is left off
+    (the stop is the protection, the TP is opportunistic)."""
+    asset = propr.normalize_asset(str(entry.get("asset") or ""))
+    direction = str(entry.get("direction") or "").strip().lower()
+    sibling_key = (
+        "take_profit_order_id" if filled_leg_key == "stop_order_id" else "stop_order_id"
+    )
+    sibling_oid = entry.get(sibling_key)
+    if not sibling_oid:
+        # A previous stop resize may already have confirmed cancellation and
+        # failed only while placing the replacement. Retry that placement
+        # without another cancel/order id.
+        if sibling_key == "stop_order_id" and entry.get("bracket_resize_pending"):
+            _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+            if entry.get("stop_unarmed"):
+                entry["bracket_resize_error"] = (
+                    "protective stop replacement is still unavailable after resize"
+                )
+            else:
+                entry.pop("bracket_resize_pending", None)
+                entry.pop("bracket_resize_error", None)
+                entry["reason"] = "protective stop resize recovered"
+        else:
+            entry.pop("bracket_resize_pending", None)
+        return
+    sibling_row = orders.get(str(sibling_oid))
+    trigger = _order_row_trigger_price(sibling_row) if sibling_row else None
+    cancelled = None
+    try:
+        cancelled = propr.cancel_order(asset, sibling_oid)
+    except Exception as exc:
+        cancelled = {"error": str(exc)}
+    if not isinstance(cancelled, dict):
+        cancelled = {"error": "venue returned no cancellation result"}
+    if cancelled.get("already_filled_or_cancelled"):
+        # A 400 deliberately conflates already-filled with already-cancelled.
+        # Re-read once: only an explicit terminal cancellation permits a
+        # replacement; filled/partial/absent remains for the attribution pass.
+        refreshed = _read_order_rows(propr)
+        refreshed_row = refreshed.get(str(sibling_oid)) if refreshed is not None else None
+        refreshed_status = _order_row_status(refreshed_row) if refreshed_row else ""
+        if refreshed_status in ("cancelled", "canceled", "rejected", "expired"):
+            sibling_row = refreshed_row
+            trigger = _order_row_trigger_price(sibling_row) or trigger
+            cancelled = {"cancelled": True, "order_id": str(sibling_oid)}
+        else:
+            cancelled = {
+                "error": (
+                    "cancel response was already-filled-or-cancelled but the fresh order "
+                    f"state was {refreshed_status or 'absent'}"
+                )
+            }
+    if cancelled.get("error"):
+        message = f"could not verify cancellation of sibling bracket {sibling_oid}: {cancelled['error']}"
+        entry["bracket_resize_error"] = message
+        entry["bracket_resize_pending"] = {
+            "filled_leg_key": filled_leg_key,
+            "remaining": float(remaining),
+        }
+        entry["reason"] = message
+        log.critical("Propr mirror: %s (trade %s)", message, trade_id)
+        _notify_mirror_failure(trade_id, entry, "bracket resize")
+        return
+    entry.pop("bracket_resize_error", None)
+    entry[sibling_key] = None
+    if sibling_key == "stop_order_id":
+        if trigger and not _num(entry.get("stop_price")):
+            entry["stop_price"] = float(trigger)
+        _rearm_deferred_leg(propr, trade_id, entry, asset, direction)
+        if entry.get("stop_unarmed"):
+            entry["bracket_resize_pending"] = {
+                "filled_leg_key": filled_leg_key,
+                "remaining": float(remaining),
+            }
+            entry["bracket_resize_error"] = (
+                "protective stop cancellation succeeded but its residual replacement failed"
+            )
+        else:
+            entry.pop("bracket_resize_pending", None)
+        return
+    entry.pop("bracket_resize_pending", None)
+    if trigger and remaining > 0:
+        placed = None
+        try:
+            placed = propr.place_take_profit(asset, direction, float(remaining), float(trigger))
+        except Exception as exc:
+            placed = {"error": str(exc)}
+        if isinstance(placed, dict) and not placed.get("error") and placed.get("take_profit_order_id"):
+            entry["take_profit_order_id"] = str(placed["take_profit_order_id"])
+            log.warning(
+                "Propr mirror: resized the take-profit for trade %s to the residual %.10g",
+                trade_id, remaining,
+            )
+            return
+    log.warning(
+        "Propr mirror: take-profit for trade %s cancelled after a partial stop fill and "
+        "not re-placed (trigger %s) — the stop still protects the residual",
+        trade_id, trigger,
+    )
+
+
+def _retire_bracket_filled_legs(propr, state: dict, now: datetime, summary: dict) -> None:
+    """PROPR-LEG-2 (Codex P1 on #113): per-LEG stop/take-profit fill attribution.
+
+    Propr nets one position per asset, so when two mirrored legs share the
+    SAME side a venue stop fill on leg A leaves the aggregate position
+    present — the (asset, side)-keyed venue_missing check can never see it,
+    A keeps reporting open, and A's eventual mirror close would reduce what
+    is by then B's share of the netted position. The leg's OWN bracket
+    orders are its venue identity: a stop/TP order reported ``filled`` means
+    the venue consumed exactly this leg's share — retire it as closed at the
+    recorded fill price and cancel the surviving sibling leg.
+
+    ``filled`` retires the leg outright; ``partially_filled`` shrinks the
+    leg's ledger claim by the newly-filled delta (cumulative-tracked) while
+    keeping it open and bracketed, so sibling closes clamp against fresh
+    claims. An unreadable order book skips the pass entirely (attribution can
+    wait a tick; a wrong retire cannot be waited back)."""
+    # close_failed included: an unconfirmed close means the leg's venue share
+    # and brackets may still be live — a later bracket fill must still retire
+    # it (and drop its claim) exactly like an open leg's.
+    open_legs = [
+        (tid, e) for tid, e in state.items()
+        if isinstance(e, dict) and e.get("status") in _UNRESOLVED_CLAIM_STATUSES
+        and (e.get("stop_order_id") or e.get("take_profit_order_id"))
+    ]
+    if not open_legs:
+        return
+    orders = _read_order_rows(propr)
+    if orders is None:
+        log.debug("Propr mirror: order read failed — skipping leg attribution")
+        return
+    for trade_id, entry in open_legs:
+        resize_pending = entry.get("bracket_resize_pending")
+        if isinstance(resize_pending, dict):
+            filled_leg_key = str(resize_pending.get("filled_leg_key") or "")
+            if filled_leg_key in ("stop_order_id", "take_profit_order_id"):
+                _resize_sibling_bracket(
+                    propr,
+                    trade_id,
+                    entry,
+                    filled_leg_key,
+                    orders,
+                    float(_num(entry.get("quantity")) or 0.0),
+                )
+        for leg_key, label in (("stop_order_id", "stop"), ("take_profit_order_id", "take-profit")):
+            oid = entry.get(leg_key)
+            order = orders.get(str(oid)) if oid else None
+            if order is None:
+                continue
+            status = _order_row_status(order)
+            if status == "partially_filled":
+                # Book the partially-filled bracket against THIS leg's claim so
+                # sibling closes clamp against fresh numbers (Codex P1 on #116).
+                # Cumulative-tracked PER BRACKET (stop and TP can both partially
+                # fill): the venue reports total filled, we shrink by the
+                # newly-filled delta only.
+                filled_so_far = float(_order_row_filled_size(order) or 0.0)
+                accounted_key = f"bracket_partial_accounted_{leg_key}"
+                accounted = float(_num(entry.get(accounted_key)) or 0.0)
+                delta = filled_so_far - accounted
+                if delta > 1e-12:
+                    remaining = max(0.0, float(_num(entry.get("quantity")) or 0.0) - delta)
+                    entry[accounted_key] = filled_so_far
+                    if remaining <= 1e-12:
+                        # The bracket consumed the whole claim piecemeal. Retire
+                        # NOW, with the sibling bracket cancelled — a qty-0 leg
+                        # left "open" would be closed by the zero-quantity close
+                        # branch, stranding a live reduce-only sibling on the
+                        # venue that can fire into another leg's share.
+                        entry.update({
+                            "status": "closed",
+                            "reason": (
+                                f"{label} order {oid} filled the leg's whole claim in "
+                                "partial fills — retired venue-side"
+                            ),
+                            "exit_price": _order_row_fill_price(order),
+                            "closed_quantity": filled_so_far,
+                            "closed_at": now.isoformat(),
+                            "bracket_filled": label,
+                        })
+                        summary["bracket_filled"] = summary.get("bracket_filled", 0) + 1
+                        log.warning(
+                            "Propr mirror: %s for trade %s consumed the whole claim in "
+                            "partial fills — retiring the leg and cancelling its sibling",
+                            label, trade_id,
+                        )
+                        _cancel_bracket_legs(
+                            propr, propr.normalize_asset(str(entry.get("asset") or "")), entry,
+                            trade_id=trade_id,
+                        )
+                        break
+                    entry["quantity"] = round(remaining, 10)
+                    entry["reason"] = (
+                        f"{label} order {oid} partially filled venue-side "
+                        f"({filled_so_far:.10g} total) — leg claim reduced to "
+                        f"{remaining:.10g}"
+                    )
+                    log.warning(
+                        "Propr mirror: %s for trade %s partially filled venue-side "
+                        "(%.10g total) — shrinking the leg's claim to %.10g",
+                        label, trade_id, filled_so_far, remaining,
+                    )
+                    # PROPR-LEG-3: the surviving bracket still rests at the
+                    # ORIGINAL size — resize it to the residual so its trigger
+                    # cannot reduce a sibling's share of the netted position.
+                    _resize_sibling_bracket(propr, trade_id, entry, leg_key, orders, remaining)
+                continue
+            if status != "filled":
+                continue
+            entry.update({
+                "status": "closed",
+                "reason": (
+                    f"{label} order {oid} filled venue-side — the venue consumed this "
+                    "leg's share of the netted position"
+                ),
+                "exit_price": _order_row_fill_price(order),
+                "closed_quantity": _order_row_filled_size(order) or entry.get("quantity"),
+                "closed_at": now.isoformat(),
+                "bracket_filled": label,
+            })
+            summary["bracket_filled"] = summary.get("bracket_filled", 0) + 1
+            log.warning(
+                "Propr mirror: %s for trade %s filled venue-side — retiring the leg "
+                "and cancelling its sibling bracket order", label, trade_id,
+            )
+            _cancel_bracket_legs(
+                propr, propr.normalize_asset(str(entry.get("asset") or "")), entry,
+                trade_id=trade_id,
+            )
+            break
 
 
 def _retire_venue_missing_legs(propr, state: dict, venue_keys: set, now: datetime, summary: dict) -> None:
@@ -996,7 +1638,10 @@ def _retire_venue_missing_legs(propr, state: dict, venue_keys: set, now: datetim
     retire a real leg, and a wrongly retired leg still surfaces through the
     unmanaged report, so either failure mode stays visible."""
     for trade_id, entry in state.items():
-        if not isinstance(entry, dict) or entry.get("status") != "open":
+        # close_failed included so an unresolved close's claim can be proven
+        # flat by venue state and released (it counts in the close clamp's
+        # sibling claims until then).
+        if not isinstance(entry, dict) or entry.get("status") not in _UNRESOLVED_CLAIM_STATUSES:
             continue
         key = _position_key(propr, entry.get("asset"), entry.get("direction"))
         if not key[0] or key in venue_keys:
@@ -1020,7 +1665,7 @@ def _retire_venue_missing_legs(propr, state: dict, venue_keys: set, now: datetim
             "Propr mirror: tracked leg for trade %s (%s %s) has no venue position — "
             "retiring it as venue_missing", trade_id, key[0], key[1],
         )
-        _cancel_bracket_legs(propr, key[0], entry)
+        _cancel_bracket_legs(propr, key[0], entry, trade_id=trade_id)
         try:
             from forven.notifications import emit_notification
             emit_notification(
@@ -1070,7 +1715,7 @@ def _reconcile_unmanaged_positions(propr, state: dict, now: datetime, summary: d
 
     tracked: set[tuple[str, str]] = set()
     for entry in state.values():
-        if entry.get("status") != "open":
+        if entry.get("status") not in _UNRESOLVED_CLAIM_STATUSES:
             continue
         key = _position_key(propr, entry.get("asset"), entry.get("direction"))
         if key[0]:
@@ -1146,6 +1791,14 @@ def mirror_tick() -> dict:
 
     # --- venue reconcile: state is bookkeeping, the venue is the truth -------
     _reconcile_unmanaged_positions(propr, state, now, summary)
+    # A terminal leg can still have a live reduce-only bracket if cancellation
+    # failed. Retry those first and block new opens on that asset until cleanup
+    # is confirmed.
+    _retry_pending_bracket_cancellations(propr, state, summary)
+    # PROPR-LEG-2: attribute venue-side stop/TP fills to their exact leg BEFORE
+    # the close pass, so a consumed leg is retired instead of closing into a
+    # same-side sibling's share of the netted position.
+    _retire_bracket_filled_legs(propr, state, now, summary)
 
     # --- close pass first: reducing risk always outranks adding it ----------
     for trade_id, entry in list(state.items()):
@@ -1155,7 +1808,7 @@ def mirror_tick() -> dict:
         if source_status == "OPEN":
             continue
         try:
-            _mirror_close(propr, trade_id, entry, now)
+            _mirror_close(propr, trade_id, entry, now, state)
             summary["closed" if entry.get("status") == "closed" else "errors"] += 1
         except Exception as exc:
             summary["errors"] += 1
@@ -1280,7 +1933,7 @@ def mirror_tick() -> dict:
                 open_risk = sum(
                     _num(e.get("risk_usd")) or 0.0
                     for e in state.values()
-                    if e.get("status") == "open"
+                    if e.get("status") in _UNRESOLVED_CLAIM_STATUSES
                 )
                 risk_budget = {
                     "remaining": max(
@@ -1308,7 +1961,10 @@ def mirror_tick() -> dict:
     # --- prune aged terminal entries ----------------------------------------
     cutoff = now - timedelta(days=_STATE_RETENTION_DAYS)
     for trade_id, entry in list(state.items()):
-        if entry.get("status") in ("closed", "skipped", "failed", "close_failed", "venue_missing"):
+        if (
+            entry.get("status") in ("closed", "skipped", "failed", "venue_missing")
+            and not entry.get("bracket_cancel_pending")
+        ):
             # Terminal records without their own timestamp (skips/failures) are
             # stamped now so they show on the page for the retention window
             # instead of being pruned in the same tick that wrote them.
