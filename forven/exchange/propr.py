@@ -567,12 +567,30 @@ def _order_filled_size(order: dict) -> float | None:
 
 
 def list_orders(limit: int | None = None) -> list[dict]:
+    """Return the venue's current orders window.
+
+    The no-filter endpoint is paginated/windowed and may omit older terminal
+    orders.  Call :func:`get_order` when a safety decision depends on one
+    specific order id.
+    """
     account_id, _ = resolve_account()
     params = {"limit": limit} if limit else None
     return _rows(_request(
         "GET", f"/accounts/{account_id}/orders",
         breaker=propr_account_breaker, params=params,
     ))
+
+
+def get_order(order_id: str) -> dict | None:
+    """Read one order through the venue's exact-id history filter."""
+    account_id, _ = resolve_account()
+    wanted = str(order_id)
+    orders = _rows(_request(
+        "GET", f"/accounts/{account_id}/orders",
+        breaker=propr_account_breaker,
+        params={"orderId": wanted, "limit": 20, "offset": 0},
+    ))
+    return next((order for order in orders if _order_id(order) == wanted), None)
 
 
 def list_trades(limit: int | None = None) -> list[dict]:

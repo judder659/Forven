@@ -34,6 +34,7 @@ class FakePropr:
         self.cancel_results = {} if cancel_results is None else cancel_results
         self.close_calls = []
         self.cancelled = []
+        self.order_lookups = []
 
     def normalize_asset(self, asset):
         return str(asset or "").upper()
@@ -57,6 +58,19 @@ class FakePropr:
         if isinstance(self.orders_book, Exception):
             raise self.orders_book
         return self.orders_book
+
+    def get_order(self, order_id):
+        self.order_lookups.append(str(order_id))
+        if isinstance(self.orders_book, Exception):
+            raise self.orders_book
+        return next(
+            (
+                order
+                for order in self.orders_book
+                if str(order.get("orderId") or order.get("id") or "") == str(order_id)
+            ),
+            None,
+        )
 
     def close_position(self, asset, size, side):
         self.close_calls.append((asset, size, side))
@@ -111,6 +125,7 @@ def test_stop_fill_retires_only_the_filled_leg(forven_db):
     assert state["TA"]["exit_price"] == 1900.0
     assert state["TA"]["closed_quantity"] == 0.5
     assert state["TA"]["bracket_filled"] == "stop"
+    assert "o-stop-A" not in propr.cancelled, "the attributed filled leg is already terminal"
     assert "o-tp-A" in propr.cancelled, "the surviving sibling leg must be cancelled"
     assert state["TB"]["status"] == "open", "the sibling LEG must not be retired"
     assert summary["bracket_filled"] == 1
@@ -198,6 +213,47 @@ def test_retired_leg_keeps_ambiguous_absent_order_pending(forven_db):
     assert entry["bracket_cancel_pending"] == failures
 
 
+def test_retired_leg_keeps_an_unreadable_exact_order_pending(forven_db):
+    entry = {**_leg(0.5, stop_id="o-stop-A", tp_id=None), "status": "closed"}
+    propr = FakePropr(
+        orders=RuntimeError("exact history endpoint unavailable"),
+        cancel_results={
+            "o-stop-A": {"cancelled": False, "already_filled_or_cancelled": True}
+        },
+    )
+
+    failures = pm._cancel_bracket_legs(propr, "ETH", entry, trade_id="TA")
+
+    assert "fresh order state was unreadable" in failures["stop_order_id"]
+    assert entry["bracket_cancel_pending"] == failures
+
+
+def test_retired_leg_clears_a_filled_bracket_already_attributed_to_it(forven_db):
+    """A known filled order is safe only when this same leg already booked it."""
+    state = {
+        "TA": {
+            **_leg(0.5, stop_id="o-stop-A", tp_id=None),
+            "status": "closed",
+            "bracket_filled": "stop",
+            "bracket_cancel_pending": {"stop_order_id": "previous failure"},
+        }
+    }
+    propr = FakePropr(
+        orders=[{"orderId": "o-stop-A", "status": "filled"}],
+        cancel_results={
+            "o-stop-A": {"cancelled": False, "already_filled_or_cancelled": True}
+        },
+    )
+    summary: dict = {}
+
+    pm._retry_pending_bracket_cancellations(propr, state, summary)
+
+    assert "bracket_cancel_pending" not in state["TA"]
+    assert "bracket_cancel_error" not in state["TA"]
+    assert propr.order_lookups == ["o-stop-A"]
+    assert summary["bracket_cancel_recovered"] == 1
+
+
 def test_take_profit_fill_retires_the_leg(forven_db):
     state = {"TA": _leg(0.5, stop_id="o-stop-A", tp_id="o-tp-A")}
     propr = FakePropr(orders=[
@@ -210,6 +266,7 @@ def test_take_profit_fill_retires_the_leg(forven_db):
     assert state["TA"]["status"] == "closed"
     assert state["TA"]["bracket_filled"] == "take-profit"
     assert "o-stop-A" in propr.cancelled
+    assert "o-tp-A" not in propr.cancelled
 
 
 def test_unreadable_orders_skip_attribution(forven_db):
@@ -359,6 +416,7 @@ def test_partial_fills_consuming_the_whole_claim_retire_the_leg(forven_db):
 
     assert state["TA"]["status"] == "closed"
     assert state["TA"]["bracket_filled"] == "stop"
+    assert "o-stop-A" not in propr.cancelled
     assert "o-tp-A" in propr.cancelled, "the sibling bracket must not be stranded"
 
 
