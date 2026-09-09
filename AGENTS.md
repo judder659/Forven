@@ -99,7 +99,7 @@ templates/workspace/       # agent workspace file templates
 
 - **Import style**: Always use absolute imports - `from forven.module import X`, never relative.
 - **Router pattern**: Keep FastAPI endpoints thin and delegate business logic to focused modules.
-- **Pipeline stages**: `researching -> backtesting -> paper -> deployed -> retired` (see `forven/policy.py`).
+- **Pipeline stages**: `quick_screen -> gauntlet -> paper -> live_graduated`, with `research_only`, `rejected`, and `archived` where applicable (see `forven/policy.py` and `forven/roster.py`). Older status labels are compatibility aliases.
 - **Type hints**: All function signatures should have type hints.
 - **Linter**: Ruff.
 - **Tests**: pytest under `tests/`.
@@ -216,3 +216,14 @@ Rules: never pass `force=true` to skip a gate; set `compatible_regimes =
 ["trending","volatile","range_bound"]` on custom strategies; no `stop_loss_pct`
 in `default_params`. Auth (only if `:8003` is exposed beyond localhost): set
 `FORVEN_API_KEY` / `FORVEN_OPERATOR_KEY`.
+
+## Maintaining the in-app agents' guidance
+
+- This repository guide governs development work. The in-app full-stack-engineer is a separate, read-only diagnosis agent; its retired repair path does not restrict an operator-authorized Codex development task.
+- `forven/roster.py` defines core identities and ownership; `forven/agents/instructions.py` supplies reviewed default roles and instructions to `forven.bot._build_default_agents()`.
+- Shared workspace defaults live in `templates/workspace/`. Each current agent has `agents/<id>/SOUL.md`, `AGENTS.md`, and `ROLE.md` under the configured `FORVEN_HOME/workspace`. Shared `IDENTITY.md` is loaded alongside them.
+- A nonempty `ROLE.md` takes precedence over the database instructions in task execution. Update both when asked to revise an existing agent's instructions. Startup refreshes built-in database defaults but deliberately preserves nonempty workspace documents; template edits alone do not update existing agents.
+- Review the live roster, including enabled/disabled custom agents, rather than treating old workspace directories as active agents. Back up the affected documents and instruction fields before an authorized bulk revision. Preserve names, models, schedules, enablement, memory, and unrelated operator settings.
+- Workspace reads currently choose the longest nonempty copy across canonical and legacy roots. Use the supported document API or `write_workspace`, then verify both roots and the API readback so a stale legacy file cannot shadow the revision.
+- Keep effective risk settings and gate thresholds out of static prompts. Refer to current policy and verified results. `request_fix` records operator triage; it does not create an approval or dispatch autonomous code repair. Order execution belongs to the kernel/operator controls, not an LLM trading agent.
+- After prompt-loading changes, verify worker, research, Brain-cycle, and direct-chat contexts with isolated tests. Existing in-flight prompts/checkpoints retain their captured text; code changes require a normal process restart to load, while subsequent fresh tasks read updated workspace files.

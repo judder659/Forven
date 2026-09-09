@@ -59,7 +59,7 @@
 		if (hypothesis.best_outcome) {
 			const outcome = hypothesis.best_outcome;
 			return [
-				`Sharpe ${formatNumber(outcome.sharpe, 2)}`,
+				`Historical Sharpe ${formatNumber(outcome.sharpe, 2)}`,
 				`Return ${formatPercent(outcome.total_return_pct, 1)}`,
 				`${formatNumber(outcome.total_trades, 0)} trades`,
 			].join(' / ');
@@ -92,7 +92,7 @@
 	     A nested overflow-x-auto becomes the thead's nearest scroll box, which
 	     never scrolls vertically — silently defeating `sticky top-0`. -->
 	<div>
-		<table class="w-full min-w-[1180px] border-collapse">
+		<table class="w-full min-w-[980px] border-collapse">
 			<thead class="sticky top-0 z-10 bg-[#050505] text-left text-[10px] uppercase tracking-wider text-[#666]">
 				<tr class="border-b border-[#222]">
 					<th class="w-12 px-4 py-3">
@@ -105,11 +105,12 @@
 						/>
 					</th>
 					<th class="px-4 py-3">Crucible</th>
+					<th class="px-4 py-3 text-right">Work / blocker</th>
 					<th class="px-4 py-3">Stage</th>
-					<th class="px-4 py-3">Origin</th>
+					<th class="hidden px-4 py-3 2xl:table-cell">Origin</th>
 					<th class="px-4 py-3">Scope</th>
-					<th class="px-4 py-3 text-right">Novelty</th>
-					<th class="px-4 py-3 text-right">Work</th>
+					<th class="hidden px-4 py-3 text-right 2xl:table-cell">Novelty</th>
+
 					<th class="px-4 py-3 text-right">Best</th>
 					<th class="px-4 py-3 text-right">Data Gaps</th>
 					<th class="px-4 py-3">Updated</th>
@@ -152,7 +153,8 @@
 							<td class="px-4 py-3 align-top">
 								<a
 									href={`/hypotheses/${encodeURIComponent(hypothesisHrefId)}`}
-									class={`font-semibold transition-colors hover:text-white ${
+									title={hypothesis.title}
+									class={`line-clamp-3 min-w-48 font-semibold transition-colors hover:text-white ${
 										hypothesis.status === 'disproven'
 											? 'text-[#555] line-through'
 											: 'text-white'
@@ -171,9 +173,7 @@
 									{/if}
 								</div>
 								{#if hypothesis.source_tags?.length}
-									<div class="mt-2">
-										<SourceTags tags={hypothesis.source_tags} size="sm" />
-									</div>
+									<details class="mt-2 text-[10px] text-[#888]"><summary class="cursor-pointer">Sources ({hypothesis.source_tags.length})</summary><SourceTags tags={hypothesis.source_tags} size="sm" /></details>
 								{/if}
 								{#if hypothesis.active_task}
 									<div class="mt-2 inline-flex max-w-full items-center gap-1.5 border border-emerald-900 bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-wider text-emerald-400">
@@ -181,6 +181,13 @@
 										<span class="truncate">{taskLabel(hypothesis.active_task.type)}</span>
 									</div>
 								{/if}
+							</td>
+							<td class="px-4 py-3 text-right align-top">
+								<div class="text-sm text-white">{hypothesis.strategy_count}</div>
+								<div class="max-w-56 text-[11px] text-[#aaa]" title={hypothesis.work_state?.reason ?? ''}>
+                                    {hypothesis.work_state?.state ?? (hypothesis.active_task ? hypothesis.active_task.status : hypothesis.open_data_gap_count > 0 ? 'Data gaps open' : 'Idle')}
+                                </div>
+                                {#if hypothesis.work_state?.reason}<p class="mt-1 max-w-56 line-clamp-2 text-[11px] text-amber-300">{hypothesis.work_state.reason}</p>{/if}
 							</td>
 							<td class="px-4 py-3 align-top" data-crucible-status={stage} data-verdict={hypothesis.status}>
 								<div class="flex flex-col items-start gap-1">
@@ -194,7 +201,7 @@
 									{/if}
 								</div>
 							</td>
-							<td class="px-4 py-3 align-top">
+							<td class="hidden px-4 py-3 align-top 2xl:table-cell">
 								<span class={`inline-flex items-center border px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${originClasses(hypothesis.origin)}`}>
 									{originLabel(hypothesis.origin)}
 								</span>
@@ -203,15 +210,8 @@
 								<div class="break-words">{formatScopeList(hypothesis.target_assets, 'No assets')}</div>
 								<div class="break-words text-[#666]">{formatScopeList(hypothesis.target_timeframes, 'No timeframes')}</div>
 							</td>
-							<td class="px-4 py-3 text-right align-top text-sm text-white">{formatScore(hypothesis.novelty_score)}</td>
-							<td class="px-4 py-3 text-right align-top">
-								<div class="text-sm text-white">{hypothesis.strategy_count}</div>
-								{#if hypothesis.active_task}
-									<div class="text-[10px] uppercase tracking-wider text-emerald-400">{hypothesis.active_task.status}</div>
-								{:else}
-									<div class="text-[10px] uppercase tracking-wider text-[#555]">idle</div>
-								{/if}
-							</td>
+							<td class="hidden px-4 py-3 text-right align-top text-sm text-white 2xl:table-cell">{formatScore(hypothesis.novelty_score)}</td>
+
 							<td class="px-4 py-3 text-right align-top text-xs text-[#888]">
 								{#if bestResultSummary(hypothesis)}
 									{bestResultSummary(hypothesis)}

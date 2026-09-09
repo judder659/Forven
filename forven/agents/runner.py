@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from forven.ai import (
     _is_quota_exhausted,
     _is_rate_limit_exception,
-    call_ai,
+    call_ai,  # noqa: F401 - compatibility for integrations patching the runner export
     is_transient_provider_exception,
     normalize_provider_and_model,
 )
@@ -56,6 +56,10 @@ import forven.agents.tools_backtesting  # noqa: F401
 from .ownership import (
     _check_task_owner,
     _extract_task_strategy_id,
+)
+
+from forven.agents.execution_state import (
+    IncompleteTask, block_task, current_execution, load_execution, record_response, task_usage,
 )
 
 log = logging.getLogger("forven.agents.runner")
@@ -402,7 +406,16 @@ async def _call_with_tools(
     surfaces a clear error about THAT provider instead of an unrelated
     fallback's auth error.
     """
-    chain = _resolve_tool_call_chain(provider, model_id, agent_id)
+    state = current_execution.get()
+    saved = state.checkpoint if state else {}
+    if saved.get("inflight"):
+        raise IncompleteTask("A tool was interrupted; reconcile its outcome before resuming.")
+    if saved.get("messages"):
+        provider, model_id = saved["provider"], saved["model_id"]
+        messages = saved["messages"]
+        chain = [(provider, model_id)]
+    else:
+        chain = _resolve_tool_call_chain(provider, model_id, agent_id)
     # If the configured PRIMARY provider itself has no credentials, fail clearly
     # about IT rather than silently falling back to a different provider the user
     # did not select (e.g. Brain set to minimax must not quietly call openai).
@@ -413,7 +426,7 @@ async def _call_with_tools(
     # NOTE: this covers the tool-call/runtime path (the Brain's brain_invoke worker);
     # the manual CLI `forven brain-invoke` path calls call_ai() directly and is not
     # augmented here (a human is present there to read the error and switch providers).
-    backup = _resolve_backup_provider(primary_provider)
+    backup = None if saved.get("has_tools") else _resolve_backup_provider(primary_provider)
     if not _provider_has_credentials(primary_provider):
         # Primary unusable. Fall back to the configured backup if it has working creds,
         # else fail clearly with a status-aware message (missing vs opaque vs expired).
@@ -457,7 +470,7 @@ async def _call_with_tools(
             trace[:] = attempts
 
     for chain_idx, (active_provider, active_model) in enumerate(chain):
-        progress = {"tools_executed": False}
+        progress = {"tools_executed": bool(saved.get("has_tools"))}
         if transcript is not None:
             transcript.set_attempt(active_provider, active_model)
             if chain_idx > 0:
@@ -491,6 +504,8 @@ async def _call_with_tools(
                 )
             return result
         except Exception as e:
+            if isinstance(e, IncompleteTask):
+                raise
             last_error = e
             if transcript is not None:
                 transcript.write(
@@ -573,9 +588,10 @@ async def _call_with_tools_single(
     # and the call fell through to a fallback provider.
     active_tools = list(tools or AGENT_TOOLS)
     impl = get_provider(provider)
+    state = current_execution.get()
     last_nonempty_text = ""
     _recent_tool_calls: list[tuple[str, str]] = []
-    nudged_for_tool = False
+    nudged_for_tool = bool(state and state.checkpoint.get("has_tools"))
     total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     def _accum(usage: dict):
@@ -593,8 +609,7 @@ async def _call_with_tools_single(
 
             cost_allowed, cost_reason = check_daily_cost_cap()
             if not cost_allowed:
-                log.warning("Tool loop halted mid-task by cost cap: %s", cost_reason)
-                break
+                raise IncompleteTask(cost_reason, last_nonempty_text)
 
         if round_num == MAX_TOOL_ROUNDS - 5:
             nudge = (
@@ -612,6 +627,7 @@ async def _call_with_tools_single(
         token = get_token(provider)
         response = await impl.call(model_id, messages, system, active_tools, token)
         _accum(response.usage)
+        record_response(provider, model_id, response.usage)
 
         if transcript is not None:
             transcript.write(
@@ -678,6 +694,8 @@ async def _call_with_tools_single(
             # side effects may already have happened.
             if progress is not None:
                 progress["tools_executed"] = True
+            if state:
+                state.save(provider=provider, model_id=model_id, inflight=True, has_tools=True)
             result = await _execute_tool(tc.name, tc.input)
             tool_results.append((tc.id, str(result)[:5000]))
             if transcript is not None:
@@ -693,6 +711,8 @@ async def _call_with_tools_single(
             _recent_tool_calls.append(call_sig)
 
         impl.append_tool_results(messages, tool_results)
+        if state:
+            state.save(provider=provider, model_id=model_id, messages=messages, inflight=False, has_tools=True)
 
         # Detect stuck loops (same tool + same args 3 times in a row).
         if len(_recent_tool_calls) >= 3:
@@ -707,41 +727,7 @@ async def _call_with_tools_single(
                 if transcript is not None:
                     transcript.write("event", content=stuck_nudge, tool_round=round_num)
 
-    # Hit max rounds — force one final non-tool answer from gathered context/tool results.
-    log.warning("Hit max tool rounds (%d) for %s/%s; forcing final answer", MAX_TOOL_ROUNDS, provider, model_id)
-    final_messages = list(messages)
-    final_messages.append({
-        "role": "user",
-        "content": (
-            "Tool-call limit reached. Provide your best final answer now using the gathered "
-            "tool results. Do not call tools."
-        ),
-    })
-    try:
-        forced = await call_ai(
-            provider=provider,
-            model=model_id,
-            messages=final_messages,
-            system=system,
-            max_tokens=2048,
-            temperature=0.3,
-            fallback=False,
-        )
-        forced = (forced or "").strip()
-        if forced:
-            if transcript is not None:
-                transcript.write(
-                    "assistant",
-                    content=forced,
-                    tool_round=MAX_TOOL_ROUNDS,
-                )
-            return (forced, total_usage)
-    except Exception as e:
-        log.warning("Forced final answer after max tool rounds failed: %s", e)
-
-    if last_nonempty_text:
-        return (last_nonempty_text, total_usage)
-    return ("I hit the tool-call limit before finishing. Ask me to continue and I will pick up from the latest results.", total_usage)
+    raise IncompleteTask("Tool-call limit reached before completion; resume from the saved checkpoint.", last_nonempty_text)
 
 
 _AGENT_TASK_TIMEOUT_SECONDS = DEFAULT_AGENT_TASK_TIMEOUT_SECONDS  # 15-minute hard wall-clock limit per task
@@ -1329,6 +1315,20 @@ async def run_agent_task(agent: dict, task: dict) -> dict:
     strategy_id = _extract_task_strategy_id(task)
     task_type = str(task.get("type") or "").strip().lower()
 
+    saved_execution = load_execution(task_id, agent_id)
+    if saved_execution.checkpoint.get("pending_handoff"):
+        from forven.db import handoff_task
+        target = saved_execution.checkpoint["pending_handoff"]
+        try:
+            with get_db() as conn:
+                handoff_task(conn, task_id, from_agent=agent_id, to_agent=target, reason="Resume saved handoff")
+            saved_execution.clear()
+            return {"handoff_to": target}
+        except Exception as exc:
+            return block_task(task_id, f"Awaiting handoff to {target}: {exc}")
+    if saved_execution.checkpoint.get("inflight"):
+        return block_task(task_id, "A prior tool was interrupted; its outcome must be reconciled before retrying.")
+
     log.info("Agent %s starting task %d: %s", agent_id, task_id, task.get("title", ""))
 
     # Daily LLM cost cap. Over-cap tasks are requeued with backoff (not failed)
@@ -1388,6 +1388,8 @@ async def run_agent_task(agent: dict, task: dict) -> dict:
     except asyncio.TimeoutError:
         log.error("Agent %s task %d TIMED OUT after %ds", agent_id, task_id, timeout_seconds)
         detail = f"AI/provider timeout after {timeout_seconds}s"
+        if load_execution(task_id, agent_id).checkpoint.get("inflight"):
+            return block_task(task_id, detail + "; tool outcome uncertain — automatic replay blocked")
         if _requeue_agent_task(
             task_id,
             agent_id,
@@ -1429,6 +1431,8 @@ async def _run_agent_task_inner(
 ) -> dict:
     """Inner task execution — wrapped by run_agent_task's timeout."""
     tool_context_tokens: tuple[Token, ...] | None = None
+    execution = load_execution(task_id, agent_id)
+    execution_token = current_execution.set(execution)
     try:
         # Set per-task tool context for permission gating and tool audit logging.
         # See _tools_context_for_task_type for the mapping + why it never returns
@@ -1442,6 +1446,19 @@ async def _run_agent_task_inner(
             tools_context=task_tools_context,
         )
         input_data = _coerce_task_input_data(task)
+
+        readiness = None
+        if (task_type in {"develop_candidate", "generate_strategies"} and not execution.checkpoint.get("messages")
+                and not execution.checkpoint.get("inflight") and not execution.checkpoint.get("pending_handoff")):
+            from forven.strategies.idea_readiness import candidate_readiness
+
+            readiness = await asyncio.to_thread(candidate_readiness, task, input_data)
+            if not readiness["can_generate"]:
+                execution.save(data_preflight=True, data_readiness=readiness)
+                raise IncompleteTask("Data check: " + " ".join(readiness["issues"]), json.dumps(readiness))
+            # A preflight-only checkpoint is safe to retry; clear it once passed.
+            if execution.checkpoint.get("data_preflight"):
+                execution.clear()
 
         # Build context: role + memory + task details
         role_md = read_workspace(f"agents/{agent_id}/ROLE.md", optional=True) or agent.get("instructions", "")
@@ -1478,6 +1495,9 @@ async def _run_agent_task_inner(
 
         # Build task prompt
         prompt = f"# Task: {task.get('title', 'Untitled')}\n\n{task.get('description', '')}"
+        if readiness:
+            prompt += "\n\n## Input preflight\n" + json.dumps(readiness)
+            prompt += "\nVerify any unresolved inputs with read-only tools BEFORE writing code. Never replace required inputs with proxies. A file-presence check is not proof of usable historical coverage."
         if input_data:
             prompt += f"\n\n## Input Data\n```json\n{json.dumps(input_data, indent=2)[:3000]}\n```"
 
@@ -1516,7 +1536,34 @@ async def _run_agent_task_inner(
             provider, model_id, messages, context, tools=agent_tools, agent_id=agent_id, trace=ai_trace,
             transcript=transcript,
         )
-        cost_usd = estimate_cost_usd(provider, model_id, usage)
+        recorded = task_usage(task_id)
+        if recorded:
+            provider, model_id = recorded["provider"], recorded["model_id"]
+            usage = {key: recorded[key] for key in ("input_tokens", "output_tokens", "total_tokens")}
+        elif ai_trace:
+            successful = next((entry for entry in reversed(ai_trace) if entry.get("ok")), None)
+            if successful:
+                provider, model_id = successful["provider"], successful["model"]
+        cost_usd = recorded["cost_usd"] if recorded else estimate_cost_usd(provider, model_id, usage)
+        if task_type == "research" and input_data.get("origin_mode") in {
+            "operator_manual_entry", "operator_url_paste", "operator_urls_paste",
+        }:
+            from forven.api_domains.hypotheses import generate_strategies_payload
+
+            if not execution.checkpoint.get("development_task_id"):
+                try:
+                    handoff = generate_strategies_payload(str(input_data.get("hypothesis_id") or ""))
+                except Exception as exc:
+                    raise IncompleteTask("Research finished, but candidate handoff needs attention: " + str(getattr(exc, "detail", exc)), response) from exc
+                execution.save(development_task_id=handoff["task"]["task_id"])
+        if task_type in {"develop_candidate", "generate_strategies"}:
+            with get_db() as conn:
+                artifact = conn.execute(
+                    "SELECT s.id FROM agent_tasks t JOIN strategies s ON s.id=t.strategy_id WHERE t.id=?",
+                    (task_id,),
+                ).fetchone()
+            if not artifact:
+                raise IncompleteTask("Candidate development returned without a registered strategy.", response)
 
         # Prepend a ground-truth tool-execution ledger so operators can cross-
         # check the agent's narrative against what actually happened. The LLM
@@ -1637,6 +1684,8 @@ async def _run_agent_task_inner(
         # path).
         queue_follow_through = False
         queue_brain_callback = False
+        if handoff_target_agent:
+            execution.save(pending_handoff=handoff_target_agent)
         with get_db() as conn:
             completed_at = datetime.now(timezone.utc).isoformat()
             if handoff_target_agent:
@@ -1659,22 +1708,8 @@ async def _run_agent_task_inner(
                         reason=handoff_reason,
                     )
                 except Exception as exc:
-                    log.warning("Task handoff failed for %s -> %s: %s", agent_id, handoff_target_agent, exc)
-                    handoff_target_agent = None
-                    conn.execute(
-                        "UPDATE agent_tasks SET status='done', output_data=?, completed_at=?, error=NULL, "
-                        "input_tokens=?, output_tokens=?, total_tokens=?, provider=?, model_id=?, cost_usd=? "
-                        "WHERE id=?",
-                        (json.dumps(output), completed_at,
-                         usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("total_tokens", 0),
-                         provider, model_id, cost_usd, task_id),
-                    )
-                    queue_follow_through = True
-                    queue_brain_callback = _should_queue_brain_callback_for_completed_task(
-                        agent_id=agent_id,
-                        task=task,
-                        input_data=input_data,
-                    )
+                    raise IncompleteTask(f"Awaiting handoff to {handoff_target_agent}: {exc}", response) from exc
+
             else:
                 conn.execute(
                     "UPDATE agent_tasks SET status='done', output_data=?, completed_at=?, error=NULL, "
@@ -1698,9 +1733,9 @@ async def _run_agent_task_inner(
 
             record_agent_spend(
                 agent_id,
-                cost_usd=cost_usd,
-                input_tokens=usage.get("input_tokens", 0),
-                output_tokens=usage.get("output_tokens", 0),
+                cost_usd=0 if recorded else cost_usd,
+                input_tokens=0 if recorded else usage.get("input_tokens", 0),
+                output_tokens=0 if recorded else usage.get("output_tokens", 0),
             )
         except Exception:
             pass
@@ -1774,10 +1809,15 @@ async def _run_agent_task_inner(
         # Provider runtime-health is recorded inside _call_with_tools, keyed on
         # the provider that ACTUALLY ran — so a working fallback never marks a
         # broken primary green. Nothing to record here.
+        execution.clear()
         log.info("Agent %s completed task %d", agent_id, task_id)
         return output
 
     except Exception as e:
+        if isinstance(e, IncompleteTask):
+            return block_task(task_id, str(e), e.partial)
+        if execution.checkpoint.get("inflight"):
+            return block_task(task_id, f"Tool outcome uncertain; automatic replay blocked: {_exception_summary(e)}")
         error_summary = _exception_summary(e)
         log.error("Agent %s task %d failed: %s", agent_id, task_id, error_summary, exc_info=True)
         # Persist the request + per-provider attempt trace (with response bodies) so a
@@ -1966,5 +2006,16 @@ async def _run_agent_task_inner(
 
         return {"error": error_summary}
     finally:
-        if tool_context_tokens is not None:
-            reset_tool_context(tool_context_tokens)
+        try:
+            recorded = task_usage(task_id)
+            if recorded:
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE agent_tasks SET input_tokens=?,output_tokens=?,total_tokens=?,cost_usd=?,provider=?,model_id=? WHERE id=?",
+                        (recorded["input_tokens"], recorded["output_tokens"], recorded["total_tokens"],
+                         recorded["cost_usd"], recorded["provider"], recorded["model_id"], task_id),
+                    )
+        finally:
+            current_execution.reset(execution_token)
+            if tool_context_tokens is not None:
+                reset_tool_context(tool_context_tokens)

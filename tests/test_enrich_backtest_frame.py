@@ -170,7 +170,8 @@ def test_enrich_backtest_frame_gains_order_flow_columns(tmp_path):
 
     for col in ("ls_ratio", "taker_buy_sell_ratio"):
         assert col in out.columns, f"order-flow column {col} missing from backtest frame"
-        assert out[col].notna().all(), f"{col} has NaNs (sparse columns must be filled, not evict rows)"
+        assert pd.isna(out[col].iloc[0]), "unclosed first bucket is unknown"
+        assert out[col].iloc[1:].notna().all()
     for col in ("long_liq_usd", "short_liq_usd", "liq_imbalance"):
         assert col in out.columns, f"order-flow column {col} missing from backtest frame"
         # Liquidations fill 0.0 only WITHIN coverage (fill_coverage_only): the
@@ -331,7 +332,8 @@ def test_load_backtest_candles_gains_order_flow_columns(tmp_path, monkeypatch):
     assert not frame.empty
     assert "ls_ratio" in frame.columns
     assert "taker_buy_sell_ratio" in frame.columns
-    assert frame["ls_ratio"].notna().all()
+    assert pd.isna(frame["ls_ratio"].iloc[0])
+    assert frame["ls_ratio"].iloc[1:].notna().all()
     # Funding is excluded on this path: the Binance per-8h parquet must not
     # have introduced a funding_rate column (Hyperliquid is the source of
     # truth and enrich_market_data is off here).

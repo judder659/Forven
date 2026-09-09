@@ -3559,7 +3559,7 @@
 				definition_json: getResultDefinitionJson(selectedResult),
 				preserve_result: true,
 				...executionDraftToPayload(optimizedExecutionDraft ?? executionDraft),
-			});
+			}, { background: true });
 			if (response.status === 'succeeded') {
 				addToast('Gauntlet with optimized params completed', 'success', `/lab/strategy/${encodeURIComponent(strategyId)}`);
 				await loadContainer({ autoOpenLatestBacktest: true });
@@ -3921,7 +3921,7 @@
 		submitJobId = null;
 		resetSubmitProgress();
 		try {
-			const response = await submitBacktest({ ...request, preserve_result: true });
+			const response = await submitBacktest({ ...request, preserve_result: true }, { background: true });
 			submitJobId = response.job_id;
 			if (response.status === 'succeeded') {
 				submitStatus = 'completed';

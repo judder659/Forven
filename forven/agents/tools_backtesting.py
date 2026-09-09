@@ -256,6 +256,17 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
         return False
 
     verdict_tests = _parse_json_object(metrics.get("verdict_tests"))
+    previous = _parse_json_object(strategy_row.get("verdict"))
+    previous_summary = _parse_json_object(previous.get("summary"))
+    incoming_summary = _parse_json_object(verdict_result.get("summary"))
+    result_identity = incoming_summary.get("resolved_result_id")
+    if (
+        not result_identity
+        or previous_summary.get("resolved_result_id") != result_identity
+        or previous.get("engine_version") != verdict_result.get("engine_version")
+    ):
+        # A subset from a new experiment must not relabel old tests as current.
+        verdict_tests = {}
     normalized_tests, verdict_blob = build_strategy_verdict_blob(verdict_result)
     merged_tests = dict(verdict_tests)
     merged_tests.update(normalized_tests)
@@ -603,8 +614,11 @@ def _tool_register_strategy(params: dict) -> str:
             f.write('"""Custom strategies — agent-generated modules."""\n')
 
     filepath = os.path.join(custom_dir, f"{type_name}.py")
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(final_code)
+    try:
+        with open(filepath, "x", encoding="utf-8") as f:
+            f.write(final_code)
+    except FileExistsError:
+        return f"Error: strategy module '{type_name}' already exists; use a unique type_name"
 
     # Targeted intake must import/register the just-written file before a full
     # custom discovery pass. If discovery sees it first, TYPE_NAME is already in
@@ -623,11 +637,18 @@ def _tool_register_strategy(params: dict) -> str:
             # can't orphan the develop_candidate task from its strategy.
             origin_task_id=provenance.get("origin_task_id"),
         )
-        discover()
-        if type_name not in _TYPE_MAP:
-            return f"Warning: file saved to {filepath} but type '{type_name}' not found in registry. Ensure the module exports TYPE_NAME = '{type_name}' and STRATEGY_CLASS."
-
         registered_strategy_id = str(registration.get("strategy_id") or "").strip()
+        runtime_type = str(registration.get("runtime_type") or type_name).strip()
+        if registration.get("sandbox_only"):
+            # Intake deliberately moves agent source to imported/ and keeps its
+            # class OUT of the trusted parent map. Its durable container and
+            # namespaced runtime are the registration result, not a warning.
+            if not registered_strategy_id or not runtime_type.startswith("imported__"):
+                return "Error: sandbox intake did not return a strategy container and isolated runtime."
+        else:
+            discover()
+            if type_name not in _TYPE_MAP:
+                return f"Error: type '{type_name}' was not registered; inspect the intake result before retrying."
         current_strategy_id = str(_current_strategy_id_var.get() or "").strip()
         target_strategy_id = registered_strategy_id or current_strategy_id
         if target_strategy_id:
@@ -639,7 +660,7 @@ def _tool_register_strategy(params: dict) -> str:
                         updated_at = ?
                     WHERE id = ?
                     """,
-                    (type_name, datetime.now(timezone.utc).isoformat(), target_strategy_id),
+                    (runtime_type, datetime.now(timezone.utc).isoformat(), target_strategy_id),
                 )
             _persist_strategy_provenance(target_strategy_id, provenance)
             cited_skills = params.get("cited_skills")

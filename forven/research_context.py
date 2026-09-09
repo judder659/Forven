@@ -194,13 +194,22 @@ def build_research_context(
 ) -> str:
     """Build a research-specific agent context without broad semantic recall.
 
-    Includes the same foundational reference every other agent context carries —
-    the Forven identity / trading rules (IDENTITY.md) and the data schema
-    (DATA_SCHEMA.md) — so research agents propose data-grounded hypotheses that
+    Includes the agent's SOUL/AGENTS guidance and the same shared reference
+    other agent contexts carry (IDENTITY.md and DATA_SCHEMA.md), so research
+    agents propose data-grounded hypotheses that
     respect the trading rules. Broad ChromaDB recall is still intentionally
     omitted; novelty/inspiration is governed by the research contract instead.
     """
     sections = [f"# YOUR ROLE\n{_clean_text(role_md)}"]
+
+    # Research still follows the agent's editable behavior and operating guide.
+    # This deliberately adds no broad memory; the contract below governs recall.
+    for filename, heading in (("SOUL.md", "SOUL"), ("AGENTS.md", "WORKSPACE GUIDE")):
+        content = _clean_text(read_workspace(f"agents/{agent_id}/{filename}", optional=True))
+        if not content:
+            content = _clean_text(read_workspace(filename, optional=True))
+        if content:
+            sections.append(f"# {heading}\n{content}")
 
     # SECURITY (audit 2026-06-22, M2): research agents read content fetched from
     # third-party URLs (wrapped in <untrusted_content> by the discover_*/inspect_*
@@ -223,6 +232,10 @@ def build_research_context(
     data_schema = _clean_text(read_workspace("DATA_SCHEMA.md", optional=True))
     if data_schema:
         sections.append(f"# DATA SCHEMA\n{data_schema}")
+
+    from forven.strategies.idea_readiness import render_research_input_constraints
+
+    sections.append(render_research_input_constraints())
 
     sections += [
         render_constraint_memory(

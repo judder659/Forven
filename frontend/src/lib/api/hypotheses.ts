@@ -65,7 +65,10 @@ export interface HypothesisBulkMutationResponse {
 	hypotheses: HypothesisSummary[];
 }
 
+export interface CrucibleWorkState { state: string; reason?: string | null; task_id: number; task_display_id?: string | null; }
+
 export interface HypothesisSummary {
+	work_state?: CrucibleWorkState | null;
 	id: string;
 	display_id?: string | null;
 	title: string;
@@ -149,6 +152,7 @@ export interface DataGapSummary {
 }
 
 export interface HypothesisDetailStrategy {
+	thesis_revision?: 'current' | 'older' | 'unverified';
 	id: string;
 	name: string;
 	type?: string | null;
@@ -189,6 +193,7 @@ export interface HypothesisResearchTask {
 }
 
 export interface HypothesisDetailResponse {
+	work_state?: CrucibleWorkState | null;
 	hypothesis: HypothesisSummary & {
 		market_thesis: string;
 		mechanism: string;
@@ -376,6 +381,7 @@ export async function previewHypothesisFromUrl(url: string): Promise<UrlPreviewR
 }
 
 export interface CreateFromUrlRequest {
+	request_id?: string;
 	url: string;
 	title?: string;
 	market_thesis?: string;
@@ -410,6 +416,7 @@ export async function createHypothesisFromUrl(body: CreateFromUrlRequest): Promi
 }
 
 export interface CreateFromUrlsRequest {
+	request_id?: string;
 	urls: string[];
 	title?: string;
 	market_thesis?: string;
@@ -459,6 +466,7 @@ export async function createHypothesisFromUrls(
 }
 
 export interface CreateManualRequest {
+	request_id?: string;
 	title: string;
 	market_thesis: string;
 	mechanism: string;
@@ -596,4 +604,8 @@ export interface AllocatorOverview {
 /** CRUX-1: daily develop budget, short quota, and the value-ranked active pool. */
 export async function getAllocatorOverview(limit = 40): Promise<AllocatorOverview> {
 	return fetchApi(`/hypotheses/allocator?limit=${limit}`);
+}
+
+export function getHypothesisReadiness(id: string): Promise<import('./strategyCreator').IdeaReadiness> {
+ return fetchApi(`/hypotheses/${encodeURIComponent(id)}/readiness`);
 }

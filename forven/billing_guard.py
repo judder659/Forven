@@ -101,12 +101,15 @@ def get_spend_today() -> float:
         with get_db() as conn:
             row = conn.execute(
                 """
-                SELECT COALESCE(SUM(cost_usd), 0.0) AS spent
-                FROM agent_tasks
-                WHERE cost_usd IS NOT NULL
-                  AND COALESCE(completed_at, started_at, created_at) >= ?
+                SELECT COALESCE(SUM(cost_usd), 0.0) AS spent FROM (
+                    SELECT cost_usd FROM agent_tasks t
+                    WHERE cost_usd IS NOT NULL AND COALESCE(completed_at, started_at, created_at) >= ?
+                      AND NOT EXISTS (SELECT 1 FROM agent_model_calls c WHERE c.task_id=t.id)
+                    UNION ALL
+                    SELECT cost_usd FROM agent_model_calls WHERE created_at >= ?
+                )
                 """,
-                (today,),
+                (today, today),
             ).fetchone()
     except Exception as exc:  # never block real work on a telemetry read
         log.debug("billing_guard: could not read spend (%s); treating as 0", exc)
@@ -180,8 +183,9 @@ def get_unpriced_spend_today() -> float:
                        model_id,
                        COALESCE(SUM(input_tokens), 0)  AS in_tokens,
                        COALESCE(SUM(output_tokens), 0) AS out_tokens
-                FROM agent_tasks
+                FROM agent_tasks t
                 WHERE COALESCE(completed_at, started_at, created_at) >= ?
+                  AND NOT EXISTS (SELECT 1 FROM agent_model_calls c WHERE c.task_id=t.id)
                   AND COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) > 0
                 GROUP BY provider, model_id
                 """,
@@ -204,7 +208,20 @@ def get_unpriced_spend_today() -> float:
             continue
         in_rate, out_rate = _unpriced_rate(provider, model_id)
         total += (in_tokens * in_rate + out_tokens * out_rate) / 1_000_000.0
-    return total
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(estimated_cost_usd),0) AS residual FROM agent_model_calls WHERE created_at >= ? AND cost_usd IS NULL",
+                (today,),
+            ).fetchone()
+        try:
+            residual = float(row["residual"] or 0.0) if row else 0.0
+        except (TypeError, ValueError, KeyError, IndexError):
+            residual = float(row[0] or 0.0) if row else 0.0
+    except Exception as exc:  # telemetry must never pause the pipeline
+        log.debug("billing_guard: could not read unpriced model calls (%s)", exc)
+        residual = 0.0
+    return total + residual
 
 
 def check_daily_cost_cap() -> tuple[bool, str]:

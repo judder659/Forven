@@ -164,8 +164,11 @@ def _insert_strategy(sid: str, hypothesis_id: str, stage: str):
         )
 
 
-def test_planner_ranks_survivor_crucible_first():
+def test_planner_ranks_survivor_crucible_first(monkeypatch):
     from forven.crucible_planner import plan_next_actions
+
+    # This test isolates value ranking; input eligibility has dedicated tests.
+    monkeypatch.setattr('forven.strategies.idea_readiness.hypothesis_readiness', lambda hid: {'can_generate': True})
 
     # Old barren crucible (FIFO would pick it first) vs newer one with a
     # promoted descendant. Value ranking must invert the old order.

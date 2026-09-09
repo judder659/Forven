@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from forven.control_plane import approvals as control_plane_approvals
 from forven.control_plane.models import ApprovalDecisionBody, ApprovalHandoffBody, ApprovalTroubleshootBody
 from forven.db import create_approval, get_approval, get_db, kv_get
+from forven.gauntlet.store import create_or_get_workflow
+from forven.strategies.builtin.ema_cross import EMACrossStrategy
+from forven.strategies.execution_contract import EXECUTION_WARMUP, make_contract
+from forven.strategies.identity import source_identity
 
 
 def _insert_blocked_agent_task(task_id: int, display_id: str = "AT0007") -> None:
@@ -297,6 +303,29 @@ def test_approve_promotion_recommendation_transitions_strategy(forven_db, monkey
             VALUES
                 ('s-promo-approval', 'Promotion Approval Strategy', 'ema_cross', 'BTC', '1h', '{}', '{}', '{}', 'gauntlet', 'simulation-agent', 'gauntlet', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
+        )
+        contract = make_contract(
+            runtime_type="ema_cross", asset="BTC", timeframe="1h", params={},
+            identity=source_identity("ema_cross", EMACrossStrategy), leverage=1.0,
+            fee_bps=4.5, slippage_bps=2.0, initial_capital=10000.0,
+            execution_controls=None, trade_mode="long_only", regime_gate=False,
+            include_funding=False, warmup=EXECUTION_WARMUP,
+        )
+        conn.execute(
+            """INSERT INTO backtest_results
+               (result_id, strategy_id, result_type, symbol, timeframe, metrics_json, config_json, created_at)
+               VALUES (?, ?, 'backtest', 'BTC', '1h', ?, ?, CURRENT_TIMESTAMP)""",
+            ("confirmation-s-promo-approval", "s-promo-approval",
+             json.dumps({"total_trades": 42}),
+             json.dumps({"status": "succeeded", "execution_contract": contract})),
+        )
+
+    workflow = create_or_get_workflow(strategy_id="s-promo-approval", settings_snapshot={})
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE gauntlet_steps SET status='passed', result_id=? "
+            "WHERE workflow_id=? AND step_key='confirmation_backtest'",
+            ("confirmation-s-promo-approval", workflow["id"]),
         )
 
     approval_id = create_approval(

@@ -1349,7 +1349,7 @@ def post_data_engine_backfill_plan() -> dict:
 # alphabetically-first series can't monopolize every 10-minute batch slot.
 # Process-local is fine: the job runs in-process and re-plans from the lake.
 _CATCHUP_STALL_COOLDOWN_SECS = 6 * 3600.0
-_catchup_stalled: dict[tuple[str, str], float] = {}
+_catchup_stalled: dict[tuple[str, str, str, str], float] = {}
 
 # History window (calendar days) requested when BOOTSTRAPPING a brand-new
 # (symbol, timeframe) that has no catalog row yet. Matches the generation
@@ -1369,8 +1369,10 @@ def execute_data_engine_catchup(
 
     Pure (raises plain exceptions, never ``HTTPException``) so both the HTTP
     endpoint and the scheduled ``forven-data-engine-catchup`` auto-drain job can
-    call it. Gap-fill tasks (``stale`` / ``gaps``) use ``backfill_ohlcv_gaps``
-    (reports bars_added + a no_recent_data flag) so a series that genuinely can't
+    call it. Binance gap-fill tasks use ``backfill_ohlcv_gaps``; Hyperliquid
+    tasks use its venue collector and gap repair, then verify stored bars. Unsupported
+    venue repairs fail explicitly. The Binance helper reports bars_added and a
+    no_recent_data flag so a series that genuinely can't
     advance is counted as ``failed`` rather than silently reported as a green
     success. ``bootstrap`` tasks — an active (symbol, timeframe) with no catalog
     row — instead route to the demand-driven coverage machinery
@@ -1411,7 +1413,7 @@ def execute_data_engine_catchup(
         log.warning("Data Engine catch-up: symbol registry refresh skipped: %s", exc)
 
     from forven.dataeng.catalog import Catalog
-    from forven.dataeng.catchup import CatchUpPlanner
+    from forven.dataeng.catchup import CatchUpPlanner, execute_candle_catchup
 
     # Refresh coverage from the parquet lake BEFORE planning. backfill writes
     # bars to parquet but nothing else updates the DuckDB series_coverage
@@ -1436,19 +1438,19 @@ def execute_data_engine_catchup(
     candle_tasks.sort(
         key=lambda t: (
             1
-            if (now_mono - _catchup_stalled.get((t.symbol, t.timeframe), -_CATCHUP_STALL_COOLDOWN_SECS))
+            if (now_mono - _catchup_stalled.get((t.source, t.market, t.symbol, t.timeframe), -_CATCHUP_STALL_COOLDOWN_SECS))
             < _CATCHUP_STALL_COOLDOWN_SECS
             else 0
         )
     )
     batch = candle_tasks[: max(1, min(int(max_tasks or 10), cap))]
 
-    from forven.data import backfill_ohlcv_gaps
-
     executed = rows_added = failed = bootstrapped = 0
     deadline_hit = False
     results: list[dict] = []
     for t in batch:
+        identity = {"source": t.source, "market": t.market, "symbol": t.symbol, "timeframe": t.timeframe}
+        series_key = (t.source, t.market, t.symbol, t.timeframe)
         # Wall-clock budget: stop before the scheduler's job timeout so this job
         # always returns (an overrun leaves an unkillable zombie thread holding
         # the scheduler lock). Partial progress is fine — the next run continues.
@@ -1477,37 +1479,39 @@ def execute_data_engine_catchup(
                 # A bootstrap is never a "stall": ensure_coverage degrades to
                 # "ready" (source exhausted / autobackfill disabled) rather than
                 # failing, so it must not enter the stall cooldown.
-                _catchup_stalled.pop((t.symbol, t.timeframe), None)
+                _catchup_stalled.pop(series_key, None)
                 results.append(
                     {
-                        "symbol": t.symbol,
-                        "timeframe": t.timeframe,
+                        **identity,
                         "rows_added": added,
                         "bootstrap": True,
                         "backfilling": kicked_off,
                     }
                 )
                 continue
-            res = backfill_ohlcv_gaps(t.symbol, t.timeframe)
+            res = execute_candle_catchup(t)
             added = int(res.get("bars_added") or 0)
             rows_added += added
-            # A task that added no bars AND couldn't fetch newer data genuinely
-            # stalled (delisted / fetch failure) — not a green "success".
-            stalled = added == 0 and bool(res.get("no_recent_data"))
+            # Count an unreached venue tail as incomplete even if some bars landed.
+            # Legacy primary repairs report a stall through no_recent_data.
+            stalled = res.get("target_reached") is False or (added == 0 and bool(res.get("no_recent_data")))
             if stalled:
                 failed += 1
-                _catchup_stalled[(t.symbol, t.timeframe)] = time.monotonic()
+                _catchup_stalled[series_key] = time.monotonic()
             else:
-                _catchup_stalled.pop((t.symbol, t.timeframe), None)
+                _catchup_stalled.pop(series_key, None)
             results.append(
-                {"symbol": t.symbol, "timeframe": t.timeframe, "rows_added": added, "stalled": stalled}
+                {
+                    **identity, "rows_added": added, "stalled": stalled,
+                    **{key: res[key] for key in ("gaps_remaining", "unavailable_bars") if key in res},
+                }
             )
         except Exception as exc:
             # Per-task isolation: one unfetchable bootstrap / backfill must not
             # abort the rest of the plan (mirror the existing gap-fill handling).
             failed += 1
-            _catchup_stalled[(t.symbol, t.timeframe)] = time.monotonic()
-            results.append({"symbol": t.symbol, "timeframe": t.timeframe, "error": str(exc)[:200]})
+            _catchup_stalled[series_key] = time.monotonic()
+            results.append({**identity, "error": str(exc)[:200]})
 
     try:
         from forven.data import _log_data_action
@@ -1517,10 +1521,12 @@ def execute_data_engine_catchup(
         # bootstrap count keeps "+Y bars" honest instead of hiding an in-flight
         # fetch as a silent 0-bar success.
         bootstrap_note = f", {bootstrapped} bootstrapped" if bootstrapped else ""
+        unavailable = sum(int(result.get("unavailable_bars", 0)) for result in results)
+        repair_note = f", {unavailable} missing bars outside venue retention" if unavailable else ""
         _log_data_action(
             "backfill",
             f"Executed Data Engine backfill plan: {executed} task(s), +{rows_added:,} bars, "
-            f"{failed} failed{bootstrap_note}",
+            f"{failed} failed{bootstrap_note}{repair_note}",
             level="warning" if failed else "info",
             executed=executed,
             failed=failed,

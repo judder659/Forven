@@ -432,6 +432,8 @@ export interface ForvenAgentTask {
 	input_data?: unknown;
 	output_data?: unknown;
 	error?: string | null;
+	retry_at?: string | null;
+	retry_count?: number;
 	source?: string;
 }
 
@@ -1614,38 +1616,8 @@ function toLiveWsUrl(base: string): string {
 }
 
 export function getForvenLiveWebSocketUrls(): string[] {
-	const candidates = new Set<string>();
-	const active = (ACTIVE_API_BASE || '').trim();
-	const primary = (API_BASE || '').trim();
-	const preferredAbsoluteBases = [primary, active].filter(
-		(base) => Boolean(base) && !String(base).startsWith('/')
-	);
-
-	// Prefer direct backend origins over dev-proxy `/api` and avoid speculative
-	// fallbacks that can bounce the client onto an invalid WS endpoint.
-	for (const base of preferredAbsoluteBases) {
-		candidates.add(base);
-	}
-
-	if (typeof window !== 'undefined' && window.location) {
-		const protocol = window.location.protocol || 'http:';
-		const host = window.location.hostname || '127.0.0.1';
-		candidates.add(`${protocol}//${host}:8003/api`);
-		if (preferredAbsoluteBases.length === 0) {
-			candidates.add(`${window.location.origin.replace(/\/$/, '')}/api`);
-		}
-	}
-
-	if (preferredAbsoluteBases.length === 0) {
-		if (primary) candidates.add(primary);
-		if (active) candidates.add(active);
-		candidates.add('/api');
-	}
-
-	return Array.from(candidates)
-		.map((base) => String(base || '').trim())
-		.filter(Boolean)
-		.map((base) => toLiveWsUrl(base));
+    // Live events and authenticated HTTP operations belong to one installation.
+    return [toLiveWsUrl(ACTIVE_API_BASE || API_BASE || '/api')];
 }
 
 export function getForvenLiveWebSocketUrl(): string {

@@ -50,7 +50,7 @@ def collect_hl_series(symbol: str, timeframe: str) -> int:
     else:
         bars = _SEED_BARS
 
-    frame = fetch_hyperliquid_candles(_hl_coin(fs_symbol), bars=bars, interval=timeframe, clean=True)
+    frame = fetch_hyperliquid_candles(_hl_coin(fs_symbol), bars=bars, interval=timeframe, clean=False)
     if frame is None or frame.empty:
         return 0
     # fetch_hyperliquid_candles returns a UTC-indexed frame; the lake writer
@@ -58,6 +58,76 @@ def collect_hl_series(symbol: str, timeframe: str) -> int:
     out = frame.reset_index()
     out = out.rename(columns={out.columns[0]: "timestamp"})
     return save_venue_frame(out, VENUE_SOURCE, VENUE_MARKET, fs_symbol, timeframe)
+
+
+def repair_hl_gaps(symbol: str, timeframe: str) -> dict:
+    """Repair stored interior gaps with one bounded, genuine venue snapshot.
+
+    The API retains only the latest 5000 candles. Older gaps stay visible;
+    neither another venue's candles nor forward-filled prices can repair them.
+    Re-read after the atomic merge so rejected/missing bars remain failures.
+    """
+    import pandas as pd
+
+    from forven.data import _timeframe_to_ms, load_venue_frame, save_venue_frame, symbol_to_fs
+    from forven.market_data import fetch_hyperliquid_candles
+
+    fs_symbol = symbol_to_fs(symbol)
+    tf_ms = _timeframe_to_ms(timeframe)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    current_start = now_ms // tf_ms * tf_ms
+    oldest = current_start - (_MAX_TAIL_BARS - 1) * tf_ms
+
+    def gaps(frame: pd.DataFrame | None) -> list[tuple[int, int]]:
+        if frame is None or frame.empty:
+            return []
+        stamps = pd.to_datetime(frame["timestamp"], utc=True).dropna()
+        milliseconds = sorted({int(t.timestamp() * 1000) for t in stamps})
+        milliseconds = [t for t in milliseconds if t < current_start and t % tf_ms == 0]
+        return [(a + tf_ms, b - tf_ms) for a, b in zip(milliseconds, milliseconds[1:]) if b - a > tf_ms]
+
+    def count(ranges: list[tuple[int, int]]) -> int:
+        return sum((end - start) // tf_ms + 1 for start, end in ranges)
+
+    before = load_venue_frame(VENUE_SOURCE, VENUE_MARKET, fs_symbol, timeframe)
+    if before is None or before.empty:
+        raise ValueError("Cannot repair interior gaps without a stored Hyperliquid series")
+    missing = gaps(before)
+    added = 0
+    eligible = [(max(start, oldest), end) for start, end in missing if end >= oldest]
+    if eligible:
+        # Fetch from the earliest repairable gap to now in a single API request.
+        bars = min(_MAX_TAIL_BARS, (now_ms - min(start for start, _ in eligible)) // tf_ms + 1)
+        fetched = fetch_hyperliquid_candles(
+            _hl_coin(fs_symbol), bars=int(bars), interval=timeframe, end_time=now_ms, clean=False,
+        )
+        if fetched is not None and not fetched.empty:
+            out = fetched.reset_index()
+            out = out.rename(columns={out.columns[0]: "timestamp"})
+            timestamps = pd.to_datetime(out["timestamp"], utc=True)
+            # Insert only missing slots; do not revise existing candles or extend
+            # the history span incidentally while fixing an interior gap.
+            keep = pd.Series(False, index=out.index)
+            for start, end in eligible:
+                keep |= timestamps.between(pd.Timestamp(start, unit="ms", tz="UTC"), pd.Timestamp(end, unit="ms", tz="UTC"))
+            aligned = timestamps.map(lambda t: int(t.timestamp() * 1000) % tf_ms == 0 if pd.notna(t) else False)
+            out = out.loc[keep & aligned]
+            if not out.empty:
+                added = save_venue_frame(out, VENUE_SOURCE, VENUE_MARKET, fs_symbol, timeframe)
+
+    stored = load_venue_frame(VENUE_SOURCE, VENUE_MARKET, fs_symbol, timeframe)
+    if stored is None or stored.empty:
+        raise ValueError("Hyperliquid series unavailable after gap repair")
+    remaining = gaps(stored)
+    unavailable = [(start, min(end, oldest - tf_ms)) for start, end in remaining if start < oldest]
+    return {
+        "bars_added": added,
+        "gaps_found": count(missing),
+        "gaps_remaining": count(remaining),
+        "unavailable_bars": count(unavailable),
+        "target_reached": not remaining,
+        "no_recent_data": bool(remaining),
+    }
 
 
 def collect_hl_venue_series() -> dict:

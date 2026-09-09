@@ -455,8 +455,8 @@ def test_regime_split_adapter_rejects_vacuous_pass_payload(forven_db, monkeypatc
         "forven.gauntlet.tasks._run_regime_split",
         lambda _body: {"persisted_result_id": "RS-1", "verdict": "PASS", "n_regimes": 1, "profitable_regime_share": 1.0},
     )
-    # Force regime_split to be REQUIRED so the legitimacy rejection still hard-gates (a
-    # non-required test's failure is intentionally downgraded — see the test below).
+    # Required evidence must block promotion without calling a one-regime sample
+    # a merit failure (a non-required issue is advisory — see the test below).
     monkeypatch.setattr(
         "forven.gauntlet.tasks._required_tests",
         lambda _wf: ["walk_forward", "parameter_jitter", "cost_stress", "regime_split"],
@@ -466,7 +466,8 @@ def test_regime_split_adapter_rejects_vacuous_pass_payload(forven_db, monkeypatc
 
     outcome = run_regime_split(workflow, regime_step)
 
-    assert outcome["status"] == "failed_gate"
+    assert outcome["status"] == "blocked_data"
+    assert outcome["reason_code"] == "insufficient_evidence"
     assert "at least 2 regimes" in outcome["message"]
 
 
@@ -510,6 +511,8 @@ def test_non_required_test_failure_does_not_fail_the_gate(forven_db, monkeypatch
 
 
 def test_paper_promotion_gate_uses_unified_status_and_transition(forven_db, monkeypatch):
+    from tests.gauntlet_artifact_fixtures import insert_gauntlet_artifacts
+
     strategy_id = _created_strategy_for_workflow()
     workflow = create_or_get_workflow(
         strategy_id=strategy_id,
@@ -526,6 +529,7 @@ def test_paper_promotion_gate_uses_unified_status_and_transition(forven_db, monk
         step = next(item for item in detail["steps"] if item["step_key"] == key)
         update_step_status(step["id"], "passed", output={"verdict": "PASS", "result_id": f"{key}-1"})
     with get_db() as conn:
+        insert_gauntlet_artifacts(conn, strategy_id)
         conn.execute(
             "UPDATE strategies SET stage = 'gauntlet', status = 'gauntlet', metrics = ? WHERE id = ?",
             ('{"composite_robustness_score": 80}', strategy_id),
@@ -554,11 +558,7 @@ def test_paper_promotion_gate_uses_unified_status_and_transition(forven_db, monk
 
 
 def test_run_walk_forward_drops_undersized_validation_window(forven_db, monkeypatch):
-    """The optimizer's validation window is an anti-leak holdout sized for its own
-    internal WFA; when it spans fewer than the 420-bar fold floor at the strategy's
-    timeframe, run_walk_forward must fall back to the windowless full-history path
-    instead of submitting a window that structurally cannot fold ('109 bars
-    requested (need 420+)', S06895's fourth run, 2026-07-12)."""
+    """An insufficient independent window cannot widen into selection history."""
     from datetime import datetime, timedelta, timezone
 
     from forven.db import get_db
@@ -602,10 +602,9 @@ def test_run_walk_forward_drops_undersized_validation_window(forven_db, monkeypa
     workflow = {"id": "gw-test-wfwin", "strategy_id": sid, "settings_snapshot_json": "{}"}
     outcome = gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
 
-    assert captured.get("start") is None and captured.get("end") is None, (
-        f"undersized window must be dropped, got {captured}"
-    )
-    assert outcome["status"] == "passed"
+    assert captured == {}, "must not run on the selection data"
+    assert outcome["status"] == "blocked_data"
+    assert outcome["reason_code"] == "insufficient_evidence"
 
     # A window that DOES support folds is forwarded untouched.
     big_window = {
@@ -620,14 +619,7 @@ def test_run_walk_forward_drops_undersized_validation_window(forven_db, monkeypa
 
 
 def test_run_walk_forward_drops_window_starving_folds_at_measured_cadence(forven_db, monkeypatch):
-    """A dated window can clear the 420-bar floor yet still be structurally
-    unjudgeable: S07680 (2026-07-19/20) got ~118 days at 1h — ~2830 bars — but at
-    its measured ~2.5 trades/month the 5 × ~7-day OOS folds could never reach
-    wfa_min_fold_trades, so walk_forward FAILed by construction and both operator
-    revivals were re-archived off the same window. When the measured cadence
-    predicts fewer than wfa_min_fold_trades OOS trades per fold, the dated window
-    must be dropped in favor of the windowless full-history path. Without a
-    measured rate the dated window is kept (covered by the test above)."""
+    """Too few expected trades means insufficient evidence, not a wider window."""
     from datetime import datetime, timedelta, timezone
 
     from forven.db import get_db
@@ -678,10 +670,9 @@ def test_run_walk_forward_drops_window_starving_folds_at_measured_cadence(forven
     workflow = {"id": "gw-test-wfwin2", "strategy_id": sid, "settings_snapshot_json": "{}"}
     outcome = gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
 
-    assert captured.get("start") is None and captured.get("end") is None, (
-        f"fold-starving window must be dropped, got {captured}"
-    )
-    assert outcome["status"] == "passed"
+    assert captured == {}, "must not widen the independent window"
+    assert outcome["status"] == "blocked_data"
+    assert outcome["reason_code"] == "insufficient_evidence"
 
     # The same cadence with a window long enough to feed the folds is kept:
     # 0.24/day * 1500d * 0.3 / 5 ≈ 21 expected trades/fold >= 5.

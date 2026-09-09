@@ -90,3 +90,40 @@ def test_hub_aggregate_specs_request_the_shift():
     for col in ("funding_rate", "open_interest"):
         if col in by_col:
             assert by_col[col].bucket_close_shift_seconds == 0, col
+
+
+@pytest.mark.parametrize("engine", ["pandas", "duckdb"])
+@pytest.mark.parametrize("rows", [1, 2])
+def test_short_aggregate_history_is_unavailable_until_bucket_close(tmp_path, engine, rows):
+    from forven.data_manager import _merge_asof_parquet
+    from forven.dataeng.hub import _enrich_with_duckdb, _EnrichmentSpec
+
+    col = "taker_buy_sell_ratio"
+    path = _write_hourly(tmp_path, "taker_volume_1h.parquet", col, [5.] * rows)
+    bars = _bars_15m(start="2026-01-01 00:15", n=4)
+    if engine == "pandas":
+        out = _merge_asof_parquet(bars, path, cols=[col], fill={col: 0.}, shift_to_bucket_close=True)
+    else:
+        out = _enrich_with_duckdb(bars, [_EnrichmentSpec(
+            "taker_volume", path, (col,), (col,), {col: 0.}, bucket_close_shift_seconds=3600,
+        )])
+    assert out[col].iloc[:3].isna().all()
+    assert out[col].iloc[3] == 5.
+
+
+@pytest.mark.parametrize("engine", ["pandas", "duckdb"])
+def test_missing_and_stale_observations_do_not_count_as_coverage(tmp_path, engine):
+    from forven.data_manager import _merge_asof_parquet
+    from forven.dataeng.hub import _enrich_with_duckdb, _EnrichmentSpec
+
+    col = "open_interest"
+    path = _write_hourly(tmp_path, "1h.parquet", col, [100., 110., 120.])
+    bars = pd.DataFrame({"timestamp": pd.to_datetime([
+        "2025-12-01", "2026-01-01 01:00", "2026-01-02", "2026-02-01",
+    ], format="mixed", utc=True)})
+    if engine == "pandas":
+        out = _merge_asof_parquet(bars, path, cols=[col], fill={col: 0.})
+    else:
+        out = _enrich_with_duckdb(bars, [_EnrichmentSpec("oi", path, (col,), (col,), {col: 0.})])
+    assert out[col].notna().tolist() == [False, True, False, False]
+    assert out[col].iloc[1] == 110.

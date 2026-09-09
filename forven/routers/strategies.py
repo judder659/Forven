@@ -662,6 +662,14 @@ async def post_nl_to_spec(body: core.NlToSpecBody):
     """Generate a rule_engine spec from a natural-language strategy description."""
     return await core.post_nl_to_spec(body)
 
+
+@router.post("/api/backtests/idea-readiness")
+def post_idea_readiness(body: core.NlToSpecBody) -> dict:
+    """Check local inputs without generating code or collecting data."""
+    from forven.strategies.idea_readiness import check_idea_readiness
+
+    return check_idea_readiness(body.description, body.symbol, body.timeframe, visual=True)
+
 @router.post("/api/backtests/custom-strategy")
 def post_register_manual_strategy(body: core.ManualStrategyBody):
     """Validate + register a user-authored strategy for the manual backtester."""
@@ -673,7 +681,11 @@ def post_send_to_forge(body: core.SendToForgeBody):
     return core.send_manual_strategy_to_forge(body)
 
 @router.post("/api/backtests")
-def post_backtest_submit(body: core.BacktestSubmitBody):
+def post_backtest_submit(body: core.BacktestSubmitBody, background: bool = False) -> dict:
+    if background:
+        from forven.api_domains.backtest_jobs import submit_backtest_job
+
+        return submit_backtest_job(body)
     return core.post_backtest_submit(body)
 
 @router.post("/api/optimizations")

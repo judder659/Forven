@@ -16,6 +16,20 @@ from forven.control_plane.models import (
 router = APIRouter(tags=["ops"], dependencies=[Depends(require_operator_access)])
 
 
+@router.get("/api/system/runtime/threads")
+def get_runtime_threads() -> dict:
+    from forven.control_plane.runtime_diagnostics import runtime_thread_snapshot
+
+    return runtime_thread_snapshot()
+
+
+@router.get("/api/system/runtime/health-profile")
+def get_runtime_health_profile() -> dict:
+    from forven.control_plane.runtime_diagnostics import runtime_health_profile
+
+    return runtime_health_profile()
+
+
 class FactoryResetBody(BaseModel):
     """API-10: typed confirmation for the destructive data wipe.
 

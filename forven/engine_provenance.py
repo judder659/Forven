@@ -46,7 +46,7 @@ import json
 # data-substrate rebuild that invalidates comparisons against prior verdicts
 # (verdicts are only evidence relative to the data they were scored on) — and
 # add a matching ENGINE_VERSION_LOG entry (test-enforced).
-BACKTEST_ENGINE_VERSION = 6
+BACKTEST_ENGINE_VERSION = 10
 
 # Append-only changelog: one entry per version, newest last. The unit test
 # asserts the newest entry matches BACKTEST_ENGINE_VERSION so a bump can never
@@ -125,9 +125,41 @@ ENGINE_VERSION_LOG: tuple[dict, ...] = (
             "re-queued rather than compared against current numbers."
         ),
     },
+    {
+        "version": 7,
+        "date": "2026-09-06",
+        "summary": (
+            "Causal execution phases: allocate all opening entries before intrabar "
+            "protection, preventing retrospective reentry and future equity sizing. "
+            "Enrichment now preserves missing coverage and expires stale observations; "
+            "hourly aggregates are delayed even for one-row histories."
+        ),
+    },
+    {
+        "version": 8,
+        "date": "2026-09-06",
+        "summary": (
+            "Reserve built-in strategy type names during custom discovery. A generated "
+            "module can no longer replace a built-in implementation and silently change "
+            "signals between inline and isolated execution. Earlier stamped results "
+            "must be revalidated against the unambiguous runtime."
+        ),
+    },
 )
 
+ENGINE_VERSION_LOG += ({
+    "version": 9,
+    "date": "2026-09-08",
+    "summary": "Reject custom runtime replacement and fuzzy family substitution; reject signed scalar Signal entries and record source identity. Prior results require validation against the exact implementation.",
+},)
+
 ENGINE_VERSION_KEY = "engine_version"
+
+ENGINE_VERSION_LOG += ({
+    "version": 10,
+    "date": "2026-09-08",
+    "summary": "Size overlapping entries from reserved dollar margin and entry-equity snapshots; retain full-precision realized sizing capital and share pro-rata allocation with forward execution.",
+},)
 
 
 def stamp_engine_version(config: dict | None) -> dict:

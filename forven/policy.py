@@ -2305,6 +2305,11 @@ def _extract_gauntlet_verdict_payloads(strategy_id: str, row, metrics: dict) -> 
     stale_engine_types: set[str] = set()
     for result_row, config_blob in parsed_rows:
         normalized_type = _canonicalize_gauntlet_verdict_test(result_row["result_type"])
+        stamped_params = str(config_blob.get("params_hash") or "").strip()
+        if current_params_hash and stamped_params and stamped_params != current_params_hash:
+            # A result for different parameters cannot validate the current strategy.
+            # Continue looking for matching evidence; cached verdicts cannot create it.
+            continue
         if normalized_type in payloads or normalized_type in stale_engine_types:
             continue
         metrics_blob = _parse_json_blob(result_row["metrics_json"], {})
@@ -2317,7 +2322,9 @@ def _extract_gauntlet_verdict_payloads(strategy_id: str, row, metrics: dict) -> 
         # counter-exempt stale_engine_artifacts code, and the gauntlet sweep
         # re-queues the run. Unstamped legacy rows are grandfathered (see
         # forven/engine_provenance.py).
-        if is_stale_engine_artifact(config_blob):
+        from forven.strategies.identity import stale_source_identity
+
+        if is_stale_engine_artifact(config_blob) or stale_source_identity(config_blob):
             stale_engine_types.add(normalized_type)
             continue
         # Same rule for DATA semantics: a verdict scored while a stream carried
@@ -2676,8 +2683,17 @@ def evaluate_promotion(
     if normalized_to not in {"archived", "rejected"}:
         with get_db() as conn:
             sym_row = conn.execute(
-                "SELECT symbol FROM strategies WHERE id = ?", (strategy_id,)
+                "SELECT * FROM strategies WHERE id = ?", (strategy_id,)
             ).fetchone()
+        if sym_row and normalized_to in {"paper", "live_graduated"}:
+            from forven.strategies.identity import execution_identity_error
+
+            identity_row = dict(sym_row)
+            identity_error = execution_identity_error(
+                identity_row, str(identity_row.get("runtime_type") or identity_row.get("type") or ""),
+            )
+            if identity_error:
+                return False, identity_error
         current_sym = str((sym_row["symbol"] if sym_row else "") or "").strip().upper()
         if not current_sym or current_sym == "GENERIC":
             if dry_run:

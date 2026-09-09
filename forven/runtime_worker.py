@@ -355,6 +355,11 @@ def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
               AND COALESCE(title, '') NOT LIKE 'Refine crucible%'
               AND started_at IS NOT NULL
               AND started_at <= ?
+              -- Work deliberately admitted after a long queue wait must get
+              -- its normal task timeout, not be cancelled for the same newer
+              -- work that already starved it. User research is never preempted.
+              AND COALESCE(source, 'system') != 'user'
+              AND datetime(started_at) < datetime(created_at, '+30 minutes')
             ORDER BY started_at ASC
             LIMIT 10
             """,
@@ -1496,11 +1501,13 @@ async def process_agent_tasks_once(concurrency: int = 5) -> int:
                 return False
 
         async def _run_one(agent: dict, task: dict) -> None:
+            from forven.async_utils import contain_process_exit
+
             async with sem:
                 timeout_seconds = _resolve_agent_task_timeout_seconds(task)
                 try:
                     await asyncio.wait_for(
-                        _run_agent_task(agent, task),
+                        contain_process_exit(_run_agent_task(agent, task)),
                         timeout=timeout_seconds,
                     )
                 except asyncio.CancelledError:
@@ -1750,7 +1757,11 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
         payload = _task_payload_dict(task)
         is_agent_callback = str(payload.get("source") or "").strip() == "agent_callback"
         try:
-            await asyncio.wait_for(_run_brain_task(task), timeout=_BRAIN_TASK_TIMEOUT_SECONDS)
+            from forven.async_utils import contain_process_exit
+
+            await asyncio.wait_for(
+                contain_process_exit(_run_brain_task(task)), timeout=_BRAIN_TASK_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             elapsed = _time.monotonic() - start_ts
             if isinstance(exc, asyncio.TimeoutError):

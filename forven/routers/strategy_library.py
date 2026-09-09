@@ -41,6 +41,8 @@ class LibraryCreateBody(BaseModel):
 
 
 class LibraryUpdateBody(BaseModel):
+    expected_version: int | None = None
+    kind: str | None = None
     name: str | None = Field(default=None, max_length=140)
     description: str | None = Field(default=None, max_length=2000)
     spec: dict | None = None
@@ -51,6 +53,10 @@ class LibraryUpdateBody(BaseModel):
     tags: list[str] | None = None
     status: str | None = None
     last_result_id: str | None = None
+
+
+class LibraryForgeBody(BaseModel):
+    expected_version: int | None = None
 
 
 class LibraryDuplicateBody(BaseModel):
@@ -153,6 +159,10 @@ def update_library_entry(sid: str, body: LibraryUpdateBody):
         sets.append(f"{col} = ?")
         vals.append(val)
 
+    if body.kind is not None:
+        if body.kind not in _VALID_KINDS:
+            raise HTTPException(status_code=422, detail="Invalid strategy kind")
+        add("kind", body.kind)
     if body.name is not None:
         add("name", body.name.strip())
     if body.description is not None:
@@ -175,13 +185,28 @@ def update_library_entry(sid: str, body: LibraryUpdateBody):
         add("last_result_id", body.last_result_id)
 
     with get_db() as conn:
-        if not _fetch(conn, sid):
+        original = _fetch(conn, sid)
+        if not original:
             raise HTTPException(status_code=404, detail=f"Strategy not found: {sid}")
+        if body.expected_version is not None and original["version"] != body.expected_version:
+            raise HTTPException(status_code=409, detail="Strategy changed. Reload the saved draft and try again.")
+        from forven.strategy_creator import revision_changed
+        changed = revision_changed(_row_to_dict(original), body.model_dump(exclude_unset=True))
+        if body.status == "tested" and (changed or body.expected_version is None):
+            raise HTTPException(status_code=409, detail="A test result must match the saved strategy revision.")
+        if changed:
+            add("status", "draft")
+            add("last_result_id", None)
+            add("forge_strategy_id", None)
+            add("version", original["version"] + 1)
         if sets:
             sets.append(f"updated_at = {_NOW}")
-            conn.execute(
-                f"UPDATE user_strategies SET {', '.join(sets)} WHERE id = ?", (*vals, sid)
+            updated = conn.execute(
+                f"UPDATE user_strategies SET {', '.join(sets)} WHERE id = ? AND version = ? AND deleted_at IS NULL",
+                (*vals, sid, original["version"]),
             )
+            if updated.rowcount != 1:
+                raise HTTPException(status_code=409, detail="Strategy changed while saving. Reload and try again.")
         row = _fetch(conn, sid)
     return _row_to_dict(row)
 
@@ -221,18 +246,20 @@ def duplicate_library_entry(sid: str, body: LibraryDuplicateBody):
 
 
 @router.post("/api/strategy-library/{sid}/send-to-forge")
-def send_library_entry_to_forge(sid: str):
+def send_library_entry_to_forge(sid: str, body: LibraryForgeBody | None = None):
     with get_db() as conn:
         row = _fetch(conn, sid)
     if not row:
         raise HTTPException(status_code=404, detail=f"Strategy not found: {sid}")
     entry = _row_to_dict(row)
+    if body and body.expected_version is not None and entry["version"] != body.expected_version:
+        raise HTTPException(status_code=409, detail="Strategy changed. Reload before sending to Forge.")
 
     if entry["kind"] == "visual":
         if not isinstance(entry["spec"], dict):
             raise HTTPException(status_code=422, detail="This strategy has no visual spec to send.")
         forge = core.send_manual_strategy_to_forge(core.SendToForgeBody(
-            mode="visual", spec=entry["spec"], symbol=entry["symbol"],
+            mode="visual", spec=entry["spec"], params=entry["params"], symbol=entry["symbol"],
             timeframe=entry["timeframe"], name=entry["name"],
         ))
     else:
@@ -250,8 +277,8 @@ def send_library_entry_to_forge(sid: str):
     forge_id = forge.get("strategy_id")
     with get_db() as conn:
         conn.execute(
-            f"UPDATE user_strategies SET forge_strategy_id = ?, status = 'in_forge', updated_at = {_NOW} WHERE id = ?",
-            (forge_id, sid),
+            f"UPDATE user_strategies SET forge_strategy_id = ?, status = 'in_forge', updated_at = {_NOW} WHERE id = ? AND version = ?",
+            (forge_id, sid, entry["version"]),
         )
         row = _fetch(conn, sid)
     return {"ok": True, "id": sid, "forge": forge, "strategy": _row_to_dict(row)}

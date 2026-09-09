@@ -17,6 +17,7 @@ from forven.model_routing import get_model_routing_snapshot
 
 from forven.auth.store import get_profile, get_token
 from forven.codex_responses import is_openai_oauth_token
+from forven.providers.frontier import chat_generation_params, claude_uses_fixed_sampling, uses_openai_responses
 from forven.model_routing import (
     get_default_model_for_provider,
     get_fallback_chain,
@@ -205,6 +206,8 @@ FALLBACK_CHAINS = _MODEL_ROUTING_BACKCOMPAT["fallback_chains"]
 ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "minimax": "https://api.minimax.io/anthropic/v1/messages",
+    "anthropic": "https://api.anthropic.com/v1/messages",
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
     "zai": "https://api.z.ai/api/paas/v4/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
     "groq": "https://api.groq.com/openai/v1/chat/completions",
@@ -230,7 +233,7 @@ _PROVIDER_ALIAS = {
 }
 
 _KNOWN_PROVIDER_PREFIXES: frozenset[str] = frozenset({
-    "openai", "minimax", "lmstudio", "zai", "openrouter", "groq", "gemini",
+    "openai", "minimax", "lmstudio", "zai", "openrouter", "groq", "gemini", "anthropic", "deepseek",
     "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go",
     "codex", "openai-codex", "local", "lm-studio", "z.ai", "z-ai",
     "open-router", "open_router",
@@ -1021,6 +1024,13 @@ async def _call_single(
             system,
             response_schema=response_schema,
         )
+    elif provider == "anthropic":
+        base_url = str((get_profile(provider) or {}).get("base_url") or "https://api.anthropic.com").rstrip("/")
+        return await _call_minimax(
+            token, model, messages, max_tokens, temperature, system,
+            response_schema=response_schema,
+            endpoint=f"{base_url}/v1/messages", provider_label="anthropic",
+        )
     elif provider == "lmstudio":
         return await _call_lmstudio(
             token,
@@ -1058,9 +1068,13 @@ async def _call_single(
             endpoint=ENDPOINTS["openrouter"],
             provider_label="openrouter",
         )
-    elif provider in ("groq", "gemini", "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go"):
+    elif provider in ("deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go"):
         # All expose OpenAI-compatible Chat Completions endpoints, so route
         # through the shared OpenAI caller with the provider's endpoint/label.
+        endpoint = ENDPOINTS[provider]
+        if provider == "deepseek":
+            base_url = str((get_profile(provider) or {}).get("base_url") or "https://api.deepseek.com").rstrip("/")
+            endpoint = f"{base_url}/v1/chat/completions"
         return await _call_openai(
             token,
             model,
@@ -1070,7 +1084,7 @@ async def _call_single(
             system,
             response_schema=response_schema,
             response_schema_name=response_schema_name,
-            endpoint=ENDPOINTS[provider],
+            endpoint=endpoint,
             provider_label=provider,
         )
     else:
@@ -1109,6 +1123,19 @@ async def _call_openai(
         )
         return str(result.get("text") or "")
 
+    if provider_label == "openai" and uses_openai_responses(model):
+        from forven.openai_responses import call_openai_responses
+
+        result = await call_openai_responses(
+            token, model, instructions=system, messages=messages,
+            max_output_tokens=max_tokens, response_schema=response_schema,
+            response_schema_name=response_schema_name,
+        )
+        text = str(result.get("text") or "")
+        if not text.strip():
+            raise EmptyProviderResponse("openai", model, truncated=bool(result.get("truncated")))
+        return text
+
     url = endpoint or ENDPOINTS["openai"]
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1123,8 +1150,7 @@ async def _call_openai(
     body = {
         "model": model,
         "messages": all_messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
+        **chat_generation_params(provider_label, model, max_tokens, temperature),
     }
     if response_schema:
         body["response_format"] = {
@@ -1202,8 +1228,11 @@ async def _call_minimax(
     max_tokens: int, temperature: float, system: str | None,
     response_schema: dict | None = None,
     _max_retries: int = 3,
+    *,
+    endpoint: str | None = None,
+    provider_label: str = "minimax",
 ) -> str:
-    """Call MiniMax API (Anthropic-compatible endpoint) with retry on 429."""
+    """Call an Anthropic Messages endpoint with retry on 429."""
     headers = {
         "x-api-key": token,
         "content-type": "application/json",
@@ -1217,12 +1246,17 @@ async def _call_minimax(
     }
     if system:
         body["system"] = system
-    _ = response_schema  # reserved for future provider-side schema support
+    if provider_label == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
+        if claude_uses_fixed_sampling(model):
+            body.pop("temperature")
+        if response_schema:
+            body["output_config"] = {"format": {"type": "json_schema", "schema": response_schema}}
 
     last_error: Exception | None = None
     for attempt in range(_max_retries):
         async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
-            resp = await client.post(ENDPOINTS["minimax"], json=body, headers=headers)
+            resp = await client.post(endpoint or ENDPOINTS["minimax"], json=body, headers=headers)
 
         if resp.status_code == 429:
             retry_header = resp.headers.get("retry-after", "")
@@ -1232,8 +1266,8 @@ async def _call_minimax(
                 retry_after = 2 ** attempt
             wait = max(1.0, min(retry_after, 90.0))
             log.warning(
-                "minimax/%s: 429 rate limited (attempt %d/%d), retrying in %.1fs",
-                model, attempt + 1, _max_retries, wait,
+                "%s/%s: 429 rate limited (attempt %d/%d), retrying in %.1fs",
+                provider_label, model, attempt + 1, _max_retries, wait,
             )
             last_error = httpx.HTTPStatusError(
                 "429 Too Many Requests", request=resp.request, response=resp,
@@ -1252,15 +1286,15 @@ async def _call_minimax(
 
         usage = data.get("usage", {})
         log.info(
-            "minimax/%s: %d input, %d output tokens",
-            model, usage.get("input_tokens", 0), usage.get("output_tokens", 0),
+            "%s/%s: %d input, %d output tokens",
+            provider_label, model, usage.get("input_tokens", 0), usage.get("output_tokens", 0),
         )
         text = "\n".join(text_parts)
         if not text.strip():
             # No usable text — surface it (never silently return "") so call_ai
             # can bump the budget on a truncation or fail over otherwise.
             truncated = str(data.get("stop_reason") or "").strip().lower() in {"max_tokens", "length"}
-            raise EmptyProviderResponse("minimax", model, truncated=truncated)
+            raise EmptyProviderResponse(provider_label, model, truncated=truncated)
         return text
 
     if last_error is not None:

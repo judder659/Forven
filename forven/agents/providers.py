@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 from forven.ai import build_provider_timeout
 from forven.auth.store import get_profile
 from forven.codex_responses import call_codex, is_openai_oauth_token, stream_codex
+from forven.openai_responses import call_openai_responses, stream_openai_responses
+from forven.providers.frontier import chat_generation_params, claude_uses_fixed_sampling, uses_openai_responses
 
 log = logging.getLogger("forven.agents.providers")
 
@@ -263,6 +265,10 @@ def _build_openai_messages(system: str, messages: list[dict]) -> list[dict]:
             coerced["tool_call_id"] = str(msg["tool_call_id"])
         if role == "assistant" and msg.get("tool_calls"):
             coerced["tool_calls"] = msg["tool_calls"]
+        if role == "assistant":
+            for key in ("reasoning_content", "reasoning_details", "extra_content"):
+                if key in msg:
+                    coerced[key] = msg[key]
         out.append(coerced)
     return out
 
@@ -291,6 +297,10 @@ async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = 
     text_parts: list[str] = []
     tool_accum: dict[int, dict] = {}
     usage: dict = {}
+    reasoning_parts: list[str] = []
+    reasoning_details: dict[int, dict] = {}
+    extra_content: dict = {}
+    finish_reason = ""
 
     async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
         async with client.stream("POST", endpoint, json=stream_body, headers=headers) as resp:
@@ -311,6 +321,19 @@ async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = 
                 if not choices:
                     continue
                 delta = choices[0].get("delta") or {}
+                finish_reason = choices[0].get("finish_reason") or finish_reason
+                if delta.get("reasoning_content"):
+                    reasoning_parts.append(delta["reasoning_content"])
+                for detail in delta.get("reasoning_details") or []:
+                    idx = detail.get("index", len(reasoning_details))
+                    saved = reasoning_details.setdefault(idx, {})
+                    for key, value in detail.items():
+                        if key in {"text", "data", "signature"} and isinstance(value, str):
+                            saved[key] = saved.get(key, "") + value
+                        else:
+                            saved[key] = value
+                if isinstance(delta.get("extra_content"), dict):
+                    extra_content.update(delta["extra_content"])
                 content = delta.get("content")
                 if content:
                     text_parts.append(content)
@@ -320,6 +343,8 @@ async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = 
                     slot = tool_accum.setdefault(idx, {"id": "", "name": "", "args": ""})
                     if tc.get("id"):
                         slot["id"] = tc["id"]
+                    if isinstance(tc.get("extra_content"), dict):
+                        slot.setdefault("extra_content", {}).update(tc["extra_content"])
                     fn = tc.get("function") or {}
                     if fn.get("name"):
                         slot["name"] = fn["name"]
@@ -343,15 +368,24 @@ async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = 
             "id": str(slot["id"]),
             "type": "function",
             "function": {"name": str(slot["name"]), "arguments": slot["args"] or "{}"},
+            **({"extra_content": slot["extra_content"]} if slot.get("extra_content") else {}),
         })
 
     text = "".join(text_parts).strip()
     raw_msg: dict = {"role": "assistant", "content": text}
     if raw_tool_calls:
         raw_msg["tool_calls"] = raw_tool_calls
+    if reasoning_parts:
+        raw_msg["reasoning_content"] = "".join(reasoning_parts)
+    if reasoning_details:
+        raw_msg["reasoning_details"] = [reasoning_details[i] for i in sorted(reasoning_details)]
+    if extra_content:
+        raw_msg["extra_content"] = extra_content
     yield {"type": "done", "response": ProviderResponse(
         text=text, tool_calls=tool_calls, stop=(not tool_calls),
         raw_assistant_message=raw_msg, usage=usage,
+        reasoning="".join(reasoning_parts) or None,
+        truncated=(finish_reason == "length"),
     )}
 
 
@@ -382,9 +416,12 @@ async def _stream_anthropic_messages(endpoint, headers, body):
                     idx = ev.get("index", 0) or 0
                     cb = ev.get("content_block") or {}
                     blocks[idx] = {
-                        "type": cb.get("type"), "text": "",
+                        **cb, "text": cb.get("text", ""),
                         "id": cb.get("id", ""), "name": cb.get("name", ""), "json": "",
                     }
+                    if cb.get("type") == "text" and cb.get("text"):
+                        text_parts.append(cb["text"])
+                        yield {"type": "text", "text": cb["text"]}
                 elif etype == "content_block_delta":
                     idx = ev.get("index", 0) or 0
                     slot = blocks.setdefault(idx, {"type": None, "text": "", "id": "", "name": "", "json": ""})
@@ -397,6 +434,12 @@ async def _stream_anthropic_messages(endpoint, headers, body):
                             yield {"type": "text", "text": txt}
                     elif d.get("type") == "input_json_delta":
                         slot["json"] += d.get("partial_json", "")
+                    elif d.get("type") == "thinking_delta":
+                        slot["thinking"] = slot.get("thinking", "") + d.get("thinking", "")
+                    elif d.get("type") == "signature_delta":
+                        slot["signature"] = slot.get("signature", "") + d.get("signature", "")
+                elif etype == "error":
+                    raise RuntimeError(f"Anthropic Messages API error: {ev.get('error')}")
                 elif etype == "message_delta":
                     if isinstance(ev.get("usage"), dict):
                         usage.update(ev["usage"])
@@ -412,9 +455,14 @@ async def _stream_anthropic_messages(endpoint, headers, body):
         slot = blocks[idx]
         if slot["type"] == "text":
             content_blocks.append({"type": "text", "text": slot["text"]})
+        elif slot["type"] in {"thinking", "redacted_thinking"}:
+            content_blocks.append({
+                key: value for key, value in slot.items()
+                if key not in {"json", "id", "name", "text"}
+            })
         elif slot["type"] == "tool_use":
             try:
-                inp = json.loads(slot["json"]) if slot["json"] else {}
+                inp = json.loads(slot["json"]) if slot["json"] else slot.get("input", {})
             except Exception:
                 inp = {}
             if not isinstance(inp, dict):
@@ -428,6 +476,9 @@ async def _stream_anthropic_messages(endpoint, headers, body):
         stop=(not tool_calls or stop_reason == "end_turn"),
         raw_assistant_message=content_blocks, usage=usage,
         truncated=(stop_reason == "max_tokens"),
+        reasoning="\n\n".join(
+            str(block.get("thinking") or "") for block in content_blocks if block.get("type") == "thinking"
+        ) or None,
     )}
 
 
@@ -435,6 +486,7 @@ class OpenAIProvider(ToolCallProvider):
     """OpenAI Chat Completions API — native function-calling."""
 
     ENDPOINT = "https://api.openai.com/v1/chat/completions"
+    PROVIDER = "openai"
 
     def __init__(self):
         self._openai_tools: list[dict] | None = None
@@ -451,7 +503,7 @@ class OpenAIProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": _build_openai_messages(system, messages),
-            "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7,
+            **chat_generation_params(self.PROVIDER, model_id, _AGENT_MAX_TOKENS, 0.7),
             "tools": self._openai_tools, "tool_choice": "auto",
         }
         async for ev in _stream_openai_chat(self.ENDPOINT, headers, body, include_usage=True):
@@ -470,8 +522,7 @@ class OpenAIProvider(ToolCallProvider):
         body = {
             "model": model_id,
             "messages": openai_messages,
-            "max_tokens": _AGENT_MAX_TOKENS,
-            "temperature": 0.7,
+            **chat_generation_params(self.PROVIDER, model_id, _AGENT_MAX_TOKENS, 0.7),
             "tools": self._openai_tools,
             "tool_choice": "auto",
         }
@@ -508,6 +559,9 @@ class OpenAIProvider(ToolCallProvider):
         raw_msg: dict = {"role": "assistant", "content": assistant_text}
         if raw_tool_calls:
             raw_msg["tool_calls"] = raw_tool_calls
+        for key in ("reasoning_content", "reasoning_details", "extra_content"):
+            if key in assistant:
+                raw_msg[key] = assistant[key]
 
         return ProviderResponse(
             text=assistant_text.strip(),
@@ -589,6 +643,7 @@ class CodexProvider(OpenAIProvider):
             raw_assistant_message=raw_msg,
             usage=result.get("usage") or {},
             reasoning="\n\n".join(summary_parts) or None,
+            truncated=bool(result.get("truncated")),
         )
 
     async def call(self, model_id, messages, system, tools, token):
@@ -610,11 +665,42 @@ class CodexProvider(OpenAIProvider):
         yield {"type": "done", "response": self._to_response(final or {})}
 
 
+class OpenAIResponsesProvider(CodexProvider):
+    """Platform Responses API with complete output replay for agent tool rounds."""
+
+    def _to_response(self, result: dict) -> ProviderResponse:
+        response = super()._to_response(result)
+        if result.get("output_items"):
+            response.raw_assistant_message["_responses_output"] = result["output_items"]
+        return response
+
+    async def call(
+        self, model_id: str, messages: list[dict], system: str, tools: list[dict], token: str,
+    ) -> ProviderResponse:
+        result = await call_openai_responses(
+            token, model_id, instructions=system, messages=messages, tools=tools,
+            max_output_tokens=_AGENT_MAX_TOKENS,
+        )
+        return self._to_response(result)
+
+    async def stream(
+        self, model_id: str, messages: list[dict], system: str, tools: list[dict], token: str,
+    ) -> AsyncIterator[dict]:
+        async for event in stream_openai_responses(
+            token, model_id, instructions=system, messages=messages, tools=tools,
+            max_output_tokens=_AGENT_MAX_TOKENS,
+        ):
+            if event.get("type") == "text":
+                yield event
+            elif event.get("type") == "done":
+                yield {"type": "done", "response": self._to_response(event)}
+
+
 class OpenAIAutoProvider(OpenAIProvider):
     """First-party ``openai`` provider — picks the surface that fits the credential.
 
     ChatGPT OAuth tokens go to the Codex Responses backend
-    (:class:`CodexProvider`); ``sk-`` API keys keep the Chat Completions path.
+    (:class:`CodexProvider`); API keys use the model's supported platform API.
     This is what makes a single connected ``openai`` credential work whether the
     operator authenticated via the in-app OAuth login or pasted an API key.
 
@@ -625,15 +711,22 @@ class OpenAIAutoProvider(OpenAIProvider):
     def __init__(self):
         super().__init__()
         self._codex = CodexProvider()
+        self._responses = OpenAIResponsesProvider()
 
     async def call(self, model_id, messages, system, tools, token):
         if is_openai_oauth_token(token):
             return await self._codex.call(model_id, messages, system, tools, token)
+        if uses_openai_responses(model_id):
+            return await self._responses.call(model_id, messages, system, tools, token)
         return await super().call(model_id, messages, system, tools, token)
 
     async def stream(self, model_id, messages, system, tools, token):
         if is_openai_oauth_token(token):
             async for event in self._codex.stream(model_id, messages, system, tools, token):
+                yield event
+            return
+        if uses_openai_responses(model_id):
+            async for event in self._responses.stream(model_id, messages, system, tools, token):
                 yield event
             return
         async for event in super().stream(model_id, messages, system, tools, token):
@@ -940,6 +1033,7 @@ class OpenRouterProvider(OpenAIProvider):
     """
 
     ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+    PROVIDER = "openrouter"
 
     def _extra_headers(self) -> dict[str, str]:
         return {
@@ -983,6 +1077,8 @@ class AnthropicProvider(ToolCallProvider):
             "model": model_id, "messages": messages, "system": system,
             "max_tokens": _AGENT_MAX_TOKENS, "temperature": 0.7, "tools": tools,
         }
+        if claude_uses_fixed_sampling(model_id):
+            body.pop("temperature")
         async for ev in _stream_anthropic_messages(endpoint, headers, body):
             yield ev
 
@@ -1001,6 +1097,9 @@ class AnthropicProvider(ToolCallProvider):
             "temperature": 0.7,
             "tools": tools,
         }
+
+        if claude_uses_fixed_sampling(model_id):
+            body.pop("temperature")
 
         async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
             resp = await client.post(endpoint, json=body, headers=headers)
@@ -1029,6 +1128,7 @@ class AnthropicProvider(ToolCallProvider):
             stop=(not tool_calls or stop_reason == "end_turn"),
             raw_assistant_message=content_blocks,
             usage=usage,
+            truncated=(stop_reason == "max_tokens"),
         )
 
     def append_assistant(self, messages, response):
@@ -1057,6 +1157,7 @@ class DeepSeekProvider(OpenAIProvider):
     """
 
     DEFAULT_BASE_URL = "https://api.deepseek.com"
+    PROVIDER = "deepseek"
 
     @staticmethod
     def _get_base_url() -> str:

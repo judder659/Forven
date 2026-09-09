@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forven.api_domains import hypotheses as hypotheses_domain
 from forven.api_security import require_operator_access
+from forven.crucible_intake import execute_intake
 
 router = APIRouter(tags=["hypotheses"], dependencies=[Depends(require_operator_access)])
 data_gap_router = APIRouter(tags=["hypotheses"], dependencies=[Depends(require_operator_access)])
@@ -19,6 +20,7 @@ class HypothesisFromUrlPreviewRequest(BaseModel):
 
 
 class HypothesisCreateFromUrlRequest(BaseModel):
+    request_id: str | None = Field(default=None, min_length=8, max_length=100)
     url: str
     title: str | None = None
     market_thesis: str | None = None
@@ -27,6 +29,7 @@ class HypothesisCreateFromUrlRequest(BaseModel):
 
 
 class HypothesisCreateFromUrlsRequest(BaseModel):
+    request_id: str | None = Field(default=None, min_length=8, max_length=100)
     urls: list[str]
     title: str | None = None
     market_thesis: str | None = None
@@ -35,13 +38,14 @@ class HypothesisCreateFromUrlsRequest(BaseModel):
 
 
 class HypothesisCreateManualRequest(BaseModel):
+    request_id: str | None = Field(default=None, min_length=8, max_length=100)
     title: str
     market_thesis: str
     mechanism: str
     why_now: str | None = None
     target_assets: list[str] | None = None
     target_timeframes: list[str] | None = None
-    novelty_score: float | None = None
+    novelty_score: float | None = Field(default=None, ge=0, le=1)
     claimed_edge: str | None = None
     operator_notes: str | None = None
 
@@ -53,7 +57,7 @@ class HypothesisUpdateRequest(BaseModel):
     why_now: str | None = None
     target_assets: list[str] | None = None
     target_timeframes: list[str] | None = None
-    novelty_score: float | None = None
+    novelty_score: float | None = Field(default=None, ge=0, le=1)
     operator_notes: str | None = None
 
 
@@ -133,29 +137,29 @@ def preview_hypothesis_from_url_endpoint(payload: HypothesisFromUrlPreviewReques
 
 @router.post("/api/hypotheses/from_url")
 def create_hypothesis_from_url_endpoint(payload: HypothesisCreateFromUrlRequest):
-    return hypotheses_domain.create_hypothesis_from_url_payload(
+    return execute_intake("url", payload.model_dump(), lambda: hypotheses_domain.create_hypothesis_from_url_payload(
         url=payload.url,
         title=payload.title,
         market_thesis=payload.market_thesis,
         mechanism=payload.mechanism,
         claimed_edge=payload.claimed_edge,
-    )
+    ))
 
 
 @router.post("/api/hypotheses/from_urls")
 def create_hypothesis_from_urls_endpoint(payload: HypothesisCreateFromUrlsRequest):
-    return hypotheses_domain.create_hypothesis_from_urls_payload(
+    return execute_intake("urls", payload.model_dump(), lambda: hypotheses_domain.create_hypothesis_from_urls_payload(
         urls=payload.urls,
         title=payload.title,
         market_thesis=payload.market_thesis,
         mechanism=payload.mechanism,
         claimed_edge=payload.claimed_edge,
-    )
+    ))
 
 
 @router.post("/api/hypotheses/manual")
 def create_hypothesis_manual_endpoint(payload: HypothesisCreateManualRequest):
-    return hypotheses_domain.create_hypothesis_manual_payload(
+    return execute_intake("manual", payload.model_dump(), lambda: hypotheses_domain.create_hypothesis_manual_payload(
         title=payload.title,
         market_thesis=payload.market_thesis,
         mechanism=payload.mechanism,
@@ -165,7 +169,7 @@ def create_hypothesis_manual_endpoint(payload: HypothesisCreateManualRequest):
         novelty_score=payload.novelty_score,
         claimed_edge=payload.claimed_edge,
         operator_notes=payload.operator_notes,
-    )
+    ))
 
 
 @router.post("/api/hypotheses/bulk/archive")
@@ -196,6 +200,11 @@ def get_hypothesis_endpoint(hypothesis_id: str, include: str | None = None):
         hypothesis_id,
         include_content="content" in include_parts,
     )
+
+
+@router.get("/api/hypotheses/{hypothesis_id}/readiness")
+def get_hypothesis_readiness(hypothesis_id: str) -> dict:
+    return hypotheses_domain.hypothesis_readiness_payload(hypothesis_id)
 
 
 @router.post("/api/hypotheses/{hypothesis_id}/archive")

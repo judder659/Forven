@@ -19,6 +19,12 @@ def dismiss_agent_task(task_id: int, body: dict | None = None):
     return tasks_domain.dismiss_agent_task(task_id=task_id, source=source, note=note)
 
 
+@router.post("/api/agent-tasks/{task_id}/resume")
+def resume_agent_task(task_id: int) -> dict:
+    from forven.agents.execution_state import resume_checkpoint
+    return resume_checkpoint(task_id)
+
+
 @router.get("/api/tasks/containers")
 def get_task_containers(
     limit: int = 200,

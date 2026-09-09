@@ -16,7 +16,13 @@ from forven.strategies.optimization_acceptance import (
     evaluate_optimization_candidate,
 )
 
-_OK_OPT = {"status": "succeeded", "validated": True, "wfa_verdict": "PASS"}
+_OK_OPT = {
+    "status": "succeeded", "validated": True, "wfa_verdict": "PASS", "holdout_applied": True,
+    "selection_window": {"start": "2024-01-01", "end": "2024-06-30"},
+    "validation_window": {"start": "2024-07-01", "end": "2024-08-30", "bars": 1440},
+    "as_of": "2024-08-31", "fee_bps": 5., "slippage_bps": 3., "initial_capital": 10000.,
+    "validation_dataset_fingerprint": "fixture-dataset",
+}
 
 
 def _wfa(fold_sharpes, *, pf=2.0, dd=0.10, trades=40, verdict="PASS"):
@@ -26,6 +32,7 @@ def _wfa(fold_sharpes, *, pf=2.0, dd=0.10, trades=40, verdict="PASS"):
         for s in fold_sharpes
     ]
     return {
+        "dataset_fingerprint": "fixture-dataset",
         "splits": splits,
         "aggregate_oos": {
             "sharpe": sum(fold_sharpes) / len(fold_sharpes),
@@ -58,6 +65,31 @@ def test_candidate_accepted_when_beats_baseline_oos():
     assert decision.accepted is True
     assert decision.code == "accepted"
     assert mock.call_count == 2  # baseline + candidate bake-off
+    for call in mock.call_args_list:
+        assert call.kwargs["start_date"] == _OK_OPT["validation_window"]["start"]
+        assert call.kwargs["end_date"] == _OK_OPT["validation_window"]["end"]
+        assert call.kwargs["as_of"] == _OK_OPT["as_of"]
+        assert call.kwargs["fee_bps"] == 5.
+        assert call.kwargs["slippage_bps"] == 3.
+
+
+def test_pass_without_holdout_cannot_trigger_comparison_or_write():
+    out, writes, mock = _apply(
+        {"rsi_entry": 30}, {"rsi_entry": 35}, _wfa([.1]), _wfa([3.]),
+        opt={**_OK_OPT, "holdout_applied": False},
+    )
+    assert not out["applied"]
+    assert writes == []
+    mock.assert_not_called()
+
+
+def test_changed_validation_data_cannot_replace_parameters():
+    baseline = _wfa([.1, .1])
+    candidate = {**_wfa([2., 2.]), "dataset_fingerprint": "revised-data"}
+    out, writes, _ = _apply({"rsi_entry": 30}, {"rsi_entry": 35}, baseline, candidate)
+    assert not out["applied"]
+    assert out["code"] == "insufficient_data"
+    assert writes == []
 
 
 def test_baseline_retained_when_candidate_worse_oos():

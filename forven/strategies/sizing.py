@@ -270,24 +270,26 @@ def size_fraction(
     ~risk_per_trade of equity, leverage-invariant).
 
     ``current_equity`` is the account value AT ENTRY. ``fixed`` mode divides the
-    target dollar notional by it (true fixed-dollar: the deployed notional stays
-    ~``fixed_size`` dollars regardless of account growth). It defaults to
+    target dollar margin by it (notional is ``fixed_size * leverage``).
+    The margin stays fixed regardless of account growth. It defaults to
     ``initial_capital`` when the caller cannot supply a running equity (e.g. a
     stateless mirror), which reproduces the pre-v5 fixed-FRACTION behaviour for
     that one call — callers that track equity (the kernel walk) pass it so the
-    notional is genuinely fixed.
+    margin is genuinely fixed.
     """
+    if current_equity is not None and (not math.isfinite(float(current_equity)) or current_equity <= 0):
+        return 0.0
     mode = ec["sizing_mode"]
     if mode == "full":
         return 1.0
     if mode == "fixed":
         if not ec.get("fixed_size"):
             return 1.0
-        # True fixed-dollar notional: size the target dollar amount against the
+        # True fixed-dollar margin: size the target dollar amount against the
         # account value AT ENTRY, not the static initial capital, so a growing
         # account keeps deploying ~fixed_size dollars (a SHRINKING fraction) rather
         # than a fixed fraction whose dollar notional balloons with equity.
-        equity_base = current_equity if (current_equity is not None and current_equity > 0) else initial_capital
+        equity_base = current_equity if current_equity is not None else initial_capital
         return clamp01(ec["fixed_size"] / max(float(equity_base), 1e-9))
     if mode == "kelly":
         return clamp01(ec["kelly_multiplier"] * kelly_fraction(closed_gross or [], ec["kelly_lookback"]))
@@ -346,3 +348,18 @@ def position_units(*, equity: float, size_fraction: float, leverage: float, entr
     if eq <= 0 or px <= 0 or sf <= 0 or lev <= 0:
         return 0.0
     return (eq * lev * sf) / px
+
+
+def allocate_entry_fractions(requests: list[float], *, equity: float, occupied_margin: float) -> list[float]:
+    """Share remaining margin pro rata across entries at the same opening tick.
+
+    Reserve actual entry dollars, not an old fraction of a changed account.
+    No rounding is applied here; exchange lot rounding belongs at the venue.
+    """
+    if not math.isfinite(equity) or equity <= 0 or not math.isfinite(occupied_margin):
+        return [0.0] * len(requests)
+    requested = [clamp01(value) for value in requests]
+    available = clamp01(1.0 - max(occupied_margin, 0.0) / equity)
+    total = sum(requested)
+    scale = min(1.0, available / total) if total > 0 else 0.0
+    return [value * scale for value in requested]

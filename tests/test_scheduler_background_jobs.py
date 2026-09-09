@@ -34,12 +34,13 @@ def _read_scheduler_job(job_id: str) -> dict:
     return dict(row)
 
 
-def test_tick_does_not_block_due_queue_on_long_evolution_job(monkeypatch, forven_db):
+@pytest.mark.parametrize('kind', ['evolution_testing', 'scanner_run', 'scanner_signal_run'])
+def test_tick_does_not_block_due_queue_on_long_evolution_job(monkeypatch, forven_db, kind):
     now = datetime.now(timezone.utc)
     _insert_scheduler_job(
         "test-slow-evolution",
         (now - timedelta(minutes=10)).isoformat(),
-        {"kind": "evolution_testing"},
+        {"kind": kind},
     )
     _insert_scheduler_job(
         "test-quick-followup",
@@ -522,6 +523,36 @@ def test_run_job_rejects_unknown_kind_without_shell_execution(forven_db):
 
     assert status == "error"
     assert error == "Unknown scheduler job kind: not_registered"
+
+
+def test_bulk_backfill_uses_its_scheduler_budget(monkeypatch, forven_db):
+    captured = {}
+
+    async def capture(fn, *args, timeout_seconds=None, **kwargs):
+        captured["timeout"] = timeout_seconds
+
+    monkeypatch.setattr(scheduler, "_run_sync_job", capture)
+    job = {
+        "id": "forven-data-bv-backfill", "name": "Bulk archive import",
+        "command": "data-bv-backfill", "payload": json.dumps({"kind": "data_manager_backfill"}),
+    }
+    assert asyncio.run(scheduler.run_job(job)) == ("ok", None)
+    assert captured["timeout"] > scheduler._DEFAULT_SYNC_JOB_TIMEOUT_SECONDS
+    assert captured["timeout"] < scheduler._job_hard_timeout_seconds(job)
+    assert scheduler._should_run_scheduler_job_in_background(job)
+
+
+def test_bulk_backfill_surfaces_stream_errors(monkeypatch, forven_db):
+    async def failed_stream(*args, **kwargs):
+        return {"BTC-USDT": {"metrics_error": "archive listing unavailable"}}
+
+    monkeypatch.setattr(scheduler, "_run_sync_job", failed_stream)
+    status, error = asyncio.run(scheduler.run_job({
+        "id": "forven-data-bv-backfill", "name": "Bulk archive import",
+        "command": "data-bv-backfill", "payload": json.dumps({"kind": "data_manager_backfill"}),
+    }))
+    assert status == "error"
+    assert "BTC-USDT" in error and "archive listing unavailable" in error
 
 
 def test_tick_skips_due_gauntlet_job_while_zombie_thread_alive(monkeypatch, forven_db):

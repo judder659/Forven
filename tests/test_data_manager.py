@@ -949,7 +949,7 @@ class TestMergeAsofParquet:
             "timestamp": pd.to_datetime(["2026-01-01"], utc=True),
             "close": [50.0],
         })
-        path = tmp_path / "vix.parquet"
+        path = tmp_path / "vix_1d.parquet"
         _save_stream_parquet(src, path, "macro_vix", "global")
         base = pd.DataFrame({
             "timestamp": pd.to_datetime(["2026-01-01 12:00"], utc=True),
@@ -992,7 +992,7 @@ class TestMergeAsofParquet:
         _save_stream_parquet(src, path, "funding", "BTC-USDT")
 
         base = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2026-01-01 12:00"], utc=True),
+            "timestamp": pd.to_datetime(["2026-01-01 01:00"], utc=True),
             "close": [100.0],
         })
         out = _merge_asof_parquet(base, path, cols=["funding_rate"], fill={"funding_rate": 0.0})
@@ -1352,3 +1352,19 @@ def test_collect_ohlcv_all_pairs_failing_records_failure(monkeypatch):
     assert s["last_success_ts"] is None
     assert s["last_attempted"] == 2
     assert s["last_failed"] == 2
+
+
+def test_active_timeframes_include_deployed_and_legacy_paper(forven_db):
+    from forven.db import create_strategy_container, get_db
+
+    with get_db() as conn:
+        for symbol, timeframe, stage in [
+            ("BTC/USDT", "15m", "deployed"),
+            ("BTC", "5m", "paper_trading"),
+            ("BTC-USDT", "1d", "retired"),
+        ]:
+            create_strategy_container(
+                conn=conn, name=f"{stage}-{timeframe}", type_="rsi",
+                symbol=symbol, timeframe=timeframe, params={}, stage=stage,
+            )
+    assert DataManager()._fetch_active_timeframes("BTC-USDT") == {"15m", "5m"}

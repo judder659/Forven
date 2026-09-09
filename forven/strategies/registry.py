@@ -1,5 +1,7 @@
 """Strategy registry — auto-discovers and manages strategy classes."""
 
+import ast
+import hashlib
 import importlib
 import inspect
 import json
@@ -60,6 +62,8 @@ _BAD_ROW_LOGGED: set[tuple[str, str]] = set()
 _discovered = False
 _builtin_discovered = False
 _custom_discovered = False
+_DISCOVERY_LOCK = threading.RLock()
+_CUSTOM_TYPE_DECLARATIONS: dict[tuple[str, int, int, int], frozenset[str]] = {}
 
 # Canonical disambiguation map: maps ambiguous or aliased type names (lowercase) to the
 # preferred registered runtime type.  Used by resolve_runtime_type() to break ties when
@@ -124,6 +128,15 @@ def register_type(strategy_type: str, cls: type[BaseStrategy], *, raise_on_skip:
     rather than re-warned on every discover.
     """
     errors = _registry_type_validation_errors(cls)
+    existing = _TYPE_MAP.get(strategy_type)
+    existing_module = str(getattr(existing, "__module__", ""))
+    incoming_module = str(getattr(cls, "__module__", ""))
+    if existing_module.startswith("forven.strategies.builtin.") and incoming_module != existing_module:
+        errors.append(
+            f"type '{strategy_type}' is reserved by builtin {existing_module}; use a unique custom TYPE_NAME"
+        )
+    elif existing is not None and existing is not cls:
+        errors.append(f"type '{strategy_type}' is already registered by {existing_module}; use a unique TYPE_NAME")
     name_error = _type_name_validation_error(strategy_type)
     if name_error:
         errors = [name_error, *errors]
@@ -141,6 +154,12 @@ def register_type(strategy_type: str, cls: type[BaseStrategy], *, raise_on_skip:
             "; ".join(errors),
         )
         return
+    try:
+        filename = inspect.getsourcefile(cls)
+        if filename and "_forven_source_sha256" not in cls.__dict__:
+            cls._forven_source_sha256 = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    except (OSError, TypeError):
+        pass
     _TYPE_MAP[strategy_type] = cls
 
 
@@ -320,11 +339,17 @@ def runtime_unloadable_reason(strategy_type: object, runtime_type: object) -> st
     return str(blocked or "runtime type could not be resolved")
 
 
-def discover(include_custom: bool = True):
+def discover(include_custom: bool = True) -> None:
     """Auto-discover strategy classes in forven.strategies.builtin and custom.
 
-    Idempotent — safe to call multiple times.
+    Serialize discovery across runtime threads so callers see a complete scan
+    and concurrent startup jobs do not repeatedly parse thousands of modules.
     """
+    with _DISCOVERY_LOCK:
+        _discover(include_custom=include_custom)
+
+
+def _discover(include_custom: bool = True) -> None:
     global _builtin_discovered, _custom_discovered, _discovered
     if include_custom and _discovered:
         return
@@ -452,6 +477,27 @@ def imported_runtime_type(module_name: str) -> str:
     return f"{IMPORTED_TYPE_PREFIX}{str(module_name).strip()}"
 
 
+def load_imported_runtime_type(runtime_type: str) -> type[BaseStrategy] | None:
+    """Load one newly installed imported module, exclusively inside the worker."""
+    if not _in_strategy_worker() or not imported_module_exists(runtime_type):
+        return None
+    existing = _TYPE_MAP.get(runtime_type)
+    if existing is not None:
+        return existing
+    modname = runtime_type[len(IMPORTED_TYPE_PREFIX):]
+    assert_custom_module_safe(modname, package="imported")
+    importlib.invalidate_caches()
+    module = importlib.import_module(f"forven.strategies.imported.{modname}")
+    cls = _resolve_module_strategy_class(module)
+    if cls is None:
+        raise RegistryTypeError(f"no single BaseStrategy subclass in imported.{modname}")
+    errors = _registry_type_validation_errors(cls)
+    if errors:
+        raise RegistryTypeError("; ".join(errors))
+    _TYPE_MAP[runtime_type] = cls
+    return cls
+
+
 def _discover_imported_modules() -> None:
     """Worker-ONLY: import every untrusted-origin strategy under
     ``forven.strategies.imported`` and register it in the worker's _TYPE_MAP under a
@@ -471,15 +517,7 @@ def _discover_imported_modules() -> None:
         if not modname or modname == "__init__":
             continue
         try:
-            assert_custom_module_safe(modname, package="imported")
-            module = importlib.import_module(f"forven.strategies.imported.{modname}")
-            cls = _resolve_module_strategy_class(module)
-            if cls is None:
-                raise RegistryTypeError(f"no single BaseStrategy subclass in imported.{modname}")
-            errors = _registry_type_validation_errors(cls)
-            if errors:
-                raise RegistryTypeError("; ".join(errors))
-            _TYPE_MAP[imported_runtime_type(modname)] = cls
+            load_imported_runtime_type(imported_runtime_type(modname))
         except (Exception, SystemExit) as e:
             if modname not in _FAILED_CUSTOM_LOGGED:
                 _FAILED_CUSTOM_LOGGED.add(modname)
@@ -752,6 +790,56 @@ def _load_archived_custom_runtime_type(runtime_name: str) -> bool:
     return str(runtime_name or "").strip() in _TYPE_MAP
 
 
+def find_archived_runtime_class(runtime_name: str) -> type[BaseStrategy] | None:
+    """Resolve an archived file's declared type without importing unrelated code.
+
+    Active modules are already discovered. Archived filenames can differ from
+    TYPE_NAME, so inspect their literal declarations before selecting an import.
+    Private probes and previously rejected modules never enter this fallback.
+    """
+    from forven.strategies import custom
+
+    normalized = str(runtime_name or "").strip().lower()
+    if not normalized or normalized.startswith(IMPORTED_TYPE_PREFIX):
+        return None
+    with _DISCOVERY_LOCK:
+        for root in custom.__path__:
+            for path in sorted(Path(root).glob("*.py")):
+                modname = path.stem
+                if custom_strategy_status(modname) != "archived" or modname in _FAILED_CUSTOM_MODULES:
+                    continue
+                try:
+                    stat = path.stat()
+                    key = (str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+                    names = _CUSTOM_TYPE_DECLARATIONS.get(key)
+                    if names is None:
+                        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+                        declarations = []
+                        for node in ast.walk(tree):
+                            if isinstance(node, ast.Assign):
+                                targets, value = node.targets, node.value
+                            elif isinstance(node, ast.AnnAssign):
+                                targets, value = [node.target], node.value
+                            else:
+                                continue
+                            if (any(isinstance(t, ast.Name) and t.id == "TYPE_NAME" for t in targets)
+                                    and isinstance(value, ast.Constant) and isinstance(value.value, str)):
+                                declarations.append(value.value.strip().lower())
+                        names = frozenset(declarations)
+                        _CUSTOM_TYPE_DECLARATIONS[key] = names
+                    if normalized not in names:
+                        continue
+                    _load_custom_strategy_module(modname)
+                except (Exception, SystemExit) as exc:
+                    _FAILED_CUSTOM_MODULES.add(modname)
+                    log.warning("Skipping archived strategy module %s: %s", modname, exc)
+                    continue
+                for name, cls in _TYPE_MAP.items():
+                    if name.lower() == normalized:
+                        return cls
+    return None
+
+
 def _load_db_strategies(target: dict):
     """Load strategies from SQLite with status='deployed'|'paper'."""
     try:
@@ -819,7 +907,8 @@ def _load_db_strategies(target: dict):
                             ),
                         )
 
-                    if sid in target:
+                    expected_class = _TYPE_MAP.get(resolved_runtime_type)
+                    if sid in target and expected_class is not None and isinstance(target[sid], expected_class):
                         strategy = target[sid]
                         strategy.params = {**strategy.default_params, **canonical_params}
                         _attach_runtime_metadata(
@@ -949,6 +1038,14 @@ def resolve_runtime_type(strategy_type: str | None, runtime_type: str | None = N
     if normalized_runtime and normalized_runtime in _TYPE_MAP:
         return normalized_runtime, {"source": "runtime_type", "blocked_reason": None}
 
+    if normalized_runtime and normalized_runtime.casefold() != normalized_type.casefold():
+        if custom_strategy_status(normalized_runtime) == "archived":
+            return normalized_runtime, {"source": "archived_runtime_type", "blocked_reason": None}
+        return None, {
+            "source": "runtime_type_unavailable",
+            "blocked_reason": f"Explicit runtime type '{normalized_runtime}' is not registered; refusing family substitution",
+        }
+
     if normalized_type and normalized_type in _TYPE_MAP:
         source = "family_type" if not normalized_runtime else "family_type_fallback"
         if normalized_runtime and normalized_runtime not in _TYPE_MAP:
@@ -993,12 +1090,10 @@ def resolve_runtime_type(strategy_type: str | None, runtime_type: str | None = N
             if str(key).strip().lower().startswith(prefix)
         )
         if len(matches) == 1:
-            log.warning(
-                "Resolved strategy type '%s' via unique runtime prefix match -> '%s'",
-                normalized_type,
-                matches[0],
-            )
-            return matches[0], {"source": "type_prefix_match", "blocked_reason": None}
+            return None, {
+                "source": "type_prefix_refused",
+                "blocked_reason": f"Exact runtime type '{normalized_type}' unavailable; refusing unvalidated variant '{matches[0]}'",
+            }
         if len(matches) > 1:
             # Check disambiguation map before giving up on ambiguous prefix matches.
             canonical = _DISAMBIGUATION_MAP.get(type_lower)
@@ -1061,8 +1156,13 @@ def _get_dynamic_regime_class(base_cls: type) -> type:
     return DynamicRegimeStrategy
 
 
-def reset():
+def reset() -> None:
     """Reset registry state. Used for testing."""
+    with _DISCOVERY_LOCK:
+        _reset()
+
+
+def _reset() -> None:
     global _builtin_discovered, _custom_discovered, _discovered
     _registry.clear()
     _TYPE_MAP.clear()
@@ -1071,6 +1171,7 @@ def reset():
     _FAILED_CUSTOM_MODULES.clear()
     _FAILED_CUSTOM_LOGGED.clear()
     _SCAN_VERDICT_CACHE.clear()
+    _CUSTOM_TYPE_DECLARATIONS.clear()
     _BAD_ROW_LOGGED.clear()
     invalidate_active_cache()
     _builtin_discovered = False

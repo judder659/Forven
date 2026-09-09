@@ -339,6 +339,7 @@ def data_manager_stats() -> dict[str, Any]:
     """
     with _stats_lock:
         import copy
+        _load_telemetry_once()
         return copy.deepcopy(_stats)
 
 
@@ -491,21 +492,14 @@ def _merge_asof_parquet(
     shift_to_bucket_close: bool = False,
     fill_coverage_only: bool = False,
 ) -> pd.DataFrame:
-    """Load stream parquet via cache, merge_asof on timestamp, rename + fillna.
+    """Join observations backward within their declared cadence.
 
-    ``fill_coverage_only`` restricts ``fill`` to bars at/after the stream's first
-    covered timestamp — bars BEFORE coverage stay NaN. Use it for event-count
-    streams (liquidations) where "no row" means 0 WITHIN coverage but is simply
-    unknown before capture started; a blanket fill would hand backtests years of
-    fake zeros (guaranteed 0-trade strategies, the phantom-family failure mode).
+    Missing and stale values remain NaN. ``fill`` and ``fill_coverage_only``
+    remain accepted for caller compatibility but cannot establish observation
+    coverage. Collectors must explicitly record observed zero event buckets.
 
-    ``shift_to_bucket_close`` re-stamps each source row from bucket START to bucket
-    CLOSE (inferred modal width) before the join. Use it for bucket-AGGREGATE
-    streams (taker_buy_sell_ratio / ls_ratio / liquidations) whose value at time t
-    summarizes the forward [t, t+bucket) window and is only knowable at t+bucket —
-    otherwise a backward merge_asof exposes an in-progress bucket to a finer bar
-    (e.g. a 15m bar reading the upcoming hour's flow) = look-ahead leak. Do NOT use
-    it for point-in-time levels (open_interest) or forward-announced rates (funding).
+    ``shift_to_bucket_close`` delays hourly aggregate availability by one hour,
+    including one-row files; point-in-time levels are not shifted.
 
     Returns df unchanged when file missing, empty, or lacks required columns.
     If df already has any of the target column names (post-rename), those
@@ -541,18 +535,10 @@ def _merge_asof_parquet(
     # (pandas>=2 carries ns/us/ms per-series); pin both sides to ns UTC.
     src["timestamp"] = pd.to_datetime(src["timestamp"], utc=True).astype("datetime64[ns, UTC]")
     src = src.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
-    if shift_to_bucket_close and len(src) >= 3:
-        # Bucket-aggregate streams are stamped at bucket START but summarize the
-        # forward [t, t+bucket) window, so a row is only KNOWN at bucket CLOSE.
-        # Re-stamp each bucket to its close time so a backward merge_asof can never
-        # join an in-progress (forward-looking) bucket onto a finer-grained bar.
-        # Without this, a sub-bucket bar (e.g. a 15m bar vs a 1h taker bucket) reads
-        # the upcoming hour's order-flow direction -> look-ahead leak (fake Sharpe).
-        _deltas = src["timestamp"].diff().dropna()
-        _mode = _deltas.mode()
-        _bucket = _mode.iloc[0] if not _mode.empty else _deltas.median()
-        if pd.notna(_bucket) and _bucket > pd.Timedelta(0):
-            src["timestamp"] = src["timestamp"] + _bucket
+    if shift_to_bucket_close:
+        # These collectors write hourly buckets, including single-row files.
+        # Observed gaps do not change the bucket's information availability.
+        src["timestamp"] = src["timestamp"] + pd.Timedelta(hours=1)
     if rename:
         src = src.rename(columns=rename)
 
@@ -568,20 +554,15 @@ def _merge_asof_parquet(
         df_clean = df_clean.rename(columns={df_clean.columns[0]: "timestamp"})
 
     df_ts = pd.to_datetime(df_clean["timestamp"], utc=True).astype("datetime64[ns, UTC]")
+    from forven.dataeng.enrichment_policy import enrichment_max_age_seconds
+
     merged = pd.merge_asof(
         df_clean.assign(timestamp=df_ts).sort_values("timestamp"),
         src,
         on="timestamp",
         direction=direction,
+        tolerance=pd.Timedelta(seconds=enrichment_max_age_seconds(path, cols)),
     )
-    coverage_start = src["timestamp"].min()
-    for col, default in fill.items():
-        if col in merged.columns:
-            if fill_coverage_only:
-                in_coverage = merged["timestamp"] >= coverage_start
-                merged.loc[in_coverage, col] = merged.loc[in_coverage, col].fillna(default)
-            else:
-                merged[col] = merged[col].fillna(default)
     if index_is_time:
         merged = merged.set_index("timestamp")
         merged.index.name = original_index_name
@@ -1649,7 +1630,8 @@ class DataManager:
                     WHERE symbol IN ({placeholders})
                       AND TRIM(COALESCE(timeframe, '')) != ''
                       AND LOWER(TRIM(COALESCE(stage, ''))) IN
-                          ('quick_screen','gauntlet','paper','live_graduated','research_only','active')
+                          ('quick_screen','gauntlet','paper','paper_trading','deployed',
+                           'live_graduated','research_only','active')
                     """,
                     tuple(candidates),
                 ).fetchall()
@@ -1802,7 +1784,8 @@ class DataManager:
         """
         try:
             with self._cycle_cache():
-                symbols = self.get_active_symbols()
+                research_targets = self._research_oi_targets()
+                symbols = set(self.get_active_symbols()) | set(research_targets)
                 if not symbols:
                     from forven.data import DATA_DIR
                     data_dir = Path(DATA_DIR)
@@ -1817,7 +1800,7 @@ class DataManager:
                 summary: dict[str, Any] = {}
                 tally = _PerSymbolTally()
                 for symbol in symbols:
-                    timeframes = self.get_active_timeframes(symbol)
+                    timeframes = set(self.get_active_timeframes(symbol)) | research_targets.get(symbol, set())
                     summary[symbol] = {}
                     for tf in timeframes:
                         added = tally.run(f"{symbol}:{tf}", lambda s=symbol, t=tf: self._oi.collect(s, t))
@@ -1832,6 +1815,40 @@ class DataManager:
         except Exception:
             _record_collection("oi", None, 0, False)
             raise
+
+    def _research_oi_targets(self) -> dict[str, set[str]]:
+        """Enroll supported research frames before a strategy exists to request them."""
+        import json
+        from forven.db import get_db
+        from forven.strategies.idea_readiness import detected_inputs
+
+        # Binance OI history supports these intervals, not every candle interval.
+        supported = {"5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"}
+        targets: dict[str, set[str]] = {}
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT market_thesis,mechanism,target_assets,target_timeframes FROM hypotheses "
+                "WHERE manager_state='active' AND status IN ('proposed','researching','proven')"
+            ).fetchall()
+        for row in rows:
+            required, external = detected_inputs(str(row["market_thesis"] or "") + "\n" + str(row["mechanism"] or ""))
+            if "open_interest" not in required or set(external) - {"Cross-asset frame joins"}:
+                continue
+            try:
+                assets = json.loads(row["target_assets"] or "[]")
+                frames = json.loads(row["target_timeframes"] or "[]")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(assets, list) or not isinstance(frames, list):
+                continue
+            valid_frames = {tf for tf in frames if isinstance(tf, str) and tf in supported}
+            for asset in assets:
+                if not isinstance(asset, str):
+                    continue
+                symbol = self._normalize_keepalive_symbol(asset, require_dataset=True)
+                if symbol and valid_frames:
+                    targets.setdefault(symbol, set()).update(valid_frames)
+        return targets
 
     def collect_lsr(self) -> dict[str, Any]:
         """Collect long/short ratio for active crypto symbols."""
@@ -2014,6 +2031,7 @@ class DataManager:
                 log.info("BV backfill OHLCV %s/%s: +%d rows", fs_sym, tf, added)
             except Exception as exc:
                 log.warning("BV OHLCV backfill failed for %s/%s: %s", fs_sym, tf, exc)
+                out[f"ohlcv:{tf}_error"] = str(exc)
         return out
 
     def _backfill_funding(self, fs_sym: str, bv_symbol: str) -> dict:

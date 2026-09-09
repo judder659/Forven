@@ -1117,7 +1117,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 				slow: 26,
 				signal: 9,
 			},
-		}));
+		}), { background: true });
 		expect(target.textContent).toContain('B2002');
 		expect(target.querySelector('[data-testid="selected-chart-source"]')?.textContent).toContain('Stored snapshot');
 	});
@@ -1158,7 +1158,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(apiMocks.submitBacktest).toHaveBeenCalledWith(expect.objectContaining({
 			symbol: 'AAPL',
 			timeframe: '1h',
-		}));
+		}), { background: true });
 	});
 
 	it('shows editable parameters on the backtest tab and submits the edited draft', async () => {
@@ -1190,7 +1190,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 				slow: 26,
 				signal: 9,
 			},
-		}));
+		}), { background: true });
 	});
 
 	it('expands compact backtest parameter summaries from the overflow chip', async () => {
@@ -1396,7 +1396,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 			risk_per_trade: 0.03,
 			stop_loss_pct: 5,
 			take_profit_pct: 11,
-		}));
+		}), { background: true });
 
 		await waitForCondition(() => apiMocks.getStrategyContainer.mock.calls.length >= 2);
 		await waitForCondition(() => target.textContent?.includes('Run B1001') ?? false);
@@ -1413,7 +1413,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 			slippage_bps: 2,
 			leverage: 1,
 			sizing_mode: 'full',
-		}));
+		}), { background: true });
 	});
 
 	describe('Add Param controls', () => {
@@ -1694,7 +1694,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(apiMocks.submitBacktest).toHaveBeenCalledWith(expect.objectContaining({
 			strategy_id: 'S0001',
 			definition_json: definition,
-		}));
+		}), { background: true });
 	});
 
 	it('reruns a historical backtest with edited row parameters', async () => {
@@ -1730,7 +1730,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 				slow: 26,
 				signal: 9,
 			},
-		}));
+		}), { background: true });
 	});
 
 	it('merges optimization base params before setting defaults', async () => {

@@ -86,7 +86,7 @@
 
 	$: components = healthData?.components ?? [];
 	$: dataChecks = healthData?.data_checks ?? [];
-	$: overall = healthData?.overall ?? 'green';
+	$: overall = healthData?.overall ?? 'unknown';
 	$: monitorRunning = healthData?.monitor_running ?? false;
 	$: failedChecks = dataChecks.filter((d) => !d.passed);
 </script>

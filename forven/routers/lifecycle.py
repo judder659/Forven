@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from forven import strategy_lifecycle as lifecycle
 from forven.api_security import require_operator_access
@@ -35,7 +35,10 @@ def read_lifecycle_strategy(strategy_id: str):
 
 @router.post("/api/lifecycle/strategies")
 def create_lifecycle_strategy(body: lifecycle.LifecycleCreateBody):
-    return lifecycle.create_lifecycle_strategy(body)
+    try:
+        return lifecycle.create_lifecycle_strategy(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/api/lifecycle/transition")

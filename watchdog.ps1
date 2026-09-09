@@ -10,6 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $RepoRoot "scripts/launcher-services.ps1")
 $script:WatchdogOwnerLockStream = $null
 $script:WatchdogOwnerName = $null
 $script:WatchdogOwnerAcquiredAt = $null
@@ -159,24 +160,9 @@ function Get-ListeningPids {
 }
 
 function Get-BackendProcessIds {
-    # Every backend process for THIS repo, listener or not. A backend whose main
-    # thread died closes its listener but can survive as a zombie (background
-    # threads wedge interpreter teardown) while still holding the runtime-worker
-    # and daemon file locks - killing only the listening PIDs leaves it alive and
-    # the replacement backend then boots with no background loops.
-    $result = @()
-    try {
-        $procs = Get-CimInstance Win32_Process -Filter "Name like 'python%'" -ErrorAction SilentlyContinue |
-            Where-Object {
-                $cmd = [string]$_.CommandLine
-                $cmd -match "forven\.api" -and $cmd.ToLowerInvariant().Contains($RepoRoot.ToLowerInvariant())
-            }
-        foreach ($proc in @($procs)) {
-            if ($proc -and $proc.ProcessId) { $result += [int]$proc.ProcessId }
-        }
-    } catch {}
-    return @($result | Select-Object -Unique)
+    return @(Get-LauncherOwnedProcesses -Root $RepoRoot | Where-Object { $_.Role -eq 'backend' -and $_.ServiceProcess } | ForEach-Object { $_.Id })
 }
+
 
 function Stop-BackendProcesses {
     param([int[]]$ListenerPids)
@@ -685,6 +671,21 @@ function Write-WatchdogSummary {
 }
 
 try {
+    if (-not (Test-LauncherServiceEnabled -Root $RepoRoot)) {
+        Write-Log "Forven is intentionally stopped by the launcher."
+        exit 0
+    }
+    # start_all initializes the DB before taking the long-lived owner lock.
+    # Do not launch a competing API while that bootstrap is still in progress.
+    $bootstrapping = @(Get-LauncherOwnedProcesses -Root $RepoRoot | Where-Object {
+        $_.Role -eq 'supervisor' -and $_.Created -and
+        ((Get-Date) - [datetime]$_.Created).TotalSeconds -ge 0 -and
+        ((Get-Date) - [datetime]$_.Created).TotalSeconds -lt 600
+    })
+    if ($bootstrapping.Count) {
+        Write-Log "Forven bootstrap is active; leaving service startup to its supervisor."
+        exit 0
+    }
     $watchdogClaim = Acquire-WatchdogOwnerLock -OwnerName "watchdog.ps1"
     if ($null -eq $watchdogClaim -or -not [bool]$watchdogClaim.claimed) {
         $watchdogStatus = if ($null -ne $watchdogClaim) { $watchdogClaim.status } else { $null }
@@ -712,7 +713,7 @@ try {
     # (no start_all console) still lands.
     $restartSentinel = Join-Path (Join-Path $RepoRoot ".tmp") "restart.request"
     $backendRestartForced = $false
-    if (Test-Path $restartSentinel) {
+    if ((Test-Path $restartSentinel) -and (Test-LauncherServiceEnabled -Root $RepoRoot -Service backend)) {
         Write-Log "Restart sentinel found - bouncing backend to load new code."
         try { Remove-Item -Path $restartSentinel -Force -ErrorAction Stop } catch {
             Write-Log ("WARN: Could not remove restart sentinel: " + $_.Exception.Message)
@@ -752,6 +753,8 @@ try {
     }
     $schedulerStallConfirmed = ($null -ne $schedulerStallReason -and $schedulerStallCycles -ge $schedulerStallLimit)
 
+    $backendHealthy = $false
+    if (Test-LauncherServiceEnabled -Root $RepoRoot -Service backend) {
     # --- Check Backend ---
     [array]$backendListeners = @(Get-ListeningPids -Port $BackendPort)
     $backendHealthy = Test-HttpHealthy -Url $HealthUrl
@@ -768,8 +771,25 @@ try {
         try { $probeFailures = [int]((Get-Content $probeFailFile -ErrorAction Stop) -join "").Trim() } catch {}
     }
     $probeFailureLimit = 3
+    # A fresh backend takes its pre-migration snapshot before opening the port.
+    # Allow bounded startup time while its process is alive, otherwise each
+    # watchdog cycle kills a multi-GB backup and starts it over indefinitely.
+    $backendStarting = $false
+    if (-not $backendRestartForced -and $backendListeners.Count -eq 0) {
+        foreach ($startupPid in @(Get-BackendProcessIds)) {
+            try {
+                $startupProcess = Get-Process -Id $startupPid -ErrorAction Stop
+                $startupAge = ((Get-Date) - $startupProcess.StartTime).TotalSeconds
+                if ($startupAge -ge 0 -and $startupAge -lt 600) { $backendStarting = $true }
+            } catch {}
+        }
+    }
     $backendNeedsRestart = $backendRestartForced -or $backendListeners.Count -eq 0
-    if (-not $backendNeedsRestart) {
+    if ($backendStarting) {
+        $backendNeedsRestart = $false
+        Write-Log "Backend process is starting (up to 10 minutes allowed for migration backup); deferring restart."
+    }
+    if (-not $backendNeedsRestart -and -not $backendStarting) {
         if ($backendHealthy) {
             if ($probeFailures -ne 0) { Remove-Item -Path $probeFailFile -Force -ErrorAction SilentlyContinue }
         } else {
@@ -803,7 +823,7 @@ try {
         }
         Write-LogThrottled -Key "scheduler_stall_healthy" -IntervalSeconds 3600 `
             -Message ("Backend scheduler stalled (" + $schedulerStallReason + ", " + $schedulerStallCycles + " cycles) but /api/health is passing - NOT restarting; operator action required.")
-    } elseif ($schedulerStallAction -eq "restart-backend") {
+    } elseif ($schedulerStallAction -eq "restart-backend" -and -not $backendStarting) {
         $backendSchedulerStall = $schedulerStallReason
         $backendNeedsRestart = $true
     }
@@ -839,6 +859,8 @@ try {
         $restarted += "backend"
         Start-Sleep -Seconds 5
     }
+
+    } # Backend desired state
 
 # --- Check Bot ---
 $botAlive = $false
@@ -1015,6 +1037,7 @@ if (-not $labWorkerAlive -and $regimeLabEnabled) {
     $restarted += "lab_worker"
 }
 
+if (Test-LauncherServiceEnabled -Root $RepoRoot -Service frontend) {
 # --- Check Frontend ---
 [array]$frontendListeners = @(Get-ListeningPids -Port $FrontendPort)
 if ($frontendListeners.Count -eq 0) {
@@ -1033,6 +1056,8 @@ if ($frontendListeners.Count -eq 0) {
         $restarted += "frontend"
     }
 }
+
+} # Frontend desired state
 
 # --- Check Pipeline Progress (detect frozen-but-alive) ---
 # $labWorkerAlive already set above; refresh $labProcs if worker was just started

@@ -65,31 +65,17 @@
 			icon: 'M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-2 .89-2 2v11c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z'
 		},
 		{
-			label: 'Portfolio',
-			href: '/portfolio',
-			icon: 'M11 2v20c-5.07-.5-9-4.79-9-10s3.93-9.5 9-10zm2.03 0v8.99H22c-.47-4.74-4.24-8.52-8.97-8.99zm0 11.01V22c4.74-.47 8.5-4.25 8.97-8.99h-8.97z'
-		},
-		{
 			label: 'Bot Factory',
 			href: '/bot-factory',
 			icon: 'M20 9V7c0-1.1-.9-2-2-2h-3c0-1.66-1.34-3-3-3S9 3.34 9 5H6c-1.1 0-2 .9-2 2v2c-1.66 0-3 1.34-3 3s1.34 3 3 3v4c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4c1.66 0 3-1.34 3-3s-1.34-3-3-3zM7.5 11.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5S9.83 13 9 13s-1.5-.67-1.5-1.5zM16 17H8v-2h8v2zm-1-4c-.83 0-1.5-.67-1.5-1.5S14.17 10 15 10s1.5.67 1.5 1.5S15.83 13 15 13z'
 		},
 	];
 
-	// PORT-GATE-1: the Portfolio entry exists only when the layer's master
-	// switch is on (Settings -> System -> Experimental features).
-	let portfolioLayerEnabled = false;
 	// PROPR-1: the Propr entry exists only when the hidden integration flag is
 	// on. The flag is env/config-only (FORVEN_PROPR_ENABLED) and deliberately
 	// has NO Settings-page control — an operator must know it exists.
 	let proprEnabled = false;
 	onMount(async () => {
-		try {
-			const { getPortfolioLayerEnabled } = await import('$lib/api/portfolio');
-			portfolioLayerEnabled = await getPortfolioLayerEnabled();
-		} catch {
-			portfolioLayerEnabled = false;
-		}
 		try {
 			const { getProprEnabled } = await import('$lib/api/propr');
 			proprEnabled = await getProprEnabled();
@@ -98,9 +84,7 @@
 		}
 	});
 	$: visiblePrimaryLinks = primaryLinks.filter(
-		(l) =>
-			(portfolioLayerEnabled || l.href !== '/portfolio') &&
-			(proprEnabled || l.href !== '/propr')
+		(l) => proprEnabled || l.href !== '/propr'
 	);
 
 	const managementLinks: NavLink[] = [

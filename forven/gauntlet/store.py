@@ -126,6 +126,8 @@ def init_gauntlet_schema(conn: sqlite3.Connection) -> None:
             ON gauntlet_steps(workflow_id, status, order_index);
         CREATE INDEX IF NOT EXISTS idx_gauntlet_artifacts_workflow
             ON gauntlet_artifacts(workflow_id, artifact_type);
+        CREATE INDEX IF NOT EXISTS idx_gauntlet_artifacts_step_key
+            ON gauntlet_artifacts(step_id, artifact_type, artifact_key);
         CREATE INDEX IF NOT EXISTS idx_gauntlet_events_workflow
             ON gauntlet_events(workflow_id, created_at);
         """

@@ -699,6 +699,8 @@ def create_hypothesis(
             ),
         )
         row = _fetch_hypothesis(conn, str(payload["id"]))
+        from forven.crucible_intake import record_created
+        record_created(conn, str(payload["id"]))
     return row or {}
 
 
@@ -740,6 +742,8 @@ def update_hypothesis(
     if target_timeframes is not None:
         updates["target_timeframes"] = json.dumps(_normalize_string_list(target_timeframes, "target_timeframes"))
     if novelty_score is not None:
+        if not 0 <= novelty_score <= 1:
+            raise ValueError("novelty_score must be between 0 and 1")
         updates["novelty_score"] = float(novelty_score)
     if operator_notes is not None:
         updates["operator_notes"] = _clean_text(operator_notes)

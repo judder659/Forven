@@ -1,33 +1,30 @@
-# TOOLS.md — Local Notes & Runtime
+# TOOLS.md - Runtime and tool use
 
-## How Forven Actually Runs
+## Local entry points
 
-Forven is a **Tauri desktop app**. The Rust shell spawns the embedded Python backend as `python -m forven.api`. **There are no 24/7 OS services, no systemd units, no cron jobs, no scheduled tasks.** Everything is gated on the app being open:
+| Surface | Default address |
+| --- | --- |
+| Backend API | `http://127.0.0.1:8003` |
+| Frontend development server | `http://127.0.0.1:5173` |
 
-- Open the app → the FastAPI backend starts and, under a single runtime-worker lock, runs all loops **in-process**:
-  - **scheduler loop** (~30s tick — cron/interval job dispatcher)
-  - **headless agent loop** (~5s)
-  - **headless brain loop** (~20s)
-  - **data/risk daemon** (price/data ingest + hard kill-switch, daily-loss halt, position reconcile, heartbeat)
-- Close the app → all of it stops. Missed cycles are **collapsed into one catch-up run** on reopen (not replayed N times).
+Confirm actual runtime status and configured base URL; these addresses are defaults. Forven can run from the packaged Tauri app, `start_all.ps1`/`start_all.sh`, or the Windows launcher and supervisor. Do not assume closing the UI stops backend workers. A launcher control receipt is not a health check, and stopping a process does not close exchange positions.
 
-Do **not** try to `systemctl`, `sc start`, or otherwise "start a service" — there are none, and on Windows those commands don't apply. To run Forven, open the app (or, for dev, `start_all.ps1`).
+For Windows launcher behavior see `docs/desktop-launcher.md` in the repository. Use the configured controls only within the operator's authorized task; do not kill arbitrary Python processes or invent OS service commands. The scheduler, agent/Brain workers, data collection, and risk monitoring depend on the running configuration. Discord and standalone daemons are optional.
 
-## Endpoints (local only)
+## Tool scope
 
-| What | Address |
-|------|---------|
-| Backend API (FastAPI/uvicorn) | `http://127.0.0.1:8003` |
-| Frontend dev server (SvelteKit/Vite) | `http://127.0.0.1:5173` |
+The tool list and schemas supplied for the current agent/task are authoritative. Available tools vary by role and context. A name in documentation does not grant access. Report a denied or unavailable operation and use the supported handoff instead of switching task type, shell, or transport to evade it.
 
-## Dev-only entry points
+- `read_file` reads workspace-relative files. It is not arbitrary repository access.
+- `write_file` writes permitted notes/artifacts under the workspace. Preserve existing notes; respect protected files and allowed suffixes.
+- `run_code` is a guarded numeric scratchpad, not an application/database/network inspection environment.
+- `register_strategy` validates code and registers a candidate linked to a real hypothesis. Confirm the returned container ID; file creation alone is insufficient.
+- `request_fix` records a bug report for operator triage. It does not open an approval, dispatch an automatic engineer task, or modify code.
 
-These exist for development; the packaged app does not use them:
+## External development harness
 
-- `start_all.ps1` — full local bootstrap (backend + frontend, optionally the Discord bot when `START_BOT=1` and a token is configured, and the standalone daemon when `START_DAEMON=1`).
-- `python -m forven daemon start` — run the data/risk daemon standalone.
-- `python -m forven bot start` — run the optional Discord bot (legacy).
+When an operator-authorized development agent needs API access without MCP, use `forven.agent` from the repository. Start with `python -m forven.agent health` and consult `forven/agent/README.md` for current commands and response fields. Use the app's typed clients in frontend code. This harness is a transport to the same API, not a permission or gate bypass.
 
-## What Goes Here
+`python -m forven` launches the CLI. Development API startup uses `python -m uvicorn --app-dir . forven.api:app --host 127.0.0.1 --port 8003`. Do not start a duplicate backend when the configured launcher already owns one.
 
-Environment-specific notes worth keeping: device details, local ports, anything unique to this machine. This is your cheat sheet — add whatever helps you do the job.
+Keep local notes concise and dated. Never store credentials here or mistake notes for live configuration.

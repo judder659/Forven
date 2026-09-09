@@ -16,18 +16,12 @@ backtesting and live scanning.
 import json
 
 
-import importlib
-
-
 import logging
 
 import math
 
 
 import os
-
-
-import pkgutil
 
 
 import signal
@@ -162,6 +156,22 @@ def _resolve_backtest_timeout(n_bars: int) -> int:
     return _scale_isolation_timeout(n_bars, _BACKTEST_TIMEOUT, _BACKTEST_TIMEOUT_MAX)
 
 
+def _wait_for_worker_result(
+    executor: concurrent.futures.ProcessPoolExecutor,
+    future: concurrent.futures.Future,
+    timeout: float,
+) -> dict:
+    """Kill before executor.__exit__ waits, including the retry-worker path."""
+    from forven.work_budget import check_work_budget, remaining_time
+
+    try:
+        return future.result(timeout=remaining_time(timeout))
+    except BaseException:
+        _kill_executor_processes(executor)
+        check_work_budget()
+        raise
+
+
 def _resolve_walk_forward_timeout(n_bars: int) -> int:
     return _scale_isolation_timeout(n_bars, _WALK_FORWARD_TIMEOUT, _WALK_FORWARD_TIMEOUT_MAX)
 
@@ -183,7 +193,7 @@ def _kill_executor_processes(executor):
     shutdown the executor afterward to prevent corrupted state.
     """
     import subprocess
-    for pid in list(executor._processes.keys()):
+    for pid in list((getattr(executor, "_processes", None) or {}).keys()):
         try:
             if sys.platform == "win32":
                 # Use taskkill on Windows - more reliable than os.kill.
@@ -361,11 +371,13 @@ def _isolated_backtest_worker(
         oos_context_df,
         initial_capital,
     )
-    oos_equity_curve = [
-        point
-        for point in oos_equity_curve
-        if pd.to_datetime(point.get("timestamp"), utc=True, errors="coerce") >= oos_start_timestamp
-    ]
+    # Parse in one batch: per-point pandas parser setup dominated parallel
+    # optimizer threads for long curves. Preserve the same OOS boundary.
+    timestamps = pd.to_datetime(
+        [point.get("timestamp") for point in oos_equity_curve],
+        utc=True, errors="coerce", format="mixed",
+    )
+    oos_equity_curve = [point for point, keep in zip(oos_equity_curve, timestamps >= oos_start_timestamp) if keep]
     oos_metrics = compute_metrics(
         oos_trades, len(oos_df), timeframe=resolved_timeframe,
         start_date=oos_df.index[0].isoformat(), end_date=oos_df.index[-1].isoformat(),
@@ -1522,69 +1534,20 @@ def _check_data_requirements(strategy_type: str, asset: str, timeframe: str, bar
         return None
 
 
-def _resolve_strategy_class(strategy_type: str | None):
-    """Resolve a strategy class by runtime type, including custom archived-style modules."""
+def _resolve_strategy_class(strategy_type: str | None) -> type[BaseStrategy] | None:
+    """Resolve validated registry types, including archived literal declarations."""
+    from forven.strategies.registry import (
+        _TYPE_MAP, discover, find_archived_runtime_class, resolve_runtime_type,
+    )
 
     normalized_type = str(strategy_type or "").strip().lower()
-
     if not normalized_type:
-
         return None
-
-    try:
-
-        from forven.strategies.registry import _TYPE_MAP, discover, resolve_runtime_type
-
-        discover()
-
-        cls = _TYPE_MAP.get(normalized_type)
-
-        if cls:
-
-            return cls
-
-        # Unique-prefix / case-insensitive / archived-custom fallback via the
-        # runtime-type resolver, so e.g. `volatility_compression` resolves to
-        # the registered `volatility_compression_breakout` class. Keeps
-        # execution aligned with `is_known_runtime_type`.
-        resolved, _meta = resolve_runtime_type(normalized_type, normalized_type)
-        if resolved and resolved in _TYPE_MAP:
-            return _TYPE_MAP[resolved]
-
-    except (ImportError, AttributeError, SyntaxError):
-
-        pass
-
-    try:
-
-        from forven.strategies import custom
-
-        for _importer, modname, _ispkg in pkgutil.iter_modules(custom.__path__):
-
-            if not modname or modname == "__init__":
-
-                continue
-
-            try:
-                # C-1: never import an unsafe custom module in-process.
-                from forven.strategies.registry import assert_custom_module_safe
-
-                assert_custom_module_safe(modname)
-                module = importlib.import_module(f"forven.strategies.custom.{modname}")
-            except (ImportError, AttributeError, SyntaxError, OSError):
-                continue
-
-            if str(getattr(module, "TYPE_NAME", "") or "").strip().lower() != normalized_type:
-
-                continue
-
-            return getattr(module, "STRATEGY_CLASS", None)
-
-    except (ImportError, AttributeError, SyntaxError, OSError):
-
-        pass
-
-    return None
+    discover()
+    resolved, _meta = resolve_runtime_type(normalized_type, normalized_type)
+    if resolved and resolved in _TYPE_MAP:
+        return _TYPE_MAP[resolved]
+    return find_archived_runtime_class(normalized_type)
 
 
 def load_multi_exchange_candles(
@@ -3651,60 +3614,36 @@ def _vectorized_directional_signals(
 
 def _precompute_regimes(df: pd.DataFrame) -> pd.Series:
     """Pre-compute market regime for every bar using only prefix-causal indicators."""
-
-    regimes = pd.Series(RANGE_BOUND, index=df.index)
-
+    # Pandas 3 stores strings in immutable Arrow buffers. Assigning through iloc
+    # once per bar copies those buffers repeatedly (quadratic work), and several
+    # gauntlet threads doing this can starve the API. Build once from a mutable
+    # list and read indicator arrays directly; classification remains identical.
+    regimes = [RANGE_BOUND] * len(df)
     if len(df) < 210:
+        return pd.Series(regimes, index=df.index, dtype=pd.Series(RANGE_BOUND).dtype)
 
-        return regimes
-
-    rsi_vals = compute_rsi(df["close"], 14)
-
-    adx_vals = compute_adx(df, 14)
-
-    ema20 = df["close"].ewm(span=20, adjust=False).mean()
-
-    ema50 = df["close"].ewm(span=50, adjust=False).mean()
-
-    ema200 = df["close"].ewm(span=200, adjust=False).mean()
-
-    h, low_p, c = df["high"], df["low"], df["close"]
-
-    # v5: shared regime ATR-ratio baseline (14-bar recent vs 30-bar lagged) so a bar
-    # classifies to the SAME regime here, in robustness, and in the live detector. The
-    # signal-walk previously used a 44-bar baseline (the odd one out) — see
-    # forven.regime.regime_atr_ratio_series.
-    atr_ratio = regime_atr_ratio_series(h, low_p, c).fillna(1.0)
+    rsi_vals = compute_rsi(df["close"], 14).fillna(50.0).to_numpy(dtype=float)
+    adx_vals = compute_adx(df, 14).fillna(15.0).to_numpy(dtype=float)
+    ema20 = df["close"].ewm(span=20, adjust=False).mean().to_numpy(dtype=float)
+    ema50 = df["close"].ewm(span=50, adjust=False).mean().to_numpy(dtype=float)
+    ema200 = df["close"].ewm(span=200, adjust=False).mean().to_numpy(dtype=float)
+    # Shared 14-bar recent / 30-bar lagged ATR baseline, identical to live and
+    # robustness classification. No full-frame statistics or future bars.
+    atr_ratio = regime_atr_ratio_series(
+        df["high"], df["low"], df["close"]
+    ).fillna(1.0).to_numpy(dtype=float)
 
     for i in range(210, len(df)):
-
-        adx_val = float(adx_vals.iloc[i]) if not np.isnan(adx_vals.iloc[i]) else 15.0
-
-        rsi_val = float(rsi_vals.iloc[i]) if not np.isnan(rsi_vals.iloc[i]) else 50.0
-
-        atr_r = float(atr_ratio.iloc[i]) if not np.isnan(atr_ratio.iloc[i]) else 1.0
-
-        e20, e50, e200_val = float(ema20.iloc[i]), float(ema50.iloc[i]), float(ema200.iloc[i])
-
-        if e20 > e50 > e200_val:
-
+        if ema20[i] > ema50[i] > ema200[i]:
             ema_alignment = "bullish"
-
-        elif e20 < e50 < e200_val:
-
+        elif ema20[i] < ema50[i] < ema200[i]:
             ema_alignment = "bearish"
-
         else:
-
             ema_alignment = "mixed"
-
-        regime, _ = _classify(adx_val, ema_alignment, atr_r, rsi_val)
-
+        regime, _ = _classify(adx_vals[i], ema_alignment, atr_ratio[i], rsi_vals[i])
         if regime in REGIME_KEYS:
-
-            regimes.iloc[i] = regime
-
-    return regimes
+            regimes[i] = regime
+    return pd.Series(regimes, index=df.index)
 
 
 def _strategy_runtime_params(params: dict | None, strategy_obj=None) -> dict:
@@ -4089,9 +4028,13 @@ def _apply_funding_to_trades(
         size_fraction = float(t.get("size_fraction_raw", t.get("size_fraction", 1.0)) or 1.0)
         funding_pnl = -sign * funding_sum * hours * lev * size_fraction
         t["funding_cost_pct"] = round(float(funding_pnl), 6)
+        t["funding_cost_pct_raw"] = float(funding_pnl)
         t["funding_applied"] = True
         t["funding_complete"] = complete
-        t["pnl_pct"] = round(float(t.get("pnl_pct", 0.0)) + funding_pnl, 5)
+        t["pnl_pct_raw"] = float(t.get("pnl_pct_raw", t.get("pnl_pct", 0.0))) + funding_pnl
+        t["pnl_pct"] = round(t["pnl_pct_raw"], 5)
+        if "equity_at_entry" in t:
+            t["pnl_usd"] = float(t["equity_at_entry"]) * t["pnl_pct_raw"]
         if not complete:
             all_complete = False
     return trades, all_complete
@@ -5193,6 +5136,9 @@ def backtest_strategy(
 
     from forven.api_core import _timeframe_to_minutes, get_settings
 
+    from forven.work_budget import check_work_budget
+
+    check_work_budget()
     settings = get_settings()
 
     original_strategy_type = str(strategy_type or "").strip()
@@ -5275,6 +5221,11 @@ def backtest_strategy(
                 "metrics": {},
             }
 
+    from forven.strategies.identity import source_identity
+
+    execution_identity = source_identity(original_strategy_type, strategy_cls)
+    if execution_identity and execution_identity["source_sha256"] != execution_identity["loaded_source_sha256"]:
+        return {"error": "Strategy module changed after loading; reload before validation", "trades": [], "metrics": {}}
     resolved_trade_mode, trade_mode_error = resolve_backtest_trade_mode(
         trade_mode,
         allow_shorting=allow_shorting,
@@ -5545,7 +5496,9 @@ def backtest_strategy(
             lambda ts: get_funding_for_backtest(asset.replace('-USDT', '').replace('/', ''), int(ts))
         )
 
-    warmup = 210  # minimum bars needed for EMA200
+    from forven.strategies.execution_contract import EXECUTION_WARMUP
+
+    warmup = EXECUTION_WARMUP  # shared with forward execution
 
     # ---- Process-isolated execution ----
     # Run the AI's signal generation in a separate OS process so that
@@ -5592,13 +5545,12 @@ def backtest_strategy(
                 asset,
             )
             try:
-                worker_result = future.result(timeout=backtest_timeout)
+                worker_result = _wait_for_worker_result(executor, future, backtest_timeout)
             except concurrent.futures.TimeoutError:
                 log.error(
                     "ISOLATION: Backtest %s timed out after %ds over %d bars (window too large or strategy too slow)",
                     strategy_id, backtest_timeout, n_bars,
                 )
-                _kill_executor_processes(executor)
                 return {
                     "error": (
                         f"Backtest timed out after {backtest_timeout}s over {n_bars} bars. "
@@ -5633,7 +5585,7 @@ def backtest_strategy(
                             resolved_initial_capital,
                             asset,
                         )
-                        worker_result = future.result(timeout=backtest_timeout)
+                        worker_result = _wait_for_worker_result(executor, future, backtest_timeout)
                 except Exception as retry_e:
                     log.error("ISOLATION: Retry failed for %s: %s", strategy_id, retry_e)
                     return {"error": f"Backtest worker process failed (after retry): {retry_e}", "trades": [], "metrics": {}}
@@ -5661,6 +5613,7 @@ def backtest_strategy(
             asset,
         )
 
+    check_work_budget()
     if "error" in worker_result:
         log.warning("Isolated backtest failed for %s: %s", strategy_id, worker_result["error"])
         return {"error": worker_result["error"], "trades": [], "metrics": {}}
@@ -5774,6 +5727,28 @@ def backtest_strategy(
     if data_source and isinstance(metrics, dict):
         metrics["data_source"] = data_source
 
+    if execution_identity and source_identity(original_strategy_type, strategy_cls) != execution_identity:
+        return {"error": "Strategy source changed during backtest; rerun validation", "trades": [], "metrics": {}}
+    if execution_identity:
+        metrics["execution_identity"] = execution_identity
+    from forven.strategies.execution_contract import make_contract
+
+    metrics["execution_contract"] = make_contract(
+        runtime_type=original_strategy_type, asset=asset, timeframe=resolved_timeframe,
+        params=params, identity=execution_identity, leverage=float(leverage),
+        fee_bps=resolved_fee_bps, slippage_bps=resolved_slippage_bps,
+        initial_capital=resolved_initial_capital, execution_controls=execution_controls,
+        trade_mode=resolved_trade_mode, regime_gate=regime_gate,
+        include_funding=resolved_include_funding, warmup=warmup,
+    )
+    # Legacy execution can return plausible trades while ignoring the profile.
+    # The shared kernel supplies entry-capital and concrete-unit evidence.
+    executed_trades = list(is_trades) + list(oos_trades)
+    if not executed_trades or not all(
+        "equity_at_entry" in trade and "size_units" in trade and "size_fraction_raw" in trade
+        for trade in executed_trades
+    ):
+        metrics["execution_contract"]["execution_model"] = "unverified"
     result = {
         "trades": oos_trades, # returns OOS trades for UI visualization
         "metrics": metrics,
@@ -6153,14 +6128,14 @@ def _build_equity_curve_from_trades(
             record
             for record in exits.get(i, [])
             if record["entry_i"] < i
-            and str(record["trade"].get("exit_reason") or "") in {"signal", "time_stop"}
+            and record["trade"].get("exit_at_open", str(record["trade"].get("exit_reason") or "") in {"signal", "time_stop"})
         ]
         for record in opening_exits:
             realized_equity = max(
                 0.0,
                 realized_equity
                 + float(record["base_equity"] or 0.0)
-                * float(record["trade"].get("pnl_pct", 0.0) or 0.0),
+                * float(record["trade"].get("pnl_pct_raw", record["trade"].get("pnl_pct", 0.0)) or 0.0),
             )
             active.pop(record["id"], None)
 
@@ -6194,7 +6169,7 @@ def _build_equity_curve_from_trades(
                 0.0,
                 realized_equity
                 + float(record["base_equity"] or 0.0)
-                * float(record["trade"].get("pnl_pct", 0.0) or 0.0),
+                * float(record["trade"].get("pnl_pct_raw", record["trade"].get("pnl_pct", 0.0)) or 0.0),
             )
             active.pop(record["id"], None)
 
@@ -7151,6 +7126,8 @@ def walk_forward(
     # Validate the same signal/execution semantics deployed by the paper scanner.
     regime_gate = False
 
+    dataset_fingerprint = _walk_forward_frame_fingerprint(df)
+
     # ---- Process-isolated execution ----
     if _should_use_process_isolation():
         n_bars = len(df)
@@ -7189,13 +7166,12 @@ def walk_forward(
                 resolved_embargo_pct,
             )
             try:
-                worker_result = future.result(timeout=walk_forward_timeout)
+                worker_result = _wait_for_worker_result(executor, future, walk_forward_timeout)
             except concurrent.futures.TimeoutError:
                 log.error(
                     "ISOLATION: Walk-forward %s timed out after %ds over %d bars (window too large or strategy too slow)",
                     strategy_id, walk_forward_timeout, n_bars,
                 )
-                _kill_executor_processes(executor)
                 return {"error": (
                     f"Walk-forward timed out after {walk_forward_timeout}s over {n_bars} bars. "
                     "Try a shorter window or fewer folds."
@@ -7229,6 +7205,9 @@ def walk_forward(
             resolved_embargo_pct,
         )
 
+    from forven.work_budget import check_work_budget
+
+    check_work_budget()
     if "error" in worker_result:
         log.warning("Isolated walk-forward failed for %s: %s", strategy_id, worker_result["error"])
         # Preserve the risk-control parity warning even when the fold evaluation could
@@ -7313,6 +7292,7 @@ def walk_forward(
         "start_date": df.index[0].isoformat() if len(df) else start_date,
         "end_date": df.index[-1].isoformat() if len(df) else end_date,
         "cv_method": worker_result.get("cv_method", resolved_cv_method),
+        "dataset_fingerprint": dataset_fingerprint,
         "purge_bars": worker_result.get("purge_bars", resolved_purge_gap),
         "embargo_bars": worker_result.get("embargo_bars", 0),
         "as_of": as_of,
@@ -7328,6 +7308,12 @@ def walk_forward(
     )
 
     return result
+
+
+def _walk_forward_frame_fingerprint(frame: pd.DataFrame) -> str:
+    from forven.strategies.experiment_evidence import frame_fingerprint
+
+    return frame_fingerprint(frame)
 
 
 def _resolve_strategy_vectorized_signals(strategy_obj, df: pd.DataFrame):

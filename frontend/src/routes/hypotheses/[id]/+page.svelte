@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { getHypothesisReadiness } from '$lib/api/hypotheses';
+	import type { IdeaReadiness } from '$lib/api/strategyCreator';
+	import { dispatchNotice } from '$lib/utils/crucibleIntake';
 	import { page } from '$app/stores';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -40,6 +43,23 @@
 	let loading = true;
 	let error: string | null = null;
 	let latestRequestId = 0;
+    let inputReadiness: IdeaReadiness | null = null;
+    let checkingInputs = false;
+    let checkedHypothesis = '';
+    $: if (hypothesis && checkedHypothesis !== JSON.stringify([hypothesis.id,hypothesis.market_thesis,hypothesis.mechanism,hypothesis.target_assets,hypothesis.target_timeframes])) inputReadiness = null;
+    async function checkInputs() {
+        if (!hypothesis || checkingInputs) return;
+        const id = hypothesis.id;
+        const key = JSON.stringify([id,hypothesis.market_thesis,hypothesis.mechanism,hypothesis.target_assets,hypothesis.target_timeframes]);
+        checkingInputs = true;
+        try {
+            const report = await getHypothesisReadiness(id);
+            if (hypothesis?.id !== id || key !== JSON.stringify([hypothesis.id,hypothesis.market_thesis,hypothesis.mechanism,hypothesis.target_assets,hypothesis.target_timeframes])) return;
+            checkedHypothesis = key;
+            inputReadiness = report;
+        } catch (error) { setBanner({tone:'error',message:error instanceof Error ? error.message : 'Data check failed'}); }
+        finally { checkingInputs = false; }
+    }
 	let mutationPending = false;
 	let banner: { tone: 'success' | 'error'; message: string } | null = null;
 	let bannerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -306,8 +326,8 @@
 		try {
 			const res = await retriggerHypothesisResearch(hypothesis.id);
 			setBanner({
-				tone: 'success',
-				message: res.already_running ? 'Research already queued.' : 'Research task queued.',
+				tone: dispatchNotice(res).failed ? 'error' : 'success',
+				message: dispatchNotice(res).message,
 			});
 			await loadDetail(hypothesis.id);
 		} catch (err) {
@@ -340,22 +360,14 @@
 		try {
 			const res = await generateHypothesisStrategies(hypothesis.id, { force });
 			setBanner({
-				tone: 'success',
-				message: res.already_running
-					? 'Candidate strategy task already queued.'
-					: 'Candidate strategy task queued.',
+				tone: dispatchNotice(res).failed ? 'error' : 'success',
+				message: dispatchNotice(res).failed ? dispatchNotice(res).message : res.already_running ? 'Candidate strategy task already queued.' : 'Candidate strategy task queued.',
 			});
 			await loadDetail(hypothesis.id);
 		} catch (err) {
 			const coded = extractErrorCode(err);
-			if (coded?.code === 'source_content_missing' && !force) {
-				mutationPending = false;
-				requestConfirm({
-					message: `${coded.message} Proceed anyway?`,
-					confirmLabel: 'Proceed anyway',
-					tone: 'warn',
-					onConfirm: () => runGenerateStrategies(true),
-				});
+			if (coded?.code === 'source_content_missing') {
+				setBanner({tone:'error',message:coded.message});
 				return;
 			}
 			setBanner({
@@ -772,6 +784,28 @@
 				<p class="mt-4 max-w-4xl text-sm leading-7 text-[#888]">{hypothesis.market_thesis}</p>
 			{/if}
 
+			{#if $page.url?.searchParams.get('intake')}
+				<p class="mt-3 border border-[#333] p-3 text-sm text-[#bbb]" role="status">
+					{$page.url.searchParams.get('intake') === 'queued' ? 'Crucible saved. Research queued.' : $page.url.searchParams.get('intake') === 'deferred' ? 'Crucible saved. Manual mode is waiting for you to start research.' : 'Crucible saved. Check the activity below; if no task is queued, use Re-research to start it.'}
+				</p>
+			{/if}
+            <div class="mt-4 border border-[#333] p-3">
+                <button class="terminal-button text-xs" on:click={checkInputs} disabled={checkingInputs}>{checkingInputs ? 'Checking inputs…' : 'Check data readiness'}</button>
+                {#if inputReadiness}
+                    <p class="mt-2 text-sm text-white">{inputReadiness.can_generate ? 'Basic inputs found — historical coverage still needs testing' : 'Resolve these inputs before development'}</p>
+                    {#each inputReadiness.issues as issue}<p class="mt-2 text-xs text-amber-300">{issue}</p>{/each}
+                    {#each inputReadiness.warnings as warning}<p class="mt-2 text-xs text-[#aaa]">{warning}</p>{/each}
+                {/if}
+            </div>
+			{#if detail?.work_state}
+                <div class="mt-4 border border-[#333] p-3 text-sm" role="status">
+                    <p class="text-white">{detail.work_state.state} · {detail.work_state.task_display_id ?? `Task ${detail.work_state.task_id}`}</p>
+                    {#if detail.work_state.reason}<p class="mt-2 text-amber-300">{detail.work_state.reason}</p>{/if}
+                    <p class="mt-2 text-xs text-[#aaa]">Review the linked task before retrying. Data problems must be resolved before candidate development.</p>
+                    <a class="mr-4 text-xs text-white underline" href="/agents">Review agent tasks</a>
+                    <a class="text-xs text-white underline" href="/data">Review data</a>
+                </div>
+            {/if}
 			{#if researchTask}
 				<div class="mt-4 flex flex-wrap items-center gap-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">
 					<span class="inline-flex h-2 w-2 animate-pulse rounded-full bg-yellow-400"></span>
@@ -856,7 +890,7 @@
 				<div class="border border-[#222] bg-black">
 					<div class="border-b border-[#222] bg-[#050505] px-5 py-4">
 						<h2 class="text-sm font-semibold uppercase tracking-[0.22em] text-[#888]">Forge — Proof Attempts</h2>
-						<p class="mt-1 text-xs text-[#666]">Each candidate is sent to the Forge to prove or disprove this crucible; results roll back up here as the verdict.</p>
+						<p class="mt-1 text-xs text-[#666]">Compare each attempt with the current thesis. Historical or unverified revisions do not establish that the current idea works.</p>
 						<div class="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-[#555]">
 							<span class="text-[#666]">Idea</span><span>→</span><span class="text-[#666]">Forge</span><span>→</span><span class="text-[#666]">Verdict</span>
 						</div>
@@ -903,7 +937,8 @@
 											<div class="text-base font-semibold text-white">{strategy.name}</div>
 											<div class="mt-1 text-sm text-[#666]">{strategy.owner || 'Unassigned owner'}</div>
 										</div>
-										{#if strategy.latest_result}
+										<p class="mb-2 text-[11px] text-amber-200">{strategy.thesis_revision === 'current' ? 'Current thesis at registration — verify implementation matches' : strategy.thesis_revision === 'older' ? 'Earlier thesis revision — historical evidence' : 'Thesis revision unverified — historical attempt'}</p>
+                                        {#if strategy.latest_result}
 											<div class="flex flex-shrink-0 gap-3 text-right text-[11px] uppercase tracking-[0.14em]">
 												<div>
 													<div class="text-[#666]">Sharpe</div>

@@ -712,6 +712,11 @@ def _execute_gauntlet_step(
                         # a fresh held-out bake-off as the decisive check).
                         "validated": opt_result.get("validated"),
                         "wfa_verdict": opt_result.get("wfa_verdict"),
+                        **{key: opt_result.get(key) for key in (
+                            "holdout_applied", "selection_window", "validation_window", "as_of",
+                            "validation_dataset_fingerprint",
+                            "fee_bps", "slippage_bps", "initial_capital",
+                        )},
                     },
                     created_at=datetime.now(timezone.utc).isoformat(),
                 )

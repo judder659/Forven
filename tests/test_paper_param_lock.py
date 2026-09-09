@@ -241,6 +241,16 @@ def test_list_active_workflow_ids_excludes_paper(forven_db):
     _insert_strategy("wf-gauntlet", stage="gauntlet")
     _insert_workflow("wfid-paper", "wf-paper", status="running")
     _insert_workflow("wfid-gauntlet", "wf-gauntlet", status="running")
+    # Both workflows need runnable work so this tests the stage lock rather
+    # than the scheduler's exclusion of workflows with no ready steps.
+    with get_db() as conn:
+        for workflow_id in ("wfid-paper", "wfid-gauntlet"):
+            conn.execute(
+                "INSERT INTO gauntlet_steps "
+                "(id, workflow_id, step_key, order_index, status, updated_at) "
+                "VALUES (?, ?, 'quick_screen', 0, 'pending', ?)",
+                (f"{workflow_id}-screen", workflow_id, datetime.now(timezone.utc).isoformat()),
+            )
 
     ids = list_active_workflow_ids()
     assert "wfid-paper" not in ids  # paper strategy excluded

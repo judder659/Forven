@@ -34,8 +34,15 @@ def _make_crucible(
     return crucible
 
 
-def test_researching_crucible_planner_cycle_creates_one_candidate_task(forven_db):
+def test_researching_crucible_planner_cycle_creates_one_candidate_task(forven_db, monkeypatch, tmp_path):
     from forven.crucible_planner import run_crucible_planner_cycle
+    from forven import data
+    import pandas as pd
+
+    monkeypatch.setattr(data, 'DATA_DIR', tmp_path / 'candles')
+    path = data.parquet_path('BTC/USDT', '1h')
+    path.parent.mkdir(parents=True)
+    pd.DataFrame({'timestamp': [1], 'close': [1]}).to_parquet(path)
 
     crucible = _make_crucible("researching")
 

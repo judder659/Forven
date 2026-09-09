@@ -223,6 +223,11 @@ def resolve_backtest_result_row(strategy_id: str, dataset_id: str):
             (normalized_dataset_id,),
         ).fetchone()
         if row:
+            matched = dict(row)
+            if matched.get("strategy_id") not in normalize_strategy_id_candidates(normalized_strategy_id):
+                return None
+            if matched.get("result_type") not in (None, "", "backtest"):
+                return None
             return row
 
         parsed_symbol, parsed_timeframe = parse_backtesting_dataset_context(normalized_dataset_id)
@@ -245,6 +250,8 @@ def resolve_backtest_result_row(strategy_id: str, dataset_id: str):
         ).fetchall()
 
     for candidate in rows:
+        if dict(candidate).get("result_type") not in (None, "", "backtest"):
+            continue
         candidate_symbol = _normalize_base_asset_symbol(candidate["symbol"])
         candidate_timeframe = str(candidate["timeframe"] or "").strip().lower()
         if candidate_symbol != desired_symbol:
@@ -323,117 +330,28 @@ def calculate_verdict_metrics(metrics: dict[str, Any] | None) -> dict[str, dict[
     gate = config.get("paper_gate", {})
 
     min_trades_req = int(gate.get("min_trades", 30) or 30)
-    min_sharpe_req = _coerce_float(gate.get("min_sharpe", 1.0), 1.0)
-    max_dd_req = _coerce_float(gate.get("max_drawdown_pct", 0.1), 0.1) * 100.0
-    min_pf_req = _coerce_float(gate.get("min_profit_factor", 1.5), 1.5)
-
-    # Evidence-gated: a metric that is ABSENT from the payload yields a
-    # "pending" test, never a synthetic pass. The old behaviour substituted
-    # passing defaults (wfa_ratio 0.8, DD 0.0, PF 1.0), which let a strategy
-    # with no backtest at all clear every test except sample_size — S05838
-    # rode exactly that into the gauntlet (2026-07-04).
-    def _pending(threshold: Any, message: str) -> dict[str, Any]:
-        return {"status": "pending", "value": None, "threshold": threshold, "message": message}
-
+    # This compatibility endpoint has only scalar backtest metrics. They cannot
+    # establish Monte Carlo, significance, cost stress, or independent validation.
+    # Genuine robustness artifacts are served by the robustness/gauntlet paths.
+    tests: dict[str, dict[str, Any]] = {
+        name: {
+            "status": "pending", "value": None, "threshold": None,
+            "message": "Requires a genuine robustness run for this experiment; backtest metrics are insufficient",
+        }
+        for name in DEFAULT_VERDICT_TESTS
+    }
     raw_trades = _metric_evidence(payload, "total_trades")
-    raw_sharpe = _metric_evidence(payload, "sharpe_ratio", "sharpe")
-    raw_wfa = _metric_evidence(payload, "wfa_ratio")
-    raw_dd = _metric_evidence(payload, "max_drawdown_pct")
-    raw_pf = _metric_evidence(payload, "profit_factor")
-    raw_win_rate = _metric_evidence(payload, "win_rate")
+    if raw_trades is not None:
+        import math
 
-    tests: dict[str, dict[str, Any]] = {}
-
-    if raw_trades is None:
-        tests["sample_size"] = _pending(min_trades_req, "No trade-count evidence (no backtest metrics)")
-    else:
-        total_trades = int(_coerce_float(raw_trades, 0.0))
-        tests["sample_size"] = {
-            "status": "pass" if total_trades >= min_trades_req else "fail",
-            "value": total_trades,
-            "threshold": min_trades_req,
-            "message": f"Trade count: {total_trades} (min: {min_trades_req})",
-        }
-
-    if raw_sharpe is None:
-        tests["statistical_significance"] = _pending(min_sharpe_req, "No Sharpe evidence (no backtest metrics)")
-    else:
-        sharpe = _coerce_float(raw_sharpe, 0.0)
-        tests["statistical_significance"] = {
-            "status": "pass"
-            if sharpe >= min_sharpe_req
-            else "warn"
-            if sharpe >= (min_sharpe_req * 0.5)
-            else "fail",
-            "value": sharpe,
-            "threshold": min_sharpe_req,
-            "message": f"Sharpe: {sharpe:.2f} (min: {min_sharpe_req})",
-        }
-
-    if raw_wfa is None:
-        tests["walk_forward"] = _pending(0.7, "No walk-forward evidence (WFA not run)")
-    else:
-        wfa_ratio = _coerce_float(raw_wfa, 0.0)
-        tests["walk_forward"] = {
-            "status": "pass"
-            if wfa_ratio >= 0.7
-            else "warn"
-            if wfa_ratio >= 0.5
-            else "fail",
-            "value": wfa_ratio,
-            "threshold": 0.7,
-            "message": f"WFA ratio: {wfa_ratio:.2%}",
-        }
-
-    if raw_dd is None:
-        tests["monte_carlo"] = _pending(max_dd_req, "No drawdown evidence (no backtest metrics)")
-    else:
-        max_dd = _normalize_drawdown_pct(raw_dd)
-        tests["monte_carlo"] = {
-            "status": "pass"
-            if max_dd <= max_dd_req
-            else "warn"
-            if max_dd <= (max_dd_req * 1.5)
-            else "fail",
-            "value": max_dd,
-            "threshold": max_dd_req,
-            "message": f"Max DD: {max_dd:.2f}% (max: {max_dd_req}%)",
-        }
-
-    if raw_pf is None:
-        tests["parameter_stability"] = _pending(min_pf_req, "No profit-factor evidence (no backtest metrics)")
-    else:
-        pf = _coerce_float(raw_pf, 0.0)
-        tests["parameter_stability"] = {
-            "status": "pass"
-            if pf >= min_pf_req
-            else "warn"
-            if pf >= (min_pf_req * 0.8)
-            else "fail",
-            "value": pf,
-            "threshold": min_pf_req,
-            "message": f"Profit Factor: {pf:.2f} (min: {min_pf_req})",
-        }
-
-    if raw_trades is None:
-        tests["cost_stress"] = _pending(None, "No backtest evidence (fees untested)")
-    else:
-        tests["cost_stress"] = {
-            "status": "pass",
-            "value": 0,
-            "message": "Included in backtest fees",
-        }
-
-    if raw_win_rate is None:
-        tests["regime_performance"] = _pending(50, "No win-rate evidence (no backtest metrics)")
-    else:
-        win_rate = _normalize_win_rate(raw_win_rate)
-        tests["regime_performance"] = {
-            "status": "pass" if win_rate >= 50 else "warn" if win_rate >= 40 else "fail",
-            "value": win_rate,
-            "threshold": 50,
-            "message": f"Win rate: {win_rate:.1f}% (min: 50%)",
-        }
+        count = _coerce_float(raw_trades, -1.0)
+        if math.isfinite(count) and count >= 0 and count.is_integer():
+            total_trades = int(count)
+            tests["sample_size"] = {
+                "status": "pass" if total_trades >= min_trades_req else "fail",
+                "value": total_trades, "threshold": min_trades_req,
+                "message": f"Trade count: {total_trades} (min: {min_trades_req})",
+            }
 
     return tests
 
@@ -448,6 +366,8 @@ def get_overall_verdict(tests: dict[str, dict[str, Any]] | None) -> Literal["pas
     warns = statuses.count("warn")
     pending = sum(1 for status in statuses if status not in {"pass", "warn", "fail"})
 
+    if not statuses:
+        return "pending"
     if fails > 0:
         return "fail"
     if pending > 0:

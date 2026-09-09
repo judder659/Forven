@@ -25,11 +25,18 @@ test.describe('startup and canonical execution status', () => {
 	});
 
 	test('the app shell renders with the risk disclaimer', async ({ page }) => {
+		const liveFrame = new Promise<string>((resolve) => {
+			page.on('websocket', (socket) => {
+				if (new URL(socket.url()).pathname !== '/api/ws/live') return;
+				socket.once('framereceived', () => resolve(socket.url()));
+			});
+		});
 		await page.goto('/');
 		// A fresh browser context has never acknowledged the disclaimer, so the
 		// banner must be visible — its absence on first load means either the
 		// shell failed to render or the paper-only disclaimer regressed.
 		await expect(page.getByText('Paper + testnet only.')).toBeVisible({ timeout: 15_000 });
+		expect(await liveFrame).toBe('ws://127.0.0.1:4173/api/ws/live');
 	});
 });
 

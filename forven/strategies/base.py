@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 
@@ -55,6 +56,15 @@ class Signal:
     confidence: float = 0.0
     indicators: dict = field(default_factory=dict)
     regime_tag: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("entry_signal", "exit_signal"):
+            value = getattr(self, name)
+            if not isinstance(value, (bool, int, float, np.bool_, np.integer, np.floating)) or value not in (0, 1):
+                raise ValueError(f"{name} must be Boolean; specify direction='short' explicitly for shorts")
+            setattr(self, name, bool(value))
+        if self.direction not in ("long", "short"):
+            raise ValueError("Signal direction must be 'long' or 'short'")
 
     @classmethod
     def from_condition(cls, condition, *args, **kwargs) -> "Signal":

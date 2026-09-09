@@ -41,6 +41,7 @@ export default defineConfig({
 			timeout: 180_000,
 			env: {
 				FORVEN_PORT: String(backendPort),
+				FORVEN_CORS_ORIGINS: baseURL,
 				FORVEN_HOME: e2eHome,
 				FORVEN_API_CONTROL_PLANE_ONLY: '1',
 			},

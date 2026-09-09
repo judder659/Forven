@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import math
 
+from forven.work_budget import check_work_budget
+
 # The objective the operator chose: risk-adjusted return. Sharpe is the canonical,
 # always-present metric; sortino/calmar are honored when the backtest reports them.
 DEFAULT_OBJECTIVE = "sharpe_ratio"
@@ -257,6 +259,7 @@ def select_execution_profile(
     scored: list[dict] = []
     baseline: dict | None = None
     for profile in grid:
+        check_work_budget()
         res = _run_candidate(
             strategy_id=strategy_id,
             asset=asset,
@@ -274,6 +277,7 @@ def select_execution_profile(
             start_date=start_date,
             end_date=end_date,
         )
+        check_work_budget()  # never select/freeze from an interrupted sweep
         if res is None:
             continue
         res["score"] = objective_score(res["metrics"], objective)

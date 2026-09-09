@@ -86,7 +86,7 @@ export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'data', label: 'Data', description: 'Local data engine, source priority, coverage, streaming, and retention.', deepLinks: [{ label: 'Data Manager', href: '/data' }] },
   { id: 'lab', label: 'Lab', description: 'Strategy research, pipeline gating, simulation, continuous testing.', deepLinks: [] },
   { id: 'trading', label: 'Trading', description: 'Mode, capital, risk, regime gating.', deepLinks: [] },
-  { id: 'portfolio', label: 'Portfolio', description: 'The book above the strategies: measured-risk allocation and basket products. Everything here proves itself on paper before touching live sizing.', deepLinks: [{ label: 'Portfolio page', href: '/portfolio' }] },
+  { id: 'portfolio', label: 'Portfolio', description: 'The book above the strategies: measured-risk allocation and basket products. Everything here proves itself on paper before touching live sizing.', deepLinks: [] },
   { id: 'hyperliquid', label: 'HyperLiquid', description: 'Credentials, wallets & sub-accounts, spot/perp balances, direction books — all Hyperliquid setup in one place.', deepLinks: [{ label: 'Bot Factory', href: '/bot-factory' }] },
   { id: 'notifications', label: 'Notifications', description: 'Discord transport, event subscriptions, delivery level.', deepLinks: [] },
   { id: 'system', label: 'System', description: 'API keys, remote engine, bot operations, health & telemetry.', deepLinks: [] },
@@ -110,8 +110,8 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'trading-risk-advanced', area: 'trading', label: 'Risk advanced', description: 'Rarely-changed risk filter overrides.', advanced: true },
 
   // Portfolio — the layer above individual strategies (PORT-LAYER).
-  { id: 'portfolio-allocator', area: 'portfolio', label: 'Measured-risk allocator', description: 'Per-strategy risk multipliers from realized vol and correlations, optional book vol targeting, and the live-sizing arm. Paper sandboxes are never scaled.', deepLinkTo: '/portfolio' },
-  { id: 'portfolio-basket', area: 'portfolio', label: 'Funding-carry basket', description: 'The forward-marked paper basket: rebalance cadence, legs, gross leverage, and universe rule. Paper only — live basket execution does not exist yet.', deepLinkTo: '/portfolio' },
+  { id: 'portfolio-allocator', area: 'portfolio', label: 'Measured-risk allocator', description: 'Per-strategy risk multipliers from realized vol and correlations, optional book vol targeting, and the live-sizing arm. Paper sandboxes are never scaled.' },
+  { id: 'portfolio-basket', area: 'portfolio', label: 'Funding-carry basket', description: 'The forward-marked paper basket: rebalance cadence, legs, gross leverage, and universe rule. Paper only — live basket execution does not exist yet.' },
 
   // Lab
   { id: 'lab-pipeline-preset', area: 'lab', label: 'Pipeline stance', description: 'Pick a stance preset to set every gate below in one move, then fine-tune individual knobs (which flips you to Custom).' },
@@ -510,9 +510,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendSection: 'risk',
     backendPath: 'portfolio_layer_enabled',
     description:
-      'Master switch for the portfolio layer (measured-risk allocator + funding-carry paper basket). Off: no Portfolio page, no settings tab, no API routes, no scheduler jobs — the feature is invisible. On: the Portfolio tab appears here in Settings and the page appears in the sidebar. Job seeding takes effect on the next restart or scheduler reconcile.',
+      'Master switch for the measured-risk allocator and funding-carry basket services. Enables their settings and background jobs. Job seeding takes effect on the next restart or scheduler reconcile.',
     usedBy: ['forven.portfolio_allocator', 'forven.basket_runtime', 'forven.scheduler', 'forven.routers.ops'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.portfolio_allocator_enabled',
@@ -526,7 +525,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Compute measured-risk allocation weights across the paper/live cohort every hour (realized vol, strategy correlations, optional book vol target) and publish them with a retrospective virtual-book comparison. Measurement only — sizing is unchanged until "Portfolio allocator sizes live" is also enabled.',
     usedBy: ['forven.portfolio_allocator', 'forven.scheduler'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.portfolio_allocator_live',
@@ -540,7 +538,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Apply the published risk multipliers to LIVE position sizing (scales each live entry’s size fraction; all hard risk gates still check the scaled size). Requires the allocator itself to be enabled; any unmeasured strategy or stale snapshot falls back to neutral 1.0. Paper sizing is never touched.',
     usedBy: ['forven.scanner', 'forven.portfolio_allocator'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.portfolio_lookback_days',
@@ -555,7 +552,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Trailing window of realized kernel parity trades used to measure each strategy’s volatility and the strategy-pair correlations. Shorter adapts faster; longer is more stable. Minimum 14.',
     usedBy: ['forven.portfolio_allocator'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.portfolio_target_book_vol_pct',
@@ -570,7 +566,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Annualized volatility target for the combined book: all multipliers are scaled toward it (bounded by the min/max multiplier clamps). 0 disables vol targeting — weights are relative-risk only.',
     usedBy: ['forven.portfolio_allocator'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.portfolio_min_risk_multiplier',
@@ -584,7 +579,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Floor on any strategy’s allocation multiplier (1.0 = the legacy flat allocation). Stops the allocator from starving a strategy below a usable size.',
     usedBy: ['forven.portfolio_allocator'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.portfolio_max_risk_multiplier',
@@ -598,7 +592,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Ceiling on any strategy’s allocation multiplier. Bounds how much extra risk the allocator can concentrate into one strategy, independent of the hard per-trade risk caps (which always apply to the scaled size).',
     usedBy: ['forven.portfolio_allocator'],
-    deepLinkTo: '/portfolio',
   },
 
   // PORT-LAYER-2: funding-carry basket — a forward-marked PAPER book running
@@ -616,7 +609,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Run the funding-carry basket as a forward-marked paper book: hourly marks + funding accrual from the data lake, rebalances on its own cadence, PnL decomposed into price vs funding vs cost. Paper only — no orders are ever placed. The prove-it stage for the carry edge validated in research.',
     usedBy: ['forven.basket_runtime', 'forven.scheduler'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.basket_rebalance_hours',
@@ -631,7 +623,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Hours between basket rebalances. Research verdict: 24h keeps essentially all of the carry edge at one third the turnover cost of 8h.',
     usedBy: ['forven.basket_runtime'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.basket_n_legs',
@@ -645,7 +636,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Number of perps held on each side (long lowest-funding, short highest-funding). More legs diversifies idiosyncratic moves but dilutes the funding spread captured.',
     usedBy: ['forven.basket_runtime'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.basket_gross_leverage',
@@ -660,7 +650,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Total gross exposure of the basket as a multiple of its equity (split equally across all legs, dollar-neutral). 1.0 = 50% long + 50% short.',
     usedBy: ['forven.basket_runtime'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.basket_rank_buffer',
@@ -675,7 +664,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'How far past the plain top/bottom cut a HELD leg may drift before being swapped out. Re-validation showed most basket turnover was marginal rank flicker, not signal — a buffer of 3 cut turnover ~27% with the same gross carry. 0 = rebuild from scratch every rebalance.',
     usedBy: ['forven.basket_runtime', 'forven.basket_lab'],
-    deepLinkTo: '/portfolio',
   },
   {
     id: 'risk.basket_universe_min_bars',
@@ -690,7 +678,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Minimum 1h bars of lake history a perp needs to enter the basket universe. The default (2 years) mirrors the deep-universe rule the research verdict was validated on; lowering it admits younger listings the edge was not tested against.',
     usedBy: ['forven.basket_runtime'],
-    deepLinkTo: '/portfolio',
   },
 
   // Risk: failed-open retry brake (RETRY-STORM-1). A live open the exchange

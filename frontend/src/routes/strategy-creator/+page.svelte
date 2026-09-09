@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { editableSnapshot } from '$lib/utils/creatorRevision';
+	import { checkIdeaReadiness, type IdeaReadiness } from '$lib/api/strategyCreator';
 	import { goto } from '$app/navigation';
 	import {
 		getIndicators,
@@ -99,6 +101,7 @@
 	function applyTemplate(id: string) {
 		const t = STRATEGY_TEMPLATES.find((x) => x.id === id);
 		if (!t) return;
+		restoreExecution({});
 		currentSpec = clone(t.spec);
 		symbol = t.symbol;
 		timeframe = t.timeframe;
@@ -109,6 +112,7 @@
 		addToast(`Loaded template “${t.name}”`, 'info');
 	}
 	function blankCanvas() {
+		restoreExecution({});
 		currentSpec = clone({
 			indicators: [{ id: 'rsi', kind: 'rsi', params: { length: 14 } }],
 			params: { oversold: 30 },
@@ -181,6 +185,11 @@ TYPE_NAME = "my_strategy"
 	let customErrors: string[] = [];
 	let customWarnings: string[] = [];
 	let customLoadedName = '';
+	let validatedCode = '';
+	$: if (customStatus === 'loaded' && customCode !== validatedCode) {
+		customStatus = 'idle';
+		customLoadedName = '';
+	}
 	let paramsDraft: Record<string, unknown> = {};
 
 	async function loadCustomStrategy() {
@@ -188,13 +197,15 @@ TYPE_NAME = "my_strategy"
 		customErrors = [];
 		customWarnings = [];
 		try {
-			const res = await registerCustomStrategy({ code: customCode });
+			const code = customCode;
+			const res = await registerCustomStrategy({ code });
 			customErrors = res.errors ?? [];
 			customWarnings = res.warnings ?? [];
 			if (res.valid && res.registered && res.strategy_name) {
+				validatedCode = code;
 				customLoadedName = res.strategy_name;
 				customStatus = 'loaded';
-				paramsDraft = { ...(res.default_params ?? {}) };
+				paramsDraft = { ...(res.default_params ?? {}), ...paramsDraft };
 			} else {
 				customStatus = 'failed';
 				if (customErrors.length === 0) customErrors = ['Strategy failed validation.'];
@@ -210,12 +221,44 @@ TYPE_NAME = "my_strategy"
 	let aiLoading = false;
 	let aiError = '';
 	let aiProvider: string | null = null;
+	let aiReadiness: IdeaReadiness | null = null;
+	let aiCheckedKey = '';
+	let aiChecking = false;
+	$: aiInputKey = JSON.stringify([aiPrompt, symbol, timeframe]);
+	$: if (aiCheckedKey !== aiInputKey) aiReadiness = null;
+	async function checkInputs() {
+		if (!aiPrompt.trim() || aiChecking || aiLoading) return;
+		const key = aiInputKey;
+		aiChecking = true;
+		aiError = '';
+		aiProvider = null;
+		try {
+			const report = await checkIdeaReadiness({ description: aiPrompt, symbol, timeframe });
+			if (key !== aiInputKey) return;
+			aiCheckedKey = key;
+			aiReadiness = report;
+		} catch (err) {
+			if (key === aiInputKey) aiError = err instanceof Error ? err.message : 'Data check failed';
+		} finally {
+			aiChecking = false;
+		}
+	}
 	async function generateFromNl() {
-		if (!aiPrompt.trim() || aiLoading) return;
+		if (!aiPrompt.trim() || aiLoading || aiChecking) return;
+		const key = aiInputKey;
+		const draft = draftSnapshot;
+		const libraryId = currentLibraryId;
 		aiLoading = true;
 		aiError = '';
+		aiProvider = null;
 		try {
 			const res = await nlToSpec({ description: aiPrompt, symbol, timeframe });
+			if (key !== aiInputKey || mode !== 'ai' || draft !== draftSnapshot || libraryId !== currentLibraryId) {
+				addToast('Your draft changed during generation. The returned draft was not applied.', 'info');
+				return;
+			}
+			aiCheckedKey = key;
+			aiReadiness = res.readiness ?? null;
 			aiProvider = res.provider ?? null;
 			if (res.spec) {
 				currentSpec = clone(res.spec as unknown as RuleSpec);
@@ -231,7 +274,7 @@ TYPE_NAME = "my_strategy"
 				aiError = (res.errors ?? ['Could not generate a spec.']).join(' ');
 			}
 		} catch (err) {
-			aiError = err instanceof Error ? err.message : 'AI generation failed';
+			if (key === aiInputKey) aiError = err instanceof Error ? err.message : 'AI generation failed';
 		} finally {
 			aiLoading = false;
 		}
@@ -264,6 +307,7 @@ TYPE_NAME = "my_strategy"
 	let previewKey = '';
 	let previewTimer: ReturnType<typeof setTimeout> | undefined;
 	let fitToken = 0;
+	onDestroy(() => clearTimeout(previewTimer));
 
 	$: chartProps = chartContextToWorkspaceProps(previewCtx);
 
@@ -394,6 +438,7 @@ TYPE_NAME = "my_strategy"
 				timeframe = detail.timeframe || timeframe;
 				strategyName = `${detail.name || displayName} (copy)`;
 				strategyDescription = '';
+				restoreExecution(detail.params || {});
 				currentLibraryId = null; // editing a system strategy → Save creates a new library entry
 				mode = 'visual';
 				addToast(`Loaded “${detail.name || displayName}” — edits save as a new strategy.`, 'info');
@@ -405,12 +450,48 @@ TYPE_NAME = "my_strategy"
 		}
 	}
 
-	function payloadForSave() {
-		if (mode === 'code') {
-			return { name: strategyName.trim() || 'My Strategy', kind: 'code' as const, description: strategyDescription, code: customCode, symbol: symbol.trim(), timeframe, params: paramsDraft };
-		}
-		return { name: strategyName.trim() || 'My Strategy', kind: 'visual' as const, description: strategyDescription, spec: liveSpec, symbol: symbol.trim(), timeframe, params: {} };
-	}
+	$: executionProfile = {
+        sizing_mode: sizingMode, risk_per_trade: riskPerTrade, fixed_size: fixedSize,
+        atr_stop_multiplier: atrStopMultiplier, kelly_multiplier: kellyMultiplier,
+        kelly_lookback: kellyLookback, stop_loss_pct: stopLossPct,
+        take_profit_pct: takeProfitPct, trailing_stop_pct: trailingStopPct, time_stop_bars: timeStopBars,
+    };
+    $: savedParams = {
+        ...(mode === 'code' ? paramsDraft : {}), execution_profile: executionProfile,
+        leverage, trade_mode: effectiveTradeMode,
+        _creator_context: { start: startDate, end: endDate, initial_capital: initialCapital, fee_bps: feeBps, slippage_bps: slippageBps },
+    };
+    $: draftPayload = {
+        name: strategyName.trim() || 'My Strategy', kind: mode === 'code' ? 'code' as const : 'visual' as const,
+        description: strategyDescription, code: mode === 'code' ? customCode : null,
+        spec: mode === 'code' ? null : liveSpec, symbol: symbol.trim(), timeframe, params: savedParams,
+    };
+    $: savedEntry = library.find((entry) => entry.id === currentLibraryId);
+    $: draftSnapshot = editableSnapshot(draftPayload);
+    $: dirty = !savedEntry || draftSnapshot !== editableSnapshot(savedEntry);
+    function payloadForSave() { return draftPayload; }
+
+    function restoreExecution(params: Record<string, unknown>) {
+        const profile = (params.execution_profile || {}) as Record<string, number | string | null>;
+        const context = (params._creator_context || {}) as Record<string, number | string>;
+        sizingMode = (profile.sizing_mode || 'full') as typeof sizingMode;
+        riskPerTrade = Number(profile.risk_per_trade ?? 0.02);
+        fixedSize = Number(profile.fixed_size ?? 1000);
+        atrStopMultiplier = Number(profile.atr_stop_multiplier ?? 2);
+        kellyMultiplier = Number(profile.kelly_multiplier ?? 0.5);
+        kellyLookback = Number(profile.kelly_lookback ?? 100);
+        stopLossPct = profile.stop_loss_pct == null ? null : Number(profile.stop_loss_pct);
+        takeProfitPct = profile.take_profit_pct == null ? null : Number(profile.take_profit_pct);
+        trailingStopPct = profile.trailing_stop_pct == null ? null : Number(profile.trailing_stop_pct);
+        timeStopBars = profile.time_stop_bars == null ? null : Number(profile.time_stop_bars);
+        leverage = Number(params.leverage ?? 1);
+        tradeMode = (params.trade_mode || 'long_only') as typeof tradeMode;
+        initialCapital = Number(context.initial_capital ?? 10000);
+        feeBps = Number(context.fee_bps ?? 10);
+        slippageBps = Number(context.slippage_bps ?? 5);
+        startDate = String(context.start ?? defaultRange.startDate);
+        endDate = String(context.end ?? defaultRange.endDate);
+    }
 
 	let savePromptOpen = false;
 	let saveAsName = '';
@@ -439,7 +520,7 @@ TYPE_NAME = "my_strategy"
 			const payload = payloadForSave();
 			let row: LibraryStrategy;
 			if (overwrite && currentLibraryId) {
-				row = await updateLibraryStrategy(currentLibraryId, payload);
+				row = await updateLibraryStrategy(currentLibraryId, { ...payload, expected_version: savedEntry?.version });
 				addToast(`Overwrote “${row.name}”`, 'success');
 			} else {
 				row = await createLibraryStrategy({ ...payload, name: saveAsName.trim() || payload.name });
@@ -462,12 +543,13 @@ TYPE_NAME = "my_strategy"
 		symbol = entry.symbol || symbol;
 		timeframe = entry.timeframe || timeframe;
 		currentLibraryId = entry.id;
+		restoreExecution(entry.params || {});
 		if (entry.kind === 'code') {
 			mode = 'code';
 			customCode = entry.code || CUSTOM_TEMPLATE;
 			customStatus = 'idle';
 			customLoadedName = '';
-			paramsDraft = { ...(entry.params || {}) };
+			paramsDraft = Object.fromEntries(Object.entries(entry.params || {}).filter(([key]) => !['execution_profile', '_creator_context', 'leverage', 'trade_mode'].includes(key)));
 		} else {
 			mode = 'visual';
 			currentSpec = clone((entry.spec as unknown as RuleSpec) ?? null);
@@ -499,15 +581,22 @@ TYPE_NAME = "my_strategy"
 		}
 	}
 
-	async function forgeEntry(entry: LibraryStrategy, ev: Event) {
-		ev.stopPropagation();
+	let forging = false;
+    async function forgeEntry(entry: LibraryStrategy, ev: Event) {
+        ev.stopPropagation();
+        if (forging) return;
+        if (entry.id === currentLibraryId && dirty) {
+            addToast('Save your current changes before sending to Forge.', 'error');
+            return;
+        }
+        forging = true;
 		try {
-			const res = await sendLibraryStrategyToForge(entry.id);
+			const res = await sendLibraryStrategyToForge(entry.id, entry.version);
 			await loadLibrary();
 			addToast(`Sent “${entry.name}” to the Forge (${res.forge.stage})`, 'success', `/lab/strategy/${res.forge.strategy_id}`);
 		} catch (err) {
 			addToast(err instanceof Error ? err.message : 'Send to Forge failed', 'error');
-		}
+		} finally { forging = false; }
 	}
 
 	// Backtest
@@ -517,6 +606,8 @@ TYPE_NAME = "my_strategy"
 	let submitWarning = '';
 	let resultLoading = false;
 	let inlineResult: BacktestResult | null = null;
+	let resultSnapshot = '';
+	$: if (resultSnapshot && resultSnapshot !== draftSnapshot) { inlineResult = null; lastStrategyId = ''; lastResultId = ''; }
 	let lastResultId = '';
 	let lastStrategyId = '';
 	$: busy = submitStatus === 'submitting';
@@ -574,34 +665,15 @@ TYPE_NAME = "my_strategy"
 		};
 	}
 
-	// Persist the "tested" library status optimistically: flip the local card to
-	// 'tested' immediately so the UI reflects the just-run backtest, then reconcile
-	// with the backend. If the persist fails, revert the optimistic status and warn
-	// so the card can't show 'tested' while the backend still holds the old status.
-	async function persistTestedStatus(libraryId: string, resultId: string) {
-		const idx = library.findIndex((l) => l.id === libraryId);
-		const previousStatus = idx >= 0 ? library[idx].status : null;
-		if (idx >= 0 && library[idx].status !== 'tested') {
-			library[idx] = { ...library[idx], status: 'tested', last_result_id: resultId };
-			library = library;
-		}
-		try {
-			const updated = await updateLibraryStrategy(libraryId, { status: 'tested', last_result_id: resultId });
-			const i = library.findIndex((l) => l.id === libraryId);
-			if (i >= 0) {
-				library[i] = updated;
-				library = library;
-			}
-		} catch (err) {
-			const i = library.findIndex((l) => l.id === libraryId);
-			if (i >= 0 && previousStatus !== null) {
-				library[i] = { ...library[i], status: previousStatus };
-				library = library;
-			}
-			console.warn('Failed to persist library status', err);
-			addToast('Could not persist library status — the card status may be out of date', 'warning');
-		}
-	}
+	// Only attach evidence to the exact saved revision submitted for this run.
+    async function persistTestedStatus(libraryId: string, resultId: string, version: number) {
+        try {
+            const updated = await updateLibraryStrategy(libraryId, { status: 'tested', last_result_id: resultId, expected_version: version });
+            library = library.map((entry) => entry.id === libraryId && entry.version === version ? updated : entry);
+        } catch (err) {
+            addToast(err instanceof Error ? err.message : 'Result was not attached to the saved revision.', 'warning');
+        }
+    }
 
 	async function runBacktest() {
 		const error = validateRun();
@@ -614,6 +686,8 @@ TYPE_NAME = "my_strategy"
 		submitWarning = '';
 		inlineResult = null;
 		const request = buildRequest();
+        const testedEntry = !dirty && savedEntry ? { id: savedEntry.id, version: savedEntry.version } : null;
+        const testedSnapshot = draftSnapshot;
 		try {
 			const job = await submitBacktest(request);
 			lastStrategyId = request.strategy_id;
@@ -622,10 +696,11 @@ TYPE_NAME = "my_strategy"
 			addToast(`Backtest ${job.status === 'succeeded' ? 'completed' : 'queued'}`, job.status === 'succeeded' ? 'success' : 'info');
 			if (job.result_id) {
 				lastResultId = job.result_id;
-				if (currentLibraryId) void persistTestedStatus(currentLibraryId, job.result_id);
+				if (testedEntry) void persistTestedStatus(testedEntry.id, job.result_id, testedEntry.version);
 				resultLoading = true;
 				try {
-					inlineResult = await getResult(job.result_id);
+					const result = await getResult(job.result_id);
+					if (draftSnapshot === testedSnapshot) { inlineResult = result; resultSnapshot = testedSnapshot; }
 				} catch {
 					inlineResult = null;
 				} finally {
@@ -755,14 +830,24 @@ TYPE_NAME = "my_strategy"
 							<StrategyBuilder {indicators} initialSpec={currentSpec} disabled={busy} on:change={onBuilderChange} />
 						{:else if mode === 'ai'}
 							<div class="space-y-3">
-								<p class="text-[12px] text-[#666]">Describe your idea in plain English. The AI drafts an editable rule spec, validated against the engine.</p>
+								<p class="text-[12px] text-[#666]">Describe your idea. Local inputs are checked before the AI drafts editable rules. Missing inputs must be resolved first.</p>
 								<textarea bind:value={aiPrompt} rows="4" placeholder="e.g. Buy when RSI drops below 30 and price is above the 200 EMA; sell when RSI goes above 60."
 									class="terminal-input w-full resize-y text-[13px]"></textarea>
-								<button type="button" on:click={generateFromNl} disabled={aiLoading || !aiPrompt.trim()}
+								<button type="button" on:click={checkInputs} disabled={aiChecking || aiLoading || !aiPrompt.trim()} class="terminal-button text-[10px] disabled:opacity-40">{aiChecking ? 'Checking data…' : 'Check data'}</button>
+								<button type="button" on:click={generateFromNl} disabled={aiLoading || aiChecking || !aiPrompt.trim()}
 									class="terminal-button-primary text-[10px] disabled:opacity-40">
 									{aiLoading ? 'Generating…' : 'Generate strategy'}
 								</button>
 								{#if aiProvider}<span class="ml-2 text-[10px] text-[#555]">via {aiProvider}</span>{/if}
+								{#if aiReadiness}
+									<div class="border border-[#333] bg-[#111] p-3 text-[12px] space-y-2" role="status">
+										<p class="text-white">{aiReadiness.can_generate ? 'Basic input check complete' : 'Resolve inputs before generation'}</p>
+										<p class="text-[#aaa]">{symbol} / {timeframe} · Named inputs: {aiReadiness.required.join(', ') || 'Price and volume only detected'}</p>
+										{#each aiReadiness.issues as issue}<p class="text-amber-400">{issue}</p>{/each}
+										{#each aiReadiness.warnings as warning}<p class="text-[#999]">{warning}</p>{/each}
+										<a href="/data" class="text-white underline">Review data collection →</a>
+									</div>
+								{/if}
 								{#if aiError}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{aiError}</div>{/if}
 							</div>
 						{:else}
@@ -913,6 +998,7 @@ TYPE_NAME = "my_strategy"
 					{/if}
 				</div>
 
+				<p class="text-[11px] text-[#888]">Stops, sizing and leverage travel with your saved strategy. Forge re-tests it using pipeline data windows and cost assumptions.</p>
 				<!-- Actions -->
 				<div class="terminal-card p-4">
 					{#if submitError}<div class="mb-3 border border-red-900 bg-red-500/5 px-4 py-2.5 text-sm text-red-400" role="alert">{submitError}</div>{/if}
@@ -927,10 +1013,12 @@ TYPE_NAME = "my_strategy"
 						</button>
 						{#if currentLibraryId}
 							<button type="button" on:click={(e) => { const entry = library.find((l) => l.id === currentLibraryId); if (entry) forgeEntry(entry, e); }}
-								class="terminal-button text-xs"
-								title="Save first, then promote to the Forge pipeline">Send to Forge →</button>
+								disabled={dirty || forging || saving || busy}
+								class="terminal-button text-xs disabled:opacity-40"
+								title={dirty ? "Save your changes first" : "Send this saved revision to Forge"}>Send to Forge →</button>
 						{/if}
 					</div>
+					{#if currentLibraryId && dirty}<p class="mt-2 text-[11px] text-amber-400">Unsaved changes — save before sending to Forge.</p>{/if}
 					{#if !currentLibraryId}
 						<p class="mt-2 text-[11px] text-[#555]">Save to your library to enable Send to Forge.</p>
 					{/if}

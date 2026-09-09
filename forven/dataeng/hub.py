@@ -328,12 +328,8 @@ class _EnrichmentSpec:
     # announced (funding, OI, macro) -> no shift. Mirrors data_manager's
     # _merge_asof_parquet(shift_to_bucket_close=...).
     bucket_close_shift_seconds: int = 0
-    # PARITY with legacy _merge_asof_parquet(fill_coverage_only=True): restrict
-    # ``fill`` to bars AT/AFTER the stream's first covered timestamp. Bars before
-    # coverage stay NaN (unknown), not a fabricated 0 — otherwise the hub hands a
-    # backtest fake zeros where the legacy engine leaves NaN, and the two engines
-    # silently diverge on pre-coverage bars (the liquidations divergence FIX 4's
-    # parity test surfaced).
+    # Compatibility metadata only: joins preserve missing observations instead
+    # of inferring capture coverage and manufacturing zero/default values.
     fill_coverage_only: bool = False
 
 
@@ -585,28 +581,15 @@ def _enrich_with_duckdb(df: pd.DataFrame, specs: list[_EnrichmentSpec]) -> pd.Da
             f"ON b.timestamp >= {alias}.timestamp"
         )
         join_params.append(str(spec.path))
-        # For coverage-only fill, compute the stream's first covered (shifted)
-        # timestamp once and gate the default on it, so pre-coverage bars stay
-        # NaN instead of a fabricated 0 — parity with legacy fill_coverage_only.
-        cov_start = None
-        if spec.fill_coverage_only and spec.fill:
-            cov_start = _stream_coverage_start(spec.path, _shift)
+        from forven.dataeng.enrichment_policy import enrichment_max_age_seconds
+
+        max_age = enrichment_max_age_seconds(spec.path, spec.source_columns)
         for output_col in spec.output_columns:
             joined = f"{alias}.{_quote_identifier(_joined_col(alias, output_col))}"
-            if output_col in spec.fill:
-                if cov_start is not None:
-                    # Fill only at/after coverage start; before it, leave NULL.
-                    select_parts.append(
-                        f"CASE WHEN b.timestamp >= ? THEN COALESCE({joined}, ?) "
-                        f"ELSE {joined} END AS {_quote_identifier(output_col)}"
-                    )
-                    select_params.append(cov_start)
-                    select_params.append(spec.fill[output_col])
-                else:
-                    select_parts.append(f"COALESCE({joined}, ?) AS {_quote_identifier(output_col)}")
-                    select_params.append(spec.fill[output_col])
-            else:
-                select_parts.append(f"{joined} AS {_quote_identifier(output_col)}")
+            select_parts.append(
+                f"CASE WHEN b.timestamp - {alias}.timestamp <= to_seconds({max_age}) "
+                f"THEN {joined} ELSE NULL END AS {_quote_identifier(output_col)}"
+            )
 
     query = f"""
         SELECT {', '.join(select_parts)}

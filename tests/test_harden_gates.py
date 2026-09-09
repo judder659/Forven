@@ -1079,12 +1079,12 @@ def test_engine_version_bumped_with_a_changelog_entry():
     two different engines; a bump without a log entry loses WHY."""
     from forven.engine_provenance import BACKTEST_ENGINE_VERSION, ENGINE_VERSION_LOG
 
-    assert BACKTEST_ENGINE_VERSION == 6
+    assert BACKTEST_ENGINE_VERSION >= 8
     newest = ENGINE_VERSION_LOG[-1]
     assert newest["version"] == BACKTEST_ENGINE_VERSION
-    summary = newest["summary"].lower()
-    assert "funding" in summary and "interval" in summary
-    assert "forward-fill" in summary or "forward fill" in summary
+    summary = next(entry["summary"].lower() for entry in ENGINE_VERSION_LOG if entry["version"] == 7)
+    assert "opening" in summary and "intrabar" in summary
+    assert "enrichment" in summary and "stale" in summary
 
 
 # ===========================================================================

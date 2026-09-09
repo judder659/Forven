@@ -129,13 +129,15 @@ def test_generate_strategies_blocks_placeholder_without_force(placeholder_hypoth
     assert detail["error_code"] == "source_content_missing"
 
 
-def test_generate_strategies_force_bypasses_placeholder_gate(placeholder_hypothesis):
-    result = hypotheses_domain.generate_strategies_payload(
-        placeholder_hypothesis["id"],
-        force=True,
-    )
-    assert result["ok"] is True
-    assert result["task"]["task_id"]
+def test_generate_strategies_force_still_blocks_placeholder(placeholder_hypothesis):
+    """Force cannot fabricate a strategy from an unextracted source stub."""
+    with pytest.raises(HTTPException) as exc:
+        hypotheses_domain.generate_strategies_payload(
+            placeholder_hypothesis["id"],
+            force=True,
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error_code"] == "source_content_missing"
 
 
 def test_generate_strategies_route_surfaces_422_on_placeholder(placeholder_hypothesis):
@@ -153,5 +155,5 @@ def test_generate_strategies_route_surfaces_422_on_placeholder(placeholder_hypot
         f"/api/hypotheses/{placeholder_hypothesis['id']}/generate-strategies",
         json={"force": True},
     )
-    assert forced.status_code == 200
-    assert forced.json()["ok"] is True
+    assert forced.status_code == 422
+    assert forced.json()["detail"]["error_code"] == "source_content_missing"

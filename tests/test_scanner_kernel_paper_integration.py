@@ -132,7 +132,12 @@ def test_kernel_paper_path_fills_now_not_backstamped(forven_db, monkeypatch):
         # the recorded entry is the current mark; the kernel's historical entry is preserved
         # separately for bookkeeping (and differs from the recorded fill).
         assert float(r["entry_price"]) > 0
-        assert sd.get("kernel_historical_entry_price") not in (None, 0)
+        if sd.get("entry_reference_unavailable"):
+            assert sd.get("pending_entry") is True
+            assert sd.get("kernel_historical_entry_price") is None
+            assert r["entry_lag_bps"] is None
+        else:
+            assert sd.get("kernel_historical_entry_price") not in (None, 0)
         # a CLOSED fill-now trade carries the equity-fraction parity flag (gate-eligible).
         if str(r["status"]).upper() == "CLOSED":
             closed_seen += 1

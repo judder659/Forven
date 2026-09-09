@@ -18,6 +18,8 @@ graduation snapshots), and the gauntlet rollup already evaluates with
 """
 
 import logging
+import json
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
@@ -383,10 +385,15 @@ def _classify_status(
         return "live"
     if stage == "research_only":
         return "parked"
-    if promotable:
-        return "ready"
     if any(b.get("kind") == "contention" for b in blockers):
         return "slot_contention"
+    operational = next((b.get("workflow_status") for b in blockers if b.get("workflow_status") in {
+        "blocked_data", "blocked_runtime", "blocked_operator", "cancelled",
+    }), None)
+    if operational:
+        return "awaiting_operator" if operational in {"blocked_operator", "cancelled"} else "waiting_evidence"
+    if promotable:
+        return "ready"
     if in_flight or any(b.get("code") == "validation_in_flight" for b in blockers):
         return "in_flight"
     # The promotion gate is authoritative for the stuck-vs-failed verdict;
@@ -401,6 +408,55 @@ def _classify_status(
     if any(b.get("kind") == "merit" for b in hard):
         return "blocked_merit"
     return "waiting_evidence" if blockers else "unknown"
+
+
+def _current_workflow_blocker(strategy_id: str) -> dict | None:
+    """Read the actual stopping condition, including pre-gauntlet data failures."""
+    with get_db() as conn:
+        try:
+            row = conn.execute(
+                """SELECT w.status, w.current_step_key, s.error_json, s.output_json
+                   FROM gauntlet_workflows w LEFT JOIN gauntlet_steps s
+                     ON s.workflow_id = w.id AND s.step_key = w.current_step_key
+                   WHERE w.strategy_id = ?
+                   ORDER BY w.definition_version DESC, w.created_at DESC LIMIT 1""",
+                (strategy_id,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc):
+                return None  # a fresh installation has no workflow history yet
+            raise
+    if row is None or row["status"] not in {
+        "blocked_data", "blocked_runtime", "blocked_operator", "cancelled", "failed_gate", "running",
+    }:
+        return None
+    status = row["status"]
+    try:
+        payload = json.loads(row["error_json"] or row["output_json"] or "{}")
+    except (ValueError, TypeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    actions = {
+        "blocked_data": ("fix_data", "Restore complete, current market data, then retry the blocked step"),
+        "blocked_runtime": ("run_validation_suite", "Resolve the runtime error, then retry the blocked step"),
+        "blocked_operator": ("review_strategy", "Review the workflow block before resuming validation"),
+        "cancelled": ("review_strategy", "Workflow cancelled — review it before explicitly restarting validation"),
+        "failed_gate": _DEFAULT_MERIT_ACTION,
+        "running": ("wait", "Wait — the workflow is processing this strategy"),
+    }
+    code = str(payload.get("reason_code") or ("validation_in_flight" if status == "running" else status))
+    reason = str(payload.get("message") or f"Workflow {status} — current step: {row['current_step_key'] or 'none'}")
+    if status in {"blocked_data", "blocked_runtime"} and payload.get("retryable") is False:
+        actions[status] = ("review_strategy", "Resolve the missing evidence or configuration before starting a new validation")
+        if code == "insufficient_evidence":
+            actions[status] = ("review_strategy", "Gather enough independent validation data, then start a new validation")
+    kind = "merit" if status == "failed_gate" else "evidence"
+    if code == "gate_contention":
+        kind = "contention"
+        actions[status] = ("wait", "Wait for pipeline capacity or resolve the pending slot decision")
+    return _blocker(reason, code, kind,
+                    "gauntlet_workflow", actions[status], workflow_status=status, step=row["current_step_key"])
 
 
 def _explain_row(row: dict, now: datetime) -> dict:
@@ -506,6 +562,16 @@ def _explain_row(row: dict, now: datetime) -> dict:
             paper_evidence["last_trade_age_days"] = _age_days(last_trade_at, now)
         if paper_evidence:
             evidence["paper"] = paper_evidence
+
+    if stage in {"quick_screen", "gauntlet"}:
+        workflow_blocker = _current_workflow_blocker(strategy_id)
+        if workflow_blocker:
+            # The current data/runtime/cancellation condition explains what the
+            # operator can do now. A downstream "no metrics" message does not.
+            blockers.insert(0, workflow_blocker)
+            promotable = False
+            gate_reason = workflow_blocker["reason"]
+            in_flight = workflow_blocker["workflow_status"] == "running"
 
     pending_approval = _pending_approval(strategy_id)
     last_rejection, rejections_in_stage = _last_rejection(strategy_id, stage_changed_at)

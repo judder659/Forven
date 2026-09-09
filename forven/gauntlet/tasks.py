@@ -7,8 +7,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from forven.gauntlet.engine import RETRYABLE_BLOCK_REASON_CODES
+from forven.work_budget import check_work_budget
 
 log = logging.getLogger("forven.gauntlet.tasks")
+GAUNTLET_RUNTIME_REVISION = "2026-09-09-forge-drain-v2"
 
 # Prose -> taxonomy code for blocked promotions that reach here as TEXT ONLY.
 # brain.transition_stage stamps the transition's reason_code from its own motion
@@ -131,11 +133,20 @@ def _ratio(value: object, default: float = 0.0) -> float:
 def _strategy_row(strategy_id: str) -> dict[str, Any] | None:
     from forven.db import get_db
 
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id, name, type, symbol, timeframe, params, metrics, stage, status FROM strategies WHERE id = ?",
-            (strategy_id,),
-        ).fetchone()
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, name, type, symbol, timeframe, params, metrics, stage, status FROM strategies WHERE id = ?",
+                (strategy_id,),
+            ).fetchone()
+    except Exception as exc:
+        # Compatibility with callers that provide a gate stub against a
+        # deliberately minimal schema. A real initialized database always has
+        # the strategies table; the gate's authoritative status read still
+        # decides whether promotion can proceed.
+        if "no such table" not in str(exc).lower():
+            raise
+        return {"id": strategy_id, "params": "{}"}
     return dict(row) if row else None
 
 
@@ -238,7 +249,10 @@ def _workflow_optimization_windows(workflow: dict[str, Any]) -> tuple[dict[str, 
     config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     selection = config.get("selection_window") if isinstance(config.get("selection_window"), dict) else {}
     validation = config.get("validation_window") if isinstance(config.get("validation_window"), dict) else {}
-    return dict(selection), dict(validation)
+    validation = dict(validation)
+    if config.get("minimum_validation_bars"):
+        validation["minimum_validation_bars"] = config["minimum_validation_bars"]
+    return dict(selection), validation
 
 
 def _data_quality_block(symbol: str, timeframe: str, required_days: int) -> dict[str, Any] | None:
@@ -311,6 +325,10 @@ _DETERMINISTIC_ERROR_TOKENS = (
     # number of retries makes it run. Fail fast so the workflow drains instead of
     # the advancer re-queuing it every cycle (it's flagged retryable otherwise).
     "does not support trade_mode",
+    "unknown strategy type",
+    "failed to instantiate strategy",
+    "no strategy class",
+    "syntaxerror",
 )
 
 # Process-teardown signatures checked BEFORE the deterministic tokens: a run that
@@ -324,18 +342,30 @@ _INFRA_ERROR_TOKENS = (
     "cannot schedule new futures",
     "interpreter shutdown",
     "event loop is closed",
+    "work deadline exceeded",
+    "subprocess budget exhausted",
+    "timed out",
+    "timeouterror",
+    "database is locked",
+    "worker did not become ready",
+    "worker failed to report ready",
+    "worker exited mid-request",
+    "worker process failed",
 )
 
 
 def _classify_exception(exc: Exception) -> dict[str, Any]:
     detail = str(getattr(exc, "detail", exc))
     lowered = detail.lower()
-    if any(token in lowered for token in _INFRA_ERROR_TOKENS):
+    if isinstance(exc, TimeoutError) or any(token in lowered for token in _INFRA_ERROR_TOKENS) or (
+        "isolated worker" in lowered and "died" in lowered
+    ):
         return {"status": "blocked_runtime", "message": detail, "retryable": True}
-    if isinstance(exc, (NameError, AttributeError, TypeError, KeyError)) or any(
+    if isinstance(exc, (NameError, AttributeError, TypeError, KeyError, SyntaxError)) or any(
         token in lowered for token in _DETERMINISTIC_ERROR_TOKENS
     ):
-        return {"status": "failed_gate", "message": detail, "retryable": False}
+        return {"status": "failed_gate", "message": detail, "retryable": False,
+                "merit": False, "reason_code": "invalid_strategy_code"}
     if isinstance(exc, HTTPException) and int(exc.status_code) in {404, 408, 409, 429, 500, 502, 503, 504}:
         return {"status": "blocked_runtime", "message": detail, "retryable": True}
     if any(token in lowered for token in ("no candle", "no data", "dataset", "ohlcv", "symbol not found")):
@@ -492,6 +522,11 @@ def run_quick_screen(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
     metrics = response.get("metrics") if isinstance(response, dict) and isinstance(response.get("metrics"), dict) else {}
     if not metrics:
         metrics = _load_result_metrics(result_id)
+    if not result_id or not metrics or (isinstance(response, dict) and response.get("error")):
+        return {
+            "status": "blocked_runtime", "retryable": True,
+            "message": "Quick-screen backtest returned no completed evidence",
+        }
     return {
         "status": "passed",
         "result_id": result_id,
@@ -755,10 +790,16 @@ def _current_sweep_artifact(
 
     from forven.engine_provenance import BACKTEST_ENGINE_VERSION
 
+    if not _usable_sweep_artifact(row):
+        return False
     config = _loads(row["config_json"], {})
     if not isinstance(config, dict):
         return False
-    if int(config.get("engine_version") or -1) != BACKTEST_ENGINE_VERSION:
+    try:
+        engine_version = int(config.get("engine_version") or -1)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if engine_version != BACKTEST_ENGINE_VERSION:
         return False
     if (config.get("params") if isinstance(config.get("params"), dict) else {}) != params:
         return False
@@ -779,6 +820,18 @@ def _current_sweep_artifact(
     return True
 
 
+def _usable_sweep_artifact(row: Any) -> bool:
+    from forven.policy import is_nonresult_validation_row
+
+    metrics = _loads(row["metrics_json"], {})
+    config = _loads(row["config_json"], {})
+    return (
+        isinstance(metrics, dict)
+        and bool(metrics)
+        and not is_nonresult_validation_row(metrics, config)
+    )
+
+
 def _existing_backtest_timeframes(
     strategy_id: str,
     *,
@@ -791,7 +844,7 @@ def _existing_backtest_timeframes(
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT timeframe, config_json, created_at
+            SELECT timeframe, metrics_json, config_json, created_at
             FROM backtest_results
             WHERE strategy_id = ?
               AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
@@ -828,10 +881,12 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
     errors: list[dict[str, str]] = []
 
     from forven.api_core import BacktestSubmitBody, stage_backtest_duration_days
+    from forven.policy import is_nonresult_validation_row
 
     sweep_duration_days = stage_backtest_duration_days("timeframe_sweep")
 
     for timeframe in sweep_timeframes:
+        check_work_budget()
         tf = str(timeframe or "").strip()
         if not tf:
             continue
@@ -839,7 +894,7 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
             skipped.append(tf)
             continue
         try:
-            _submit_backtest(
+            response = _submit_backtest(
                 BacktestSubmitBody(
                     strategy_id=row["id"],
                     strategy_name=row.get("name"),
@@ -851,14 +906,26 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
                 ),
                 skip_auto_trash=True,
             )
+            result_id = response.get("result_id") if isinstance(response, dict) else None
+            metrics = response.get("metrics") if isinstance(response, dict) else None
+            if not isinstance(metrics, dict) or not metrics:
+                metrics = _load_result_metrics(result_id)
+            if (
+                not result_id or not metrics
+                or is_nonresult_validation_row(metrics, response)
+                or is_nonresult_validation_row(response, {})
+            ):
+                errors.append({"timeframe": tf, "error": "backtest returned no completed evidence"})
+                continue
             submitted.append(tf)
         except Exception as exc:
             errors.append({"timeframe": tf, "error": str(getattr(exc, "detail", exc))})
 
-    if errors and not submitted and not skipped:
+    check_work_budget()
+    if not submitted and not skipped:
         return {
             "status": "blocked_runtime",
-            "message": "all timeframe sweep backtests failed",
+            "message": "timeframe sweep produced no completed evidence",
             "errors": errors,
             "retryable": True,
         }
@@ -935,6 +1002,8 @@ def _best_sweep_result(
     fb_tf, fb_result_id, fb_metrics, fb_trades = best_tf, None, {}, -1.0
     from forven.policy import is_degenerate_backtest_metrics
     for row in rows:
+        if not _usable_sweep_artifact(row):
+            continue
         if params is not None and not _current_sweep_artifact(
             row,
             params=params,
@@ -1076,6 +1145,12 @@ def run_validation_optimization(workflow: dict[str, Any], step: dict[str, Any]) 
                 return {"status": "running", "result_id": result_id, "message": "optimization still running"}
         if persisted_status in {"failed", "error"}:
             err = str(metrics.get("error") or config.get("error") or "optimization failed")
+            if (metrics.get("reason_code") or config.get("reason_code")) == "insufficient_evidence":
+                return {
+                    "status": "blocked_data", "result_id": result_id, "message": err,
+                    "reason_code": "insufficient_evidence", "retryable": False, "merit": False,
+                    "history_requirements": config.get("history_requirements"),
+                }
             # A server-restart interruption is transient infra, not a real failure:
             # the worker thread was killed mid-run and the result was flagged failed
             # on startup. Drop the dead result and re-submit a FRESH optimization
@@ -1108,6 +1183,38 @@ def run_validation_optimization(workflow: dict[str, Any], step: dict[str, Any]) 
 
     try:
         from forven.api_core import OptimizationSubmitBody, stage_backtest_duration_days
+        from forven.gauntlet.history import optimization_history_requirements
+        from datetime import datetime, timedelta, timezone
+
+        history = optimization_history_requirements(
+            str(row["id"]), timeframe, stage_backtest_duration_days("optimization"),
+            _workflow_settings(workflow),
+        )
+        if history["exceeds_validation_capacity"]:
+            return {
+                "status": "blocked_data", "retryable": False, "merit": False,
+                "reason_code": "insufficient_evidence", "history_requirements": history,
+                "message": "Required independent validation history exceeds the supported 50,000-bar window",
+            }
+        end = str(workflow.get("created_at") or "").strip() or datetime.now(timezone.utc).isoformat()
+        start = (datetime.fromisoformat(end.replace("Z", "+00:00")) - timedelta(days=history["duration_days"])).isoformat()
+
+        from forven.dataeng.coverage import ensure_coverage
+
+        # Request the full pre-selection window, including the age of this
+        # workflow. A completed incremental refresh is not evidence that older
+        # history was requested and found unavailable.
+        required_days = max(history["duration_days"], int((datetime.now(timezone.utc) - datetime.fromisoformat(start)).total_seconds() / 86400) + 1)
+        coverage = ensure_coverage(
+            row.get("symbol") or "BTC/USDT", timeframe, required_days,
+            require_request_evidence=True,
+        )
+        if coverage.get("status") == "backfilling" or coverage.get("backfill_error"):
+            return {
+                "status": "blocked_data", "retryable": True, "merit": False,
+                "reason_code": "awaiting_data_backfill", "coverage": coverage,
+                "message": "Requesting history for independent validation before parameter selection",
+            }
 
         response = _submit_optimization(
             OptimizationSubmitBody(
@@ -1115,7 +1222,10 @@ def run_validation_optimization(workflow: dict[str, Any], step: dict[str, Any]) 
                 strategy_name=row.get("name"),
                 symbol=row.get("symbol") or "BTC/USDT",
                 timeframe=timeframe,
-                duration_days=stage_backtest_duration_days("optimization"),
+                duration_days=history["duration_days"],
+                minimum_validation_bars=history["minimum_validation_bars"],
+                start=start,
+                end=end,
                 as_of=_workflow_as_of(workflow),
             )
         )
@@ -1339,11 +1449,18 @@ def run_confirmation_backtest(workflow: dict[str, Any], step: dict[str, Any]) ->
         return _classify_exception(exc)
     if not isinstance(response, dict):
         return {"status": "blocked_runtime", "message": "confirmation backtest returned invalid response", "retryable": True}
+    response_status = str(response.get("status") or "").lower()
+    if response.get("error") or response_status in {"failed", "error", "cancelled"}:
+        return {"status": "blocked_runtime", "message": str(response.get("error") or response_status), "retryable": True}
+    if response_status in {"queued", "pending", "running"}:
+        return {"status": "blocked_runtime", "message": "Confirmation backtest has not completed", "retryable": True}
     confirmation_metrics = (
         response.get("metrics")
         if isinstance(response.get("metrics"), dict)
         else _load_result_metrics(response.get("result_id"))
     )
+    if not response.get("result_id") or not confirmation_metrics:
+        return {"status": "blocked_runtime", "message": "Confirmation backtest returned no result or metrics", "retryable": True}
     # When the strategy row carries NO performance metrics — the quick-screen gate
     # deliberately does not persist a degeneracy-skipped declared-TF slice — promote
     # this confirmation run's metrics as the canonical blob: it is the
@@ -1444,6 +1561,31 @@ def _baseline_backtest_result(strategy_id: str) -> dict[str, Any] | None:
     return _latest_backtest_result(sid)
 
 
+def _workflow_baseline(workflow: dict[str, Any]) -> dict[str, Any] | None:
+    """Use this workflow's confirmation, never an earlier pinned configuration."""
+    from forven.db import get_db
+
+    workflow_id = str(workflow.get("id") or "")
+    strategy_id = str(workflow.get("strategy_id") or "")
+    try:
+        output = _latest_step_output(workflow_id, "confirmation_backtest") if workflow_id else {}
+    except ValueError:
+        # Direct diagnostic callers may supply a context without a persisted workflow.
+        output = {}
+    result_id = str(output.get("result_id") or "").strip()
+    if not result_id:
+        return _baseline_backtest_result(strategy_id)
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT result_id, symbol, timeframe, start_date, end_date
+               FROM backtest_results WHERE result_id = ? AND strategy_id = ?
+               AND LOWER(COALESCE(result_type, 'backtest')) = 'backtest'
+               AND (deleted_at IS NULL OR TRIM(deleted_at) = '')""",
+            (result_id, strategy_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 # ARCH-03: these call the robustness ENGINE directly. They used to import the
 # decorated FastAPI endpoints out of forven.routers.robustness, which meant the
 # autonomous gauntlet — the thing that decides whether a strategy reaches paper —
@@ -1507,11 +1649,43 @@ def _robustness_outcome(
     required_tests: list[str] | None = None,
 ) -> dict[str, Any]:
     from forven.gauntlet.legitimacy import validate_robustness_payload
+    from forven.policy import is_nonresult_validation_row
 
     result_id = response.get("persisted_result_id") or response.get("result_id")
     verdict = str(response.get("verdict") or "").strip().upper()
     legitimacy = validate_robustness_payload(step_key, response)
+    if step_key == "walk_forward" and legitimacy["ok"]:
+        from forven.policy import wfa_insufficient_fold_evidence
+
+        if wfa_insufficient_fold_evidence(response):
+            legitimacy = {
+                "ok": False, "reason_code": "insufficient_evidence",
+                "reason": "Walk-forward produced no folds with enough out-of-sample trades to judge",
+            }
     is_required = _step_is_required(step_key, required_tests)
+    not_applicable = step_key == "parameter_jitter" and response.get("not_applicable") is True
+    response_issue = None
+    if is_nonresult_validation_row(response, {}):
+        response_issue = str(response.get("error") or f"{step_key} has no completed result")
+    elif not str(result_id or "").strip():
+        response_issue = f"{step_key} returned no persisted result reference"
+    elif verdict not in {"PASS", "FAIL"} and not not_applicable:
+        response_issue = f"{step_key} returned no explicit PASS/FAIL verdict"
+    if response_issue:
+        if not is_required:
+            return {
+                "status": "passed", "non_required_failure": True,
+                "result_id": result_id, "verdict": verdict or None,
+                "message": f"{step_key} (non-required) issue recorded: {response_issue}",
+                "payload": response,
+            }
+        return {
+            "status": "blocked_runtime", "retryable": True, "merit": False,
+            "reason_code": "invalid_evidence",
+            "result_id": result_id, "verdict": verdict or None,
+            "message": response_issue,
+            "payload": response,
+        }
 
     # A NON-required test that fails (verdict FAIL or legitimacy miss) must NOT drive the
     # whole serial workflow terminal — the promotion policy only gates on required_tests.
@@ -1529,8 +1703,12 @@ def _robustness_outcome(
                 "legitimacy_reason": legitimacy["reason"],
                 "payload": response,
             }
+        insufficient = legitimacy.get("reason_code") == "insufficient_evidence"
         return {
-            "status": "failed_gate",
+            "status": "blocked_data" if insufficient else "blocked_runtime",
+            "retryable": not insufficient,
+            "merit": False,
+            "reason_code": "insufficient_evidence" if insufficient else "invalid_evidence",
             "result_id": result_id,
             "message": legitimacy["reason"],
             "verdict": verdict or None,
@@ -1652,6 +1830,7 @@ def _dated_wfa_window_issue(
     *,
     n_splits: int,
     train_ratio: float,
+    check_cadence: bool = True,
 ) -> str | None:
     """Reason the optimizer's dated validation window cannot judge WFA folds, or None.
 
@@ -1669,6 +1848,8 @@ def _dated_wfa_window_issue(
     """
     if not _window_supports_wfa_folds(start, end, timeframe):
         return "optimizer validation window too small for folds"
+    if not check_cadence:
+        return None  # planned history is fixed; let actual folds judge optimized cadence
     span_bars = _window_span_bars(start, end, timeframe)
     if span_bars is None:
         return None
@@ -1717,23 +1898,23 @@ def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
     start_date = str(validation_window.get("start") or "").strip() or None
     end_date = str(validation_window.get("end") or "").strip() or None
     if start_date and end_date:
-        # The persisted walk-forward is the FULL-HISTORY edge-existence test; the
-        # anti-leak validation on the optimizer's holdout already ran inside the
-        # optimizer itself. Fall back to the windowless trade-frequency-sized
-        # window (the path every successful WFA has used) rather than submitting
-        # a window that structurally cannot judge folds — too few bars OR too few
-        # expected trades per OOS fold at the strategy's measured cadence.
+        # An inadequate holdout is missing evidence, not permission to reuse
+        # the selection history as independent validation.
         window_issue = _dated_wfa_window_issue(
             str(row["id"]), start_date, end_date, tf,
             n_splits=n_splits, train_ratio=train_ratio,
+            check_cadence=not bool(validation_window.get("minimum_validation_bars")),
         )
         if window_issue:
-            log.info(
-                "walk_forward %s: %s — running full-history windowless WFA instead",
-                row["id"], window_issue,
-            )
-            start_date = None
-            end_date = None
+            message = f"Independent validation window insufficient: {window_issue}"
+            skip = _non_required_skip("walk_forward", workflow, message)
+            if skip is not None:
+                return skip
+            return {
+                "status": "blocked_data", "retryable": False,
+                "message": message,
+                "reason_code": "insufficient_evidence",
+            }
     try:
         from forven.robustness.models import WalkForwardBody
 
@@ -1777,7 +1958,7 @@ def _non_required_skip(step_key: str, workflow: dict[str, Any], reason: str) -> 
 
 
 def run_monte_carlo(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
-    baseline = _baseline_backtest_result(str(workflow.get("strategy_id") or ""))
+    baseline = _workflow_baseline(workflow)
     if not baseline:
         skip = _non_required_skip("monte_carlo", workflow, "no persisted baseline backtest")
         if skip is not None:
@@ -1796,7 +1977,7 @@ def run_monte_carlo(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str,
 
 
 def run_parameter_jitter(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
-    baseline = _baseline_backtest_result(str(workflow.get("strategy_id") or ""))
+    baseline = _workflow_baseline(workflow)
     if not baseline:
         skip = _non_required_skip("parameter_jitter", workflow, "no persisted baseline backtest")
         if skip is not None:
@@ -1824,7 +2005,12 @@ def run_cost_stress(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str,
     row = _strategy_row(str(workflow.get("strategy_id") or ""))
     if not row:
         return {"status": "blocked_runtime", "message": "strategy not found", "retryable": True}
-    baseline = _baseline_backtest_result(str(row["id"]))
+    baseline = _workflow_baseline(workflow)
+    if not baseline:
+        skip = _non_required_skip("cost_stress", workflow, "no persisted baseline backtest")
+        if skip is not None:
+            return skip
+        return {"status": "blocked_data", "message": "Cost stress requires a persisted baseline backtest", "retryable": True}
     try:
         from forven.robustness.models import CostStressBody
 
@@ -1833,7 +2019,7 @@ def run_cost_stress(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str,
                 strategy_id=str(row["id"]),
                 symbol=str(row.get("symbol") or "BTC/USDT"),
                 timeframe=str(row.get("timeframe") or "1h"),
-                baseline_result_id=str(baseline["result_id"]) if baseline else None,
+                baseline_result_id=str(baseline["result_id"]),
                 as_of=_workflow_as_of(workflow),
             )
         )
@@ -1846,7 +2032,7 @@ def run_cost_stress(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str,
 
 
 def run_regime_split(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
-    baseline = _baseline_backtest_result(str(workflow.get("strategy_id") or ""))
+    baseline = _workflow_baseline(workflow)
     if not baseline:
         skip = _non_required_skip("regime_split", workflow, "no persisted baseline backtest")
         if skip is not None:
@@ -2043,6 +2229,17 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
     if not strategy_id:
         return {"status": "blocked_runtime", "message": "workflow is missing strategy_id", "retryable": True}
 
+    from forven.strategies.execution_contract import _asset
+
+    row = _strategy_row(strategy_id)
+    params = _loads((row or {}).get("params"), {})
+    if isinstance(params, dict) and params.get("_asset") and row and _asset(params["_asset"]) != _asset(row.get("symbol")):
+        return {
+            "status": "blocked_operator", "retryable": False, "merit": False,
+            "reason_code": "execution_market_conflict",
+            "message": "Strategy parameters name a different asset than its market; correct the identity and revalidate",
+        }
+
     # STATUS-READONLY-1: the ONE caller that is not a read. This is the gate
     # step itself, so the writes get_strategy_gauntlet_status can make —
     # symbol auto-assignment, the DSR stamp, queueing a dethrone approval a
@@ -2072,6 +2269,14 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
             verdict = str(payload.get("verdict") or "").strip().upper()
             if payload.get("stale_engine"):
                 stale_engine_missing.append(str(item))
+            elif (
+                payload.get("stale") or payload.get("stale_source")
+                or str(payload.get("status") or "").lower() in {
+                    "pending", "queued", "running", "not_started", "cancelled",
+                    "blocked_data", "blocked_runtime", "blocked_operator",
+                }
+            ):
+                absent_missing.append(str(item))
             elif verdict == "FAIL":
                 merit_missing.append(str(item))
             else:
@@ -2107,18 +2312,13 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
     # (the authoritative numeric gate); composite_robustness_score remains a
     # UI/ranking number only (still surfaced in `status`).
 
-    # Pick + freeze the best risk engine BEFORE the transition so the strategy
-    # enters paper sized/stopped by the engine the backtest chose (best-effort;
-    # never blocks promotion). After it transitions to paper its params are
-    # operator-locked, so this is the moment to record it.
+    # Selection belongs before confirmation and robustness. Retrying a failed
+    # selection here would change the parameters AFTER their validation.
     try:
-        profile_selection = _select_and_persist_execution_profile(workflow, strategy_id)
-    except Exception as exc:  # noqa: BLE001 — selection must never block promotion
-        log.warning(
-            "execution-profile selection failed for %s (promoting on the default engine): %s",
-            strategy_id, exc,
-        )
-        profile_selection = {"error": str(exc)}
+        confirmation = _latest_step_output(str(workflow.get("id") or ""), "confirmation_backtest")
+    except ValueError:
+        confirmation = {}
+    profile_selection = confirmation.get("execution_profile_selection") or {"skipped": True}
 
     transition = _transition_to_paper(
         strategy_id=strategy_id,
@@ -2131,6 +2331,13 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
     if target == "paper":
         return {"status": "passed", "transition": transition, "gauntlet_status": status, "execution_profile_selection": profile_selection}
     reason_code = str(transition.get("reason_code") or "").strip()
+    if "parameter asset conflicts with the market" in str(transition.get("blocked_reason") or ""):
+        return {
+            "status": "blocked_operator", "retryable": False, "merit": False,
+            "reason_code": "execution_market_conflict",
+            "message": "Strategy parameters name a different asset than its market; correct the identity and revalidate",
+            "transition": transition,
+        }
     if transition.get("approval_id") or reason_code == "operator_promotion_approval_required":
         return {
             "status": "blocked_operator",
@@ -2205,7 +2412,21 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
     }
 
 
-def run_step(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
+def run_step(workflow: dict[str, Any], step: dict[str, Any], *, background: bool = False) -> dict[str, Any]:
+    output = _loads(step.get("output_json"), {})
+    if (isinstance(output, dict) and output.get("background_job_id")) or (
+        background and str(step.get("step_key") or "") in {
+            "quick_screen", "timeframe_sweep", "confirmation_backtest", "walk_forward",
+            "cost_stress", "monte_carlo", "regime_split", "parameter_jitter",
+        }
+    ):
+        from forven.gauntlet.worker import run_or_poll
+
+        return run_or_poll(workflow, step, _run_step_inline)
+    return _run_step_inline(workflow, step)
+
+
+def _run_step_inline(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
     step_key = str(step.get("step_key") or "")
     if step_key == "quick_screen":
         return run_quick_screen(workflow, step)

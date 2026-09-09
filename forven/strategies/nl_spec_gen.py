@@ -134,6 +134,14 @@ async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: s
     if not description:
         return {"valid": False, "spec": None, "errors": ["Describe a strategy first."], "warnings": [], "provider": None}
 
+    from forven.strategies.idea_readiness import check_idea_readiness
+    import asyncio
+
+    readiness = await asyncio.to_thread(check_idea_readiness, description, symbol, timeframe, visual=True)
+    if not readiness["can_generate"]:
+        return {"valid": False, "spec": None, "errors": readiness["issues"],
+                "warnings": readiness["warnings"], "provider": None, "readiness": readiness}
+
     provider = ai.resolve_available_provider()
     try:
         has_creds = ai._provider_has_credentials(provider)
@@ -175,7 +183,7 @@ async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: s
 
     if spec is not None:
         errors = validate_rule_spec(spec)
-        return {"valid": len(errors) == 0, "spec": spec, "errors": errors, "warnings": [], "provider": provider}
+        return {"valid": len(errors) == 0, "spec": spec, "errors": errors, "warnings": readiness["warnings"], "provider": provider, "readiness": readiness}
 
     if parse_error is not None:
         # We got text back but couldn't complete a spec — almost always a

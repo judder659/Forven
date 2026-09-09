@@ -27,7 +27,7 @@ def get_health_status():
         return {
             "components": [],
             "data_checks": [],
-            "overall": "red" if unavailable else "green",
+            "overall": "red" if unavailable else "unknown",
             "checked_at": None,
             "monitor_running": False,
             "monitor_unavailable": unavailable,
@@ -37,7 +37,7 @@ def get_health_status():
     return {
         "components": [c.to_dict() for c in state.get_all_statuses()],
         "data_checks": [d.to_dict() for d in state.get_all_data_checks()],
-        "overall": state.get_overall_state().value,
+        "overall": state.get_overall_state().value if state.checked_at else "unknown",
         "checked_at": state.checked_at.isoformat() if state.checked_at else None,
         "monitor_running": True,
         "monitor_unavailable": False,

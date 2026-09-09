@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
+	import { dialogFocus, dispatchNotice, intakeKeys } from '$lib/utils/crucibleIntake';
 	import {
 		createHypothesisFromUrl,
 		createHypothesisFromUrls,
@@ -11,7 +12,7 @@
 	export let open = false;
 
 	const dispatch = createEventDispatcher<{
-		created: { id: string };
+		created: { id: string; intake?: string };
 		createdBulk: { ids: string[] };
 		close: void;
 	}>();
@@ -46,6 +47,7 @@
 		ok: boolean;
 		id?: string;
 		errorMsg?: string;
+		notice?: string;
 	}
 	let createResults: CreateResult[] = [];
 	let createProgress: { done: number; total: number } | null = null;
@@ -53,10 +55,12 @@
 	// Combine mode: merge all pasted URLs into ONE crucible with every source
 	// attached, instead of one crucible per URL.
 	let combineMode = false;
-	let combinedResult: { id: string; sources: UrlSourceResult[] } | null = null;
+	let combinedResult: { id: string; sources: UrlSourceResult[]; notice: string; intake: string } | null = null;
 
 	let errorMsg: string | null = null;
 	let previewing = false;
+	let requestVersion = 0;
+	let requestKey = intakeKeys();
 
 	$: parsedCount = parseUrls(urlsRaw).length;
 	$: canPreview = parsedCount > 0 && !previewing && step !== 'submitting';
@@ -75,6 +79,7 @@
 	}
 
 	function resetState(): void {
+		requestKey = intakeKeys();
 		step = 'input';
 		urlsRaw = '';
 		preview = null;
@@ -92,6 +97,8 @@
 	}
 
 	function close(): void {
+		if (step === 'submitting') return;
+		requestVersion++;
 		resetState();
 		dispatch('close');
 	}
@@ -133,6 +140,9 @@
 	}
 
 	async function handlePreview(): Promise<void> {
+		if (!canPreview) return;
+		const version = ++requestVersion;
+		const input = urlsRaw;
 		errorMsg = null;
 		const urls = parseUrls(urlsRaw);
 		if (urls.length === 0) {
@@ -146,6 +156,7 @@
 			if (urls.length === 1) {
 				// Single-URL rich path — identical to the original behavior.
 				const res = await previewHypothesisFromUrl(urls[0]);
+				if (version !== requestVersion || urlsRaw !== input || !open) return;
 				if (!res.ok) {
 					errorMsg = `${res.error_code}: ${res.error}`;
 					return;
@@ -158,7 +169,7 @@
 
 			// Multi-URL: preview each (throttled — every preview is a network +
 			// extraction call against external providers).
-			rows = await mapLimit(urls, 4, async (u): Promise<PreviewRow> => {
+			const fetchedRows = await mapLimit(urls, 4, async (u): Promise<PreviewRow> => {
 				try {
 					const res = await previewHypothesisFromUrl(u);
 					if (res.ok) {
@@ -185,21 +196,25 @@
 					};
 				}
 			});
+			if (version !== requestVersion || urlsRaw !== input || !open) return;
+			rows = fetchedRows;
 			step = 'preview';
 		} catch (err) {
-			errorMsg = err instanceof Error ? err.message : 'Preview failed.';
+			if (version === requestVersion && urlsRaw === input && open) errorMsg = err instanceof Error ? err.message : 'Preview failed.';
 		} finally {
-			previewing = false;
+			if (version === requestVersion) previewing = false;
 		}
 	}
 
 	async function handleCreate(): Promise<void> {
+		if (step !== 'preview') return;
 		if (preview) {
 			// Single-URL rich path — original behavior (create one, then navigate).
 			errorMsg = null;
 			step = 'submitting';
 			try {
 				const res = await createHypothesisFromUrl({
+					request_id: requestKey([preview.url,title,marketThesis,mechanism,claimedEdge]),
 					url: preview.url,
 					title: title.trim() || undefined,
 					market_thesis: marketThesis.trim() || undefined,
@@ -211,7 +226,8 @@
 					step = 'preview';
 					return;
 				}
-				dispatch('created', { id: res.hypothesis.id });
+				step = 'done';
+				dispatch('created', { id: res.hypothesis.id, intake: dispatchNotice(res).state });
 				close();
 			} catch (err) {
 				errorMsg = err instanceof Error ? err.message : 'Create failed.';
@@ -232,6 +248,7 @@
 			step = 'submitting';
 			try {
 				const res = await createHypothesisFromUrls({
+					request_id: requestKey(targets.map((r) => r.canonicalUrl)),
 					urls: targets.map((r) => r.canonicalUrl as string),
 				});
 				if (!res.ok) {
@@ -239,7 +256,7 @@
 					step = 'preview';
 					return;
 				}
-				combinedResult = { id: res.hypothesis.id, sources: res.sources };
+				combinedResult = { id: res.hypothesis.id, sources: res.sources, notice:dispatchNotice(res).message, intake:dispatchNotice(res).state };
 				dispatch('createdBulk', { ids: [res.hypothesis.id] });
 				step = 'done';
 			} catch (err) {
@@ -257,9 +274,9 @@
 		for (const row of targets) {
 			let result: CreateResult;
 			try {
-				const res = await createHypothesisFromUrl({ url: row.canonicalUrl as string });
+				const res = await createHypothesisFromUrl({ url: row.canonicalUrl as string, request_id:requestKey(row.canonicalUrl) });
 				result = res.ok
-					? { raw: row.raw, ok: true, id: res.hypothesis.id }
+					? { raw: row.raw, ok: true, id: res.hypothesis.id, notice: dispatchNotice(res).message }
 					: { raw: row.raw, ok: false, errorMsg: `${res.error_code}: ${res.error}` };
 			} catch (err) {
 				result = {
@@ -286,18 +303,19 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-50 flex items-start justify-center bg-black/80 px-4 py-10"
+		class="fixed inset-0 z-50 flex items-start justify-center bg-black/80 px-4 py-4 sm:py-6"
 		on:click={onBackdropClick}
 		on:keydown={(e) => e.key === 'Escape' && step !== 'submitting' && close()}
 		role="presentation"
 	>
 		<div
-			class="w-full max-w-2xl border border-[#222] bg-[#050505] text-white"
+			use:dialogFocus
+			class="flex max-h-[calc(100dvh-3rem)] w-full max-w-2xl flex-col border border-[#222] bg-[#050505] text-white"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="url-ingest-title"
 		>
-			<header class="flex items-center justify-between border-b border-[#1a1a1a] px-4 py-2">
+			<header class="flex shrink-0 items-center justify-between border-b border-[#1a1a1a] px-4 py-2">
 				<h2 id="url-ingest-title" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
 					Add crucible from URL
 				</h2>
@@ -312,7 +330,7 @@
 				</button>
 			</header>
 
-			<div class="space-y-4 px-5 py-5">
+			<div class="min-h-0 space-y-4 overflow-y-auto px-5 py-5">
 				{#if errorMsg}
 					<div class="border border-red-900 bg-red-500/5 px-3 py-2 text-xs text-red-400">
 						{errorMsg}
@@ -520,6 +538,7 @@
 					<div class="text-sm text-white">
 						Created 1 crucible from {okSources.length} source{okSources.length === 1 ? '' : 's'}.
 					</div>
+					<p class="text-xs text-amber-200">{combinedResult.notice}</p>
 					{#if failedSources.length > 0}
 						<div class="text-[11px] uppercase tracking-[0.18em] text-red-400">Skipped sources</div>
 						<div class="max-h-48 space-y-1 overflow-auto pr-1">
@@ -543,7 +562,7 @@
 							type="button"
 							class="terminal-button-primary text-xs"
 							on:click={() => {
-								if (combinedResult) dispatch('created', { id: combinedResult.id });
+								if (combinedResult) dispatch('created', { id: combinedResult.id, intake: combinedResult.intake });
 								close();
 							}}
 						>
@@ -560,6 +579,7 @@
 							? ''
 							: 's'}.
 					</div>
+					{#each created as result}<p class="text-xs text-[#aaa]">{result.id}: {result.notice}</p>{/each}
 					{#if failed.length > 0}
 						<div class="text-[11px] uppercase tracking-[0.18em] text-red-400">Failed</div>
 						<div class="max-h-48 space-y-1 overflow-auto pr-1">

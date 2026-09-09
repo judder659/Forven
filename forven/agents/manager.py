@@ -19,7 +19,7 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates" / "w
 
 
 def _render_role_md(name: str, role: str, instructions: str | None) -> str:
-    """Build the per-agent ROLE.md body (unchanged historical format)."""
+    """Build the per-agent ROLE.md from its concise role and full instructions."""
     role_content = f"# {name}\n\n{role}\n"
     if instructions:
         role_content += f"\n## Instructions\n\n{instructions}\n"
@@ -53,8 +53,8 @@ def _render_soul_md(name: str, role: str) -> str:
     base = _load_template("SOUL.md")
     header = (
         f"# {name} — Identity\n\n"
-        f"_You are **{name}**, a Forven sub-agent. Your role: {role}_\n\n"
-        f"Everything below is Forven's shared soul — internalize it as your own.\n\n---\n\n"
+        f"You are **{name}**, part of Forven. Your responsibility: {role}\n\n"
+        "Your ROLE.md defines the detailed mandate. The shared principles follow.\n\n---\n\n"
     )
     return header + base
 

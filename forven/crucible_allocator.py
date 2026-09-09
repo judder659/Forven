@@ -61,19 +61,16 @@ SHORT_DIRECTIVE_TEXT = (
 )
 
 DATA_DIRECTIVE_TEXT = (
-    "\n\nORTHOGONAL-DATA QUOTA (CRUX-1): drive THIS candidate's PRIMARY entry "
-    "signal from at least one non-price enrichment column — funding_rate, "
-    "basis, open_interest, ls_ratio / long_pct / short_pct, "
-    "taker_buy_sell_ratio, or iv_btc / iv_eth (DATA_SCHEMA.md has availability "
-    "windows and NaN semantics; guard for column presence). Price/volume "
-    "indicators may filter or time the entry, but must not BE the thesis. "
-    "State the economic rationale in the strategy docstring: who is on the "
-    "other side of this edge and why they keep paying. Evidence: OHLCV-only "
-    "indicator space is the graveyard's most-mined field, while these columns "
-    "carry 4-6 years of history and near-zero surviving exploration. "
-    "Liquidation columns (long_liq_usd/short_liq_usd/liq_imbalance) exist but "
-    "capture only started 2026-07-06 — do not build a backtest thesis on them "
-    "yet."
+    "\n\nORTHOGONAL-DATA QUOTA (CRUX-1): where the assigned hypothesis requires "
+    "non-price inputs, explore its verified enrichment data. Optional examples "
+    "are funding_rate, basis, open_interest, ls_ratio, taker_buy_sell_ratio, "
+    "iv_btc and iv_eth; these examples are not additional requirements. "
+    "Check actual columns and usable history for the chosen market/timeframe. "
+    "Do not assume years of coverage from a feed's name or a stored schema note. "
+    "Preserve the assigned mechanism: if adding a feed would replace the thesis, "
+    "do not apply this quota. Never substitute perpetual OI for options OI or "
+    "one asset's series for a cross-asset feature. State the economic rationale "
+    "and missing dependencies explicitly."
 )
 
 

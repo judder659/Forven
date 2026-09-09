@@ -93,9 +93,9 @@ export async function submitBacktest(request: {
 	leverage?: number;
 	lifecycle_id?: string;
 	preserve_result?: boolean;
-}): Promise<{ job_id: string; status: string; result_id?: string; warning?: string }> {
+}, options: { background?: boolean } = {}): Promise<{ job_id: string; status: string; result_id?: string; warning?: string }> {
 	try {
-		return await fetchApi('/backtests', {
+		return await fetchApi(options.background ? '/backtests?background=true' : '/backtests', {
 			method: 'POST',
 			body: JSON.stringify(request),
 			timeoutMs: LONG_TIMEOUT_MS,

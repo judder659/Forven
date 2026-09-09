@@ -740,6 +740,18 @@ def register_imported_strategy_file(
                 "UPDATE strategies SET type = ?, runtime_type = ? WHERE id = ?",
                 (container_type, runtime_type, strategy_id),
             )
+        if _origin_task_id:
+            # Persist both directions of task provenance in the same commit.
+            # A crash or tool-reporting error after intake must not leave a real
+            # candidate mislabeled as "no registered strategy" by its worker.
+            conn.execute(
+                "UPDATE agent_tasks SET strategy_id=? WHERE display_id=? "
+                "AND status='running' AND type IN ('develop_candidate','generate_strategies') "
+                "AND (strategy_id IS NULL OR TRIM(strategy_id)='') AND json_valid(input_data) "
+                "AND COALESCE(json_extract(input_data,'$.hypothesis_id'),json_extract(input_data,'$.crucible_id')) "
+                "IN (?,(SELECT display_id FROM hypotheses WHERE id=?))",
+                (strategy_id, _origin_task_id, _hypothesis_id, _hypothesis_id),
+            )
         if _session_id:
             from forven.ai_dropzone_sessions import record_strategy_in_session
 

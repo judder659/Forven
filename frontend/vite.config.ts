@@ -9,11 +9,11 @@ const isVitest = process.env.VITEST === 'true';
 
 export default defineConfig({
 	plugins: [sveltekit()],
-	// Pre-bundle deps that are only imported lazily (e.g. `marked` in AIChatPanel)
-	// so Vite doesn't discover them MID-PAGE-LOAD and trigger a re-optimization —
-	// that changes chunk hashes and 404s the already-loaded tab (the blank-white
-	// screen seen on restart). Listing them here forces pre-bundling at startup.
-	optimizeDeps: { include: ['marked'] },
+	// Prepare lazy UI dependencies together before serving a page. Discovering
+	// charts or markdown dependencies later replaces chunks an open tab still needs.
+	optimizeDeps: {
+		include: ['marked', 'lightweight-charts', 'dompurify', 'mermaid', 'svelte-dnd-action']
+	},
 	resolve: isVitest
 		? {
 			conditions: ['browser']

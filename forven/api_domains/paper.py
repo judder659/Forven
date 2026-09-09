@@ -861,7 +861,10 @@ def _collect_compat_paper_sessions(
                 total_pnl_pct = None
         else:
             balance_source = "simulated"
-            initial_capital = 10_000.0
+            from forven.strategies.execution_contract import paper_initial_capital
+
+            with get_db() as capital_conn:
+                initial_capital = paper_initial_capital(capital_conn, strategy_id)
             capital = initial_capital + total_pnl
             total_pnl_pct = (total_pnl / initial_capital) * 100.0 if initial_capital > 0 else 0.0
         session_trade_mode = _resolve_session_trade_mode(decision_params or params_dict, position_sides)

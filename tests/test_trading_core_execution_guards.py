@@ -249,7 +249,18 @@ def test_execute_trade_intent_rejects_oversized_open(forven_db, monkeypatch):
         )
 
 
-def test_market_order_reuses_client_order_ids_for_same_idempotency_key(monkeypatch):
+@pytest.fixture
+def liquid_market(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide observed market inputs without replacing the liquidity checks."""
+    from forven.exchange import liquidity
+
+    monkeypatch.setattr(liquidity, "fetch_asset_ctx", lambda asset: {"dayNtlVlm": 100_000_000, "markPx": 100})
+    monkeypatch.setattr(liquidity, "fetch_l2_book", lambda asset: (
+        [{"px": 99.99, "sz": 100_000}], [{"px": 100.01, "sz": 100_000}],
+    ))
+
+
+def test_market_order_reuses_client_order_ids_for_same_idempotency_key(monkeypatch, liquid_market):
     pytest.importorskip("hyperliquid")
     import forven.exchange.hyperliquid as hl
 
@@ -280,7 +291,7 @@ def test_market_order_reuses_client_order_ids_for_same_idempotency_key(monkeypat
     assert str(captured_orders[1][0]["cloid"]) == second["client_order_ids"]["entry"]
 
 
-def test_market_order_raises_when_exchange_response_has_no_order_ids(monkeypatch):
+def test_market_order_raises_when_exchange_response_has_no_order_ids(monkeypatch, liquid_market):
     pytest.importorskip("hyperliquid")
     import forven.exchange.hyperliquid as hl
 

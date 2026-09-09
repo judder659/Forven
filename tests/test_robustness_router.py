@@ -6,7 +6,11 @@ import pytest
 from fastapi import HTTPException
 
 from forven.db import create_strategy_container, get_db, init_db
+from forven.gauntlet.store import create_or_get_workflow
 from forven.routers import robustness as robustness_router
+from forven.strategies.builtin.rsi_momentum import RSIMomentumStrategy
+from forven.strategies.execution_contract import EXECUTION_WARMUP, make_contract
+from forven.strategies.identity import source_identity
 
 
 def _create_strategy(
@@ -607,6 +611,40 @@ def test_recalculate_robustness_score_reconciles_gauntlet_to_paper(forven_db):
         metrics={"verdict": "PASS", "stressed_sharpe": 0.6},
         config={"status": "succeeded"},
     )
+
+    # A gauntlet→paper transition now requires the exact confirmation backtest
+    # and execution contract that was accepted for promotion. Bind that
+    # evidence here so this fixture exercises the real promotion path.
+    contract = make_contract(
+        runtime_type="rsi_momentum",
+        asset="BTC",
+        timeframe="1h",
+        params={"rsi_period": 14},
+        identity=source_identity("rsi_momentum", RSIMomentumStrategy),
+        leverage=2.0,
+        fee_bps=3.0,
+        slippage_bps=1.0,
+        initial_capital=10000.0,
+        execution_controls=None,
+        trade_mode="long_only",
+        regime_gate=False,
+        include_funding=False,
+        warmup=EXECUTION_WARMUP,
+    )
+    _insert_result(
+        strategy_id,
+        result_id="confirmation-promotable",
+        result_type="backtest",
+        metrics={"total_trades": 42},
+        config={"status": "succeeded", "execution_contract": contract},
+    )
+    workflow = create_or_get_workflow(strategy_id=strategy_id, settings_snapshot={})
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE gauntlet_steps SET status='passed', result_id=? "
+            "WHERE workflow_id=? AND step_key='confirmation_backtest'",
+            ("confirmation-promotable", workflow["id"]),
+        )
 
     robustness_router._recalculate_robustness_score(strategy_id)
     robustness_router._reconcile_stage_after_validation(strategy_id)

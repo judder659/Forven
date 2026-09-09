@@ -198,3 +198,6 @@ notes/
 Python/
 _my_hunks.patch
 h01421_section.txt
+
+# Rebuildable native launcher host (source is scripts/ForvenLauncher.cs).
+/ForvenLauncher.exe

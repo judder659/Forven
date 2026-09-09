@@ -620,7 +620,7 @@ class TestHealthMonitor:
                 await monitor.stop()
         asyncio.run(_run())
 
-    def test_poll_loop_observes_and_alerts_in_manual_mode(self):
+    def test_poll_loop_observes_and_alerts_in_manual_mode(self, forven_db):
         """In MANUAL mode the read-only checks AND alert dispatch must still run
         (so a down AI provider lights the critical banner / Discord alert), but
         the auto-recovery (which takes action) must NOT run."""
@@ -628,13 +628,19 @@ class TestHealthMonitor:
             monitor = HealthMonitor(poll_interval=0.05, data_check_interval=100)
             down = ComponentStatus(name="ai_providers", state=State.RED, message="quota exhausted")
 
-            with patch("forven.health_monitor.autonomous_runtime_allowed", return_value=False), \
+            with patch("forven.health_monitor.autonomous_runtime_allowed", return_value=False) as allowed, \
                  patch("forven.health_monitor.check_ai_providers", return_value=down) as ai_check, \
                  patch("forven.health_monitor._dispatch_alerts") as dispatch, \
                  patch("forven.health_monitor._attempt_recovery") as recovery:
                 await monitor.start()
-                await asyncio.sleep(0.15)
-                await monitor.stop()
+                try:
+                    for _ in range(500):
+                        if allowed.called:
+                            break
+                        await asyncio.sleep(0.01)
+                    assert allowed.called, "monitor never completed its collection and alert pass"
+                finally:
+                    await monitor.stop()
 
             # Observability + alerting ran despite manual mode.
             assert ai_check.called
@@ -645,7 +651,7 @@ class TestHealthMonitor:
             assert monitor.state.get_component("ai_providers").state == State.RED
         asyncio.run(_run())
 
-    def test_poll_loop_auto_recovers_in_autonomous_mode(self):
+    def test_poll_loop_auto_recovers_in_autonomous_mode(self, forven_db):
         """In autonomous mode a freshly-RED component triggers auto-recovery."""
         async def _run():
             monitor = HealthMonitor(poll_interval=0.05, data_check_interval=100)
@@ -656,8 +662,13 @@ class TestHealthMonitor:
                  patch("forven.health_monitor._dispatch_alerts"), \
                  patch("forven.health_monitor._attempt_recovery") as recovery:
                 await monitor.start()
-                await asyncio.sleep(0.15)
-                await monitor.stop()
+                try:
+                    for _ in range(500):
+                        if recovery.called:
+                            break
+                        await asyncio.sleep(0.01)
+                finally:
+                    await monitor.stop()
 
             assert recovery.called
         asyncio.run(_run())

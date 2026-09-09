@@ -10,6 +10,14 @@ from forven.gauntlet.store import create_or_get_workflow, get_workflow_detail
 router = APIRouter(tags=["gauntlet"], dependencies=[Depends(require_operator_access)])
 
 
+@router.get("/api/gauntlet/runtime")
+def read_gauntlet_runtime() -> dict:
+    from forven.gauntlet.tasks import GAUNTLET_RUNTIME_REVISION
+    from forven.gauntlet.worker import runtime_status
+
+    return {"revision": GAUNTLET_RUNTIME_REVISION, **runtime_status()}
+
+
 def _http_for_value_error(exc: ValueError) -> HTTPException:
     """Map the store/engine's bare ValueErrors to honest HTTP status codes at the API
     boundary (keeping those layers framework-agnostic)."""
