@@ -91,6 +91,22 @@ def test_window_fee_slippage_capital_are_forwarded(captured):
     assert kw["leverage"] == 2
 
 
+def test_background_submit_keeps_reserved_job_and_result_until_artifacts_finish(captured, monkeypatch):
+    saved = {}
+    artifacts = []
+    monkeypatch.setattr(core, "_persist_backtest_result_row", lambda **kw: saved.update(kw))
+    monkeypatch.setattr(core, "_write_backtest_result_artifacts", lambda rid, jid, *a, **kw: artifacts.append((rid, jid)))
+    response = core.post_backtest_submit(
+        _submit(preserve_result=True), job_id="bt-reserved", result_id="result-reserved",
+    )
+    assert response["job_id"] == "bt-reserved"
+    assert response["result_id"] == "result-reserved"
+    assert saved["result_id"] == "result-reserved"
+    assert saved["config"]["job_id"] == "bt-reserved"
+    assert saved["config"]["status"] == "running"
+    assert artifacts == [("result-reserved", "bt-reserved")]
+
+
 def test_sizing_and_stop_controls_are_forwarded(captured):
     core.post_backtest_submit(_submit(
         sizing_mode="fraction", risk_per_trade=0.02,

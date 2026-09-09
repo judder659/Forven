@@ -23,6 +23,7 @@
 	let saving = false;
 	let error: string | null = null;
 	let refreshing = false;
+	let modelSearch = '';
 
 	// Batched edits: toggle as many models as you like, then save once.
 	let pending: Set<string> | null = null;
@@ -73,7 +74,12 @@
 	}
 
 	$: shownKeys = pending ?? storeKeys;
-	$: grouped = modelOptions.reduce<Record<string, ForvenAgentModelOption[]>>((acc, opt) => {
+	$: searchWords = modelSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
+	$: filteredModels = modelOptions.filter((opt) => {
+		const text = `${opt.provider} ${opt.label} ${opt.model_id}`.toLowerCase();
+		return searchWords.every((word) => text.includes(word));
+	});
+	$: grouped = filteredModels.reduce<Record<string, ForvenAgentModelOption[]>>((acc, opt) => {
 		(acc[opt.provider] ??= []).push(opt);
 		return acc;
 	}, {});
@@ -101,6 +107,15 @@
 			{refreshing ? 'Refreshing…' : 'Refresh from providers'}
 		</button>
 	</header>
+	<label class="block text-xs text-[#888]">
+		Search models
+		<input
+			type="search"
+			bind:value={modelSearch}
+			placeholder="GPT-6, Fable, Gemini, provider…"
+			class="mt-1 w-full rounded border border-[#333] bg-[#111] px-3 py-2 text-sm text-white"
+		/>
+	</label>
 
 	{#if error}
 		<p class="text-xs text-red-400" role="alert">{error}</p>
@@ -113,6 +128,9 @@
 			No models discovered. Connect a provider under the Providers &amp; Keys tab.
 		</p>
 	{:else}
+		{#if filteredModels.length === 0}
+			<p class="text-sm text-[#888]">No models match your search.</p>
+		{/if}
 		<div class="space-y-4">
 			{#each Object.entries(grouped) as [provider, opts] (provider)}
 				{@const providerConnected = $connectedProviderIds.has(provider)}

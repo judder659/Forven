@@ -14,16 +14,21 @@ Strategies:
 
 import json
 import logging
+import math
 import sqlite3
 import threading
 import time
+from typing import TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
-from forven.db import get_db, init_db, kv_get, kv_set, log_activity, next_container_id
+if TYPE_CHECKING:
+    from forven.strategies.execution_kernel import KernelResult
+
+from forven.db import ensure_db_initialized, get_db, kv_get, kv_set, log_activity, next_container_id
 from forven.exchange.risk import (
     LIVE_PER_TRADE_RISK_CAP_DEFAULT as _LIVE_PER_TRADE_RISK_CAP_DEFAULT,
     calculate_position_size,
@@ -39,6 +44,7 @@ from forven.exchange.risk import (
     sync_from_trades,
 )
 from forven.strategies import sizing as _sizing
+from forven.strategies.execution_contract import EXECUTION_RUNTIME_REVISION as EXECUTION_RUNTIME_REVISION
 from forven.strategies.execution_kernel import cost_breakdown_usd as _kernel_cost_breakdown_usd
 from forven.market_cache import (
     load_price_snapshot,
@@ -108,20 +114,20 @@ _TIMEFRAME_SECONDS = {
 }
 
 
-def _coerce_positive_float(value) -> float | None:
+def _coerce_positive_float(value: object) -> float | None:
     try:
         parsed = float(value)
     except Exception:
         return None
-    return parsed if parsed > 0 else None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
 
 
-def _coerce_non_negative_float(value) -> float | None:
+def _coerce_non_negative_float(value: object) -> float | None:
     try:
         parsed = float(value)
     except Exception:
         return None
-    return parsed if parsed >= 0 else None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
 
 
 def _trim_unclosed_latest_candle(
@@ -682,7 +688,7 @@ _PAPER_SANDBOX_INITIAL_CAPITAL = 10_000.0
 
 
 def _get_paper_strategy_equity(strategy_id: str) -> float:
-    """Current paper-sandbox equity for a strategy: the $10k starting capital plus
+    """Current paper-sandbox equity: the accepted starting capital plus
     its realized closed-trade PnL. Mirrors the "Capital" figure on the paper card
     (``api_domains/paper.py``: initial_capital + total_pnl). Each paper strategy is
     an ISOLATED sandbox, so its position must be sized as a % of THIS balance — not
@@ -693,7 +699,10 @@ def _get_paper_strategy_equity(strategy_id: str) -> float:
     if not sid:
         return _PAPER_SANDBOX_INITIAL_CAPITAL
     try:
+        from forven.strategies.execution_contract import paper_initial_capital
+
         with get_db() as conn:
+            initial_capital = paper_initial_capital(conn, sid)
             row = conn.execute(
                 """
                 SELECT COALESCE(SUM(pnl_usd), 0.0) AS realized
@@ -706,9 +715,9 @@ def _get_paper_strategy_equity(strategy_id: str) -> float:
             ).fetchone()
         realized = float((dict(row).get("realized") if row else 0.0) or 0.0)
     except Exception:
-        realized = 0.0
-    equity = _PAPER_SANDBOX_INITIAL_CAPITAL + realized
-    return equity if equity > 0 else _PAPER_SANDBOX_INITIAL_CAPITAL
+        return 0.0  # unavailable equity must not mint a new paper allocation
+    equity = initial_capital + realized
+    return max(equity, 0.0)
 
 
 def _recent_strategy_returns(strategy_id: str, lookback: int = 200) -> list[float]:
@@ -3274,10 +3283,14 @@ def _update_trade_fill(trade_id: str, fill_price: float, fill_kind: str, signal_
     venue slippage (the remainder). A paper fill IS the mark, so paper skew is
     pure lag.
     """
+    if _coerce_positive_float(fill_price) is None:
+        return False
+    if fill_kind == "entry" and filled_size is not None and _coerce_positive_float(filled_size) is None:
+        return False  # never turn a zero/invalid fill into the requested position
     try:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT direction, signal_data, signal_entry_price, signal_exit_price FROM trades WHERE id = ?",
+                "SELECT direction, signal_data, signal_entry_price, signal_exit_price, size, leverage FROM trades WHERE id = ?",
                 (trade_id,),
             ).fetchone()
             if not row:
@@ -3317,16 +3330,41 @@ def _update_trade_fill(trade_id: str, fill_price: float, fill_kind: str, signal_
                         updates.append("size = ?")
                         values.append(filled_size_f)
                         signal_data["filled_size"] = filled_size_f
+                # The exchange can round or partially fill an order. Preserve
+                # requested/submitted intent, then account from confirmed units.
+                if signal_data.get("kernel_managed"):
+                    actual_units = _coerce_positive_float(signal_data.get("filled_size")) or _coerce_positive_float(row["size"])
+                    entry_equity = _coerce_positive_float(signal_data.get("kernel_equity_at_entry"))
+                    entry_leverage = _coerce_positive_float(row["leverage"])
+                    if actual_units and entry_equity and entry_leverage:
+                        actual_fraction = actual_units * float(fill_price) / (entry_equity * entry_leverage)
+                        signal_data["kernel_size_fraction"] = actual_fraction
+                        signal_data["sizing_filled_units"] = actual_units
+                        signal_data["sizing_notional_usd"] = actual_units * float(fill_price)
+                        signal_data["sizing_margin_usd"] = actual_units * float(fill_price) / entry_leverage
+                        stop = _coerce_positive_float(signal_data.get("stop_loss_price"))
+                        if stop:
+                            signal_data["sizing_loss_at_stop_usd"] = actual_units * abs(float(fill_price) - stop)
+                        requested = _coerce_positive_float(signal_data.get("kernel_requested_size_fraction"))
+                        if requested:
+                            signal_data["execution_allocation_ratio"] = actual_fraction / requested
+                        submitted = _coerce_positive_float(signal_data.get("sizing_submitted_units"))
+                        if submitted:
+                            signal_data["sizing_fill_ratio"] = actual_units / submitted
                 signal_data.pop("pending_open_reconcile", None)
                 signal_data.pop("pending_open_reconcile_at", None)
                 signal_data.pop("open_execution_failure_reason", None)
                 signal_data.pop("fill_persistence_failed", None)
                 signal_data["entry_finalization_state"] = "finalized_direct"
                 signal_data["entry_finalized_at"] = get_now().isoformat()
-                ref_price = signal_price if signal_price not in (None, 0) else row["signal_entry_price"]
+                ref_price = signal_data.get("expected_entry_price") or signal_price or row["signal_entry_price"]
+                if signal_data.get("entry_reference_unavailable"):
+                    ref_price = None
+                    updates.extend(["signal_entry_price = NULL", "entry_slippage_bps = NULL", "entry_lag_bps = NULL"])
+                    signal_price = None
                 if signal_price not in (None, 0):
                     updates.append("signal_entry_price = ?")
-                    values.append(float(signal_price))
+                    values.append(float(ref_price))
                 if ref_price not in (None, 0):
                     side = "buy" if direction == "long" else "sell"
                     updates.append("entry_slippage_bps = COALESCE(?, entry_slippage_bps)")
@@ -3338,10 +3376,14 @@ def _update_trade_fill(trade_id: str, fill_price: float, fill_kind: str, signal_
                 updates.extend(["fill_exit_price = ?", "exit_price = ?"])
                 values.append(float(fill_price))
                 values.append(float(fill_price))
-                ref_price = signal_price if signal_price not in (None, 0) else row["signal_exit_price"]
+                ref_price = signal_data.get("expected_exit_price") or signal_price or row["signal_exit_price"]
+                if signal_data.get("exit_reference_unavailable"):
+                    ref_price = None
+                    updates.extend(["signal_exit_price = NULL", "exit_slippage_bps = NULL", "exit_lag_bps = NULL"])
+                    signal_price = None
                 if signal_price not in (None, 0):
                     updates.append("signal_exit_price = ?")
-                    values.append(float(signal_price))
+                    values.append(float(ref_price))
                 if ref_price not in (None, 0):
                     side = "sell" if direction == "long" else "buy"
                     updates.append("exit_slippage_bps = COALESCE(?, exit_slippage_bps)")
@@ -3839,13 +3881,22 @@ def _execute_direct(
                 filled_size_f = float(filled_size) if filled_size is not None else None
             except (TypeError, ValueError):
                 filled_size_f = None
-            if filled_size_f is not None and filled_size_f + 1e-12 < float(size):
+            venue_size = _coerce_positive_float(result.get("requested_size")) or float(size)
+            # The adapter reports its lot-rounded order quantity. Keep that
+            # separate from strategy sizing and from an actual partial fill.
+            order_meta["sizing_submitted_units"] = venue_size
+            order_meta["sizing_lot_reduction_units"] = max(0.0, float(size) - venue_size)
+            _update_trade_signal_data(trade_id, {
+                "sizing_submitted_units": venue_size,
+                "sizing_lot_reduction_units": order_meta["sizing_lot_reduction_units"],
+            })
+            if filled_size_f is not None and filled_size_f + 1e-12 < venue_size:
                 order_meta["partial_fill"] = True
-                order_meta["requested_size"] = float(size)
+                order_meta["requested_size"] = venue_size
                 order_meta["filled_size"] = filled_size_f
                 log.warning(
                     "Partial fill on %s %s trade=%s: requested %s, filled %s",
-                    asset, direction, trade_id, size, filled_size_f,
+                    asset, direction, trade_id, venue_size, filled_size_f,
                 )
             if fill is not None:
                 _fill_persisted = _persist_live_entry_fill(
@@ -4834,6 +4885,12 @@ def manage_positions(
 
         price = signal["price"]
 
+        if strat.get("execution_identity_error"):
+            strategy_diag.update(execution_decision="blocked", blocked_reason=strat["execution_identity_error"])
+            if diagnostics is not None:
+                diagnostics[strat_id] = strategy_diag
+            return actions
+
         # Pipeline stage gate — only strategies that have passed through the
         # pipeline (at minimum paper stage) are allowed to open trades.
         _EXECUTION_ELIGIBLE_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
@@ -5713,9 +5770,18 @@ def _load_deployed_strategies() -> dict:
                 continue
 
             row_timeframe = str(row.get("timeframe") or "").strip().lower() or None
+            from forven.strategies.identity import execution_identity_error
+
+            identity_error = execution_identity_error(row, resolved_runtime_type)
+            from forven.strategies.execution_contract import execution_binding
+
+            execution_contract, binding_error = execution_binding(row)
+            identity_error = identity_error or binding_error
             merged[sid] = {
                 "name": row.get("name", sid),
                 "asset": asset,
+                "symbol": row.get("symbol"),
+                "stage_changed_at": row.get("stage_changed_at"),
                 "type": stype,
                 "runtime_type": resolved_runtime_type,
                 "family_type": diagnostic["family_type"],
@@ -5728,8 +5794,11 @@ def _load_deployed_strategies() -> dict:
                 "param_unknown_params": diagnostic["param_unknown_params"],
                 "param_unsupported_rule_blobs": diagnostic["param_unsupported_rule_blobs"],
                 "paper_certified": certified_for_paper,
+                "execution_identity_error": identity_error,
+                "execution_contract": execution_contract,
             }
-            diagnostic["execution_decision"] = "loaded"
+            diagnostic["execution_decision"] = "manage_existing_only" if identity_error else "loaded"
+            diagnostic["blocked_reason"] = identity_error
             load_diagnostics[sid] = diagnostic
         except Exception as exc:
             # Per-row failure must not nuke the whole load. Record the
@@ -5897,6 +5966,118 @@ def _paper_include_funding_enabled() -> bool:
     funds by default). Reads the SAME setting key as the backtest so the two engines
     keep ONE funding convention — net-costs parity."""
     return _scanner_bool_setting("backtest_include_funding", True)
+
+
+def _kernel_execution_assumptions(strat: dict) -> dict:
+    """Use the accepted backtest's costs, including legitimate zero-cost inputs."""
+    contract = strat.get("execution_contract") or {}
+    return {
+        "fee_bps": contract.get("fee_bps", max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)),
+        "slippage_bps": contract.get("slippage_bps", max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)),
+        "include_funding": contract.get("include_funding", _paper_include_funding_enabled()),
+    }
+
+
+def _recorded_execution_assumptions(strat: dict, signal_data: dict) -> dict:
+    assumptions = _kernel_execution_assumptions(strat)
+    saved = signal_data.get("execution_assumptions")
+    if isinstance(saved, dict):
+        assumptions.update({key: saved[key] for key in assumptions if key in saved})
+    elif signal_data.get("fee_bps") is not None:
+        assumptions["fee_bps"] = signal_data["fee_bps"]
+    return assumptions
+
+
+def _kernel_entry_fraction(
+    strat_id: str, strat: dict, position: dict, equity: float, leverage: float, *, execution_type: str = "paper",
+) -> float:
+    contract = strat.get("execution_contract") or {}
+    controls = _sizing.normalize_execution_controls(
+        contract.get("execution_controls") or _sizing.extract_execution_profile(contract.get("params", strat.get("params"))),
+    )
+    fraction = float(position.get("size_fraction") or 0.0)
+    if equity <= 0:
+        return 0.0
+    if "allocated_size_fraction" in position:
+        fraction = float(position["allocated_size_fraction"])
+        # A routed book may supply a smaller capital base after planning.
+        if controls and controls.get("sizing_mode") == "fixed":
+            fraction *= float(position["allocation_equity"]) / equity
+    elif controls and controls.get("sizing_mode") == "fixed":
+        # Use actual forward equity, not hypothetical profits before go-live.
+        fraction = _sizing.size_fraction(controls, None, leverage=leverage,
+                                        initial_capital=equity, current_equity=equity)
+    occupied = _kernel_occupied_margin(strat_id, execution_type)
+    return _sizing.allocate_entry_fractions([fraction], equity=equity, occupied_margin=occupied)[0]
+
+
+def _kernel_occupied_margin(strat_id: str, execution_type: str) -> float:
+    """Reserve existing dollars within the executing strategy's lane."""
+    return sum(
+        float(row.get("size") or 0) * float(row.get("fill_entry_price") or row.get("entry_price") or 0)
+        / max(float(row.get("leverage") or 1), 1e-9)
+        for row in _get_open_trades(strat_id)
+        if _recorded_row_execution_lane(row) in {execution_type, None}
+    )
+
+
+def _kernel_allocate_entry_batch(
+    strat_id: str, strat: dict, actions: list, *, equity: float, leverage: float, execution_type: str,
+) -> None:
+    """Freeze one proportional allocation after exits, before any same-tick opens."""
+    contract = strat.get("execution_contract") or {}
+    controls = _sizing.normalize_execution_controls(
+        contract.get("execution_controls") or _sizing.extract_execution_profile(contract.get("params", strat.get("params"))),
+    )
+    requests = []
+    for action in actions:
+        pos = action.position or {}
+        request = float(pos.get("requested_size_fraction", pos.get("size_fraction")) or 0.0)
+        if controls and controls.get("sizing_mode") == "fixed":
+            request = _sizing.size_fraction(controls, None, leverage=leverage,
+                                            initial_capital=equity, current_equity=equity)
+        requests.append(request)
+    allocated = _sizing.allocate_entry_fractions(
+        requests, equity=equity, occupied_margin=_kernel_occupied_margin(strat_id, execution_type),
+    )
+    for action, request, fraction in zip(actions, requests, allocated):
+        action.position = {**(action.position or {}), "requested_size_fraction": request,
+                           "allocated_size_fraction": fraction, "allocation_equity": equity}
+
+
+def _kernel_entry_geometry(strat: dict, action, current_price: float | None) -> tuple[dict, float, bool]:
+    """Give paper and live the same current-mark entry and protective geometry."""
+    pos = dict(action.position or {})
+    original = float(pos.get("backtest_entry_price", pos.get("entry_price")) or 0.0)
+    late = bool(getattr(action, "late_entry", False)) and _coerce_positive_float(current_price) is not None
+    if not late or original <= 0:
+        return pos, original, False
+    price = float(current_price)
+    sign = 1.0 if action.direction == "long" else -1.0
+    pos.setdefault("backtest_entry_price", original)
+    for key in ("stop_price", "target_price"):
+        pos.setdefault("backtest_" + key, pos.get(key))
+        level = pos["backtest_" + key]
+        if level is not None:
+            pos[key] = price * (float(level) / original)
+    # ATR measures dollars per unit. A delayed mark must not stretch the ATR
+    # stop and keep yesterday's fraction, changing the promised dollar risk.
+    contract = strat.get("execution_contract") or {}
+    controls = _sizing.normalize_execution_controls(
+        contract.get("execution_controls") or _sizing.extract_execution_profile(contract.get("params", strat.get("params"))),
+    ) or _sizing.default_controls()
+    atr = _coerce_positive_float(pos.get("atr_value"))
+    if controls["sizing_mode"] == "atr" and atr:
+        pos["stop_price"] = price - sign * float(controls["atr_stop_multiplier"]) * atr
+        # ATR risk fraction is proportional to price; leverage and risk cancel
+        # in this ratio. Preserve any allocation already made by the kernel.
+        basis = float(pos.get("entry_price") or original)
+        for key in ("size_fraction", "requested_size_fraction"):
+            if key in pos:
+                pos[key] = float(pos[key]) * price / basis
+    pos["entry_price"] = price
+    action.position = pos
+    return pos, original, True
 
 
 def _paper_kernel_history_bars() -> int:
@@ -6080,29 +6261,16 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
     p = dict(strat.get("params") or {})
     asset = str(strat.get("asset") or "")
     direction = action.direction
-    pos = action.position or {}
-    kernel_entry_price = float(pos.get("entry_price") or 0.0)
+    pos, kernel_entry_price, late = _kernel_entry_geometry(strat, action, current_price)
     # LATE "hop-in": the kernel has held this position since before the recording window
     # (a still-active signal we missed while off). Open it at the CURRENT price/time and
     # re-anchor the stop/target to that price, PRESERVING the kernel position's risk
     # geometry (stop/target distance as a fraction of entry) so the 1%-risk sizing still
     # holds at the late entry. Otherwise: faithful open at the kernel's own entry.
-    late = bool(getattr(action, "late_entry", False)) and current_price is not None and float(current_price) > 0
     if late:
         entry_price = float(current_price)
-        _sgn = 1.0 if direction == "long" else -1.0
-        _k_stop = pos.get("stop_price")
-        if _k_stop and kernel_entry_price > 0:
-            _stop_dist = abs(kernel_entry_price - float(_k_stop)) / kernel_entry_price
-            stop_price = round(entry_price * (1.0 - _sgn * _stop_dist), 8)
-        else:
-            stop_price = None
-        _k_tp = pos.get("target_price")
-        if _k_tp and kernel_entry_price > 0:
-            _tp_dist = abs(float(_k_tp) - kernel_entry_price) / kernel_entry_price
-            target_price = round(entry_price * (1.0 + _sgn * _tp_dist), 8)
-        else:
-            target_price = None
+        stop_price = pos.get("stop_price")
+        target_price = pos.get("target_price")
         opened_at_val = str(current_time) if current_time else action.entry_time
     else:
         entry_price = kernel_entry_price
@@ -6111,11 +6279,11 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
         opened_at_val = action.entry_time
     if entry_price <= 0 or not asset:
         return None
-    size_fraction = float(pos.get("size_fraction") or 0.0)
-    units = round(_sizing.position_units(
+    size_fraction = _kernel_entry_fraction(strat_id, strat, pos, float(sizing_equity), leverage)
+    units = _sizing.position_units(
         equity=float(sizing_equity), size_fraction=size_fraction,
         leverage=leverage, entry_price=entry_price,
-    ), 6)
+    )
     if units <= 0:
         return None
     alloc_risk = (
@@ -6125,15 +6293,19 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
     # Entry-leg fee at open (fee_bps on the entry notional) so the position shows its
     # fee immediately, like an exchange fill. The close overwrites both legs with the
     # close-time breakdown; this stamp is display-only (the drag is charged at close).
-    _fee_bps_open = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
+    assumptions = _kernel_execution_assumptions(strat)
+    _fee_bps_open = float(assumptions["fee_bps"])
     signal_data = {
+        "execution_assumptions": assumptions,
+        "validation_result_id": (strat.get("execution_contract") or {}).get("result_id"),
         "kernel_managed": True,
         # Match key is ALWAYS the kernel's historical entry_time, even for a late hop-in,
         # so the next scan reconciles it as a REFRESH of the still-held kernel position.
         "kernel_entry_time": action.entry_time,
         "kernel_entry_bar": int(pos.get("entry_bar") or 0),
-        "kernel_size_fraction": round(float(size_fraction), 8),
-        "kernel_equity_at_entry": round(float(sizing_equity), 4),
+        "kernel_size_fraction": float(size_fraction),
+        "kernel_requested_size_fraction": float(pos.get("requested_size_fraction", pos.get("size_fraction")) or 0.0),
+        "kernel_equity_at_entry": float(sizing_equity),
         "fee_bps": _fee_bps_open,
         "entry_fee_usd": round((_fee_bps_open / 10000.0) * float(sizing_equity) * float(leverage) * float(size_fraction), 6),
         "kernel_regime": pos.get("regime"),
@@ -6148,7 +6320,11 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
         # differs from the kernel's historical entry) and the refresh path leaves the
         # re-anchored stop/target alone.
         "late_entry": late,
-        "kernel_historical_entry_price": round(kernel_entry_price, 8) if late else None,
+        "kernel_historical_entry_price": (pos.get("expected_entry_price") if getattr(action, "pending", False)
+                                          else round(kernel_entry_price, 8) if late else None),
+        "expected_entry_price": (pos.get("expected_entry_price") if getattr(action, "pending", False) else kernel_entry_price),
+        "entry_reference_unavailable": bool(getattr(action, "pending", False) and pos.get("expected_entry_price") is None),
+        "pending_entry": bool(getattr(action, "pending", False)),
         "sizing": {
             "method": "kernel", "size_fraction": round(float(size_fraction), 8),
             "units": units, "portfolio_equity": round(float(sizing_equity), 4),
@@ -6280,6 +6456,11 @@ def _kernel_close_recorded(
     # A mark-watcher close may carry a separate expected level (expected_exit_price)
     # when its actual fill diverged from the armed level.
     kernel_exit_price = _coerce_positive_float(trade.get("expected_exit_price")) or exit_price
+    if "exit_reference_unavailable" in trade:
+        _update_trade_signal_data(trade_id, {
+            "exit_reference_unavailable": trade["exit_reference_unavailable"],
+            "expected_exit_price": trade.get("expected_exit_price"),
+        })
     pnl_pct_net = float(trade.get("pnl_pct") or 0.0)  # kernel net, equity-fraction
     equity_at_entry = _coerce_positive_float(sd.get("kernel_equity_at_entry")) or _PAPER_SANDBOX_INITIAL_CAPITAL
     pnl_usd = round(float(equity_at_entry) * pnl_pct_net, 4)
@@ -6324,7 +6505,7 @@ def _kernel_close_recorded(
         _closed_at = str(current_time).replace(" ", "T")
     if closed_at_override:
         _closed_at = str(closed_at_override).replace(" ", "T")
-    if late or pending or mark_fill:
+    if late or pending or mark_fill or sd.get("kernel_managed"):
         # FILL-NOW entry: the recorded entry is the current-mark fill price, NOT the kernel's
         # historical entry — so the kernel's historical-entry pnl_pct does NOT describe this
         # position (a PENDING close likewise has no kernel pnl at all — the kernel hasn't
@@ -6339,9 +6520,12 @@ def _kernel_close_recorded(
         ) or 0.0
         _lev = float(row.get("leverage") or 1.0)
         _sgn = 1.0 if str(direction).strip().lower() == "long" else -1.0
-        _size_frac = _coerce_positive_float(sd.get("kernel_size_fraction")) or 1.0
-        _fee_bps = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
-        _slip_bps = max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)
+        _units = _coerce_positive_float(row.get("size")) or 0.0
+        _size_frac = (_units * _our_entry / (equity_at_entry * _lev)
+                      if equity_at_entry > 0 and _lev > 0 else 0.0)
+        assumptions = _recorded_execution_assumptions(strat, sd)
+        _fee_bps = float(assumptions["fee_bps"])
+        _slip_bps = float(assumptions["slippage_bps"])
         _drag_at_entry = 2.0 * (_fee_bps + _slip_bps) / 10000.0 * max(_lev, 0.0)
         _exit_notional_ratio = (exit_price / _our_entry) if _our_entry > 0 else 1.0
         _drag = _drag_at_entry * 0.5 * (1.0 + _exit_notional_ratio)
@@ -6349,11 +6533,16 @@ def _kernel_close_recorded(
         # (_apply_funding_to_trades) only covers a FAITHFUL trade's historical bar range,
         # which doesn't describe a fill-now position's real (current-mark) entry/exit.
         _funding_pct = 0.0
-        if _paper_include_funding_enabled():
-            _funding_pct = _late_trade_funding_pct(
-                funding_df, direction, row.get("opened_at"), _closed_at, _lev, _size_frac,
-                timeframe or "1h",
-            )
+        if assumptions["include_funding"]:
+            if not (late or pending or mark_fill) and trade.get("funding_applied"):
+                _kernel_fraction = float(trade.get("size_fraction_raw", trade.get("size_fraction")) or 0)
+                _funding_pct = (float(trade.get("funding_cost_pct_raw", trade.get("funding_cost_pct")) or 0)
+                                * _size_frac / _kernel_fraction if _kernel_fraction > 0 else 0.0)
+            else:
+                _funding_pct = _late_trade_funding_pct(
+                    funding_df, direction, row.get("opened_at"), _closed_at, _lev, _size_frac,
+                    timeframe or "1h",
+                )
         if _our_entry > 0:
             _pnl_eq = (((exit_price - _our_entry) / _our_entry) * _sgn * _lev - _drag) * _size_frac + _funding_pct
         else:
@@ -6390,8 +6579,10 @@ def _kernel_close_recorded(
             _tag = "mark-fill"
         elif fresh_exit:
             _tag = "fill-now"
-        else:
+        elif late:
             _tag = "fill-now entry, historical exit"
+        else:
+            _tag = "recorded units"
         return f"KERNEL-CLOSE ({_tag}) {strat.get('asset')} {direction} @ {exit_price:.6g} pnl={_pnl_eq * 100:.2f}% ({exit_reason})"
     # Faithful kernel trade: write the kernel's NET equity-fraction values (the kernel
     # pnl_pct is net-of-drag, size-scaled equity impact — close_trade_record's own pnl is a
@@ -6403,8 +6594,9 @@ def _kernel_close_recorded(
     # backtest_* settings drove this scan's simulate() call, size_fraction_raw is the
     # exact fraction the price/funding legs used, and funding_cost_pct is the kernel's
     # gain-positive funding term (_apply_funding_to_trades).
-    _fee_bps_f = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
-    _slip_bps_f = max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)
+    assumptions = _recorded_execution_assumptions(strat, sd)
+    _fee_bps_f = float(assumptions["fee_bps"])
+    _slip_bps_f = float(assumptions["slippage_bps"])
     _size_frac_f = (
         _coerce_positive_float(trade.get("size_fraction_raw"))
         or _coerce_positive_float(trade.get("size_fraction"))
@@ -6490,10 +6682,11 @@ def _kernel_close_paper_trade(
         return None
     from forven.strategies.paper_reconcile import ReconcileAction
     sizing_equity = _get_paper_strategy_equity(strat_id)
-    leverage = float((strat.get("params") or {}).get("leverage", 1.0) or 1.0)
+    leverage = float((strat.get("execution_contract") or {}).get("leverage") or trade.get("leverage")
+                     or (strat.get("params") or {}).get("leverage", 1.0) or 1.0)
     open_pos = {
         "entry_price": trade.get("entry_price"), "entry_bar": trade.get("entry_bar"),
-        "size_fraction": trade.get("size_fraction"), "regime": trade.get("regime"),
+        "size_fraction": trade.get("size_fraction_raw", trade.get("size_fraction")), "regime": trade.get("regime"),
         "stop_price": None, "target_price": None,
     }
     _kernel_open_paper_trade(strat_id, strat, ReconcileAction("open", action.direction, action.entry_time, position=open_pos),
@@ -6761,6 +6954,7 @@ def _kernel_handle_manual_exits(strat_id: str, current_price: float) -> list[str
 
 def _kernel_handle_late_entry_exits(
     strat_id: str, strat: dict, df: "pd.DataFrame", timeframe: str | None = None,
+    *, kernel_result: "KernelResult | None" = None,
 ) -> list[str]:
     """Enforce a LATE hop-in's RE-ANCHORED stop / take-profit — the live-faithful exit.
 
@@ -6777,9 +6971,9 @@ def _kernel_handle_late_entry_exits(
     at the FIRST breach (stop checked before target; gap-through fills at the level — the
     same conventions as ``execution_kernel.simulate``). The partial bar we entered during
     is skipped (its path relative to our entry is unknown), matching the engine's
-    closed-bars-only philosophy. A strategy SIGNAL / time-stop exit still closes the trade
-    via the reconciler, so the trade exits at the re-anchored stop OR a strategy exit,
-    whichever comes first. Paper-only; late hop-ins never occur on the live path.
+    closed-bars-only philosophy. Retained closed-bar signals and a time stop measured
+    from the actual entry also apply after the historical replay becomes flat. The
+    first actual price breach or subsequent strategy/time exit wins. Paper-only.
     """
     out: list[str] = []
     if df is None or getattr(df, "empty", True) or len(df) == 0:
@@ -6799,13 +6993,14 @@ def _kernel_handle_late_entry_exits(
         sd = parse_trade_signal_data(trade.get("signal_data"))
         if not sd.get("late_entry") or sd.get("manual_pause"):
             continue
+        if str(trade.get("execution_type") or "paper").lower() != "paper":
+            continue
+        if trade.get("asset") and strat.get("asset") and trade["asset"] != strat["asset"]:
+            continue
         direction = str(trade.get("direction") or "long").strip().lower()
         is_long = direction != "short"
         stop = _coerce_positive_float(sd.get("stop_loss_price"))
         target = _coerce_positive_float(sd.get("take_profit_price"))
-        if stop is None and target is None:
-            continue  # nothing to enforce
-
         hop_raw = trade.get("opened_at") or sd.get("opened_at")
         try:
             hop_ts = pd.Timestamp(hop_raw)
@@ -6814,8 +7009,23 @@ def _kernel_handle_late_entry_exits(
             mask = (idx > hop_ts).to_numpy() if hasattr(idx > hop_ts, "to_numpy") else (idx > hop_ts)
         except Exception:
             continue
-        if not bool(getattr(mask, "any", lambda: False)()):
-            continue
+        # Keep the first strategy/time exit even if the historical replay stopped
+        # earlier. Its effective time is the next bar's open, never the signal bar.
+        bar_delta = pd.Timedelta(seconds=_TIMEFRAME_SECONDS.get(resolved_timeframe, 3600))
+        signal_exit_at = None
+        signal_reason = "signal"
+        if kernel_result is not None:
+            for raw in (getattr(kernel_result, "exit_signals", {}) or {}).get(direction, []):
+                effective_at = pd.Timestamp(raw) + bar_delta
+                if effective_at > hop_ts:
+                    signal_exit_at = effective_at
+                    break
+            time_stop = (getattr(kernel_result, "ec", None) or {}).get("time_stop_bars")
+            if time_stop:
+                entry_bar = hop_ts.floor(bar_delta)
+                deadline = entry_bar + int(time_stop) * bar_delta
+                if deadline <= idx[-1] + bar_delta and (signal_exit_at is None or deadline < signal_exit_at):
+                    signal_exit_at, signal_reason = deadline, "time_stop"
 
         sub_opens = opens[mask].to_numpy()
         sub_highs = highs[mask].to_numpy()
@@ -6827,6 +7037,9 @@ def _kernel_handle_late_entry_exits(
         exit_time = ""
         for i in range(len(sub_idx)):
             o, h, l = float(sub_opens[i]), float(sub_highs[i]), float(sub_lows[i])
+            if signal_exit_at is not None and signal_exit_at <= sub_idx[i]:
+                exit_price, exit_reason, exit_time = o, signal_reason, str(signal_exit_at)
+                break
             if is_long:
                 if stop is not None and l <= stop:
                     exit_price, exit_reason = min(o, stop), "stop_loss"  # gap-through fills at open
@@ -6840,6 +7053,8 @@ def _kernel_handle_late_entry_exits(
             if exit_price is not None:
                 exit_time = str(sub_idx[i])
                 break
+        if exit_price is None and signal_exit_at is not None and signal_exit_at <= idx[-1] + bar_delta:
+            exit_price, exit_reason, exit_time = float(df["close"].iloc[-1]), signal_reason, str(signal_exit_at)
         if exit_price is None or exit_price <= 0:
             continue
 
@@ -6856,6 +7071,9 @@ def _kernel_handle_late_entry_exits(
         msg = _kernel_close_recorded(
             strat_id, strat, dict(trade), synthetic, direction,
             funding_df=df, timeframe=resolved_timeframe,
+            current_price=(_fill_now_mark(str(strat.get("asset") or trade.get("asset") or ""), float(df["close"].iloc[-1]))
+                           if exit_reason not in _KERNEL_PRICE_EXIT_REASONS else None),
+            current_time=get_now().isoformat(),
         )
         if msg:
             out.append(msg)
@@ -6941,10 +7159,12 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
 
     asset = str(strat.get("asset") or "")
     direction = action.direction
-    pos = action.position or {}
+    pos, kernel_entry_price, _late = _kernel_entry_geometry(strat, action, current_price)
     ref_price = _coerce_positive_float(pos.get("entry_price"))
     if not asset or ref_price is None:
         return None
+    if not _coerce_positive_float(leverage) or float(leverage) < 1 or not float(leverage).is_integer():
+        return f"BLOCKED {asset} live — validated leverage {leverage} cannot be applied exactly at the exchange"
 
     # DIRECTION-BOOKS-1 / LIVE-4: route the NEW live position to its direction
     # sub-account (Approach C), exactly like the legacy live path. Books OFF =>
@@ -7030,7 +7250,7 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     if not _rg_ok:
         _notify_live_open_blocked(strat_id, asset, _rg_why, "regime_gate")
         return f"BLOCKED {asset} live — {_rg_why}"
-    size_fraction = float(pos.get("size_fraction") or 0.0)
+    size_fraction = _kernel_entry_fraction(strat_id, strat, pos, float(sizing_equity), leverage, execution_type="live")
     # PORT-LAYER-1: portfolio allocation multiplier — LIVE only, double-flagged
     # (portfolio_allocator_enabled AND portfolio_allocator_live), neutral 1.0 on
     # any failure. Scales size_fraction, NEVER sizing_equity: equity is recorded
@@ -7050,7 +7270,8 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
             "[%s] portfolio allocator scaled live size_fraction x%.3f -> %.6f",
             strat_id, portfolio_multiplier, size_fraction,
         )
-    units = round(_sizing.position_units(equity=float(sizing_equity), size_fraction=size_fraction, leverage=leverage, entry_price=ref_price), 6)
+    requested_fraction = float(pos.get("requested_size_fraction", pos.get("size_fraction")) or 0.0)
+    units = _sizing.position_units(equity=float(sizing_equity), size_fraction=size_fraction, leverage=leverage, entry_price=ref_price)
     # SLICE-1: the slice is the default allocation; an operator-typed go-live
     # ceiling is an optional TIGHTER cap and the smaller wins. Clamped, not
     # refused — a ceiling that refuses disables the strategy instead of limiting
@@ -7083,6 +7304,16 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         # stop there; each refresh then ratchets it with the kernel's extreme.
         _sgn = -1.0 if direction == "short" else 1.0
         stop_price = round(float(ref_price) * (1.0 - _sgn * float(kernel_trail_pct)), 8)
+    # Use the same trigger tick as the exchange when measuring loss at stop.
+    # Rounding an outward stop after the risk clamp would exceed that clamp.
+    from forven.exchange import hyperliquid as _hl
+
+    _venue_url = _hl.constants.TESTNET_API_URL if _resolve_hyperliquid_testnet() else _hl.constants.MAINNET_API_URL
+    _stop_reference = stop_price
+    if stop_price is not None:
+        stop_price = _hl.round_to_tick(float(stop_price), asset, _venue_url)
+    if target_price is not None:
+        target_price = _hl.round_to_tick(float(target_price), asset, _venue_url)
     # PORT-1 (precise gate): admission against the ACCOUNT-level budget with this
     # order's actual risk (distance to its stop x units) and notional. Uses the
     # AGGREGATE account equity, not the direction-book slice sizing_equity may have
@@ -7117,7 +7348,7 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     _live_clamp_meta = None
     if _add_risk > _risk_budget_usd + 1e-9:
         _scale = _risk_budget_usd / _add_risk
-        _clamped_units = round(float(units) * _scale, 6)
+        _clamped_units = float(units) * _scale
         if _clamped_units <= 0:
             _why = (
                 f"per-trade risk clamp reduced size to zero (loss-at-stop "
@@ -7155,11 +7386,16 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     # BOOK-BUDGET-1: the order draws on ONE wallet — pass the routed book and its
     # balance (sizing_equity was narrowed to exactly that above) so admission is
     # also checked against the wallet's own capacity, not just the aggregate.
+    _routed_equity = None
+    if books_on and open_book and books.book_address(open_book):
+        _routed_equity = _book_account_equity(books.book_address(open_book))
+        if not _coerce_positive_float(_routed_equity):
+            return f"BLOCKED {asset} live — routed book balance unavailable for admission"
     _pb_ok, _pb_why = check_live_portfolio_budget(
         asset, direction, add_risk_usd=_add_risk, add_notional_usd=_add_notional,
         equity=_real_equity,
         book=open_book,
-        book_equity_usd=(float(sizing_equity) if (books_on and open_book) else None),
+        book_equity_usd=_routed_equity,
     )
     if not _pb_ok:
         log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _pb_why)
@@ -7174,15 +7410,34 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _cl_why)
         _notify_live_open_blocked(strat_id, asset, _cl_why, "go_live_ceiling")
         return f"BLOCKED {asset} live — {_cl_why}"
-    risk_pct = float(alloc_risk) if alloc_risk else min(float(size_fraction), 1.0)
+    # Every clamp must flow into recorded intent; fills may reduce it again.
+    size_fraction = units * ref_price / (float(sizing_equity) * float(leverage))
+    risk_pct = _add_risk / float(sizing_equity)
     signal_data = {
         "kernel_managed": True, "kernel_entry_time": action.entry_time,
-        "kernel_size_fraction": round(float(size_fraction), 8), "kernel_equity_at_entry": round(float(sizing_equity), 4),
+        "validation_result_id": (strat.get("execution_contract") or {}).get("result_id"),
+        "execution_assumptions": _kernel_execution_assumptions(strat),
+        "kernel_requested_size_fraction": requested_fraction,
+        "execution_allocation_ratio": (float(size_fraction) / requested_fraction if requested_fraction else None),
+        "kernel_size_fraction": float(size_fraction), "kernel_equity_at_entry": float(sizing_equity),
+        "sizing_requested_units": _sizing.position_units(equity=float(sizing_equity), size_fraction=requested_fraction,
+                                                        leverage=leverage, entry_price=ref_price),
+        "sizing_submitted_units": units,
+        "sizing_planned_units": units,
+        "sizing_reference_price": ref_price,
+        "sizing_notional_usd": units * ref_price,
+        "sizing_margin_usd": units * ref_price / leverage,
+        "sizing_loss_at_stop_usd": _add_risk,
+        "sizing_stop_reference_price": _stop_reference,
+        "sizing_stop_price": stop_price,
         "stop_loss": stop_price, "stop_loss_price": stop_price,
         "take_profit": target_price, "take_profit_price": target_price,
         "kernel_trail_pct": float(kernel_trail_pct) if kernel_trail_pct else None,
         "kernel_regime": pos.get("regime"),
         "direction": direction, "source": "scanner.kernel.live",
+        "expected_entry_price": pos.get("expected_entry_price") if getattr(action, "pending", False) else kernel_entry_price,
+        "entry_reference_unavailable": bool(getattr(action, "pending", False) and pos.get("expected_entry_price") is None),
+        "pending_entry": bool(getattr(action, "pending", False)),
         # PORT-LAYER-1 attribution: the allocation multiplier applied to this
         # fill (kernel_size_fraction above is the SCALED value actually deployed).
         "portfolio_risk_multiplier": round(portfolio_multiplier, 4),
@@ -7252,6 +7507,12 @@ def _kernel_close_live_trade(
     ref_price = _coerce_positive_float(trade.get("exit_price")) or 0.0
     reason = str(trade.get("exit_reason") or "signal")
 
+    if "exit_reference_unavailable" in trade:
+        _update_trade_signal_data(trade_id, {
+            "exit_reference_unavailable": trade["exit_reference_unavailable"],
+            "expected_exit_price": trade.get("expected_exit_price"),
+        })
+
     # DB-4 / RACE-2: a prior live close that left no confirmed fill is marked
     # pending_close_reconcile but stays OPEN for the periodic reconcile sweep to
     # finalize. Do NOT re-issue a fresh reduce-only close every scan (and don't let
@@ -7299,12 +7560,34 @@ def _kernel_close_live_trade(
     return f"LIVE-KERNEL-CLOSE {asset} {reason}"
 
 
+def _pending_bar_open(frame: "pd.DataFrame", label: str | None, asset: str) -> float | None:
+    """Read a forming bar's observed open solely as execution-price evidence."""
+    if not label:
+        return None
+    try:
+        stamp = pd.Timestamp(label)
+        if stamp in frame.index:
+            return _coerce_positive_float(frame.loc[stamp, "open"])
+        # The daemon's minute cache often has the opening minute even when the
+        # strategy frame deliberately contains closed candles only.
+        cached = kv_get(f"market:candles:{asset}:1m") or {}
+        if isinstance(cached, str):
+            cached = json.loads(cached)
+        for row in cached.get("rows", []):
+            if pd.Timestamp(row.get("t")) == stamp:
+                return _coerce_positive_float(row.get("open"))
+    except Exception:
+        pass
+    return None
+
+
 def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=None, execution_type: str = "paper", diagnostics=None) -> list[str] | None:
     """Kernel-driven paper execution: run the shared engine over the strategy's history
     and reconcile its open/closed positions into paper trades. Returns the action
     strings, or ``None`` when the strategy exposes no vectorized signals (the caller
     falls back to the legacy per-bar ``manage_positions``)."""
     from forven.strategies import backtest as _bt
+    from forven.strategies.execution_contract import EXECUTION_WARMUP
     from forven.strategies.paper_reconcile import reconcile
 
     def _skip(reason: str) -> object:
@@ -7319,15 +7602,15 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
         return KERNEL_SKIP_SCAN
 
     p = dict(strat.get("params") or {})
+    contract = strat.get("execution_contract") or {}
     asset = str(strat.get("asset") or "").strip()
     if not asset:
         return _skip("no asset on strategy")
     timeframe = str(strat.get("timeframe") or p.get("timeframe") or "1h").strip().lower() or "1h"
 
     try:
-        df = _enrich_scan_frame(
-            fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe), asset, timeframe,
-        )
+        reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe)
+        df = _enrich_scan_frame(reference_frame.copy(), asset, timeframe)
         df = _trim_unclosed_latest_candle(df, timeframe)
     except Exception as exc:
         log.warning("[%s] kernel paper: candle fetch failed (%s); SKIP scan (no legacy)", strat_id, exc)
@@ -7339,12 +7622,15 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     try:
         from forven.strategies.registry import _TYPE_MAP, get_active, resolve_runtime_type
         from forven.strategies.sandbox_proxy import is_sandbox_only_type as _is_sandbox_only_type
-        strategy_instance = get_active().get(strat_id)
+        # A registry cache entry can predate promotion or an operator edit.
+        # Instantiate the accepted configuration fresh when one is available.
+        strategy_instance = None if contract else get_active().get(strat_id)
         if strategy_instance is None:
             runtime_type, _meta = resolve_runtime_type(str(strat.get("type") or ""), strat.get("runtime_type"))
             cls = _TYPE_MAP.get(runtime_type or "")
-            cp = dict(p)
-            cp.setdefault("_asset", asset)
+            cp = dict(contract.get("params", p))
+            if not contract:
+                cp.setdefault("_asset", asset)
             if cls is not None:
                 strategy_instance = cls(strat_id, cp)
             elif _meta.get("sandbox_only") or _is_sandbox_only_type(runtime_type):
@@ -7360,36 +7646,38 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
 
     # Resolve via the shared engine default so the kernel paper run matches the
     # confirmation backtest's leverage (operator default_leverage when undeclared).
-    leverage = _bt.resolve_leverage(p)
+    leverage = float(contract["leverage"]) if contract else _bt.resolve_leverage(p)
     # Source fees/slippage from the SAME backtest settings the confirmation backtest
     # uses (not risk_fee_bps), so the kernel's round_trip_drag — and therefore net
     # pnl_pct — matches the validated backtest exactly.
-    fee_bps = max(_scanner_float_setting("backtest_fee_bps", 4.5), 0.0)
-    slippage_bps = max(_scanner_float_setting("backtest_slippage_bps", 2.0), 0.0)
-    ec = _bt.execution_controls_from_params(p) or None
+    assumptions = _kernel_execution_assumptions(strat)
+    fee_bps = float(assumptions["fee_bps"])
+    slippage_bps = float(assumptions["slippage_bps"])
+    p = dict(contract.get("params", p))
+    ec = contract.get("execution_controls") or _bt.execution_controls_from_params(p) or None
     # Sizing initial_capital MUST equal the confirmation backtest's (10k, since its
     # body.initial_capital is None). Reading execution_profile.initial_capital here
     # would diverge 'fixed'-mode sizing from the validated backtest.
-    initial_capital = _PAPER_SANDBOX_INITIAL_CAPITAL
-    trade_mode = _resolve_kernel_trade_mode(strat, strategy_instance)
+    initial_capital = float(contract.get("initial_capital", _PAPER_SANDBOX_INITIAL_CAPITAL))
+    trade_mode = contract.get("trade_mode") or _resolve_kernel_trade_mode(strat, strategy_instance)
     strategy_type = str(strat.get("runtime_type") or strat.get("type") or "").strip() or None
 
     # The kernel's simulate() skips the first KERNEL_WARMUP+1 bars, so the EARLIEST
     # entry it can reproduce is df.index[KERNEL_WARMUP+1]. The orphan-close guard below
     # must use that as window_start — using df.index[0] would treat a still-valid open
     # whose entry fell in the warmup band as an orphan and converge-close it.
-    KERNEL_WARMUP = 200
+    KERNEL_WARMUP = int(contract.get("warmup", EXECUTION_WARMUP))
     # Fund the kernel walk IN-LINE (same opt-in the backtest uses) so paper's kelly
     # sizing evidence (res.closed_gross) is funding-aware — matching the backtest's
     # funding-aware Kelly instead of learning price-only returns. Each kernel-funded
     # trade is stamped ``_funding_from_kernel``; the post-walk pass below skips those
     # (single-application invariant). Gated on the SAME setting the post-hoc pass reads
     # so paper never funds one way in-walk and the other post-hoc — one funding switch.
-    _include_funding = _paper_include_funding_enabled()
+    _include_funding = bool(assumptions["include_funding"])
     try:
         res = _bt.run_strategy_execution(
             df, strategy_instance, params=p, warmup=KERNEL_WARMUP, leverage=leverage,
-            fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=False,
+            fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=bool(contract.get("regime_gate", False)),
             trade_mode=trade_mode, execution_controls=ec, initial_capital=initial_capital,
             strategy_type=strategy_type,
             # PAIR form (BTC/USDT), not the bare coin: the intrabar resolver
@@ -7530,6 +7818,13 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # stale-asset entry (corrupting it — see _kernel_close_cross_asset_orphan / S04545). Hold
     # those out of reconcile so they can never be adopted/refreshed across assets.
     _strat_asset_u = asset.strip().upper()
+    # Close actual paper holdings before planning new entries and reload their
+    # state, so an ignored historical stop cannot leave a slot occupied forever.
+    held_exit_actions: list[str] = []
+    if not is_live:
+        held_exit_actions = _kernel_handle_late_entry_exits(
+            strat_id, strat, df, timeframe, kernel_result=res,
+        )
     _recorded = _kernel_recorded_trades(strat_id)
     same_asset_recorded: list[dict] = []
     cross_asset_open_rows: list[dict] = []
@@ -7619,6 +7914,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     if any(getattr(a, "pending", False) for a in actions_plan):
         from forven.strategies import sizing as _psizing
         _mark_ok = _coerce_positive_float(hop_price) is not None
+        expected_pending_price = _pending_bar_open(reference_frame, _pending_next_label, asset)
         _plan: list = []
         for a in actions_plan:
             if not getattr(a, "pending", False):
@@ -7640,10 +7936,13 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                     _target_price = float(hop_price) * (1.0 + _sgn * res.ec["take_profit_pct"] / 100.0)
                 a.position = {
                     "entry_price": float(hop_price), "entry_bar": len(df), "entry_time": a.entry_time,
+                    "expected_entry_price": expected_pending_price,
                     "regime": pe.get("regime"),
+                    "atr_value": pe.get("atr_value"),
                     "size_fraction": _psizing.size_fraction(
                         res.ec, _stop_dist, leverage=max(float(leverage), 1e-9),
                         initial_capital=initial_capital, closed_gross=res.closed_gross,
+                        current_equity=sizing_equity,
                     ),
                     "stop_price": _stop_price, "target_price": _target_price,
                     "trail_pct": (res.ec["trailing_stop_pct"] / 100.0) if res.ec.get("trailing_stop_pct") is not None else None,
@@ -7652,12 +7951,14 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
             elif a.kind == "close":
                 a.trade = dict(a.trade or {})
                 a.trade.setdefault("exit_price", float(hop_price))
+                a.trade["expected_exit_price"] = expected_pending_price
+                a.trade["exit_reference_unavailable"] = expected_pending_price is None
                 if _pending_next_label:
                     a.trade.setdefault("exit_time", _pending_next_label)
             _plan.append(a)
         actions_plan = _plan
 
-    out: list[str] = []
+    out: list[str] = list(held_exit_actions)
     # Resolve cross-asset orphans held out of reconcile above. Paper: flat-close the
     # phantom (no real order). Live: never auto-flatten a REAL position off the wrong
     # asset's price — hold it out of reconcile and surface it for operator review.
@@ -7675,9 +7976,34 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                     out.append(_msg)
         except Exception as exc:
             log.error("[%s] kernel %s cross-asset orphan handling failed: %s", strat_id, label, exc, exc_info=True)
+    allocated_entry_times: set[str] = set()
     for a in actions_plan:
         try:
             if a.kind == "open":
+                if a.entry_time not in allocated_entry_times:
+                    # Reconcile orders closes before opens. Realized close PnL
+                    # must reach the next size, and both directions share one
+                    # pre-entry allocation rather than taking turns spending it.
+                    if not is_live:
+                        sizing_equity = _get_paper_strategy_equity(strat_id)
+                    batch = [entry for entry in actions_plan if entry.kind == "open" and entry.entry_time == a.entry_time]
+                    for entry in batch:
+                        _kernel_entry_geometry(strat, entry, hop_price)
+                    _kernel_allocate_entry_batch(
+                        strat_id, strat, batch, equity=float(sizing_equity or 0), leverage=leverage,
+                        execution_type="live" if is_live else "paper",
+                    )
+                    allocated_entry_times.add(a.entry_time)
+                if strat.get("execution_identity_error"):
+                    out.append(f"BLOCKED {asset} open — {strat['execution_identity_error']}")
+                    continue
+                if strat.get("from_db"):
+                    from forven.strategies.execution_contract import current_execution_error
+
+                    entry_error = current_execution_error(strat_id, contract.get("result_id"))
+                    if entry_error:
+                        out.append(f"BLOCKED {asset} open — {entry_error}")
+                        continue
                 if data_is_stale:
                     out.append(f"BLOCKED {asset} {label} open — stale candle data (feed may be down)")
                     continue
@@ -7777,6 +8103,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                 out.append(msg)
         except Exception as exc:
             log.error("[%s] kernel %s %s action failed: %s", strat_id, label, a.kind, exc, exc_info=True)
+            out.append(f"FAILED {asset} {a.kind} — {exc}")
 
     # Operator-set manual SL/TP on manually-opened PAPER positions (the reconciler
     # ignores non-kernel trades, and the legacy manual-exit path is short-circuited
@@ -7787,17 +8114,12 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
             out.extend(_kernel_handle_manual_exits(strat_id, float(df["close"].iloc[-1])))
         except Exception as exc:
             log.error("[%s] kernel paper manual-exit check failed: %s", strat_id, exc, exc_info=True)
-        # Enforce a LATE hop-in's RE-ANCHORED stop/target (a live resting order would).
-        # The kernel only reproduces the HISTORICAL position's geometry, so a hop-in's own
-        # stop/target must be checked here, intrabar, against the bars since the hop-in.
-        try:
-            out.extend(_kernel_handle_late_entry_exits(strat_id, strat, df, timeframe))
-        except Exception as exc:
-            log.error("[%s] kernel paper late-entry stop check failed: %s", strat_id, exc, exc_info=True)
 
     if diagnostics is not None:
         diagnostics[strat_id] = {
-            "strategy_id": strat_id, "execution_decision": "kernel_managed",
+            "strategy_id": strat_id,
+            "execution_decision": "manage_existing_only" if strat.get("execution_identity_error") else "kernel_managed",
+            "blocked_reason": strat.get("execution_identity_error"),
             "runtime_type": strategy_type, "actions": out,
         }
     return out
@@ -8149,18 +8471,20 @@ def _evaluate_signal_matrix(
                         from forven.db import record_signal_result
                         if signal.get("entry_signal") or signal.get("exit_signal"):
                             sig_type = "entry" if signal.get("entry_signal") else "exit"
-                            record_signal_result(
+                            result_id = record_signal_result(
                                 strategy_id=strat_id,
                                 symbol=strat["asset"],
                                 signal_type=sig_type,
                                 matched=True,
                                 executed=False,  # execution outcome filled in later
+                                block_reason="evaluation_only",
                                 price=signal.get("price"),
                                 adx=signal.get("adx"),
                                 match_reason=signal.get("match_reason") or sig_type,
                                 metrics={k: signal.get(k) for k in ("rsi", "macd", "bb_z", "regime")
                                          if signal.get(k) is not None},
                             )
+                            item["signal_result_ids"] = {sig_type: result_id}
                         else:
                             record_signal_result(
                                 strategy_id=strat_id,
@@ -8273,6 +8597,20 @@ def _apply_execution_actions(signal_rows: list[dict], diagnostics_out: dict[str,
 def _apply_execution_action_item(
     item: dict, account_equity: float, diagnostics_out: dict[str, dict] | None
 ) -> list[str]:
+    from forven.execution_observations import record_execution_outcome, trade_snapshot
+
+    sid = str(item.get("strategy_id") or "")
+    diagnostics = diagnostics_out if diagnostics_out is not None else {}
+    before = trade_snapshot(sid)
+    actions = _dispatch_execution_action_item(item, account_equity, diagnostics)
+    summary = record_execution_outcome(item, before, trade_snapshot(sid), diagnostics.get(sid, {}), actions)
+    diagnostics.setdefault(sid, {}).update(summary)
+    return actions
+
+
+def _dispatch_execution_action_item(
+    item: dict, account_equity: float, diagnostics_out: dict[str, dict] | None
+) -> list[str]:
     """Execution dispatch for ONE evaluated strategy row. Never raises."""
     strat_id = str(item.get("strategy_id") or "")
     if not strat_id:
@@ -8310,6 +8648,13 @@ def _apply_execution_action_item(
             # convention diverge from the backtest (would silently break parity).
             return []
         if actions is None:
+            if strat.get("execution_contract"):
+                # A verified promotion cannot opt into different sizing by
+                # disabling the kernel. Legacy exits may still manage holdings.
+                strat = {**strat, "execution_identity_error": (
+                    strat.get("execution_identity_error")
+                    or "Accepted sizing requires the shared execution kernel; legacy new entries are blocked"
+                )}
             # actions is None means: kernel not attempted (disabled / not a kernel
             # stage) OR the strategy is genuinely non-vectorizable.
             if kernel_mode == "paper":
@@ -8393,6 +8738,8 @@ def _apply_execution_action_item(
         return list(actions or [])
     except Exception as e:
         log.error("[%s] ERROR while applying execution actions: %s", strat_id, e, exc_info=True)
+        if diagnostics_out is not None:
+            diagnostics_out.setdefault(strat_id, {}).update(execution_decision="failed", reason=str(e))
         return []
 
 
@@ -8537,7 +8884,7 @@ def _open_position_strategy_ids() -> set[str]:
 
 def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     """Inner scan body. Call ``run_scan`` (the single-flight wrapper) instead."""
-    init_db()
+    ensure_db_initialized()
     requested_execution = bool(execute_positions)
     execution_allowed = bool(requested_execution and _scanner_execution_enabled())
     if execution_allowed:

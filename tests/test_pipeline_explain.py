@@ -11,6 +11,8 @@ symbols — the failure mode that motivated evaluate_promotion(dry_run=True)).
 from __future__ import annotations
 
 import json
+import pytest
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from forven.db import get_db
@@ -68,6 +70,62 @@ def test_quick_screen_without_metrics_reads_as_waiting_evidence(forven_db):
     assert blocker["code"] == "no_metrics_error"
     assert blocker["kind"] == "evidence"
     assert s["next_action"]["key"] == "run_backtest"
+
+
+@pytest.mark.parametrize("stage", ["quick_screen", "gauntlet"])
+@pytest.mark.parametrize("block_status, expected_action", [
+    ("blocked_data", "fix_data"), ("blocked_runtime", "run_validation_suite"),
+])
+def test_workflow_block_is_explained_before_downstream_missing_metrics(
+    forven_db: Path, stage: str, block_status: str, expected_action: str,
+) -> None:
+    from forven.gauntlet.engine import block_step, claim_next_step
+    from forven.gauntlet.store import create_or_get_workflow, get_workflow_detail
+
+    with get_db() as conn:
+        _insert_strategy(conn, "s-blocked", stage)
+    workflow = create_or_get_workflow(strategy_id="s-blocked", settings_snapshot={})
+    step = claim_next_step(workflow["id"])
+    message = "Market candles are stale" if block_status == "blocked_data" else "Validation worker unavailable"
+    block_step(step["id"], block_status, message=message, retryable=True)
+    before = get_workflow_detail(workflow["id"])
+    explained = explain_strategy("s-blocked")["strategy"]
+    assert explained["gate_reason"] == message
+    assert explained["blockers"][0]["workflow_status"] == block_status
+    assert explained["next_action"]["key"] == expected_action
+    assert explained["status"] == "waiting_evidence"
+    assert explained["promotable"] is False
+    assert get_workflow_detail(workflow["id"]) == before
+
+
+def test_cancelled_workflow_explanation_requires_review(forven_db: Path) -> None:
+    from forven.gauntlet.engine import cancel_workflow
+    from forven.gauntlet.store import create_or_get_workflow
+
+    with get_db() as conn:
+        _insert_strategy(conn, "s-cancelled", "quick_screen")
+    workflow = create_or_get_workflow(strategy_id="s-cancelled", settings_snapshot={})
+    cancel_workflow(workflow["id"])
+    explained = explain_strategy("s-cancelled")["strategy"]
+    assert explained["status"] == "awaiting_operator"
+    assert explained["next_action"]["key"] == "review_strategy"
+    assert explained["promotable"] is False
+
+
+def test_insufficient_holdout_does_not_recommend_retrying_same_data(forven_db: Path) -> None:
+    from forven.gauntlet.engine import block_step, claim_next_step
+    from forven.gauntlet.store import create_or_get_workflow
+
+    with get_db() as conn:
+        _insert_strategy(conn, "s-holdout", "gauntlet")
+    workflow = create_or_get_workflow(strategy_id="s-holdout", settings_snapshot={})
+    step = claim_next_step(workflow["id"])
+    block_step(step["id"], "blocked_data", message="Independent validation window insufficient",
+               retryable=False, payload={"reason_code": "insufficient_evidence"})
+    explained = explain_strategy("s-holdout")["strategy"]
+    assert explained["status"] == "waiting_evidence"
+    assert explained["next_action"]["key"] == "review_strategy"
+    assert "independent validation data" in explained["next_action"]["label"]
 
 
 def test_gauntlet_stage_reports_missing_evidence_and_readiness(forven_db):

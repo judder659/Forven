@@ -77,7 +77,8 @@ class CatchUpPlanner:
             # quality gate is waiting on it the way end-staleness gates scoring,
             # so it queues behind end-staleness work at priority 0 and drains
             # whenever the tail is healthy.
-            if _completeness(row, tf_delta) < COMPLETENESS_THRESHOLD:
+            threshold = 1.0 if row.get("source") == "hyperliquid" else COMPLETENESS_THRESHOLD
+            if _completeness(row, tf_delta) < threshold:
                 prioritized.append(
                     (0.0, _task_from_row(row, _as_utc(row.get("start_ts") or end_ts), end_ts, reason="gaps"))
                 )
@@ -125,7 +126,7 @@ class CatchUpPlanner:
 
     def _active_universe_pairs(self) -> list[tuple[str, str]]:
         """Active (fs-symbol, timeframe) pairs the pipeline collects on: the
-        active trading universe × the scan/sweep timeframes."""
+        scan/sweep intervals plus each symbol's strategy intervals."""
         try:
             from forven.data import symbol_to_fs
             from forven.data_manager import get_data_manager
@@ -133,7 +134,8 @@ class CatchUpPlanner:
 
             _, timeframes = _scan_universe()
             timeframes = [tf for tf in timeframes if tf] or ["1h"]
-            symbols = get_data_manager().get_active_symbols(include_recent_backtests=False)
+            manager = get_data_manager()
+            symbols = manager.get_active_symbols(include_recent_backtests=False)
         except Exception:
             return []
 
@@ -142,9 +144,40 @@ class CatchUpPlanner:
             fs = symbol_to_fs(sym)
             if not fs:
                 continue
-            for tf in timeframes:
+            for tf in sorted(set(timeframes) | manager.get_active_timeframes(sym)):
                 pairs.append((fs, tf))
         return pairs
+
+
+def execute_candle_catchup(task: CatchUpTask) -> dict:
+    """Repair the planned source without writing into another venue's series."""
+    from forven.data import backfill_ohlcv_gaps, load_venue_frame
+    from forven.dataeng.venue import VENUE_MARKET, VENUE_SOURCE, collect_hl_series, repair_hl_gaps
+
+    if task.source == "binance":
+        return backfill_ohlcv_gaps(task.symbol, task.timeframe)
+    if (task.source, task.market) != (VENUE_SOURCE, VENUE_MARKET):
+        raise ValueError(f"Unsupported candle repair source: {task.source}/{task.market}")
+    if task.reason == "gaps":
+        return repair_hl_gaps(task.symbol, task.timeframe)
+    if task.reason != "stale":
+        raise ValueError(f"Unsupported Hyperliquid repair reason: {task.reason}")
+
+    added = collect_hl_series(task.symbol, task.timeframe)
+    # A tail refresh alone can leave interior gaps indefinitely because the
+    # next scheduled plan may already consider the tail stale again.
+    repair = repair_hl_gaps(task.symbol, task.timeframe)
+    frame = load_venue_frame(task.source, task.market, task.symbol, task.timeframe)
+    reached = (
+        frame is not None
+        and not frame.empty
+        and _as_utc(frame["timestamp"].max()) >= _as_utc(task.end_ts)
+    )
+    reached = reached and repair["target_reached"]
+    return {
+        **repair, "bars_added": added + repair["bars_added"],
+        "no_recent_data": not reached, "target_reached": reached,
+    }
 
 
 def _completeness(row: dict[str, object], tf_delta: pd.Timedelta) -> float:

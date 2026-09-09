@@ -763,7 +763,7 @@ def check_data_freshness() -> ComponentStatus:
         stats = data_manager_stats()
         if not stats:
             return ComponentStatus(
-                name="data_freshness", state=State.GREEN,
+                name="data_freshness", state=State.AMBER,
                 message="No collection telemetry yet", component_type="data",
             )
         now = datetime.now(timezone.utc)
@@ -814,17 +814,17 @@ def check_data_freshness() -> ComponentStatus:
         )
 
 
-def data_health_score() -> int:
+def data_health_score() -> int | None:
     """Aggregate 0-100 data-health score from collection telemetry, suitable for
     the autonomous loop to gate on (e.g. refuse to start a gauntlet on degraded
     data). 100 = all streams fresh and succeeding; deductions per failing/stale
-    stream."""
+    stream. None means collection health has not been established."""
     try:
         from forven.data_manager import data_manager_stats
 
         stats = data_manager_stats()
         if not stats:
-            return 100
+            return None
         now = datetime.now(timezone.utc)
         score = 100
         for stream, entry in stats.items():
@@ -842,7 +842,7 @@ def data_health_score() -> int:
                     score -= 10
         return max(0, min(100, score))
     except Exception:
-        return 100
+        return None
 
 
 
@@ -1052,6 +1052,10 @@ def _kill_lab_worker_processes() -> int:
 
 
 async def _attempt_recovery(state: HealthState, name: str, status: ComponentStatus) -> None:
+    await asyncio.to_thread(_attempt_recovery_sync, state, name, status)
+
+
+def _attempt_recovery_sync(state: HealthState, name: str, status: ComponentStatus) -> None:
     """Attempt auto-recovery for recoverable components."""
     if state.is_circuit_broken(name):
         alert = HealthAlert(
@@ -1581,7 +1585,10 @@ class HealthMonitor:
                     check_ai_providers,
                 ):
                     try:
-                        result = check_fn()
+                        # Collectors perform SQLite/file/provider reads. A busy
+                        # database can wait up to 60s; that must not freeze the
+                        # uvicorn loop the health monitor is meant to observe.
+                        result = await asyncio.to_thread(check_fn)
                         if isinstance(result, list):
                             for r in result:
                                 self.state.update_component(r)
@@ -1594,7 +1601,7 @@ class HealthMonitor:
 
                 # Bots return a list
                 try:
-                    bot_statuses = check_bots()
+                    bot_statuses = await asyncio.to_thread(check_bots)
                     for bs in bot_statuses:
                         self.state.update_component(bs)
                         new_statuses[bs.name] = bs
@@ -1602,12 +1609,12 @@ class HealthMonitor:
                     log.warning("Bot health check failed: %s", exc)
 
                 # Dispatch alerts based on state changes (runs in every mode).
-                _dispatch_alerts(self.state, old_statuses, new_statuses)
+                await asyncio.to_thread(_dispatch_alerts, self.state, old_statuses, new_statuses)
 
                 # Auto-recovery for RED components — this TAKES ACTION, so it is
                 # gated on autonomous mode. In manual mode we still observed and
                 # alerted above; we just don't auto-act.
-                if autonomous_runtime_allowed():
+                if await asyncio.to_thread(autonomous_runtime_allowed):
                     for name, status in new_statuses.items():
                         old = old_statuses.get(name)
                         if status.state == State.RED and (old is None or old.state != State.RED):
@@ -1658,7 +1665,7 @@ class HealthMonitor:
                     check_pipeline_consistency,
                 ):
                     try:
-                        results = check_fn()
+                        results = await asyncio.to_thread(check_fn)
                         if not isinstance(results, list):
                             results = [results]
                         for check in results:
@@ -1678,13 +1685,13 @@ class HealthMonitor:
                                 # previously nothing here ever reached
                                 # emit_notification.
                                 if check.severity == Severity.CRITICAL:
-                                    self._notify_data_check(check)
+                                    await asyncio.to_thread(self._notify_data_check, check)
                     except Exception as exc:
                         log.warning("Data check %s failed: %s", check_fn.__name__, exc)
 
                 # SQLite health (returns single check)
                 try:
-                    sqlite_check = check_sqlite_health()
+                    sqlite_check = await asyncio.to_thread(check_sqlite_health)
                     self.state.update_data_check(sqlite_check)
                     if not sqlite_check.passed:
                         alert = HealthAlert(

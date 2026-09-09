@@ -172,16 +172,21 @@ def _spawn_supervised_runtime_thread(
     one missed synchronous path can starve the event loop. Keeping these loops
     on their own event loops preserves HTTP and websocket liveness.
     """
+    from forven.control_plane.runtime_diagnostics import (
+        mark_runtime_thread_declined, track_runtime_thread,
+    )
 
     def _runner() -> None:
         try:
             if initial_delay_seconds > 0:
                 threading.Event().wait(initial_delay_seconds)
             asyncio.run(_supervise_background_loop(name, factory))
-        except Exception:
+            mark_runtime_thread_declined(threading.current_thread())
+        except BaseException:
             log.exception("%s runtime thread crashed", name)
 
     thread = threading.Thread(target=_runner, name=f"forven-{name}", daemon=True)
+    track_runtime_thread(thread)
     thread.start()
     return thread
 

@@ -108,6 +108,7 @@ class BacktestSubmitBody(BaseModel):
 
 
 class OptimizationSubmitBody(BaseModel):
+    minimum_validation_bars: int | None = Field(default=None, ge=420, le=50_000)
     strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
     strategy_name: str | None = Field(default=None, max_length=256)
     symbol: str = "BTC"

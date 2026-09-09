@@ -208,7 +208,7 @@ def test_get_active_skips_bad_row_and_loads_non_execution_owner(forven_db):
     assert row["runtime_type"] == "macd"
 
 
-def test_get_active_backfills_runtime_type_from_unique_prefix_match(forven_db):
+def test_get_active_refuses_unvalidated_prefix_variant(forven_db):
     registry_mod.reset()
     registry_mod.register_type("bb_fade_s00194", DummyStrategy)
 
@@ -222,15 +222,14 @@ def test_get_active_backfills_runtime_type_from_unique_prefix_match(forven_db):
 
     active = registry_mod.get_active()
 
-    assert "S-CUSTOM" in active
-    assert getattr(active["S-CUSTOM"], "runtime_type") == "bb_fade_s00194"
+    assert "S-CUSTOM" not in active
 
     with get_db() as conn:
         row = conn.execute(
             "SELECT runtime_type FROM strategies WHERE id = ?",
             ("S-CUSTOM",),
         ).fetchone()
-    assert row["runtime_type"] == "bb_fade_s00194"
+    assert row["runtime_type"] is None
 
 
 def test_resolve_runtime_type_quarantines_ambiguous_prefix_match():

@@ -1696,6 +1696,10 @@ def _persist_backtest_result_row(
     stamped_config = stamp_data_fingerprint(
         stamp_engine_version(config), symbol_value, timeframe_value
     )
+    if isinstance(metrics, dict) and metrics.get("execution_identity"):
+        stamped_config.setdefault("execution_identity", metrics["execution_identity"])
+    if isinstance(metrics, dict) and metrics.get("execution_contract"):
+        stamped_config["execution_contract"] = metrics["execution_contract"]
     config_json = json.dumps(stamped_config, separators=(",", ":"), default=str)
 
     with core.get_db() as conn:

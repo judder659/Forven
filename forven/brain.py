@@ -1484,7 +1484,7 @@ def transition_stage(
     force_activity_message: str | None = None
     with get_db() as conn:
         row = conn.execute(
-            "SELECT id, stage, status, owner, base_id, display_id, notes, metrics, stage_changed_at, type, runtime_type, symbol, demotion_count, status_reason FROM strategies WHERE id = ?",
+            "SELECT id, stage, status, owner, base_id, display_id, notes, metrics, stage_changed_at, type, runtime_type, symbol, timeframe, demotion_count, status_reason, params FROM strategies WHERE id = ?",
             (strategy_id,),
         ).fetchone()
         if not row:
@@ -1868,7 +1868,7 @@ def transition_stage(
         # duplicate or contradictory transitions; the last writer silently wins.
         conn.execute("BEGIN IMMEDIATE")
         commit_row = conn.execute(
-            "SELECT stage, status, stage_changed_at, display_id, owner "
+            "SELECT stage, status, stage_changed_at, display_id, owner, params, symbol, timeframe, type, runtime_type "
             "FROM strategies WHERE id = ?",
             (strategy_id,),
         ).fetchone()
@@ -1914,6 +1914,26 @@ def transition_stage(
                 "blocked_reason": conflict_reason,
                 "reason_code": "lifecycle_conflict",
             }
+
+        if normalized_target in {"paper", "live_graduated", "deployed"} and not force and any(
+            commit_row[key] != row[key] for key in ("params", "symbol", "timeframe", "type", "runtime_type")
+        ):
+            return _record_blocked_transition(
+                "Strategy parameters or execution identity changed during promotion checks; revalidate the current configuration",
+                "stale_validation",
+            )
+
+        execution_validation = None
+        if normalized_target == "paper":
+            from forven.strategies.execution_contract import capture_confirmation
+
+            execution_validation = capture_confirmation(conn, dict(row))
+            if not execution_validation.get("verified") and not force:
+                return _record_blocked_transition(
+                    "Promotion execution could not be bound to its confirmation backtest: "
+                    + str(execution_validation.get("reason") or "revalidation required"),
+                    "stale_validation",
+                )
 
         now = datetime.now(timezone.utc).isoformat()
         new_owner = STAGE_TO_AGENT.get(normalized_target)
@@ -2160,6 +2180,7 @@ def transition_stage(
                         "base_id": row["base_id"],
                         "motion": "failure" if failure_transition else "lifecycle_transition",
                         "force": force_transition,
+                        "execution_validation": execution_validation,
                     }
                 ),
                 now,
@@ -2515,6 +2536,11 @@ def transition_stage(
         if (
             normalized_target in {"archived", "rejected", "research_only"}
             and current_stage in {"paper", "gauntlet", "live_graduated"}
+            and not (
+                normalized_target == "research_only"
+                and actor == "gauntlet_evidence_deferral"
+                and isinstance(evidence, dict) and evidence.get("merit") is False
+            )
         ):
             outcome_kind = "negative"
         elif normalized_target == "live_graduated":
@@ -3115,24 +3141,23 @@ def invoke_sync(
 
 
 def _build_cycle_prompt() -> str:
-    """Build the default hourly cycle prompt with dynamic rules."""
-    from forven.db import kv_get
-    settings = kv_get("forven:settings", {})
-    max_dd = settings.get("max_drawdown_pct", 30)
-    daily_loss = settings.get("max_daily_loss", 500)
-    max_trade = settings.get("max_position_size_pct", 2)
-
+    """Build the default review prompt without freezing or mislabeling risk limits."""
     return (
-        "You are the Brain ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ the boss of the Forven trading operation.\n\n"
-        "Review the current state provided in your context. Then:\n"
-        "1. Assess the current market regime and portfolio status\n"
-        "2. Check if any open positions need attention (trailing stops, exits)\n"
-        "3. Review any completed agent tasks and decide next steps\n"
-        "4. Evaluate if conditions are right for new entries\n"
-        "5. Assign tasks to agents if needed (quick-screen triage, gauntlet validation, paper risk review)\n"
-        "6. Summarize your assessment and any actions taken\n\n"
-        f"REMEMBER: {max_dd}% max drawdown kill switch. ${daily_loss} daily loss limit. {max_trade}% max per trade. "
-        "Capital preservation is the floor. Alpha generation is the mission.\n\n"
+        "You are the Brain coordinating Forven's current specialist roster.\n\n"
+        "Review the current state and your supplied role/workspace guidance. Then:\n"
+        "1. Assess market, portfolio, data freshness, and pipeline blockers.\n"
+        "2. Review completed, failed, blocked, and already-running work before assigning more.\n"
+        "3. Identify risk incidents using effective controls and verified exposure. "
+        "Execution and position management belong to the kernel/operator controls.\n"
+        "4. Assign bounded research, development, validation, or risk-review work only "
+        "within the current mode, roster, permissions, and budgets. Avoid duplicate tasks.\n"
+        "5. Recommend only supported stage transitions with current, relevant gate evidence.\n"
+        "6. Summarize observations and proposed actions separately from confirmed outcomes.\n\n"
+        "Use effective risk settings with their actual units and scope. Position-size "
+        "percentage is not risk per trade. If limits or exposure are unavailable/stale, "
+        "report the missing evidence and do not recommend increased exposure. "
+        "Never force a gate, modify limits, or claim a proposed action already happened. "
+        "An empty actions list is appropriate when no supported action is needed.\n\n"
         "Respond ONLY as strict JSON matching this schema:\n"
         "{\n"
         '  "summary": "string",\n'
@@ -3328,6 +3353,28 @@ def assign_task_direct(
     display_id = ""
     task_id = 0
     with get_db() as conn:
+        if task_type == "develop_candidate" and isinstance(input_data, dict):
+            hypothesis_id = str(input_data.get("hypothesis_id") or input_data.get("crucible_id") or "").strip()
+            if hypothesis_id:
+                # Serialize candidate ownership across planner, promotion and
+                # direct assignments. A blocked checkpoint is unfinished work.
+                conn.execute("BEGIN IMMEDIATE")
+                hypothesis = conn.execute(
+                    "SELECT id,display_id FROM hypotheses WHERE id=? OR display_id=?",
+                    (hypothesis_id, hypothesis_id),
+                ).fetchone()
+                aliases = (hypothesis["id"], hypothesis["display_id"]) if hypothesis else (hypothesis_id, hypothesis_id)
+                existing = conn.execute(
+                    "SELECT id FROM agent_tasks WHERE type='develop_candidate' "
+                    "AND status IN ('pending','running','blocked') AND (status!='blocked' OR dismissed_at IS NULL) "
+                    "AND json_valid(input_data) "
+                    "AND (json_extract(input_data,'$.hypothesis_id') IN (?,?) "
+                    "OR json_extract(input_data,'$.crucible_id') IN (?,?)) "
+                    "ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,id DESC LIMIT 1",
+                    (*aliases, *aliases),
+                ).fetchone()
+                if existing:
+                    return int(existing["id"])
         resolved_strategy_id = _resolve_task_strategy_id(
             conn,
             task_type,

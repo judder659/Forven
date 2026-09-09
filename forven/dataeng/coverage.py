@@ -281,7 +281,7 @@ def _autobackfill_enabled() -> bool:
     return "PYTEST_CURRENT_TEST" not in os.environ
 
 
-def _latest_ingestion_run(symbol_canonical: str, timeframe: str) -> dict | None:
+def _latest_ingestion_run(symbol_canonical: str, timeframe: str, required_since_ms: int | None = None) -> dict | None:
     """The most recently started ingestion run for this series, or None."""
     from forven.data import get_active_ingestion_runs, symbol_to_fs
 
@@ -293,6 +293,11 @@ def _latest_ingestion_run(symbol_canonical: str, timeframe: str) -> dict | None:
                 continue
             if str(run.get("timeframe")) != str(timeframe):
                 continue
+            if required_since_ms is not None and run.get("status") == "completed":
+                if not run.get("all_available") and (
+                    run.get("since_ms") is None or int(run["since_ms"]) > required_since_ms
+                ):
+                    continue  # a newer refresh cannot hide a completed history request
         except Exception:
             continue
         if best is None or str(run.get("started_at") or "") > str(best.get("started_at") or ""):
@@ -385,6 +390,7 @@ def ensure_coverage(
     required_days: int,
     *,
     exchange: str = "binance",
+    require_request_evidence: bool = False,
 ) -> dict[str, Any]:
     """Ensure ~``required_days`` of OHLCV history exists for (symbol, timeframe).
 
@@ -413,7 +419,11 @@ def ensure_coverage(
         # whatever history exists, still returning the canonical symbol.
         return {"status": "ready", "coverage_days": cov, "symbol": canon, "autobackfill_disabled": True}
 
-    run = _latest_ingestion_run(canon, timeframe)
+    requested_since = int(time.time() * 1000) - need * _DAY_MS
+    run = (
+        _latest_ingestion_run(canon, timeframe, requested_since)
+        if require_request_evidence else _latest_ingestion_run(canon, timeframe)
+    )
     if run is not None:
         status = str(run.get("status") or "")
         if status in {"pending", "running"}:
@@ -423,7 +433,11 @@ def ensure_coverage(
                 "coverage_days": cov,
                 "symbol": canon,
             }
-        if status == "completed":
+        covered_request = bool(run.get("all_available")) or (
+            run.get("since_ms") is not None
+            and int(run["since_ms"]) <= requested_since
+        )
+        if status == "completed" and (not require_request_evidence or covered_request):
             # A backfill already finished yet coverage is still short → the source has
             # no older history for this series (e.g. a recent listing). Proceed on what
             # exists rather than re-requesting the impossible every tick. The catch-up

@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 import yaml
 
@@ -985,11 +986,16 @@ def force_promote_hypothesis(hypothesis_id: str) -> QuantSkill | None:
 
 
 def _archive_skill(name: str) -> None:
-    """Move a skill to the _archived directory."""
+    """Archive a skill without overwriting evidence from an earlier version."""
     src = SKILLS_DIR / _sanitize_name(name)
     dst = ARCHIVED_DIR / _sanitize_name(name)
     if src.exists():
+        if src.is_symlink() or src.resolve().parent != SKILLS_DIR.resolve():
+            raise ValueError("Skill archive source must stay inside the skills directory")
         if dst.exists():
-            shutil.rmtree(dst)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            dst = ARCHIVED_DIR / f"{_sanitize_name(name)}--{stamp}-{uuid4().hex[:8]}"
+        if dst.resolve().parent != ARCHIVED_DIR.resolve():
+            raise ValueError("Skill archive destination must stay inside the archive directory")
         shutil.move(str(src), str(dst))
         log.info("Archived quant skill: %s", name)

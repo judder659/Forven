@@ -35,7 +35,7 @@ def test_live_kernel_execution_can_be_disabled(forven_db):
     assert scanner._live_kernel_execution_enabled() is False
 
 
-def test_kernel_open_live_places_real_order(monkeypatch):
+def test_kernel_open_live_places_real_order(forven_db, monkeypatch):
     calls = {}
     monkeypatch.setattr("forven.exchange.risk.can_open", lambda *a, **k: (True, 0.01, "ok"))
     # Budget/hard-cap admission is covered by test_live_portfolio_budget; this
@@ -220,7 +220,7 @@ def test_kernel_refresh_live_respects_manual_stop(monkeypatch):
     assert "place" not in calls
 
 
-def test_kernel_open_live_trailing_only_derives_initial_stop(monkeypatch):
+def test_kernel_open_live_trailing_only_derives_initial_stop(forven_db, monkeypatch):
     calls = {}
     monkeypatch.setattr("forven.exchange.risk.can_open", lambda *a, **k: (True, 0.01, "ok"))
     # Budget/hard-cap admission is covered by test_live_portfolio_budget; this

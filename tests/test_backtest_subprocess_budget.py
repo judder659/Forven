@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+import pytest
 
 import forven.strategies.concurrency as conc
 
@@ -107,7 +108,7 @@ def test_budget_edit_applies_to_queued_waiters(monkeypatch):
     assert conc.active_backtest_subprocess_slots() == 0
 
 
-def test_pathological_wait_proceeds_over_budget_instead_of_wedging(monkeypatch):
+def test_pathological_wait_times_out_without_exceeding_budget(monkeypatch):
     monkeypatch.setattr(conc, "_SLOT_POLL_SECONDS", 0.02)
     monkeypatch.setattr(conc, "_MAX_SLOT_WAIT_SECONDS", 0.1)
     monkeypatch.setenv("FORVEN_BACKTEST_SUBPROCESS_BUDGET", "1")
@@ -122,17 +123,19 @@ def test_pathological_wait_proceeds_over_budget_instead_of_wedging(monkeypatch):
             release_holder.wait(timeout=5)
 
     def waiter():
-        with conc.backtest_subprocess_slot("waiter"):
-            waiter_in.set()
+        with pytest.raises(TimeoutError, match="subprocess budget exhausted"):
+            with conc.backtest_subprocess_slot("waiter"):
+                pytest.fail("must not exceed the configured memory budget")
+        waiter_in.set()
 
     t1 = threading.Thread(target=holder)
     t1.start()
     assert holder_in.wait(timeout=5)
     t2 = threading.Thread(target=waiter)
     t2.start()
-    # After the backstop wait the queued spawn proceeds over budget (availability
-    # beats a wedged pipeline; the budget is a memory guard, not a correctness gate).
+    # A timed-out waiter drains without killing the holder or consuming a slot.
     assert waiter_in.wait(timeout=5)
+    assert conc.active_backtest_subprocess_slots() == 1
     release_holder.set()
     t1.join(timeout=5)
     t2.join(timeout=5)

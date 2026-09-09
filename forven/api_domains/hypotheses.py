@@ -10,6 +10,7 @@ from forven.crucibles import (
     derive_origin,
 )
 from forven.db import get_db
+from forven.crucible_operations import attempt_revisions, work_states
 from forven.hypotheses import (
     HypothesisPoolFullError,
     add_hypothesis_artifact,
@@ -390,6 +391,7 @@ def _build_hypothesis_summaries(
     strategy_gap_counts: dict[str, int] = {}
 
     active_tasks = _active_task_map(hypothesis_ids)
+    operations = work_states(hypothesis_ids)
     source_tags_by_hypothesis = _source_tags_map(hypothesis_ids)
 
     with get_db() as conn:
@@ -504,6 +506,7 @@ def _build_hypothesis_summaries(
                 + int(strategy_gap_counts.get(hypothesis_id, 0)),
                 "quality": computed_quality,
                 "active_task": active_task,
+                "work_state": operations.get(hypothesis_id),
                 "source_tags": source_tags_by_hypothesis.get(hypothesis_id, []),
                 "verdict_memo": hypothesis.get("verdict_memo"),
                 "verdict_memo_at": hypothesis.get("verdict_memo_at"),
@@ -567,6 +570,7 @@ def get_hypothesis_detail_payload(
     research_task = _active_research_task_for_hypothesis(hypothesis["id"])
     task_history = _recent_task_history(hypothesis["id"], limit=5)
     strategy_id_list = [str(row["id"]) for row in strategies]
+    revisions = attempt_revisions(hypothesis, strategy_id_list)
     strategy_outcomes = _strategy_outcome_map(strategy_id_list)
     gauntlet_status = _gauntlet_status_map(strategy_id_list)
     strategy_count = len(strategies)
@@ -645,6 +649,7 @@ def get_hypothesis_detail_payload(
                 "gauntlet_status": gauntlet_status.get(str(row["id"])),
                 "owner": row.get("owner"),
                 "latest_result": strategy_outcomes.get(str(row["id"])),
+                "thesis_revision": revisions.get(str(row["id"]), "unverified"),
                 "updated_at": row.get("updated_at"),
                 "canonical": bool(row.get("canonical") or 0),
                 "parent_strategy_id": row.get("parent_strategy_id"),
@@ -655,6 +660,7 @@ def get_hypothesis_detail_payload(
         "data_gaps": list_hypothesis_data_gaps(hypothesis_id),
         "research_task": research_task,
         "agent_activity": task_history,
+        "work_state": work_states([hypothesis["id"]]).get(hypothesis["id"]),
     }
 
 
@@ -833,6 +839,11 @@ def retrigger_research_payload(hypothesis_id: str) -> dict[str, Any]:
     if active is not None:
         return {"ok": True, "task": active, "already_running": True}
 
+    if hypothesis.get("source_type") == "operator_manual":
+        task_info = _enqueue_operator_manual_research(hypothesis=hypothesis)
+        _require_queued_task(task_info)
+        return {"ok": True, "task": task_info, "already_running": False}
+
     # Prefer the first artifact's source_type/ref for the task description
     artifacts = list_hypothesis_artifacts(hypothesis["id"])
     first_artifact = artifacts[0] if artifacts else None
@@ -844,7 +855,22 @@ def retrigger_research_payload(hypothesis_id: str) -> dict[str, Any]:
         source_url=str(source_url),
         source="user",
     )
+    _require_queued_task(task_info)
     return {"ok": True, "task": task_info, "already_running": False}
+
+
+def _require_queued_task(task: dict | None) -> None:
+    if not task or not task.get("task_id") or task.get("error"):
+        raise HTTPException(503, "Research was not queued. The Crucible is saved; retry its research action.")
+
+
+def hypothesis_readiness_payload(hypothesis_id: str) -> dict:
+    from forven.strategies.idea_readiness import candidate_readiness
+
+    hypothesis = get_hypothesis(hypothesis_id)
+    if not hypothesis:
+        raise HTTPException(404, "Crucible not found")
+    return candidate_readiness({}, {"hypothesis_id": hypothesis["id"]})
 
 
 def trigger_crucible_discovery_payload() -> dict[str, Any]:
@@ -885,7 +911,7 @@ def generate_strategies_payload(
     if not hypothesis:
         raise HTTPException(status_code=404, detail="hypothesis not found")
 
-    if not force and _is_placeholder_hypothesis(hypothesis):
+    if _is_placeholder_hypothesis(hypothesis):
         raise HTTPException(
             status_code=422,
             detail={
@@ -893,8 +919,7 @@ def generate_strategies_payload(
                 "message": (
                     "No strategy was extracted from the source — this hypothesis "
                     "still has placeholder mechanism/thesis. Generating candidates "
-                    "would fabricate a strategy. Refine the hypothesis or confirm "
-                    "to proceed anyway."
+                    "would fabricate a strategy. Refine the hypothesis before generating candidates."
                 ),
             },
         )
@@ -904,6 +929,7 @@ def generate_strategies_payload(
         return {"ok": True, "task": active, "already_running": True}
 
     task_info = _enqueue_generate_strategies(hypothesis=hypothesis)
+    _require_queued_task(task_info)
     return {"ok": True, "task": task_info, "already_running": False}
 
 
@@ -920,13 +946,13 @@ def _active_generate_strategies_task_for_hypothesis(hypothesis_id: str) -> dict[
             SELECT id, display_id, type, status, title, created_at, input_data
             FROM agent_tasks
             WHERE agent_id = 'strategy-developer'
-              AND type = 'generate_strategies'
-              AND status IN ('pending', 'running')
-              AND input_data LIKE ?
+              AND type IN ('generate_strategies', 'develop_candidate')
+              AND status IN ('pending', 'running', 'paused_manual')
+              AND json_extract(CASE WHEN json_valid(input_data) THEN input_data ELSE '{}' END,'$.hypothesis_id') = ?
             ORDER BY id DESC
             LIMIT 5
             """,
-            (f'%"hypothesis_id": "{hypothesis_id}"%',),
+            (hypothesis_id,),
         ).fetchall()
     for row in rows:
         try:
@@ -1293,6 +1319,8 @@ def create_hypothesis_manual_payload(
         raise HTTPException(status_code=400, detail="market_thesis is required")
     if not final_mechanism:
         raise HTTPException(status_code=400, detail="mechanism is required")
+    if novelty_score is not None and not 0 <= novelty_score <= 1:
+        raise HTTPException(status_code=422, detail="Novelty score must be between 0 and 1")
 
     assets = [a.strip() for a in (target_assets or []) if a and a.strip()]
     if not assets:
@@ -1330,6 +1358,8 @@ def create_hypothesis_manual_payload(
 
     edge = (claimed_edge or "").strip()
     notes = (operator_notes or "").strip()
+    if notes:
+        hypothesis = update_hypothesis(hypothesis["id"], operator_notes=notes)
     if edge or notes:
         add_hypothesis_artifact(
             hypothesis_id=hypothesis["id"],
@@ -1375,8 +1405,7 @@ def _enqueue_operator_manual_research(
         f"1. Read the hypothesis fields; do NOT rewrite them unless clearly wrong.\n"
         f"2. Call record_data_gap for anything material that's missing to implement "
         f"and evaluate the mechanism.\n"
-        f"3. Spawn 1-3 candidate strategies via create_strategy, each tied to "
-        f"hypothesis_id={hypothesis['id']}, lane=benchmarking.\n"
+        f"3. Resolve executable target assets/timeframes and document required inputs. Do not write strategy code in this research task.\n"
         f"4. Stop. Do not go outside this hypothesis."
     )
     try:
@@ -1450,8 +1479,7 @@ def _enqueue_operator_seed_research(
         f"market_thesis, mechanism, why_now, target_assets, target_timeframes, "
         f"novelty_score (0-1 vs existing memory).\n"
         f"3. Call record_data_gap for anything material the source is missing.\n"
-        f"4. Spawn 1-3 candidate strategies via create_strategy, each tied to "
-        f"hypothesis_id={hypothesis['id']}, lane=benchmarking.\n"
+        f"4. Resolve executable target assets/timeframes and document required inputs. Do not write strategy code in this research task. The application queues development after research completes.\n"
         f"5. Stop. Do not go outside this hypothesis."
     )
     try:
@@ -1510,8 +1538,7 @@ def _enqueue_operator_seed_research_multi(
         f"market_thesis, mechanism, why_now, target_assets, target_timeframes, "
         f"novelty_score (0-1 vs existing memory).\n"
         f"3. Call record_data_gap for anything material the sources are missing.\n"
-        f"4. Spawn 1-3 candidate strategies via create_strategy, each tied to "
-        f"hypothesis_id={hypothesis['id']}, lane=benchmarking.\n"
+        f"4. Resolve executable target assets/timeframes and document required inputs. Do not write strategy code in this research task. The application queues development after research completes.\n"
         f"5. Stop. Do not go outside this hypothesis."
     )
     try:

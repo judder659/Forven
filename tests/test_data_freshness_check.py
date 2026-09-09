@@ -1,6 +1,8 @@
 """check_data_freshness watches data ARRIVAL (telemetry), not scheduler liveness."""
 from __future__ import annotations
 
+import pytest
+
 import forven.data_manager as dm
 from forven.health_monitor import (
     State,
@@ -20,6 +22,20 @@ def test_green_and_full_score_when_fresh(forven_db):
     dm._record_collection("ohlcv", None, 100, True)
     assert check_data_freshness().state == State.GREEN
     assert data_health_score() == 100
+
+
+def test_unknown_collection_health_is_not_a_perfect_score(forven_db: object) -> None:
+    _reset_stats()
+    assert check_data_freshness().state == State.AMBER
+    assert data_health_score() is None
+
+
+def test_broken_collection_monitor_is_not_a_perfect_score(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken() -> dict:
+        raise RuntimeError("telemetry unavailable")
+
+    monkeypatch.setattr(dm, "data_manager_stats", broken)
+    assert data_health_score() is None
 
 
 def test_red_on_repeated_stream_failures(forven_db):

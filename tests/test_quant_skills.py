@@ -255,6 +255,28 @@ def test_consolidation_keeps_good_skills(tmp_skills_dir):
     assert read_skill("regime-range-bound-rsi") is not None
 
 
+def test_consolidation_preserves_previous_archive(tmp_skills_dir, monkeypatch):
+    import forven.quant_skills as skills
+
+    prior = tmp_skills_dir / "_archived" / "weak-skill"
+    prior.mkdir()
+    evidence = prior / "previous-evidence.json"
+    evidence.write_text('{"backtest": "original"}', encoding="utf-8")
+    write_skill(_make_skill(name="weak-skill", metadata={"confidence": "0.1", "sample_size": "25"}))
+
+    def refuse_delete(*args, **kwargs):
+        raise PermissionError("Archived evidence is read-only")
+
+    monkeypatch.setattr(skills.shutil, "rmtree", refuse_delete)
+    assert run_consolidation()["archived"] == 1
+    assert evidence.read_text(encoding="utf-8") == '{"backtest": "original"}'
+    versions = list(prior.parent.glob("weak-skill--*"))
+    assert len(versions) == 1
+    assert (versions[0] / "SKILL.md").exists()
+    assert read_skill("weak-skill") is None
+    assert run_consolidation()["archived"] == 0
+
+
 # ── Skill Detail ──────────────────────────────────────────────────────────────
 
 def test_get_skill_detail(tmp_skills_dir):

@@ -91,6 +91,12 @@ def get_agents_spend(days: int = 30):
     return {"days": days, "daily": rows, "totals": sorted(totals.values(), key=lambda a: -a["cost_usd"])}
 
 
+@router.get("/api/agents/outcomes")
+def get_agent_outcomes(days: int = 7) -> dict:
+    from forven.agents.outcomes import get_agent_outcomes as summarize
+    return summarize(days)
+
+
 @router.get("/api/agents/{agent_id}")
 def get_agent(agent_id: str):
     return core.get_agent(agent_id)

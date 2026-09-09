@@ -804,7 +804,11 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
                 )
             else:
                 try:
-                    result = await asyncio.wait_for(tool.handler(tool_payload), timeout=120)
+                    from forven.async_utils import contain_process_exit
+
+                    result = await asyncio.wait_for(
+                        contain_process_exit(tool.handler(tool_payload)), timeout=120,
+                    )
                 except asyncio.TimeoutError:
                     result = f"Tool '{tool_name}' timed out after 120s"
 

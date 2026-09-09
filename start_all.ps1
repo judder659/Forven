@@ -3,6 +3,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $script:RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $script:RepoRoot "scripts/launcher-services.ps1")
+if (-not (Test-LauncherServiceEnabled -Root $script:RepoRoot)) { exit 0 }
 $script:WatchdogOwnerLockStream = $null
 $script:WatchdogOwnerName = $null
 $script:WatchdogOwnerAcquiredAt = $null
@@ -398,32 +400,25 @@ function Stop-ExistingBotProcesses {
 }
 
 function Get-BackendProcessIds {
-    # Every backend uvicorn process for THIS repo, listener or not. A backend
-    # whose main thread died closes its listener but can survive as a zombie
-    # (background threads wedge interpreter teardown) while still holding the
-    # runtime-worker and daemon file locks - reaping only the port listeners
-    # leaves it alive and the replacement backend then boots with no background
-    # loops.
-    $escapedRepoRoot = [Regex]::Escape($script:RepoRoot)
-    try {
-        return @(
-            Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction Stop |
-                Where-Object {
-                    $cmd = [string]$_.CommandLine
-                    $cmd -match $escapedRepoRoot -and $cmd -match 'forven\.api'
-                } |
-                Select-Object -ExpandProperty ProcessId -Unique
-        )
-    } catch {
-        Write-WarnMessage "Backend process discovery failed: $($_.Exception.Message)"
-        return @()
-    }
+    return @(Get-LauncherOwnedProcesses -Root $script:RepoRoot | Where-Object { $_.Role -eq 'backend' -and $_.ServiceProcess } | ForEach-Object { $_.Id })
 }
+
 
 function Stop-ZombieBackendProcesses {
     param([int[]]$KeepProcessIds = @())
 
     $keep = @($KeepProcessIds | Where-Object { $_ -and $_ -gt 0 })
+    # Keep the interpreter wrapper owning the live listener as well. Killing it
+    # loses installation provenance and can interrupt supervised descendants.
+    $processSnapshot = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    do {
+        $oldKeepCount = $keep.Count
+        foreach ($proc in $processSnapshot) {
+            if ([int]$proc.ProcessId -in $keep -and [int]$proc.ParentProcessId -notin $keep) {
+                $keep += [int]$proc.ParentProcessId
+            }
+        }
+    } while ($keep.Count -gt $oldKeepCount)
     $zombiePids = @(Get-BackendProcessIds | Where-Object { $keep -notcontains $_ })
     if ($zombiePids.Count -eq 0) { return }
     Write-WarnMessage "Reaping non-listening backend process(es): $($zombiePids -join ', ')"
@@ -891,18 +886,9 @@ function Start-FrontendService {
         }
     }
     Write-Info "Starting frontend on port $frontendPort ..."
-    # Clear Vite's dependency-optimization cache before a fresh dev-server start.
-    # A stale .vite cache from a prior run makes the loaded page request dead chunk
-    # hashes (404) -> blank white screen. Clearing it forces one clean re-optimize.
-    $viteCache = Join-Path $script:RepoRoot "frontend\node_modules\.vite"
-    if (Test-Path $viteCache) {
-        try {
-            Remove-Item -Recurse -Force $viteCache -ErrorAction Stop
-            Write-Info "Cleared stale Vite dep cache ($viteCache)"
-        } catch {
-            Write-WarnMessage "Could not clear Vite cache ${viteCache}: $($_.Exception.Message)"
-        }
-    }
+    # Preserve optimized chunks across ordinary restarts so existing browser tabs
+    # can still load them. Vite invalidates this cache when dependencies or config
+    # change; deleting it on every launch races the browser's cached module graph.
     # Bind Vite on the IPv6 unspecified address so both localhost (::1) and 127.0.0.1 work on Windows.
     $proc = Start-LoggedProcess -FilePath $npm -CommandArgs @("run","dev","--","--host","::","--port",$frontendPort.ToString()) `
         -WorkingDirectory (Join-Path $script:RepoRoot "frontend") -StdOutPath $frontendLog -StdErrPath $frontendErr
@@ -917,8 +903,8 @@ function Start-FrontendService {
 function Ensure-BackendService {
     $listenerPids = @(Get-ListeningProcessIds -Port $backendPort)
     $healthy = Test-HttpHealthy -Url $backendHealth
-    if ($forceRestart -eq "0" -and $listenerPids.Count -gt 0 -and $healthy) {
-        Write-Info "Reusing healthy backend on port $backendPort."
+    if ($forceRestart -eq "0" -and $listenerPids.Count -gt 0) {
+        Write-Info "Reusing existing backend on port $backendPort (health probe=$healthy); the watchdog will assess recovery."
         Add-StartupSummary -Service "backend" -Action "reused" -Details "pids=$($listenerPids -join ',')"
         return $null
     }
@@ -936,8 +922,8 @@ function Ensure-BackendService {
 function Ensure-FrontendService {
     $listenerPids = @(Get-ListeningProcessIds -Port $frontendPort)
     $healthy = Test-HttpHealthy -Url $frontendRoot
-    if ($forceRestart -eq "0" -and $listenerPids.Count -gt 0 -and $healthy) {
-        Write-Info "Reusing healthy frontend on port $frontendPort."
+    if ($forceRestart -eq "0" -and $listenerPids.Count -gt 0) {
+        Write-Info "Reusing existing frontend on port $frontendPort (health probe=$healthy)."
         Add-StartupSummary -Service "frontend" -Action "reused" -Details "pids=$($listenerPids -join ',')"
         return $null
     }
@@ -1338,17 +1324,20 @@ try {
     $script:WatchdogOwnerLockHeld = $true
     Add-StartupSummary -Service "watchdog" -Action "claimed" -Details "owner=start_all pid=$PID"
 
-    # Always kill all existing Forven processes for a clean start
-    Write-Info "Stopping all existing Forven processes..."
-    Stop-AllForvenProcesses
+    # Only an explicit full restart may stop unrelated healthy service roles.
+    # The launcher already stops its selected role and sets FORCE_RESTART=0.
+    if ($forceRestart -eq '1') {
+        Write-Info "Stopping all existing Forven processes..."
+        Stop-AllForvenProcesses
+    }
 
     Write-Info "Starting Forven services..."
 
-    $backendProc = Ensure-BackendService
+    $backendProc = if (Test-LauncherServiceEnabled -Root $script:RepoRoot -Service backend) { Ensure-BackendService } else { $null }
     $labWorkerProc = Ensure-LabWorkerService
     $botProc = Ensure-BotService
     $daemonProc = Ensure-DaemonService
-    $frontendProc = Ensure-FrontendService
+    $frontendProc = if (Test-LauncherServiceEnabled -Root $script:RepoRoot -Service frontend) { Ensure-FrontendService } else { $null }
 
     Write-Info "Ready:"
     Write-Info "  Frontend: http://127.0.0.1:$frontendPort"
@@ -1484,12 +1473,14 @@ try {
     while ($true) {
         Start-Sleep -Seconds $watchdogInterval
 
+        if (-not (Test-LauncherServiceEnabled -Root $script:RepoRoot)) { continue }
+
         # In-app self-update: the "Update & restart" action fast-forwards the
         # checkout and drops this sentinel. Bounce the backend so it reloads the
         # pulled code, then clear the sentinel. (The frontend is served by Vite,
         # which hot-reloads source changes on its own.)
         $restartSentinel = Join-Path $script:RepoRoot ".tmp\restart.request"
-        if (Test-Path $restartSentinel) {
+        if ((Test-Path $restartSentinel) -and (Test-LauncherServiceEnabled -Root $script:RepoRoot -Service backend)) {
             Write-Info "Self-update restart requested - bouncing backend to load new code..."
             try { Remove-Item -Force $restartSentinel -ErrorAction Stop } catch { Write-WarnMessage "Could not remove restart sentinel: $($_.Exception.Message)" }
             try {
@@ -1509,6 +1500,7 @@ try {
             continue
         }
 
+        if (Test-LauncherServiceEnabled -Root $script:RepoRoot -Service backend) {
         # Watchdog: Backend (critical - check HTTP health)
         $backendHealthy = Test-HttpHealthy -Url $backendHealth
         $backendExited = (($null -ne $backendProc) -and $backendProc.HasExited)
@@ -1556,6 +1548,8 @@ try {
                 Write-WarnMessage "Backend health check failed ($backendProbeCount/$backendHealthRestartCycles) but process is alive and listening (likely a heavy job blocking /api/health); not restarting."
             }
         }
+
+        } # Backend desired state
 
         # Watchdog: Bot
         if (($null -ne $botProc) -and $botProc.HasExited) {
@@ -1611,6 +1605,7 @@ try {
             }
         }
 
+        if (Test-LauncherServiceEnabled -Root $script:RepoRoot -Service frontend) {
         # Watchdog: Frontend
         if (($null -ne $frontendProc) -and $frontendProc.HasExited) {
             if (Test-HttpHealthy -Url $frontendRoot) {
@@ -1637,7 +1632,8 @@ try {
                 }
             }
         }
-    }
+        } # Frontend desired state
+    } # Supervisor loop
 } catch {
     # Any exception in the watchdog loop (including Ctrl+C PipelineStoppedException)
     # is treated as intentional. Terminal close events (CTRL_CLOSE_EVENT) give us

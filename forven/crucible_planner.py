@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from forven.crucible_tasks import CANDIDATE_ACTION_KINDS
@@ -142,6 +142,7 @@ class CrucibleTaskIndex:
     failed_action_counts: dict[tuple[str, str | None], int]
     failed_backtest_counts: dict[tuple[str | None, str | None], int]
     fruitless_develop_counts: dict[str | None, int]
+    blocked_candidates: set[str | None] = field(default_factory=set)
 
     @classmethod
     def build(cls) -> "CrucibleTaskIndex":
@@ -152,6 +153,7 @@ class CrucibleTaskIndex:
                 FROM agent_tasks
                 WHERE input_data IS NOT NULL
                   AND input_data LIKE '%action_kind%'
+                  AND (status != 'blocked' OR dismissed_at IS NULL)
                 """
             ).fetchall()
 
@@ -161,6 +163,7 @@ class CrucibleTaskIndex:
         failed_action_counts: dict[tuple[str, str | None], int] = defaultdict(int)
         failed_backtest_counts: dict[tuple[str | None, str | None], int] = defaultdict(int)
         fruitless_develop_counts: dict[str | None, int] = defaultdict(int)
+        blocked_candidates: set[str | None] = set()
 
         for row in rows:
             payload = _parse_input_data(row["input_data"])
@@ -182,6 +185,11 @@ class CrucibleTaskIndex:
 
             if status in _OPEN_STATUSES:
                 open_actions.add(key)
+            if status == "blocked" and action_kind in CANDIDATE_ACTION_KINDS:
+                # A checkpoint/data dependency owns this candidate until it is
+                # explicitly resolved. Creating a fresh task bypasses neither.
+                open_actions.add(key)
+                blocked_candidates.add(crucible_id)
             if effective_success:
                 successful_actions.add(key)
             if status in _PRIOR_STATUSES and not expired_pending:
@@ -208,6 +216,7 @@ class CrucibleTaskIndex:
             failed_action_counts=dict(failed_action_counts),
             failed_backtest_counts=dict(failed_backtest_counts),
             fruitless_develop_counts=dict(fruitless_develop_counts),
+            blocked_candidates=blocked_candidates,
         )
 
     def open_action_exists(self, action_kind: str, crucible_id: str | None) -> bool:
@@ -438,9 +447,10 @@ def _propose_crucible_action() -> CrucibleAction:
         title="Propose replacement crucible",
         description=(
             "Propose the next necessary research crucible for the trading pipeline. "
-            "The active research pool is currently exhausted by spawn limits, so create "
+            "The active research pool has no actionable development work, so create "
             "a fresh, materially different hypothesis with explicit assets, timeframes, "
-            "mechanism, and acceptance criteria."
+            "mechanism, and acceptance criteria. Verify required inputs against actual "
+            "local datasets first; keep unavailable-data ideas in research."
         ),
         priority=-2,
     )
@@ -703,6 +713,14 @@ def _research_pool_needs_replenishment(
             busy_count += 1
             continue
         if _strategy_count(crucible_id) == 0 and not _strategy_spawn_limit_exhausted(crucible_id):
+            if crucible_id in index.blocked_candidates:
+                non_actionable_count += 1
+                continue
+            from forven.strategies.idea_readiness import hypothesis_readiness
+
+            if not hypothesis_readiness(crucible_id)["can_generate"]:
+                non_actionable_count += 1
+                continue
             # 3-strike-parked crucibles are NOT actionable: _plan_for_crucible
             # refuses them forever once develop_candidate retries are exhausted.
             # Counting them as actionable here silently suppressed pool
@@ -771,6 +789,11 @@ def plan_next_actions(*, limit: int = 3) -> list[CrucibleAction]:
             continue
         if task_index.open_action_exists(action.action_kind, action.crucible_id):
             continue
+        if action.task_type == "develop_candidate":
+            from forven.strategies.idea_readiness import hypothesis_readiness
+
+            if not hypothesis_readiness(str(action.crucible_id))["can_generate"]:
+                continue
         actions.append(action)
         if len(actions) >= max_actions:
             break
@@ -788,7 +811,9 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
         _current_in_flight_task_count,
     )
     from forven.research_contract import get_hypothesis_discipline_settings
+    from forven.research_queue import resume_ready_data_candidates
 
+    resumed_task_ids = resume_ready_data_candidates(limit=limit)
     actions = plan_next_actions(limit=limit)
 
     # Share the strategy-developer in-flight budget with the hypothesis-promotion
@@ -878,6 +903,7 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
         )
         assigned_task_ids.append(int(task_id))
     result: dict[str, Any] = {
+        "resumed_task_ids": resumed_task_ids,
         "planned": len(actions),
         "assigned": len(assigned_task_ids),
         "assigned_task_ids": assigned_task_ids,

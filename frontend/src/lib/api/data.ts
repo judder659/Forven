@@ -1203,7 +1203,7 @@ export interface CollectionStream {
 }
 
 export interface CollectionHealth {
-	score: number;
+	score: number | null;
 	streams: CollectionStream[];
 }
 

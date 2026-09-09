@@ -27,7 +27,7 @@ def _normalize_job_status(raw: object) -> str:
 def _maybe_expire_stale_job(conn, result_id: str, cfg: dict, created_at: str) -> tuple[str, dict]:
     """If a 'running' job has exceeded the stale timeout, mark it failed in the DB."""
     try:
-        submitted = cfg.get("submitted_at") or created_at or ""
+        submitted = cfg.get("heartbeat_at") or cfg.get("submitted_at") or created_at or ""
         ts = datetime.fromisoformat(str(submitted).replace("Z", "+00:00"))
         age_minutes = (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
         if age_minutes < _STALE_JOB_TIMEOUT_MINUTES:
@@ -87,9 +87,10 @@ def _get_job_from_sqlite(job_id: str) -> dict | None:
         with get_db() as conn:
             brow = conn.execute(
                 "SELECT result_id, result_type, config_json, created_at "
-                "FROM backtest_results WHERE config_json LIKE ? "
+                "FROM backtest_results WHERE CASE WHEN json_valid(config_json) "
+                "THEN json_extract(config_json, '$.job_id') END = ? "
                 "ORDER BY created_at DESC LIMIT 1",
-                (f'%"job_id": "{job_id}"%',),
+                (job_id,),
             ).fetchone()
             if brow:
                 cfg = {}
@@ -100,10 +101,13 @@ def _get_job_from_sqlite(job_id: str) -> dict | None:
                 bt_status = _normalize_job_status(cfg.get("status", "succeeded"))
 
                 # Auto-fail stale "running" jobs that have exceeded the timeout.
-                if bt_status == "running":
+                if bt_status == "running" or (bt_status == "queued" and cfg.get("background_submit")):
+                    previous_status = bt_status
                     bt_status, cfg = _maybe_expire_stale_job(
                         conn, brow["result_id"], cfg, brow["created_at"],
                     )
+                    if bt_status == "running":
+                        bt_status = previous_status
 
                 return {
                     "id": job_id,

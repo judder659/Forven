@@ -8,8 +8,9 @@ from forven.gauntlet.models import normalize_step_key
 
 def _as_float(value: object, default: float = 0.0) -> float:
     try:
-        return float(value)
-    except Exception:
+        number = float(value)
+        return number if math.isfinite(number) else float(default)
+    except (TypeError, ValueError, OverflowError):
         return float(default)
 
 
@@ -29,7 +30,7 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
         folds = _as_list(payload.get("folds"))
         fold_count = int(_as_float(payload.get("n_folds") or payload.get("fold_count") or len(splits) or len(folds), 0.0))
         if fold_count < 2:
-            return {"ok": False, "reason": "walk-forward needs at least 2 folds with out-of-sample evidence"}
+            return {"ok": False, "reason": "walk-forward needs at least 2 folds with out-of-sample evidence", "reason_code": "insufficient_evidence"}
         return {"ok": True, "reason": "walk-forward payload has fold evidence"}
 
     if normalized == "monte_carlo":
@@ -47,7 +48,7 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
             )
         )
         if trade_count < max(1, min_trades):
-            return {"ok": False, "reason": f"Monte Carlo needs at least {min_trades} baseline trades"}
+            return {"ok": False, "reason": f"Monte Carlo needs at least {min_trades} baseline trades", "reason_code": "insufficient_evidence"}
         return {"ok": True, "reason": "Monte Carlo payload has simulation evidence"}
 
     if normalized == "parameter_jitter":
@@ -67,7 +68,10 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
                 0.0,
             )
         )
-        has_rate = any(key in payload for key in ("pass_rate", "stable_pct", "pct_positive_sharpe"))
+        has_rate = any(
+            math.isfinite(_as_float(payload.get(key), float("nan")))
+            for key in ("pass_rate", "stable_pct", "pct_positive_sharpe")
+        )
         if iterations < 10 or not has_rate:
             return {"ok": False, "reason": "parameter jitter needs iterations and stability/pass-rate evidence"}
         return {"ok": True, "reason": "parameter jitter payload has stability evidence"}
@@ -96,7 +100,7 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
         regimes = _as_list(payload.get("regimes"))
         n_regimes = int(_as_float(payload.get("n_regimes") or len(regimes), 0.0))
         if n_regimes < 2:
-            return {"ok": False, "reason": "regime split needs at least 2 regimes to be meaningful"}
+            return {"ok": False, "reason": "regime split needs at least 2 regimes to be meaningful", "reason_code": "insufficient_evidence"}
         return {"ok": True, "reason": "regime split payload has multi-regime evidence"}
 
     return {"ok": False, "reason": f"unknown robustness step: {step_key}"}

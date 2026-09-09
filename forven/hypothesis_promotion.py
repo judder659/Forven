@@ -266,7 +266,9 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
             "skipped": {**skipped, "no_eligible": 1},
             "picked": 0,
         }
-    picks = eligible[:top_k]
+    # Ineligible high-ranked ideas must not starve ready ideas below the cut.
+    picks = eligible
+    dispatch_limit = min(max(0, top_k), max(0, max_in_flight - in_flight))
     # Share the candidate dedup family with the crucible planner: skip a pick if a
     # develop_candidate / expand_viable_crucible task is already open for it, so the
     # two dispatchers don't both fire for the same crucible in one window.
@@ -283,6 +285,8 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
 
     daily_budget_remaining = develop_budget_remaining()
     for candidate in picks:
+        if len(dispatched_ids) >= dispatch_limit:
+            break
         if daily_budget_remaining <= 0:
             skipped["daily_budget"] = skipped.get("daily_budget", 0) + 1
             continue
@@ -292,6 +296,11 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
         hypothesis_id = str(hypothesis["id"])
         if task_index.candidate_action_open(hypothesis_id):
             skipped["candidate_open"] += 1
+            continue
+        from forven.strategies.idea_readiness import hypothesis_readiness
+
+        if not hypothesis_readiness(hypothesis_id)["can_generate"]:
+            skipped["data_not_ready"] = skipped.get("data_not_ready", 0) + 1
             continue
         # Mirror the planner's develop-retry cap: a crucible with no live
         # strategies whose develop attempts are exhausted (failed OR completed

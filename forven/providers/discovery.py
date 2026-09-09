@@ -20,6 +20,7 @@ import httpx
 
 from forven.auth.store import get_profile, get_token
 from forven.codex_responses import is_openai_oauth_token
+from forven.providers.frontier import FRONTIER_MODELS
 
 log = logging.getLogger("forven.api")
 
@@ -162,6 +163,10 @@ _LOCAL_PROVIDER_DEFAULT_BASE_URLS = {
 }
 
 _AGENT_MODEL_CATALOG = [
+    *[
+        {"provider": model.provider, "model_id": model.model_id, "label": model.label}
+        for model in FRONTIER_MODELS
+    ],
     {"provider": "openai", "model_id": "gpt-3.5-turbo", "label": "OpenAI GPT-3.5 Turbo"},
     {"provider": "openai", "model_id": "gpt-3.5-turbo-0125", "label": "OpenAI GPT-3.5 Turbo (0125)"},
     {"provider": "openai", "model_id": "gpt-4.1", "label": "OpenAI GPT-4.1"},
@@ -308,7 +313,7 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "opencode-go", "model_id": "mimo-v2.5", "label": "OpenCode GO MiMo V2.5"},
     {"provider": "opencode-go", "model_id": "qwen3.7-max", "label": "OpenCode GO Qwen3.7 Max"},
     {"provider": "opencode-go", "model_id": "qwen3.7-plus", "label": "OpenCode GO Qwen3.7 Plus"},
-    # OpenRouter: free tool-capable models are auto-discovered; these curated
+    # OpenRouter: tool-capable text models are auto-discovered; these curated
     # entries are reliable fallbacks (always selectable even if discovery fails).
     {"provider": "openrouter", "model_id": "openrouter/free", "label": "OpenRouter Auto (free, tool-capable router)"},
     {"provider": "openrouter", "model_id": "nvidia/nemotron-3-ultra-550b-a55b", "label": "OpenRouter Nemotron 3 Ultra 550B (paid)"},
@@ -482,7 +487,9 @@ def _looks_like_nvidia_discovery_model(model: str) -> bool:
 def _looks_like_xai_discovery_model(model: str) -> bool:
     lowered = model.lower().strip()
     # Keep generative grok chat models; drop image-generation variants.
-    return lowered.startswith("grok") and "image" not in lowered
+    return lowered.startswith("grok") and not any(
+        tag in lowered for tag in ("image", "video", "imagine", "voice", "audio")
+    )
 
 
 def _looks_like_groq_discovery_model(model: str) -> bool:
@@ -513,7 +520,7 @@ def _looks_like_gemini_discovery_model(model: str) -> bool:
         tag in lowered
         for tag in (
             "embedding", "image", "tts", "aqa", "computer-use",
-            "native-audio", "live", "robotics",
+            "native-audio", "live", "robotics", "transcribe", "omni",
         )
     ):
         return False
@@ -755,10 +762,8 @@ def _discover_provider_models(
         return merged, discovery_error
 
     if provider == "openrouter":
-        # OpenRouter is a gateway over 400+ models — listing them all would
-        # flood the picker. Surface only the FREE, tool-capable models (the
-        # useful set for Forven's agent loop), auto-updating as the free roster
-        # rotates. Curated paid fallbacks live in the catalog and merge in.
+        # Include paid frontier releases as well as free models. Discovery only
+        # offers choices; it never enables a model or changes a selected route.
         try:
             token = get_token("openrouter")
         except Exception:
@@ -775,21 +780,17 @@ def _discover_provider_models(
             }
             return fallback, str(exc)
 
-        def _is_zero_price(value: object) -> bool:
-            try:
-                return float(value or 0) == 0.0
-            except (TypeError, ValueError):
-                return False
-
         discovered_records: list[dict] = []
         for model in (payload.get("data") or []):
+            if not isinstance(model, dict):
+                continue
             model_id = str(model.get("id") or "").strip()
-            if not model_id:
+            if not model_id or model_id.endswith(":batch"):
                 continue
             if "tools" not in (model.get("supported_parameters") or []):
                 continue
-            pricing = model.get("pricing") or {}
-            if not (_is_zero_price(pricing.get("prompt")) and _is_zero_price(pricing.get("completion"))):
+            outputs = (model.get("architecture") or {}).get("output_modalities")
+            if outputs and outputs != ["text"]:
                 continue
             label = str(model.get("name") or model_id).strip()
             discovered_records.append({"model_id": model_id, "label": label})
@@ -797,7 +798,7 @@ def _discover_provider_models(
         if discovered_records:
             source = "provider-api"
         else:
-            discovery_error = "no free tool-capable models returned"
+            discovery_error = "no tool-capable text models returned"
 
         merged = _merge_model_records(provider, discovered_records, fallback)
         _AGENT_MODEL_LIST_CACHE[provider] = {

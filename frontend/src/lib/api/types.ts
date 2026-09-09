@@ -267,7 +267,7 @@ export interface Trade {
 // Health Monitor types
 // ---------------------------------------------------------------------------
 
-export type HealthState = 'green' | 'amber' | 'red';
+export type HealthState = 'green' | 'amber' | 'red' | 'unknown';
 
 export interface ComponentStatus {
 	name: string;

@@ -2599,6 +2599,7 @@ def _run_inline_result(
     source: str = "user",
 ) -> dict:
     from forven.api_core import _now
+    from forven.strategies.identity import strategy_source_identity
 
     if source == "user":
         try:
@@ -2621,6 +2622,7 @@ def _run_inline_result(
         "start_date": context.get("start_date"),
         "end_date": context.get("end_date"),
         "params_hash": _current_params_hash(context.get("strategy_id")),
+        "execution_identity": strategy_source_identity(str(context.get("strategy_id") or "")),
     }
     _persist_placeholder_result(
         result_id=result_id,
@@ -2695,6 +2697,7 @@ def _submit_result(
     global _robustness_system_running, _robustness_user_running
 
     from forven.api_core import _now
+    from forven.strategies.identity import strategy_source_identity
 
     result_id = _make_result_id(result_type)
     job_id = _make_job_id(result_type)
@@ -2713,6 +2716,7 @@ def _submit_result(
         "symbol": context.get("symbol"),
         "timeframe": context.get("timeframe"),
         "params_hash": _current_params_hash(context.get("strategy_id")),
+        "execution_identity": strategy_source_identity(str(context.get("strategy_id") or "")),
     }
     _persist_placeholder_result(
         result_id=result_id,

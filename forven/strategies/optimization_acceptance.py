@@ -41,9 +41,8 @@ If anything prevents a confident *better* verdict — insufficient data, a
 walk-forward error, a tie within noise — the baseline is retained. "Retained
 baseline" is a **successful** optimization outcome, not a failure.
 
-Phase-2 follow-ups (deliberately not here): a fully disjoint selection/decision
-window split, an OOS-first selection objective, plateau scoring, and wiring the
-advertised ``objective`` field.
+Acceptance requires disjoint dated windows and the same evaluated data content
+as the optimizer validation. A changed dataset requires a new experiment.
 """
 
 from __future__ import annotations
@@ -116,8 +115,28 @@ def _precheck(optimization_metrics: dict, candidate_params: dict) -> tuple[bool,
         return False, f"optimization status={status!r} (need 'succeeded')"
     validated = metrics.get("validated")
     wfa_verdict = str(metrics.get("wfa_verdict") or "").strip().upper()
-    if validated is not True and wfa_verdict != "PASS":
+    if validated is not True or wfa_verdict != "PASS":
         return False, f"optimizer WFA not passed (validated={validated!r}, wfa_verdict={wfa_verdict or 'N/A'})"
+    if metrics.get("holdout_applied") is not True:
+        return False, "insufficient_evidence: independent holdout was not applied"
+    if not metrics.get("validation_dataset_fingerprint"):
+        return False, "insufficient_evidence: validation dataset content identity is missing"
+    try:
+        import pandas as pd
+
+        selection = metrics["selection_window"]
+        validation = metrics["validation_window"]
+        boundaries = [pd.Timestamp(window[key]) for window, key in (
+            (selection, "start"), (selection, "end"), (validation, "start"), (validation, "end")
+        )]
+        if any(pd.isna(value) for value in boundaries):
+            raise ValueError("missing dates")
+        if not boundaries[0] <= boundaries[1] < boundaries[2] < boundaries[3]:
+            raise ValueError("overlapping or reversed windows")
+        if int(validation["bars"]) < 2:
+            raise ValueError("empty holdout")
+    except (KeyError, TypeError, ValueError):
+        return False, "insufficient_evidence: valid disjoint selection and validation windows required"
     return True, "precheck ok"
 
 
@@ -273,7 +292,7 @@ def _decide(baseline_wfa: dict, candidate_wfa: dict) -> AcceptanceDecision:
     )
 
 
-def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timeframe, total_bars, leverage, execution_controls=None):
+def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timeframe, total_bars, leverage, execution_controls=None, experiment_context=None):
     """Run a walk_forward over a fixed context; returns the result dict or None."""
     from forven.strategies.backtest import walk_forward
 
@@ -291,6 +310,7 @@ def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timefra
             total_bars=total_bars,
             leverage=leverage,
             execution_controls=execution_controls,
+            **(experiment_context or {}),
         )
     except Exception as exc:  # noqa: BLE001 - any failure -> can't prove better -> retain
         log.warning("acceptance bake-off walk_forward crashed for %s: %s", strategy_id, exc)
@@ -327,8 +347,7 @@ def evaluate_optimization_candidate(
     ``eval_timeframe`` defaults to the baseline's timeframe (the live deployment
     context) so the comparison answers "are the new params better than the old
     ones, where this strategy actually runs?". ``total_bars`` defaults to the
-    settings window via ``walk_forward`` (the full deployment window, not the
-    optimizer's 1440-bar cap).
+    recorded validation window. Caller bar counts cannot widen that window.
     """
     optimization_metrics = optimization_metrics if isinstance(optimization_metrics, dict) else {}
     current_params = current_params if isinstance(current_params, dict) else {}
@@ -370,20 +389,36 @@ def evaluate_optimization_candidate(
         else execution_controls_from_params(current_params)
     )
 
+    validation = optimization_metrics["validation_window"]
+    total_bars = int(validation["bars"])
+    experiment_context = {
+        "start_date": validation["start"], "end_date": validation["end"],
+        "as_of": optimization_metrics.get("as_of") or validation["end"],
+        **{key: optimization_metrics[key] for key in ("fee_bps", "slippage_bps", "initial_capital")
+           if optimization_metrics.get(key) is not None},
+    }
     baseline_wfa = _run_walk_forward(
         strategy_id, asset, strategy_type, current_params,
         eval_timeframe=resolved_tf, total_bars=total_bars, leverage=resolved_leverage,
-        execution_controls=shared_ec,
+        execution_controls=shared_ec, experiment_context=experiment_context,
     )
     candidate_wfa = _run_walk_forward(
         strategy_id, asset, strategy_type, candidate_params,
         eval_timeframe=resolved_tf, total_bars=total_bars, leverage=resolved_leverage,
-        execution_controls=shared_ec,
+        execution_controls=shared_ec, experiment_context=experiment_context,
     )
     if baseline_wfa is None or candidate_wfa is None:
         return AcceptanceDecision(
             accepted=False, code="bakeoff_error",
             reason="could not run baseline/candidate walk-forward; retaining baseline (do no harm)",
+            candidate_params=candidate_params, baseline_params=current_params,
+        )
+
+    expected_fingerprint = optimization_metrics["validation_dataset_fingerprint"]
+    if any(result.get("dataset_fingerprint") != expected_fingerprint for result in (baseline_wfa, candidate_wfa)):
+        return AcceptanceDecision(
+            accepted=False, code="insufficient_data",
+            reason="validation data changed since optimization; start a new experiment",
             candidate_params=candidate_params, baseline_params=current_params,
         )
 

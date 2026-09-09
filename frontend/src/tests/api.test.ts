@@ -315,6 +315,31 @@ describe('API Client', () => {
 	});
 
 	describe('submitBacktest', () => {
+		it('submits long interactive runs as background jobs', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				json: async () => ({ job_id: 'bt-long', status: 'queued' }),
+			});
+			const accepted = await api.submitBacktest({
+				strategy_id: 'S09735', strategy_name: 'SOL breakout', symbol: 'SOL', timeframe: '1h',
+				start: '2021-09-08', end: '2026-09-08', preserve_result: true,
+			}, { background: true });
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+			expect(mockFetch.mock.calls[0][0]).toBe('/api/backtests?background=true');
+			expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({
+				strategy_id: 'S09735', start: '2021-09-08', end: '2026-09-08', preserve_result: true,
+			});
+			expect(accepted.status).toBe('queued');
+		});
+
+		it('reports an uncertain submission on timeout without replaying it', async () => {
+			mockFetch.mockRejectedValueOnce(new DOMException('signal timed out', 'TimeoutError'));
+			await expect(api.submitBacktest({
+				strategy_id: 'S09735', strategy_name: 'SOL breakout', symbol: 'SOL', timeframe: '1h',
+			}, { background: true })).rejects.toBeInstanceOf(ApiOutcomeUnknownError);
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+
 		it('should submit backtest request', async () => {
 			const mockResponse = { job_id: 'test-job-123', status: 'queued' };
 			mockFetch.mockResolvedValueOnce({

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { dispatchNotice } from '$lib/utils/crucibleIntake';
 	import { onMount } from 'svelte';
 
 	import {
@@ -90,7 +91,9 @@
 		}
 	}
 
+	let surfaceRequest = 0;
 	async function loadSurface(): Promise<void> {
+		const request = ++surfaceRequest;
 		loading = true;
 		error = null;
 		try {
@@ -105,6 +108,7 @@
 				limit: pageSize,
 				offset: (currentPage - 1) * pageSize,
 			});
+			if (request !== surfaceRequest) return;
 			hypotheses = hypothesisResponse.hypotheses ?? [];
 			totalRows = hypothesisResponse.total ?? hypotheses.length;
 			// If the current page fell past the end (e.g. after a delete), step back and reload.
@@ -116,9 +120,9 @@
 			}
 			selectedIds = new Set(Array.from(selectedIds).filter((id) => hypotheses.some((item) => item.id === id)));
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load hypotheses.';
+			if (request === surfaceRequest) error = err instanceof Error ? err.message : 'Failed to load hypotheses.';
 		} finally {
-			loading = false;
+			if (request === surfaceRequest) loading = false;
 		}
 	}
 
@@ -246,9 +250,9 @@
 		}
 	}
 
-	function handleCreated(event: CustomEvent<{ id: string }>): void {
+	function handleCreated(event: CustomEvent<{ id: string; intake?: string }>): void {
 		setBanner('success', 'Crucible created from URL.');
-		void goto(`/hypotheses/${event.detail.id}`);
+		void goto(`/hypotheses/${event.detail.id}?intake=${event.detail.intake ?? "saved"}`);
 	}
 
 	function handleCreatedBulk(event: CustomEvent<{ ids: string[] }>): void {
@@ -257,9 +261,9 @@
 		void refreshAll();
 	}
 
-	function handleManualCreated(event: CustomEvent<{ id: string }>): void {
+	function handleManualCreated(event: CustomEvent<{ id: string; intake?: string }>): void {
 		setBanner('success', 'Crucible created.');
-		void goto(`/hypotheses/${event.detail.id}`);
+		void goto(`/hypotheses/${event.detail.id}?intake=${event.detail.intake ?? "saved"}`);
 	}
 
 	async function runRowResearch(hypothesisId: string): Promise<void> {
@@ -267,11 +271,8 @@
 		banner = null;
 		try {
 			const res = await retriggerHypothesisResearch(hypothesisId);
-			if (res.already_running) {
-				setBanner('success', 'Research already queued for this crucible.');
-			} else {
-				setBanner('success', 'Research task queued.');
-			}
+			const notice = dispatchNotice(res);
+			setBanner(notice.failed ? 'error' : 'success', notice.message);
 			await loadSurface();
 		} catch (err) {
 			setBanner('error', err instanceof Error ? err.message : 'Failed to queue research.');
@@ -375,7 +376,6 @@
 	$: activeTaskCount = hypotheses.filter((h) => h.active_task).length;
 	$: dataGapCount = hypotheses.reduce((total, h) => total + (h.open_data_gap_count ?? 0), 0);
 	$: provenCount = hypotheses.filter((h) => h.status === 'proven').length;
-	$: researchCount = hypotheses.filter((h) => h.status === 'researching' || h.quality === 'researching').length;
 	$: filtersActive = Boolean(laneFilter || statusFilter || qualityFilter || searchQuery || includeDisproven || sortOption !== 'updated_desc');
 	$: visibleStart = totalRows === 0 ? 0 : (currentPage - 1) * pageSize + 1;
 	$: visibleEnd = Math.min((currentPage - 1) * pageSize + hypotheses.length, totalRows);
@@ -410,7 +410,7 @@
 						title={filtersActive ? 'Reflects the filtered view, not the full bucket' : 'Inventory health in the current view'}
 					>
 						{totalRows} {viewLabels[managerView].toLowerCase()}
-						· queue {researchCount} ({activeTaskCount} task{activeTaskCount === 1 ? '' : 's'})
+						· on this page: {activeTaskCount} queued/running task{activeTaskCount === 1 ? '' : 's'}
 						· <span class={placeholderCount > 0 ? 'text-yellow-400' : ''}>{placeholderCount} placeholder{placeholderCount === 1 ? '' : 's'}</span>
 						· <span class={dataGapCount > 0 ? 'text-yellow-400' : ''}>{dataGapCount} data gap{dataGapCount === 1 ? '' : 's'}</span>
 						· {provenCount} proven{filtersActive ? ' · filtered' : ''}
@@ -445,14 +445,14 @@
 						on:click={() => (manualIngestOpen = true)}
 						class="terminal-button text-xs"
 					>
-						Create manually
+						Add idea
 					</button>
 					<button
 						type="button"
 						on:click={() => (urlIngestOpen = true)}
 						class="terminal-button-primary text-xs"
 					>
-						Add URL
+						Add source
 					</button>
 					<button
 						type="button"

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import io
 import logging
+import re
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
@@ -17,8 +19,9 @@ import pandas as pd
 log = logging.getLogger("forven.binance_vision")
 
 _BV_BASE = "https://data.binance.vision/data/futures/um"
+_BV_LIST_BASE = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 _BV_START_YEAR = 2019
-_BV_START_MONTH = 9  # September 2019
+_BV_START_MONTH = 9
 
 # SECURITY (audit 2026-06-22, L8): caps against memory exhaustion / zip-bombs.
 # A monthly klines ZIP is a few MB; these ceilings are generous but bound a
@@ -534,40 +537,55 @@ class BinanceVisionClient:
     def probe_start_date(
         self, bv_symbol: str, stream: str, timeframe: str = "1h"
     ) -> tuple[int, int] | None:
-        """Find the earliest available month for a symbol on Binance Vision.
+        """Read the earliest archive key with one bounded, sorted bucket listing.
 
-        Walks forward from 2019-09. Returns (year, month) or None if no data found.
-        Cached per bv_symbol+stream+timeframe in _bv_start_cache.
+        A failed listing is an error, not evidence that a market has no history.
+        Daily metrics can begin mid-month; probing only day one missed that data.
         """
         cache_key = f"{bv_symbol}:{stream}:{timeframe}"
         if cache_key in _bv_start_cache:
             return _bv_start_cache[cache_key]
-
-        now = datetime.now(timezone.utc)
-        for year, month in self._month_range(_BV_START_YEAR, _BV_START_MONTH, now.year, now.month):
-            if stream == "klines":
-                url = self._monthly_klines_url(bv_symbol, timeframe, year, month)
-            elif stream == "fundingRate":
-                url = self._monthly_funding_url(bv_symbol, year, month)
-            elif stream == "openInterest":
-                # Binance Vision has no monthly OI archives — probe day 1 of each month
-                # using the daily/metrics/ format (the only source for OI history).
-                url = self._daily_metrics_url(bv_symbol, year, month, 1)
-            else:
-                log.warning("BV probe unknown stream %r for %s — returning None", stream, bv_symbol)
-                break
-            try:
-                resp = httpx.get(url, timeout=10, follow_redirects=True)
-                if resp.status_code == 200:
-                    log.info("BV probe %s %s (%s) → %d-%02d", stream, bv_symbol, timeframe, year, month)
-                    _bv_start_cache[cache_key] = (year, month)
-                    return (year, month)
-            except Exception as exc:
-                log.warning("BV probe request failed for %s %s %d-%02d: %s", stream, bv_symbol, year, month, exc)
-
-        log.info("BV probe %s %s (%s) → no data found", stream, bv_symbol, timeframe)
-        _bv_start_cache[cache_key] = None
-        return None
+        if not re.fullmatch(r"[A-Z0-9_]+", bv_symbol):
+            return None
+        if stream == "klines":
+            if not re.fullmatch(r"[1-9]\d*[mhdwM]", timeframe):
+                return None
+            prefix = f"data/futures/um/monthly/klines/{bv_symbol}/{timeframe}/"
+            filename = f"{bv_symbol}-{timeframe}"
+        elif stream == "fundingRate":
+            prefix = f"data/futures/um/monthly/fundingRate/{bv_symbol}/"
+            filename = f"{bv_symbol}-fundingRate"
+        elif stream == "openInterest":
+            prefix = f"data/futures/um/daily/metrics/{bv_symbol}/"
+            filename = f"{bv_symbol}-metrics"
+        else:
+            return None
+        response = httpx.get(
+            _BV_LIST_BASE,
+            params={"list-type": "2", "prefix": prefix, "max-keys": 4},
+            timeout=15, follow_redirects=True,
+        )
+        response.raise_for_status()
+        if len(response.content) > 64 * 1024 or b"<!DOCTYPE" in response.content.upper():
+            raise ValueError("Invalid Binance Vision archive listing")
+        root = ET.fromstring(response.content)
+        ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
+        if root.tag != ns + "ListBucketResult":
+            raise ValueError("Invalid Binance Vision archive listing root")
+        pattern = re.escape(prefix + filename) + r"-(\d{4})-(\d{2})(?:-\d{2})?\.zip"
+        dates = []
+        for key in root.findall(f"{ns}Contents/{ns}Key"):
+            match = re.fullmatch(pattern, key.text or "")
+            if match and 1 <= int(match[2]) <= 12:
+                dates.append((int(match[1]), int(match[2])))
+        if dates:
+            result = min(dates)
+            _bv_start_cache[cache_key] = result
+            return result
+        if root.findtext(ns + "KeyCount") == "0" and root.findtext(ns + "IsTruncated") == "false":
+            _bv_start_cache[cache_key] = None
+            return None
+        raise ValueError("Binance Vision listing contained no recognized archive keys")
 
     @staticmethod
     def _month_range(

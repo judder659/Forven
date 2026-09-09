@@ -49,8 +49,8 @@ def test_telemetry_survives_restart(forven_db):
     with dm._stats_lock:
         dm._stats.clear()
         dm._stats_loaded = False
-        dm._load_telemetry_once()
 
+    # A read must load the snapshot; no new collection is required first.
     restored = dm.data_manager_stats().get("funding")
     assert restored is not None
     assert restored["consecutive_failures"] == 1

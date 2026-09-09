@@ -3,6 +3,7 @@
 Exhaustive grid search with WFA validation on best candidates.
 """
 
+import ast
 import gc
 import importlib
 import itertools
@@ -13,6 +14,7 @@ import os
 import pkgutil
 import random
 import time
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from forven.strategies.backtest import (
@@ -683,6 +685,7 @@ def optimize_strategy(
     initial_capital: float | None = None,
     leverage: float | None = None,
     as_of: str | None = None,
+    minimum_validation_bars: int | None = None,
 ) -> dict:
     """Optimize a strategy: grid search + WFA validation on best params.
 
@@ -691,6 +694,10 @@ def optimize_strategy(
     """
     from forven.api_core import get_settings
     settings = get_settings()
+
+    from datetime import datetime, timezone
+
+    as_of = as_of or datetime.now(timezone.utc).isoformat()
 
     if bars is None:
         duration_days = int(settings["backtest_duration_days"])
@@ -777,10 +784,15 @@ def optimize_strategy(
     resolved_execution_param_space = _normalize_explicit_param_space(execution_param_space)
     normalized_objective = _normalize_objective(objective)
 
+    # Resolve mutable settings once so all stages use the same cost assumptions.
+    fee_bps = float(fee_bps if fee_bps is not None else settings.get("backtest_fee_bps", 4.5))
+    slippage_bps = float(slippage_bps if slippage_bps is not None else settings.get("backtest_slippage_bps", 2.0))
+    initial_capital = float(initial_capital if initial_capital is not None else 10000.0)
+
     # Keep parameter selection and the final decision evidence disjoint. For a
     # sufficiently long window, the grid sees the chronological first 70% and WFA
-    # sees only the untouched final 30%. Short explicit/unit-test windows retain the
-    # legacy single-window behavior because they cannot support two 420-bar samples.
+    # sees only the untouched final 30%. Short windows remain exploratory and
+    # cannot produce a validated optimization.
     selection_bars = int(bars)
     selection_start = start_date
     selection_end = end_date
@@ -801,7 +813,14 @@ def optimize_strategy(
                 as_of=as_of,
             )
             if len(split_frame) >= 840:
-                holdout_bars = max(420, int(len(split_frame) * 0.30))
+                holdout_bars = max(420, int(len(split_frame) * 0.30), int(minimum_validation_bars or 0))
+                if minimum_validation_bars and len(split_frame) < holdout_bars + 420:
+                    return {
+                        "error": "Insufficient history for independent validation and parameter selection",
+                        "reason_code": "insufficient_evidence",
+                        "available_bars": len(split_frame),
+                        "required_bars": holdout_bars + 420,
+                    }
                 holdout_bars = min(holdout_bars, len(split_frame) - 420)
                 split_at = len(split_frame) - holdout_bars
                 selection_bars = split_at
@@ -813,6 +832,13 @@ def optimize_strategy(
                 holdout_applied = True
         except Exception as exc:
             log.warning("Optimization holdout split unavailable for %s: %s", strategy_id, exc)
+
+    if minimum_validation_bars and not holdout_applied:
+        return {
+            "error": "Independent validation history unavailable before parameter selection",
+            "reason_code": "insufficient_evidence",
+            "required_bars": int(minimum_validation_bars) + 420,
+        }
 
     # Step 1: Grid search on selection data only.
     try:
@@ -851,7 +877,7 @@ def optimize_strategy(
     )
 
     # Step 2: WFA validation on the untouched chronological holdout.
-    wfa_bars = min(validation_bars, 1440)
+    wfa_bars = validation_bars if minimum_validation_bars else min(validation_bars, 1440)
     best_full_params = best.get("full_params") if isinstance(best.get("full_params"), dict) else best["params"]
     best_execution_controls = best.get("full_execution_controls") if isinstance(best.get("full_execution_controls"), dict) else exec_controls
     # Size the fold count so each in-sample slice clears the worker's warmup+min-eval
@@ -887,6 +913,7 @@ def optimize_strategy(
         return {"error": detail}
 
     wfa_pass = wfa_result.get("verdict") == "PASS"
+    independently_validated = bool(wfa_pass and holdout_applied and wfa_result.get("dataset_fingerprint"))
 
     # Step 3: Feed the quant-skills learning loop
     try:
@@ -923,7 +950,8 @@ def optimize_strategy(
         "best_metrics": best["metrics"],
         "wfa_verdict": wfa_result.get("verdict", "N/A"),
         "wfa_degradation": wfa_result.get("degradation", None),
-        "validated": wfa_pass,
+        "validated": independently_validated,
+        "validation_status": "validated" if independently_validated else "insufficient_evidence",
         # The genuine selection breadth = combos actually evaluated (for the DSR
         # deflation), falling back to the caller's requested budget.
         "n_trials": int(best.get("trials_evaluated") or 0) or n_trials,
@@ -933,9 +961,14 @@ def optimize_strategy(
         "trial_sharpe_count": best.get("trial_sharpe_count"),
         "top_results": grid_results[:3],
         "holdout_applied": holdout_applied,
+        "minimum_validation_bars": minimum_validation_bars,
         "selection_window": {"start": selection_start, "end": selection_end, "bars": selection_bars},
         "validation_window": {"start": validation_start, "end": validation_end, "bars": wfa_bars},
+        "validation_dataset_fingerprint": wfa_result.get("dataset_fingerprint"),
         "as_of": as_of,
+        "fee_bps": fee_bps,
+        "slippage_bps": slippage_bps,
+        "initial_capital": initial_capital,
     }
 
     log.info(
@@ -1148,7 +1181,7 @@ def _get_param_space(strategy_id: str, strategy_type: str, base_params: dict) ->
                 space = strategy_obj.parameter_space()
                 if space:
                     return space
-    except Exception:
+    except (Exception, SystemExit):
         pass
 
     # Fallback for intake-created custom strategies that may be filtered from
@@ -1160,13 +1193,26 @@ def _get_param_space(strategy_id: str, strategy_type: str, base_params: dict) ->
 
         normalized_type = str(strategy_type or "").strip()
         for _importer, modname, _ispkg in pkgutil.iter_modules(custom.__path__):
-            if not modname or modname == "__init__":
+            if not modname or modname.startswith("_") or _ispkg:
                 continue
             try:
+                # Inspect the declaration before executing extensions. Unrelated
+                # local files must never run just to resolve a parameter space.
+                source_path = Path(_importer.path) / f"{modname}.py"
+                tree = ast.parse(source_path.read_text(encoding="utf-8-sig"))
+                declared_types = [
+                    node.value.value
+                    for node in tree.body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "TYPE_NAME" for target in node.targets)
+                    and isinstance(node.value, ast.Constant)
+                ]
+                if normalized_type not in declared_types:
+                    continue
                 # C-1: never import an unsafe custom module in-process.
                 assert_custom_module_safe(modname)
                 module = importlib.import_module(f"forven.strategies.custom.{modname}")
-            except (ImportError, AttributeError, SyntaxError, OSError):
+            except (Exception, SystemExit):
                 continue
             if str(getattr(module, "TYPE_NAME", "") or "").strip() != normalized_type:
                 continue
@@ -1180,7 +1226,7 @@ def _get_param_space(strategy_id: str, strategy_type: str, base_params: dict) ->
                 if space:
                     return space
             break
-    except Exception:
+    except (Exception, SystemExit):
         pass
 
     # Default parameter spaces by strategy type

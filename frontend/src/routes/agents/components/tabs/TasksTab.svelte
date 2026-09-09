@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { resumeAgentCheckpoint } from '$lib/api/agentOutcomes';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -203,6 +204,14 @@
 			void loadMotion();
 		}
 	}
+
+	async function resumeTask(task: TaskContainer) {
+        actionError = null;
+        actionPending = { ...actionPending, [task.id]: true };
+        try { await resumeAgentCheckpoint(task.id); await loadTasks(); }
+        catch (e) { actionError = e instanceof Error ? e.message : 'Could not resume task'; }
+        finally { actionPending = { ...actionPending, [task.id]: false }; }
+    }
 
 	async function dismissTask(task: TaskContainer) {
 		if (typeof task.id !== 'number') return;
@@ -956,6 +965,7 @@
 										<td class="py-2 px-2 text-right whitespace-nowrap">
 											<div class="inline-flex items-center gap-2 justify-end">
 												<button type="button" class="text-white hover:underline" on:click={() => void inspectTask(task)}>Inspect</button>
+                                                {#if taskStatus(task) === "blocked"}<button type="button" class="text-amber-400 disabled:opacity-40" disabled={Boolean(actionPending[task.id])} on:click={() => void resumeTask(task)}>Resume</button>{/if}
 												<button
 													type="button"
 													class="text-[#888] hover:text-white disabled:opacity-40"

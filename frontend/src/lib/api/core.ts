@@ -7,112 +7,37 @@
  */
 
 const DEFAULT_API_ORIGIN = 'http://127.0.0.1:8003';
-const FALLBACK_API_ORIGINS = ['127.0.0.1', 'localhost'];
-const IS_TEST_ENV = Boolean(import.meta.env?.MODE === 'test' || import.meta.env?.VITEST);
-
 function trimTrailingSlash(value: string): string {
 	return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
 function resolveApiBase(): string {
-	const configuredBase = (import.meta.env.VITE_API_BASE ?? '').trim();
-	if (configuredBase) {
-		if (configuredBase.startsWith('/')) {
-			if (typeof window !== 'undefined' && window.location) {
-				// Prefer direct backend access from browser clients; Vite proxy `/api`
-				// can intermittently disconnect for remote/mobile clients.
-				const protocol = window.location.protocol || 'http:';
-				const host = window.location.hostname || '127.0.0.1';
-				return `${protocol}//${host}:8003/api`;
-			}
-			return `${DEFAULT_API_ORIGIN}${trimTrailingSlash(configuredBase)}`;
-		}
-		if (configuredBase.startsWith('http://') || configuredBase.startsWith('https://')) {
-			return trimTrailingSlash(configuredBase);
-		}
-	}
-
-	if (typeof window !== 'undefined' && window.location) {
-		const protocol = window.location.protocol || 'http:';
-		const host = window.location.hostname || '127.0.0.1';
-		return `${protocol}//${host}:8003/api`;
-	}
-	return `${DEFAULT_API_ORIGIN}/api`;
+    const configuredBase = (import.meta.env.VITE_API_BASE ?? '').trim();
+    if (configuredBase) {
+        if (configuredBase.startsWith('/') || /^https?:\/\//.test(configuredBase)) {
+            return trimTrailingSlash(configuredBase);
+        }
+        throw new Error('VITE_API_BASE must be an HTTP URL or an absolute path');
+    }
+    // Browser traffic follows the configured same-origin proxy. Packaged desktop
+    // clients use the local sidecar; neither path discovers other installations.
+    if (typeof window !== 'undefined') {
+        if ('__TAURI_INTERNALS__' in window || '__TAURI__' in window) {
+            return `${DEFAULT_API_ORIGIN}/api`;
+        }
+        return '/api';
+    }
+    return `${DEFAULT_API_ORIGIN}/api`;
 }
 
 export const API_BASE = resolveApiBase();
-const BASE_CANDIDATES_RAW = new Set<string>([
-	trimTrailingSlash(API_BASE),
-	trimTrailingSlash(DEFAULT_API_ORIGIN),
-]);
-
-if (typeof window !== 'undefined' && window.location) {
-	const protocol = window.location.protocol || 'http:';
-	const host = window.location.hostname || '127.0.0.1';
-	const isLocalBrowserHost = host === '127.0.0.1' || host === 'localhost' || host === '::1';
-
-	BASE_CANDIDATES_RAW.add('/api');
-	BASE_CANDIDATES_RAW.add(`${protocol}//${host}/api`);
-	BASE_CANDIDATES_RAW.add(`${protocol}//${host}:8003/api`);
-	BASE_CANDIDATES_RAW.add(`${protocol}//${host}:8000/api`);
-	if (isLocalBrowserHost) {
-		for (const fallbackHost of FALLBACK_API_ORIGINS) {
-			BASE_CANDIDATES_RAW.add(`${protocol}//${fallbackHost}:8003/api`);
-			BASE_CANDIDATES_RAW.add(`${protocol}//${fallbackHost}:8000/api`);
-		}
-	}
-	BASE_CANDIDATES_RAW.add(`${window.location.origin.replace(/\/$/, '')}/api`);
-} else {
-	BASE_CANDIDATES_RAW.add(`${DEFAULT_API_ORIGIN}/api`);
-}
-
-let preferredCandidates: string[] = [];
-if (typeof window !== 'undefined' && window.location) {
-	const protocol = window.location.protocol || 'http:';
-	const host = window.location.hostname || '127.0.0.1';
-	const originApi = `${window.location.origin.replace(/\/$/, '')}/api`;
-	const directBackendApi = `${protocol}//${host}:8003/api`;
-	preferredCandidates = [
-		trimTrailingSlash(API_BASE),
-		directBackendApi,
-		`${DEFAULT_API_ORIGIN}/api`,
-		originApi,
-		`${protocol}//${host}/api`,
-		`${protocol}//${host}:8000/api`,
-		'/api',
-	];
-} else {
-	preferredCandidates = [
-		trimTrailingSlash(API_BASE),
-		`${DEFAULT_API_ORIGIN}/api`,
-	];
-}
-
-const API_BASE_CANDIDATES = Array.from(new Set(
-	[
-		...preferredCandidates,
-		...Array.from(BASE_CANDIDATES_RAW),
-	].map(trimTrailingSlash).filter(Boolean)
-));
-
-export let ACTIVE_API_BASE = IS_TEST_ENV ? '/api' : (API_BASE_CANDIDATES[0] || API_BASE);
-let API_BASE_DISCOVERED = IS_TEST_ENV;
-let API_BASE_DISCOVERY: Promise<void> | null = null;
-
-const API_DISCOVERY_TIMEOUT_MS = 1_200;
-
+const API_BASE_CANDIDATES = [API_BASE];
+export const ACTIVE_API_BASE = API_BASE;
 function toHealthUrl(base: string): string {
 	const trimmed = trimTrailingSlash(base);
 	if (!trimmed) return '/api/health';
 	if (trimmed.endsWith('/api')) return `${trimmed}/health`;
 	return `${trimmed}/api/health`;
-}
-
-function promoteActiveApiBase(base: string): void {
-	const normalized = trimTrailingSlash(base);
-	if (!normalized) return;
-	ACTIVE_API_BASE = normalized;
-	API_BASE_DISCOVERED = true;
 }
 
 function baseHasApiPrefix(base: string): boolean {
@@ -174,56 +99,11 @@ async function readHealthPayload(response: Response): Promise<{ status: string;[
 	return null;
 }
 
-let _discoveryLastAttempt = 0;
-const _DISCOVERY_COOLDOWN_MS = 5_000;
-
-async function detectActiveApiBase(): Promise<void> {
-	if (API_BASE_DISCOVERED) return;
-	if (API_BASE_DISCOVERY) {
-		await API_BASE_DISCOVERY;
-		return;
-	}
-
-	const now = Date.now();
-	if (now - _discoveryLastAttempt < _DISCOVERY_COOLDOWN_MS) return;
-	_discoveryLastAttempt = now;
-
-	API_BASE_DISCOVERY = (async () => {
-		for (const base of API_BASE_CANDIDATES) {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => {
-				controller.abort();
-			}, API_DISCOVERY_TIMEOUT_MS);
-			try {
-				const response = await fetch(toHealthUrl(base), { signal: controller.signal });
-				if (!response.ok) {
-					continue;
-				}
-				const payload = await readHealthPayload(response);
-				if (payload) {
-					promoteActiveApiBase(base);
-					return;
-				}
-			} catch {
-				continue;
-			} finally {
-				clearTimeout(timeout);
-			}
-		}
-		// No healthy base found — do NOT set API_BASE_DISCOVERED so retries are possible
-	})();
-
-	await API_BASE_DISCOVERY;
-	API_BASE_DISCOVERY = null;
-}
-
 function isRetryableNetworkError(error: unknown): boolean {
-	if (!(error instanceof Error)) return false;
-	if (error.name === 'TypeError') return true;
 	if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
-		return error.name === 'AbortError';
+		return error.name === 'AbortError' || error.name === 'TimeoutError';
 	}
-	return false;
+	return error instanceof Error && error.name === 'TypeError';
 }
 
 function readSecretFromStorage(key: string): string {
@@ -391,7 +271,6 @@ export async function fetchApi<T>(endpoint: string, options?: RequestInit & { ti
 	}
 
 	let lastError: unknown;
-	await detectActiveApiBase();
 	const orderedCandidates = Array.from(new Set([ACTIVE_API_BASE, ...API_BASE_CANDIDATES]));
 	for (let index = 0; index < orderedCandidates.length; index += 1) {
 		const base = orderedCandidates[index];
@@ -416,7 +295,6 @@ export async function fetchApi<T>(endpoint: string, options?: RequestInit & { ti
 				throw new ApiError(response.status, detail, parsed.payload);
 			}
 
-			promoteActiveApiBase(base);
 			return response.json();
 		} catch (error) {
 			lastError = error;
@@ -462,7 +340,6 @@ export async function fetchApiStream(
 		headers.set('Content-Type', 'application/json');
 	}
 
-	await detectActiveApiBase();
 	const base = ACTIVE_API_BASE;
 	const requestPath = getRequestPath(base, endpoint);
 	const requestUrl = /^https?:\/\//.test(requestPath) ? requestPath : `${base}${requestPath}`;
@@ -495,7 +372,6 @@ export async function fetchApiStream(
 
 // Health check
 export async function checkHealth(): Promise<{ status: string;[key: string]: unknown }> {
-	await detectActiveApiBase();
 	const orderedCandidates = Array.from(new Set([ACTIVE_API_BASE, ...API_BASE_CANDIDATES]));
 	for (let index = 0; index < orderedCandidates.length; index += 1) {
 		const base = orderedCandidates[index];
@@ -507,7 +383,6 @@ export async function checkHealth(): Promise<{ status: string;[key: string]: unk
 			}
 			const payload = await readHealthPayload(response);
 			if (payload) {
-				promoteActiveApiBase(base);
 				return payload;
 			}
 			if (isLast) {

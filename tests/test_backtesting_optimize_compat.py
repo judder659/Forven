@@ -275,7 +275,7 @@ def test_execute_verdict_resolves_dataset_id_to_latest_matching_result(forven_db
         )
     )
 
-    assert result.status == "pass"
+    assert result.status == "pending"  # scalar metrics are not robustness evidence
     assert result.summary["dataset_id"] == "dataset-2-BNB/USDT-1h"
     assert result.summary["resolved_result_id"] == "bt-s00037-new"
     assert result.tests["sample_size"]["value"] == 52
@@ -352,7 +352,7 @@ def test_execute_verdict_resolves_decorated_strategy_id_to_canonical_result(forv
         )
     )
 
-    assert result.status == "pass"
+    assert result.status == "pending"  # scalar metrics are not robustness evidence
     assert result.summary["resolved_result_id"] == "bt-s00136-canonical"
     assert result.tests["sample_size"]["value"] == 44
 
@@ -387,7 +387,7 @@ def test_execute_verdict_falls_back_to_strategy_metrics_when_result_row_missing(
         )
     )
 
-    assert result.status == "pass"
+    assert result.status == "pending"  # scalar metrics are not robustness evidence
     assert result.summary["resolved_result_id"] == "strategy-metrics:S00144"
     assert result.tests["sample_size"]["value"] == 77
 
@@ -417,7 +417,7 @@ def test_execute_verdict_direct_result_id_lookup_still_works(forven_db):
         )
     )
 
-    assert result.status == "pass"
+    assert result.status == "pending"  # scalar metrics are not robustness evidence
     assert result.summary["resolved_result_id"] == "bt-s00042-direct"
     assert result.tests["sample_size"]["value"] == 41
 
@@ -534,7 +534,8 @@ def test_optimize_strategy_uses_explicit_parameter_ranges(monkeypatch):
 
     assert captured["param_space"] == {"rsi_length": [5, 14]}
     assert result["best_params"] == {"rsi_length": 5}
-    assert result["validated"] is True
+    assert result["validated"] is False
+    assert result["holdout_applied"] is False
 
 
 def test_optimize_strategy_normalizes_frontend_parameter_range_dicts(monkeypatch):
@@ -569,7 +570,8 @@ def test_optimize_strategy_normalizes_frontend_parameter_range_dicts(monkeypatch
 
     assert captured["param_space"] == {"rsi_length": [5, 8, 11, 14]}
     assert result["best_params"] == {"rsi_length": 8}
-    assert result["validated"] is True
+    assert result["validated"] is False
+    assert result["holdout_applied"] is False
 
 
 def test_optimize_strategy_honors_execution_ranges_objective_window_and_base_params(monkeypatch):
@@ -661,7 +663,8 @@ def test_optimize_strategy_honors_execution_ranges_objective_window_and_base_par
     assert result["best_execution_profile"]["stop_loss_pct"] == 3.0
     assert result["best_objective"] == "total_return_pct"
     assert result["best_objective_value"] == 9.5
-    assert result["validated"] is True
+    assert result["validated"] is False
+    assert result["holdout_applied"] is False
 
 
 def test_grid_search_sanitizes_legacy_leverage_axes(monkeypatch):

@@ -67,12 +67,28 @@ export async function previewStrategyChart(request: {
 // Natural-language -> rule spec
 // ---------------------------------------------------------------------------
 export interface NlToSpecResponse {
+    readiness?: IdeaReadiness;
 	valid: boolean;
 	spec: Record<string, unknown> | null;
 	errors: string[];
 	warnings: string[];
 	provider?: string | null;
 	raw?: string;
+}
+
+export interface IdeaReadiness {
+    status: 'blocked' | 'review' | 'checked';
+    can_generate: boolean;
+    symbol: string | null;
+    timeframe: string | null;
+    required: string[];
+    present: string[];
+    issues: string[];
+    warnings: string[];
+}
+
+export function checkIdeaReadiness(request: { description: string; symbol: string; timeframe: string }): Promise<IdeaReadiness> {
+    return fetchApi('/backtests/idea-readiness', { method: 'POST', body: JSON.stringify(request) });
 }
 
 export async function nlToSpec(request: {
@@ -112,6 +128,7 @@ export interface LibraryStrategy {
 }
 
 export interface LibraryStrategyInput {
+	expected_version?: number;
 	name: string;
 	kind?: 'visual' | 'code';
 	description?: string;
@@ -189,8 +206,9 @@ export interface SendLibraryToForgeResponse {
 	strategy: LibraryStrategy;
 }
 
-export async function sendLibraryStrategyToForge(id: string): Promise<SendLibraryToForgeResponse> {
+export async function sendLibraryStrategyToForge(id: string, expectedVersion?: number): Promise<SendLibraryToForgeResponse> {
 	return fetchApi(`/strategy-library/${encodeURIComponent(id)}/send-to-forge`, {
+		body: JSON.stringify({ expected_version: expectedVersion }),
 		method: 'POST',
 		timeoutMs: LONG_TIMEOUT_MS,
 	});

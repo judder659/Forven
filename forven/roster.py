@@ -9,8 +9,9 @@ instead of keeping its own copy. This module is deliberately dependency-free
 (pure data + tiny helpers) so even ``forven.db`` can import it without
 creating a cycle.
 
-Behavior prompts (per-agent ``instructions``) stay in ``forven.bot`` — they
-interpolate live risk settings and are seed-time concerns, not identity.
+Behavior prompts (per-agent ``instructions``) live in
+``forven.agents.instructions`` and are seeded by ``forven.bot``. Effective
+risk settings are read at task time rather than frozen in those prompts.
 """
 
 # ── Live agents ─────────────────────────────────────────────────────────────

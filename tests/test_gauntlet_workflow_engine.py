@@ -455,7 +455,7 @@ def test_resume_workflow_does_not_redispatch_fresh_running_step(forven_db):
     assert _step_row(claimed["id"])["status"] == "running"
 
 
-def test_resume_workflow_redispatches_stale_running_step(forven_db):
+def test_resume_workflow_requires_recovery_before_redispatching_stale_step(forven_db):
     workflow = create_or_get_workflow(
         strategy_id=_strategy(),
         created_by="pytest",
@@ -472,9 +472,15 @@ def test_resume_workflow_redispatches_stale_running_step(forven_db):
 
     result = resume_workflow(workflow["id"], max_steps=1, runner=_runner)
 
+    assert calls == []
+    assert result["steps_run"] == 0
+    recover_stale_running_steps(stale_after_minutes=30)
+    retry_step(claimed["id"])
+    result = resume_workflow(workflow["id"], max_steps=1, runner=_runner)
     assert calls == ["quick_screen"]
     assert result["steps_run"] == 1
     assert _step_row(claimed["id"])["status"] == "passed"
+    assert _step_row(claimed["id"])["attempt_count"] == claimed["attempt_count"] + 1
 
 
 def test_resume_workflow_still_polls_fresh_running_step_with_poll_handle(forven_db):

@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
+import pytest
+
 from forven.agents.context import _current_strategy_id_var, reset_tool_context, set_tool_context
 import forven.agents.tools_backtesting as tools_mod
 from forven.agents.tools_backtesting import _persist_agent_verdict, _tool_backtesting, _tool_register_strategy, _tool_run_backtest
@@ -358,7 +360,8 @@ def test_register_strategy_persists_runtime_type_for_current_strategy(forven_db,
     assert Path(tmp_path / "strategies" / "custom" / "bb_fade_s00194.py").exists()
 
 
-def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkeypatch, tmp_path):
+@pytest.mark.parametrize('sandbox_only', [False, True])
+def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkeypatch, tmp_path, sandbox_only):
     _insert_strategy("s-registered-provenance", stage="quick_screen")
     with get_db() as conn:
         conn.execute(
@@ -404,10 +407,11 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
     registry_mod.reset()
     monkeypatch.setattr(registry_mod, "reset", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(registry_mod, "discover", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(registry_mod, "_TYPE_MAP", {"bb_fade_s00200": object()})
+    monkeypatch.setattr(registry_mod, "_TYPE_MAP", {} if sandbox_only else {"bb_fade_s00200": object()})
+    runtime_type = "imported__bb_fade_s00200_digest" if sandbox_only else "bb_fade_s00200"
     monkeypatch.setattr(
         "forven.strategies.intake.register_custom_strategy_file",
-        lambda **_kwargs: {"strategy_id": "s-registered-provenance"},
+        lambda **_kwargs: {"strategy_id": "s-registered-provenance", "sandbox_only": sandbox_only, "runtime_type": runtime_type},
     )
 
     tokens = set_tool_context("strategy-developer", "T0100")
@@ -423,6 +427,9 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         reset_tool_context(tokens)
 
     assert "registered successfully" in result.lower()
+    with get_db() as conn:
+        assert conn.execute("SELECT runtime_type FROM strategies WHERE id='s-registered-provenance'").fetchone()[0] == runtime_type
+        assert conn.execute("SELECT strategy_id FROM agent_tasks WHERE display_id='T0100'").fetchone()[0] == 's-registered-provenance'
     with get_db() as conn:
         row = conn.execute(
             """

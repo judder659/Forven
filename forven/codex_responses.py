@@ -125,7 +125,7 @@ def _coerce_text(content: Any) -> str:
     return str(content)
 
 
-def responses_input_from_messages(messages: list[dict]) -> list[dict]:
+def responses_input_from_messages(messages: list[dict], *, preserve_system_messages: bool = False) -> list[dict]:
     """Convert Chat-Completions-shaped messages to Responses ``input`` items.
 
     * ``system`` messages are dropped — the system prompt is passed separately as
@@ -141,7 +141,9 @@ def responses_input_from_messages(messages: list[dict]) -> list[dict]:
         if not isinstance(msg, dict):
             continue
         role = str(msg.get("role", "user"))
-        if role == "system":
+        if role in {"system", "developer"}:
+            if preserve_system_messages:
+                items.append({"role": role, "content": _coerce_text(msg.get("content", ""))})
             continue
 
         if role == "tool":
@@ -156,6 +158,11 @@ def responses_input_from_messages(messages: list[dict]) -> list[dict]:
             continue
 
         if role == "assistant":
+            # Platform Responses output is replayed verbatim, including phase,
+            # encrypted reasoning and any provider metadata needed by tools.
+            if isinstance(msg.get("_responses_output"), list):
+                items.extend(msg["_responses_output"])
+                continue
             # Replay encrypted reasoning items captured from prior turns BEFORE
             # the function_call items. With store=false a reasoning model rejects
             # a function call whose preceding reasoning item is absent (HTTP 400).
@@ -256,6 +263,30 @@ async def stream_codex(
     response_schema: dict | None = None,
     response_schema_name: str = "structured_response",
 ) -> AsyncIterator[dict]:
+    """Use the subscription endpoint and OAuth-specific headers."""
+    async for event in stream_responses(
+        model, instructions=instructions, messages=messages, tools=tools,
+        reasoning_effort=reasoning_effort, response_schema=response_schema,
+        response_schema_name=response_schema_name,
+        endpoint=f"{codex_base_url()}/responses", headers=_codex_headers(token),
+    ):
+        yield event
+
+
+async def stream_responses(
+    model: str,
+    *,
+    instructions: str | None,
+    messages: list[dict],
+    endpoint: str,
+    headers: dict[str, str],
+    tools: list[dict] | None = None,
+    reasoning_effort: str = "medium",
+    response_schema: dict | None = None,
+    response_schema_name: str = "structured_response",
+    max_output_tokens: int | None = None,
+    preserve_system_messages: bool = False,
+) -> AsyncIterator[dict]:
     """Stream a Codex Responses API turn.
 
     Yields ``{"type": "text", "text": <delta>}`` as tokens arrive, then a final
@@ -272,7 +303,7 @@ async def stream_codex(
     body: dict[str, Any] = {
         "model": model,
         "instructions": instructions or "",
-        "input": responses_input_from_messages(messages),
+        "input": responses_input_from_messages(messages, preserve_system_messages=preserve_system_messages),
         "store": False,
         "stream": True,
         # Ask the backend to echo back encrypted reasoning so multi-round tool
@@ -295,14 +326,17 @@ async def stream_codex(
             }
         }
 
-    endpoint = f"{codex_base_url()}/responses"
-    headers = _codex_headers(token)
+    if max_output_tokens is not None:
+        body["max_output_tokens"] = max_output_tokens
 
     text_parts: list[str] = []
     message_text_fallback: list[str] = []
     function_calls: list[dict] = []
     reasoning_items: list[dict] = []
     usage: dict = {}
+    output_items: list[dict] = []
+    completed = False
+    truncated = False
 
     async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
         async with client.stream("POST", endpoint, json=body, headers=headers) as resp:
@@ -324,7 +358,7 @@ async def stream_codex(
                 etype = str(event.get("type") or "")
 
                 if etype == "error" or etype == "response.failed":
-                    raise RuntimeError(f"Codex Responses API error: {_error_message(event)}")
+                    raise RuntimeError(f"Responses API error: {_error_message(event)}")
 
                 if etype.endswith("output_text.delta"):
                     delta = event.get("delta")
@@ -337,6 +371,7 @@ async def stream_codex(
                     item = event.get("item")
                     if not isinstance(item, dict):
                         continue
+                    output_items.append(item)
                     itype = item.get("type")
                     if itype == "function_call":
                         function_calls.append(item)
@@ -347,11 +382,22 @@ async def stream_codex(
                     continue
 
                 if etype in _TERMINAL_EVENTS:
+                    completed = True
+                    truncated = etype == "response.incomplete"
                     response_obj = event.get("response")
                     if isinstance(response_obj, dict) and isinstance(response_obj.get("usage"), dict):
                         usage = response_obj["usage"]
+                    if isinstance(response_obj, dict) and isinstance(response_obj.get("output"), list):
+                        output_items = response_obj["output"]
+                        function_calls = [item for item in output_items if item.get("type") == "function_call"]
+                        reasoning_items = [item for item in output_items if item.get("type") == "reasoning"]
+                        message_text_fallback = [
+                            _extract_message_text(item) for item in output_items if item.get("type") == "message"
+                        ]
                     break
 
+    if not completed:
+        raise RuntimeError("Responses API stream ended before completion")
     text = "".join(text_parts).strip()
     if not text:
         text = "".join(message_text_fallback).strip()
@@ -385,6 +431,8 @@ async def stream_codex(
             if item.get("encrypted_content")
         ],
         "usage": usage,
+        "output_items": output_items,
+        "truncated": truncated,
     }
 
 

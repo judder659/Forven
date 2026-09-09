@@ -244,6 +244,9 @@ def reconcile(res: KernelResult, recorded: list[dict], *, recent_cutoff: str | N
             # no-op; a NEW signal enters on a fresh bar = a new entry_time = r is None = opens.)
             continue
         elif _recent(entry_time):  # don't adopt a position that opened before tracking began
+            pending_exit = _pending_exits.get(direction) or {}
+            if fresh_cutoff is not None and _key(direction, str(pending_exit.get("entry_time") or "")) == _key(direction, entry_time):
+                continue  # The latest closed bar already exits this exact position.
             # The kernel holds a position with no recorded counterpart. How we open it:
             #  • fresh_cutoff None (full-replay parity): faithful back-stamp at the kernel's
             #    historical next-bar-open entry — trade-for-trade backtest parity.

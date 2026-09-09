@@ -222,6 +222,9 @@ class TestCatchupBootstrap:
             def get_active_symbols(self, *, include_recent_backtests=True):
                 return set(symbols)
 
+            def get_active_timeframes(self, symbol):
+                return set()
+
         monkeypatch.setattr(dm_mod, "get_data_manager", lambda: _DM())
         monkeypatch.setattr(
             "forven.dataeng.coverage._scan_universe",

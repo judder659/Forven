@@ -13,9 +13,9 @@ This module is that global ceiling. `backtest_subprocess_slot()` must be held
 around every backtest subprocess spawn; at most `backtest_subprocess_budget()`
 slots exist per Python process, so the parallel levers can default ON while
 total subprocess memory stays bounded no matter how the levers combine.
-Excess spawns QUEUE (they don't fail), so contention degrades to the old
-serial pacing rather than to errors — a queued backtest is never mistaken for
-a failed one (transient waits must never become merit failures).
+Excess spawns queue up to the caller's work deadline or the 15-minute slot
+backstop. Exhaustion raises an infrastructure timeout; it does not exceed the
+memory ceiling and must never become a strategy-quality verdict.
 
 Budget resolution: FORVEN_BACKTEST_SUBPROCESS_BUDGET env override, else the
 `backtest_subprocess_budget` runtime setting (Settings > System > resource
@@ -36,6 +36,8 @@ import threading
 import time
 from contextlib import contextmanager
 
+from forven.work_budget import check_work_budget, remaining_time
+
 log = logging.getLogger(__name__)
 
 DEFAULT_BACKTEST_SUBPROCESS_BUDGET = 4
@@ -44,9 +46,8 @@ _BUDGET_MAX = 8
 
 # A slot is held for one subprocess lifetime, which is itself hard-bounded by the
 # backtest/walk-forward timeouts — so waiters always drain. This ceiling exists
-# only as a backstop against a pathological leak: rather than wedge the whole
-# pipeline forever, proceed over budget with a loud warning (the budget is a
-# memory-pressure guard, not a correctness gate).
+# as a backstop against a pathological leak. Timeout instead of exceeding the
+# memory budget: an infrastructure block is recoverable, an OOM restart is not.
 _MAX_SLOT_WAIT_SECONDS = 900.0
 
 # Waiters re-check the (possibly edited) budget at this cadence even without a
@@ -153,8 +154,8 @@ def backtest_subprocess_slot(purpose: str = "backtest"):
 
     Blocks while the budget is exhausted, re-reading the budget on each wake so
     a settings edit applies to already-queued waiters. After
-    `_MAX_SLOT_WAIT_SECONDS` it proceeds over budget with a warning instead of
-    wedging the pipeline (see module docstring).
+    `_MAX_SLOT_WAIT_SECONDS` it raises a runtime timeout without exceeding the
+    budget. A caller's shorter work deadline also applies to queued waits.
 
     The budget is resolved with the monitor RELEASED (HARDEN-DATA-OPS) — see
     `_budget_for_slot` for why a DB read must never happen under `_cond`.
@@ -164,26 +165,24 @@ def backtest_subprocess_slot(purpose: str = "backtest"):
     logged_wait = False
     budget = _budget_for_slot()
     while True:
+        check_work_budget()
         with _cond:
             if _active < budget:
                 _active += 1
                 break
             waited = time.monotonic() - start
             if waited >= _MAX_SLOT_WAIT_SECONDS:
-                log.warning(
-                    "Backtest subprocess budget: proceeding OVER budget after waiting %.0fs "
-                    "(purpose=%s active=%d budget=%d) — possible leaked slot",
-                    waited, purpose, _active, budget,
+                raise TimeoutError(
+                    f"Backtest subprocess budget exhausted after {waited:.0f}s "
+                    f"(purpose={purpose}, active={_active}, budget={budget})"
                 )
-                _active += 1
-                break
             if waited >= 30.0 and not logged_wait:
                 log.info(
                     "Backtest subprocess budget: %s queued behind %d active (budget=%d)",
                     purpose, _active, budget,
                 )
                 logged_wait = True
-            _cond.wait(timeout=_SLOT_POLL_SECONDS)
+            _cond.wait(timeout=remaining_time(min(_SLOT_POLL_SECONDS, _MAX_SLOT_WAIT_SECONDS - waited)))
         budget = _budget_for_slot()  # monitor released — safe to touch settings
     try:
         yield

@@ -246,6 +246,10 @@ _AUTONOMY_RECENT_FAILURE_LIMIT = 12
 _AUTONOMY_DB_LOCK_FAILURE_LIMIT = 3
 _RESTART_RECOVERY_ERROR_LIKE = "recovered after process restarted%"
 _BACKGROUND_SCHEDULER_JOB_KINDS = {
+    # Each has a separate scheduler claim; execution also keeps run_scan's
+    # single-flight guard. Slow scans must not delay every other due job.
+    "scanner_run",
+    "scanner_signal_run",
     "evolution_testing",
     # Graduation ends with a research-recovery sweep that may re-certify every
     # research-only strategy when none promotes. Keep that unbounded, CPU/DB-
@@ -1305,6 +1309,8 @@ async def _run_sync_job(fn, *args, timeout_seconds: float | None = None, **kwarg
         # register it so the lock is not released under it.
         _register_zombie_sync_job_thread(cfut)
         raise
+    except (SystemExit, KeyboardInterrupt) as exc:
+        raise RuntimeError(f"Scheduler job raised {type(exc).__name__}: {exc}") from exc
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
@@ -2023,7 +2029,18 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # DataManager — Binance Vision bulk backfill
         if kind == "data_manager_backfill":
             from forven.data_manager import data_manager
-            await _run_sync_job(data_manager.backfill)
+            # Match the bulk job's existing 30-minute scheduler allowance;
+            # the generic short-call timeout abandoned healthy archive imports.
+            result = await _run_sync_job(data_manager.backfill, timeout_seconds=30 * 60)
+            errors = [
+                f"{symbol}: {key}: {value}"
+                for symbol, streams in (result or {}).items()
+                if isinstance(streams, dict)
+                for key, value in streams.items()
+                if key.endswith("_error") and value
+            ]
+            if errors:
+                return "error", "; ".join(errors)[:2000]
             return "ok", None
 
         # DataManager — Long/Short Ratio collection
@@ -2381,12 +2398,13 @@ def _expire_old_pending_tasks():
 
 async def _execute_claimed_scheduler_job(job: dict) -> None:
     """Run a job after its DB lock has been acquired and persist completion."""
+    from forven.async_utils import contain_process_exit
     job_id = str(job.get("id"))
     _per_job_timeout = _job_hard_timeout_seconds(job)
     context_token = _CURRENT_SCHEDULER_JOB_ID.set(job_id)
     try:
         status, error = await asyncio.wait_for(
-            run_job(job), timeout=_per_job_timeout,
+            contain_process_exit(run_job(job)), timeout=_per_job_timeout,
         )
     except asyncio.TimeoutError:
         log.error(

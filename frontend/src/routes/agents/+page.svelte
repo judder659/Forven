@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import AgentOutcomes from '$lib/components/AgentOutcomes.svelte';
 	import { get } from 'svelte/store';
 	import { page } from '$app/stores';
 	import { beforeNavigate, goto } from '$app/navigation';
@@ -46,7 +47,7 @@
 	// ---- Tabbed navigation (?tab=) ---------------------------------------- //
 	type AgentsTab = 'roster' | 'tasks' | 'providers' | 'models' | 'routing' | 'schedules' | 'health';
 	const TABS: { id: AgentsTab; label: string }[] = [
-		{ id: 'roster', label: 'Roster' },
+		{ id: 'roster', label: 'Overview' },
 		{ id: 'tasks', label: 'Tasks' },
 		{ id: 'providers', label: 'Providers & Keys' },
 		{ id: 'models', label: 'Models' },
@@ -686,6 +687,7 @@
 	function statusColor(status?: string | null): string {
 		if (!status) return 'border-[#333] text-[#666]';
 		const value = status.toLowerCase();
+		if (value === 'blocked' || value === 'incomplete') return 'border-amber-900 text-amber-400';
 		if (value === 'pending') return 'border-[#555] text-[#888]';
 		if (value === 'running') return 'border-emerald-500 text-emerald-400';
 		if (value === 'done' || value === 'completed' || value === 'reviewed') return 'border-emerald-900 text-emerald-400';
@@ -720,8 +722,12 @@
 
 	/** Live status for an agent's card, derived from its most recent task. */
 	function agentLiveStatus(agentId: string): string {
-		const last = latestTaskForAgent(agentId);
-		if (!last) return 'idle';
+		if (refreshErrors.includes('work status')) return 'unavailable';
+        const assigned = agentTasks.filter(task => task.agent_id === agentId);
+        if (assigned.some(task => task.status === 'running')) return 'running';
+        if (assigned.some(task => task.status === 'blocked')) return 'blocked';
+        const last = latestTaskForAgent(agentId);
+        if (!last) return 'idle';
 		const status = parseAgentStatus(last);
 		if (status === 'pending' || status === 'running' || status === 'brain_invoke') return status;
 		// done / completed / reviewed / error / failed → the agent itself is idle.
@@ -742,7 +748,7 @@
 			if (String(task.agent_id ?? '').trim() !== agentId) continue;
 			if (isCompletedTask(task)) completed += 1;
 			else if (isErrorTask(task)) failed += 1;
-			else pending += 1;
+			else if (['pending', 'running', 'brain_invoke'].includes(task.status || '')) pending += 1;
 		}
 		return { completed, failed, pending };
 	}
@@ -811,60 +817,9 @@
 			.filter((agentId) => agentId.length > 0);
 	}
 
-	function mergeAgentCards(runtimeAgents: ForvenAgent[], runtimeTasks: ForvenAgentTask[], runtimeLogs: AgentLogEntry[]): AgentCard[] {
-		const discovered = runtimeAgents
-			.map((agent) => toAgentCard(agent))
-			.filter((agent): agent is AgentCard => agent !== null && agent.id.length > 0);
-		const discoveredById = new Map<string, AgentCard>(discovered.map((agent) => [agent.id, agent]));
-		const taskAgentIds = runtimeTasks
-			.map((task) => String(task.agent_id ?? '').trim())
-			.filter((agentId) => agentId.length > 0);
-		const logAgentIds = discoverAgentIdsFromLogs(runtimeLogs);
-		const sourceAgentIds = [...taskAgentIds, ...logAgentIds]
-			.filter((agentId) => agentId.length > 0)
-			.filter((agentId) => !discoveredById.has(agentId))
-			.filter((agentId, idx, arr) => arr.indexOf(agentId) === idx);
-
-		const merged: AgentCard[] = [];
-		const emitted = new Set<string>();
-
-		for (const fallback of fallbackAgentDefs) {
-			const match = discoveredById.get(fallback.id);
-			if (match) {
-				merged.push(match);
-			} else {
-				merged.push(fallback);
-			}
-			emitted.add(fallback.id);
-		}
-
-	for (const discoveredItem of discovered) {
-		if (!emitted.has(discoveredItem.id)) {
-			merged.push(discoveredItem);
-			emitted.add(discoveredItem.id);
-		}
-	}
-
-		for (const taskAgentId of sourceAgentIds) {
-			if (!emitted.has(taskAgentId)) {
-				merged.push(makeSyntheticAgentCard(taskAgentId));
-				emitted.add(taskAgentId);
-			}
-		}
-
-		for (const requiredAgentId of requiredCoreAgentIds) {
-			if (emitted.has(requiredAgentId)) continue;
-			const requiredFallback = fallbackAgentDefs.find((agent) => agent.id === requiredAgentId);
-			if (requiredFallback) {
-				merged.push(requiredFallback);
-			} else {
-				merged.push(makeSyntheticAgentCard(requiredAgentId));
-			}
-			emitted.add(requiredAgentId);
-		}
-
-		return merged;
-	}
+	function mergeAgentCards(runtimeAgents: ForvenAgent[], _tasks: ForvenAgentTask[], _logs: AgentLogEntry[]): AgentCard[] {
+        return runtimeAgents.map(toAgentCard).filter((agent): agent is AgentCard => agent !== null && !!agent.id);
+    }
 
 	function toPresetOption(raw: unknown): AgentModelPreset | null {
 		if (!raw || typeof raw !== 'object') return null;
@@ -999,7 +954,12 @@
 		}
 	}
 
+	let refreshing = false;
+	let refreshErrors: string[] = [];
+	let lastRefresh = "";
 	async function fetchData() {
+        if (refreshing) return;
+        refreshing = true;
 		try {
 			const [agentsRes, tasksRes, jobsRes, logsRes] = await Promise.allSettled([
 				getForvenAgents(),
@@ -1008,20 +968,25 @@
 				getForvenLogs(50)
 			]);
 
-			if (agentsRes.status === 'fulfilled') agents = agentsRes.value;
+			refreshErrors = [];
+            if (agentsRes.status === 'fulfilled') agents = agentsRes.value;
+            else { agents = []; refreshErrors.push('agent roster'); }
 			if (jobsRes.status === 'fulfilled') schedulerJobs = jobsRes.value;
+            else { schedulerJobs = []; refreshErrors.push('schedules'); }
 			if (tasksRes.status === 'fulfilled') {
 				agentTasks = tasksRes.value;
 				handleTaskCompletionAlert(tasksRes.value);
-			}
+			} else { agentTasks = []; refreshErrors.push('work status'); }
 			if (logsRes.status === 'fulfilled') {
 				logs = logsRes.value
 					.map(normalizeLogRow)
 					.filter((entry): entry is AgentLogEntry => entry !== null);
-			}
+			} else { logs = []; refreshErrors.push('logs'); }
+            if (!refreshErrors.length) lastRefresh = new Date().toLocaleTimeString();
 		} catch (err) {
 			console.error('Failed to fetch agent data', err);
 		} finally {
+            refreshing = false;
 			loading = false;
 		}
 	}
@@ -1332,7 +1297,7 @@
 	}
 
 	function fmtSpendUsd(value: number): string {
-		if (!Number.isFinite(value) || value <= 0) return '$0';
+		if (!Number.isFinite(value) || value <= 0) return 'Cost not estimated';
 		if (value < 0.01) return `$${value.toFixed(4)}`;
 		return `$${value.toFixed(2)}`;
 	}
@@ -1456,6 +1421,11 @@
 	</div>
 
 	{#if activeTab === 'roster'}
+    <AgentOutcomes />
+    {#if loading}
+      <p class="border border-[#333] bg-[#111] p-4 text-xs text-[#aaa]" role="status">Loading agent status…</p>
+    {:else}
+    {#if refreshErrors.length}<div class="border border-amber-900 p-3 text-xs text-amber-400" role="status">Unable to refresh {refreshErrors.join(', ')}. {lastRefresh ? `Last complete refresh: ${lastRefresh}.` : ''}</div>{:else if lastRefresh}<p class="text-[11px] text-[#666]">Status checked {lastRefresh}. Showing registered agents only.</p>{/if}
 	<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
 		{#each coreAgentCards as agent}
 			{@const lastTask = latestTaskForAgent(agent.id)}
@@ -1520,7 +1490,7 @@
 								set in Routing &amp; Fallbacks
 							</a>
 						</div>
-						{#if agentSpend[agent.id]?.cost_usd}
+						{#if agentSpend[agent.id]?.tasks}
 							<div class="text-[10px] text-[#555]" title="Spend over the last 30 days">
 								30d spend:
 								<span class="text-[#aaa] font-mono"
@@ -1713,7 +1683,7 @@
 								>
 									set in Routing &amp; Fallbacks
 								</a>
-								{#if agentSpend[agent.id]?.cost_usd}
+								{#if agentSpend[agent.id]?.tasks}
 									<div class="mt-1" title="Spend over the last 30 days">
 										30d spend:
 										<span class="text-[#aaa] font-mono"
@@ -1743,7 +1713,6 @@
 								placeholder="e.g. Two"
 								disabled={submittingDeveloper}
 								maxlength="60"
-								autofocus
 							/>
 						</label>
 						<p class="text-[10px] text-[#555]">
@@ -1825,6 +1794,7 @@
 
 	{/if}
 
+    {/if}
 	{#if activeTab === 'tasks'}
 		<!-- Full Task Manager (formerly the /tasks page); needs a bounded height for
 		     its internal scroll panes, so the page wrapper switches to a non-scrolling

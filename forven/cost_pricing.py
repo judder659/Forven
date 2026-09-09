@@ -36,6 +36,8 @@ from __future__ import annotations
 import logging
 from typing import Mapping
 
+from forven.providers.frontier import FRONTIER_MODELS
+
 log = logging.getLogger("forven.cost_pricing")
 
 
@@ -97,9 +99,9 @@ _PRICING: dict[tuple[str, str], tuple[float, float]] = {
     ("openai", "gpt-5"): (5.00, 15.00),
     ("openai", "gpt-5.2"): (5.00, 15.00),
     ("openai", "gpt-5.2-mini"): (0.30, 1.20),
-    ("openai", "gpt-5.4"): (5.00, 15.00),
-    ("openai", "gpt-5.4-mini"): (0.30, 1.20),
-    ("openai", "gpt-5.5"): (5.00, 15.00),
+    ("openai", "gpt-5.4"): (2.50, 15.00),
+    ("openai", "gpt-5.4-mini"): (0.75, 4.50),
+    ("openai", "gpt-5.5"): (5.00, 30.00),
     ("openai", "o1"): (15.00, 60.00),
     ("openai", "o1-mini"): (3.00, 12.00),
     ("openai", "o1-preview"): (15.00, 60.00),
@@ -168,6 +170,8 @@ _PRICING: dict[tuple[str, str], tuple[float, float]] = {
     # ---- LM Studio (local — free; see FREE_LOCAL_PROVIDERS for any model id) ----
     ("lmstudio", "local-model"): (0.00, 0.00),
 }
+
+_PRICING.update({(model.provider, model.model_id): model.rate for model in FRONTIER_MODELS})
 
 
 def canonical_provider(provider: str | None) -> str:

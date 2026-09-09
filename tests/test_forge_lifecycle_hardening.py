@@ -126,6 +126,10 @@ def test_concurrent_identical_promotions_commit_once(forven_db, monkeypatch):
     monkeypatch.setattr(registry, "runtime_unloadable_reason", lambda *_args: None)
     monkeypatch.setattr(db, "find_duplicate_trading_strategy", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(brain, "_requires_operator_promotion_approval", lambda *_args: False)
+    # This test isolates commit serialization after all admission checks pass.
+    # Real confirmation capture and missing-evidence refusal have dedicated tests.
+    monkeypatch.setattr("forven.strategies.execution_contract.capture_confirmation",
+                        lambda *a: {"verified": True, "result_id": "concurrency-fixture"})
 
     barrier = threading.Barrier(2)
 

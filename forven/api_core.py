@@ -7172,7 +7172,8 @@ def send_manual_strategy_to_forge(body: SendToForgeBody) -> dict:
         if spec_errors:
             raise HTTPException(status_code=400, detail="Invalid rule spec: " + "; ".join(spec_errors[:5]))
         strategy_type = "rule_engine"
-        params: dict = {"spec": spec, "_asset": asset}
+        from forven.strategy_creator import creator_execution_params
+        params: dict = {**creator_execution_params(body.params), "spec": spec, "_asset": asset}
         source_ref = "manual_backtest:visual_builder"
         name = (body.name or "").strip() or f"{asset} rule strategy"
     elif mode == "code":
@@ -7528,7 +7529,11 @@ def _is_canonical_backtest_submit(
     return True
 
 
-def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = False):
+def post_backtest_submit(
+    body: BacktestSubmitBody, *, skip_auto_trash: bool = False,
+    job_id: str | None = None, result_id: str | None = None,
+) -> dict:
+    background_job = job_id is not None and result_id is not None
     requested_strategy_id = str(body.strategy_id or body.lifecycle_id or "").strip()
     if not requested_strategy_id:
         raise HTTPException(status_code=400, detail="strategy_id is required")
@@ -7719,8 +7724,8 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
         if submit_end_dt.tzinfo is None:
             submit_end_dt = submit_end_dt.replace(tzinfo=timezone.utc)
         submit_start = (submit_end_dt - timedelta(days=max(duration_days, 1))).isoformat()
-    job_id = f"bt_{uuid4().hex[:12]}"
-    result_id = f"{strategy_id}-{asset.lower()}-{int(time.time() * 1000)}"
+    job_id = job_id or f"bt_{uuid4().hex[:12]}"
+    result_id = result_id or f"{strategy_id}-{asset.lower()}-{int(time.time() * 1000)}"
 
     config_payload: dict[str, object] = {
         "strategy_id": strategy_id,
@@ -7754,6 +7759,9 @@ def post_backtest_submit(body: BacktestSubmitBody, *, skip_auto_trash: bool = Fa
         "preserve_result": bool(body.preserve_result),
         "as_of": (str(body.as_of).strip() or None) if body.as_of else None,
     }
+    if background_job:
+        # Keep the job running until trades and chart artifacts are saved too.
+        config_payload.update(status="running", background_submit=True, heartbeat_at=_now())
     # Verdict auditability (edge-data-expansion Run 2): stamp the identity of
     # the data this result was scored on so drift is detectable, not remembered.
     try:
@@ -8000,6 +8008,7 @@ def post_optimization_submit(body: OptimizationSubmitBody):
         "execution_profile": body_execution_profile or None,
         "execution_parameter_ranges": execution_parameter_ranges,
         "parameter_ranges": body.parameter_ranges if isinstance(body.parameter_ranges, dict) else None,
+        "minimum_validation_bars": body.minimum_validation_bars,
         "job_id": job_id,
         "status": "running",
     }
@@ -8090,6 +8099,7 @@ def post_optimization_submit(body: OptimizationSubmitBody):
                 initial_capital=body.initial_capital,
                 leverage=body.leverage,
                 as_of=body_as_of,
+                minimum_validation_bars=body.minimum_validation_bars,
             )
 
             if not isinstance(opt_result, dict) or opt_result.get("error"):
@@ -8098,6 +8108,12 @@ def post_optimization_submit(body: OptimizationSubmitBody):
                     default_message="invalid optimization payload",
                 )
                 failed_metrics, failed_config = _build_failed_optimization_payload(error_detail)
+                if isinstance(opt_result, dict) and opt_result.get("reason_code"):
+                    failed_metrics["reason_code"] = opt_result["reason_code"]
+                    failed_config["reason_code"] = opt_result["reason_code"]
+                    failed_config["history_requirements"] = {
+                        key: opt_result.get(key) for key in ("available_bars", "required_bars")
+                    }
                 _update_optimization_result_row(
                     result_id=result_id,
                     metrics=failed_metrics,
@@ -8145,9 +8161,11 @@ def post_optimization_submit(body: OptimizationSubmitBody):
                 "wfa_verdict": opt_result.get("wfa_verdict"),
                 "validated": opt_result.get("validated"),
                 "holdout_applied": opt_result.get("holdout_applied"),
+                "minimum_validation_bars": opt_result.get("minimum_validation_bars"),
                 "selection_window": opt_result.get("selection_window"),
                 "validation_window": opt_result.get("validation_window"),
-                "as_of": body_as_of,
+                "validation_dataset_fingerprint": opt_result.get("validation_dataset_fingerprint"),
+                "as_of": opt_result.get("as_of") or body_as_of,
                 "top_results": opt_result.get("top_results"),
                 "job_id": job_id,
                 "status": "succeeded",

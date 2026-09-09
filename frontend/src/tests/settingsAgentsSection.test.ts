@@ -99,7 +99,7 @@ describe('SettingsAgents section', () => {
 		document.body.appendChild(target);
 		instance = mount(SettingsAgents, {
 			target,
-			props: { settings: {} },
+			props: {},
 		});
 		await flush();
 
@@ -114,7 +114,7 @@ describe('SettingsAgents section', () => {
 		document.body.appendChild(target);
 		instance = mount(SettingsAgents, {
 			target,
-			props: { settings: {} },
+			props: {},
 		});
 		await flush();
 
@@ -131,7 +131,7 @@ describe('SettingsAgents section', () => {
 		document.body.appendChild(target);
 		instance = mount(SettingsAgents, {
 			target,
-			props: { settings: {} },
+			props: {},
 		});
 		await flush();
 
@@ -154,7 +154,7 @@ describe('SettingsAgents section', () => {
 		document.body.appendChild(target);
 		instance = mount(SettingsAgents, {
 			target,
-			props: { settings: {} },
+			props: {},
 		});
 		await flush();
 

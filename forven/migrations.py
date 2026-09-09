@@ -659,6 +659,17 @@ def _m_2026_07_regime_gate_events(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m_2026_09_agent_calls(conn: sqlite3.Connection) -> None:
+    conn.execute("""CREATE TABLE IF NOT EXISTS agent_model_calls (
+        id TEXT PRIMARY KEY, task_id INTEGER NOT NULL, agent_id TEXT NOT NULL,
+        provider TEXT NOT NULL, model_id TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+        cost_usd REAL, estimated_cost_usd REAL NOT NULL, created_at TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_calls_task ON agent_model_calls(task_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_calls_date ON agent_model_calls(created_at)")
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -719,6 +730,7 @@ MIGRATIONS: list[Migration] = [
         name="2026_07_regime_gate_events",
         up=_m_2026_07_regime_gate_events,
     ),
+    Migration(name="2026_09_agent_calls", up=_m_2026_09_agent_calls),
 ]
 
 

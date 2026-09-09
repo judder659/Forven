@@ -6,7 +6,9 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 from contextlib import contextmanager
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -35,6 +37,74 @@ ID_WIDTH_BY_PREFIX = {
 }
 log = logging.getLogger("forven.db")
 _WAL_CONFIGURED_PATHS: set[str] = set()
+_DB_DIRS_READY: set[tuple[str, str, str]] = set()
+_KV_READ_LOCAL = threading.local()
+_DB_INIT_LOCK = threading.Lock()
+_INITIALIZED_DATABASES: set[tuple[str, int, int, int]] = set()
+
+
+def _database_identity() -> tuple[str, int, int, int] | None:
+    try:
+        path = Path(FORVEN_DB).resolve()
+        stat = path.stat()
+    except OSError:
+        return None
+    return str(path), os.getpid(), stat.st_dev, stat.st_ino
+
+
+def ensure_db_initialized() -> None:
+    """Initialize a runtime's database once; explicit init_db still repairs it.
+
+    Repeating the bulk migration from every scanner pass rewrites historical
+    records under SQLite's sole writer lock. File identity detects replacement;
+    a fresh process or a failed initialization must initialize again.
+    """
+    _assert_db_access_allowed()
+    identity = _database_identity()
+    if identity is not None and identity in _INITIALIZED_DATABASES:
+        return
+    with _DB_INIT_LOCK:
+        identity = _database_identity()
+        if identity is None or identity not in _INITIALIZED_DATABASES:
+            init_db()
+
+
+def _connect_db(timeout: float, isolation_level: str | None = "") -> sqlite3.Connection:
+    """Initialize directories once per DB location, not on every KV read."""
+    _assert_db_access_allowed()
+    key = (str(FORVEN_DB), str(FORVEN_HOME), str(WORKSPACE_DIR))
+    if key not in _DB_DIRS_READY:
+        ensure_dirs()
+    try:
+        conn = sqlite3.connect(str(FORVEN_DB), timeout=timeout, isolation_level=isolation_level)
+    except sqlite3.OperationalError as exc:
+        # Recover if a previously initialized directory was removed externally.
+        if "unable to open database file" not in str(exc).lower():
+            raise
+        ensure_dirs()
+        conn = sqlite3.connect(str(FORVEN_DB), timeout=timeout, isolation_level=isolation_level)
+    _DB_DIRS_READY.add(key)
+    return conn
+
+
+@contextmanager
+def kv_read_scope() -> Iterator[sqlite3.Connection]:
+    """Reuse a connection for synchronous KV reads in one diagnostic request.
+
+    This caches no values, opens no explicit read transaction, and never reuses
+    the connection for writes. Thread-local storage preserves SQLite affinity.
+    """
+    _assert_db_access_allowed()
+    previous = getattr(_KV_READ_LOCAL, "connection", None)
+    if previous is not None:
+        yield previous
+        return
+    with get_db() as conn:
+        _KV_READ_LOCAL.connection = conn
+        try:
+            yield conn
+        finally:
+            _KV_READ_LOCAL.connection = None
 
 # Untrusted strategy code runs ONLY inside the out-of-process strategy worker
 # (forven.sandbox.strategy_worker sets FORVEN_IN_STRATEGY_WORKER). That worker must
@@ -454,9 +524,8 @@ def _repair_strategy_generic_placeholders(conn: sqlite3.Connection, now_iso: str
 def get_db():
     """Get a database connection with WAL mode and foreign keys."""
     _assert_db_access_allowed()
-    ensure_dirs()
     db_key = str(FORVEN_DB)
-    conn = sqlite3.connect(db_key, timeout=60)
+    conn = _connect_db(timeout=60)
     conn.row_factory = sqlite3.Row
     if db_key not in _WAL_CONFIGURED_PATHS:
         try:
@@ -466,7 +535,6 @@ def get_db():
                 raise
         else:
             _WAL_CONFIGURED_PATHS.add(db_key)
-    conn.execute("PRAGMA busy_timeout=60000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     try:
@@ -487,11 +555,10 @@ def get_db_best_effort(timeout_seconds: float = 0.25):
     than blocking an async loop behind SQLite contention.
     """
     _assert_db_access_allowed()
-    ensure_dirs()
     timeout = max(float(timeout_seconds), 0.0)
     busy_timeout_ms = max(1, int(timeout * 1000))
     db_key = str(FORVEN_DB)
-    conn = sqlite3.connect(db_key, timeout=timeout)
+    conn = _connect_db(timeout=timeout)
     conn.row_factory = sqlite3.Row
     if db_key not in _WAL_CONFIGURED_PATHS:
         try:
@@ -528,9 +595,8 @@ def get_db_immediate():
     only the critical section that must be atomic.
     """
     _assert_db_access_allowed()
-    ensure_dirs()
     db_key = str(FORVEN_DB)
-    conn = sqlite3.connect(db_key, timeout=60, isolation_level=None)
+    conn = _connect_db(timeout=60, isolation_level=None)
     conn.row_factory = sqlite3.Row
     if db_key not in _WAL_CONFIGURED_PATHS:
         try:
@@ -540,7 +606,6 @@ def get_db_immediate():
                 raise
         else:
             _WAL_CONFIGURED_PATHS.add(db_key)
-    conn.execute("PRAGMA busy_timeout=60000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     conn.execute("BEGIN IMMEDIATE")
@@ -687,6 +752,9 @@ def _snapshot_before_pending_migrations(conn: sqlite3.Connection) -> None:
 
 def init_db():
     """Create all tables if they don't exist."""
+    identity = _database_identity()
+    if identity is not None:
+        _INITIALIZED_DATABASES.discard(identity)
     # B-21: schema-init failures below must be LOUD, not swallowed. They are
     # NOT re-raised (init_db runs on every startup path — api, cli, agents,
     # bot — and a long-standing benign failure must not brick startup);
@@ -695,6 +763,7 @@ def init_db():
     # a mid-migration failure cannot leave half-applied DML that get_db's
     # clean-exit commit would silently persist.
     failures: list[dict] = []
+    ready = True
     with get_db() as conn:
         conn.executescript(SCHEMA_SQL)
         _run_migrations(conn)
@@ -736,6 +805,7 @@ def init_db():
             # Roll back the failing migration's partial DML (and any
             # migrations applied in this same batch — they re-apply on the
             # next boot; the named-migration design relies on idempotency).
+            ready = False
             conn.execute("ROLLBACK TO SAVEPOINT named_migrations")
             busy = isinstance(exc, sqlite3.OperationalError) and (
                 "locked" in str(exc).lower() or "busy" in str(exc).lower()
@@ -762,6 +832,11 @@ def init_db():
         finally:
             conn.execute("RELEASE SAVEPOINT named_migrations")
         _record_schema_migration_failures(conn, failures)
+
+    if ready and not failures:
+        identity = _database_identity()
+        if identity is not None:
+            _INITIALIZED_DATABASES.add(identity)
 
 
 def recover_dangling_runtime_tasks() -> dict[str, int]:
@@ -3578,7 +3653,7 @@ def record_signal_result(
     match_reason: str | None = None,
     block_reason: str | None = None,
     metrics: dict | None = None,
-) -> None:
+) -> int | None:
     """C14: Persist every scanner signal evaluation to a queryable table.
 
     Operators can answer 'why didn't strategy X enter on BTC at 04:00?'
@@ -3589,7 +3664,7 @@ def record_signal_result(
     """
     try:
         with get_db_best_effort() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO scanner_signal_results
                    (strategy_id, symbol, signal_type, matched, executed,
                     price, adx, match_reason, block_reason, metrics_json)
@@ -3607,8 +3682,10 @@ def record_signal_result(
                     json.dumps(metrics, default=str) if metrics else None,
                 ),
             )
+            return int(cursor.lastrowid)
     except Exception:
         pass  # Non-critical — never block scan on telemetry
+    return None
 
 
 def query_failure_taxonomy(
@@ -3649,8 +3726,13 @@ def query_failure_taxonomy(
 def kv_get(key: str, default=None):
     """Get a value from the key-value store."""
     try:
-        with get_db() as conn:
-            row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        _assert_db_access_allowed()
+        scoped_conn = getattr(_KV_READ_LOCAL, "connection", None)
+        if scoped_conn is not None:
+            row = scoped_conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        else:
+            with get_db() as conn:
+                row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
     except sqlite3.OperationalError as exc:
         if "no such table: kv" in str(exc).lower():
             return default
@@ -4233,9 +4315,9 @@ def get_trades_stats(
 ) -> dict:
     """Aggregate blotter stats over the FULL filtered set (not just one page).
 
-    Realized metrics use the unambiguous DOLLAR P&L ``COALESCE(pnl_usd, pnl)`` over
-    CLOSED trades — deliberately sidestepping the pnl_pct unit-blend (kernel writes an
-    equity-fraction, legacy writes a margin-return). Open exposure is the sum of open
+    Realized metrics use net DOLLAR P&L from each row's recorded cost basis over
+    CLOSED trades. Kernel paper dollars are already net; live margin returns include
+    their separately recorded costs. Open exposure is the sum of open
     notional (size * entry price). Computed entirely in SQL so a large ledger never
     streams every row into the API process.
     """
@@ -4244,7 +4326,9 @@ def get_trades_stats(
         execution_type=execution_type, opened_from=opened_from, opened_to=opened_to,
         search=search,
     )
-    pnl = "COALESCE(pnl_usd, pnl)"
+    from forven.trade_accounting import net_pnl_sql
+
+    pnl = net_pnl_sql()
     closed = "UPPER(COALESCE(status, '')) = 'CLOSED'"
     notional = "ABS(COALESCE(size, 0) * COALESCE(fill_entry_price, entry_price, signal_entry_price, 0))"
     sql = f"""
@@ -5270,6 +5354,8 @@ def create_strategy_container(
             now,
         ),
     )
+    from forven.crucible_operations import capture_attempt
+    capture_attempt(conn, final_strategy_id, normalized_hypothesis_id)
     return final_strategy_id, display_id, base_id
 
 
@@ -5668,7 +5754,14 @@ def claim_pending_agent_tasks(agent_id: str, limit: int | None = None) -> list[d
             "SELECT * FROM agent_tasks WHERE agent_id = ? AND status = 'pending' "
             "AND (retry_at IS NULL OR retry_at <= ?) "
             f"{source_clause}"
-            "ORDER BY (COALESCE(source,'system')='user') DESC, priority DESC, created_at LIMIT ?",
+            # Once ready work has waited 30 minutes, serve it oldest-first
+            # within its source class. A stream of new priority-4 generation
+            # tasks must not starve priority-1 research indefinitely. Explicit
+            # user work still precedes autonomous work; retry delays still apply.
+            "ORDER BY (COALESCE(source,'system')='user') DESC, "
+            "CASE WHEN datetime(created_at) <= datetime('now','-30 minutes') THEN 0 ELSE 1 END, "
+            "CASE WHEN datetime(created_at) <= datetime('now','-30 minutes') THEN datetime(created_at) END, "
+            "priority DESC, datetime(created_at), id LIMIT ?",
             tuple(params),
         ).fetchall()
 

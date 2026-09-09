@@ -154,6 +154,11 @@ def _compute_signals(workdir: Path) -> bool:
 
     strategy_type = str(request["strategy_type"])
     cls = registry._TYPE_MAP.get(strategy_type)
+    if cls is None and strategy_type.startswith(registry.IMPORTED_TYPE_PREFIX):
+        # Persistent workers predate later strategy intakes. Resolve that exact
+        # namespaced module under the same AST guard without rediscovering every
+        # strategy, importing it in the parent, or substituting another family.
+        cls = registry.load_imported_runtime_type(strategy_type)
     if cls is None:
         raise StrategyWorkerError(f"unknown strategy type {strategy_type!r}")
     strat = cls("isolated", dict(request.get("params") or {}))
@@ -450,8 +455,10 @@ class _PersistentWorker:
                 _assign_pid_to_job(self._job, self._kernel32, self._proc.pid)
         threading.Thread(target=self._read_loop, daemon=True).start()
         try:
-            ready = self._acks.get(timeout=READY_TIMEOUT_SECONDS)
-        except queue.Empty:
+            from forven.work_budget import remaining_time
+
+            ready = self._acks.get(timeout=remaining_time(READY_TIMEOUT_SECONDS))
+        except (queue.Empty, TimeoutError):
             self.shutdown()
             raise StrategyWorkerError(
                 f"strategy worker did not become ready: {self.stderr_tail()} "
@@ -481,7 +488,7 @@ class _PersistentWorker:
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def request(self, workdir: Path, timeout: int) -> dict:
+    def request(self, workdir: Path, timeout: float) -> dict:
         if not self.alive() or self._proc is None or self._proc.stdin is None:
             raise StrategyWorkerError("strategy worker is not alive")
         self._proc.stdin.write(json.dumps({"workdir": str(workdir)}) + "\n")
@@ -554,6 +561,8 @@ def _request_signals(
     this mode (the strategy has no signals there → caller falls back). Raises
     :class:`StrategyWorkerError` on timeout / worker death / malformed output (fail
     closed — never a silent in-process fallback, which would defeat the isolation)."""
+    from forven.work_budget import remaining_time
+
     with tempfile.TemporaryDirectory(prefix="forven_strat_") as tmp:
         workdir = Path(tmp)
         try:
@@ -562,11 +571,13 @@ def _request_signals(
             raise StrategyWorkerError(f"failed to serialize input frame: {exc}") from exc
         (workdir / "request.json").write_text(json.dumps(request), encoding="utf-8")
 
-        with _worker_lock:
+        if not _worker_lock.acquire(timeout=remaining_time(timeout)):
+            raise StrategyWorkerError("isolated signal worker queue timed out before execution")
+        try:
             try:
                 worker = _get_worker()
-                ack = worker.request(workdir, timeout)
-            except queue.Empty:
+                ack = worker.request(workdir, remaining_time(timeout))
+            except (queue.Empty, TimeoutError):
                 # A late ack would corrupt the next request's exchange → respawn.
                 _reset_worker()
                 raise StrategyWorkerError(
@@ -578,6 +589,8 @@ def _request_signals(
                 raise StrategyWorkerError(
                     f"isolated worker for {strategy_type!r} died" + (f": {tail}" if tail else "")
                 )
+        finally:
+            _worker_lock.release()
 
         if not ack.get("ok"):
             detail = ack.get("error") or _read_status_error(workdir) or "unknown error"

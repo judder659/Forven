@@ -362,7 +362,7 @@ def test_bootstrap_in_flight_reports_zero_bars_but_counts_bootstrapped(monkeypat
     assert result["failed"] == 0
     # A bootstrap never enters the stall cooldown (ensure_coverage degrades to
     # "ready", it does not "fail" like a delisted gap-fill series).
-    assert ("NEW-USDT", "1h") not in data_domain._catchup_stalled
+    assert ("binance", "futures", "NEW-USDT", "1h") not in data_domain._catchup_stalled
 
 
 def test_bootstrap_ready_source_exhausted_is_not_a_stall(monkeypatch):
@@ -462,3 +462,82 @@ def test_non_bootstrap_tasks_are_unaffected(monkeypatch):
     assert calls == ["BTC-USDT", "ETH-USDT"]
     assert result["rows_added"] == 12
     assert result["bootstrapped"] == 0
+
+
+def test_hyperliquid_catchup_repairs_venue_and_checks_target(monkeypatch):
+    import pandas as pd
+
+    task = _task("BTC-USDT", "15m")
+    task.source, task.market = "hyperliquid", "perp"
+    task.end_ts = "2026-09-08T10:00:00Z"
+    def wrong_source(*args, **kwargs):
+        raise AssertionError("Hyperliquid must not repair primary Binance data")
+    _patch_executor(monkeypatch, [task], wrong_source)
+    calls = []
+    monkeypatch.setattr("forven.dataeng.venue.collect_hl_series", lambda s, t: calls.append((s, t)) or 3)
+    def stored(source, market, symbol, timeframe):
+        assert (source, market, symbol, timeframe) == ("hyperliquid", "perp", "BTC-USDT", "15m")
+        return pd.DataFrame({"timestamp": pd.to_datetime([task.end_ts], utc=True)})
+    monkeypatch.setattr("forven.data.load_venue_frame", stored)
+    result = data_domain.execute_data_engine_catchup()
+    assert calls == [("BTC-USDT", "15m")]
+    assert result["failed"] == 0
+    assert result["rows_added"] == 3
+
+
+def test_hyperliquid_partial_tail_is_not_reported_as_success(monkeypatch):
+    import pandas as pd
+
+    task = _task("BTC-USDT", "15m")
+    task.source, task.market = "hyperliquid", "perp"
+    task.end_ts = "2026-09-08T10:00:00Z"
+    _patch_executor(monkeypatch, [task], lambda *a, **k: {})
+    monkeypatch.setattr("forven.dataeng.venue.collect_hl_series", lambda *a: 2)
+    monkeypatch.setattr("forven.data.load_venue_frame", lambda *a: pd.DataFrame({
+        "timestamp": pd.to_datetime(["2026-09-08T09:00:00Z"], utc=True),
+    }))
+    result = data_domain.execute_data_engine_catchup()
+    assert result["failed"] == 1
+    assert result["rows_added"] == 2
+    assert ("hyperliquid", "perp", "BTC-USDT", "15m") in data_domain._catchup_stalled
+    assert ("binance", "futures", "BTC-USDT", "15m") not in data_domain._catchup_stalled
+
+
+def test_unsupported_venue_repairs_do_not_fall_back_to_binance(monkeypatch):
+    hl_gap = _task("BTC-USDT", "1h", reason="unsupported")
+    hl_gap.source, hl_gap.market = "hyperliquid", "perp"
+    unknown = _task("ETH-USDT", "1h")
+    unknown.source = "unknown"
+    calls = []
+    _patch_executor(monkeypatch, [hl_gap, unknown], lambda *a, **k: calls.append(a) or {})
+    monkeypatch.setattr("forven.dataeng.venue.collect_hl_series", lambda *a: calls.append(a) or 0)
+    result = data_domain.execute_data_engine_catchup()
+    assert result["failed"] == 2
+    assert calls == []
+
+
+def test_bootstrap_includes_each_symbols_strategy_timeframes(monkeypatch):
+    from forven.dataeng.catchup import CatchUpPlanner
+
+    manager = SimpleNamespace(
+        get_active_symbols=lambda **kwargs: {"BTC/USDT", "ETH/USDT"},
+        get_active_timeframes=lambda symbol: {"15m"} if symbol == "BTC/USDT" else {"4h"},
+    )
+    monkeypatch.setattr("forven.data_manager.get_data_manager", lambda: manager)
+    monkeypatch.setattr("forven.dataeng.coverage._scan_universe", lambda: ([], ["1h"]))
+    assert set(CatchUpPlanner(catalog=_FakeCatalog())._active_universe_pairs()) == {
+        ("BTC-USDT", "1h"), ("BTC-USDT", "15m"),
+        ("ETH-USDT", "1h"), ("ETH-USDT", "4h"),
+    }
+
+
+def test_venue_stall_does_not_deprioritize_primary_series(monkeypatch):
+    venue = _task("BTC-USDT", "15m")
+    venue.source, venue.market = "hyperliquid", "perp"
+    primary = _task("BTC-USDT", "15m")
+    calls = []
+    _patch_executor(monkeypatch, [venue, primary], lambda *a, **k: calls.append(a) or {"bars_added": 1})
+    data_domain._catchup_stalled[("hyperliquid", "perp", "BTC-USDT", "15m")] = data_domain.time.monotonic()
+    result = data_domain.execute_data_engine_catchup(max_tasks=1)
+    assert calls == [("BTC-USDT", "15m")]
+    assert result["failed"] == 0

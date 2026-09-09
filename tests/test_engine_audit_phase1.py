@@ -188,7 +188,7 @@ def test_kernel_open_live_skips_short_in_long_only(monkeypatch):
     assert opened["db"] is False  # no order, no trade row
 
 
-def test_kernel_open_live_reports_open_failure(monkeypatch):
+def test_kernel_open_live_reports_open_failure(monkeypatch, forven_db):
     import forven.scanner as sc
     import forven.exchange.risk as risk
     from forven.exchange import books

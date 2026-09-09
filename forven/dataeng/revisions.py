@@ -263,9 +263,10 @@ def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_
     )
 
     overlay = picked.set_index("timestamp")
-    for ts, row in overlay.iterrows():
-        mask = result["timestamp"] == ts
-        if mask.any():
-            for col in _PRICE_COLUMNS:
-                result.loc[mask, col] = row[col]
+    # Align once rather than scanning the entire lake once per revised bar.
+    # Positional assignment preserves the lake's order, index and duplicates.
+    mask = result["timestamp"].isin(overlay.index)
+    columns = list(_PRICE_COLUMNS)
+    if mask.any():
+        result.loc[mask, columns] = overlay.reindex(result.loc[mask, "timestamp"])[columns].to_numpy()
     return result

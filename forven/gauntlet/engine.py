@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from forven.gauntlet.models import RETRYABLE_STEP_STATUSES, STEP_TERMINAL_STATUSES
+from forven.gauntlet.models import RETRYABLE_STEP_STATUSES
 from forven.gauntlet.store import (
     WORKFLOW_TERMINAL_STATUSES,
     init_gauntlet_schema,
@@ -226,7 +226,7 @@ def _refresh_workflow_status(conn, workflow_id: str) -> dict[str, Any]:
     steps = _steps(conn, workflow_id)
     statuses = [str(step.get("status") or "") for step in steps]
     now = _now()
-    current = next((step["step_key"] for step in steps if step["status"] not in STEP_TERMINAL_STATUSES), None)
+    current = next((step["step_key"] for step in steps if step["status"] not in {"passed", "skipped", "cancelled"}), None)
 
     if statuses and all(status == "cancelled" or status == "passed" for status in statuses):
         status = "cancelled" if any(status == "cancelled" for status in statuses) else "passed"
@@ -248,10 +248,10 @@ def _refresh_workflow_status(conn, workflow_id: str) -> dict[str, Any]:
         """
         UPDATE gauntlet_workflows
         SET status = ?, current_step_key = ?, updated_at = ?,
-            completed_at = CASE WHEN ? IS NOT NULL THEN ? ELSE completed_at END
+            completed_at = ?
         WHERE id = ?
         """,
-        (status, current, now, completed_at, completed_at, workflow_id),
+        (status, current, now, completed_at, workflow_id),
     )
     row = conn.execute("SELECT * FROM gauntlet_workflows WHERE id = ?", (workflow_id,)).fetchone()
     return dict(row)
@@ -341,7 +341,10 @@ def claim_next_step(workflow_id: str) -> dict[str, Any] | None:
         return dict(row)
 
 
-def complete_step(step_id: str, output: dict[str, Any] | None = None) -> dict[str, Any]:
+def complete_step(
+    step_id: str, output: dict[str, Any] | None = None, *, expected_attempt: int | None = None,
+    expected_started_at: str | None = None,
+) -> dict[str, Any]:
     from forven.db import get_db
 
     clean_step_id = str(step_id or "").strip()
@@ -357,10 +360,14 @@ def complete_step(step_id: str, output: dict[str, Any] | None = None) -> dict[st
         conn.execute(
             """
             UPDATE gauntlet_steps
-            SET status = 'passed', output_json = ?, error_json = NULL, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'passed', output_json = ?, result_id = COALESCE(?, result_id),
+                error_json = NULL, completed_at = ?, updated_at = ?
+            WHERE id = ? AND status NOT IN ('cancelled', 'passed')
+              AND (? IS NULL OR (status = 'running' AND attempt_count = ?))
+              AND (? IS NULL OR started_at = ?)
             """,
-            (_json_dumps(output or {}), now, now, clean_step_id),
+            (_json_dumps(output or {}), (output or {}).get("result_id"), now, now, clean_step_id,
+             expected_attempt, expected_attempt, expected_started_at, expected_started_at),
         )
         _queue_ready_steps(conn, step["workflow_id"])
         workflow = _refresh_workflow_status(conn, step["workflow_id"])
@@ -374,6 +381,8 @@ def block_step(
     message: str,
     retryable: bool = True,
     payload: dict[str, Any] | None = None,
+    expected_attempt: int | None = None,
+    expected_started_at: str | None = None,
 ) -> dict[str, Any]:
     from forven.db import get_db
 
@@ -392,9 +401,12 @@ def block_step(
             """
             UPDATE gauntlet_steps
             SET status = ?, error_json = ?, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status NOT IN ('cancelled', 'passed')
+              AND (? IS NULL OR (status = 'running' AND attempt_count = ?))
+              AND (? IS NULL OR started_at = ?)
             """,
-            (status, _json_dumps(error_payload), now, now, step_id),
+            (status, _json_dumps(error_payload), now, now, step_id,
+             expected_attempt, expected_attempt, expected_started_at, expected_started_at),
         )
         workflow = _refresh_workflow_status(conn, step["workflow_id"])
         return workflow
@@ -418,7 +430,8 @@ def retry_step(step_id: str, *, actor: str = "system") -> dict[str, Any]:
         conn.execute(
             """
             UPDATE gauntlet_steps
-            SET status = 'queued', error_json = NULL, completed_at = NULL, updated_at = ?
+            SET status = 'queued', error_json = NULL, output_json = '{}',
+                result_id = NULL, completed_at = NULL, updated_at = ?
             WHERE id = ?
             """,
             (now, clean_step_id),
@@ -453,6 +466,8 @@ def cancel_workflow(workflow_id: str, *, actor: str = "system", reason: str = ""
         workflow = conn.execute("SELECT * FROM gauntlet_workflows WHERE id = ?", (clean_workflow_id,)).fetchone()
         if not workflow:
             raise ValueError(f"workflow {clean_workflow_id!r} not found")
+        if workflow["status"] in WORKFLOW_TERMINAL_STATUSES:
+            return dict(workflow)
         conn.execute(
             """
             UPDATE gauntlet_steps
@@ -505,17 +520,24 @@ def recover_stale_running_steps(*, stale_after_minutes: int = 30) -> dict[str, i
             SELECT *
             FROM gauntlet_steps
             WHERE status = 'running'
-              AND started_at IS NOT NULL
-              AND datetime(started_at) < datetime(?)
+              AND (datetime(started_at) IS NULL OR datetime(started_at) < datetime(?))
             """,
             (threshold.isoformat(),),
         ).fetchall()
         for row in rows:
-            conn.execute(
+            output = _loads(row["output_json"], {})
+            job_id = output.get("background_job_id") if isinstance(output, dict) else None
+            if job_id and conn.execute(
+                """SELECT 1 FROM gauntlet_artifacts WHERE step_id=?
+                   AND artifact_type='background_outcome' AND artifact_key=? LIMIT 1""",
+                (row["id"], str(job_id)),
+            ).fetchone():
+                continue  # durable completion is ready for the next poll after restart
+            updated = conn.execute(
                 """
                 UPDATE gauntlet_steps
                 SET status = 'blocked_runtime', completed_at = ?, updated_at = ?, error_json = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'running' AND started_at IS ?
                 """,
                 (
                     now,
@@ -527,10 +549,12 @@ def recover_stale_running_steps(*, stale_after_minutes: int = 30) -> dict[str, i
                         }
                     ),
                     row["id"],
+                    row["started_at"],
                 ),
             )
-            _refresh_workflow_status(conn, row["workflow_id"])
-            recovered["blocked_runtime"] += 1
+            if updated.rowcount:
+                _refresh_workflow_status(conn, row["workflow_id"])
+                recovered["blocked_runtime"] += 1
     return recovered
 
 
@@ -558,15 +582,17 @@ def _preserve_running_step(step: dict[str, Any], outcome: dict[str, Any]) -> Non
         # without the refresh a legitimately long step (>30-min optimization grid) was
         # flipped to blocked_runtime every stale-window, burning an attempt per cycle until
         # the drain sweep terminally archived a strategy whose work was still in flight.
-        conn.execute(
+        updated = conn.execute(
             """
             UPDATE gauntlet_steps
             SET status = 'running', output_json = ?, result_id = COALESCE(?, result_id),
                 started_at = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'running' AND attempt_count = ? AND started_at IS ?
             """,
-            (_json_dumps(outcome), result_id, now, now, step["id"]),
+            (_json_dumps(outcome), result_id, now, now, step["id"], step["attempt_count"], step.get("started_at")),
         )
+        if not updated.rowcount:
+            return
         conn.execute(
             "UPDATE gauntlet_workflows SET status = 'running', current_step_key = ?, updated_at = ? WHERE id = ?",
             (step["step_key"], now, step["workflow_id"]),
@@ -589,10 +615,14 @@ def _step_poll_handle(step: dict[str, Any]) -> str | None:
     polls the persisted backtest/optimization result instead of re-executing
     work. A running step WITHOUT one would be re-executed from scratch.
     """
+    output = _loads(step.get("output_json"), {})
+    if not isinstance(output, dict) or output.get("status") not in {"running", "waiting"}:
+        return None  # a prior completed result is evidence, not a polling handle
+    if output.get("background_job_id"):
+        return str(output["background_job_id"])
     direct = str(step.get("result_id") or "").strip()
     if direct:
         return direct
-    output = _loads(step.get("output_json"), {})
     if isinstance(output, dict):
         nested = str(output.get("result_id") or "").strip()
         if nested:
@@ -607,22 +637,15 @@ def _step_in_flight(step: dict[str, Any], *, lease_minutes: float = _IN_FLIGHT_L
     periodic tick, the HTTP resume route, and manual driving) and no lease, so
     re-invoking the runner for a step another thread is synchronously executing
     duplicates the whole backtest/optimization — and at the paper gate the
-    loser overwrites a successful promotion with ``failed_gate``. A step is in
-    flight when it has NO poll handle (re-dispatch would re-execute) and its
-    ``started_at`` heartbeat is recent (another driver claimed or refreshed it
-    within the lease window). Genuinely stale running steps are NOT re-driven
-    here; ``recover_stale_running_steps`` owns that path.
+    loser overwrites a successful promotion with ``failed_gate``. Without a poll
+    handle, re-dispatch would execute work again. Stale running steps are not
+    re-driven here; ``recover_stale_running_steps`` owns that path. The legacy
+    ``lease_minutes`` argument remains accepted for compatibility.
     """
-    if _step_poll_handle(step):
-        return False
-    started = _parse_timestamp(step.get("started_at"))
-    if started is None:
-        # claim_next_step always writes started_at; an empty/garbled value
-        # means we cannot prove liveness, and skipping forever would wedge the
-        # workflow (stale recovery also keys on started_at). Treat as stale.
-        return False
-    age = datetime.now(timezone.utc) - started
-    return age < timedelta(minutes=max(float(lease_minutes), 1.0))
+    # Age alone does not confer ownership of an existing attempt. Stale recovery
+    # must block it first, then retry/claim creates a new attempt. Re-dispatching
+    # here reused the old attempt identity and admitted its late result as current.
+    return _step_poll_handle(step) is None
 
 
 def resume_workflow(
@@ -631,6 +654,7 @@ def resume_workflow(
     max_steps: int = 1,
     runner: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
     deadline_monotonic: float | None = None,
+    background_steps: bool = False,
 ) -> dict[str, Any]:
     from forven.gauntlet.tasks import run_step
     from forven.gauntlet.store import get_workflow_detail
@@ -644,10 +668,13 @@ def resume_workflow(
 
         with get_db() as conn:
             stage_row = conn.execute(
-                "SELECT s.stage FROM gauntlet_workflows w "
+                "SELECT s.stage, w.status AS workflow_status FROM gauntlet_workflows w "
                 "JOIN strategies s ON s.id = w.strategy_id WHERE w.id = ?",
                 (str(workflow_id),),
             ).fetchone()
+        if stage_row is not None and stage_row["workflow_status"] in WORKFLOW_TERMINAL_STATUSES:
+            return {"ok": True, "workflow_id": workflow_id, "steps_run": 0,
+                    "last_outcome": {"status": stage_row["workflow_status"]}}
         if stage_row is not None and stage_is_param_locked(stage_row["stage"]):
             try:
                 cancel_workflow(
@@ -671,17 +698,20 @@ def resume_workflow(
 
     steps_run = 0
     last_outcome: dict[str, Any] | None = None
-    step_runner = runner or run_step
+    def step_runner(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
+        return runner(workflow, step) if runner else run_step(workflow, step, background=background_steps)
     import time as _time
     while steps_run < max(int(max_steps), 1):
-        # Stop advancing FURTHER steps once the tick's wall-clock budget is spent:
-        # a multi-step visit must not run several heavy steps past the deadline and
-        # overrun the scheduler job timeout (which orphans a worker thread). The
-        # first step always runs (the caller only claims a workflow before the
-        # deadline) and a step already started runs to completion, so this bounds
-        # the overrun to a single in-flight step regardless of max_steps.
-        if deadline_monotonic is not None and steps_run > 0 and _time.monotonic() >= deadline_monotonic:
+        # Recheck before the FIRST claim too: queueing or the DB pre-check can
+        # spend the remaining budget after the caller submitted this workflow.
+        # A step already started still runs to completion under its claim lock.
+        if deadline_monotonic is not None and _time.monotonic() >= deadline_monotonic:
             break
+        if background_steps and runner is None:
+            from forven.gauntlet.worker import has_capacity
+
+            if not has_capacity() and _running_step(workflow_id) is None:
+                break  # no claim/attempt is spent waiting for a worker slot
         step = claim_next_step(workflow_id)
         if step is None:
             step = _running_step(workflow_id)
@@ -692,8 +722,8 @@ def resume_workflow(
                     "status": "in_flight",
                     "step_key": step.get("step_key"),
                     "message": (
-                        "step is currently in flight (recent heartbeat, no poll "
-                        "handle); skipping re-dispatch to avoid duplicate execution"
+                        "running step has no poll handle; wait for completion or "
+                        "stale recovery before claiming a new attempt"
                     ),
                 }
                 log.info(
@@ -703,12 +733,24 @@ def resume_workflow(
                 )
                 break
         workflow = get_workflow_detail(workflow_id)["workflow"]
-        outcome = step_runner(workflow, step)
-        last_outcome = outcome if isinstance(outcome, dict) else {"status": "passed"}
-        outcome_status = str(last_outcome.get("status") or "passed")
+        try:
+            from forven.work_budget import work_budget
+
+            with work_budget(deadline_monotonic):
+                outcome = step_runner(workflow, step)
+        except Exception as exc:
+            log.exception("Gauntlet runner failed for step %s", step["id"])
+            outcome = {"status": "blocked_runtime", "message": str(exc), "retryable": True, "runner_error": True}
+        last_outcome = outcome if isinstance(outcome, dict) else {}
+        if not last_outcome.get("status"):
+            last_outcome = {
+                "status": "blocked_runtime", "message": "Runner returned no explicit outcome status",
+                "retryable": True,
+            }
+        outcome_status = str(last_outcome["status"])
         try:
             if outcome_status == "passed":
-                complete_step(step["id"], last_outcome)
+                complete_step(step["id"], last_outcome, expected_attempt=step["attempt_count"], expected_started_at=step.get("started_at"))
             elif outcome_status in {"running", "waiting"}:
                 _preserve_running_step(step, last_outcome)
                 steps_run += 1
@@ -720,9 +762,11 @@ def resume_workflow(
                     message=str(last_outcome.get("message") or last_outcome.get("error") or outcome_status),
                     retryable=outcome_status in RETRYABLE_STEP_STATUSES,
                     payload=last_outcome,
+                    expected_attempt=step["attempt_count"],
+                    expected_started_at=step.get("started_at"),
                 )
             else:
-                block_step(step["id"], "failed_gate", message=f"Unexpected outcome status: {outcome_status}", payload=last_outcome)
+                block_step(step["id"], "blocked_runtime", message=f"Unexpected outcome status: {outcome_status}", payload=last_outcome, expected_attempt=step["attempt_count"], expected_started_at=step.get("started_at"))
         except Exception as exc:
             # A failed outcome write must not strand the step in 'running' — that
             # turns one bad payload into an infinite claim/reap/requeue loop (a
@@ -748,6 +792,8 @@ def resume_workflow(
                 ),
                 retryable=fallback_status in RETRYABLE_STEP_STATUSES,
                 payload=None,
+                expected_attempt=step["attempt_count"],
+                expected_started_at=step.get("started_at"),
             )
         steps_run += 1
     return {"ok": True, "workflow_id": workflow_id, "steps_run": steps_run, "last_outcome": last_outcome}
@@ -790,6 +836,13 @@ def list_active_workflow_ids(*, max_workflows: int | None = None) -> list[str]:
         f"WHERE w.status NOT IN ({placeholders}) "
         f"AND LOWER(TRIM(COALESCE(s.stage, ''))) NOT IN "
         f"('paper', 'paper_trading', 'live_graduated', 'deployed', 'archived', 'rejected') "
+        # Apply readiness BEFORE LIMIT. Otherwise old operator/data blocks can
+        # occupy every visit slot forever while runnable workflows starve.
+        f"AND EXISTS (SELECT 1 FROM gauntlet_steps ready WHERE ready.workflow_id = w.id "
+        f"AND (ready.status = 'running' OR (ready.status IN ('pending', 'queued') "
+        f"AND NOT EXISTS (SELECT 1 FROM json_each(ready.depends_on_json) dep "
+        f"LEFT JOIN gauntlet_steps parent ON parent.workflow_id = w.id AND parent.step_key = dep.value "
+        f"WHERE COALESCE(parent.status, '') <> 'passed')))) "
         f"ORDER BY "
         # Tier: stale (anti-starvation) before fresh.
         f"{stale} DESC, "
@@ -890,7 +943,7 @@ def backfill_missing_quick_screen_workflows(*, limit: int = 20) -> int:
         term_ph = ",".join("?" for _ in terminal)
         rows = conn.execute(
             f"""
-            SELECT s.id
+            SELECT s.id, s.stage_changed_at
             FROM strategies s
             WHERE LOWER(COALESCE(s.stage, '')) IN ({stage_ph})
               AND NOT EXISTS (
@@ -907,7 +960,7 @@ def backfill_missing_quick_screen_workflows(*, limit: int = 20) -> int:
         for row in rows:
             sid = str(row["id"])
             cur = conn.execute(
-                """SELECT id, status FROM gauntlet_workflows
+                """SELECT id, status, cancelled_at FROM gauntlet_workflows
                    WHERE strategy_id = ? AND definition_version = ?
                    ORDER BY datetime(created_at) DESC LIMIT 1""",
                 (sid, WORKFLOW_DEFINITION_VERSION),
@@ -926,6 +979,11 @@ def backfill_missing_quick_screen_workflows(*, limit: int = 20) -> int:
                 # pre-paper stage (e.g. demoted from paper for a re-test).
                 if str(cur["status"] or "").strip().lower() == "failed_gate":
                     continue
+                if str(cur["status"] or "").strip().lower() == "cancelled":
+                    cancelled_at = _parse_timestamp(cur["cancelled_at"])
+                    stage_changed_at = _parse_timestamp(row["stage_changed_at"])
+                    if not cancelled_at or not stage_changed_at or stage_changed_at <= cancelled_at:
+                        continue  # cancellation remains effective until a later lifecycle move
                 _reset_workflow_to_pending(
                     conn, str(cur["id"]), now,
                     reason="self-heal: stranded in pre-paper stage with no active workflow",
@@ -1373,6 +1431,8 @@ def requeue_stale_engine_artifacts(*, limit: int = 20, revive_limit: int = _ENGI
                     (strategy_id, WORKFLOW_DEFINITION_VERSION),
                 ).fetchone()
                 workflow_id = str(workflow["id"]) if workflow else None
+                if workflow and workflow["status"] == "cancelled":
+                    continue  # an engine update is not authorization to undo cancellation
                 if workflow_id and _workflow_has_running_step(conn, workflow_id):
                     continue  # in flight — retry once idle, no marker
 
@@ -1535,13 +1595,17 @@ def requeue_retryable_blocked_steps(*, limit: int = 50) -> int:
             JOIN gauntlet_workflows w ON w.id = s.workflow_id
             WHERE s.status IN ({placeholders})
               AND w.status NOT IN ('passed', 'failed_gate', 'cancelled')
-            ORDER BY datetime(COALESCE(s.updated_at, s.completed_at)) ASC
-            LIMIT ?
+            ORDER BY datetime(COALESCE(s.updated_at, s.completed_at)) ASC, s.id ASC
             """,
-            (*RETRYABLE_STEP_STATUSES, int(max(int(limit), 1))),
-        ).fetchall()
-        affected_workflows: set[str] = set()
+            (*RETRYABLE_STEP_STATUSES,),
+        )
+        # Apply the mutation limit AFTER eligibility checks. Old permanent blocks,
+        # exhausted retries, or long backoffs must not hide later runnable work.
+        eligible = []
         for row in rows:
+            error = _loads(row["error_json"], {})
+            if isinstance(error, dict) and error.get("retryable") is False:
+                continue
             reason_code = _step_block_reason_code(row["error_json"])
             exempt_from_attempts = reason_code in _NO_DRAIN_REASON_CODES
             if not exempt_from_attempts and int(row["attempt_count"] or 0) >= _effective_max_attempts(
@@ -1553,6 +1617,12 @@ def requeue_retryable_blocked_steps(*, limit: int = 50) -> int:
                 backoff = timedelta(minutes=_requeue_backoff_minutes(row["attempt_count"], reason_code))
                 if now_dt - blocked_at < backoff:
                     continue  # still inside the retry backoff window
+            eligible.append((row, exempt_from_attempts))
+            if len(eligible) >= max(int(limit), 1):
+                break
+        rows.close()
+        affected_workflows: set[str] = set()
+        for row, exempt_from_attempts in eligible:
             if exempt_from_attempts:
                 # Reset the counter so the next claim's increment can never push the
                 # step over the drain threshold while the contention persists.
@@ -1560,6 +1630,7 @@ def requeue_retryable_blocked_steps(*, limit: int = 50) -> int:
                     """
                     UPDATE gauntlet_steps
                     SET status = 'queued', attempt_count = 0, error_json = NULL,
+                        output_json = '{}', result_id = NULL,
                         completed_at = NULL, updated_at = ?
                     WHERE id = ?
                     """,
@@ -1569,7 +1640,8 @@ def requeue_retryable_blocked_steps(*, limit: int = 50) -> int:
                 conn.execute(
                     """
                     UPDATE gauntlet_steps
-                    SET status = 'queued', error_json = NULL, completed_at = NULL, updated_at = ?
+                    SET status = 'queued', error_json = NULL, output_json = '{}',
+                        result_id = NULL, completed_at = NULL, updated_at = ?
                     WHERE id = ?
                     """,
                     (now, row["id"]),
@@ -1616,15 +1688,23 @@ def drain_exhausted_blocked_steps(*, limit: int = 50) -> int:
             WHERE s.status IN ({placeholders})
               AND COALESCE(s.attempt_count, 0) >= MAX(COALESCE(s.max_attempts, 3), ?)
               AND w.status NOT IN ('passed', 'failed_gate', 'cancelled')
-            ORDER BY datetime(COALESCE(s.updated_at, s.completed_at)) ASC
-            LIMIT ?
+            ORDER BY datetime(COALESCE(s.updated_at, s.completed_at)) ASC, s.id ASC
             """,
-            (*RETRYABLE_STEP_STATUSES, _TRANSIENT_MAX_ATTEMPTS, int(max(int(limit), 1))),
-        ).fetchall()
-        affected_workflows: set[str] = set()
+            (*RETRYABLE_STEP_STATUSES, _TRANSIENT_MAX_ATTEMPTS),
+        )
+        eligible = []
         for row in rows:
+            error = _loads(row["error_json"], {})
+            if isinstance(error, dict) and error.get("retryable") is False:
+                continue
             if _step_block_reason_code(row["error_json"]) in _NO_DRAIN_REASON_CODES:
                 continue
+            eligible.append(row)
+            if len(eligible) >= max(int(limit), 1):
+                break
+        rows.close()
+        affected_workflows: set[str] = set()
+        for row in eligible:
             payload = _loads(row["error_json"], {})
             if not isinstance(payload, dict):
                 payload = {}
@@ -1719,6 +1799,11 @@ def tick_active_gauntlet_workflows(
     Per-workflow exceptions are caught and logged so a single bad
     workflow cannot block the rest of the queue.
     """
+    import time as _time
+
+    _loop_start = _time.monotonic()
+    _deadline_monotonic = (_loop_start + float(deadline_seconds)) if deadline_seconds is not None else None
+
     # Engine-version re-baseline FIRST: it may revive archived strategies and reset
     # failed_gate workflows to pending, and must land before this tick's demote
     # sweep runs (which only archives workflows still in failed_gate) — otherwise a
@@ -1730,6 +1815,9 @@ def tick_active_gauntlet_workflows(
         log.exception("Gauntlet tick: engine re-baseline sweep failed")
         engine_rebaseline = {"reset": 0, "revived": 0, "converged": 0}
     backfilled = backfill_missing_quick_screen_workflows(limit=max_workflows)
+    from forven.gauntlet.recovery import resolve_evidence_blocks
+
+    evidence_recovery = resolve_evidence_blocks(limit=max_workflows)
     # Re-queue retryable blocked steps BEFORE demoting failed_gate strategies, so a
     # transiently-blocked (not failed) step is re-driven rather than mistaken for a
     # stuck workflow. demote_failed_gate only archives workflows whose status is
@@ -1753,6 +1841,7 @@ def tick_active_gauntlet_workflows(
         "workflows_seen": len(workflow_ids),
         "engine_rebaseline": engine_rebaseline,
         "backfilled": backfilled,
+        "evidence_recovery": evidence_recovery,
         "requeued_blocked": requeued,
         "drained_exhausted": drained,
         "demoted_failed_gate": demoted,
@@ -1764,20 +1853,20 @@ def tick_active_gauntlet_workflows(
         "deadline_hit": False,
         "skipped_for_deadline": 0,
     }
-    import time as _time
-
-    _loop_start = _time.monotonic()
-    _deadline_monotonic = (_loop_start + float(deadline_seconds)) if deadline_seconds else None
-
     def _advance_workflow(wf_id: str) -> dict[str, Any]:
         return resume_workflow(
             wf_id,
             max_steps=max_steps_per_workflow,
             runner=runner,
             deadline_monotonic=_deadline_monotonic,
+            background_steps=runner is None,
         )
 
     def _record_outcome(outcome: dict[str, Any]) -> None:
+        last = outcome.get("last_outcome") or {}
+        if last.get("runner_error"):
+            summary["errors"].append({"workflow_id": outcome["workflow_id"], "error": last.get("message")})
+            return
         if int((outcome or {}).get("steps_run") or 0) > 0:
             summary["advanced"] += 1
         else:
@@ -1797,9 +1886,9 @@ def tick_active_gauntlet_workflows(
         # The DB is WAL + 60s busy_timeout, so concurrent per-step writes serialize
         # safely. Subprocess memory is bounded by the process-wide budget in
         # strategies/concurrency.py, not by this worker count. In-flight is bounded to
-        # drain_workers and submission is deadline-gated, so a backlog can neither
-        # over-subscribe memory nor overrun the tick budget; in-flight workflows finish
-        # (each self-limited by deadline_monotonic) and the rest defer to the next tick.
+        # drain_workers and submission is deadline-gated. Maintenance consumes the
+        # same budget. Already-running steps may finish after the deadline; their
+        # scheduler lock must remain held until completion to prevent duplicates.
         import concurrent.futures as _cf
 
         in_flight: dict[Any, str] = {}
@@ -1809,7 +1898,7 @@ def tick_active_gauntlet_workflows(
         ) as pool:
             while pending or in_flight:
                 while pending and len(in_flight) < drain_workers:
-                    if _deadline_monotonic and _time.monotonic() > _deadline_monotonic:
+                    if _deadline_monotonic is not None and _time.monotonic() >= _deadline_monotonic:
                         summary["deadline_hit"] = True
                         summary["skipped_for_deadline"] = len(pending)
                         log.warning(
@@ -1835,7 +1924,7 @@ def tick_active_gauntlet_workflows(
             # budget, so a slow late step can't overrun the scheduler job timeout and
             # orphan a worker thread. The skipped workflows are the freshest-updated; the
             # next tick (FIFO by updated_at) picks up the oldest-waiting ones first.
-            if _deadline_monotonic and (_time.monotonic() > _deadline_monotonic):
+            if _deadline_monotonic is not None and _time.monotonic() >= _deadline_monotonic:
                 summary["deadline_hit"] = True
                 summary["skipped_for_deadline"] = len(workflow_ids) - idx
                 log.warning(

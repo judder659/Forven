@@ -1,4 +1,7 @@
 import os
+import sqlite3
+import sys
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -6,7 +9,7 @@ from fastapi import HTTPException
 
 from forven import api_core as core
 from forven.config import get_execution_mode
-from forven.db import _now, get_db, kv_get, kv_set
+from forven.db import _now, get_db, kv_get, kv_read_scope, kv_set
 from forven.circuit_breaker import hl_account_breaker, hl_price_breaker, hl_trade_breaker
 from forven.exchange.risk import get_risk_status, is_trading_allowed
 from forven.runtime_health import compute_runtime_code_fingerprint, normalize_daemon_state
@@ -52,10 +55,20 @@ def _row_int(row: object, key: str) -> int:
         return 0
 
 
-def _runtime_health_summary() -> dict[str, object]:
+def _runtime_health_summary(connection: sqlite3.Connection | None = None) -> dict[str, object]:
     now = datetime.now(timezone.utc)
     issues: list[str] = []
     details: dict[str, object] = {}
+    from forven.control_plane.runtime_diagnostics import runtime_thread_health
+
+    runtime_threads = runtime_thread_health()
+    details["runtime_threads"] = runtime_threads
+    details["execution_runtime_revision"] = getattr(
+        sys.modules.get("forven.scanner"), "EXECUTION_RUNTIME_REVISION", None,
+    )
+    for thread in runtime_threads:
+        if not thread["alive"] and not thread["expected_stop"]:
+            issues.append(f"runtime thread stopped unexpectedly: {thread['name']}")
 
     last_progress = (
         _parse_health_timestamp(kv_get("scheduler:last_progress_at"))
@@ -73,15 +86,16 @@ def _runtime_health_summary() -> dict[str, object]:
     details["scheduler_age_seconds"] = scheduler_age
 
     try:
-        with get_db() as conn:
+        with (nullcontext(connection) if connection is not None else get_db()) as conn:
             queue_row = conn.execute(
                 """
                 SELECT
                   SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS agent_pending,
                   SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS agent_running,
-                  SUM(CASE WHEN status='pending' AND datetime(created_at) < datetime('now','-30 minutes') THEN 1 ELSE 0 END) AS agent_stale_pending,
+                  SUM(CASE WHEN status='pending' AND datetime(COALESCE(retry_at, created_at)) < datetime('now','-30 minutes') THEN 1 ELSE 0 END) AS agent_stale_pending,
                   SUM(CASE WHEN status='running' AND datetime(started_at) < datetime('now','-60 minutes') THEN 1 ELSE 0 END) AS agent_stale_running
                 FROM agent_tasks
+                WHERE status IN ('pending', 'running')
                 """
             ).fetchone()
             brain_row = conn.execute(
@@ -89,10 +103,10 @@ def _runtime_health_summary() -> dict[str, object]:
                 SELECT
                   SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS brain_pending,
                   SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS brain_running,
-                  SUM(CASE WHEN status='pending' AND datetime(created_at) < datetime('now','-30 minutes') THEN 1 ELSE 0 END) AS brain_stale_pending,
+                  SUM(CASE WHEN status='pending' AND datetime(COALESCE(retry_at, created_at)) < datetime('now','-30 minutes') THEN 1 ELSE 0 END) AS brain_stale_pending,
                   SUM(CASE WHEN status='running' AND datetime(claimed_at) < datetime('now','-30 minutes') THEN 1 ELSE 0 END) AS brain_stale_running
                 FROM tasks
-                WHERE type='brain_invoke'
+                WHERE type='brain_invoke' AND status IN ('pending', 'running')
                 """
             ).fetchone()
             job_row = conn.execute(
@@ -109,7 +123,10 @@ def _runtime_health_summary() -> dict[str, object]:
                 SELECT id, next_run_at, running_since
                 FROM scheduler_jobs
                 WHERE enabled = 1
-                """
+                  AND (running_since IS NULL OR TRIM(running_since) = '')
+                  AND datetime(next_run_at) <= datetime(?)
+                """,
+                ((now - timedelta(minutes=5)).isoformat(),),
             ).fetchall()
     except Exception as exc:
         issues.append(f"runtime DB health check failed: {exc}")
@@ -202,8 +219,9 @@ def health_check() -> dict[str, object]:
     # every status surface. mainnet_arming_snapshot() is env-only and never
     # raises (it falls back to reading the var itself), so this cannot take the
     # health endpoint down.
-    arming = core.mainnet_arming_snapshot()
-    summary = _runtime_health_summary()
+    with kv_read_scope() as connection:
+        arming = core.mainnet_arming_snapshot()
+        summary = _runtime_health_summary(connection)
     return {
         "status": summary["status"],
         "time": _now(),

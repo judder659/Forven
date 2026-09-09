@@ -32,12 +32,10 @@
 		getBackfillStatus,
 		triggerBackfill,
 		cancelBackfill,
-		getCollectionHealth,
 		getDataHealth,
 		updateUniverseConfig,
 		type DataUniverse,
 		type BackfillStatus,
-		type CollectionHealth,
 		type DataHealth,
 	} from '$lib/api/data';
 	import { dataFetchState, clearDataFetchTask } from '$lib/stores/dataFetch';
@@ -194,17 +192,15 @@
 				}
 			})
 			.catch(() => {});
-		const [settingsResult, datasetsResult, runsResult, dataEngineResult, healthResult, lakeResult, universeResult] = await Promise.allSettled([
+		const [settingsResult, datasetsResult, runsResult, dataEngineResult, lakeResult, universeResult] = await Promise.allSettled([
 			getSettings(),
 			datasetsPromise,
 			getIngestionRuns({ limit: 500 }),
 			getDataEngineStatus(),
-			getCollectionHealth(),
 			getDataHealth(),
 			getDataUniverse(),
 		]);
 
-		collectionHealth = healthResult.status === 'fulfilled' ? healthResult.value : null;
 		lakeHealth = lakeResult.status === 'fulfilled' ? lakeResult.value : null;
 		if (universeResult.status === 'fulfilled') {
 			universe = universeResult.value;
@@ -404,7 +400,6 @@
 		: 0;
 
 	// --- Overview trust strip ---
-	let collectionHealth: CollectionHealth | null = null;
 	let lakeHealth: DataHealth | null = null;
 
 	function formatBytes(bytes: number | null | undefined): string {
@@ -414,11 +409,6 @@
 		return `${(value / 1024).toFixed(0)} KB`;
 	}
 
-	function scoreClass(score: number): string {
-		if (score >= 90) return 'text-emerald-400';
-		if (score >= 70) return 'text-yellow-400';
-		return 'text-red-400';
-	}
 
 	// Venue split from the stamped market identity of each series.
 	$: venueSplit = datasets.reduce(
@@ -670,7 +660,7 @@
 </script>
 
 <svelte:head>
-	<title>Data Manager | Forven</title>
+	<title>Data | Forven</title>
 	<meta
 		name="description"
 		content="Download market data, inspect datasets, and review historical ingestion runs."
@@ -680,8 +670,8 @@
 <div class="h-full overflow-auto text-white p-4 space-y-4">
 	<header class="flex flex-col gap-3 border-b border-[#222] pb-4 md:flex-row md:items-end md:justify-between">
 		<div>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Data Manager</h1>
-			<p class="mt-1 text-xs text-[#666]">Download, inspect, and track historical datasets across crypto and stock-market feeds.</p>
+			<h1 class="text-2xl font-semibold tracking-tight text-white">Data</h1>
+			<p class="mt-1 text-xs text-[#666]">See collection progress, check market coverage, and resolve missing data for research and trading.</p>
 		</div>
 		<div class="flex flex-col gap-2 sm:flex-row">
 			<button
@@ -718,15 +708,9 @@
 	</div>
 
 	{#if activeTab === 'overview'}
-	<section class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3" title="Aggregate collection health across every stream (OHLCV, funding, OI, basis, IV, …)">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Data Health</div>
-			{#if collectionHealth}
-				<div class="text-lg font-semibold mt-1 font-mono {scoreClass(collectionHealth.score)}">{collectionHealth.score}<span class="text-[11px] text-gray-600">/100</span></div>
-			{:else}
-				<div class="text-lg font-semibold mt-1 text-gray-600">--</div>
-			{/if}
-		</div>
+	<SourceHealth on:activity={() => selectTab('data-log')} on:maintenance={() => selectTab('maintenance')} />
+	<section class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+
 		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3">
 			<div class="text-[10px] uppercase tracking-wider text-gray-500">Datasets</div>
 			<div class="text-lg font-semibold mt-1">{datasets.length}</div>
@@ -758,7 +742,7 @@
 			{/if}
 		</div>
 		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Latest Download</div>
+			<div class="text-[10px] uppercase tracking-wider text-gray-500">Latest stored bar</div>
 			<div class="text-sm font-semibold mt-1">{latestDatasetLabel}</div>
 			<div class="text-[10px] text-gray-500 mt-0.5">{availableMarketLabel}</div>
 		</div>
@@ -766,8 +750,7 @@
 
 	<CoverageMatrix on:view={(e) => (drillSeries = e.detail)} />
 
-	<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-		<SourceHealth />
+	<div>
 		<QualityLeaderboard on:select={(e) => (drillSeries = e.detail)} />
 	</div>
 	{/if}
@@ -1146,7 +1129,7 @@
 
 	{#if activeTab === 'overview'}
 	<div class="rounded border border-cyan-900/40 bg-cyan-950/15 px-3 py-2 text-xs text-cyan-100">
-		Any symbol listed in this dataset catalog can be used for backtests and optimizations.
+		Stored datasets are available for research; each strategy still needs sufficient history, current inputs and compatible market data.
 		{#if equitySymbolCount > 0}
 			<span class="text-cyan-200"> {equitySymbolCount.toLocaleString()} stock / ETF symbols are ready in the local backtest universe.</span>
 		{/if}

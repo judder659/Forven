@@ -99,7 +99,7 @@ def _result_status_to_step_status(config_status: str, verdict: str | None) -> st
     if status in {"failed", "error"}:
         return "blocked_runtime"
     if status in {"succeeded", "success", "passed", "pass", "done", "completed", "complete"}:
-        return "passed" if normalized_verdict in {"", "PASS"} else "failed_gate"
+        return "passed" if normalized_verdict == "PASS" else "blocked_runtime"
     return "not_started"
 
 
@@ -145,6 +145,11 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
         if step_key == "walk_forward" and is_nonresult_wfa_row(metrics):
             continue
         verdict = metrics.get("verdict") if isinstance(metrics, dict) else None
+        not_applicable = (
+            step_key == "parameter_jitter"
+            and metrics.get("not_applicable") is True
+            and str(verdict or "").upper() == "NOT_APPLICABLE"
+        )
         # A walk-forward run where EVERY fold is below wfa_min_fold_trades judged
         # nothing — the window was too short for the strategy's trade rate. Its
         # PASS/FAIL verdict is noise either way: surface it as retryable absence
@@ -164,9 +169,10 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
             "status": (
                 "blocked_runtime"
                 if insufficient_wfa
-                else _result_status_to_step_status(str(config.get("status") or ""), verdict)
+                else _result_status_to_step_status(str(config.get("status") or metrics.get("status") or ""), "PASS" if not_applicable else verdict)
             ),
-            "verdict": "INSUFFICIENT" if insufficient_wfa else (str(verdict).upper() if verdict else None),
+            "verdict": "INSUFFICIENT" if insufficient_wfa else ("PASS" if not_applicable else (str(verdict).upper() if verdict else None)),
+            "not_applicable": not_applicable,
             "insufficient_fold_evidence": insufficient_wfa or None,
             "submitted_at": config.get("submitted_at") if isinstance(config, dict) else None,
             "completed_at": config.get("completed_at") if isinstance(config, dict) else None,
@@ -178,6 +184,7 @@ def _latest_robustness_results(strategy_id: str) -> dict[str, dict[str, Any]]:
             # Engine that produced this verdict (engine_provenance stamp; absent
             # on pre-provenance rows).
             "engine_version": config.get("engine_version") if isinstance(config, dict) else None,
+            "execution_identity": config.get("execution_identity") if isinstance(config, dict) else None,
         }
     return latest
 
@@ -276,7 +283,7 @@ def get_strategy_gauntlet_status(strategy_id: str, *, dry_run: bool = True) -> d
             str(step.get("status") or "").lower() == "passed"
             and (not result or (step_result_id and step_result_id == latest_result_id))
         )
-        if result and not step_already_passed:
+        if result:
             payload.update(result)
         # Fold-rescue transparency (issue #18): a rescued walk_forward step passed the
         # workflow even though the raw WFA verdict was FAIL (its fold pass rate cleared
@@ -288,6 +295,7 @@ def get_strategy_gauntlet_status(strategy_id: str, *, dry_run: bool = True) -> d
         if step_key == "walk_forward" and step_already_passed and (
             step_output.get("rescued_by_fold_pass_rate") or step_output.get("wfa_verdict_raw")
         ):
+            payload["status"] = "passed"
             payload["verdict"] = "PASS"
             payload["rescued_by_fold_pass_rate"] = True
             payload["verdict_raw"] = str(step_output.get("wfa_verdict_raw") or "FAIL").upper()
@@ -299,9 +307,14 @@ def get_strategy_gauntlet_status(strategy_id: str, *, dry_run: bool = True) -> d
         # stale=True only when BOTH hashes are known and differ; legacy rows
         # without a stamped hash stay None ("unknown") rather than crying wolf.
         stored_hash = payload.get("params_hash")
+        from forven.strategies.identity import stale_source_identity
+
+        payload["stale_source"] = stale_source_identity(payload)
         payload["stale"] = (
             (stored_hash != current_params_hash) if (stored_hash and current_params_hash) else None
         )
+        if payload["stale_source"]:
+            payload["stale"] = True
         # Engine-version staleness follows the same convention: only an explicit
         # stamp from a different BACKTEST_ENGINE_VERSION marks the verdict stale
         # (unstamped legacy rows stay "unknown"). A stale-engine verdict is
@@ -320,14 +333,14 @@ def get_strategy_gauntlet_status(strategy_id: str, *, dry_run: bool = True) -> d
             payload["stale_engine"] = None
         if payload["status"] in STEP_TERMINAL_STATUSES:
             completed_tests += 1
-        if payload["status"] == "passed" and (not payload.get("verdict") or payload.get("verdict") == "PASS"):
+        if payload["status"] == "passed" and payload.get("verdict") == "PASS" and not payload.get("stale"):
             passed_tests.add(step_key)
         tests[step_key] = payload
 
     missing_required = [key for key in required_tests if key not in passed_tests]
     current_step = None
     for step in steps:
-        if str(step.get("status") or "") not in STEP_TERMINAL_STATUSES:
+        if str(step.get("status") or "") not in {"passed", "skipped", "cancelled"}:
             current_step = step.get("step_key")
             break
 

@@ -8,6 +8,7 @@ as a complete close merely because the response lacks a top-level error.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Literal
 
 
@@ -28,7 +29,7 @@ def _positive_float(value: object) -> float | None:
         parsed = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    return parsed if parsed > 0 else None
+    return parsed if isfinite(parsed) and parsed > 0 else None
 
 
 def parse_close_receipt(result: object, requested_size: float) -> CloseReceipt:
@@ -37,7 +38,9 @@ def parse_close_receipt(result: object, requested_size: float) -> CloseReceipt:
     ``close_price`` and ``mid`` are deliberately ignored as fill prices: they
     are request-time prices, not proof that an IOC executed.
     """
-    requested = max(float(requested_size or 0.0), 0.0)
+    requested = _positive_float(requested_size)
+    if requested is None:
+        return CloseReceipt("unknown", 0.0, None, 0.0, None)
     if not isinstance(result, dict):
         return CloseReceipt("unknown", requested, None, requested, None)
 
@@ -47,8 +50,11 @@ def parse_close_receipt(result: object, requested_size: float) -> CloseReceipt:
         return CloseReceipt("unknown", requested, None, requested, fill_price)
 
     try:
-        filled = max(float(raw_filled), 0.0)
+        filled = float(raw_filled)
     except (TypeError, ValueError):
+        return CloseReceipt("unknown", requested, None, requested, fill_price)
+
+    if not isfinite(filled) or filled < 0:
         return CloseReceipt("unknown", requested, None, requested, fill_price)
 
     filled = min(filled, requested) if requested > 0 else filled

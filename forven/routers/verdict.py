@@ -1,4 +1,4 @@
-"""Verdict engine router - validates strategies with robustness tests."""
+"""Compatibility verdict summary; unexecuted robustness tests remain pending."""
 import asyncio
 
 from typing import Any
@@ -37,7 +37,7 @@ class VerdictResponse(BaseModel):
 
 @router.post("/verdict/run", response_model=VerdictResponse)
 async def run_verdict(request: VerdictRequest):
-    """Run verdict validation tests on a strategy backtest result."""
+    """Summarize recorded backtest evidence without synthesizing robustness runs."""
     return await asyncio.to_thread(execute_verdict, request)
 
 
@@ -74,8 +74,8 @@ async def get_verdict_guide():
             },
             "statistical_significance": {
                 "name": "Statistical Significance",
-                "description": "Validates Sharpe ratio is meaningfully positive",
-                "threshold": "Sharpe >= 1.0",
+                "description": "Requires a statistical test accounting for sampling and strategy selection",
+                "threshold": "Requires a genuine statistical validation run",
             },
             "walk_forward": {
                 "name": "Walk-Forward Analysis",
@@ -85,22 +85,22 @@ async def get_verdict_guide():
             "monte_carlo": {
                 "name": "Monte Carlo Simulation",
                 "description": "Tests robustness under random trade sequence",
-                "threshold": "Max DD <= 10%",
+                "threshold": "Requires simulated paths and the configured robustness thresholds",
             },
             "parameter_stability": {
                 "name": "Parameter Stability",
                 "description": "Ensures strategy is not overfitted to specific parameters",
-                "threshold": "Profit Factor >= 1.5",
+                "threshold": "Requires parameter perturbation runs",
             },
             "cost_stress": {
                 "name": "Cost Stress Test",
-                "description": "Validates performance under realistic fees",
-                "threshold": "Included in backtest",
+                "description": "Reruns the strategy with increased fees and slippage",
+                "threshold": "Requires stressed-cost results",
             },
             "regime_performance": {
                 "name": "Regime Performance",
                 "description": "Tests across different market conditions",
-                "threshold": "Win rate >= 50%",
+                "threshold": "Requires results separated by market regime",
             },
         }
     }
