@@ -6,6 +6,7 @@ does not certify arbitrary prose, history coverage, signal quality or tradabilit
 from __future__ import annotations
 
 import re
+import importlib
 
 _ALIASES = {
     "funding_rate": r"funding(?:[ _-]rate)?",
@@ -45,7 +46,7 @@ def detected_inputs(description: str) -> tuple[list[str], list[str]]:
 
 def check_idea_readiness(description: str, symbol: str | None, timeframe: str | None,
                          *, visual: bool = False) -> dict:
-    from forven.strategies.data_availability import _present_columns
+    _present_columns = importlib.import_module("forven.strategies.data_availability")._present_columns
 
     symbol = None if str(symbol or "").strip().lower() in {"", "unspecified", "unknown", "tbd"} else symbol
     timeframe = None if str(timeframe or "").strip().lower() in {"", "unspecified", "unknown", "tbd"} else timeframe
@@ -60,7 +61,7 @@ def check_idea_readiness(description: str, symbol: str | None, timeframe: str | 
         issues.append("Cannot verify an input integration for: " + ", ".join(external)
                       + ". Integrate these inputs or explicitly revise the idea before retrying. Do not substitute price or funding proxies.")
     if visual:
-        from forven.strategies.builtin.rule_engine import _RAW_COLUMNS
+        _RAW_COLUMNS = importlib.import_module("forven.strategies.builtin.rule_engine")._RAW_COLUMNS
         unsupported = sorted(set(required) - _RAW_COLUMNS)
         if unsupported:
             issues.append("The visual builder cannot express these inputs: " + ", ".join(unsupported) + ". Use a reviewed custom strategy.")
@@ -68,7 +69,8 @@ def check_idea_readiness(description: str, symbol: str | None, timeframe: str | 
         warnings.append("No single market/timeframe is specified; dataset availability has not been checked.")
     else:
         try:
-            from forven.data import parquet_path, tail_path
+            data = importlib.import_module("forven.data")
+            parquet_path, tail_path = data.parquet_path, data.tail_path
             import pyarrow.parquet as pq
 
             paths = [p for p in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)) if p.exists()]
@@ -89,7 +91,7 @@ def check_idea_readiness(description: str, symbol: str | None, timeframe: str | 
 def candidate_readiness(task: dict, input_data: dict) -> dict:
     """Use the stored thesis, never infer a market from a default ticker."""
     import json
-    from forven.db import get_db
+    get_db = importlib.import_module("forven.db").get_db
 
     description = str(task.get("description") or task.get("title") or "")
     # Scheduler quota menus list optional feeds, not thesis requirements. Do not
@@ -112,7 +114,7 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
                     current.extend(v for v in values if isinstance(v, str))
     # A single candidate uses one execution frame. Multi-target hypotheses may
     # name several frames, but prose and external reference features are not frames.
-    from forven.dataeng.coverage import canonical_market_symbol
+    canonical_market_symbol = importlib.import_module("forven.dataeng.coverage").canonical_market_symbol
 
     unresolved = []
     canonical = []
@@ -142,18 +144,16 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
 
 def hypothesis_readiness(hypothesis_id: str) -> dict:
     """Check dispatch eligibility before allocating an agent task or daily slot."""
-    from forven.db import kv_set
-
     report = candidate_readiness({}, {"hypothesis_id": hypothesis_id})
     # One replaceable diagnostic per hypothesis; never label missing data as a
     # disproven economic thesis or discard the original research.
-    kv_set(f"research_readiness:{hypothesis_id}", report)
+    importlib.import_module("forven.db").kv_set(f"research_readiness:{hypothesis_id}", report)
     return report
 
 
 def render_research_input_constraints() -> str:
     """Current feed capabilities for research, independent of old workspace notes."""
-    from forven.strategies.data_availability import _KNOWN_COLUMNS
+    _KNOWN_COLUMNS = importlib.import_module("forven.strategies.data_availability")._KNOWN_COLUMNS
 
     return (
         "# EXECUTABLE RESEARCH REQUIREMENTS\n"

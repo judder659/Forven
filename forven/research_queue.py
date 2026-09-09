@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import logging
+import importlib
 from datetime import datetime, timezone
-
-from forven.db import get_db, kv_get, kv_set
 
 log = logging.getLogger(__name__)
 
@@ -15,14 +14,16 @@ def resume_ready_data_candidates(*, limit: int = 3) -> list[int]:
     Incomplete model/tool work requires explicit review. It is never auto-retried
     here, and old duplicates or retired hypotheses are never revived.
     """
-    from forven.agents.execution_state import load_execution, resume_checkpoint
-    from forven.crucible_allocator import develop_budget_remaining
-    from forven.hypothesis_promotion import MAX_IN_FLIGHT_DEFAULT, _current_in_flight_task_count
+    execution_state = importlib.import_module("forven.agents.execution_state")
+    load_execution, resume_checkpoint = execution_state.load_execution, execution_state.resume_checkpoint
+    develop_budget_remaining = importlib.import_module("forven.crucible_allocator").develop_budget_remaining
+    promotion = importlib.import_module("forven.hypothesis_promotion")
+    MAX_IN_FLIGHT_DEFAULT, _current_in_flight_task_count = promotion.MAX_IN_FLIGHT_DEFAULT, promotion._current_in_flight_task_count
 
     slots = min(max(0, limit), max(0, MAX_IN_FLIGHT_DEFAULT - _current_in_flight_task_count()), develop_budget_remaining())
     if slots <= 0:
         return []
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         rows = conn.execute(
             "SELECT a.id,a.agent_id,h.id AS hypothesis_id FROM agent_tasks a JOIN hypotheses h "
             "ON COALESCE(json_extract(a.input_data,'$.hypothesis_id'),json_extract(a.input_data,'$.crucible_id')) "
@@ -43,10 +44,10 @@ def resume_ready_data_candidates(*, limit: int = 3) -> list[int]:
         if not saved.get("data_preflight") or any(saved.get(key) for key in ("messages", "inflight", "pending_handoff")):
             continue
         key = f"research_resume_check:{row['id']}"
-        previous = kv_get(key, 0)
+        previous = importlib.import_module("forven.db").kv_get(key, 0)
         if isinstance(previous, (int, float)) and now - previous < 3600:
             continue
-        kv_set(key, now)
+        importlib.import_module("forven.db").kv_set(key, now)
         try:
             resume_checkpoint(row["id"])
         except Exception as exc:

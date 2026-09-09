@@ -1,8 +1,19 @@
 import json
 from unittest.mock import patch
 
+import pytest
+
 from forven.db import get_db
 from forven.hypotheses import create_hypothesis, update_hypothesis_status
+
+
+@pytest.fixture(autouse=True)
+def _promotion_readiness(monkeypatch):
+    """Treat synthetic hypothesis rows as data-ready for scheduler tests."""
+    monkeypatch.setattr(
+        "forven.strategies.idea_readiness.hypothesis_readiness",
+        lambda _hypothesis_id: {"can_generate": True},
+    )
 
 
 def _hyp(status="researching"):

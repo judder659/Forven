@@ -1,13 +1,12 @@
 """Best-effort execution outcomes correlated with scanner evaluations."""
 
 import json
-
-from forven.db import get_db_best_effort, record_signal_result
+import importlib
 
 
 def trade_snapshot(strategy_id: str) -> dict[str, dict] | None:
     try:
-        with get_db_best_effort() as conn:
+        with importlib.import_module("forven.db").get_db_best_effort() as conn:
             return {row["id"]: dict(row) for row in conn.execute(
                 "SELECT id, status, fill_entry_price, fill_exit_price FROM trades "
                 "WHERE COALESCE(strategy_id, strategy) = ?", (strategy_id,),
@@ -41,15 +40,17 @@ def record_execution_outcome(item: dict, before: dict | None, after: dict | None
         block_reason = None if trades else str(reason or ("execution_failed" if failed else "no_actionable_position_or_order"))
         try:
             if row_id:
-                with get_db_best_effort() as conn:
+                with importlib.import_module("forven.db").get_db_best_effort() as conn:
                     conn.execute(
                         "UPDATE scanner_signal_results SET executed=?, block_reason=?, "
                         "metrics_json=json_patch(COALESCE(metrics_json,'{}'),?) WHERE id=?",
                         (int(bool(trades)), block_reason, json.dumps(metrics), row_id),
                     )
             else:
-                record_signal_result(item["strategy_id"], item["strategy"]["asset"], kind,
-                                     matched=True, executed=bool(trades), block_reason=block_reason, metrics=metrics)
+                importlib.import_module("forven.db").record_signal_result(
+                    item["strategy_id"], item["strategy"]["asset"], kind,
+                    matched=True, executed=bool(trades), block_reason=block_reason, metrics=metrics
+                )
         except Exception:
             pass
     return summary

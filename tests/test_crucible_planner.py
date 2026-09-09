@@ -1,7 +1,22 @@
 import json
 
+import pytest
+
 from forven.db import get_db
 from forven.hypotheses import create_hypothesis
+
+
+@pytest.fixture(autouse=True)
+def _planner_readiness(monkeypatch):
+    """Keep planner unit fixtures focused on scheduling decisions.
+
+    Data-readiness behavior has dedicated coverage; these legacy fixtures do
+    not create source artifacts and should represent already-ready hypotheses.
+    """
+    monkeypatch.setattr(
+        "forven.strategies.idea_readiness.hypothesis_readiness",
+        lambda _hypothesis_id: {"can_generate": True},
+    )
 
 
 def _make_crucible(

@@ -14,8 +14,19 @@ from __future__ import annotations
 import importlib
 import json
 
+import pytest
+
 from forven.db import get_db, kv_set
 from forven.hypotheses import create_hypothesis
+
+
+@pytest.fixture(autouse=True)
+def _planner_readiness(monkeypatch):
+    """Keep oversaturation tests focused on budgets and remediation lanes."""
+    monkeypatch.setattr(
+        "forven.strategies.idea_readiness.hypothesis_readiness",
+        lambda _hypothesis_id: {"can_generate": True},
+    )
 
 
 def _crucible(status: str = "proposed", *, protection_status: str = "unprotected") -> dict:

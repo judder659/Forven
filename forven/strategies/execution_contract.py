@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import sqlite3
@@ -27,7 +28,8 @@ def _asset(value: Any) -> str:
 
 
 def parameter_identity(runtime_type: str, params: dict[str, Any]) -> str:
-    from forven.strategies.params import canonicalize_params, resolve_strategy_family
+    strategy_params = importlib.import_module("forven.strategies.params")
+    canonicalize_params, resolve_strategy_family = strategy_params.canonicalize_params, strategy_params.resolve_strategy_family
 
     canonical = canonicalize_params(resolve_strategy_family(runtime_type), dict(params)).params
     # Asset is compared separately. Historical API and registry callers used
@@ -43,7 +45,7 @@ def make_contract(
     initial_capital: float, execution_controls: dict[str, Any] | None,
     trade_mode: str, regime_gate: bool, include_funding: bool, warmup: int,
 ) -> dict[str, Any]:
-    from forven.engine_provenance import BACKTEST_ENGINE_VERSION
+    BACKTEST_ENGINE_VERSION = importlib.import_module("forven.engine_provenance").BACKTEST_ENGINE_VERSION
 
     return {
         "version": CONTRACT_VERSION, "engine_version": BACKTEST_ENGINE_VERSION,
@@ -59,8 +61,8 @@ def make_contract(
 
 
 def contract_error(row: dict[str, Any], contract: dict[str, Any]) -> str | None:
-    from forven.engine_provenance import BACKTEST_ENGINE_VERSION
-    from forven.strategies.identity import source_identity
+    BACKTEST_ENGINE_VERSION = importlib.import_module("forven.engine_provenance").BACKTEST_ENGINE_VERSION
+    source_identity = importlib.import_module("forven.strategies.identity").source_identity
 
     prefix = "Execution differs from its promotion backtest: "
     if contract.get("version") != CONTRACT_VERSION:
@@ -120,7 +122,12 @@ def paper_initial_capital(conn: sqlite3.Connection, strategy_id: str) -> float:
     Legacy books retain their original $10k base. This does not verify admission
     or relabel historical promotion evidence as current.
     """
-    accepted = accepted_execution(conn, strategy_id)
+    try:
+        accepted = accepted_execution(conn, strategy_id)
+    except sqlite3.OperationalError:
+        # Minimal compatibility schemas (migration probes and old paper books)
+        # do not have strategy_events yet; they retain the legacy sandbox floor.
+        accepted = {}
     contract = _object(accepted.get("contract"))
     if not accepted.get("verified") or "initial_capital" not in contract:
         return 10000.0
@@ -150,14 +157,13 @@ def capture_confirmation(conn: sqlite3.Connection, row: dict[str, Any]) -> dict[
 
 
 def execution_binding(row: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    from forven.db import get_db
+    get_db = importlib.import_module("forven.db").get_db
 
     try:
         with get_db() as conn:
             accepted = accepted_execution(conn, str(row["id"]))
             if row.get("stage") in {"live_graduated", "deployed", "live"}:
-                from forven.strategies.live_revalidation import accepted_live_baseline
-
+                accepted_live_baseline = importlib.import_module("forven.strategies.live_revalidation").accepted_live_baseline
                 accepted = accepted_live_baseline(conn, row) or accepted
     except sqlite3.Error:
         return {}, "Promotion execution evidence is temporarily unavailable; new entries are blocked"
@@ -172,7 +178,7 @@ def execution_binding(row: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
 
 def current_execution_error(strategy_id: str, expected_result_id: str | None) -> str | None:
     """Recheck at entry dispatch; the scan's snapshot may predate an operator edit."""
-    from forven.db import get_db
+    get_db = importlib.import_module("forven.db").get_db
 
     try:
         with get_db() as conn:

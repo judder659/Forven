@@ -173,7 +173,7 @@ def _extract_result_type(result_id: str, meta: dict) -> str:
 
 
 def _result_data_dirs() -> list[str]:
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(core.__file__), os.pardir))
     candidates = [
         os.path.join(repo_root, "data", "results"),
         os.path.join(str(FORVEN_HOME), "data", "results"),
@@ -1805,7 +1805,7 @@ def _ensure_result_data_dir() -> str:
         if existing:
             os.makedirs(existing, exist_ok=True)
             return existing
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(core.__file__), os.pardir))
     target = os.path.abspath(os.path.join(repo_root, "data", "results"))
     os.makedirs(target, exist_ok=True)
     return target

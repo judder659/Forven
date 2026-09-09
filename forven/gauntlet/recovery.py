@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import logging
 from typing import Any
 
@@ -10,9 +11,10 @@ log = logging.getLogger(__name__)
 
 
 def resolve_evidence_blocks(*, limit: int = 50) -> dict[str, int]:
-    from forven.brain import transition_stage
-    from forven.db import get_db
-    from forven.gauntlet.engine import _now, cancel_workflow, retry_step
+    transition_stage = importlib.import_module("forven.brain").transition_stage
+    get_db = importlib.import_module("forven.db").get_db
+    engine = importlib.import_module("forven.gauntlet.engine")
+    _now, cancel_workflow, retry_step = engine._now, engine.cancel_workflow, engine.retry_step
 
     summary = {"history_requeued": 0, "research_deferred": 0}
     with get_db() as conn:

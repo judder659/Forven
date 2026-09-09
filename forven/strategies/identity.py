@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import importlib
 import inspect
 import json
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 def source_identity(runtime_type: str, cls: type | None = None) -> dict:
     """Hash the exact registered module, never a fuzzy type-name match."""
     if runtime_type.startswith("imported__"):
-        from forven.strategies.registry import imported_module_exists
+        imported_module_exists = importlib.import_module("forven.strategies.registry").imported_module_exists
 
         if not imported_module_exists(runtime_type):
             return {}
@@ -22,8 +23,7 @@ def source_identity(runtime_type: str, cls: type | None = None) -> dict:
         except OSError:
             return {}
     if cls is None:
-        from forven.strategies.registry import _TYPE_MAP
-
+        _TYPE_MAP = importlib.import_module("forven.strategies.registry")._TYPE_MAP
         cls = _TYPE_MAP.get(runtime_type)
     try:
         filename = inspect.getsourcefile(cls) if cls is not None else None
@@ -72,9 +72,7 @@ def execution_identity_error(row: dict, runtime_type: str) -> str | None:
 
 def strategy_source_identity(strategy_id: str) -> dict:
     """Capture the registered implementation when a validation job is submitted."""
-    from forven.db import get_db
-
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         row = conn.execute("SELECT type, runtime_type FROM strategies WHERE id=?", (strategy_id,)).fetchone()
     return source_identity(str(row["runtime_type"] or row["type"] or "")) if row else {}
 

@@ -16,16 +16,12 @@ backtesting and live scanning.
 import json
 
 
-
-
 import logging
 
 import math
 
 
 import os
-
-
 
 
 import signal
@@ -1552,7 +1548,6 @@ def _resolve_strategy_class(strategy_type: str | None) -> type[BaseStrategy] | N
     if resolved and resolved in _TYPE_MAP:
         return _TYPE_MAP[resolved]
     return find_archived_runtime_class(normalized_type)
-
 
 
 def load_multi_exchange_candles(

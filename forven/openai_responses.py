@@ -1,8 +1,7 @@
 """Platform API-key Responses transport using the shared SSE protocol parser."""
 
+import importlib
 from typing import AsyncIterator
-
-from forven.codex_responses import stream_responses
 
 
 async def stream_openai_responses(
@@ -17,6 +16,7 @@ async def stream_openai_responses(
     response_schema_name: str = "structured_response",
 ) -> AsyncIterator[dict]:
     """Keep API keys on the platform endpoint, separate from subscription auth."""
+    stream_responses = importlib.import_module("forven.codex_responses").stream_responses
     async for event in stream_responses(
         model, instructions=instructions, messages=messages, tools=tools,
         endpoint="https://api.openai.com/v1/responses",

@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from sqlite3 import Connection
-
-from forven.db import get_db
 
 
 def thesis_fingerprint(hypothesis: dict) -> str:
@@ -38,7 +37,7 @@ def attempt_revisions(hypothesis: dict, strategy_ids: list[str]) -> dict[str, st
     if not strategy_ids:
         return {}
     keys = [f"crucible_attempt:{sid}" for sid in strategy_ids]
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         rows = conn.execute(f"SELECT key,value FROM kv WHERE key IN ({','.join('?' for _ in keys)})", keys).fetchall()
     snapshots = {row["key"]: json.loads(row["value"]) for row in rows}
     current = thesis_fingerprint(hypothesis)
@@ -50,7 +49,7 @@ def attempt_revisions(hypothesis: dict, strategy_ids: list[str]) -> dict[str, st
 def work_states(hypothesis_ids: list[str]) -> dict[str, dict]:
     if not hypothesis_ids:
         return {}
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         rows = conn.execute(
             "SELECT id,display_id,status,error,type,input_data FROM agent_tasks WHERE "
             "json_extract(CASE WHEN json_valid(input_data) THEN input_data ELSE '{}' END,'$.hypothesis_id') "

@@ -16,6 +16,7 @@ from forven.api_core import read_lifecycle_strategy
 from forven.brain import assign_task, escalate_to_engineer, promote_strategy as brain_promote_strategy, transition_stage
 from forven.db import append_strategy_event, create_approval, create_task_container, get_db, init_db, kv_get, kv_set
 from forven.evolution import check_paper_graduation, run_testing_step, run_weekly_review
+from forven.gauntlet.store import create_or_get_workflow
 from forven.monitoring import run_decay_tracker
 from forven.policy import evaluate_promotion
 from forven.scheduler import (
@@ -32,6 +33,9 @@ from forven.scheduler import (
 )
 from forven.strategy_lifecycle import StrategyPromoteBody, promote_strategy as lifecycle_promote_strategy
 from forven.strategies.backtest import _sync_strategy_metrics_and_promote_if_eligible
+from forven.strategies.builtin.rsi_momentum import RSIMomentumStrategy
+from forven.strategies.execution_contract import EXECUTION_WARMUP, make_contract
+from forven.strategies.identity import source_identity
 
 
 def _insert_strategy(
@@ -233,6 +237,35 @@ def _insert_validation_result(strategy_id: str, result_type: str, *, passing: bo
 def _insert_required_validation_results(strategy_id: str, *, failing: str | None = None) -> None:
     for result_type in ("walk_forward", "monte_carlo", "param_jitter", "cost_stress", "regime_split"):
         _insert_validation_result(strategy_id, result_type, passing=result_type != failing)
+
+
+def _bind_confirmation_backtest(strategy_id: str) -> None:
+    """Attach the exact execution evidence required by a paper promotion."""
+    contract = make_contract(
+        runtime_type="rsi_momentum", asset="ETH", timeframe="1m", params={},
+        identity=source_identity("rsi_momentum", RSIMomentumStrategy), leverage=1.0,
+        fee_bps=4.5, slippage_bps=2.0, initial_capital=10000.0,
+        execution_controls=None, trade_mode="long_only", regime_gate=False,
+        include_funding=False, warmup=EXECUTION_WARMUP,
+    )
+    result_id = f"confirmation-{strategy_id}"
+    _insert_backtest_result(
+        strategy_id, result_type="backtest", result_id=result_id,
+        metrics={"total_trades": 42},
+        config={"status": "succeeded", "execution_contract": contract},
+    )
+    workflow = create_or_get_workflow(strategy_id=strategy_id, settings_snapshot={})
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE gauntlet_steps SET status='passed', result_id=? "
+            "WHERE workflow_id=? AND step_key='confirmation_backtest'",
+            (result_id, workflow["id"]),
+        )
+        completion_stamp = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE gauntlet_workflows SET status='passed', completed_at=?, updated_at=? WHERE id=?",
+            (completion_stamp, completion_stamp, workflow["id"]),
+        )
 
 
 def test_transition_stage_updates_stage_changed_at_and_events(forven_db):
@@ -1294,6 +1327,7 @@ def test_testing_step_auto_promotes_with_existing_pass_metrics(forven_db):
         },
     )
     _insert_required_validation_results("s-existing-pass")
+    _bind_confirmation_backtest("s-existing-pass")
 
     result = run_testing_step(code_first=False)
     assert bool(result.get("promoted")) is True

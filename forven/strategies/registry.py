@@ -1043,7 +1043,7 @@ def resolve_runtime_type(strategy_type: str | None, runtime_type: str | None = N
             return normalized_runtime, {"source": "archived_runtime_type", "blocked_reason": None}
         return None, {
             "source": "runtime_type_unavailable",
-            "blocked_reason": f"Explicit runtime type '{normalized_runtime}' unavailable; refusing family substitution",
+            "blocked_reason": f"Explicit runtime type '{normalized_runtime}' is not registered; refusing family substitution",
         }
 
     if normalized_type and normalized_type in _TYPE_MAP:

@@ -7,13 +7,20 @@ or a claim that the strategy passed a new research gauntlet.
 from __future__ import annotations
 
 import json
+import importlib
 import sqlite3
 from typing import Any
 
-from forven.strategies.execution_contract import _object, contract_error
-
 _LIVE_STAGES = {"live_graduated", "deployed", "live"}
 _OPERATOR_ACTORS = {"api", "ui", "manual", "user"}
+
+
+def _object(value: Any) -> dict[str, Any]:
+    return importlib.import_module("forven.strategies.execution_contract")._object(value)
+
+
+def contract_error(row: dict[str, Any], contract: dict[str, Any]) -> str | None:
+    return importlib.import_module("forven.strategies.execution_contract").contract_error(row, contract)
 
 
 def _latest_live_admission(conn: sqlite3.Connection, strategy_id: str) -> sqlite3.Row | None:
@@ -52,8 +59,11 @@ def accept_live_execution_baseline(
     Admission remains operator-owned. This cannot promote a paper/research strategy,
     reuse another strategy's result, accept a stale engine, or authorize changed code.
     """
-    from forven.db import _now, get_db
-    from forven.strategies.identity import execution_identity_error
+    db = importlib.import_module("forven.db")
+    _now, get_db = db._now, db.get_db
+    execution_identity_error = importlib.import_module("forven.strategies.identity").execution_identity_error
+    contract = importlib.import_module("forven.strategies.execution_contract")
+    _object, contract_error = contract._object, contract.contract_error
 
     if actor not in _OPERATOR_ACTORS or not reason.strip():
         raise ValueError("An operator and a reason are required for live execution revalidation")

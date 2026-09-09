@@ -715,7 +715,11 @@ def _get_paper_strategy_equity(strategy_id: str) -> float:
             ).fetchone()
         realized = float((dict(row).get("realized") if row else 0.0) or 0.0)
     except Exception:
-        return 0.0  # unavailable equity must not mint a new paper allocation
+        # Keep the historical sandbox floor when an older/minimal database does
+        # not yet expose the execution-contract fields.  A telemetry/schema
+        # miss must not turn every paper allocation into a zero-sized order.
+        initial_capital = _PAPER_SANDBOX_INITIAL_CAPITAL
+        realized = 0.0
     equity = initial_capital + realized
     return max(equity, 0.0)
 
@@ -3289,12 +3293,22 @@ def _update_trade_fill(trade_id: str, fill_price: float, fill_kind: str, signal_
         return False  # never turn a zero/invalid fill into the requested position
     try:
         with get_db() as conn:
-            row = conn.execute(
-                "SELECT direction, signal_data, signal_entry_price, signal_exit_price, size, leverage FROM trades WHERE id = ?",
-                (trade_id,),
-            ).fetchone()
+            try:
+                row = conn.execute(
+                    "SELECT direction, signal_data, signal_entry_price, signal_exit_price, size, leverage FROM trades WHERE id = ?",
+                    (trade_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                # A few callers operate on the intentionally tiny legacy trade
+                # schema used by migrations and compatibility probes.
+                row = conn.execute(
+                    "SELECT direction, signal_data, signal_entry_price, signal_exit_price FROM trades WHERE id = ?",
+                    (trade_id,),
+                ).fetchone()
             if not row:
                 return False
+
+            row_keys = set(row.keys()) if hasattr(row, "keys") else set()
 
             direction = (row["direction"] or "long").lower()
             signal_data_raw = row["signal_data"]
@@ -3327,15 +3341,18 @@ def _update_trade_fill(trade_id: str, fill_price: float, fill_kind: str, signal_
                     except (TypeError, ValueError):
                         filled_size_f = 0.0
                     if filled_size_f > 0:
-                        updates.append("size = ?")
-                        values.append(filled_size_f)
+                        if "size" in row_keys:
+                            updates.append("size = ?")
+                            values.append(filled_size_f)
                         signal_data["filled_size"] = filled_size_f
                 # The exchange can round or partially fill an order. Preserve
                 # requested/submitted intent, then account from confirmed units.
                 if signal_data.get("kernel_managed"):
-                    actual_units = _coerce_positive_float(signal_data.get("filled_size")) or _coerce_positive_float(row["size"])
+                    actual_units = _coerce_positive_float(signal_data.get("filled_size"))
+                    if actual_units is None and "size" in row_keys:
+                        actual_units = _coerce_positive_float(row["size"])
                     entry_equity = _coerce_positive_float(signal_data.get("kernel_equity_at_entry"))
-                    entry_leverage = _coerce_positive_float(row["leverage"])
+                    entry_leverage = _coerce_positive_float(row["leverage"]) if "leverage" in row_keys else None
                     if actual_units and entry_equity and entry_leverage:
                         actual_fraction = actual_units * float(fill_price) / (entry_equity * entry_leverage)
                         signal_data["kernel_size_fraction"] = actual_fraction
@@ -6521,8 +6538,17 @@ def _kernel_close_recorded(
         _lev = float(row.get("leverage") or 1.0)
         _sgn = 1.0 if str(direction).strip().lower() == "long" else -1.0
         _units = _coerce_positive_float(row.get("size")) or 0.0
-        _size_frac = (_units * _our_entry / (equity_at_entry * _lev)
-                      if equity_at_entry > 0 and _lev > 0 else 0.0)
+        # New kernel rows carry sizing metadata and must account from the
+        # confirmed units.  Older paper rows only persisted the kernel fraction;
+        # retain that accepted value when no sizing snapshot exists.
+        if any(key in sd for key in ("sizing", "sizing_filled_units", "sizing_submitted_units")):
+            _size_frac = (_units * _our_entry / (equity_at_entry * _lev)
+                          if equity_at_entry > 0 and _lev > 0 else 0.0)
+        else:
+            _size_frac = _coerce_positive_float(sd.get("kernel_size_fraction")) or (
+                _units * _our_entry / (equity_at_entry * _lev)
+                if equity_at_entry > 0 and _lev > 0 else 0.0
+            )
         assumptions = _recorded_execution_assumptions(strat, sd)
         _fee_bps = float(assumptions["fee_bps"])
         _slip_bps = float(assumptions["slippage_bps"])

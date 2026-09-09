@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import math
+import importlib
 from typing import Any
 
 
 def optimization_history_requirements(
     strategy_id: str, timeframe: str, duration_days: int, settings: dict[str, Any],
 ) -> dict[str, Any]:
-    from forven.wfa_window import _timeframe_minutes, measured_trade_rate
+    wfa_window = importlib.import_module("forven.wfa_window")
+    _timeframe_minutes, measured_trade_rate = wfa_window._timeframe_minutes, wfa_window.measured_trade_rate
 
     wf = settings.get("walk_forward") or {}
     robustness = settings.get("robustness_thresholds") or {}

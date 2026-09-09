@@ -4,12 +4,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextvars import ContextVar
 import hashlib
+import importlib
 import json
 from sqlite3 import Connection
 
 from fastapi import HTTPException
-
-from forven.db import get_db
 
 _receipt: ContextVar[str | None] = ContextVar("crucible_intake_receipt", default=None)
 
@@ -26,7 +25,7 @@ def execute_intake(kind: str, payload: dict, operation: Callable[[], dict]) -> d
         return operation()  # Compatibility for existing local clients.
     key = "crucible_intake:" + str(request_id)
     fingerprint = hashlib.sha256(json.dumps({"kind": kind, **payload}, sort_keys=True).encode()).hexdigest()
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         inserted = conn.execute("INSERT OR IGNORE INTO kv(key,value) VALUES (?,?)", (
             key, json.dumps({"fingerprint": fingerprint, "state": "processing"}),
         )).rowcount
@@ -43,7 +42,7 @@ def execute_intake(kind: str, payload: dict, operation: Callable[[], dict]) -> d
     token = _receipt.set(key)
     try:
         result = operation()
-        with get_db() as conn:
+        with importlib.import_module("forven.db").get_db() as conn:
             if result.get("ok") is False:
                 conn.execute("DELETE FROM kv WHERE key=? AND json_extract(value,'$.hypothesis_id') IS NULL", (key,))
             else:
@@ -51,7 +50,7 @@ def execute_intake(kind: str, payload: dict, operation: Callable[[], dict]) -> d
         return result
     except HTTPException as exc:
         if 400 <= exc.status_code < 500:
-            with get_db() as conn:
+            with importlib.import_module("forven.db").get_db() as conn:
                 conn.execute("DELETE FROM kv WHERE key=? AND json_extract(value,'$.hypothesis_id') IS NULL", (key,))
         raise
     finally:

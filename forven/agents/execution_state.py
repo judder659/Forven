@@ -4,9 +4,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import importlib
 from uuid import uuid4
-
-from forven.db import get_db, kv_get, kv_set
 
 
 class IncompleteTask(RuntimeError):
@@ -23,18 +22,18 @@ class ExecutionState:
 
     def save(self, **values: object) -> None:
         self.checkpoint = {**self.checkpoint, **values}
-        kv_set(f"agent_checkpoint:{self.task_id}", self.checkpoint)
+        importlib.import_module("forven.db").kv_set(f"agent_checkpoint:{self.task_id}", self.checkpoint)
 
     def clear(self) -> None:
         self.checkpoint = {}
-        kv_set(f"agent_checkpoint:{self.task_id}", {})
+        importlib.import_module("forven.db").kv_set(f"agent_checkpoint:{self.task_id}", {})
 
 
 current_execution: ContextVar[ExecutionState | None] = ContextVar("agent_execution", default=None)
 
 
 def load_execution(task_id: int, agent_id: str) -> ExecutionState:
-    checkpoint = kv_get(f"agent_checkpoint:{task_id}", {})
+    checkpoint = importlib.import_module("forven.db").kv_get(f"agent_checkpoint:{task_id}", {})
     return ExecutionState(task_id, agent_id, checkpoint if isinstance(checkpoint, dict) else {})
 
 
@@ -43,15 +42,16 @@ def record_response(provider: str, model_id: str, usage: dict) -> None:
     state = current_execution.get()
     if state is None:
         return
-    from forven.billing_guard import _unpriced_rate
-    from forven.cost_pricing import estimate_cost_usd, has_pricing
+    _unpriced_rate = importlib.import_module("forven.billing_guard")._unpriced_rate
+    cost_pricing = importlib.import_module("forven.cost_pricing")
+    estimate_cost_usd, has_pricing = cost_pricing.estimate_cost_usd, cost_pricing.has_pricing
 
     incoming = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
     outgoing = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
     cost = estimate_cost_usd(provider, model_id, usage) if has_pricing(provider, model_id) else None
     rates = _unpriced_rate(provider, model_id)
     estimate = cost if cost is not None else (incoming * rates[0] + outgoing * rates[1]) / 1_000_000
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         conn.execute(
             "INSERT INTO agent_model_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (uuid4().hex, state.task_id, state.agent_id, provider, model_id, incoming, outgoing,
@@ -67,7 +67,7 @@ def record_response(provider: str, model_id: str, usage: dict) -> None:
 
 
 def task_usage(task_id: int) -> dict | None:
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         row = conn.execute(
             "SELECT COUNT(*) n, SUM(input_tokens) input_tokens, SUM(output_tokens) output_tokens, "
             "SUM(COALESCE(cost_usd,0)) cost_usd FROM agent_model_calls WHERE task_id=?", (task_id,),
@@ -84,7 +84,7 @@ def task_usage(task_id: int) -> dict | None:
 def block_task(task_id: int, reason: str, partial: str = "") -> dict:
     import json
     output = {"completion_state": "incomplete", "reason": reason, "response": partial}
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         row = conn.execute("SELECT output_data FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
         try:
             prior = json.loads(row["output_data"] or "{}") if row else {}
@@ -99,7 +99,7 @@ def block_task(task_id: int, reason: str, partial: str = "") -> dict:
 def resume_checkpoint(task_id: int) -> dict:
     """Queue only a verified checkpoint; never erase an uncertain tool boundary."""
     from fastapi import HTTPException
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Task not found")
@@ -110,7 +110,7 @@ def resume_checkpoint(task_id: int) -> dict:
         raise HTTPException(409, "No safe checkpoint to resume. Inspect the task and reconcile any uncertain tool outcome.")
     if row["type"] == "develop_candidate":
         import json
-        from forven.strategies.idea_readiness import candidate_readiness
+        candidate_readiness = importlib.import_module("forven.strategies.idea_readiness").candidate_readiness
 
         try:
             payload = json.loads(row["input_data"] or "{}")
@@ -121,14 +121,14 @@ def resume_checkpoint(task_id: int) -> dict:
         if not report["can_generate"]:
             raise HTTPException(409, "Candidate inputs are still blocked: " + " ".join(report["issues"]))
         hypothesis_id = payload.get("hypothesis_id") or payload.get("crucible_id")
-        with get_db() as conn:
+        with importlib.import_module("forven.db").get_db() as conn:
             hypothesis = conn.execute(
                 "SELECT id,manager_state,status FROM hypotheses WHERE id=? OR display_id=?",
                 (hypothesis_id, hypothesis_id),
             ).fetchone()
         if not hypothesis or hypothesis["manager_state"] != "active" or hypothesis["status"] not in {"researching", "proven"}:
             raise HTTPException(409, "Candidate hypothesis is not active and ready for development.")
-    with get_db() as conn:
+    with importlib.import_module("forven.db").get_db() as conn:
         if row["type"] == "develop_candidate":
             conn.execute("BEGIN IMMEDIATE")
             other = conn.execute(

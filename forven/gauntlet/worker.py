@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import logging
 import threading
 import time
@@ -10,9 +11,6 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import uuid4
-
-from forven.db import get_db
-from forven.gauntlet.store import _json_dumps
 
 log = logging.getLogger(__name__)
 STEP_BUDGET_SECONDS = 1200.0  # below the 30-minute stale lease; worker sublimits remain
@@ -22,8 +20,7 @@ _pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="gauntlet-step")
 
 
 def has_capacity() -> bool:
-    from forven.gauntlet.engine import _resolve_gauntlet_drain_workers
-
+    _resolve_gauntlet_drain_workers = importlib.import_module("forven.gauntlet.engine")._resolve_gauntlet_drain_workers
     with _lock:
         return len(_active) < _resolve_gauntlet_drain_workers()
 
@@ -50,7 +47,7 @@ def _execute(
     job_id: str, workflow: dict[str, Any], step: dict[str, Any],
     adapter: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
 ) -> None:
-    from forven.work_budget import work_budget
+    work_budget = importlib.import_module("forven.work_budget").work_budget
 
     try:
         try:
@@ -65,14 +62,14 @@ def _execute(
             outcome = {"status": "blocked_runtime", "retryable": True, "message": "Worker returned no explicit outcome"}
         # Results survive a process restart, but only the active attempt may
         # publish an outcome. Cancellation/retry must invalidate late writers.
-        with get_db() as conn:
+        with importlib.import_module("forven.db").get_db() as conn:
             conn.execute(
                 """INSERT INTO gauntlet_artifacts
                    (workflow_id, step_id, artifact_type, artifact_key, payload_json, created_at)
                    SELECT workflow_id, id, 'background_outcome', ?, ?, datetime('now')
                    FROM gauntlet_steps WHERE id=? AND status='running' AND attempt_count=?
                    AND json_valid(output_json) AND json_extract(output_json, '$.background_job_id')=?""",
-                (job_id, _json_dumps(outcome), step["id"], step["attempt_count"], job_id),
+                (job_id, importlib.import_module("forven.gauntlet.store")._json_dumps(outcome), step["id"], step["attempt_count"], job_id),
             )
     except Exception:
         log.exception("Failed to persist background outcome for %s", job_id)
@@ -85,8 +82,9 @@ def run_or_poll(
     workflow: dict[str, Any], step: dict[str, Any],
     adapter: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
 ) -> dict[str, Any]:
-    from forven.gauntlet.engine import _resolve_gauntlet_drain_workers
-
+    _resolve_gauntlet_drain_workers = importlib.import_module("forven.gauntlet.engine")._resolve_gauntlet_drain_workers
+    get_db = importlib.import_module("forven.db").get_db
+    _json_dumps = importlib.import_module("forven.gauntlet.store")._json_dumps
     output = _output(step)
     attempt = int(step["attempt_count"])
     job_id = str(output.get("background_job_id") or "")

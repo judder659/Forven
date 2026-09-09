@@ -1,6 +1,7 @@
 """SQLite database — single source of truth for all Forven state."""
 
 import json
+import importlib
 import logging
 import os
 import re
@@ -4326,9 +4327,7 @@ def get_trades_stats(
         execution_type=execution_type, opened_from=opened_from, opened_to=opened_to,
         search=search,
     )
-    from forven.trade_accounting import net_pnl_sql
-
-    pnl = net_pnl_sql()
+    pnl = importlib.import_module("forven.trade_accounting").net_pnl_sql()
     closed = "UPPER(COALESCE(status, '')) = 'CLOSED'"
     notional = "ABS(COALESCE(size, 0) * COALESCE(fill_entry_price, entry_price, signal_entry_price, 0))"
     sql = f"""
@@ -5354,8 +5353,9 @@ def create_strategy_container(
             now,
         ),
     )
-    from forven.crucible_operations import capture_attempt
-    capture_attempt(conn, final_strategy_id, normalized_hypothesis_id)
+    importlib.import_module("forven.crucible_operations").capture_attempt(
+        conn, final_strategy_id, normalized_hypothesis_id
+    )
     return final_strategy_id, display_id, base_id
 
 
