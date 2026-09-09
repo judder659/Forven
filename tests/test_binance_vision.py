@@ -156,26 +156,26 @@ def test_csv_parsing_oi_from_metrics():
 
 def test_probe_start_date_returns_tuple():
     """probe_start_date returns (year, month) or None — mocked to avoid HTTP."""
-    mock_resp_404 = MagicMock()
-    mock_resp_404.status_code = 404
-
     mock_resp_200 = MagicMock()
     mock_resp_200.status_code = 200
     mock_resp_200.raise_for_status = MagicMock()
-    mock_resp_200.content = _make_zip(
-        "1609459200000,29000.0,29500.0,28800.0,29300.0,100.5,"
-        "1609462799999,2950000.0,1000,50.0,1500000.0,0\n"
+    mock_resp_200.content = (
+        b"<?xml version='1.0' encoding='UTF-8'?>"
+        b"<ListBucketResult xmlns='http://s3.amazonaws.com/doc/2006-03-01/'>"
+        b"<Contents><Key>data/futures/um/monthly/klines/PROBETEST/4h/"
+        b"PROBETEST-4h-2020-01.zip</Key></Contents>"
+        b"<KeyCount>1</KeyCount><IsTruncated>false</IsTruncated>"
+        b"</ListBucketResult>"
     )
 
-    # 3 404s then a 200 — probe finds start on 4th month tried
-    with patch("httpx.get", side_effect=[mock_resp_404, mock_resp_404, mock_resp_404, mock_resp_200]):
+    with patch("httpx.get", return_value=mock_resp_200):
         # Clear cache first to avoid interference from other tests
         from forven.binance_vision import _bv_start_cache
         _bv_start_cache.clear()
         result = BV.probe_start_date("PROBETEST", "klines", timeframe="4h")
     assert result is not None
     year, month = result
-    assert isinstance(year, int) and isinstance(month, int)
+    assert (year, month) == (2020, 1)
 
 
 # ---------------------------------------------------------------------------
