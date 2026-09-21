@@ -1041,15 +1041,15 @@ if (Test-LauncherServiceEnabled -Root $RepoRoot -Service frontend) {
 # --- Check Frontend ---
 [array]$frontendListeners = @(Get-ListeningPids -Port $FrontendPort)
 if ($frontendListeners.Count -eq 0) {
-    $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if ($npmCmd) {
+    $pnpmCmd = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
+    if ($pnpmCmd) {
         $frontendLog = Join-Path $logRoot "unified_frontend.log"
         $frontendErr = Join-Path $logRoot "unified_frontend.err.log"
         $frontendDir = Join-Path $RepoRoot "frontend"
         Move-LogAside -Path $frontendLog -Keep $LogRetainCount
         Move-LogAside -Path $frontendErr -Keep $LogRetainCount
-        $proc = Start-Process -FilePath $npmCmd.Source `
-            -ArgumentList @("run","dev","--","--host","0.0.0.0","--port",$FrontendPort.ToString()) `
+        $proc = Start-Process -FilePath $pnpmCmd.Source `
+            -ArgumentList @("run","dev","--host","0.0.0.0","--port",$FrontendPort.ToString()) `
             -WorkingDirectory $frontendDir -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendErr `
             -WindowStyle Hidden -PassThru
         Write-Log ("Frontend started as PID " + $proc.Id)

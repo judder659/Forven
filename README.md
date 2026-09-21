@@ -29,7 +29,7 @@
 
 ## Quick Start
 
-Requirements: **Python 3.11+**, **Node.js**, and **git**.
+Requirements: **Python 3.11+**, **Node.js 20+**, **pnpm 10.33.0**, and **git**.
 
 ```bash
 git clone https://github.com/judder659/Forven.git
@@ -53,7 +53,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-cd frontend && npm install && cd ..
+cd frontend && pnpm install --frozen-lockfile && cd ..
 cp .env.example .env
 START_BOT=0 START_DAEMON=0 bash start_all.sh
 ```
@@ -92,7 +92,7 @@ bash start_all.sh                                            # macOS / Linux
 python -m uvicorn --app-dir . forven.api:app --host 127.0.0.1 --port 8003 --reload
 
 # Frontend only
-cd frontend && npm run dev
+cd frontend && pnpm run dev
 
 # CLI
 python -m forven --help
@@ -100,7 +100,7 @@ python -m forven --help
 # Tests / checks
 python -m pytest tests -q
 python -m ruff check forven tests
-cd frontend && npm test && npm run check
+cd frontend && pnpm test && pnpm run check
 ```
 
 ## Configuration & safety

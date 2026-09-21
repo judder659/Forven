@@ -55,7 +55,7 @@ python -m pip install -e .
 - [ ] Install frontend dependencies:
 
 ```bash
-cd frontend && npm install && cd ..
+cd frontend && pnpm install --frozen-lockfile && cd ..
 ```
 
 - [ ] Copy the environment template if you want repo-local env settings:
@@ -124,8 +124,8 @@ python -m ruff check forven tests
 
 ```powershell
 cd frontend
-npm test
-npm run check
+pnpm test
+pnpm run check
 ```
 
 ## 8. Know where to look if startup fails

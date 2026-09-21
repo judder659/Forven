@@ -31,10 +31,10 @@ python3 -c "from forven.db import init_db; init_db()"
 if [ -d "frontend" ]; then
     echo "Installing Forven frontend dependencies..."
     cd frontend
-    if command -v npm &> /dev/null; then
-        npm install
+    if command -v pnpm &> /dev/null; then
+        pnpm install --frozen-lockfile
     else
-        echo "WARNING: npm not found. Skipping frontend dependency installation."
+        echo "WARNING: pnpm not found. Skipping frontend dependency installation."
     fi
     cd ..
 fi

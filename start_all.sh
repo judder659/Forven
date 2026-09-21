@@ -311,7 +311,7 @@ info "Starting frontend on port ${FRONTEND_PORT}..."
 (
 	cd "$DIR/frontend"
   # Bind Vite on the IPv6 unspecified address so both localhost (::1) and 127.0.0.1 work.
-  npm run dev -- --host :: --port "$FRONTEND_PORT"
+  pnpm run dev --host :: --port "$FRONTEND_PORT"
 ) > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 PIDS+=("$FRONTEND_PID")

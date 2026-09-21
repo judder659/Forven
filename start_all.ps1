@@ -154,19 +154,21 @@ function Invoke-Checked {
     }
 }
 
-function Get-NpmCommand {
-    $npmPath = Get-ExistingExecutablePath -Candidates @(
-        "npm.cmd",
-        "npm",
-        (Join-Path $env:ProgramFiles "nodejs\npm.cmd"),
-        (Join-Path ${env:ProgramFiles(x86)} "nodejs\npm.cmd"),
-        (Join-Path $env:LOCALAPPDATA "Programs\nodejs\npm.cmd")
+function Get-PnpmCommand {
+    $pnpmPath = Get-ExistingExecutablePath -Candidates @(
+        "pnpm.cmd",
+        "pnpm",
+        (Join-Path $env:APPDATA "npm\pnpm.cmd"),
+        (Join-Path $env:LOCALAPPDATA "pnpm\pnpm.cmd"),
+        (Join-Path $env:ProgramFiles "nodejs\pnpm.cmd"),
+        (Join-Path ${env:ProgramFiles(x86)} "nodejs\pnpm.cmd"),
+        (Join-Path $env:LOCALAPPDATA "Programs\nodejs\pnpm.cmd")
     )
-    if ($npmPath) {
-        Add-DirectoryToPath -Directory (Split-Path $npmPath -Parent)
-        return $npmPath
+    if ($pnpmPath) {
+        Add-DirectoryToPath -Directory (Split-Path $pnpmPath -Parent)
+        return $pnpmPath
     }
-    Throw-StartAllError "npm was not found in PATH. Install Node.js 18+."
+    Throw-StartAllError "pnpm was not found in PATH. Install Node.js 20+ and pnpm 10.33.0."
 }
 
 function Test-ModuleAvailable {
@@ -528,12 +530,12 @@ function Install-BackendDeps {
 }
 
 function Ensure-FrontendDeps {
-    param([string]$Npm)
+    param([string]$Pnpm)
     $frontend = Join-Path $script:RepoRoot "frontend"
     if (-not (Test-Path $frontend)) { Throw-StartAllError "Frontend directory missing: $frontend" }
-    if (-not (Test-Path (Join-Path $frontend "node_modules"))) {
+    if (-not (Test-Path (Join-Path $frontend "node_modules/.modules.yaml"))) {
         Push-Location $frontend
-        try { Invoke-Checked -FilePath $Npm -CommandArgs @("install") }
+        try { Invoke-Checked -FilePath $Pnpm -CommandArgs @("install","--frozen-lockfile") }
         finally { Pop-Location }
     }
 }
@@ -890,7 +892,7 @@ function Start-FrontendService {
     # can still load them. Vite invalidates this cache when dependencies or config
     # change; deleting it on every launch races the browser's cached module graph.
     # Bind Vite on the IPv6 unspecified address so both localhost (::1) and 127.0.0.1 work on Windows.
-    $proc = Start-LoggedProcess -FilePath $npm -CommandArgs @("run","dev","--","--host","::","--port",$frontendPort.ToString()) `
+    $proc = Start-LoggedProcess -FilePath $pnpm -CommandArgs @("run","dev","--host","::","--port",$frontendPort.ToString()) `
         -WorkingDirectory (Join-Path $script:RepoRoot "frontend") -StdOutPath $frontendLog -StdErrPath $frontendErr
     if (-not (Wait-ForHttp -Url $frontendRoot -Label "Frontend")) {
         if (Test-Path $frontendErr) { Get-Content $frontendErr -Tail 120 }
@@ -1225,7 +1227,7 @@ $frontendRoot = "http://127.0.0.1:$frontendPort/"
 if ([string]::IsNullOrWhiteSpace($env:FORVEN_CLIENT_BASE)) { $env:FORVEN_CLIENT_BASE = "http://127.0.0.1:$backendPort" }
 $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) { $script:RepoRoot } else { "$script:RepoRoot;$($env:PYTHONPATH)" }
 
-$npm = Get-NpmCommand
+$pnpm = Get-PnpmCommand
 $python = [string](Ensure-Venv | Select-Object -Last 1)
 # Dependency completeness is driven by pyproject (the single source of truth) via
 # the preflight module, NOT a hand-maintained import probe that silently drifts:
@@ -1241,7 +1243,7 @@ if ($LASTEXITCODE -ne 0) {
         Throw-StartAllError "Backend dependencies still unsatisfied after install (see preflight output above)."
     }
 }
-Ensure-FrontendDeps -Npm $npm
+Ensure-FrontendDeps -Pnpm $pnpm
 
 # Bootstrap DB schema before API import path that reads kv.
 Invoke-Checked -FilePath $python -CommandArgs @("-c","from forven.db import init_db; init_db(); print('db_initialized')")

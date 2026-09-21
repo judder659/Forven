@@ -38,5 +38,6 @@
 		"typescript": "^5.9.3",
 		"vite": "^5.4.21",
 		"vitest": "^1.6.1"
-	}
+	},
+	"packageManager": "pnpm@10.33.0"
 }

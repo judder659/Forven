@@ -1,0 +1,6 @@
+# Share package contents through the global pnpm store.
+nodeLinker: hoisted
+packageImportMethod: hardlink
+
+onlyBuiltDependencies:
+  - esbuild

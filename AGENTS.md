@@ -128,7 +128,7 @@ python -m uvicorn --app-dir . forven.api:app --host 127.0.0.1 --port 8003 --relo
 
 # Frontend only
 cd frontend
-npm run dev
+pnpm run dev
 
 # CLI
 python -m forven --help

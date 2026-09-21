@@ -18,7 +18,7 @@ Closes #
 
 - [ ] `python -m pytest tests -q` (or the relevant subset) passes
 - [ ] `python -m ruff check forven tests` is clean
-- [ ] `cd frontend && npm run check` passes (if frontend touched)
+- [ ] `cd frontend && pnpm run check` passes (if frontend touched)
 
 ## Checklist
 
