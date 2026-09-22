@@ -343,15 +343,26 @@ def get_hypothesis_bucket_counts(*, include_disproven_in_archived: bool = True) 
     Replaces the previous client pattern of fetching four full lists just to read
     `.length`. Disproven hypotheses are excluded everywhere except the archived
     bucket (matching the UI's `include_disproven` behaviour for archived).
+    Counted in SQL: building the four full summary lists took ~5s per poll.
     """
-    counts: dict[str, int] = {}
-    for view in ("active", "archived", "trash", "graduated"):
-        counts[view] = len(
-            _build_hypothesis_summaries(
-                view=view,
-                include_disproven=include_disproven_in_archived and view == "archived",
-            )
-        )
+    views = ("active", "archived", "trash", "graduated")
+    counts: dict[str, int] = dict.fromkeys(views, 0)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT manager_state,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN LOWER(COALESCE(status, '')) = 'disproven' THEN 1 ELSE 0 END) AS disproven
+            FROM hypotheses
+            WHERE manager_state IN ({", ".join("?" for _ in views)})
+            GROUP BY manager_state
+            """,
+            views,
+        ).fetchall()
+    for row in rows:
+        view = str(row["manager_state"])
+        keep_disproven = include_disproven_in_archived and view == "archived"
+        counts[view] = int(row["total"] or 0) - (0 if keep_disproven else int(row["disproven"] or 0))
     return counts
 
 

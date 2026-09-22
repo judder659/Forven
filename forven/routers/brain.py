@@ -77,7 +77,7 @@ def get_overview_endpoint() -> dict[str, Any]:
             "SELECT id, level, source, message, data, created_at "
             "FROM activity_log "
             "WHERE lower(COALESCE(source, '')) IN ('brain', 'agent:brain') "
-            "ORDER BY created_at DESC, id DESC LIMIT 20"
+            "ORDER BY id DESC LIMIT 20"
         ).fetchall()
 
         recent_task_rows = conn.execute(

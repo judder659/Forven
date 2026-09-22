@@ -1220,7 +1220,7 @@ def get_data_activity(limit: int = 200) -> dict:
         with get_db() as conn:
             rows = conn.execute(
                 "SELECT created_at, level, message, data FROM activity_log "
-                "WHERE source = 'data' ORDER BY created_at DESC LIMIT ?",
+                "WHERE source = 'data' ORDER BY id DESC LIMIT ?",
                 (int(limit),),
             ).fetchall()
         for row in rows:

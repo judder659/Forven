@@ -172,7 +172,7 @@ def update_system_mode(mode: str) -> dict[str, object]:
 
 def get_logs(limit: int = 50) -> list[dict[str, object]]:
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
 

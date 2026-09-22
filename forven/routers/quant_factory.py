@@ -227,7 +227,7 @@ def get_quant_factory_data() -> Dict[str, Any]:
             for row in conn.execute(
                 "SELECT id, level, source, message, created_at "
                 "FROM activity_log "
-                "ORDER BY datetime(created_at) DESC LIMIT 30"
+                "ORDER BY id DESC LIMIT 30"
             ).fetchall():
                 created = row.get("created_at", "")
                 time_part = created.split(" ")[1] if " " in created else created
