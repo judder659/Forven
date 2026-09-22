@@ -508,3 +508,30 @@ def test_no_coverage_gap_when_reading_exists(forven_db):
     gaps = sr._coverage_gap_pairs()
 
     assert ("BTC/USDT", "1h") not in gaps
+
+
+# --------------------------- legacy symbol spellings ---------------------------
+# Paper strategies minted before mint-time normalisation store 'ETH' / 'SOL'. The
+# sweep reconciled those spellings as-is, found no lake series, and wrote a
+# permanent fetch_error under 'ETH:15m' that held them at the paper->live gate.
+
+
+def test_bare_symbol_strategy_reads_the_pair_reading(forven_db):
+    _seed_strategy(strategy_id="S-BARE", symbol="ETH", timeframe="15m", stage="paper")
+    _seed_divergence("ETH/USDT", "15m", status="ok", max_pct=0.3)
+
+    ok, reason = _evaluate_source_divergence_gate("S-BARE", _settings(block_when_missing=True))
+
+    assert ok is True
+    assert "within" in reason
+
+
+def test_sweep_plan_merges_symbol_spellings(forven_db):
+    _seed_strategy(strategy_id="S-BARE", symbol="ETH", timeframe="15m", stage="paper")
+    _seed_strategy(strategy_id="S-PAIR", symbol="ETH/USDT", timeframe="15m", stage="quick_screen")
+    _seed_strategy(strategy_id="S-DASH", symbol="SOL-USDT", timeframe="4h", stage="gauntlet")
+
+    pairs = sr._active_symbol_timeframes(limit=200)
+
+    assert pairs == [("ETH/USDT", "15m"), ("SOL/USDT", "4h")]
+    assert sorted(sr._coverage_gap_pairs()) == sorted(pairs)

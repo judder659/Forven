@@ -29,7 +29,7 @@ from typing import Any
 import pandas as pd
 
 from forven.data import get_dataset_source, load_parquet, reconcile_close_prices
-from forven.db import get_db, kv_get, kv_set_best_effort
+from forven.db import get_db, kv_get, kv_set_best_effort, normalize_strategy_symbol_strict
 
 log = logging.getLogger(__name__)
 
@@ -52,9 +52,32 @@ _PRECAPITAL_STAGES = ("quick_screen",)
 _PIPELINE_STAGES = _CAPITAL_STAGES + _PRECAPITAL_STAGES
 
 
+def canonical_symbol(symbol: str) -> str:
+    """The pair spelling the lake and venue series are stored under.
+
+    Legacy strategy rows still hold bare ('ETH') or dashed ('ETH-USDT') symbols.
+    Reconciling those spellings as-is found no lake series, stored a permanent
+    ``fetch_error`` under their own key, and held the strategy at the gate as
+    "pending" while a valid 'ETH/USDT' reading went unused.
+    """
+    raw = str(symbol or "").strip().upper()
+    return normalize_strategy_symbol_strict(raw) or raw
+
+
 def divergence_key(symbol: str, timeframe: str) -> str:
     """KV key for a series' pre-computed divergence (read cache-only by the gate)."""
-    return f"forven:data:divergence:{str(symbol).strip().upper()}:{str(timeframe).strip().lower()}"
+    return f"forven:data:divergence:{canonical_symbol(symbol)}:{str(timeframe).strip().lower()}"
+
+
+def _distinct_pairs(rows: list[Any]) -> list[tuple[str, str]]:
+    """Canonical ``(symbol, timeframe)`` pairs in row order, spelling variants merged."""
+    pairs: dict[tuple[str, str], None] = {}
+    for row in rows:
+        sym = canonical_symbol(row["sym"])
+        tf = str(row["tf"] or "1h").strip().lower() or "1h"
+        if sym and sym != "GENERIC":
+            pairs.setdefault((sym, tf), None)
+    return list(pairs)
 
 
 def _resolve_min_overlap_bars(default: int = _MIN_OVERLAP_BARS) -> int:
@@ -141,13 +164,7 @@ def _active_symbol_timeframes(limit: int) -> list[tuple[str, str]]:
     except Exception as exc:
         log.warning("source-reconciliation: could not list active symbols: %s", exc)
         return []
-    pairs: list[tuple[str, str]] = []
-    for row in rows:
-        sym = str(row["sym"] or "").strip().upper()
-        tf = str(row["tf"] or "1h").strip().lower() or "1h"
-        if sym and sym != "GENERIC":
-            pairs.append((sym, tf))
-    return pairs
+    return _distinct_pairs(rows)
 
 
 def _all_pipeline_pairs() -> list[tuple[str, str]]:
@@ -173,13 +190,7 @@ def _all_pipeline_pairs() -> list[tuple[str, str]]:
     except Exception as exc:
         log.warning("source-reconciliation: could not list pipeline pairs: %s", exc)
         return []
-    out: list[tuple[str, str]] = []
-    for row in rows:
-        sym = str(row["sym"] or "").strip().upper()
-        tf = str(row["tf"] or "1h").strip().lower() or "1h"
-        if sym and sym != "GENERIC":
-            out.append((sym, tf))
-    return out
+    return _distinct_pairs(rows)
 
 
 def _coverage_gap_pairs() -> list[tuple[str, str]]:
