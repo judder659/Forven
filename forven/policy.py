@@ -2555,7 +2555,9 @@ def _evaluate_source_divergence_gate(strategy_id: str, general_settings: Any) ->
     if not symbol or symbol == "GENERIC":
         return True, "no symbol to reconcile"
 
-    payload = kv_get(f"forven:data:divergence:{symbol}:{timeframe}")
+    from forven.source_reconciliation import divergence_key
+
+    payload = kv_get(divergence_key(symbol, timeframe))
 
     def _missing(reason: str) -> tuple[bool, str]:
         if block_when_missing:

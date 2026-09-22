@@ -441,7 +441,7 @@ def get_pipeline_activity_stub(limit: int = 50) -> list[dict[str, object]]:
     normalized_limit = max(1, int(limit or 50))
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT source, message, data, created_at FROM activity_log ORDER BY created_at DESC LIMIT ?",
+            "SELECT source, message, data, created_at FROM activity_log ORDER BY id DESC LIMIT ?",
             (normalized_limit,),
         ).fetchall()
 

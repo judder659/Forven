@@ -380,3 +380,29 @@ def test_detail_includes_latest_result_from_backtest(forven_db):
     assert latest is not None
     assert latest["sharpe"] == pytest.approx(1.42)
     assert latest["total_trades"] == 100
+
+
+def test_bucket_counts_match_the_summary_lists(forven_db):
+    from forven.api_domains.hypotheses import _build_hypothesis_summaries, get_hypothesis_bucket_counts
+
+    placement = [
+        ("active", "proposed"), ("active", "disproven"), ("archived", "proposed"),
+        ("archived", "disproven"), ("trash", "disproven"), ("graduated", "proven"),
+        ("graduated", "disproven"),
+    ]
+    ids = [_real_hyp()["id"] for _ in placement]
+    with get_db() as conn:
+        for hypothesis_id, (state, status) in zip(ids, placement):
+            conn.execute(
+                "UPDATE hypotheses SET manager_state = ?, status = ? WHERE id = ?",
+                (state, status, hypothesis_id),
+            )
+
+    counts = get_hypothesis_bucket_counts()
+
+    expected = {
+        view: len(_build_hypothesis_summaries(view=view, include_disproven=view == "archived"))
+        for view in ("active", "archived", "trash", "graduated")
+    }
+    # archived keeps disproven rows, including the migration-seeded HYP-LEGACY bucket
+    assert counts == expected == {"active": 1, "archived": 3, "trash": 0, "graduated": 1}

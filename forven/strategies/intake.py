@@ -862,7 +862,7 @@ def get_recent_intake_events(limit: int = 20) -> dict:
         from forven.db import get_db
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT * FROM activity_log WHERE source = 'strategy_intake' ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM activity_log WHERE source = 'strategy_intake' ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
             events = []

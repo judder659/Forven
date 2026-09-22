@@ -59,12 +59,8 @@ class Signal:
 
     def __post_init__(self) -> None:
         for name in ("entry_signal", "exit_signal"):
-            value = getattr(self, name)
-            if not isinstance(value, (bool, int, float, np.bool_, np.integer, np.floating)) or value not in (0, 1):
-                raise ValueError(f"{name} must be Boolean; specify direction='short' explicitly for shorts")
-            setattr(self, name, bool(value))
-        if self.direction not in ("long", "short"):
-            raise ValueError("Signal direction must be 'long' or 'short'")
+            setattr(self, name, _normalize_signal_flag(name, getattr(self, name)))
+        self.direction = _normalize_signal_direction(self.direction, entry=self.entry_signal)
 
     @classmethod
     def from_condition(cls, condition, *args, **kwargs) -> "Signal":
@@ -110,6 +106,59 @@ class Signal:
             **self.indicators,
         }
         return d
+
+
+_LONG_DIRECTIONS = frozenset({"long", "buy"})
+_SHORT_DIRECTIONS = frozenset({"short", "sell"})
+_VECTOR_TYPES = (pd.Series, pd.DataFrame, np.ndarray, list, tuple)
+
+
+def _vector_signal_error(name: str) -> ValueError:
+    return ValueError(
+        f"{name} must be a scalar value from generate_signal(); "
+        "implement generate_signals(df) for vectorized Series output"
+    )
+
+
+def _normalize_signal_flag(name: str, value: object) -> bool:
+    """Coerce an entry/exit flag to bool, refusing values with no clear meaning.
+
+    ``None`` is "no signal" (every engine read it as falsy). Signed or fractional
+    numbers are refused: ``Signal(-1)`` is the classic mistaken spelling of a
+    short entry, which the engines used to read as a LONG entry.
+    """
+    if value is None:
+        return False
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        value = value.item()
+    if isinstance(value, _VECTOR_TYPES):
+        raise _vector_signal_error(name)
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.integer, np.floating)) and value in (0, 1):
+        return bool(value)
+    raise ValueError(f"{name} must be Boolean; specify direction='short' explicitly for shorts")
+
+
+def _normalize_signal_direction(direction: object, *, entry: bool) -> str:
+    """Resolve a Signal direction to ``'long'`` or ``'short'``.
+
+    An entry must name its side. A non-entry bar has no side to name, and
+    strategies already promoted to paper and live label those bars
+    ``'flat'``/``'neutral'``/``'hold'``. Engines never read that label except to
+    route a both-mode exit, where anything other than short went to the long
+    book, so non-entry bars keep exactly that reading instead of raising.
+    """
+    if isinstance(direction, _VECTOR_TYPES):
+        raise _vector_signal_error("direction")
+    text = "" if direction is None else str(direction).strip().lower()
+    if not text or text in _LONG_DIRECTIONS:
+        return "long"
+    if text in _SHORT_DIRECTIONS:
+        return "short"
+    if not entry:
+        return "long"
+    raise ValueError(f"Signal direction {direction!r} is not a side; an entry needs 'long' or 'short'")
 
 
 def _latest_value(value, default=None):

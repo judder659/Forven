@@ -66,28 +66,37 @@ def test_get_pipeline_funnel_returns_counts_and_flows(forven_db):
     assert payload["flows"][0]["from_state"] == "backtesting"
 
 
-def test_get_dashboard_overview_stub_shape(monkeypatch):
+def _set_metrics(strategy_id: str, metrics_text: str | None) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET metrics = ? WHERE id = ?", (metrics_text, strategy_id))
+
+
+def test_get_dashboard_overview_stub_shape(monkeypatch, forven_db):
     monkeypatch.setattr(
         analytics_domain,
         "normalize_daemon_state",
         lambda write_back=True: {"running": True, "scan_count": 3, "last_scan": "2026-03-06T00:00:00+00:00"},
     )
     monkeypatch.setattr(analytics_domain, "is_trading_allowed", lambda: (True, "OK"))
-    monkeypatch.setattr(
-        analytics_domain,
-        "get_strategies",
-        lambda: [
-            {"id": "S10001", "stage": "paper", "status": "paper", "metrics": json.dumps({"sharpe": 1.4})},
-            {"id": "S10002", "stage": "backtesting", "status": "backtesting", "metrics": json.dumps({"sharpe": 2.1})},
-        ],
-    )
+    for strategy_id, stage in [("S10001", "paper"), ("S10002", "backtesting"), ("S10003", "archived"), ("S10004", "paper")]:
+        _insert_strategy(strategy_id, stage=stage)
+    _set_metrics("S10001", json.dumps({"sharpe": 1.4}))
+    # json.dumps writes NaN tokens that SQLite's JSON functions reject; the
+    # overview must still read the Sharpe from such a row.
+    _set_metrics("S10002", json.dumps({"sharpe_ratio": 2.6, "sortino_ratio": float("nan")}))
+    _set_metrics("S10003", json.dumps({"sharpe_ratio": 2.1}))
+    _set_metrics("S10004", None)
 
     payload = analytics_domain.get_dashboard_overview_stub()
 
-    assert payload["kpis"]["total_tested"] == 2
+    assert payload["kpis"]["total_tested"] == 4
+    assert payload["kpis"]["pipeline_count"] == 3
+    assert payload["kpis"]["best_sharpe"] == 2.6
     assert payload["kpis"]["active_scans"] == 3
     assert payload["autopilot"]["running"] is True
-    assert payload["lifecycle_counts"]["paper"] == 1
+    assert payload["lifecycle_counts"] == {"paper": 2, "backtesting": 1, "retired": 1}
+    funnel = {row["state"]: row["count"] for row in analytics_domain.dashboard_funnel_stub()}
+    assert funnel == payload["lifecycle_counts"]
 
 
 def test_get_dashboard_leaderboard_stub_filters_by_symbol_and_tier(monkeypatch):

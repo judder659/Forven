@@ -4210,7 +4210,7 @@ def get_pipeline_motion_log(limit: int = 200):
         ).fetchall()
         activity_rows = conn.execute(
             "SELECT level, source, message, data, created_at "
-            "FROM activity_log ORDER BY created_at DESC LIMIT ?",
+            "FROM activity_log ORDER BY id DESC LIMIT ?",
             (activity_fetch_limit,),
         ).fetchall()
 
@@ -5091,7 +5091,7 @@ def get_agent_terminal(agent_id: str):
         logs = conn.execute(
             "SELECT * FROM activity_log "
             "WHERE source = ? OR source LIKE ? "
-            "ORDER BY created_at DESC LIMIT 50",
+            "ORDER BY id DESC LIMIT 50",
             (source_prefix, source_like),
         ).fetchall()
         logs_payload = [dict(log_row) for log_row in logs]

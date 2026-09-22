@@ -1368,3 +1368,81 @@ def test_active_timeframes_include_deployed_and_legacy_paper(forven_db):
                 symbol=symbol, timeframe=timeframe, params={}, stage=stage,
             )
     assert DataManager()._fetch_active_timeframes("BTC-USDT") == {"15m", "5m"}
+
+
+# ---------------------------------------------------------------------------
+# Binance futures-data 30-day window
+# ---------------------------------------------------------------------------
+# openInterestHist / globalLongShortAccountRatio / takerlongshortRatio reject a
+# startTime older than 30 days. A series that fell behind asked for the same
+# rejected cursor on every run: DOT/POL/RPL/SYN froze on 2026-07-04 for 80 days.
+
+
+def _seed_stream(path: Path, last: pd.Timestamp, column: str) -> None:
+    from forven.data_manager import _save_stream_parquet
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _save_stream_parquet(pd.DataFrame({"timestamp": [last], column: [1.0]}), path, "test", "TEST")
+
+
+def _window_floor_ms() -> int:
+    return int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)).timestamp() * 1000)
+
+
+def _capturing_session(seen: dict):
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return []
+
+    def _get(self, url, params=None, timeout=None):
+        seen.update(params or {})
+        return _Resp()
+
+    return type("S", (), {"get": _get})()
+
+
+def test_stale_rest_cursor_resumes_inside_binance_window(monkeypatch, tmp_path):
+    from forven.data_manager import LongShortRatioCollector
+
+    stale = pd.Timestamp.now(tz="UTC").floor("h") - pd.Timedelta(days=80)
+    _seed_stream(tmp_path / "DOT-USDT" / "long_short_ratio_1h.parquet", stale, "ls_ratio")
+    seen: dict = {}
+    monkeypatch.setattr("forven.data_manager._http_session", lambda: _capturing_session(seen))
+    monkeypatch.setattr("forven.data_manager.DERIVATIVES_DIR", tmp_path)
+
+    assert LongShortRatioCollector().collect("DOT-USDT") == 0
+    assert seen["startTime"] > _window_floor_ms()
+
+
+def test_fresh_rest_cursor_is_left_alone(monkeypatch, tmp_path):
+    from forven.data_manager import TakerVolumeCollector
+
+    recent = pd.Timestamp.now(tz="UTC").floor("h") - pd.Timedelta(hours=3)
+    _seed_stream(tmp_path / "BTC-USDT" / "taker_volume_1h.parquet", recent, "buy_vol")
+    seen: dict = {}
+    monkeypatch.setattr("forven.data_manager._http_session", lambda: _capturing_session(seen))
+    monkeypatch.setattr("forven.data_manager.DERIVATIVES_DIR", tmp_path)
+
+    TakerVolumeCollector().collect("BTC-USDT")
+    assert seen["startTime"] == int(recent.timestamp() * 1000) + 1
+
+
+def test_stale_oi_cursor_resumes_inside_binance_window(monkeypatch, tmp_path):
+    stale = pd.Timestamp.now(tz="UTC").floor("h") - pd.Timedelta(days=80)
+    _seed_stream(tmp_path / "SYN-USDT" / "4h.parquet", stale, "open_interest")
+    seen: dict = {}
+
+    class _Exchange:
+        def fetch_open_interest_history(self, symbol, timeframe=None, since=None, limit=None):
+            seen["since"] = since
+            return []
+
+    monkeypatch.setattr("forven.data_manager.OI_DIR", tmp_path)
+    monkeypatch.setattr("forven.data_manager._data_engine_collect_enabled", lambda: False)
+    monkeypatch.setattr("forven.data_manager._get_futures_exchange", lambda: _Exchange())
+
+    assert OICollector().collect("SYN-USDT", "4h") == 0
+    assert seen["since"] > _window_floor_ms()

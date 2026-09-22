@@ -9,11 +9,14 @@ from forven.exchange.risk import is_trading_allowed
 from forven.runtime_health import normalize_daemon_state
 from forven.util import normalize_stage, sanitize_json_floats
 
-_DASHBOARD_LEADERBOARD_TTL_SECONDS = 30.0
+# Backtest metrics move slowly. A TTL equal to the dashboard's 30s poll rebuilt
+# the ~10k-strategy leaderboard on nearly every poll.
+_DASHBOARD_LEADERBOARD_TTL_SECONDS = 120.0
 # T16-F2: only count recent failures toward dead-letter/health so a single old
 # failure cannot pin Health=FAIL forever. Queued/running/succeeded stay lifetime.
 _DASHBOARD_FAILED_WINDOW = "-1 day"
 _DASHBOARD_CACHE_LOCK = threading.Lock()
+_DASHBOARD_REBUILD_LOCK = threading.Lock()
 _DASHBOARD_CACHE_ENTRIES: list[dict[str, object]] = []
 _DASHBOARD_CACHE_EXPIRES_AT = 0.0
 
@@ -118,7 +121,7 @@ def get_code_review_log(days: int = 7, limit: int = 50) -> list[dict[str, object
             """SELECT message, data, created_at FROM activity_log
                WHERE source = 'code-review-log'
                AND datetime(created_at) > datetime('now', ? || ' days')
-               ORDER BY created_at DESC LIMIT ?""",
+               ORDER BY id DESC LIMIT ?""",
             (str(-abs(days)), limit),
         ).fetchall()
     import json as _json
@@ -262,11 +265,62 @@ def _dashboard_leaderboard_entries() -> list[dict[str, object]]:
         if _DASHBOARD_CACHE_ENTRIES and now_monotonic < _DASHBOARD_CACHE_EXPIRES_AT:
             return _clone_dashboard_entries(_DASHBOARD_CACHE_ENTRIES)
 
-    entries = _compute_dashboard_leaderboard_entries()
-    with _DASHBOARD_CACHE_LOCK:
-        _DASHBOARD_CACHE_ENTRIES = _clone_dashboard_entries(entries)
-        _DASHBOARD_CACHE_EXPIRES_AT = now_monotonic + _DASHBOARD_LEADERBOARD_TTL_SECONDS
-        return _clone_dashboard_entries(_DASHBOARD_CACHE_ENTRIES)
+    # Dashboard panels that miss together wait for one rebuild and reuse it,
+    # instead of each loading every strategy at once.
+    with _DASHBOARD_REBUILD_LOCK:
+        with _DASHBOARD_CACHE_LOCK:
+            if _DASHBOARD_CACHE_ENTRIES and now_monotonic < _DASHBOARD_CACHE_EXPIRES_AT:
+                return _clone_dashboard_entries(_DASHBOARD_CACHE_ENTRIES)
+        entries = _compute_dashboard_leaderboard_entries()
+        with _DASHBOARD_CACHE_LOCK:
+            _DASHBOARD_CACHE_ENTRIES = _clone_dashboard_entries(entries)
+            _DASHBOARD_CACHE_EXPIRES_AT = now_monotonic + _DASHBOARD_LEADERBOARD_TTL_SECONDS
+            return _clone_dashboard_entries(_DASHBOARD_CACHE_ENTRIES)
+
+
+def _stage_status_groups() -> list[tuple[object, object, int]]:
+    """Strategy counts per stored ``(stage, status)`` pair.
+
+    The stage KPIs used to load every strategy row (~85MB of params, metrics and
+    notes) on each dashboard poll just to count them.
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT stage, status, COUNT(*) AS n FROM strategies GROUP BY stage, status"
+        ).fetchall()
+    return [(row["stage"], row["status"], int(row["n"] or 0)) for row in rows]
+
+
+def _reported_stage(stage: object, status: object) -> object:
+    """The stage a ``get_strategies()`` row reports: normalized stage, else status."""
+    return normalize_stage(stage or status) or status
+
+
+def _best_stored_sharpe() -> float:
+    """Highest stored Sharpe across every strategy; -inf when none has one.
+
+    SQLite extracts the two keys from well-formed metrics. Only rows it rejects
+    (Python writes NaN/Infinity tokens) are parsed here, instead of decoding every
+    strategy's metrics JSON under the GIL on each poll.
+    """
+    best = float("-inf")
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT CASE WHEN json_valid(metrics) THEN NULL ELSE metrics END AS raw,
+                   CASE WHEN json_valid(metrics) THEN json_extract(metrics, '$.sharpe_ratio') END AS sharpe_ratio,
+                   CASE WHEN json_valid(metrics) THEN json_extract(metrics, '$.sharpe') END AS sharpe
+            FROM strategies
+            WHERE metrics IS NOT NULL
+            """
+        ).fetchall()
+    for row in rows:
+        if row["raw"] is not None:
+            metrics = _strategy_metrics({"metrics": row["raw"]})
+        else:
+            metrics = {key: row[key] for key in ("sharpe_ratio", "sharpe") if row[key] is not None}
+        best = max(best, _metric_float(metrics, "sharpe_ratio", "sharpe", default=float("-inf")))
+    return best
 
 
 def _get_task_queue_counts() -> dict[str, int]:
@@ -320,27 +374,22 @@ def _get_autopilot_settings() -> dict[str, object]:
 def get_dashboard_overview_stub() -> dict[str, object]:
     daemon = normalize_daemon_state(write_back=True)
     trading_allowed, trading_reason = is_trading_allowed()
-    strategy_rows = get_strategies()
 
     lifecycle_counts: dict[str, int] = {}
-    best_sharpe = float("-inf")
     # T16-F1: Pipeline KPI must exclude terminal strategies (the inflated "213"
     # class). Filter on canonical normalize_stage BEFORE _to_lifecycle_state.
     _terminal_stages = {"archived", "rejected", "backtest_failed"}
     pipeline_count = 0
-    for row in strategy_rows:
-        if not isinstance(row, dict):
-            continue
-        stage = core._to_lifecycle_state(row.get("stage") or row.get("status"))
-        lifecycle_counts[stage] = lifecycle_counts.get(stage, 0) + 1
-        if normalize_stage(row.get("stage") or row.get("status")) not in _terminal_stages:
-            pipeline_count += 1
-        metrics = _strategy_metrics(row)
-        sharpe = _metric_float(metrics, "sharpe_ratio", "sharpe", default=float("-inf"))
-        if sharpe > best_sharpe:
-            best_sharpe = sharpe
+    strategy_count = 0
+    for stage, status, count in _stage_status_groups():
+        reported = _reported_stage(stage, status)
+        state = core._to_lifecycle_state(reported)
+        lifecycle_counts[state] = lifecycle_counts.get(state, 0) + count
+        if normalize_stage(reported) not in _terminal_stages:
+            pipeline_count += count
+        strategy_count += count
+    best_sharpe = _best_stored_sharpe()
 
-    strategy_count = len(strategy_rows)
     daemon_running = bool(daemon.get("running"))
 
     # Real queue metrics from tasks table
@@ -401,7 +450,7 @@ def get_dashboard_kpis_stub() -> dict[str, object]:
 def get_dashboard_activity_stub(limit: int = 50) -> list[dict[str, object]]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, source, message, data, created_at FROM activity_log ORDER BY created_at DESC LIMIT ?",
+            "SELECT id, source, message, data, created_at FROM activity_log ORDER BY id DESC LIMIT ?",
             (max(1, int(limit or 50)),),
         ).fetchall()
 
@@ -648,9 +697,9 @@ def get_strategy_performance() -> list[dict[str, object]]:
 
 def dashboard_funnel_stub() -> list[dict[str, object]]:
     counts: dict[str, int] = {}
-    for row in get_strategies():
-        state = core._to_lifecycle_state(row.get("stage") or row.get("status"))
-        counts[state] = counts.get(state, 0) + 1
+    for stage, status, count in _stage_status_groups():
+        state = core._to_lifecycle_state(_reported_stage(stage, status))
+        counts[state] = counts.get(state, 0) + count
     return [{"state": state, "count": count} for state, count in counts.items()]
 
 

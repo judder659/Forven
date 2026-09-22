@@ -722,6 +722,33 @@ class OHLCVCollector:
             raise
 
 
+# Binance serves openInterestHist, globalLongShortAccountRatio and
+# takerlongshortRatio for the latest 30 days only and rejects an older startTime
+# outright. A day of margin keeps a cursor near the edge from being refused.
+_FUTURES_DATA_WINDOW = timedelta(days=29)
+
+
+def _futures_data_since(since_ms: int | None, label: str) -> int | None:
+    """Clamp an incremental cursor into Binance's futures-data window.
+
+    A series that fell more than 30 days behind (an outage, a delisting pause)
+    otherwise requests the same rejected startTime on every run and never
+    resumes. The skipped span cannot be recovered from this API, so collection
+    restarts at the window edge and leaves a gap.
+    """
+    if since_ms is None:
+        return None
+    floor_ms = int((datetime.now(timezone.utc) - _FUTURES_DATA_WINDOW).timestamp() * 1000)
+    if since_ms >= floor_ms:
+        return since_ms
+    log.warning(
+        "%s is %d days behind Binance's 30-day futures-data window; resuming at the window "
+        "edge and leaving a gap",
+        label, (floor_ms - since_ms) // 86_400_000,
+    )
+    return floor_ms
+
+
 def _data_engine_collect_enabled() -> bool:
     try:
         from forven.data import _data_engine_read_enabled
@@ -860,7 +887,9 @@ class OICollector:
             try:
                 existing = _load_stream_parquet(path)
                 last_ms = _last_timestamp(existing)
-                since = (last_ms + 1) if last_ms is not None else None
+                since = _futures_data_since(
+                    (last_ms + 1) if last_ms is not None else None, f"OI {fs_symbol}/{timeframe}"
+                )
 
                 if _data_engine_collect_enabled():
                     new_df = _fetch_stream_via_source_registry(symbol, "oi", timeframe=timeframe, since=since)
@@ -934,7 +963,9 @@ class _RestCollector:
                     "limit": self._LIMIT,
                 }
                 if last_ms is not None:
-                    params["startTime"] = last_ms + 1
+                    params["startTime"] = _futures_data_since(
+                        last_ms + 1, f"{self._STREAM_NAME} {fs_symbol}"
+                    )
                 resp = _http_session().get(self._ENDPOINT, params=params, timeout=30)
                 resp.raise_for_status()
                 rows = resp.json()
