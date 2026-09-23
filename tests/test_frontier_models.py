@@ -49,7 +49,9 @@ async def turn(adapter: providers.ToolCallProvider, model: str, messages: list[d
     raise AssertionError("missing completed turn")
 
 
-@pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+@pytest.mark.parametrize("model", [
+    "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+])
 @pytest.mark.parametrize("streamed", [False, True])
 def test_openai_platform_tool_roundtrip(monkeypatch: pytest.MonkeyPatch, model: str, streamed: bool) -> None:
     output = [
@@ -119,7 +121,9 @@ def test_openai_never_treats_interrupted_tool_call_as_complete(monkeypatch: pyte
             asyncio.run(request)
 
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"])
+@pytest.mark.parametrize("model", [
+    "claude-fable-5-1", "claude-opus-5-5", "claude-fable-5", "claude-opus-5", "claude-sonnet-5",
+])
 @pytest.mark.parametrize("streamed", [False, True])
 def test_claude_thinking_and_signature_roundtrip(monkeypatch: pytest.MonkeyPatch, model: str, streamed: bool) -> None:
     blocks = [
@@ -217,19 +221,52 @@ def test_frontier_auxiliary_routes(monkeypatch: pytest.MonkeyPatch, provider: st
 
 
 def test_frontier_choices_available_offline(monkeypatch: pytest.MonkeyPatch) -> None:
-    expected = {
-        "openai": "gpt-6-astra", "anthropic": "claude-fable-5-1", "gemini": "gemini-3.8-flash",
-        "deepseek": "deepseek-v4-pro", "xai": "grok-4.6", "zai": "glm-5.3", "minimax": "MiniMax-M3",
-    }
+    expected = [
+        ("openai", "gpt-6-astra"), ("openai", "gpt-6-sol"), ("openai", "gpt-6-luna"),
+        ("anthropic", "claude-fable-5-1"), ("anthropic", "claude-opus-5-5"),
+        ("gemini", "gemini-3.8-flash"), ("gemini", "gemma-4-31b-it"),
+        ("deepseek", "deepseek-flash"), ("deepseek", "deepseek-v4-pro"),
+        ("xai", "grok-4.7"), ("zai", "glm-5.3-flashx"), ("minimax", "MiniMax-M3"),
+        ("mistral", "mistral-small-2603"), ("opencode-go", "kimi-k3"),
+    ]
     monkeypatch.setattr(discovery, "_AGENT_MODEL_LIST_CACHE", {})
 
     def no_token(_: str) -> tuple[str, bool]:
         raise ValueError("not connected")
 
-    for provider, model in expected.items():
+    for provider, model in expected:
         rows, _ = discovery._discover_provider_models(provider, token_getter=no_token)
         assert model in {row["model_id"] for row in rows}
         assert all("enabled" not in row for row in rows)
+
+
+def test_retired_models_not_seeded() -> None:
+    # Verified retired by each vendor as of 2026-09-22; saved selections of
+    # these still surface as "(configured)" options, but are no longer offered.
+    seeded = {(row["provider"], row["model_id"]) for row in discovery._AGENT_MODEL_CATALOG}
+    retired = {
+        ("openai", "o1-mini"), ("openai", "o1-preview"), ("openai", "gpt-4-vision-preview"),
+        ("anthropic", "claude-3-5-sonnet-20241022"), ("anthropic", "claude-3-5-haiku-20241022"),
+        ("deepseek", "deepseek-chat"), ("deepseek", "deepseek-reasoner"),
+        ("gemini", "gemini-2.0-flash"), ("gemini", "gemma-3-27b-it"),
+        ("xai", "grok-3-mini"), ("xai", "grok-code-fast-1"), ("cerebras", "llama-3.3-70b"),
+        ("mistral", "open-mistral-nemo"), ("opencode-zen", "grok-code"), ("opencode-go", "kimi-k2.7"),
+    }
+    assert not seeded & retired
+
+
+def test_default_routes_are_seeded_choices() -> None:
+    from forven import model_routing
+
+    seeded = {(row["provider"], row["model_id"]) for row in discovery._AGENT_MODEL_CATALOG}
+    routes = [
+        (provider, model) for provider, model in model_routing._DEFAULT_MODEL_ROUTING["default_models"].items()
+        if provider != "lmstudio"
+    ] + [
+        (entry["provider"], entry["model_id"])
+        for entry in model_routing._DEFAULT_AUXILIARY_ROUTING.values()
+    ]
+    assert [route for route in routes if route not in seeded] == []
 
 
 def test_openrouter_discovers_paid_frontier_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,6 +309,15 @@ def test_frontier_prices_keep_gateway_rates_and_ids_separate() -> None:
     assert resolve_rate("anthropic", "claude-fable-5-1") == (10, 50)
     assert resolve_rate("openrouter", "anthropic/claude-fable-5.1") == (10, 50)
     assert resolve_rate("openrouter", "anthropic/claude-fable-5.1:free") == (0, 0)
+    assert resolve_rate("openai", "gpt-6-sol") == (2, 10)
+    assert resolve_rate("openai", "gpt-6-luna") == (0.1, 0.5)
+    assert resolve_rate("anthropic", "claude-opus-5-5") == (4, 20)
+    assert resolve_rate("openrouter", "anthropic/claude-opus-5.5") == (4, 20)
+    assert resolve_rate("xai", "grok-4.7") == (2, 6)
+    assert resolve_rate("openrouter", "x-ai/grok-4.7") == (1.6, 4.8)
+    assert resolve_rate("deepseek", "deepseek-flash") == (0.3, 1.2)
+    assert resolve_rate("deepseek", "deepseek-v4-flash") == (0.3, 1.2)
+    assert resolve_rate("anthropic", "claude-haiku-4-5-20251001") == (1, 5)
 
 
 def test_model_options_preserve_existing_enabled_selection(monkeypatch: pytest.MonkeyPatch) -> None:

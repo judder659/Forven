@@ -74,7 +74,7 @@ def test_minimax_pricing():
 
 def test_zai_pricing():
     cost = estimate_cost_usd("zai", "glm-4.5", {"input_tokens": 1_000_000, "output_tokens": 0})
-    assert cost == 0.50
+    assert cost == 0.60
 
 
 def test_case_insensitive_model_id():

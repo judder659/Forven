@@ -285,10 +285,9 @@
 	];
 
 	const staticModelPresetFallbacks: AgentModelPreset[] = [
-		{ key: 'openai:codex-5.3-ultra', label: 'OpenAI Codex-5.3-Ultra', provider: 'openai', modelId: 'codex-5.3-ultra', enabled: true },
-		{ key: 'openai:codex-5.3-extra-high', label: 'OpenAI Codex-5.3-Extra-High', provider: 'openai', modelId: 'codex-5.3-extra-high', enabled: true },
-		{ key: 'openai:codex-5.3', label: 'OpenAI Codex-5.3', provider: 'openai', modelId: 'codex-5.3', enabled: true },
-		{ key: 'openai:o1-mini', label: 'OpenAI O1-Mini', provider: 'openai', modelId: 'o1-mini', enabled: true },
+		{ key: 'openai:gpt-6-sol', label: 'OpenAI GPT-6 Sol', provider: 'openai', modelId: 'gpt-6-sol', enabled: true },
+		{ key: 'openai:gpt-6-luna', label: 'OpenAI GPT-6 Luna', provider: 'openai', modelId: 'gpt-6-luna', enabled: true },
+		{ key: 'openai:gpt-6-astra', label: 'OpenAI GPT-6 Astra', provider: 'openai', modelId: 'gpt-6-astra', enabled: true },
 		{ key: 'openai:gpt-4o', label: 'OpenAI GPT-4o', provider: 'openai', modelId: 'gpt-4o', enabled: true }
 	];
 	const requiredCoreAgentIds = fallbackAgentDefBase

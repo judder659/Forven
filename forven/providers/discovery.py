@@ -173,8 +173,6 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "openai", "model_id": "gpt-4.1-mini", "label": "OpenAI GPT-4.1 Mini"},
     {"provider": "openai", "model_id": "gpt-4.1-nano", "label": "OpenAI GPT-4.1 Nano"},
     {"provider": "openai", "model_id": "gpt-4-turbo", "label": "OpenAI GPT-4 Turbo"},
-    {"provider": "openai", "model_id": "gpt-4-0125-preview", "label": "OpenAI GPT-4 (0125 Preview)"},
-    {"provider": "openai", "model_id": "gpt-4-vision-preview", "label": "OpenAI GPT-4 Vision Preview"},
     {"provider": "openai", "model_id": "gpt-4o", "label": "OpenAI GPT-4o"},
     {"provider": "openai", "model_id": "gpt-4o-mini", "label": "OpenAI GPT-4o Mini"},
     {"provider": "openai", "model_id": "gpt-5", "label": "OpenAI GPT-5"},
@@ -184,11 +182,6 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "openai", "model_id": "gpt-5.4-mini", "label": "OpenAI GPT-5.4 Mini"},
     {"provider": "openai", "model_id": "gpt-5.5", "label": "OpenAI GPT-5.5"},
     {"provider": "openai", "model_id": "o1", "label": "OpenAI O1"},
-    {"provider": "openai", "model_id": "o1-mini", "label": "OpenAI O1 Mini"},
-    {"provider": "openai", "model_id": "o1-preview", "label": "OpenAI O1 Preview"},
-    {"provider": "openai", "model_id": "codex-5.3-ultra", "label": "OpenAI Codex 5.3 Ultra"},
-    {"provider": "openai", "model_id": "codex-5.3-extra-high", "label": "OpenAI Codex 5.3 Extra High"},
-    {"provider": "openai", "model_id": "codex-5.3", "label": "OpenAI Codex 5.3"},
     {"provider": "minimax", "model_id": "MiniMax-M2.7", "label": "MiniMax M2.7"},
     {"provider": "minimax", "model_id": "MiniMax-M2.7-highspeed", "label": "MiniMax M2.7 Highspeed"},
     {"provider": "minimax", "model_id": "MiniMax-M2.5", "label": "MiniMax M2.5"},
@@ -210,54 +203,50 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "zai", "model_id": "glm-4.5-air", "label": "Z.AI GLM-4.5 Air"},
     {"provider": "zai", "model_id": "glm-4.5-flash", "label": "Z.AI GLM-4.5 Flash"},
     {"provider": "zai", "model_id": "glm-4.5v", "label": "Z.AI GLM-4.5V"},
+    {"provider": "anthropic", "model_id": "claude-opus-4-8", "label": "Anthropic Claude Opus 4.8"},
     {"provider": "anthropic", "model_id": "claude-opus-4-7", "label": "Anthropic Claude Opus 4.7"},
+    {"provider": "anthropic", "model_id": "claude-opus-4-6", "label": "Anthropic Claude Opus 4.6"},
+    {"provider": "anthropic", "model_id": "claude-opus-4-5", "label": "Anthropic Claude Opus 4.5"},
     {"provider": "anthropic", "model_id": "claude-sonnet-4-6", "label": "Anthropic Claude Sonnet 4.6"},
+    {"provider": "anthropic", "model_id": "claude-sonnet-4-5", "label": "Anthropic Claude Sonnet 4.5"},
     {"provider": "anthropic", "model_id": "claude-haiku-4-5-20251001", "label": "Anthropic Claude Haiku 4.5"},
-    {"provider": "anthropic", "model_id": "claude-3-5-sonnet-20241022", "label": "Anthropic Claude 3.5 Sonnet"},
-    {"provider": "anthropic", "model_id": "claude-3-5-haiku-20241022", "label": "Anthropic Claude 3.5 Haiku"},
-    {"provider": "deepseek", "model_id": "deepseek-chat", "label": "DeepSeek Chat"},
-    {"provider": "deepseek", "model_id": "deepseek-reasoner", "label": "DeepSeek Reasoner"},
     {"provider": "groq", "model_id": "llama-3.3-70b-versatile", "label": "Groq Llama 3.3 70B Versatile"},
     {"provider": "groq", "model_id": "llama-3.1-8b-instant", "label": "Groq Llama 3.1 8B Instant"},
     {"provider": "groq", "model_id": "openai/gpt-oss-120b", "label": "Groq GPT-OSS 120B"},
     {"provider": "groq", "model_id": "openai/gpt-oss-20b", "label": "Groq GPT-OSS 20B"},
-    {"provider": "groq", "model_id": "moonshotai/kimi-k2-instruct", "label": "Groq Kimi K2 Instruct"},
-    {"provider": "groq", "model_id": "qwen/qwen3-32b", "label": "Groq Qwen3 32B"},
+    {"provider": "groq", "model_id": "qwen/qwen3.8-27b", "label": "Groq Qwen3.8 27B (preview)"},
+    # 2.5 models stay served to accounts that already used them; new Gemini
+    # projects should pick a 3.x model.
     {"provider": "gemini", "model_id": "gemini-2.5-pro", "label": "Google Gemini 2.5 Pro"},
     {"provider": "gemini", "model_id": "gemini-2.5-flash", "label": "Google Gemini 2.5 Flash"},
     {"provider": "gemini", "model_id": "gemini-2.5-flash-lite", "label": "Google Gemini 2.5 Flash Lite"},
-    {"provider": "gemini", "model_id": "gemini-2.0-flash", "label": "Google Gemini 2.0 Flash"},
-    {"provider": "gemini", "model_id": "gemini-1.5-flash", "label": "Google Gemini 1.5 Flash"},
-    # Google's open Gemma models — same endpoint/key as Gemini, but far more
-    # generous free-tier daily quota. Great for simple completions (e.g. the
-    # no-code strategy builder); note Gemma does NOT support tool-calling, so
-    # it's unsuited to the agent tool-loop slots.
-    {"provider": "gemini", "model_id": "gemma-3-27b-it", "label": "Google Gemma 3 27B"},
-    {"provider": "gemini", "model_id": "gemma-3-12b-it", "label": "Google Gemma 3 12B"},
-    {"provider": "gemini", "model_id": "gemma-3-4b-it", "label": "Google Gemma 3 4B"},
-    {"provider": "gemini", "model_id": "gemma-3-1b-it", "label": "Google Gemma 3 1B"},
+    # Google's open Gemma models — same endpoint/key as Gemini, free-tier only,
+    # with a far more generous daily quota than Gemini Flash. The Gemini API
+    # serves only Gemma 4, which supports function calling.
+    {"provider": "gemini", "model_id": "gemma-4-31b-it", "label": "Google Gemma 4 31B"},
+    {"provider": "gemini", "model_id": "gemma-4-26b-a4b-it", "label": "Google Gemma 4 26B A4B"},
     # Cerebras / Mistral / xAI are also live-discovered; these seed sensible
     # defaults + a fallback when discovery is unavailable.
-    {"provider": "cerebras", "model_id": "llama-3.3-70b", "label": "Cerebras Llama 3.3 70B"},
-    {"provider": "cerebras", "model_id": "llama3.1-8b", "label": "Cerebras Llama 3.1 8B"},
-    {"provider": "cerebras", "model_id": "qwen-3-32b", "label": "Cerebras Qwen 3 32B"},
     {"provider": "cerebras", "model_id": "gpt-oss-120b", "label": "Cerebras GPT-OSS 120B"},
+    {"provider": "cerebras", "model_id": "qwen-3.8-27b", "label": "Cerebras Qwen 3.8 27B"},
+    {"provider": "mistral", "model_id": "mistral-large-2512", "label": "Mistral Large 3"},
+    {"provider": "mistral", "model_id": "mistral-small-2603", "label": "Mistral Small 4"},
     {"provider": "mistral", "model_id": "mistral-large-latest", "label": "Mistral Large"},
     {"provider": "mistral", "model_id": "mistral-medium-latest", "label": "Mistral Medium"},
     {"provider": "mistral", "model_id": "mistral-small-latest", "label": "Mistral Small"},
-    {"provider": "mistral", "model_id": "magistral-small-latest", "label": "Mistral Magistral Small"},
     {"provider": "mistral", "model_id": "codestral-latest", "label": "Mistral Codestral"},
-    {"provider": "mistral", "model_id": "open-mistral-nemo", "label": "Mistral Nemo"},
-    {"provider": "xai", "model_id": "grok-4", "label": "xAI Grok 4"},
-    {"provider": "xai", "model_id": "grok-3", "label": "xAI Grok 3"},
-    {"provider": "xai", "model_id": "grok-3-mini", "label": "xAI Grok 3 Mini"},
-    {"provider": "xai", "model_id": "grok-code-fast-1", "label": "xAI Grok Code Fast"},
+    {"provider": "xai", "model_id": "grok-4.5", "label": "xAI Grok 4.5"},
+    {"provider": "xai", "model_id": "grok-4.3", "label": "xAI Grok 4.3"},
+    {"provider": "xai", "model_id": "grok-build-0.1", "label": "xAI Grok Build 0.1"},
     # Together is a broad gateway; a curated set of popular tool-capable models.
+    {"provider": "together", "model_id": "moonshotai/Kimi-K3", "label": "Together Kimi K3"},
+    {"provider": "together", "model_id": "zai-org/GLM-5.3", "label": "Together GLM-5.3"},
+    {"provider": "together", "model_id": "zai-org/GLM-5.3-Flash", "label": "Together GLM-5.3 Flash"},
+    {"provider": "together", "model_id": "MiniMaxAI/MiniMax-M3", "label": "Together MiniMax M3"},
+    {"provider": "together", "model_id": "deepseek-ai/DeepSeek-V4.1-Flash", "label": "Together DeepSeek V4.1 Flash"},
+    {"provider": "together", "model_id": "deepseek-ai/DeepSeek-V4-Pro-0813", "label": "Together DeepSeek V4 Pro"},
+    {"provider": "together", "model_id": "openai/gpt-oss-120b", "label": "Together GPT-OSS 120B"},
     {"provider": "together", "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "label": "Together Llama 3.3 70B Turbo"},
-    {"provider": "together", "model_id": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", "label": "Together Llama 3.1 8B Turbo"},
-    {"provider": "together", "model_id": "Qwen/Qwen2.5-72B-Instruct-Turbo", "label": "Together Qwen 2.5 72B Turbo"},
-    {"provider": "together", "model_id": "deepseek-ai/DeepSeek-V3", "label": "Together DeepSeek V3"},
-    {"provider": "together", "model_id": "mistralai/Mixtral-8x7B-Instruct-v0.1", "label": "Together Mixtral 8x7B"},
     # NVIDIA NIM (build.nvidia.com) — curated tool-capable chat models across the
     # top open-source families. The live /v1/models list is also discovered; these
     # are reliable, function-calling instruct/reasoning models (vendor/model ids
@@ -268,6 +257,7 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "nvidia", "model_id": "meta/llama-3.1-70b-instruct", "label": "NVIDIA Llama 3.1 70B Instruct"},
     {"provider": "nvidia", "model_id": "meta/llama-3.1-8b-instruct", "label": "NVIDIA Llama 3.1 8B Instruct (fast/cheap)"},
     # NVIDIA Nemotron (NVIDIA-tuned, strong tool-calling)
+    {"provider": "nvidia", "model_id": "nvidia/nemotron-3-ultra-550b-a55b", "label": "NVIDIA Nemotron 3 Ultra 550B"},
     {"provider": "nvidia", "model_id": "nvidia/llama-3.1-nemotron-ultra-253b-v1", "label": "NVIDIA Nemotron Ultra 253B"},
     {"provider": "nvidia", "model_id": "nvidia/nemotron-3-super-120b-a12b", "label": "NVIDIA Nemotron 3 Super 120B"},
     {"provider": "nvidia", "model_id": "nvidia/llama-3.3-nemotron-super-49b-v1.5", "label": "NVIDIA Nemotron Super 49B v1.5"},
@@ -277,14 +267,20 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "nvidia", "model_id": "qwen/qwen3-next-80b-a3b-instruct", "label": "NVIDIA Qwen3-Next 80B"},
     # DeepSeek
     {"provider": "nvidia", "model_id": "deepseek-ai/deepseek-v4-pro", "label": "NVIDIA DeepSeek V4 Pro"},
+    {"provider": "nvidia", "model_id": "deepseek-ai/deepseek-v4.1-flash", "label": "NVIDIA DeepSeek V4.1 Flash"},
     {"provider": "nvidia", "model_id": "deepseek-ai/deepseek-v4-flash", "label": "NVIDIA DeepSeek V4 Flash"},
     # MiniMax
     {"provider": "nvidia", "model_id": "minimaxai/minimax-m3", "label": "NVIDIA MiniMax M3"},
     {"provider": "nvidia", "model_id": "minimaxai/minimax-m2.7", "label": "NVIDIA MiniMax M2.7"},
     # Moonshot Kimi
+    {"provider": "nvidia", "model_id": "moonshotai/kimi-k3", "label": "NVIDIA Kimi K3"},
     {"provider": "nvidia", "model_id": "moonshotai/kimi-k2.6", "label": "NVIDIA Kimi K2.6"},
     # Zhipu GLM
+    {"provider": "nvidia", "model_id": "z-ai/glm-5.3", "label": "NVIDIA GLM-5.3"},
+    {"provider": "nvidia", "model_id": "z-ai/glm-5.3-flash", "label": "NVIDIA GLM-5.3 Flash"},
     {"provider": "nvidia", "model_id": "z-ai/glm-5.1", "label": "NVIDIA GLM-5.1"},
+    # Google Gemma
+    {"provider": "nvidia", "model_id": "google/gemma-4-31b-it", "label": "NVIDIA Gemma 4 31B"},
     # Mistral
     {"provider": "nvidia", "model_id": "mistralai/mistral-large-3-675b-instruct-2512", "label": "NVIDIA Mistral Large 3 675B"},
     {"provider": "nvidia", "model_id": "mistralai/mixtral-8x22b-v0.1", "label": "NVIDIA Mixtral 8x22B"},
@@ -292,23 +288,33 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "nvidia", "model_id": "openai/gpt-oss-120b", "label": "NVIDIA GPT-OSS 120B"},
     {"provider": "nvidia", "model_id": "openai/gpt-oss-20b", "label": "NVIDIA GPT-OSS 20B"},
     # OpenCode Zen: live-discovered via /v1/models; these seed sensible defaults
-    # and a fallback when discovery is unavailable.
-    {"provider": "opencode-zen", "model_id": "grok-code", "label": "OpenCode Zen Grok Code Fast"},
-    {"provider": "opencode-zen", "model_id": "big-pickle", "label": "OpenCode Zen Big Pickle"},
-    {"provider": "opencode-zen", "model_id": "claude-sonnet-4-5", "label": "OpenCode Zen Claude Sonnet 4.5"},
-    {"provider": "opencode-zen", "model_id": "gpt-5", "label": "OpenCode Zen GPT-5"},
-    {"provider": "opencode-zen", "model_id": "qwen3-coder", "label": "OpenCode Zen Qwen3 Coder"},
-    {"provider": "opencode-zen", "model_id": "kimi-k2", "label": "OpenCode Zen Kimi K2"},
+    # and a fallback when discovery is unavailable. Only models Zen serves on
+    # /chat/completions are seeded — Claude, GPT and Gemini sit on other
+    # endpoints this adapter does not speak.
+    {"provider": "opencode-zen", "model_id": "big-pickle", "label": "OpenCode Zen Big Pickle (free)"},
+    {"provider": "opencode-zen", "model_id": "kimi-k3", "label": "OpenCode Zen Kimi K3"},
+    {"provider": "opencode-zen", "model_id": "kimi-k2.7-code", "label": "OpenCode Zen Kimi K2.7 Code"},
+    {"provider": "opencode-zen", "model_id": "glm-5.3", "label": "OpenCode Zen GLM-5.3"},
+    {"provider": "opencode-zen", "model_id": "glm-5.3-flash", "label": "OpenCode Zen GLM-5.3 Flash"},
+    {"provider": "opencode-zen", "model_id": "deepseek-v4.1-flash", "label": "OpenCode Zen DeepSeek V4.1 Flash"},
+    {"provider": "opencode-zen", "model_id": "deepseek-v4-pro", "label": "OpenCode Zen DeepSeek V4 Pro"},
+    {"provider": "opencode-zen", "model_id": "minimax-m3", "label": "OpenCode Zen MiniMax M3"},
     # OpenCode GO: flat-rate subscription with NO /models discovery, so the full
     # tool-capable catalog is curated here from the GO docs.
+    {"provider": "opencode-go", "model_id": "glm-5.3", "label": "OpenCode GO GLM-5.3"},
+    {"provider": "opencode-go", "model_id": "glm-5.3-flash", "label": "OpenCode GO GLM-5.3 Flash"},
     {"provider": "opencode-go", "model_id": "glm-5.2", "label": "OpenCode GO GLM-5.2"},
     {"provider": "opencode-go", "model_id": "glm-5.1", "label": "OpenCode GO GLM-5.1"},
-    {"provider": "opencode-go", "model_id": "kimi-k2.7", "label": "OpenCode GO Kimi K2.7 Code"},
+    {"provider": "opencode-go", "model_id": "kimi-k3", "label": "OpenCode GO Kimi K3"},
+    {"provider": "opencode-go", "model_id": "kimi-k2.7-code", "label": "OpenCode GO Kimi K2.7 Code"},
     {"provider": "opencode-go", "model_id": "kimi-k2.6", "label": "OpenCode GO Kimi K2.6"},
+    {"provider": "opencode-go", "model_id": "deepseek-v4.1-flash", "label": "OpenCode GO DeepSeek V4.1 Flash"},
     {"provider": "opencode-go", "model_id": "deepseek-v4-pro", "label": "OpenCode GO DeepSeek V4 Pro"},
     {"provider": "opencode-go", "model_id": "deepseek-v4-flash", "label": "OpenCode GO DeepSeek V4 Flash"},
     {"provider": "opencode-go", "model_id": "minimax-m3", "label": "OpenCode GO MiniMax M3"},
     {"provider": "opencode-go", "model_id": "minimax-m2.7", "label": "OpenCode GO MiniMax M2.7"},
+    {"provider": "opencode-go", "model_id": "mimo-v2.6-pro", "label": "OpenCode GO MiMo V2.6 Pro"},
+    {"provider": "opencode-go", "model_id": "mimo-v2.6-flash", "label": "OpenCode GO MiMo V2.6 Flash"},
     {"provider": "opencode-go", "model_id": "mimo-v2.5-pro", "label": "OpenCode GO MiMo V2.5 Pro"},
     {"provider": "opencode-go", "model_id": "mimo-v2.5", "label": "OpenCode GO MiMo V2.5"},
     {"provider": "opencode-go", "model_id": "qwen3.7-max", "label": "OpenCode GO Qwen3.7 Max"},

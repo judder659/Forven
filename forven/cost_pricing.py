@@ -1,9 +1,9 @@
 """Per-provider per-model pricing table and cost computation.
 
 USD per 1M tokens, broken into ``in`` (prompt) and ``out`` (completion) rates.
-Numbers are best-effort snapshots of public list prices as of late 2025 / early
-2026 — they are *not* guaranteed accurate for billing, only good enough for
-in-app cost surfacing on the diagnostics + task-detail UIs.
+Numbers are best-effort snapshots of public list prices (last refreshed
+September 2026) — they are *not* guaranteed accurate for billing, only good
+enough for in-app cost surfacing on the diagnostics + task-detail UIs.
 
 Update path: bump entries here and add a fallback for new IDs. Pricing is
 intentionally hard-coded (not fetched from a vendor endpoint) so the desktop
@@ -111,21 +111,26 @@ _PRICING: dict[tuple[str, str], tuple[float, float]] = {
     ("minimax", "MiniMax-M2.5"): (0.30, 1.50),
     ("minimax", "MiniMax-M2.7"): (0.40, 2.00),
     # ---- Z.AI / GLM ----
-    ("zai", "glm-4.5"): (0.50, 1.50),
-    ("zai", "glm-4.5-air"): (0.20, 0.60),
+    ("zai", "glm-4.5"): (0.60, 2.20),
+    ("zai", "glm-4.5-air"): (0.20, 1.10),
     ("zai", "glm-4.5-flash"): (0.10, 0.30),
-    ("zai", "glm-4.6"): (0.60, 2.00),
-    ("zai", "glm-4.7"): (0.80, 2.50),
-    ("zai", "glm-5"): (1.00, 3.00),
-    ("zai", "glm-5.1"): (1.00, 3.00),
+    ("zai", "glm-4.6"): (0.60, 2.20),
+    ("zai", "glm-4.7"): (0.60, 2.20),
+    ("zai", "glm-4.7-flashx"): (0.07, 0.40),
+    ("zai", "glm-5"): (1.00, 3.20),
+    ("zai", "glm-5.1"): (1.40, 4.40),
     # ---- Anthropic ----
     ("anthropic", "claude-opus-4"): (15.00, 75.00),
     ("anthropic", "claude-opus-4-1"): (15.00, 75.00),
     ("anthropic", "claude-opus-4-5"): (5.00, 25.00),
+    ("anthropic", "claude-opus-4-6"): (5.00, 25.00),
+    ("anthropic", "claude-opus-4-7"): (5.00, 25.00),
+    ("anthropic", "claude-opus-4-8"): (5.00, 25.00),
     ("anthropic", "claude-sonnet-4"): (3.00, 15.00),
     ("anthropic", "claude-sonnet-4-5"): (3.00, 15.00),
     ("anthropic", "claude-sonnet-4-6"): (3.00, 15.00),
     ("anthropic", "claude-haiku-4-5"): (1.00, 5.00),
+    ("anthropic", "claude-haiku-4-5-20251001"): (1.00, 5.00),
     ("anthropic", "claude-3-7-sonnet"): (3.00, 15.00),
     ("anthropic", "claude-3-5-sonnet"): (3.00, 15.00),
     ("anthropic", "claude-3-5-haiku"): (0.80, 4.00),
@@ -143,16 +148,24 @@ _PRICING: dict[tuple[str, str], tuple[float, float]] = {
     # ---- DeepSeek ----
     ("deepseek", "deepseek-chat"): (0.27, 1.10),
     ("deepseek", "deepseek-reasoner"): (0.55, 2.19),
+    # Retired V4 Flash names are served by V4.1 Flash at its (peak) price.
+    ("deepseek", "deepseek-v4-flash"): (0.30, 1.20),
+    ("deepseek", "deepseek-v4-flash-vision-exp"): (0.30, 1.20),
     # ---- Groq (hosted open-weights) ----
     ("groq", "llama-3.3-70b-versatile"): (0.59, 0.79),
     ("groq", "llama-3.1-8b-instant"): (0.05, 0.08),
     ("groq", "llama3-70b-8192"): (0.59, 0.79),
     ("groq", "mixtral-8x7b-32768"): (0.24, 0.24),
     ("groq", "gemma2-9b-it"): (0.20, 0.20),
+    ("groq", "openai/gpt-oss-120b"): (0.15, 0.60),
+    ("groq", "openai/gpt-oss-20b"): (0.075, 0.30),
+    ("groq", "qwen/qwen3.8-27b"): (0.80, 4.00),
     # ---- Mistral ----
     ("mistral", "mistral-small-latest"): (0.10, 0.30),
     ("mistral", "mistral-medium-latest"): (0.40, 2.00),
     ("mistral", "mistral-large-latest"): (2.00, 6.00),
+    ("mistral", "mistral-small-2603"): (0.15, 0.60),
+    ("mistral", "mistral-large-2512"): (0.50, 1.50),
     ("mistral", "open-mistral-nemo"): (0.15, 0.15),
     ("mistral", "codestral-latest"): (0.30, 0.90),
     # ---- xAI ----
@@ -161,12 +174,22 @@ _PRICING: dict[tuple[str, str], tuple[float, float]] = {
     ("xai", "grok-3"): (3.00, 15.00),
     ("xai", "grok-3-mini"): (0.30, 0.50),
     ("xai", "grok-code-fast-1"): (0.20, 1.50),
+    ("xai", "grok-4.5"): (2.00, 6.00),
+    ("xai", "grok-4.3"): (1.25, 2.50),
+    ("xai", "grok-build-0.1"): (1.00, 2.00),
     # ---- Cerebras (hosted open-weights) ----
     ("cerebras", "llama-3.3-70b"): (0.85, 1.20),
     ("cerebras", "llama3.1-8b"): (0.10, 0.10),
     # ---- Together ----
-    ("together", "meta-llama/Llama-3.3-70B-Instruct-Turbo"): (0.88, 0.88),
+    ("together", "meta-llama/Llama-3.3-70B-Instruct-Turbo"): (1.04, 1.04),
     ("together", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"): (0.18, 0.18),
+    ("together", "moonshotai/Kimi-K3"): (3.00, 15.00),
+    ("together", "zai-org/GLM-5.3"): (1.40, 4.40),
+    ("together", "zai-org/GLM-5.3-Flash"): (0.15, 0.50),
+    ("together", "MiniMaxAI/MiniMax-M3"): (0.30, 1.20),
+    ("together", "deepseek-ai/DeepSeek-V4.1-Flash"): (0.30, 1.20),
+    ("together", "deepseek-ai/DeepSeek-V4-Pro-0813"): (1.32, 3.96),
+    ("together", "openai/gpt-oss-120b"): (0.15, 0.60),
     # ---- LM Studio (local — free; see FREE_LOCAL_PROVIDERS for any model id) ----
     ("lmstudio", "local-model"): (0.00, 0.00),
 }
