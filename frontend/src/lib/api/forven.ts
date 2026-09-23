@@ -2240,6 +2240,7 @@ export interface ResearchMemoryMode {
 export interface HypothesisDisciplineSettings {
 	active_pool_cap: number;
 	min_strategies_per_pick: number;
+	repick_after_hours?: number;
 	revisit_interval_days: number;
 	verdict_hit_rate_threshold: number;
 	verdict_min_diversity_cells: number;

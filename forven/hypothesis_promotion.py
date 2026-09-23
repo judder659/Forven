@@ -29,16 +29,22 @@ def _current_in_flight_task_count() -> int:
     return int(row["n"] or 0)
 
 
-def _score_rows() -> list[dict[str, Any]]:
+def _score_rows(excluded: dict[str, int] | None = None) -> list[dict[str, Any]]:
     """Return candidate hypotheses with precomputed metrics, ordered by promise desc.
 
     Disproven, cooldown-locked, and depth-incomplete hypotheses are dropped here.
     Depth-incomplete = picked but has not yet accumulated `min_strategies_per_pick`
-    children since the last pick (Phase 3 round-robin guarantee).
+    children since the last pick (Phase 3 round-robin guarantee), until
+    `repick_after_hours` have passed since that pick. ``excluded`` (optional)
+    receives a count per drop reason.
     """
-    cooldown_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
+    now = datetime.now(timezone.utc)
+    cooldown_cutoff = (now - timedelta(minutes=COOLDOWN_MINUTES)).isoformat()
     discipline = get_hypothesis_discipline_settings()
     min_per_pick = int(discipline["min_strategies_per_pick"])
+    repick_hours = int(discipline["repick_after_hours"])
+    repick_cutoff = (now - timedelta(hours=repick_hours)).isoformat() if repick_hours > 0 else None
+    drops = excluded if excluded is not None else {}
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -72,7 +78,6 @@ def _score_rows() -> list[dict[str, Any]]:
             GROUP BY h.id
             """
         ).fetchall()
-    now = datetime.now(timezone.utc)
     # CRUX-1: score with the shared crucible value model — true stage survival
     # dominates, family survival priors steer the (majority) zero-children
     # candidates that the old formula scored as pure random.
@@ -92,15 +97,22 @@ def _score_rows() -> list[dict[str, Any]]:
         # thesis that still lacks assets/timeframes/acceptance criteria. Only
         # 'researching'/'proven' are dispatch-ready here; 'disproven' is dead.
         if row["status"] in ("proposed", "disproven"):
+            drops[row["status"]] = drops.get(row["status"], 0) + 1
             continue
         if row["last_dispatched_at"] and row["last_dispatched_at"] > cooldown_cutoff:
+            drops["cooldown"] = drops.get("cooldown", 0) + 1
             continue
         # Round-robin depth gate: once a hypothesis has been picked, it must
         # accumulate min_per_pick children before it's eligible to be picked
         # again. First-time picks (last_dispatched_at IS NULL) bypass this.
+        # A pick yields one strategy, so without the repick window a picked
+        # hypothesis stayed locked out for good (Sept 2026 stall).
         if row["last_dispatched_at"] is not None:
             since = int(row["strategies_since_last_pick"] or 0)
-            if since < min_per_pick:
+            if since < min_per_pick and (
+                repick_cutoff is None or row["last_dispatched_at"] > repick_cutoff
+            ):
+                drops["depth_gate"] = drops.get("depth_gate", 0) + 1
                 continue
         positive = int(row["positive_children"] or 0)
         scored_children = int(row["scored_children"] or 0)
@@ -254,17 +266,20 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
             "picked": 0,
         }
 
-    eligible = _score_rows()
+    excluded: dict[str, int] = {}
+    eligible = _score_rows(excluded)
     if not eligible:
         log.info(
-            "promotion_loop.no_eligible_hypothesis tick=%s in_flight=%s",
+            "promotion_loop.no_eligible_hypothesis tick=%s in_flight=%s excluded=%s",
             datetime.now(timezone.utc).isoformat(),
             in_flight,
+            excluded,
         )
         return {
             "dispatched_ids": [],
             "skipped": {**skipped, "no_eligible": 1},
             "picked": 0,
+            "excluded": excluded,
         }
     # Ineligible high-ranked ideas must not starve ready ideas below the cut.
     picks = eligible
@@ -276,6 +291,7 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
         _MAX_FAILED_ACTION_RETRIES,
         CrucibleTaskIndex,
         _strategy_count,
+        log_idle_summary,
     )
 
     task_index = CrucibleTaskIndex.build()
@@ -324,8 +340,16 @@ def run_promotion_loop(*, top_k: int = 3, max_in_flight: int = MAX_IN_FLIGHT_DEF
             )
         dispatched_ids.append(hypothesis["id"])
 
+    if not dispatched_ids:
+        reasons = {key: count for key, count in skipped.items() if count}
+        log_idle_summary(
+            log,
+            "hypothesis promotion loop",
+            f"{len(picks)} eligible, none dispatched; skipped={reasons} excluded={excluded}",
+        )
     return {
         "dispatched_ids": dispatched_ids,
         "skipped": skipped,
         "picked": len(picks),
+        "excluded": excluded,
     }

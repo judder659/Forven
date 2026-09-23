@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import defaultdict
+import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -278,7 +279,11 @@ _REFINE_PRIORITY = 4
 # "no longer candidates" so a researching crucible whose only strategies
 # are archived can develop new ones instead of stalling forever.
 _LIVE_STRATEGY_STAGE_CLAUSE = "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash')"
-_BUSY_STRATEGY_STAGES = {"quick_screen", "gauntlet", "research_only"}
+# Stages with validation still in progress. research_only is a parking stage
+# (see _untested_strategy_id), not work in progress: counting it as busy let one
+# parked child hold every crucible in the pool, so the planner stopped both
+# replenishing and expanding survivors once all of them had one (Sept 2026 stall).
+_BUSY_STRATEGY_STAGES = {"quick_screen", "gauntlet"}
 
 
 def _strategy_spawn_limit_exhausted(crucible_id: str) -> bool:
@@ -801,7 +806,55 @@ def plan_next_actions(*, limit: int = 3) -> list[CrucibleAction]:
         action = _propose_crucible_action()
         if not task_index.open_action_exists(action.action_kind, action.crucible_id):
             actions.append(action)
+    if not actions:
+        _log_idle_pool(crucibles, task_index)
     return actions
+
+
+_IDLE_LOG_INTERVAL_SECONDS = 3600.0
+_last_idle_log: dict[str, tuple[str, float]] = {}
+
+
+def log_idle_summary(logger: logging.Logger, name: str, summary: str) -> None:
+    """Log why a research dispatcher did nothing: on change, else at most hourly.
+
+    Both dispatchers run every five minutes and used to go quiet when idle,
+    which hid a pool-wide stall for days.
+    """
+    now = time.monotonic()
+    previous = _last_idle_log.get(name)
+    if previous and previous[0] == summary and now - previous[1] < _IDLE_LOG_INTERVAL_SECONDS:
+        return
+    _last_idle_log[name] = (summary, now)
+    logger.info("%s idle: %s", name, summary)
+
+
+def _log_idle_pool(crucibles: list[dict[str, Any]], task_index: CrucibleTaskIndex) -> None:
+    ids = [str(crucible["id"]) for crucible in crucibles]
+    stages: dict[str, set[str]] = defaultdict(set)
+    if ids:
+        crucible_key = "COALESCE(NULLIF(TRIM(COALESCE(hypothesis_id, '')), ''), origin_crucible_id)"
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT {crucible_key} AS crucible_id, LOWER(TRIM(COALESCE(stage, ''))) AS stage
+                FROM strategies
+                WHERE {crucible_key} IN ({",".join("?" * len(ids))})
+                  AND COALESCE(stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash')
+                """,
+                ids,
+            ).fetchall()
+        for row in rows:
+            stages[str(row["crucible_id"])].add(str(row["stage"]))
+    statuses = Counter(str(crucible.get("status") or "").strip().lower() for crucible in crucibles)
+    summary = (
+        f"{len(ids)} crucibles {dict(sorted(statuses.items()))}; "
+        f"validating={sum(1 for cid in ids if stages[cid] & _BUSY_STRATEGY_STAGES)} "
+        f"parked_only={sum(1 for cid in ids if stages[cid] == {'research_only'})} "
+        f"no_live_strategies={sum(1 for cid in ids if not stages[cid])} "
+        f"blocked_tasks={len(task_index.blocked_candidates & set(ids))}; nothing to plan"
+    )
+    log_idle_summary(log, "crucible planner", summary)
 
 
 def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:

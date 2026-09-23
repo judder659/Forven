@@ -97,7 +97,7 @@ def test_promotion_fills_slot_below_blocked_high_rank(research_data, monkeypatch
 
     bad = hypothesis("h-bad", "ETF flows")
     good = hypothesis("h-good")
-    monkeypatch.setattr(promotion, "_score_rows", lambda: [{"id": bad}, {"id": good}])
+    monkeypatch.setattr(promotion, "_score_rows", lambda excluded=None: [{"id": bad}, {"id": good}])
     dispatched = []
     monkeypatch.setattr(promotion, "_dispatch_task", lambda h: dispatched.append(h["id"]) or 123)
     result = promotion.run_promotion_loop(top_k=1)
