@@ -95,6 +95,10 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     "hypothesis_discipline": {
         "active_pool_cap": 100,
         "min_strategies_per_pick": 3,
+        # A pick yields one strategy, so the depth gate above can only clear via
+        # other dispatchers. After this many hours a picked crucible is eligible
+        # again regardless; 0 keeps the pure depth gate.
+        "repick_after_hours": 48,
         "revisit_interval_days": 90,
         "verdict_hit_rate_threshold": 0.4,
         "verdict_min_diversity_cells": 4,
@@ -168,6 +172,7 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
 _HYPOTHESIS_DISCIPLINE_RANGES: dict[str, tuple[int | float, int | float]] = {
     "active_pool_cap": (1, 500),
     "min_strategies_per_pick": (1, 20),
+    "repick_after_hours": (0, 720),
     "revisit_interval_days": (7, 365),
     "verdict_hit_rate_threshold": (0.0, 1.0),
     "verdict_min_diversity_cells": (1, 50),

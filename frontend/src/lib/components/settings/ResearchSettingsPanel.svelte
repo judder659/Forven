@@ -26,6 +26,7 @@
 	const HYPOTHESIS_DISCIPLINE_DEFAULTS = {
 		active_pool_cap: 100,
 		min_strategies_per_pick: 3,
+		repick_after_hours: 48,
 		revisit_interval_days: 90,
 		verdict_hit_rate_threshold: 0.4,
 		verdict_min_diversity_cells: 4,
@@ -366,6 +367,19 @@
 					class="terminal-input w-full"
 				/>
 				<span class="mt-1 block text-[11px] text-[#666]">Round-robin depth before another crucible can be picked.</span>
+			</label>
+			<label class="text-xs text-[#888]">
+				<span class="mb-1 block uppercase tracking-[0.18em]">Re-pick After (hours)</span>
+				<input
+					data-testid="hypothesis-repick-after-hours"
+					type="number"
+					min="0"
+					max="720"
+					value={hypothesisDiscipline.repick_after_hours}
+					on:input={(event) => setHypothesisDiscipline('repick_after_hours', Number((event.currentTarget as HTMLInputElement).value))}
+					class="terminal-input w-full"
+				/>
+				<span class="mt-1 block text-[11px] text-[#666]">A picked crucible is eligible again after this long, even short of the depth above. 0 waits for the depth.</span>
 			</label>
 			<label class="text-xs text-[#888]">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Revisit Interval (days)</span>

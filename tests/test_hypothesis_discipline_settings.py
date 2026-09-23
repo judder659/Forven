@@ -97,6 +97,7 @@ def test_block_missing_returns_all_defaults() -> None:
     assert settings == {
         "active_pool_cap": 100,
         "min_strategies_per_pick": 3,
+        "repick_after_hours": 48,
         "revisit_interval_days": 90,
         "verdict_hit_rate_threshold": pytest.approx(0.4),
         "verdict_min_diversity_cells": 4,
