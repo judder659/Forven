@@ -61,7 +61,7 @@ def test_get_auxiliary_routing_returns_recall_default(forven_db):
 def test_get_auxiliary_routing_returns_skill_extraction_default(forven_db):
     routing = get_auxiliary_routing("skill_extraction")
     assert routing["provider"] == "openrouter"
-    assert routing["model_id"] == "anthropic/claude-3-5-sonnet"
+    assert routing["model_id"] == "anthropic/claude-sonnet-5"
 
 
 def test_get_auxiliary_routing_unknown_kind_falls_back_to_priority_zero(forven_db):

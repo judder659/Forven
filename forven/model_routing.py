@@ -78,7 +78,7 @@ _DEFAULT_AUXILIARY_ROUTING: dict[str, dict[str, str | None]] = {
     },
     "skill_extraction": {
         "provider": "openrouter",
-        "model_id": "anthropic/claude-3-5-sonnet",
+        "model_id": "anthropic/claude-sonnet-5",
         "base_url": None,
         "api_key": None,
     },
@@ -103,18 +103,18 @@ _DEFAULT_MODEL_ROUTING = {
         "zai": "glm-5.1",
         "openrouter": "openai/gpt-4o-mini",
         "anthropic": "claude-sonnet-4-6",
-        "deepseek": "deepseek-chat",
+        "deepseek": "deepseek-flash",
         "groq": "llama-3.3-70b-versatile",
-        # Cheapest Gemini model that still runs the agent tool-loop reliably
-        # (~$0.10/$0.40 per 1M tokens, free tier available). Step up to
-        # gemini-2.5-flash if strategy quality looks weak.
-        "gemini": "gemini-2.5-flash-lite",
-        "cerebras": "llama-3.3-70b",
+        # Google's recommended low-cost model for new projects (~$0.30/$2.50
+        # per 1M tokens, free tier available); 2.5 models are closed to new
+        # accounts. Step up to gemini-3.8-flash if strategy quality looks weak.
+        "gemini": "gemini-3.5-flash-lite",
+        "cerebras": "gpt-oss-120b",
         "mistral": "mistral-small-latest",
-        "xai": "grok-3-mini",
+        "xai": "grok-4.3",
         "together": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "nvidia": "meta/llama-3.3-70b-instruct",
-        "opencode-zen": "grok-code",
+        "opencode-zen": "big-pickle",
         "opencode-go": "glm-5.2",
     },
     # Every default chain is SELF-ONLY (fail-closed): a slot NEVER silently falls
@@ -141,22 +141,22 @@ _DEFAULT_MODEL_ROUTING = {
             {"provider": "anthropic", "model_id": "claude-sonnet-4-6"},
         ],
         "deepseek": [
-            {"provider": "deepseek", "model_id": "deepseek-chat"},
+            {"provider": "deepseek", "model_id": "deepseek-flash"},
         ],
         "groq": [
             {"provider": "groq", "model_id": "llama-3.3-70b-versatile"},
         ],
         "gemini": [
-            {"provider": "gemini", "model_id": "gemini-2.5-flash-lite"},
+            {"provider": "gemini", "model_id": "gemini-3.5-flash-lite"},
         ],
         "cerebras": [
-            {"provider": "cerebras", "model_id": "llama-3.3-70b"},
+            {"provider": "cerebras", "model_id": "gpt-oss-120b"},
         ],
         "mistral": [
             {"provider": "mistral", "model_id": "mistral-small-latest"},
         ],
         "xai": [
-            {"provider": "xai", "model_id": "grok-3-mini"},
+            {"provider": "xai", "model_id": "grok-4.3"},
         ],
         "together": [
             {"provider": "together", "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
@@ -165,7 +165,7 @@ _DEFAULT_MODEL_ROUTING = {
             {"provider": "nvidia", "model_id": "meta/llama-3.3-70b-instruct"},
         ],
         "opencode-zen": [
-            {"provider": "opencode-zen", "model_id": "grok-code"},
+            {"provider": "opencode-zen", "model_id": "big-pickle"},
         ],
         "opencode-go": [
             {"provider": "opencode-go", "model_id": "glm-5.2"},

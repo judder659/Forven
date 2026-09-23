@@ -1152,8 +1152,9 @@ class DeepSeekProvider(OpenAIProvider):
     """DeepSeek Chat API — OpenAI Chat Completions compatible.
 
     Default base: ``https://api.deepseek.com``. Default model
-    ``deepseek-chat``; ``deepseek-reasoner`` available for the cheap-
-    reasoning auxiliary use-case in Phase 5.
+    ``deepseek-flash`` (V4.1 Flash); ``deepseek-v4-pro`` is the stronger
+    option. The legacy ``deepseek-chat``/``deepseek-reasoner`` names were
+    discontinued on 2026-07-24.
     """
 
     DEFAULT_BASE_URL = "https://api.deepseek.com"

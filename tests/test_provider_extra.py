@@ -94,8 +94,9 @@ def test_gemini_provider_surfaces_gemma_models():
     assert not ac._discovery_model_should_belong("gemini", "gpt-4o")
 
     catalog_gemini = {m["model_id"] for m in ac._AGENT_MODEL_CATALOG if m["provider"] == "gemini"}
-    assert "gemma-3-27b-it" in catalog_gemini
-    assert {"gemma-3-27b-it", "gemma-3-12b-it", "gemma-3-4b-it", "gemma-3-1b-it"} <= catalog_gemini
+    # The Gemini API serves only Gemma 4 now; Gemma 3 is no longer offered.
+    assert {"gemma-4-31b-it", "gemma-4-26b-a4b-it"} <= catalog_gemini
+    assert not {m for m in catalog_gemini if m.startswith("gemma-3-")}
 
     # Explicit gemini provider routes the Gemma model through unchanged (it's a
     # passthrough provider — no model-name heuristic may re-route it elsewhere).
