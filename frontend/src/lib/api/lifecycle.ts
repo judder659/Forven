@@ -758,7 +758,6 @@ export type PipelineExplainStatus =
 	| 'slot_contention'
 	| 'awaiting_operator'
 	| 'live'
-	| 'parked'
 	| 'unknown';
 
 export interface PipelineExplainStrategy {
@@ -1027,7 +1026,6 @@ export async function getContainerTasks(strategyId: string): Promise<TaskContain
 function normalizePipelineStageToStatus(stage: string): string {
 	const normalized = String(stage || '').trim().toLowerCase();
 	if (!normalized) return 'quick_screen';
-	if (normalized === 'research_only' || normalized === 'research-only') return 'research_only';
 	if (normalized === 'graveyard' || normalized === 'archived' || normalized === 'retired' || normalized === 'killed') return 'retired';
 	if (normalized === 'paper_trading' || normalized === 'paper-trading' || normalized === 'paper') return 'paper';
 	if (normalized === 'researching' || normalized === 'developing' || normalized === 'quick_screen') return 'quick_screen';

@@ -23,7 +23,11 @@ from forven.db import (
     log_activity,
 )
 from forven import phantom_recovery
-from forven.strategies.certification import certify_execution_strategy
+from forven.strategies.certification import (
+    certification_status_reason,
+    certify_execution_strategy,
+    resolve_initial_stage,
+)
 from forven.strategies.params import canonicalize_params
 from forven.util import normalize_stage, sanitize_json_floats
 
@@ -82,7 +86,6 @@ class LifecycleCreateBody(BaseModel):
     # authoritative type (e.g. import) pass it so it survives the round-trip.
     type: str | None = Field(default=None, max_length=64)
     definition_json: dict | str | None = None
-    research_only: bool = Field(default=False)
     model: str | None = Field(default=None, max_length=64)
     model_id: str | None = Field(default=None, max_length=128)
 
@@ -120,7 +123,6 @@ def _to_lifecycle_state(core_status: str | None) -> str:
 
     core_to_lifecycle = {
         "quick_screen": "generated",
-        "research_only": "research_only",
         "gauntlet": "backtesting",
         "paper": "paper",
         "live_graduated": "deployed",
@@ -132,8 +134,6 @@ def _to_lifecycle_state(core_status: str | None) -> str:
     if normalized in core_to_lifecycle:
         return core_to_lifecycle[normalized]
 
-    if normalized == "research_only":
-        return "research_only"
     if normalized.startswith("paper") or normalized == "paper_trading":
         return "paper"
     if normalized.startswith("backtest") or normalized == "gauntlet":
@@ -1624,8 +1624,8 @@ def create_lifecycle_strategy(body: LifecycleCreateBody):
         payload=params_value,
     ) or "strategy"
     certification = certify_execution_strategy(strategy_type, strategy_params)
-    # Orphan runtime types are always rejected outright (not demoted to
-    # research_only). An unregistered type cannot execute in any lane.
+    # Orphan runtime types are always rejected outright (not created as an
+    # untestable archive). An unregistered type cannot execute in any lane.
     if certification.unregistered_runtime_type:
         return {
             "ok": False,
@@ -1635,16 +1635,13 @@ def create_lifecycle_strategy(body: LifecycleCreateBody):
                 "forven/strategies/custom/ before creating strategies of this type."
             ),
         }
-    target_stage = "research_only" if bool(body.research_only) or not certification.certified else "quick_screen"
+    target_stage = resolve_initial_stage(certification)
+    status_reason = certification_status_reason(certification)
     note_lines: list[str] = []
     if body.source_ref:
         note_lines.append(body.source_ref)
-    if target_stage == "research_only":
-        blocking_reason = certification.primary_blocking_reason()
-        if blocking_reason:
-            note_lines.append(f"Research-only: {blocking_reason}")
-        elif body.research_only:
-            note_lines.append("Research-only: kept outside the tradable pipeline by request")
+    if status_reason:
+        note_lines.append(f"Untestable — created in the graveyard: {status_reason}")
 
     with get_db() as conn:
         strategy_id, display_id, _ = create_strategy_container(
@@ -1655,6 +1652,7 @@ def create_lifecycle_strategy(body: LifecycleCreateBody):
             timeframe=body.timeframe or "1h",
             params=certification.canonical_params,
             stage=target_stage,
+            status_reason=status_reason,
         )
         conn.execute(
             "UPDATE strategies SET notes = ?, updated_at = ? WHERE id = ?",
@@ -1811,8 +1809,9 @@ def import_strategy_container(payload: object) -> dict:
 
     Validates the envelope, extracts the portable `configuration`, and routes it
     through the same certify → create path the lifecycle "create" endpoint uses
-    (uncertified params land in research_only; an unregistered code-class runtime
-    type is rejected outright). Never overwrites an existing container.
+    (uncertified params are created in the graveyard as untestable; an
+    unregistered code-class runtime type is rejected outright). Never overwrites an
+    existing container.
     """
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="import payload must be a JSON object")
@@ -1922,7 +1921,7 @@ def import_strategy_container(payload: object) -> dict:
 
 def _apply_import_attribution(new_id: str, source_id: str, source_ref: str | None) -> str | None:
     """Stamp source=import + an 'Imported from …' note on a freshly created
-    container, preserving any research-only reason already set. Returns its stage."""
+    container, preserving any untestable reason already set. Returns its stage."""
     stage = None
     with get_db() as conn:
         existing = conn.execute(

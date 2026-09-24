@@ -2358,7 +2358,7 @@ def _run_migrations(conn: sqlite3.Connection):
         "    WHEN 'developing' THEN 'quick_screen' "
         "    WHEN 'backtesting' THEN 'gauntlet' "
         "    WHEN 'gauntlet' THEN 'gauntlet' "
-        "    WHEN 'research_only' THEN 'research_only' "
+        "    WHEN 'research_only' THEN 'archived' "
         "    WHEN 'backtest_failed' THEN 'backtest_failed' "
         "    WHEN 'rejected' THEN 'rejected' "
         "    WHEN 'archived' THEN 'archived' "
@@ -4793,7 +4793,7 @@ def next_container_id(conn: sqlite3.Connection, prefix: str) -> str:
 def get_display_prefix(stage: str | None) -> str:
     """Return container display prefix based on stage."""
     normalized = str(stage or "").strip().lower()
-    if normalized in {"quick_screen", "research_only", "researching", "developing", "rejected"}:
+    if normalized in {"quick_screen", "researching", "developing", "rejected"}:
         return "S"
     if normalized in {"gauntlet", "backtesting", "paper", "paper_trading"}:
         return "B"
@@ -5134,12 +5134,16 @@ def create_strategy_container(
     parent_strategy_id: str | None = None,
     origin_task_id: str | None = None,
     sandbox_only: bool = False,
+    status_reason: str | None = None,
 ) -> tuple[str, str, int]:
     """Create a strategy container row with canonical immutable Sxxxxx IDs.
 
     If `parent_strategy_id` is provided, validates it exists and shares the
     same `hypothesis_id` as this new strategy — lineage cannot cross
     hypotheses. Raises ValueError on mismatch.
+
+    A strategy that cannot be fairly tested is created directly in the
+    graveyard (stage='archived') with an untestable `status_reason`.
     """
     # TRADE-MODE-1 (2026-07-06 audit): a class whose supported_trade_modes
     # excludes long_only was silently backtested long_only anyway — the
@@ -5312,9 +5316,9 @@ def create_strategy_container(
     stage_aliases = {
         "researching": "quick_screen",
         "developing": "quick_screen",
-        "research_only": "research_only",
-        "research-only": "research_only",
-        "researchonly": "research_only",
+        "research_only": "archived",
+        "research-only": "archived",
+        "researchonly": "archived",
         "backtesting": "gauntlet",
         "paper_trading": "paper",
         "papertrading": "paper",
@@ -5336,8 +5340,8 @@ def create_strategy_container(
     normalized_origin_task_id = str(origin_task_id or "").strip() or None
     conn.execute(
         "INSERT INTO strategies "
-        "(id, name, type, runtime_type, symbol, timeframe, params, status, stage, owner, hypothesis_id, base_id, display_id, last_prefix, model, model_id, source, source_ref, stage_changed_at, audit_summary, parent_strategy_id, origin_task_id, sandbox_only, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)",
+        "(id, name, type, runtime_type, symbol, timeframe, params, status, stage, owner, hypothesis_id, base_id, display_id, last_prefix, model, model_id, source, source_ref, stage_changed_at, audit_summary, parent_strategy_id, origin_task_id, sandbox_only, status_reason, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
         (
             final_strategy_id,
             generated_name,
@@ -5361,6 +5365,7 @@ def create_strategy_container(
             normalized_parent,
             normalized_origin_task_id,
             1 if sandbox_only else 0,
+            str(status_reason or "").strip() or None,
             now,
             now,
         ),

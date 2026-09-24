@@ -12,6 +12,9 @@ export interface ManagerRow {
 	symbol: string;
 	timeframe: string;
 	stage: string;
+	// `untestable:<code>: <why>` when the strategy was archived without a fair
+	// test (broken code, lookahead leak, missing data, not enough history).
+	status_reason: string | null;
 	source: string | null;
 	source_ref: string | null;
 	has_backtest_results: boolean;
@@ -281,6 +284,7 @@ export function parseManagerRow(raw: any, deletedAt?: string): ManagerRow {
 		symbol: String(raw.symbol || 'MULTI'),
 		timeframe: String(raw.timeframe || '1h'),
 		stage: String(raw.stage || raw.status || 'unknown'),
+		status_reason: typeof raw.status_reason === 'string' && raw.status_reason.trim() ? raw.status_reason : null,
 		source: raw.source ? String(raw.source) : null,
 		source_ref: raw.source_ref ? String(raw.source_ref) : null,
 		has_backtest_results: Boolean(raw.has_backtest_results ?? raw.best_backtest_result_id),
@@ -328,8 +332,9 @@ export function normalizeStage(value: string | null | undefined): string {
 		candidate: 'quick_screen',
 		generated: 'quick_screen',
 
-		// research_only
-		'research-only': 'research_only',
+		// Retired research_only ("Parked") lane: legacy spellings read as the graveyard.
+		research_only: 'archived',
+		'research-only': 'archived',
 		
 		// gauntlet
 		backtesting: 'gauntlet',
@@ -366,35 +371,34 @@ export function normalizeStage(value: string | null | undefined): string {
 	};
 
 	const mapped = aliases[normalized] || normalized;
-	const valid = new Set(['quick_screen', 'research_only', 'gauntlet', 'paper', 'live_graduated', 'archived', 'rejected', 'backtest_failed']);
+	const valid = new Set(['quick_screen', 'gauntlet', 'paper', 'live_graduated', 'archived', 'rejected', 'backtest_failed']);
 	return valid.has(mapped) ? mapped : 'quick_screen';
 }
 
 export function isArchivedStage(stage: string): boolean {
 	const normalized = normalizeStage(stage);
-	return (
-		normalized === 'archived' ||
-		normalized === 'rejected' ||
-		normalized === 'backtest_failed' ||
-		normalized === 'research_only'
-	);
+	return normalized === 'archived' || normalized === 'rejected' || normalized === 'backtest_failed';
 }
 
-export function isParkedStage(stage: string): boolean {
-	const normalized = normalizeStage(stage);
-	return normalized === 'backtest_failed' || normalized === 'research_only';
+const UNTESTABLE_PREFIX = 'untestable:';
+
+/** True when a graveyard row never got a fair test (not a merit failure). */
+export function isUntestable(row: { status_reason: string | null }): boolean {
+	return (row.status_reason ?? '').trim().toLowerCase().startsWith(UNTESTABLE_PREFIX);
 }
 
-export function isTrueArchivedStage(stage: string): boolean {
-	const normalized = normalizeStage(stage);
-	return normalized === 'archived' || normalized === 'rejected';
+/** The human-readable part of an untestable status_reason ("<why>"), or null. */
+export function untestableReason(row: { status_reason: string | null }): string | null {
+	if (!isUntestable(row)) return null;
+	const body = (row.status_reason ?? '').trim().slice(UNTESTABLE_PREFIX.length);
+	const split = body.indexOf(': ');
+	return (split >= 0 ? body.slice(split + 2) : body).trim() || null;
 }
 
 export function stageClass(stage: string): string {
 	const norm = normalizeStage(stage);
 	switch (norm) {
 		case 'quick_screen': return 'text-cyan-300 border-cyan-700 bg-cyan-900/20';
-		case 'research_only': return 'text-fuchsia-300 border-fuchsia-700 bg-fuchsia-900/20';
 		case 'gauntlet': return 'text-orange-300 border-orange-700 bg-orange-900/20';
 		case 'paper': return 'text-blue-300 border-blue-700 bg-blue-900/20';
 		case 'live_graduated': return 'text-emerald-300 border-emerald-700 bg-emerald-900/20';

@@ -24,7 +24,6 @@
 
 	const STAGE_RANK: Record<string, number> = {
 		quick_screen: 0,
-		research_only: 0,
 		gauntlet: 1,
 		paper: 2,
 		live_graduated: 3,

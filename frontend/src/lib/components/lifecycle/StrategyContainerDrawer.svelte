@@ -40,20 +40,18 @@
 	let taskDetailError = '';
 
 	const VALID_TRANSITIONS: Record<string, string[]> = {
-		researching: ['developing', 'research_only', 'rejected', 'archived'],
-		developing: ['backtesting', 'research_only', 'researching', 'rejected', 'archived'],
-		research_only: ['researching', 'rejected', 'archived'],
-		backtesting: ['paper_trading', 'research_only', 'developing', 'rejected', 'archived'],
+		researching: ['developing', 'rejected', 'archived'],
+		developing: ['backtesting', 'researching', 'rejected', 'archived'],
+		backtesting: ['paper_trading', 'developing', 'rejected', 'archived'],
 		paper_trading: ['deployed', 'backtesting', 'archived'],
 		deployed: ['paper_trading', 'developing', 'archived'],
-		archived: ['researching', 'research_only'],
-		rejected: ['researching', 'research_only', 'archived'],
+		archived: ['researching'],
+		rejected: ['researching', 'archived'],
 	};
 
 	const STAGE_LABELS: Record<string, string> = {
 		researching: 'Researching',
 		developing: 'Developing',
-		research_only: 'Research Only',
 		backtesting: 'Gauntlet',
 		paper_trading: 'Paper Trading',
 		deployed: 'Deployed',

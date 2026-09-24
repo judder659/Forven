@@ -1264,7 +1264,7 @@ def _queue_autonomous_research_follow_through_if_needed(
             f"Title: {str(hypothesis.get('title') or '').strip()}\n\n"
             "Create at least one linked strategy candidate for this hypothesis unless a tool call proves a concrete blocker.\n"
             "1. Use forven_create_strategy or register_strategy to create a linked strategy container.\n"
-            "2. Prefer quick_screen for testable candidates; use research_only only when runtime support is genuinely missing.\n"
+            "2. Create only testable candidates; if runtime support or data is genuinely missing, report the verified blocker instead of creating a strategy.\n"
             "3. Run at least one backtest for any created candidate, or cite the exact failing tool output.\n"
             "4. Do not claim funding data, backtest support, or registration is unavailable without verifying locally with tools first.\n"
             "5. Use the exact provided hypothesis_id/crucible_id; do not call create_hypothesis.\n"

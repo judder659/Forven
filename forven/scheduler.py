@@ -1766,14 +1766,14 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # cannot trade, and clog pipeline WIP caps.
         if kind == "orphan_type_scan":
             from forven.strategies.params import is_known_runtime_type
-            from forven.brain import transition_stage
+            from forven.brain import archive_untestable
 
             auto_demote = bool(payload.get("auto_demote", False))
             with get_db() as conn:
                 rows = conn.execute(
                     """
                     SELECT id, type, stage FROM strategies
-                    WHERE stage NOT IN ('archived', 'rejected', 'research_only')
+                    WHERE stage NOT IN ('archived', 'rejected', 'backtest_failed')
                     """,
                 ).fetchall()
 
@@ -1803,10 +1803,10 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                     for o in orphans:
                         try:
                             await _run_sync_job(
-                                transition_stage,
+                                archive_untestable,
                                 o["id"],
-                                "research_only",
-                                reason=(
+                                code="broken_code",
+                                detail=(
                                     f"orphan runtime type '{o['type']}': "
                                     "no registered class and not a known param family"
                                 ),
@@ -1816,11 +1816,11 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                             demoted += 1
                         except Exception as exc:
                             log.warning(
-                                "orphan_type_scan: could not demote %s: %s",
+                                "orphan_type_scan: could not archive %s: %s",
                                 o["id"],
                                 exc,
                             )
-                    log.info("orphan_type_scan: demoted %d/%d orphans to research_only", demoted, len(orphans))
+                    log.info("orphan_type_scan: archived %d/%d orphans as untestable", demoted, len(orphans))
             else:
                 log.info("orphan_type_scan: no orphan strategies found")
             return "ok", None

@@ -57,29 +57,17 @@ def test_tool_create_strategy_rejects_nontradable_payload_before_db_write():
     assert "can also be traded" in result
 
 
-def test_tool_create_strategy_allows_research_only_payload(monkeypatch):
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        "forven.ai.normalize_provider_and_model",
-        lambda model, model_id: (model, model_id),
-    )
-    monkeypatch.setattr(
-        "forven.agents.tools_research.assert_hypothesis_spawn_allowed",
-        lambda hypothesis_id: None,
-    )
-
-    def _fake_create_strategy(**kwargs):
-        captured.update(kwargs)
-        return {"id": "S00999", "status": "research_only"}
-
-    monkeypatch.setattr("forven.brain.create_strategy", _fake_create_strategy)
+def test_tool_create_strategy_research_only_flag_no_longer_bypasses_certification(monkeypatch):
+    # The research_only ("Parked") lane was retired: the old flag must not smuggle an
+    # uncertified payload into the database.
+    created: list[dict] = []
+    monkeypatch.setattr("forven.brain.create_strategy", lambda **kwargs: created.append(kwargs) or {})
 
     result = _tool_create_strategy(
         {
             "strategy_id": "rule-blob-2",
             "hypothesis_id": "HYP-123",
-            "name": "Research only rule blob",
+            "name": "Formerly research-only rule blob",
             "strategy_type": "rsi_momentum",
             "symbol": "BTC/USDT",
             "params": {
@@ -92,9 +80,8 @@ def test_tool_create_strategy_allows_research_only_payload(monkeypatch):
         }
     )
 
-    assert captured["research_only"] is True
-    assert captured["hypothesis_id"] == "HYP-123"
-    assert result == "Strategy created: S00999 (status: research_only, model: openai/gpt-5.2)"
+    assert result.startswith("Error creating strategy:")
+    assert created == []
 
 
 def test_tool_create_strategy_requires_hypothesis_id():

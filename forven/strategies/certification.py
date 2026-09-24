@@ -165,16 +165,29 @@ def classify_failure_tier(reason: str | None) -> tuple[int, str]:
 def resolve_initial_stage(certification: StrategyExecutionCertification) -> str:
     """Determine the correct initial stage for a new strategy container.
 
-    Returns ``"quick_screen"`` if the certification passed, ``"research_only"``
-    otherwise.  Strategies should never be created directly at gauntlet.
+    Returns ``"quick_screen"`` if the certification passed, ``"archived"``
+    otherwise: an uncertified strategy is created in the graveyard as untestable
+    (see ``certification_status_reason``). Strategies should never be created
+    directly at gauntlet.
     """
-    return "quick_screen" if certification.certified else "research_only"
+    return "quick_screen" if certification.certified else "archived"
+
+
+def certification_status_reason(certification: StrategyExecutionCertification) -> str | None:
+    """The untestable status_reason for an uncertified strategy, else None."""
+    if certification.certified:
+        return None
+    from forven.util import untestable_status_reason
+
+    code = "broken_code" if certification.unregistered_runtime_type else "uncertified"
+    return untestable_status_reason(code, certification.primary_blocking_reason() or "certification failed")
 
 
 __all__ = [
     "EXECUTION_CERTIFIED_FAMILIES",
     "FAILURE_TIERS",
     "StrategyExecutionCertification",
+    "certification_status_reason",
     "certify_execution_strategy",
     "classify_failure_tier",
     "resolve_initial_stage",

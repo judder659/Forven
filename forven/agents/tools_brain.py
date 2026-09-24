@@ -189,7 +189,7 @@ def _tool_assign_agent_task(params: dict) -> str:
     name="promote_strategy",
     description=(
         "Promote or retire a strategy to a new lifecycle status. "
-        "Valid statuses: quick_screen, research_only, gauntlet, paper, live_graduated, archived, rejected."
+        "Valid statuses: quick_screen, gauntlet, paper, live_graduated, archived, rejected."
     ),
     input_schema={
         "type": "object",
@@ -198,7 +198,7 @@ def _tool_assign_agent_task(params: dict) -> str:
             "new_status": {
                 "type": "string",
                 "description": "New status",
-                "enum": ["quick_screen", "research_only", "gauntlet", "paper", "live_graduated", "archived", "rejected"],
+                "enum": ["quick_screen", "gauntlet", "paper", "live_graduated", "archived", "rejected"],
             },
         },
         "required": ["strategy_id", "new_status"],
@@ -232,11 +232,10 @@ def _tool_promote_strategy(params: dict) -> str:
 @register_tool(
     name="create_strategy",
     description=(
-        "Create a new strategy in the database with status 'quick_screen' by default. The strategy type "
+        "Create a new strategy in the database with status 'quick_screen'. The strategy type "
         "must be backed by a registered runtime class and its params must be valid for it; anything else "
-        "is rejected, even with research_only=true. New logic needs a strategy module registered by "
-        "strategy-developer. Canonical param names get automatic alias resolution for chart overlays. "
-        "Set research_only=true to store an experimental strategy outside the tradable pipeline."
+        "is rejected. New logic needs a strategy module registered by "
+        "strategy-developer. Canonical param names get automatic alias resolution for chart overlays."
     ),
     input_schema={
         "type": "object",
@@ -257,10 +256,6 @@ def _tool_promote_strategy(params: dict) -> str:
             "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs are accepted"},
             "timeframe": {"type": "string", "description": "Timeframe: 1h, 4h, 1d (default: 1h)"},
             "notes": {"type": "string", "description": "Notes about the strategy hypothesis"},
-            "research_only": {
-                "type": "boolean",
-                "description": "Store the strategy in the non-tradable research_only lane instead of quick_screen.",
-            },
             "model": {"type": "string", "description": "AI provider that created this strategy (auto-detected if omitted)"},
             "model_id": {"type": "string", "description": "AI model ID that created this strategy (auto-detected if omitted)"},
         },
@@ -307,7 +302,6 @@ def _tool_create_strategy(params: dict) -> str:
         except Exception:
             pass
 
-    research_only = bool(params.get("research_only"))
     agent_id = str(_current_agent_id_var.get() or "").strip()
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
     validation = validate_candidate_strategy_creation(crucible_id, agent_id, task_display_id, hypothesis_id)
@@ -321,8 +315,8 @@ def _tool_create_strategy(params: dict) -> str:
         params.get("params"),
     )
     certification_error = certification.format_error(context="creation")
-    # Orphan runtime types are always rejected — even research_only can't use
-    # them because nothing downstream can execute, optimize, or promote them.
+    # Orphan runtime types get their own message: nothing downstream can
+    # execute, optimize, or promote them.
     if certification.unregistered_runtime_type:
         requested = str(params.get("strategy_type") or "").strip()
         suggestions = _suggest_known_families(requested)
@@ -337,7 +331,7 @@ def _tool_create_strategy(params: dict) -> str:
             "inventing a new one — do not claim the strategy was created."
             + suggestion_hint
         )
-    if certification_error and not research_only:
+    if certification_error:
         return f"Error creating strategy: {certification_error}"
 
     try:
@@ -356,7 +350,6 @@ def _tool_create_strategy(params: dict) -> str:
         notes=params.get("notes", ""),
         model=strat_model,
         model_id=strat_model_id,
-        research_only=research_only,
         origin_crucible_id=crucible_id if agent_id else None,
         origin_agent_id=agent_id or None,
         origin_task_id=task_display_id or None,

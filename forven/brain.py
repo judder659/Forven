@@ -38,7 +38,7 @@ from forven.workspace import (
     append_workspace,
     today_memory_path,
 )
-from forven.util import normalize_stage
+from forven.util import is_untestable_reason, normalize_stage, untestable_status_reason
 from forven.dethrone_cooldown import clear_dethrone_cooldown, dethrone_cooldown_active_until
 from forven.policy import evaluate_promotion, load_pipeline_config
 from forven.strategies.certification import certify_execution_strategy
@@ -59,16 +59,15 @@ log = logging.getLogger("forven.brain")
 from forven.roster import STAGE_TO_AGENT, normalize_strategy_owner as _roster_normalize_strategy_owner
 
 VALID_TRANSITIONS = {
-    "quick_screen": {"gauntlet", "research_only", "archived", "rejected", "backtest_failed"},
-    "research_only": {"quick_screen", "archived", "rejected"},
-    "gauntlet": {"paper", "archived", "rejected", "quick_screen", "research_only", "backtest_failed"},
+    "quick_screen": {"gauntlet", "archived", "rejected", "backtest_failed"},
+    "gauntlet": {"paper", "archived", "rejected", "quick_screen", "backtest_failed"},
     "paper": {"live_graduated", "archived", "gauntlet", "backtest_failed"},
     "live_graduated": {"archived", "paper", "backtest_failed"},
-    "archived": {"quick_screen", "research_only"},
+    "archived": {"quick_screen"},
     # Manual recovery: user can move rejected back to paper, but gates still apply.
     # Only user actors (api/manual/ui) can force-bypass gates.
-    "rejected": {"quick_screen", "research_only", "archived", "paper"},
-    "backtest_failed": {"quick_screen", "research_only", "archived"},
+    "rejected": {"quick_screen", "archived", "paper"},
+    "backtest_failed": {"quick_screen", "archived"},
 }
 
 NEXT_STAGE = {
@@ -128,7 +127,6 @@ def params_write_blocked(stage, actor) -> bool:
     return stage_is_param_locked(stage) and str(actor or "").strip().lower() not in _USER_ACTORS
 _STAGE_PROGRESS_RANK = {
     "quick_screen": 0,
-    "research_only": 0,
     "gauntlet": 1,
     "paper": 2,
     "live_graduated": 3,
@@ -437,7 +435,6 @@ class BrainTransitionAction(BaseModel):
     strategy_id: str = Field(min_length=1)
     to_stage: Literal[
         "quick_screen",
-        "research_only",
         "gauntlet",
         "paper",
         "live_graduated",
@@ -1492,6 +1489,22 @@ def transition_stage(
 
         current_stage = _normalize_stage(row["stage"] or row["status"]) or "quick_screen"
 
+        # Untestable archive (evidence merit=False): the strategy never got a fair
+        # test — its code cannot run, it reads future bars, its data is missing,
+        # or validation cannot gather enough history. It goes to the graveyard
+        # like any archive, but it is not a merit verdict: ghost protection,
+        # failure post-mortems and negative outcome feedback are skipped, and
+        # status_reason records why so the Forge can show it.
+        untestable_reason: str | None = None
+        if (
+            normalized_target == "archived"
+            and isinstance(evidence, dict)
+            and evidence.get("merit") is False
+        ):
+            untestable_reason = str(evidence.get("status_reason") or "").strip() or (
+                untestable_status_reason("unspecified", reason)
+            )
+
         # NOTE: the "container exists" pipeline-audit write is deliberately
         # deferred to the success path (just before the strategies UPDATE below).
         # Writing it here would (a) acquire the single WAL writer lock at the top
@@ -1641,6 +1654,24 @@ def transition_stage(
                     "verification_failure",
                 )
 
+        # Recovering an UNTESTABLE strategy from the graveyard re-runs the checks
+        # every fresh strategy passes at intake (certification, data availability,
+        # lookahead). Without them Recover would put code that cannot run — or code
+        # that reads future bars and so scores impossibly well — straight back into
+        # quick_screen. Operator force bypasses, like the other admission gates.
+        if (
+            not force
+            and current_stage in _TERMINAL_TASK_STAGES
+            and normalized_target == "quick_screen"
+            and is_untestable_reason(row["status_reason"])
+        ):
+            reentry_block = _untestable_reentry_block(strategy_id, row)
+            if reentry_block:
+                return _record_blocked_transition(
+                    f"Still untestable: {reentry_block}",
+                    "untestable_reentry_blocked",
+                )
+
         # RUNTIME LOADABILITY GATE: a strategy whose runtime type cannot load
         # can never produce a paper/live signal — admitting it just creates a
         # blocked session that rots in the stage forever (trade/duration gates
@@ -1708,7 +1739,7 @@ def transition_stage(
         # transitions and for operator-forced moves. The paper cap is also lifted when
         # slot-competition is disabled (the default) — that mode intentionally promotes
         # every gauntlet-passing strategy with no cap on how many may paper-trade.
-        _wip_skip_stages = {"archived", "rejected", "backtest_failed", "quick_screen", "research_only"}
+        _wip_skip_stages = {"archived", "rejected", "backtest_failed", "quick_screen"}
         if normalized_target == "paper":
             from forven.policy import _paper_slot_competition_enabled
             if not _paper_slot_competition_enabled():
@@ -1800,7 +1831,7 @@ def transition_stage(
                     )
 
             # GAUNTLET ENTRY GUARDRAILS: Run stricter checks for non-quick_screen
-            # sources (e.g. research_only re-entry, demotion recovery).
+            # sources (e.g. graveyard re-entry, demotion recovery).
             # Skip for quick_screen → gauntlet: the overfitting guardrails above
             # and policy.py's _evaluate_quick_screen_gate() already screen these.
             # The gauntlet entry guardrails require robustness ≥ 60 and 100+ trades,
@@ -1940,7 +1971,7 @@ def transition_stage(
         new_display = update_display_id(conn, strategy_id, normalized_target, row["base_id"])
         transition_metrics_raw = row["metrics"]
         event_reason = str(reason or "").strip()
-        failure_transition = _is_failure_transition(
+        failure_transition = untestable_reason is None and _is_failure_transition(
             current_stage=current_stage,
             target_stage=normalized_target,
             actor=actor,
@@ -1959,16 +1990,22 @@ def transition_stage(
             current_demotion_count = int(row["demotion_count"] or 0) if "demotion_count" in row.keys() else 0
             new_demotion_count = current_demotion_count + 1
             if new_demotion_count >= 3:
-                # Redirect to research_only instead of quick_screen
-                normalized_target = "research_only"
-                event_reason = f"Max retries exceeded ({new_demotion_count} demotions) — routed to research_only"
-                conn.execute(
-                    "UPDATE strategies SET demotion_count = ?, status_reason = ? WHERE id = ?",
-                    (new_demotion_count, "max_retries_exceeded", strategy_id),
+                # Three demotions without producing evidence: archive as untestable
+                # instead of bouncing back into quick_screen.
+                normalized_target = "archived"
+                new_owner = STAGE_TO_AGENT.get(normalized_target)
+                event_reason = f"Max retries exceeded ({new_demotion_count} demotions) — archived as untestable"
+                untestable_reason = untestable_status_reason(
+                    "max_demotions",
+                    f"demoted out of the gauntlet {new_demotion_count} times without producing evidence",
                 )
-                log.info("DEMOTION THRASH: %s redirected to research_only after %d demotions", strategy_id, new_demotion_count)
+                conn.execute(
+                    "UPDATE strategies SET demotion_count = ? WHERE id = ?",
+                    (new_demotion_count, strategy_id),
+                )
+                log.info("DEMOTION THRASH: %s archived as untestable after %d demotions", strategy_id, new_demotion_count)
                 # Defer activity log to after transaction completes
-                force_activity_message = f"Strategy {strategy_id} routed to research_only after {new_demotion_count} gauntlet demotions (max retries)"
+                force_activity_message = f"Strategy {strategy_id} archived as untestable after {new_demotion_count} gauntlet demotions (max retries)"
             else:
                 conn.execute(
                     "UPDATE strategies SET demotion_count = ? WHERE id = ?",
@@ -2014,9 +2051,13 @@ def transition_stage(
                 "SELECT canonical FROM strategies WHERE id = ?", (strategy_id,),
             ).fetchone()
             if canonical_row and canonical_row["canonical"]:
+                # An untestable strategy holds no verified edge to protect; blocking
+                # its archive would leave the caller retrying every cycle (e.g. the
+                # gauntlet evidence deferral re-selects the same blocked row).
                 may_retire_canonical = (
                     actor.lower() == "decay_tracker"
                     or (force and actor.lower() in _USER_ACTORS)
+                    or untestable_reason is not None
                 )
                 if not may_retire_canonical:
                     return _record_blocked_transition(
@@ -2038,8 +2079,10 @@ def transition_stage(
         # `rejected` uses the evidence-only variant (no fitness-key requirement —
         # gate-failure rejects legitimately carry metrics but no scored fitness).
         # Real losing metrics still reject normally; a stuck no-metrics strategy is
-        # reaped by the 7-day quick_screen stale sweep.
-        if normalized_target == "archived" and not force:
+        # reaped by the 7-day quick_screen stale sweep. An untestable archive is
+        # exempt: it records that no fair test was possible, so missing metrics are
+        # expected rather than a sign of a ghost container.
+        if normalized_target == "archived" and not force and untestable_reason is None:
             can_archive, error_msg = verify_fitness_before_archive(strategy_id)
             if not can_archive:
                 return _record_blocked_transition(
@@ -2097,7 +2140,7 @@ def transition_stage(
 
         reset_terminal_metrics = (
             current_stage in _TERMINAL_TASK_STAGES
-            and normalized_target in {"quick_screen", "research_only"}
+            and normalized_target == "quick_screen"
         )
 
         # Deferred from the top of the function: record the container transition
@@ -2135,7 +2178,7 @@ def transition_stage(
                 notes = ?,
                 metrics = CASE WHEN ? THEN NULL ELSE metrics END,
                 verdict = CASE WHEN ? THEN NULL ELSE verdict END,
-                status_reason = CASE WHEN ? THEN NULL ELSE status_reason END,
+                status_reason = CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE status_reason END,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -2148,6 +2191,8 @@ def transition_stage(
                 int(reset_terminal_metrics),
                 int(reset_terminal_metrics),
                 int(reset_terminal_metrics),
+                untestable_reason,
+                untestable_reason,
                 now,
                 strategy_id,
             ),
@@ -2178,7 +2223,11 @@ def transition_stage(
                     {
                         "display_id": new_display,
                         "base_id": row["base_id"],
-                        "motion": "failure" if failure_transition else "lifecycle_transition",
+                        "motion": (
+                            "untestable" if untestable_reason
+                            else "failure" if failure_transition
+                            else "lifecycle_transition"
+                        ),
                         "force": force_transition,
                         "execution_validation": execution_validation,
                     }
@@ -2516,31 +2565,30 @@ def transition_stage(
 
     # P1-T07: backfill brain_decisions.outcome_observed when this transition
     # is terminal. Best-effort — never let a missing decision link block the
-    # transition itself.
-    try:
-        from forven.brain_decisions import backfill_outcome_for_strategy
+    # transition itself. An untestable archive is not an outcome: the strategy
+    # was never fairly tested, so the decision that produced it stays open.
+    if untestable_reason is None:
+        try:
+            from forven.brain_decisions import backfill_outcome_for_strategy
 
-        backfill_outcome_for_strategy(strategy_id, normalized_target)
-    except Exception:  # noqa: BLE001
-        log.warning(
-            "brain_decisions: outcome backfill failed for %s -> %s",
-            strategy_id, normalized_target, exc_info=True,
-        )
+            backfill_outcome_for_strategy(strategy_id, normalized_target)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "brain_decisions: outcome backfill failed for %s -> %s",
+                strategy_id, normalized_target, exc_info=True,
+            )
 
     # P3-T09: skill outcome closure. Fail-open — bugs in outcome closure must
     # never roll back the transition itself. Skipped on operator force-moves
-    # because they reflect manual judgment, not skill-driven outcomes.
+    # because they reflect manual judgment, not skill-driven outcomes, and on
+    # untestable archives, which carry no evidence about the skill.
     skip_outcome_closure = bool(force) and actor.lower() in _USER_ACTORS
     if not skip_outcome_closure:
         outcome_kind: str | None = None
         if (
-            normalized_target in {"archived", "rejected", "research_only"}
+            normalized_target in {"archived", "rejected"}
             and current_stage in {"paper", "gauntlet", "live_graduated"}
-            and not (
-                normalized_target == "research_only"
-                and actor == "gauntlet_evidence_deferral"
-                and isinstance(evidence, dict) and evidence.get("merit") is False
-            )
+            and untestable_reason is None
         ):
             outcome_kind = "negative"
         elif normalized_target == "live_graduated":
@@ -3683,12 +3731,12 @@ def _check_param_sanity(params: dict) -> tuple[bool, str]:
 def create_strategy(
     strategy_id: str, name: str, strategy_type: str, symbol: str,
     params: dict, timeframe: str = "1h", notes: str = "", owner: str | None = None,
-    model: str | None = None, model_id: str | None = None, research_only: bool = False,
+    model: str | None = None, model_id: str | None = None,
     hypothesis_id: str | None = None,
     origin_crucible_id: str | None = None, origin_agent_id: str | None = None,
     origin_task_id: str | None = None, origin_model: str | None = None,
 ) -> dict:
-    """Create a new strategy container in quick_screen or research_only."""
+    """Create a new strategy container in quick_screen."""
     normalized_hypothesis_id = str(hypothesis_id or "").strip()
     if not normalized_hypothesis_id:
         return {"error": "hypothesis_id is required for all new strategies"}
@@ -3711,14 +3759,13 @@ def create_strategy(
     # Strip position-sizing params that the backtest engine cannot handle
     # (risk_pct, risk_per_trade etc. belong in paper/live risk engine only)
     # Pipeline saturation gate — refuse new strategies when pipeline is overloaded
-    if not research_only:
-        try:
-            from forven.lab_features import is_pipeline_saturated
-            saturated, active_count, sat_reason = is_pipeline_saturated()
-            if saturated:
-                return {"error": f"Pipeline saturated ({active_count} active strategies). Drain existing backlog before creating new ones."}
-        except Exception:
-            pass
+    try:
+        from forven.lab_features import is_pipeline_saturated
+        saturated, active_count, sat_reason = is_pipeline_saturated()
+        if saturated:
+            return {"error": f"Pipeline saturated ({active_count} active strategies). Drain existing backlog before creating new ones."}
+    except Exception:
+        pass
 
     _BACKTEST_UNSUPPORTED = {"risk_pct", "risk_per_trade", "position_size", "fixed_size"}
     canonical_params = {k: v for k, v in canonical_params.items() if k not in _BACKTEST_UNSUPPORTED}
@@ -3742,7 +3789,7 @@ def create_strategy(
                         pass
 
     with get_db() as conn:
-        target_stage = "research_only" if research_only else "quick_screen"
+        target_stage = "quick_screen"
         created_id, display_id, _ = create_strategy_container(
             conn=conn,
             name=name,
@@ -4165,7 +4212,7 @@ def _reentry_lookahead_verdict(
 ) -> tuple[str | None, str | None]:
     """Re-probe causality on lifecycle re-entry: ``(rejection_reason, inconclusive_reason)``.
 
-    Lifecycle re-entry (research recovery) safety net: the lookahead / data-leak
+    Lifecycle re-entry (graveyard recovery) safety net: the lookahead / data-leak
     probe runs at registration intake but not on re-entry, so a recovered
     strategy would otherwise skip the causality check every fresh strategy passes.
 
@@ -4211,7 +4258,7 @@ def _reentry_lookahead_verdict(
             return reason, None
         return None, lookahead_probe.probe_lookahead(probe).inconclusive
     except Exception as exc:  # never block a recovery on a probe-infrastructure fault
-        log.debug("Research recovery lookahead re-probe inconclusive for %s", strategy_id, exc_info=True)
+        log.debug("Re-entry lookahead re-probe inconclusive for %s", strategy_id, exc_info=True)
         return None, f"lookahead re-probe could not run: {type(exc).__name__}: {exc}"
 
 
@@ -4227,134 +4274,93 @@ def _reentry_lookahead_reason(strategy_id: str, strategy_type: str, params: dict
     return reason
 
 
-def try_research_recovery(strategy_id: str) -> dict:
-    """Re-certify a research_only strategy and promote to quick_screen if it passes.
+def _untestable_reentry_block(strategy_id: str, row) -> str | None:
+    """Why an untestable strategy still cannot re-enter quick_screen, or None.
 
-    Returns a dict with ``promoted`` (bool) and ``reason``.
+    Re-runs the intake admission checks: certification, data availability and
+    the lookahead probe (LOOKAHEAD-REENTRY-1 — a future-bar leak makes IS and
+    OOS both look excellent, so the probe is the primary catch). The data check
+    never fetches; like the create route it only blocks on a feed that cannot be
+    downloaded, leaving fetchable gaps to the backtest precheck. Probe
+    INFRASTRUCTURE faults stay inconclusive and do not block.
+
+    A sandbox-only (imported / drop-zone) class never loads in this process, so
+    a parent-side probe would compare nothing and pass. Those strategies are
+    re-validated inside the sandbox worker exactly as at registration — the old
+    research_only recovery skipped that and revived lookahead-flagged drop-zone
+    strategies (S05661, S06155) within minutes of registration.
     """
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id, stage, type, params, symbol, timeframe FROM strategies WHERE id = ?",
-            (strategy_id,),
-        ).fetchone()
-        if not row:
-            return {"promoted": False, "reason": "not_found"}
-        if (row["stage"] or "").strip().lower() != "research_only":
-            return {"promoted": False, "reason": "not_research_only"}
+    from forven.strategies.registry import IMPORTED_TYPE_PREFIX
 
-        import json as _json
-        params = {}
+    runtime_type = str(row["runtime_type"] or "")
+    if runtime_type.startswith(IMPORTED_TYPE_PREFIX):
         try:
-            params = _json.loads(row["params"]) if row["params"] else {}
-        except Exception:
-            pass
+            from forven.sandbox.strategy_worker import validate_custom_module_isolated
 
-        cert = certify_execution_strategy(row["type"], params)
-        if not cert.certified:
-            # Classify failure and store
-            from forven.strategies.certification import classify_failure_tier
-            tier, canonical = classify_failure_tier(cert.primary_blocking_reason())
-            conn.execute(
-                "UPDATE strategies SET status_reason = ? WHERE id = ?",
-                (f"tier{tier}:{canonical}", strategy_id),
-            )
-            return {"promoted": False, "reason": cert.primary_blocking_reason()}
-        strategy_type = str(row["type"] or "")
-        strategy_symbol = str(row["symbol"] or "BTC").strip() or "BTC"
-        strategy_timeframe = str(row["timeframe"] or "1h").strip() or "1h"
+            meta = validate_custom_module_isolated(runtime_type[len(IMPORTED_TYPE_PREFIX):], package="imported")
+        except Exception as exc:
+            return f"sandbox validation unavailable: {exc}"
+        if not meta.get("ok"):
+            return f"sandbox validation failed: {meta.get('error') or 'unknown error'}"
+        if meta.get("lookahead_blocked"):
+            return str(meta.get("lookahead_reason") or "lookahead detected")
+        if meta.get("execution_crash_reason"):
+            return str(meta["execution_crash_reason"])
+        if not meta.get("certified"):
+            return str(meta.get("cert_error") or "certification failed")
+        return None
 
-    # Data-availability gate: certification only proves the CLASS executes; a
-    # strategy parked because its required feed doesn't exist would otherwise
-    # re-certify instantly and bounce back into quick_screen while still
-    # untestable (S05838 was un-parked 18s after the brain parked it,
-    # 2026-07-04). Runs outside the DB context — the probe may synchronously
-    # auto-fetch fetchable feeds. A probe error is not evidence that the feed is
-    # available, so recovery remains parked until the precondition can be checked.
+    try:
+        params = json.loads(row["params"]) if row["params"] else {}
+    except (TypeError, ValueError):
+        params = {}
+    if not isinstance(params, dict):
+        params = {}
+    strategy_type = str(row["type"] or "")
+
+    cert = certify_execution_strategy(strategy_type, params)
+    if not cert.certified:
+        return cert.primary_blocking_reason() or "certification failed"
+
     try:
         from forven.strategies.data_availability import evaluate_data_availability
 
-        _avail = evaluate_data_availability(
+        avail = evaluate_data_availability(
             strategy_type,
-            strategy_symbol,
-            strategy_timeframe,
+            str(row["symbol"] or "BTC").strip() or "BTC",
+            str(row["timeframe"] or "1h").strip() or "1h",
             strategy_id=strategy_id,
+            auto_fetch=False,
         )
     except Exception as exc:
-        log.warning("Research recovery data-availability probe errored for %s: %s", strategy_id, exc)
-        block_reason = f"data-availability check unavailable: {exc}"
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET status_reason = ? WHERE id = ?",
-                (f"data_check_error: {block_reason[:400]}", strategy_id),
-            )
-        return {"promoted": False, "reason": block_reason}
-    if _avail is not None and _avail.blocked:
-        block_reason = _avail.error or "required data feed unavailable"
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET status_reason = ? WHERE id = ?",
-                (f"data_blocked: {block_reason[:400]}", strategy_id),
-            )
-        return {"promoted": False, "reason": block_reason}
+        return f"data-availability check unavailable: {exc}"
+    if avail.blocked and (avail.missing_unfetchable or not avail.missing_fetchable):
+        return avail.error or "required data feed unavailable"
 
-    # LOOKAHEAD-REENTRY-1: the lookahead / data-leak probe runs at registration
-    # intake but NOT on lifecycle re-entry — so a strategy parked to research_only
-    # and later recovered would re-enter quick_screen WITHOUT the causality check
-    # that gates first-time entry. A future-bar leak (e.g. .shift(-1)) makes both
-    # IS and OOS slices amazing, defeating the overfit/win-rate-trap detectors, so
-    # the probe is the primary catch. Re-probe here, at the same choke point that
-    # already re-runs certification + data availability, so recovery cannot smuggle
-    # a leaking strategy past a check every fresh strategy must pass.
-    lookahead_reason, lookahead_inconclusive = _reentry_lookahead_verdict(
-        strategy_id, strategy_type, params
-    )
-    if lookahead_reason:
-        # A leak / strategy-authoring fault is a QUARANTINE reason, not a
-        # repeated-failure archive count — park with a tier-classified reason,
-        # mirroring the certification-failure branch above. Probe INFRASTRUCTURE
-        # faults never reach here: they come back as `inconclusive`, not as a
-        # reason, so an environmental probe crash stays inconclusive/retryable
-        # (recovery is re-attempted on the next sweep) rather than a rejection.
-        from forven.strategies.certification import classify_failure_tier
-        tier, canonical = classify_failure_tier(lookahead_reason)
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET status_reason = ? WHERE id = ?",
-                (f"lookahead_blocked:tier{tier}:{canonical}", strategy_id),
-            )
-        log.warning(
-            "Research recovery: NOT reviving %s — lookahead re-probe rejected: %s",
-            strategy_id, lookahead_reason,
-        )
-        return {"promoted": False, "reason": lookahead_reason}
+    lookahead_reason, _inconclusive = _reentry_lookahead_verdict(strategy_id, strategy_type, params)
+    return lookahead_reason or None
 
-    # lookahead-probe-vacuous-pass: the probe did not reject, but it may have
-    # compared NOTHING. Revival proceeds either way (quiet on synthetic data is not
-    # evidence of a leak), but the transition reason must not claim a causality
-    # check that never happened — this string is the audit trail an operator reads
-    # when asking why a graveyard strategy is back in the funnel.
-    if lookahead_inconclusive:
-        transition_reason = (
-            "Research recovery: re-certification passed (causality NOT verified — "
-            f"{str(lookahead_inconclusive)[:200]})"
-        )
-        log.warning(
-            "Research recovery: reviving %s with an UNVERIFIED causality check: %s",
-            strategy_id, lookahead_inconclusive,
-        )
-    else:
-        transition_reason = "Research recovery: re-certification passed"
 
-    # Certification + data availability + causality passed — promote via transition_stage
-    result = transition_stage(
+def archive_untestable(
+    strategy_id: str,
+    *,
+    code: str,
+    detail: str,
+    actor: str,
+    force: bool = False,
+) -> dict[str, str | None]:
+    """Move a strategy that could not be fairly tested into the graveyard.
+
+    Untestable is not a merit failure (see transition_stage): the archive skips
+    ghost protection, failure post-mortems and negative outcome feedback, and
+    records ``status_reason = untestable:<code>: <detail>`` for the Forge.
+    """
+    status_reason = untestable_status_reason(code, detail)
+    return transition_stage(
         strategy_id=strategy_id,
-        target_stage="quick_screen",
-        reason=transition_reason,
-        actor="system",
+        target_stage="archived",
+        reason=f"Untestable ({code}): {detail}"[:500],
+        actor=actor,
+        force=force,
+        evidence={"merit": False, "reason_code": f"untestable:{code}", "status_reason": status_reason},
     )
-    return {
-        "promoted": result.get("to") == "quick_screen",
-        "reason": "re-certified",
-        "lookahead_verifiable": not lookahead_inconclusive,
-        "lookahead_inconclusive_reason": lookahead_inconclusive,
-    }

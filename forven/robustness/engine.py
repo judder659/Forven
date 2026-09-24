@@ -2506,7 +2506,7 @@ def _has_paper_readiness_artifacts(strategy_id: str) -> bool:
 
 
 def _reconcile_stage_after_validation(strategy_id: str) -> None:
-    from forven.brain import transition_stage, try_research_recovery
+    from forven.brain import transition_stage
     from forven.db import get_db
     from forven.policy import evaluate_promotion, load_pipeline_config
     from forven.util import normalize_stage
@@ -2519,14 +2519,6 @@ def _reconcile_stage_after_validation(strategy_id: str) -> None:
     current_stage = normalize_stage(row["stage"] or row["status"]) or "quick_screen"
     if current_stage in {"archived", "rejected", "paper", "live_graduated", "backtest_failed"}:
         return
-
-    if current_stage == "research_only":
-        recovery = try_research_recovery(strategy_id)
-        if not recovery.get("promoted"):
-            return
-        with get_db() as conn:
-            row = conn.execute("SELECT stage, status FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-        current_stage = normalize_stage(row["stage"] or row["status"]) if row else current_stage
 
     if current_stage == "quick_screen":
         transition = transition_stage(

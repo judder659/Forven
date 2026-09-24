@@ -529,7 +529,7 @@ async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict
                 conn=conn,
             )
         if data_blocked:
-            _park_data_blocked_strategy(strategy_id, error_text)
+            _archive_data_blocked_strategy(strategy_id, error_text)
         return safe_output if isinstance(safe_output, dict) else output
 
     with get_db() as conn:
@@ -564,39 +564,35 @@ async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict
     return safe_output if isinstance(safe_output, dict) else output
 
 
-def _park_data_blocked_strategy(strategy_id: str, reason: str) -> None:
-    """Move a strategy whose required data feed is unavailable to research_only.
+def _archive_data_blocked_strategy(strategy_id: str, reason: str) -> None:
+    """Archive a strategy whose required data or class is unavailable as untestable.
 
     A data-blocked candidate can never produce a trading backtest, so leaving
     it in quick_screen just burns planner cycles re-scheduling backtests that
-    the availability precheck will always abort. research_only is the revival
-    parking stage: try_research_recovery re-checks data availability and
-    promotes it back if the feed ever appears. Best-effort — failures only log.
+    the availability precheck will always abort. It goes to the graveyard as
+    untestable (not a merit failure); Recover re-checks availability before
+    letting it back in. Best-effort — failures only log.
     """
-    from forven.db import get_db, log_activity
+    from forven.db import log_activity
 
+    code = "broken_code" if "could not be resolved" in reason else "no_data"
     try:
-        from forven.brain import transition_stage
+        from forven.brain import archive_untestable
 
-        transition = transition_stage(
+        transition = archive_untestable(
             strategy_id,
-            "research_only",
-            reason=f"Data-blocked: {reason[:300]}",
+            code=code,
+            detail=reason[:400],
             actor="system",
         )
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET status_reason = ? WHERE id = ?",
-                (f"data_blocked: {reason[:400]}", strategy_id),
-            )
         log_activity(
             "warning",
             "runtime_worker",
-            f"Parked data-blocked strategy {strategy_id} in research_only",
+            f"Archived data-blocked strategy {strategy_id} as untestable",
             {"strategy_id": strategy_id, "transition": transition, "reason": reason[:300]},
         )
     except Exception as exc:
-        log.warning("Could not park data-blocked strategy %s: %s", strategy_id, exc)
+        log.warning("Could not archive data-blocked strategy %s: %s", strategy_id, exc)
 
 
 def _get_bot_lock_status() -> dict:

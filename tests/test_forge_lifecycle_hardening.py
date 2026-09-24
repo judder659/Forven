@@ -181,25 +181,31 @@ def test_concurrent_identical_promotions_commit_once(forven_db, monkeypatch):
     assert events["count"] == 1
 
 
-def test_research_recovery_data_check_error_stays_parked(forven_db, monkeypatch):
+def test_untestable_recovery_data_check_error_stays_archived(forven_db, monkeypatch):
     from forven.strategies import data_availability
 
     strategy_id = "forge-recovery-data"
-    _insert_strategy(strategy_id, stage="research_only")
+    _insert_strategy(strategy_id, stage="archived")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET status_reason = 'untestable:no_data: feed missing' WHERE id = ?",
+            (strategy_id,),
+        )
     monkeypatch.setattr(
         data_availability,
         "evaluate_data_availability",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("feed catalog unavailable")),
     )
 
-    result = brain.try_research_recovery(strategy_id)
+    result = brain.transition_stage(strategy_id, "quick_screen", reason="Recover", actor="api")
 
-    assert result["promoted"] is False
-    assert "data-availability check unavailable" in result["reason"]
+    assert result["to"] == "archived"
+    assert result["reason_code"] == "untestable_reentry_blocked"
+    assert "data-availability check unavailable" in result["blocked_reason"]
     with get_db() as conn:
         row = conn.execute(
             "SELECT stage, status_reason FROM strategies WHERE id = ?",
             (strategy_id,),
         ).fetchone()
-    assert row["stage"] == "research_only"
-    assert row["status_reason"].startswith("data_check_error:")
+    assert row["stage"] == "archived"
+    assert row["status_reason"] == "untestable:no_data: feed missing"

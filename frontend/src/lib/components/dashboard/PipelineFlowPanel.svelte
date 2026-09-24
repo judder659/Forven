@@ -24,7 +24,7 @@
 
 	// Canonical funnel order; raw lifecycle states map onto these buckets.
 	const BUCKETS: Array<{ key: string; label: string; states: string[] }> = [
-		{ key: 'research', label: 'research', states: ['generated', 'quick_screen', 'researching', 'research_only', 'developing'] },
+		{ key: 'research', label: 'research', states: ['generated', 'quick_screen', 'researching', 'developing'] },
 		{ key: 'gauntlet', label: 'gauntlet', states: ['backtesting', 'gauntlet'] },
 		{ key: 'paper', label: 'paper', states: ['paper', 'paper_trading'] },
 		{ key: 'live', label: 'live', states: ['deployed', 'live_graduated'] },

@@ -23,7 +23,7 @@ Start with a falsifiable hypothesis: the mechanism, market/timeframe, required i
 
 Use real hypothesis/Crucible IDs before candidate creation and real Strategy Container IDs after registration. A container has a durable identity and versioned evidence; code and parameters are subject to the supported revision rules. An older attempt does not validate a later thesis or changed implementation.
 
-Canonical progression is `quick_screen -> gauntlet -> paper -> live_graduated`, with `research_only`, `rejected`, and `archived` where applicable. Quick-screen and gauntlet work belong to validation, paper/live oversight to risk-manager. Read current gate reports and policy; no fixed score, test list, or metric from this document overrides them. Real paper evidence is required before live graduation. Graduation, deployment authorization, and actual execution are distinct.
+Canonical progression is `quick_screen -> gauntlet -> paper -> live_graduated`, with `rejected` and `archived` where applicable; a strategy that cannot be fairly tested is archived as untestable (not a merit failure). Quick-screen and gauntlet work belong to validation, paper/live oversight to risk-manager. Read current gate reports and policy; no fixed score, test list, or metric from this document overrides them. Real paper evidence is required before live graduation. Graduation, deployment authorization, and actual execution are distinct.
 
 ## Non-negotiable controls
 

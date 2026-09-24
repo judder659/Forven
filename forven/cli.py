@@ -341,7 +341,7 @@ def strategies_triage_stale(days: int, do_apply: bool) -> None:
 
 @strategies.command("triage-orphans")
 @click.option("--apply", "do_apply", is_flag=True, default=False,
-              help="Actually demote orphans to research_only. Without this flag the command runs as dry-run.")
+              help="Actually archive orphans as untestable. Without this flag the command runs as dry-run.")
 def strategies_triage_orphans(do_apply: bool) -> None:
     """List strategies whose runtime type has no registered class or param family.
 
@@ -350,14 +350,14 @@ def strategies_triage_orphans(do_apply: bool) -> None:
     that never had a backing class file.
     """
     from forven.db import get_db
-    from forven.brain import transition_stage
+    from forven.brain import archive_untestable
     from forven.strategies.params import is_known_runtime_type
 
     with get_db() as conn:
         rows = conn.execute(
             """
             SELECT id, name, type, stage FROM strategies
-            WHERE stage NOT IN ('archived', 'rejected', 'research_only')
+            WHERE stage NOT IN ('archived', 'rejected', 'backtest_failed')
             ORDER BY type, id
             """,
         ).fetchall()
@@ -382,17 +382,17 @@ def strategies_triage_orphans(do_apply: bool) -> None:
         click.echo(f"  - {o['id']}  type={o['type']}  stage={o['stage']}  name={o.get('name','')}")
 
     if not do_apply:
-        click.echo("Dry-run only. Re-run with --apply to demote to research_only.")
+        click.echo("Dry-run only. Re-run with --apply to archive them as untestable.")
         return
 
     demoted = 0
     failed = 0
     for o in orphans:
         try:
-            transition_stage(
+            archive_untestable(
                 o["id"],
-                "research_only",
-                reason=(
+                code="broken_code",
+                detail=(
                     f"orphan runtime type '{o['type']}': "
                     "no registered class and not a known param family"
                 ),
@@ -402,9 +402,9 @@ def strategies_triage_orphans(do_apply: bool) -> None:
             demoted += 1
         except Exception as exc:
             failed += 1
-            click.echo(f"  ! failed to demote {o['id']}: {exc}", err=True)
+            click.echo(f"  ! failed to archive {o['id']}: {exc}", err=True)
 
-    click.echo(f"Done. demoted={demoted} failed={failed}")
+    click.echo(f"Done. archived={demoted} failed={failed}")
 
 
 # --- Bot commands ---

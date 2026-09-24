@@ -34,7 +34,6 @@ _NEXT_STAGE = {
     "gauntlet": "paper",
     "paper": "live_graduated",
     "live_graduated": None,
-    "research_only": None,
 }
 
 ACTIVE_STAGES = ("quick_screen", "gauntlet", "paper", "live_graduated")
@@ -44,7 +43,6 @@ _STAGE_LABELS = {
     "gauntlet": "Gauntlet",
     "paper": "Paper trading",
     "live_graduated": "Live (graduated)",
-    "research_only": "Research only",
 }
 
 # What fires the next transition, keyed by CURRENT stage.
@@ -78,6 +76,10 @@ _TERMINAL_STAGE_ALIASES = (
     "backtest_failed",
     "backtest-failed",
     "backtestfailed",
+    # Retired Parked lane; normalize_stage reads these as archived.
+    "research_only",
+    "research-only",
+    "researchonly",
 )
 
 # Mirror of brain._SLOT_CONTENTION_MARKERS: slot contention is a capacity
@@ -383,8 +385,6 @@ def _classify_status(
         return "awaiting_operator"
     if stage == "live_graduated":
         return "live"
-    if stage == "research_only":
-        return "parked"
     if any(b.get("kind") == "contention" for b in blockers):
         return "slot_contention"
     operational = next((b.get("workflow_status") for b in blockers if b.get("workflow_status") in {
@@ -632,7 +632,7 @@ def _explain_row(row: dict, now: datetime) -> dict:
     }
 
 
-_STAGE_RANK = {"quick_screen": 1, "gauntlet": 2, "paper": 3, "live_graduated": 4, "research_only": 5}
+_STAGE_RANK = {"quick_screen": 1, "gauntlet": 2, "paper": 3, "live_graduated": 4}
 
 _STRATEGY_COLUMNS = (
     "id, display_id, name, display_name, type, symbol, timeframe, stage, status, "
