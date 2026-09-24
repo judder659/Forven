@@ -2051,9 +2051,13 @@ def transition_stage(
                 "SELECT canonical FROM strategies WHERE id = ?", (strategy_id,),
             ).fetchone()
             if canonical_row and canonical_row["canonical"]:
+                # An untestable strategy holds no verified edge to protect; blocking
+                # its archive would leave the caller retrying every cycle (e.g. the
+                # gauntlet evidence deferral re-selects the same blocked row).
                 may_retire_canonical = (
                     actor.lower() == "decay_tracker"
                     or (force and actor.lower() in _USER_ACTORS)
+                    or untestable_reason is not None
                 )
                 if not may_retire_canonical:
                     return _record_blocked_transition(

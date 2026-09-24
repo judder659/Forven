@@ -413,3 +413,25 @@ def test_engine_revival_proceeds_when_probe_is_clean(forven_db, monkeypatch):
     assert stage == "quick_screen"
     marker = kv_get(f"forven:engine_rebaseline:v{BACKTEST_ENGINE_VERSION}:{strategy_id}")
     assert marker and marker["action"] == "revived"
+
+
+def test_engine_revival_skips_untestable_archives(forven_db, monkeypatch):
+    """An untestable archive was never killed by a verdict, so an engine bump
+    does not revive it; only Recover (which re-runs the intake checks) does."""
+    import forven.brain as brain
+    from forven.gauntlet.engine import requeue_stale_engine_artifacts
+
+    strategy_id, _wf = _make_failed_gate_archive("untestable-revival")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET status_reason = 'untestable:broken_code: class missing' WHERE id = ?",
+            (strategy_id,),
+        )
+    monkeypatch.setattr(brain, "_reentry_lookahead_reason", lambda sid, stype, params: None)
+
+    summary = requeue_stale_engine_artifacts(limit=10)
+
+    assert summary["revived"] == 0
+    stage, status_reason = _stage_of(strategy_id)
+    assert stage == "archived"
+    assert status_reason == "untestable:broken_code: class missing"

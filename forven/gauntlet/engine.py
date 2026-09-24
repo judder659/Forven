@@ -1395,6 +1395,10 @@ def requeue_stale_engine_artifacts(*, limit: int = 20, revive_limit: int = _ENGI
             FROM strategies s
             JOIN backtest_results br ON br.strategy_id = s.id
             WHERE LOWER(TRIM(COALESCE(s.stage, ''))) IN ('quick_screen', 'gauntlet', 'archived')
+              -- An untestable archive was never killed by a verdict, so a new
+              -- engine version does not make it testable; only Recover (which
+              -- re-runs the intake checks) brings one back.
+              AND COALESCE(s.status_reason, '') NOT LIKE 'untestable:%'
               AND (br.deleted_at IS NULL OR TRIM(COALESCE(br.deleted_at, '')) = '')
               AND LOWER(TRIM(COALESCE(br.result_type, ''))) IN ({placeholders})
               AND json_valid(br.config_json)

@@ -712,11 +712,14 @@ def _m_2026_09_retire_research_only(conn: sqlite3.Connection) -> None:
     from forven.util import untestable_status_reason
 
     placeholders = ",".join("?" for _ in _PARKED_STAGES)
+    # The legacy _run_migrations fixup may already have rewritten a stage-less
+    # research_only row to stage='archived' (status still research_only), so match
+    # those too — they still need their untestable reason.
     rows = conn.execute(
         f"""
         SELECT id, owner, status_reason FROM strategies
         WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ({placeholders})
-           OR (NULLIF(TRIM(COALESCE(stage, '')), '') IS NULL
+           OR (LOWER(TRIM(COALESCE(stage, ''))) IN ('', 'archived')
                AND LOWER(TRIM(COALESCE(status, ''))) IN ({placeholders}))
         """,
         _PARKED_STAGES + _PARKED_STAGES,

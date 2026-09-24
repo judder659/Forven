@@ -113,6 +113,39 @@ def test_migration_archives_every_parked_strategy_with_its_reason(forven_db):
         assert conn.execute("SELECT COUNT(*) FROM strategy_events WHERE actor = 'migration'").fetchone()[0] == 5
 
 
+def test_migration_also_catches_rows_the_legacy_fixup_already_archived(forven_db):
+    # _run_migrations rewrites a stage-less research_only row to stage='archived'
+    # before the named migration runs; it still needs its untestable reason.
+    from forven.migrations import _m_2026_09_retire_research_only
+
+    _insert("S-LEGACY", "archived")
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET status = 'research_only' WHERE id = 'S-LEGACY'")
+        _m_2026_09_retire_research_only(conn)
+        row = conn.execute("SELECT stage, status, status_reason FROM strategies WHERE id = 'S-LEGACY'").fetchone()
+
+    assert row["stage"] == row["status"] == "archived"
+    assert row["status_reason"] == "untestable:parked: parked before the research_only stage was retired"
+
+
+def test_untestable_archive_clears_canonical_instead_of_looping(forven_db):
+    # A canonical child that turns out untestable holds no verified edge; blocking
+    # the archive would make callers like the evidence deferral retry forever.
+    from forven.brain import archive_untestable
+
+    _insert("S-CANON", "gauntlet")
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET canonical = 1 WHERE id = 'S-CANON'")
+
+    result = archive_untestable("S-CANON", code="insufficient_history", detail="needs 60k bars", actor="gauntlet_evidence_deferral")
+
+    assert result["to"] == "archived"
+    with get_db() as conn:
+        row = conn.execute("SELECT stage, canonical FROM strategies WHERE id = 'S-CANON'").fetchone()
+    assert row["stage"] == "archived"
+    assert row["canonical"] == 0
+
+
 def test_migration_is_registered_last():
     from forven.migrations import MIGRATIONS
 
