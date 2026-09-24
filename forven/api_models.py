@@ -70,8 +70,11 @@ class BacktestSubmitBody(BaseModel):
     strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
     strategy_name: str | None = Field(default=None, max_length=256)
     strategy_version: str | None = None
-    symbol: str = "BTC"
-    timeframe: str = "1h"
+    # None = run on the strategy row's stored symbol/timeframe; an explicit value
+    # overrides it. (Non-empty defaults here used to beat the row, so a bare
+    # strategy-id rerun of a SOL 4h strategy silently ran on BTC 1h.)
+    symbol: str | None = None
+    timeframe: str | None = None
     start: str | None = None
     end: str | None = None
     params: dict | None = None

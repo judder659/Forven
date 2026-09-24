@@ -92,9 +92,12 @@ def submit_backtest_job(body: BacktestSubmitBody) -> dict[str, str]:
         "submitted_at": now, "heartbeat_at": now, "progress": "Waiting for a backtest worker",
     }
     try:
+        # An omitted symbol/timeframe runs on the strategy's own market, so the
+        # placeholder (kept for good if the job fails) must say so too.
         core._persist_backtest_result_row(
             result_id=result_id, strategy_id=strategy_id, result_type="backtest",
-            symbol=body.symbol, timeframe=body.timeframe, start_date=body.start, end_date=body.end,
+            symbol=body.symbol or row.get("symbol"), timeframe=body.timeframe or row.get("timeframe"),
+            start_date=body.start, end_date=body.end,
             metrics={"status": "queued"}, config=config, created_at=now,
         )
         _EXECUTOR.submit(_run_job, snapshot, job_id, result_id)

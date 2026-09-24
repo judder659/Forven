@@ -90,6 +90,29 @@ def test_background_failure_is_durable_and_keeps_the_actual_error(queued_body, m
     assert done["result_id"] == accepted["result_id"]
 
 
+def test_strategy_id_only_job_row_records_the_strategy_market(queued_body, monkeypatch):
+    # With symbol/timeframe omitted, the queued row (which a failed job keeps
+    # for good) must show the strategy's own market, not BTC/1h or a blank.
+    with get_db() as conn:
+        sid, _, _ = create_strategy_container(
+            conn=conn, name="manual-eth", type_="macd", symbol="ETH/USDT", timeframe="4h",
+            params={"fast": 12, "slow": 26, "signal": 9},
+        )
+
+    def fail(*args, **kwargs) -> None:
+        raise HTTPException(status_code=400, detail="Not enough candles in the requested window")
+
+    monkeypatch.setattr(core, "post_backtest_submit", fail)
+    accepted = backtest_jobs.submit_backtest_job(BacktestSubmitBody(strategy_id=sid))
+    assert _finished(accepted["job_id"])["status"] == "failed"
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT symbol, timeframe FROM backtest_results WHERE result_id = ?", (accepted["result_id"],)
+        ).fetchone()
+    assert row["symbol"] == "ETH/USDT"
+    assert row["timeframe"] == "4h"
+
+
 def test_poll_finds_compact_json_and_does_not_expire_a_healthy_long_run(queued_body):
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     current = datetime.now(timezone.utc).isoformat()
