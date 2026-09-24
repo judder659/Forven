@@ -232,9 +232,10 @@ def _tool_promote_strategy(params: dict) -> str:
 @register_tool(
     name="create_strategy",
     description=(
-        "Create a new strategy in the database with status 'quick_screen' by default. "
-        "Any params your strategy needs are accepted — composite strategies mixing multiple indicator "
-        "families are encouraged. Canonical param names get automatic alias resolution for chart overlays. "
+        "Create a new strategy in the database with status 'quick_screen' by default. The strategy type "
+        "must be backed by a registered runtime class and its params must be valid for it; anything else "
+        "is rejected, even with research_only=true. New logic needs a strategy module registered by "
+        "strategy-developer. Canonical param names get automatic alias resolution for chart overlays. "
         "Set research_only=true to store an experimental strategy outside the tradable pipeline."
     ),
     input_schema={

@@ -998,8 +998,11 @@ register_tool(
 register_tool(
     name="forven_create_strategy",
     description=(
-        "Create a tradable strategy on Forven Backtesting. Any strategy family and params are accepted — "
-        "composite strategies mixing multiple indicator families are encouraged and can run in paper/live."
+        "Create a tradable strategy from an existing Forven strategy family (e.g. orb, macd, "
+        "rsi_momentum, ema_cross, bollinger, stochastic, williams_r) with your params. The type must be "
+        "backed by a registered runtime class; anything else is rejected with HTTP 422 and nothing is "
+        "created. To vary a sibling's parameters, pass that sibling's strategy type. For new logic, write "
+        "a strategy module and call register_strategy, which creates the strategy itself."
     ),
     input_schema={
         "type": "object",
@@ -1010,14 +1013,14 @@ register_tool(
             "strategy_type": {
                 "type": "string",
                 "description": (
-                    "Strategy family name. Prefer executable Forven families such as orb, "
-                    "macd, rsi_momentum, ema_cross, bollinger, stochastic, and williams_r; "
-                    "the API may route unsupported rule blobs to research_only."
+                    "Existing strategy family backed by a registered runtime class, e.g. orb, macd, "
+                    "rsi_momentum, ema_cross, bollinger, stochastic, williams_r. Unregistered types "
+                    "are rejected; use register_strategy for new logic."
                 ),
             },
             "symbol": {"type": "string", "description": "Trading symbol, e.g. BTC/USDT"},
             "timeframe": {"type": "string", "description": "Chart timeframe: 1m, 5m, 15m, 1h, 4h, 1d"},
-            "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs"},
+            "params": {"type": "object", "description": "Parameters for this family. Unknown rule-blob params and invalid values are rejected."},
             "notes": {"type": "string", "description": "Notes explaining the strategy logic"},
             "parent_strategy_id": {"type": "string", "description": _PARENT_STRATEGY_ID_DESCRIPTION},
         },

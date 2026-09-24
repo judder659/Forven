@@ -609,3 +609,13 @@ def test_jbt_create_strategy_rejects_mismatched_hypothesis_and_crucible(forven_d
 
     assert "planner-approved crucible_id and hypothesis_id pair" in result["error"]
     assert created == []
+
+
+def test_create_strategy_tool_points_new_logic_to_register_strategy():
+    # The API rejects unregistered types; an agent told "any strategy family is
+    # accepted" kept sending custom types here and stopped at the 422.
+    from forven.agents.tool_registry import _REGISTRY
+
+    description = _REGISTRY["forven_create_strategy"].description
+    assert "register_strategy" in description
+    assert "Any strategy family" not in description
