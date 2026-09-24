@@ -5093,6 +5093,30 @@ def get_agent_spend(days: int = 30) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def parent_strategy_lineage_error(
+    conn, parent_strategy_id: str | None, hypothesis_id: str | None,
+) -> str | None:
+    """Why ``parent_strategy_id`` cannot parent a new strategy for ``hypothesis_id``.
+
+    None when there is no parent or it is valid. Lineage must stay inside one
+    hypothesis; callers can check this before doing any irreversible work.
+    """
+    parent = str(parent_strategy_id or "").strip()
+    if not parent:
+        return None
+    row = conn.execute("SELECT hypothesis_id FROM strategies WHERE id = ?", (parent,)).fetchone()
+    if not row:
+        return f"parent_strategy_id {parent!r} not found"
+    parent_hyp = str(row["hypothesis_id"] or "").strip() or None
+    new_hyp = str(hypothesis_id or "").strip() or None
+    if parent_hyp != new_hyp:
+        return (
+            f"parent_strategy_id {parent!r} belongs to hypothesis {parent_hyp!r}, "
+            f"but new strategy is for hypothesis {new_hyp!r}; lineage cannot cross hypotheses"
+        )
+    return None
+
+
 def create_strategy_container(
     conn: sqlite3.Connection,
     name: str,
@@ -5220,21 +5244,9 @@ def create_strategy_container(
             )
         symbol = str(_symbol_verdict.get("symbol") or symbol)
     normalized_parent = str(parent_strategy_id or "").strip() or None
-    if normalized_parent:
-        parent_row = conn.execute(
-            "SELECT hypothesis_id FROM strategies WHERE id = ?",
-            (normalized_parent,),
-        ).fetchone()
-        if not parent_row:
-            raise ValueError(f"parent_strategy_id {normalized_parent!r} not found")
-        parent_hyp = str(parent_row["hypothesis_id"] or "").strip() or None
-        new_hyp = str(hypothesis_id or "").strip() or None
-        if parent_hyp != new_hyp:
-            raise ValueError(
-                f"parent_strategy_id {normalized_parent!r} belongs to hypothesis "
-                f"{parent_hyp!r}, but new strategy is for hypothesis {new_hyp!r}; "
-                "lineage cannot cross hypotheses"
-            )
+    lineage_error = parent_strategy_lineage_error(conn, normalized_parent, hypothesis_id)
+    if lineage_error:
+        raise ValueError(lineage_error)
     requested_id = str(strategy_id or "").strip().upper()
     requested_numeric = _extract_numeric_suffix(requested_id, expected_prefix="S")
     final_strategy_id: str

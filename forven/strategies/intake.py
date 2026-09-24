@@ -418,6 +418,7 @@ def _register_custom_strategy_sandboxed(
     session_id: str | None,
     origin_task_id: str | None,
     validated_meta: dict | None = None,
+    parent_strategy_id: str | None = None,
 ) -> dict:
     """Register generated custom code without importing it in the API process."""
     import hashlib
@@ -483,6 +484,7 @@ def _register_custom_strategy_sandboxed(
             _hypothesis_id=hypothesis_id,
             _origin_task_id=origin_task_id,
             _session_id=session_id,
+            _parent_strategy_id=parent_strategy_id,
         )
     except Exception:
         if moved_file and target.exists():
@@ -524,6 +526,7 @@ def register_custom_strategy_file(
     hypothesis_id: str | None = None,
     session_id: str | None = None,
     origin_task_id: str | None = None,
+    parent_strategy_id: str | None = None,
 ) -> dict:
     """Register one custom strategy module for the AI Drop Zone workflow.
 
@@ -565,6 +568,7 @@ def register_custom_strategy_file(
         hypothesis_id=hypothesis_id,
         session_id=clean_session_id,
         origin_task_id=origin_task_id,
+        parent_strategy_id=parent_strategy_id,
     )
 
 
@@ -579,6 +583,7 @@ def register_imported_strategy_file(
     _hypothesis_id: str | None = None,
     _origin_task_id: str | None = None,
     _session_id: str | None = None,
+    _parent_strategy_id: str | None = None,
 ) -> dict:
     """Register an UNTRUSTED-ORIGIN (imported / shared) strategy as a SANDBOX-ONLY
     container — WITHOUT importing the author's code into the trusted parent.
@@ -733,6 +738,7 @@ def register_imported_strategy_file(
             source_ref=stored_source_ref,
             hypothesis_id=_hypothesis_id,
             origin_task_id=_origin_task_id,
+            parent_strategy_id=_parent_strategy_id,
             sandbox_only=True,
         )
         if container_type != runtime_type:

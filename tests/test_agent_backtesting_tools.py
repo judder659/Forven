@@ -492,6 +492,7 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
             params: dict | None = None,
             symbol: str = "",
             timeframe: str = "1h",
+            parent_strategy_id: str | None = None,
         ):
             captured.update(
                 {
