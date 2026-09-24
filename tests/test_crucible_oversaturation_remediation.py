@@ -171,9 +171,11 @@ def test_count_unstarted_active_only_counts_proposed_zero_live(forven_db):
     _crucible("proposed")
     _crucible("proposed")
     started = _crucible("proposed"); _strategy(started["id"], "S-START", stage="gauntlet")
+    parked = _crucible("proposed"); _strategy(parked["id"], "S-PARKED", stage="research_only")
     _crucible("researching")  # not proposed -> excluded
 
-    assert count_unstarted_active_hypotheses() == 2
+    # A parked child is not a start: nothing in research_only is being tested.
+    assert count_unstarted_active_hypotheses() == 3
 
 
 # 5. archive_reason is never silently NULL ----------------------------------------
