@@ -84,20 +84,22 @@ def submit_backtest_job(body: BacktestSubmitBody) -> dict[str, str]:
     result_id = f"{strategy_id}-manual-{uuid4().hex[:12]}"
     now = _now()
     # Store a frozen request for audit and return quickly, before runtime
-    # discovery, data loading, signal generation or chart construction.
-    snapshot = body.model_copy(deep=True)
+    # discovery, data loading, signal generation or chart construction. An
+    # omitted symbol/timeframe means the strategy's own market: freeze that too,
+    # so the job row (kept for good if the job fails) names the market it runs.
+    snapshot = body.model_copy(deep=True, update={
+        "symbol": body.symbol or row.get("symbol"),
+        "timeframe": body.timeframe or row.get("timeframe"),
+    })
     config = {
         **snapshot.model_dump(exclude_none=True), "strategy_id": strategy_id,
         "job_id": job_id, "status": "queued", "background_submit": True,
         "submitted_at": now, "heartbeat_at": now, "progress": "Waiting for a backtest worker",
     }
     try:
-        # An omitted symbol/timeframe runs on the strategy's own market, so the
-        # placeholder (kept for good if the job fails) must say so too.
         core._persist_backtest_result_row(
             result_id=result_id, strategy_id=strategy_id, result_type="backtest",
-            symbol=body.symbol or row.get("symbol"), timeframe=body.timeframe or row.get("timeframe"),
-            start_date=body.start, end_date=body.end,
+            symbol=snapshot.symbol, timeframe=snapshot.timeframe, start_date=body.start, end_date=body.end,
             metrics={"status": "queued"}, config=config, created_at=now,
         )
         _EXECUTOR.submit(_run_job, snapshot, job_id, result_id)
