@@ -2749,10 +2749,13 @@ def test_research_recovery_on_edit_debounce_5min(forven_db):
     assert row["stage"] == "research_only"
 
 
-def test_research_recovery_sweep_max_3_per_cycle(forven_db):
-    from forven.evolution import _sweep_research_recovery
-    # Create 5 research_only strategies with valid params
-    for i in range(5):
+def test_research_only_sweep_never_revives_parked_strategies(forven_db):
+    # The sweep used to re-certify and revive parked strategies without checking
+    # why they were parked, so insufficient-history deferrals bounced
+    # gauntlet -> research_only -> quick_screen hourly (Sept 2026).
+    from forven.evolution import _archive_stale_research_only
+
+    for i in range(3):
         _insert_strategy(f"s-sweep-{i}", stage="research_only")
         with get_db() as conn:
             conn.execute(
@@ -2760,46 +2763,24 @@ def test_research_recovery_sweep_max_3_per_cycle(forven_db):
                 (json.dumps({"rsi_threshold": 30, "lookback_period": 14}), f"s-sweep-{i}"),
             )
 
-    _sweep_research_recovery()
+    _archive_stale_research_only()
 
-    promoted_count = 0
     with get_db() as conn:
-        for i in range(5):
-            row = conn.execute(f"SELECT stage FROM strategies WHERE id = 's-sweep-{i}'").fetchone()
-            if row and row["stage"] == "quick_screen":
-                promoted_count += 1
-    assert promoted_count <= 3
-
-
-def test_research_recovery_sweep_oldest_first(forven_db):
-    from forven.evolution import _sweep_research_recovery
-    # Create strategies with different ages
-    for i, offset_hours in enumerate([100, 200, 50]):
-        ts = (datetime.now(timezone.utc) - timedelta(hours=offset_hours)).isoformat()
-        _insert_strategy(f"s-age-{i}", stage="research_only", stage_changed_at=ts)
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET type = 'rsi_momentum', params = ?, created_at = ? WHERE id = ?",
-                (json.dumps({"rsi_threshold": 30, "lookback_period": 14}), ts, f"s-age-{i}"),
-            )
-
-    _sweep_research_recovery()
-
-    # At least some should be promoted — the oldest ones first
-    with get_db() as conn:
-        row = conn.execute("SELECT stage FROM strategies WHERE id = 's-age-1'").fetchone()
-    # s-age-1 is oldest (200h), should be promoted
-    assert row["stage"] == "quick_screen"
+        stages = {
+            row["id"]: row["stage"]
+            for row in conn.execute("SELECT id, stage FROM strategies WHERE id LIKE 's-sweep-%'")
+        }
+    assert stages == {f"s-sweep-{i}": "research_only" for i in range(3)}
 
 
 def test_research_only_30d_inactive_archived(forven_db):
-    from forven.evolution import _sweep_research_recovery
+    from forven.evolution import _archive_stale_research_only
     old_time = (datetime.now(timezone.utc) - timedelta(days=35)).isoformat()
     _insert_strategy("s-30d", stage="research_only", stage_changed_at=old_time)
     with get_db() as conn:
         conn.execute("UPDATE strategies SET created_at = ? WHERE id = 's-30d'", (old_time,))
 
-    _sweep_research_recovery()
+    _archive_stale_research_only()
 
     with get_db() as conn:
         row = conn.execute("SELECT stage FROM strategies WHERE id = 's-30d'").fetchone()

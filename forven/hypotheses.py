@@ -295,8 +295,9 @@ def _pick_weakest_active_hypothesis(
     (used to avoid evicting the parent of a derived hypothesis being created right now).
 
     Only live-stage strategies count toward "strength" — a crucible whose children all
-    died (archived/rejected/backtest_failed/trash) reads as 0 here, matching the planner's
-    _strategy_count (crucible_planner.py). Otherwise a "zombie" crucible with only dead
+    died (archived/rejected/backtest_failed/trash) or sit parked (research_only) reads as
+    0 here, matching the planner's _strategy_count (crucible_planner.py). Otherwise a
+    "zombie" crucible with only dead
     children would look strong to the eviction picker (never evicted) while the planner
     treats it as 0-strategy (keeps re-developing) — the two would silently disagree.
     The live-stage filter lives in the JOIN's ON clause so the LEFT JOIN still yields a
@@ -310,7 +311,7 @@ def _pick_weakest_active_hypothesis(
         FROM hypotheses h
         LEFT JOIN strategies s
           ON s.hypothesis_id = h.id
-          AND COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash')
+          AND COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash', 'research_only')
         WHERE h.manager_state = 'active'
           AND h.status NOT IN ('disproven', 'proven')
           AND COALESCE(h.protection_status, 'unprotected') NOT IN ('protected', 'contested')
@@ -369,7 +370,7 @@ def count_unstarted_active_hypotheses() -> int:
     pool can't fill with idle proposals the research funnel can never clear. Mirrors
     crucible_planner._LIVE_STRATEGY_STAGE_CLAUSE for what counts as a live strategy.
     """
-    live_clause = "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash')"
+    live_clause = "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash', 'research_only')"
     with get_db() as conn:
         row = conn.execute(
             f"""

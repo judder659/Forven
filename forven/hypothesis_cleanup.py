@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # Mirror of crucible_planner._LIVE_STRATEGY_STAGE_CLAUSE — a strategy in one of
 # these stages is a dead end and must NOT count as "this crucible produced work".
 _LIVE_STRATEGY_STAGE_CLAUSE = (
-    "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash')"
+    "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash', 'research_only')"
 )
 
 

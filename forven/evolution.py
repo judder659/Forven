@@ -2587,35 +2587,32 @@ def check_paper_graduation():
     if needs_more_time:
         log.info("Evolution: still incubating: %s", ", ".join(needs_more_time))
 
-    # Research recovery sweep
-    _sweep_research_recovery()
+    _archive_stale_research_only()
 
 
-def _sweep_research_recovery():
-    """Periodic sweep: re-certify research_only strategies, promote up to 3 per cycle.
+def _archive_stale_research_only():
+    """Archive research_only strategies that have had no activity for 30+ days.
 
-    Oldest first, Tier 1 failures first. Sequential (1 at a time).
-    Also archives research_only strategies inactive > 30 days.
+    This sweep used to re-certify and revive up to 3 parked strategies per cycle.
+    Re-certification never checked why a strategy was parked, so strategies parked
+    for insufficient validation history passed instantly, re-entered the gauntlet,
+    and were parked again — S06677/S07675/S07676 each looped ~358 times
+    (Sept 2026) and held every revival slot. Parked strategies no longer revive
+    automatically; an operator can still recover one from the Forge.
     """
-    from forven.brain import try_research_recovery
-
     now = datetime.now(timezone.utc)
     cutoff_30d = (now - timedelta(days=30)).isoformat()
 
     with get_db() as conn:
         research_rows = conn.execute(
             """
-            SELECT id, type, params, status_reason, stage_changed_at
+            SELECT id, stage_changed_at
             FROM strategies
             WHERE LOWER(TRIM(stage)) = 'research_only'
             ORDER BY created_at ASC
             """
         ).fetchall()
 
-    if not research_rows:
-        return
-
-    # Archive 30-day inactive research_only
     for row in research_rows:
         sid = row["id"]
         changed_at = row["stage_changed_at"] or ""
@@ -2638,44 +2635,6 @@ def _sweep_research_recovery():
                     log.info("Research sweep: archived %s (30d inactive)", sid)
                 except Exception as exc:
                     log.warning("Research sweep archive failed for %s: %s", sid, exc)
-
-    # Sort by tier (Tier 1 first), then by created_at (oldest first)
-    candidates = []
-    for row in research_rows:
-        status_reason = row["status_reason"] or ""
-        if status_reason.startswith("tier"):
-            try:
-                tier = int(status_reason[4])
-            except (IndexError, ValueError):
-                tier = 2
-        else:
-            tier = 2
-        candidates.append((tier, row))
-
-    candidates.sort(key=lambda x: x[0])
-
-    # Parse/compile check + re-certify, max 3 promotions
-    promoted_count = 0
-    for _tier, row in candidates:
-        if promoted_count >= 3:
-            break
-        sid = row["id"]
-
-        # Skip code_error — parse check
-        status_reason = row["status_reason"] or ""
-        if "code_error" in status_reason:
-            continue
-
-        try:
-            result = try_research_recovery(sid)
-            if result.get("promoted"):
-                promoted_count += 1
-                log.info("Research sweep: promoted %s to quick_screen", sid)
-        except Exception as exc:
-            log.warning("Research sweep re-cert failed for %s: %s", sid, exc)
-
-    if promoted_count:
-        log_activity("info", "evolution", f"Research recovery sweep: promoted {promoted_count} strategies")
 
 
 def _brain_research_recovery_step():

@@ -4,6 +4,10 @@ Sept 2026 stall: each researching crucible had a strategy parked in research_onl
 The planner counted that parking stage as busy, so it neither replenished the pool
 nor expanded survivors, and the promotion loop's depth gate locked out every
 hypothesis it had picked before. Both dispatchers idled silently for days.
+
+Treating parked as "not busy" was not enough: the planner still counted the parked
+child as a live strategy, so a parked-only crucible never reached the
+develop-a-candidate branch either ("parked_only=96 ... nothing to plan").
 """
 
 import logging
@@ -85,15 +89,50 @@ def _discipline(**values: int) -> None:
     kv_set("forven:settings", {"research_settings": {"hypothesis_discipline": values}})
 
 
-def test_pool_of_parked_crucibles_proposes_replacement(forven_db):
+def test_parked_only_crucibles_develop_fresh_candidates(forven_db):
     from forven.crucible_planner import plan_next_actions
 
-    for index in range(2):
-        _strategy(_crucible(), f"S-PARKED-{index}", "research_only")
+    crucibles = {_crucible() for _ in range(2)}
+    for index, crucible_id in enumerate(sorted(crucibles)):
+        _strategy(crucible_id, f"S-PARKED-{index}", "research_only")
 
     actions = plan_next_actions(limit=3)
 
-    assert [action.action_kind for action in actions] == ["propose_crucible"]
+    assert [action.action_kind for action in actions] == ["develop_candidate", "develop_candidate"]
+    assert {action.crucible_id for action in actions} == crucibles
+
+
+def test_parked_child_does_not_count_as_a_live_strategy(forven_db):
+    from forven.crucible_planner import _strategy_count
+
+    parked = _crucible()
+    _strategy(parked, "S-ONLY-PARKED", "research_only")
+    active = _crucible()
+    _strategy(active, "S-ACTIVE", "quick_screen")
+    _strategy(active, "S-ACTIVE-PARKED", "research_only")
+
+    assert _strategy_count(parked) == 0
+    assert _strategy_count(active) == 1
+
+
+def test_parked_only_crucible_is_evicted_before_one_with_live_work(forven_db):
+    from forven.hypotheses import _pick_weakest_active_hypothesis
+
+    live = _crucible()
+    _strategy(live, "S-LIVE-WORK", "quick_screen")
+    parked = _crucible()
+    _strategy(parked, "S-PARKED-ONLY", "research_only")
+    with get_db() as conn:
+        # Make the parked crucible the NEWER one so only the live count separates them.
+        conn.execute(
+            "UPDATE hypotheses SET updated_at = '2099-01-01T00:00:00+00:00' WHERE id = ?",
+            (parked,),
+        )
+        victim = _pick_weakest_active_hypothesis(conn)
+
+    assert victim is not None
+    assert victim["id"] == parked
+    assert victim["strategy_count"] == 0
 
 
 def test_survivor_crucible_with_parked_sibling_still_expands(forven_db):

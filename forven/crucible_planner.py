@@ -278,7 +278,13 @@ _REFINE_PRIORITY = 4
 # rejected by review, or were superseded. The planner must treat them as
 # "no longer candidates" so a researching crucible whose only strategies
 # are archived can develop new ones instead of stalling forever.
-_LIVE_STRATEGY_STAGE_CLAUSE = "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash')"
+# research_only (Parked) is a dead end too: nothing parked is being tested.
+# Counting it as live left ~95 of 100 crucibles holding one parked child that
+# was neither busy nor absent, so the planner idled on "nothing to plan"
+# (Sept 2026).
+_LIVE_STRATEGY_STAGE_CLAUSE = (
+    "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash', 'research_only')"
+)
 # Stages with validation still in progress. research_only is a parking stage
 # (see _untested_strategy_id), not work in progress: counting it as busy let one
 # parked child hold every crucible in the pool, so the planner stopped both
@@ -367,10 +373,6 @@ def _untested_strategy_id(crucible_id: str) -> str | None:
                     )
                   )
               AND {_LIVE_STRATEGY_STAGE_CLAUSE}
-              -- research_only is a parking stage (lookahead/crash/data-blocked):
-              -- those candidates are revived via research recovery, not by
-              -- scheduling first-backtests that their block guarantees will fail.
-              AND LOWER(TRIM(COALESCE(s.stage, ''))) != 'research_only'
               AND NOT EXISTS (
                   SELECT 1
                   FROM backtest_results AS br
