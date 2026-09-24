@@ -216,6 +216,26 @@ def test_stream_codex_parses_tool_call_and_headers(monkeypatch):
     assert body["input"][0]["content"][0]["type"] == "input_text"
 
 
+def test_stream_codex_keeps_streamed_items_when_completed_output_is_empty(monkeypatch):
+    # The Codex backend runs with store=false and ends with response.output == [];
+    # the streamed items are the only copy of the turn.
+    lines = [
+        'data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","encrypted_content":"enc","summary":[]}}',
+        'data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Checking."}]}}',
+        'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"list_strategies","arguments":"{\\"limit\\": 5}","id":"fc_1"}}',
+        'data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":10,"output_tokens":20}}}',
+    ]
+    _patch_codex(monkeypatch, lines)
+    done = [e for e in _drain(cr.stream_codex(
+        _oauth_token(), "gpt-6-luna", instructions=None,
+        messages=[{"role": "user", "content": "list strategies"}],
+        tools=[{"name": "list_strategies", "description": "x", "input_schema": {}}],
+    )) if e["type"] == "done"][0]
+    assert done["text"] == "Checking."
+    assert done["tool_calls"] == [{"id": "call_1", "name": "list_strategies", "input": {"limit": 5}}]
+    assert done["reasoning_items"] == [{"type": "reasoning", "encrypted_content": "enc", "summary": []}]
+
+
 def test_stream_codex_text_only_stops(monkeypatch):
     lines = [
         'data: {"type":"response.output_text.delta","delta":"final answer"}',

@@ -387,7 +387,10 @@ async def stream_responses(
                     response_obj = event.get("response")
                     if isinstance(response_obj, dict) and isinstance(response_obj.get("usage"), dict):
                         usage = response_obj["usage"]
-                    if isinstance(response_obj, dict) and isinstance(response_obj.get("output"), list):
+                    # The platform API repeats every item here; the Codex backend
+                    # (store=false) sends output=[], so the streamed items are the
+                    # only copy. Replacing them with [] dropped every GPT-6 turn.
+                    if isinstance(response_obj, dict) and isinstance(response_obj.get("output"), list) and response_obj["output"]:
                         output_items = response_obj["output"]
                         function_calls = [item for item in output_items if item.get("type") == "function_call"]
                         reasoning_items = [item for item in output_items if item.get("type") == "reasoning"]
