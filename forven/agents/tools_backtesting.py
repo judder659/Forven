@@ -8,11 +8,17 @@ from uuid import uuid4
 
 import httpx
 
-from forven.db import get_db
+from forven.db import get_db, parent_strategy_lineage_error
 from forven.verdict_engine import build_strategy_verdict_blob, get_overall_verdict
 
 from .context import _current_agent_id_var, _current_strategy_id_var, _current_task_display_id_var
 from .tool_registry import register_tool
+
+_PARENT_STRATEGY_ID_DESCRIPTION = (
+    "When this candidate mutates an existing sibling strategy, that sibling's strategy id "
+    "(e.g. S10418); it is recorded as this strategy's parent. Omit for a fresh variant. "
+    "The parent must belong to the same hypothesis."
+)
 
 log = logging.getLogger("forven.agents.runner")
 
@@ -559,6 +565,7 @@ def _tool_run_code(code: str) -> str:
                 "items": {"type": "string"},
                 "description": "Names of learned quant skills (from the LEARNED KNOWLEDGE context block) that informed this design. Cited skills get their confidence adjusted when this strategy later graduates or dies, so cite honestly — only skills you actually applied.",
             },
+            "parent_strategy_id": {"type": "string", "description": _PARENT_STRATEGY_ID_DESCRIPTION},
         },
         "required": ["code", "type_name", "hypothesis_id"],
     },
@@ -590,6 +597,13 @@ def _tool_register_strategy(params: dict) -> str:
     crucible_id = str(validation.crucible_id or crucible_id).strip()
     hypothesis_id = str(validation.hypothesis_id or hypothesis_id).strip()
     provenance = _current_candidate_provenance(crucible_id)
+    # Check lineage before the module is written: a rejected parent must not
+    # leave a saved file that blocks a corrected retry under the same type_name.
+    parent_strategy_id = str(params.get("parent_strategy_id") or "").strip() or None
+    with get_db() as conn:
+        lineage_error = parent_strategy_lineage_error(conn, parent_strategy_id, hypothesis_id)
+    if lineage_error:
+        return f"Error: {lineage_error}"
 
     # Validate strategy code via self-healer (lint + sandbox test harness)
     try:
@@ -636,6 +650,7 @@ def _tool_register_strategy(params: dict) -> str:
             # between creation and the _persist_strategy_provenance backfill below
             # can't orphan the develop_candidate task from its strategy.
             origin_task_id=provenance.get("origin_task_id"),
+            parent_strategy_id=parent_strategy_id,
         )
         registered_strategy_id = str(registration.get("strategy_id") or "").strip()
         runtime_type = str(registration.get("runtime_type") or type_name).strip()
@@ -838,7 +853,8 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
             crucible_id = str(validation.crucible_id or crucible_id).strip()
             hypothesis_id = str(validation.hypothesis_id or hypothesis_id).strip()
             provenance = _current_candidate_provenance(crucible_id)
-            
+            parent_strategy_id = str(params.get("parent_strategy_id") or "").strip() or None
+
             # Check if this is a certified strategy family that doesn't need rule-blobs
             if _is_certified_strategy_family(strategy_type, strategy_name):
                 # Certified families: only send core fields, NOT rule-blobs
@@ -850,6 +866,7 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                     params=params.get("params"),
                     symbol=params.get("symbol", ""),
                     timeframe=params.get("timeframe", "1h"),
+                    parent_strategy_id=parent_strategy_id,
                 )
             else:
                 # Custom strategies: send full rule-blob configuration
@@ -865,6 +882,7 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                     params=params.get("params"),
                     symbol=params.get("symbol", ""),
                     timeframe=params.get("timeframe", "1h"),
+                    parent_strategy_id=parent_strategy_id,
                 )
             # Ensure consistent ID return format for backward compatibility
             if isinstance(result, dict) and "id" not in result and "strategy_id" in result:
@@ -996,6 +1014,7 @@ register_tool(
             "timeframe": {"type": "string", "description": "Chart timeframe: 1m, 5m, 15m, 1h, 4h, 1d"},
             "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs"},
             "notes": {"type": "string", "description": "Notes explaining the strategy logic"},
+            "parent_strategy_id": {"type": "string", "description": _PARENT_STRATEGY_ID_DESCRIPTION},
         },
         "required": ["name", "hypothesis_id", "strategy_type", "symbol", "params"],
     },

@@ -274,6 +274,7 @@ class BacktestingClient:
         params: dict | None = None,
         symbol: str = "",
         timeframe: str = "1h",
+        parent_strategy_id: str | None = None,
     ) -> dict:
         """Create a new strategy."""
         payload = {
@@ -284,6 +285,8 @@ class BacktestingClient:
         }
         if hypothesis_id:
             payload["hypothesis_id"] = hypothesis_id
+        if parent_strategy_id:
+            payload["parent_strategy_id"] = parent_strategy_id
         if params is not None:
             # PARAMS-1: params and rule-blobs are no longer mutually exclusive —
             # the old branch silently DROPPED indicators/entry/exit/filters
