@@ -1001,8 +1001,8 @@ register_tool(
         "Create a tradable strategy from an existing Forven strategy family (e.g. orb, macd, "
         "rsi_momentum, ema_cross, bollinger, stochastic, williams_r) with your params. The type must be "
         "backed by a registered runtime class; anything else is rejected with HTTP 422 and nothing is "
-        "created. For new logic, write a strategy module and call register_strategy, which creates the "
-        "strategy itself."
+        "created. To vary a sibling's parameters, pass that sibling's strategy type. For new logic, write "
+        "a strategy module and call register_strategy, which creates the strategy itself."
     ),
     input_schema={
         "type": "object",
