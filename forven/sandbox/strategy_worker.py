@@ -220,6 +220,10 @@ def _validate_custom_module(workdir: Path) -> dict:
     # Belt-and-suspenders re-scan in the child (the parent already scanned before
     # write; re-checking here means the worker never imports an unscanned module).
     registry.assert_custom_module_safe(module_name, package=package)
+    # Certification looks the type up in the registry; a cold registry would run
+    # a full discover() and import the whole strategy library, which outlasts
+    # the validation timeout on a large library. Register only this module.
+    registry.discover_for_single_module(module_name, package=package)
 
     module = importlib.import_module(f"forven.strategies.{package}.{module_name}")
 
