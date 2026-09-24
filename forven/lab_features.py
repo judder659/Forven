@@ -59,10 +59,8 @@ def _pipeline_settings_wip_cap(settings: dict, stage: str) -> int | None | objec
     return _UNSET
 
 # Pipeline saturation: stop creating new strategies when tradable pipeline
-# containers exceed this threshold. The non-tradable `research_only` lane is
-# intentionally excluded so experimental parking-lot strategies do not block
-# quick_screen intake. Only resume generation once the count drops below
-# PIPELINE_RESUME_THRESHOLD.
+# containers exceed this threshold. Only resume generation once the count drops
+# below PIPELINE_RESUME_THRESHOLD.
 PIPELINE_SATURATION_THRESHOLD = 100
 PIPELINE_RESUME_THRESHOLD = 60
 
@@ -139,7 +137,7 @@ def is_pipeline_saturated() -> tuple[bool, int, str]:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS c FROM strategies
-                   WHERE LOWER(TRIM(stage)) NOT IN ('archived', 'rejected', 'backtest_failed', 'research_only')"""
+                   WHERE LOWER(TRIM(stage)) NOT IN ('archived', 'rejected', 'backtest_failed')"""
             ).fetchone()
         active_count = int(row["c"]) if row else 0
 
@@ -199,12 +197,6 @@ def regime_lab_enabled() -> bool:
     return raw in ENABLED_VALUES
 
 
-def brain_research_recovery_enabled() -> bool:
-    """Check if agent-driven research recovery is enabled. Default: False."""
-    raw = str(os.getenv("FORVEN_BRAIN_RESEARCH_RECOVERY", "") or "").strip().lower()
-    return raw in ENABLED_VALUES
-
-
 __all__ = [
     "GAUNTLET_MAX",
     "STAGE_WIP_CAPS",
@@ -212,5 +204,4 @@ __all__ = [
     "count_active_in_stage",
     "check_stage_wip_capacity",
     "regime_lab_enabled",
-    "brain_research_recovery_enabled",
 ]

@@ -57,7 +57,7 @@ def test_create_backtesting_strategy_infers_macd_type(forven_db):
     assert row["hypothesis_id"] == hypothesis["id"]
 
 
-def test_create_backtesting_strategy_routes_rule_blob_payload_to_research_only(forven_db):
+def test_create_backtesting_strategy_archives_rule_blob_payload_as_untestable(forven_db):
     from forven.routers.backtesting import create_backtesting_strategy
     from forven.hypotheses import create_hypothesis
 
@@ -89,19 +89,22 @@ def test_create_backtesting_strategy_routes_rule_blob_payload_to_research_only(f
 
     assert response["ok"] is True
     assert response["type"] == "macd"
-    assert response["status"] == "research_only"
+    assert response["status"] == "archived"
     assert response["certified"] is False
+    assert str(response["untestable_reason"]).startswith("untestable:uncertified:")
+    assert response["gauntlet_workflow_id"] is None
     with get_db() as conn:
         row = conn.execute(
-            "SELECT stage, notes FROM strategies WHERE id = ?",
+            "SELECT stage, notes, status_reason FROM strategies WHERE id = ?",
             (response["strategy_id"],),
         ).fetchone()
     assert row is not None
-    assert row["stage"] == "research_only"
+    assert row["stage"] == "archived"
+    assert row["status_reason"] == response["untestable_reason"]
     assert "unsupported rule-blob params" in str(row["notes"])
 
 
-def test_create_backtesting_strategy_maps_orb_variant_to_research_only(forven_db):
+def test_create_backtesting_strategy_archives_uncertified_orb_variant_as_untestable(forven_db):
     from forven.routers.backtesting import create_backtesting_strategy
     from forven.hypotheses import create_hypothesis
 
@@ -133,7 +136,8 @@ def test_create_backtesting_strategy_maps_orb_variant_to_research_only(forven_db
 
     assert response["ok"] is True
     assert response["type"] == "orb"
-    assert response["status"] == "research_only"
+    assert response["status"] == "archived"
+    assert str(response["untestable_reason"]).startswith("untestable:")
 
 
 def test_create_backtesting_strategy_rejects_unknown_hypothesis_id(forven_db):

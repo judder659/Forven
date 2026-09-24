@@ -1662,7 +1662,7 @@ class DataManager:
                       AND TRIM(COALESCE(timeframe, '')) != ''
                       AND LOWER(TRIM(COALESCE(stage, ''))) IN
                           ('quick_screen','gauntlet','paper','paper_trading','deployed',
-                           'live_graduated','research_only','active')
+                           'live_graduated','active')
                     """,
                     tuple(candidates),
                 ).fetchall()

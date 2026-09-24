@@ -99,7 +99,7 @@ templates/workspace/       # agent workspace file templates
 
 - **Import style**: Always use absolute imports - `from forven.module import X`, never relative.
 - **Router pattern**: Keep FastAPI endpoints thin and delegate business logic to focused modules.
-- **Pipeline stages**: `quick_screen -> gauntlet -> paper -> live_graduated`, with `research_only`, `rejected`, and `archived` where applicable (see `forven/policy.py` and `forven/roster.py`). Older status labels are compatibility aliases.
+- **Pipeline stages**: `quick_screen -> gauntlet -> paper -> live_graduated`, with `rejected` and `archived` where applicable (see `forven/policy.py` and `forven/roster.py`). A strategy that cannot be fairly tested is archived with an `untestable:<code>` status_reason (not a merit failure); there is no separate parking stage. Older status labels, including `research_only`, are compatibility aliases.
 - **Type hints**: All function signatures should have type hints.
 - **Linter**: Ruff.
 - **Tests**: pytest under `tests/`.

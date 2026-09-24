@@ -69,7 +69,7 @@ def test_create_lifecycle_strategy_resolves_executable_type(forven_db):
     assert "-RSI_MOMENTUM-" in str(row["name"])
 
 
-def test_create_lifecycle_strategy_routes_uncertified_payload_to_research_only(forven_db):
+def test_create_lifecycle_strategy_creates_uncertified_payload_as_untestable_archive(forven_db):
     created = create_lifecycle_strategy(
         LifecycleCreateBody(
             name="Rule Blob Candidate",
@@ -88,14 +88,18 @@ def test_create_lifecycle_strategy_routes_uncertified_payload_to_research_only(f
 
     strategy_id = str(created.get("id") or "")
     assert strategy_id
-    assert created["state"] == "research_only"
+    assert created["state"] == "retired"
 
     with get_db() as conn:
-        row = conn.execute("SELECT stage, params, notes FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        row = conn.execute(
+            "SELECT stage, params, notes, status_reason FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
 
     assert row is not None
-    assert str(row["stage"]) == "research_only"
+    assert str(row["stage"]) == "archived"
     assert "entry_conditions" in str(row["params"])
+    assert str(row["status_reason"]).startswith("untestable:uncertified:")
+    assert "unsupported rule-blob params" in str(row["status_reason"])
     assert "unsupported rule-blob params" in str(row["notes"])
 
 

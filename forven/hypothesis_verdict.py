@@ -15,6 +15,7 @@ from typing import Any
 from forven.db import get_db
 from forven.hypotheses import get_hypothesis, update_hypothesis_status
 from forven.research_contract import get_hypothesis_discipline_settings
+from forven.util import is_untestable_reason
 
 log = logging.getLogger(__name__)
 
@@ -180,9 +181,14 @@ def _is_passing_child(child: dict[str, Any]) -> bool:
 
 
 def _is_dead_child(child: dict[str, Any]) -> bool:
-    """A child is dead if it's been archived/rejected — the experiment is over."""
+    """A child is dead if it's been archived/rejected — the experiment is over.
+
+    An untestable archive is not: the child never got a fair test (broken code,
+    missing data, not enough history), so it is no evidence against the thesis
+    and must not drag the crucible to an all-dead 'disproven'.
+    """
     stage = str(child.get("stage") or "").strip().lower()
-    return stage in _DEAD_STAGES
+    return stage in _DEAD_STAGES and not is_untestable_reason(child.get("status_reason"))
 
 
 def _is_in_progress_child(child: dict[str, Any]) -> bool:
@@ -214,7 +220,7 @@ def _load_recent_child_outcomes(hypothesis_id: str, *, limit: int) -> list[dict[
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT id, symbol, timeframe, stage, verdict
+            SELECT id, symbol, timeframe, stage, status_reason, verdict
             FROM strategies
             WHERE hypothesis_id = ?
             ORDER BY created_at DESC
@@ -238,6 +244,7 @@ def _load_recent_child_outcomes(hypothesis_id: str, *, limit: int) -> list[dict[
             "symbol": row["symbol"],
             "timeframe": row["timeframe"],
             "stage": row["stage"],
+            "status_reason": row["status_reason"],
             "verdict": verdict_value,
         })
     return out

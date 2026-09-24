@@ -28,7 +28,6 @@
 		slot_contention: { label: 'SLOT CONTENTION', cls: 'text-orange-400 border-orange-900 bg-orange-500/10' },
 		awaiting_operator: { label: 'NEEDS YOU', cls: 'text-purple-400 border-purple-900 bg-purple-500/10' },
 		live: { label: 'LIVE', cls: 'text-emerald-400 border-emerald-900 bg-emerald-500/10' },
-		parked: { label: 'PARKED', cls: 'text-[#666] border-[#333] bg-[#111]' },
 		unknown: { label: 'UNKNOWN', cls: 'text-[#888] border-[#333] bg-[#111]' },
 	};
 

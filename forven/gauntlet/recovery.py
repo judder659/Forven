@@ -11,12 +11,12 @@ log = logging.getLogger(__name__)
 
 
 def resolve_evidence_blocks(*, limit: int = 50) -> dict[str, int]:
-    transition_stage = importlib.import_module("forven.brain").transition_stage
+    archive_untestable = importlib.import_module("forven.brain").archive_untestable
     get_db = importlib.import_module("forven.db").get_db
     engine = importlib.import_module("forven.gauntlet.engine")
     _now, cancel_workflow, retry_step = engine._now, engine.cancel_workflow, engine.retry_step
 
-    summary = {"history_requeued": 0, "research_deferred": 0}
+    summary = {"history_requeued": 0, "archived_untestable": 0}
     with get_db() as conn:
         rows = conn.execute(
             """SELECT st.*, w.strategy_id FROM gauntlet_steps st
@@ -54,15 +54,20 @@ def resolve_evidence_blocks(*, limit: int = 50) -> dict[str, int]:
                         )
                     summary["history_requeued"] += 1
                     continue
-            reason = "Insufficient validation evidence; retained for research, not a merit failure: " + str(error.get("message") or "history unavailable")
-            result = transition_stage(
-                strategy_id=row["strategy_id"], target_stage="research_only",
-                reason=reason, actor="gauntlet_evidence_deferral", force=False,
-                evidence={"merit": False, "reason_code": "insufficient_evidence"},
+            detail = str(error.get("message") or "history unavailable")
+            result = archive_untestable(
+                row["strategy_id"],
+                code="insufficient_history",
+                detail=detail,
+                actor="gauntlet_evidence_deferral",
             )
-            if result.get("to") == "research_only":
-                cancel_workflow(row["workflow_id"], actor="gauntlet_evidence_deferral", reason=reason)
-                summary["research_deferred"] += 1
+            if result.get("to") == "archived":
+                cancel_workflow(
+                    row["workflow_id"],
+                    actor="gauntlet_evidence_deferral",
+                    reason=f"Insufficient validation evidence (not a merit failure): {detail}",
+                )
+                summary["archived_untestable"] += 1
         except Exception:
             log.exception("Unable to resolve evidence block for %s", row["strategy_id"])
     return summary

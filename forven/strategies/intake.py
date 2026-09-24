@@ -11,6 +11,8 @@ from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
+from forven.util import untestable_status_reason
+
 log = logging.getLogger("forven.strategies.intake")
 
 
@@ -165,8 +167,8 @@ class IntakeRegistration:
     stage: str = "quick_screen"
     session_id: str | None = None
     # Lookahead / data-leak probe outcome (GATE B). When the vectorized signals
-    # read future bars, the strategy registers as research_only (inert — the
-    # gauntlet backfill only picks up quick_screen/gauntlet) with the reason here.
+    # read future bars, the strategy registers straight into the graveyard as
+    # untestable (stage='archived') with the reason here.
     lookahead_blocked: bool = False
     lookahead_reason: str | None = None
     # Probe VERIFIABILITY (lookahead-probe-vacuous-pass, 2026-07-25). The
@@ -183,8 +185,8 @@ class IntakeRegistration:
     lookahead_inconclusive_reason: str | None = None
     bounded_lookback: bool | None = None
     # Data-availability probe outcome (GATE D). When a required enrichment feed
-    # is unavailable and cannot be auto-downloaded, the strategy registers as
-    # research_only — it can never produce a trading backtest until the data
+    # is unavailable and cannot be auto-downloaded, the strategy registers as an
+    # untestable archive — it can never produce a trading backtest until the data
     # exists (S05577/S05838 phantom class).
     data_blocked: bool = False
     data_block_reason: str | None = None
@@ -505,7 +507,7 @@ def _register_custom_strategy_sandboxed(
         file_name=file_name,
         source=source,
         source_ref=str(target),
-        stage=str(registered.get("stage") or "research_only"),
+        stage=str(registered.get("stage") or "archived"),
         session_id=session_id,
         lookahead_blocked=bool(registered.get("lookahead_blocked")),
         lookahead_reason=registered.get("certification_error")
@@ -515,6 +517,7 @@ def _register_custom_strategy_sandboxed(
     ).to_dict()
     payload["runtime_type"] = registered.get("runtime_type")
     payload["sandbox_only"] = True
+    payload["untestable_reason"] = registered.get("untestable_reason")
     return payload
 
 
@@ -683,7 +686,8 @@ def register_imported_strategy_file(
         if not cert_error:
             cert_error = meta.get("lookahead_reason")
     # Execution smoke probe ran in the worker (the untrusted class never reaches
-    # the parent). A crash on clean synthetic data → research_only with the reason.
+    # the parent). A crash on clean synthetic data → an untestable archive with
+    # the reason.
     execution_crash_reason = meta.get("execution_crash_reason")
     if execution_crash_reason:
         certified = False
@@ -695,7 +699,17 @@ def register_imported_strategy_file(
     # reject honest strategies; passing it silently is what let a leak-free stamp be
     # issued on zero evidence. So it is recorded and surfaced instead.
     verifiability = lookahead_verifiability(meta)
-    initial_stage = "research_only" if (lookahead_blocked or execution_crash_reason or not certified) else "quick_screen"
+    # A strategy that cannot be fairly tested is registered straight into the
+    # graveyard as untestable (not a merit failure); the author fixes the file and
+    # registers it again — an archived holder never blocks its TYPE_NAME.
+    initial_stage = "archived" if (lookahead_blocked or execution_crash_reason or not certified) else "quick_screen"
+    untestable_reason: str | None = None
+    if lookahead_blocked:
+        untestable_reason = untestable_status_reason("lookahead", str(cert_error or "reads future bars"))
+    elif execution_crash_reason:
+        untestable_reason = untestable_status_reason("broken_code", str(cert_error))
+    elif not certified:
+        untestable_reason = untestable_status_reason("uncertified", str(cert_error or "certification failed"))
     stored_params = (
         meta.get("canonical_params") if (certified and not lookahead_blocked) else meta.get("default_params")
     ) or {}
@@ -740,6 +754,7 @@ def register_imported_strategy_file(
             origin_task_id=_origin_task_id,
             parent_strategy_id=_parent_strategy_id,
             sandbox_only=True,
+            status_reason=untestable_reason,
         )
         if container_type != runtime_type:
             conn.execute(
@@ -767,7 +782,9 @@ def register_imported_strategy_file(
                 strategy_id=strategy_id,
             )
         status_note = (
-            f"sandbox_validation: {str(cert_error)[:400]}"
+            None
+            if untestable_reason
+            else f"sandbox_validation: {str(cert_error)[:400]}"
             if cert_error
             else (
                 "lookahead not verifiable: "
@@ -816,6 +833,7 @@ def register_imported_strategy_file(
         "certified": certified,
         "certification_error": cert_error,
         "stage": initial_stage,
+        "untestable_reason": untestable_reason,
         "sandbox_only": True,
         "lookahead_blocked": lookahead_blocked,
         **verifiability,
@@ -882,11 +900,13 @@ def get_recent_intake_events(limit: int = 20) -> dict:
                 events.append(entry)
 
             # Intake registers new AI Drop Zone strategies at quick_screen (certified)
-            # or research_only (failed certification). Include both so the UI surfaces
-            # what was just ingested, not strategies that were later promoted.
+            # or straight into the graveyard as untestable (failed certification).
+            # Include both so the UI surfaces what was just ingested, not strategies
+            # that were later promoted or archived on merit.
             strat_rows = conn.execute(
-                "SELECT id, name, type, symbol, timeframe, status, stage, source, created_at "
-                "FROM strategies WHERE stage IN ('quick_screen', 'research_only') "
+                "SELECT id, name, type, symbol, timeframe, status, stage, source, status_reason, created_at "
+                "FROM strategies WHERE stage = 'quick_screen' "
+                "OR (stage = 'archived' AND status_reason LIKE 'untestable:%') "
                 "ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()

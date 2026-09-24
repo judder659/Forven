@@ -72,7 +72,6 @@ RETIRED_OWNER_SUCCESSORS: dict[str, str] = {
 # only (there is no execution agent).
 STAGE_TO_AGENT: dict[str, str | None] = {
     "quick_screen": "simulation-agent",
-    "research_only": "strategy-developer",
     "gauntlet": "simulation-agent",
     "paper": "risk-manager",
     "live_graduated": "risk-manager",
@@ -80,8 +79,8 @@ STAGE_TO_AGENT: dict[str, str | None] = {
     "rejected": None,
 }
 
-# Stages where worker/lock ownership is actively ENFORCED (research_only
-# containers are freely workable, terminal stages have no owner).
+# Stages where worker/lock ownership is actively ENFORCED (terminal stages have
+# no owner).
 STAGE_OWNER_GUARD: dict[str, str] = {
     "quick_screen": "simulation-agent",
     "gauntlet": "simulation-agent",

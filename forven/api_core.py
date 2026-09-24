@@ -2286,7 +2286,6 @@ def _to_lifecycle_state(core_status: str | None) -> str:
 
     core_to_lifecycle = {
         "quick_screen": "generated",
-        "research_only": "research_only",
         "gauntlet": "backtesting",
         "paper": "paper",
         "live_graduated": "deployed",
@@ -2298,8 +2297,6 @@ def _to_lifecycle_state(core_status: str | None) -> str:
     if normalized in core_to_lifecycle:
         return core_to_lifecycle[normalized]
 
-    if normalized == "research_only":
-        return "research_only"
     if normalized.startswith("paper") or normalized == "paper_trading":
         return "paper"
     if normalized.startswith("backtest") or normalized == "gauntlet":
@@ -5464,9 +5461,6 @@ def update_strategy_default_params(
                         )
         pin_written = pin_to_store
 
-    # Research recovery: on param edit, try re-certification for research_only strategies
-    _try_research_recovery_on_edit(strategy_id)
-
     # Propagate execution-setting changes onto an OPEN paper/live position so the
     # edit "takes" on the running trade. Only when the strategy is in an
     # operator-owned (paper/live) stage AND the execution_profile actually changed —
@@ -5496,53 +5490,6 @@ def update_strategy_default_params(
         "pinned_backtest_id": pin_written,
         "open_position_update": open_position_update,
     }
-
-
-def _try_research_recovery_on_edit(strategy_id: str):
-    """Debounced research recovery trigger on param edit. Max 1 per strategy per 5 min."""
-    try:
-        from forven.db import get_db as _gdb, kv_get as _kvg, kv_set as _kvs
-        from datetime import datetime as _dt, timezone as _tz
-
-        # Check if strategy is research_only
-        with _gdb() as conn:
-            row = conn.execute(
-                "SELECT stage FROM strategies WHERE id = ?", (strategy_id,)
-            ).fetchone()
-        if not row or (row["stage"] or "").strip().lower() != "research_only":
-            return
-
-        # Debounce: 1 per strategy per 5 min
-        debounce_key = f"forven:recert_debounce:{strategy_id}"
-        last_run = _kvg(debounce_key)
-        if last_run:
-            try:
-                last_dt = _dt.fromisoformat(last_run)
-                if (_dt.now(_tz.utc) - last_dt).total_seconds() < 300:
-                    return
-            except Exception:
-                pass
-
-        _kvs(debounce_key, _dt.now(_tz.utc).isoformat())
-
-        from forven.brain import try_research_recovery
-        result = try_research_recovery(strategy_id)
-
-        # WebSocket broadcast if available
-        if result.get("promoted"):
-            # API-08: this runs in the threadpool (sync handler), so the old
-            # `asyncio.run(ws_manager.broadcast(...))` fallback drove sockets owned
-            # by the uvicorn loop from a throwaway loop — and the bare
-            # `except Exception: pass` around it meant the resulting failure was
-            # invisible: the certification_change event silently never arrived.
-            dispatch_ws_broadcast(
-                {"type": "certification_change", "strategy_id": strategy_id, "promoted": True}
-            )
-    except Exception:
-        import logging
-        logging.getLogger("forven.api_core").warning(
-            "Research recovery on edit failed for %s", strategy_id, exc_info=True
-        )
 
 
 def get_backtest_results_count(

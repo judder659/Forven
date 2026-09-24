@@ -2,7 +2,7 @@
 (imported/dropzone) strategies just because their class cannot be resolved in
 the trusted parent — that is true BY DESIGN (the class loads only in the
 worker), and their availability was already certified with the real class at
-registration (a blocked verdict parks the strategy research_only at birth).
+registration (a blocked verdict archives the strategy as untestable at birth).
 Pre-fix, every certified dropzone strategy re-blocked at quick_screen with
 "Cannot verify data availability ... strategy class could not be resolved"
 (the S06890 no-metrics chain; S06895's re-adjudication stall, 2026-07-11).

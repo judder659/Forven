@@ -353,46 +353,51 @@ def test_attempt_stage_promotion_reports_blocked_transition_when_transition_stag
     assert row["status"] == "quick_screen"
 
 
-def test_transition_stage_supports_research_only_lane(forven_db):
-    _insert_strategy("s-research-lane", stage="quick_screen", owner="simulation-agent")
+def test_untestable_archive_skips_ghost_protection_and_recovery_clears_reason(forven_db, monkeypatch):
+    # No metrics: a merit archive would be blocked by ghost protection, but an
+    # untestable archive records that no fair test was possible.
+    from forven.brain import archive_untestable
+    import forven.strategies.lookahead_probe as lookahead_probe
 
-    demotion = transition_stage(
-        strategy_id="s-research-lane",
-        target_stage="research_only",
-        reason="experimental sandbox",
-        actor="test",
-    )
-    promotion = transition_stage(
-        strategy_id="s-research-lane",
-        target_stage="quick_screen",
-        reason="ready for pipeline",
-        actor="test",
-    )
+    _insert_strategy("s-untestable", stage="quick_screen", owner="simulation-agent")
 
-    assert demotion["from"] == "quick_screen"
-    assert demotion["to"] == "research_only"
-    assert demotion["owner"] == "strategy-developer"
-    assert promotion["from"] == "research_only"
-    assert promotion["to"] == "quick_screen"
-    assert promotion["owner"] == "simulation-agent"
+    archived = archive_untestable(
+        "s-untestable", code="broken_code", detail="class failed to load", actor="test",
+    )
+    assert archived["to"] == "archived"
+    assert archived["owner"] is None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT stage, owner, status_reason FROM strategies WHERE id = 's-untestable'"
+        ).fetchone()
+    assert row["stage"] == "archived"
+    assert row["owner"] is None
+    assert row["status_reason"] == "untestable:broken_code: class failed to load"
+
+    # Recover re-runs the intake checks; a clean re-probe lets it back in.
+    monkeypatch.setattr(lookahead_probe, "detect_lookahead", lambda _obj: None)
+    revived = transition_stage(
+        strategy_id="s-untestable", target_stage="quick_screen", reason="fixed", actor="test",
+    )
+    assert revived["to"] == "quick_screen"
+    assert revived["owner"] == "simulation-agent"
 
     with get_db() as conn:
         row = conn.execute(
-            "SELECT stage, status, owner FROM strategies WHERE id = ?",
-            ("s-research-lane",),
+            "SELECT stage, status_reason FROM strategies WHERE id = 's-untestable'"
         ).fetchone()
         events = conn.execute(
-            "SELECT from_state, to_state FROM strategy_events WHERE strategy_id = ? ORDER BY id ASC",
-            ("s-research-lane",),
+            "SELECT from_state, to_state, details_json FROM strategy_events WHERE strategy_id = ? ORDER BY id ASC",
+            ("s-untestable",),
         ).fetchall()
 
     assert row["stage"] == "quick_screen"
-    assert row["status"] == "quick_screen"
-    assert row["owner"] == "simulation-agent"
+    assert row["status_reason"] is None
     assert [(event["from_state"], event["to_state"]) for event in events[-2:]] == [
-        ("quick_screen", "research_only"),
-        ("research_only", "quick_screen"),
+        ("quick_screen", "archived"),
+        ("archived", "quick_screen"),
     ]
+    assert json.loads(events[-2]["details_json"])["motion"] == "untestable"
 
 
 def test_transition_stage_allows_forced_rejected_to_paper_without_backtests(forven_db):
@@ -704,19 +709,25 @@ def test_brain_promote_strategy_resolves_prefixed_display_name(forven_db, caplog
             ("ETH-BOLLINGER-S09999", "S09999"),
         )
 
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET metrics = ? WHERE id = ?",
+            (json.dumps({"fitness": 0.2, "sharpe": -0.4, "total_return_pct": -3.0}), "S09999"),
+        )
+
     with caplog.at_level("ERROR", logger="forven.brain"):
-        success, reason = brain_promote_strategy("ETH-BOLLINGER-S09999", "research_only")
+        success, reason = brain_promote_strategy("ETH-BOLLINGER-S09999", "archived")
 
     assert success is True, reason
     with get_db() as conn:
         stage = conn.execute("SELECT stage FROM strategies WHERE id = ?", ("S09999",)).fetchone()["stage"]
-    assert stage == "research_only"
+    assert stage == "archived"
     assert "Strategy not found: ETH-BOLLINGER-S09999" not in caplog.text
 
 
 def test_brain_promote_strategy_non_strategy_id_stays_not_found(forven_db):
     """A non-S-prefixed id (e.g. a hypothesis) must NOT be mis-resolved to a strategy."""
-    success, reason = brain_promote_strategy("H00217", "research_only")
+    success, reason = brain_promote_strategy("H00217", "archived")
     assert success is False
     assert "not found" in reason.lower()
 
@@ -2498,8 +2509,12 @@ def test_resolve_initial_stage_certified_returns_quick_screen():
     assert resolve_initial_stage(cert) == "quick_screen"
 
 
-def test_resolve_initial_stage_uncertified_returns_research_only():
-    from forven.strategies.certification import StrategyExecutionCertification, resolve_initial_stage
+def test_resolve_initial_stage_uncertified_returns_untestable_archive():
+    from forven.strategies.certification import (
+        StrategyExecutionCertification,
+        certification_status_reason,
+        resolve_initial_stage,
+    )
     from forven.strategies.params import ParamCanonicalizationMeta
     # Build an uncertified certification manually
     cert = StrategyExecutionCertification(
@@ -2515,7 +2530,8 @@ def test_resolve_initial_stage_uncertified_returns_research_only():
         param_validation_errors=[],
     )
     assert not cert.certified
-    assert resolve_initial_stage(cert) == "research_only"
+    assert resolve_initial_stage(cert) == "archived"
+    assert (certification_status_reason(cert) or "").startswith("untestable:uncertified:")
 
 
 def test_transition_quick_screen_to_gauntlet_blocked_without_backtest(forven_db):
@@ -2546,7 +2562,7 @@ def test_transition_quick_screen_to_gauntlet_allowed_with_backtest(forven_db):
     assert row["stage"] == "gauntlet"
 
 
-def test_demotion_thrash_redirects_to_research_only_after_3(forven_db):
+def test_demotion_thrash_archives_as_untestable_after_3(forven_db):
     _insert_strategy("s-thrash", stage="gauntlet", metrics={"sharpe": 1.5, "total_trades": 30})
     # Set demotion_count to 2 so next demotion hits threshold
     with get_db() as conn:
@@ -2559,10 +2575,11 @@ def test_demotion_thrash_redirects_to_research_only_after_3(forven_db):
         actor="system",
     )
     with get_db() as conn:
-        row = conn.execute("SELECT stage, demotion_count, status_reason FROM strategies WHERE id = 's-thrash'").fetchone()
-    assert row["stage"] == "research_only"
+        row = conn.execute("SELECT stage, owner, demotion_count, status_reason FROM strategies WHERE id = 's-thrash'").fetchone()
+    assert row["stage"] == "archived"
+    assert row["owner"] is None
     assert row["demotion_count"] == 3
-    assert row["status_reason"] == "max_retries_exceeded"
+    assert row["status_reason"].startswith("untestable:max_demotions:")
 
 
 def test_migration_snapshot_saves_and_restores(forven_db):
@@ -2656,135 +2673,81 @@ def test_stale_quick_screen_no_activity_7d_archived(forven_db):
     assert row is None or row["stage"] == "archived"
 
 
-def test_research_recovery_on_edit_promotes_if_certified(forven_db):
-    from forven.brain import try_research_recovery
-    _insert_strategy("s-recov", stage="research_only")
-    # Give it a valid type that will certify
-    with get_db() as conn:
-        conn.execute("UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = 's-recov'",
-                     (json.dumps({"rsi_threshold": 30, "lookback_period": 14}),))
-    result = try_research_recovery("s-recov")
-    assert result.get("promoted") is True
-    with get_db() as conn:
-        row = conn.execute("SELECT stage FROM strategies WHERE id = 's-recov'").fetchone()
-    assert row["stage"] == "quick_screen"
-
-
-def test_research_recovery_reprobes_lookahead_and_parks_on_leak(forven_db, monkeypatch):
-    # LOOKAHEAD-REENTRY-1: recovery must re-run the causality probe every fresh
-    # strategy passes at intake. Certification + data-availability pass (valid
-    # rsi_momentum), but the lookahead re-probe reports a leak → recovery must
-    # NOT promote; the strategy stays research_only with a lookahead status_reason,
-    # classified as a quarantine (not a repeated-failure archive count).
-    from forven.brain import try_research_recovery
-    import forven.strategies.lookahead_probe as lookahead_probe
-
-    _insert_strategy("s-recov-leak", stage="research_only")
+def _insert_untestable(strategy_id: str) -> None:
+    _insert_strategy(strategy_id, stage="archived")
     with get_db() as conn:
         conn.execute(
-            "UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = 's-recov-leak'",
-            (json.dumps({"rsi_threshold": 30, "lookback_period": 14}),),
+            "UPDATE strategies SET params = ?, status_reason = ? WHERE id = ?",
+            (
+                json.dumps({"rsi_threshold": 30, "lookback_period": 14}),
+                "untestable:lookahead: reads future bars",
+                strategy_id,
+            ),
         )
 
+
+def test_untestable_recovery_reprobes_lookahead_and_stays_archived_on_leak(forven_db, monkeypatch):
+    # LOOKAHEAD-REENTRY-1: recovering an untestable strategy must re-run the
+    # causality probe every fresh strategy passes at intake. Certification and
+    # data availability pass (valid rsi_momentum), but the re-probe reports a
+    # leak, so Recover is refused and the strategy keeps its untestable reason.
+    import forven.strategies.lookahead_probe as lookahead_probe
+
+    _insert_untestable("s-recov-leak")
     leak_reason = (
         "Lookahead detected: vectorized signal at bar t=-20 changes when future "
         "bars are withheld (long_entries) -- strategy reads future data; rejected"
     )
     monkeypatch.setattr(lookahead_probe, "detect_lookahead", lambda _obj: leak_reason)
 
-    result = try_research_recovery("s-recov-leak")
-    assert result.get("promoted") is False
-    assert "lookahead" in (result.get("reason") or "").lower()
+    result = transition_stage("s-recov-leak", "quick_screen", reason="Recover", actor="api")
+
+    assert result["to"] == "archived"
+    assert result["reason_code"] == "untestable_reentry_blocked"
+    assert "Lookahead detected" in result["blocked_reason"]
     with get_db() as conn:
         row = conn.execute(
             "SELECT stage, status_reason FROM strategies WHERE id = 's-recov-leak'"
         ).fetchone()
-    assert row["stage"] == "research_only"
-    assert (row["status_reason"] or "").startswith("lookahead_blocked:")
-    # Quarantine classification: a leak is a structural (tier2) quarantine.
-    assert "tier2:lookahead" in row["status_reason"]
+    assert row["stage"] == "archived"
+    assert row["status_reason"] == "untestable:lookahead: reads future bars"
 
 
-def test_research_recovery_promotes_when_lookahead_probe_passes(forven_db, monkeypatch):
-    # Same setup, but the re-probe reports no leak → recovery proceeds as before.
-    from forven.brain import try_research_recovery
+def test_untestable_recovery_operator_force_bypasses_reentry_checks(forven_db, monkeypatch):
     import forven.strategies.lookahead_probe as lookahead_probe
 
-    _insert_strategy("s-recov-clean", stage="research_only")
+    _insert_untestable("s-recov-force")
+    monkeypatch.setattr(lookahead_probe, "detect_lookahead", lambda _obj: "Lookahead detected: leak")
+
+    result = transition_stage("s-recov-force", "quick_screen", reason="operator override", actor="api", force=True)
+
+    assert result["to"] == "quick_screen"
+
+
+def test_sandbox_untestable_recovery_revalidates_in_the_worker(forven_db, monkeypatch):
+    # A drop-zone class never loads in the parent, so a parent-side probe compares
+    # nothing. Recovery must re-run the worker validation instead (S05661/S06155
+    # were revived past an intake lookahead block by the old parent-side check).
+    import forven.sandbox.strategy_worker as strategy_worker
+
+    _insert_untestable("s-recov-sandbox")
     with get_db() as conn:
         conn.execute(
-            "UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = 's-recov-clean'",
-            (json.dumps({"rsi_threshold": 30, "lookback_period": 14}),),
+            "UPDATE strategies SET runtime_type = 'imported__dropzone_leaky_abc', sandbox_only = 1 WHERE id = 's-recov-sandbox'"
         )
+    calls: list[tuple] = []
 
-    monkeypatch.setattr(lookahead_probe, "detect_lookahead", lambda _obj: None)
+    def _validate(module_name, *, package="custom", **_kwargs):
+        calls.append((module_name, package))
+        return {"ok": True, "certified": True, "lookahead_blocked": True, "lookahead_reason": "Lookahead detected: t=-3"}
 
-    result = try_research_recovery("s-recov-clean")
-    assert result.get("promoted") is True
-    with get_db() as conn:
-        row = conn.execute("SELECT stage FROM strategies WHERE id = 's-recov-clean'").fetchone()
-    assert row["stage"] == "quick_screen"
+    monkeypatch.setattr(strategy_worker, "validate_custom_module_isolated", _validate)
 
+    result = transition_stage("s-recov-sandbox", "quick_screen", reason="Recover", actor="api")
 
-def test_research_recovery_on_edit_debounce_5min(forven_db):
-    from forven.api_core import _try_research_recovery_on_edit
-    _insert_strategy("s-debounce", stage="research_only")
-    with get_db() as conn:
-        conn.execute("UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = 's-debounce'",
-                     (json.dumps({"rsi_threshold": 30, "lookback_period": 14}),))
-
-    # First call — should run
-    _try_research_recovery_on_edit("s-debounce")
-    # Check debounce key exists
-    from forven.db import kv_get
-    assert kv_get("forven:recert_debounce:s-debounce") is not None
-
-    # Reset strategy back to research_only to test debounce prevents second call
-    with get_db() as conn:
-        conn.execute("UPDATE strategies SET stage = 'research_only', status = 'research_only' WHERE id = 's-debounce'")
-    _try_research_recovery_on_edit("s-debounce")
-    # Should still be research_only due to debounce
-    with get_db() as conn:
-        row = conn.execute("SELECT stage FROM strategies WHERE id = 's-debounce'").fetchone()
-    assert row["stage"] == "research_only"
-
-
-def test_research_only_sweep_never_revives_parked_strategies(forven_db):
-    # The sweep used to re-certify and revive parked strategies without checking
-    # why they were parked, so insufficient-history deferrals bounced
-    # gauntlet -> research_only -> quick_screen hourly (Sept 2026).
-    from forven.evolution import _archive_stale_research_only
-
-    for i in range(3):
-        _insert_strategy(f"s-sweep-{i}", stage="research_only")
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET type = 'rsi_momentum', params = ? WHERE id = ?",
-                (json.dumps({"rsi_threshold": 30, "lookback_period": 14}), f"s-sweep-{i}"),
-            )
-
-    _archive_stale_research_only()
-
-    with get_db() as conn:
-        stages = {
-            row["id"]: row["stage"]
-            for row in conn.execute("SELECT id, stage FROM strategies WHERE id LIKE 's-sweep-%'")
-        }
-    assert stages == {f"s-sweep-{i}": "research_only" for i in range(3)}
-
-
-def test_research_only_30d_inactive_archived(forven_db):
-    from forven.evolution import _archive_stale_research_only
-    old_time = (datetime.now(timezone.utc) - timedelta(days=35)).isoformat()
-    _insert_strategy("s-30d", stage="research_only", stage_changed_at=old_time)
-    with get_db() as conn:
-        conn.execute("UPDATE strategies SET created_at = ? WHERE id = 's-30d'", (old_time,))
-
-    _archive_stale_research_only()
-
-    with get_db() as conn:
-        row = conn.execute("SELECT stage FROM strategies WHERE id = 's-30d'").fetchone()
-    assert row is None or row["stage"] == "archived"
+    assert calls == [("dropzone_leaky_abc", "imported")]
+    assert result["to"] == "archived"
+    assert "Lookahead detected: t=-3" in result["blocked_reason"]
 
 
 def test_failure_tier_classification():
@@ -2907,14 +2870,9 @@ def test_ideation_prompt_congestion_warning_when_gauntlet_above_30(forven_db):
     assert "PIPELINE CONGESTION WARNING" in prompt
 
 
-def test_brain_research_recovery_flag_default_false():
-    from forven.lab_features import brain_research_recovery_enabled
-    assert brain_research_recovery_enabled() is False
-
-
 def test_mutation_audit_log_records_changes(forven_db):
     from forven.db import log_mutation_audit
-    _insert_strategy("s-audit", stage="research_only")
+    _insert_strategy("s-audit", stage="quick_screen")
     with get_db() as conn:
         log_mutation_audit(conn, "s-audit", "brain", "lookback_period", "14", "21")
 
@@ -3058,12 +3016,12 @@ def test_pipeline_saturation_ignores_archived(forven_db):
     assert active_count == 10
 
 
-def test_pipeline_saturation_ignores_research_only(forven_db):
-    """Research-only strategies live outside the tradable pipeline gate."""
+def test_pipeline_saturation_ignores_untestable_archives(forven_db):
+    """Untestable strategies sit in the graveyard, outside the tradable pipeline gate."""
     from forven.lab_features import is_pipeline_saturated
 
     for i in range(80):
-        _insert_strategy(f"res-{i:04d}", stage="research_only")
+        _insert_strategy(f"res-{i:04d}", stage="archived")
     for i in range(12):
         _insert_strategy(f"qs-{i:04d}", stage="quick_screen")
 

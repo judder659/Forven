@@ -670,6 +670,140 @@ def _m_2026_09_agent_calls(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_calls_date ON agent_model_calls(created_at)")
 
 
+_PARKED_STAGES = ("research_only", "research-only", "researchonly")
+
+
+def _untestable_code_for_parked(status_reason: str, park_actor: str, park_reason: str) -> str:
+    """Classify why a legacy research_only strategy was parked (see util.untestable_status_reason)."""
+    text = f"{status_reason} {park_reason}".lower()
+    if "lookahead detected" in text or "lookahead_blocked" in text:
+        return "lookahead"
+    if any(marker in text for marker in (
+        "no runtime class", "could not be resolved", "execution smoke test failed",
+        "failed inside strategy code", "code_error",
+    )):
+        return "broken_code"
+    if "data_blocked" in text or "data-blocked" in text or "data-availability" in text:
+        return "no_data"
+    if park_actor == "gauntlet_evidence_deferral" or "insufficient validation evidence" in text:
+        return "insufficient_history"
+    if "max_retries_exceeded" in text or "max retries exceeded" in text:
+        return "max_demotions"
+    if status_reason.lower().startswith(("tier", "sandbox_validation")):
+        return "uncertified"
+    return "parked"
+
+
+def _m_2026_09_retire_research_only(conn: sqlite3.Connection) -> None:
+    """Retire the research_only ("Parked") stage: move every parked strategy to the
+    graveyard as an untestable archive.
+
+    Parked strategies were never fairly tested (broken code, lookahead leaks,
+    missing data, not enough validation history). They become stage='archived'
+    with status_reason='untestable:<code>: <why>', which keeps them out of the
+    merit-failure evidence (hypothesis verdicts, skill outcomes) and lets the
+    Forge show why. Recover re-runs the intake checks before letting one back in.
+    Existing notes are kept; pending tasks and live gauntlet workflows for these
+    strategies are cancelled as for any archive. Idempotent: a second run finds
+    no parked rows.
+    """
+    from datetime import datetime, timezone
+
+    from forven.util import untestable_status_reason
+
+    placeholders = ",".join("?" for _ in _PARKED_STAGES)
+    rows = conn.execute(
+        f"""
+        SELECT id, owner, status_reason FROM strategies
+        WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ({placeholders})
+           OR (NULLIF(TRIM(COALESCE(stage, '')), '') IS NULL
+               AND LOWER(TRIM(COALESCE(status, ''))) IN ({placeholders}))
+        """,
+        _PARKED_STAGES + _PARKED_STAGES,
+    ).fetchall()
+    if not rows:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    ids: list[str] = []
+    for row in rows:
+        strategy_id = str(row[0])
+        status_reason = str(row[2] or "").strip()
+        # The latest real park event (a blocked transition records a
+        # research_only -> research_only row that is not the reason it was parked).
+        park = conn.execute(
+            "SELECT actor, reason FROM strategy_events "
+            "WHERE strategy_id = ? AND LOWER(TRIM(COALESCE(to_state, ''))) = 'research_only' "
+            "AND LOWER(TRIM(COALESCE(from_state, ''))) != 'research_only' "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (strategy_id,),
+        ).fetchone()
+        park_actor = str(park[0] or "") if park else ""
+        park_reason = str(park[1] or "").strip() if park else ""
+        code = _untestable_code_for_parked(status_reason, park_actor, park_reason)
+        if code == "insufficient_history" and park_reason:
+            detail = park_reason
+        else:
+            detail = status_reason or park_reason or "parked before the research_only stage was retired"
+        reason = untestable_status_reason(code, detail)
+        conn.execute(
+            """
+            UPDATE strategies
+            SET stage = 'archived', status = 'archived', owner = NULL,
+                stage_changed_at = ?, status_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, reason, now, strategy_id),
+        )
+        conn.execute(
+            "INSERT INTO strategy_events "
+            "(strategy_id, from_state, to_state, actor, reason, owner_from, owner_to, details_json, created_at) "
+            "VALUES (?, 'research_only', 'archived', 'migration', ?, ?, NULL, ?, ?)",
+            (
+                strategy_id,
+                f"Parked stage retired: archived as untestable ({code})",
+                row[1],
+                json.dumps({"motion": "untestable", "migration": "2026_09_retire_research_only"}),
+                now,
+            ),
+        )
+        ids.append(strategy_id)
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" for _ in chunk)
+        if "agent_tasks" in tables:
+            conn.execute(
+                f"""UPDATE agent_tasks
+                    SET status = 'cancelled', completed_at = ?,
+                        error = COALESCE(error, 'Cancelled because strategy entered terminal stage')
+                    WHERE strategy_id IN ({marks})
+                      AND LOWER(TRIM(COALESCE(status, ''))) = 'pending'""",
+                (now, *chunk),
+            )
+        if "gauntlet_workflows" in tables and "gauntlet_steps" in tables:
+            conn.execute(
+                f"""UPDATE gauntlet_steps
+                    SET status = 'cancelled', completed_at = ?, updated_at = ?
+                    WHERE status NOT IN ('passed', 'failed_gate', 'cancelled')
+                      AND workflow_id IN (
+                          SELECT id FROM gauntlet_workflows
+                          WHERE strategy_id IN ({marks})
+                            AND status NOT IN ('passed', 'failed_gate', 'cancelled')
+                      )""",
+                (now, now, *chunk),
+            )
+            conn.execute(
+                f"""UPDATE gauntlet_workflows
+                    SET status = 'cancelled', cancelled_at = ?, completed_at = ?, updated_at = ?
+                    WHERE strategy_id IN ({marks})
+                      AND status NOT IN ('passed', 'failed_gate', 'cancelled')""",
+                (now, now, now, *chunk),
+            )
+    log.info("Retired research_only: archived %d parked strategies as untestable", len(ids))
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -731,6 +865,7 @@ MIGRATIONS: list[Migration] = [
         up=_m_2026_07_regime_gate_events,
     ),
     Migration(name="2026_09_agent_calls", up=_m_2026_09_agent_calls),
+    Migration(name="2026_09_retire_research_only", up=_m_2026_09_retire_research_only),
 ]
 
 

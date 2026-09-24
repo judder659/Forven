@@ -23,7 +23,7 @@ Read current dataset coverage, effective settings, gate reports, and persisted r
 
 Keep code/parameter revisions, hypothesis provenance, dataset versions, costs, sample periods, and test results linked. Never reuse old metrics as proof for changed logic or overwrite failed results. Respect paper/live parameter locks and the supported revision workflow.
 
-The canonical progression is `quick_screen -> gauntlet -> paper -> live_graduated`; `research_only`, `rejected`, and `archived` also exist. Use current transition policy and all required evidence. Never pass `force=true`, modify metrics, or relax thresholds to make a candidate pass. Recommendations, eligibility, approvals, completed transitions, and live deployment are separate facts.
+The canonical progression is `quick_screen -> gauntlet -> paper -> live_graduated`; `rejected` and `archived` also exist, and a strategy that cannot be fairly tested is archived as untestable (not a merit failure). Use current transition policy and all required evidence. Never pass `force=true`, modify metrics, or relax thresholds to make a candidate pass. Recommendations, eligibility, approvals, completed transitions, and live deployment are separate facts.
 
 ## Boundaries and escalation
 

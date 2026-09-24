@@ -1376,16 +1376,6 @@ def _sync_strategy_metrics_and_promote_if_eligible(
             pass
         return
 
-    if strategy_stage == "research_only":
-        try:
-            from forven.brain import try_research_recovery
-
-            recovery = try_research_recovery(strategy_id)
-            if recovery.get("promoted"):
-                strategy_stage = "quick_screen"
-        except Exception as exc:
-            log.warning("Research recovery check failed for %s: %s", strategy_id, exc)
-
     if strategy_stage != "quick_screen":
 
         return
@@ -7875,7 +7865,11 @@ def save_backtest_results(results: dict):
                 strat = HARDCODED_STRATEGIES.get(strat_id, {})
 
                 _strat_params = strat.get("params", {}) if isinstance(strat.get("params"), dict) else {}
-                from forven.strategies.certification import certify_execution_strategy, resolve_initial_stage
+                from forven.strategies.certification import (
+                    certification_status_reason,
+                    certify_execution_strategy,
+                    resolve_initial_stage,
+                )
                 _cert = certify_execution_strategy(str(strat.get("type", "")), _strat_params)
 
                 created_id, _, _ = create_strategy_container(
@@ -7886,6 +7880,7 @@ def save_backtest_results(results: dict):
                     timeframe="1h",
                     params=_strat_params,
                     stage=resolve_initial_stage(_cert),
+                    status_reason=certification_status_reason(_cert),
                 )
 
                 conn.execute(

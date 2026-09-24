@@ -413,7 +413,7 @@ def evaluate_data_availability(
                 # the trusted parent — by design its code loads only in the
                 # worker. Its availability was already certified WITH the real
                 # class at registration (intake passes strategy_cls; a blocked
-                # verdict parks the strategy research_only at birth), so a
+                # verdict archives the strategy as untestable at birth), so a
                 # sandbox strategy that reached the active funnel has passed
                 # this probe. Hard-blocking here re-blocked every certified
                 # dropzone strategy at quick_screen ("Cannot verify data
@@ -440,7 +440,7 @@ def evaluate_data_availability(
         # XASSET-1: a cross-asset/second-leg design can never fire on the
         # single-symbol backtest frame — block it before any fetch logic.
         # Reported through missing_unfetchable so every existing caller
-        # (create-route research_only gate, intake data_block_reason, backtest
+        # (create-route untestable gate, intake data_block_reason, backtest
         # precheck) handles it without changes.
         cross_cols = infer_cross_asset_columns(cls, symbol)
         if cross_cols:
@@ -454,7 +454,7 @@ def evaluate_data_availability(
                 f"strategy reads second-leg data ({_label_columns(sorted(cross_cols))}) "
                 "but the backtest frame is single-symbol and no pair/confirm-leg join "
                 "exists, so entries can structurally never fire (guaranteed 0 trades). "
-                "Keep this design research_only until a cross-asset substrate ships; "
+                "Do not create it until a cross-asset substrate ships; "
                 "do not substitute a single-asset proxy."
             )
             return result

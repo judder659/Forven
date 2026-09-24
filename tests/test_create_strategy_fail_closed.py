@@ -199,7 +199,7 @@ def test_route_allows_empty_params_for_certified_family(forven_db):
     assert response["ok"] is True
 
 
-def test_route_parks_when_data_availability_is_unknown(forven_db, monkeypatch):
+def test_route_archives_as_untestable_when_data_availability_is_unknown(forven_db, monkeypatch):
     from forven.routers.backtesting import create_backtesting_strategy
     from forven.strategies import data_availability
 
@@ -221,12 +221,14 @@ def test_route_parks_when_data_availability_is_unknown(forven_db, monkeypatch):
         body={"type": "ema_cross", "params": {}, "hypothesis_id": _mint_hypothesis()},
     )
 
-    assert response["status"] == "research_only"
+    assert response["status"] == "archived"
     with get_db() as conn:
         row = conn.execute(
-            "SELECT notes FROM strategies WHERE id = ?",
+            "SELECT notes, status_reason FROM strategies WHERE id = ?",
             (response["strategy_id"],),
         ).fetchone()
+    assert str(row["status_reason"]).startswith("untestable:no_data:")
+    assert "feed catalog unavailable" in str(row["status_reason"])
     assert "feed catalog unavailable" in str(row["notes"])
 
 

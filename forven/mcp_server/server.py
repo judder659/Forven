@@ -562,12 +562,14 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         name="forven_register_strategy_file",
         description=(
             "STEP 4 — register a strategy .py you wrote to the workspace "
-            "(absolute path). Returns strategy_id + stage (quick_screen if "
-            "certified, research_only otherwise) — the strategy_id feeds "
-            "every later call. Auto-tags to the active session. NOTE: "
-            "re-registering the same TYPE_NAME is rejected; logic edits "
-            "don't need re-registration (code loads live), but changed "
-            "default_params need a NEW file + TYPE_NAME."
+            "(absolute path). Returns strategy_id + stage: quick_screen if "
+            "it certifies, otherwise archived with an untestable_reason "
+            "(crash, lookahead leak, failed certification) — fix the file "
+            "and register it again. The strategy_id feeds every later call. "
+            "Auto-tags to the active session. NOTE: re-registering a TYPE_NAME "
+            "that is still active is rejected; logic edits don't need "
+            "re-registration (code loads live), but changed default_params "
+            "need a NEW file + TYPE_NAME."
         ),
     )
     def forven_register_strategy_file(

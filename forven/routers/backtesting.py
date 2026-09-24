@@ -11,9 +11,11 @@ from forven.db import create_strategy_container, get_db, parent_strategy_lineage
 from forven.hypotheses import get_hypothesis_spawn_stats, require_hypothesis
 from forven.strategies.certification import (
     EXECUTION_CERTIFIED_FAMILIES,
+    certification_status_reason,
     certify_execution_strategy,
     resolve_initial_stage,
 )
+from forven.util import untestable_status_reason
 
 log = logging.getLogger("forven.routers.backtesting")
 router = APIRouter(tags=["backtesting"], dependencies=[Depends(require_operator_access)])
@@ -132,8 +134,8 @@ def create_backtesting_strategy(
                     f"unknown_symbol: {strategy_symbol!r} is not a resolvable market "
                     "symbol (expected e.g. 'BTC/USDT' or a bare base asset). The "
                     "strategy was NOT created — do not substitute a proxy symbol; "
-                    "if the required substrate has no dataset, keep the hypothesis "
-                    "in research_only instead."
+                    "if the required substrate has no dataset, leave the hypothesis "
+                    "without a strategy until the data exists."
                 ),
             )
 
@@ -159,6 +161,7 @@ def create_backtesting_strategy(
         )
 
     target_stage = resolve_initial_stage(certification)
+    status_reason = certification_status_reason(certification)
     note_lines: list[str] = []
     if isinstance(data.get("notes"), str) and str(data.get("notes")).strip():
         note_lines.append(str(data.get("notes")).strip())
@@ -187,15 +190,15 @@ def create_backtesting_strategy(
     except Exception:
         log.exception("create-time risk-control check failed (skipping) for %s", strategy_name)
 
-    # Data-availability gate: land a strategy in research_only (not quick_screen)
-    # when it references an enrichment feed that GENUINELY can't be provided for
-    # its symbol — otherwise it climbs the gauntlet as a silent 0-trade phantom
-    # (see S05577; funding-family strategies on OHLCV-only data). On-disk only
-    # (auto_fetch=False) so the create path never blocks on network I/O, and we
-    # only downgrade for UNFETCHABLE feeds (e.g. liquidations): fetchable-but-not-
-    # yet-downloaded feeds are left for the backtest precheck to auto-fetch.
-    # A probe error parks the candidate in research_only until availability can
-    # be established; it must not enter quick_screen on unknown inputs.
+    # Data-availability gate: create the strategy in the graveyard as untestable
+    # (not in quick_screen) when it references an enrichment feed that GENUINELY
+    # can't be provided for its symbol — otherwise it climbs the gauntlet as a
+    # silent 0-trade phantom (see S05577; funding-family strategies on OHLCV-only
+    # data). On-disk only (auto_fetch=False) so the create path never blocks on
+    # network I/O, and we only divert UNFETCHABLE feeds (e.g. liquidations):
+    # fetchable-but-not-yet-downloaded feeds are left for the backtest precheck to
+    # auto-fetch. A probe error also diverts the candidate; it must not enter
+    # quick_screen on unknown inputs.
     if target_stage == "quick_screen" and strategy_symbol and strategy_symbol.upper() != "MULTI":
         try:
             from forven.strategies.data_availability import evaluate_data_availability
@@ -207,20 +210,20 @@ def create_backtesting_strategy(
                 auto_fetch=False,
             )
             if avail.blocked and (avail.missing_unfetchable or not avail.missing_fetchable):
-                target_stage = "research_only"
-                note_lines.append(f"Research-only: {avail.error}")
+                target_stage = "archived"
+                status_reason = untestable_status_reason("no_data", avail.error)
         except Exception as exc:
             log.exception(
-                "create-time data-availability check failed (parking) for %s",
+                "create-time data-availability check failed (archiving as untestable) for %s",
                 strategy_name,
             )
-            target_stage = "research_only"
-            note_lines.append(f"Research-only: data-availability check unavailable: {exc}")
+            target_stage = "archived"
+            status_reason = untestable_status_reason(
+                "no_data", f"data-availability check unavailable: {exc}"
+            )
 
-    if target_stage == "research_only":
-        blocking_reason = certification.primary_blocking_reason()
-        if blocking_reason:
-            note_lines.append(f"Research-only: {blocking_reason}")
+    if status_reason:
+        note_lines.append(f"Untestable — created in the graveyard: {status_reason}")
 
     with get_db() as conn:
         lineage_error = parent_strategy_lineage_error(conn, parent_strategy_id, linked_hypothesis_id)
@@ -237,6 +240,7 @@ def create_backtesting_strategy(
             stage=target_stage,
             hypothesis_id=linked_hypothesis_id,
             parent_strategy_id=parent_strategy_id,
+            status_reason=status_reason,
         )
         row = conn.execute(
             "SELECT * FROM strategies WHERE id = ?",
@@ -302,6 +306,9 @@ def create_backtesting_strategy(
         "stage": target_stage,
         "certified": certification.certified,
         "certification_error": certification_error,
+        # Set when the strategy was created straight into the graveyard because
+        # it cannot be fairly tested; fix the cause and create a new strategy.
+        "untestable_reason": status_reason,
         "risk_warning": risk_warning,
         "gauntlet_workflow_id": gauntlet_workflow_id,
     }

@@ -267,7 +267,7 @@ def test_get_strategy_container_refuses_claim_if_strategy_leaves_active_lane_bef
     def _stale_outer_guard(strategy_id: str) -> bool:
         with get_db() as conn:
             conn.execute(
-                "UPDATE strategies SET stage = 'research_only', status = 'research_only', updated_at = datetime('now') WHERE id = ?",
+                "UPDATE strategies SET stage = 'archived', status = 'archived', updated_at = datetime('now') WHERE id = ?",
                 (strategy_id,),
             )
         return True
@@ -283,8 +283,8 @@ def test_get_strategy_container_refuses_claim_if_strategy_leaves_active_lane_bef
     assert payload["strategy"]["recovery_active"] is False
     assert payload["strategy"]["recovery_status"] == "idle"
     assert state == {}
-    assert row["stage"] == "research_only"
-    assert row["status"] == "research_only"
+    assert row["stage"] == "archived"
+    assert row["status"] == "archived"
 
 
 def test_read_strategies_reclaims_stale_replay_running_claim(monkeypatch, forven_db):
@@ -439,7 +439,7 @@ def test_read_and_detail_skip_non_active_stages(monkeypatch, forven_db):
     with get_db() as conn:
         conn.execute(
             "INSERT INTO strategies (id, name, type, symbol, timeframe, params, stage, status, created_at, updated_at) "
-            "VALUES ('S20003', 'BTC-RSI-S20003', 'rsi_momentum', 'BTC', '1h', '{}', 'research_only', 'research_only', datetime('now'), datetime('now'))"
+            "VALUES ('S20003', 'BTC-RSI-S20003', 'rsi_momentum', 'BTC', '1h', '{}', 'archived', 'archived', datetime('now'), datetime('now'))"
         )
 
     rows = read_strategies()

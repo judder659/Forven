@@ -47,16 +47,17 @@ def normalize_stage(value: str | None) -> str:
     Tradable pipeline:
     quick_screen -> gauntlet -> paper -> live_graduated
 
-    Side lane:
-    research_only
-
     Terminal states:
     archived, rejected, backtest_failed
+
+    The former research_only ("Parked") side lane was retired in Sept 2026; a
+    strategy that cannot be fairly tested is archived with an untestable
+    status_reason instead (see untestable_status_reason).
     """
     normalized = str(value or "").strip().lower()
     if not normalized:
         return "quick_screen"
-    
+
     aliases = {
         # quick_screen aliases
         "researching": "quick_screen",
@@ -65,11 +66,11 @@ def normalize_stage(value: str | None) -> str:
         "candidate": "quick_screen",
         "generated": "quick_screen",
 
-        # research_only aliases
-        "research_only": "research_only",
-        "research-only": "research_only",
-        "researchonly": "research_only",
-        
+        # Retired research_only lane: legacy spellings read as the graveyard.
+        "research_only": "archived",
+        "research-only": "archived",
+        "researchonly": "archived",
+
         # gauntlet aliases
         "backtesting": "gauntlet",
         "testing": "gauntlet",
@@ -109,7 +110,6 @@ def normalize_stage(value: str | None) -> str:
     mapped = aliases.get(normalized, normalized)
     valid = {
         "quick_screen",
-        "research_only",
         "gauntlet",
         "paper",
         "live_graduated",
@@ -118,6 +118,26 @@ def normalize_stage(value: str | None) -> str:
         "backtest_failed",
     }
     return mapped if mapped in valid else "quick_screen"
+
+
+UNTESTABLE_PREFIX = "untestable"
+
+
+def untestable_status_reason(code: str, detail: str | None = None) -> str:
+    """status_reason for a strategy archived because it could not be fairly tested.
+
+    Untestable is not a merit verdict: the code cannot run, reads future bars,
+    lacks data, or cannot gather enough validation history. The prefix lets the
+    Forge and the evidence consumers (hypothesis verdicts, skill outcomes) tell
+    these graveyard rows apart from strategies that failed on merit.
+    """
+    text = " ".join(str(detail or "").split())
+    reason = f"{UNTESTABLE_PREFIX}:{code}: {text}" if text else f"{UNTESTABLE_PREFIX}:{code}"
+    return reason[:500]
+
+
+def is_untestable_reason(status_reason: str | None) -> bool:
+    return str(status_reason or "").strip().lower().startswith(f"{UNTESTABLE_PREFIX}:")
 
 
 def params_fingerprint(params: Any) -> str | None:

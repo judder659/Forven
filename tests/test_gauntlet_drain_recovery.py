@@ -29,7 +29,7 @@ def test_evidence_blocks_request_history_once_or_defer_without_failing(
 
     def transition(**kwargs: Any) -> dict:
         transitions.append(kwargs)
-        return {"to": "research_only"}
+        return {"to": "archived"}
 
     monkeypatch.setattr("forven.brain.transition_stage", transition)
     outcome = resolve_evidence_blocks()
@@ -44,9 +44,11 @@ def test_evidence_blocks_request_history_once_or_defer_without_failing(
             "reason_code": "insufficient_evidence", "history_requirements": {"available_bars": 100},
         })
         outcome = resolve_evidence_blocks()
-    assert outcome["research_deferred"] == 1
+    assert outcome["archived_untestable"] == 1
+    assert transitions[0]["target_stage"] == "archived"
     assert transitions[0]["force"] is False
     assert transitions[0]["evidence"]["merit"] is False
+    assert transitions[0]["evidence"]["status_reason"].startswith("untestable:insufficient_history:")
     assert get_workflow_detail(workflow["id"])["workflow"]["status"] == "cancelled"
 
 
@@ -81,7 +83,7 @@ def test_conflicting_market_stops_before_promotion_or_status_side_effects(monkey
     assert result["reason_code"] == "execution_market_conflict"
 
 
-def test_real_research_deferral_preserves_strategy_and_does_not_record_quality_failure(
+def test_real_evidence_deferral_archives_as_untestable_without_recording_quality_failure(
     forven_db: object, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workflow = _workflow()
@@ -92,12 +94,18 @@ def test_real_research_deferral_preserves_strategy_and_does_not_record_quality_f
         "reason_code": "insufficient_evidence", "message": "Cannot judge fixed holdout",
     })
     outcomes = []
+    post_mortems = []
     monkeypatch.setattr("forven.skill_outcomes.record_outcome", lambda *a, **kw: outcomes.append((a, kw)))
-    assert resolve_evidence_blocks()["research_deferred"] == 1
+    monkeypatch.setattr("forven.brain._queue_failure_post_mortem", lambda **kw: post_mortems.append(kw) or (None, None))
+    assert resolve_evidence_blocks()["archived_untestable"] == 1
     assert outcomes == []
+    assert post_mortems == []
     with get_db() as conn:
-        row = conn.execute("SELECT stage FROM strategies WHERE id=?", (workflow["strategy_id"],)).fetchone()
-        assert row["stage"] == "research_only"
+        row = conn.execute(
+            "SELECT stage, status_reason FROM strategies WHERE id=?", (workflow["strategy_id"],)
+        ).fetchone()
+        assert row["stage"] == "archived"
+        assert row["status_reason"] == "untestable:insufficient_history: Cannot judge fixed holdout"
     assert get_workflow_detail(workflow["id"])["workflow"]["status"] == "cancelled"
 
 

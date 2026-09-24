@@ -16,10 +16,10 @@
 	import {
 		parseManagerRow,
 		isArchivedStage,
-		isParkedStage,
-		isTrueArchivedStage,
+		isUntestable,
 		normalizeStage,
 		stageClass,
+		untestableReason,
 		type ManagerRow,
 	} from '$lib/utils/strategy';
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
@@ -32,7 +32,8 @@
 	import type { HealthStatusResponse } from '$lib/api/types';
 	import type { StrategyImportResult } from '$lib/api';
 
-	type Bucket = 'active' | 'parked' | 'trash';
+	type Bucket = 'active' | 'trash';
+	type GraveyardFilter = 'all' | 'failed' | 'untestable';
 	type SortField = 'created' | 'cagr' | 'in_sample_cagr' | 'out_of_sample_cagr' | 'return' | 'sharpe' | 'in_sample_sharpe' | 'out_of_sample_sharpe' | 'robustness' | 'dsr' | 'drawdown' | 'win_rate' | 'trades' | 'profit_factor';
 	type SortDirection = 'asc' | 'desc';
 	type GraveyardStrategyLimitMode = 'capped' | 'unlimited';
@@ -43,8 +44,8 @@
 	// but still throttled so a stream of WS events doesn't refetch on every tick.
 	const GRAVEYARD_VISIBLE_REFRESH_MS = 15 * 1000;
 	const DEFAULT_GRAVEYARD_STRATEGY_LIMIT = 500;
-	const FOREGROUND_STRATEGY_STATUSES = ['quick_screen', 'gauntlet', 'paper', 'live_graduated', 'research_only', 'backtest_failed'];
-	const GRAVEYARD_STRATEGY_STATUSES = ['archived', 'rejected'];
+	const FOREGROUND_STRATEGY_STATUSES = ['quick_screen', 'gauntlet', 'paper', 'live_graduated'];
+	const GRAVEYARD_STRATEGY_STATUSES = ['archived', 'rejected', 'backtest_failed'];
 
 	let loading = true;
 	let actionMsg: string | null = null;
@@ -75,11 +76,11 @@
 	let search = '';
 	let symbolFilter = 'all';
 	let stageFilter = 'all';
+	let graveyardFilter: GraveyardFilter = 'all';
 	let sortBy: SortField = 'created';
 	let sortDirection: SortDirection = 'desc';
 
 	let activeResults: ManagerRow[] = [];
-	let parkedResults: ManagerRow[] = [];
 	let trashResults: ManagerRow[] = [];
 	
 	let highlightedId: string | null = null;
@@ -92,11 +93,10 @@
 	let pageCount = 1;
 	let pageSize = 100;
 	let activePageRows: ManagerRow[] = [];
-	let parkedPageRows: ManagerRow[] = [];
 	let trashPageRows: ManagerRow[] = [];
 	let lastViewSignature = '';
 	let pipelineActiveCount = 0;
-	let researchOnlyCount = 0;
+	let untestableCount = 0;
 
 	function normalizeGraveyardStrategyLimitMode(value: unknown): GraveyardStrategyLimitMode {
 		const normalized = String(value ?? '').trim().toLowerCase();
@@ -183,12 +183,11 @@
 
 	function applyForegroundRows(parsedRows: ManagerRow[]) {
 		activeResults = parsedRows.filter((row) => !isArchivedStage(row.stage));
-		parkedResults = parsedRows.filter((row) => isParkedStage(row.stage));
 	}
 
 	function applyGraveyardRows(parsedRows: ManagerRow[]) {
 		const archivedRows = parsedRows
-			.filter((row) => isTrueArchivedStage(row.stage))
+			.filter((row) => isArchivedStage(row.stage))
 			.map((row) => ({ ...row, deleted_at: row.deleted_at || row.created_at }));
 		const trashById = new Map<string, ManagerRow>();
 		for (const row of archivedRows) {
@@ -291,10 +290,10 @@
 		}
 	}
 
-	function badgeClass(kind: 'source' | 'untested'): string {
-		return kind === 'source'
-			? 'text-white border-[#444] bg-[#111]'
-			: 'text-yellow-400 border-yellow-800 bg-yellow-950/20';
+	function badgeClass(kind: 'source' | 'untested' | 'untestable'): string {
+		if (kind === 'source') return 'text-white border-[#444] bg-[#111]';
+		if (kind === 'untestable') return 'text-amber-300 border-amber-800 bg-amber-950/30';
+		return 'text-yellow-400 border-yellow-800 bg-yellow-950/20';
 	}
 
 	function recoveryBadge(row: ManagerRow): { label: string; className: string } | null {
@@ -467,7 +466,7 @@
 			// Only surface a blocking banner on the initial load (no rows yet). A transient
 			// failure during a background/realtime refresh must not clobber an otherwise
 			// healthy table full of previously-loaded rows.
-			if (activeResults.length === 0 && parkedResults.length === 0) {
+			if (activeResults.length === 0) {
 				error = message;
 			} else {
 				console.warn('[lab] background refresh failed:', message);
@@ -545,7 +544,7 @@
 		return reasons.length > max ? `${head} (+${reasons.length - max} more)` : head;
 	}
 
-	async function runBatchAction(action: 'trash' | 'archive' | 'recover' | 'recover_parked' | 'delete') {
+	async function runBatchAction(action: 'trash' | 'archive' | 'recover' | 'delete') {
 		const ids = rowsInView.map((row) => row.id).filter((id) => selectedIds.has(id));
 		if (ids.length === 0) return;
 
@@ -577,15 +576,6 @@
 			} else if (action === 'recover') {
 				const { succeeded, failed, errors } = await runSequential(ids, (id) => reviveFromGraveyard(id));
 				actionMsg = `Recovered ${succeeded} container${succeeded === 1 ? '' : 's'} from graveyard.`;
-				if (failed > 0) {
-					actionMsg += ` ${failed} failed.`;
-					error = summarizeReasons(errors);
-				}
-			} else if (action === 'recover_parked') {
-				// Parked (research_only) recovery is a stage transition back to the active
-				// pipeline — NOT a graveyard revive (which is reviveFromGraveyard).
-				const { succeeded, failed, errors } = await runSequential(ids, (id) => transitionStage(id, 'researching', 'User batch-recovered research_only container from Lab Manager', 'manual'));
-				actionMsg = `Recovered ${succeeded} container${succeeded === 1 ? '' : 's'} to the active pipeline.`;
 				if (failed > 0) {
 					actionMsg += ` ${failed} failed.`;
 					error = summarizeReasons(errors);
@@ -633,17 +623,6 @@
 			await reviveFromGraveyard(id);
 			actionMsg = 'Container recovered from graveyard.';
 			await loadData({ forceGraveyard: true });
-			clearSelection();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to recover container';
-		}
-	}
-
-	async function recoverParked(id: string) {
-		try {
-			await transitionStage(id, 'researching', 'User recovered research_only container from Lab Manager', 'manual');
-			actionMsg = 'Container recovered to the active pipeline.';
-			await loadData();
 			clearSelection();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to recover container';
@@ -724,6 +703,8 @@
 		const sortField = sortBy;
 		const direction = sortDirection;
 		const filtered = trashResults.filter((row) => {
+			if (graveyardFilter === 'untestable' && !isUntestable(row)) return false;
+			if (graveyardFilter === 'failed' && isUntestable(row)) return false;
 			if (!query) return true;
 			return (
 				row.name.toLowerCase().includes(query)
@@ -742,31 +723,7 @@
 		return ranked.map((entry) => entry.row);
 	})();
 
-	$: parkedFiltered = (() => {
-		if (bucket !== 'parked') return [];
-		const query = search.trim().toLowerCase();
-		const sortField = sortBy;
-		const direction = sortDirection;
-		const filtered = parkedResults.filter((row) => {
-			if (!query) return true;
-			return (
-				row.name.toLowerCase().includes(query)
-				|| (row.display_name ?? '').toLowerCase().includes(query)
-				|| row.symbol.toLowerCase().includes(query)
-				|| row.timeframe.toLowerCase().includes(query)
-				|| row.id.toLowerCase().includes(query)
-			);
-		});
-		const ranked = filtered.map((row, index) => ({ row, index, sortValue: graveyardSortValue(row, sortField) }));
-		ranked.sort((a, b) => {
-			const cmp = compareNumeric(a.sortValue, b.sortValue, direction);
-			if (cmp !== 0) return cmp;
-			return a.index - b.index;
-		});
-		return ranked.map((entry) => entry.row);
-	})();
-
-	$: rowsInView = bucket === 'active' ? activeFiltered : bucket === 'parked' ? parkedFiltered : trashFiltered;
+	$: rowsInView = bucket === 'active' ? activeFiltered : trashFiltered;
 	// Keep the detail page's prev/next context in sync with whatever this view
 	// currently shows (full filtered+sorted order, all pages) — captured on every
 	// view change, not on click, so EVERY route into a container (name link,
@@ -783,6 +740,7 @@
 			search.trim().toLowerCase(),
 			symbolFilter,
 			stageFilter,
+			graveyardFilter,
 			sortBy,
 			sortDirection,
 			String(pageSize),
@@ -793,7 +751,6 @@
 		}
 	}
 	$: activePageRows = activeFiltered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-	$: parkedPageRows = parkedFiltered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 	$: trashPageRows = trashFiltered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 	$: selectedInView = rowsInView.reduce((count, row) => (selectedIds.has(row.id) ? count + 1 : count), 0);
 	// Auto-dismiss the success banner after a few seconds; re-arm on each new message
@@ -810,7 +767,7 @@
 	$: selectAllChecked = rowsInView.length > 0 && selectedInView === rowsInView.length;
 	$: selectAllIndeterminate = selectedInView > 0 && selectedInView < rowsInView.length;
 	$: pipelineActiveCount = activeResults.filter((row) => isPipelineActiveStage(row.stage)).length;
-	$: researchOnlyCount = parkedResults.filter((row) => normalizeStage(row.stage) === 'research_only').length;
+	$: untestableCount = trashResults.filter((row) => isUntestable(row)).length;
 	$: failedHealthChecks = (healthData?.data_checks ?? []).filter((check) => !check.passed);
 	$: healthSummaryLabel = healthError ? 'Unavailable' : !healthLoaded ? 'Loading' : healthStateLabel(healthData?.overall);
 	$: healthSummaryClass = healthError ? 'text-red-400' : healthTextClass(healthData?.overall);
@@ -910,7 +867,7 @@
 			<div>
 				<h1 class="text-xl font-bold uppercase tracking-widest text-white">The Forge</h1>
 				<p class="text-xs text-[#666] mt-1">
-					{rowsInView.length} in view · Pipeline {pipelineActiveCount} · Research-only {researchOnlyCount}
+					{rowsInView.length} in view · Pipeline {pipelineActiveCount}
 				</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">
@@ -946,7 +903,7 @@
 			<input
 				type="text"
 				bind:value={search}
-				placeholder={bucket === 'active' ? 'Search container, symbol, timeframe, id…' : bucket === 'parked' ? 'Search parked…' : 'Search graveyard…'}
+				placeholder={bucket === 'active' ? 'Search container, symbol, timeframe, id…' : 'Search graveyard…'}
 				class="bg-black border border-[#333] px-3 py-1.5 text-xs w-full focus:outline-none focus:border-white sm:w-72"
 			/>
 			{#if bucket === 'active'}
@@ -967,6 +924,17 @@
 					{#each stageOptions as stage}
 						<option value={stage}>{stage === 'all' ? 'All stages' : stage}</option>
 					{/each}
+				</select>
+			{:else}
+				<select
+					aria-label="Filter graveyard by outcome"
+					bind:value={graveyardFilter}
+					class="terminal-input !w-full !py-1 !px-2 text-xs sm:!w-52"
+					title="Untestable = archived without a fair test (broken code, lookahead leak, missing data, not enough history). Not a merit failure."
+				>
+					<option value="all">All ({trashResults.length})</option>
+					<option value="failed">Failed on merit ({trashResults.length - untestableCount})</option>
+					<option value="untestable">Untestable ({untestableCount})</option>
 				</select>
 			{/if}
 			<details
@@ -1077,8 +1045,8 @@
 			</details>
 			<span class="text-[10px] text-[#666] ml-1">
 				{rowsInView.length} items
-				{#if rowsInView.length > (bucket === 'active' ? activePageRows.length : bucket === 'parked' ? parkedPageRows.length : trashPageRows.length)}
-					(showing {bucket === 'active' ? activePageRows.length : bucket === 'parked' ? parkedPageRows.length : trashPageRows.length})
+				{#if rowsInView.length > (bucket === 'active' ? activePageRows.length : trashPageRows.length)}
+					(showing {bucket === 'active' ? activePageRows.length : trashPageRows.length})
 				{/if}
 			</span>
 			<div class="ml-auto flex items-center gap-2 text-[10px] text-[#666]">
@@ -1127,14 +1095,6 @@
 				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'active' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
 			>
 				Open <span class="ml-1 text-[#666]">({activeResults.length})</span>
-			</button>
-			<button
-				type="button"
-				aria-pressed={bucket === 'parked'}
-				on:click={() => { bucket = 'parked'; clearSelection(); }}
-				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'parked' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
-			>
-				Parked <span class="ml-1 text-[#666]">({parkedResults.length})</span>
 			</button>
 			<button
 				type="button"
@@ -1211,18 +1171,11 @@
 						<button type="button" class="px-2 py-1 border border-[#333] text-[#888] hover:border-[#555] hover:bg-[#111]" on:click={() => runBatchAction('archive')}>Archive</button>
 						<button type="button" class="px-2 py-1 border border-yellow-800 text-yellow-400 hover:bg-yellow-950/20" on:click={() => runBatchAction('trash')}>Graveyard</button>
 						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete</button>
-					{:else if bucket === 'parked'}
-						<button type="button" class="px-2 py-1 border border-emerald-800 text-emerald-400 hover:bg-emerald-950/20" on:click={() => runBatchAction('recover_parked')}>Recover</button>
-						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete</button>
 					{:else if bucket === 'trash'}
 						<button type="button" class="px-2 py-1 border border-emerald-800 text-emerald-400 hover:bg-emerald-950/20" on:click={() => runBatchAction('recover')}>Recover</button>
 						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete permanently</button>
 					{/if}
 				</div>
-			</div>
-		{:else if bucket === 'parked'}
-			<div class="border-b border-[#222] bg-[#0a0a0a] px-4 py-2 text-[10px] text-[#666]">
-				Research-only containers. Select rows to batch-recover them into the active pipeline, or use the per-row Recover button.
 			</div>
 		{/if}
 
@@ -1342,73 +1295,6 @@
 								{/each}
 							{/if}
 						</tbody>
-					{:else if bucket === 'parked'}
-						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-[#666] border-b border-[#222]">
-									<th class="py-2 px-2 text-left w-8"><input type="checkbox" class="accent-white w-3 h-3 align-middle" aria-label="Select all matching strategies" checked={selectAllChecked} indeterminate={selectAllIndeterminate} on:change={toggleSelectAll} /></th>
-								<th class="py-2 px-2 text-left">Strategy</th>
-								<th class="py-2 px-2 text-left">Pair/TF</th>
-								<th class="py-2 px-2 text-left">Stage</th>
-								<SortableTh field="cagr" label="CAGR" active={sortBy === 'cagr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window CAGR (annualized over IS + OOS). Short windows are shown with muted styling." />
-								<SortableTh field="sharpe" label="Sharpe ⓘ" active={sortBy === 'sharpe'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window Sharpe (approximate: month-weighted average of IS and OOS Sharpe). ≥1.0 strong, ≥0.5 good, >0 weak, ≤0 poor." />
-								<SortableTh field="drawdown" label="Max DD ⓘ" active={sortBy === 'drawdown'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window max drawdown (approximate: max of IS and OOS halves). ≤20% good, ≤35% marginal, >35% poor." />
-								<SortableTh field="win_rate" label="Win%" active={sortBy === 'win_rate'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window win rate = combined wins / combined closed trades." />
-								<SortableTh field="trades" label="Trades" active={sortBy === 'trades'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Total completed trades across IS + OOS." />
-								<SortableTh field="profit_factor" label="PF" active={sortBy === 'profit_factor'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window profit factor. ≥1.5 good, ≥1.0 marginal. ∞ if no losing trades." />
-								<SortableTh field="robustness" label="Rob%" active={sortBy === 'robustness'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Gauntlet ranking score. Promotion uses the backend gate and persisted per-test verdicts under current Settings." />
-								<SortableTh field="dsr" label="DSR" active={sortBy === 'dsr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Deflated Sharpe (0-1): probability the edge survives optimizer selection bias. ≥0.95 significant, ≥0.80 marginal. Shows the last computed value; '-' means it has not been computed yet." />
-								<SortableTh field="out_of_sample_cagr" label="OOS CAGR" active={sortBy === 'out_of_sample_cagr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} thClass="border-l border-[#222] pl-3" title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling." />
-								<SortableTh field="out_of_sample_sharpe" label="OOS Sharpe" active={sortBy === 'out_of_sample_sharpe'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Out-of-sample annualized Sharpe. Low-trade samples are shown with muted styling." />
-								<SortableTh field="created" label="Created" active={sortBy === 'created'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
-								<th class="py-2 px-2 text-right">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#if loading}
-								<tr><td colspan="16" class="py-8 text-center text-[#555]">Loading parked containers...</td></tr>
-							{:else if parkedFiltered.length === 0}
-								<tr><td colspan="16" class="py-8 text-center text-[#555]">No parked strategies.</td></tr>
-							{:else}
-								{#each parkedPageRows as row (row.id)}
-									<tr class="border-t border-[#181818] hover:bg-[#0f0f0f]">
-										<td class="py-2 px-2"><input type="checkbox" class="accent-white w-3 h-3" checked={selectedIds.has(row.id)} on:change={() => toggleSelect(row.id)} /></td>
-										<td class="py-2 px-2 text-white font-medium max-w-[420px]">
-											<StrategyLink
-												strategyId={row.id}
-												label={row.display_name || row.name}
-												returnTo="/lab"
-												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
-											/>
-											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
-											{#if row.hypothesis_id}
-												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white">
-													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
-												</a>
-											{/if}
-										</td>
-										<td class="py-2 px-2 text-[#888] font-mono">{row.symbol} / {row.timeframe}</td>
-										<td class="py-2 px-2">
-											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
-										</td>
-										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
-										<td class={`py-2 px-2 font-mono ${metricClass('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 2)}{row.max_drawdown_is_approximation ? ' ~' : ''}</td>
-										<td class={`py-2 px-2 font-mono ${metricClass('win_rate', row.win_rate)}`}>{formatPercent(row.win_rate, 1)}</td>
-										<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(row.total_trades, 0)}</td>
-										<td class={`py-2 px-2 font-mono ${row.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', row.profit_factor)}`} title={row.profit_factor_is_infinite ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${metricClass('robustness', row.robustness_score)}`}>{formatPercent(row.robustness_score, 1)}</td>
-										<td class={`py-2 px-2 font-mono ${dsrClass(row.deflated_sharpe)}`} title="Deflated Sharpe (last computed value)">{formatNumber(row.deflated_sharpe, 2)}</td>
-										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
-										<td class="py-2 px-2 text-[#666]">{formatDateTime(row.created_at)}</td>
-										<td class="py-2 px-2 text-right space-x-2 whitespace-nowrap">
-											<button type="button" class="text-white hover:text-[#888]" on:click={() => openContainer(row)}>Details</button>
-											<button type="button" class="text-emerald-400 hover:text-emerald-300" on:click={() => recoverParked(row.id)} title="Move this research-only container back into the active pipeline">Recover</button>
-										</td>
-									</tr>
-								{/each}
-							{/if}
-						</tbody>
 					{:else}
 						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
 							<tr class="text-[#666] border-b border-[#222]">
@@ -1463,14 +1349,25 @@
 													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
 												</a>
 											{/if}
-											{#if row.source === 'ai_dropzone' || !row.has_backtest_results}
+											{#if row.source === 'ai_dropzone' || !row.has_backtest_results || isUntestable(row)}
 												<div class="mt-1 flex flex-wrap gap-1">
+													{#if isUntestable(row)}
+														<span
+															class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('untestable')}`}
+															title="Archived without a fair test — not a merit failure. Recover re-runs the intake checks first."
+														>Untestable</span>
+													{/if}
 													{#if row.source === 'ai_dropzone'}
 														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('source')}`}>AI Drop Zone</span>
 													{/if}
-													{#if !row.has_backtest_results}
+													{#if !row.has_backtest_results && !isUntestable(row)}
 														<span class={`text-[9px] px-1.5 py-0.5 border uppercase ${badgeClass('untested')}`}>Untested</span>
 													{/if}
+												</div>
+											{/if}
+											{#if untestableReason(row)}
+												<div class="mt-1 max-w-[400px] truncate text-[10px] text-amber-300/80" title={untestableReason(row)}>
+													{untestableReason(row)}
 												</div>
 											{/if}
 										</td>
