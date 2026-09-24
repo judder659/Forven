@@ -888,7 +888,12 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
             if isinstance(result, dict) and "id" not in result and "strategy_id" in result:
                 result["id"] = result["strategy_id"]
             if isinstance(result, dict):
-                _persist_strategy_provenance(str(result.get("id") or result.get("strategy_id") or ""), provenance)
+                created_id = str(result.get("id") or result.get("strategy_id") or "")
+                _persist_strategy_provenance(created_id, provenance)
+                # Link the running develop task as register_strategy does: the
+                # runner only counts a develop task as successful once linked.
+                cited_skills = params.get("cited_skills")
+                _persist_task_strategy_link(created_id, cited_skills if isinstance(cited_skills, list) else [])
         elif tool_name == "forven_run_backtest":
             result = client.run_backtest(
                 strategy_id=params["strategy_id"],

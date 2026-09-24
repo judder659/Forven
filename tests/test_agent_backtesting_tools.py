@@ -550,6 +550,12 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
         "origin_task_id": "T0101",
         "origin_model": "gpt-5.3",
     }
+    # The runner only counts a develop task as successful when this join holds.
+    with get_db() as conn:
+        linked = conn.execute(
+            "SELECT s.id FROM agent_tasks t JOIN strategies s ON s.id = t.strategy_id WHERE t.display_id = 'T0101'"
+        ).fetchone()
+    assert linked["id"] == "S12345"
 
 
 def test_jbt_create_strategy_rejects_mismatched_hypothesis_and_crucible(forven_db, monkeypatch):
