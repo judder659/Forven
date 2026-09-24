@@ -349,6 +349,34 @@ def discover(include_custom: bool = True) -> None:
         _discover(include_custom=include_custom)
 
 
+def discover_for_single_module(modname: str, package: str = "custom") -> None:
+    """Discover the builtins plus ONE module, then mark discovery complete.
+
+    For a one-shot process that validates a single module (the sandbox
+    validation child). A full discover() imports the whole strategy library,
+    which outlasts the validation budget once it holds thousands of modules.
+    The module is treated exactly as the full scan would treat it: custom/
+    modules by name status, while imported/ modules only ever get namespaced
+    keys, so none is registered for them here.
+    """
+    global _custom_discovered, _discovered
+    with _DISCOVERY_LOCK:
+        _discover(include_custom=False)
+        if _custom_discovered:
+            return
+        status = custom_strategy_status(modname) if package == "custom" else "imported"
+        if status == "archived":
+            _ARCHIVED_CUSTOM_MODULES[modname.lower()] = modname
+        if status == "active" or (status == "archived" and include_archived_custom_strategies()):
+            try:
+                _load_custom_strategy_module(modname, package=package)
+            except (Exception, SystemExit) as exc:
+                _FAILED_CUSTOM_MODULES.add(modname)
+                log.warning("Skipping custom strategy module %s: %s", modname, exc)
+        _custom_discovered = True
+        _discovered = True
+
+
 def _discover(include_custom: bool = True) -> None:
     global _builtin_discovered, _custom_discovered, _discovered
     if include_custom and _discovered:
