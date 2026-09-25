@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from forven import daemon
+from forven import daemon, runtime_health
 from forven.db import get_db
 from forven.exchange.risk import reconcile_exchange_positions
 
@@ -113,35 +113,49 @@ def test_periodic_reconcile_can_resolve_existing_recovery_block():
 
 
 def test_daemon_pid_probe_tolerates_windows_kill_errors(monkeypatch):
-    def _boom(_pid: int, _sig: int):
-        raise SystemError("WinError 87")
+    # Fake the Win32 probe: a real OpenProcess(12345) opens PID 12344 (Windows
+    # ignores a PID's low two bits), so the answer would depend on live PIDs.
+    probed: list[int] = []
 
+    def _no_such_process(pid: int):
+        probed.append(pid)
+        return None, 87  # ERROR_INVALID_PARAMETER
+
+    monkeypatch.setattr(daemon.os, "name", "nt")
+    monkeypatch.setattr(runtime_health, "_win32_process_exit_code", _no_such_process)
+
+    assert daemon._is_pid_running(12345) is False
+    assert probed == [12345]
+
+
+def test_daemon_pid_probe_tolerates_posix_kill_errors(monkeypatch):
+    killed: list[tuple[int, int]] = []
+
+    def _boom(pid: int, sig: int):
+        killed.append((pid, sig))
+        raise SystemError("kill failed")
+
+    monkeypatch.setattr(daemon.os, "name", "posix")
     monkeypatch.setattr(daemon.os, "kill", _boom)
 
     assert daemon._is_pid_running(12345) is False
+    assert killed == [(12345, 0)]
 
 
 def test_daemon_pid_probe_tolerates_windows_access_denied(monkeypatch):
-    import sys
-
-    class _Kernel32:
-        def OpenProcess(self, *_args):
-            return 0
-
-        def CloseHandle(self, _handle):
-            return 1
-
-    class _Ctypes:
-        windll = type("windll", (), {"kernel32": _Kernel32()})()
-
-        @staticmethod
-        def GetLastError():
-            return 5
-
     monkeypatch.setattr(daemon.os, "name", "nt")
-    monkeypatch.setitem(sys.modules, "ctypes", _Ctypes)
+    monkeypatch.setattr(runtime_health, "_win32_process_exit_code", lambda _pid: (None, 5))
 
     assert daemon._is_pid_running(12345) is True
+
+
+def test_daemon_pid_probe_reports_exited_process_dead_while_its_handle_is_open(monkeypatch):
+    # An orphaned spawn worker holds its dead parent's handle, so the parent PID
+    # still opens; the orphan sweeper must see it as dead.
+    monkeypatch.setattr(daemon.os, "name", "nt")
+    monkeypatch.setattr(runtime_health, "_win32_process_exit_code", lambda _pid: (0, 0))
+
+    assert daemon._is_pid_running(12345) is False
 
 
 def test_reconcile_can_adopt_missing_exchange_position_by_stop_order_id(forven_db, monkeypatch):

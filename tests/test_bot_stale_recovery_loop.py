@@ -110,24 +110,8 @@ def test_should_queue_bootstrap_brain_cycle_allows_new_task_after_cooldown(forve
 
 
 def test_bot_pid_probe_tolerates_windows_access_denied(monkeypatch):
-    import sys
-
-    class _Kernel32:
-        def OpenProcess(self, *_args):
-            return 0
-
-        def CloseHandle(self, _handle):
-            return 1
-
-    class _Ctypes:
-        windll = type("windll", (), {"kernel32": _Kernel32()})()
-
-        @staticmethod
-        def GetLastError():
-            return 5
-
     monkeypatch.setattr("forven.bot.os.name", "nt")
-    monkeypatch.setitem(sys.modules, "ctypes", _Ctypes)
+    monkeypatch.setattr("forven.runtime_health._win32_process_exit_code", lambda _pid: (None, 5))
 
     from forven import bot as bot_mod
 
