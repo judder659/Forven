@@ -8,6 +8,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 from forven.backtesting import BacktestingClient
 from forven.db import get_db
@@ -110,6 +111,37 @@ def test_post_backtesting_optimize_parses_dataset_id_and_ranges(monkeypatch):
     assert body.symbol == "BTC/USDT"
     assert body.timeframe == "1h"
     assert body.parameter_ranges == {"rsi_length": [5, 14]}
+
+
+@pytest.mark.parametrize(
+    ("payload", "symbol", "timeframe"),
+    [
+        ({}, None, None),
+        ({"dataset_id": "SOL/USDT"}, "SOL/USDT", None),
+    ],
+)
+def test_post_backtesting_optimize_leaves_an_unnamed_market_to_the_strategy_row(
+    monkeypatch, payload, symbol, timeframe
+):
+    # This route used to fill a missing symbol/timeframe with BTC/1h, which beat
+    # the strategy's stored market; None lets post_optimization_submit use the row.
+    captured: dict[str, object] = {}
+
+    def _fake_submit(body):
+        captured["body"] = body
+        return {"ok": True}
+
+    class _FakeRequest:
+        async def json(self):
+            return {"strategy_id": "S00040", **payload}
+
+    monkeypatch.setattr("forven.routers.strategies.core.post_optimization_submit", _fake_submit)
+
+    asyncio.run(strategies_router.post_backtesting_optimize(_FakeRequest()))
+
+    body = captured["body"]
+    assert body.symbol == symbol
+    assert body.timeframe == timeframe
 
 
 def test_post_backtesting_verdict_forwards_payload(monkeypatch):
