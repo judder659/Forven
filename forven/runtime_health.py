@@ -65,21 +65,56 @@ def read_daemon_lock_pid(lock_path: Path | None = None) -> int | None:
         return None
 
 
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_STILL_ACTIVE = 259
+
+
+def _win32_process_exit_code(pid: int) -> tuple[int | None, int]:
+    """Open ``pid`` for a limited query and read its exit code (every Win32 call lives here).
+
+    Returns ``(None, GetLastError())`` when the process cannot be opened, else
+    ``(exit_code, 0)``. The exit code is STILL_ACTIVE while the process runs, and is
+    reported as STILL_ACTIVE when it cannot be read: the process exists.
+    """
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None, ctypes.get_last_error()  # type: ignore[attr-defined]
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return _STILL_ACTIVE, 0
+        return exit_code.value, 0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_exists(pid: int) -> bool:
+    """Is ``pid`` a running process? The one liveness probe (daemon, bot, watchdog).
+
+    On Windows, a PID that can be opened is not necessarily running: an exited
+    process stays openable for as long as anything holds a handle to it, and an
+    orphaned multiprocessing spawn worker holds one to its dead parent for life.
+    So the probe also requires the exit code to still be STILL_ACTIVE.
+    """
     normalized_pid = int(pid)
     if normalized_pid <= 0:
         return False
     if os.name == "nt" and ctypes is not None:
-        process_query_limited_information = 0x1000
-        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
-            process_query_limited_information,
-            False,
-            normalized_pid,
-        )
-        if not handle:
-            return False
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
-        return True
+        exit_code, error = _win32_process_exit_code(normalized_pid)
+        if exit_code is None:
+            # Access denied still means the PID exists (like EPERM below);
+            # ERROR_INVALID_PARAMETER means no process has it.
+            return error == _ERROR_ACCESS_DENIED
+        return exit_code == _STILL_ACTIVE
 
     try:
         os.kill(normalized_pid, 0)

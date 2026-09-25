@@ -46,6 +46,7 @@ from forven.model_routing import get_default_model_for_provider
 from forven.notification_policy import DEFAULT_RESPONSE_CHANNEL_ALIASES
 from forven.notification_renderers import summarize_discord_text
 from forven.ai import _is_rate_limit_exception, is_transient_provider_exception, normalize_provider_and_model
+from forven.runtime_health import pid_exists
 from forven.task_timeouts import coerce_stale_recovery_minutes
 
 log = logging.getLogger("forven.bot")
@@ -286,26 +287,8 @@ def _is_pid_running(pid: int | None) -> bool:
     """Check whether a PID appears to be alive."""
     if not isinstance(pid, int) or pid <= 0:
         return False
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return ctypes.GetLastError() == 5  # access denied still means the PID exists
-        except Exception:
-            return False
     try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+        return pid_exists(pid)
     except Exception:
         return False
 

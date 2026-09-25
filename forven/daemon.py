@@ -58,7 +58,7 @@ from forven.market_data import (
     BinancePriceFeed,
     dataframe_to_ohlcv_rows,
 )
-from forven.runtime_health import compute_runtime_code_fingerprint
+from forven.runtime_health import compute_runtime_code_fingerprint, pid_exists
 from forven.system_mode_policy import autonomous_runtime_allowed
 
 log = logging.getLogger("forven.daemon")
@@ -550,28 +550,8 @@ def _is_pid_running(pid: int | None) -> bool:
     """Check whether a PID appears to still be alive."""
     if not isinstance(pid, int) or pid <= 0:
         return False
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return ctypes.GetLastError() == 5  # access denied still means the PID exists
-        except Exception:
-            return False
     try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
+        return pid_exists(pid)
     except Exception:
         return False
 
