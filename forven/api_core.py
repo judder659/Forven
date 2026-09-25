@@ -1577,8 +1577,8 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             # SIZE-CAP-1: per-order hard ceilings (forven.exchange.risk).
             ("live_hard_max_per_trade_risk_pct", 2.0),
             ("live_hard_max_order_notional_pct", 100.0),
-            # BOOK-BUDGET-1: per-wallet gross-notional cap (forven.exchange.risk).
-            ("live_max_book_notional_pct", 100.0),
+            # BOOK-MARGIN-1: per-wallet margin cap (forven.exchange.risk).
+            ("live_max_book_margin_pct", 80.0),
             # CORR-1: measured-correlation effective-exposure gate
             # (forven.portfolio_correlation via check_live_portfolio_budget).
             ("live_max_effective_exposure_pct", 200.0),
@@ -7019,9 +7019,11 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     default_params: dict = {}
     registered = False
     try:
-        from forven.strategies.registry import _TYPE_MAP, discover, reset
-        reset()
-        discover()
+        from forven.strategies.registry import _TYPE_MAP, load_custom_module
+
+        # REG-RACE-1: register just this module; a reset() would empty the
+        # registry for every live strategy while it is rebuilt.
+        load_custom_module(f"manual_{type_name}")
         cls = _TYPE_MAP.get(type_name)
         if cls is None:
             return {"valid": True, "registered": False, "strategy_name": type_name,

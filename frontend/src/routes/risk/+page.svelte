@@ -760,7 +760,7 @@
 			<div class="space-y-2 pt-1">
 				<div class="text-[10px] uppercase tracking-wider text-[#666]">Per-wallet capacity (direction books)</div>
 				{#each liveBudgetBooks as [bookName, b]}
-					{@const used = Number(b.gross_notional_usd ?? 0)}
+					{@const used = Number(b.margin_usd ?? 0)}
 					{@const bookCap = Number(b.limit_usd ?? 0)}
 					{@const bookEq = Number(b.equity_usd ?? 0)}
 					<div class="space-y-1">
@@ -769,7 +769,7 @@
 								{#if bookEq > 0}<span class="text-[#555]">(${bookEq.toLocaleString(undefined, { maximumFractionDigits: 0 })} equity, {b.positions ?? 0} pos)</span>{/if}
 							</span>
 							<span class={bookCap > 0 && used > bookCap ? 'text-red-400' : 'text-[#888]'}>
-								{formatBudgetUsd(used)} / {bookCap > 0 ? formatBudgetUsd(bookCap) : '—'} notional
+								{formatBudgetUsd(used)} / {bookCap > 0 ? formatBudgetUsd(bookCap) : '—'} margin
 							</span>
 						</div>
 						<div class="h-1.5 bg-[#1a1a1a] overflow-hidden">

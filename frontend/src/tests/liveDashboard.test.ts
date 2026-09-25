@@ -6,6 +6,7 @@ import {
 	cumulativePnlSeries,
 	failingJobs,
 	formatAge,
+	groupConflicts,
 	isLiveTrade,
 } from '$lib/utils/liveDashboard';
 
@@ -37,6 +38,7 @@ function fleet(strategies: LiveFleetStrategy[]): LiveFleet {
 		live_bots_armed: 0,
 		realized: { '7d': empty, '30d': empty, all: empty },
 		recent_fills: [],
+		capacity: null,
 	};
 }
 
@@ -157,6 +159,46 @@ describe('buildAttentionItems', () => {
 			now: NOW,
 		});
 		expect(items).toEqual([]);
+	});
+});
+
+describe('capacity and coin conflicts', () => {
+	const capacity = {
+		margin_cap_pct: 80,
+		cohort_size: 6,
+		slice_usd: 170,
+		capacity_scale: 0.67,
+		wallets: [
+			{ wallet: 'long', sides: ['long'], equity_usd: 535, capacity_usd: 428, worst_case_margin_usd: 641, over_capacity: true },
+			{ wallet: 'short', sides: ['short'], equity_usd: 488, capacity_usd: 390, worst_case_margin_usd: 300, over_capacity: false },
+		],
+		conflicts: [
+			{ coin: 'BTC', sides: ['long', 'short'], strategy_ids: ['S01566', 'S05665'] },
+			{ coin: 'BTC', sides: ['long', 'short'], strategy_ids: ['S05665', 'S06151'] },
+			{ coin: 'ETH', sides: ['short'], strategy_ids: ['S03402', 'S06325'] },
+		],
+	};
+
+	it('groups pairwise conflicts by coin', () => {
+		expect(groupConflicts(capacity.conflicts)).toEqual([
+			{ coin: 'BTC', sides: ['long', 'short'], strategyIds: ['S01566', 'S05665', 'S06151'] },
+			{ coin: 'ETH', sides: ['short'], strategyIds: ['S03402', 'S06325'] },
+		]);
+	});
+
+	it('flags each conflicting coin and each over-capacity wallet', () => {
+		const items = buildAttentionItems({
+			dashboard: null,
+			risk: null,
+			fleet: { ...fleet([]), capacity },
+			schedulerJobs: [],
+			pendingApprovals: 0,
+			now: NOW,
+		});
+		expect(items.map((item) => item.id)).toEqual(['conflict-BTC', 'conflict-ETH', 'capacity-long']);
+		expect(items[0].title).toBe('S01566, S05665, S06151 all trade BTC long/short live');
+		expect(items[2].title).toBe('Live sizes scaled to 67% to fit the long wallet');
+		expect(items[2].detail).toContain('worst case is $641.00 of margin against a $428.00 limit');
 	});
 });
 

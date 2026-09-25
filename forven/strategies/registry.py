@@ -349,6 +349,21 @@ def discover(include_custom: bool = True) -> None:
         _discover(include_custom=include_custom)
 
 
+def load_custom_module(modname: str, package: str = "custom") -> None:
+    """Import and register ONE custom module without clearing the registry.
+
+    REG-RACE-1: reset() + discover() emptied the registry for every live strategy
+    for the ~30s a full discovery takes, and the scanner dropped their entries.
+    """
+    with _DISCOVERY_LOCK:
+        _discover(include_custom=True)
+        try:
+            _load_custom_strategy_module(modname, package=package)
+        except SystemExit as exc:
+            raise RuntimeError(f"custom module {modname} exited during import") from exc
+        invalidate_active_cache()
+
+
 def discover_for_single_module(modname: str, package: str = "custom") -> None:
     """Discover the builtins plus ONE module, then mark discovery complete.
 

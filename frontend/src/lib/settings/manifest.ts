@@ -819,19 +819,19 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     deepLinkTo: '/risk',
   },
 
-  // BOOK-BUDGET-1: per-wallet capacity cap with direction books enabled.
+  // BOOK-MARGIN-1: per-wallet margin cap with direction books enabled.
   {
-    id: 'risk.live_max_book_notional_pct',
-    label: 'Live max per-wallet notional',
+    id: 'risk.live_max_book_margin_pct',
+    label: 'Live max per-wallet margin',
     unit: '%',
-    default: 100,
+    default: 80,
     type: 'number',
     area: 'trading',
     subsection: 'trading-risk-loss-limits',
     backendSection: 'risk',
-    backendPath: 'live_max_book_notional_pct',
+    backendPath: 'live_max_book_margin_pct',
     description:
-      'With direction books, each live order draws on ONE wallet (the long or short sub-account). Cap on the total open notional routed to a wallet as a percent of that wallet’s own equity — stops several strategies from stacking orders into one small wallet (capital is first-come-first-served; a refused open alerts and retries when the wallet frees up).',
+      'With direction books, each live order draws on ONE wallet (the long or short sub-account). Cap on the margin a wallet’s open positions tie up (notional ÷ exchange leverage), this order included, as a percent of that wallet’s equity. The 80% default matches the exchange-margin gate. Going live is refused when the live strategies could need more than this at once, so a validated entry is not refused later.',
     usedBy: ['forven.exchange.risk', 'forven.scanner'],
     deepLinkTo: '/risk',
   },

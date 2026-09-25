@@ -86,6 +86,24 @@ export function failingJobs(jobs: SchedulerJobSummary[]): SchedulerJobSummary[] 
 	return jobs.filter((job) => job.enabled && job.lastStatus && job.lastStatus !== 'ok');
 }
 
+/** Merge pairwise coin/side conflicts into one entry per coin. */
+export function groupConflicts(
+	pairs: Array<{ coin: string; sides: string[]; strategy_ids: string[] }>,
+): Array<{ coin: string; sides: string[]; strategyIds: string[] }> {
+	const byCoin = new Map<string, { sides: Set<string>; ids: Set<string> }>();
+	for (const pair of pairs) {
+		const group = byCoin.get(pair.coin) ?? { sides: new Set<string>(), ids: new Set<string>() };
+		pair.sides.forEach((side) => group.sides.add(side));
+		pair.strategy_ids.forEach((id) => group.ids.add(id));
+		byCoin.set(pair.coin, group);
+	}
+	return [...byCoin.entries()].map(([coin, group]) => ({
+		coin,
+		sides: [...group.sides].sort(),
+		strategyIds: [...group.ids].sort(),
+	}));
+}
+
 export type AttentionSeverity = 'critical' | 'warning' | 'info';
 
 export interface AttentionItem {
@@ -192,6 +210,28 @@ export function buildAttentionItems(input: AttentionInput): AttentionItem[] {
 				href: `/lab/strategy/${encodeURIComponent(strategy.strategy_id)}`,
 			});
 		}
+	}
+
+	// LIVE-ADMIT-1: entry refusals waiting to happen, before any signal hits them.
+	for (const group of groupConflicts(fleet?.capacity?.conflicts ?? [])) {
+		items.push({
+			id: `conflict-${group.coin}`,
+			severity: 'warning',
+			title: `${group.strategyIds.join(', ')} all trade ${group.coin} ${group.sides.join('/')} live`,
+			detail: 'One wallet holds one position per coin, so they refuse each other’s entries. Keep one of them live.',
+			href: '/live-trades',
+		});
+	}
+	const scale = fleet?.capacity?.capacity_scale ?? 1;
+	for (const wallet of fleet?.capacity?.wallets ?? []) {
+		if (!wallet.over_capacity) continue;
+		items.push({
+			id: `capacity-${wallet.wallet}`,
+			severity: 'warning',
+			title: `Live sizes scaled to ${Math.round(scale * 100)}% to fit the ${wallet.wallet} wallet`,
+			detail: `At full size its worst case is ${formatUsd(wallet.worst_case_margin_usd)} of margin against a ${formatUsd(wallet.capacity_usd)} limit. Add funds to it to restore full size.`,
+			href: '/risk',
+		});
 	}
 
 	for (const job of failingJobs(schedulerJobs)) {

@@ -65,6 +65,14 @@ function buildFleet(strategies: LiveFleetStrategy[]): LiveFleet {
 			all: { closed: 66, wins: 13, losses: 52, net_pnl_usd: 15.39, win_rate: 0.2, profit_factor: 1.56 },
 		},
 		recent_fills: [],
+		capacity: {
+			margin_cap_pct: 80,
+			cohort_size: strategies.length,
+			slice_usd: 170,
+			capacity_scale: 1,
+			wallets: [{ wallet: 'long', sides: ['long'], equity_usd: 535, capacity_usd: 428, worst_case_margin_usd: 373, over_capacity: false }],
+			conflicts: strategies.length > 1 ? [{ coin: 'BTC', sides: ['long', 'short'], strategy_ids: ['S1', 'S2'] }] : [],
+		},
 	};
 }
 
@@ -111,7 +119,7 @@ const RISK: ForvenRiskStatus = {
 		total_open_risk_used_frac: 0.11,
 		stops_missing: 0,
 		positions: [{ trade_id: 'E1', asset: 'SOL', direction: 'long', stop_price: 116.94, risk_usd: 5.69, notional_usd: 268.81, book: 'long' }],
-		per_book: { long: { gross_notional_usd: 268.81, equity_usd: 528.63, limit_usd: 528.63, positions: 1 } },
+		per_book: { long: { gross_notional_usd: 268.81, margin_usd: 134.4, equity_usd: 528.63, limit_usd: 422.9, positions: 1 } },
 		strategy_sizing: [{ strategy_id: 'S1', mode: 'system', effective_usd: 169.68, binding: 'slice' }],
 	},
 };
@@ -198,6 +206,8 @@ describe('live-first dashboard', () => {
 		expect(scorecard).toContain('$169.68');
 
 		expect(text(target, 'attention-panel')).toContain('S2 entries blocked (84× in 30d)');
+		expect(text(target, 'attention-panel')).toContain('S1, S2 all trade BTC long/short live');
+		expect(text(target, 'wallet-capacity')).toContain('worst case $373.00 of $422.90');
 		expect(text(target, 'realized-tile')).toContain('+$24.39');
 		expect(text(target, 'ops-footer')).toContain('16 strategies · 5 open');
 		expect(text(target, 'ops-footer')).toContain('live 6');

@@ -18,16 +18,16 @@ from forven.exchange import risk
 
 
 def _insert_open(conn, trade_id, asset, direction, entry, size, stop=None,
-                 execution_type="live", book=None):
+                 execution_type="live", book=None, leverage=None):
     sd = {"kernel_managed": True}
     if stop is not None:
         sd["stop_loss_price"] = stop
     sid = f"S-{trade_id}"
     conn.execute(
         "INSERT INTO trades (id, strategy, strategy_id, asset, direction, entry_price, size, "
-        "status, execution_type, signal_data, book, opened_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, '2026-01-01T00:00:00+00:00')",
-        (trade_id, sid, sid, asset, direction, entry, size, execution_type, json.dumps(sd), book),
+        "status, execution_type, signal_data, book, leverage, opened_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, '2026-01-01T00:00:00+00:00')",
+        (trade_id, sid, sid, asset, direction, entry, size, execution_type, json.dumps(sd), book, leverage),
     )
 
 
@@ -178,9 +178,9 @@ def test_exposure_aggregates_per_book(forven_db):
 
 
 def test_two_ceiling_strategies_cannot_oversubscribe_one_wallet(forven_db):
-    """THE scenario: a $300 wallet, two strategies each opening ~$200. The first
-    fits (66% of the wallet); the second would take the wallet to $400 > 100%
-    of its equity and is refused — capital is first-come-first-served."""
+    """THE scenario: a $300 wallet, two strategies each opening ~$200 at 1x. The
+    first fits (67% of the wallet as margin); the second would tie up $400 of
+    margin, above 80% of the wallet's equity, and is refused."""
     _set_equity(10_000.0)  # aggregate caps roomy; the BOOK cap is what must bite
     ok, why = risk.check_live_portfolio_budget(
         "BTC", "long", add_risk_usd=4.0, add_notional_usd=200.0,
@@ -193,7 +193,7 @@ def test_two_ceiling_strategies_cannot_oversubscribe_one_wallet(forven_db):
         "ETH", "long", add_risk_usd=4.0, add_notional_usd=200.0,
         book="long", book_equity_usd=300.0,
     )
-    assert not ok and "book budget" in why and "first-come-first-served" in why
+    assert not ok and "book budget" in why and "ties up $200 of margin" in why
     # the OTHER wallet is untouched — a short strategy still gets in
     ok, _ = risk.check_live_portfolio_budget(
         "ETH", "short", add_risk_usd=4.0, add_notional_usd=200.0,
@@ -227,15 +227,40 @@ def test_book_gate_reads_daemon_snapshot_when_equity_not_passed(forven_db):
     assert not ok and "book budget" in why
 
 
+def test_book_gate_measures_margin_at_the_order_leverage(forven_db):
+    """BOOK-MARGIN-1: two 2x positions of $200 tie up $200 of margin in a $300
+    wallet. The old 1x notional cap refused the second one; margin admits it."""
+    _set_equity(10_000.0)
+    with get_db() as conn:
+        _insert_open(conn, "L1", "BTC", "long", 100.0, 2.0, stop=98.0, book="long", leverage=2.0)
+    ok, why = risk.check_live_portfolio_budget(
+        "ETH", "long", add_risk_usd=4.0, add_notional_usd=200.0,
+        book="long", book_equity_usd=300.0, leverage=2,
+    )
+    assert ok, why  # $100 + $100 of margin <= 80% x $300
+    ok, why = risk.check_live_portfolio_budget(
+        "ETH", "long", add_risk_usd=4.0, add_notional_usd=300.0,
+        book="long", book_equity_usd=300.0, leverage=2,
+    )
+    assert not ok and "needs $150 more" in why  # $100 + $150 > $240
+
+
+def test_exchange_margin_leverage_prefers_recorded_and_floors_fractions():
+    assert risk.exchange_margin_leverage(1.3, {"exchange_leverage": 2}) == 2.0
+    assert risk.exchange_margin_leverage(1.3) == 1.0  # older rows sat at round-to-nearest
+    assert risk.exchange_margin_leverage(2.0) == 2.0
+    assert risk.exchange_margin_leverage(None) == 1.0
+
+
 def test_book_gate_cap_editable_and_main_skipped(forven_db):
     _set_equity(10_000.0)
-    # operator raised the per-wallet cap to 200% (margin headroom)
-    kv_set("forven:settings", {"live_max_book_notional_pct": 200.0})
+    # operator raised the per-wallet margin cap to 100% of the wallet
+    kv_set("forven:settings", {"live_max_book_margin_pct": 100.0})
     ok, why = risk.check_live_portfolio_budget(
-        "BTC", "long", add_risk_usd=4.0, add_notional_usd=500.0,
+        "BTC", "long", add_risk_usd=4.0, add_notional_usd=250.0,
         book="long", book_equity_usd=300.0,
     )
-    assert ok, why  # 500 <= 200% x 300
+    assert ok, why  # 250 <= 100% x 300 (the 80% default would refuse it)
     # books-off (book None / main) is never gated per-wallet
     ok, _ = risk.check_live_portfolio_budget(
         "BTC", "long", add_risk_usd=4.0, add_notional_usd=500.0, book=None,
@@ -257,8 +282,9 @@ def test_snapshot_shows_per_book_capacity(forven_db):
         _insert_open(conn, "L1", "BTC", "long", 100.0, 2.0, stop=95.0, book="long")
     snap = risk.live_portfolio_budget_snapshot()
     assert snap["per_book"]["long"]["gross_notional_usd"] == pytest.approx(200.0)
+    assert snap["per_book"]["long"]["margin_usd"] == pytest.approx(200.0)  # no leverage recorded -> 1x
     assert snap["per_book"]["long"]["equity_usd"] == pytest.approx(300.0)
-    assert snap["per_book"]["long"]["limit_usd"] == pytest.approx(300.0)  # 100% default
+    assert snap["per_book"]["long"]["limit_usd"] == pytest.approx(240.0)  # 80% margin default
     # the idle short wallet is still listed so free capacity is visible
     assert snap["per_book"]["short"]["positions"] == 0
     assert snap["per_book"]["short"]["equity_usd"] == pytest.approx(310.0)

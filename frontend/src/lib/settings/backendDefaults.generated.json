@@ -106,7 +106,7 @@
     "live_hard_max_order_notional_pct": 100.0,
     "live_hard_max_per_trade_risk_pct": 2.0,
     "live_max_asset_exposure_pct": 150.0,
-    "live_max_book_notional_pct": 100.0,
+    "live_max_book_margin_pct": 80.0,
     "live_max_book_participation_pct": 25.0,
     "live_max_effective_exposure_pct": 200.0,
     "live_max_group_exposure_pct": 200.0,

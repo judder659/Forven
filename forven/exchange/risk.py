@@ -13,7 +13,15 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from forven.db import get_db, kv_get, kv_set, kv_set_best_effort, log_activity, next_container_id
+from forven.db import (
+    get_db,
+    kv_get,
+    kv_set,
+    kv_set_best_effort,
+    log_activity,
+    next_container_id,
+    normalize_strategy_symbol_strict,
+)
 from forven.sim.clock import get_now, get_today, sim_kv_key
 from forven.system_pause import is_system_paused
 from forven.trade_state import (
@@ -805,11 +813,21 @@ def get_portfolio_summary(scope: str = "live") -> dict:
 # BOOK-BUDGET-1: with direction books, each order draws on ONE wallet (the
 # long or short sub-account), so admission must also be checked against THAT
 # wallet's capacity — the aggregate caps alone let two strategies with $200
-# ceilings both open into a $300 wallet. Gross notional per book is capped at
-# a percent of the book's own equity; capital is first-come-first-served and
-# the refused open alerts the operator (trade_blocked).
-#   live_max_book_notional_pct       (default 100.0 — Σ gross notional in a
-#                                     book vs that book's equity)
+# ceilings both open into a $300 wallet. The refused open alerts the operator
+# (trade_blocked).
+#
+# BOOK-MARGIN-1: the wallet cap is MARGIN (notional / exchange leverage), the
+# quantity the venue actually holds against the wallet. It used to cap GROSS
+# notional at 100% of the wallet, i.e. 1x: sizing gives each strategy a slice of
+# the combined pool at its validated leverage (usually 2x), so a second
+# same-side position was refused while the wallet had ~40% of its margin free.
+# 30 live entries were missed that way 2026-07-27..09-21, and every miss breaks
+# the backtest the strategy was promoted on. The default sits at the same 80%
+# line as can_open's exchange-margin gate (Rule 0c), so an order this cap admits
+# is never refused there. go_live_refusal (LIVE-ADMIT-1) refuses a go-live the
+# wallets cannot hold, which keeps this a backstop rather than a routine refusal.
+#   live_max_book_margin_pct         (default 80.0 — Σ margin in a book vs
+#                                     that book's equity, including the order)
 # --------------------------------------------------------------------------- #
 
 _PORTFOLIO_BUDGET_DEFAULTS = {
@@ -822,7 +840,7 @@ _PORTFOLIO_BUDGET_DEFAULTS = {
     "live_max_effective_exposure_pct": 200.0,
     "live_hard_max_per_trade_risk_pct": 2.0,
     "live_hard_max_order_notional_pct": 100.0,
-    "live_max_book_notional_pct": 100.0,
+    "live_max_book_margin_pct": 80.0,
 }
 # Risk fallback for a live row with no recorded stop (should not exist — live
 # opens are refused without one; adopted/recovered rows are the edge case).
@@ -876,6 +894,19 @@ def _live_aggregate_equity() -> float | None:
     return None
 
 
+def exchange_margin_leverage(leverage: object, signal_data: dict | None = None) -> float:
+    """The whole-number leverage the venue holds a position at (BOOK-MARGIN-1).
+
+    Prefers the recorded ``exchange_leverage`` (LEV-EXACT-1 rows). Otherwise floors
+    the given leverage: a floor never understates margin, and older fractional rows
+    were held at round-to-nearest, which is never below the floor."""
+    recorded = _coerce_non_negative_float((signal_data or {}).get("exchange_leverage"))
+    if recorded and recorded >= 1:
+        return float(recorded)
+    lev = _coerce_non_negative_float(leverage) or 1.0
+    return max(1.0, float(math.floor(lev)))
+
+
 def live_portfolio_exposure(exclude_trade_ids: "set[str] | None" = None) -> dict:
     """The live book's current dollar exposure, from OPEN live trade rows.
 
@@ -903,7 +934,7 @@ def live_portfolio_exposure(exclude_trade_ids: "set[str] | None" = None) -> dict
     try:
         with get_db() as conn:
             db_rows = conn.execute(
-                "SELECT id, asset, direction, entry_price, fill_entry_price, size, book, "
+                "SELECT id, asset, direction, entry_price, fill_entry_price, size, book, leverage, "
                 "COALESCE(strategy_id, strategy) AS strategy_id, signal_data "
                 "FROM trades WHERE status = 'OPEN' "
                 "AND LOWER(COALESCE(execution_type, 'live')) = 'live'"
@@ -941,17 +972,22 @@ def live_portfolio_exposure(exclude_trade_ids: "set[str] | None" = None) -> dict
         g["net_notional_usd"] += sign * notional
         g["risk_usd"] += risk_usd
         g["positions"] += 1
-        # BOOK-BUDGET-1: GROSS notional per routed wallet — within a book every
-        # position consumes that wallet's margin regardless of direction.
+        # BOOK-BUDGET-1: per routed wallet — within a book every position consumes
+        # that wallet's margin regardless of direction. BOOK-MARGIN-1 caps margin.
+        margin = notional / exchange_margin_leverage(row.get("leverage"), sd)
         book_label = str(row.get("book") or "main").strip().lower() or "main"
-        b = per_book.setdefault(book_label, {"gross_notional_usd": 0.0, "risk_usd": 0.0, "positions": 0})
+        b = per_book.setdefault(
+            book_label, {"gross_notional_usd": 0.0, "margin_usd": 0.0, "risk_usd": 0.0, "positions": 0}
+        )
         b["gross_notional_usd"] += notional
+        b["margin_usd"] += margin
         b["risk_usd"] += risk_usd
         b["positions"] += 1
         total_risk_usd += risk_usd
         rows.append({
             "trade_id": str(row.get("id")), "asset": asset_u, "direction": direction,
             "strategy_id": row.get("strategy_id"), "notional_usd": round(notional, 2),
+            "margin_usd": round(margin, 2),
             "risk_usd": round(risk_usd, 2), "stop_price": stop, "group": group,
             "book": book_label,
         })
@@ -983,6 +1019,7 @@ def check_live_portfolio_budget(
     add_risk_usd: float, add_notional_usd: float, equity: float | None = None,
     book: str | None = None, book_equity_usd: float | None = None,
     exclude_trade_ids: "set[str] | None" = None,
+    leverage: float | None = None,
 ) -> tuple[bool, str]:
     """The account-level admission check for a NEW live position.
 
@@ -991,7 +1028,9 @@ def check_live_portfolio_budget(
     for the order about to be placed. With direction books, pass ``book`` (the
     routed wallet's label) and ``book_equity_usd`` (its balance) so admission is
     also checked against THAT wallet's capacity — the aggregate caps alone
-    would let several strategies stack orders into one small wallet.
+    would let several strategies stack orders into one small wallet. Pass the
+    order's exchange ``leverage`` so the wallet check measures the margin it
+    ties up; without it the order is counted at 1x.
 
     ``exclude_trade_ids`` is for callers that already persisted the OPEN row for
     the order they are admitting (see live_portfolio_exposure) — without it the
@@ -1030,8 +1069,8 @@ def check_live_portfolio_budget(
             f"(${hard_notional_usd:,.0f}) — refusing the live open"
         )
 
-    # BOOK-BUDGET-1: the order draws on ONE wallet. Cap the routed book's GROSS
-    # open notional against that book's own equity — first come, first served.
+    # BOOK-BUDGET-1 / BOOK-MARGIN-1: the order draws on ONE wallet. Cap the margin
+    # the routed book would tie up, this order included, against its own equity.
     book_label = str(book or "").strip().lower()
     if book_label and book_label != "main":
         book_eq = _coerce_non_negative_float(book_equity_usd) or _book_equity_from_snapshot(book_label)
@@ -1040,15 +1079,16 @@ def check_live_portfolio_budget(
                 f"book budget: the {book_label} wallet's balance is unavailable — refusing "
                 "the live open (fail closed) until the wallet read recovers"
             )
-        max_book_usd = _budget_pct_setting(settings, "live_max_book_notional_pct") / 100.0 * book_eq
-        book_used = float((exposure["per_book"].get(book_label) or {}).get("gross_notional_usd", 0.0))
-        if book_used + add_notional > max_book_usd:
+        margin_pct = _budget_pct_setting(settings, "live_max_book_margin_pct")
+        max_book_margin = margin_pct / 100.0 * book_eq
+        book_margin = float((exposure["per_book"].get(book_label) or {}).get("margin_usd", 0.0))
+        add_margin = add_notional / exchange_margin_leverage(leverage)
+        if book_margin + add_margin > max_book_margin:
             return False, (
-                f"book budget: the {book_label} wallet already holds ${book_used:,.0f} of open "
-                f"notional; adding ${add_notional:,.0f} would exceed "
-                f"{_budget_pct_setting(settings, 'live_max_book_notional_pct'):g}% of its "
-                f"${book_eq:,.0f} equity (${max_book_usd:,.0f}). Capital is first-come-first-served — "
-                "this open waits until the wallet frees up"
+                f"book budget: the {book_label} wallet already ties up ${book_margin:,.0f} of margin; "
+                f"this order needs ${add_margin:,.0f} more, above {margin_pct:g}% of its "
+                f"${book_eq:,.0f} equity (${max_book_margin:,.0f}). Fund the {book_label} wallet "
+                "or run fewer live strategies on this side"
             )
 
     max_risk_usd = _budget_pct_setting(settings, "live_max_total_open_risk_pct") / 100.0 * eq
@@ -1257,6 +1297,10 @@ def live_equity_slice(account_equity: float | None) -> tuple[float | None, dict]
     N is floored at 1: a strategy placing a live order is by definition in the
     cohort, so a zero count means the read disagrees with reality, and dividing by
     zero is not the way to find out.
+
+    CAP-FIT-1: the slice is scaled by live_capacity_scale() so every wallet can hold
+    every live strategy's margin at once. Percent returns are unchanged; only the
+    dollar base shrinks, and only while a wallet is over-committed.
     """
     meta: dict = {"cohort_size": None, "account_equity_usd": None, "slice_usd": None}
     eq = None
@@ -1272,12 +1316,223 @@ def live_equity_slice(account_equity: float | None) -> tuple[float | None, dict]
         return None, {**meta, "account_equity_usd": round(eq, 2), "reason": "live cohort unreadable"}
 
     n = max(len(cohort), 1)
-    slice_usd = eq / float(n)
+    scale = live_capacity_scale()
+    slice_usd = eq / float(n) * scale
     return slice_usd, {
         "cohort_size": n,
         "account_equity_usd": round(eq, 2),
         "slice_usd": round(slice_usd, 4),
+        "capacity_scale": round(scale, 4),
     }
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-ADMIT-1: go-live admission for the live cohort.
+#
+# A live entry refused after go-live breaks the backtest the strategy was
+# promoted on, which assumed every signal trades. brain.transition_stage checks
+# the two structural refusals when a strategy goes live, where the operator can
+# still act:
+#   - Coin/side conflicts. Hyperliquid nets positions per wallet, so two live
+#     strategies that can hold the same coin in the same direction refuse each
+#     other (can_open Rule 2). One live strategy per coin per side.
+#   - Wallet capacity. Each wallet must hold the margin of every live strategy
+#     that can route to it at once, within live_max_book_margin_pct
+#     (BOOK-MARGIN-1), or the last one in is refused.
+# Worst-case margin per strategy is its slice (combined wallet equity / N, as
+# live sizing uses) times the largest size fraction it has traded at, 1.0 with
+# no kernel trades yet. Margin at validated leverage L is slice x f x L / L, so
+# leverage cancels; rounding the venue leverage up only lowers real margin.
+# --------------------------------------------------------------------------- #
+
+_LIVE_SIDES = ("long", "short")
+
+
+def strategy_sides(params: dict | None) -> frozenset[str]:
+    mode = str((params or {}).get("trade_mode") or "both").strip().lower()
+    if mode in {"long_only", "long"}:
+        return frozenset({"long"})
+    if mode in {"short_only", "short"}:
+        return frozenset({"short"})
+    return frozenset(_LIVE_SIDES)
+
+
+def _strategy_coin(symbol: object) -> str:
+    base = (normalize_strategy_symbol_strict(str(symbol or "")) or "").split("/", 1)[0]
+    for quote in ("USDT", "USD", "PERP"):
+        if base.endswith(quote) and len(base) > len(quote):
+            return base[: -len(quote)]
+    return base
+
+
+def _max_traded_size_fraction(conn, strategy_id: str) -> float:
+    row = conn.execute(
+        "SELECT MAX(CAST(json_extract(signal_data, '$.kernel_size_fraction') AS REAL)) "
+        "FROM trades WHERE COALESCE(strategy_id, strategy) = ? AND json_valid(signal_data)",
+        (strategy_id,),
+    ).fetchone()
+    fraction = row[0] if row else None
+    if fraction is None or fraction <= 0:
+        return 1.0
+    return min(float(fraction), 1.0)
+
+
+def _capacity_member(conn, row: dict) -> dict:
+    try:
+        params = json.loads(row.get("params") or "{}")
+    except (TypeError, ValueError):
+        params = {}
+    sid = str(row["id"])
+    return {
+        "strategy_id": sid,
+        "coin": _strategy_coin(row.get("symbol")),
+        "sides": strategy_sides(params if isinstance(params, dict) else {}),
+        "size_fraction": _max_traded_size_fraction(conn, sid),
+    }
+
+
+def _capacity_wallets() -> dict[str, frozenset[str]]:
+    """Wallet label -> the sides live orders route to it."""
+    from forven.exchange import books
+
+    if not books.books_enabled():
+        return {"main": frozenset(_LIVE_SIDES)}
+    wallets = {books.LONG_BOOK: frozenset({"long"})}
+    if books.short_book_available():
+        wallets[books.SHORT_BOOK] = frozenset({"short"})
+    return wallets
+
+
+def coin_side_conflicts(members: list[dict]) -> list[dict]:
+    """Pairs of cohort members that share a coin and a direction."""
+    found = []
+    for i, a in enumerate(members):
+        for b in members[i + 1:]:
+            shared = a["sides"] & b["sides"]
+            if a["coin"] and a["coin"] == b["coin"] and shared:
+                found.append({
+                    "coin": a["coin"],
+                    "sides": sorted(shared),
+                    "strategy_ids": [a["strategy_id"], b["strategy_id"]],
+                })
+    return found
+
+
+def live_capacity_report(conn, candidate_id: str | None = None) -> dict:
+    """Coin/side conflicts and worst-case wallet margin for the live cohort.
+
+    With ``candidate_id`` the report is for the cohort as it would be once that
+    strategy goes live. Wallet figures are None when a balance is unavailable.
+    """
+    placeholders = ",".join("?" for _ in LIVE_COHORT_STAGES)
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            f"SELECT id, symbol, params FROM strategies "
+            f"WHERE LOWER(COALESCE(stage, status, '')) IN ({placeholders}) ORDER BY id",
+            tuple(LIVE_COHORT_STAGES),
+        ).fetchall()
+    ]
+    if candidate_id and all(str(r["id"]) != candidate_id for r in rows):
+        candidate = conn.execute(
+            "SELECT id, symbol, params FROM strategies WHERE id = ?", (candidate_id,)
+        ).fetchone()
+        if candidate:
+            rows.append(dict(candidate))
+    members = [_capacity_member(conn, row) for row in rows]
+
+    margin_pct = _budget_pct_setting(_load_risk_settings(), "live_max_book_margin_pct")
+    wallets = _capacity_wallets()
+    equities = {
+        label: (_live_aggregate_equity() if label == "main" else _book_equity_from_snapshot(label))
+        for label in wallets
+    }
+    known = all(equity for equity in equities.values())
+    total = sum(equities.values()) if known else None
+    slice_usd = total / len(members) if total and members else None
+
+    report_wallets = []
+    for label, sides in wallets.items():
+        equity = equities[label]
+        demand = None
+        if slice_usd is not None:
+            # One position per coin per wallet: the largest claimant counts. A
+            # member whose coin is unknown counts on its own, never merged.
+            per_coin: dict[str, float] = {}
+            for m in members:
+                if m["sides"] & sides:
+                    key = m["coin"] or f"?{m['strategy_id']}"
+                    per_coin[key] = max(per_coin.get(key, 0.0), slice_usd * m["size_fraction"])
+            demand = sum(per_coin.values())
+        capacity = margin_pct / 100.0 * equity if equity else None
+        report_wallets.append({
+            "wallet": label,
+            "sides": sorted(sides),
+            "equity_usd": round(equity, 2) if equity else None,
+            "capacity_usd": round(capacity, 2) if capacity is not None else None,
+            "worst_case_margin_usd": round(demand, 2) if demand is not None else None,
+            "over_capacity": bool(demand is not None and capacity is not None and demand > capacity),
+        })
+    report = {
+        "margin_cap_pct": margin_pct,
+        "cohort_size": len(members),
+        "slice_usd": round(slice_usd, 2) if slice_usd else None,
+        "wallets": report_wallets,
+        "conflicts": coin_side_conflicts(members),
+    }
+    # CAP-FIT-1: the share of the full slice live sizing uses right now.
+    report["capacity_scale"] = round(_capacity_scale(report), 4)
+    return report
+
+
+def _capacity_scale(report: dict) -> float:
+    scale = 1.0
+    for w in report["wallets"]:
+        demand, capacity = w["worst_case_margin_usd"], w["capacity_usd"]
+        if demand and capacity is not None and demand > capacity:
+            scale = min(scale, capacity / demand)
+    return scale
+
+
+def live_capacity_scale() -> float:
+    """CAP-FIT-1: the factor (<= 1) that fits every wallet's worst case.
+
+    The operator's choice (2026-09-25): when the live cohort could need more
+    margin than a wallet holds, shrink every live slice to fit rather than refuse
+    entries. 1.0 when the cohort fits or wallet balances are unknown; the
+    BOOK-MARGIN-1 cap still guards each order.
+    """
+    try:
+        with get_db() as conn:
+            return _capacity_scale(live_capacity_report(conn))
+    except Exception as exc:  # noqa: BLE001 — sizing falls back to the unscaled slice
+        log.warning("CAP-FIT-1: capacity scale unavailable (%s); using the full slice", exc)
+        return 1.0
+
+
+def go_live_refusal(conn, strategy_id: str) -> str | None:
+    """Why ``strategy_id`` may not go live now, or None when it can."""
+    report = live_capacity_report(conn, candidate_id=strategy_id)
+    reasons = []
+    for c in report["conflicts"]:
+        if strategy_id not in c["strategy_ids"]:
+            continue
+        other = next(s for s in c["strategy_ids"] if s != strategy_id)
+        reasons.append(
+            f"{other} already trades {c['coin']} {'/'.join(c['sides'])} live. One wallet holds one "
+            f"position per coin, so the two would refuse each other's entries. Demote {other} first"
+        )
+    for w in report["wallets"]:
+        if w["over_capacity"]:
+            # Only margin_cap_pct of a deposit becomes capacity.
+            shortfall = (w["worst_case_margin_usd"] - w["capacity_usd"]) / (report["margin_cap_pct"] / 100.0)
+            reasons.append(
+                f"the {w['wallet']} wallet could need ${w['worst_case_margin_usd']:,.0f} of margin if every "
+                f"live strategy that trades {'/'.join(w['sides'])} entered at once, above its "
+                f"${w['capacity_usd']:,.0f} limit ({report['margin_cap_pct']:g}% of ${w['equity_usd']:,.0f}). "
+                f"Add about ${shortfall:,.0f} to that wallet, or keep fewer strategies live on that side"
+            )
+    return "; ".join(reasons) or None
 
 
 def apply_go_live_ceiling(
@@ -1533,11 +1788,13 @@ def live_portfolio_budget_snapshot(equity: float | None = None) -> dict:
         book_eq = books_equity.get(label)
         per_book[label] = {
             "gross_notional_usd": round(float(used.get("gross_notional_usd", 0.0)), 2),
+            "margin_usd": round(float(used.get("margin_usd", 0.0)), 2),
             "risk_usd": round(float(used.get("risk_usd", 0.0)), 2),
             "positions": int(used.get("positions", 0) or 0),
             "equity_usd": round(book_eq, 2) if book_eq else None,
+            # BOOK-MARGIN-1: the cap applies to margin_usd, not gross notional.
             "limit_usd": (
-                round(limits_pct["live_max_book_notional_pct"] / 100.0 * book_eq, 2)
+                round(limits_pct["live_max_book_margin_pct"] / 100.0 * book_eq, 2)
                 if book_eq else None
             ),
         }

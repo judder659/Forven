@@ -687,7 +687,7 @@ def open_manual_position(
 
 def _assert_live_open_bounds(
     strategy_id, asset, direction, *, size, ref_price, stop_price, book,
-    testnet, exclude_trade_ids=None, context: str = "",
+    testnet, exclude_trade_ids=None, context: str = "", leverage=None,
 ) -> None:
     """ORDER-BOUND-1: the three money bounds every REAL open must satisfy.
 
@@ -731,6 +731,7 @@ def _assert_live_open_bounds(
     ok, why = risk_mod.check_live_portfolio_budget(
         asset, direction, add_risk_usd=add_risk, add_notional_usd=add_notional,
         equity=real_equity, book=book, exclude_trade_ids=exclude_trade_ids,
+        leverage=leverage,
     )
     if not ok:
         raise HTTPException(status_code=409, detail=f"{context}Blocked by portfolio budget: {why}")
@@ -821,7 +822,7 @@ def _live_open(
             size=float(resolved_size),
             ref_price=_fresh_manual_mark(_resolve_session(session_id)),
             stop_price=float(_parsed_stop), book=book, testnet=testnet,
-            exclude_trade_ids=exclude_trade_ids,
+            exclude_trade_ids=exclude_trade_ids, leverage=leverage,
         )
 
     try:
@@ -1276,7 +1277,7 @@ def flip_position(session_id: str) -> dict:
             strategy_id, asset, opposite,
             size=size, ref_price=rev_mark, stop_price=rev_stop,
             book=open_book, testnet=_live_testnet(),
-            exclude_trade_ids={old_id}, context="Flip blocked — ",
+            exclude_trade_ids={old_id}, context="Flip blocked — ", leverage=leverage,
         )
         _live_close_trade(trade, close_reason="manual_flip_close")
         _live_open(
