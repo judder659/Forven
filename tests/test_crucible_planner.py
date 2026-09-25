@@ -323,6 +323,36 @@ def test_active_proposed_crucible_blocks_extra_replenishment(forven_db):
     assert actions == []
 
 
+@pytest.mark.parametrize("failures", [2, 3, 4])
+def test_exhausted_first_backtest_cannot_starve_research(forven_db, failures):
+    from forven.crucible_planner import plan_next_actions
+
+    crucible = _make_crucible("researching")
+    strategy_id = _make_strategy(crucible["id"])
+    with get_db() as conn:
+        for _ in range(failures):
+            conn.execute(
+                "INSERT INTO agent_tasks (agent_id, type, status, input_data, error) "
+                "VALUES ('simulation-agent', 'backtest', 'failed', ?, ?)",
+                (json.dumps({
+                    "action_kind": "run_backtest",
+                    "crucible_id": crucible["id"],
+                    "strategy_id": strategy_id,
+                }), "No registered runtime class"),
+            )
+
+    actions = plan_next_actions(limit=3)
+    expected = "run_backtest" if failures < 3 else "propose_crucible"
+    assert [action.action_kind for action in actions] == [expected]
+    # Replenishment preserves the failed candidate and its audit evidence.
+    with get_db() as conn:
+        row = conn.execute("SELECT stage FROM strategies WHERE id=?", (strategy_id,)).fetchone()
+        assert row["stage"] == "quick_screen"
+    if failures >= 3:
+        _make_planner_task("", "propose_crucible", "pending")
+        assert plan_next_actions(limit=3) == []
+
+
 def test_backtest_failed_strategy_does_not_block_new_candidate(forven_db):
     from forven.crucible_planner import plan_next_actions
 

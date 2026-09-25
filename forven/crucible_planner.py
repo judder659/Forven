@@ -714,8 +714,15 @@ def _research_pool_needs_replenishment(
     busy_count = 0
     for crucible in researching:
         crucible_id = str(crucible["id"])
-        if _untested_strategy_id(crucible_id) is not None:
-            return False
+        strategy_id = _untested_strategy_id(crucible_id)
+        if strategy_id is not None:
+            if index.failed_strategy_backtest_count(crucible_id, strategy_id) < _MAX_FAILED_ACTION_RETRIES:
+                return False
+            # Match _plan_for_crucible's retry cap. A candidate that cannot
+            # receive another first backtest must not suppress fresh research
+            # until the seven-day stale-strategy sweep eventually archives it.
+            non_actionable_count += 1
+            continue
         if _has_busy_strategy(crucible_id):
             busy_count += 1
             continue
