@@ -5108,9 +5108,8 @@ def create_strategy_container(
 ) -> tuple[str, str, int]:
     """Create a strategy container row with canonical immutable Sxxxxx IDs.
 
-    If `parent_strategy_id` is provided, validates it exists and shares the
-    same `hypothesis_id` as this new strategy — lineage cannot cross
-    hypotheses. Raises ValueError on mismatch.
+    If `parent_strategy_id` is provided, validates that it exists; a variant
+    may test a different idea than its parent. Raises ValueError when missing.
 
     A strategy that cannot be fairly tested is created directly in the
     graveyard (stage='archived') with an untestable `status_reason`.
