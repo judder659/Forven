@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, pstdev
 from typing import Any
 
+from forven.baseline_hurdle import baseline_hurdle_gate_reason
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
 from forven.dethrone_cooldown import dethrone_cooldown_active_until
 
@@ -148,6 +149,17 @@ DEFAULT_PIPELINE_CONFIG = {
         # demonstrated forward edge is enforced later at the strict paper->live gate.
         "wfa_min_oos_sharpe": 0.0,
         "wfa_min_folds": 2,
+        # Baseline hurdle (forven.baseline_hurdle): walk-forward OOS alpha after
+        # removing buy-and-hold of the same asset and a zero-search trend rule, same
+        # days, same costs. Per-gate mode off|observe|enforce. Observe at ->paper:
+        # a measured fail there would archive via the gauntlet sweep on a statistic
+        # with a ~13%/yr standard error over two years. Enforce at ->live: a live
+        # rejection holds the strategy in paper, it never archives.
+        "wfa_baseline_hurdle_paper": "observe",
+        "wfa_baseline_hurdle_live": "enforce",
+        "wfa_baseline_min_alpha_pct": 0.0,  # annualised alpha must exceed this
+        "wfa_baseline_min_alpha_t": 0.0,  # OLS t floor; see the SE caveat in baseline_hurdle._ols
+        "wfa_baseline_min_oos_days": 60,  # fewer OOS days = insufficient evidence, never a fail
         # IMPLAUSIBLE-METRICS REJECT (defense-in-depth at the gauntlet->paper gate;
         # the primary catch is in quick_screen). See the quick_screen note above.
         "max_plausible_sharpe": 5.0,
@@ -4218,6 +4230,12 @@ def _strict_robustness_reject(strategy_id: str, row, metrics: dict, config: dict
                 f"Live gate: walk-forward OOS Sharpe {float(oos_sh):.2f} below "
                 f"{float(gate.get('wfa_min_oos_sharpe', 0.3)):.2f} floor"
             )
+        # Baseline hurdle (enforced at ->live by default): OOS returns must beat what
+        # buy-and-hold and a zero-search trend rule made over the same days. A walk-
+        # forward that predates the hurdle carries no block and is not judged here.
+        hurdle_reason = baseline_hurdle_gate_reason(wfa, gate, stage="live")
+        if hurdle_reason:
+            return GateRejection(hurdle_reason, reason_code="baseline_hurdle_reject")
 
     mc = verdict_payloads.get("monte_carlo") or verdict_payloads.get("mc")
     if isinstance(mc, dict):
@@ -4540,6 +4558,12 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
         )
         if enforce_wfa and wfa_pass_rate < min_pass_rate:
             return False, f"S00552 REJECT: Walk-forward pass rate {wfa_pass_rate:.0%} below {min_pass_rate:.0%} minimum"
+
+        # Baseline hurdle — blocks ->paper only when the operator set the paper mode
+        # to enforce (default observe). Absent/insufficient measurements never block.
+        hurdle_reason = baseline_hurdle_gate_reason(wfa_payload, gate, stage="paper")
+        if hurdle_reason:
+            return False, GateRejection(hurdle_reason, reason_code="baseline_hurdle_reject")
 
         # PAPER GATE IS LEAN: the OOS *consistency* check above (folds + fold pass
         # rate) is the paper-stage hard gate. The absolute-Sharpe / degradation /

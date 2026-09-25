@@ -69,6 +69,11 @@
       "walk_forward",
       "param_jitter"
     ],
+    "gauntlet.wfa_baseline_hurdle_live": "enforce",
+    "gauntlet.wfa_baseline_hurdle_paper": "observe",
+    "gauntlet.wfa_baseline_min_alpha_pct": 0.0,
+    "gauntlet.wfa_baseline_min_alpha_t": 0.0,
+    "gauntlet.wfa_baseline_min_oos_days": 60,
     "gauntlet.wfa_min_folds": 2,
     "gauntlet_auto_quick_screen_enabled": true,
     "gauntlet_drain_workers": 3,

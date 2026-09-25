@@ -284,6 +284,42 @@ describe('RobustnessPanel', () => {
 		expect(target.textContent).toContain('0.910');
 	});
 
+	it('shows the out-of-sample baseline hurdle next to a walk-forward result', async () => {
+		const persisted = buildPersistedWalkForwardResult('WF-HURDLE');
+		(persisted.payload as Record<string, unknown>).baseline_hurdle = {
+			status: 'fail',
+			n_days: 310,
+			alpha_pct: -6.4,
+			alpha_t: -1.2,
+			beta_market: 0.55,
+			beta_trend: 0.1,
+			sharpe: { strategy: 0.31, buy_hold: 0.62, trend: 0.44 },
+			reasons: ['OOS alpha -6.4%/yr after removing buy-and-hold and the trend baseline is not above +0.0%/yr'],
+			paper_mode: 'observe',
+			live_mode: 'enforce',
+		};
+		backtestingMocks.getRobustnessResult.mockResolvedValue(persisted);
+
+		app = mount(RobustnessPanel, {
+			target,
+			props: {
+				strategyId: 'S0001',
+				backtestHistory: [buildBacktestHistoryItem()],
+				validationHistory: [buildValidationHistoryItem('WF-HURDLE', 'succeeded')],
+				defaultSymbol: 'BTC/USDT',
+				defaultTimeframe: '1h',
+				symbolSuggestions: ['BTC/USDT'],
+			},
+		});
+
+		await waitForCondition(() => target.querySelector('[data-testid="wf-baseline-hurdle"]') !== null);
+		const panel = target.querySelector('[data-testid="wf-baseline-hurdle"]')?.textContent ?? '';
+		expect(panel).toContain('NO ALPHA');
+		expect(panel).toContain('-6.4%');
+		expect(panel).toContain('->paper observed · ->live blocks');
+		expect(panel).toContain('310 OOS days');
+	});
+
 	it('submits walk-forward runs, tracks the job, polls completion, and hydrates the persisted result', async () => {
 		backtestingMocks.submitWalkForwardRobustness.mockResolvedValue({
 			job_id: 'JOB-WF-QUEUE',

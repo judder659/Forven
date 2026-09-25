@@ -7288,6 +7288,25 @@ def walk_forward(
         "as_of": as_of,
     }
 
+    # Does the OOS edge beat buy-and-hold and a zero-search trend rule over the same
+    # days and costs? Measured here, where the per-fold OOS curves and the candles
+    # both exist; robustness.engine classifies it and the policy gates act on it.
+    # A measurement failure must never cost the walk-forward its verdict.
+    try:
+        from forven.baseline_hurdle import compute_baseline_hurdle
+
+        result["baseline_hurdle"] = compute_baseline_hurdle(
+            oos_curves=all_oos_curves,
+            candles=df,
+            trade_mode=resolved_trade_mode,
+            fee_bps=resolved_fee_bps,
+            slippage_bps=resolved_slippage_bps,
+            timeframe_hours=_hours_per_bar(resolved_timeframe),
+        )
+    except Exception as exc:  # noqa: BLE001 — diagnostics only
+        log.warning("Baseline hurdle measurement failed for %s: %s", strategy_id, exc)
+        result["baseline_hurdle"] = {"error": str(exc)[:300]}
+
     if risk_parity_warning:
 
         result["warning"] = risk_parity_warning

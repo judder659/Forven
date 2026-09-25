@@ -19,6 +19,7 @@
 		type RegimeSplitEntry,
 		type RegimeSplitRobustnessResult,
 		type RobustnessSubmitResponse,
+		type WalkForwardBaselineHurdle,
 		type WalkForwardRobustnessResult,
 	} from '$lib/api/backtesting';
 	import { getJob, type BacktestResult, type Job, type StrategyContainerHistoryItem } from '$lib/api';
@@ -525,6 +526,29 @@
 	function verdictLabel(verdict: string | null): string {
 		if (!verdict) return 'NOT RUN';
 		return verdict;
+	}
+
+	function hurdleBadge(status: string | undefined): string {
+		if (status === 'pass') return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
+		if (status === 'fail') return 'border-red-900 bg-red-500/10 text-red-400';
+		return 'border-[#333] text-[#888]';
+	}
+
+	function hurdleLabel(status: string | undefined): string {
+		if (status === 'pass') return 'BEATS BASELINES';
+		if (status === 'fail') return 'NO ALPHA';
+		if (status === 'insufficient_evidence') return 'TOO LITTLE DATA';
+		return 'NOT MEASURED';
+	}
+
+	function hurdleEnforcement(hurdle: WalkForwardBaselineHurdle): string {
+		const at = (mode: string | undefined) => (mode === 'enforce' ? 'blocks' : mode === 'observe' ? 'observed' : 'off');
+		return `->paper ${at(hurdle.paper_mode)} · ->live ${at(hurdle.live_mode)}`;
+	}
+
+	function signedPct(value: number | undefined): string {
+		const n = Number(value ?? 0);
+		return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
 	}
 
 	function methodLabel(value: unknown): string {
@@ -1405,6 +1429,48 @@
 							<div class="mt-1 font-mono text-sm text-[#888]">{walkForwardResult.aggregate_oos?.total_trades ?? walkForwardResult.aggregate_oos?.trades ?? '-'}</div>
 						</div>
 					</div>
+					{#if walkForwardResult.baseline_hurdle}
+						{@const hurdle = walkForwardResult.baseline_hurdle}
+						<div class="mt-3 border border-[#1a1a1a] bg-black px-3 py-2" data-testid="wf-baseline-hurdle">
+							<div class="flex flex-wrap items-center gap-2">
+								<span class="text-[10px] uppercase tracking-wide text-[#666]">Out-of-sample vs buy-and-hold + trend rule</span>
+								<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${hurdleBadge(hurdle.status)}`}>{hurdleLabel(hurdle.status)}</span>
+								<span class="text-[10px] text-[#555]">{hurdleEnforcement(hurdle)}</span>
+							</div>
+							{#if hurdle.alpha_pct != null}
+								<div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+									<div>
+										<div class="text-[10px] text-[#666]">Alpha / yr (t)</div>
+										<div class="mt-1 font-mono text-sm {Number(hurdle.alpha_pct) > 0 ? 'text-emerald-400' : 'text-red-400'}">
+											{signedPct(hurdle.alpha_pct)} ({Number(hurdle.alpha_t ?? 0).toFixed(2)})
+										</div>
+									</div>
+									<div>
+										<div class="text-[10px] text-[#666]">Sharpe: strategy</div>
+										<div class="mt-1 font-mono text-sm text-[#888]">{Number(hurdle.sharpe?.strategy ?? 0).toFixed(2)}</div>
+									</div>
+									<div>
+										<div class="text-[10px] text-[#666]">Sharpe: buy-and-hold</div>
+										<div class="mt-1 font-mono text-sm text-[#888]">{Number(hurdle.sharpe?.buy_hold ?? 0).toFixed(2)}</div>
+									</div>
+									<div>
+										<div class="text-[10px] text-[#666]">Sharpe: trend rule</div>
+										<div class="mt-1 font-mono text-sm text-[#888]">{Number(hurdle.sharpe?.trend ?? 0).toFixed(2)}</div>
+									</div>
+								</div>
+								<div class="mt-2 text-[10px] text-[#555]">
+									{hurdle.n_days ?? 0} OOS days · market beta {Number(hurdle.beta_market ?? 0).toFixed(2)} · trend beta {Number(hurdle.beta_trend ?? 0).toFixed(2)}
+								</div>
+							{:else}
+								<div class="mt-1 text-[11px] text-[#888]">{hurdle.insufficient_reason ?? hurdle.error ?? 'Not measured on this run.'}</div>
+							{/if}
+							{#if hurdle.reasons?.length}
+								<ul class="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-red-400">
+									{#each hurdle.reasons as reason}<li>{reason}</li>{/each}
+								</ul>
+							{/if}
+						</div>
+					{/if}
 					{#if walkForwardResult.splits?.length > 0}
 						<table class="mt-3 w-full text-xs">
 							<thead class="bg-[#050505] text-[#666]">
