@@ -68,11 +68,22 @@ def test_write_verdict_memo_happy_path(forven_db):
 
 
 def test_write_verdict_memo_disproven_path(forven_db):
+    """With no evidence the math floor is 'researching'. The autonomous loop may
+    not let the LLM disprove on narrative; the operator's triage cleanup may."""
     from forven.hypothesis_verdict import write_verdict_memo
-    hyp = _hyp()
     fake = json.dumps({"verdict": "disproven", "rationale": "incoherent idea"})
+    autonomous = _hyp()
     with patch("forven.hypothesis_verdict._call_llm", return_value=fake):
-        result = write_verdict_memo(hyp["id"])
+        result = write_verdict_memo(autonomous["id"])
+    assert result["hypothesis"]["status"] == "researching"
+
+    triaged = create_hypothesis(
+        title="Incoherent idea", market_thesis="m", mechanism="x", why_now=None,
+        lane="benchmarking", source_type="operator_seed", origin_agent_id=None,
+        origin_role="operator", target_assets=["BTC-PERP"], target_timeframes=["1h"],
+    )
+    with patch("forven.hypothesis_verdict._call_llm", return_value=fake):
+        result = write_verdict_memo(triaged["id"], allow_llm_disproof=True)
     assert result["hypothesis"]["status"] == "disproven"
 
 

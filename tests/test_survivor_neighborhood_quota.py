@@ -103,6 +103,104 @@ def test_family_cap_prevents_monoculture(forven_db):
     assert directive["survivor_id"] == "s-b"
 
 
+def test_neighborhood_crucible_is_created_once_for_a_crucible_less_survivor(forven_db):
+    from forven.crucible_allocator import survivor_neighborhood_crucible
+    from forven.hypotheses import get_hypothesis
+
+    _insert_strategy("s-paper-1", stage="paper", symbol="BTC/USDT")
+    directive = next_survivor_neighborhood_directive()
+
+    first = survivor_neighborhood_crucible(directive)
+    second = survivor_neighborhood_crucible(directive)
+
+    assert first and first == second
+    crucible = get_hypothesis(first)
+    assert crucible["status"] == "researching"
+    assert crucible["target_assets"] == ["BTC/USDT"]
+    assert "s-paper-1" in crucible["title"]
+
+
+def test_two_survivors_of_one_family_get_their_own_neighborhoods(forven_db):
+    """Their titles share most tokens; the agents' fuzzy dedup would merge them."""
+    from forven.crucible_allocator import survivor_neighborhood_crucible
+
+    first = survivor_neighborhood_crucible(
+        {"survivor_id": "S05215", "display_id": "S05215", "family": "donchian", "symbol": "BTC/USDT", "timeframe": "1h"}
+    )
+    second = survivor_neighborhood_crucible(
+        {"survivor_id": "S06151", "display_id": "S06151", "family": "donchian", "symbol": "BTC/USDT", "timeframe": "1h"}
+    )
+
+    assert first and second and first != second
+
+
+def test_neighborhood_prefers_the_survivors_own_active_crucible(forven_db):
+    from forven.crucible_allocator import survivor_neighborhood_crucible
+    from forven.hypotheses import create_hypothesis
+
+    own = create_hypothesis(
+        title="Own survivor thesis", market_thesis="m", mechanism="x", lane="exploration",
+        source_type="agent_original", target_assets=["BTC/USDT"], target_timeframes=["1h"],
+    )
+    _insert_strategy("s-paper-own", stage="paper")
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET hypothesis_id = ? WHERE id = 's-paper-own'", (own["id"],))
+
+    assert survivor_neighborhood_crucible(next_survivor_neighborhood_directive()) == own["id"]
+
+
+def test_neighborhood_rests_while_recently_disproven(forven_db):
+    from forven.crucible_allocator import survivor_neighborhood_crucible
+
+    _insert_strategy("s-paper-1", stage="paper", symbol="BTC/USDT")
+    directive = next_survivor_neighborhood_directive()
+    first = survivor_neighborhood_crucible(directive)
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE hypotheses SET status = 'disproven', manager_state = 'archived', "
+            "verdict_memo_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') WHERE id = ?",
+            (first,),
+        )
+
+    assert survivor_neighborhood_crucible(directive) is None
+
+
+def test_planner_cycle_keeps_the_survivor_directive_on_its_own_lane(forven_db, monkeypatch):
+    """The directive used to ride on whatever develop came next, telling agents to
+    vary survivor X inside crucible Y's unrelated thesis."""
+    from forven import crucible_planner
+    from forven.hypotheses import create_hypothesis
+
+    _insert_strategy("s-paper-1", stage="paper", symbol="BTC/USDT")
+    unrelated = create_hypothesis(
+        title="Failed close extension reversal", market_thesis="A failed breakout reverses.",
+        mechanism="Enter against a close back inside the prior range.", lane="exploration",
+        source_type="agent_original", target_assets=["BTC/USDT"], target_timeframes=["1d"],
+    )
+    with get_db() as conn:
+        conn.execute("UPDATE hypotheses SET status = 'researching' WHERE id = ?", (unrelated["id"],))
+    monkeypatch.setattr(
+        "forven.strategies.idea_readiness.hypothesis_readiness", lambda _hid: {"can_generate": True}
+    )
+    assigned: list[dict] = []
+    monkeypatch.setattr(
+        "forven.brain.assign_task",
+        lambda agent_id, task_type, title, description, input_data, **kw: assigned.append(
+            {"type": task_type, "description": description, "input_data": input_data}
+        ) or len(assigned),
+    )
+
+    crucible_planner.run_crucible_planner_cycle(limit=3)
+
+    develops = [a for a in assigned if a["type"] == "develop_candidate"]
+    directed = [a for a in develops if "survivor_neighborhood_directive" in a["input_data"]]
+    assert len(directed) == 1
+    assert directed[0]["input_data"]["crucible_id"] != unrelated["id"]
+    assert "NEIGHBORHOOD VARIANT" in directed[0]["description"]
+    plain = [a for a in develops if a["input_data"]["crucible_id"] == unrelated["id"]]
+    assert plain and "NEIGHBORHOOD" not in plain[0]["description"]
+
+
 def test_planner_overview_reports_survivor_quota(forven_db):
     from forven.crucible_allocator import allocator_overview
 

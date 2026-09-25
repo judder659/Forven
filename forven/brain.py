@@ -3405,7 +3405,10 @@ def assign_task_direct(
             hypothesis_id = str(input_data.get("hypothesis_id") or input_data.get("crucible_id") or "").strip()
             if hypothesis_id:
                 # Serialize candidate ownership across planner, promotion and
-                # direct assignments. A blocked checkpoint is unfinished work.
+                # direct assignments. Only a data-preflight block is unfinished
+                # work (it resumes when its inputs pass); any other blocked
+                # attempt is over and must not hold the crucible (see
+                # crucible_planner.blocked_candidate_holds_crucible).
                 conn.execute("BEGIN IMMEDIATE")
                 hypothesis = conn.execute(
                     "SELECT id,display_id FROM hypotheses WHERE id=? OR display_id=?",
@@ -3414,7 +3417,8 @@ def assign_task_direct(
                 aliases = (hypothesis["id"], hypothesis["display_id"]) if hypothesis else (hypothesis_id, hypothesis_id)
                 existing = conn.execute(
                     "SELECT id FROM agent_tasks WHERE type='develop_candidate' "
-                    "AND status IN ('pending','running','blocked') AND (status!='blocked' OR dismissed_at IS NULL) "
+                    "AND (status IN ('pending','running') OR (status='blocked' AND dismissed_at IS NULL "
+                    "AND COALESCE(error,'') LIKE 'Data check:%')) "
                     "AND json_valid(input_data) "
                     "AND (json_extract(input_data,'$.hypothesis_id') IN (?,?) "
                     "OR json_extract(input_data,'$.crucible_id') IN (?,?)) "

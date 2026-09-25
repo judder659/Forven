@@ -116,6 +116,8 @@ def test_block_missing_returns_all_defaults() -> None:
         # SURV-QUOTA-1 instance-relative survivor-neighborhood quota.
         "crucible_survivor_neighborhood_quota_pct": 25,
         "survivor_neighborhood_family_cap_pct": 50,
+        # Registration-time feed coverage floor for new candidates.
+        "candidate_min_feed_coverage_pct": 50,
     }
 
 

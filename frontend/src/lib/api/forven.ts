@@ -2248,6 +2248,7 @@ export interface HypothesisDisciplineSettings {
 	unstarted_ageout_days?: number;
 	refine_in_flight_budget?: number;
 	disproven_dedup_lookback_days?: number;
+	candidate_min_feed_coverage_pct?: number;
 }
 
 export interface AutonomousDiscoverySettings {

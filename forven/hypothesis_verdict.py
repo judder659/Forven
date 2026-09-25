@@ -36,12 +36,41 @@ _PASSING_VERDICT_LIFECYCLES = frozenset({"paper_eligible", "deploy_eligible"})
 # Stages that mean a child has been killed off — used to detect a hypothesis
 # whose every child is dead, which is itself disproof.
 _DEAD_STAGES = frozenset({"archived", "rejected"})
-# Stages where a child is actively being validated (robustness in flight). Not a
-# pass, but explicitly NOT a failure — these block a premature disproven verdict.
-_IN_PROGRESS_STAGES = frozenset({"gauntlet"})
+# Stages where a child is still being evaluated (quick screen queued/running,
+# robustness in flight). Neither a pass nor a failure: they are left out of the
+# evidence window and block a premature disproven verdict. Counting queued
+# quick_screen children as failures used to fill the window with untested work.
+_IN_PROGRESS_STAGES = frozenset({"quick_screen", "gauntlet"})
 # Minimum dead children needed to declare an all-dead hypothesis disproven.
 # Set conservatively at 2 so a single random failure doesn't auto-disprove.
 _DEAD_CHILDREN_FLOOR = 2
+# How many recent children to load before filtering to evaluated ones: untested
+# children are skipped, so the evidence window can reach further back.
+_CHILD_SCAN_LIMIT = 200
+_CRUCIBLE_LINK_SQL = "COALESCE(NULLIF(TRIM(COALESCE(s.hypothesis_id, '')), ''), s.origin_crucible_id)"
+# Effective trades per backtest row, as the quick screen counts them: the stored
+# top-level total_trades is the out-of-sample slice, so read IS/OOS too.
+_EFFECTIVE_TRADES_SQL = """MAX(
+    COALESCE(CAST(json_extract(b.metrics_json, '$.total_trades') AS INTEGER), 0),
+    COALESCE(CAST(json_extract(b.metrics_json, '$.in_sample.total_trades') AS INTEGER), 0),
+    COALESCE(CAST(json_extract(b.metrics_json, '$.out_of_sample.total_trades') AS INTEGER), 0)
+)"""
+
+
+def fair_test_min_trades() -> int:
+    """Own-timeframe trades a child needs before its outcome is evidence.
+
+    Mirrors the quick-screen trade floor: a child below it can never be judged
+    on merit, so its death says nothing about the thesis. 44% of the crucibles
+    disproven in the 60 days to 2026-09-25 never had a single child reach it.
+    """
+    try:
+        from forven.policy import load_pipeline_config
+
+        quick_screen = load_pipeline_config().get("quick_screen") or {}
+        return max(1, int(float(quick_screen.get("min_trades") or 0)))
+    except Exception:
+        return 20
 
 
 def _call_llm(prompt: str) -> str:
@@ -97,25 +126,32 @@ def compute_verdict_signals(
     """Compute the mathematical floor for a hypothesis verdict.
 
     Returns a dict with: rolling_window_setting, rolling_window_size, hit_rate,
-    diversity_cells, hit_rate_threshold, min_diversity_cells, mathematical_verdict.
+    diversity_cells, dead_children, evaluated/untested/in-progress child counts,
+    thresholds and mathematical_verdict.
 
-    Inspects the most recent `rolling_window` children. A child counts as
-    "passing" if its stage is in _PASSING_STAGES or its verdict-lifecycle is
-    paper_eligible / deploy_eligible. Diversity cells are distinct
-    (asset, timeframe) tuples *among passing children*.
+    Only EVALUATED children are evidence. A child is evaluated when it passed
+    (paper+ stage or a paper/deploy-eligible verdict) or died after a fair test:
+    archived/rejected, not untestable, and at least ``min_child_trades`` trades
+    on its own timeframe (the quick-screen floor). Children still in quick screen
+    or the gauntlet are in progress; everything else is untested. The window is
+    the most recent ``rolling_window`` evaluated children. Diversity cells are
+    distinct (asset, timeframe) tuples among passing children.
 
     Verdict floor:
-      - 'disproven' if EVERY child is in a dead stage (archived/rejected) AND
-        n >= _DEAD_CHILDREN_FLOOR — the experiment was decisively rejected and
-        the slot must be freed even if the rolling window isn't full.
+      - 'disproven' if every evaluated child is dead, there are at least
+        _DEAD_CHILDREN_FLOOR of them and nothing is in progress.
       - 'proven' if hit_rate >= threshold AND diversity_cells >= min_diversity_cells
-      - 'disproven' if hit_rate < (threshold * 0.25) AND window is FULL
-      - 'researching' otherwise
+      - 'disproven' if hit_rate < (threshold * 0.25), the window is FULL and
+        nothing is in progress.
+      - 'researching' otherwise. A crucible whose attempts never trade stays
+        researching; the planner parks it as an implementation failure
+        (develop_fruitless_3x) instead of recording a disproven thesis.
     """
     discipline = discipline or get_hypothesis_discipline_settings()
     rolling_window = int(discipline["verdict_rolling_window"])
     threshold = float(discipline["verdict_hit_rate_threshold"])
     min_cells = int(discipline["verdict_min_diversity_cells"])
+    min_trades = fair_test_min_trades()
 
     if declared_cells is None:
         declared_cells = _declared_cell_count(hypothesis_id)
@@ -125,36 +161,29 @@ def compute_verdict_signals(
     effective_min = max(1, min(min_cells, declared_cells)) if declared_cells else min_cells
 
     if children is None:
-        children = _load_recent_child_outcomes(hypothesis_id, limit=rolling_window)
+        children = _load_recent_child_outcomes(hypothesis_id, limit=_CHILD_SCAN_LIMIT)
     else:
-        children = list(children)[:rolling_window]
+        children = list(children)
 
-    n = len(children)
-    if n == 0:
-        return {
-            "rolling_window_setting": rolling_window,
-            "rolling_window_size": 0,
-            "hit_rate": 0.0,
-            "diversity_cells": 0,
-            "dead_children": 0,
-            "hit_rate_threshold": threshold,
-            "min_diversity_cells": min_cells,
-            "effective_min_diversity_cells": effective_min,
-            "mathematical_verdict": "researching",
-        }
-
-    passing = [c for c in children if _is_passing_child(c)]
-    hit_rate = len(passing) / n
-    diversity_cells = len({(c.get("symbol"), c.get("timeframe")) for c in passing})
-    dead_children = sum(1 for c in children if _is_dead_child(c))
     in_progress = sum(1 for c in children if _is_in_progress_child(c))
+    evaluated = [c for c in children if _is_evaluated_child(c, min_trades)][:rolling_window]
+    untested = sum(
+        1 for c in children if not _is_in_progress_child(c) and not _is_evaluated_child(c, min_trades)
+    )
+    n = len(evaluated)
+    passing = [c for c in evaluated if _is_passing_child(c)]
+    hit_rate = len(passing) / n if n else 0.0
+    diversity_cells = len({(c.get("symbol"), c.get("timeframe")) for c in passing})
+    dead_children = n - len(passing)
 
-    if dead_children == n and n >= _DEAD_CHILDREN_FLOOR:
+    if n == 0:
+        verdict = "researching"
+    elif dead_children == n and n >= _DEAD_CHILDREN_FLOOR and in_progress == 0:
         verdict = "disproven"
     elif hit_rate >= threshold and diversity_cells >= effective_min:
         verdict = "proven"
     elif hit_rate < (threshold * 0.25) and n >= rolling_window and in_progress == 0:
-        # Low pass rate over a full window AND nothing still mid-robustness.
+        # Low pass rate over a full window AND nothing still under evaluation.
         verdict = "disproven"
     else:
         verdict = "researching"
@@ -165,6 +194,10 @@ def compute_verdict_signals(
         "hit_rate": hit_rate,
         "diversity_cells": diversity_cells,
         "dead_children": dead_children,
+        "evaluated_children": n,
+        "untested_children": untested,
+        "in_progress_children": in_progress,
+        "min_child_trades": min_trades,
         "hit_rate_threshold": threshold,
         "min_diversity_cells": min_cells,
         "effective_min_diversity_cells": effective_min,
@@ -180,23 +213,36 @@ def _is_passing_child(child: dict[str, Any]) -> bool:
     return verdict_lifecycle in _PASSING_VERDICT_LIFECYCLES
 
 
-def _is_dead_child(child: dict[str, Any]) -> bool:
-    """A child is dead if it's been archived/rejected — the experiment is over.
+def _is_dead_child(child: dict[str, Any], min_trades: int) -> bool:
+    """A child that died after a fair test — evidence against the thesis.
 
-    An untestable archive is not: the child never got a fair test (broken code,
-    missing data, not enough history), so it is no evidence against the thesis
-    and must not drag the crucible to an all-dead 'disproven'.
+    Archived/rejected alone is not enough. An untestable archive (broken code,
+    missing data, not enough history) or a child that never reached the
+    quick-screen trade floor on its own timeframe was never judged on merit, so
+    it must not drag the crucible to an all-dead 'disproven'.
     """
     stage = str(child.get("stage") or "").strip().lower()
-    return stage in _DEAD_STAGES and not is_untestable_reason(child.get("status_reason"))
+    if stage not in _DEAD_STAGES or is_untestable_reason(child.get("status_reason")):
+        return False
+    try:
+        trades = int(child.get("own_trades") or 0)
+    except (TypeError, ValueError):
+        trades = 0
+    return trades >= int(min_trades)
+
+
+def _is_evaluated_child(child: dict[str, Any], min_trades: int) -> bool:
+    return _is_passing_child(child) or _is_dead_child(child, min_trades)
 
 
 def _is_in_progress_child(child: dict[str, Any]) -> bool:
-    """A child actively running robustness (gauntlet) — neither passed nor failed.
+    """A child still under evaluation — neither passed nor failed.
 
     It must not be counted as a pass (that was the old credulity bug), but it also
     must not drag a crucible to a premature 'disproven' while it's still in flight.
     """
+    if _is_passing_child(child):
+        return False
     stage = str(child.get("stage") or "").strip().lower()
     return stage in _IN_PROGRESS_STAGES
 
@@ -216,14 +262,26 @@ def _declared_cell_count(hypothesis_id: str) -> int:
 
 
 def _load_recent_child_outcomes(hypothesis_id: str, *, limit: int) -> list[dict[str, Any]]:
-    """Return the `limit` most recent children with stage + verdict for signal math."""
+    """Return the `limit` most recent children with stage, verdict and own-timeframe trades.
+
+    Children are linked the way the planner and allocator link them
+    (hypothesis_id, else origin_crucible_id); keying on hypothesis_id alone missed
+    survivors that carry only origin_crucible_id and let their crucibles be
+    disproven while a child was trading on paper.
+    """
     with get_db() as conn:
         rows = conn.execute(
-            """
-            SELECT id, symbol, timeframe, stage, status_reason, verdict
-            FROM strategies
-            WHERE hypothesis_id = ?
-            ORDER BY created_at DESC
+            f"""
+            SELECT s.id, s.symbol, s.timeframe, s.stage, s.status_reason, s.verdict,
+                   (SELECT MAX({_EFFECTIVE_TRADES_SQL})
+                    FROM backtest_results b
+                    WHERE b.strategy_id = s.id
+                      AND b.deleted_at IS NULL
+                      AND b.timeframe = s.timeframe
+                      AND json_valid(b.metrics_json)) AS own_trades
+            FROM strategies s
+            WHERE {_CRUCIBLE_LINK_SQL} = ?
+            ORDER BY s.created_at DESC
             LIMIT ?
             """,
             (hypothesis_id, int(limit)),
@@ -246,6 +304,7 @@ def _load_recent_child_outcomes(hypothesis_id: str, *, limit: int) -> list[dict[
             "stage": row["stage"],
             "status_reason": row["status_reason"],
             "verdict": verdict_value,
+            "own_trades": int(row["own_trades"] or 0),
         })
     return out
 
@@ -254,14 +313,14 @@ def _load_child_metrics(hypothesis_id: str) -> list[dict[str, Any]]:
     """Return compact structured summaries of child strategies. No artifact text."""
     with get_db() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT s.id, s.symbol, s.timeframe, s.type,
                    s.verdict AS strategy_verdict,
                    (SELECT metrics_json FROM backtest_results r
                     WHERE r.strategy_id = s.id AND r.deleted_at IS NULL
                     ORDER BY r.created_at DESC LIMIT 1) AS latest_metrics
             FROM strategies s
-            WHERE s.hypothesis_id = ?
+            WHERE {_CRUCIBLE_LINK_SQL} = ?
             ORDER BY s.created_at ASC
             """,
             (hypothesis_id,),
@@ -408,8 +467,18 @@ def _extract_json(raw: str) -> str:
     return text
 
 
-def write_verdict_memo(hypothesis_id: str, *, by: str = "agent:strategy-developer") -> dict[str, Any]:
+def write_verdict_memo(
+    hypothesis_id: str,
+    *,
+    by: str = "agent:strategy-developer",
+    allow_llm_disproof: bool = False,
+) -> dict[str, Any]:
     """Assemble context, call LLM, parse verdict, transition status.
+
+    ``allow_llm_disproof`` lets the LLM disprove a thesis the math still calls
+    'researching'. Only the operator-triggered triage cleanup passes it: there
+    an operator explicitly asked an LLM to cull incoherent ideas. The autonomous
+    verdict loop never does.
 
     Returns {ok: bool, hypothesis: dict | None, error_code?: str, raw?: str}.
     Never raises. Failures leave the hypothesis untouched.
@@ -477,7 +546,9 @@ def write_verdict_memo(hypothesis_id: str, *, by: str = "agent:strategy-develope
         return {"ok": False, "error_code": "invalid_verdict", "raw": raw, "hypothesis": None}
 
     floor = signals["mathematical_verdict"]
-    final_verdict = _resolve_verdict_with_floor(floor=floor, llm_verdict=llm_verdict)
+    final_verdict = _resolve_verdict_with_floor(
+        floor=floor, llm_verdict=llm_verdict, allow_llm_disproof=allow_llm_disproof
+    )
 
     memo["verdict"] = final_verdict
     memo["llm_verdict"] = llm_verdict
@@ -539,12 +610,16 @@ def _finalize_verdict(
     }
 
 
-def _resolve_verdict_with_floor(*, floor: str, llm_verdict: str) -> str:
+def _resolve_verdict_with_floor(*, floor: str, llm_verdict: str, allow_llm_disproof: bool = False) -> str:
     """Combine the mathematical floor with the LLM's verdict.
 
     - Floor 'disproven' is binding — LLM cannot upgrade.
-    - Floor 'researching' is binding — LLM cannot upgrade to 'proven' without
-      the math supporting it (prevents narrative-driven 'proven').
+    - Floor 'researching' is binding in both directions. The LLM cannot upgrade
+      to 'proven' without the math, and it cannot disprove a thesis the math
+      says is still under test. 57 of the 861 crucibles disproven in the 60 days
+      to 2026-09-25 were narrative disproofs of this kind, although the auditor
+      prompt already told the LLM to return 'researching' here. The one
+      exception is ``allow_llm_disproof`` (operator triage cleanup).
     - Floor 'proven' may be downgraded by the LLM to 'researching'
       (e.g. winners are correlated, not diverse). LLM cannot push to 'disproven'
       from a 'proven' floor — that would be inconsistent.
@@ -552,10 +627,9 @@ def _resolve_verdict_with_floor(*, floor: str, llm_verdict: str) -> str:
     if floor == "disproven":
         return "disproven"
     if floor == "researching":
-        # LLM may NOT upgrade; both researching/disproven downgrades are allowed
-        if llm_verdict == "proven":
-            return "researching"
-        return llm_verdict
+        if allow_llm_disproof and llm_verdict == "disproven":
+            return "disproven"
+        return "researching"
     # floor == "proven"
     if llm_verdict == "researching":
         return "researching"  # downgrade allowed
@@ -587,10 +661,10 @@ def _eligible_hypothesis_ids(*, limit: int) -> list[str]:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_STALENESS_DAYS)).isoformat()
     with get_db() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT h.id
             FROM hypotheses h
-            LEFT JOIN strategies s ON s.hypothesis_id = h.id
+            LEFT JOIN strategies s ON {_CRUCIBLE_LINK_SQL} = h.id
             WHERE h.manager_state = 'active'
               AND h.status IN ('proposed', 'researching')
             GROUP BY h.id

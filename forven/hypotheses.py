@@ -70,7 +70,61 @@ def _hypothesis_row_to_dict(row) -> dict[str, Any]:
     hypothesis["restored_at"] = hypothesis.get("restored_at")
     if "verdict_memo" in hypothesis:
         hypothesis["verdict_memo"] = _parse_json_value(hypothesis.get("verdict_memo"))
+    if "feasibility" in hypothesis:
+        hypothesis["feasibility"] = normalize_feasibility(_parse_json_value(hypothesis.get("feasibility")))
     return hypothesis
+
+
+# The strategy runtime evaluates ONE market and ONE candle interval per backtest,
+# with only the local feed columns joined. A thesis that needs more (a second
+# asset's series, a lower-timeframe join, an unintegrated external input) cannot
+# be implemented faithfully; developing it anyway produced refusals or proxy
+# substitutes (Sept 2026). Agents declare these needs at create/refine/develop
+# time; candidate readiness keeps such crucibles in research.
+_FEASIBILITY_FLAGS = ("needs_cross_asset", "needs_multi_timeframe")
+
+
+def normalize_feasibility(value: Any) -> dict[str, Any] | None:
+    """Canonical feasibility declaration, or None when nothing is declared."""
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, Any] = {flag: bool(value.get(flag)) for flag in _FEASIBILITY_FLAGS}
+    raw_inputs = value.get("external_inputs")
+    if isinstance(raw_inputs, str):
+        raw_inputs = [raw_inputs]
+    out["external_inputs"] = [
+        str(item).strip()[:120] for item in (raw_inputs or []) if str(item).strip()
+    ][:10]
+    out["notes"] = _clean_text(value.get("notes"))
+    if out["notes"]:
+        out["notes"] = str(out["notes"])[:500]
+    return out
+
+
+def feasibility_issues(feasibility: Any) -> list[str]:
+    """Readiness issues for runtime needs the thesis declared it has."""
+    declared = normalize_feasibility(feasibility)
+    if not declared:
+        return []
+    issues: list[str] = []
+    note = f" ({declared['notes']})" if declared.get("notes") else ""
+    if declared["needs_cross_asset"]:
+        issues.append(
+            "Needs a cross-asset join (a second asset's series in the strategy frame); a backtest "
+            f"provides one market. Keep the idea in research until that integration exists{note}."
+        )
+    if declared["needs_multi_timeframe"]:
+        issues.append(
+            "Needs a multi-timeframe join; a backtest provides one candle interval. Revise the "
+            f"thesis to one interval or keep it in research{note}."
+        )
+    if declared["external_inputs"]:
+        issues.append(
+            "Needs inputs with no strategy-frame integration: "
+            + ", ".join(declared["external_inputs"])
+            + ". Integrate them or revise the idea before development."
+        )
+    return issues
 
 
 def _data_gap_row_to_dict(row) -> dict[str, Any]:
@@ -398,6 +452,11 @@ def count_unstarted_active_hypotheses() -> int:
 # `disproven_dedup_lookback_days` setting. Match = exact normalized-title equality
 # or a cheap token-set (Jaccard) ratio at/above the threshold below.
 _DEDUP_TOKEN_SET_THRESHOLD = 0.8
+# Archive reasons the crucible planner stamps when no attempt could be
+# implemented (crucible_planner._archive_parked_crucible). Not evidence against
+# the thesis, but recent enough ones still block an identical re-mint.
+IMPLEMENTATION_PARK_REASONS = ("develop_fruitless_3x", "develop_retries_exhausted", "refine_failed_3x")
+IMPLEMENTATION_PARK_REASONS_SQL = ", ".join(f"'{reason}'" for reason in IMPLEMENTATION_PARK_REASONS)
 # Generic filler that carries no thesis identity — "X Strategy" duplicates "X".
 _DEDUP_STOPWORDS = {"a", "an", "the", "strategy", "strategies", "thesis", "hypothesis", "crucible"}
 
@@ -535,15 +594,20 @@ def find_duplicate_hypothesis(
         ).isoformat()
 
     with get_db() as conn:
+        # Crucibles parked because no attempt could be implemented are not
+        # disproven (no graveyard weight), but re-minting the same title at once
+        # would repeat the same failing attempts.
         rows = conn.execute(
-            """
+            f"""
             SELECT id, display_id, title, status, manager_state
             FROM hypotheses
             WHERE (manager_state = 'active' AND status IN ('proposed', 'researching', 'proven'))
                OR (
                     ? IS NOT NULL
-                    AND status = 'disproven'
-                    AND COALESCE(verdict_memo_at, updated_at, created_at) >= ?
+                    AND (status = 'disproven' OR archive_reason IN ({IMPLEMENTATION_PARK_REASONS_SQL}))
+                    AND CASE WHEN status = 'disproven'
+                             THEN COALESCE(verdict_memo_at, updated_at, created_at)
+                             ELSE COALESCE(archived_at, updated_at, created_at) END >= ?
                   )
             """,
             (cutoff, cutoff),
@@ -598,8 +662,10 @@ def create_hypothesis(
     target_timeframes: list[str],
     novelty_score: float = 0.0,
     derived_from_hypothesis_id: str | None = None,
+    feasibility: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now_iso = _now()
+    declared_feasibility = normalize_feasibility(feasibility)
     payload = {
         "id": f"HYP-{uuid4().hex[:12]}",
         "title": _require_text(title, "title"),
@@ -699,6 +765,11 @@ def create_hypothesis(
                 now_iso,
             ),
         )
+        if declared_feasibility:
+            conn.execute(
+                "UPDATE hypotheses SET feasibility = ? WHERE id = ?",
+                (json.dumps(declared_feasibility), payload["id"]),
+            )
         row = _fetch_hypothesis(conn, str(payload["id"]))
         from forven.crucible_intake import record_created
         record_created(conn, str(payload["id"]))
@@ -721,6 +792,7 @@ def update_hypothesis(
     target_timeframes: list[str] | None = None,
     novelty_score: float | None = None,
     operator_notes: str | None = None,
+    feasibility: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Partial-update an existing hypothesis. Only non-None fields are written.
 
@@ -748,6 +820,9 @@ def update_hypothesis(
         updates["novelty_score"] = float(novelty_score)
     if operator_notes is not None:
         updates["operator_notes"] = _clean_text(operator_notes)
+    if feasibility is not None:
+        declared = normalize_feasibility(feasibility)
+        updates["feasibility"] = json.dumps(declared) if declared else None
 
     if not updates:
         # Nothing to change — return current row without touching updated_at

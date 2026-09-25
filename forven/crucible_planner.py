@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from forven.crucible_tasks import CANDIDATE_ACTION_KINDS
+from forven.crucible_tasks import CANDIDATE_ACTION_KINDS, CANDIDATE_TASK_TEXT
 from forven.db import get_db
 
 log = logging.getLogger(__name__)
@@ -135,6 +135,22 @@ def _develop_task_spawned_strategy(output_data: object) -> bool:
     return not has_evidence
 
 
+DATA_CHECK_BLOCK_PREFIX = "Data check:"
+
+
+def blocked_candidate_holds_crucible(error: object) -> bool:
+    """True when a blocked candidate task still owns its crucible.
+
+    Only a data-preflight block does: ``research_queue.resume_ready_data_candidates``
+    resumes it once the inputs pass. Every other blocked candidate ("returned
+    without a registered strategy", tool-call limit, ...) is a finished attempt
+    that nothing resumes. Treating those as open work froze 86 of the 100 active
+    crucibles and made the planner mint replacements (2026-09-25 review); they now
+    count as failed attempts toward the retry cap instead.
+    """
+    return str(error or "").strip().startswith(DATA_CHECK_BLOCK_PREFIX)
+
+
 @dataclass(frozen=True)
 class CrucibleTaskIndex:
     open_actions: set[tuple[str, str | None]]
@@ -150,7 +166,7 @@ class CrucibleTaskIndex:
         with get_db() as conn:
             rows = conn.execute(
                 """
-                SELECT status, input_data, output_data, error
+                SELECT status, input_data, output_data, error, strategy_id
                 FROM agent_tasks
                 WHERE input_data IS NOT NULL
                   AND input_data LIKE '%action_kind%'
@@ -187,10 +203,16 @@ class CrucibleTaskIndex:
             if status in _OPEN_STATUSES:
                 open_actions.add(key)
             if status == "blocked" and action_kind in CANDIDATE_ACTION_KINDS:
-                # A checkpoint/data dependency owns this candidate until it is
-                # explicitly resolved. Creating a fresh task bypasses neither.
-                open_actions.add(key)
-                blocked_candidates.add(crucible_id)
+                if blocked_candidate_holds_crucible(row["error"]):
+                    # A data dependency owns this candidate until its inputs pass;
+                    # a fresh task would bypass the preflight checkpoint.
+                    open_actions.add(key)
+                    blocked_candidates.add(crucible_id)
+                else:
+                    # Nothing resumes this block: it is a finished, failed attempt.
+                    failed_action_counts[key] += 1
+                    if action_kind == "develop_candidate" and not str(row["strategy_id"] or "").strip():
+                        fruitless_develop_counts[crucible_id] += 1
             if effective_success:
                 successful_actions.add(key)
             if status in _PRIOR_STATUSES and not expired_pending:
@@ -423,6 +445,7 @@ def _action(
     title: str,
     description: str,
     crucible_id: str | None = None,
+    crucible_display_id: str | None = None,
     priority: int = 0,
     input_data: dict[str, Any] | None = None,
 ) -> CrucibleAction:
@@ -434,6 +457,14 @@ def _action(
     if crucible_id is not None:
         payload["crucible_id"] = crucible_id
         payload["hypothesis_id"] = crucible_id
+        # Task titles show the display id (H03652); the candidate-creation gate
+        # can only translate it back when the payload carries it. Planner tasks
+        # omitted it, so agents that used the id from the title were rejected.
+        display_id = str(crucible_display_id or "").strip()
+        if display_id and display_id != crucible_id:
+            payload["hypothesis_display_id"] = display_id
+    if task_type == "develop_candidate":
+        description = description + CANDIDATE_TASK_TEXT
     return CrucibleAction(
         action_kind=action_kind,
         agent_id=agent_id,
@@ -457,7 +488,10 @@ def _propose_crucible_action() -> CrucibleAction:
             "The active research pool has no actionable development work, so create "
             "a fresh, materially different hypothesis with explicit assets, timeframes, "
             "mechanism, and acceptance criteria. Verify required inputs against actual "
-            "local datasets first; keep unavailable-data ideas in research."
+            "local datasets first; keep unavailable-data ideas in research. A backtest "
+            "runs one market on one candle interval: prefer theses that fit, and declare "
+            "any cross-asset, multi-timeframe or external-input need in create_hypothesis's "
+            "feasibility field."
         ),
         priority=-2,
     )
@@ -560,9 +594,14 @@ def _plan_for_crucible(
                     "Use update_hypothesis_fields on the provided hypothesis_id/crucible_id "
                     "and attach_hypothesis_artifact for acceptance criteria or evidence. "
                     "Do not call create_hypothesis and do not create a replacement crucible. "
-                    "The task is only complete after the existing crucible is durably updated."
+                    "The task is only complete after the existing crucible is durably updated. "
+                    "A backtest runs one market on one candle interval: if implementing the "
+                    "thesis faithfully needs another asset's series, a second interval or an "
+                    "input that is not a local feed, set update_hypothesis_fields' feasibility "
+                    "field instead of writing acceptance criteria that forbid registration."
                 ),
                 crucible_id=crucible_id,
+                crucible_display_id=str(crucible.get("display_id") or ""),
                 priority=_REFINE_PRIORITY,
             )
 
@@ -606,6 +645,7 @@ def _plan_for_crucible(
                     "tool error and the candidate definition that failed to persist."
                 ),
                 crucible_id=crucible_id,
+                crucible_display_id=str(crucible.get("display_id") or ""),
                 priority=4,
             )
         strategy_id = _untested_strategy_id(crucible_id)
@@ -620,6 +660,7 @@ def _plan_for_crucible(
                 title=f"Backtest {strategy_id}",
                 description=f"Run the first backtest for {strategy_id} in {label}.",
                 crucible_id=crucible_id,
+                crucible_display_id=str(crucible.get("display_id") or ""),
                 input_data={"strategy_id": strategy_id},
                 priority=2,
             )
@@ -657,6 +698,7 @@ def _plan_for_crucible(
                 "Do not call create_hypothesis."
             ),
             crucible_id=crucible_id,
+            crucible_display_id=str(crucible.get("display_id") or ""),
             priority=5,
         )
 
@@ -684,6 +726,7 @@ def _plan_for_crucible(
                 "hypothesis_id/crucible_id. Do not call create_hypothesis."
             ),
             crucible_id=crucible_id,
+            crucible_display_id=str(crucible.get("display_id") or ""),
             priority=4,
         )
 
@@ -767,6 +810,7 @@ def plan_next_actions(*, limit: int = 3) -> list[CrucibleAction]:
     from forven.crucible_allocator import (
         cached_family_outcome_stats,
         crucible_value_score,
+        days_since_activity,
         fetch_crucible_child_signals,
         smoothed_family_rate,
     )
@@ -787,6 +831,8 @@ def plan_next_actions(*, limit: int = 3) -> list[CrucibleAction]:
             scored_children=int(signals.get("children") or 0),
             fruitless_develops=task_index.fruitless_develop_count(crucible_id),
             failed_develops=task_index.failed_action_count("develop_candidate", crucible_id),
+            # Same staleness input the promotion loop scores with.
+            days_since_activity=days_since_activity(signals.get("last_child_created_at"), crucible.get("created_at")),
             family_survival_rate=smoothed_family_rate(family, family_stats),
         )
 
@@ -866,6 +912,58 @@ def _log_idle_pool(crucibles: list[dict[str, Any]], task_index: CrucibleTaskInde
     log_idle_summary(log, "crucible planner", summary)
 
 
+def _survivor_lane_action() -> CrucibleAction | None:
+    """SURV-QUOTA-1 lane: one develop against a survivor's neighborhood crucible.
+
+    When today's survivor-directed share is under quota, the next survivor
+    (family-capped, round-robin) gets a develop on the crucible whose thesis is
+    its neighborhood, so the directive and the crucible agree. Best-effort: a
+    failure here must not stop the regular plan.
+    """
+    try:
+        from forven.crucible_allocator import (
+            next_survivor_neighborhood_directive,
+            survivor_directive_text,
+            survivor_neighborhood_crucible,
+        )
+        from forven.hypotheses import get_hypothesis
+        from forven.strategies.idea_readiness import hypothesis_readiness
+
+        directive = next_survivor_neighborhood_directive()
+        if not directive:
+            return None
+        crucible_id = survivor_neighborhood_crucible(directive)
+        if not crucible_id:
+            return None
+        task_index = CrucibleTaskIndex.build()
+        if task_index.candidate_action_open(crucible_id) or _strategy_spawn_limit_exhausted(crucible_id):
+            return None
+        if not hypothesis_readiness(crucible_id)["can_generate"]:
+            return None
+        crucible = get_hypothesis(crucible_id) or {}
+        label = str(crucible.get("display_id") or crucible_id)
+        return _action(
+            action_kind="develop_candidate",
+            agent_id="strategy-developer",
+            task_type="develop_candidate",
+            title=f"Map survivor neighborhood {label}",
+            description=(
+                f"Build the next strategy candidate for the existing crucible {label}: "
+                f"{crucible.get('title') or 'survivor neighborhood'}.\n\n"
+                "Call forven_create_strategy or register_strategy with the exact provided "
+                "hypothesis_id/crucible_id. Do not call create_hypothesis."
+                + survivor_directive_text(directive)
+            ),
+            crucible_id=crucible_id,
+            crucible_display_id=str(crucible.get("display_id") or ""),
+            input_data={"survivor_neighborhood_directive": directive},
+            priority=5,
+        )
+    except Exception as exc:
+        log.warning("survivor neighborhood lane skipped: %s", exc)
+        return None
+
+
 def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
     from forven.brain import assign_task
     from forven.hypothesis_promotion import (
@@ -877,6 +975,9 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
 
     resumed_task_ids = resume_ready_data_candidates(limit=limit)
     actions = plan_next_actions(limit=limit)
+    survivor_action = _survivor_lane_action()
+    if survivor_action is not None:
+        actions = [survivor_action, *(a for a in actions if a.crucible_id != survivor_action.crucible_id)]
 
     # Share the strategy-developer in-flight budget with the hypothesis-promotion
     # loop. Both loops dispatch develop_candidate-family work to the same
@@ -902,15 +1003,7 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
 
     # CRUX-1: hard DAILY develop budget shared with the promotion loop
     # (in-flight caps bound concurrency, not spend). Read once, track locally.
-    from forven.crucible_allocator import (
-        DATA_DIRECTIVE_TEXT,
-        SHORT_DIRECTIVE_TEXT,
-        develop_budget_remaining,
-        next_data_directive,
-        next_survivor_neighborhood_directive,
-        next_trade_mode_directive,
-        survivor_directive_text,
-    )
+    from forven.crucible_allocator import develop_budget_remaining, stamp_develop_directives
 
     daily_budget_remaining = develop_budget_remaining()
 
@@ -933,26 +1026,13 @@ def run_crucible_planner_cycle(*, limit: int = 3) -> dict[str, Any]:
                         deferred_for_daily_budget += 1
                         continue
                     daily_budget_remaining -= 1
-                    # CRUX-1 direction quota: a share of daily develops carry
-                    # an explicit short/both authoring requirement.
-                    directive = next_trade_mode_directive()
-                    if directive:
-                        input_data["trade_mode_directive"] = directive
-                        description = description + SHORT_DIRECTIVE_TEXT
-                        directives_stamped += 1
-                    # CRUX-1 orthogonal-data quota: a share of daily develops
-                    # must hypothesize over non-price enrichment columns.
-                    data_directive = next_data_directive()
-                    if data_directive:
-                        input_data["data_directive"] = data_directive
-                        description = description + DATA_DIRECTIVE_TEXT
-                    # SURV-QUOTA-1: a share of daily develops map the
-                    # neighborhood of this instance's OWN proven survivors —
-                    # instance-relative exploit, never a shipped family pick.
-                    survivor_directive = next_survivor_neighborhood_directive()
-                    if survivor_directive:
-                        input_data["survivor_neighborhood_directive"] = survivor_directive
-                        description = description + survivor_directive_text(survivor_directive)
+                    # CRUX-1 short/both and orthogonal-data quotas, applied only
+                    # where the crucible's thesis fits them (shared with the
+                    # promotion loop). The survivor quota is its own lane above.
+                    input_data, description, short_stamped = stamp_develop_directives(
+                        action.crucible_id, input_data, description
+                    )
+                    directives_stamped += short_stamped
                 develop_in_flight += 1
         task_id = assign_task(
             action.agent_id,

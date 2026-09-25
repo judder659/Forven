@@ -160,9 +160,10 @@ def test_all_untestable_children_do_not_disprove_a_crucible():
         {"stage": "archived", "status_reason": "untestable:broken_code: class missing", "symbol": "BTC", "timeframe": "1h"},
         {"stage": "archived", "status_reason": "untestable:no_data: feed missing", "symbol": "ETH", "timeframe": "1h"},
     ]
+    # Failed after a fair test: enough own-timeframe trades to be judged on merit.
     failed = [
-        {"stage": "archived", "status_reason": None, "symbol": "BTC", "timeframe": "1h"},
-        {"stage": "rejected", "status_reason": "gate failure", "symbol": "ETH", "timeframe": "1h"},
+        {"stage": "archived", "status_reason": None, "symbol": "BTC", "timeframe": "1h", "own_trades": 45},
+        {"stage": "rejected", "status_reason": "gate failure", "symbol": "ETH", "timeframe": "1h", "own_trades": 60},
     ]
 
     kept = compute_verdict_signals("H-x", children=untestable, discipline=discipline, declared_cells=1)

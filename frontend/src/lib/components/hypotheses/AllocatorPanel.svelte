@@ -45,6 +45,7 @@
 	$: quota = overview?.short_quota;
 	$: dataQuota = overview?.data_quota;
 	$: pool = overview?.pool;
+	$: yieldSummary = overview?.yield;
 	$: rows = overview?.crucibles ?? [];
 	$: visibleRows = showAll ? rows : rows.slice(0, COLLAPSED_ROWS);
 	$: quotaOnTrack = quota ? quota.develops_today === 0 || quota.share_pct >= quota.target_pct : true;
@@ -98,6 +99,21 @@
 				{pool?.total ?? 0} active · {pool?.by_status?.['proven'] ?? 0} proven ·
 				<span class={(pool?.with_survivors ?? 0) > 0 ? 'text-emerald-400' : ''}>{pool?.with_survivors ?? 0} with survivors</span>
 			</span>
+			{#if yieldSummary}
+				<span
+					class="text-[11px] text-[#666]"
+					data-testid="allocator-yield"
+					title="Crucible candidates created in the window: untestable = archived before a fair test (no trades at registration, too little feed history, broken code); never traded = own-timeframe backtest with zero trades. Disproven needs fairly-tested children; parked = no attempt could be implemented."
+				>
+					{yieldSummary.days}d: {yieldSummary.candidates} candidates ·
+					<span class={yieldSummary.no_trades + yieldSummary.untestable > 0 ? 'text-yellow-500' : ''}
+						>{yieldSummary.untestable} untestable, {yieldSummary.no_trades} never traded</span
+					>
+					· {yieldSummary.reached_gauntlet} gauntlet ·
+					<span class={yieldSummary.reached_paper > 0 ? 'text-emerald-400' : ''}>{yieldSummary.reached_paper} paper</span>
+					· {yieldSummary.disproven} disproven, {yieldSummary.parked} parked
+				</span>
+			{/if}
 		{/if}
 	</button>
 

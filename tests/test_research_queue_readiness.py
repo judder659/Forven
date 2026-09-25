@@ -64,6 +64,28 @@ def test_distinct_unintegrated_inputs_stay_blocked(research_data, mechanism, lab
     assert label in result["required"]
 
 
+def test_declared_runtime_needs_keep_a_crucible_in_research(research_data):
+    """A thesis that needs a second asset's series or another candle interval is
+    kept out of development instead of being refused (or proxied) three times."""
+    from forven.hypotheses import update_hypothesis
+
+    hid = hypothesis("h-pair")
+    assert candidate_readiness({}, {"hypothesis_id": hid})["can_generate"]
+
+    update_hypothesis(hid, feasibility={"needs_cross_asset": True, "notes": "ADA/BTC relative strength"})
+    report = candidate_readiness({}, {"hypothesis_id": hid})
+    assert not report["can_generate"]
+    assert any("cross-asset join" in issue and "ADA/BTC" in issue for issue in report["issues"])
+
+    update_hypothesis(hid, feasibility={"needs_multi_timeframe": True, "external_inputs": ["VIX term structure"]})
+    issues = candidate_readiness({}, {"hypothesis_id": hid})["issues"]
+    assert any("multi-timeframe join" in issue for issue in issues)
+    assert any("VIX term structure" in issue for issue in issues)
+
+    update_hypothesis(hid, feasibility={"needs_cross_asset": False})
+    assert candidate_readiness({}, {"hypothesis_id": hid})["can_generate"]
+
+
 def test_explicit_external_exclusion_stays_excluded():
     assert detected_inputs("Use funding_rate. Ignore Polymarket. Without VIX.") == (["funding_rate"], [])
 
@@ -174,6 +196,59 @@ def test_dismissed_duplicate_does_not_hold_candidate_or_resume(research_data):
     assert not CrucibleTaskIndex.build().candidate_action_open(hid)
     with pytest.raises(HTTPException, match="dismissed"):
         resume_checkpoint(task_id)
+
+
+def finished_block(hid: str, *, error="Candidate development returned without a registered strategy.", strategy_id=None) -> int:
+    with get_db() as conn:
+        return conn.execute(
+            "INSERT INTO agent_tasks(agent_id,type,title,description,input_data,status,error,strategy_id) "
+            "VALUES ('strategy-developer','develop_candidate','Develop','Develop',?,'blocked',?,?)",
+            (json.dumps({"hypothesis_id": hid, "action_kind": "develop_candidate"}), error, strategy_id),
+        ).lastrowid
+
+
+def test_finished_blocked_attempt_is_a_fruitless_attempt_not_open_work(research_data):
+    from forven.crucible_planner import CrucibleTaskIndex, plan_next_actions
+
+    hid = hypothesis("h-refused")
+    finished_block(hid)
+    index = CrucibleTaskIndex.build()
+    assert not index.candidate_action_open(hid)
+    assert hid not in index.blocked_candidates
+    assert index.failed_action_count("develop_candidate", hid) == 1
+    assert index.fruitless_develop_count(hid) == 1
+    assert any(a.crucible_id == hid and a.task_type == "develop_candidate" for a in plan_next_actions())
+
+
+def test_tool_limit_block_with_strategy_is_failed_but_not_fruitless(research_data):
+    from forven.crucible_planner import CrucibleTaskIndex
+
+    hid = hypothesis("h-tool-limit")
+    finished_block(hid, error="Tool-call limit reached before completion; resume from the saved checkpoint.", strategy_id="S1")
+    index = CrucibleTaskIndex.build()
+    assert index.failed_action_count("develop_candidate", hid) == 1
+    assert index.fruitless_develop_count(hid) == 0
+
+
+def test_finished_blocked_attempt_does_not_absorb_new_assignment(research_data):
+    from forven.brain import assign_task_direct
+
+    hid = hypothesis("h-retry")
+    old = finished_block(hid)
+    new = assign_task_direct("strategy-developer", "develop_candidate", "Again", "Again", {"hypothesis_id": hid})
+    assert new != old
+
+
+def test_three_finished_blocked_attempts_park_the_crucible(research_data):
+    from forven.crucible_planner import plan_next_actions
+
+    hid = hypothesis("h-parked")
+    for _ in range(3):
+        finished_block(hid)
+    assert all(a.crucible_id != hid for a in plan_next_actions())
+    with get_db() as conn:
+        row = conn.execute("SELECT manager_state, archive_reason, status FROM hypotheses WHERE id=?", (hid,)).fetchone()
+    assert (row["manager_state"], row["archive_reason"], row["status"]) == ("archived", "develop_fruitless_3x", "researching")
 
 
 def test_auto_resume_only_preflight_and_never_incomplete_tool_work(research_data):

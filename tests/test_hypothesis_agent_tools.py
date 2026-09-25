@@ -177,6 +177,40 @@ def test_create_hypothesis_allowed_for_propose_crucible_task(forven_db):
     assert result["hypothesis"]["id"].startswith("HYP-")
 
 
+def test_propose_task_can_declare_feasibility_and_refine_can_update_it(forven_db):
+    tools_research = importlib.import_module("forven.agents.tools_research")
+    from forven.agents.context import reset_tool_context, set_tool_context
+    from forven.db import get_db
+    from forven.hypotheses import get_hypothesis
+    from forven.system_pause import set_system_mode
+
+    set_system_mode("auto")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO agent_tasks (agent_id, type, title, description, input_data, display_id, status) "
+            "VALUES ('strategy-developer', 'research', 'Propose', 'p', ?, 'T0102', 'running')",
+            (json.dumps({"origin_mode": "crucible_planner", "action_kind": "propose_crucible"}),),
+        )
+
+    tokens = set_tool_context("strategy-developer", "T0102")
+    try:
+        created = json.loads(tools_research._tool_create_hypothesis(
+            _hypothesis_payload(feasibility={"needs_cross_asset": True, "external_inputs": ["ETF flows", " "]})
+        ))
+    finally:
+        reset_tool_context(tokens)
+
+    hypothesis_id = created["hypothesis"]["id"]
+    assert created["hypothesis"]["feasibility"] == {
+        "needs_cross_asset": True, "needs_multi_timeframe": False, "external_inputs": ["ETF flows"], "notes": None,
+    }
+    updated = json.loads(tools_research._tool_update_hypothesis_fields(
+        {"hypothesis_id": hypothesis_id, "feasibility": {"needs_cross_asset": False}}
+    ))
+    assert updated["ok"] is True
+    assert get_hypothesis(hypothesis_id)["feasibility"]["needs_cross_asset"] is False
+
+
 def test_assert_hypothesis_spawn_allowed_raises_when_limits_reached(monkeypatch):
     tools_research = importlib.import_module("forven.agents.tools_research")
 

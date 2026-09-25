@@ -100,9 +100,10 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
     symbols = [input_data["symbol"]] if input_data.get("symbol") else []
     timeframes = [input_data["timeframe"]] if input_data.get("timeframe") else []
     hypothesis_id = input_data.get("hypothesis_id") or input_data.get("crucible_id")
+    declared_issues: list[str] = []
     if hypothesis_id:
         with get_db() as conn:
-            row = conn.execute("SELECT market_thesis,mechanism,target_assets,target_timeframes FROM hypotheses WHERE id=? OR display_id=?", (hypothesis_id, hypothesis_id)).fetchone()
+            row = conn.execute("SELECT market_thesis,mechanism,target_assets,target_timeframes,feasibility FROM hypotheses WHERE id=? OR display_id=?", (hypothesis_id, hypothesis_id)).fetchone()
         if row:
             description += "\n" + str(row["market_thesis"] or "") + "\n" + str(row["mechanism"] or "")
             for key, current in (("target_assets", symbols), ("target_timeframes", timeframes)):
@@ -112,6 +113,13 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
                     values = []
                 if not current and isinstance(values, list):
                     current.extend(v for v in values if isinstance(v, str))
+            try:
+                declared = json.loads(row["feasibility"]) if row["feasibility"] else None
+            except (TypeError, ValueError):
+                declared = None
+            # Runtime needs the thesis declared (cross-asset / multi-timeframe
+            # joins, unintegrated inputs) keep it in research, not development.
+            declared_issues = importlib.import_module("forven.hypotheses").feasibility_issues(declared)
     # A single candidate uses one execution frame. Multi-target hypotheses may
     # name several frames, but prose and external reference features are not frames.
     canonical_market_symbol = importlib.import_module("forven.dataeng.coverage").canonical_market_symbol
@@ -131,12 +139,13 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
     if unresolved or not canonical or not valid_tfs or len(canonical) * len(valid_tfs) > 16:
         report = check_idea_readiness(description, None, None)
         report["issues"].append("Resolve executable markets and candle timeframes before development (up to 16 market/timeframe combinations). Keep holding horizons and external references in the mechanism. Unresolved: " + ", ".join(unresolved or ["market or timeframe not selected"]))
+        report["issues"].extend(declared_issues)
         report.update(status="blocked", can_generate=False)
         return report
     reports = [check_idea_readiness(description, symbol, tf) for symbol in canonical for tf in valid_tfs]
     report = dict(reports[0])
     report["datasets"] = [{"symbol": r["symbol"], "timeframe": r["timeframe"], "status": r["status"]} for r in reports]
-    report["issues"] = list(dict.fromkeys(issue for r in reports for issue in r["issues"]))
+    report["issues"] = list(dict.fromkeys([*(issue for r in reports for issue in r["issues"]), *declared_issues]))
     report["can_generate"] = not report["issues"]
     report["status"] = "checked" if report["can_generate"] else "blocked"
     return report

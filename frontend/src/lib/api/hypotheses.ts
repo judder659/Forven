@@ -598,6 +598,17 @@ export interface AllocatorOverview {
 		share_pct: number;
 	};
 	pool: { total: number; by_status: Record<string, number>; with_survivors: number };
+	/** Research yield over the last `days`: how many candidates actually got tested and how far. */
+	yield?: {
+		days: number;
+		candidates: number;
+		untestable: number;
+		no_trades: number;
+		reached_gauntlet: number;
+		reached_paper: number;
+		disproven: number;
+		parked: number;
+	};
 	crucibles: AllocatorCrucible[];
 }
 

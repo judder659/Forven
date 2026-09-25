@@ -40,13 +40,19 @@ def test_disproven_verdict_attributes_archive_reason(forven_db):
 
     h = _hyp()
     with get_db() as conn:
-        for i in range(4):  # 4 non-passing children, full window -> disproven
+        for i in range(4):  # 4 fairly-tested failed children, full window -> disproven
             conn.execute(
                 """INSERT INTO strategies (id, display_id, name, type, symbol, timeframe,
                    stage, status, hypothesis_id, owner, params, metrics, verdict, created_at, updated_at)
-                   VALUES (?, ?, 'n', 'rsi', 'BTC', '1h', 'quick_screen', 'active', ?, 'brain',
+                   VALUES (?, ?, 'n', 'rsi', 'BTC', '1h', 'archived', 'active', ?, 'brain',
                            '{}', '{}', '{}', datetime('now'), datetime('now'))""",
                 (f"SD{i}", f"SD{i}", h["id"]),
+            )
+            conn.execute(
+                """INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, timeframe,
+                   metrics_json, config_json, created_at)
+                   VALUES (?, ?, 'backtest', 'BTC', '1h', '{"total_trades": 40}', '{}', datetime('now'))""",
+                (f"R-SD{i}", f"SD{i}"),
             )
     with patch("forven.hypothesis_verdict._call_llm", return_value=json.dumps({"verdict": "researching", "rationale": "r"})):
         result = write_verdict_memo(h["id"])

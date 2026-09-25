@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -254,6 +255,25 @@ def test_create_hypothesis_tool_rejects_remint_of_recently_disproven(forven_db, 
         )
 
     out = _mint(tools_research, "Disproven Thesis")
+
+    assert out["ok"] is False
+    assert out["error_code"] == "duplicate_hypothesis"
+    assert out["duplicate_of"]["id"] == existing["id"]
+
+
+def test_create_hypothesis_tool_rejects_remint_of_recently_parked_crucible(forven_db, monkeypatch):
+    """A crucible parked because no attempt could be implemented is not disproven,
+    but re-minting it at once would just repeat the same failing attempts."""
+    tools_research = _as_strategy_developer(monkeypatch)
+    existing = _crucible("researching")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE hypotheses SET manager_state = 'archived', archive_reason = 'develop_fruitless_3x', "
+            "archived_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), existing["id"]),
+        )
+
+    out = _mint(tools_research, "Researching Thesis")
 
     assert out["ok"] is False
     assert out["error_code"] == "duplicate_hypothesis"

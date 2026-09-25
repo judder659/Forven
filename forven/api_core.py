@@ -8397,6 +8397,10 @@ def _create_inline_backtest_task(
                 ),
             )
             task_id = int(cursor.lastrowid) if cursor.lastrowid else None
+            if task_id:
+                from forven.db import assign_task_display_id
+
+                display_id = assign_task_display_id(conn, task_id)
     except Exception as exc:
         log.warning(
             "agent_tasks insert failed for inline backtest %s: %s; Now Working panel will not surface this run",

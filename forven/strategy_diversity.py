@@ -181,6 +181,10 @@ def family_outcome_stats(days: int = DEFAULT_OUTCOME_WINDOW_DAYS) -> dict[str, d
     the paper stage (or beyond) at least once. This is the survivor signal that
     lets the diversity guard steer by OUTCOME (dead vs live regions of the
     search space), not just by generation frequency.
+
+    Untestable archives (broken code, missing data, never trading) are not
+    attempts: they say nothing about the family, and counting them punished
+    families the generator merely implemented badly.
     """
     window = -abs(int(days or DEFAULT_OUTCOME_WINDOW_DAYS))
     try:
@@ -196,6 +200,7 @@ def family_outcome_stats(days: int = DEFAULT_OUTCOME_WINDOW_DAYS) -> dict[str, d
                 LEFT JOIN strategy_events e ON e.strategy_id = s.id
                 WHERE datetime(COALESCE(s.created_at, '1970-01-01T00:00:00+00:00'))
                       > datetime('now', ? || ' days')
+                  AND LOWER(TRIM(COALESCE(s.status_reason, ''))) NOT LIKE 'untestable:%'
                 GROUP BY s.id
                 """,
                 (str(window),),
