@@ -833,8 +833,8 @@ class ForvenBot(commands.Bot):
                             "2. Review any pending post-mortems from closed trades\n"
                             "3. Check the market regime and sentiment\n"
                     "4. Assign tasks to your agents as needed:\n"
-                    "   - strategy-developer swarm: Generate first-class hypotheses and spawn initial strategy candidates immediately\n"
-                    "   - defer quant-researcher until after the first strategy-developer hypothesis wave is underway; then use it only for external benchmarks, market structure, missing data, and data-quality/feature-integrity checks\n"
+                    "   - strategy-developer: the strategy-creation job already queues idea-to-strategy tasks within the daily budget; do not add more\n"
+                    "   - quant-researcher: only for external benchmarks, market structure, missing data, and data-quality/feature-integrity checks\n"
                     "   - simulation-agent: Validate Strategy Containers in Test stage\n"
                             "   - risk-manager: Oversee paper + live container risk and capital allocation (trade execution is automated by the scanner kernel — there is no execution agent)\n"
                             "   - brain: Escalate orchestrator-level control tasks if needed\n"
@@ -1732,8 +1732,8 @@ class ForvenBot(commands.Bot):
 
                     assign_research_cycle()
                     response = (
-                        "Bootstrap dispatched the strategy-developer research swarm "
-                        "to create first-class hypotheses and initial strategy candidates."
+                        "Bootstrap ran the strategy-creation cycle: the strategy-developer "
+                        "writes an idea and builds strategies from it, within the daily budget."
                     )
                     with get_db() as conn:
                         conn.execute(

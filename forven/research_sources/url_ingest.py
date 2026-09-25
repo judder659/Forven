@@ -1,16 +1,15 @@
-"""Operator-initiated URL ingest for hypothesis bootstrapping.
+"""Operator-initiated URL ingest for submitted ideas.
 
 When an operator pastes a URL, we:
   1. Detect which source type it belongs to (youtube/reddit/github/blog/forum)
   2. Call the corresponding inspect_* helper (bypassing the agent-tool gating, which
      is designed for research-contract-driven calls — operator paste is out-of-band)
-  3. Return extracted title + content preview for confirmation, or persist a
-     hypothesis + artifact if the operator confirms.
+  3. Return extracted title + content, for the submit dialog's preview or for the
+     strategy-creation task the submitted idea queues.
 
 All source paths surface an explicit ``content_empty`` failure when the extractor
-returns no readable text. Creating a hollow artifact silently defeats downstream
-research — the operator is told to paste a different source or use the manual
-ingest flow instead.
+returns no readable text. A hollow source gives the agent nothing to build from —
+the operator is told to paste a different source or describe the idea instead.
 """
 from __future__ import annotations
 
@@ -40,7 +39,7 @@ def _build_preview(source_type: str, url: str, title: str, content: str) -> dict
             "error_code": "content_empty",
             "error": (
                 f"No readable content could be extracted from this {source_type}. "
-                "Paste a different source or create the hypothesis manually."
+                "Paste a different source or describe the idea instead."
             ),
             "source_type": source_type,
             "url": url,
@@ -259,7 +258,7 @@ def _normalize_youtube(raw: Any, url: str) -> dict[str, Any]:
         return {
             "ok": False,
             "error_code": "transcript_unavailable",
-            "error": f"YouTube transcript unavailable ({human}). Paste a different source or create the hypothesis manually.",
+            "error": f"YouTube transcript unavailable ({human}). Paste a different source or describe the idea instead.",
             "source_type": "youtube",
             "url": url,
             "title": title,
@@ -282,7 +281,7 @@ def _normalize_youtube(raw: Any, url: str) -> dict[str, Any]:
         return {
             "ok": False,
             "error_code": "transcript_unavailable",
-            "error": "YouTube transcript was empty. Paste a different source or create the hypothesis manually.",
+            "error": "YouTube transcript was empty. Paste a different source or describe the idea instead.",
             "source_type": "youtube",
             "url": url,
             "title": title,

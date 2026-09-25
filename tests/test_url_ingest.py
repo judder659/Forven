@@ -1,6 +1,7 @@
-"""URL ingest for operator-initiated hypothesis creation."""
+"""URL ingest for operator-submitted ideas."""
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -214,11 +215,18 @@ def test_fetch_preview_youtube_empty_transcript_surfaces_failure():
 # ---- API endpoints ----
 
 
+def _queued_tasks() -> list[dict]:
+    from forven.db import get_db
+
+    with get_db() as conn:
+        return [dict(row) for row in conn.execute("SELECT type, input_data FROM agent_tasks")]
+
+
 def test_preview_url_endpoint(forven_db):
     fake = {"ok": True, "title": "Post", "content": "a" * 5000, "selftext": "", "top_comments": [], "url": "u", "source": "reddit"}
     with patch("forven.research_sources.url_ingest.reddit.inspect_reddit_thread", return_value=fake):
         client = TestClient(app)
-        r = client.post("/api/hypotheses/preview_url", json={"url": "https://www.reddit.com/r/x/comments/1/"})
+        r = client.post("/api/ideas/preview_url", json={"url": "https://www.reddit.com/r/x/comments/1/"})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
@@ -227,91 +235,84 @@ def test_preview_url_endpoint(forven_db):
     assert len(body["content_preview"]) <= 4000
     assert body["preview_truncated"] is True
     assert body["content_bytes"] == 5000
+    assert _queued_tasks() == []
 
 
 def test_preview_url_endpoint_surfaces_fetch_error(forven_db):
     fake = {"ok": False, "error_code": "http_4xx", "error": "http 404"}
     with patch("forven.research_sources.url_ingest.blog.inspect_blog_article", return_value=fake):
         client = TestClient(app)
-        r = client.post("/api/hypotheses/preview_url", json={"url": "https://random.example.com/post"})
+        r = client.post("/api/ideas/preview_url", json={"url": "https://random.example.com/post"})
     body = r.json()
     assert r.status_code == 200
     assert body["ok"] is False
     assert body["error_code"] == "http_4xx"
 
 
-def test_create_from_url_endpoint_persists_hypothesis_and_artifact(forven_db):
+def test_submit_idea_endpoint_queues_the_url_source(forven_db):
     fake = {"ok": True, "title": "Strategy from blog", "content": "full body text", "url": "u", "source": "blog"}
     with patch("forven.research_sources.url_ingest.blog.inspect_blog_article", return_value=fake):
         client = TestClient(app)
-        r = client.post(
-            "/api/hypotheses/from_url",
-            json={"url": "https://random.example.com/post"},
-        )
+        r = client.post("/api/ideas", json={"url": "https://random.example.com/post"})
     assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    hid = body["hypothesis"]["id"]
-    assert body["hypothesis"]["source_type"] == "operator_seed"
-    assert body["hypothesis"]["lane"] == "benchmarking"
-    assert body["hypothesis"]["origin_role"] == "operator"
-    # Detail with include=content → artifact has cached_content + correct source_type
-    r2 = client.get(f"/api/hypotheses/{hid}?include=content")
-    detail = r2.json()
-    assert detail["artifacts"][0]["source_type"] == "blog"
-    assert detail["artifacts"][0]["cached_content"] == "full body text"
-    assert detail["artifacts"][0]["source_ref"] == "https://random.example.com/post"
+    assert r.json()["ok"] is True
+    tasks = _queued_tasks()
+    assert [task["type"] for task in tasks] == ["generate_strategies"]
+    payload = json.loads(tasks[0]["input_data"])
+    assert payload["source_type"] == "blog"
+    assert payload["source_title"] == "Strategy from blog"
+    assert payload["operator_idea"]["title"] == "Strategy from blog"
 
 
-def test_create_from_url_respects_operator_overrides(forven_db):
+def test_submit_idea_endpoint_keeps_the_operators_fields(forven_db):
     fake = {"ok": True, "title": "Extracted Title", "content": "body", "url": "u", "source": "blog"}
     with patch("forven.research_sources.url_ingest.blog.inspect_blog_article", return_value=fake):
         client = TestClient(app)
         r = client.post(
-            "/api/hypotheses/from_url",
+            "/api/ideas",
             json={
                 "url": "https://random.example.com/post",
                 "title": "Operator Chose This Title",
                 "market_thesis": "Specific thesis.",
                 "mechanism": "Specific mechanism.",
-                "claimed_edge": "Specific edge.",
             },
         )
-    body = r.json()
-    assert body["ok"] is True
-    assert body["hypothesis"]["title"] == "Operator Chose This Title"
-    assert body["hypothesis"]["market_thesis"] == "Specific thesis."
+    assert r.json()["ok"] is True
+    idea = json.loads(_queued_tasks()[0]["input_data"])["operator_idea"]
+    assert idea["title"] == "Operator Chose This Title"
+    assert idea["market_thesis"] == "Specific thesis."
+    assert idea["mechanism"] == "Specific mechanism."
 
 
-def test_create_from_url_fetch_failure_does_not_persist(forven_db):
-    from forven.hypotheses import list_hypotheses
+def test_submit_idea_endpoint_fetch_failure_queues_nothing(forven_db):
     fake = {"ok": False, "error_code": "http_4xx", "error": "http 404"}
     with patch("forven.research_sources.url_ingest.blog.inspect_blog_article", return_value=fake):
         client = TestClient(app)
-        r = client.post("/api/hypotheses/from_url", json={"url": "https://random.example.com/post"})
+        r = client.post("/api/ideas", json={"url": "https://random.example.com/post"})
     body = r.json()
     assert body["ok"] is False
-    # No hypothesis created
-    assert list_hypotheses() == []
+    assert body["error_code"] == "http_4xx"
+    assert _queued_tasks() == []
 
 
-def test_create_from_url_missing_url_returns_400(forven_db):
+def test_submit_idea_endpoint_needs_text_or_a_url(forven_db):
     client = TestClient(app)
-    r = client.post("/api/hypotheses/from_url", json={"url": ""})
-    assert r.status_code == 400
+    r = client.post("/api/ideas", json={"url": ""})
+    assert r.status_code == 200
+    assert r.json()["error_code"] == "empty_idea"
+    assert _queued_tasks() == []
 
 
-def test_create_from_url_empty_content_surfaces_failure(forven_db):
-    """Unextractable article: blog returns ok with empty content. We now refuse to
-    create a hollow hypothesis — downstream research has nothing to chew on. The
-    operator gets ``content_empty`` and is told to paste a different source."""
-    from forven.hypotheses import list_hypotheses
+def test_submit_idea_endpoint_empty_content_surfaces_failure(forven_db):
+    """Unextractable article: blog returns ok with empty content. A hollow source
+    gives the agent nothing to build from, so the operator gets ``content_empty``
+    and is told to paste a different source."""
     fake = {"ok": True, "title": "No Content", "content": "", "url": "u", "source": "blog"}
     with patch("forven.research_sources.url_ingest.blog.inspect_blog_article", return_value=fake):
         client = TestClient(app)
-        r = client.post("/api/hypotheses/from_url", json={"url": "https://random.example.com/empty"})
+        r = client.post("/api/ideas", json={"url": "https://random.example.com/empty"})
     body = r.json()
     assert body["ok"] is False
     assert body["error_code"] == "content_empty"
     assert body["source_type"] == "blog"
-    assert list_hypotheses() == []
+    assert _queued_tasks() == []

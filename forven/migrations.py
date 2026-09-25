@@ -807,6 +807,44 @@ def _m_2026_09_retire_research_only(conn: sqlite3.Connection) -> None:
     log.info("Retired research_only: archived %d parked strategies as untestable", len(ids))
 
 
+_CRUCIBLE_TASK_ORIGINS = (
+    "crucible_planner",
+    "hypothesis_promotion_loop",
+    "autonomous_follow_through",
+    "operator_manual_entry",
+    "operator_url_paste",
+    "operator_urls_paste",
+)
+
+
+def _m_2026_09_retire_crucibles(conn: sqlite3.Connection) -> None:
+    """Retire crucibles: cancel the work the crucible loop left queued.
+
+    Queued develop_candidate tasks, and the refine/propose/backtest/research
+    tasks the planner and the old idea intake queued, lead nowhere once the
+    loop is gone. Running tasks finish on their own. Idea records (the
+    hypotheses table) and the strategies built from them are kept as they are.
+    Idempotent: a second run finds nothing queued.
+    """
+    from datetime import datetime, timezone
+
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "agent_tasks" not in tables:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    marks = ",".join("?" for _ in _CRUCIBLE_TASK_ORIGINS)
+    cursor = conn.execute(
+        f"""UPDATE agent_tasks
+            SET status = 'cancelled', error = 'crucibles removed', completed_at = ?, retry_at = NULL
+            WHERE status IN ('pending', 'blocked', 'paused_manual')
+              AND (type = 'develop_candidate'
+                   OR (json_valid(input_data)
+                       AND json_extract(input_data, '$.origin_mode') IN ({marks})))""",
+        (now, *_CRUCIBLE_TASK_ORIGINS),
+    )
+    log.info("Retired crucibles: cancelled %d queued crucible task(s)", int(cursor.rowcount or 0))
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -869,6 +907,7 @@ MIGRATIONS: list[Migration] = [
     ),
     Migration(name="2026_09_agent_calls", up=_m_2026_09_agent_calls),
     Migration(name="2026_09_retire_research_only", up=_m_2026_09_retire_research_only),
+    Migration(name="2026_09_retire_crucibles", up=_m_2026_09_retire_crucibles),
 ]
 
 

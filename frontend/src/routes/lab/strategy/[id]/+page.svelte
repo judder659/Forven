@@ -80,6 +80,7 @@
 	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
 	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
 	import StageControl from '$lib/components/strategy/StageControl.svelte';
+	import IdeaPanel from '$lib/components/strategy/IdeaPanel.svelte';
 	import { getForgeNavPosition, type ForgeNavEntry } from '$lib/stores/forgeNav';
 	import type { StrategyImportResult } from '$lib/api';
 	import { openDeepdive } from '$lib/stores/deepdiveStore';
@@ -4178,12 +4179,12 @@
 				{/if}
 			{/if}
 			{#if container.strategy.hypothesis_id}
-				{@const hypothesisHrefId = container.strategy.hypothesis_display_id || container.strategy.hypothesis_id}
-				{@const hypothesisLabelId = container.strategy.hypothesis_display_id || container.strategy.hypothesis_id}
 				<span class="text-gray-700">|</span>
-				<a href={`/hypotheses/${encodeURIComponent(hypothesisHrefId)}`} class="text-[11px] uppercase tracking-widest text-[#888] transition-colors hover:text-white">
-					Crucible {hypothesisLabelId}
-				</a>
+				<IdeaPanel
+					ideaId={container.strategy.hypothesis_id}
+					label={container.strategy.hypothesis_display_id || container.strategy.hypothesis_id}
+					strategyId={container.strategy.id}
+				/>
 			{/if}
 			<span class="text-gray-700">•</span>
 			<StageControl
@@ -4210,15 +4211,6 @@
 				<span class="uppercase tracking-[0.12em]">Driver</span>
 				<span class="font-mono normal-case tracking-normal">{pinnedBacktestId || 'Container defaults'}</span>
 			</button>
-			{#if container.strategy.canonical}
-				<span
-					data-canonical-badge
-					class="ml-1 border border-emerald-500/60 bg-emerald-950/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-emerald-100"
-					title="Canonical: best-in-cell for this hypothesis; protected from cleanup"
-				>
-					Canonical
-				</span>
-			{/if}
 			{#if container.strategy.parent_strategy_id}
 				<span class="text-gray-700">•</span>
 				<a

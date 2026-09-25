@@ -60,7 +60,7 @@ _SETTINGS_MUTATION_LOCK = threading.RLock()
 # Single source of truth for the default backtest window (calendar days). This ONE
 # setting governs every automatic backtest that doesn't carry an explicit start/end:
 # quick-screen, gauntlet timeframe-sweep/optimization/confirmation, walk-forward,
-# the cost-stress rerun, and the evolution/crucible validation matrix. Every fallback
+# the cost-stress rerun, and the evolution validation matrix. Every fallback
 # below references this so a missing key can never silently shrink the window (the old
 # scattered 365/30 fallbacks did exactly that, contradicting the saved 730 default).
 DEFAULT_BACKTEST_DURATION_DAYS = 730
@@ -174,11 +174,6 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     # ON for autonomous operation — reversible (the incumbent is demoted
     # paper->gauntlet, not archived). See policy._maybe_auto_apply_dethrone.
     "auto_approve_dethrone": True,
-    # When a hypothesis graduates and its per-cell-best becomes canonical, enqueue
-    # the gauntlet paper-promotion gate for it (the robustness/required-test floor
-    # still applies — it is NOT a direct transition). Default OFF: graduation stays
-    # a label until the operator opts in. See hypothesis_graduation.graduate_hypothesis.
-    "canonical_auto_deploy_enabled": False,
     # When True, capital slots hold ONE strategy per symbol/timeframe: the duplicate
     # tournament, paper slot-guard, capital-slot dedupe, and paper WIP cap all apply.
     # Default OFF: every strategy that passes the gauntlet is promoted to paper with
@@ -448,7 +443,9 @@ def _merge_research_settings_payload(value) -> dict:
     for key, current_value in value.items():
         if key not in merged:
             merged[key] = current_value
-    return merged
+    from forven.research_contract import drop_retired_research_keys
+
+    return drop_retired_research_keys(merged, value)
 
 
 def _default_pipeline_settings_payload() -> dict:
@@ -705,7 +702,7 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         "regime_gate_block_long", "regime_gate_block_short",
         "regime_gate_min_confidence",
         # promotion-safety gates + paper test mode
-        "allow_unsupported_backtest_risk_controls", "canonical_requires_forward_proof",
+        "allow_unsupported_backtest_risk_controls",
         "relaxed_trade_filters_enabled", "paper_test_mode_enabled",
         "paper_test_high_activity_enabled", "paper_test_bypass_gates_enabled",
         "paper_test_local_execution_only",

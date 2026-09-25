@@ -128,51 +128,11 @@ def test_migration_also_catches_rows_the_legacy_fixup_already_archived(forven_db
     assert row["status_reason"] == "untestable:parked: parked before the research_only stage was retired"
 
 
-def test_untestable_archive_clears_canonical_instead_of_looping(forven_db):
-    # A canonical child that turns out untestable holds no verified edge; blocking
-    # the archive would make callers like the evidence deferral retry forever.
-    from forven.brain import archive_untestable
-
-    _insert("S-CANON", "gauntlet")
-    with get_db() as conn:
-        conn.execute("UPDATE strategies SET canonical = 1 WHERE id = 'S-CANON'")
-
-    result = archive_untestable("S-CANON", code="insufficient_history", detail="needs 60k bars", actor="gauntlet_evidence_deferral")
-
-    assert result["to"] == "archived"
-    with get_db() as conn:
-        row = conn.execute("SELECT stage, canonical FROM strategies WHERE id = 'S-CANON'").fetchone()
-    assert row["stage"] == "archived"
-    assert row["canonical"] == 0
-
-
-def test_migration_is_registered_last():
+def test_migration_is_registered_in_order():
     from forven.migrations import MIGRATIONS
 
-    assert MIGRATIONS[-1].name == "2026_09_retire_research_only"
-
-
-def test_all_untestable_children_do_not_disprove_a_crucible():
-    from forven.hypothesis_verdict import compute_verdict_signals
-
-    discipline = {"verdict_rolling_window": 10, "verdict_hit_rate_threshold": 0.3, "verdict_min_diversity_cells": 1}
-    untestable = [
-        {"stage": "archived", "status_reason": "untestable:broken_code: class missing", "symbol": "BTC", "timeframe": "1h"},
-        {"stage": "archived", "status_reason": "untestable:no_data: feed missing", "symbol": "ETH", "timeframe": "1h"},
-    ]
-    # Failed after a fair test: enough own-timeframe trades to be judged on merit.
-    failed = [
-        {"stage": "archived", "status_reason": None, "symbol": "BTC", "timeframe": "1h", "own_trades": 45},
-        {"stage": "rejected", "status_reason": "gate failure", "symbol": "ETH", "timeframe": "1h", "own_trades": 60},
-    ]
-
-    kept = compute_verdict_signals("H-x", children=untestable, discipline=discipline, declared_cells=1)
-    dead = compute_verdict_signals("H-x", children=failed, discipline=discipline, declared_cells=1)
-
-    assert kept["dead_children"] == 0
-    assert kept["mathematical_verdict"] == "researching"
-    assert dead["dead_children"] == 2
-    assert dead["mathematical_verdict"] == "disproven"
+    names = [migration.name for migration in MIGRATIONS]
+    assert names.index("2026_09_retire_research_only") < names.index("2026_09_retire_crucibles")
 
 
 def test_untestable_archive_records_no_decision_outcome(forven_db, monkeypatch):
@@ -189,26 +149,6 @@ def test_untestable_archive_records_no_decision_outcome(forven_db, monkeypatch):
 
     assert result["to"] == "archived"
     assert backfills == []
-
-
-@pytest.mark.parametrize(
-    ("reason", "code"),
-    [
-        ("Cannot verify data availability for S1: strategy class could not be resolved.", "broken_code"),
-        ("Required liquidation feed is not available and cannot be auto-downloaded", "no_data"),
-    ],
-)
-def test_runtime_worker_archives_data_blocked_strategy_as_untestable(forven_db, reason, code):
-    from forven.runtime_worker import _archive_data_blocked_strategy
-
-    _insert("S-BLOCKED", "quick_screen")
-
-    _archive_data_blocked_strategy("S-BLOCKED", reason)
-
-    with get_db() as conn:
-        row = conn.execute("SELECT stage, status_reason FROM strategies WHERE id = 'S-BLOCKED'").fetchone()
-    assert row["stage"] == "archived"
-    assert row["status_reason"].startswith(f"untestable:{code}: ")
 
 
 def test_orphan_triage_cli_archives_orphans_as_untestable(forven_db):

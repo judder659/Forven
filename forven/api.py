@@ -74,7 +74,7 @@ from forven.routers.brain import router as brain_router
 from forven.routers.strategy_guard import router as strategy_guard_router
 from forven.routers.skills import router as skills_router
 from forven.routers.health import router as health_router
-from forven.routers.hypotheses import router as hypotheses_router, data_gap_router
+from forven.routers.ideas import router as ideas_router
 from forven.lab_dormancy import quiesce_regime_lab
 from forven.lab_features import regime_lab_enabled
 from forven.runtime_worker import (
@@ -758,8 +758,7 @@ if not any(isinstance(f, RequestIdLogFilter) for f in _root_logger.filters):
 app.include_router(status_router)
 app.include_router(diagnostics_router)
 app.include_router(notifications_router)
-app.include_router(hypotheses_router)
-app.include_router(data_gap_router)
+app.include_router(ideas_router)
 app.include_router(approvals_router)
 app.include_router(ops_router)
 app.include_router(analytics_router)

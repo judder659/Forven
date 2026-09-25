@@ -22,8 +22,8 @@ def test_agent_exit_is_persisted_and_next_task_can_run(monkeypatch: pytest.Monke
     monkeypatch.setattr(worker, "_active_agent_tasks", set())
     monkeypatch.setattr(worker, "_agent_claim_lock", None)
     monkeypatch.setattr(worker, "_headless_task_processing_allowed", lambda: True)
-    monkeypatch.setattr(worker, "_recover_durable_completed_develop_candidate_tasks", lambda: 0)
-    monkeypatch.setattr(worker, "_preempt_research_for_waiting_develop_candidate_tasks", lambda: set())
+    monkeypatch.setattr(worker, "_recover_durable_completed_creation_tasks", lambda: 0)
+    monkeypatch.setattr(worker, "_preempt_research_for_waiting_creation_tasks", lambda: set())
 
     async def run_task(agent: dict, task: dict) -> None:
         if task["id"] == 99901:

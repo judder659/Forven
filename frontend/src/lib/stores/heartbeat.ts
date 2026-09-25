@@ -49,7 +49,6 @@ function buildFallbackNavIndicators(heartbeat: SystemHeartbeatResponse): Record<
 		'/': emptyIndicator(),
 		'/data': emptyIndicator(),
 		'/lab': emptyIndicator(),
-		'/hypotheses': emptyIndicator(),
 		'/risk': emptyIndicator(),
 		'/paper-trades': emptyIndicator(),
 		'/live-trades': emptyIndicator(),

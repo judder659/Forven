@@ -53,7 +53,6 @@ def context(forven_db, monkeypatch):
     monkeypatch.setattr(runner, 'build_agent_context', lambda *a, **k: 'system')
     monkeypatch.setattr(runner, '_get_tools_for_agent', lambda *a, **k: [{'name':'artifact','description':'Produce an artifact','input_schema':{}}])
     monkeypatch.setattr(runner, '_should_queue_brain_callback_for_completed_task', lambda **k: False)
-    monkeypatch.setattr(runner, '_queue_autonomous_research_follow_through_if_needed', lambda *a, **k: None)
     agent = {'id':'quant-researcher','name':'Research','model':'openai','model_id':'gpt-5.2'}
     return agent, task
 
@@ -86,12 +85,8 @@ def test_candidate_data_block_can_recheck_without_model_or_tool_calls(context, m
     assert status(task)['status'] == 'blocked'
     assert 'Missing funding' in status(task)['error']
     assert load_execution(task['id'], agent['id']).checkpoint['data_preflight']
-    if candidate_type == 'develop_candidate':
-        with pytest.raises(HTTPException, match='inputs are still blocked'):
-            resume_checkpoint(task['id'])
-    else:
+    with pytest.raises(HTTPException, match='inputs are still blocked'):
         resume_checkpoint(task['id'])
-        asyncio.run(runner.run_agent_task(agent, status(task)))
     assert len(checks) == 2
     assert status(task)['status'] == 'blocked'
     monkeypatch.setattr('forven.strategies.idea_readiness.candidate_readiness', lambda *a: {
@@ -107,25 +102,6 @@ def test_candidate_data_block_can_recheck_without_model_or_tool_calls(context, m
     asyncio.run(runner.run_agent_task(agent, status(task)))
     assert called == [True]
     assert 'without a registered strategy' in status(task)['error']
-
-
-def test_operator_research_hands_off_to_development(context, monkeypatch):
-    import json
-
-    agent, task = context
-    task.update(type='research', input_data=json.dumps({'origin_mode':'operator_manual_entry','hypothesis_id':'H_TEST'}))
-    monkeypatch.setattr(runner, 'build_research_context', lambda **kw: 'Research context')
-    async def researched(*a, **kw):
-        return 'Refined the idea', {}
-    monkeypatch.setattr(runner, '_call_with_tools', researched)
-    calls = []
-    def handoff(hid):
-        calls.append(hid)
-        return {'ok':True, 'task':{'task_id':42}}
-    monkeypatch.setattr('forven.api_domains.hypotheses.generate_strategies_payload', handoff)
-    asyncio.run(runner.run_agent_task(agent, task))
-    assert calls == ['H_TEST']
-    assert status(task)['status'] == 'done'
 
 
 def test_provider_retry_resumes_after_tool_without_replay(context, monkeypatch):

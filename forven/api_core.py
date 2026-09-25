@@ -1706,17 +1706,12 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             updates["regime_gate_min_confidence"] = max(
                 0.0, min(1.0, _coerce_float(payload.get("regime_gate_min_confidence"), 0.6))
             )
-        # Promotion-safety gates (read top-level from forven:settings by
-        # forven.policy.evaluate_promotion and forven.hypothesis_graduation).
+        # Promotion-safety gate (read top-level from forven:settings by
+        # forven.policy.evaluate_promotion).
         if "allow_unsupported_backtest_risk_controls" in payload:
             updates["allow_unsupported_backtest_risk_controls"] = _coerce_bool(
                 payload.get("allow_unsupported_backtest_risk_controls"),
                 bool(updates.get("allow_unsupported_backtest_risk_controls", False)),
-            )
-        if "canonical_requires_forward_proof" in payload:
-            updates["canonical_requires_forward_proof"] = _coerce_bool(
-                payload.get("canonical_requires_forward_proof"),
-                bool(updates.get("canonical_requires_forward_proof", False)),
             )
         # The live trade gate (forven.regime.is_strategy_allowed -> forven.config
         # getters) now reads these keys from this KV settings blob directly, so no
@@ -1879,8 +1874,6 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             updates["allow_auto_live_promotion"] = _coerce_bool(payload.get("allow_auto_live_promotion"), updates.get("allow_auto_live_promotion", False))
         if "auto_approve_dethrone" in payload:
             updates["auto_approve_dethrone"] = _coerce_bool(payload.get("auto_approve_dethrone"), updates.get("auto_approve_dethrone", True))
-        if "canonical_auto_deploy_enabled" in payload:
-            updates["canonical_auto_deploy_enabled"] = _coerce_bool(payload.get("canonical_auto_deploy_enabled"), updates.get("canonical_auto_deploy_enabled", False))
         if "paper_slot_competition_enabled" in payload:
             updates["paper_slot_competition_enabled"] = _coerce_bool(payload.get("paper_slot_competition_enabled"), updates.get("paper_slot_competition_enabled", False))
         if "brain_queue_max_pending" in payload:
@@ -2159,8 +2152,8 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             stored_research_settings = {}
         # DEEP-merge the incoming partial over STORED values (the UI sends only
         # the edited leaves). The previous shallow spread replaced whole nested
-        # dicts, so editing e.g. hypothesis_discipline.crucible_daily_develop_budget
-        # would silently reset its customized siblings back to defaults.
+        # dicts, so editing e.g. research_holdout.min_trades would silently reset
+        # its customized siblings back to defaults.
         updates["research_settings"] = _merge_research_settings_payload(
             _deep_merge_dicts(stored_research_settings, dict(raw_research_settings or {}))
         )
@@ -6921,7 +6914,7 @@ _MANUAL_STRATEGY_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     """Validate + register a user-authored strategy for the manual backtester.
 
-    Unlike the agent/crucible intake path, this does NOT create a lifecycle
+    Unlike the agent intake path, this does NOT create a lifecycle
     container — the strategy is only registered in the runtime registry so the
     manual backtester can run it. It never enters the autonomous pipeline.
 

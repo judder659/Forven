@@ -2233,32 +2233,6 @@ export async function postBrainChatDirect(
 }
 
 
-export interface ResearchMemoryMode {
-	constraint_memory: boolean;
-	inspiration_memory: string;
-}
-
-export interface HypothesisDisciplineSettings {
-	active_pool_cap: number;
-	min_strategies_per_pick: number;
-	repick_after_hours?: number;
-	revisit_interval_days: number;
-	verdict_hit_rate_threshold: number;
-	verdict_min_diversity_cells: number;
-	verdict_rolling_window: number;
-	max_unrefined_active?: number;
-	unstarted_ageout_days?: number;
-	refine_in_flight_budget?: number;
-	disproven_dedup_lookback_days?: number;
-	candidate_min_feed_coverage_pct?: number;
-}
-
-export interface AutonomousDiscoverySettings {
-	enabled: boolean;
-	mode: 'operator_approves' | 'autonomous';
-	max_open_discovery_tasks: number;
-}
-
 /** Recent data research never sees; each new candidate gets one test on it (forven/research_holdout.py). */
 export interface ResearchHoldoutSettings {
 	enabled?: boolean;
@@ -2273,16 +2247,13 @@ export interface ResearchHoldoutSettings {
 
 export interface ResearchSettings {
 	external_benchmarking_enabled: boolean;
-	lane_weights: Record<string, number>;
-	spawn_limits: {
-		per_run: number;
-		rolling_window: number;
-		window_days: number;
-	};
-	memory_modes: Record<string, ResearchMemoryMode>;
 	allowed_external_source_types: string[];
-	autonomous_discovery?: AutonomousDiscoverySettings;
-	hypothesis_discipline?: HypothesisDisciplineSettings;
+	/** Autonomous strategy-creation tasks per UTC day (forven/strategy_creation.py). */
+	strategy_creation_daily_budget?: number;
+	/** Strategy-creation tasks allowed pending or running at once. */
+	strategy_creation_max_in_flight?: number;
+	/** Percent of the quick-screen window every candidate input feed must cover (0 = off). */
+	candidate_min_feed_coverage_pct?: number;
 	research_holdout?: ResearchHoldoutSettings;
 	research_sources?: {
 		reddit?: {

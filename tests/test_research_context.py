@@ -82,24 +82,6 @@ def test_build_research_context_includes_strategy_diversity_guard(monkeypatch):
     assert "RSI is cooled down" in payload
 
 
-def test_coerce_research_contract_tolerates_invalid_spawn_limits():
-    from forven.research_context import coerce_research_contract
-
-    contract = coerce_research_contract(
-        {
-            "lane": "benchmarking",
-            "available_datasets": ["ohlcv"],
-            "spawn_limits": {
-                "per_run": "two",
-                "rolling_window": "8",
-                "window_days": "bad",
-            },
-        }
-    )
-
-    assert contract.spawn_limits == {"per_run": 3, "rolling_window": 8, "window_days": 7}
-
-
 def test_coerce_research_contract_parses_falsey_external_sources_strings():
     from forven.research_context import coerce_research_contract
 

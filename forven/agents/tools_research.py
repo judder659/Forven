@@ -45,19 +45,18 @@ from .tool_registry import register_tool
 
 from forven.db import get_db
 from forven.hypotheses import (
-    HypothesisPoolFullError,
     add_hypothesis_artifact,
     create_hypothesis,
-    get_hypothesis_spawn_stats,
     list_hypothesis_artifacts,
     record_data_gap,
     update_hypothesis,
 )
+from forven.strategy_creation import OPERATOR_ORIGIN
 from forven.strategy_extrapolation import extrapolate_strategy_spec, record_extrapolation_gaps
 
-# What the thesis needs from the strategy runtime. A backtest evaluates one
-# market and one candle interval with the local feed columns; declared needs
-# beyond that keep the crucible in research instead of being developed.
+# What the idea needs from the strategy runtime. A backtest evaluates one
+# market and one candle interval with the local feed columns; an idea that
+# declares needs beyond that is not developed.
 _FEASIBILITY_SCHEMA = {
     "type": "object",
     "description": (
@@ -65,8 +64,8 @@ _FEASIBILITY_SCHEMA = {
         "and ONE candle interval, plus the local feed columns. Set needs_cross_asset when the "
         "mechanism needs another asset's series (pairs, ratios, relative strength, lead-lag), "
         "needs_multi_timeframe when it needs bars from a different interval, and list "
-        "external_inputs that are not local feeds. Declared needs keep the idea in research "
-        "instead of dispatching development."
+        "external_inputs that are not local feeds. An idea with declared needs is not developed "
+        "until the runtime supports them."
     ),
     "properties": {
         "needs_cross_asset": {"type": "boolean"},
@@ -130,6 +129,32 @@ def _current_research_contract() -> dict[str, Any]:
     return research_contract if isinstance(research_contract, dict) else {}
 
 
+def _current_task_origin() -> str:
+    task = _current_agent_task()
+    payload = task.get("input_data") if task else None
+    return str((payload or {}).get("origin_mode") or "").strip() if isinstance(payload, dict) else ""
+
+
+def _attach_operator_source(hypothesis_id: str) -> None:
+    """Link the URL an operator submitted to the idea the agent wrote from it."""
+    task = _current_agent_task()
+    payload = task.get("input_data") if task else None
+    url = str((payload or {}).get("source_url") or "").strip() if isinstance(payload, dict) else ""
+    if not url:
+        return
+    try:
+        add_hypothesis_artifact(
+            hypothesis_id=hypothesis_id,
+            source_type=str(payload.get("source_type") or "url"),
+            source_title=str(payload.get("source_title") or url)[:300],
+            source_ref=url,
+            claimed_edge="The operator submitted this source with the idea.",
+            implementation_summary="Fetched when the operator submitted the idea.",
+        )
+    except ValueError as exc:
+        logger.warning("Could not attach operator source %s to %s: %s", url, hypothesis_id, exc)
+
+
 def _current_agent_task() -> dict[str, Any]:
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
     if not task_display_id:
@@ -177,74 +202,25 @@ def _current_agent_task() -> dict[str, Any]:
 
 
 def _hypothesis_creation_blocker_for_current_task() -> dict[str, Any] | None:
+    """Refuse a new idea when the current task already names the idea to build."""
     task = _current_agent_task()
     if not task:
         return None
-
     payload = task.get("input_data")
     payload = payload if isinstance(payload, dict) else {}
-    origin_mode = str(payload.get("origin_mode") or "").strip().lower()
-    action_kind = str(payload.get("action_kind") or "").strip().lower()
-    task_type = str(task.get("type") or "").strip().lower()
-    task_title = str(task.get("title") or "").strip().lower()
-
-    if action_kind == "propose_crucible":
+    bound_id = str(payload.get("hypothesis_id") or "").strip()
+    if not bound_id:
         return None
-
-    blocked_actions = {
-        "refine_crucible",
-        "develop_candidate",
-        "expand_viable_crucible",
-        "run_backtest",
-    }
-    candidate_origins = {
-        "autonomous_follow_through",
-        "crucible_planner",
-        "hypothesis_promotion_loop",
-        "operator_generate_strategies",
-        "operator_manual_entry",
-        "operator_url_paste",
-    }
-    has_bound_crucible = bool(payload.get("crucible_id") or payload.get("hypothesis_id"))
-    should_block = (
-        action_kind in blocked_actions
-        or (
-            origin_mode in candidate_origins
-            and action_kind != "propose_crucible"
-            and has_bound_crucible
-        )
-        or (task_type == "develop_candidate" and has_bound_crucible)
-        or ("refine crucible" in task_title and has_bound_crucible)
-    )
-    if not should_block:
-        return None
-
-    if action_kind == "refine_crucible" or "refine crucible" in task_title:
-        guidance = (
-            "This task is bound to an existing crucible. Use update_hypothesis_fields "
-            "and attach_hypothesis_artifact on the provided hypothesis_id/crucible_id; "
-            "do not create a replacement hypothesis."
-        )
-    elif action_kind == "run_backtest":
-        guidance = (
-            "This task is a backtest task. Use forven_run_backtest for the provided "
-            "strategy_id; do not create a new hypothesis."
-        )
-    else:
-        guidance = (
-            "This task is bound to an existing crucible. Use forven_create_strategy "
-            "or register_strategy with the provided hypothesis_id/crucible_id; do not "
-            "create a new hypothesis."
-        )
     return {
         "ok": False,
         "error_code": "hypothesis_creation_blocked_for_task",
-        "error": "create_hypothesis is not allowed for this task context",
-        "origin_mode": origin_mode or None,
-        "action_kind": action_kind or None,
-        "task_type": task_type or None,
-        "hypothesis_id": payload.get("hypothesis_id") or payload.get("crucible_id"),
-        "guidance": guidance,
+        "error": "create_hypothesis is not allowed for this task: it already names its idea",
+        "task_type": str(task.get("type") or "").strip() or None,
+        "hypothesis_id": bound_id,
+        "guidance": (
+            f"Build strategies for the provided idea: register_strategy with hypothesis_id={bound_id}. "
+            "Use update_hypothesis_fields to correct its fields; do not write a new idea."
+        ),
     }
 
 
@@ -307,14 +283,6 @@ def _normalized_origin_role(explicit_role: object, *, origin_agent_id: str | Non
     if normalized_explicit_role in _HYPOTHESIS_TOOL_AGENTS:
         return normalized_explicit_role
     return canonical_agent_role or origin_agent_id or (normalized_explicit_role or None)
-
-
-def assert_hypothesis_spawn_allowed(hypothesis_id: str) -> None:
-    stats = get_hypothesis_spawn_stats(hypothesis_id)
-    if stats["spawned_in_current_run"] >= stats["per_run_limit"]:
-        raise ValueError("Hypothesis reached per-run strategy spawn limit.")
-    if stats["spawned_in_window"] >= stats["rolling_window_limit"]:
-        raise ValueError("Hypothesis reached rolling strategy spawn limit.")
 
 
 def _youtube_benchmarking_access_error() -> str | None:
@@ -434,40 +402,45 @@ def _normalize_youtube_inspect_result(raw_result: Any) -> dict[str, Any]:
 
 @register_tool(
     name="create_hypothesis",
-    description="Create a first-class hypothesis record before or alongside strategy generation.",
+    description=(
+        "Write down an idea before building strategies from it: the market behaviour it "
+        "exploits (market_thesis), why that edge exists and who is on the other side "
+        "(mechanism), the result that would show it is wrong (disproof), and the markets and "
+        "timeframes to test. Returns the idea's hypothesis_id; pass it to register_strategy. "
+        "Variants of the same idea reuse the id."
+    ),
     input_schema={
         "type": "object",
         "properties": {
             "title": {"type": "string"},
             "market_thesis": {"type": "string"},
             "mechanism": {"type": "string"},
+            "disproof": {
+                "type": "string",
+                "description": "The backtest or forward result that would show the idea is wrong.",
+            },
             "why_now": {"type": "string"},
-            "lane": {"type": "string"},
             "source_type": {"type": "string"},
-            "origin_agent_id": {"type": "string"},
-            "origin_role": {"type": "string"},
-            "origin_model": {"type": "string"},
-            "origin_model_id": {"type": "string"},
             "target_assets": {"type": "array", "items": {"type": "string"}},
             "target_timeframes": {"type": "array", "items": {"type": "string"}},
             "novelty_score": {"type": "number"},
             "derived_from_hypothesis_id": {"type": "string"},
             "feasibility": _FEASIBILITY_SCHEMA,
         },
-        "required": ["title", "market_thesis", "mechanism", "lane", "source_type", "target_assets", "target_timeframes"],
+        "required": ["title", "market_thesis", "mechanism", "disproof", "target_assets", "target_timeframes"],
     },
     permissions={"role:strategy-developer", None},
-    # Autonomy-boundary fix: create_hypothesis does open-ended hypothesis
-    # generation, but its name matches none of the discover_/inspect_/research_
-    # prefixes in _DEFAULT_CATEGORY_PATTERNS, so it silently stayed 'general' and
-    # was NOT caught by the scheduled-context default-deny ({'research',
-    # 'catastrophic'}). Headless/cron Brain cycles could therefore mint new
-    # hypotheses without operator approval. Mark it 'research' explicitly so the
-    # scheduled default-deny gates it (its system_mode gate is orthogonal — it
-    # keys on mode, not on the tools-context).
+    # Autonomy-boundary fix: create_hypothesis does open-ended idea generation,
+    # but its name matches none of the discover_/inspect_/research_ prefixes in
+    # _DEFAULT_CATEGORY_PATTERNS, so it silently stayed 'general' and was NOT
+    # caught by the scheduled-context default-deny ({'research', 'catastrophic'}).
+    # Headless/cron Brain cycles could therefore mint ideas without operator
+    # approval. Mark it 'research' explicitly so the scheduled default-deny gates
+    # it (its system_mode gate is orthogonal — it keys on mode, not on context).
     category="research",
 )
 def _tool_create_hypothesis(params: dict) -> str:
+    from forven.hypotheses import find_duplicate_hypothesis
     from forven.system_mode_policy import autonomous_hypothesis_generation_allowed
     from forven.system_pause import get_system_mode
 
@@ -475,23 +448,24 @@ def _tool_create_hypothesis(params: dict) -> str:
     if blocked is not None:
         return json.dumps(blocked)
 
+    # An operator-submitted idea runs in every mode and may repeat an earlier one.
+    operator_task = _current_task_origin() == OPERATOR_ORIGIN
     system_mode = get_system_mode()
-    if not autonomous_hypothesis_generation_allowed(system_mode):
+    if not operator_task and not autonomous_hypothesis_generation_allowed(system_mode):
         return json.dumps({
             "ok": False,
             "error_code": "generation_paused",
             "error": (
-                f"Autonomous hypothesis generation is disabled in "
-                f"system_mode={system_mode!r}. Only operator-initiated "
-                "hypotheses are accepted in this mode."
+                f"Autonomous idea generation is disabled in system_mode={system_mode!r}. "
+                "Only operator-submitted ideas are accepted in this mode."
             ),
             "system_mode": system_mode,
         })
 
     # Crypto-only scope: Forven trades crypto (Hyperliquid) for now; stock/forex
-    # support may return later. Without this gate the autonomous loops mint
-    # equity/index hypotheses that can never reach the scanner — they just burn
-    # research/backtest cycles before dying at the data layer.
+    # support may return later. Without this gate agents write equity/index
+    # ideas that can never reach the scanner — they just burn backtest cycles
+    # before dying at the data layer.
     from forven.symbol_mapping import AssetClass, detect_asset_class
 
     non_crypto = [
@@ -511,126 +485,44 @@ def _tool_create_hypothesis(params: dict) -> str:
             "guidance": (
                 "Use crypto targets in BASE/QUOTE form (e.g. BTC/USDT, SOL/USDT) "
                 "or a well-known base symbol (BTC, ETH, SOL). Do not propose "
-                "stock, ETF, index, or forex hypotheses."
+                "stock, ETF, index, or forex ideas."
             ),
         })
 
-    # Bound the un-started backlog: when many 'proposed' crucibles already await
-    # research with no strategies, minting another only deepens an idle queue the
-    # funnel can't clear (and churns it via pool-pressure eviction) — the root of the
-    # oversaturation. Steer autonomous agents to refine/expand an existing crucible
-    # instead. Operator URL/manual creates use a different API path and are unaffected;
-    # derived (expand-an-existing-thesis) creates are allowed through.
-    if not params.get("derived_from_hypothesis_id"):
-        from forven.hypotheses import count_unstarted_active_hypotheses, find_duplicate_hypothesis
-        from forven.research_contract import get_hypothesis_discipline_settings
-
-        # Dedup gate (audit B-16): autonomous mints must not re-create a thesis that
-        # already sits in the active pool or was disproven recently. Without this the
-        # discovery/propose loops re-minted the same crucible every cycle — each copy
-        # spawning strategies, getting disproven, and being archived, only to return
-        # an hour later. Derived (expand-an-existing-thesis) creates are exempt: they
-        # intentionally build on a named parent.
+    # A repeated idea wastes the whole task. Derived variants of a named parent
+    # are exempt: they build on it on purpose.
+    if not operator_task and not params.get("derived_from_hypothesis_id"):
         duplicate = find_duplicate_hypothesis(str(params.get("title") or ""))
         if duplicate is not None:
+            kind = "matching" if duplicate["match"] == "exact_title" else "near-duplicate"
+            label = duplicate.get("display_id") or duplicate["id"]
             return json.dumps({
                 "ok": False,
                 "error_code": "duplicate_hypothesis",
-                "error": (
-                    f"A {'matching' if duplicate['match'] == 'exact_title' else 'near-duplicate'} "
-                    f"crucible already exists: {duplicate.get('display_id') or duplicate['id']} "
-                    f"({duplicate['title']!r}, status={duplicate['status']}, "
-                    f"manager_state={duplicate['manager_state']})."
-                ),
+                "error": f"A {kind} idea was written recently: {label} ({duplicate['title']!r}).",
                 "duplicate_of": duplicate,
                 "guidance": (
-                    "Do not re-mint this thesis. If it is active, refine or expand it "
-                    "(update_hypothesis_fields / create a strategy under its hypothesis_id, "
-                    "or pass derived_from_hypothesis_id for a deliberate variant). If it was "
-                    "recently disproven, propose a materially different mechanism instead — "
-                    "re-testing the same idea in the same regime will reach the same verdict."
-                ),
-            })
-
-        # Graveyard-aware novelty: the title dedup above is literal, so it misses
-        # semantically-equivalent re-treads (the 30+ disproven SOL+EMA crucibles with
-        # differing titles). Discount the LLM's self-reported novelty by how many times
-        # this idea-cluster (family x asset) has already been DISPROVEN so a settled
-        # idea-space loses the novelty-ranked dispatch queue; optionally hard-block past
-        # a configurable threshold. Autonomous-only (operators are ungated); fail-open.
-        try:
-            from forven.hypotheses import (
-                disproven_cluster_count,
-                graveyard_novelty_factor,
-                total_hypothesis_count,
-            )
-
-            _disc = get_hypothesis_discipline_settings()
-            if total_hypothesis_count() >= int(_disc["novelty_graveyard_min_total"]):
-                _dcount = disproven_cluster_count(
-                    title=str(params.get("title") or ""),
-                    market_thesis=str(params.get("market_thesis") or ""),
-                    mechanism=str(params.get("mechanism") or ""),
-                    target_assets=params.get("target_assets") or [],
-                )
-                _hard = int(_disc["novelty_graveyard_hard_block"])
-                if _hard > 0 and _dcount >= _hard:
-                    return json.dumps({
-                        "ok": False,
-                        "error_code": "disproven_cluster_saturated",
-                        "error": (
-                            f"This idea-cluster (family x asset) has already been disproven "
-                            f"{_dcount} times (>= novelty_graveyard_hard_block={_hard}). "
-                            "Re-testing it in the same regime will reach the same verdict."
-                        ),
-                        "disproven_cluster_count": _dcount,
-                        "guidance": (
-                            "Propose a materially different mechanism, or a different asset/regime, "
-                            "or pass derived_from_hypothesis_id to deliberately refine a named parent."
-                        ),
-                    })
-                _factor = graveyard_novelty_factor(
-                    _dcount, scale=float(_disc["novelty_graveyard_scale"])
-                )
-                if _factor < 1.0:
-                    _raw_nov = float(params.get("novelty_score", 0.0) or 0.0)
-                    params = {**params, "novelty_score": round(_raw_nov * _factor, 4)}
-                    logger.info(
-                        "hypothesis novelty graveyard-discounted %.3f -> %.3f "
-                        "(cluster disproven=%d, factor=%.3f)",
-                        _raw_nov, _raw_nov * _factor, _dcount, _factor,
-                    )
-        except Exception:
-            pass  # fail-open — never block creation on the graveyard check
-
-        max_unrefined = int(get_hypothesis_discipline_settings()["max_unrefined_active"])
-        unrefined = count_unstarted_active_hypotheses()
-        if unrefined >= max_unrefined:
-            return json.dumps({
-                "ok": False,
-                "error_code": "unrefined_backlog_saturated",
-                "error": (
-                    f"{unrefined} un-started proposed crucibles already await research "
-                    f"(>= max_unrefined_active={max_unrefined}); minting another would only "
-                    "deepen the idle backlog."
-                ),
-                "unrefined_active": unrefined,
-                "max_unrefined_active": max_unrefined,
-                "guidance": (
-                    "Do not create a new hypothesis right now. Refine an existing 'proposed' "
-                    "crucible (update_hypothesis_fields on its hypothesis_id) or develop a "
-                    "strategy under an existing one so the current pool advances before adding more."
+                    "Write a materially different idea. To build a variant of that one, "
+                    "register the strategy with its hypothesis_id, or pass "
+                    "derived_from_hypothesis_id for a deliberate refinement."
                 ),
             })
 
     origin_agent_id = _normalized_origin_agent_id(params.get("origin_agent_id"))
     lane = _normalize_lane(params.get("lane"))
-    source_type = _normalize_source_type(params.get("source_type"), lane)
+    source_type = "operator_seed" if operator_task else _normalize_source_type(params.get("source_type"), lane)
+    if not str(params.get("disproof") or "").strip():
+        return json.dumps({
+            "ok": False,
+            "error_code": "disproof_required",
+            "error": "disproof is required: state the backtest or forward result that would show the idea is wrong.",
+        })
     try:
         hypothesis = create_hypothesis(
             title=params["title"],
             market_thesis=params["market_thesis"],
             mechanism=params["mechanism"],
+            disproof=params.get("disproof"),
             why_now=params.get("why_now"),
             lane=lane,
             source_type=source_type,
@@ -647,27 +539,10 @@ def _tool_create_hypothesis(params: dict) -> str:
             derived_from_hypothesis_id=params.get("derived_from_hypothesis_id"),
             feasibility=params.get("feasibility") if isinstance(params.get("feasibility"), dict) else None,
         )
-    except HypothesisPoolFullError as exc:
-        # Defensive fallback. The active-pool cap is a pressure valve — under
-        # normal operation create_hypothesis auto-archives the weakest active
-        # hypothesis to make room rather than refusing. Reaching this branch
-        # means the eviction query found no victim, which is structurally
-        # unusual (it requires active_count >= cap but zero evictable rows).
-        # Report the refusal clearly; the agent can retry shortly.
-        return json.dumps({
-            "ok": False,
-            "error_code": "hypothesis_pool_full",
-            "error": str(exc),
-            "active_count": exc.active_count,
-            "cap": exc.cap,
-            "guidance": (
-                "Unexpected pool-full state: the auto-eviction pressure valve "
-                "could not find a hypothesis to archive. This is rare. You may "
-                "retry create_hypothesis once, or proceed by expanding an "
-                "existing hypothesis (spawn a new strategy variant under it) "
-                "while an operator investigates."
-            ),
-        })
+    except ValueError as exc:
+        return json.dumps({"ok": False, "error": str(exc)})
+    if operator_task:
+        _attach_operator_source(str(hypothesis["id"]))
     return json.dumps({"ok": True, "hypothesis": hypothesis})
 
 
@@ -814,9 +689,8 @@ def _tool_attach_hypothesis_artifact(params: dict) -> str:
 @register_tool(
     name="update_hypothesis_fields",
     description=(
-        "Enrich an existing hypothesis with refined fields extracted from its source "
-        "artifacts. Only supplied fields overwrite; others stay untouched. Use this "
-        "after reading a cached artifact to turn a placeholder hypothesis into a real one."
+        "Correct or complete an existing idea's fields. Only supplied fields overwrite; "
+        "others stay untouched."
     ),
     input_schema={
         "type": "object",
@@ -825,6 +699,7 @@ def _tool_attach_hypothesis_artifact(params: dict) -> str:
             "title": {"type": "string"},
             "market_thesis": {"type": "string"},
             "mechanism": {"type": "string"},
+            "disproof": {"type": "string"},
             "why_now": {"type": "string"},
             "target_assets": {"type": "array", "items": {"type": "string"}},
             "target_timeframes": {"type": "array", "items": {"type": "string"}},
@@ -842,6 +717,7 @@ def _tool_update_hypothesis_fields(params: dict) -> str:
             title=params.get("title"),
             market_thesis=params.get("market_thesis"),
             mechanism=params.get("mechanism"),
+            disproof=params.get("disproof"),
             why_now=params.get("why_now"),
             target_assets=params.get("target_assets"),
             target_timeframes=params.get("target_timeframes"),

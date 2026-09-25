@@ -56,9 +56,9 @@
 			return 'Manual mode: all autonomous background work freezes. Scheduled jobs stop, queued autonomous tasks pause, and only direct operator actions can run until you leave manual mode.';
 		}
 		if (mode === 'semi_auto') {
-			return 'Semi-automatic mode: the system will not spawn new crucibles on its own. Crucibles you enter manually are fully evaluated by the research, Gauntlet, and lifecycle machinery. Trading stays active.';
+			return 'Semi-automatic mode: agents will not write new ideas on their own. Ideas you submit are built into strategies and fully evaluated by the Gauntlet and lifecycle machinery. Trading stays active.';
 		}
-		return 'Fully automatic mode: the scanner and agents autonomously generate, evaluate, and promote crucibles. Live trading is active. This is the original pipeline behavior.';
+		return 'Fully automatic mode: agents write new ideas and build strategies from them within the daily budget, and the pipeline evaluates and promotes them. Live trading is active.';
 	}
 
 	function emptyPausedManualCounts(): PausedManualCounts {
@@ -261,7 +261,7 @@
 	</div>
 {:else if systemMode === 'semi_auto'}
 	<div class="bg-white/5 border-b border-[#333] px-4 py-1 text-[11px] uppercase tracking-wider text-[#999] font-bold flex flex-wrap items-center justify-between gap-2">
-		<span>Semi mode - autonomous generation off; user-created hypotheses still run through the pipeline.</span>
+		<span>Semi mode - autonomous generation off; ideas you submit still run through the pipeline.</span>
 		<button
 			class="px-2 py-0.5 border border-[#555] text-[10px] hover:bg-white hover:text-black transition-colors"
 			on:click={() => requestSystemMode('auto')}

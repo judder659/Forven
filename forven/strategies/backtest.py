@@ -898,7 +898,7 @@ def resolve_backtest_trade_mode(
             # williams_r, ...) that had trade_mode='both' stamped into its params
             # by a CRUX-1 short/both authoring directive it couldn't actually
             # honor. That is an internally-inconsistent config, not a deliberate
-            # request. Hard-failing it makes the deterministic crucible /
+            # request. Hard-failing it makes the deterministic
             # validation backtest error, which the pipeline classifies terminal
             # (_DETERMINISTIC_ERROR_TOKENS) and ARCHIVES the strategy over a
             # config technicality (the 2026-07-08 alert wave). 'both' subsumes

@@ -28,6 +28,7 @@
 	import SortableTh from '$lib/components/ui/SortableTh.svelte';
 	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
 	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
+	import SubmitIdeaDialog from '$lib/components/lab/SubmitIdeaDialog.svelte';
 	import { getHealthStatus } from '$lib/api/forven';
 	import type { HealthStatusResponse } from '$lib/api/types';
 	import type { StrategyImportResult } from '$lib/api';
@@ -387,6 +388,7 @@
 	}
 
 	let showImportDialog = false;
+	let showIdeaDialog = false;
 
 	function onStrategyImported(result: StrategyImportResult) {
 		showImportDialog = false;
@@ -879,6 +881,14 @@
 				</a>
 				<button
 					type="button"
+					data-testid="forge-submit-idea"
+					on:click={() => (showIdeaDialog = true)}
+					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
+				>
+					+ Submit idea
+				</button>
+				<button
+					type="button"
 					data-testid="forge-import-strategy"
 					on:click={() => (showImportDialog = true)}
 					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
@@ -1236,9 +1246,9 @@
 											/>
 											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white">
-													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
-												</a>
+												<span class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888]" title="The idea this strategy tests (shown on its page)">
+													Idea {row.hypothesis_display_id || row.hypothesis_id}
+												</span>
 											{/if}
 											{#if row.source === 'ai_dropzone' || !row.has_backtest_results || recovery}
 												<div class="mt-1 flex flex-wrap gap-1">
@@ -1345,9 +1355,9 @@
 											/>
 											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<a href={`/hypotheses/${encodeURIComponent(row.hypothesis_display_id || row.hypothesis_id)}`} class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888] transition-colors hover:border-white hover:text-white">
-													Hypothesis {row.hypothesis_display_id || row.hypothesis_id}
-												</a>
+												<span class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888]" title="The idea this strategy tests (shown on its page)">
+													Idea {row.hypothesis_display_id || row.hypothesis_id}
+												</span>
 											{/if}
 											{#if row.source === 'ai_dropzone' || !row.has_backtest_results || isUntestable(row)}
 												<div class="mt-1 flex flex-wrap gap-1">
@@ -1410,6 +1420,8 @@
 		on:imported={(e) => onStrategyImported(e.detail)}
 	/>
 {/if}
+
+<SubmitIdeaDialog open={showIdeaDialog} on:close={() => (showIdeaDialog = false)} />
 
 <style>
 	tr.strategy-row-highlight {

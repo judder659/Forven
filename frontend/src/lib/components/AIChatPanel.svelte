@@ -74,8 +74,6 @@
 				return ['Help me set up a routine', 'What routines are scheduled?'];
 			case 'settings':
 				return ['Explain the gate presets', 'Walk me through going live safely', 'What does each section control?'];
-			case 'hypotheses':
-				return ['What is a crucible?', 'Turn my idea into a strategy', 'Any promising ideas right now?'];
 			case 'brain':
 				return ['What has the Brain decided lately?', 'How does the Brain work?'];
 			case 'integrations':

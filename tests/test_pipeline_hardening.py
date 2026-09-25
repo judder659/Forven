@@ -1153,27 +1153,27 @@ def test_scheduler_job_takeover_window_uses_job_specific_timeout(forven_db):
     now = datetime.now(timezone.utc)
 
     with get_db() as conn:
-        ideation = dict(conn.execute("SELECT * FROM scheduler_jobs WHERE id = ?", ("forven-ideation-daily",)).fetchone())
+        creation = dict(conn.execute("SELECT * FROM scheduler_jobs WHERE id = ?", ("forven-strategy-creation",)).fetchone())
         testing = dict(conn.execute("SELECT * FROM scheduler_jobs WHERE id = ?", ("forven-testing-cycle",)).fetchone())
 
-    ideation_stale_seconds = _job_running_stale_seconds(ideation)
+    creation_stale_seconds = _job_running_stale_seconds(creation)
     testing_stale_seconds = _job_running_stale_seconds(testing)
 
-    assert ideation_stale_seconds < testing_stale_seconds
+    assert creation_stale_seconds < testing_stale_seconds
 
-    ideation_stale = (now - timedelta(seconds=ideation_stale_seconds + 5)).isoformat()
-    testing_fresh = (now - timedelta(seconds=ideation_stale_seconds + 5)).isoformat()
+    creation_stale = (now - timedelta(seconds=creation_stale_seconds + 5)).isoformat()
+    testing_fresh = (now - timedelta(seconds=creation_stale_seconds + 5)).isoformat()
     with get_db() as conn:
         conn.execute(
             "UPDATE scheduler_jobs SET running_since = ? WHERE id = ?",
-            (ideation_stale, "forven-ideation-daily"),
+            (creation_stale, "forven-strategy-creation"),
         )
         conn.execute(
             "UPDATE scheduler_jobs SET running_since = ? WHERE id = ?",
             (testing_fresh, "forven-testing-cycle"),
         )
 
-    assert _try_mark_job_running("forven-ideation-daily", now, stale_seconds=ideation_stale_seconds) is True
+    assert _try_mark_job_running("forven-strategy-creation", now, stale_seconds=creation_stale_seconds) is True
     assert _try_mark_job_running("forven-testing-cycle", now, stale_seconds=testing_stale_seconds) is False
 
 
@@ -1182,16 +1182,16 @@ def test_recover_stale_scheduler_job_locks_uses_job_specific_timeout(forven_db):
     now = datetime.now(timezone.utc)
 
     with get_db() as conn:
-        ideation = dict(conn.execute("SELECT * FROM scheduler_jobs WHERE id = ?", ("forven-ideation-daily",)).fetchone())
+        creation = dict(conn.execute("SELECT * FROM scheduler_jobs WHERE id = ?", ("forven-strategy-creation",)).fetchone())
         testing = dict(conn.execute("SELECT * FROM scheduler_jobs WHERE id = ?", ("forven-testing-cycle",)).fetchone())
 
-    ideation_stale_seconds = _job_running_stale_seconds(ideation)
+    creation_stale_seconds = _job_running_stale_seconds(creation)
     testing_stale_seconds = _job_running_stale_seconds(testing)
 
     with get_db() as conn:
         conn.execute(
             "UPDATE scheduler_jobs SET running_since = ? WHERE id = ?",
-            ((now - timedelta(seconds=ideation_stale_seconds + 5)).isoformat(), "forven-ideation-daily"),
+            ((now - timedelta(seconds=creation_stale_seconds + 5)).isoformat(), "forven-strategy-creation"),
         )
         conn.execute(
             "UPDATE scheduler_jobs SET running_since = ? WHERE id = ?",
@@ -1201,9 +1201,9 @@ def test_recover_stale_scheduler_job_locks_uses_job_specific_timeout(forven_db):
     recovered = recover_stale_scheduler_job_locks(now=now)
 
     with get_db() as conn:
-        ideation_row = conn.execute(
+        creation_row = conn.execute(
             "SELECT running_since FROM scheduler_jobs WHERE id = ?",
-            ("forven-ideation-daily",),
+            ("forven-strategy-creation",),
         ).fetchone()
         testing_row = conn.execute(
             "SELECT running_since FROM scheduler_jobs WHERE id = ?",
@@ -1211,7 +1211,7 @@ def test_recover_stale_scheduler_job_locks_uses_job_specific_timeout(forven_db):
         ).fetchone()
 
     assert recovered == 1
-    assert ideation_row["running_since"] is None
+    assert creation_row["running_since"] is None
     assert testing_row["running_since"] is not None
 
 
@@ -1222,7 +1222,7 @@ def test_reset_scheduler_job_locks_clears_inherited_running_since(forven_db):
     with get_db() as conn:
         conn.execute(
             "UPDATE scheduler_jobs SET running_since = ? WHERE id IN (?, ?)",
-            (now, "forven-ideation-daily", "forven-testing-cycle"),
+            (now, "forven-strategy-creation", "forven-testing-cycle"),
         )
 
     cleared = reset_scheduler_job_locks()
@@ -1230,7 +1230,7 @@ def test_reset_scheduler_job_locks_clears_inherited_running_since(forven_db):
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, running_since FROM scheduler_jobs WHERE id IN (?, ?)",
-            ("forven-ideation-daily", "forven-testing-cycle"),
+            ("forven-strategy-creation", "forven-testing-cycle"),
         ).fetchall()
 
     assert cleared == 2

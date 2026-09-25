@@ -1,27 +1,19 @@
 from __future__ import annotations
 
 
-def test_assign_research_cycle_delegates_to_crucible_planner(monkeypatch, forven_db):
+def test_assign_research_cycle_delegates_to_strategy_creation(monkeypatch, forven_db):
     from forven import brain
-    import forven.crucible_planner as crucible_planner_mod
+    import forven.strategy_creation as creation
 
-    calls: list[int] = []
+    calls: list[bool] = []
 
-    def _stub_crucible_planner_cycle(*, limit: int = 3):
-        calls.append(limit)
-        return {"planned": 3, "assigned": 3}
+    def _stub_creation_cycle():
+        calls.append(True)
+        return {"status": "queued", "task_id": 7}
 
-    def _legacy_assign_task(*args, **kwargs):
-        raise AssertionError("assign_research_cycle should not create legacy swarm agent_tasks")
-
-    monkeypatch.setattr(
-        crucible_planner_mod,
-        "run_crucible_planner_cycle",
-        _stub_crucible_planner_cycle,
-    )
-    monkeypatch.setattr(brain, "assign_task", _legacy_assign_task)
+    monkeypatch.setattr(creation, "run_creation_cycle", _stub_creation_cycle)
 
     result = brain.assign_research_cycle()
 
-    assert result == {"planned": 3, "assigned": 3}
-    assert calls == [3]
+    assert result == {"status": "queued", "task_id": 7}
+    assert calls == [True]

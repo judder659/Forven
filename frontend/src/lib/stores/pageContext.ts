@@ -39,8 +39,6 @@ export function inferPageKind(pathname: string): string {
 	if (p.startsWith('/pipeline')) return 'pipeline';
 	if (p.startsWith('/risk')) return 'risk';
 	if (p.startsWith('/agents')) return 'agents';
-	if (p.startsWith('/crucible')) return 'crucible';
-	if (p.startsWith('/hypoth')) return 'hypotheses';
 	if (p.startsWith('/settings')) return 'settings';
 	if (p.startsWith('/tasks')) return 'tasks';
 	if (p.startsWith('/bot-factory')) return 'bot_factory';
@@ -59,14 +57,13 @@ export function inferPageKind(pathname: string): string {
 // navigation so those pages are assistant-aware with zero per-page wiring.
 const ENTITY_ROUTES: Array<{ re: RegExp; type: string }> = [
 	{ re: /^\/lab\/strategy\/([^/?#]+)/, type: 'strategy' },
-	{ re: /^\/hypotheses\/([^/?#]+)/, type: 'hypothesis' },
 	{ re: /^\/bot-factory\/([^/?#]+)/, type: 'bot' },
 	{ re: /^\/tasks\/([^/?#]+)/, type: 'task' },
 	{ re: /^\/integrations\/mcp\/([^/?#]+)/, type: 'mcp_server' },
 ];
 
 // Non-entity subpaths that would otherwise match an ENTITY_ROUTES pattern.
-const ENTITY_ID_BLOCKLIST = new Set(['data-gaps', 'editor', 'new']);
+const ENTITY_ID_BLOCKLIST = new Set(['editor', 'new']);
 
 /** Called by the layout on every navigation. Resets entity/summary/data.
  *

@@ -118,7 +118,7 @@ describe('buildAttentionItems', () => {
 			schedulerJobs: [
 				job({ id: 'forven-data-funding-collect', name: 'Funding Collect', lastStatus: 'error' }),
 				job({ id: 'forven-scanner-hourly', name: 'Live Scanner Execution Worker', lastStatus: 'error' }),
-				job({ id: 'forven-crucible-planner', name: 'Crucible Planner', lastStatus: 'error' }),
+				job({ id: 'forven-strategy-creation', name: 'Strategy Creation', lastStatus: 'error' }),
 			],
 			pendingApprovals: 0,
 			now: NOW,
@@ -126,7 +126,7 @@ describe('buildAttentionItems', () => {
 		expect(items.map((item) => [item.id, item.severity])).toEqual([
 			['job-forven-scanner-hourly', 'warning'],
 			['job-forven-data-funding-collect', 'info'],
-			['job-forven-crucible-planner', 'info'],
+			['job-forven-strategy-creation', 'info'],
 		]);
 	});
 

@@ -177,10 +177,10 @@ def saturated_strategy_families(
 def family_outcome_stats(days: int = DEFAULT_OUTCOME_WINDOW_DAYS) -> dict[str, dict[str, int]]:
     """Per-family generation outcomes over a recent window.
 
-    attempts = strategies created in the window; survivors = those that reached
-    the paper stage (or beyond) at least once. This is the survivor signal that
-    lets the diversity guard steer by OUTCOME (dead vs live regions of the
-    search space), not just by generation frequency.
+    attempts = strategies created in the window; survivors = those whose closed
+    paper trades made money. Reaching paper is not survival: gate passes did
+    not predict forward results (68 of 83 strategies that traded in paper lost
+    money by Sept 2026), so steering by them taught agents to fit the gates.
 
     Untestable archives (broken code, missing data, never trading) are not
     attempts: they say nothing about the family, and counting them punished
@@ -193,15 +193,18 @@ def family_outcome_stats(days: int = DEFAULT_OUTCOME_WINDOW_DAYS) -> dict[str, d
                 """
                 SELECT s.id, s.display_id, s.name, s.type, s.runtime_type,
                        s.params, s.metrics, s.notes,
-                       MAX(CASE WHEN e.to_state IN ('paper', 'live_graduated')
-                                  OR s.stage IN ('paper', 'live_graduated')
-                            THEN 1 ELSE 0 END) AS survived
+                       CASE WHEN COALESCE(p.paper_pnl, 0) > 0 THEN 1 ELSE 0 END AS survived
                 FROM strategies s
-                LEFT JOIN strategy_events e ON e.strategy_id = s.id
+                LEFT JOIN (
+                    SELECT strategy_id, SUM(net_pnl_pct) AS paper_pnl
+                    FROM trades
+                    WHERE status = 'CLOSED' AND execution_type = 'paper' AND source = 'paper'
+                      AND net_pnl_pct IS NOT NULL
+                    GROUP BY strategy_id
+                ) p ON p.strategy_id = s.id
                 WHERE datetime(COALESCE(s.created_at, '1970-01-01T00:00:00+00:00'))
                       > datetime('now', ? || ' days')
                   AND LOWER(TRIM(COALESCE(s.status_reason, ''))) NOT LIKE 'untestable:%'
-                GROUP BY s.id
                 """,
                 (str(window),),
             ).fetchall()
@@ -264,10 +267,10 @@ def render_strategy_diversity_guard(
 
     # Outcome steering: frequency alone can't distinguish an over-mined dead
     # region from a productive one, so surface where recent attempts actually
-    # went (reached paper) vs where the pipeline keeps rejecting everything.
+    # made money in paper vs where nothing has.
     if dead:
         lines.append(
-            f"Proven-dead regions (last {int(outcome_window_days)}d, ≥{DEAD_FAMILY_MIN_ATTEMPTS} attempts, zero reached paper):"
+            f"Dead regions (last {int(outcome_window_days)}d, ≥{DEAD_FAMILY_MIN_ATTEMPTS} attempts, none made money in paper):"
         )
         for family, stats in dead[:4]:
             label = FAMILY_LABELS.get(family, family.replace("_", " "))
@@ -277,10 +280,10 @@ def render_strategy_diversity_guard(
             )
     if alive:
         parts = [
-            f"{FAMILY_LABELS.get(family, family.replace('_', ' '))} ({stats['survivors']}/{stats['attempts']} reached paper)"
+            f"{FAMILY_LABELS.get(family, family.replace('_', ' '))} ({stats['survivors']}/{stats['attempts']} made money in paper)"
             for family, stats in alive[:4]
         ]
-        lines.append("Families with recent survivors (evidence of a live region): " + ", ".join(parts) + ".")
+        lines.append("Families with strategies that made money in paper: " + ", ".join(parts) + ".")
 
     if _normalize_text(task_description):
         lines.append(f"- Apply this guard while working on: {_normalize_text(task_description)[:240]}")

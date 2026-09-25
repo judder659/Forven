@@ -1,7 +1,7 @@
 """Tests for the enrich+enqueue pipeline:
 - forven.hypotheses.update_hypothesis
 - update_hypothesis_fields agent tool
-- operator-URL-paste auto-enqueues a strategy-developer research task
+- submitting an idea URL queues a strategy-creation task
 """
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from forven.db import get_db
 from forven.hypotheses import (
     add_hypothesis_artifact,
     create_hypothesis,
-    get_hypothesis,
     update_hypothesis,
 )
 
@@ -186,105 +185,56 @@ def test_list_hypothesis_artifacts_tool_missing_id_returns_error(forven_db):
     assert out["ok"] is False
 
 
-# ---- paste auto-enqueues research task ----
+# ---- submitting a URL queues a strategy-creation task ----
 
 
-def test_from_url_enqueues_strategy_developer_research_task(forven_db):
-    fake_preview = {
-        "status": "ok",
-        "url": "https://youtube.com/watch?v=abc",
-        "video_id": "abc",
-        "title": "ICT Smart Money Concepts",
-        "channel_name": "Example",
-        "description_excerpt": "",
-        "transcript": [
-            {"text": "Transcript body about order blocks, fair value gaps, liquidity runs."}
-        ],
-    }
+_YOUTUBE_PREVIEW = {
+    "status": "ok",
+    "url": "https://youtube.com/watch?v=abc",
+    "video_id": "abc",
+    "title": "ICT Smart Money Concepts",
+    "channel_name": "Example",
+    "description_excerpt": "",
+    "transcript": [
+        {"text": "Transcript body about order blocks, fair value gaps, liquidity runs."}
+    ],
+}
 
-    control_plane_ops.update_system_mode("auto")
+
+@pytest.mark.parametrize("mode", ["auto", "manual"])
+def test_submitted_url_queues_a_creation_task_in_every_mode(forven_db, mode):
+    # Submitting is itself an explicit operator action: the task is
+    # source="user", which runs through the manual-mode freeze.
+    control_plane_ops.update_system_mode(mode)
 
     with patch(
         "forven.research_sources.url_ingest.inspect_youtube_video",
-        return_value=fake_preview,
+        return_value=_YOUTUBE_PREVIEW,
     ):
         client = TestClient(app)
-        r = client.post(
-            "/api/hypotheses/from_url",
-            json={"url": "https://youtube.com/watch?v=abc"},
-        )
+        r = client.post("/api/ideas", json={"url": "https://youtube.com/watch?v=abc"})
 
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    hid = body["hypothesis"]["id"]
-    assert body["task"] is not None
-    assert body["task"]["task_id"] is not None
-    task_id = body["task"]["task_id"]
+    assert body["task_id"] is not None
 
-    # Task row exists for strategy-developer, type=research, carrying the hypothesis_id
     with get_db() as conn:
         row = conn.execute(
-            "SELECT agent_id, type, status, input_data FROM agent_tasks WHERE id = ?",
-            (task_id,),
+            "SELECT agent_id, type, status, source, input_data FROM agent_tasks WHERE id = ?",
+            (body["task_id"],),
         ).fetchone()
-    assert row is not None
     assert row["agent_id"] == "strategy-developer"
-    assert row["type"] == "research"
+    assert row["type"] == "generate_strategies"
     assert row["status"] == "pending"
-    input_data = json.loads(row["input_data"])
-    assert input_data["hypothesis_id"] == hid
-    assert input_data["origin_mode"] == "operator_url_paste"
-    assert input_data["source_type"] == "youtube"
-
-
-def test_from_url_in_manual_mode_enqueues_operator_research(forven_db):
-    # URL paste is itself an explicit operator action — submitting after paste
-    # should enrich the hypothesis fields without requiring a second Re-research
-    # click. The task is source="user", which bypasses the manual-mode freeze.
-    fake_preview = {
-        "status": "ok",
-        "url": "https://youtube.com/watch?v=abc",
-        "video_id": "abc",
-        "title": "ICT Smart Money Concepts",
-        "channel_name": "Example",
-        "description_excerpt": "",
-        "transcript": [
-            {"text": "Transcript body about order blocks, fair value gaps, liquidity runs."}
-        ],
-    }
-    control_plane_ops.update_system_mode("manual")
-
-    with patch(
-        "forven.research_sources.url_ingest.inspect_youtube_video",
-        return_value=fake_preview,
-    ):
-        client = TestClient(app)
-        r = client.post(
-            "/api/hypotheses/from_url",
-            json={"url": "https://youtube.com/watch?v=abc"},
-        )
-
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert body["research_deferred"] is False
-    assert body["task"] is not None
-    assert body["task"]["task_id"] is not None
-
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT agent_id, type, source, input_data FROM agent_tasks WHERE id = ?",
-            (body["task"]["task_id"],),
-        ).fetchone()
-    assert row is not None
-    assert row["agent_id"] == "strategy-developer"
-    assert row["type"] == "research"
     assert row["source"] == "user"
+    input_data = json.loads(row["input_data"])
+    assert input_data["origin_mode"] == "operator_idea"
+    assert input_data["source_type"] == "youtube"
+    assert "hypothesis_id" not in input_data  # the agent writes the idea record
 
 
-def test_from_url_enqueue_failure_does_not_break_paste(forven_db):
-    """If assign_task blows up, the hypothesis is still created; task info carries the error."""
+def test_enqueue_failure_is_reported_to_the_operator(forven_db):
     fake_preview = {
         "ok": True,
         "title": "t",
@@ -296,27 +246,22 @@ def test_from_url_enqueue_failure_does_not_break_paste(forven_db):
     def _raise(**kwargs):
         raise RuntimeError("scheduler offline")
 
-    control_plane_ops.update_system_mode("auto")
-
     with patch(
         "forven.research_sources.url_ingest.blog.inspect_blog_article",
         return_value=fake_preview,
     ), patch("forven.brain.assign_task", side_effect=_raise):
         client = TestClient(app)
-        r = client.post(
-            "/api/hypotheses/from_url",
-            json={"url": "https://random.example.com/post"},
-        )
+        r = client.post("/api/ideas", json={"url": "https://random.example.com/post"})
 
     body = r.json()
-    assert body["ok"] is True  # paste still succeeds
-    assert get_hypothesis(body["hypothesis"]["id"]) is not None
-    assert body["task"]["task_id"] is None
-    assert "scheduler offline" in (body["task"].get("error") or "")
+    assert r.status_code == 200
+    assert body["ok"] is False
+    assert body["error_code"] == "enqueue_failed"
+    assert "scheduler offline" in body["error"]
 
 
 def test_preview_url_does_not_enqueue_task(forven_db):
-    """Preview is read-only — it must not create hypotheses or tasks."""
+    """Preview is read-only — it must not create ideas or tasks."""
     fake_preview = {
         "ok": True,
         "title": "t",
@@ -334,7 +279,7 @@ def test_preview_url_does_not_enqueue_task(forven_db):
     ):
         client = TestClient(app)
         r = client.post(
-            "/api/hypotheses/preview_url",
+            "/api/ideas/preview_url",
             json={"url": "https://random.example.com/post"},
         )
     assert r.status_code == 200
@@ -343,42 +288,3 @@ def test_preview_url_does_not_enqueue_task(forven_db):
         hyp_count = conn.execute("SELECT COUNT(*) AS n FROM hypotheses").fetchone()["n"]
     assert task_count == before_task_count
     assert hyp_count == before_hyp_count
-
-
-def test_manual_create_in_manual_mode_defers_research_but_explicit_research_still_runs(forven_db):
-    control_plane_ops.update_system_mode("manual")
-    client = TestClient(app)
-
-    create_response = client.post(
-        "/api/hypotheses/manual",
-        json={
-            "title": "Funding reversion",
-            "market_thesis": "Funding spikes mean revert after liquidation sweeps.",
-            "mechanism": "Fade extreme funding after one-sided positioning flushes.",
-            "target_assets": ["BTC-PERP"],
-            "target_timeframes": ["1h"],
-        },
-    )
-
-    assert create_response.status_code == 200
-    create_body = create_response.json()
-    assert create_body["ok"] is True
-    assert create_body["research_deferred"] is True
-    assert create_body["task"] is None
-
-    hypothesis_id = create_body["hypothesis"]["id"]
-    research_response = client.post(f"/api/hypotheses/{hypothesis_id}/research")
-    research_body = research_response.json()
-
-    assert research_response.status_code == 200
-    assert research_body["ok"] is True
-    assert research_body["already_running"] is False
-    assert research_body["task"]["task_id"] is not None
-
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT status, source FROM agent_tasks WHERE id = ?",
-            (research_body["task"]["task_id"],),
-        ).fetchone()
-    assert row["status"] == "pending"
-    assert row["source"] == "user"

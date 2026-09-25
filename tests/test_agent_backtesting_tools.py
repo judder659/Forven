@@ -16,6 +16,24 @@ from forven.db import get_db
 from forven.policy import evaluate_promotion
 
 
+def _idea() -> str:
+    from forven.hypotheses import create_hypothesis
+
+    return create_hypothesis(
+        title="Funding extremes mean-revert",
+        market_thesis="Crowded perps unwind after funding spikes.",
+        mechanism="Forced deleveraging exhausts the crowded side.",
+        disproof="Fading funding extremes loses money after costs.",
+        lane="research",
+        source_type="test",
+        target_assets=["BTC/USDT"],
+        target_timeframes=["1h"],
+    )["id"]
+
+
+_CREATION_TASK_INPUT = json.dumps({"origin_mode": "autonomous_creation"})
+
+
 def _insert_strategy(
     strategy_id: str,
     *,
@@ -363,7 +381,6 @@ def test_register_strategy_persists_runtime_type_for_current_strategy(forven_db,
         result = _tool_register_strategy(
             {
                 "type_name": "bb_fade_s00194",
-                "hypothesis_id": "HYP-123",
                 "code": "from forven.strategies.base import BaseStrategy, Signal\n",
             }
         )
@@ -396,21 +413,11 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
             """
             INSERT INTO agent_tasks
                 (agent_id, type, title, description, input_data, display_id, status)
-            VALUES (?, 'develop_candidate', 'Develop candidate', 'Build a candidate strategy', ?, ?, 'running')
+            VALUES (?, 'generate_strategies', 'Create a strategy', 'Write an idea and build it', ?, ?, 'running')
             """,
-            (
-                "strategy-developer",
-                json.dumps(
-                    {
-                        "origin_mode": "crucible_planner",
-                        "action_kind": "develop_candidate",
-                        "crucible_id": "HYP-123",
-                        "hypothesis_id": "HYP-123",
-                    }
-                ),
-                "T0100",
-            ),
+            ("strategy-developer", _CREATION_TASK_INPUT, "T0100"),
         )
+    idea = _idea()
 
     monkeypatch.setattr(
         "forven.selfheal.validate_strategy_code",
@@ -435,10 +442,10 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         "forven.strategies.intake.register_custom_strategy_file",
         lambda **_kwargs: {"strategy_id": "s-registered-provenance", "sandbox_only": sandbox_only, "runtime_type": runtime_type},
     )
-    from forven.crucible_tasks import CandidateTradeCheck
+    from forven.strategies.candidate_checks import CandidateTradeCheck
 
     monkeypatch.setattr(
-        "forven.crucible_tasks.check_candidate_trades",
+        "forven.strategies.candidate_checks.check_candidate_trades",
         lambda *_a, **_k: CandidateTradeCheck("ok", trades=42, min_trades=20, symbol="BTC", timeframe="1h"),
     )
 
@@ -447,7 +454,7 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         result = _tool_register_strategy(
             {
                 "type_name": "bb_fade_s00200",
-                "hypothesis_id": "HYP-123",
+                "hypothesis_id": idea,
                 "code": "from forven.strategies.base import BaseStrategy, Signal\n",
             }
         )
@@ -455,6 +462,7 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         reset_tool_context(tokens)
 
     assert "registered successfully" in result.lower()
+    assert f"for idea {idea}" in result
     assert "Trade check: 42 trades on BTC 1h" in result
     with get_db() as conn:
         assert conn.execute("SELECT runtime_type FROM strategies WHERE id='s-registered-provenance'").fetchone()[0] == runtime_type
@@ -471,7 +479,7 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         ).fetchone()
 
     assert dict(row) == {
-        "origin_crucible_id": "HYP-123",
+        "origin_crucible_id": None,
         "origin_agent_id": "strategy-developer",
         "origin_task_id": "T0100",
         "origin_model": "gpt-5.2",
@@ -482,19 +490,18 @@ def _candidate_task(display_id: str, strategy_id: str | None) -> None:
     with get_db() as conn:
         conn.execute(
             "INSERT INTO agent_tasks (agent_id, type, title, description, input_data, display_id, status, strategy_id) "
-            "VALUES ('strategy-developer', 'develop_candidate', 'Develop', 'd', ?, ?, 'running', ?)",
-            (json.dumps({"origin_mode": "crucible_planner", "action_kind": "develop_candidate",
-                         "crucible_id": "HYP-9", "hypothesis_id": "HYP-9"}), display_id, strategy_id),
+            "VALUES ('strategy-developer', 'generate_strategies', 'Create', 'd', ?, ?, 'running', ?)",
+            (_CREATION_TASK_INPUT, display_id, strategy_id),
         )
 
 
 def test_candidate_gate_archives_a_silent_candidate_and_releases_the_task(forven_db, monkeypatch):
-    from forven.crucible_tasks import CandidateTradeCheck
+    from forven.strategies.candidate_checks import CandidateTradeCheck
 
     _insert_strategy("s-silent", stage="quick_screen")
     _candidate_task("T0300", "s-silent")
     monkeypatch.setattr(
-        "forven.crucible_tasks.check_candidate_trades",
+        "forven.strategies.candidate_checks.check_candidate_trades",
         lambda *_a, **_k: CandidateTradeCheck("too_few_trades", trades=0, min_trades=20, symbol="BTC", timeframe="1h"),
     )
 
@@ -534,7 +541,7 @@ def test_candidate_gate_reports_intake_untestable_as_an_error(forven_db):
 def test_candidate_gate_is_inert_outside_candidate_tasks(forven_db, monkeypatch):
     _insert_strategy("s-manual", stage="quick_screen")
     monkeypatch.setattr(
-        "forven.crucible_tasks.check_candidate_trades",
+        "forven.strategies.candidate_checks.check_candidate_trades",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not run")),
     )
     assert tools_mod._candidate_trade_gate("s-manual", started_at=time.monotonic()) == ""
@@ -553,21 +560,11 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
             """
             INSERT INTO agent_tasks
                 (agent_id, type, title, description, input_data, display_id, status)
-            VALUES (?, 'develop_candidate', 'Develop candidate', 'Build a candidate strategy', ?, ?, 'running')
+            VALUES (?, 'generate_strategies', 'Create a strategy', 'Write an idea and build it', ?, ?, 'running')
             """,
-            (
-                "strategy-developer",
-                json.dumps(
-                    {
-                        "origin_mode": "crucible_planner",
-                        "action_kind": "develop_candidate",
-                        "crucible_id": "HYP-456",
-                        "hypothesis_id": "HYP-456",
-                    }
-                ),
-                "T0101",
-            ),
+            ("strategy-developer", _CREATION_TASK_INPUT, "T0101"),
         )
+    idea = _idea()
 
     class FakeClient:
         def create_strategy(
@@ -605,10 +602,10 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
 
     monkeypatch.setattr(tools_mod, "_check_backtesting_available", lambda: True)
     monkeypatch.setattr("forven.backtesting.get_client", lambda: FakeClient())
-    from forven.crucible_tasks import CandidateTradeCheck
+    from forven.strategies.candidate_checks import CandidateTradeCheck
 
     monkeypatch.setattr(
-        "forven.crucible_tasks.check_candidate_trades",
+        "forven.strategies.candidate_checks.check_candidate_trades",
         lambda *_a, **_k: CandidateTradeCheck("ok", trades=33, min_trades=20, symbol="BTC", timeframe="1h"),
     )
 
@@ -619,7 +616,7 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
                 "forven_create_strategy",
                 {
                     "name": "MACD candidate",
-                    "hypothesis_id": "HYP-456",
+                    "hypothesis_id": idea,
                     "strategy_type": "macd",
                     "symbol": "BTC/USDT",
                     "params": {"fast": 5, "slow": 13, "signal": 3},
@@ -631,6 +628,7 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
 
     assert result["id"] == "S12345"
     assert result["trade_check"].startswith("Trade check: 33 trades")
+    assert captured["hypothesis_id"] == idea
     assert "origin_crucible_id" not in captured
     with get_db() as conn:
         row = conn.execute(
@@ -643,7 +641,7 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
         ).fetchone()
 
     assert dict(row) == {
-        "origin_crucible_id": "HYP-456",
+        "origin_crucible_id": None,
         "origin_agent_id": "strategy-developer",
         "origin_task_id": "T0101",
         "origin_model": "gpt-5.3",
@@ -656,27 +654,22 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
     assert linked["id"] == "S12345"
 
 
-def test_jbt_create_strategy_rejects_mismatched_hypothesis_and_crucible(forven_db, monkeypatch):
+@pytest.mark.parametrize(
+    ("hypothesis_id", "expected"),
+    [(None, "create_hypothesis"), ("H-missing", "unknown hypothesis_id")],
+)
+def test_jbt_create_strategy_requires_a_real_idea_inside_a_creation_task(
+    forven_db, monkeypatch, hypothesis_id, expected
+):
     created: list[dict] = []
     with get_db() as conn:
         conn.execute(
             """
             INSERT INTO agent_tasks
                 (agent_id, type, title, description, input_data, display_id, status)
-            VALUES (?, 'develop_candidate', 'Develop candidate', 'Build a candidate strategy', ?, ?, 'running')
+            VALUES (?, 'generate_strategies', 'Create a strategy', 'Write an idea and build it', ?, ?, 'running')
             """,
-            (
-                "strategy-developer",
-                json.dumps(
-                    {
-                        "origin_mode": "crucible_planner",
-                        "action_kind": "develop_candidate",
-                        "crucible_id": "HYP-parent",
-                        "hypothesis_id": "HYP-parent",
-                    }
-                ),
-                "T0102",
-            ),
+            ("strategy-developer", _CREATION_TASK_INPUT, "T0102"),
         )
 
     class FakeClient:
@@ -687,25 +680,21 @@ def test_jbt_create_strategy_rejects_mismatched_hypothesis_and_crucible(forven_d
     monkeypatch.setattr(tools_mod, "_check_backtesting_available", lambda: True)
     monkeypatch.setattr("forven.backtesting.get_client", lambda: FakeClient())
 
+    params = {
+        "name": "Idea-less candidate",
+        "strategy_type": "macd",
+        "symbol": "BTC/USDT",
+        "params": {"fast": 5, "slow": 13, "signal": 3},
+    }
+    if hypothesis_id:
+        params["hypothesis_id"] = hypothesis_id
     tokens = set_tool_context("strategy-developer", "T0102")
     try:
-        result = json.loads(
-            _tool_backtesting(
-                "forven_create_strategy",
-                {
-                    "name": "Mismatched candidate",
-                    "crucible_id": "HYP-parent",
-                    "hypothesis_id": "HYP-child",
-                    "strategy_type": "macd",
-                    "symbol": "BTC/USDT",
-                    "params": {"fast": 5, "slow": 13, "signal": 3},
-                },
-            )
-        )
+        result = json.loads(_tool_backtesting("forven_create_strategy", params))
     finally:
         reset_tool_context(tokens)
 
-    assert "planner-approved crucible_id and hypothesis_id pair" in result["error"]
+    assert expected in result["error"]
     assert created == []
 
 

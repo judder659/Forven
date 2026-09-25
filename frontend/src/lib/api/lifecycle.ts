@@ -82,7 +82,6 @@ export interface LifecycleStrategy {
 	state_changed_at: string | null;
 	failed_at: string | null;
 	retention_expires_at: string | null;
-	canonical?: boolean | number | null;
 	parent_strategy_id?: string | null;
 	pinned_backtest_id?: string | null;
 }
@@ -855,7 +854,7 @@ export interface GauntletTestEntry {
 
 // Deflated Sharpe payload embedded in the gauntlet status response. n_trials is
 // the EFFECTIVE trial count: optimizer trials (n_trials_base) x swarm attempts
-// (1 + swarm_cluster_attempts disproven same-cluster hypotheses, issue #17).
+// (1 + swarm_cluster_attempts same-cluster siblings that failed, issue #17).
 export interface DeflatedSharpeInfo {
 	dsr: number | null;
 	sr_hat?: number;

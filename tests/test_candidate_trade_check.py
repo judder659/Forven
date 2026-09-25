@@ -1,4 +1,4 @@
-"""A crucible candidate must trade on its own market before it counts as registered."""
+"""An agent candidate must trade on its own market before it counts as registered."""
 from __future__ import annotations
 
 import pytest
@@ -29,7 +29,7 @@ def engine(monkeypatch):
 
 
 def test_check_mirrors_the_quick_screen_run_and_counts_in_sample_trades(forven_db, engine):
-    from forven.crucible_tasks import check_candidate_trades
+    from forven.strategies.candidate_checks import check_candidate_trades
     from forven.evolution import _bars_for_validation_timeframe
 
     calls, reply = engine
@@ -49,7 +49,7 @@ def test_check_mirrors_the_quick_screen_run_and_counts_in_sample_trades(forven_d
 
 
 def test_check_flags_a_candidate_below_the_quick_screen_floor(forven_db, engine):
-    from forven.crucible_tasks import check_candidate_trades
+    from forven.strategies.candidate_checks import check_candidate_trades
 
     _calls, reply = engine
     reply["metrics"] = {"total_trades": 1, "in_sample": {"total_trades": 4}, "out_of_sample": {"total_trades": 1}}
@@ -61,7 +61,7 @@ def test_check_flags_a_candidate_below_the_quick_screen_floor(forven_db, engine)
 
 
 def test_check_leaves_engine_errors_to_the_pipeline(forven_db, engine):
-    from forven.crucible_tasks import check_candidate_trades
+    from forven.strategies.candidate_checks import check_candidate_trades
 
     _calls, reply = engine
     reply["error"] = "Required feed unavailable: liquidations"
@@ -74,7 +74,7 @@ def test_check_leaves_engine_errors_to_the_pipeline(forven_db, engine):
 
 
 def test_check_skips_candidates_already_archived_at_intake(forven_db, engine):
-    from forven.crucible_tasks import check_candidate_trades
+    from forven.strategies.candidate_checks import check_candidate_trades
 
     calls, _reply = engine
     _strategy("S-C4", stage="archived")
@@ -84,7 +84,7 @@ def test_check_skips_candidates_already_archived_at_intake(forven_db, engine):
 
 
 def test_check_does_not_start_without_time_left(forven_db, engine):
-    from forven.crucible_tasks import check_candidate_trades
+    from forven.strategies.candidate_checks import check_candidate_trades
 
     calls, _reply = engine
     _strategy("S-C5")

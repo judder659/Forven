@@ -108,7 +108,7 @@ def resume_checkpoint(task_id: int) -> dict:
     saved = load_execution(task_id, row["agent_id"]).checkpoint
     if row["status"] != "blocked" or saved.get("inflight") or not (saved.get("messages") or saved.get("pending_handoff") or saved.get("data_preflight")):
         raise HTTPException(409, "No safe checkpoint to resume. Inspect the task and reconcile any uncertain tool outcome.")
-    if row["type"] == "develop_candidate":
+    if row["type"] in {"generate_strategies", "develop_candidate"}:
         import json
         candidate_readiness = importlib.import_module("forven.strategies.idea_readiness").candidate_readiness
 
@@ -117,28 +117,11 @@ def resume_checkpoint(task_id: int) -> dict:
         except (TypeError, ValueError):
             payload = {}
         payload = payload if isinstance(payload, dict) else {}
-        report = candidate_readiness(dict(row), payload)
-        if not report["can_generate"]:
-            raise HTTPException(409, "Candidate inputs are still blocked: " + " ".join(report["issues"]))
-        hypothesis_id = payload.get("hypothesis_id") or payload.get("crucible_id")
-        with importlib.import_module("forven.db").get_db() as conn:
-            hypothesis = conn.execute(
-                "SELECT id,manager_state,status FROM hypotheses WHERE id=? OR display_id=?",
-                (hypothesis_id, hypothesis_id),
-            ).fetchone()
-        if not hypothesis or hypothesis["manager_state"] != "active" or hypothesis["status"] not in {"researching", "proven"}:
-            raise HTTPException(409, "Candidate hypothesis is not active and ready for development.")
+        if payload.get("hypothesis_id"):
+            report = candidate_readiness(dict(row), payload)
+            if not report["can_generate"]:
+                raise HTTPException(409, "Candidate inputs are still blocked: " + " ".join(report["issues"]))
     with importlib.import_module("forven.db").get_db() as conn:
-        if row["type"] == "develop_candidate":
-            conn.execute("BEGIN IMMEDIATE")
-            other = conn.execute(
-                "SELECT id FROM agent_tasks WHERE id!=? AND type='develop_candidate' "
-                "AND status IN ('pending','running') AND json_valid(input_data) "
-                "AND COALESCE(json_extract(input_data,'$.hypothesis_id'),json_extract(input_data,'$.crucible_id')) "
-                "IN (?,?) LIMIT 1", (task_id, hypothesis["id"], hypothesis_id),
-            ).fetchone()
-            if other:
-                raise HTTPException(409, "Another candidate task is already active for this hypothesis.")
         changed = conn.execute(
             "UPDATE agent_tasks SET status='pending',retry_at=NULL,started_at=NULL,completed_at=NULL,error=NULL "
             "WHERE id=? AND status='blocked'", (task_id,),

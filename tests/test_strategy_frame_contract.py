@@ -124,7 +124,7 @@ def test_short_history_columns_flags_a_recently_collected_feed(tmp_path, monkeyp
 
 
 def test_candidate_with_a_short_feed_is_rejected_as_insufficient_history(forven_db, tmp_path, monkeypatch):
-    from forven.crucible_tasks import check_candidate_trades
+    from forven.strategies.candidate_checks import check_candidate_trades
     from forven.db import get_db
 
     source = tmp_path / "liq_gate.py"

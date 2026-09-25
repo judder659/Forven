@@ -1,7 +1,7 @@
 """Task checkpointing for resumable long-running agent tasks.
 
-Some agent tasks (large backtest sweeps, multi-symbol research passes, the
-crucible planner) can run for many minutes. If the user closes the Tauri
+Some agent tasks (large backtest sweeps, multi-symbol research passes,
+strategy creation) can run for many minutes. If the user closes the Tauri
 window mid-task — or the app crashes — we don't want to start over from
 scratch on the next open.
 

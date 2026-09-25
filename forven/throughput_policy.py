@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 from forven.research_contract import (
     _DEFAULT_RESEARCH_SETTINGS,
-    get_hypothesis_discipline_settings,
+    get_effective_research_settings,
 )
 
 # Single source for the flat throughput knob defaults in forven:settings.
@@ -37,15 +37,13 @@ THROUGHPUT_DEFAULTS: dict[str, int] = {
     "gauntlet_drain_workers": 3,
 }
 
-# The develop budget lives in research_settings.hypothesis_discipline inside
-# the same forven:settings blob (written via settings section 'research').
-_DEVELOP_BUDGET_KEY = "crucible_daily_develop_budget"
-_DEVELOP_BUDGET_DEFAULT = int(
-    _DEFAULT_RESEARCH_SETTINGS["hypothesis_discipline"][_DEVELOP_BUDGET_KEY]
-)
+# The creation budget lives in research_settings inside the same
+# forven:settings blob (written via settings section 'research').
+_CREATION_BUDGET_KEY = "strategy_creation_daily_budget"
+_CREATION_BUDGET_DEFAULT = int(_DEFAULT_RESEARCH_SETTINGS[_CREATION_BUDGET_KEY])
 
 # Mirrors the _apply_settings_section coercion bounds (api_core) for the flat
-# knobs and _HYPOTHESIS_DISCIPLINE_RANGES for the budget. Derivation compares
+# knobs and forven.strategy_creation's range for the budget. Derivation compares
 # POST-coercion values on both sides, so a bundle value sitting exactly on a
 # bound (claim limit 20, subprocess budget 8) still matches after clamping.
 THROUGHPUT_SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
@@ -56,13 +54,13 @@ THROUGHPUT_SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
     "agent_task_claim_limit": (1, 20),
     "backtest_subprocess_budget": (1, 8),
     "gauntlet_drain_workers": (1, 8),
-    _DEVELOP_BUDGET_KEY: (1, 2000),
+    _CREATION_BUDGET_KEY: (0, 500),
 }
 
 # Complete value maps — every preset lists every key, and "balanced" IS the
-# shipped defaults (pinned by tests in both directions). The develop budget is
+# shipped defaults (pinned by tests in both directions). The creation budget is
 # the dominant AI-call-volume driver, so the outcome help text in the UI is
-# phrased off it (trickle ~20 develops/day ... max ~500).
+# phrased off it (trickle 2 strategy-creation tasks/day ... max 30).
 THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
     "trickle": {
         "ideation_interval_minutes": 480,
@@ -72,7 +70,7 @@ THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
         "agent_task_claim_limit": 1,
         "backtest_subprocess_budget": 1,
         "gauntlet_drain_workers": 1,
-        _DEVELOP_BUDGET_KEY: 20,
+        _CREATION_BUDGET_KEY: 2,
     },
     "conserve": {
         "ideation_interval_minutes": 240,
@@ -82,11 +80,11 @@ THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
         "agent_task_claim_limit": 3,
         "backtest_subprocess_budget": 2,
         "gauntlet_drain_workers": 1,
-        _DEVELOP_BUDGET_KEY: 60,
+        _CREATION_BUDGET_KEY: 6,
     },
     "balanced": {
         **THROUGHPUT_DEFAULTS,
-        _DEVELOP_BUDGET_KEY: _DEVELOP_BUDGET_DEFAULT,
+        _CREATION_BUDGET_KEY: _CREATION_BUDGET_DEFAULT,
     },
     "max": {
         "ideation_interval_minutes": 15,
@@ -96,7 +94,7 @@ THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
         "agent_task_claim_limit": 20,
         "backtest_subprocess_budget": 8,
         "gauntlet_drain_workers": 6,
-        _DEVELOP_BUDGET_KEY: 500,
+        _CREATION_BUDGET_KEY: 30,
     },
 }
 
@@ -106,7 +104,7 @@ def _clamp(key: str, value: Any) -> int:
     try:
         coerced = int(value)
     except (TypeError, ValueError):
-        coerced = int(THROUGHPUT_DEFAULTS.get(key, _DEVELOP_BUDGET_DEFAULT))
+        coerced = int(THROUGHPUT_DEFAULTS.get(key, _CREATION_BUDGET_DEFAULT))
     return max(lo, min(hi, coerced))
 
 
@@ -116,12 +114,8 @@ def _current_throughput_values(settings: Mapping[str, Any]) -> dict[str, int]:
         key: _clamp(key, settings.get(key, default))
         for key, default in THROUGHPUT_DEFAULTS.items()
     }
-    # Defaults + clamps internally; accepts the full settings mapping and digs
-    # research_settings.hypothesis_discipline out itself.
-    discipline = get_hypothesis_discipline_settings(settings)
-    values[_DEVELOP_BUDGET_KEY] = _clamp(
-        _DEVELOP_BUDGET_KEY, discipline.get(_DEVELOP_BUDGET_KEY)
-    )
+    research = get_effective_research_settings(settings)
+    values[_CREATION_BUDGET_KEY] = _clamp(_CREATION_BUDGET_KEY, research.get(_CREATION_BUDGET_KEY))
     return values
 
 

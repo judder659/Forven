@@ -2220,17 +2220,17 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(diff?.textContent).toContain('18');
 	});
 
-	it('links back to the parent hypothesis when one is attached', async () => {
+	it('shows the idea the strategy tests when one is attached', async () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
 		apiMocks.getResult.mockImplementation(async (resultId: string) => buildResult(resultId));
 		apiMocks.getResultChartContext.mockImplementation(async (resultId: string) => buildChartContext(resultId));
 
 		app = mount(StrategyDetailPage, { target });
-		await waitForCondition(() => target.querySelector('a[href="/hypotheses/H00001"]') !== null);
+		const ideaButton = () =>
+			Array.from(target.querySelectorAll('button')).find((node) => (node.textContent || '').includes('Idea H00001'));
+		await waitForCondition(() => ideaButton() !== undefined);
 
-		const link = target.querySelector('a[href="/hypotheses/H00001"]');
-		expect(link).not.toBeNull();
-		expect(link?.textContent).toContain('Crucible');
-		expect(link?.textContent).toContain('H00001');
+		expect(ideaButton()?.getAttribute('aria-expanded')).toBe('false');
+		expect(target.querySelector('a[href^="/hypotheses/"]')).toBeNull();
 	});
 });

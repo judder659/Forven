@@ -73,7 +73,7 @@ const THROUGHPUT_BUNDLES = {
 		agent_task_claim_limit: 1,
 		backtest_subprocess_budget: 1,
 		gauntlet_drain_workers: 1,
-		crucible_daily_develop_budget: 20,
+		strategy_creation_daily_budget: 2,
 	},
 	conserve: {
 		ideation_interval_minutes: 240,
@@ -83,7 +83,7 @@ const THROUGHPUT_BUNDLES = {
 		agent_task_claim_limit: 3,
 		backtest_subprocess_budget: 2,
 		gauntlet_drain_workers: 1,
-		crucible_daily_develop_budget: 60,
+		strategy_creation_daily_budget: 6,
 	},
 	balanced: {
 		ideation_interval_minutes: 120,
@@ -93,7 +93,7 @@ const THROUGHPUT_BUNDLES = {
 		agent_task_claim_limit: 12,
 		backtest_subprocess_budget: 4,
 		gauntlet_drain_workers: 3,
-		crucible_daily_develop_budget: 150,
+		strategy_creation_daily_budget: 12,
 	},
 	max: {
 		ideation_interval_minutes: 15,
@@ -103,15 +103,15 @@ const THROUGHPUT_BUNDLES = {
 		agent_task_claim_limit: 20,
 		backtest_subprocess_budget: 8,
 		gauntlet_drain_workers: 6,
-		crucible_daily_develop_budget: 500,
+		strategy_creation_daily_budget: 30,
 	},
 };
 
 function settingsForBundle(bundle: Record<string, number>): Record<string, unknown> {
-	const { crucible_daily_develop_budget, ...flat } = bundle;
+	const { strategy_creation_daily_budget, ...flat } = bundle;
 	return {
 		...flat,
-		research_settings: { hypothesis_discipline: { crucible_daily_develop_budget } },
+		research_settings: { strategy_creation_daily_budget },
 		throughput_presets: THROUGHPUT_BUNDLES,
 	};
 }
@@ -163,7 +163,7 @@ describe('SettingsSystem throughput preset dial', () => {
 		const pend = get(pendingValues);
 		expect(pend['bot-operations.ideation_interval_minutes']).toBe(480);
 		expect(pend['bot-operations.agent_task_claim_limit']).toBe(1);
-		expect(pend['research.crucible_daily_develop_budget']).toBe(20);
+		expect(pend['research.strategy_creation_daily_budget']).toBe(2);
 		// Derived value follows the pending edits before any save.
 		expect(dialSelect().value).toBe('trickle');
 		// The RENDERED inputs must update too — regression guard: rows fed from a
@@ -175,10 +175,10 @@ describe('SettingsSystem throughput preset dial', () => {
 		expect(ideationInput).toBeTruthy();
 		expect(ideationInput.value).toBe('480');
 		const budgetInput = target.querySelector(
-			'input[id="research.crucible_daily_develop_budget"]',
+			'input[id="research.strategy_creation_daily_budget"]',
 		) as HTMLInputElement;
 		expect(budgetInput).toBeTruthy();
-		expect(budgetInput.value).toBe('20');
+		expect(budgetInput.value).toBe('2');
 	});
 
 	it('editing one knob away flips the derived value to custom', async () => {

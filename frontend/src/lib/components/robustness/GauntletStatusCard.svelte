@@ -173,7 +173,7 @@
 			return (
 				base +
 				` Trial count includes swarm-level selection: ${info.n_trials_base ?? '?'} optimizer trials x ` +
-				`${swarm + 1} attempts in this idea-cluster (${swarm} sibling hypotheses already disproven).`
+				`${swarm + 1} attempts in this idea-cluster (${swarm} sibling strategies already failed).`
 			);
 		}
 		return base;

@@ -6,11 +6,9 @@ plus operator-grade ACTION tools the operator explicitly authorized for
 direct (no-confirmation) use:
 
   * ``assistant_create_strategy`` — creates a strategy from a natural-language
-    idea. This closes the long-standing gap where ``create_strategy`` was
-    unusable from chat because it demanded a ``hypothesis_id`` the chat had no
-    way to mint. Here we mint a lightweight *operator* hypothesis first
-    (``source_type='operator_manual'``, honestly attributed) and then register
-    the strategy against it.
+    idea. The operator's idea is written down as an idea record first
+    (``source_type='operator_manual'``, honestly attributed) and the strategy
+    is linked to it.
   * ``assistant_run_backtest`` — runs a LOCAL backtest for a strategy (same
     engine the deepdive tools use), avoiding the remote HTTP backtest service.
   * ``assistant_register_strategy_file`` — register a custom strategy .py file
@@ -590,14 +588,13 @@ def _tool_get_ops_overview() -> str:
 @register_tool(
     name="list_hypotheses",
     description=(
-        "List crucibles (trading-idea hypotheses) with status and strategy counts, "
-        "optionally filtered by status or a search string. Use for 'any promising "
-        "ideas?', 'what ideas are under test?'."
+        "List recent trading ideas (idea records) and the pipeline stages of the "
+        "strategies built from each, optionally filtered by a search string. Use for "
+        "'what ideas were tried?', 'what came of my idea?'."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "status": {"type": "string", "description": "Optional status filter."},
             "search": {"type": "string", "description": "Optional search string."},
             "limit": {"type": "integer", "description": "Max rows (default 20, max 50)."},
         },
@@ -605,33 +602,37 @@ def _tool_get_ops_overview() -> str:
     },
     permissions={"brain", None},
 )
-def _tool_list_hypotheses(status: str = "", search: str = "", limit: int = 20) -> str:
-    from forven.api_domains.hypotheses import list_hypotheses_page
+def _tool_list_hypotheses(search: str = "", limit: int = 20, **_ignored) -> str:
+    from forven.hypotheses import list_hypotheses
 
     try:
         cap = max(1, min(int(limit or 20), 50))
     except (TypeError, ValueError):
         cap = 20
-    page = list_hypotheses_page(
-        status=(str(status or "").strip() or None),
-        search=(str(search or "").strip() or None),
-        limit=cap,
-        offset=0,
-    )
-    rows = page.get("hypotheses") or []
+    rows = list_hypotheses(search=(str(search or "").strip() or None), limit=cap)
+    ids = [str(row.get("id")) for row in rows if row.get("id")]
+    stages: dict[str, dict[str, int]] = {}
+    if ids:
+        placeholders = ",".join("?" for _ in ids)
+        with get_db() as conn:
+            for row in conn.execute(
+                f"SELECT hypothesis_id, stage, COUNT(*) AS n FROM strategies "
+                f"WHERE hypothesis_id IN ({placeholders}) GROUP BY hypothesis_id, stage",
+                tuple(ids),
+            ).fetchall():
+                stages.setdefault(str(row["hypothesis_id"]), {})[str(row["stage"])] = int(row["n"])
     out = [
         {
             "id": h.get("id"),
             "display_id": h.get("display_id"),
             "title": h.get("title"),
-            "status": h.get("status"),
-            "lane": h.get("lane"),
             "source_type": h.get("source_type"),
-            "strategy_count": h.get("strategy_count"),
+            "created_at": h.get("created_at"),
+            "strategy_stages": stages.get(str(h.get("id")), {}),
         }
-        for h in rows[:cap]
+        for h in rows
     ]
-    return _json.dumps({"total": page.get("total"), "hypotheses": out}, indent=2, default=str)
+    return _json.dumps({"count": len(out), "ideas": out}, indent=2, default=str)
 
 
 @register_tool(
@@ -745,7 +746,7 @@ def _tool_list_agent_tasks(status: str = "", limit: int = 20) -> str:
     name="assistant_create_strategy",
     description=(
         "Create a new tradable strategy from the operator's natural-language idea. "
-        "Mints an operator hypothesis automatically, then registers the strategy in "
+        "Writes the idea down as an idea record, then registers the strategy in "
         "the 'quick_screen' stage so it can be backtested and run through the gauntlet. "
         f"`strategy_type` MUST be an existing family (e.g. {_COMMON_FAMILIES}) — do not "
         "invent a type. Composite param sets mixing indicators are fine. Returns the new "
@@ -756,7 +757,7 @@ def _tool_list_agent_tasks(status: str = "", limit: int = 20) -> str:
         "properties": {
             "idea": {
                 "type": "string",
-                "description": "The operator's idea / thesis in their own words (drives the hypothesis).",
+                "description": "The operator's idea / thesis in their own words (becomes the idea record).",
             },
             "name": {"type": "string", "description": "Short human-readable strategy name."},
             "strategy_type": {
@@ -794,8 +795,8 @@ def _tool_assistant_create_strategy(
     if not strategy_type or not symbol:
         return "Error: strategy_type and symbol are required."
 
-    # Certify the family/params BEFORE minting a hypothesis so an invalid type
-    # never leaves an orphan hypothesis behind.
+    # Certify the family/params BEFORE writing the idea so an invalid type
+    # never leaves an orphan idea record behind.
     certification = certify_execution_strategy(strategy_type, params)
     cert_error = certification.format_error(context="creation")
     if certification.unregistered_runtime_type or cert_error:
@@ -819,7 +820,6 @@ def _tool_assistant_create_strategy(
                 f"{strategy_type} signals on {symbol} {timeframe}. "
                 f"Params: {_json.dumps(params)[:400]}"
             ),
-            lane="benchmarking",
             source_type="operator_manual",
             origin_role="operator",
             origin_model=provider,
@@ -829,11 +829,11 @@ def _tool_assistant_create_strategy(
             novelty_score=0.0,
         )
     except Exception as exc:
-        return f"Could not create the parent hypothesis: {exc}"
+        return f"Could not write the idea record: {exc}"
 
     hyp_id = str(hypothesis.get("id") or "").strip()
     if not hyp_id:
-        return "Could not create the parent hypothesis (no id returned)."
+        return "Could not write the idea record (no id returned)."
 
     result = create_strategy(
         strategy_id="",

@@ -10,7 +10,6 @@ import type { ApprovalRecord } from '$lib/api/forven';
 
 import StrategyApprovalCard from './StrategyApprovalCard.svelte';
 import TaskApprovalCard from './TaskApprovalCard.svelte';
-import CrucibleDethroneCard from './CrucibleDethroneCard.svelte';
 import RegimeChampionCard from './RegimeChampionCard.svelte';
 import RoutineCreateCard from './RoutineCreateCard.svelte';
 
@@ -21,7 +20,6 @@ export const APPROVAL_TYPE_TITLES: Record<string, string> = {
 	code_change: 'Code Change',
 	skill_update_proposal: 'Skill Update Proposal',
 	routine_create: 'New Routine Proposal',
-	crucible_dethrone: 'Crucible Dethrone',
 	regime_champion_promotion: 'Regime Champion Promotion',
 	strategy_live_graduation_recommendation: 'Live Graduation Recommendation',
 };
@@ -45,7 +43,6 @@ const PAYLOAD_RENDERERS: Record<string, ApprovalCard> = {
 	strategy_promotion_approval: StrategyApprovalCard,
 	task_approval: TaskApprovalCard,
 	code_change: TaskApprovalCard,
-	crucible_dethrone: CrucibleDethroneCard,
 	regime_champion_promotion: RegimeChampionCard,
 	routine_create: RoutineCreateCard,
 };

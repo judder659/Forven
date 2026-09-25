@@ -12,10 +12,6 @@ def test_tool_create_strategy_returns_duplicate_error_without_keyerror(monkeypat
         lambda model, model_id: (model, model_id),
     )
     monkeypatch.setattr(
-        "forven.agents.tools_research.assert_hypothesis_spawn_allowed",
-        lambda hypothesis_id: None,
-    )
-    monkeypatch.setattr(
         "forven.brain.create_strategy",
         lambda **_kwargs: {"error": "Duplicate: active strategy S00165 has identical type+params"},
     )
@@ -84,11 +80,22 @@ def test_tool_create_strategy_research_only_flag_no_longer_bypasses_certificatio
     assert created == []
 
 
-def test_tool_create_strategy_requires_hypothesis_id():
+def test_tool_create_strategy_accepts_a_strategy_without_an_idea(monkeypatch):
+    created: list[dict] = []
+    monkeypatch.setattr(
+        "forven.ai.normalize_provider_and_model",
+        lambda model, model_id: (model, model_id),
+    )
+    monkeypatch.setattr(
+        "forven.brain.create_strategy",
+        lambda **kwargs: created.append(kwargs)
+        or {"id": kwargs["strategy_id"], "status": "quick_screen"},
+    )
+
     result = _tool_create_strategy(
         {
-            "strategy_id": "no-hypothesis",
-            "name": "Missing hypothesis",
+            "strategy_id": "no-idea",
+            "name": "No linked idea",
             "strategy_type": "macd",
             "symbol": "BTC/USDT",
             "params": {"fast": 5, "slow": 13, "signal": 3},
@@ -97,17 +104,18 @@ def test_tool_create_strategy_requires_hypothesis_id():
         }
     )
 
-    assert "hypothesis_id" in result
+    assert result.startswith("Strategy created: no-idea")
+    assert created[0]["hypothesis_id"] is None
 
 
-def test_tool_create_strategy_rejects_agent_context_without_planner_task(forven_db):
+def test_tool_create_strategy_rejects_agent_context_without_a_running_task(forven_db):
     tokens = set_tool_context("strategy-developer", "T0099")
     try:
         result = _tool_create_strategy(
             {
-                "strategy_id": "agent-no-planner",
+                "strategy_id": "agent-no-task",
                 "hypothesis_id": "HYP-123",
-                "name": "Agent no planner",
+                "name": "Agent without a task",
                 "strategy_type": "macd",
                 "symbol": "BTC/USDT",
                 "params": {"fast": 5, "slow": 13, "signal": 3},
@@ -119,7 +127,7 @@ def test_tool_create_strategy_rejects_agent_context_without_planner_task(forven_
         reset_tool_context(tokens)
 
     assert "Error creating strategy:" in result
-    assert "planner-approved" in result
+    assert "running task" in result
 
 
 def test_bootstrap_brain_cannot_assign_quant_researcher_research_task(monkeypatch, forven_db):
@@ -169,7 +177,7 @@ def test_bootstrap_brain_cannot_assign_quant_researcher_research_task(monkeypatc
         }
     )
 
-    assert "strategy-developer swarm" in result.lower()
+    assert "defer quant-researcher" in result.lower()
     assert assigned == []
 
 
