@@ -86,6 +86,25 @@ def _insert_develop_task(directive: str | None = None, task_type: str = "develop
         )
 
 
+def _insert_blocked_develop_task(*, with_model_call: bool = False):
+    """A preflight block is free; a block after model execution is chargeable."""
+    import json
+
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO agent_tasks (agent_id, type, title, description, input_data, status) "
+            "VALUES ('strategy-developer', 'develop_candidate', 'blocked', 'd', ?, 'blocked')",
+            (json.dumps({"action_kind": "develop_candidate"}),),
+        )
+        if with_model_call:
+            conn.execute(
+                "INSERT INTO agent_model_calls "
+                "(id, task_id, agent_id, provider, model_id, input_tokens, output_tokens, cost_usd, estimated_cost_usd, created_at) "
+                "VALUES (?, ?, 'strategy-developer', 'minimax', 'MiniMax-M3', 1, 1, 0, 0, datetime('now'))",
+                (f"test-call-{cur.lastrowid}", cur.lastrowid),
+            )
+
+
 def test_develop_budget_counts_today(monkeypatch):
     from forven import crucible_allocator as allocator
 
@@ -95,6 +114,15 @@ def test_develop_budget_counts_today(monkeypatch):
     _insert_develop_task(task_type="research")  # not develop-family
     assert allocator.develop_budget_used_today() == 2
     assert allocator.develop_budget_remaining() == allocator.develop_daily_budget() - 2
+
+
+def test_preflight_block_does_not_consume_budget_but_executed_block_does():
+    from forven import crucible_allocator as allocator
+
+    _insert_blocked_develop_task()
+    assert allocator.develop_budget_used_today() == 0
+    _insert_blocked_develop_task(with_model_call=True)
+    assert allocator.develop_budget_used_today() == 1
 
 
 def test_develop_budget_knob_clamped():
