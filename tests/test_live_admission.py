@@ -105,8 +105,9 @@ def test_untraded_strategy_is_sized_at_its_full_slice(forven_db):
         eth = _strategy(conn, "ETH/USDT", "long_only", stage="paper")
         refusal = go_live_refusal(conn, eth)
 
-    # two long-only strategies at $300 each would tie up $600 against $240
-    assert refusal and "long wallet could need $600" in refusal and "Add about $360" in refusal
+    # two long-only strategies at $300 each would tie up $600 against $240; the
+    # wallet needs $750 of equity for an 80% limit to cover it, $450 more
+    assert refusal and "long wallet could need $600" in refusal and "Add about $450" in refusal
 
 
 def test_capacity_is_skipped_when_wallet_balances_are_unknown(forven_db):

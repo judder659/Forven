@@ -1490,7 +1490,8 @@ def go_live_refusal(conn, strategy_id: str) -> str | None:
         )
     for w in report["wallets"]:
         if w["over_capacity"]:
-            shortfall = w["worst_case_margin_usd"] - w["capacity_usd"]
+            # Only margin_cap_pct of a deposit becomes capacity.
+            shortfall = (w["worst_case_margin_usd"] - w["capacity_usd"]) / (report["margin_cap_pct"] / 100.0)
             reasons.append(
                 f"the {w['wallet']} wallet could need ${w['worst_case_margin_usd']:,.0f} of margin if every "
                 f"live strategy that trades {'/'.join(w['sides'])} entered at once, above its "
