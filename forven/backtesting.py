@@ -335,7 +335,7 @@ class BacktestingClient:
         leverage: float | None = None,
         execution_controls: dict | None = None,
         objective: str = "sharpe_ratio",
-        timeframe: str = "1h",
+        timeframe: str | None = None,
         trade_mode: str | None = None,
         request_source: str | None = None,
         origin_agent_id: str | None = None,
@@ -348,8 +348,11 @@ class BacktestingClient:
             "fee_bps": fee_bps,
             "slippage_bps": slippage_bps,
             "objective": objective,
-            "timeframe": timeframe,
         }
+        # A sent timeframe overrides the dataset id's and the strategy's stored
+        # one, so send it only when the caller names one (it used to default 1h).
+        if timeframe:
+            payload["timeframe"] = timeframe
         if parameters:
             payload["parameters"] = parameters
         if initial_capital is not None:
