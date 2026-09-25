@@ -281,7 +281,7 @@ def _cleanup_orphaned_running_jobs() -> None:
         with get_db() as conn:
             rows = conn.execute(
                 "SELECT result_id, config_json FROM backtest_results "
-                "WHERE result_type IN ('walk_forward','monte_carlo','param_jitter','cost_stress','regime_split','optimization','backtest') "
+                "WHERE result_type IN ('walk_forward','monte_carlo','param_jitter','cost_stress','regime_split','optimization','backtest','holdout') "
                 "AND config_json LIKE '%\"status\":%\"running\"%'",
             ).fetchall()
             for row in rows:
@@ -3017,4 +3017,303 @@ def run_regime_split_submit(body: RegimeSplitBody | None = None, **kwargs) -> di
         context=_prepare_regime_split_context(body),
         request_payload=_model_to_dict(body),
         runner=lambda: _run_regime_split_analysis(body),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Research holdout: the one-shot held-back test (rules in forven.research_holdout)
+#
+# Lives here, not in its own module: research reads, the paper gate and the
+# workflow all reach it, and this module already runs and records the validation
+# tests. A separate module importing the DB would join the import cycle that
+# tests/test_finish_db_layering.py ratchets.
+# ---------------------------------------------------------------------------
+
+_HOLDOUT_SUBMIT_LOCK = threading.Lock()  # one shot means one submission, even from racing callers
+
+
+def holdout_settings() -> dict:
+    from forven.research_contract import get_effective_research_settings
+    from forven.research_holdout import normalize_settings
+
+    try:
+        block = get_effective_research_settings().get("research_holdout")
+    except Exception:
+        block = None
+    return normalize_settings(block)
+
+
+def _holdout_family(row) -> str:
+    from forven.strategy_diversity import infer_strategy_family
+
+    # Only the design (not mutable notes/metrics), so the family a shot was
+    # counted under stays the family the strategy is judged under.
+    fields = ("type", "runtime_type", "name", "params")
+    return infer_strategy_family(*(row[field] if field in row.keys() else None for field in fields))
+
+
+def holdout_rows(strategy_id: str) -> list[dict]:
+    """This strategy's held-back test records, newest first."""
+    from forven.db import get_db
+    from forven.research_holdout import HOLDOUT_RESULT_TYPE
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT result_id, metrics_json, config_json, created_at FROM backtest_results
+               WHERE strategy_id = ? AND result_type = ?
+                 AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+               ORDER BY datetime(created_at) DESC, result_id DESC""",
+            (strategy_id, HOLDOUT_RESULT_TYPE),
+        ).fetchall()
+    return [
+        {
+            "result_id": row["result_id"],
+            "config": _parse_json_blob(row["config_json"], {}) or {},
+            "metrics": _parse_json_blob(row["metrics_json"], {}) or {},
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def holdout_family_shots(family: str, cutoff) -> int:
+    """Held-back tests spent (running or finished) by ``family`` under ``cutoff``."""
+    from forven.db import get_db
+    from forven.research_holdout import HOLDOUT_RESULT_TYPE, utc
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT config_json FROM backtest_results WHERE result_type = ? "
+            "AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')",
+            (HOLDOUT_RESULT_TYPE,),
+        ).fetchall()
+    spent = 0
+    for row in rows:
+        config = _parse_json_blob(row["config_json"], {}) or {}
+        request = config.get("request") if isinstance(config.get("request"), dict) else {}
+        if request.get("family") != family or utc(request.get("cutoff")) != cutoff:
+            continue
+        if str(config.get("status") or "").lower() in {"running", "succeeded"}:
+            spent += 1
+    return spent
+
+
+def holdout_state(strategy_id: str, settings: dict | None = None) -> dict:
+    """Where a strategy stands with its held-back test, without changing anything.
+
+    ``state`` is one of: off, exempt, pass, fail, running, missing,
+    budget_exhausted, errored.
+    """
+    from forven.research_holdout import MAX_ATTEMPTS, current_cutoff, is_contaminated
+
+    cfg = settings if settings is not None else holdout_settings()
+    cutoff = current_cutoff(cfg)
+    if cutoff is None or cfg.get("paper_mode") == "off":
+        return {"state": "off"}
+    try:
+        row = _load_strategy_row(strategy_id)
+    except HTTPException:
+        return {"state": "off"}
+    if is_contaminated(dict(row), cfg):
+        return {"state": "exempt", "reason": "created before the research holdout was established"}
+    params_hash = _current_params_hash(strategy_id)
+    attempts = [
+        r
+        for r in holdout_rows(strategy_id)
+        if r["config"].get("params_hash") == params_hash
+        # Refused at admission (executor busy): never ran, so not an attempt.
+        and not str(r["config"].get("error") or "").startswith("robustness executor")
+    ]
+    for record in attempts:
+        status = str(record["config"].get("status") or "").lower()
+        if status == "running":
+            return {"state": "running", "result_id": record["result_id"]}
+        if status == "succeeded":
+            passed = str(record["metrics"].get("verdict") or "").upper() == "PASS"
+            return {
+                "state": "pass" if passed else "fail",
+                "result_id": record["result_id"],
+                "reasons": list(record["metrics"].get("verdict_reasons") or []),
+            }
+    if len(attempts) >= MAX_ATTEMPTS:
+        return {"state": "errored", "attempts": len(attempts)}
+    family = _holdout_family(row)
+    limit = int(cfg.get("max_family_shots") or 0)
+    if limit and holdout_family_shots(family, cutoff) >= limit:
+        return {"state": "budget_exhausted", "family": family, "limit": limit}
+    return {"state": "missing", "family": family}
+
+
+def ensure_holdout(strategy_id: str, *, source: str = "system") -> dict:
+    """Submit the held-back test when a clean candidate still needs its one shot."""
+    with _HOLDOUT_SUBMIT_LOCK:
+        state = holdout_state(strategy_id)
+        if state["state"] != "missing":
+            return state
+        handle = run_holdout_submit(strategy_id, source=source)
+    return {"state": "running", "result_id": handle.get("result_id"), "submitted": True}
+
+
+def holdout_gate_reason(strategy_id: str, *, submit: bool = False) -> tuple[str, str] | None:
+    """(message, reason_code) when an enforcing paper gate must hold or reject.
+
+    The paper gate checks this LAST, so a missing test here means every other
+    ->paper check passed: with ``submit`` (any non-dry-run evaluation) the one
+    shot is spent now, whichever path is promoting — the workflow step, the
+    reconcile after validation, the stuck-gauntlet sweep or a direct promote.
+    """
+    from forven.research_holdout import gate_message
+
+    cfg = holdout_settings()
+    state = holdout_state(strategy_id, cfg)
+    if submit and state["state"] == "missing":
+        try:
+            state = ensure_holdout(strategy_id)
+        except Exception as exc:  # noqa: BLE001 — still missing, so the gate still holds
+            log.warning("Held-back test submission failed for %s: %s", strategy_id, exc)
+    if cfg.get("paper_mode") != "enforce":
+        return None
+    return gate_message(state)
+
+
+def holdout_summary(strategy_id: str) -> dict:
+    """Cutoff, settings and this strategy's held-back test state plus latest result."""
+    from forven.research_holdout import current_cutoff
+
+    cfg = holdout_settings()
+    cutoff = current_cutoff(cfg)
+    state = holdout_state(strategy_id, cfg) if cutoff is not None else {"state": "off"}
+    latest = None
+    if state.get("result_id"):
+        for record in holdout_rows(strategy_id):
+            if record["result_id"] == state["result_id"]:
+                latest = {
+                    "result_id": record["result_id"],
+                    "status": record["config"].get("status"),
+                    "created_at": record["created_at"],
+                    "result": record["metrics"],
+                }
+                break
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "cutoff": cutoff.isoformat() if cutoff is not None else None,
+        "roll": cfg.get("roll"),
+        "paper_mode": cfg.get("paper_mode"),
+        "established_at": cfg.get("established_at") or None,
+        "max_family_shots": cfg.get("max_family_shots"),
+        **state,
+        "latest": latest,
+    }
+
+
+def _run_holdout_analysis(strategy_id: str) -> dict:
+    """The one-shot test: a walk-forward whose OOS fold is the held-back period."""
+    from forven.baseline_hurdle import evaluate_baseline_hurdle
+    from forven.policy import load_pipeline_config
+    from forven.research_holdout import (
+        CONTEXT_DAYS,
+        MAX_EVAL_BARS,
+        MIN_CONTEXT_BARS,
+        current_cutoff,
+        unsealed,
+        verdict,
+    )
+    from forven.strategies.backtest import _hours_per_bar, load_backtest_candles, walk_forward
+    from forven.strategies.registry import discover
+
+    cfg = holdout_settings()
+    cutoff = current_cutoff(cfg)
+    if cutoff is None:
+        raise HTTPException(400, "Research holdout is not enabled")
+    row = _load_strategy_row(strategy_id)
+    discover()
+    strategy_type, params = _extract_strategy_info(row)
+    symbol = str(row["symbol"] or "")
+    timeframe = str(row["timeframe"] or params.get("timeframe") or "1h")
+    now = pd.Timestamp.now(tz="UTC").floor("h")
+    bar_hours = max(_hours_per_bar(timeframe), 1e-9)
+    holdout_bars = int((now - cutoff).total_seconds() / 3600 / bar_hours)
+    context_bars = min(int(CONTEXT_DAYS * 24 / bar_hours), MAX_EVAL_BARS - holdout_bars)
+    if context_bars < MIN_CONTEXT_BARS:
+        raise HTTPException(400, f"{timeframe} bars are too fine for a {holdout_bars}-bar held-back test")
+    start = cutoff - pd.Timedelta(hours=context_bars * bar_hours)
+
+    with unsealed():
+        frame = load_backtest_candles(
+            asset=symbol, timeframe=timeframe, start_date=start.isoformat(), end_date=now.isoformat()
+        )
+        index = pd.DatetimeIndex(pd.to_datetime(frame.index, utc=True, errors="coerce"))
+        before = int((index < cutoff).sum())
+        if before < MIN_CONTEXT_BARS or before >= len(index):
+            raise HTTPException(400, "Not enough data on both sides of the holdout cutoff")
+        walk_params = dict(params)
+        walk_params["timeframe"] = timeframe
+        # walk_forward loads this same frame (same dates, 210-bar warm-up), so the
+        # split lands on the cutoff and the one OOS fold is the held-back period.
+        result = walk_forward(
+            strategy_id=strategy_id,
+            asset=symbol,
+            strategy_type=strategy_type,
+            params=walk_params,
+            n_splits=1,
+            in_sample_pct=before / len(index),
+            start_date=start.isoformat(),
+            end_date=now.isoformat(),
+            timeframe=timeframe,
+        )
+    if not isinstance(result, dict) or result.get("error"):
+        raise HTTPException(400, str((result or {}).get("error") or "held-back walk-forward failed"))
+    splits = result.get("splits") if isinstance(result.get("splits"), list) else []
+    if not splits:
+        raise HTTPException(400, "held-back walk-forward produced no fold")
+    hurdle = evaluate_baseline_hurdle(result.get("baseline_hurdle"), load_pipeline_config().get("gauntlet", {}))
+    outcome, reasons = verdict(splits[-1], hurdle, int(cfg["min_trades"]))
+    fold = splits[-1]
+    family = _holdout_family(row)
+    return {
+        "verdict": outcome,
+        "verdict_reasons": reasons,
+        "cutoff": cutoff.isoformat(),
+        "held_back": {
+            "start": (fold.get("date_range") or {}).get("split_at"),
+            "end": (fold.get("date_range") or {}).get("end"),
+            "bars": fold.get("oos_bars"),
+        },
+        "out_of_sample": fold.get("out_of_sample") or {},
+        "baseline_hurdle": hurdle,
+        "family": family,
+        "family_shot": holdout_family_shots(family, cutoff),
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "start_date": result.get("start_date"),
+        "end_date": result.get("end_date"),
+    }
+
+
+def run_holdout_submit(strategy_id: str, *, source: str = "system") -> dict:
+    """Queue a candidate's one-shot held-back test.
+
+    The request stamps the family and cutoff so shots can be counted per family
+    per cutoff; _submit_result stamps params_hash, which makes the shot one per
+    params. Callers should go through ensure_holdout, which refuses a second shot.
+    """
+    from forven.research_holdout import HOLDOUT_RESULT_TYPE, current_cutoff
+
+    row = _load_strategy_row(strategy_id)
+    cutoff = current_cutoff(holdout_settings())
+    if cutoff is None:
+        raise HTTPException(400, "Research holdout is not enabled")
+    return _submit_result(
+        result_type=HOLDOUT_RESULT_TYPE,
+        context={
+            "strategy_id": strategy_id,
+            "symbol": row["symbol"],
+            "timeframe": row["timeframe"],
+            "start_date": cutoff.isoformat(),
+            "end_date": None,
+            "baseline_result_id": None,
+        },
+        request_payload={"strategy_id": strategy_id, "cutoff": cutoff.isoformat(), "family": _holdout_family(row)},
+        runner=lambda: _run_holdout_analysis(strategy_id),
+        source=source,
     )

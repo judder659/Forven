@@ -52,3 +52,7 @@ class CostStressBody(BaseModel):
 
 class RegimeSplitBody(BaseModel):
     result_id: str
+
+
+class HoldoutBody(BaseModel):
+    strategy_id: str

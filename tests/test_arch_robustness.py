@@ -224,6 +224,8 @@ def test_http_surface_is_unchanged():
     assert routes == [
         ("/api/robustness/cost-stress", ("POST",)),
         ("/api/robustness/cost-stress/submit", ("POST",)),
+        ("/api/robustness/holdout/submit", ("POST",)),
+        ("/api/robustness/holdout/{strategy_id}", ("GET",)),
         ("/api/robustness/monte-carlo", ("POST",)),
         ("/api/robustness/monte-carlo/submit", ("POST",)),
         ("/api/robustness/param-jitter", ("POST",)),

@@ -3113,6 +3113,11 @@ _EVIDENCE_ABSENCE_REASON_CODES = {
     # find a market to judge, so it never judged. Backtesting one real pair
     # resolves it.
     "no_symbol_evidence",
+    # Research holdout: the one-shot held-back test has not produced a verdict
+    # yet (queued/running/errored), or the family's per-quarter test budget is
+    # spent and the candidate waits for the next roll. Neither judged the edge.
+    "holdout_pending",
+    "holdout_budget_exhausted",
 }
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _DETHRONE_MANUAL_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
@@ -4334,6 +4339,13 @@ _PAPER_GATE_FLOORS = {
 }
 
 
+def holdout_gate_reason(strategy_id: str, *, submit: bool = False) -> tuple[str, str] | None:
+    """The research holdout's (message, reason_code) for ->paper, or None."""
+    from forven.robustness.engine import holdout_gate_reason as engine_holdout_gate_reason
+
+    return engine_holdout_gate_reason(strategy_id, submit=submit)
+
+
 def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = False) -> tuple[bool, str]:
     """Step 2 -> Step 3 gate: require robustness gauntlet score and S00552 test evidence.
     
@@ -4729,6 +4741,17 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
                          _check_artifact_rows_exist, strategy_id, sorted(required_tests))
     if result:
         return result
+
+    # Research holdout, LAST: in enforce mode a clean candidate (created after the
+    # holdout was established) needs a PASS from its one-shot held-back test.
+    # Every check above has passed, so a missing test is due now: a real
+    # evaluation submits it (dry runs never do), whichever path is promoting —
+    # workflow step, reconcile after validation, stuck-gauntlet sweep, direct
+    # promote. Queued/running/budget-spent is evidence absence; a completed FAIL
+    # is merit.
+    holdout = holdout_gate_reason(strategy_id, submit=not dry_run)
+    if holdout:
+        return False, GateRejection(holdout[0], reason_code=holdout[1])
 
     suffix = ""
     if warnings_list:

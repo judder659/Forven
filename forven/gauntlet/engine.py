@@ -90,6 +90,10 @@ _NO_DRAIN_REASON_CODES = {
     "wfa_window_insufficient",
     # The source-reconciliation job has not produced a fresh divergence reading yet.
     "source_reconciliation_pending",
+    # Research holdout: the one-shot held-back test is queued/running, or the
+    # family's per-quarter test budget is spent until the next roll.
+    "holdout_pending",
+    "holdout_budget_exhausted",
 }
 
 # Public alias — import THIS from other modules (tasks.py). Same object, so the

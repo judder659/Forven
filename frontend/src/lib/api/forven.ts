@@ -2256,6 +2256,18 @@ export interface AutonomousDiscoverySettings {
 	max_open_discovery_tasks: number;
 }
 
+/** Recent data research never sees; each new candidate gets one test on it (forven/research_holdout.py). */
+export interface ResearchHoldoutSettings {
+	enabled?: boolean;
+	roll?: 'quarterly' | 'manual';
+	lag_quarters?: number;
+	cutoff?: string;
+	established_at?: string;
+	paper_mode?: 'off' | 'observe' | 'enforce';
+	min_trades?: number;
+	max_family_shots?: number;
+}
+
 export interface ResearchSettings {
 	external_benchmarking_enabled: boolean;
 	lane_weights: Record<string, number>;
@@ -2268,6 +2280,7 @@ export interface ResearchSettings {
 	allowed_external_source_types: string[];
 	autonomous_discovery?: AutonomousDiscoverySettings;
 	hypothesis_discipline?: HypothesisDisciplineSettings;
+	research_holdout?: ResearchHoldoutSettings;
 	research_sources?: {
 		reddit?: {
 			enabled?: boolean;

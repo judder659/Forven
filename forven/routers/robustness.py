@@ -126,6 +126,8 @@ from forven.robustness.engine import (
     _verdict_successful,
     _write_payload_artifact,
     compute_composite_robustness_score,
+    ensure_holdout,
+    holdout_summary,
     run_cost_stress_inline,
     run_cost_stress_submit,
     run_monte_carlo_inline,
@@ -140,6 +142,7 @@ from forven.robustness.engine import (
 )
 from forven.robustness.models import (
     CostStressBody,
+    HoldoutBody,
     MonteCarloBody,
     ParamJitterBody,
     RegimeSplitBody,
@@ -380,6 +383,18 @@ def post_regime_split(body: RegimeSplitBody):
 @router.post("/api/robustness/regime-split/submit")
 def submit_regime_split(body: RegimeSplitBody):
     return run_regime_split_submit(body)
+
+
+@router.post("/api/robustness/holdout/submit")
+def submit_holdout(body: HoldoutBody):
+    """Run the candidate's one-shot held-back test if it is due; never re-runs a verdict."""
+    return ensure_holdout(body.strategy_id, source="user")
+
+
+@router.get("/api/robustness/holdout/{strategy_id}")
+def get_holdout(strategy_id: str):
+    """The research holdout's cutoff and where this strategy stands with its test."""
+    return holdout_summary(strategy_id)
 
 
 @router.get("/api/robustness/results/{result_id}")
