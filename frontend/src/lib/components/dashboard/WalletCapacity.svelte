@@ -1,17 +1,30 @@
 <script lang="ts">
 	/**
-	 * How much room each live wallet and asset has left. A full wallet refuses new
-	 * entries first-come-first-served, so this is where blocked entries come from.
+	 * How much margin each live wallet has tied up against its limit, and the worst
+	 * case if every live strategy that can use it entered at once. A wallet whose
+	 * worst case exceeds its limit will refuse a validated entry sooner or later.
 	 */
 	import type { ForvenRiskStatus } from '$lib/api';
+	import type { LiveCapacityReport } from '$lib/api/dashboard';
 	import { finite, formatUsd, meterTone } from '$lib/utils/liveDashboard';
 
 	export let budget: ForvenRiskStatus['portfolio_budget_live'] | null = null;
+	export let capacity: LiveCapacityReport | null = null;
 
+	$: worstCase = new Map((capacity?.wallets ?? []).map((w) => [w.wallet, w]));
 	$: wallets = Object.entries(budget?.per_book ?? {}).map(([label, book]) => {
-		const used = finite(book.gross_notional_usd) ?? 0;
+		const used = finite(book.margin_usd) ?? 0;
 		const limit = finite(book.limit_usd);
-		return { label, used, limit, fraction: limit ? used / limit : null, positions: finite(book.positions) ?? 0 };
+		const worst = worstCase.get(label);
+		return {
+			label,
+			used,
+			limit,
+			fraction: limit ? used / limit : null,
+			positions: finite(book.positions) ?? 0,
+			worstMargin: finite(worst?.worst_case_margin_usd),
+			overCapacity: Boolean(worst?.over_capacity),
+		};
 	});
 	$: assets = Object.entries(budget?.per_asset ?? {}).map(([asset, exposure]) => {
 		const net = finite(exposure.net_notional_usd) ?? 0;
@@ -31,7 +44,7 @@
 	</div>
 	<div class="grid gap-x-6 gap-y-3 px-3 py-2 md:grid-cols-2">
 		<div class="space-y-2">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500" title="Open notional against each wallet's own equity">Wallets</div>
+			<div class="text-[10px] uppercase tracking-wider text-gray-500" title="Margin tied up by open positions against each wallet's limit">Wallet margin</div>
 			{#each wallets as wallet (wallet.label)}
 				<div>
 					<div class="flex justify-between text-[11px]">
@@ -44,6 +57,11 @@
 					<div class="mt-1 h-1 bg-[#1a1a1a]">
 						<div class="h-1 {meterTone(wallet.fraction)}" style="width: {width(wallet.fraction)}"></div>
 					</div>
+					{#if wallet.worstMargin !== null}
+						<div class="mt-0.5 text-[10px] {wallet.overCapacity ? 'text-amber-300' : 'text-gray-500'}" title="If every live strategy that can use this wallet entered at once">
+							worst case {formatUsd(wallet.worstMargin)} of {formatUsd(wallet.limit)}{wallet.overCapacity ? ' — over the limit' : ''}
+						</div>
+					{/if}
 				</div>
 			{:else}
 				<div class="text-xs text-gray-500">No live wallets reported.</div>

@@ -1734,6 +1734,23 @@ def transition_stage(
                     "duplicate_trading_strategy",
                 )
 
+        # LIVE-ADMIT-1: going live must not create an entry refusal the backtest
+        # never had — a second live strategy on the same coin and side, or wallets
+        # that cannot hold every live strategy's margin at once. NOT bypassed by
+        # force: operator GO LIVE runs forced, and a forced overlap is exactly the
+        # silent refusal this gate exists to prevent (risk.go_live_refusal).
+        if normalized_target == "live_graduated" and current_stage not in {"live_graduated", "deployed"}:
+            try:
+                from forven.exchange.risk import go_live_refusal
+
+                _admit_refusal = go_live_refusal(conn, strategy_id)
+            except Exception as exc:
+                log.warning("Live admission check errored for %s: %s", strategy_id, exc)
+                _admit_refusal = f"live admission check unavailable ({exc}); refusing go-live (fail closed)"
+            if _admit_refusal:
+                log.error("LIVE ADMISSION BLOCKED: %s -> live_graduated - %s", strategy_id, _admit_refusal)
+                return _record_blocked_transition(f"Live admission: {_admit_refusal}", "live_admission")
+
         # WIP cap enforcement: refuse to admit another strategy into a capped stage
         # when the configured capacity is already full. Skipped for terminal/archival
         # transitions and for operator-forced moves. The paper cap is also lifted when

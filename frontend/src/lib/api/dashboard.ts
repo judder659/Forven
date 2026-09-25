@@ -261,6 +261,25 @@ export interface LiveFill {
 	failure_reason: string | null;
 }
 
+/** Worst-case wallet margin if every live strategy that can route to it entered at once. */
+export interface LiveWalletCapacity {
+	wallet: string;
+	sides: string[];
+	equity_usd: number | null;
+	capacity_usd: number | null;
+	worst_case_margin_usd: number | null;
+	over_capacity: boolean;
+}
+
+export interface LiveCapacityReport {
+	margin_cap_pct: number;
+	cohort_size: number;
+	slice_usd: number | null;
+	wallets: LiveWalletCapacity[];
+	/** Live strategies that share a coin and a direction, so they refuse each other's entries. */
+	conflicts: Array<{ coin: string; sides: string[]; strategy_ids: string[] }>;
+}
+
 export interface LiveFleet {
 	generated_at: string;
 	stale_after_seconds: number;
@@ -268,6 +287,7 @@ export interface LiveFleet {
 	live_bots_armed: number;
 	realized: Record<'7d' | '30d' | 'all', LiveRealizedWindow>;
 	recent_fills: LiveFill[];
+	capacity: LiveCapacityReport | null;
 }
 
 export async function getLiveFleet(): Promise<LiveFleet> {

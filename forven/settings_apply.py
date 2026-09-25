@@ -675,7 +675,7 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         "live_portfolio_budget_enabled", "live_max_total_open_risk_pct",
         "live_max_asset_exposure_pct", "live_max_group_exposure_pct",
         "live_hard_max_per_trade_risk_pct", "live_hard_max_order_notional_pct",
-        "live_max_book_notional_pct", "live_correlation_budget_enabled",
+        "live_max_book_margin_pct", "live_correlation_budget_enabled",
         "live_max_effective_exposure_pct", "live_correlation_window_bars",
         "live_correlation_missing_default",
         # RETRY-STORM-1 failed-open brake
@@ -735,7 +735,7 @@ _SETTINGS_SECTION_NUMERIC_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
         "live_max_group_exposure_pct": (0.0001, 10000.0),
         "live_hard_max_per_trade_risk_pct": (0.0001, 100.0),
         "live_hard_max_order_notional_pct": (0.0001, 10000.0),
-        "live_max_book_notional_pct": (0.0001, 10000.0),
+        "live_max_book_margin_pct": (0.0001, 100.0),
         "live_max_effective_exposure_pct": (0.0001, 10000.0),
         "live_correlation_window_bars": (1.0, 1e6),
         "live_correlation_missing_default": (0.0, 1.0),

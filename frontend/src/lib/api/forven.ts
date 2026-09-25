@@ -198,6 +198,8 @@ export interface ForvenRiskStatus {
 		/** BOOK-BUDGET-1: per-wallet (direction book) capacity and usage. */
 		per_book?: Record<string, {
 			gross_notional_usd?: number;
+			/** BOOK-MARGIN-1: margin tied up (notional / exchange leverage); limit_usd applies to this. */
+			margin_usd?: number;
 			risk_usd?: number;
 			positions?: number;
 			equity_usd?: number | null;

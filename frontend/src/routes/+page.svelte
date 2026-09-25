@@ -182,7 +182,7 @@
 					<RecentFills fills={fleet?.recent_fills ?? []} {now} />
 				</div>
 
-				<WalletCapacity budget={risk?.portfolio_budget_live ?? null} />
+				<WalletCapacity budget={risk?.portfolio_budget_live ?? null} capacity={fleet?.capacity ?? null} />
 			{:else}
 				<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
 					<div class="border border-[#222] bg-[#050505] px-4 py-5 text-xs text-gray-400" data-testid="no-live">

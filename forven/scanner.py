@@ -5647,6 +5647,18 @@ def _load_deployed_strategies() -> dict:
         False,
     )
     load_diagnostics: dict[str, dict] = {}
+    # REG-RACE-1: code that rebuilds the strategy registry empties it for the ~30s
+    # a full discovery takes. Loading in that window left every custom-type
+    # strategy unresolvable or failing its source-identity check, so live entries
+    # and exit checks were dropped (2026-09: 22 live evaluations, each within a
+    # minute of an agent strategy registration). discover() is a no-op on a
+    # complete registry and waits out a rebuild in progress.
+    try:
+        from forven.strategies.registry import discover as _discover_strategies
+
+        _discover_strategies()
+    except Exception as exc:  # noqa: BLE001 — the per-strategy checks below still fail closed
+        log.warning("Scanner: strategy registry discovery failed: %s", exc)
     try:
         with get_db() as conn:
             rows = conn.execute(
@@ -7479,6 +7491,7 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         equity=_real_equity,
         book=open_book,
         book_equity_usd=_routed_equity,
+        leverage=exchange_leverage,
     )
     if not _pb_ok:
         log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _pb_why)
@@ -7669,6 +7682,55 @@ def _pending_bar_open(frame: "pd.DataFrame", label: str | None, asset: str) -> f
     return None
 
 
+def _instantiate_kernel_strategy(
+    strat_id: str, strat: dict, contract: dict, params: dict, asset: str,
+) -> tuple[object | None, str | None]:
+    try:
+        from forven.strategies.registry import _TYPE_MAP, get_active, resolve_runtime_type
+        from forven.strategies.sandbox_proxy import is_sandbox_only_type as _is_sandbox_only_type
+        # A registry cache entry can predate promotion or an operator edit.
+        # Instantiate the accepted configuration fresh when one is available.
+        instance = None if contract else get_active().get(strat_id)
+        if instance is None:
+            runtime_type, _meta = resolve_runtime_type(str(strat.get("type") or ""), strat.get("runtime_type"))
+            cls = _TYPE_MAP.get(runtime_type or "")
+            cp = dict(contract.get("params", params))
+            if not contract:
+                cp.setdefault("_asset", asset)
+            if cls is not None:
+                instance = cls(strat_id, cp)
+            elif _meta.get("sandbox_only") or _is_sandbox_only_type(runtime_type):
+                # Untrusted-origin: the proxy carries type+params; run_strategy_execution
+                # force-routes its kernel signal generation to the sandbox worker.
+                from forven.strategies.sandbox_proxy import SandboxOnlyStrategy
+
+                instance = SandboxOnlyStrategy(strat_id, cp, runtime_type=runtime_type)
+        return instance, None
+    except Exception as exc:  # noqa: BLE001 — surfaced in the caller's skip reason
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def _resolve_kernel_strategy_instance(
+    strat_id: str, strat: dict, contract: dict, params: dict, asset: str,
+) -> tuple[object | None, str | None]:
+    """The strategy object the kernel runs, or (None, error).
+
+    REG-RACE-1: a registry rebuild elsewhere can hide the class for ~30s, so a
+    miss triggers discover() — which waits out a rebuild in progress or
+    repopulates a cleared registry — and one retry.
+    """
+    instance, error = _instantiate_kernel_strategy(strat_id, strat, contract, params, asset)
+    if instance is not None:
+        return instance, None
+    try:
+        from forven.strategies.registry import discover as _discover_strategies
+
+        _discover_strategies()
+    except Exception as exc:  # noqa: BLE001 — the retry below decides
+        log.warning("[%s] strategy registry discovery failed: %s", strat_id, exc)
+    return _instantiate_kernel_strategy(strat_id, strat, contract, params, asset)
+
+
 def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=None, execution_type: str = "paper", diagnostics=None) -> list[str] | None:
     """Kernel-driven paper execution: run the shared engine over the strategy's history
     and reconcile its open/closed positions into paper trades. Returns the action
@@ -7706,31 +7768,11 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     if df is None or df.empty or len(df) < 20:
         return _skip("insufficient candle history")
 
-    strategy_instance = None
-    try:
-        from forven.strategies.registry import _TYPE_MAP, get_active, resolve_runtime_type
-        from forven.strategies.sandbox_proxy import is_sandbox_only_type as _is_sandbox_only_type
-        # A registry cache entry can predate promotion or an operator edit.
-        # Instantiate the accepted configuration fresh when one is available.
-        strategy_instance = None if contract else get_active().get(strat_id)
-        if strategy_instance is None:
-            runtime_type, _meta = resolve_runtime_type(str(strat.get("type") or ""), strat.get("runtime_type"))
-            cls = _TYPE_MAP.get(runtime_type or "")
-            cp = dict(contract.get("params", p))
-            if not contract:
-                cp.setdefault("_asset", asset)
-            if cls is not None:
-                strategy_instance = cls(strat_id, cp)
-            elif _meta.get("sandbox_only") or _is_sandbox_only_type(runtime_type):
-                # Untrusted-origin: the proxy carries type+params; run_strategy_execution
-                # force-routes its kernel signal generation to the sandbox worker.
-                from forven.strategies.sandbox_proxy import SandboxOnlyStrategy
-
-                strategy_instance = SandboxOnlyStrategy(strat_id, cp, runtime_type=runtime_type)
-    except Exception:
-        strategy_instance = None
+    strategy_instance, resolve_error = _resolve_kernel_strategy_instance(strat_id, strat, contract, p, asset)
     if strategy_instance is None:
-        return _skip("could not resolve strategy instance")
+        return _skip(
+            "could not resolve strategy instance" + (f" ({resolve_error})" if resolve_error else "")
+        )
 
     # Resolve via the shared engine default so the kernel paper run matches the
     # confirmation backtest's leverage (operator default_leverage when undeclared).

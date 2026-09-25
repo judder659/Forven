@@ -15,12 +15,15 @@ rows that carry no reason.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from forven.db import get_db
 from forven.trade_accounting import net_pnl_sql
+
+log = logging.getLogger("forven.api")
 
 LIVE_STAGE = "live_graduated"
 BLOCK_WINDOW_DAYS = 30
@@ -346,6 +349,13 @@ def build_live_fleet(now: datetime | None = None) -> dict[str, Any]:
         realized = _realized(conn, now)
         fills = _recent_fills(conn)
         bots_armed = _live_bots_armed(conn)
+        try:
+            from forven.exchange.risk import live_capacity_report
+
+            capacity = live_capacity_report(conn)
+        except Exception as exc:  # noqa: BLE001 — the scorecard must still load
+            log.warning("Live fleet: capacity report failed: %s", exc)
+            capacity = None
     return {
         "generated_at": now.isoformat(),
         "stale_after_seconds": int(stale_after.total_seconds()),
@@ -353,4 +363,5 @@ def build_live_fleet(now: datetime | None = None) -> dict[str, Any]:
         "live_bots_armed": bots_armed,
         "realized": realized,
         "recent_fills": fills,
+        "capacity": capacity,
     }

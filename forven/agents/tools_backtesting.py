@@ -636,13 +636,13 @@ def _tool_register_strategy(params: dict) -> str:
     except FileExistsError:
         return f"Error: strategy module '{type_name}' already exists; use a unique type_name"
 
-    # Targeted intake must import/register the just-written file before a full
-    # custom discovery pass. If discovery sees it first, TYPE_NAME is already in
-    # the runtime map and targeted DB registration rejects it as a duplicate.
+    # Intake validates the file in the sandbox worker and moves it to imported/;
+    # it never enters this process's registry. REG-RACE-1: do NOT reset the
+    # registry here — that emptied it for every live strategy until a ~30s
+    # rediscovery, and the scanner dropped their entries and exit checks.
     try:
-        from forven.strategies.registry import reset, discover, _TYPE_MAP
+        from forven.strategies.registry import discover, _TYPE_MAP
         from forven.strategies.intake import register_custom_strategy_file
-        reset()
 
         registration = register_custom_strategy_file(
             file_path=filepath,
