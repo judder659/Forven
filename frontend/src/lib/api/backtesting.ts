@@ -957,8 +957,28 @@ export interface WalkForwardSplit {
 	out_of_sample?: WalkForwardSplitMetrics;
 }
 
+/** OOS alpha net of buy-and-hold and a zero-search trend rule (forven/baseline_hurdle.py). */
+export interface WalkForwardBaselineHurdle {
+	status?: 'pass' | 'fail' | 'insufficient_evidence' | 'error';
+	n_days?: number;
+	active_day_pct?: number;
+	alpha_pct?: number;
+	alpha_t?: number;
+	beta_market?: number;
+	beta_trend?: number;
+	alpha_vs_market_pct?: number;
+	sharpe?: { strategy?: number; buy_hold?: number; trend?: number };
+	total_return_pct?: { strategy?: number; buy_hold?: number; trend?: number };
+	reasons?: string[];
+	insufficient_reason?: string;
+	error?: string;
+	paper_mode?: string;
+	live_mode?: string;
+}
+
 export interface WalkForwardRobustnessResult {
 	splits: WalkForwardSplit[];
+	baseline_hurdle?: WalkForwardBaselineHurdle;
 	aggregate_oos: {
 		total_trades?: number;
 		trades?: number;

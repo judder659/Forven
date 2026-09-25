@@ -970,6 +970,14 @@ def _run_walk_forward_analysis(body: WalkForwardBody) -> dict:
     # walk_forward() sets `robust` from its own looser rule; keep it in lockstep with
     # the policy verdict so a persisted payload can't carry robust:true + verdict:FAIL.
     result["robust"] = not failures
+    # Baseline hurdle: stamp its classification on the payload for the UI and the
+    # gates. Deliberately NOT part of the WFA verdict — a FAIL here would drain the
+    # workflow to failed_gate (auto-archive) on a statistic whose standard error is
+    # large; the policy gates decide per stage what a failed hurdle blocks.
+    if isinstance(result.get("baseline_hurdle"), dict):
+        from forven.baseline_hurdle import evaluate_baseline_hurdle
+
+        result["baseline_hurdle"] = evaluate_baseline_hurdle(result["baseline_hurdle"], gauntlet_cfg)
     result["verdict_reasons"] = failures
     result["verdict_thresholds"] = {
         "max_degradation": max_degradation,

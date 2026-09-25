@@ -335,6 +335,7 @@ def get_ai_dropzone_context():
             "Rare-entry designs starve the gates: you need >= 15 trades total and enough out-of-sample trades for walk-forward folds (~1y window, ~70/30 IS/OOS split).",
             "Transient verdict probes do NOT count toward promotion. Only the persisted robustness endpoints (/api/robustness/*/submit) write the validation artifacts the paper gate reads.",
             "A Monte Carlo PASS is NOT evidence the edge is real — it bootstraps the realized trades, so it only certifies sequencing/tail-risk stability of that trade set. Never cite it as edge proof when arguing for promotion; edge existence is what walk-forward and regime-split test.",
+            "Beating zero is not alpha. Every walk-forward also measures out-of-sample alpha after removing buy-and-hold of the same asset and a fixed trend-following rule (same days, same costs) — the payload's baseline_hurdle block. A strategy that mostly rides market direction scores ~0 there and is blocked at paper->live by default. Design for returns that market exposure and a basic trend rule do not explain.",
         ],
         "sessions": {
             "purpose": "A session is a lightweight grouping token. Tag registrations and backtests with session_id to make 'what did I try in iteration #7' queryable.",
