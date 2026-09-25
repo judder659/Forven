@@ -82,6 +82,22 @@ def test_capacity_report_counts_each_coin_once_per_wallet(forven_db):
     assert report["conflicts"] == [{"coin": "BTC", "sides": ["long"], "strategy_ids": sorted([btc_a, btc_b])}]
 
 
+def test_strategies_with_unknown_coins_each_count_toward_the_wallet(forven_db):
+    _wallets(long_usd=500.0, short_usd=500.0)
+    with get_db() as conn:
+        for sid in ("S-A", "S-B"):
+            conn.execute(
+                "INSERT INTO strategies (id, name, stage, symbol, params) VALUES (?, ?, 'live_graduated', '', ?)",
+                (sid, sid, json.dumps({"trade_mode": "long_only"})),
+            )
+            _traded_fraction(conn, sid, 0.5)
+        report = capacity_report(conn)
+
+    long_wallet = next(w for w in report["wallets"] if w["wallet"] == "long")
+    assert long_wallet["worst_case_margin_usd"] == pytest.approx(2 * 500.0 * 0.5)
+    assert report["conflicts"] == []
+
+
 def test_untraded_strategy_is_sized_at_its_full_slice(forven_db):
     _wallets(long_usd=300.0, short_usd=300.0)
     with get_db() as conn:

@@ -7019,9 +7019,11 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     default_params: dict = {}
     registered = False
     try:
-        from forven.strategies.registry import _TYPE_MAP, discover, reset
-        reset()
-        discover()
+        from forven.strategies.registry import _TYPE_MAP, load_custom_module
+
+        # REG-RACE-1: register just this module; a reset() would empty the
+        # registry for every live strategy while it is rebuilt.
+        load_custom_module(f"manual_{type_name}")
         cls = _TYPE_MAP.get(type_name)
         if cls is None:
             return {"valid": True, "registered": False, "strategy_name": type_name,

@@ -1450,11 +1450,13 @@ def live_capacity_report(conn, candidate_id: str | None = None) -> dict:
         equity = equities[label]
         demand = None
         if slice_usd is not None:
-            # One position per coin per wallet: the largest claimant counts.
+            # One position per coin per wallet: the largest claimant counts. A
+            # member whose coin is unknown counts on its own, never merged.
             per_coin: dict[str, float] = {}
             for m in members:
                 if m["sides"] & sides:
-                    per_coin[m["coin"]] = max(per_coin.get(m["coin"], 0.0), slice_usd * m["size_fraction"])
+                    key = m["coin"] or f"?{m['strategy_id']}"
+                    per_coin[key] = max(per_coin.get(key, 0.0), slice_usd * m["size_fraction"])
             demand = sum(per_coin.values())
         capacity = margin_pct / 100.0 * equity if equity else None
         report_wallets.append({
