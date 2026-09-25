@@ -7379,9 +7379,12 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     # LEV-EXACT-1: rounding the venue leverage UP moves liquidation nearer than the
     # kernel modeled at the validated leverage. Hyperliquid's maintenance margin is
     # half the initial margin at the asset's max leverage, and the venue refuses a
-    # leverage above that max, so maintenance is at most 1/(2L): a position at L
-    # survives at least 1/(2L+1) of adverse move either way. A stop beyond that
-    # would be pre-empted by liquidation, so the validated exit could not happen.
+    # leverage above that max, so maintenance is at most 1/(2L): an ISOLATED
+    # position at L survives at least 1/(2L+1) of adverse move either way. A stop
+    # beyond that could be pre-empted by liquidation, so the validated exit might
+    # not happen. The bound is venue-agnostic and deliberately conservative (BTC at
+    # 2x really liquidates near 49%, not 20%); cross margin is account-wide and not
+    # modeled. Integer leverage is untouched: the venue then holds exactly L.
     if stop_price is not None and exchange_leverage > float(leverage) + 1e-9:
         _stop_move = abs(float(ref_price) - float(stop_price)) / float(ref_price)
         _liquidation_move = 1.0 / (2.0 * exchange_leverage + 1.0)
