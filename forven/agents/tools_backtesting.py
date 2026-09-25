@@ -550,13 +550,15 @@ def _tool_run_code(code: str) -> str:
         "backtesting via run_backtest. The code must extend BaseStrategy from forven.strategies.base and "
         "export STRATEGY_CLASS and TYPE_NAME. Implement name/asset/strategy_type/default_params as properties "
         "or class attributes; generate_signal(df) must return a scalar Signal for the latest bar. Use "
-        "generate_signals(df) for vectorized pandas Series. Agent-generated strategies must include "
+        "generate_signals(df) for aligned vectorized output: DirectionalSignals or an entry/exit "
+        "Series tuple (a four-Series directional tuple is also accepted). Do not return a single "
+        "Series. Agent-generated strategies must include "
         "hypothesis_id so the resulting strategy container is registered directly against its parent hypothesis."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "code": {"type": "string", "description": "Full Python source code of the strategy module. Must import and extend BaseStrategy, implement generate_signal(df) returning a scalar Signal for the latest bar, and export STRATEGY_CLASS and TYPE_NAME."},
+            "code": {"type": "string", "description": "Full Python source code of the strategy module. Must import and extend BaseStrategy, implement generate_signal(df) returning a scalar Signal for the latest bar, and export module-level STRATEGY_CLASS and TYPE_NAME. Prefer inheriting BaseStrategy.__init__; an override must accept (strategy_id, params=None) and call super()."},
             "type_name": {"type": "string", "description": "Unique type name for the strategy (e.g., 'fisher_momentum', 'qqe_trend'). Alphanumeric and underscores only."},
             "hypothesis_id": {"type": "string", "description": "Parent hypothesis ID for the strategy container that will be registered from this module."},
             "crucible_id": {"type": "string", "description": "Planner-approved crucible/hypothesis ID for this candidate."},
