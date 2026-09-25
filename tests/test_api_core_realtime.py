@@ -8,7 +8,13 @@ from forven import api_core
 from forven.db import get_db
 
 
-def _insert_strategy(strategy_id: str, *, params: dict[str, object] | None = None) -> None:
+def _insert_strategy(
+    strategy_id: str,
+    *,
+    params: dict[str, object] | None = None,
+    symbol: str = "BTC",
+    timeframe: str = "1h",
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         conn.execute(
@@ -21,8 +27,8 @@ def _insert_strategy(strategy_id: str, *, params: dict[str, object] | None = Non
                 strategy_id,
                 strategy_id,
                 "rsi_momentum",
-                "BTC",
-                "1h",
+                symbol,
+                timeframe,
                 json.dumps(params or {}),
                 json.dumps({"sharpe": 1.2}),
                 "gauntlet",
@@ -199,6 +205,60 @@ def test_post_optimization_submit_persists_named_failure_details(monkeypatch, fo
     assert "timed out" in config["error"].lower()
     assert config["n_trials"] == 100
     assert config["objective"] == "sharpe_ratio"
+
+
+# --- The stored symbol/timeframe win when the caller omits them --------------
+# The body used to default symbol="BTC"/timeframe="1h", and those defaults beat
+# the strategy row: a strategy-id-only optimization of a SOL 4h strategy
+# silently ran on BTC 1h. A BTC/1h row can't tell the two apart, so these rows
+# trade SOL on 4h.
+
+def _capture_optimizer_call(monkeypatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    class _ImmediateExecutor:
+        def submit(self, fn):
+            fn()
+            return object()
+
+    def _fake_optimize_strategy(**kwargs):
+        captured.update(kwargs)
+        return {"error": "stub optimizer"}  # only the call's arguments matter here
+
+    monkeypatch.setattr(api_core, "_OPTIMIZATION_EXECUTOR", _ImmediateExecutor())
+    monkeypatch.setattr("forven.strategies.optimizer.optimize_strategy", _fake_optimize_strategy)
+    return captured
+
+
+def test_strategy_id_only_optimization_runs_on_the_stored_market(monkeypatch, forven_db):
+    _insert_strategy("S30005", symbol="SOL/USDT", timeframe="4h")
+    captured = _capture_optimizer_call(monkeypatch)
+
+    result = api_core.post_optimization_submit(api_core.OptimizationSubmitBody(strategy_id="S30005"))
+
+    assert captured["asset"] == "SOL"
+    assert captured["timeframe"] == "4h"
+    # The result row (kept for good when the run fails) records that market too.
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT symbol, timeframe, config_json FROM backtest_results WHERE result_id = ?",
+            (result["result_id"],),
+        ).fetchone()
+    assert (row["symbol"], row["timeframe"]) == ("SOL", "4h")
+    config = json.loads(row["config_json"] or "{}")
+    assert (config["symbol"], config["timeframe"]) == ("SOL", "4h")
+
+
+def test_explicit_optimization_symbol_and_timeframe_override_the_row(monkeypatch, forven_db):
+    _insert_strategy("S30006", symbol="SOL/USDT", timeframe="4h")
+    captured = _capture_optimizer_call(monkeypatch)
+
+    api_core.post_optimization_submit(
+        api_core.OptimizationSubmitBody(strategy_id="S30006", symbol="ETH", timeframe="1d")
+    )
+
+    assert captured["asset"] == "ETH"
+    assert captured["timeframe"] == "1d"
 
 
 def test_get_backtest_result_preserves_failed_optimization_status(forven_db):

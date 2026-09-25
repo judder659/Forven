@@ -761,8 +761,10 @@ async def post_backtesting_optimize(request: core.Request):
     body_model = core.OptimizationSubmitBody(
         strategy_id=strategy_id,
         strategy_name=strategy_id,
-        symbol=str(body.get("symbol") or parsed_symbol or "BTC"),
-        timeframe=str(body.get("timeframe") or parsed_timeframe or "1h"),
+        # Whatever neither the payload nor the dataset id names stays None, so
+        # the optimization runs on the strategy's stored market, not BTC/1h.
+        symbol=str(body.get("symbol") or parsed_symbol or "").strip() or None,
+        timeframe=str(body.get("timeframe") or parsed_timeframe or "").strip() or None,
         objective=body.get("objective"),
         n_trials=body.get("n_trials"),
         parameter_ranges=body.get("parameter_ranges"),
