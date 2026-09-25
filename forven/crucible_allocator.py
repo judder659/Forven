@@ -218,14 +218,23 @@ def develop_daily_budget() -> int:
 
 
 def develop_budget_used_today() -> int:
-    """develop_candidate-family tasks created since UTC midnight, any status —
-    a dispatched task is spent budget whether or not it later fails."""
+    """Count today's candidate-development attempts that reached execution.
+
+    A task that stops in the runner's input preflight is retained as a blocked
+    checkpoint, but it never makes an AI call and must not consume the daily
+    development allowance. Once a blocked task has an ``agent_model_calls``
+    row, it did reach execution and remains chargeable even if the later tool
+    work failed or was incomplete.
+    """
     try:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS n FROM agent_tasks
                    WHERE type = 'develop_candidate'
-                     AND created_at >= strftime('%Y-%m-%dT00:00:00+00:00', 'now')"""
+                     AND created_at >= strftime('%Y-%m-%dT00:00:00+00:00', 'now')
+                     AND (status != 'blocked' OR EXISTS (
+                         SELECT 1 FROM agent_model_calls m WHERE m.task_id = agent_tasks.id
+                     ))"""
             ).fetchone()
         return int(row["n"] or 0)
     except Exception as exc:
@@ -249,7 +258,10 @@ def _directive_counts_today(key: str = "trade_mode_directive") -> tuple[int, int
                                    IS NOT NULL THEN 1 ELSE 0 END) AS directed
                    FROM agent_tasks
                    WHERE type = 'develop_candidate'
-                     AND created_at >= strftime('%Y-%m-%dT00:00:00+00:00', 'now')"""
+                     AND created_at >= strftime('%Y-%m-%dT00:00:00+00:00', 'now')
+                     AND (status != 'blocked' OR EXISTS (
+                         SELECT 1 FROM agent_model_calls m WHERE m.task_id = agent_tasks.id
+                     ))"""
             ).fetchone()
         return int(row["total"] or 0), int(row["directed"] or 0)
     except Exception as exc:
