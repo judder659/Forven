@@ -100,7 +100,7 @@ def test_paper_equity_uses_the_accepted_starting_capital(forven_db: object) -> N
 
 
 @pytest.mark.parametrize("mode", ["full", "fixed", "fraction", "atr", "kelly"])
-@pytest.mark.parametrize("equity,leverage", [(500., 1.), (10000., 2.), (25000., 3.)])
+@pytest.mark.parametrize("equity,leverage", [(500., 1.), (10000., 2.), (25000., 3.), (2500., 1.3)])
 @pytest.mark.parametrize("direction", ["long", "short"])
 def test_sizing_formula_reaches_paper_and_live_unchanged(
     forven_db: object, monkeypatch: pytest.MonkeyPatch, mode: str, equity: float, leverage: float, direction: str,
@@ -182,13 +182,103 @@ def test_invalid_filled_units_do_not_become_the_requested_size(forven_db: object
     assert _read_trade("SIZE", "live")["fill_entry_price"] is None
 
 
-@pytest.mark.parametrize("leverage", [.5, 1.5, 2.7])
-def test_live_cannot_silently_round_validated_leverage(forven_db: object, monkeypatch: pytest.MonkeyPatch, leverage: float) -> None:
+@pytest.mark.parametrize("leverage,expected", [
+    (1., 1), (3., 3), (1.0000000000000002, 1), (2.0000000000000004, 2),
+    (1.3, 2), (1.5, 2), (2.5, 3), (.4, 1),
+    (None, None), ("x", None), (0., None), (-1., None), (float("nan"), None), (float("inf"), None),
+])
+def test_exchange_leverage_rounds_up_never_down(leverage: object, expected: int | None) -> None:
+    assert scanner._exchange_margin_leverage(leverage) == expected
+
+
+@pytest.mark.parametrize("leverage,exchange_leverage", [(.5, 1), (1.3, 2), (1.5, 2), (2.7, 3)])
+@pytest.mark.parametrize("direction", ["long", "short"])
+def test_fractional_leverage_trades_its_validated_notional(
+    forven_db: object, monkeypatch: pytest.MonkeyPatch, leverage: float, exchange_leverage: int, direction: str,
+) -> None:
+    calls = _live_capture(monkeypatch, equity=1000)
+    stop = 95. if direction == "long" else 105.
+    action = ReconcileAction("open", direction, "t", position={"entry_price": 100., "size_fraction": .1, "stop_price": stop})
+    message = scanner._kernel_open_live_trade("SIZE", {"asset": "ETH"}, action, sizing_equity=1000, leverage=leverage)
+    assert calls, message
+    # Size comes from the VALIDATED leverage, exactly as the backtest sized it.
+    notional = 1000 * .1 * leverage
+    assert calls[0]["size"] == pytest.approx(notional / 100)
+    row = _read_trade("SIZE", "live")
+    assert row["leverage"] == leverage  # PnL basis stays the validated leverage
+    sd = json.loads(row["signal_data"])
+    assert sd["sizing_margin_usd"] == pytest.approx(100)  # the backtest's margin model
+    assert sd["exchange_leverage"] == exchange_leverage
+    assert sd["exchange_margin_usd"] == pytest.approx(notional / exchange_leverage)
+    assert sd["exchange_margin_usd"] <= sd["sizing_margin_usd"] + 1e-9  # never more collateral than modeled
+
+
+@pytest.mark.parametrize("direction,stop", [("long", 75.), ("short", 125.)])
+def test_rounded_up_leverage_refuses_a_stop_beyond_exchange_liquidation(
+    forven_db: object, monkeypatch: pytest.MonkeyPatch, direction: str, stop: float,
+) -> None:
+    calls = _live_capture(monkeypatch, equity=1000)
+    notices: list[tuple] = []
+    monkeypatch.setattr(scanner, "_notify_live_open_blocked", lambda *a: notices.append(a))
+    action = ReconcileAction("open", direction, "t", position={"entry_price": 100., "size_fraction": .1, "stop_price": stop})
+    # 1.3x runs at 2x exchange margin, which can liquidate after a 1/(2*2+1) = 20% move.
+    message = scanner._kernel_open_live_trade("SIZE", {"asset": "ETH"}, action, sizing_equity=1000, leverage=1.3)
+    assert "BLOCKED" in message and "2x exchange margin" in message
+    assert not calls
+    assert [n[3] for n in notices] == ["leverage_liquidation"]
+
+
+def test_stop_inside_exchange_liquidation_opens_at_rounded_up_leverage(
+    forven_db: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _live_capture(monkeypatch, equity=1000)
+    action = ReconcileAction("open", "long", "t", position={"entry_price": 100., "size_fraction": .1, "stop_price": 81.})
+    assert scanner._kernel_open_live_trade("SIZE", {"asset": "ETH"}, action, sizing_equity=1000, leverage=1.3)
+    assert calls
+
+
+def test_integer_leverage_keeps_its_exact_exchange_leverage(forven_db: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _live_capture(monkeypatch, equity=1000)
+    # Nothing is rounded at 2x, so the venue liquidates where the kernel modeled it;
+    # the rounded-up liquidation check does not second-guess a wide stop here.
+    action = ReconcileAction("open", "long", "t", position={"entry_price": 100., "size_fraction": .1, "stop_price": 70.})
+    assert scanner._kernel_open_live_trade("SIZE", {"asset": "ETH"}, action, sizing_equity=1000, leverage=2)
+    assert calls
+    assert json.loads(_read_trade("SIZE", "live")["signal_data"])["exchange_leverage"] == 2
+
+
+@pytest.mark.parametrize("leverage", [0., -1., float("nan"), float("inf")])
+def test_unusable_validated_leverage_is_refused(forven_db: object, monkeypatch: pytest.MonkeyPatch, leverage: float) -> None:
     calls = _live_capture(monkeypatch, equity=1000)
     action = ReconcileAction("open", "long", "t", position={"entry_price": 100., "size_fraction": .1, "stop_price": 95.})
     message = scanner._kernel_open_live_trade("SIZE", {"asset": "ETH"}, action, sizing_equity=1000, leverage=leverage)
-    assert "cannot be applied exactly" in message
+    assert "is not a usable leverage" in message
     assert not calls
+
+
+@pytest.mark.parametrize("leverage,exchange_leverage", [(1.3, 2), (2.5, 3), (2., 2), (None, 1)])
+def test_every_live_lane_sets_the_rounded_up_exchange_leverage(
+    monkeypatch: pytest.MonkeyPatch, leverage: object, exchange_leverage: int,
+) -> None:
+    """The legacy lane hands params['leverage'] straight to _execute_direct. It gets
+    the kernel's mapping, never set_leverage's round-to-nearest (1.3 -> 1)."""
+    from forven.exchange import hyperliquid, risk
+    from forven.sim import clock
+
+    set_leverages: list[object] = []
+    recorded: dict = {}
+    monkeypatch.setattr(scanner, "_resolve_hyperliquid_testnet", lambda: True)
+    monkeypatch.setattr(scanner, "_resolve_trade_vault_address", lambda *a, **k: None)
+    monkeypatch.setattr(scanner, "_persist_live_entry_fill", lambda *a, **k: True)
+    monkeypatch.setattr(scanner, "_update_trade_signal_data", lambda trade_id, data: recorded.update(data) or True)
+    monkeypatch.setattr(scanner, "log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(clock, "is_sim_active", lambda: False)
+    monkeypatch.setattr(risk, "is_trading_allowed", lambda: (True, "ok"))
+    monkeypatch.setattr(hyperliquid, "set_leverage", lambda asset, lev, **k: set_leverages.append(lev) or {"status": "ok"})
+    monkeypatch.setattr(hyperliquid, "market_order", lambda **k: {"entry_price": 100., "filled_size": .5})
+    scanner._execute_direct("open", "T-LEV", "S-LEV", "ETH", "long", .5, 100., stop_loss=95., leverage=leverage)
+    assert set_leverages == [exchange_leverage]
+    assert recorded["exchange_leverage"] == exchange_leverage
 
 
 def test_risk_cap_uses_the_exchange_rounded_stop(forven_db: object, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,9 +424,9 @@ def test_kelly_without_evidence_remains_zero_in_backtest_and_forward() -> None:
                                 initial_capital=10000, closed_gross=result.closed_gross) == 0
 
 
-@pytest.mark.parametrize("lot_decimals", [0, 4, 8])
+@pytest.mark.parametrize("lot_decimals,leverage", [(0, 2.), (4, 2.), (8, 2.), (4, 1.5)])
 def test_real_backtest_contract_reaches_exchange_order_builder(
-    forven_db: object, monkeypatch: pytest.MonkeyPatch, lot_decimals: int,
+    forven_db: object, monkeypatch: pytest.MonkeyPatch, lot_decimals: int, leverage: float,
 ) -> None:
     from decimal import Decimal, ROUND_DOWN
 
@@ -353,7 +443,7 @@ def test_real_backtest_contract_reaches_exchange_order_builder(
     monkeypatch.setitem(registry._TYPE_MAP, "rsi_momentum", RSIMomentumStrategy)
     monkeypatch.setattr(registry, "discover", lambda *a, **k: None)
     monkeypatch.setattr(backtest, "_should_use_process_isolation", lambda: False)
-    monkeypatch.setattr(api_core, "get_settings", lambda: {"default_leverage": 2., "backtest_fee_bps": 0.,
+    monkeypatch.setattr(api_core, "get_settings", lambda: {"default_leverage": leverage, "backtest_fee_bps": 0.,
                                                          "backtest_slippage_bps": 0., "backtest_include_funding": False})
     params = {"rsi_period": 14, "rsi_entry": 45, "rsi_exit": 55, "ema_fast": 10, "ema_slow": 30, "adx_min": 0,
               "execution_profile": {"sizing_mode": "fixed", "fixed_size": 500, "stop_loss_pct": 5}}
@@ -422,18 +512,22 @@ def test_real_backtest_contract_reaches_exchange_order_builder(
     })
     message = scanner._kernel_open_live_trade(sid, strat, action, sizing_equity=25000, leverage=contract["leverage"])
     assert captured, message
-    expected_units = 500 * 2 / price
+    assert contract["leverage"] == leverage
+    expected_units = 500 * leverage / price
     rounded = float(Decimal(str(expected_units)).quantize(Decimal(1).scaleb(-lot_decimals), rounding=ROUND_DOWN))
     assert reference["size_units"] == pytest.approx(expected_units, rel=1e-12)
     assert captured[0][0]["sz"] == rounded
     assert captured[0][1]["sz"] == rounded  # protective order covers the submitted units
     assert captured[0][1]["reduce_only"] is True
-    assert set_leverages == [2]
+    assert set_leverages == [2]  # 1.5x validated -> the venue's whole-number 2x margin
     filled = _read_trade(sid, "live")
     assert filled["size"] == rounded and filled["fill_entry_price"] == price
+    assert filled["leverage"] == leverage
     sd = json.loads(filled["signal_data"])
     assert sd["validation_result_id"] == "sizing-original"
-    assert sd["sizing_margin_usd"] == pytest.approx(rounded * price / 2)
+    assert sd["sizing_margin_usd"] == pytest.approx(rounded * price / leverage)
+    assert sd["exchange_leverage"] == 2
+    assert sd["exchange_margin_usd"] == pytest.approx(rounded * price / 2)
     assert sd["sizing_submitted_units"] == rounded
     assert sd["sizing_fill_ratio"] == 1
     assert not sd.get("partial_fill")  # lot rounding is not an IOC partial fill

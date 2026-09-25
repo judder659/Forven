@@ -3359,6 +3359,9 @@ def _update_trade_fill(trade_id: str, fill_price: float, fill_kind: str, signal_
                         signal_data["sizing_filled_units"] = actual_units
                         signal_data["sizing_notional_usd"] = actual_units * float(fill_price)
                         signal_data["sizing_margin_usd"] = actual_units * float(fill_price) / entry_leverage
+                        exchange_leverage = _coerce_positive_float(signal_data.get("exchange_leverage"))
+                        if exchange_leverage:
+                            signal_data["exchange_margin_usd"] = actual_units * float(fill_price) / exchange_leverage
                         stop = _coerce_positive_float(signal_data.get("stop_loss_price"))
                         if stop:
                             signal_data["sizing_loss_at_stop_usd"] = actual_units * abs(float(fill_price) - stop)
@@ -3710,6 +3713,28 @@ def _resolve_hyperliquid_testnet() -> bool:
     return resolve_configured_testnet(default_testnet=True)
 
 
+def _exchange_margin_leverage(leverage: object) -> int | None:
+    """The whole-number leverage to set at the venue for a validated leverage.
+
+    Hyperliquid (like Propr) only takes integer leverage, but there leverage is
+    just the MARGIN setting: position size is the order's units, which the
+    kernel computes from the VALIDATED leverage (sizing.position_units), so
+    notional, PnL, fees and funding match the backtest whatever integer the
+    venue holds. Round UP, never down: the venue then never asks for more
+    collateral than the backtest's margin model reserved (notional / validated
+    leverage). The cost is a nearer liquidation, which _kernel_open_live_trade
+    checks against the protective stop. None for an unusable value.
+    """
+    try:
+        lev = float(leverage)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(lev) or lev <= 0:
+        return None
+    # Tolerance: a float-built 2.0000000000000004 must not round up a notch.
+    return max(1, math.ceil(lev - 1e-9))
+
+
 def _execute_direct(
     action: str,
     trade_id: str,
@@ -3850,9 +3875,14 @@ def _execute_direct(
         # entry, so the position uses the leverage our risk/stop math assumes
         # instead of the venue default (often 20-40x). Fail closed if it can't be
         # set — opening at an unknown leverage silently invalidates the stop math.
+        # LEV-EXACT-1: every live lane maps a fractional leverage UP here (see
+        # _exchange_margin_leverage) instead of set_leverage's round-to-nearest,
+        # which silently went DOWN (1.3 -> 1). Unusable values keep the old 1x
+        # fallback; the kernel lane refuses them before reaching this point.
+        exchange_leverage = _exchange_margin_leverage(leverage) or 1
         if not is_sim_active():
             from forven.exchange.hyperliquid import set_leverage
-            lev_res = set_leverage(asset, leverage, testnet=testnet, vault_address=vault_address)
+            lev_res = set_leverage(asset, exchange_leverage, testnet=testnet, vault_address=vault_address)
             if isinstance(lev_res, dict) and lev_res.get("error"):
                 raise RuntimeError(
                     f"refusing to open {trade_id}: could not set exchange leverage for {asset}: {lev_res.get('error')}"
@@ -3893,6 +3923,7 @@ def _execute_direct(
             if take_profit is not None:
                 order_meta["exchange_take_profit_price"] = float(take_profit)
             order_meta["exchange_take_profit_requested"] = take_profit is not None
+            order_meta["exchange_leverage"] = exchange_leverage
             filled_size = result.get("filled_size")
             try:
                 filled_size_f = float(filled_size) if filled_size is not None else None
@@ -7189,8 +7220,13 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     ref_price = _coerce_positive_float(pos.get("entry_price"))
     if not asset or ref_price is None:
         return None
-    if not _coerce_positive_float(leverage) or float(leverage) < 1 or not float(leverage).is_integer():
-        return f"BLOCKED {asset} live — validated leverage {leverage} cannot be applied exactly at the exchange"
+    # LEV-EXACT-1: the venue only takes whole-number leverage, but there it sets
+    # MARGIN, not size. Units below still come from the VALIDATED leverage, so a
+    # 1.3x strategy trades its validated notional at 2x exchange margin (see
+    # _exchange_margin_leverage); only the liquidation distance moves, checked below.
+    exchange_leverage = _exchange_margin_leverage(leverage)
+    if exchange_leverage is None:
+        return f"BLOCKED {asset} live — validated leverage {leverage} is not a usable leverage"
 
     # DIRECTION-BOOKS-1 / LIVE-4: route the NEW live position to its direction
     # sub-account (Approach C), exactly like the legacy live path. Books OFF =>
@@ -7340,6 +7376,27 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         stop_price = _hl.round_to_tick(float(stop_price), asset, _venue_url)
     if target_price is not None:
         target_price = _hl.round_to_tick(float(target_price), asset, _venue_url)
+    # LEV-EXACT-1: rounding the venue leverage UP moves liquidation nearer than the
+    # kernel modeled at the validated leverage. Hyperliquid's maintenance margin is
+    # half the initial margin at the asset's max leverage, and the venue refuses a
+    # leverage above that max, so maintenance is at most 1/(2L): an ISOLATED
+    # position at L survives at least 1/(2L+1) of adverse move either way. A stop
+    # beyond that could be pre-empted by liquidation, so the validated exit might
+    # not happen. The bound is venue-agnostic and deliberately conservative (BTC at
+    # 2x really liquidates near 49%, not 20%); cross margin is account-wide and not
+    # modeled. Integer leverage is untouched: the venue then holds exactly L.
+    if stop_price is not None and exchange_leverage > float(leverage) + 1e-9:
+        _stop_move = abs(float(ref_price) - float(stop_price)) / float(ref_price)
+        _liquidation_move = 1.0 / (2.0 * exchange_leverage + 1.0)
+        if _stop_move >= _liquidation_move:
+            _why = (
+                f"protective stop {_stop_move:.1%} from entry is beyond the ~{_liquidation_move:.1%} "
+                f"adverse move that can liquidate the position at {exchange_leverage}x exchange "
+                f"margin (validated leverage {float(leverage):g}x rounds up to a whole number)"
+            )
+            log.warning("[%s] BLOCKED %s live open — %s", strat_id, asset, _why)
+            _notify_live_open_blocked(strat_id, asset, _why, "leverage_liquidation")
+            return f"BLOCKED {asset} live — {_why}"
     # PORT-1 (precise gate): admission against the ACCOUNT-level budget with this
     # order's actual risk (distance to its stop x units) and notional. Uses the
     # AGGREGATE account equity, not the direction-book slice sizing_equity may have
@@ -7453,6 +7510,11 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         "sizing_reference_price": ref_price,
         "sizing_notional_usd": units * ref_price,
         "sizing_margin_usd": units * ref_price / leverage,
+        # LEV-EXACT-1: what the venue actually holds. sizing_* stays the backtest's
+        # margin model (notional / validated leverage); these differ only when the
+        # validated leverage is fractional and the venue's integer is rounded up.
+        "exchange_leverage": exchange_leverage,
+        "exchange_margin_usd": units * ref_price / exchange_leverage,
         "sizing_loss_at_stop_usd": _add_risk,
         "sizing_stop_reference_price": _stop_reference,
         "sizing_stop_price": stop_price,
