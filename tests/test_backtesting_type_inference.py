@@ -523,6 +523,152 @@ def test_post_backtesting_run_local_sanitizes_nonfinite_metrics_for_json_respons
     json.dumps(response, allow_nan=False)
 
 
+# --- A dataset id that names no timeframe runs on the stored one --------------
+# The "Plain symbol" branch filled in 1h, so dataset_id "SOL/USDT" backtested a
+# 4h strategy at 1h and every row the route wrote said 1h. A BTC/1h row can't
+# tell the fix from the bug, so these rows trade SOL on 4h.
+
+def _insert_sol_strategy(strategy_id: str, *, timeframe: str | None = "4h") -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO strategies
+            (id, name, type, symbol, timeframe, params, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                strategy_id,
+                f"SOL-RSI_MOMENTUM-{strategy_id}",
+                "rsi_momentum",
+                "SOL/USDT",
+                timeframe,
+                json.dumps({"rsi_period": 14}),
+                "gauntlet",
+                now,
+                now,
+            ),
+        )
+
+
+def _run_local_backtesting_run(monkeypatch, body: dict) -> tuple[dict, dict]:
+    from forven.api_core import post_backtesting_run
+    import forven.backtesting as backtesting_mod
+    import forven.strategies.backtest as bt_mod
+
+    captured: dict = {}
+
+    def _fake_backtest_strategy(**kwargs):
+        captured.update(kwargs)
+        return {
+            "start_date": "2025-01-01T00:00:00+00:00",
+            "end_date": "2025-02-01T00:00:00+00:00",
+            "metrics": {"total_return_pct": 0.0, "sharpe": 0.0, "max_drawdown_pct": 0.0, "total_trades": 0},
+            "trades": [],
+        }
+
+    monkeypatch.setattr(backtesting_mod, "get_client", lambda: None)
+    monkeypatch.setattr(bt_mod, "backtest_strategy", _fake_backtest_strategy)
+    monkeypatch.setattr("forven.api_core._write_backtest_result_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forven.api_core.auto_assign_best_symbol", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("forven.quant_skills_extractor.record_backtest_for_learning", lambda **_kwargs: None)
+
+    with patch("forven.api_core.kv_get", return_value={"remote_engine_enabled": False}):
+        response = post_backtesting_run(body)
+    return response, captured
+
+
+def test_post_backtesting_run_timeframe_less_dataset_id_uses_the_stored_timeframe(forven_db, monkeypatch):
+    _insert_sol_strategy("S00150")
+
+    response, captured = _run_local_backtesting_run(
+        monkeypatch, {"strategy_id": "S00150", "dataset_id": "SOL/USDT"}
+    )
+
+    assert response.get("error") is None
+    assert captured["asset"] == "SOL/USDT"
+    assert captured["timeframe"] == "4h"
+    # The result row, its config and the Now Working task all record that market.
+    with get_db() as conn:
+        result_row = conn.execute(
+            "SELECT symbol, timeframe, config_json FROM backtest_results WHERE result_id = ?",
+            (response["result_id"],),
+        ).fetchone()
+        task_row = conn.execute(
+            "SELECT input_data FROM agent_tasks WHERE id = ?", (response["task_id"],)
+        ).fetchone()
+    assert (result_row["symbol"], result_row["timeframe"]) == ("SOL/USDT", "4h")
+    assert json.loads(result_row["config_json"])["timeframe"] == "4h"
+    assert json.loads(task_row["input_data"])["timeframe"] == "4h"
+
+
+@pytest.mark.parametrize(
+    ("dataset_id", "payload_timeframe", "expected"),
+    [
+        ("SOL/USDT", "1d", "1d"),  # an explicit payload timeframe beats the row
+        ("SOL/USDT-1d", None, "1d"),  # so does one the dataset id names
+        ("SOL/USDT-1d", "15m", "15m"),  # and the payload beats the dataset id
+    ],
+)
+def test_post_backtesting_run_named_timeframes_still_override_the_stored_one(
+    forven_db, monkeypatch, dataset_id, payload_timeframe, expected
+):
+    _insert_sol_strategy("S00151")
+    body = {"strategy_id": "S00151", "dataset_id": dataset_id}
+    if payload_timeframe:
+        body["timeframe"] = payload_timeframe
+
+    response, captured = _run_local_backtesting_run(monkeypatch, body)
+
+    assert captured["timeframe"] == expected
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT timeframe FROM backtest_results WHERE result_id = ?", (response["result_id"],)
+        ).fetchone()
+    assert row["timeframe"] == expected
+
+
+def test_post_backtesting_run_falls_back_to_1h_only_without_a_stored_timeframe(forven_db, monkeypatch):
+    _insert_sol_strategy("S00152", timeframe=None)
+
+    response, captured = _run_local_backtesting_run(
+        monkeypatch, {"strategy_id": "S00152", "dataset_id": "SOL/USDT"}
+    )
+
+    assert captured["timeframe"] == "1h"
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT timeframe FROM backtest_results WHERE result_id = ?", (response["result_id"],)
+        ).fetchone()
+    assert row["timeframe"] == "1h"
+
+
+@pytest.mark.parametrize(("strategy_id", "expected"), [("S00153", "4h"), ("S09999", None)])
+def test_post_backtesting_run_remote_engine_is_sent_the_stored_timeframe(
+    forven_db, monkeypatch, strategy_id, expected
+):
+    # The remote engine re-parses the same timeframe-less dataset id, so it is
+    # told the stored timeframe. With no local row, None leaves the choice to the
+    # remote (its own row, then its own 1h) instead of planting 1h here.
+    from forven.api_core import post_backtesting_run
+    import forven.backtesting as backtesting_mod
+
+    _insert_sol_strategy("S00153")
+    sent: dict = {}
+
+    class _FakeRemoteClient:
+        def run_backtest(self, **kwargs):
+            sent.update(kwargs)
+            return {"ok": True}
+
+    monkeypatch.setattr(backtesting_mod, "get_client", lambda: _FakeRemoteClient())
+    with patch("forven.api_core.kv_get", return_value={"remote_engine_enabled": True}):
+        post_backtesting_run({"strategy_id": strategy_id, "dataset_id": "SOL/USDT"})
+
+    assert sent["dataset_id"] == "SOL/USDT"
+    assert sent["timeframe"] == expected
+
+
 def test_get_backtest_result_sanitizes_stored_infinite_profit_factor(forven_db):
     from forven.api_core import get_backtest_result
 

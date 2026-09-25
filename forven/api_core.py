@@ -8469,8 +8469,9 @@ def post_backtesting_run(body: dict):
             dataset_id = str(body.get("dataset_id", ""))
             # Strip Forven dataset prefix (e.g., "dataset-26-" from "dataset-26-BTC/USDT-1h")
             dataset_id = re.sub(r"^dataset-\d+-", "", dataset_id)
-            # Priority: body.timeframe > parse from dataset_id > default "1h"
-            explicit_timeframe = body.get("timeframe")
+            # Priority: body.timeframe > parse from dataset_id > the strategy row's
+            # stored timeframe > "1h" (the row is applied below, once it is loaded)
+            explicit_timeframe = str(body.get("timeframe") or "").strip()
             
             # Parse symbol and timeframe from dataset_id - always extract symbol
             VALID_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d", "1w")
@@ -8487,13 +8488,15 @@ def post_backtesting_run(body: dict):
                 symbol = dataset_id.split()[0]
                 timeframe = dataset_id.split()[-1]
             else:
-                # Plain symbol: "BTC/USDT"
+                # Plain symbol: "BTC/USDT" names no timeframe. None lets the
+                # strategy row's stored one apply (a 1h default here silently
+                # ran a 4h strategy at 1h).
                 symbol = dataset_id
-                timeframe = "1h"
+                timeframe = None
             
             # Override timeframe if explicitly provided
             if explicit_timeframe:
-                timeframe = str(explicit_timeframe).strip() or "1h"
+                timeframe = explicit_timeframe
             
             # Check if we are pointing to ourself to avoid recursion
             settings = kv_get("forven:settings", {})
@@ -8508,6 +8511,10 @@ def post_backtesting_run(body: dict):
                 if not strategy_row:
                     return {"ok": False, "error": f"strategy not found: {requested_strategy_id}"}
                 strategy_id = str(strategy_row.get("id") or requested_strategy_id).strip() or requested_strategy_id
+                # Nothing named a timeframe: run on the strategy's own, 1h only when
+                # the row has none. Everything below (bar estimate, backtest, task
+                # row, result row and config) reads this resolved value.
+                timeframe = timeframe or str(strategy_row.get("timeframe") or "").strip() or "1h"
                 base_params = _parse_strategy_params_blob(
                     strategy_row.get("params") if strategy_row else {}
                 )
@@ -8661,10 +8668,14 @@ def post_backtesting_run(body: dict):
             requested_strategy_id = str(body["strategy_id"]).strip()
             strategy_row = _get_strategy_row_by_id(requested_strategy_id)
             resolved_strategy_id = str((strategy_row or {}).get("id") or requested_strategy_id).strip() or requested_strategy_id
+            # The remote re-parses the same dataset id, so a timeframe-less one would
+            # land on its own 1h fallback: send the resolved timeframe. Without a
+            # local row, None leaves it to the remote's row rather than forcing 1h.
+            timeframe = timeframe or str((strategy_row or {}).get("timeframe") or "").strip() or None
             return json_safe_payload(client.run_backtest(
                 strategy_id=resolved_strategy_id,
                 dataset_id=body["dataset_id"],
-                timeframe=body.get("timeframe"),
+                timeframe=timeframe,
                 parameters=body.get("parameters"),
                 fee_bps=body.get("fee_bps", settings_obj.get("backtest_fee_bps", 4.5)),
                 slippage_bps=body.get("slippage_bps", settings_obj.get("backtest_slippage_bps", 2.0)),
