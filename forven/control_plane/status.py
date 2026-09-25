@@ -691,8 +691,20 @@ def get_dashboard(require_account_connection: bool = False) -> dict[str, object]
         "synced_at": account_synced_at,
     }
 
+    # execution_mode is a global label; a strategy's stage decides whether it
+    # trades real money, so the header derives LIVE from these counts.
+    try:
+        from forven.api_domains.live_fleet import count_live_armed
+
+        live_armed = count_live_armed()
+    except Exception as exc:
+        core.log.debug("Dashboard live-armed count failed: %s", exc)
+        live_armed = {"strategies": 0, "bots": 0}
+
     return {
         "execution_mode": mode,
+        "live_strategy_count": live_armed["strategies"],
+        "live_bot_count": live_armed["bots"],
         "trading_allowed": allowed,
         "trading_reason": reason,
         "paused": paused,
@@ -841,9 +853,12 @@ def get_sentiment() -> dict[str, object]:
 
 
 def get_equity_history() -> dict[str, object]:
+    from forven.trade_accounting import net_pnl_sql
+
+    # Live pnl_usd is gross of fees and funding; net_pnl_sql applies the recorded costs.
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT closed_at, pnl_usd FROM trades "
+            f"SELECT closed_at, {net_pnl_sql()} AS pnl_usd FROM trades "
             "WHERE status = 'CLOSED' AND closed_at IS NOT NULL "
             "AND execution_type = 'live' "
             "ORDER BY closed_at"

@@ -26,7 +26,12 @@ export type ForvenProvider =
 // ============== Forven Classic Compatibility ==============
 
 export interface ForvenDashboardResponse {
+	/** Global label only — strategy stage decides live execution. Use the live counts below. */
 	execution_mode?: 'paper' | 'live' | string;
+	/** Strategies at the live_graduated stage (they send real orders). */
+	live_strategy_count?: number;
+	/** Bot Factory bots armed for live execution. */
+	live_bot_count?: number;
 	trading_allowed?: boolean;
 	trading_reason?: string;
 	paused?: boolean;
@@ -207,6 +212,8 @@ export interface ForvenRiskStatus {
 			risk_usd?: number;
 			stop_price?: number | null;
 			group?: string;
+			/** Routed wallet label (direction book or named wallet); 'main' when unrouted. */
+			book?: string;
 		}>;
 		groups?: Record<string, string[]>;
 		/** GO-LIVE-1: per-strategy notional ceilings accepted at go-live. */
@@ -915,10 +922,6 @@ export async function getForvenOpenTrades(): Promise<ForvenTrade[]> {
 	return fetchApi('/forven/trades/open');
 }
 
-export async function getForvenRecentTrades(limit = 20): Promise<ForvenTrade[]> {
-	return fetchApi(`/forven/trades/recent?limit=${limit}`);
-}
-
 export interface LiveSignalsResponse {
 	strategy_id: string;
 	indicators: Record<string, { name: string; value: number; timestamp: string }>;
@@ -1018,10 +1021,6 @@ export async function markForvenTradeFailed(
 		method: 'POST',
 		body: JSON.stringify({ reason }),
 	});
-}
-
-export async function getForvenScannerState(): Promise<ForvenScannerState> {
-	return fetchApi('/forven/scanner/state');
 }
 
 export async function getForvenStrategyPerformance(): Promise<ForvenStrategyPerformance[]> {

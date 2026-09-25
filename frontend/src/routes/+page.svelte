@@ -1,273 +1,206 @@
 <script lang="ts">
-	import { onMount, onDestroy } from "svelte";
+	/**
+	 * Live-first dashboard: is real money trading safely, what is it doing, are
+	 * the live strategies actually firing, and what needs the operator. Paper,
+	 * pipeline and system health get one line each at the bottom.
+	 *
+	 * Account, risk and open trades live in the shared stores the header
+	 * heartbeat also fills; this page refreshes them on its own cadence so the
+	 * numbers never wait on a quiet websocket.
+	 */
+	import { onDestroy, onMount } from 'svelte';
 	import {
-		getDashboardOverview,
-		getDashboardActivity,
-		getDashboardWinners,
-	} from "$lib/api";
+		getForvenDashboard,
+		getForvenEquityHistory,
+		getForvenOpenTrades,
+		getForvenRisk,
+	} from '$lib/api';
+	import type { ForvenEquityHistory } from '$lib/api';
+	import {
+		getDashboardFunnel,
+		getLiveFleet,
+		getPaperSummary,
+		getSchedulerJobs,
+		getTaskHealth,
+	} from '$lib/api/dashboard';
 	import type {
-		DashboardOverview,
-		DashboardActivityItem,
-		WinnerEntry,
-	} from "$lib/api";
-	import { backendConnected } from "$lib/stores";
-	import {
-		createRealtimeRefresh,
-		type RealtimeRefreshController,
-	} from "$lib/utils/realtime";
-	import OpsHeaderStrip from "$lib/components/dashboard/OpsHeaderStrip.svelte";
-	import SystemPulsePanel from "$lib/components/dashboard/SystemPulsePanel.svelte";
-	import DataIntegrityPanel from "$lib/components/dashboard/DataIntegrityPanel.svelte";
-	import AlertsFeed from "$lib/components/dashboard/AlertsFeed.svelte";
-	import SchedulerWatchPanel from "$lib/components/dashboard/SchedulerWatchPanel.svelte";
-	import PaperSessionSummary from "$lib/components/dashboard/PaperSessionSummary.svelte";
-	import PipelineFlowPanel from "$lib/components/dashboard/PipelineFlowPanel.svelte";
-	import AgentHeartbeat from "$lib/components/dashboard/AgentHeartbeat.svelte";
-	import ActivityStream from "$lib/components/dashboard/ActivityStream.svelte";
-	import StrategyLeaderboard from "$lib/components/dashboard/StrategyLeaderboard.svelte";
-	import EquityOverlay from "$lib/components/dashboard/EquityOverlay.svelte";
-	import Skeleton from "$lib/components/Skeleton.svelte";
-	import LiveTradingPanel from "$lib/components/dashboard/LiveTradingPanel.svelte";
-	import CriticalAlertsBanner from "$lib/components/dashboard/CriticalAlertsBanner.svelte";
-	import CrucibleResearchPanel from "$lib/components/dashboard/CrucibleResearchPanel.svelte";
+		DashboardFunnelStage,
+		LiveFleet,
+		PaperSummary,
+		SchedulerJobSummary,
+		TaskHealth,
+	} from '$lib/api/dashboard';
+	import { forvenDashboard, forvenOpenTrades, forvenRisk } from '$lib/stores/forven';
+	import { forvenLivePrices } from '$lib/stores/forvenWebSocket';
+	import { navRouteMetrics } from '$lib/stores/navMetrics';
+	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
+	import { buildAttentionItems, formatAge, isLiveTrade } from '$lib/utils/liveDashboard';
+	import CriticalAlertsBanner from '$lib/components/dashboard/CriticalAlertsBanner.svelte';
+	import LiveStatusBar from '$lib/components/dashboard/LiveStatusBar.svelte';
+	import AccountTiles from '$lib/components/dashboard/AccountTiles.svelte';
+	import LivePositions from '$lib/components/dashboard/LivePositions.svelte';
+	import AttentionPanel from '$lib/components/dashboard/AttentionPanel.svelte';
+	import LiveStrategiesTable from '$lib/components/dashboard/LiveStrategiesTable.svelte';
+	import LivePnlPanel from '$lib/components/dashboard/LivePnlPanel.svelte';
+	import RecentFills from '$lib/components/dashboard/RecentFills.svelte';
+	import WalletCapacity from '$lib/components/dashboard/WalletCapacity.svelte';
+	import OpsFooter from '$lib/components/dashboard/OpsFooter.svelte';
 
-	/** Loader data from +page.ts — provides initial dashboard payload. */
-	export let data: {
-		overview: DashboardOverview | null;
-		activity: DashboardActivityItem[];
-		winners: WinnerEntry[];
-	};
+	export let data: { fleet: LiveFleet | null };
 
-	// Seed local state from loader data so the page renders on frame 1.
-	let overview: DashboardOverview | null = data.overview;
-	let activity: DashboardActivityItem[] = data.activity;
-	let winners: WinnerEntry[] = data.winners;
+	let fleet: LiveFleet | null = data.fleet;
+	let fleetUnavailable = false;
+	let equityHistory: ForvenEquityHistory | null = null;
+	let schedulerJobs: SchedulerJobSummary[] = [];
+	let paper: PaperSummary | null = null;
+	let funnel: DashboardFunnelStage[] = [];
+	let health: TaskHealth | null = null;
+	let healthUnreachable = false;
+	let refreshedAt: number | null = null;
+	let now = Date.now();
+	let realtime: RealtimeRefreshController | null = null;
+	let clock: ReturnType<typeof setInterval> | null = null;
 
-	let loadingError = "";
-	let loading = !data.overview;
-	let primaryRealtime: RealtimeRefreshController | null = null;
-	let primaryLoadingInFlight = false;
-	let primaryDashboardLoaded = !!data.overview;
-	const DASHBOARD_TIMEOUT_MS = 8_000;
-
-	// Persisted activity-stream expand/collapse (full firehose; alerts have
-	// their own always-visible feed).
-	const ACTIVITY_KEY = "dashboard.activityStream.expanded";
-	let activityExpanded = false;
-
-	function toggleActivity() {
-		activityExpanded = !activityExpanded;
-		try {
-			localStorage.setItem(ACTIVITY_KEY, String(activityExpanded));
-		} catch {
-			// localStorage may be unavailable (private mode / SSR harness); ignore.
-		}
-	}
-
-	function withTimeout<T>(
-		promise: Promise<T>,
-		label: string,
-		timeoutMs = DASHBOARD_TIMEOUT_MS,
-	): Promise<T> {
-		return new Promise<T>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error(`${label} timed out`)),
-				timeoutMs,
-			);
-			promise.then(
-				(value) => {
-					clearTimeout(timer);
-					resolve(value);
-				},
-				(err) => {
-					clearTimeout(timer);
-					reject(err);
-				},
-			);
-		});
-	}
-
-	async function loadDashboard() {
-		if (primaryLoadingInFlight) return;
-		primaryLoadingInFlight = true;
-
-		try {
-			const results = await Promise.allSettled([
-				withTimeout(getDashboardOverview(), "overview"),
-				withTimeout(getDashboardActivity(40), "activity"),
-				withTimeout(getDashboardWinners(10), "winners"),
+	async function refresh(): Promise<void> {
+		const [dash, risk, open, fleetResult, equity, jobs, paperResult, funnelResult, healthResult] =
+			await Promise.allSettled([
+				getForvenDashboard(),
+				getForvenRisk(),
+				getForvenOpenTrades(),
+				getLiveFleet(),
+				getForvenEquityHistory(),
+				getSchedulerJobs(),
+				getPaperSummary(false),
+				getDashboardFunnel(),
+				getTaskHealth(),
 			]);
-			const [overviewResult, activityResult, winnersResult] = results;
-
-			if (overviewResult.status === "fulfilled") {
-				overview = overviewResult.value;
-				loadingError = "";
-			}
-			if (activityResult.status === "fulfilled")
-				activity = activityResult.value;
-			if (winnersResult.status === "fulfilled")
-				winners = winnersResult.value;
-
-			// An always-on dashboard must not die on a transient miss: keep the
-			// last good data on screen and only surface an error when we have
-			// nothing at all to show. The ops header independently shows
-			// backend reachability, so a stale-but-rendered dashboard is
-			// visibly distinguishable from a healthy one.
-			const allFailed = results.every((entry) => entry.status === "rejected");
-			if (allFailed && !overview) {
-				loadingError = $backendConnected
-					? "Dashboard data is temporarily unavailable. Retrying in background."
-					: "Backend connection is still initializing. Dashboard will auto-retry.";
-			}
-
-			loading = false;
-			primaryDashboardLoaded = true;
-		} finally {
-			primaryLoadingInFlight = false;
-		}
+		if (dash.status === 'fulfilled' && dash.value) forvenDashboard.set(dash.value);
+		if (risk.status === 'fulfilled' && risk.value) forvenRisk.set(risk.value);
+		if (open.status === 'fulfilled' && Array.isArray(open.value)) forvenOpenTrades.set(open.value);
+		// Keep the last good fleet on screen through a transient miss.
+		if (fleetResult.status === 'fulfilled') fleet = fleetResult.value;
+		fleetUnavailable = fleetResult.status === 'rejected' && fleet === null;
+		if (equity.status === 'fulfilled') equityHistory = equity.value;
+		if (jobs.status === 'fulfilled') schedulerJobs = jobs.value;
+		if (paperResult.status === 'fulfilled') paper = paperResult.value;
+		if (funnelResult.status === 'fulfilled') funnel = funnelResult.value;
+		if (healthResult.status === 'fulfilled') health = healthResult.value;
+		healthUnreachable = healthResult.status === 'rejected';
+		refreshedAt = Date.now();
 	}
 
-	function startPrimaryRealtime() {
-		if (primaryRealtime) return;
-		primaryRealtime = createRealtimeRefresh(loadDashboard, {
-			fallbackMs: 30_000,
-			wsDebounceMs: 5000,
-			wsEvents: [
-				"strategy_promoted",
-				"kill_switch_activated",
-				"kill_switch_cleared",
-				"agent_stalled",
-			],
-			pollWhenWsOfflineOnly: false,
-		});
-		primaryRealtime.start();
-	}
-
-	function stopPrimaryRealtime() {
-		primaryRealtime?.stop();
-		primaryRealtime = null;
-	}
+	$: dashboard = $forvenDashboard;
+	$: risk = $forvenRisk;
+	$: liveTrades = $forvenOpenTrades.filter(isLiveTrade);
+	$: prices = { ...(dashboard?.prices ?? {}), ...$forvenLivePrices };
+	// null = unknown (e.g. an older backend without the live counts): never claim
+	// "paper only" without evidence.
+	$: armedCount = fleet
+		? fleet.strategies.length + fleet.live_bots_armed
+		: typeof dashboard?.live_strategy_count === 'number'
+			? dashboard.live_strategy_count + (dashboard.live_bot_count ?? 0)
+			: null;
+	$: hasLive = armedCount === null || armedCount > 0 || liveTrades.length > 0;
+	$: attention = buildAttentionItems({
+		dashboard,
+		risk,
+		fleet,
+		schedulerJobs,
+		pendingApprovals: $navRouteMetrics['/approval']?.count ?? 0,
+		now,
+	});
 
 	onMount(() => {
-		try {
-			activityExpanded = localStorage.getItem(ACTIVITY_KEY) === "true";
-		} catch {
-			activityExpanded = false;
-		}
-
-		if (!primaryDashboardLoaded) {
-			loading = true;
-			void loadDashboard();
-		}
-		startPrimaryRealtime();
+		void refresh();
+		realtime = createRealtimeRefresh(refresh, {
+			fallbackMs: 30_000,
+			wsDebounceMs: 2_000,
+			wsEvents: ['trade', 'kill_switch_activated', 'kill_switch_cleared', 'strategy_promoted', 'strategy_transition', 'risk_alert'],
+			pollWhenWsOfflineOnly: false,
+		});
+		realtime.start();
+		clock = setInterval(() => (now = Date.now()), 5_000);
 	});
 
 	onDestroy(() => {
-		stopPrimaryRealtime();
+		realtime?.stop();
+		realtime = null;
+		if (clock) clearInterval(clock);
 	});
 </script>
 
 <svelte:head>
-	<title>Operations | Forven</title>
+	<title>Dashboard | Forven</title>
 	<meta
 		name="description"
-		content="Always-on operations dashboard: system health, data integrity, pipeline flow, paper trading, and alerts."
+		content="Live trading first: account, positions, live strategy health, realized P&L, and what needs attention."
 	/>
 </svelte:head>
 
-<div
-	class="relative flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-black px-4 py-6"
->
-	<CriticalAlertsBanner />
+<div class="flex h-full min-h-0 flex-col overflow-hidden bg-black">
+	<div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
+		<div class="mx-auto max-w-[1600px] space-y-3">
+			<CriticalAlertsBanner />
 
-	<div class="flex-shrink-0 border-b border-[#222] pb-4">
-		<h1 class="text-lg font-bold uppercase tracking-widest text-white">Dashboard</h1>
-		<p class="mt-1 text-xs text-[#666]">
-			Live operations, trading exposure, agent activity, and strategy pipeline health.
-		</p>
-	</div>
-
-	<OpsHeaderStrip autopilot={overview?.autopilot ?? null} kpis={overview?.kpis ?? null} />
-
-	{#if loading && !overview}
-		<div class="min-h-[220px] grid grid-cols-[1fr_1fr_1fr] gap-2">
-			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={6} /></div>
-			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={6} /></div>
-			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={6} /></div>
-		</div>
-		<div class="min-h-[240px] grid grid-cols-2 gap-2">
-			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={8} /></div>
-			<div class="border border-[#222] p-4 bg-[#050505]"><Skeleton rows={8} /></div>
-		</div>
-	{:else}
-		<div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-			<div class="space-y-2 pb-2">
-				<!-- Monitor row: is the machine alive, is the data trustworthy, what needs attention -->
-				<div class="grid grid-cols-1 gap-2 lg:h-[330px] lg:grid-cols-3">
-					<div class="flex min-h-0 flex-col gap-2">
-						<div class="min-h-0 flex-1"><SystemPulsePanel /></div>
-						<div class="min-h-0 flex-1"><DataIntegrityPanel /></div>
-					</div>
-					<div class="h-[240px] min-h-0 lg:h-auto"><AlertsFeed /></div>
-					<div class="h-[240px] min-h-0 lg:h-auto"><SchedulerWatchPanel /></div>
-				</div>
-
-				<!-- Trading row: what is the money doing right now -->
-				<div class="flex-shrink-0 space-y-2">
-					<LiveTradingPanel />
-				</div>
-				<div class="flex-shrink-0">
-					<PaperSessionSummary />
-				</div>
-
-				<!-- Agent activity + pipeline flow, side by side -->
-				<div class="flex-shrink-0 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:h-[260px]">
-					<div class="h-[240px] min-h-0 lg:h-auto"><AgentHeartbeat /></div>
-					<div class="h-[240px] min-h-0 lg:h-auto"><PipelineFlowPanel /></div>
-				</div>
-
-				<!-- Research: active crucibles + recent verdicts -->
-				<div class="flex-shrink-0 h-[180px]">
-					<CrucibleResearchPanel />
-				</div>
-
-				<div
-					class="flex-shrink-0 min-h-[180px] overflow-hidden terminal-card p-1.5"
-				>
-					<EquityOverlay />
-				</div>
-
-				<div class="flex-shrink-0 h-[230px]">
-					<StrategyLeaderboard {winners} />
-				</div>
-
-				<!-- Full activity firehose (alerts have their own panel above) -->
-				<div class="flex-shrink-0 terminal-card">
-					<button
-						type="button"
-						class="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#888] hover:text-white transition-colors"
-						on:click={toggleActivity}
-						aria-expanded={activityExpanded}
-						aria-controls="activity-stream-panel"
-						data-testid="activity-stream-toggle"
-					>
-						Activity Stream {activityExpanded ? "▾" : "▸"}
-					</button>
-					{#if activityExpanded}
-						<div id="activity-stream-panel" class="max-h-[280px] overflow-auto">
-							<ActivityStream items={activity} />
-						</div>
-					{/if}
-				</div>
+			<div class="flex items-baseline justify-between">
+				<h1 class="text-lg font-bold uppercase tracking-widest text-white">Dashboard</h1>
+				<span class="text-[10px] uppercase tracking-wider text-gray-600">
+					{refreshedAt ? `updated ${formatAge(new Date(refreshedAt).toISOString(), now)} ago` : 'loading…'}
+				</span>
 			</div>
-		</div>
-	{/if}
 
-	{#if loadingError}
-		<div
-			class="flex-shrink-0 border border-red-900 bg-red-500/5 px-4 py-2 text-xs text-red-400"
-		>
-			{loadingError}
+			<LiveStatusBar {dashboard} {risk} {fleet} {now} />
+
+			{#if hasLive}
+				<AccountTiles {dashboard} {risk} {fleet} />
+
+				<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+					<LivePositions
+						trades={liveTrades}
+						{prices}
+						budgetPositions={risk?.portfolio_budget_live?.positions ?? []}
+						{now}
+					/>
+					<AttentionPanel items={attention} />
+				</div>
+
+				{#if fleetUnavailable}
+					<div class="border border-amber-900 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
+						Live strategy data is unavailable right now. Retrying.
+					</div>
+				{:else}
+					<LiveStrategiesTable
+						strategies={fleet?.strategies ?? []}
+						sizing={risk?.portfolio_budget_live?.strategy_sizing ?? []}
+						liveBotsArmed={fleet?.live_bots_armed ?? 0}
+						{now}
+					/>
+				{/if}
+
+				<div class="grid gap-3 xl:grid-cols-2">
+					<LivePnlPanel history={equityHistory} />
+					<RecentFills fills={fleet?.recent_fills ?? []} {now} />
+				</div>
+
+				<WalletCapacity budget={risk?.portfolio_budget_live ?? null} />
+			{:else}
+				<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+					<div class="border border-[#222] bg-[#050505] px-4 py-5 text-xs text-gray-400" data-testid="no-live">
+						<div class="text-sm font-bold text-gray-200">No strategies are trading real money.</div>
+						<p class="mt-2 max-w-prose">
+							A strategy trades real money once it is promoted from paper to live. Paper results and go-live
+							candidates are on the pages below.
+						</p>
+						<div class="mt-3 flex gap-3 text-[11px] uppercase tracking-wider">
+							<a href="/paper-trades" class="text-gray-300 hover:text-white">Paper trades →</a>
+							<a href="/approval" class="text-gray-300 hover:text-white">Approvals →</a>
+						</div>
+					</div>
+					<AttentionPanel items={attention} />
+				</div>
+			{/if}
+
+			<OpsFooter {paper} {funnel} {health} {healthUnreachable} />
 		</div>
-	{/if}
+	</div>
 </div>

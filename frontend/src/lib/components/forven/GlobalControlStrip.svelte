@@ -91,8 +91,12 @@
 	}
 
 	$: executionMode = normalizeMode($forvenDashboard?.execution_mode);
+	// execution_mode is only a global label: strategies at the live stage and
+	// live-armed bots are what send real orders, so count those instead.
+	$: liveArmed = ($forvenDashboard?.live_strategy_count ?? 0) + ($forvenDashboard?.live_bot_count ?? 0);
 	$: hlNetwork = (() => {
-		const raw = ($forvenDashboard?.account?.network || '').toString().trim().toLowerCase();
+		if (!$forvenDashboard) return null;
+		const raw = ($forvenDashboard.account?.network || '').toString().trim().toLowerCase();
 		if (raw === 'mainnet' || raw === 'testnet') return raw;
 		return executionMode === 'live' ? 'mainnet' : 'testnet';
 	})();
@@ -306,22 +310,34 @@
 			{/if}
 		{/each}
 
-		<!-- Execution mode is display-only: Forven supports paper trading +
-		     Hyperliquid testnet only. Live/mainnet is not a supported feature, so
-		     there is no in-app switch to it. -->
-		<span
-			class={`px-2 py-1 border whitespace-nowrap ${executionMode === 'live' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-[#333] text-[#888]'}`}
-			title={`Execution mode: ${executionMode.toUpperCase()} — paper trading + Hyperliquid testnet only`}
-		>
-			Mode: {executionMode.toUpperCase()}
-		</span>
+		<!-- Display-only, with no in-app switch to live. Real orders come from
+		     strategies promoted to the live stage and live-armed bots, so the badge
+		     counts those rather than reading the global execution_mode label. -->
+		{#if liveArmed > 0}
+			<a
+				href="/live-trades"
+				class="px-2 py-1 border whitespace-nowrap font-bold border-red-900 text-red-400 bg-red-500/10"
+				title={`${liveArmed} live ${liveArmed === 1 ? 'strategy/bot sends' : 'strategies/bots send'} real orders`}
+			>
+				Live ×{liveArmed}
+			</a>
+		{:else}
+			<span
+				class={`px-2 py-1 border whitespace-nowrap ${executionMode === 'live' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-[#333] text-[#888]'}`}
+				title={`Execution mode: ${executionMode.toUpperCase()} — no strategies or bots are trading real money`}
+			>
+				Mode: {executionMode.toUpperCase()}
+			</span>
+		{/if}
 
-		<span
-			class={`px-2 py-1 border whitespace-nowrap font-bold ${hlNetwork === 'mainnet' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-emerald-900 text-emerald-400 bg-emerald-500/10'}`}
-			title={hlNetwork === 'mainnet' ? 'HyperLiquid MAINNET — orders use real funds' : 'HyperLiquid testnet — no real funds at risk'}
-		>
-			{hlNetwork === 'mainnet' ? 'MAINNET' : 'TESTNET'}
-		</span>
+		{#if hlNetwork}
+			<span
+				class={`px-2 py-1 border whitespace-nowrap font-bold ${hlNetwork === 'mainnet' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-emerald-900 text-emerald-400 bg-emerald-500/10'}`}
+				title={hlNetwork === 'mainnet' ? 'HyperLiquid MAINNET — orders use real funds' : 'HyperLiquid testnet — no real funds at risk'}
+			>
+				{hlNetwork === 'mainnet' ? 'MAINNET' : 'TESTNET'}
+			</span>
+		{/if}
 
 		<span class={`px-2 py-1 border whitespace-nowrap ${getSentimentClass(sentimentScore)}`}>
 			F&G: {sentimentScore !== null ? Math.round(sentimentScore) : '--'}
