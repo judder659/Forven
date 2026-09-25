@@ -534,6 +534,43 @@ def test_backtesting_client_sends_forven_api_and_operator_keys(monkeypatch):
         client.close()
 
 
+@pytest.mark.parametrize(("kwargs", "expected"), [({}, None), ({"timeframe": None}, None), ({"timeframe": "15m"}, "15m")])
+def test_backtesting_client_run_backtest_sends_a_timeframe_only_when_given(monkeypatch, kwargs, expected):
+    # /api/backtesting/run treats a sent timeframe as an override that beats the
+    # dataset id's and the strategy's stored one, so an omitted one must not go
+    # out as "1h".
+    posted: dict[str, object] = {}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True}
+
+    class _DummyClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def post(self, url: str, json: dict[str, object] | None = None):
+            posted.update(json or {})
+            return _Response()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("forven.backtesting.httpx.Client", _DummyClient)
+
+    client = BacktestingClient(base_url="http://127.0.0.1:8003/api")
+    try:
+        client.run_backtest("S00150", "SOL/USDT", **kwargs)
+    finally:
+        client.close()
+
+    assert posted["dataset_id"] == "SOL/USDT"
+    assert posted.get("timeframe") == expected
+
+
 def test_optimize_strategy_uses_explicit_parameter_ranges(monkeypatch):
     captured: dict[str, object] = {}
 

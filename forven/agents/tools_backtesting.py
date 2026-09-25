@@ -901,7 +901,9 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                 parameters=params.get("parameters"),
                 fee_bps=params.get("fee_bps", 4.5),
                 slippage_bps=params.get("slippage_bps", 2.0),
-                timeframe=params.get("timeframe", "1h"),
+                # No "1h" default: a sent timeframe beats the dataset id's, so an
+                # omitted one must stay None for the route to resolve it.
+                timeframe=params.get("timeframe"),
                 request_source="agent_tool",
                 origin_agent_id=str(_current_agent_id_var.get() or "").strip() or None,
                 origin_task_id=str(_current_task_display_id_var.get() or "").strip() or None,
@@ -1041,7 +1043,13 @@ register_tool(
         "properties": {
             "strategy_id": {"type": "string", "description": "Strategy ID to test"},
             "dataset_id": {"type": "string", "description": "Dataset ID to test on"},
-            "timeframe": {"type": "string", "description": "Chart timeframe: 1m, 5m, 15m, 1h, 4h, 1d (default 1h)"},
+            "timeframe": {
+                "type": "string",
+                "description": (
+                    "Chart timeframe override: 1m, 5m, 15m, 1h, 4h, 1d. Omit it to use the "
+                    "dataset id's timeframe, else the strategy's stored one."
+                ),
+            },
             "parameters": {"type": "object", "description": "Optional parameter overrides"},
             "fee_bps": {"type": "number", "description": "Fee in basis points (default 4.5, Hyperliquid taker)"},
             "slippage_bps": {"type": "number", "description": "Slippage in basis points (default 2.0)"},

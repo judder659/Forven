@@ -611,6 +611,27 @@ def test_jbt_create_strategy_rejects_mismatched_hypothesis_and_crucible(forven_d
     assert created == []
 
 
+@pytest.mark.parametrize(("tool_params", "expected"), [({}, None), ({"timeframe": "15m"}, "15m")])
+def test_jbt_run_backtest_leaves_an_omitted_timeframe_to_the_route(monkeypatch, tool_params, expected):
+    # The tool sent timeframe="1h" whenever the agent omitted one, and a payload
+    # timeframe beats the dataset id's, so a "SOL/USDT-4h" run came back at 1h.
+    # None lets /api/backtesting/run use the dataset id's timeframe, else the
+    # strategy's stored one.
+    sent: dict = {}
+
+    class FakeClient:
+        def run_backtest(self, **kwargs):
+            sent.update(kwargs)
+            return {"ok": True}
+
+    monkeypatch.setattr(tools_mod, "_check_backtesting_available", lambda: True)
+    monkeypatch.setattr("forven.backtesting.get_client", lambda: FakeClient())
+
+    _tool_backtesting("forven_run_backtest", {"strategy_id": "S00150", "dataset_id": "SOL/USDT-4h", **tool_params})
+
+    assert sent["timeframe"] == expected
+
+
 def test_create_strategy_tool_points_new_logic_to_register_strategy():
     # The API rejects unregistered types; an agent told "any strategy family is
     # accepted" kept sending custom types here and stopped at the 422.
