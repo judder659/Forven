@@ -388,3 +388,35 @@ def test_timeframe_mismatch_disables_strategy_state_sync(captured):
     # stored timeframe column directly).
     core.post_backtest_submit(_plain_submit(timeframe="4h"))
     assert captured["kwargs"]["sync_strategy_state"] is False
+
+
+# --- The stored symbol/timeframe win when the caller omits them --------------
+# The body used to default symbol="BTC"/timeframe="1h", and those defaults beat
+# the strategy row: a strategy-id-only rerun of a SOL 4h strategy silently ran
+# on BTC 1h. The `captured` row is BTC/1h (identical to the old defaults), so
+# these tests swap in a row that can tell the two apart.
+
+def _stub_sol_4h_row(monkeypatch):
+    monkeypatch.setattr(core, "_require_existing_strategy_row", lambda sid: {
+        "id": "rsi_momentum", "name": "rsi_momentum", "type": "rsi_momentum",
+        "symbol": "SOL/USDT", "timeframe": "4h", "params": "{}", "definition_json": None,
+    })
+
+
+def test_strategy_id_only_submit_uses_stored_symbol_and_timeframe(captured, monkeypatch):
+    _stub_sol_4h_row(monkeypatch)
+    core.post_backtest_submit(core.BacktestSubmitBody(strategy_id="rsi_momentum"))
+    kw = captured["kwargs"]
+    assert kw["asset"] == "SOL"
+    assert kw["timeframe"] == "4h"
+    # A bare rerun is the stored configuration, so it stays canonical (B-6).
+    assert kw["sync_strategy_state"] is True
+
+
+def test_explicit_symbol_and_timeframe_still_override_the_row(captured, monkeypatch):
+    _stub_sol_4h_row(monkeypatch)
+    core.post_backtest_submit(core.BacktestSubmitBody(strategy_id="rsi_momentum", symbol="ETH", timeframe="1d"))
+    kw = captured["kwargs"]
+    assert kw["asset"] == "ETH"
+    assert kw["timeframe"] == "1d"
+    assert kw["sync_strategy_state"] is False
