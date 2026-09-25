@@ -276,6 +276,8 @@ export interface LiveCapacityReport {
 	cohort_size: number;
 	slice_usd: number | null;
 	wallets: LiveWalletCapacity[];
+	/** CAP-FIT-1: share of the full slice live sizing uses so every wallet's worst case fits (1 = full size). */
+	capacity_scale: number;
 	/** Live strategies that share a coin and a direction, so they refuse each other's entries. */
 	conflicts: Array<{ coin: string; sides: string[]; strategy_ids: string[] }>;
 }

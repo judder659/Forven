@@ -1297,6 +1297,10 @@ def live_equity_slice(account_equity: float | None) -> tuple[float | None, dict]
     N is floored at 1: a strategy placing a live order is by definition in the
     cohort, so a zero count means the read disagrees with reality, and dividing by
     zero is not the way to find out.
+
+    CAP-FIT-1: the slice is scaled by live_capacity_scale() so every wallet can hold
+    every live strategy's margin at once. Percent returns are unchanged; only the
+    dollar base shrinks, and only while a wallet is over-committed.
     """
     meta: dict = {"cohort_size": None, "account_equity_usd": None, "slice_usd": None}
     eq = None
@@ -1312,11 +1316,13 @@ def live_equity_slice(account_equity: float | None) -> tuple[float | None, dict]
         return None, {**meta, "account_equity_usd": round(eq, 2), "reason": "live cohort unreadable"}
 
     n = max(len(cohort), 1)
-    slice_usd = eq / float(n)
+    scale = live_capacity_scale()
+    slice_usd = eq / float(n) * scale
     return slice_usd, {
         "cohort_size": n,
         "account_equity_usd": round(eq, 2),
         "slice_usd": round(slice_usd, 4),
+        "capacity_scale": round(scale, 4),
     }
 
 
@@ -1467,13 +1473,41 @@ def live_capacity_report(conn, candidate_id: str | None = None) -> dict:
             "worst_case_margin_usd": round(demand, 2) if demand is not None else None,
             "over_capacity": bool(demand is not None and capacity is not None and demand > capacity),
         })
-    return {
+    report = {
         "margin_cap_pct": margin_pct,
         "cohort_size": len(members),
         "slice_usd": round(slice_usd, 2) if slice_usd else None,
         "wallets": report_wallets,
         "conflicts": coin_side_conflicts(members),
     }
+    # CAP-FIT-1: the share of the full slice live sizing uses right now.
+    report["capacity_scale"] = round(_capacity_scale(report), 4)
+    return report
+
+
+def _capacity_scale(report: dict) -> float:
+    scale = 1.0
+    for w in report["wallets"]:
+        demand, capacity = w["worst_case_margin_usd"], w["capacity_usd"]
+        if demand and capacity is not None and demand > capacity:
+            scale = min(scale, capacity / demand)
+    return scale
+
+
+def live_capacity_scale() -> float:
+    """CAP-FIT-1: the factor (<= 1) that fits every wallet's worst case.
+
+    The operator's choice (2026-09-25): when the live cohort could need more
+    margin than a wallet holds, shrink every live slice to fit rather than refuse
+    entries. 1.0 when the cohort fits or wallet balances are unknown; the
+    BOOK-MARGIN-1 cap still guards each order.
+    """
+    try:
+        with get_db() as conn:
+            return _capacity_scale(live_capacity_report(conn))
+    except Exception as exc:  # noqa: BLE001 — sizing falls back to the unscaled slice
+        log.warning("CAP-FIT-1: capacity scale unavailable (%s); using the full slice", exc)
+        return 1.0
 
 
 def go_live_refusal(conn, strategy_id: str) -> str | None:

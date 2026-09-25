@@ -222,13 +222,14 @@ export function buildAttentionItems(input: AttentionInput): AttentionItem[] {
 			href: '/live-trades',
 		});
 	}
+	const scale = fleet?.capacity?.capacity_scale ?? 1;
 	for (const wallet of fleet?.capacity?.wallets ?? []) {
 		if (!wallet.over_capacity) continue;
 		items.push({
 			id: `capacity-${wallet.wallet}`,
 			severity: 'warning',
-			title: `${wallet.wallet} wallet can’t hold every live strategy at once`,
-			detail: `Worst case ${formatUsd(wallet.worst_case_margin_usd)} of margin against a ${formatUsd(wallet.capacity_usd)} limit. Add funds to it or run fewer strategies on that side.`,
+			title: `Live sizes scaled to ${Math.round(scale * 100)}% to fit the ${wallet.wallet} wallet`,
+			detail: `At full size its worst case is ${formatUsd(wallet.worst_case_margin_usd)} of margin against a ${formatUsd(wallet.capacity_usd)} limit. Add funds to it to restore full size.`,
 			href: '/risk',
 		});
 	}

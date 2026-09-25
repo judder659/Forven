@@ -69,6 +69,7 @@ function buildFleet(strategies: LiveFleetStrategy[]): LiveFleet {
 			margin_cap_pct: 80,
 			cohort_size: strategies.length,
 			slice_usd: 170,
+			capacity_scale: 1,
 			wallets: [{ wallet: 'long', sides: ['long'], equity_usd: 535, capacity_usd: 428, worst_case_margin_usd: 373, over_capacity: false }],
 			conflicts: strategies.length > 1 ? [{ coin: 'BTC', sides: ['long', 'short'], strategy_ids: ['S1', 'S2'] }] : [],
 		},

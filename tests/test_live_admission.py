@@ -122,6 +122,36 @@ def test_capacity_is_skipped_when_wallet_balances_are_unknown(forven_db):
     assert refusal is None
 
 
+def test_slices_shrink_so_the_worst_case_fits_each_wallet(forven_db):
+    """CAP-FIT-1: an over-committed cohort trades smaller instead of being refused."""
+    from forven.exchange.risk import live_equity_slice
+
+    _wallets(long_usd=300.0, short_usd=300.0)
+    with get_db() as conn:
+        _strategy(conn, "BTC/USDT", "long_only", period=20)
+        _strategy(conn, "ETH/USDT", "long_only", period=21)
+        report = capacity_report(conn)
+
+    # full slice $300 each: long worst case $600 vs a $240 limit -> scale 0.4
+    assert report["capacity_scale"] == pytest.approx(0.4)
+    slice_usd, meta = live_equity_slice(600.0)
+    assert slice_usd == pytest.approx(120.0)
+    assert meta["capacity_scale"] == pytest.approx(0.4)
+
+
+def test_slices_are_unscaled_when_the_cohort_fits(forven_db):
+    from forven.exchange.risk import live_equity_slice
+
+    _wallets(long_usd=500.0, short_usd=500.0)
+    with get_db() as conn:
+        for period, coin in ((20, "BTC/USDT"), (21, "ETH/USDT")):
+            _traded_fraction(conn, _strategy(conn, coin, "long_only", period=period), 0.3)
+
+    slice_usd, meta = live_equity_slice(1_000.0)
+    assert slice_usd == pytest.approx(500.0)  # worst case $300 of margin fits $400
+    assert meta["capacity_scale"] == 1.0
+
+
 def _promote(sid: str, **kwargs) -> dict:
     import forven.brain as brain
 

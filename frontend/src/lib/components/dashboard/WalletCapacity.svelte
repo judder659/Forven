@@ -44,7 +44,14 @@
 	</div>
 	<div class="grid gap-x-6 gap-y-3 px-3 py-2 md:grid-cols-2">
 		<div class="space-y-2">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500" title="Margin tied up by open positions against each wallet's limit">Wallet margin</div>
+			<div class="text-[10px] uppercase tracking-wider text-gray-500" title="Margin tied up by open positions against each wallet's limit">
+				Wallet margin
+				{#if capacity && capacity.capacity_scale < 1}
+					<span class="ml-1 normal-case tracking-normal text-amber-300" title="Every live strategy is sized down so each wallet can hold them all at once">
+						· live sizes at {Math.round(capacity.capacity_scale * 100)}%
+					</span>
+				{/if}
+			</div>
 			{#each wallets as wallet (wallet.label)}
 				<div>
 					<div class="flex justify-between text-[11px]">
