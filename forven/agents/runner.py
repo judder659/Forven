@@ -1401,7 +1401,7 @@ async def _run_agent_task_inner(
                 ).fetchone()
             if not artifact:
                 raise IncompleteTask("Candidate development returned without a registered strategy.", response)
-            if task_type == "generate_strategies" and not str(artifact["hypothesis_id"] or "").strip():
+            if not str(artifact["hypothesis_id"] or "").strip():
                 raise IncompleteTask(
                     "Strategy creation registered a strategy without a written idea (hypothesis_id).",
                     response,

@@ -418,6 +418,22 @@ def test_scheduler_replaces_crucible_jobs_with_strategy_creation():
     assert not retired & scheduler._DEFAULT_JOB_IDS
 
 
+def test_startup_reconcile_removes_the_crucible_jobs_from_a_live_scheduler(forven_db):
+    import forven.scheduler as scheduler
+
+    retired = ("forven-crucible-planner", "forven-hypothesis-verdict-loop", "forven-ideation-daily")
+    for job_id in retired:
+        scheduler.add_job(job_id, job_id, "interval", "900000", job_id, payload={"kind": "crucible_planner"})
+
+    result = scheduler.reconcile_forven_jobs()
+
+    with get_db() as conn:
+        job_ids = {row["id"] for row in conn.execute("SELECT id FROM scheduler_jobs")}
+    assert result["removed"] >= len(retired)
+    assert not job_ids & set(retired)
+    assert "forven-strategy-creation" in job_ids
+
+
 def test_seeding_registers_the_strategy_creation_job(forven_db):
     import forven.scheduler as scheduler
 

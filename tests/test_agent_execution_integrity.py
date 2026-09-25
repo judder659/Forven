@@ -229,6 +229,39 @@ def test_candidate_task_requires_registered_strategy_evidence(context, monkeypat
     assert 'without a registered strategy' in result['reason']
 
 
+@pytest.mark.parametrize('with_idea', [False, True])
+def test_creation_task_completes_only_with_a_strategy_that_names_its_idea(context, monkeypatch, with_idea):
+    from forven.hypotheses import create_hypothesis
+
+    agent, task = context
+    task['type'] = 'generate_strategies'
+    idea_id = None
+    if with_idea:
+        idea_id = create_hypothesis(
+            title='Funding fade', market_thesis='t', mechanism='m', disproof='d',
+            lane='research', source_type='test', target_assets=['BTC/USDT'], target_timeframes=['1h'],
+        )['id']
+    provider = Provider()
+    monkeypatch.setattr('forven.agents.providers.get_provider', lambda *a: provider)
+
+    async def register(*a):
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO strategies (id, name, hypothesis_id) VALUES ('S-IDEA', 'candidate', ?)", (idea_id,),
+            )
+            conn.execute("UPDATE agent_tasks SET strategy_id='S-IDEA' WHERE id=?", (task['id'],))
+        return 'Registered S-IDEA'
+
+    monkeypatch.setattr(runner, '_execute_tool', register)
+    result = asyncio.run(runner.run_agent_task(agent, task))
+
+    if with_idea:
+        assert status(task)['status'] == 'done'
+    else:
+        assert status(task)['status'] == 'blocked'
+        assert 'without a written idea' in result['reason']
+
+
 def test_usage_prices_actual_models_and_keeps_free_distinct_from_unpriced(context, monkeypatch):
     from forven.agents.execution_state import task_usage
     from forven.billing_guard import get_unpriced_spend_today
