@@ -266,11 +266,15 @@ def _recover_durable_completed_develop_candidate_tasks() -> int:
                 continue
             task_id = int(row["id"])
             origin_ids = (f"T{task_id}", str(task_id))
+            # An untestable archive (rejected at registration for not trading, thin
+            # feed history or broken code) is not a durable completion: the agent is
+            # still revising it, and closing the task here would cancel that run.
             strategy_rows = conn.execute(
                 """
                 SELECT id, name, symbol, timeframe, status, stage, created_at, updated_at
                 FROM strategies
                 WHERE origin_task_id IN (?, ?)
+                  AND LOWER(TRIM(COALESCE(status_reason, ''))) NOT LIKE 'untestable:%'
                 ORDER BY COALESCE(created_at, updated_at) DESC
                 """,
                 origin_ids,
@@ -451,7 +455,7 @@ async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict
     with get_db() as conn:
         row = conn.execute(
             """
-            SELECT id, type, symbol, timeframe, params
+            SELECT id, type, runtime_type, symbol, timeframe, params
             FROM strategies
             WHERE id = ?
             """,
@@ -463,9 +467,18 @@ async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict
 
     strategy = dict(row)
     params = _parse_json_dict(strategy.get("params"))
+    # Agent candidates are sandbox-only: `type` holds the declared TYPE_NAME and
+    # `runtime_type` the imported__ module the worker executes. Backtesting the
+    # declared name reported every one of them as an orphan (111 of 115 planner
+    # backtest failures, Sept 2026). Resolve the way the scanner does.
+    from forven.strategies.registry import resolve_runtime_type
+
+    resolved_type, _runtime_meta = resolve_runtime_type(
+        str(strategy.get("type") or ""), strategy.get("runtime_type")
+    )
     result = await run_backtest_validation(
         strategy_id=strategy_id,
-        strategy_type=str(strategy.get("type") or ""),
+        strategy_type=str(resolved_type or strategy.get("type") or ""),
         symbol=str(strategy.get("symbol") or "BTC/USDT"),
         timeframe=str(strategy.get("timeframe") or "1h"),
         params=params,

@@ -116,7 +116,9 @@ def run_triage_loop(*, batch_size: int = 10) -> dict[str, Any]:
     processed: list[str] = []
     errors: list[dict[str, Any]] = []
     for hid in ids:
-        result = write_verdict_memo(hid)
+        # Operator-requested cleanup: the LLM may cull an incoherent idea even
+        # though the evidence floor alone would keep it researching.
+        result = write_verdict_memo(hid, allow_llm_disproof=True)
         if result["ok"]:
             processed.append(hid)
         else:

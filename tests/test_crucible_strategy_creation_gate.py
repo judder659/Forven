@@ -182,6 +182,26 @@ def test_display_id_matches_dispatched_task_payload(forven_db):
     assert result.hypothesis_id == "HYP-57edc49af1f2"
 
 
+def test_display_id_resolves_through_hypotheses_without_payload_alias(forven_db):
+    """T78727: the planner payload carried only HYP-..., the agent passed the H id from the title."""
+    from forven.crucible_tasks import validate_candidate_strategy_creation
+
+    hypothesis_id = _create_hypothesis()
+    with get_db() as conn:
+        display_id = conn.execute("SELECT display_id FROM hypotheses WHERE id=?", (hypothesis_id,)).fetchone()[0]
+    _insert_running_planner_task(display_id="T9010", agent_id="strategy-developer", crucible_id=hypothesis_id)
+
+    result = validate_candidate_strategy_creation(
+        crucible_id=display_id,
+        hypothesis_id=hypothesis_id,
+        agent_id="strategy-developer",
+        task_display_id="T9010",
+    )
+
+    assert result.allowed is True, result.reason
+    assert result.hypothesis_id == hypothesis_id
+
+
 def test_untrusted_origin_rejection_names_the_origin(forven_db):
     from forven.crucible_tasks import validate_candidate_strategy_creation
 

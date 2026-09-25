@@ -994,6 +994,7 @@ CREATE TABLE IF NOT EXISTS hypotheses (
     initial_viability_evidence_id TEXT,
     contested_at TEXT,
     archive_reason TEXT,
+    feasibility JSON,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
 );
@@ -2114,6 +2115,9 @@ def _run_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "hypotheses", "initial_viability_evidence_id", "TEXT")
     _ensure_column(conn, "hypotheses", "contested_at", "TEXT")
     _ensure_column(conn, "hypotheses", "archive_reason", "TEXT")
+    # What the thesis needs from the runtime (cross-asset / multi-timeframe
+    # joins, external inputs), declared at create/refine; readiness enforces it.
+    _ensure_column(conn, "hypotheses", "feasibility", "JSON")
     _ensure_column(conn, "strategies", "origin_crucible_id", "TEXT")
     _ensure_column(conn, "strategies", "origin_agent_id", "TEXT")
     _ensure_column(conn, "strategies", "origin_task_id", "TEXT")
@@ -4790,6 +4794,31 @@ def next_container_id(conn: sqlite3.Connection, prefix: str) -> str:
     return format_prefixed_id(normalized, current)
 
 
+def assign_task_display_id(conn: sqlite3.Connection, task_id: int) -> str:
+    """Stamp an agent task's display id from its own row id and return it.
+
+    Task display ids used to come from the ``T`` container counter, but some rows
+    (recall audit records) are inserted without it and advance only the rowid. The
+    counter then lagged and handed out display ids already held by other rows, so
+    transcripts, tool audits and every ``display_id = ?`` task lookup could land on
+    the wrong task until a restart renumbered them (2026-09-25 crucible review).
+    The row id is unique, so the display id derived from it is too; the counter is
+    kept ahead of it for any caller that still allocates from it.
+    """
+    numeric_id = int(task_id)
+    display_id = format_prefixed_id("T", numeric_id)
+    conn.execute(
+        "UPDATE agent_tasks SET display_id = ? WHERE id = ? AND COALESCE(display_id, '') != ?",
+        (display_id, numeric_id, display_id),
+    )
+    conn.execute("INSERT OR IGNORE INTO container_counters (prefix, next_val) VALUES ('T', 1)")
+    conn.execute(
+        "UPDATE container_counters SET next_val = MAX(next_val, ?) WHERE prefix = 'T'",
+        (numeric_id + 1,),
+    )
+    return display_id
+
+
 def get_display_prefix(stage: str | None) -> str:
     """Return container display prefix based on stage."""
     normalized = str(stage or "").strip().lower()
@@ -5465,7 +5494,8 @@ def create_task_container(
             insert_params,
         )
     row = conn.execute("SELECT last_insert_rowid() AS task_id").fetchone()
-    return int(row["task_id"]), display_id
+    task_id = int(row["task_id"])
+    return task_id, assign_task_display_id(conn, task_id)
 
 
 def create_pending_task(

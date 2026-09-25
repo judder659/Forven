@@ -35,6 +35,7 @@
 		unstarted_ageout_days: 7,
 		refine_in_flight_budget: 2,
 		disproven_dedup_lookback_days: 30,
+		candidate_min_feed_coverage_pct: 50,
 	};
 
 	$: hypothesisDiscipline = {
@@ -535,7 +536,7 @@
 					on:input={(event) => setHypothesisDiscipline('verdict_hit_rate_threshold', Number((event.currentTarget as HTMLInputElement).value))}
 					class="terminal-input w-full"
 				/>
-				<span class="mt-1 block text-[11px] text-[#666]">Min fraction of children reaching gauntlet/paper for "proven".</span>
+				<span class="mt-1 block text-[11px] text-[#666]">Min fraction of fairly-tested children (at least the quick-screen trade minimum) reaching paper for "proven".</span>
 			</label>
 			<label class="text-xs text-[#888]">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Min Diversity Cells</span>
@@ -561,7 +562,7 @@
 					on:input={(event) => setHypothesisDiscipline('verdict_rolling_window', Number((event.currentTarget as HTMLInputElement).value))}
 					class="terminal-input w-full"
 				/>
-				<span class="mt-1 block text-[11px] text-[#666]">Number of most recent children evaluated by the verdict pass.</span>
+				<span class="mt-1 block text-[11px] text-[#666]">Number of most recent fairly-tested children the verdict pass judges; children that never reached the quick-screen trade minimum are not evidence.</span>
 			</label>
 			<label class="text-xs text-[#888]">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Max Un-refined Active</span>
@@ -600,7 +601,20 @@
 					on:input={(event) => setHypothesisDiscipline('disproven_dedup_lookback_days', Number((event.currentTarget as HTMLInputElement).value))}
 					class="terminal-input w-full"
 				/>
-				<span class="mt-1 block text-[11px] text-[#666]">Agents can't re-mint a crucible disproven within this window (0 = dedup against the active pool only).</span>
+				<span class="mt-1 block text-[11px] text-[#666]">Agents can't re-mint a crucible disproven, or parked because no attempt could be implemented, within this window (0 = dedup against the active pool only).</span>
+			</label>
+			<label class="text-xs text-[#888]">
+				<span class="mb-1 block uppercase tracking-[0.18em]">Min Candidate Feed Coverage (%)</span>
+				<input
+					data-testid="hypothesis-candidate-min-feed-coverage-pct"
+					type="number"
+					min="0"
+					max="100"
+					value={hypothesisDiscipline.candidate_min_feed_coverage_pct}
+					on:input={(event) => setHypothesisDiscipline('candidate_min_feed_coverage_pct', Number((event.currentTarget as HTMLInputElement).value))}
+					class="terminal-input w-full"
+				/>
+				<span class="mt-1 block text-[11px] text-[#666]">A new candidate whose input feeds cover less of the quick-screen window is archived as untestable at registration (0 = off).</span>
 			</label>
 			<label class="text-xs text-[#888]">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Refine In-flight Budget</span>

@@ -158,6 +158,55 @@ def _persist_task_strategy_link(strategy_id: str, cited_skills: list[str]) -> No
         log.warning("cited_skills persistence failed for task %s: %s", task_display_id, exc)
 
 
+_TOOL_CALL_SECONDS = 120.0  # tool_registry.execute_tool timeout
+_TOOL_CALL_MARGIN_SECONDS = 10.0
+
+
+def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_reason: str | None = None) -> str:
+    """Check a crucible candidate right after registration.
+
+    Returns an agent-facing ``Error: ...`` when the candidate cannot count
+    (archived as untestable at intake, or too few trades on its own market and
+    timeframe), a short trade note when it passed, or "" when this is not a
+    candidate task or the check could not run.
+    """
+    from forven.crucible_tasks import (
+        CANDIDATE_TRADE_CHECK_MAX_SECONDS,
+        REJECTED_CANDIDATE_STATUSES,
+        check_candidate_trades,
+        current_task_is_candidate_task,
+        reject_unfit_candidate,
+    )
+
+    task_display_id = str(_current_task_display_id_var.get() or "").strip()
+    if not strategy_id or not current_task_is_candidate_task(task_display_id):
+        return ""
+    if untestable_reason:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE agent_tasks SET strategy_id = NULL WHERE display_id = ? AND strategy_id = ?",
+                (task_display_id, strategy_id),
+            )
+        return (
+            f"Error: candidate {strategy_id} registered but was archived at intake as "
+            f"{untestable_reason}. It does not count as this task's candidate; fix the code and "
+            "register a corrected version under a new type_name."
+        )
+    remaining = _TOOL_CALL_SECONDS - _TOOL_CALL_MARGIN_SECONDS - (time.monotonic() - started_at)
+    check = check_candidate_trades(strategy_id, budget_seconds=min(CANDIDATE_TRADE_CHECK_MAX_SECONDS, remaining))
+    if check.status in REJECTED_CANDIDATE_STATUSES:
+        return reject_unfit_candidate(strategy_id, check, task_display_id)
+    if check.status == "ok":
+        return (
+            f" Trade check: {check.trades} trades on {check.symbol} {check.timeframe} over the "
+            f"quick-screen window (minimum {check.min_trades})."
+        )
+    # Fails open (the quick screen still screens it); log so a skipped check is
+    # distinguishable from a passed one when reading the yield numbers.
+    log.info("candidate trade check skipped for %s: %s", strategy_id, check.detail)
+    return ""
+
+
 def _load_strategy_context(strategy_id: str) -> tuple[dict, dict]:
     from forven.db import get_db
 
@@ -351,6 +400,36 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
         "required": ["asset", "strategy_type", "params"],
     },
 )
+def _sandbox_runtime_type_for(strategy_type: str) -> str:
+    """Resolve an agent-registered TYPE_NAME to the runtime the worker executes.
+
+    Agent registrations are sandbox-only: the declared TYPE_NAME never enters the
+    parent registry, only its ``imported__`` runtime does. Without this, an agent
+    backtesting the candidate it just registered got an orphan error, so develop
+    tasks could not check their own work before finishing.
+    """
+    normalized = str(strategy_type or "").strip()
+    if not normalized or normalized.startswith("imported__"):
+        return normalized
+    from forven.strategies.registry import _TYPE_MAP
+
+    if normalized in _TYPE_MAP:
+        return normalized
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                """
+                SELECT runtime_type FROM strategies
+                WHERE type = ? AND COALESCE(runtime_type, '') LIKE 'imported__%'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
+    except Exception:
+        return normalized
+    return str(row["runtime_type"]) if row and row["runtime_type"] else normalized
+
+
 def _tool_run_backtest(params: dict) -> str:
     """Run a strategy backtest."""
     try:
@@ -365,6 +444,7 @@ def _tool_run_backtest(params: dict) -> str:
         backtest_params = params.get("params")
         if not asset or not strategy_type or not isinstance(backtest_params, dict):
             return "Backtest error: asset, strategy_type, and params are required"
+        strategy_type = _sandbox_runtime_type_for(str(strategy_type))
 
         # Use the strategy ID from task context, falling back to agent ID
         sid = _current_strategy_id_var.get()
@@ -577,6 +657,7 @@ def _tool_register_strategy(params: dict) -> str:
     """Validate, save to custom/ directory, and register a new strategy type."""
     from forven.crucible_tasks import validate_candidate_strategy_creation
 
+    started_at = time.monotonic()
     code = params.get("code", "")
     type_name = params.get("type_name", "")
     crucible_id = str(params.get("crucible_id") or params.get("hypothesis_id") or "").strip()
@@ -686,9 +767,16 @@ def _tool_register_strategy(params: dict) -> str:
                 cited_skills if isinstance(cited_skills, list) else [],
             )
         if registered_strategy_id:
+            trade_note = _candidate_trade_gate(
+                registered_strategy_id,
+                started_at=started_at,
+                untestable_reason=str(registration.get("untestable_reason") or "").strip() or None,
+            )
+            if trade_note.startswith("Error:"):
+                return trade_note
             return (
                 f"Strategy type '{type_name}' registered successfully as "
-                f"{registered_strategy_id} for hypothesis {hypothesis_id}."
+                f"{registered_strategy_id} for hypothesis {hypothesis_id}.{trade_note}"
             )
         return (
             f"Strategy type '{type_name}' registered successfully for hypothesis {hypothesis_id}, "
@@ -838,6 +926,7 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
         elif tool_name == "forven_create_strategy":
             from forven.crucible_tasks import validate_candidate_strategy_creation
 
+            started_at = time.monotonic()
             strategy_type = params.get("strategy_type") or params.get("type", "backtest")
             strategy_name = params.get("name", "")
             crucible_id = str(params.get("crucible_id") or params.get("hypothesis_id") or "").strip()
@@ -896,6 +985,11 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                 # runner only counts a develop task as successful once linked.
                 cited_skills = params.get("cited_skills")
                 _persist_task_strategy_link(created_id, cited_skills if isinstance(cited_skills, list) else [])
+                trade_note = _candidate_trade_gate(created_id, started_at=started_at)
+                if trade_note.startswith("Error:"):
+                    return json.dumps({"error": trade_note})
+                if trade_note:
+                    result["trade_check"] = trade_note.strip()
         elif tool_name == "forven_run_backtest":
             result = client.run_backtest(
                 strategy_id=params["strategy_id"],

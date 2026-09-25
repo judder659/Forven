@@ -55,6 +55,27 @@ from forven.hypotheses import (
 )
 from forven.strategy_extrapolation import extrapolate_strategy_spec, record_extrapolation_gaps
 
+# What the thesis needs from the strategy runtime. A backtest evaluates one
+# market and one candle interval with the local feed columns; declared needs
+# beyond that keep the crucible in research instead of being developed.
+_FEASIBILITY_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Declare what implementing this thesis faithfully needs. A backtest provides ONE market "
+        "and ONE candle interval, plus the local feed columns. Set needs_cross_asset when the "
+        "mechanism needs another asset's series (pairs, ratios, relative strength, lead-lag), "
+        "needs_multi_timeframe when it needs bars from a different interval, and list "
+        "external_inputs that are not local feeds. Declared needs keep the idea in research "
+        "instead of dispatching development."
+    ),
+    "properties": {
+        "needs_cross_asset": {"type": "boolean"},
+        "needs_multi_timeframe": {"type": "boolean"},
+        "external_inputs": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"},
+    },
+}
+
 try:
     from forven.research_sources.youtube import inspect_youtube_video, search_youtube_videos
 except ImportError:  # pragma: no cover - fallback for local workspaces missing the source module
@@ -431,6 +452,7 @@ def _normalize_youtube_inspect_result(raw_result: Any) -> dict[str, Any]:
             "target_timeframes": {"type": "array", "items": {"type": "string"}},
             "novelty_score": {"type": "number"},
             "derived_from_hypothesis_id": {"type": "string"},
+            "feasibility": _FEASIBILITY_SCHEMA,
         },
         "required": ["title", "market_thesis", "mechanism", "lane", "source_type", "target_assets", "target_timeframes"],
     },
@@ -623,6 +645,7 @@ def _tool_create_hypothesis(params: dict) -> str:
             target_timeframes=params.get("target_timeframes", []),
             novelty_score=float(params.get("novelty_score", 0.0) or 0.0),
             derived_from_hypothesis_id=params.get("derived_from_hypothesis_id"),
+            feasibility=params.get("feasibility") if isinstance(params.get("feasibility"), dict) else None,
         )
     except HypothesisPoolFullError as exc:
         # Defensive fallback. The active-pool cap is a pressure valve — under
@@ -806,6 +829,7 @@ def _tool_attach_hypothesis_artifact(params: dict) -> str:
             "target_assets": {"type": "array", "items": {"type": "string"}},
             "target_timeframes": {"type": "array", "items": {"type": "string"}},
             "novelty_score": {"type": "number"},
+            "feasibility": _FEASIBILITY_SCHEMA,
         },
         "required": ["hypothesis_id"],
     },
@@ -822,6 +846,7 @@ def _tool_update_hypothesis_fields(params: dict) -> str:
             target_assets=params.get("target_assets"),
             target_timeframes=params.get("target_timeframes"),
             novelty_score=params.get("novelty_score"),
+            feasibility=params.get("feasibility") if isinstance(params.get("feasibility"), dict) else None,
         )
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)})

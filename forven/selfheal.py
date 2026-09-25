@@ -148,6 +148,7 @@ import numpy as np
 import pandas as pd
 
 from forven.strategies.base import BaseStrategy, Signal, DirectionalSignals
+from forven.strategies.synthetic_frame import add_enrichment_columns
 
 index = pd.date_range("2025-01-01", periods=100, freq="h", tz="UTC")
 close = np.linspace(100.0, 110.0, num=100)
@@ -165,6 +166,10 @@ dummy_df = pd.DataFrame(
     }},
     index=index,
 )
+# The same enrichment columns a backtest frame can carry (funding, OI, flow,
+# liquidations, basis, IV): registering a strategy that reads one must not fail
+# on a column no real backtest would be missing.
+dummy_df = add_enrichment_columns(dummy_df, np.random.default_rng(7))
 
 strategy_classes = []
 for name, obj in list(globals().items()):

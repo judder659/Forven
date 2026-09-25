@@ -84,6 +84,7 @@ def _score_rows(excluded: dict[str, int] | None = None) -> list[dict[str, Any]]:
     from forven.crucible_allocator import (
         cached_family_outcome_stats,
         crucible_value_score,
+        days_since_activity,
         smoothed_family_rate,
     )
     from forven.strategy_diversity import infer_strategy_family
@@ -116,17 +117,7 @@ def _score_rows(excluded: dict[str, int] | None = None) -> list[dict[str, Any]]:
                 continue
         positive = int(row["positive_children"] or 0)
         scored_children = int(row["scored_children"] or 0)
-        last_activity = row["last_child_created_at"] or row["created_at"]
-        try:
-            activity_dt = (
-                datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
-                if last_activity else now
-            )
-        except (ValueError, AttributeError):
-            activity_dt = now
-        if activity_dt.tzinfo is None:
-            activity_dt = activity_dt.replace(tzinfo=timezone.utc)
-        days_since = max(0.0, (now - activity_dt).total_seconds() / 86400.0)
+        days_since = days_since_activity(row["last_child_created_at"], row["created_at"])
         family = infer_strategy_family(row["title"])
         score = crucible_value_score(
             status=str(row["status"] or ""),
@@ -200,6 +191,9 @@ def _dispatch_task(hypothesis: dict[str, Any]) -> int | None:
         "Use the exact provided hypothesis_id/crucible_id. Do not call create_hypothesis "
         "or create a replacement crucible. Then stop — one strategy per pick."
     )
+    from forven.crucible_tasks import CANDIDATE_TASK_TEXT
+
+    description += CANDIDATE_TASK_TEXT
     input_data: dict[str, Any] = {
         "origin_mode": "hypothesis_promotion_loop",
         "action_kind": "develop_candidate",
@@ -210,28 +204,14 @@ def _dispatch_task(hypothesis: dict[str, Any]) -> int | None:
         "siblings": siblings,
         "canonical_coverage": coverage,
     }
-    # CRUX-1 direction quota: a share of daily develops must explore the
-    # short/both side (graveyard audit: shorts net-positive in every regime).
+    # CRUX-1 short/both and orthogonal-data quotas, placed only where the
+    # thesis fits them — the same helper and counting the planner uses.
     try:
-        from forven.crucible_allocator import (
-            DATA_DIRECTIVE_TEXT,
-            SHORT_DIRECTIVE_TEXT,
-            next_data_directive,
-            next_trade_mode_directive,
-        )
+        from forven.crucible_allocator import stamp_develop_directives
 
-        directive = next_trade_mode_directive()
-        if directive:
-            input_data["trade_mode_directive"] = directive
-            description = description + SHORT_DIRECTIVE_TEXT
-        # CRUX-1 orthogonal-data quota: a share of daily develops must
-        # hypothesize over non-price enrichment columns.
-        data_directive = next_data_directive()
-        if data_directive:
-            input_data["data_directive"] = data_directive
-            description = description + DATA_DIRECTIVE_TEXT
+        input_data, description, _short = stamp_develop_directives(hypothesis_id, input_data, description)
     except Exception:
-        log.exception("trade-mode directive stamp failed for %s", hypothesis_id)
+        log.exception("develop directive stamp failed for %s", hypothesis_id)
     try:
         return int(assign_task(
             agent_id="strategy-developer",

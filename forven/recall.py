@@ -325,6 +325,11 @@ def _record_cost_row(
                 "strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))",
                 ("brain", title, description, status, output, aux_provider, aux_model),
             )
+            # Stamp the display id from the row id so this insert cannot push the
+            # task counter behind the rowid (duplicate display ids otherwise).
+            from forven.db import assign_task_display_id
+
+            assign_task_display_id(conn, int(cur.lastrowid))
             return int(cur.lastrowid)
     except Exception as exc:  # noqa: BLE001
         log.warning("recall: failed to write cost row (%s)", exc)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -144,6 +145,27 @@ def test_agent_run_backtest_persists_result_without_mutating_strategy(forven_db,
     assert strategy_row["status"] == "quick_screen"
     stored_metrics = json.loads(strategy_row["metrics"] or "{}")
     assert stored_metrics == {}
+
+
+def test_agent_run_backtest_resolves_a_sandbox_registration_to_its_runtime(forven_db, monkeypatch):
+    """A develop agent backtesting the TYPE_NAME it just registered got an orphan error."""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, runtime_type, symbol, timeframe, params, stage, sandbox_only) "
+            "VALUES ('s-sandboxed', 'n', 'btc_fresh_idea', 'imported__dropzone_btc_fresh_idea_abc', 'BTC', '1h', '{}', 'quick_screen', 1)"
+        )
+    seen: list[str] = []
+
+    def _fake_backtest_strategy(**kwargs):
+        seen.append(kwargs["strategy_type"])
+        return {"metrics": {"total_trades": 0}, "trades": []}
+
+    monkeypatch.setattr("forven.strategies.backtest.backtest_strategy", _fake_backtest_strategy)
+    monkeypatch.setattr("forven.quant_skills_extractor.record_backtest_for_learning", lambda **_kwargs: None)
+
+    _tool_run_backtest({"asset": "BTC", "strategy_type": "btc_fresh_idea", "params": {}})
+
+    assert seen == ["imported__dropzone_btc_fresh_idea_abc"]
 
 
 def test_agent_verdict_persistence_normalizes_gauntlet_aliases(forven_db):
@@ -413,6 +435,12 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         "forven.strategies.intake.register_custom_strategy_file",
         lambda **_kwargs: {"strategy_id": "s-registered-provenance", "sandbox_only": sandbox_only, "runtime_type": runtime_type},
     )
+    from forven.crucible_tasks import CandidateTradeCheck
+
+    monkeypatch.setattr(
+        "forven.crucible_tasks.check_candidate_trades",
+        lambda *_a, **_k: CandidateTradeCheck("ok", trades=42, min_trades=20, symbol="BTC", timeframe="1h"),
+    )
 
     tokens = set_tool_context("strategy-developer", "T0100")
     try:
@@ -427,6 +455,7 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         reset_tool_context(tokens)
 
     assert "registered successfully" in result.lower()
+    assert "Trade check: 42 trades on BTC 1h" in result
     with get_db() as conn:
         assert conn.execute("SELECT runtime_type FROM strategies WHERE id='s-registered-provenance'").fetchone()[0] == runtime_type
         assert conn.execute("SELECT strategy_id FROM agent_tasks WHERE display_id='T0100'").fetchone()[0] == 's-registered-provenance'
@@ -447,6 +476,68 @@ def test_register_strategy_persists_agent_candidate_provenance(forven_db, monkey
         "origin_task_id": "T0100",
         "origin_model": "gpt-5.2",
     }
+
+
+def _candidate_task(display_id: str, strategy_id: str | None) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO agent_tasks (agent_id, type, title, description, input_data, display_id, status, strategy_id) "
+            "VALUES ('strategy-developer', 'develop_candidate', 'Develop', 'd', ?, ?, 'running', ?)",
+            (json.dumps({"origin_mode": "crucible_planner", "action_kind": "develop_candidate",
+                         "crucible_id": "HYP-9", "hypothesis_id": "HYP-9"}), display_id, strategy_id),
+        )
+
+
+def test_candidate_gate_archives_a_silent_candidate_and_releases_the_task(forven_db, monkeypatch):
+    from forven.crucible_tasks import CandidateTradeCheck
+
+    _insert_strategy("s-silent", stage="quick_screen")
+    _candidate_task("T0300", "s-silent")
+    monkeypatch.setattr(
+        "forven.crucible_tasks.check_candidate_trades",
+        lambda *_a, **_k: CandidateTradeCheck("too_few_trades", trades=0, min_trades=20, symbol="BTC", timeframe="1h"),
+    )
+
+    tokens = set_tool_context("strategy-developer", "T0300")
+    try:
+        message = tools_mod._candidate_trade_gate("s-silent", started_at=time.monotonic())
+    finally:
+        reset_tool_context(tokens)
+
+    assert message.startswith("Error:")
+    assert "untestable:no_signal" in message
+    with get_db() as conn:
+        strategy = conn.execute("SELECT stage, status_reason FROM strategies WHERE id='s-silent'").fetchone()
+        task = conn.execute("SELECT strategy_id FROM agent_tasks WHERE display_id='T0300'").fetchone()
+    assert strategy["stage"] == "archived"
+    assert strategy["status_reason"].startswith("untestable:no_signal: 0 trades on BTC 1h")
+    assert task["strategy_id"] is None
+
+
+def test_candidate_gate_reports_intake_untestable_as_an_error(forven_db):
+    _insert_strategy("s-crashed", stage="archived")
+    _candidate_task("T0301", "s-crashed")
+
+    tokens = set_tool_context("strategy-developer", "T0301")
+    try:
+        message = tools_mod._candidate_trade_gate(
+            "s-crashed", started_at=time.monotonic(), untestable_reason="untestable:broken_code: boom"
+        )
+    finally:
+        reset_tool_context(tokens)
+
+    assert message.startswith("Error:") and "untestable:broken_code" in message
+    with get_db() as conn:
+        assert conn.execute("SELECT strategy_id FROM agent_tasks WHERE display_id='T0301'").fetchone()[0] is None
+
+
+def test_candidate_gate_is_inert_outside_candidate_tasks(forven_db, monkeypatch):
+    _insert_strategy("s-manual", stage="quick_screen")
+    monkeypatch.setattr(
+        "forven.crucible_tasks.check_candidate_trades",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+    assert tools_mod._candidate_trade_gate("s-manual", started_at=time.monotonic()) == ""
 
 
 def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_client_create(forven_db, monkeypatch):
@@ -514,6 +605,12 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
 
     monkeypatch.setattr(tools_mod, "_check_backtesting_available", lambda: True)
     monkeypatch.setattr("forven.backtesting.get_client", lambda: FakeClient())
+    from forven.crucible_tasks import CandidateTradeCheck
+
+    monkeypatch.setattr(
+        "forven.crucible_tasks.check_candidate_trades",
+        lambda *_a, **_k: CandidateTradeCheck("ok", trades=33, min_trades=20, symbol="BTC", timeframe="1h"),
+    )
 
     tokens = set_tool_context("strategy-developer", "T0101")
     try:
@@ -533,6 +630,7 @@ def test_jbt_create_strategy_persists_agent_candidate_provenance_after_strict_cl
         reset_tool_context(tokens)
 
     assert result["id"] == "S12345"
+    assert result["trade_check"].startswith("Trade check: 33 trades")
     assert "origin_crucible_id" not in captured
     with get_db() as conn:
         row = conn.execute(

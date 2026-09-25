@@ -36,6 +36,10 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 log = logging.getLogger("forven.strategies.data_availability")
 
@@ -326,6 +330,88 @@ def _present_columns(symbol: str, timeframe: str) -> frozenset[str]:
     with _AVAIL_LOCK:
         _AVAIL_CACHE[key] = (now, result)
     return result
+
+
+def _first_parquet_timestamp(path) -> pd.Timestamp | None:
+    """Earliest ``timestamp`` in a stream parquet, from row-group statistics."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    try:
+        parquet = pq.ParquetFile(path)
+        names = parquet.schema_arrow.names
+        if "timestamp" not in names:
+            return None
+        position = names.index("timestamp")
+        earliest = None
+        for group in range(parquet.metadata.num_row_groups):
+            stats = parquet.metadata.row_group(group).column(position).statistics
+            if stats is None or not stats.has_min_max:
+                column = parquet.read(columns=["timestamp"]).column(0)
+                values = pd.to_datetime(column.to_pandas(), utc=True, errors="coerce").dropna()
+                return values.min() if not values.empty else None
+            value = pd.Timestamp(stats.min)
+            value = value.tz_localize("UTC") if value.tzinfo is None else value.tz_convert("UTC")
+            earliest = value if earliest is None or value < earliest else earliest
+        return earliest
+    except Exception as exc:
+        log.debug("could not read first timestamp of %s: %s", path, exc)
+        return None
+
+
+def feed_history_start(symbol: str, timeframe: str) -> dict:
+    """First stored timestamp of each enrichment column available for (symbol, timeframe).
+
+    Presence is not coverage: a stream collected only recently counts as
+    present yet cannot fire over most of a multi-year backtest window (BTC
+    liquidations start 2026-07-06, so a liquidation gate is silent for most of
+    the quick screen's two years).
+    """
+    from forven.dataeng.hub import _available_enrichment_specs
+
+    starts: dict = {}
+    for spec in _available_enrichment_specs(symbol, timeframe, include_macro=False, exclude_streams=set()):
+        first = _first_parquet_timestamp(spec.path)
+        if first is None:
+            continue
+        for column in spec.output_columns:
+            starts[column] = first
+    return starts
+
+
+def short_history_columns(
+    symbol: str,
+    timeframe: str,
+    columns,
+    *,
+    window_start,
+    window_end,
+    min_fraction: float,
+) -> dict:
+    """Required columns whose history covers less than ``min_fraction`` of the window.
+
+    Returns ``{column: first_timestamp}``. Absent columns are the availability
+    precheck's business and are not reported here.
+    """
+    import pandas as pd
+
+    start = pd.Timestamp(window_start)
+    end = pd.Timestamp(window_end)
+    start = start.tz_localize("UTC") if start.tzinfo is None else start.tz_convert("UTC")
+    end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
+    span = (end - start).total_seconds()
+    if span <= 0 or min_fraction <= 0:
+        return {}
+    starts = feed_history_start(symbol, timeframe)
+    short: dict = {}
+    for column in sorted(set(columns)):
+        first = starts.get(column)
+        if first is None:
+            continue
+        covered = max(0.0, (end - max(first, start)).total_seconds())
+        if covered / span < float(min_fraction):
+            short[column] = first
+    return short
 
 
 def _invalidate_availability(symbol: str, timeframe: str) -> None:

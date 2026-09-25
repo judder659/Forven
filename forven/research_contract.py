@@ -146,6 +146,11 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
         # survivor-directed develops one family may consume) — the exploit
         # lane must not monoculture a single lucky family.
         "survivor_neighborhood_family_cap_pct": 50,
+        # A new crucible candidate whose input feeds cover less than this percent
+        # of the quick-screen window cannot be fairly tested there (a recently
+        # collected feed is "present" but silent for most of the window). It is
+        # archived untestable:insufficient_history at registration. 0 disables.
+        "candidate_min_feed_coverage_pct": 50,
         # Autonomous-mint dedup (2026-06-10 audit B-16). An agent create_hypothesis
         # is rejected when its title duplicates an active crucible or one disproven
         # within this many days — stops the re-mint/re-disprove churn loop. 0
@@ -203,6 +208,7 @@ _HYPOTHESIS_DISCIPLINE_RANGES: dict[str, tuple[int | float, int | float]] = {
     "crucible_orthogonal_data_quota_pct": (0, 100),
     "crucible_survivor_neighborhood_quota_pct": (0, 100),
     "survivor_neighborhood_family_cap_pct": (0, 100),
+    "candidate_min_feed_coverage_pct": (0, 100),
     "disproven_dedup_lookback_days": (0, 365),
     "novelty_graveyard_scale": (1.0, 100.0),
     "novelty_graveyard_min_total": (0, 5000),

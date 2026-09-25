@@ -158,6 +158,97 @@ def test_directive_fires_until_quota_met():
     assert next_trade_mode_directive() == "short_or_both"
 
 
+def test_thesis_direction_reads_the_thesis_wording():
+    from forven.crucible_allocator import thesis_direction
+
+    assert thesis_direction("Buy the post-liquidation bounce") == "long"
+    assert thesis_direction("Fade crowded funding spikes") == "short"
+    assert thesis_direction("Long strength, short weakness after a breakout") == "both"
+    assert thesis_direction("Volatility compression precedes expansion") == "unspecified"
+    # Horizon wording and the long/short-ratio feed are not a direction.
+    assert thesis_direction("Short-term mean reversion of the long/short ratio") == "unspecified"
+
+
+def test_stamping_fits_quotas_to_the_thesis(forven_db):
+    from forven.crucible_allocator import stamp_develop_directives
+    from forven.hypotheses import create_hypothesis
+
+    def crucible(title: str, mechanism: str) -> str:
+        return create_hypothesis(
+            title=title, market_thesis=title, mechanism=mechanism, lane="exploration",
+            source_type="agent_original", target_assets=["BTC/USDT"], target_timeframes=["1h"],
+        )["id"]
+
+    long_setup = crucible("Buy the post-liquidation bounce", "Enter long after the flush.")
+    neutral = crucible("Volatility compression breakout", "Trade the expansion out of a squeeze.")
+    funding = crucible("Funding extremes mean revert", "Use funding_rate z-scores as the trigger.")
+
+    data, text, short = stamp_develop_directives(long_setup, {}, "d")
+    assert "trade_mode_directive" not in data and short == 0
+    data, text, short = stamp_develop_directives(neutral, {}, "d")
+    assert data.get("trade_mode_directive") == "short_or_both" and short == 1
+    assert "data_directive" not in data  # price-only thesis: the data quota does not apply
+    data, _text, _short = stamp_develop_directives(funding, {}, "d")
+    assert data.get("data_directive") == "orthogonal_data"
+
+
+def test_research_yield_summary_counts_the_window():
+    import json as _json
+
+    from forven.crucible_allocator import allocator_overview, research_yield_summary
+    from forven.hypotheses import create_hypothesis
+
+    def crucible(title: str) -> str:
+        return create_hypothesis(
+            title=title, market_thesis="m", mechanism="x", lane="exploration",
+            source_type="agent_original", target_assets=["BTC/USDT"], target_timeframes=["1h"],
+        )["id"]
+
+    home = crucible("Home thesis")
+    disproven = crucible("Disproven thesis")
+    parked = crucible("Parked thesis")
+    with get_db() as conn:
+        for sid, stage, reason in (
+            ("S-Y1", "quick_screen", None),
+            ("S-Y2", "archived", "untestable:no_signal: 0 trades"),
+            ("S-Y3", "archived", None),
+            ("S-Y4", "paper", None),
+        ):
+            conn.execute(
+                "INSERT INTO strategies (id, name, type, symbol, timeframe, params, stage, hypothesis_id, "
+                "status_reason, created_at, updated_at) VALUES (?, 'n', 't', 'BTC/USDT', '1h', '{}', ?, ?, ?, "
+                "datetime('now'), datetime('now'))",
+                (sid, stage, home, reason),
+            )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, timeframe, metrics_json, "
+            "config_json, created_at) VALUES ('R-Y1', 'S-Y1', 'backtest', 'BTC/USDT', '1h', ?, '{}', datetime('now'))",
+            (_json.dumps({"total_trades": 0, "in_sample": {"total_trades": 0}}),),
+        )
+        conn.execute(
+            "INSERT INTO strategy_events (strategy_id, from_state, to_state, actor, reason, created_at) "
+            "VALUES ('S-Y3', 'quick_screen', 'gauntlet', 'system', 'r', datetime('now'))"
+        )
+        conn.execute(
+            "UPDATE hypotheses SET status = 'disproven', manager_state = 'archived', "
+            "verdict_memo_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') WHERE id = ?",
+            (disproven,),
+        )
+        conn.execute(
+            "UPDATE hypotheses SET manager_state = 'archived', archive_reason = 'develop_fruitless_3x', "
+            "archived_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') WHERE id = ?",
+            (parked,),
+        )
+
+    summary = research_yield_summary(7)
+
+    assert summary == {
+        "candidates": 4, "untestable": 1, "no_trades": 1, "reached_gauntlet": 2,
+        "reached_paper": 1, "disproven": 1, "parked": 1, "days": 7,
+    }
+    assert allocator_overview()["yield"]["candidates"] == 4
+
+
 def test_directive_disabled_at_zero_quota(monkeypatch):
     from forven import crucible_allocator as allocator
 

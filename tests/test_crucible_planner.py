@@ -219,6 +219,9 @@ def test_researching_crucible_without_strategies_routes_to_candidate_development
     assert action.priority == 4
     assert action.input_data["crucible_id"] == crucible["id"]
     assert action.input_data["hypothesis_id"] == crucible["id"]
+    # The title shows the display id; the creation gate needs the alias to accept it.
+    assert action.input_data["hypothesis_display_id"] == crucible["display_id"]
+    assert crucible["display_id"] in action.title
 
 
 def test_planner_defers_develop_candidate_when_one_is_in_flight(forven_db):

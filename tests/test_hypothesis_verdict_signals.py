@@ -41,17 +41,36 @@ def _hyp(assets: list[str] | None = None, timeframes: list[str] | None = None) -
 
 def _seed_strategy(hypothesis_id: str, sid: str, *, stage: str = "quick_screen",
                    lifecycle: str | None = None,
-                   symbol: str = "BTC", timeframe: str = "1h") -> None:
+                   symbol: str = "BTC", timeframe: str = "1h",
+                   trades: int | None = None, status_reason: str | None = None,
+                   link: str = "hypothesis_id") -> None:
+    """Seed a child. ``trades`` adds an own-timeframe backtest (OOS-flattened
+    top level plus an in-sample block, like the real blob)."""
     verdict_blob = json.dumps({"lifecycle": lifecycle}) if lifecycle else "{}"
+    hypothesis_col = hypothesis_id if link == "hypothesis_id" else None
+    origin_col = hypothesis_id if link == "origin_crucible_id" else None
     with get_db() as conn:
         conn.execute(
             """INSERT INTO strategies (id, display_id, name, type, symbol, timeframe,
-               stage, status, hypothesis_id, owner, params, metrics, verdict,
-               created_at, updated_at)
-               VALUES (?, ?, 'n', 'rsi', ?, ?, ?, 'active', ?, 'brain', '{}', '{}', ?,
+               stage, status, hypothesis_id, origin_crucible_id, owner, params, metrics, verdict,
+               status_reason, created_at, updated_at)
+               VALUES (?, ?, 'n', 'rsi', ?, ?, ?, 'active', ?, ?, 'brain', '{}', '{}', ?, ?,
                        datetime('now'), datetime('now'))""",
-            (sid, sid, symbol, timeframe, stage, hypothesis_id, verdict_blob),
+            (sid, sid, symbol, timeframe, stage, hypothesis_col, origin_col, verdict_blob, status_reason),
         )
+        if trades is not None:
+            conn.execute(
+                """INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, timeframe,
+                   metrics_json, config_json, created_at)
+                   VALUES (?, ?, 'backtest', ?, ?, ?, '{}', datetime('now'))""",
+                (f"{sid}-bt", sid, symbol, timeframe,
+                 json.dumps({"total_trades": trades // 3, "in_sample": {"total_trades": trades}})),
+            )
+
+
+def _seed_dead(hypothesis_id: str, sid: str, **kwargs) -> None:
+    """A child archived after a fair test (well above the quick-screen trade floor)."""
+    _seed_strategy(hypothesis_id, sid, stage="archived", trades=60, **kwargs)
 
 
 # ---- compute_verdict_signals ----
@@ -72,13 +91,16 @@ def test_signals_high_hit_high_diversity_proven(forven_db):
         verdict_rolling_window=4,
     )
     h = _hyp()
-    # 4 children, 3 in passing (paper+) stages, across 2 distinct (asset, tf) cells
+    # 3 passing (paper+) children across 2 distinct (asset, tf) cells, 1 fair failure,
+    # and 1 child still queued in quick screen (in progress, not evidence).
     _seed_strategy(h["id"], "S1", stage="paper", symbol="BTC", timeframe="1h")
     _seed_strategy(h["id"], "S2", stage="paper", symbol="ETH", timeframe="1h")
     _seed_strategy(h["id"], "S3", stage="paper", symbol="BTC", timeframe="1h")
-    _seed_strategy(h["id"], "S4", stage="quick_screen", symbol="SOL", timeframe="1h")
+    _seed_dead(h["id"], "S4", symbol="SOL", timeframe="1h")
+    _seed_strategy(h["id"], "S5", stage="quick_screen", symbol="SOL", timeframe="1h")
     sig = compute_verdict_signals(h["id"])
     assert sig["rolling_window_size"] == 4
+    assert sig["in_progress_children"] == 1
     assert sig["hit_rate"] == 0.75
     assert sig["diversity_cells"] == 2
     assert sig["mathematical_verdict"] == "proven"
@@ -109,12 +131,29 @@ def test_signals_low_hit_full_window_disproven(forven_db):
         verdict_rolling_window=4,
     )
     h = _hyp()
-    # 4 children, 0 passing
+    # A full window of 4 fairly-tested children, 0 passing
     for i in range(4):
-        _seed_strategy(h["id"], f"S{i}", stage="quick_screen")
+        _seed_dead(h["id"], f"S{i}")
     sig = compute_verdict_signals(h["id"])
     assert sig["hit_rate"] == 0.0
     assert sig["mathematical_verdict"] == "disproven"
+
+
+def test_signals_queued_quick_screen_children_are_not_failures(forven_db):
+    """Children still queued in quick screen were never evaluated. Counting them
+    as a full window of failures disproved theses before any child was tested."""
+    _set_discipline(
+        verdict_hit_rate_threshold=0.5,
+        verdict_min_diversity_cells=2,
+        verdict_rolling_window=4,
+    )
+    h = _hyp()
+    for i in range(4):
+        _seed_strategy(h["id"], f"S{i}", stage="quick_screen")
+    sig = compute_verdict_signals(h["id"])
+    assert sig["rolling_window_size"] == 0
+    assert sig["in_progress_children"] == 4
+    assert sig["mathematical_verdict"] == "researching"
 
 
 def test_signals_low_hit_partial_window_researching(forven_db):
@@ -125,11 +164,11 @@ def test_signals_low_hit_partial_window_researching(forven_db):
         verdict_rolling_window=4,
     )
     h = _hyp()
-    # Only 2 children, 0 passing — under window size, can't disprove
-    _seed_strategy(h["id"], "S1", stage="quick_screen")
+    # One fair failure and one queued child: under window size, can't disprove
+    _seed_dead(h["id"], "S1")
     _seed_strategy(h["id"], "S2", stage="quick_screen")
     sig = compute_verdict_signals(h["id"])
-    assert sig["rolling_window_size"] == 2
+    assert sig["rolling_window_size"] == 1
     assert sig["hit_rate"] == 0.0
     assert sig["mathematical_verdict"] == "researching"
 
@@ -147,12 +186,57 @@ def test_signals_all_children_archived_disproven_short_window(forven_db):
         verdict_rolling_window=5,
     )
     h = _hyp()
-    _seed_strategy(h["id"], "S1", stage="archived")
-    _seed_strategy(h["id"], "S2", stage="rejected")
+    _seed_dead(h["id"], "S1")
+    _seed_strategy(h["id"], "S2", stage="rejected", trades=45)
     sig = compute_verdict_signals(h["id"])
     assert sig["dead_children"] == 2
     assert sig["rolling_window_size"] == 2
     assert sig["mathematical_verdict"] == "disproven"
+
+
+def test_signals_children_that_never_traded_do_not_disprove(forven_db):
+    """The 2026-09-25 disproof factory: two archived children that never reached
+    the quick-screen trade floor (or never traded at all) tested the code, not
+    the thesis. They are untested, and the crucible stays researching."""
+    _set_discipline(
+        verdict_hit_rate_threshold=0.5,
+        verdict_min_diversity_cells=2,
+        verdict_rolling_window=5,
+    )
+    h = _hyp()
+    _seed_strategy(h["id"], "S1", stage="archived", trades=0)
+    _seed_strategy(h["id"], "S2", stage="archived", trades=4)
+    _seed_strategy(h["id"], "S3", stage="archived")  # never backtested
+    _seed_dead(h["id"], "S4", status_reason="untestable:no_signal: 0 trades")
+    sig = compute_verdict_signals(h["id"])
+    assert sig["dead_children"] == 0
+    assert sig["untested_children"] == 4
+    assert sig["mathematical_verdict"] == "researching"
+
+
+def test_signals_read_in_sample_trades_not_just_the_oos_top_level(forven_db):
+    """The stored top-level total_trades is the OOS slice; quick screen counts the
+    larger in-sample block too, and so must the fair-test floor."""
+    _set_discipline(verdict_hit_rate_threshold=0.5, verdict_rolling_window=5)
+    h = _hyp()
+    _seed_strategy(h["id"], "S1", stage="archived", trades=30)  # top-level 10, IS 30
+    _seed_strategy(h["id"], "S2", stage="archived", trades=30)
+    sig = compute_verdict_signals(h["id"])
+    assert sig["dead_children"] == 2
+    assert sig["mathematical_verdict"] == "disproven"
+
+
+def test_signals_follow_origin_crucible_link(forven_db):
+    """A paper survivor linked only through origin_crucible_id is still a child;
+    ignoring it let crucibles with paper children be disproven."""
+    _set_discipline(verdict_hit_rate_threshold=0.4, verdict_min_diversity_cells=1, verdict_rolling_window=4)
+    h = _hyp()
+    _seed_dead(h["id"], "S1")
+    _seed_dead(h["id"], "S2")
+    _seed_strategy(h["id"], "S3", stage="paper", link="origin_crucible_id")
+    sig = compute_verdict_signals(h["id"])
+    assert sig["rolling_window_size"] == 3
+    assert sig["mathematical_verdict"] != "disproven"
 
 
 def test_signals_one_dead_one_alive_not_disproven_yet(forven_db):
@@ -163,10 +247,22 @@ def test_signals_one_dead_one_alive_not_disproven_yet(forven_db):
         verdict_rolling_window=5,
     )
     h = _hyp()
-    _seed_strategy(h["id"], "S1", stage="archived")
+    _seed_dead(h["id"], "S1")
     _seed_strategy(h["id"], "S2", stage="quick_screen")
     sig = compute_verdict_signals(h["id"])
     assert sig["dead_children"] == 1
+    assert sig["mathematical_verdict"] == "researching"
+
+
+def test_signals_in_progress_child_blocks_all_dead_disproof(forven_db):
+    """Two fair failures plus a child still in quick screen: wait for it."""
+    _set_discipline(verdict_hit_rate_threshold=0.5, verdict_rolling_window=5)
+    h = _hyp()
+    _seed_dead(h["id"], "S1")
+    _seed_dead(h["id"], "S2")
+    _seed_strategy(h["id"], "S3", stage="quick_screen")
+    sig = compute_verdict_signals(h["id"])
+    assert sig["dead_children"] == 2
     assert sig["mathematical_verdict"] == "researching"
 
 
@@ -178,7 +274,7 @@ def test_signals_single_dead_child_below_floor_is_researching(forven_db):
         verdict_rolling_window=5,
     )
     h = _hyp()
-    _seed_strategy(h["id"], "S1", stage="archived")
+    _seed_dead(h["id"], "S1")
     sig = compute_verdict_signals(h["id"])
     assert sig["dead_children"] == 1
     assert sig["mathematical_verdict"] == "researching"
@@ -197,8 +293,8 @@ def test_signals_legacy_lifecycle_paper_eligible_counts_as_pass(forven_db):
                    symbol="BTC", timeframe="1h")
     _seed_strategy(h["id"], "S2", stage="quick_screen", lifecycle="deploy_eligible",
                    symbol="ETH", timeframe="1h")
-    _seed_strategy(h["id"], "S3", stage="quick_screen")
-    _seed_strategy(h["id"], "S4", stage="quick_screen")
+    _seed_dead(h["id"], "S3")
+    _seed_dead(h["id"], "S4")
     sig = compute_verdict_signals(h["id"])
     assert sig["hit_rate"] == 0.5
     assert sig["diversity_cells"] == 2
@@ -215,7 +311,7 @@ def test_single_cell_thesis_proven_by_one_robust_child(forven_db):
     )
     h = _hyp(assets=["BTC"], timeframes=["1h"])  # ...but the thesis declares 1 cell
     _seed_strategy(h["id"], "S1", stage="paper", symbol="BTC", timeframe="1h")
-    _seed_strategy(h["id"], "S2", stage="quick_screen", symbol="BTC", timeframe="1h")
+    _seed_dead(h["id"], "S2", symbol="BTC", timeframe="1h")
     sig = compute_verdict_signals(h["id"])
     assert sig["hit_rate"] == 0.5
     assert sig["diversity_cells"] == 1
@@ -249,10 +345,11 @@ def test_floor_disproven_binds_against_llm_upgrade():
     assert _resolve_verdict_with_floor(floor="disproven", llm_verdict="disproven") == "disproven"
 
 
-def test_floor_researching_blocks_llm_upgrade_to_proven():
+def test_floor_researching_binds_both_directions():
+    """The LLM may neither prove nor disprove what the math says is still under test."""
     assert _resolve_verdict_with_floor(floor="researching", llm_verdict="proven") == "researching"
     assert _resolve_verdict_with_floor(floor="researching", llm_verdict="researching") == "researching"
-    assert _resolve_verdict_with_floor(floor="researching", llm_verdict="disproven") == "disproven"
+    assert _resolve_verdict_with_floor(floor="researching", llm_verdict="disproven") == "researching"
 
 
 def test_floor_proven_can_be_downgraded_to_researching():
@@ -306,7 +403,7 @@ def test_write_verdict_memo_disproven_floor_overrides_llm(forven_db):
     )
     h = _hyp()
     for i in range(4):
-        _seed_strategy(h["id"], f"S{i}", stage="quick_screen")
+        _seed_dead(h["id"], f"S{i}")
     fake_llm = json.dumps({
         "verdict": "researching",
         "rationale": "let's keep trying",
@@ -320,6 +417,22 @@ def test_write_verdict_memo_disproven_floor_overrides_llm(forven_db):
     assert result["hypothesis"]["status"] == "disproven"
     memo = result["hypothesis"]["verdict_memo"]
     assert memo["verdict"] == "disproven"
+
+
+def test_write_verdict_memo_llm_cannot_disprove_an_untested_thesis(forven_db):
+    """Floor 'researching' (children never traded) + LLM 'disproven' stays researching."""
+    _set_discipline(verdict_hit_rate_threshold=0.5, verdict_min_diversity_cells=2, verdict_rolling_window=4)
+    h = _hyp()
+    for i in range(3):
+        _seed_strategy(h["id"], f"S{i}", stage="archived", trades=0)
+    fake_llm = json.dumps({"verdict": "disproven", "rationale": "nothing ever worked"})
+    with patch("forven.hypothesis_verdict._call_llm", return_value=fake_llm):
+        result = write_verdict_memo(h["id"])
+    assert result["ok"]
+    assert result["hypothesis"]["status"] == "researching"
+    memo = result["hypothesis"]["verdict_memo"]
+    assert memo["llm_verdict"] == "disproven"
+    assert memo["signals"]["untested_children"] == 3
 
 
 def test_write_verdict_memo_proven_can_downgrade(forven_db):
