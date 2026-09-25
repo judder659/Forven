@@ -1,15 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
-import {
-	getDashboardOverview,
-	getDashboardActivity,
-	getDashboardWinners,
-} from '$lib/api';
-import type {
-	DashboardOverview,
-	DashboardActivityItem,
-	WinnerEntry,
-} from '$lib/api';
+import { getLiveFleet } from '$lib/api/dashboard';
+import type { LiveFleet } from '$lib/api/dashboard';
 
 export const ssr = false;
 
@@ -19,19 +11,9 @@ export const load: PageLoad = async ({ url }) => {
 		throw redirect(301, '/');
 	}
 
-	const [overview, activity, winners] = await Promise.allSettled([
-		getDashboardOverview(),
-		getDashboardActivity(40),
-		getDashboardWinners(10),
-	]);
+	const [fleet] = await Promise.allSettled([getLiveFleet()]);
 
 	return {
-		overview: overview.status === 'fulfilled' ? overview.value : null,
-		activity: activity.status === 'fulfilled' ? activity.value : [],
-		winners: winners.status === 'fulfilled' ? winners.value : [],
-	} satisfies {
-		overview: DashboardOverview | null;
-		activity: DashboardActivityItem[];
-		winners: WinnerEntry[];
-	};
+		fleet: fleet.status === 'fulfilled' ? fleet.value : null,
+	} satisfies { fleet: LiveFleet | null };
 };

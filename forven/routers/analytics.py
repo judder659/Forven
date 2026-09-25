@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from forven.api_domains import analytics as analytics_domain
+from forven.api_domains import live_fleet as live_fleet_domain
 
 router = APIRouter(tags=["analytics"])
 
@@ -48,6 +49,12 @@ def list_tournaments_stub(limit: int = 200):
 @router.get("/api/dashboard/funnel")
 def dashboard_funnel_stub():
     return analytics_domain.dashboard_funnel_stub()
+
+
+# Sync `def` so the DB reads run in the threadpool, not on the request loop.
+@router.get("/api/dashboard/live-fleet")
+def dashboard_live_fleet():
+    return live_fleet_domain.build_live_fleet()
 
 
 @router.get("/api/dashboard/kpis")
