@@ -1768,6 +1768,17 @@ def load_backtest_candles(
     if as_of is None:
         as_of = _resolve_point_in_time_as_of()
 
+    # Research holdout: this loader serves research only (backtests, walk-forward,
+    # optimizer, robustness reruns, previews), so it never returns a bar in the
+    # held-back period. A window that reaches past the cutoff shifts back to end
+    # at it; the one-shot held-back test lifts the seal via research_holdout.unsealed().
+    from forven.research_contract import research_read_cutoff
+    from forven.research_holdout import seal_frame, seal_window
+
+    holdout_cutoff = research_read_cutoff()
+    if holdout_cutoff is not None:
+        start_date, end_date = seal_window(start_date, end_date, holdout_cutoff)
+
     resolved_timeframe = str(timeframe or "1h").strip() or "1h"
 
     required_bars = max(int(bars), 1)
@@ -1789,6 +1800,8 @@ def load_backtest_candles(
         for symbol in _dataset_symbol_candidates(asset):
 
             frame = _normalize_backtest_frame(load_parquet(symbol, resolved_timeframe, as_of=as_of))
+            if holdout_cutoff is not None:
+                frame = seal_frame(frame, holdout_cutoff)
 
             if frame.empty:
 
@@ -1843,6 +1856,8 @@ def load_backtest_candles(
         )
 
     frame = _normalize_backtest_frame(fetch_candles(asset, bars=required_bars, interval=resolved_timeframe))
+    if holdout_cutoff is not None:
+        frame = seal_frame(frame, holdout_cutoff)
 
     if start_date or end_date:
 

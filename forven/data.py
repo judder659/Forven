@@ -2709,31 +2709,40 @@ def cleanup_parquet_orphans() -> dict[str, Any]:
     }
 
 
-def dataset_ohlcv(symbol: str, timeframe: str, limit: int = 100) -> dict[str, Any]:
+def dataset_ohlcv(symbol: str, timeframe: str, limit: int = 100, *, before: object | None = None) -> dict[str, Any]:
     """Most-recent ``limit`` bars for the data viewer.
 
     Windowed DuckDB read (ORDER BY DESC LIMIT over cold+tail) + footer bounds —
     the previous full pandas load served 100 rows by materializing MILLIONS on
     the post-backfill 1m series. Falls back to the full load when DuckDB errors.
+
+    ``before`` returns the most recent bars stamped strictly earlier (the research
+    holdout seal for agent reads); None keeps the plain latest-bars read.
     """
     fs_symbol = symbol_to_fs(symbol)
     capped = max(1, int(limit))
+    before_ts = pd.Timestamp(before) if before is not None else None
+    if before_ts is not None and before_ts.tzinfo is None:
+        before_ts = before_ts.tz_localize("UTC")
     try:
         import duckdb
 
         paths = [str(p) for p in (parquet_path(fs_symbol, timeframe), tail_path(fs_symbol, timeframe)) if p.exists()]
         if not paths:
             raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
+        where = "WHERE timestamp < ?" if before_ts is not None else ""
+        params: list[Any] = [paths] + ([before_ts.to_pydatetime()] if before_ts is not None else []) + [capped]
         with duckdb.connect(":memory:") as con:
             rows = con.execute(
-                """
+                f"""
                 SELECT timestamp, open, high, low, close, volume
                 FROM read_parquet(?)
+                {where}
                 QUALIFY row_number() OVER (PARTITION BY timestamp) = 1
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """,
-                [paths, capped],
+                params,
             ).fetchdf()
         if rows.empty:
             raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
@@ -2761,6 +2770,10 @@ def dataset_ohlcv(symbol: str, timeframe: str, limit: int = 100) -> dict[str, An
     frame = load_parquet(fs_symbol, timeframe)
     if frame is None or frame.empty:
         raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
+    if before_ts is not None:
+        frame = frame[pd.to_datetime(frame["timestamp"], utc=True, errors="coerce") < before_ts]
+        if frame.empty:
+            raise FileNotFoundError(f"dataset has no bars before {before_ts.isoformat()}: {fs_symbol} {timeframe}")
     rows = frame.tail(capped).copy()
     rows["timestamp"] = rows["timestamp"].map(_to_iso)
     records = rows.to_dict("records")

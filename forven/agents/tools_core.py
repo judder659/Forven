@@ -551,10 +551,14 @@ def _tool_get_local_ohlcv(
     DataManager.enrich, they were just never surfaced on this read tool.
     """
     from forven.data import dataset_ohlcv
+    from forven.research_contract import research_read_cutoff
+
     try:
         # Max limit 1000 for safety
         requested_limit = max(min(int(limit or 100), 1000), 1)
-        result = dataset_ohlcv(symbol, timeframe, limit=requested_limit)
+        # Research holdout: agents are research, so they read only up to the cutoff.
+        cutoff = research_read_cutoff()
+        result = dataset_ohlcv(symbol, timeframe, limit=requested_limit, before=cutoff)
         data = result.get("data", [])
         if not data:
             return f"No data found for {symbol} {timeframe}"
@@ -578,6 +582,10 @@ def _tool_get_local_ohlcv(
             "row_count": result["row_count"],
             "bars": data,
         }
+        if cutoff is not None:
+            payload["research_holdout"] = (
+                f"bars end before {cutoff.date().isoformat()}; later data is held back from research"
+            )
         if include_enrichment:
             payload["enriched"] = enrichment_error is None
             if enrichment_error:

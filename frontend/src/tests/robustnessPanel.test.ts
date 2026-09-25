@@ -61,6 +61,8 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 const backtestingMocks = vi.hoisted(() => ({
+	getHoldoutSummary: vi.fn(async () => ({ enabled: false, cutoff: null, state: 'off' })),
+	submitHoldout: vi.fn(),
 	getRobustnessResult: vi.fn(),
 	submitCostStressRobustness: vi.fn(),
 	submitMonteCarloRobustness: vi.fn(),
@@ -80,6 +82,8 @@ vi.mock('$lib/api', () => ({
 }));
 
 vi.mock('$lib/api/backtesting', () => ({
+	getHoldoutSummary: backtestingMocks.getHoldoutSummary,
+	submitHoldout: backtestingMocks.submitHoldout,
 	getRobustnessResult: backtestingMocks.getRobustnessResult,
 	submitCostStressRobustness: backtestingMocks.submitCostStressRobustness,
 	submitMonteCarloRobustness: backtestingMocks.submitMonteCarloRobustness,

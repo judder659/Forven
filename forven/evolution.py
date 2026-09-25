@@ -1470,6 +1470,11 @@ _PENDING_EVIDENCE_GATE_MARKERS = (
     "no gauntlet metrics",
     "canonical backtest",
     "strategy not found",
+    # Research holdout: waiting on the one-shot test, or on the next quarterly
+    # roll once the family's test budget is spent. A completed held-back FAIL
+    # ("Held-back test failed") is merit and still archives.
+    "held-back test pending",
+    "held-back test budget",
 )
 
 

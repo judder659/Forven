@@ -166,6 +166,24 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
         "novelty_graveyard_min_total": 40,
         "novelty_graveyard_hard_block": 0,
     },
+    # Research holdout (forven.research_holdout): recent data research never sees.
+    # Off by default. When on, research reads stop at the cutoff and each new
+    # candidate gets one test on the held-back period before the paper gate.
+    #   roll: "quarterly" (cutoff = current quarter start - lag_quarters) or
+    #     "manual" (cutoff below). established_at is stamped when first enabled;
+    #     strategies created earlier saw the held-back data and are exempt.
+    #   paper_mode: off | observe | enforce (block paper promotion without a pass).
+    #   max_family_shots: held-back tests per strategy family per cutoff (0 = no cap).
+    "research_holdout": {
+        "enabled": False,
+        "roll": "quarterly",
+        "lag_quarters": 2,
+        "cutoff": "",
+        "established_at": "",
+        "paper_mode": "enforce",
+        "min_trades": 5,
+        "max_family_shots": 3,
+    },
 }
 
 
@@ -278,6 +296,16 @@ def get_effective_research_settings(raw_settings: Mapping[str, Any] | None = Non
     if not isinstance(raw_research_settings, Mapping):
         return settings
     return _merge_settings(settings, raw_research_settings)
+
+
+def research_read_cutoff() -> Any:
+    """Where research candle reads stop (``forven.research_holdout``), or None."""
+    from forven.research_holdout import normalize_settings, read_cutoff
+
+    try:
+        return read_cutoff(normalize_settings(get_effective_research_settings().get("research_holdout")))
+    except Exception:
+        return None
 
 
 def get_research_sources_block(raw_settings: Mapping[str, Any] | None = None) -> dict[str, Any]:

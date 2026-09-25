@@ -1361,6 +1361,49 @@ export async function getRobustnessResult<TPayload = Record<string, unknown>>(
 	return fetchApi(`/robustness/results/${encodeURIComponent(resultId)}`);
 }
 
+/** The one-shot test on the research holdout's held-back period (forven/research_holdout.py). */
+export interface HoldoutResult {
+	verdict?: 'PASS' | 'FAIL';
+	verdict_reasons?: string[];
+	cutoff?: string;
+	held_back?: { start?: string; end?: string; bars?: number };
+	out_of_sample?: { total_trades?: number; trades?: number; total_return_pct?: number; sharpe?: number };
+	baseline_hurdle?: WalkForwardBaselineHurdle;
+	family?: string;
+	family_shot?: number;
+}
+
+export interface HoldoutSummary {
+	enabled: boolean;
+	cutoff: string | null;
+	roll?: string;
+	paper_mode?: string;
+	established_at?: string | null;
+	max_family_shots?: number;
+	state: 'off' | 'exempt' | 'pass' | 'fail' | 'running' | 'missing' | 'budget_exhausted' | 'errored';
+	reason?: string;
+	reasons?: string[];
+	family?: string;
+	limit?: number;
+	attempts?: number;
+	result_id?: string;
+	latest?: { result_id: string; status?: string; created_at?: string; result?: HoldoutResult } | null;
+}
+
+export async function getHoldoutSummary(strategyId: string): Promise<HoldoutSummary> {
+	return fetchApi(`/robustness/holdout/${encodeURIComponent(strategyId)}`);
+}
+
+/** Run the one-shot held-back test if it is due. Never re-runs a finished verdict. */
+export async function submitHoldout(strategyId: string): Promise<{ state: string; result_id?: string }> {
+	return fetchApi('/robustness/holdout/submit', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ strategy_id: strategyId }),
+		timeoutMs: LONG_TIMEOUT_MS,
+	});
+}
+
 // Run Monte Carlo simulation
 export async function runMonteCarlo(
 	resultId?: string,

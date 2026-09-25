@@ -83,6 +83,38 @@
 		};
 	}
 
+	const RESEARCH_HOLDOUT_DEFAULTS = {
+		enabled: false,
+		roll: 'quarterly' as 'quarterly' | 'manual',
+		lag_quarters: 2,
+		cutoff: '',
+		established_at: '',
+		paper_mode: 'enforce' as 'off' | 'observe' | 'enforce',
+		min_trades: 5,
+		max_family_shots: 3,
+	};
+
+	$: researchHoldout = {
+		...RESEARCH_HOLDOUT_DEFAULTS,
+		...(draft.research_holdout ?? {}),
+	};
+
+	function setResearchHoldout<K extends keyof typeof RESEARCH_HOLDOUT_DEFAULTS>(
+		key: K,
+		value: (typeof RESEARCH_HOLDOUT_DEFAULTS)[K],
+	): void {
+		const current = { ...RESEARCH_HOLDOUT_DEFAULTS, ...(draft.research_holdout ?? {}) };
+		draft = { ...draft, research_holdout: { ...current, [key]: value } };
+	}
+
+	/** Mirrors research_holdout.current_cutoff: quarter start minus lag quarters (UTC). */
+	function holdoutCutoffPreview(holdout: typeof RESEARCH_HOLDOUT_DEFAULTS, now = new Date()): string {
+		if (holdout.roll === 'manual') return holdout.cutoff ? holdout.cutoff.slice(0, 10) : 'not set';
+		const quarterStartMonth = Math.floor(now.getUTCMonth() / 3) * 3;
+		const cutoff = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth - 3 * holdout.lag_quarters, 1));
+		return cutoff.toISOString().slice(0, 10);
+	}
+
 	function toggleSourceType(sourceType: (typeof SOURCE_TYPE_OPTIONS)[number], enabled: boolean): void {
 		const nextSourceTypes = new Set(draft.allowed_external_source_types);
 		if (enabled) {
@@ -201,6 +233,103 @@
 					<option value="autonomous">Autonomous — discovered crucibles proceed through the pipeline</option>
 				</select>
 			</label>
+		</div>
+
+		<div class="border border-[#222] bg-[#050505] px-4 py-3 text-sm text-[#888] lg:col-span-2" data-testid="research-holdout">
+			<div class="flex items-center justify-between gap-3">
+				<div>
+					<div class="font-medium text-white">Held-back data (research holdout)</div>
+					<div class="mt-1 text-xs text-[#666]">
+						Research — agents, backtests, the optimizer and walk-forward — only sees data before the cutoff.
+						Each new strategy then gets one test on the held-back period before paper, and that verdict is
+						never re-run for the same parameters. Strategies created before this was switched on have seen the
+						data, so they are exempt and judged on forward results.
+					</div>
+				</div>
+				<input
+					data-testid="research-holdout-enabled"
+					type="checkbox"
+					checked={researchHoldout.enabled}
+					on:change={(e) => setResearchHoldout('enabled', (e.currentTarget as HTMLInputElement).checked)}
+					class="border-[#333] bg-black"
+				/>
+			</div>
+			<div class="mt-3 text-xs text-[#aaa]" data-testid="research-holdout-cutoff">
+				Research data currently ends: <span class="font-mono text-white">{holdoutCutoffPreview(researchHoldout)}</span>
+				{#if researchHoldout.established_at}
+					<span class="text-[#555]"> · established {researchHoldout.established_at.slice(0, 10)}</span>
+				{/if}
+			</div>
+			<div class="mt-3 grid gap-3 sm:grid-cols-3">
+				<label class="block text-xs text-[#888]">
+					Cutoff
+					<select
+						data-testid="research-holdout-roll"
+						value={researchHoldout.roll}
+						on:change={(e) => setResearchHoldout('roll', (e.currentTarget as HTMLSelectElement).value as 'quarterly' | 'manual')}
+						class="terminal-select mt-1 w-full"
+					>
+						<option value="quarterly">Rolls quarterly (automatic)</option>
+						<option value="manual">Fixed date (manual)</option>
+					</select>
+				</label>
+				{#if researchHoldout.roll === 'manual'}
+					<label class="block text-xs text-[#888]">
+						Cutoff date
+						<input
+							type="date"
+							value={researchHoldout.cutoff.slice(0, 10)}
+							on:change={(e) => setResearchHoldout('cutoff', (e.currentTarget as HTMLInputElement).value)}
+							class="terminal-input mt-1 w-full"
+						/>
+					</label>
+				{:else}
+					<label class="block text-xs text-[#888]">
+						Quarters held back (6–9 months at 2)
+						<input
+							type="number"
+							min="1"
+							max="8"
+							value={researchHoldout.lag_quarters}
+							on:change={(e) => setResearchHoldout('lag_quarters', Number((e.currentTarget as HTMLInputElement).value))}
+							class="terminal-input mt-1 w-full"
+						/>
+					</label>
+				{/if}
+				<label class="block text-xs text-[#888]">
+					At the paper gate
+					<select
+						data-testid="research-holdout-mode"
+						value={researchHoldout.paper_mode}
+						on:change={(e) => setResearchHoldout('paper_mode', (e.currentTarget as HTMLSelectElement).value as 'off' | 'observe' | 'enforce')}
+						class="terminal-select mt-1 w-full"
+					>
+						<option value="enforce">Enforce — a pass is required for paper</option>
+						<option value="observe">Observe — run and show, never block</option>
+						<option value="off">Off — don't run the test</option>
+					</select>
+				</label>
+				<label class="block text-xs text-[#888]">
+					Min trades in the held-back period
+					<input
+						type="number"
+						min="1"
+						value={researchHoldout.min_trades}
+						on:change={(e) => setResearchHoldout('min_trades', Number((e.currentTarget as HTMLInputElement).value))}
+						class="terminal-input mt-1 w-full"
+					/>
+				</label>
+				<label class="block text-xs text-[#888]">
+					Tests per strategy family per quarter (0 = no cap)
+					<input
+						type="number"
+						min="0"
+						value={researchHoldout.max_family_shots}
+						on:change={(e) => setResearchHoldout('max_family_shots', Number((e.currentTarget as HTMLInputElement).value))}
+						class="terminal-input mt-1 w-full"
+					/>
+				</label>
+			</div>
 		</div>
 
 		<div class="border border-[#222] bg-[#050505] px-4 py-3">

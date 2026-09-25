@@ -2164,6 +2164,9 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
         updates["research_settings"] = _merge_research_settings_payload(
             _deep_merge_dicts(stored_research_settings, dict(raw_research_settings or {}))
         )
+        from forven.research_holdout import stamp_established
+
+        stamp_established(updates["research_settings"])
 
     elif section in {"data-engine", "data_engine"}:
         raw_data_engine_settings = payload.get("data_engine_settings")

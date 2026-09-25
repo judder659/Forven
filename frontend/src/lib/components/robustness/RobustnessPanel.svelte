@@ -23,6 +23,7 @@
 		type WalkForwardRobustnessResult,
 	} from '$lib/api/backtesting';
 	import { getJob, type BacktestResult, type Job, type StrategyContainerHistoryItem } from '$lib/api';
+	import HoldoutTile from '$lib/components/robustness/HoldoutTile.svelte';
 	import DateRangeFieldset from '$lib/components/ui/DateRangeFieldset.svelte';
 	import NumericInputField from '$lib/components/ui/NumericInputField.svelte';
 	import ResultPicker from '$lib/components/ui/ResultPicker.svelte';
@@ -1332,6 +1333,8 @@
      RUNNER ACCORDIONS — all five tests, selected one expanded (gauntlet
      status tiles select + expand; headers toggle)
      ════════════════════════════════════════════════════════════════════ -->
+
+<HoldoutTile {strategyId} />
 
 <!-- ──── Walk-Forward Analysis ──── -->
 <div class="mb-3 terminal-card overflow-hidden">
