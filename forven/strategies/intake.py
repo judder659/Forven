@@ -51,6 +51,29 @@ def _intended_timeframe(stored_params: object) -> str:
     return declared if declared in supported else "1h"
 
 
+def _idea_timeframe(hypothesis_id: str | None) -> str | None:
+    """The one supported timeframe an idea names, or None (no idea, several, unsupported)."""
+    idea_id = str(hypothesis_id or "").strip()
+    if not idea_id:
+        return None
+    try:
+        from forven.db import get_db
+
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT target_timeframes FROM hypotheses WHERE id = ? OR display_id = ?",
+                (idea_id, idea_id),
+            ).fetchone()
+        declared = json.loads(row["target_timeframes"] or "[]") if row else []
+    except Exception:
+        return None
+    timeframes = {str(item).strip().lower() for item in declared if str(item).strip()} if isinstance(declared, list) else set()
+    if len(timeframes) != 1:
+        return None
+    (timeframe,) = timeframes
+    return timeframe if _intended_timeframe({"_timeframe": timeframe}) == timeframe else None
+
+
 def _file_uses_banned_imports(path: Path) -> list[str]:
     """Return a list of banned top-level module names imported anywhere in
     the file (module level or inside function / class bodies). Empty list
@@ -738,6 +761,12 @@ def register_imported_strategy_file(
             ]
     if verifiability["bounded_lookback"] is not None:
         stored_params["_bounded_lookback"] = verifiability["bounded_lookback"]
+    # Code that declares no timeframe takes the one its idea names: otherwise a 4h
+    # design is stored, screened and swept at the 1h default.
+    if not str(stored_params.get("_timeframe") or "").strip():
+        idea_timeframe = _idea_timeframe(_hypothesis_id)
+        if idea_timeframe:
+            stored_params["_timeframe"] = idea_timeframe
 
     with get_db() as conn:
         strategy_id, _display, _base = create_strategy_container(

@@ -33,8 +33,10 @@ _SOURCE_CONTENT_CHARS = 20_000
 PREVIEW_CONTENT_CHARS = 4_000
 
 _BUILD_STEPS = (
-    "Implement the idea as a strategy module and register it with register_strategy, passing "
-    "the hypothesis_id. Registration backtests it on its own market and timeframe; if it "
+    "Implement the idea as a strategy module. Declare its timeframe in default_params as "
+    "`_timeframe` (e.g. \"4h\"): the strategy is stored and screened at that timeframe, and "
+    "undeclared it falls back to the idea's timeframe or 1h. Register it with register_strategy, "
+    "passing the hypothesis_id. Registration backtests it on its own market and timeframe; if it "
     "reports too few trades, fix the entry logic and register a corrected version under a "
     "new type_name. Variants of the same idea (another market or timeframe) reuse the same "
     "hypothesis_id.",
