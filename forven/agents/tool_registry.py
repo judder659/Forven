@@ -156,6 +156,11 @@ def _permission_subjects(agent_id: str | None) -> frozenset[str | None]:
     if not normalized_agent_id:
         subjects.add(None)
         return frozenset(subjects)
+    # A core agent's id is its role. The operator can rename an agent and its
+    # role text changes with the shipped defaults, so neither may decide which
+    # tools a core agent keeps (a renamed "Strat Dev" lost register_strategy).
+    if normalized_agent_id in _CANONICAL_AGENT_ROLES:
+        subjects.add(f"role:{normalized_agent_id}")
     try:
         with get_db() as conn:
             row = conn.execute("SELECT name, role FROM agents WHERE id = ?", (normalized_agent_id,)).fetchone()
