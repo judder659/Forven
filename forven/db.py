@@ -843,20 +843,48 @@ def init_db():
 def recover_dangling_runtime_tasks() -> dict[str, int]:
     """Recover queue rows that were marked running in a dead process.
 
-    Agent tasks cannot safely resume mid-execution, so they are marked failed.
-    Brain/global tasks are safe to requeue; when manual mode is active they are
-    re-frozen as ``paused_manual`` instead of becoming runnable again.
+    Agent tasks cannot safely resume mid-execution, so they are marked failed,
+    except a strategy-creation task that already registered a strategy for its
+    idea: it has delivered, so it completes. Brain/global tasks are safe to
+    requeue; when manual mode is active they are re-frozen as ``paused_manual``
+    instead of becoming runnable again.
     """
     from forven.system_mode_policy import initial_queue_status_for_source, normalize_task_source
 
     now = datetime.now(timezone.utc).isoformat()
     agent_note = "Recovered after process restarted; task was previously running."
     brain_note = "Recovered after process restarted; queue item was previously running."
-    recovered = {"agent_failed": 0, "brain_requeued": 0}
+    recovered = {"agent_completed": 0, "agent_failed": 0, "brain_requeued": 0}
 
     # Keep claim selection and state transition in one writer transaction so
     # fallback/API workers cannot duplicate work under contention.
     with get_db_immediate() as conn:
+        delivered = conn.execute(
+            """
+            SELECT t.id, t.strategy_id, t.output_data FROM agent_tasks t
+            JOIN strategies s ON s.id = t.strategy_id
+            WHERE t.status = 'running'
+              AND t.type IN ('generate_strategies', 'develop_candidate')
+              AND TRIM(COALESCE(s.hypothesis_id, '')) != ''
+            """
+        ).fetchall()
+        for row in delivered:
+            try:
+                output = json.loads(row["output_data"]) if row["output_data"] else {}
+            except (TypeError, ValueError):
+                output = {}
+            output = output if isinstance(output, dict) else {}
+            output.update({
+                "response": "Completed at restart: the task had registered its strategy before the process stopped.",
+                "execution": "restart_recovery_after_registration",
+                "strategy_id": row["strategy_id"],
+            })
+            conn.execute(
+                "UPDATE agent_tasks SET status='done', error=NULL, completed_at=?, output_data=? WHERE id=?",
+                (now, json.dumps(output), int(row["id"])),
+            )
+        recovered["agent_completed"] = len(delivered)
+
         agent_rows = conn.execute(
             "SELECT id FROM agent_tasks WHERE status = 'running'"
         ).fetchall()
