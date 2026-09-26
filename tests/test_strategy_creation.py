@@ -60,6 +60,7 @@ def test_cycle_fills_the_free_in_flight_slots(auto_mode):
     assert json.loads(rows[0]["input_data"])["origin_mode"] == AUTONOMOUS_ORIGIN
     assert "create_hypothesis" in rows[0]["description"]
     assert "disproof" in rows[0]["description"]
+    assert "_timeframe" in rows[0]["description"]
 
 
 def test_cycle_queues_only_what_the_budget_and_free_slots_allow(auto_mode, monkeypatch):
@@ -337,6 +338,39 @@ def test_autonomous_tasks_cannot_repeat_a_recent_idea(auto_mode, running_task):
 
     assert duplicate["ok"] is False
     assert duplicate["error_code"] == "duplicate_hypothesis"
+
+
+@pytest.mark.parametrize(
+    ("idea_timeframes", "declared", "expected"),
+    [(["4h"], None, "4h"), (["1h", "4h"], None, "1h"), (["4h"], "15m", "15m")],
+)
+def test_registration_takes_the_ideas_timeframe_when_the_code_declares_none(
+    forven_db, monkeypatch, tmp_path, idea_timeframes, declared, expected
+):
+    from forven.hypotheses import create_hypothesis
+    from forven.strategies import imported
+    from forven.strategies.intake import register_imported_strategy_file
+
+    idea = create_hypothesis(
+        title="Funding-cycle fade", market_thesis="t", mechanism="m", disproof="d",
+        lane="research", source_type="test", target_assets=["DOGE/USDT"], target_timeframes=idea_timeframes,
+    )["id"]
+    monkeypatch.setattr(imported, "__file__", str(tmp_path / "__init__.py"))
+    monkeypatch.setattr("forven.sandbox.strategy_worker._reset_worker", lambda: None)
+    (tmp_path / "timeframe_fixture.py").write_text('TYPE_NAME = "timeframe_fixture"\n')
+
+    result = register_imported_strategy_file(
+        module_name="timeframe_fixture", source="agent_register", _hypothesis_id=idea,
+        _validated_meta={
+            "ok": True, "type_name": "timeframe_fixture", "asset": "DOGE", "certified": True,
+            "canonical_params": {"_timeframe": declared} if declared else {}, "lookahead_verifiable": True,
+        },
+    )
+
+    with get_db() as conn:
+        row = conn.execute("SELECT timeframe, params FROM strategies WHERE id = ?", (result["strategy_id"],)).fetchone()
+    assert row["timeframe"] == expected
+    assert json.loads(row["params"]).get("_timeframe") == (None if expected == "1h" else expected)
 
 
 def test_a_renamed_strategy_developer_keeps_its_creation_tools(forven_db):
