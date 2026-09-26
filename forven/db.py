@@ -5646,6 +5646,7 @@ def _claim_ownership_for_task(conn: sqlite3.Connection, agent_id: str, task: sql
         "code_strategy_container",
         "coding_cycle",
         "develop_candidate",
+        "generate_strategies",
         "phantom_repair",
     ):
         return strategy_id or "ok", None

@@ -153,6 +153,38 @@ def test_tool_limit_is_incomplete_without_extra_model_call(context, monkeypatch)
     assert provider.calls == 1
 
 
+@pytest.mark.parametrize('registered', [True, False])
+def test_creation_task_at_the_tool_limit_completes_once_it_registered(context, monkeypatch, registered):
+    from forven.hypotheses import create_hypothesis
+
+    agent, task = context
+    task['type'] = 'generate_strategies'
+    idea_id = create_hypothesis(
+        title='Basis fade', market_thesis='t', mechanism='m', disproof='d',
+        lane='research', source_type='test', target_assets=['BTC/USDT'], target_timeframes=['1h'],
+    )['id']
+    provider = Provider()
+    monkeypatch.setattr('forven.agents.providers.get_provider', lambda *a: provider)
+    monkeypatch.setattr(runner, 'MAX_TOOL_ROUNDS', 1)
+
+    async def tool(*a):
+        if registered:
+            with get_db() as conn:
+                conn.execute("INSERT INTO strategies (id, name, hypothesis_id) VALUES ('S-LIMIT', 'c', ?)", (idea_id,))
+                conn.execute("UPDATE agent_tasks SET strategy_id='S-LIMIT' WHERE id=?", (task['id'],))
+        return 'recorded'
+
+    monkeypatch.setattr(runner, '_execute_tool', tool)
+    result = asyncio.run(runner.run_agent_task(agent, task))
+
+    assert provider.calls == 1
+    if registered:
+        assert status(task)['status'] == 'done'
+    else:
+        assert status(task)['status'] == 'blocked'
+        assert 'Tool-call limit' in result['reason']
+
+
 def test_usage_is_charged_during_task_and_not_double_counted(context, monkeypatch):
     from forven.billing_guard import get_spend_today, get_unpriced_spend_today
     agent, task = context

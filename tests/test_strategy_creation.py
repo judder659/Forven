@@ -373,6 +373,24 @@ def test_registration_takes_the_ideas_timeframe_when_the_code_declares_none(
     assert json.loads(row["params"]).get("_timeframe") == (None if expected == "1h" else expected)
 
 
+@pytest.mark.parametrize("task_type", ["generate_strategies", "develop_candidate"])
+def test_a_creation_task_survives_the_pipeline_taking_its_strategy(forven_db, task_type):
+    """A retried or resumed creation task must not fail because its strategy moved on."""
+    from forven.agents.ownership import _check_task_owner
+    from forven.db import _claim_ownership_for_task
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, stage, status, owner) "
+            "VALUES ('S-OWNED', 'c', 'gauntlet', 'gauntlet', 'simulation-agent')"
+        )
+        task = {"type": task_type, "strategy_id": "S-OWNED", "input_data": "{}"}
+        _claimed, claim_error = _claim_ownership_for_task(conn, "strategy-developer", task)
+
+    assert claim_error is None
+    assert _check_task_owner("strategy-developer", "S-OWNED", task_type=task_type) == (None, True)
+
+
 def test_a_renamed_strategy_developer_keeps_its_creation_tools(forven_db):
     """Core agents get their role from their id, not from editable name/role text."""
     import forven.agents.tools_backtesting  # noqa: F401 - registers the tools

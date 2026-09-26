@@ -14,6 +14,10 @@ class IncompleteTask(RuntimeError):
         self.partial = partial
 
 
+class ToolLimitReached(IncompleteTask):
+    """The agent used every tool round without finishing."""
+
+
 @dataclass
 class ExecutionState:
     task_id: int
