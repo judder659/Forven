@@ -870,6 +870,11 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
     params = _loads(row.get("params"), {})
     if not isinstance(params, dict):
         params = {}
+    declared_timeframe = str(params.get("_timeframe") or "").strip()
+    if declared_timeframe:
+        # A declared timeframe is a contract (see _best_sweep_result): no other
+        # timeframe can be judged, so no backtests are spent on them.
+        sweep_timeframes = [declared_timeframe]
     existing = _existing_backtest_timeframes(
         str(row["id"]),
         params=params,
@@ -965,7 +970,13 @@ def _best_sweep_result(
     and merit-archived on a Sharpe −2.40 1h context it never declared). When the
     declared row exists but is degeneracy-skipped and every survivor is negative,
     the declared context is returned rather than crowning a negative one. A genuinely
-    better positive off-declared timeframe still wins — the enhancement stands."""
+    better positive off-declared timeframe still wins — the enhancement stands.
+
+    Except when ``params`` DECLARE ``_timeframe``: that declaration is a contract (the
+    author, or the idea a created strategy tests, named the timeframe up front), so
+    only the declared context is judged. Crowning a better-looking timeframe after
+    seeing the results is selection bias, and a degenerate declared slice is judged
+    as it is so the gate fails it honestly."""
     from forven.db import get_db
 
     with get_db() as conn:
@@ -990,6 +1001,9 @@ def _best_sweep_result(
         str((params or {}).get("_timeframe") or "").strip() or best_tf
     )
     declared_tf = declared_display.lower()
+    explicitly_declared = bool(str((params or {}).get("_timeframe") or "").strip())
+    declared_any: tuple[str, str | None, dict[str, Any]] | None = None
+    declared_any_trades = -1.0
     best_result_id: str | None = None
     best_metrics: dict[str, Any] = {}
     best_score = float("-inf")
@@ -1021,6 +1035,8 @@ def _best_sweep_result(
         rid = str(row["result_id"]) if row["result_id"] else None
         if float(trades) > fb_trades:
             fb_tf, fb_result_id, fb_metrics, fb_trades = tf, rid, metrics, float(trades)
+        if tf.lower() == declared_tf and float(trades) > declared_any_trades:
+            declared_any, declared_any_trades = (tf, rid, metrics), float(trades)
         # Validity floor: a too-few-trade / zero-in-sample-trade slice yields a lucky
         # high Sharpe that swamps this Sharpe-dominated score and contaminates the
         # strategy's stored metrics (the gate then reads IS Sharpe 0.00 and rejects).
@@ -1035,6 +1051,13 @@ def _best_sweep_result(
             best_score = score
             best_sharpe = float(sharpe)
             best_tf, best_result_id, best_metrics = tf, rid, metrics
+    if explicitly_declared:
+        if declared_pick is not None:
+            return declared_pick
+        if declared_any is not None:
+            return declared_any
+        # Not measured yet: the gate takes the retryable missing-evidence path.
+        return declared_display, None, {}
     # No context cleared the validity floor: judge on the most-traded context
     # (never crowned by a lucky slice — see fb comment above).
     if best_score == float("-inf"):

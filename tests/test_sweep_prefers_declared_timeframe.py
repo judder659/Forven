@@ -173,3 +173,71 @@ def test_asof_pinned_excludes_unpinned_rows(forven_db):
     assert rid is None
     assert metrics == {}
     assert tf == "4h"
+
+
+def _declare(sid: str, params: dict):
+    from forven.engine_provenance import BACKTEST_ENGINE_VERSION
+
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE backtest_results SET config_json = ? WHERE strategy_id = ?",
+            (json.dumps({"engine_version": BACKTEST_ENGINE_VERSION, "params": params}), sid),
+        )
+
+
+def test_an_explicit_declaration_is_a_contract(forven_db):
+    """A declared _timeframe is judged even when a positive off-declared context
+    scores better: picking the better-looking timeframe afterwards is selection bias."""
+    sid = "S-SWPD8"
+    params = {"_timeframe": "4h"}
+    _insert_strategy(sid, "4h")
+    _insert_bt(sid, "bt-4h", "4h", trades=30, sharpe=1.0, total_return=4.0)
+    _insert_bt(sid, "bt-1h", "1h", trades=100, sharpe=2.0, total_return=12.0)
+    _declare(sid, params)
+
+    tf, rid, _metrics = _best_sweep_result(sid, "4h", params=params, since=None, as_of=None)
+    assert (tf, rid) == ("4h", "bt-4h")
+
+
+def test_an_explicit_declaration_judges_its_degenerate_slice(forven_db):
+    """A declared timeframe that barely trades is judged as it is (the gate fails it
+    honestly) rather than swapped for a busier timeframe."""
+    sid = "S-SWPD9"
+    params = {"_timeframe": "4h"}
+    _insert_strategy(sid, "4h")
+    _insert_bt(sid, "bt-4h", "4h", trades=4, sharpe=3.0, total_return=6.0, is_trades=4)
+    _insert_bt(sid, "bt-1h", "1h", trades=100, sharpe=2.0, total_return=12.0)
+    _declare(sid, params)
+
+    tf, rid, metrics = _best_sweep_result(sid, "4h", params=params, since=None, as_of=None)
+    assert (tf, rid) == ("4h", "bt-4h")
+    assert metrics["total_trades"] == 4
+
+
+def test_a_declared_timeframe_is_the_only_one_swept(forven_db, monkeypatch):
+    from forven.gauntlet import tasks
+
+    submitted: list[str] = []
+
+    def _submit(body, **_kwargs):
+        submitted.append(body.timeframe)
+        return {"result_id": f"bt-{body.timeframe}", "metrics": {"total_trades": 30, "sharpe_ratio": 1.0}}
+
+    monkeypatch.setattr(tasks, "_strategy_row", lambda _: {"id": "S-SWPD10", "params": json.dumps({"_timeframe": "4h"})})
+    monkeypatch.setattr(tasks, "_existing_backtest_timeframes", lambda *a, **kw: set())
+    monkeypatch.setattr(tasks, "_submit_backtest", _submit)
+
+    outcome = tasks.run_timeframe_sweep({"strategy_id": "S-SWPD10", "settings_snapshot_json": "{}"}, {})
+
+    assert submitted == ["4h"]
+    assert outcome["status"] == "passed"
+
+
+def test_validation_contexts_stay_on_a_declared_timeframe(forven_db, monkeypatch):
+    from forven import evolution
+
+    monkeypatch.setattr(evolution, "_collect_validation_symbols", lambda symbol, params=None: [symbol, "ETH/USDT"])
+
+    contexts = evolution._build_validation_contexts("SOL/USDT", "1h", params={"_timeframe": "4h"})
+
+    assert contexts and {timeframe for _symbol, timeframe in contexts} == {"4h"}

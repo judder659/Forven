@@ -513,7 +513,14 @@ def _collect_validation_timeframes(primary_timeframe: str | None = None) -> list
 
 def _build_validation_contexts(symbol: str, timeframe: str, params: dict | None = None) -> list[tuple[str, str]]:
     symbols = _collect_validation_symbols(symbol, params=params)
-    timeframes = _collect_validation_timeframes(primary_timeframe=timeframe)
+    # A declared timeframe is a contract: validate there only, so the best
+    # context can never re-home the strategy onto another timeframe.
+    declared = str((params or {}).get("_timeframe") or "").strip() if isinstance(params, dict) else ""
+    timeframes = (
+        [_normalize_timeframe(declared, timeframe)]
+        if declared
+        else _collect_validation_timeframes(primary_timeframe=timeframe)
+    )
     contexts: list[tuple[str, str]] = []
     for sym in symbols:
         for tf in timeframes:
