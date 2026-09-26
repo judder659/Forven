@@ -975,8 +975,9 @@ def _best_sweep_result(
     Except when ``params`` DECLARE ``_timeframe``: that declaration is a contract (the
     author, or the idea a created strategy tests, named the timeframe up front), so
     only the declared context is judged. Crowning a better-looking timeframe after
-    seeing the results is selection bias, and a degenerate declared slice is judged
-    as it is so the gate fails it honestly."""
+    seeing the results is selection bias. A degenerate or missing declared slice
+    comes back UNMEASURED, so the gate judges the declared row's own numbers (or
+    resubmits it) without persisting a degenerate slice."""
     from forven.db import get_db
 
     with get_db() as conn:
@@ -1002,8 +1003,6 @@ def _best_sweep_result(
     )
     declared_tf = declared_display.lower()
     explicitly_declared = bool(str((params or {}).get("_timeframe") or "").strip())
-    declared_any: tuple[str, str | None, dict[str, Any]] | None = None
-    declared_any_trades = -1.0
     best_result_id: str | None = None
     best_metrics: dict[str, Any] = {}
     best_score = float("-inf")
@@ -1035,8 +1034,6 @@ def _best_sweep_result(
         rid = str(row["result_id"]) if row["result_id"] else None
         if float(trades) > fb_trades:
             fb_tf, fb_result_id, fb_metrics, fb_trades = tf, rid, metrics, float(trades)
-        if tf.lower() == declared_tf and float(trades) > declared_any_trades:
-            declared_any, declared_any_trades = (tf, rid, metrics), float(trades)
         # Validity floor: a too-few-trade / zero-in-sample-trade slice yields a lucky
         # high Sharpe that swamps this Sharpe-dominated score and contaminates the
         # strategy's stored metrics (the gate then reads IS Sharpe 0.00 and rejects).
@@ -1052,12 +1049,7 @@ def _best_sweep_result(
             best_sharpe = float(sharpe)
             best_tf, best_result_id, best_metrics = tf, rid, metrics
     if explicitly_declared:
-        if declared_pick is not None:
-            return declared_pick
-        if declared_any is not None:
-            return declared_any
-        # Not measured yet: the gate takes the retryable missing-evidence path.
-        return declared_display, None, {}
+        return declared_pick if declared_pick is not None else (declared_display, None, {})
     # No context cleared the validity floor: judge on the most-traded context
     # (never crowned by a lucky slice — see fb comment above).
     if best_score == float("-inf"):

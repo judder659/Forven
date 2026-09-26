@@ -199,9 +199,9 @@ def test_an_explicit_declaration_is_a_contract(forven_db):
     assert (tf, rid) == ("4h", "bt-4h")
 
 
-def test_an_explicit_declaration_judges_its_degenerate_slice(forven_db):
-    """A declared timeframe that barely trades is judged as it is (the gate fails it
-    honestly) rather than swapped for a busier timeframe."""
+def test_an_explicit_declaration_never_swaps_a_degenerate_slice_for_a_busier_timeframe(forven_db):
+    """A declared timeframe that barely trades comes back unmeasured (the gate then
+    judges the declared row's own numbers) instead of crowning a busier timeframe."""
     sid = "S-SWPD9"
     params = {"_timeframe": "4h"}
     _insert_strategy(sid, "4h")
@@ -210,8 +210,7 @@ def test_an_explicit_declaration_judges_its_degenerate_slice(forven_db):
     _declare(sid, params)
 
     tf, rid, metrics = _best_sweep_result(sid, "4h", params=params, since=None, as_of=None)
-    assert (tf, rid) == ("4h", "bt-4h")
-    assert metrics["total_trades"] == 4
+    assert (tf, rid, metrics) == ("4h", None, {})
 
 
 def test_a_declared_timeframe_is_the_only_one_swept(forven_db, monkeypatch):
