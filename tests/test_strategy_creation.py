@@ -592,3 +592,36 @@ def test_autonomous_creation_tasks_skip_the_brain_callback(monkeypatch):
         task={"id": 44, "display_id": "T00044", "type": "generate_strategies"},
         input_data={"origin_mode": "operator_idea"},
     ) is True
+
+
+def test_a_restart_completes_a_creation_task_that_already_registered(forven_db):
+    from forven.db import recover_dangling_runtime_tasks
+    from forven.hypotheses import create_hypothesis
+
+    idea = create_hypothesis(
+        title="Basis fade", market_thesis="t", mechanism="m", disproof="d",
+        lane="research", source_type="test", target_assets=["BTC/USDT"], target_timeframes=["1h"],
+    )["id"]
+    with get_db() as conn:
+        conn.execute("INSERT INTO strategies (id, name, hypothesis_id) VALUES ('S-RESTART', 'c', ?)", (idea,))
+        conn.execute(
+            "INSERT INTO agent_tasks (id, agent_id, type, title, status, strategy_id, output_data) "
+            "VALUES (99101, 'strategy-developer', 'generate_strategies', 'Create', 'running', 'S-RESTART', ?)",
+            (json.dumps({"cited_skills": ["funding_crowding"]}),),
+        )
+        conn.execute(
+            "INSERT INTO agent_tasks (id, agent_id, type, title, status) "
+            "VALUES (99102, 'strategy-developer', 'generate_strategies', 'Create', 'running')"
+        )
+
+    recovered = recover_dangling_runtime_tasks()
+
+    assert recovered["agent_completed"] == 1 and recovered["agent_failed"] == 1
+    with get_db() as conn:
+        delivered = conn.execute("SELECT status, error, output_data FROM agent_tasks WHERE id = 99101").fetchone()
+        unfinished = conn.execute("SELECT status FROM agent_tasks WHERE id = 99102").fetchone()
+    output = json.loads(delivered["output_data"])
+    assert delivered["status"] == "done" and delivered["error"] is None
+    assert output["cited_skills"] == ["funding_crowding"]  # registration's citations survive
+    assert output["strategy_id"] == "S-RESTART"
+    assert unfinished["status"] == "failed"

@@ -870,6 +870,11 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
     params = _loads(row.get("params"), {})
     if not isinstance(params, dict):
         params = {}
+    declared_timeframe = str(params.get("_timeframe") or "").strip()
+    if declared_timeframe:
+        # A declared timeframe is a contract (see _best_sweep_result): no other
+        # timeframe can be judged, so no backtests are spent on them.
+        sweep_timeframes = [declared_timeframe]
     existing = _existing_backtest_timeframes(
         str(row["id"]),
         params=params,
@@ -965,7 +970,14 @@ def _best_sweep_result(
     and merit-archived on a Sharpe −2.40 1h context it never declared). When the
     declared row exists but is degeneracy-skipped and every survivor is negative,
     the declared context is returned rather than crowning a negative one. A genuinely
-    better positive off-declared timeframe still wins — the enhancement stands."""
+    better positive off-declared timeframe still wins — the enhancement stands.
+
+    Except when ``params`` DECLARE ``_timeframe``: that declaration is a contract (the
+    author, or the idea a created strategy tests, named the timeframe up front), so
+    only the declared context is judged. Crowning a better-looking timeframe after
+    seeing the results is selection bias. A degenerate or missing declared slice
+    comes back UNMEASURED, so the gate judges the declared row's own numbers (or
+    resubmits it) without persisting a degenerate slice."""
     from forven.db import get_db
 
     with get_db() as conn:
@@ -990,6 +1002,7 @@ def _best_sweep_result(
         str((params or {}).get("_timeframe") or "").strip() or best_tf
     )
     declared_tf = declared_display.lower()
+    explicitly_declared = bool(str((params or {}).get("_timeframe") or "").strip())
     best_result_id: str | None = None
     best_metrics: dict[str, Any] = {}
     best_score = float("-inf")
@@ -1035,6 +1048,8 @@ def _best_sweep_result(
             best_score = score
             best_sharpe = float(sharpe)
             best_tf, best_result_id, best_metrics = tf, rid, metrics
+    if explicitly_declared:
+        return declared_pick if declared_pick is not None else (declared_display, None, {})
     # No context cleared the validity floor: judge on the most-traded context
     # (never crowned by a lucky slice — see fb comment above).
     if best_score == float("-inf"):
