@@ -94,12 +94,9 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
     get_db = importlib.import_module("forven.db").get_db
 
     description = str(task.get("description") or task.get("title") or "")
-    # Scheduler quota menus list optional feeds, not thesis requirements. Do not
-    # turn every example in a menu into a mandatory dependency of this candidate.
-    description = re.split(r"\n\n(?:DIRECTION QUOTA|ORTHOGONAL-DATA QUOTA|SURVIVOR-NEIGHBORHOOD QUOTA)", description)[0]
     symbols = [input_data["symbol"]] if input_data.get("symbol") else []
     timeframes = [input_data["timeframe"]] if input_data.get("timeframe") else []
-    hypothesis_id = input_data.get("hypothesis_id") or input_data.get("crucible_id")
+    hypothesis_id = input_data.get("hypothesis_id")
     declared_issues: list[str] = []
     if hypothesis_id:
         with get_db() as conn:
@@ -117,8 +114,8 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
                 declared = json.loads(row["feasibility"]) if row["feasibility"] else None
             except (TypeError, ValueError):
                 declared = None
-            # Runtime needs the thesis declared (cross-asset / multi-timeframe
-            # joins, unintegrated inputs) keep it in research, not development.
+            # Runtime needs the idea declared (cross-asset / multi-timeframe
+            # joins, unintegrated inputs) block development until they exist.
             declared_issues = importlib.import_module("forven.hypotheses").feasibility_issues(declared)
     # A single candidate uses one execution frame. Multi-target hypotheses may
     # name several frames, but prose and external reference features are not frames.
@@ -151,15 +148,6 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
     return report
 
 
-def hypothesis_readiness(hypothesis_id: str) -> dict:
-    """Check dispatch eligibility before allocating an agent task or daily slot."""
-    report = candidate_readiness({}, {"hypothesis_id": hypothesis_id})
-    # One replaceable diagnostic per hypothesis; never label missing data as a
-    # disproven economic thesis or discard the original research.
-    importlib.import_module("forven.db").kv_set(f"research_readiness:{hypothesis_id}", report)
-    return report
-
-
 def render_research_input_constraints() -> str:
     """Current feed capabilities for research, independent of old workspace notes."""
     _KNOWN_COLUMNS = importlib.import_module("forven.strategies.data_availability")._KNOWN_COLUMNS
@@ -172,9 +160,9 @@ def render_research_input_constraints() -> str:
         "A collector's existence or a feed name in DATA_SCHEMA.md is not proof of coverage.\n"
         "Strategy-visible derivatives columns: " + ", ".join(sorted(_KNOWN_COLUMNS)) + ".\n"
         "No verified strategy-frame integration for: " + ", ".join(_EXTERNAL) + ". "
-        "Preserve such ideas as research with explicit missing dependencies; do not "
-        "substitute another input or keep dispatching development. The current frame "
-        "contains one asset; a basket or cross-asset feature needs an implemented join.\n"
+        "Do not build ideas that depend on these, and do not substitute another input. "
+        "The current frame contains one asset; a basket or cross-asset feature needs an "
+        "implemented join.\n"
         "target_assets must contain executable market symbols only. target_timeframes "
         "must contain candle intervals such as 1h or 4h only. Put holding horizons, "
         "event timing and external reference series in the mechanism. If unavailable "

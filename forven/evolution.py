@@ -399,7 +399,7 @@ def _normalize_timeframe(value: str | None, fallback: str = "1h") -> str:
     return fallback
 
 
-# Per-context compute bounds for the evolution/crucible validation matrix (N backtests
+# Per-context compute bounds for the evolution validation matrix (N backtests
 # across symbols x timeframes, run via a thread pool). The MAX fits ~3.4y @1h so the
 # common multi-year windows pass un-truncated; fine timeframes (5m/1m) clamp here so a
 # single context can't request ~1M bars. The COARSE floor keeps 1d+ strategies tradeable.
@@ -410,7 +410,7 @@ _VALIDATION_COARSE_FLOOR_BARS = 1095
 
 def _bars_for_validation_timeframe(timeframe: str) -> int:
     minutes_per_bar = max(_parse_timeframe_minutes(timeframe), 1)
-    # Evolution/crucible discovery has its OWN per-stage window knob
+    # Evolution validation has its OWN per-stage window knob
     # (evolution_duration_days), which falls back to the global Default backtest window
     # when left at 0 — so the validation matrix can run a different horizon than the
     # gauntlet if the operator wants. Falls back to the canonical default if unreadable.
@@ -1761,7 +1761,7 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
             elif stage == "quick_screen":
                 latest_gate_reason = str(row["latest_gate_reason"] or "")
 
-                # Rule 1: Hard terminal gate failures should free their crucible immediately.
+                # Rule 1: Hard terminal gate failures archive immediately.
                 if _is_terminal_quick_screen_gate_failure(latest_gate_reason):
                     reason = f"Terminal gate failure: {_normalize_gate_failure_text(latest_gate_reason)}"
 

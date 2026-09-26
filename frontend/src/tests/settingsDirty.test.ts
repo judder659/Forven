@@ -29,17 +29,17 @@ vi.mock('$lib/settings/manifest', () => ({
       usedBy: ['x'],
     },
     {
-      // Deep dotted path (3 levels) — the throughput preset's develop-budget
-      // entry writes research_settings.hypothesis_discipline.* via section
-      // 'research'; grouping must build the full nested body.
-      id: 'research.crucible_daily_develop_budget',
-      label: 'Daily develop budget',
-      default: 150,
+      // Deep dotted path (3 levels) — a held-back-test knob writes
+      // research_settings.research_holdout.* via section 'research';
+      // grouping must build the full nested body.
+      id: 'research.research_holdout.min_trades',
+      label: 'Held-back min trades',
+      default: 5,
       type: 'number',
-      area: 'system',
-      subsection: 'system-throughput',
+      area: 'lab',
+      subsection: 'lab-research',
       backendSection: 'research',
-      backendPath: 'research_settings.hypothesis_discipline.crucible_daily_develop_budget',
+      backendPath: 'research_settings.research_holdout.min_trades',
       description: '.',
       usedBy: ['x'],
     },
@@ -106,14 +106,14 @@ describe('dirty store', () => {
   });
 
   it('groups a deep dotted research path into the full nested body', () => {
-    originalValues.set({ 'research.crucible_daily_develop_budget': 150 });
-    markField('research.crucible_daily_develop_budget', 60);
+    originalValues.set({ 'research.research_holdout.min_trades': 5 });
+    markField('research.research_holdout.min_trades', 12);
     const grouped = groupDirtyByBackendSection({
-      'research.crucible_daily_develop_budget': 60,
+      'research.research_holdout.min_trades': 12,
     });
     expect(grouped).toEqual({
       research: {
-        research_settings: { hypothesis_discipline: { crucible_daily_develop_budget: 60 } },
+        research_settings: { research_holdout: { min_trades: 12 } },
       },
     });
   });

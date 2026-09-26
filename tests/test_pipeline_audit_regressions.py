@@ -1,8 +1,8 @@
 """Regression guards for the 2026-06-05 pipeline release-readiness audit.
 
 Locks in the capital-safety behaviours the audit changed so they can't silently
-regress: the gate-bypass carve-out, the canonical-archive carve-out, and the
-decay kill-switch force-archive authorisation.
+regress: the gate-bypass carve-out and the decay kill-switch force-archive
+authorisation.
 """
 from __future__ import annotations
 
@@ -38,12 +38,6 @@ def _stage_of(strategy_id: str) -> str:
     return str(row["stage"]) if row else ""
 
 
-def _canonical_of(strategy_id: str) -> int:
-    with get_db() as conn:
-        row = conn.execute("SELECT canonical FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-    return int(row["canonical"] or 0) if row else 0
-
-
 # --- #6 (T05-F1): gate-bypass flags must NOT skip capital-bearing gates ---------
 
 def test_paper_test_bypass_still_evaluates_paper_gate(forven_db):
@@ -72,29 +66,6 @@ def test_testing_mode_still_evaluates_paper_gate(forven_db):
     passed_paper, reason_paper = evaluate_promotion("byp-2", "gauntlet", "paper")
     assert passed_paper is False
     assert "bypass" not in reason_paper.lower()
-
-
-# --- #2 (T18-F1): canonical strategies are retireable by decay / operator -------
-
-def test_canonical_blocks_archive_for_automated_system_actor(forven_db):
-    """A canonical strategy is still protected from a generic automated archive."""
-    _mk_strategy("canon-1", stage="gauntlet", canonical=1, metrics={"sharpe": 1.0})
-    result = transition_stage("canon-1", "archived", reason="cleanup", actor="system")
-    assert result.get("reason_code") == "canonical_protected"
-    assert _stage_of("canon-1") == "gauntlet"
-    assert _canonical_of("canon-1") == 1
-
-
-def test_canonical_archivable_by_decay_tracker(forven_db):
-    """Decay-driven retirement may archive a decayed canonical, clearing the flag."""
-    # Carries fitness so it clears the (separate) ghost-container fitness guard,
-    # mirroring a real decayed strategy that was selected on a positive baseline.
-    _mk_strategy("canon-2", stage="gauntlet", canonical=1,
-                 metrics={"sharpe": 1.0, "total_trades": 30, "fitness": 50.0})
-    result = transition_stage("canon-2", "archived", reason="decayed", actor="decay_tracker")
-    assert result.get("to") == "archived"
-    assert _stage_of("canon-2") == "archived"
-    assert _canonical_of("canon-2") == 0
 
 
 # --- slot competition off by default: gauntlet pass -> promote, no tournament ----

@@ -88,7 +88,7 @@ def test_agent_registration_does_not_reset_the_registry(monkeypatch, forven_db, 
     )
 
     result = tools_mod._tool_register_strategy(
-        {"type_name": "race_s00001", "hypothesis_id": "HYP-1",
+        {"type_name": "race_s00001",
          "code": "from forven.strategies.base import BaseStrategy, Signal\n"}
     )
 

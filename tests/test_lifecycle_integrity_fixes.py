@@ -163,21 +163,6 @@ def test_auto_archive_goes_through_transition_stage_with_terminal_cleanup(forven
     assert event["to_state"] == "archived"
 
 
-def test_auto_archive_never_archives_canonical_strategy(forven_db):
-    """The canonical guard must hold: auto_archive is neither decay_tracker nor a
-    forced user actor, so a canonical strategy stays put with canonical=1 intact."""
-    strategy_id = "s-m12-canonical"
-    _insert_strategy(strategy_id, stage="gauntlet", metrics=GOOD_METRICS, canonical=1)
-    text = "Walk-forward fold pass rate 0.20 below floor"
-    _insert_rejections(strategy_id, "wfa_reject", text, count=5)
-
-    policy._check_repeated_failure_auto_archive(strategy_id, "gauntlet", "wfa_reject", text)
-
-    row = _strategy_row(strategy_id)
-    assert row["stage"] == "gauntlet"
-    assert int(row["canonical"]) == 1
-
-
 def test_auto_archive_succeeds_under_ghost_protection(forven_db):
     """5x genuine ran-and-failed rejections must archive even when the metrics blob
     would trip verify_fitness_before_archive (force=True via _SYSTEM_FORCE_ACTORS)."""
@@ -280,20 +265,6 @@ def test_evolution_terminal_archive_succeeds_under_ghost_protection(forven_db):
             (strategy_id,),
         ).fetchone()
     assert event["actor"] == "evolution_terminal_archive"
-
-
-def test_evolution_terminal_archive_still_respects_canonical_guard(forven_db):
-    strategy_id = "s-m13-evo-canonical"
-    _insert_strategy(strategy_id, stage="quick_screen", metrics=GOOD_METRICS, canonical=1)
-
-    archived = _archive_terminal_quick_screen_gate_failure(
-        strategy_id, "Quick screen reject: zero trades"
-    )
-
-    assert archived is False
-    row = _strategy_row(strategy_id)
-    assert row["stage"] == "quick_screen"
-    assert int(row["canonical"]) == 1
 
 
 # =====================================================================================

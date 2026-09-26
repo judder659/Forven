@@ -31,14 +31,14 @@ vi.mock('../lib/settings/manifest', () => ({
 		},
 		{
 			// Second backend section so multi-section saves have two PUTs to order.
-			id: 'research.crucible_daily_develop_budget',
-			label: 'Daily develop budget',
-			default: 150,
+			id: 'research.strategy_creation_daily_budget',
+			label: 'Daily strategy-creation budget',
+			default: 12,
 			type: 'number',
 			area: 'system',
 			subsection: 'system-throughput',
 			backendSection: 'research',
-			backendPath: 'research_settings.hypothesis_discipline.crucible_daily_develop_budget',
+			backendPath: 'research_settings.strategy_creation_daily_budget',
 			description: '',
 			usedBy: [],
 		},
@@ -212,10 +212,10 @@ describe('SettingsSaveBar', () => {
 			return { status: 'ok' };
 		});
 
-		dirtyFields.set(new Set(['risk.max_daily_loss', 'research.crucible_daily_develop_budget']));
+		dirtyFields.set(new Set(['risk.max_daily_loss', 'research.strategy_creation_daily_budget']));
 		originalValues.set({
 			'risk.max_daily_loss': 200,
-			'research.crucible_daily_develop_budget': 150,
+			'research.strategy_creation_daily_budget': 12,
 		});
 		target = document.createElement('div');
 		document.body.appendChild(target);
@@ -224,7 +224,7 @@ describe('SettingsSaveBar', () => {
 			props: {
 				currentValues: {
 					'risk.max_daily_loss': 150,
-					'research.crucible_daily_develop_budget': 60,
+					'research.strategy_creation_daily_budget': 6,
 				},
 			},
 		});
@@ -242,7 +242,7 @@ describe('SettingsSaveBar', () => {
 		expect(order.sort()).toEqual(['research', 'risk']);
 		// The dotted research path produced the full nested body.
 		expect(updateSettingsSectionMock).toHaveBeenCalledWith('research', {
-			research_settings: { hypothesis_discipline: { crucible_daily_develop_budget: 60 } },
+			research_settings: { strategy_creation_daily_budget: 6 },
 		});
 		expect(get(dirtyFields).size).toBe(0);
 	});

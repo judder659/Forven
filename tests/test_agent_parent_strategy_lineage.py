@@ -1,12 +1,9 @@
-"""Agents can record which sibling a candidate mutates (parent_strategy_id).
+"""Agents can record which strategy a candidate mutates (parent_strategy_id).
 
-The promotion loop and survivor expansion tell strategy-developer to set
-parent_strategy_id when mutating a sibling, but neither creation tool exposed
-it. MiniMax ignored the instruction; GPT-6 Luna refused to create the strategy.
+The parent only has to exist; a variant may test a different idea than its parent.
 """
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -44,26 +41,15 @@ def _parent_of(strategy_id: str) -> str | None:
         ).fetchone()[0]
 
 
-def _allow_candidate(monkeypatch, hypothesis_id: str) -> None:
-    monkeypatch.setattr(
-        "forven.crucible_tasks.validate_candidate_strategy_creation",
-        lambda *args, **kwargs: SimpleNamespace(
-            allowed=True, reason="", crucible_id=hypothesis_id, hypothesis_id=hypothesis_id,
-        ),
-    )
-
-
-def test_lineage_must_stay_inside_one_hypothesis(forven_db):
-    home, other = _hypothesis("home"), _hypothesis("other")
-    parent = _strategy(home)
+def test_parent_must_exist(forven_db):
+    parent = _strategy(_hypothesis("home"))
     with get_db() as conn:
-        assert parent_strategy_lineage_error(conn, None, home) is None
-        assert parent_strategy_lineage_error(conn, parent, home) is None
-        assert "lineage cannot cross hypotheses" in parent_strategy_lineage_error(conn, parent, other)
-        assert "not found" in parent_strategy_lineage_error(conn, "S99999", home)
+        assert parent_strategy_lineage_error(conn, None) is None
+        assert parent_strategy_lineage_error(conn, parent) is None
+        assert "not found" in parent_strategy_lineage_error(conn, "S99999")
 
 
-def test_route_records_parent_and_rejects_foreign_parent(forven_db):
+def test_route_records_parent_and_rejects_a_missing_parent(forven_db):
     from forven.routers.backtesting import create_backtesting_strategy
 
     home, other = _hypothesis("home"), _hypothesis("other")
@@ -73,16 +59,21 @@ def test_route_records_parent_and_rejects_foreign_parent(forven_db):
         name="mutation", type="backtest", symbol="BTC/USDT", timeframe="1h", body=body,
     )["strategy_id"]
     assert _parent_of(child) == parent
+    crossed = create_backtesting_strategy(
+        name="crossed", type="backtest", symbol="BTC/USDT", timeframe="1h",
+        body={**body, "hypothesis_id": other},
+    )["strategy_id"]
+    assert _parent_of(crossed) == parent
 
     with get_db() as conn:
         before = conn.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
     with pytest.raises(HTTPException) as rejected:
         create_backtesting_strategy(
-            name="crossed", type="backtest", symbol="BTC/USDT", timeframe="1h",
-            body={**body, "hypothesis_id": other},
+            name="orphan", type="backtest", symbol="BTC/USDT", timeframe="1h",
+            body={**body, "parent_strategy_id": "S99999"},
         )
     assert rejected.value.status_code == 422
-    assert "lineage cannot cross hypotheses" in rejected.value.detail
+    assert "not found" in rejected.value.detail
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM strategies").fetchone()[0] == before
 
@@ -96,12 +87,10 @@ def test_both_creation_tools_accept_parent_strategy_id():
         assert properties["parent_strategy_id"]["type"] == "string"
 
 
-def test_register_strategy_rejects_foreign_parent_before_writing_module(forven_db, monkeypatch):
+def test_register_strategy_rejects_missing_parent_before_writing_module(forven_db):
     from forven.agents.tools_backtesting import _tool_register_strategy
 
-    home, other = _hypothesis("home"), _hypothesis("other")
-    parent = _strategy(other)
-    _allow_candidate(monkeypatch, home)
+    home = _hypothesis("home")
     type_name = "parent_lineage_guard_probe"
     module = Path(forven.__file__).parent / "strategies" / "custom" / f"{type_name}.py"
 
@@ -109,11 +98,11 @@ def test_register_strategy_rejects_foreign_parent_before_writing_module(forven_d
         "code": "raise SystemExit('must not be written')\n",
         "type_name": type_name,
         "hypothesis_id": home,
-        "parent_strategy_id": parent,
+        "parent_strategy_id": "S99999",
     })
 
     assert result.startswith("Error: parent_strategy_id")
-    assert "lineage cannot cross hypotheses" in result
+    assert "not found" in result
     assert not module.exists()
 
 
@@ -122,7 +111,6 @@ def test_create_strategy_tool_forwards_parent(forven_db, monkeypatch, strategy_t
     from forven.agents import tools_backtesting
 
     home = _hypothesis("home")
-    _allow_candidate(monkeypatch, home)
     calls: list[dict] = []
 
     class Client:

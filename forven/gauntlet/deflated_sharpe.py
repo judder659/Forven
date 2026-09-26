@@ -17,12 +17,11 @@ Note: returns scale cancels in the Sharpe / skew / kurtosis, so per-trade pnl in
 ratio or percent units gives the same DSR — no unit normalisation needed.
 
 Swarm-level selection (issue #17): the optimizer trial count only corrects for
-parameter search WITHIN one strategy. The agent swarm also tries many sibling
-hypotheses per idea-cluster (family x asset) and only survivors reach the
+parameter search WITHIN one strategy. The agents also try many sibling
+strategies per idea-cluster (family x asset) and only survivors reach the
 gauntlet, so a survivor's effective trial count is per-strategy trials x cluster
-attempts. compute_strategy_dsr() therefore multiplies n_trials by (1 + disproven
-same-cluster hypotheses, reusing the graveyard clustering in forven.hypotheses)
-when the strategy's origin hypothesis is known.
+attempts. compute_strategy_dsr() therefore multiplies n_trials by (1 + same-
+cluster siblings that failed on merit within the lookback window).
 """
 
 from __future__ import annotations
@@ -248,40 +247,57 @@ def _cumulative_n_trials(
     return max(sum(counted), latest, 1), len(counted)
 
 
+def _base_asset(symbol: object) -> str:
+    text = str(symbol or "").strip().upper()
+    for separator in ("/", "-", ":"):
+        text = text.split(separator)[0]
+    return text
+
+
 def _swarm_cluster_attempts(strategy_id: str, lookback_days: int) -> int:
-    """Disproven same-cluster (family x asset) hypothesis siblings of the strategy's
-    origin hypothesis — the swarm-level selection pressure behind this survivor.
-    Returns 0 (no adjustment) when the strategy has no hypothesis link (manual /
-    imported strategies) and on ANY error: the swarm factor is advisory and must
-    never take down the base DSR."""
+    """Same-cluster (family x asset) siblings that failed on merit in the lookback.
+
+    The swarm-level selection pressure behind this survivor. Untestable
+    archives are not attempts (no fair test ran). Returns 0 when the family or
+    asset cannot be placed in a cluster and on ANY error: the swarm factor is
+    advisory and must never take down the base DSR.
+    """
     try:
+        from datetime import datetime, timedelta, timezone
+
         from forven.db import get_db
-        from forven.hypotheses import disproven_cluster_count, get_hypothesis
+        from forven.strategy_diversity import infer_strategy_family
 
         with get_db() as conn:
             row = conn.execute(
-                "SELECT hypothesis_id, origin_crucible_id FROM strategies WHERE id = ?",
+                "SELECT type, runtime_type, name, symbol FROM strategies WHERE id = ?",
                 (str(strategy_id),),
             ).fetchone()
-        if not row:
-            return 0
-        hyp_id = row["hypothesis_id"] or row["origin_crucible_id"]
-        if not hyp_id:
-            return 0
-        hyp = get_hypothesis(str(hyp_id))
-        if not hyp:
-            return 0
-        return max(
-            0,
-            int(
-                disproven_cluster_count(
-                    title=hyp.get("title"),
-                    market_thesis=hyp.get("market_thesis"),
-                    mechanism=hyp.get("mechanism"),
-                    target_assets=hyp.get("target_assets") or [],
-                    lookback_days=max(0, int(lookback_days)),
-                )
-            ),
+            if not row:
+                return 0
+            family = infer_strategy_family(row["type"], row["runtime_type"], row["name"])
+            asset = _base_asset(row["symbol"])
+            if family in ("", "other") or not asset:
+                return 0
+            clauses = [
+                "id != ?",
+                "stage IN ('rejected', 'archived')",
+                "LOWER(COALESCE(status_reason, '')) NOT LIKE 'untestable:%'",
+            ]
+            params: list[object] = [str(strategy_id)]
+            if int(lookback_days) > 0:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=int(lookback_days))).isoformat()
+                clauses.append("COALESCE(stage_changed_at, updated_at, created_at) >= ?")
+                params.append(cutoff)
+            rows = conn.execute(
+                f"SELECT type, runtime_type, name, symbol FROM strategies WHERE {' AND '.join(clauses)}",
+                tuple(params),
+            ).fetchall()
+        return sum(
+            1
+            for sibling in rows
+            if _base_asset(sibling["symbol"]) == asset
+            and infer_strategy_family(sibling["type"], sibling["runtime_type"], sibling["name"]) == family
         )
     except Exception:
         return 0
@@ -421,7 +437,7 @@ def compute_strategy_dsr(
         n_trials_base, n_optimization_runs = _cumulative_n_trials(parsed_opt_rows, default_trials)
 
         # Effective trials = optimizer trials x cluster attempts (the survivor
-        # itself + disproven same-cluster siblings). 0 siblings -> unchanged.
+        # itself + same-cluster siblings that failed). 0 siblings -> unchanged.
         swarm_attempts = 0
         if bool(rob.get("dsr_swarm_trials_enabled", True)):
             try:

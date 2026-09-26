@@ -52,11 +52,11 @@ def test_seed_jobs_include_signal_and_execution_scanners(forven_db):
 
     assert "forven-scanner-signal" in jobs
     assert "forven-scanner-hourly" in jobs
-    assert "forven-crucible-planner" in jobs
+    assert "forven-strategy-creation" in jobs
 
     signal_job = jobs["forven-scanner-signal"]
     exec_job = jobs["forven-scanner-hourly"]
-    crucible_job = jobs["forven-crucible-planner"]
+    creation_job = jobs["forven-strategy-creation"]
 
     assert str(signal_job.get("schedule_type")) == "interval"
     assert str(signal_job.get("schedule_expr")) == str(3 * 60 * 1000)
@@ -68,11 +68,13 @@ def test_seed_jobs_include_signal_and_execution_scanners(forven_db):
     assert exec_payload.get("kind") == "scanner_run"
     assert exec_payload.get("execute_positions") is True
 
-    assert crucible_job.get("enabled") == 1
+    assert creation_job.get("enabled") == 1
     # The Daily Coding Cycle was retired (autonomous code-modification path
     # intentionally not registered) — it must not be seeded at all.
     assert "forven-coding-daily" not in jobs
-    assert jobs["forven-ideation-daily"].get("enabled") == 0
+    # The retired ideation seed and the crucible jobs are gone for good.
+    assert "forven-ideation-daily" not in jobs
+    assert "forven-crucible-planner" not in jobs
 
 
 def test_runtime_overrides_update_scanner_cadence(forven_db):

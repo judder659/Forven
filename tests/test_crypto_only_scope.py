@@ -34,6 +34,7 @@ def _payload(**overrides):
         "title": "Equity rotation momentum",
         "market_thesis": "Sector rotation persists across weekly horizons.",
         "mechanism": "Momentum carry across sector leaders.",
+        "disproof": "Sector leaders stop outperforming after costs.",
         "lane": "benchmarking",
         "source_type": "public_benchmark",
         "origin_role": "strategy-developer",

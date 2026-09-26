@@ -40,7 +40,6 @@ from forven.dethrone_cooldown import (
 
 _ACTIVE_TASK_STATUSES = {"pending", "running", "blocked"}
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
-_CRUCIBLE_DETHRONE_APPROVAL_TYPE = "crucible_dethrone"
 _PROMOTION_APPROVAL_TYPE = "strategy_promotion_approval"
 _REGIME_CHAMPION_APPROVAL_TYPE = "regime_champion_promotion"
 _SKILL_UPDATE_APPROVAL_TYPE = "skill_update_proposal"
@@ -392,50 +391,6 @@ def _apply_dethrone_recommendation(
         "strategy_id": strategy_id,
         "target_stage": recommended_target,
         "transition": transition,
-    }
-
-
-def _apply_crucible_dethrone(
-    approval: Mapping[str, object],
-    *,
-    approved: bool,
-) -> dict[str, object]:
-    """Apply (approve) or reject (deny) a contested crucible's dethrone request.
-
-    Approve -> clear protection and archive/trash the crucible. Deny -> restore
-    protection. The protection-transition logic lives in the crucibles facade so
-    it stays in one place.
-    """
-    payload = _approval_payload(approval)
-    crucible_id = str(approval.get("target_id") or payload.get("crucible_id") or "").strip()
-    if not crucible_id:
-        raise HTTPException(status_code=400, detail="Crucible dethrone approval missing crucible_id")
-
-    new_evidence = payload.get("new_evidence")
-    requested_manager_state = str(
-        approval.get("requested_status")
-        or (new_evidence.get("requested_manager_state") if isinstance(new_evidence, Mapping) else "")
-        or "archived"
-    ).strip().lower()
-
-    try:
-        from forven.crucibles import apply_dethrone_decision
-
-        crucible = apply_dethrone_decision(
-            crucible_id,
-            approved=approved,
-            requested_manager_state=requested_manager_state,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to apply crucible dethrone: {exc}") from exc
-
-    return {
-        "crucible_id": crucible_id,
-        "dethroned": bool(approved),
-        "manager_state": crucible.get("manager_state"),
-        "protection_status": crucible.get("protection_status"),
     }
 
 
@@ -983,26 +938,6 @@ def post_approve_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[
             "target_stage": dethrone_result["target_stage"],
         }
 
-    if approval_type == _CRUCIBLE_DETHRONE_APPROVAL_TYPE:
-        crucible_result = _apply_crucible_dethrone(approval, approved=True)
-        log_activity(
-            "info",
-            "operator",
-            f"Crucible dethrone approved for {crucible_result['crucible_id']} "
-            f"→ {crucible_result['manager_state']}",
-            {
-                "approval_id": approval_id,
-                "crucible_id": crucible_result["crucible_id"],
-                "manager_state": crucible_result["manager_state"],
-            },
-        )
-        return {
-            "ok": True,
-            "approval_id": approval_id,
-            "status": updated["status"] if updated else "approved",
-            **crucible_result,
-        }
-
     if approval_type == _PROMOTION_APPROVAL_TYPE:
         promotion_result = _apply_promotion_approval(approval, body)
         log_activity(
@@ -1160,26 +1095,6 @@ def post_deny_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[str
             "strategy_id": strategy_id or None,
             "cooldown_until": cooldown_state.get("until"),
             "deny_count": cooldown_state.get("deny_count"),
-        }
-
-    if approval_type == _CRUCIBLE_DETHRONE_APPROVAL_TYPE:
-        crucible_result = _apply_crucible_dethrone(approval, approved=False)
-        log_activity(
-            "info",
-            "operator",
-            f"Crucible dethrone denied for {crucible_result['crucible_id']}; protection restored",
-            {
-                "approval_id": approval_id,
-                "crucible_id": crucible_result["crucible_id"],
-                "protection_status": crucible_result["protection_status"],
-            },
-        )
-        return {
-            "ok": True,
-            "approval_id": approval_id,
-            "status": updated["status"] if updated else "denied",
-            "crucible_id": crucible_result["crucible_id"],
-            "protection_status": crucible_result["protection_status"],
         }
 
     if approval_type == _REGIME_CHAMPION_APPROVAL_TYPE:

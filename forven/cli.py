@@ -1036,12 +1036,15 @@ def evolution_status():
 
 @evolution.command("ideate")
 def evolution_ideate():
-    """Trigger an ideation pass (dispatch crucible work to strategy-developer)."""
-    from forven.crucible_planner import run_crucible_planner_cycle
+    """Queue a strategy-creation task for strategy-developer (within today's budget)."""
     from forven.db import init_db
+    from forven.strategy_creation import run_creation_cycle
     init_db()
-    run_crucible_planner_cycle(limit=3)
-    click.echo("Ideation delegated to the crucible planner")
+    result = run_creation_cycle()
+    if result.get("status") == "queued":
+        click.echo(f"Queued strategy-creation task(s) {result.get('task_ids')}")
+    else:
+        click.echo(f"No task queued: {result.get('reason')}")
 
 
 @evolution.command("test")

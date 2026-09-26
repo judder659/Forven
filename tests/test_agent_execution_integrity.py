@@ -53,7 +53,6 @@ def context(forven_db, monkeypatch):
     monkeypatch.setattr(runner, 'build_agent_context', lambda *a, **k: 'system')
     monkeypatch.setattr(runner, '_get_tools_for_agent', lambda *a, **k: [{'name':'artifact','description':'Produce an artifact','input_schema':{}}])
     monkeypatch.setattr(runner, '_should_queue_brain_callback_for_completed_task', lambda **k: False)
-    monkeypatch.setattr(runner, '_queue_autonomous_research_follow_through_if_needed', lambda *a, **k: None)
     agent = {'id':'quant-researcher','name':'Research','model':'openai','model_id':'gpt-5.2'}
     return agent, task
 
@@ -86,12 +85,8 @@ def test_candidate_data_block_can_recheck_without_model_or_tool_calls(context, m
     assert status(task)['status'] == 'blocked'
     assert 'Missing funding' in status(task)['error']
     assert load_execution(task['id'], agent['id']).checkpoint['data_preflight']
-    if candidate_type == 'develop_candidate':
-        with pytest.raises(HTTPException, match='inputs are still blocked'):
-            resume_checkpoint(task['id'])
-    else:
+    with pytest.raises(HTTPException, match='inputs are still blocked'):
         resume_checkpoint(task['id'])
-        asyncio.run(runner.run_agent_task(agent, status(task)))
     assert len(checks) == 2
     assert status(task)['status'] == 'blocked'
     monkeypatch.setattr('forven.strategies.idea_readiness.candidate_readiness', lambda *a: {
@@ -107,25 +102,6 @@ def test_candidate_data_block_can_recheck_without_model_or_tool_calls(context, m
     asyncio.run(runner.run_agent_task(agent, status(task)))
     assert called == [True]
     assert 'without a registered strategy' in status(task)['error']
-
-
-def test_operator_research_hands_off_to_development(context, monkeypatch):
-    import json
-
-    agent, task = context
-    task.update(type='research', input_data=json.dumps({'origin_mode':'operator_manual_entry','hypothesis_id':'H_TEST'}))
-    monkeypatch.setattr(runner, 'build_research_context', lambda **kw: 'Research context')
-    async def researched(*a, **kw):
-        return 'Refined the idea', {}
-    monkeypatch.setattr(runner, '_call_with_tools', researched)
-    calls = []
-    def handoff(hid):
-        calls.append(hid)
-        return {'ok':True, 'task':{'task_id':42}}
-    monkeypatch.setattr('forven.api_domains.hypotheses.generate_strategies_payload', handoff)
-    asyncio.run(runner.run_agent_task(agent, task))
-    assert calls == ['H_TEST']
-    assert status(task)['status'] == 'done'
 
 
 def test_provider_retry_resumes_after_tool_without_replay(context, monkeypatch):
@@ -251,6 +227,39 @@ def test_candidate_task_requires_registered_strategy_evidence(context, monkeypat
     result=asyncio.run(runner.run_agent_task(agent,task))
     assert status(task)['status']=='blocked'
     assert 'without a registered strategy' in result['reason']
+
+
+@pytest.mark.parametrize('with_idea', [False, True])
+def test_creation_task_completes_only_with_a_strategy_that_names_its_idea(context, monkeypatch, with_idea):
+    from forven.hypotheses import create_hypothesis
+
+    agent, task = context
+    task['type'] = 'generate_strategies'
+    idea_id = None
+    if with_idea:
+        idea_id = create_hypothesis(
+            title='Funding fade', market_thesis='t', mechanism='m', disproof='d',
+            lane='research', source_type='test', target_assets=['BTC/USDT'], target_timeframes=['1h'],
+        )['id']
+    provider = Provider()
+    monkeypatch.setattr('forven.agents.providers.get_provider', lambda *a: provider)
+
+    async def register(*a):
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO strategies (id, name, hypothesis_id) VALUES ('S-IDEA', 'candidate', ?)", (idea_id,),
+            )
+            conn.execute("UPDATE agent_tasks SET strategy_id='S-IDEA' WHERE id=?", (task['id'],))
+        return 'Registered S-IDEA'
+
+    monkeypatch.setattr(runner, '_execute_tool', register)
+    result = asyncio.run(runner.run_agent_task(agent, task))
+
+    if with_idea:
+        assert status(task)['status'] == 'done'
+    else:
+        assert status(task)['status'] == 'blocked'
+        assert 'without a written idea' in result['reason']
 
 
 def test_usage_prices_actual_models_and_keeps_free_distinct_from_unpriced(context, monkeypatch):

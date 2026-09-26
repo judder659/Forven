@@ -29,21 +29,6 @@
 	function defaultResearchSettings(): any {
 		return {
 			external_benchmarking_enabled: true,
-			lane_weights: {
-				exploration: 0.5,
-				exploitation: 0.3,
-				benchmarking: 0.2,
-			},
-			spawn_limits: {
-				per_run: 2,
-				rolling_window: 6,
-				window_days: 7,
-			},
-			memory_modes: {
-				exploration: { constraint_memory: true, inspiration_memory: 'optional' },
-				exploitation: { constraint_memory: true, inspiration_memory: 'bounded' },
-				benchmarking: { constraint_memory: true, inspiration_memory: 'none' },
-			},
 			allowed_external_source_types: [],
 			research_sources: {
 				reddit: {
@@ -64,9 +49,6 @@
 		return {
 			...base,
 			...src,
-			lane_weights: { ...base.lane_weights, ...(src.lane_weights as object ?? {}) },
-			spawn_limits: { ...base.spawn_limits, ...(src.spawn_limits as object ?? {}) },
-			memory_modes: { ...base.memory_modes, ...(src.memory_modes as object ?? {}) },
 			research_sources: {
 				...base.research_sources,
 				...(src.research_sources as object ?? {}),
@@ -129,9 +111,9 @@
 			value: 'semi_auto',
 			label: 'Semi',
 			short: 'User-initiated',
-			tagline: 'You create crucibles; the system evaluates them',
+			tagline: 'You submit ideas; the system builds and evaluates them',
 			description:
-				'The scanner and agents will NOT spawn new crucibles on their own. Crucibles you enter manually are fully processed by the research, Gauntlet, robustness, and lifecycle machinery. Live trading stays active.',
+				'Agents will NOT write new ideas on their own. Ideas you submit (The Forge → Submit idea) are built into strategies and fully processed by the Gauntlet, robustness, and lifecycle machinery. Live trading stays active.',
 		},
 		{
 			value: 'auto',
@@ -139,7 +121,7 @@
 			short: 'Fully autonomous',
 			tagline: 'Original autonomous pipeline',
 			description:
-				'The scanner and agents autonomously generate, evaluate, and promote hypotheses. Live trading is active. Use only when the pipeline is healthy.',
+				'Agents write new ideas and build strategies from them within the daily budget; the pipeline evaluates and promotes them. Live trading is active. Use only when the pipeline is healthy.',
 		},
 	];
 

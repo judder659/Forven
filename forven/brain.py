@@ -2030,13 +2030,6 @@ def transition_stage(
                 )
                 log.info("DEMOTION COUNT: %s now at %d/3", strategy_id, new_demotion_count)
 
-        # Guardrail #0: Canonical strategies are protected from archival/rejection.
-        # A canonical is the per-cell-best winner of a graduated hypothesis;
-        # losing it would erase the hypothesis's frozen edge. But a once-best
-        # winner can later DECAY, and without a carve-out it would be a permanent
-        # un-retireable trap. So: decay-driven retirement (actor='decay_tracker')
-        # and explicit operator force may retire it (clearing the flag first);
-        # all other automated actors stay blocked and must clear canonical=0 first.
         # ARCH-1: a terminal strategy must not keep real-money exposure. Open LIVE
         # positions block the transition outright — even under force — because the
         # scanner only loads paper/live-stage strategies, so archiving would leave a
@@ -2061,33 +2054,6 @@ def transition_stage(
                     ),
                     motion="terminal_blocked_open_live_position",
                 )
-
-        clear_canonical_on_commit = False
-        if normalized_target in {"archived", "rejected"}:
-            canonical_row = conn.execute(
-                "SELECT canonical FROM strategies WHERE id = ?", (strategy_id,),
-            ).fetchone()
-            if canonical_row and canonical_row["canonical"]:
-                # An untestable strategy holds no verified edge to protect; blocking
-                # its archive would leave the caller retrying every cycle (e.g. the
-                # gauntlet evidence deferral re-selects the same blocked row).
-                may_retire_canonical = (
-                    actor.lower() == "decay_tracker"
-                    or (force and actor.lower() in _USER_ACTORS)
-                    or untestable_reason is not None
-                )
-                if not may_retire_canonical:
-                    return _record_blocked_transition(
-                        block_reason=(
-                            "Strategy is canonical for a graduated hypothesis; "
-                            "clear canonical=0 first or transition the hypothesis."
-                        ),
-                        motion="canonical_protected",
-                    )
-                # Defer the flag-clear to the commit point (just before the stage
-                # UPDATE) so a later-blocked archive (e.g. fitness guard) does not
-                # leave the strategy non-canonical but still active.
-                clear_canonical_on_commit = True
 
         # Guardrail #1: Verify evidence before a terminal transition (skip for
         # force-bypass). `rejected` is just as terminal as `archived` — without a
@@ -2173,17 +2139,6 @@ def transition_stage(
             details={"from_stage": current_stage, "to_stage": normalized_target, "actor": actor},
             conn=conn,
         )
-
-        # Clear the canonical flag (carve-out above) atomically with the archive so
-        # the retirement and the flag-clear commit together.
-        if clear_canonical_on_commit:
-            conn.execute(
-                "UPDATE strategies SET canonical = 0 WHERE id = ?", (strategy_id,),
-            )
-            log.info(
-                "Cleared canonical flag on %s for %s (actor=%s)",
-                strategy_id, normalized_target, actor,
-            )
 
         conn.execute(
             """
@@ -3418,32 +3373,6 @@ def assign_task_direct(
     display_id = ""
     task_id = 0
     with get_db() as conn:
-        if task_type == "develop_candidate" and isinstance(input_data, dict):
-            hypothesis_id = str(input_data.get("hypothesis_id") or input_data.get("crucible_id") or "").strip()
-            if hypothesis_id:
-                # Serialize candidate ownership across planner, promotion and
-                # direct assignments. Only a data-preflight block is unfinished
-                # work (it resumes when its inputs pass); any other blocked
-                # attempt is over and must not hold the crucible (see
-                # crucible_planner.blocked_candidate_holds_crucible).
-                conn.execute("BEGIN IMMEDIATE")
-                hypothesis = conn.execute(
-                    "SELECT id,display_id FROM hypotheses WHERE id=? OR display_id=?",
-                    (hypothesis_id, hypothesis_id),
-                ).fetchone()
-                aliases = (hypothesis["id"], hypothesis["display_id"]) if hypothesis else (hypothesis_id, hypothesis_id)
-                existing = conn.execute(
-                    "SELECT id FROM agent_tasks WHERE type='develop_candidate' "
-                    "AND (status IN ('pending','running') OR (status='blocked' AND dismissed_at IS NULL "
-                    "AND COALESCE(error,'') LIKE 'Data check:%')) "
-                    "AND json_valid(input_data) "
-                    "AND (json_extract(input_data,'$.hypothesis_id') IN (?,?) "
-                    "OR json_extract(input_data,'$.crucible_id') IN (?,?)) "
-                    "ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,id DESC LIMIT 1",
-                    (*aliases, *aliases),
-                ).fetchone()
-                if existing:
-                    return int(existing["id"])
         resolved_strategy_id = _resolve_task_strategy_id(
             conn,
             task_type,
@@ -3754,17 +3683,16 @@ def create_strategy(
     params: dict, timeframe: str = "1h", notes: str = "", owner: str | None = None,
     model: str | None = None, model_id: str | None = None,
     hypothesis_id: str | None = None,
-    origin_crucible_id: str | None = None, origin_agent_id: str | None = None,
+    origin_agent_id: str | None = None,
     origin_task_id: str | None = None, origin_model: str | None = None,
 ) -> dict:
-    """Create a new strategy container in quick_screen."""
-    normalized_hypothesis_id = str(hypothesis_id or "").strip()
-    if not normalized_hypothesis_id:
-        return {"error": "hypothesis_id is required for all new strategies"}
-    try:
-        normalized_hypothesis_id = str(require_hypothesis(normalized_hypothesis_id)["id"])
-    except ValueError as exc:
-        return {"error": str(exc)}
+    """Create a new strategy container in quick_screen, optionally linked to an idea."""
+    normalized_hypothesis_id = str(hypothesis_id or "").strip() or None
+    if normalized_hypothesis_id:
+        try:
+            normalized_hypothesis_id = str(require_hypothesis(normalized_hypothesis_id)["id"])
+        except ValueError as exc:
+            return {"error": str(exc)}
 
     certification = certify_execution_strategy(strategy_type, params if isinstance(params, dict) else {})
     certification_error = certification.format_error(context="creation")
@@ -3832,7 +3760,6 @@ def create_strategy(
             SET owner = ?,
                 notes = ?,
                 hypothesis_id = ?,
-                origin_crucible_id = ?,
                 origin_agent_id = ?,
                 origin_task_id = ?,
                 origin_model = ?,
@@ -3843,7 +3770,6 @@ def create_strategy(
                 resolved_owner,
                 (notes or f"Created from request id {strategy_id}").strip(),
                 normalized_hypothesis_id,
-                str(origin_crucible_id or "").strip() or None,
                 str(origin_agent_id or "").strip() or None,
                 str(origin_task_id or "").strip() or None,
                 str(origin_model or model_id or model or "").strip() or None,
@@ -4094,12 +4020,10 @@ def run_strategy_review():
 
 def assign_research_cycle():
     """Compatibility wrapper for the retired broad research cycle."""
-    from forven.crucible_planner import run_crucible_planner_cycle
+    from forven.strategy_creation import run_creation_cycle
 
-    log.info("Starting daily research cycle via crucible planner")
-    result = run_crucible_planner_cycle(limit=3)
-    log.info("Crucible planner research cycle complete: %s", result)
-    log_activity("info", "brain", f"Crucible planner research cycle complete: {result}")
+    result = run_creation_cycle()
+    log_activity("info", "brain", f"Strategy creation cycle: {result}")
     return result
 
 

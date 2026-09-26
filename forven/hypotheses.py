@@ -1,3 +1,11 @@
+"""Idea records: the written thesis behind each strategy.
+
+A hypothesis row is the idea an agent or the operator wrote down before
+building strategies from it: what market behaviour it exploits, why, and on
+which markets. Strategies link to it through ``strategies.hypothesis_id``.
+There is no lifecycle here; the strategy pipeline judges each strategy.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,37 +13,14 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
-from forven.crucibles import is_crucible_protected, request_dethrone_approval
 from forven.db import _now, _parse_json_value, get_db, next_container_id
-from forven.research_contract import (
-    get_effective_research_settings,
-    get_hypothesis_discipline_settings,
-)
 
 logger = logging.getLogger(__name__)
 
-HypothesisManagerView = Literal["active", "archived", "trash", "graduated"]
-
-
-class HypothesisPoolFullError(RuntimeError):
-    """Defensive fallback when the active pool is at cap AND no hypothesis can be evicted.
-
-    Under normal operation create_hypothesis never raises this: the active-pool cap
-    is a *pressure valve*, not a gate — when full, the weakest active hypothesis
-    (fewest strategies, stalest) is auto-archived to make room. This error only
-    fires if the eviction query returns no candidate, which is structurally
-    impossible when active_count >= cap.
-    """
-
-    def __init__(self, *, active_count: int, cap: int) -> None:
-        super().__init__(
-            f"hypothesis active pool full: {active_count} active >= cap {cap}"
-        )
-        self.active_count = active_count
-        self.cap = cap
+DEFAULT_LANE = "exploration"
 
 
 def _clean_text(value: str | None) -> str | None:
@@ -64,23 +49,17 @@ def _hypothesis_row_to_dict(row) -> dict[str, Any]:
     hypothesis["display_id"] = str(hypothesis.get("display_id") or "").strip() or None
     hypothesis["target_assets"] = _parse_json_value(hypothesis.get("target_assets")) or []
     hypothesis["target_timeframes"] = _parse_json_value(hypothesis.get("target_timeframes")) or []
-    hypothesis["manager_state"] = str(hypothesis.get("manager_state") or "active").strip() or "active"
-    hypothesis["archived_at"] = hypothesis.get("archived_at")
-    hypothesis["deleted_at"] = hypothesis.get("deleted_at")
-    hypothesis["restored_at"] = hypothesis.get("restored_at")
-    if "verdict_memo" in hypothesis:
-        hypothesis["verdict_memo"] = _parse_json_value(hypothesis.get("verdict_memo"))
     if "feasibility" in hypothesis:
         hypothesis["feasibility"] = normalize_feasibility(_parse_json_value(hypothesis.get("feasibility")))
     return hypothesis
 
 
 # The strategy runtime evaluates ONE market and ONE candle interval per backtest,
-# with only the local feed columns joined. A thesis that needs more (a second
+# with only the local feed columns joined. An idea that needs more (a second
 # asset's series, a lower-timeframe join, an unintegrated external input) cannot
 # be implemented faithfully; developing it anyway produced refusals or proxy
-# substitutes (Sept 2026). Agents declare these needs at create/refine/develop
-# time; candidate readiness keeps such crucibles in research.
+# substitutes (Sept 2026). Agents declare these needs on the idea record, and
+# candidate readiness refuses to develop such ideas.
 _FEASIBILITY_FLAGS = ("needs_cross_asset", "needs_multi_timeframe")
 
 
@@ -102,7 +81,7 @@ def normalize_feasibility(value: Any) -> dict[str, Any] | None:
 
 
 def feasibility_issues(feasibility: Any) -> list[str]:
-    """Readiness issues for runtime needs the thesis declared it has."""
+    """Readiness issues for runtime needs the idea declared it has."""
     declared = normalize_feasibility(feasibility)
     if not declared:
         return []
@@ -111,12 +90,12 @@ def feasibility_issues(feasibility: Any) -> list[str]:
     if declared["needs_cross_asset"]:
         issues.append(
             "Needs a cross-asset join (a second asset's series in the strategy frame); a backtest "
-            f"provides one market. Keep the idea in research until that integration exists{note}."
+            f"provides one market. Pick an idea that fits one market until that integration exists{note}."
         )
     if declared["needs_multi_timeframe"]:
         issues.append(
             "Needs a multi-timeframe join; a backtest provides one candle interval. Revise the "
-            f"thesis to one interval or keep it in research{note}."
+            f"idea to one interval{note}."
         )
     if declared["external_inputs"]:
         issues.append(
@@ -184,26 +163,6 @@ def _fetch_data_gap(conn, gap_id: str) -> dict[str, Any] | None:
     return _data_gap_row_to_dict(row)
 
 
-def _normalize_manager_view(view: str | None) -> HypothesisManagerView:
-    normalized = str(_clean_text(view) or "active").lower()
-    if normalized not in {"active", "archived", "trash", "graduated"}:
-        raise ValueError(f"unknown manager view: {normalized}")
-    return normalized  # type: ignore[return-value]
-
-
-def _normalize_sort(sort: str | None) -> str:
-    normalized = str(_clean_text(sort) or "updated_desc").lower()
-    allowed = {
-        "updated_desc": "datetime(updated_at) DESC, datetime(created_at) DESC",
-        "created_desc": "datetime(created_at) DESC, datetime(updated_at) DESC",
-        "novelty_desc": "novelty_score DESC, datetime(updated_at) DESC",
-        "title_asc": "LOWER(title) ASC, datetime(updated_at) DESC",
-    }
-    if normalized not in allowed:
-        raise ValueError(f"unknown hypothesis sort: {normalized}")
-    return allowed[normalized]
-
-
 def _require_existing_hypothesis(conn, hypothesis_id: str | None) -> str | None:
     cleaned = _clean_text(hypothesis_id)
     if cleaned is None:
@@ -224,241 +183,11 @@ def _require_existing_strategy(conn, strategy_id: str | None) -> str | None:
     return cleaned
 
 
-def _resolve_existing_hypothesis_id(conn, hypothesis_id: str | None) -> str | None:
-    cleaned = _clean_text(hypothesis_id)
-    if cleaned is None:
-        return None
-    hypothesis = _fetch_hypothesis(conn, cleaned)
-    if not hypothesis:
-        return None
-    return str(hypothesis["id"])
-
-
-def _apply_hypothesis_manager_state(conn, hypothesis_id: str, manager_state: HypothesisManagerView, *, reason: str | None = None) -> dict[str, Any]:
-    now_iso = _now()
-    current = _fetch_hypothesis(conn, hypothesis_id)
-    if current is None:
-        raise ValueError(f"unknown hypothesis_id: {hypothesis_id}")
-
-    if manager_state in {"archived", "trash"} and is_crucible_protected(current):
-        return _protected_archive_response(
-            current,
-            conn=conn,
-            requested_manager_state=manager_state,
-            actor="system",
-            reason=f"Protected crucible cannot move to {manager_state} without approval.",
-        )
-
-    archived_at = current.get("archived_at")
-    deleted_at = current.get("deleted_at")
-    restored_at = current.get("restored_at")
-
-    if manager_state == "archived":
-        archived_at = now_iso
-        deleted_at = None
-        restored_at = None
-    elif manager_state == "trash":
-        archived_at = archived_at or now_iso
-        deleted_at = now_iso
-    else:
-        archived_at = None
-        deleted_at = None
-        restored_at = now_iso
-
-    # Record WHY (archived/trashed only); cleared on restore so a re-archive can't
-    # show a stale reason. Never leave the reason NULL on an archive/trash: an
-    # untagged archival is invisible in audits — exactly the observability gap that
-    # hid pool-pressure-eviction churn (0 tagged rows despite the pool pinned at cap).
-    # Default to a sentinel so every outflow is at least attributable to a path.
-    if manager_state in {"archived", "trash"}:
-        archive_reason = (str(reason).strip() if reason else "") or "unspecified"
-    else:
-        archive_reason = None
-    conn.execute(
-        """
-        UPDATE hypotheses
-        SET manager_state = ?,
-            archived_at = ?,
-            deleted_at = ?,
-            restored_at = ?,
-            archive_reason = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (manager_state, archived_at, deleted_at, restored_at, archive_reason, now_iso, hypothesis_id),
-    )
-    row = _fetch_hypothesis(conn, hypothesis_id)
-    if row is None:
-        raise ValueError(f"unknown hypothesis_id: {hypothesis_id}")
-    return row
-
-
-def _protected_archive_response(
-    current: dict[str, Any],
-    *,
-    conn,
-    requested_manager_state: HypothesisManagerView,
-    actor: str,
-    reason: str,
-) -> dict[str, Any]:
-    approval_id = request_dethrone_approval(
-        str(current["id"]),
-        actor=actor,
-        reason=reason,
-        new_evidence={"requested_manager_state": requested_manager_state},
-        recommended_action=f"dethrone/{requested_manager_state}",
-        requested_status=requested_manager_state,
-        conn=conn,
-    )
-    refreshed = _fetch_hypothesis(conn, str(current["id"])) or dict(current)
-    refreshed["approval_required"] = True
-    refreshed["approval_id"] = approval_id
-    return refreshed
-
-
-def _protected_status_response(
-    current: dict[str, Any],
-    *,
-    conn,
-    requested_status: str,
-    memo: dict[str, Any],
-    actor: str,
-) -> dict[str, Any]:
-    approval_id = request_dethrone_approval(
-        str(current["id"]),
-        actor=actor,
-        reason=f"Protected crucible cannot move to {requested_status} without approval.",
-        new_evidence={"requested_status": requested_status, "memo": memo},
-        recommended_action=f"dethrone/{requested_status}",
-        requested_status=requested_status,
-        conn=conn,
-    )
-    refreshed = _fetch_hypothesis(conn, str(current["id"])) or dict(current)
-    refreshed["approval_required"] = True
-    refreshed["approval_id"] = approval_id
-    return refreshed
-
-
-def _pick_weakest_active_hypothesis(
-    conn, *, protect_ids: tuple[str, ...] = ()
-) -> dict[str, Any] | None:
-    """Return {id, display_id, strategy_count} for the weakest active hypothesis, or None.
-
-    Weakest = fewest *live* linked strategies, then oldest updated_at, then oldest
-    created_at. Ties broken deterministically. Hypotheses in `protect_ids` are excluded
-    (used to avoid evicting the parent of a derived hypothesis being created right now).
-
-    Only live-stage strategies count toward "strength" — a crucible whose children all
-    died (archived/rejected/backtest_failed/trash) or sit parked (research_only) reads as
-    0 here, matching the planner's _strategy_count (crucible_planner.py). Otherwise a
-    "zombie" crucible with only dead
-    children would look strong to the eviction picker (never evicted) while the planner
-    treats it as 0-strategy (keeps re-developing) — the two would silently disagree.
-    The live-stage filter lives in the JOIN's ON clause so the LEFT JOIN still yields a
-    row (count 0) for crucibles with no live strategies.
-    """
-    placeholders = ",".join(["?"] * len(protect_ids)) if protect_ids else ""
-    protect_clause = f" AND h.id NOT IN ({placeholders})" if protect_ids else ""
-    row = conn.execute(
-        f"""
-        SELECT h.id AS id, h.display_id AS display_id, COUNT(s.id) AS strategy_count
-        FROM hypotheses h
-        LEFT JOIN strategies s
-          ON s.hypothesis_id = h.id
-          AND COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash', 'research_only')
-        WHERE h.manager_state = 'active'
-          AND h.status NOT IN ('disproven', 'proven')
-          AND COALESCE(h.protection_status, 'unprotected') NOT IN ('protected', 'contested')
-          {protect_clause}
-        GROUP BY h.id
-        ORDER BY COUNT(s.id) ASC,
-                 COALESCE(h.updated_at, '') ASC,
-                 COALESCE(h.created_at, '') ASC
-        LIMIT 1
-        """,
-        tuple(protect_ids),
-    ).fetchone()
-    if row is None:
-        return None
-    return {
-        "id": str(row["id"]),
-        "display_id": str(row["display_id"] or "") or None,
-        "strategy_count": int(row["strategy_count"] or 0),
-    }
-
-
-def _evict_hypothesis_for_pool_pressure(conn, hypothesis_id: str) -> bool:
-    """Archive a hypothesis in-place to free a pool slot.
-
-    Archiving is reversible via the hypothesis manager. Linked strategies are NOT
-    deleted — they stay in the pipeline under their current stages. Runs in the
-    caller's connection so it's part of the same create_hypothesis transaction.
-    """
-    current = _fetch_hypothesis(conn, hypothesis_id)
-    if current is None or is_crucible_protected(current):
-        return False
-
-    now_iso = _now()
-    cursor = conn.execute(
-        """
-        UPDATE hypotheses
-        SET manager_state = 'archived',
-            archived_at = ?,
-            deleted_at = NULL,
-            restored_at = NULL,
-            archive_reason = 'pool_pressure_eviction',
-            updated_at = ?
-        WHERE id = ?
-          AND COALESCE(protection_status, 'unprotected') NOT IN ('protected', 'contested')
-        """,
-        (now_iso, now_iso, hypothesis_id),
-    )
-    return int(cursor.rowcount or 0) > 0
-
-
-def count_unstarted_active_hypotheses() -> int:
-    """Count active 'proposed' crucibles that have no live strategies.
-
-    This is the "un-started backlog" — crucibles admitted to the pool that have not
-    yet produced any live strategy. The oversaturation remediation bounds this so the
-    pool can't fill with idle proposals the research funnel can never clear. Mirrors
-    crucible_planner._LIVE_STRATEGY_STAGE_CLAUSE for what counts as a live strategy.
-    """
-    live_clause = "COALESCE(s.stage, '') NOT IN ('archived', 'rejected', 'backtest_failed', 'trash', 'research_only')"
-    with get_db() as conn:
-        row = conn.execute(
-            f"""
-            SELECT COUNT(*) AS n
-            FROM hypotheses h
-            WHERE h.manager_state = 'active'
-              AND h.status = 'proposed'
-              AND NOT EXISTS (
-                  SELECT 1 FROM strategies s
-                  WHERE (s.hypothesis_id = h.id OR s.origin_crucible_id = h.id)
-                    AND {live_clause}
-              )
-            """
-        ).fetchone()
-    return int(row["n"] or 0) if row else 0
-
-
-# --- Autonomous-mint dedup (2026-06-10 audit B-16) --------------------------------
-# The autonomous mint paths (discovery harvest, propose_crucible, the promotion
-# loop) had ZERO dedup: the same thesis was re-minted, re-developed, re-disproven
-# and re-archived cycle after cycle (observed live: identical titles minted minutes
-# apart, and a disproven title re-minted within the hour) — wasted LLM/backtest
-# spend and garbage strategies downstream. Before minting, autonomous creates are
-# checked against (a) the active pool and (b) crucibles disproven within the wired
-# `disproven_dedup_lookback_days` setting. Match = exact normalized-title equality
-# or a cheap token-set (Jaccard) ratio at/above the threshold below.
+# An agent re-writing an idea it wrote days ago wastes a whole creation task.
+_DUPLICATE_LOOKBACK_DAYS = 30
 _DEDUP_TOKEN_SET_THRESHOLD = 0.8
-# Archive reasons the crucible planner stamps when no attempt could be
-# implemented (crucible_planner._archive_parked_crucible). Not evidence against
-# the thesis, but recent enough ones still block an identical re-mint.
-IMPLEMENTATION_PARK_REASONS = ("develop_fruitless_3x", "develop_retries_exhausted", "refine_failed_3x")
-IMPLEMENTATION_PARK_REASONS_SQL = ", ".join(f"'{reason}'" for reason in IMPLEMENTATION_PARK_REASONS)
-# Generic filler that carries no thesis identity — "X Strategy" duplicates "X".
-_DEDUP_STOPWORDS = {"a", "an", "the", "strategy", "strategies", "thesis", "hypothesis", "crucible"}
+# Generic filler that carries no idea identity — "X Strategy" duplicates "X".
+_DEDUP_STOPWORDS = {"a", "an", "the", "strategy", "strategies", "thesis", "hypothesis", "idea"}
 
 
 def _normalized_dedup_tokens(title: str | None) -> tuple[str, frozenset[str]]:
@@ -476,143 +205,21 @@ def _token_set_ratio(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / len(a | b)
 
 
-def total_hypothesis_count() -> int:
-    """Total hypotheses on this instance (any status). Used as the scale floor for
-    the graveyard-novelty penalty so a small/new instance is never penalized."""
-    try:
-        with get_db() as conn:
-            row = conn.execute("SELECT COUNT(*) AS n FROM hypotheses").fetchone()
-        return int(row["n"] or 0)
-    except Exception:
-        return 0
+def find_duplicate_hypothesis(title: str, *, lookback_days: int = _DUPLICATE_LOOKBACK_DAYS) -> dict[str, Any] | None:
+    """Return a recent idea whose title ``title`` repeats, or None.
 
-
-def disproven_cluster_count(
-    *,
-    title: str | None,
-    market_thesis: str | None = None,
-    mechanism: str | None = None,
-    target_assets: list[str] | None = None,
-    lookback_days: int | None = None,
-) -> int:
-    """Count DISPROVEN hypotheses in the same idea-cluster as a proposed one.
-
-    Cluster = (inferred strategy family) x (overlapping target asset) — coarse but
-    family-agnostic and graveyard-aware, so it catches semantically-equivalent
-    re-treads the title-token dedup misses (e.g. "SOL EMA Cross" vs "SOL EMA Pullback
-    (Refined)"; both are the SOL+EMA idea). Drives the autonomous novelty discount so
-    an idea-space disproven N times stops being scored as novel. Timeframe is NOT part
-    of the cluster — that's a parameter the crucible explores, not a separate idea.
-
-    Returns 0 when the family can't be inferred or no target asset is given (we can't
-    place it in a cluster). Fail-OPEN on any error — must never block creation.
-    """
-    try:
-        from forven.strategy_diversity import infer_strategy_family
-
-        family = infer_strategy_family(title, market_thesis, mechanism)
-        if family in ("", "other"):
-            return 0
-        assets = [str(a).strip().upper() for a in (target_assets or []) if str(a).strip()]
-        if not assets:
-            return 0  # no asset -> can't cluster; don't penalize
-        if lookback_days is None:
-            lookback_days = int(get_hypothesis_discipline_settings()["disproven_dedup_lookback_days"])
-
-        clauses = ["status = 'disproven'"]
-        sql_params: list[Any] = []
-        if int(lookback_days) > 0:
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=int(lookback_days))).isoformat()
-            clauses.append("COALESCE(verdict_memo_at, updated_at, created_at) >= ?")
-            sql_params.append(cutoff)
-        asset_or = " OR ".join("UPPER(COALESCE(target_assets, '')) LIKE ?" for _ in assets)
-        clauses.append(f"({asset_or})")
-        sql_params.extend(f"%{a}%" for a in assets)
-        where = " AND ".join(clauses)
-        with get_db() as conn:
-            rows = conn.execute(
-                f"SELECT title, market_thesis, mechanism FROM hypotheses WHERE {where}",
-                tuple(sql_params),
-            ).fetchall()
-        return sum(
-            1
-            for r in rows
-            if infer_strategy_family(r["title"], r["market_thesis"], r["mechanism"]) == family
-        )
-    except Exception:
-        return 0
-
-
-def graveyard_novelty_factor(disproven_count: int, *, scale: float) -> float:
-    """Multiplicative novelty discount for a proposed hypothesis given how many times
-    its idea-cluster has already been disproven. 0 disproven -> 1.0 (no penalty); the
-    factor falls off and saturates: factor = 1 / (1 + count/scale) (count==scale ->
-    0.5). Soft by design — a discounted score just loses the novelty-ranked dispatch
-    queue and gets evicted by pool pressure, rather than being hard-refused."""
-    try:
-        d = max(0, int(disproven_count))
-        s = max(1e-9, float(scale))
-        return 1.0 / (1.0 + d / s)
-    except Exception:
-        return 1.0
-
-
-def find_duplicate_hypothesis(
-    title: str,
-    *,
-    disproven_lookback_days: int | None = None,
-) -> dict[str, Any] | None:
-    """Return an existing hypothesis that `title` duplicates, or None.
-
-    Compared against:
-      (a) the active pool (manager_state='active', status proposed/researching/proven),
-          regardless of age, and
-      (b) recently-disproven crucibles (status='disproven', disproven/touched within
-          `disproven_lookback_days`, any manager_state — disproven crucibles are
-          archived, which is exactly why nothing remembered them before).
-
-    `disproven_lookback_days` defaults to the wired
-    hypothesis_discipline.disproven_dedup_lookback_days setting; 0 disables the
-    disproven arm (the active-pool arm is always on).
-
-    This is a gate for AUTONOMOUS minting (the create_hypothesis agent tool).
-    Operator manual/URL creates and core create_hypothesis() are intentionally
-    not gated — an operator may re-create a thesis on purpose.
+    Only agent-written ideas are checked by callers; an operator may repeat an
+    idea on purpose.
     """
     normalized, tokens = _normalized_dedup_tokens(title)
     if not normalized:
         return None
-
-    if disproven_lookback_days is None:
-        disproven_lookback_days = int(
-            get_hypothesis_discipline_settings()["disproven_dedup_lookback_days"]
-        )
-    cutoff: str | None = None
-    if int(disproven_lookback_days) > 0:
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=int(disproven_lookback_days))
-        ).isoformat()
-
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(0, int(lookback_days)))).isoformat()
     with get_db() as conn:
-        # Crucibles parked because no attempt could be implemented are not
-        # disproven (no graveyard weight), but re-minting the same title at once
-        # would repeat the same failing attempts.
         rows = conn.execute(
-            f"""
-            SELECT id, display_id, title, status, manager_state
-            FROM hypotheses
-            WHERE (manager_state = 'active' AND status IN ('proposed', 'researching', 'proven'))
-               OR (
-                    ? IS NOT NULL
-                    AND (status = 'disproven' OR archive_reason IN ({IMPLEMENTATION_PARK_REASONS_SQL}))
-                    AND CASE WHEN status = 'disproven'
-                             THEN COALESCE(verdict_memo_at, updated_at, created_at)
-                             ELSE COALESCE(archived_at, updated_at, created_at) END >= ?
-                  )
-            """,
-            (cutoff, cutoff),
+            "SELECT id, display_id, title, created_at FROM hypotheses WHERE created_at >= ?",
+            (cutoff,),
         ).fetchall()
-
     for row in rows:
         candidate_normalized, candidate_tokens = _normalized_dedup_tokens(row["title"])
         if not candidate_normalized:
@@ -624,25 +231,14 @@ def find_duplicate_hypothesis(
             if similarity < _DEDUP_TOKEN_SET_THRESHOLD:
                 continue
             match = "similar_title"
-        duplicate = {
+        return {
             "id": str(row["id"]),
             "display_id": str(row["display_id"] or "") or None,
             "title": str(row["title"] or ""),
-            "status": str(row["status"] or ""),
-            "manager_state": str(row["manager_state"] or ""),
+            "created_at": row["created_at"],
             "match": match,
             "similarity": round(float(similarity), 3),
         }
-        logger.info(
-            "hypothesis_dedup.hit title=%r matched %s (%s, status=%s/%s, similarity=%.3f)",
-            title,
-            duplicate["display_id"] or duplicate["id"],
-            match,
-            duplicate["status"],
-            duplicate["manager_state"],
-            similarity,
-        )
-        return duplicate
     return None
 
 
@@ -651,8 +247,9 @@ def create_hypothesis(
     title: str,
     market_thesis: str,
     mechanism: str,
+    disproof: str | None = None,
     why_now: str | None = None,
-    lane: str,
+    lane: str | None = None,
     source_type: str,
     origin_agent_id: str | None = None,
     origin_role: str | None = None,
@@ -671,10 +268,11 @@ def create_hypothesis(
         "title": _require_text(title, "title"),
         "market_thesis": _require_text(market_thesis, "market_thesis"),
         "mechanism": _require_text(mechanism, "mechanism"),
+        "disproof": _clean_text(disproof),
         "why_now": _clean_text(why_now),
         "target_assets": json.dumps(_normalize_string_list(target_assets, "target_assets")),
         "target_timeframes": json.dumps(_normalize_string_list(target_timeframes, "target_timeframes")),
-        "lane": _require_text(lane, "lane"),
+        "lane": _clean_text(lane) or DEFAULT_LANE,
         "source_type": _require_text(source_type, "source_type"),
         "origin_agent_id": _clean_text(origin_agent_id),
         "origin_role": _clean_text(origin_role),
@@ -682,62 +280,19 @@ def create_hypothesis(
         "origin_model_id": _clean_text(origin_model_id),
         "novelty_score": float(novelty_score),
         "derived_from_hypothesis_id": _clean_text(derived_from_hypothesis_id),
-        "status": "proposed",
-        "manager_state": "active",
-        "archived_at": None,
-        "deleted_at": None,
-        "restored_at": None,
     }
 
     with get_db() as conn:
-        # Active-pool pressure valve. Counts hypotheses that occupy a slot:
-        # manager_state='active' AND status NOT IN ('disproven', 'proven').
-        # When the pool is at cap, auto-archive the weakest active hypothesis
-        # (fewest strategies, then stalest) to make room — research agents are
-        # never refused. HypothesisPoolFullError remains as a defensive fallback
-        # for the impossible case where the cap check says "full" but eviction
-        # can't find a victim. Done inside the same connection as the insert so
-        # everything commits atomically.
-        discipline = get_hypothesis_discipline_settings()
-        cap = int(discipline["active_pool_cap"])
-        active_row = conn.execute(
-            "SELECT COUNT(*) AS n FROM hypotheses "
-            "WHERE manager_state = 'active' "
-            "AND status NOT IN ('disproven', 'proven')"
-        ).fetchone()
-        active_count = int(active_row["n"] or 0)
-        if active_count >= cap:
-            protect: tuple[str, ...] = ()
-            if payload["derived_from_hypothesis_id"]:
-                protect = (str(payload["derived_from_hypothesis_id"]),)
-            evicted_victim: dict[str, Any] | None = None
-            for _attempt in range(2):
-                victim = _pick_weakest_active_hypothesis(conn, protect_ids=protect)
-                if victim is None:
-                    break
-                if _evict_hypothesis_for_pool_pressure(conn, victim["id"]):
-                    evicted_victim = victim
-                    break
-            if evicted_victim is None:
-                raise HypothesisPoolFullError(active_count=active_count, cap=cap)
-            logger.info(
-                "hypothesis pool at cap (%d); evicted %s (strategies=%d) to admit new hypothesis",
-                cap,
-                evicted_victim.get("display_id") or evicted_victim["id"],
-                evicted_victim["strategy_count"],
-            )
-
         payload["display_id"] = next_container_id(conn, "H")
         if payload["derived_from_hypothesis_id"] is not None:
             _require_existing_hypothesis(conn, payload["derived_from_hypothesis_id"])
         conn.execute(
             """
             INSERT INTO hypotheses (
-                id, display_id, title, market_thesis, mechanism, why_now, target_assets, target_timeframes,
-                lane, source_type, origin_agent_id, origin_role, origin_model, origin_model_id,
-                novelty_score, derived_from_hypothesis_id, status, manager_state, archived_at, deleted_at, restored_at,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, display_id, title, market_thesis, mechanism, disproof, why_now, target_assets,
+                target_timeframes, lane, source_type, origin_agent_id, origin_role, origin_model,
+                origin_model_id, novelty_score, derived_from_hypothesis_id, feasibility, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload["id"],
@@ -745,6 +300,7 @@ def create_hypothesis(
                 payload["title"],
                 payload["market_thesis"],
                 payload["mechanism"],
+                payload["disproof"],
                 payload["why_now"],
                 payload["target_assets"],
                 payload["target_timeframes"],
@@ -756,23 +312,12 @@ def create_hypothesis(
                 payload["origin_model_id"],
                 payload["novelty_score"],
                 payload["derived_from_hypothesis_id"],
-                payload["status"],
-                payload["manager_state"],
-                payload["archived_at"],
-                payload["deleted_at"],
-                payload["restored_at"],
+                json.dumps(declared_feasibility) if declared_feasibility else None,
                 now_iso,
                 now_iso,
             ),
         )
-        if declared_feasibility:
-            conn.execute(
-                "UPDATE hypotheses SET feasibility = ? WHERE id = ?",
-                (json.dumps(declared_feasibility), payload["id"]),
-            )
         row = _fetch_hypothesis(conn, str(payload["id"]))
-        from forven.crucible_intake import record_created
-        record_created(conn, str(payload["id"]))
     return row or {}
 
 
@@ -787,6 +332,7 @@ def update_hypothesis(
     title: str | None = None,
     market_thesis: str | None = None,
     mechanism: str | None = None,
+    disproof: str | None = None,
     why_now: str | None = None,
     target_assets: list[str] | None = None,
     target_timeframes: list[str] | None = None,
@@ -794,12 +340,11 @@ def update_hypothesis(
     operator_notes: str | None = None,
     feasibility: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Partial-update an existing hypothesis. Only non-None fields are written.
+    """Partial-update an existing idea. Only non-None fields are written.
 
-    Immutable by design: id, display_id, lane, source_type, origin_*, created_at,
-    status (use lifecycle APIs), manager_state (use lifecycle APIs),
-    derived_from_hypothesis_id. Attempts to modify these are silently ignored by
-    virtue of the kwargs allowlist.
+    Immutable by design: id, display_id, lane, source_type, origin_*, created_at
+    and derived_from_hypothesis_id. Attempts to modify these are silently
+    ignored by virtue of the kwargs allowlist.
     """
     updates: dict[str, object] = {}
     if title is not None:
@@ -808,6 +353,8 @@ def update_hypothesis(
         updates["market_thesis"] = _require_text(market_thesis, "market_thesis")
     if mechanism is not None:
         updates["mechanism"] = _require_text(mechanism, "mechanism")
+    if disproof is not None:
+        updates["disproof"] = _clean_text(disproof)
     if why_now is not None:
         updates["why_now"] = _clean_text(why_now)
     if target_assets is not None:
@@ -840,127 +387,24 @@ def update_hypothesis(
     return row or {}
 
 
-_VALID_STATUSES = {"proposed", "researching", "proven", "disproven"}
-
-
-def update_hypothesis_status(
-    hypothesis_id: str,
-    *,
-    new_status: str,
-    memo: dict[str, Any],
-    by: str,
-) -> dict[str, Any]:
-    """Transition a hypothesis's scientific status, writing history.
-
-    - Updates hypotheses.status, verdict_memo (JSON), verdict_memo_at, verdict_memo_by.
-    - Appends a row to hypothesis_verdict_memos for the full audit trail.
-    - `by` identifies the source: 'agent:strategy-developer', 'cleanup_rule:<why>',
-      'operator', etc. No hard format enforcement — it's a log string.
-
-    Raises ValueError if hypothesis missing or new_status invalid.
-    """
-    if new_status not in _VALID_STATUSES:
-        raise ValueError(f"invalid status: {new_status} (expected one of {_VALID_STATUSES})")
-
-    now_iso = _now()
-    memo_payload = json.dumps(memo, separators=(",", ":"))
-    evidence_id = str(memo.get("evidence_id") or memo.get("initial_viability_evidence_id") or "").strip()
-    evidence_id = evidence_id or None
-
-    with get_db() as conn:
-        canonical_id = str(require_hypothesis(hypothesis_id)["id"])
-        current = _fetch_hypothesis(conn, canonical_id)
-        if (
-            current is not None
-            and str(current.get("status") or "").strip().lower() == "proven"
-            and new_status != "proven"
-            and is_crucible_protected(current)
-        ):
-            return _protected_status_response(
-                current,
-                conn=conn,
-                requested_status=new_status,
-                memo=memo,
-                actor=by,
-            )
-        if new_status == "proven":
-            # A proven crucible must carry an evidence reference for the protection
-            # audit trail; synthesize a deterministic fallback when the verdict memo
-            # didn't supply one (COALESCE still preserves any pre-set value).
-            proven_evidence_id = evidence_id or f"verdict-memo:{canonical_id}:{now_iso}"
-            conn.execute(
-                """
-                UPDATE hypotheses
-                SET status = ?,
-                    verdict_memo = ?,
-                    verdict_memo_at = ?,
-                    verdict_memo_by = ?,
-                    protection_status = 'protected',
-                    protected_at = COALESCE(protected_at, ?),
-                    protected_by = COALESCE(protected_by, ?),
-                    initial_viability_evidence_id = COALESCE(initial_viability_evidence_id, ?),
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (new_status, memo_payload, now_iso, by, now_iso, by, proven_evidence_id, now_iso, canonical_id),
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE hypotheses
-                SET status = ?, verdict_memo = ?, verdict_memo_at = ?, verdict_memo_by = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (new_status, memo_payload, now_iso, by, now_iso, canonical_id),
-            )
-        conn.execute(
-            """
-            INSERT INTO hypothesis_verdict_memos (id, hypothesis_id, payload, written_at, written_by)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (f"HVM-{uuid4().hex[:12]}", canonical_id, memo_payload, now_iso, by),
-        )
-        row = _fetch_hypothesis(conn, canonical_id)
-    return row or {}
-
-
-def list_hypotheses(
-    *,
-    view: str | None = None,
-    lane: str | None = None,
-    status: str | None = None,
-    source_type: str | None = None,
-    search: str | None = None,
-    sort: str | None = None,
-) -> list[dict[str, Any]]:
+def list_hypotheses(*, search: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    """Newest ideas first, optionally filtered by title, display id or target."""
     clauses: list[str] = []
     params: list[object] = []
-    clauses.append("manager_state = ?")
-    params.append(_normalize_manager_view(view))
-    if _clean_text(lane):
-        clauses.append("lane = ?")
-        params.append(_clean_text(lane))
-    if _clean_text(status):
-        clauses.append("status = ?")
-        params.append(_clean_text(status))
-    if _clean_text(source_type):
-        clauses.append("source_type = ?")
-        params.append(_clean_text(source_type))
     if _clean_text(search):
         pattern = f"%{_clean_text(search)}%"
         clauses.append(
             "("
             "title LIKE ? COLLATE NOCASE OR "
             "COALESCE(display_id, '') LIKE ? COLLATE NOCASE OR "
-            "source_type LIKE ? COLLATE NOCASE OR "
             "target_assets LIKE ? COLLATE NOCASE OR "
             "target_timeframes LIKE ? COLLATE NOCASE"
             ")"
         )
-        params.extend([pattern, pattern, pattern, pattern, pattern])
+        params.extend([pattern, pattern, pattern, pattern])
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    order_sql = _normalize_sort(sort)
-    query = f"SELECT * FROM hypotheses {where_sql} ORDER BY {order_sql}"
+    params.append(max(1, min(int(limit or 50), 500)))
+    query = f"SELECT * FROM hypotheses {where_sql} ORDER BY datetime(created_at) DESC LIMIT ?"
     with get_db() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
     return [_hypothesis_row_to_dict(row) for row in rows]
@@ -974,58 +418,6 @@ def require_hypothesis(hypothesis_id: str) -> dict[str, Any]:
     if row is None:
         raise ValueError(f"unknown hypothesis_id: {normalized_id}")
     return row
-
-
-def archive_hypothesis(hypothesis_id: str, *, reason: str | None = None) -> dict[str, Any]:
-    normalized_id = _require_text(hypothesis_id, "hypothesis_id")
-    with get_db() as conn:
-        resolved_id = _require_existing_hypothesis(conn, normalized_id)
-        return _apply_hypothesis_manager_state(conn, str(resolved_id), "archived", reason=reason)
-
-
-def trash_hypothesis(hypothesis_id: str, *, reason: str | None = None) -> dict[str, Any]:
-    normalized_id = _require_text(hypothesis_id, "hypothesis_id")
-    with get_db() as conn:
-        resolved_id = _require_existing_hypothesis(conn, normalized_id)
-        return _apply_hypothesis_manager_state(conn, str(resolved_id), "trash", reason=reason)
-
-
-def restore_hypothesis(hypothesis_id: str) -> dict[str, Any]:
-    normalized_id = _require_text(hypothesis_id, "hypothesis_id")
-    with get_db() as conn:
-        resolved_id = _require_existing_hypothesis(conn, normalized_id)
-        return _apply_hypothesis_manager_state(conn, str(resolved_id), "active")
-
-
-def _bulk_apply_hypothesis_manager_state(
-    hypothesis_ids: list[str] | tuple[str, ...],
-    manager_state: HypothesisManagerView,
-) -> list[dict[str, Any]]:
-    normalized_ids = [str(item).strip() for item in hypothesis_ids if str(item).strip()]
-    if not normalized_ids:
-        return []
-    updated: list[dict[str, Any]] = []
-    with get_db() as conn:
-        seen: set[str] = set()
-        for hypothesis_id in normalized_ids:
-            resolved_id = _resolve_existing_hypothesis_id(conn, hypothesis_id)
-            if resolved_id is None or resolved_id in seen:
-                continue
-            seen.add(resolved_id)
-            updated.append(_apply_hypothesis_manager_state(conn, resolved_id, manager_state))
-    return updated
-
-
-def bulk_archive_hypotheses(hypothesis_ids: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
-    return _bulk_apply_hypothesis_manager_state(hypothesis_ids, "archived")
-
-
-def bulk_trash_hypotheses(hypothesis_ids: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
-    return _bulk_apply_hypothesis_manager_state(hypothesis_ids, "trash")
-
-
-def bulk_restore_hypotheses(hypothesis_ids: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
-    return _bulk_apply_hypothesis_manager_state(hypothesis_ids, "active")
 
 
 _ARTIFACT_CONTENT_CAP_BYTES = 500 * 1024  # 500 KB
@@ -1219,24 +611,6 @@ def list_hypothesis_strategies(hypothesis_id: str) -> list[dict[str, Any]]:
     return [_strategy_row_to_dict(row) for row in rows]
 
 
-def list_hypothesis_data_gaps(hypothesis_id: str) -> list[dict[str, Any]]:
-    normalized_id = str(require_hypothesis(hypothesis_id)["id"])
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT dg.*
-            FROM data_gaps dg
-            JOIN data_gap_links dgl ON dgl.data_gap_id = dg.id
-            LEFT JOIN strategies s ON s.id = dgl.strategy_id
-            WHERE dgl.hypothesis_id = ?
-               OR s.hypothesis_id = ?
-            ORDER BY dg.priority_score DESC, dg.request_count DESC, datetime(dg.updated_at) DESC
-            """,
-            (normalized_id, normalized_id),
-        ).fetchall()
-    return [_data_gap_row_to_dict(row) for row in rows]
-
-
 def list_ranked_data_gaps(limit: int = 20) -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
@@ -1249,40 +623,3 @@ def list_ranked_data_gaps(limit: int = 20) -> list[dict[str, Any]]:
             (max(int(limit), 0),),
         ).fetchall()
     return [_data_gap_row_to_dict(row) for row in rows]
-
-
-def get_hypothesis_spawn_stats(hypothesis_id: str) -> dict[str, int]:
-    normalized_id = str(require_hypothesis(hypothesis_id)["id"])
-    settings = get_effective_research_settings()
-    raw_limits = settings.get("spawn_limits", {})
-    per_run_limit = int(raw_limits.get("per_run", 3) or 3)
-    rolling_window_limit = int(raw_limits.get("rolling_window", 10) or 10)
-    window_days = int(raw_limits.get("window_days", 7) or 7)
-
-    with get_db() as conn:
-        current_run_count = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM strategies
-            WHERE hypothesis_id = ?
-              AND datetime(created_at) >= datetime('now', 'start of day')
-            """,
-            (normalized_id,),
-        ).fetchone()[0]
-        rolling_window_count = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM strategies
-            WHERE hypothesis_id = ?
-              AND datetime(created_at) >= datetime('now', ?)
-            """,
-            (normalized_id, f"-{window_days} days"),
-        ).fetchone()[0]
-
-    return {
-        "spawned_in_current_run": int(current_run_count or 0),
-        "spawned_in_window": int(rolling_window_count or 0),
-        "per_run_limit": per_run_limit,
-        "rolling_window_limit": rolling_window_limit,
-        "window_days": window_days,
-    }

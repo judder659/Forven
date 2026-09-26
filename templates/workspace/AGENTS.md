@@ -4,7 +4,7 @@
 
 Use your supplied ROLE.md, SOUL.md, this guide, and the shared IDENTITY.md. Do not repeatedly reread material already present. These files describe purpose and workflow; the operator's authorized task, current tool permissions, active risk controls, and authoritative gate results determine what you may actually do.
 
-Confirm the task scope, deliverable, relevant hypothesis/Crucible, strategy and task IDs, available tools, and completion criteria. Read only the additional records needed for the next decision. Research and infrastructure work may precede a strategy ID; never fabricate one.
+Confirm the task scope, deliverable, relevant idea (hypothesis_id), strategy and task IDs, available tools, and completion criteria. Read only the additional records needed for the next decision. Research and infrastructure work may precede a strategy ID; never fabricate one.
 
 Read permitted recent memory and applicable lessons. A research contract controls historical inspiration and recall: do not load broad memory when that contract disables it. Use USER.md preferences where relevant; main-session private memory is reserved for the operator's direct conversation.
 

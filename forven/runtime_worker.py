@@ -56,7 +56,7 @@ _BRAIN_KEEPALIVE_SECONDS = 900
 _AGENT_TASK_COMPLETION_GRACE_SECONDS = 0.2
 _AGENT_CALLBACK_OUTPUT_SNIPPET_CHARS = 1500
 _DEFAULT_COMPLETED_TASK_OUTPUT_SNIPPET_CHARS = 3000
-_DEVELOP_CANDIDATE_DURABLE_COMPLETION_SECONDS = 300
+_CREATION_TASK_DURABLE_COMPLETION_SECONDS = 300
 _STRATEGY_CREATION_PREEMPT_SECONDS = 180
 _STRATEGY_CREATION_PREEMPT_ERROR = "Preempted by higher-priority strategy creation task"
 
@@ -177,31 +177,6 @@ def _resolve_agent_task_timeout_seconds(task: dict) -> int:
     return resolve_agent_task_timeout_seconds(task_type, settings=settings)
 
 
-def _parse_agent_task_input_data(task: dict) -> dict:
-    raw_payload = task.get("input_data")
-    if isinstance(raw_payload, dict):
-        return raw_payload
-    if raw_payload is None:
-        return {}
-    try:
-        payload = json.loads(str(raw_payload))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _parse_json_dict(value: object) -> dict:
-    if isinstance(value, dict):
-        return value
-    if value is None:
-        return {}
-    try:
-        payload = json.loads(str(value))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
 def _json_safe_task_output(value: object) -> object:
     if isinstance(value, bool) or value is None:
         return value
@@ -242,11 +217,15 @@ def _terminal_agent_task_ids(task_ids: list[int]) -> set[int]:
     return {int(row["id"]) for row in rows if row["id"] is not None}
 
 
-def _recover_durable_completed_develop_candidate_tasks() -> int:
-    """Close running develop tasks once their strategy container exists."""
+def _recover_durable_completed_creation_tasks() -> int:
+    """Close running strategy-creation tasks once their strategy container exists.
+
+    A task that registered its strategy and then hit the tool-call limit or a
+    restart would otherwise end as fruitless and lose the strategy's task link.
+    """
     from forven.db import append_task_audit_event, get_db, log_activity
 
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_DEVELOP_CANDIDATE_DURABLE_COMPLETION_SECONDS)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_CREATION_TASK_DURABLE_COMPLETION_SECONDS)
     recovered = 0
     with get_db() as conn:
         rows = conn.execute(
@@ -254,7 +233,7 @@ def _recover_durable_completed_develop_candidate_tasks() -> int:
             SELECT id, title, started_at
             FROM agent_tasks
             WHERE status = 'running'
-              AND type = 'develop_candidate'
+              AND type IN ('generate_strategies', 'develop_candidate')
               AND started_at IS NOT NULL
             ORDER BY started_at ASC
             LIMIT 20
@@ -269,12 +248,14 @@ def _recover_durable_completed_develop_candidate_tasks() -> int:
             # An untestable archive (rejected at registration for not trading, thin
             # feed history or broken code) is not a durable completion: the agent is
             # still revising it, and closing the task here would cancel that run.
+            # Like the runner's completion check, the strategy must name its idea.
             strategy_rows = conn.execute(
                 """
                 SELECT id, name, symbol, timeframe, status, stage, created_at, updated_at
                 FROM strategies
                 WHERE origin_task_id IN (?, ?)
                   AND LOWER(TRIM(COALESCE(status_reason, ''))) NOT LIKE 'untestable:%'
+                  AND TRIM(COALESCE(hypothesis_id, '')) != ''
                 ORDER BY COALESCE(created_at, updated_at) DESC
                 """,
                 origin_ids,
@@ -287,7 +268,7 @@ def _recover_durable_completed_develop_candidate_tasks() -> int:
             output = _json_safe_task_output(
                 {
                     "response": (
-                        "Recovered completed develop_candidate task from persisted "
+                        "Recovered completed strategy-creation task from persisted "
                         "strategy container output."
                     ),
                     "execution": "durable_strategy_creation_recovery",
@@ -321,7 +302,7 @@ def _recover_durable_completed_develop_candidate_tasks() -> int:
             log_activity(
                 "warning",
                 "runtime_worker",
-                f"Recovered develop_candidate task {task_id} from persisted strategy output",
+                f"Recovered strategy-creation task {task_id} from persisted strategy output",
                 {
                     "task_id": task_id,
                     "strategy_ids": [strategy["id"] for strategy in strategies],
@@ -332,7 +313,7 @@ def _recover_durable_completed_develop_candidate_tasks() -> int:
     return recovered
 
 
-def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
+def _preempt_research_for_waiting_creation_tasks() -> set[int]:
     """Cancel old research/refinement when strategy creation is waiting behind it."""
     from forven.db import append_task_audit_event, get_db, log_activity
 
@@ -342,12 +323,8 @@ def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
     preempted: set[int] = set()
 
     with get_db() as conn:
-        # refine_crucible is NOT preemptable: it is the proposed->researching gate
-        # that FEEDS develop_candidate, so killing it to make room for develop_candidate
-        # is self-defeating — it starves the very funnel that produces researchable
-        # crucibles. Only genuinely unrelated long research (web harvest, sentiment)
-        # should yield to waiting strategy creation. Exclude refine tasks by their
-        # planner-stamped action_kind (with a title fallback for older rows).
+        # Only long unrelated research (web harvest, sentiment) yields to a
+        # higher-priority strategy-creation task waiting behind it.
         running_rows = conn.execute(
             """
             SELECT id, agent_id, type, title, priority, started_at
@@ -355,8 +332,6 @@ def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
             WHERE status = 'running'
               AND agent_id = 'strategy-developer'
               AND type = 'research'
-              AND COALESCE(json_extract(input_data, '$.action_kind'), '') != 'refine_crucible'
-              AND COALESCE(title, '') NOT LIKE 'Refine crucible%'
               AND started_at IS NOT NULL
               AND started_at <= ?
               -- Work deliberately admitted after a long queue wait must get
@@ -377,7 +352,7 @@ def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
                 FROM agent_tasks
                 WHERE status = 'pending'
                   AND agent_id = ?
-                  AND type = 'develop_candidate'
+                  AND type IN ('generate_strategies', 'develop_candidate')
                   AND COALESCE(priority, 0) > ?
                   AND (retry_at IS NULL OR retry_at <= ?)
                 ORDER BY priority DESC, created_at ASC
@@ -392,7 +367,7 @@ def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
             pending_id = int(pending["id"])
             error = (
                 f"{_STRATEGY_CREATION_PREEMPT_ERROR}: "
-                f"pending develop_candidate T{pending_id} has priority {int(pending['priority'] or 0)}"
+                f"pending strategy-creation task T{pending_id} has priority {int(pending['priority'] or 0)}"
             )
             cursor = conn.execute(
                 """
@@ -429,183 +404,6 @@ def _preempt_research_for_waiting_develop_candidate_tasks() -> set[int]:
             )
             preempted.add(task_id)
     return preempted
-
-
-def _is_crucible_planner_backtest_task(agent: dict, task: dict, payload: dict) -> bool:
-    strategy_id = str(payload.get("strategy_id") or task.get("strategy_id") or "").strip()
-    return (
-        str(agent.get("id") or "").strip() == "simulation-agent"
-        and str(task.get("type") or "").strip().lower() == "backtest"
-        and str(payload.get("origin_mode") or "").strip().lower() == "crucible_planner"
-        and str(payload.get("action_kind") or "").strip().lower() == "run_backtest"
-        and bool(strategy_id)
-    )
-
-
-async def _run_crucible_planner_backtest_task(task: dict, payload: dict) -> dict:
-    """Run planner-created backtest tasks without an LLM/tool-call round trip."""
-    from forven.db import append_task_audit_event, get_db, log_activity
-    from forven.evolution import run_backtest_validation
-
-    task_id = int(task.get("id") or 0)
-    strategy_id = str(payload.get("strategy_id") or task.get("strategy_id") or "").strip()
-    if not strategy_id:
-        raise ValueError("crucible planner backtest task is missing strategy_id")
-
-    with get_db() as conn:
-        row = conn.execute(
-            """
-            SELECT id, type, runtime_type, symbol, timeframe, params
-            FROM strategies
-            WHERE id = ?
-            """,
-            (strategy_id,),
-        ).fetchone()
-
-    if not row:
-        raise ValueError(f"strategy {strategy_id} not found for planner backtest")
-
-    strategy = dict(row)
-    params = _parse_json_dict(strategy.get("params"))
-    # Agent candidates are sandbox-only: `type` holds the declared TYPE_NAME and
-    # `runtime_type` the imported__ module the worker executes. Backtesting the
-    # declared name reported every one of them as an orphan (111 of 115 planner
-    # backtest failures, Sept 2026). Resolve the way the scanner does.
-    from forven.strategies.registry import resolve_runtime_type
-
-    resolved_type, _runtime_meta = resolve_runtime_type(
-        str(strategy.get("type") or ""), strategy.get("runtime_type")
-    )
-    result = await run_backtest_validation(
-        strategy_id=strategy_id,
-        strategy_type=str(resolved_type or strategy.get("type") or ""),
-        symbol=str(strategy.get("symbol") or "BTC/USDT"),
-        timeframe=str(strategy.get("timeframe") or "1h"),
-        params=params,
-    )
-    now = datetime.now(timezone.utc).isoformat()
-    result_payload = result if isinstance(result, dict) else {"result": result}
-    error_text = str(result_payload.get("error") or "").strip()
-    _availability = result_payload.get("data_availability")
-    data_blocked = bool(
-        isinstance(_availability, dict) and _availability.get("blocked")
-    )
-    output = {
-        "response": (
-            f"Deterministic crucible planner backtest failed: {error_text}"
-            if error_text
-            else "Deterministic crucible planner backtest completed."
-        ),
-        "execution": "deterministic_crucible_backtest",
-        "strategy_id": strategy_id,
-        "crucible_id": payload.get("crucible_id") or payload.get("hypothesis_id"),
-        "completed_at": now,
-        "result": result_payload,
-    }
-    safe_output = _json_safe_task_output(output)
-
-    if error_text:
-        # A blocked/errored backtest is NOT a completed one. Marking it 'done'
-        # made the planner treat the step as satisfied and advance the doomed
-        # candidate to validation (S05838 got three blocked backtests recorded
-        # as 'done' and then a WFA task, 2026-07-04). 'failed' feeds the
-        # planner's per-strategy retry cap instead.
-        with get_db() as conn:
-            conn.execute(
-                """
-                UPDATE agent_tasks
-                SET status = 'failed',
-                    output_data = ?,
-                    error = ?,
-                    completed_at = ?,
-                    retry_at = NULL
-                WHERE id = ? AND status NOT IN ('done', 'reviewed', 'failed')
-                """,
-                (json.dumps(safe_output, default=str), error_text[:500], now, task_id),
-            )
-            append_task_audit_event(
-                conn,
-                task_id,
-                "failed",
-                {
-                    "agent_id": "simulation-agent",
-                    "execution": "deterministic_crucible_backtest",
-                    "strategy_id": strategy_id,
-                    "data_blocked": data_blocked,
-                },
-            )
-            log_activity(
-                "warning",
-                "runtime_worker",
-                f"Deterministic crucible backtest failed for {strategy_id}: {error_text[:200]}",
-                {"task_id": task_id, "strategy_id": strategy_id, "data_blocked": data_blocked},
-                conn=conn,
-            )
-        if data_blocked:
-            _archive_data_blocked_strategy(strategy_id, error_text)
-        return safe_output if isinstance(safe_output, dict) else output
-
-    with get_db() as conn:
-        conn.execute(
-            """
-            UPDATE agent_tasks
-            SET status = 'done',
-                output_data = ?,
-                completed_at = ?,
-                error = NULL
-            WHERE id = ? AND status NOT IN ('done', 'reviewed', 'failed')
-            """,
-            (json.dumps(safe_output, default=str), now, task_id),
-        )
-        append_task_audit_event(
-            conn,
-            task_id,
-            "completed",
-            {
-                "agent_id": "simulation-agent",
-                "execution": "deterministic_crucible_backtest",
-                "strategy_id": strategy_id,
-            },
-        )
-        log_activity(
-            "info",
-            "runtime_worker",
-            f"Completed deterministic crucible backtest task {task_id} for {strategy_id}",
-            {"task_id": task_id, "strategy_id": strategy_id},
-            conn=conn,
-        )
-    return safe_output if isinstance(safe_output, dict) else output
-
-
-def _archive_data_blocked_strategy(strategy_id: str, reason: str) -> None:
-    """Archive a strategy whose required data or class is unavailable as untestable.
-
-    A data-blocked candidate can never produce a trading backtest, so leaving
-    it in quick_screen just burns planner cycles re-scheduling backtests that
-    the availability precheck will always abort. It goes to the graveyard as
-    untestable (not a merit failure); Recover re-checks availability before
-    letting it back in. Best-effort — failures only log.
-    """
-    from forven.db import log_activity
-
-    code = "broken_code" if "could not be resolved" in reason else "no_data"
-    try:
-        from forven.brain import archive_untestable
-
-        transition = archive_untestable(
-            strategy_id,
-            code=code,
-            detail=reason[:400],
-            actor="system",
-        )
-        log_activity(
-            "warning",
-            "runtime_worker",
-            f"Archived data-blocked strategy {strategy_id} as untestable",
-            {"strategy_id": strategy_id, "transition": transition, "reason": reason[:300]},
-        )
-    except Exception as exc:
-        log.warning("Could not archive data-blocked strategy %s: %s", strategy_id, exc)
 
 
 def _get_bot_lock_status() -> dict:
@@ -916,10 +714,6 @@ def _record_brain_spend(provider: str, model: str | None, response: object) -> N
 
 
 async def _run_agent_task(agent: dict, task: dict) -> dict:
-    payload = _parse_agent_task_input_data(task)
-    if _is_crucible_planner_backtest_task(agent, task, payload):
-        return await _run_crucible_planner_backtest_task(task, payload)
-
     from forven.agents.runner import run_agent_task
 
     return await run_agent_task(agent, task)
@@ -1336,11 +1130,11 @@ async def process_agent_tasks_once(concurrency: int = 5) -> int:
             log.exception("Headless agent task crashed outside guarded runner")
 
     async with _agent_claim_lock:
-        recovered = await asyncio.to_thread(_recover_durable_completed_develop_candidate_tasks)
+        recovered = await asyncio.to_thread(_recover_durable_completed_creation_tasks)
         if recovered:
-            log.warning("Recovered %d durable completed develop_candidate task(s)", recovered)
+            log.warning("Recovered %d durable completed strategy-creation task(s)", recovered)
 
-        preempted_result = await asyncio.to_thread(_preempt_research_for_waiting_develop_candidate_tasks)
+        preempted_result = await asyncio.to_thread(_preempt_research_for_waiting_creation_tasks)
         if isinstance(preempted_result, int):
             preempted_task_ids: set[int] = set()
             preempted_count = int(preempted_result)

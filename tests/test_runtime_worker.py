@@ -2,6 +2,8 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from forven.runtime_worker import (
     API_TASK_WORKER_HEARTBEAT_KEY,
     BOT_TASK_WORKER_HEARTBEAT_KEY,
@@ -54,11 +56,11 @@ def test_process_agent_tasks_once_claims_and_runs(monkeypatch):
         _fake_run_agent_task,
     )
     monkeypatch.setattr(
-        "forven.runtime_worker._recover_durable_completed_develop_candidate_tasks",
+        "forven.runtime_worker._recover_durable_completed_creation_tasks",
         lambda: 0,
     )
     monkeypatch.setattr(
-        "forven.runtime_worker._preempt_research_for_waiting_develop_candidate_tasks",
+        "forven.runtime_worker._preempt_research_for_waiting_creation_tasks",
         lambda: 0,
     )
     monkeypatch.setattr(
@@ -124,11 +126,11 @@ def test_process_agent_tasks_once_keeps_claiming_with_long_task(monkeypatch):
         monkeypatch.setattr("forven.db.claim_pending_agent_tasks", _claim)
         monkeypatch.setattr("forven.runtime_worker._run_agent_task", _fake_run_agent_task)
         monkeypatch.setattr(
-            "forven.runtime_worker._recover_durable_completed_develop_candidate_tasks",
+            "forven.runtime_worker._recover_durable_completed_creation_tasks",
             lambda: 0,
         )
         monkeypatch.setattr(
-            "forven.runtime_worker._preempt_research_for_waiting_develop_candidate_tasks",
+            "forven.runtime_worker._preempt_research_for_waiting_creation_tasks",
             lambda: 0,
         )
         monkeypatch.setattr("forven.runtime_worker._terminal_agent_task_ids", lambda _task_ids: set())
@@ -204,11 +206,11 @@ def test_process_agent_tasks_once_does_not_double_book_same_agent(monkeypatch):
         monkeypatch.setattr("forven.db.claim_pending_agent_tasks", _claim)
         monkeypatch.setattr("forven.runtime_worker._run_agent_task", _fake_run_agent_task)
         monkeypatch.setattr(
-            "forven.runtime_worker._recover_durable_completed_develop_candidate_tasks",
+            "forven.runtime_worker._recover_durable_completed_creation_tasks",
             lambda: 0,
         )
         monkeypatch.setattr(
-            "forven.runtime_worker._preempt_research_for_waiting_develop_candidate_tasks",
+            "forven.runtime_worker._preempt_research_for_waiting_creation_tasks",
             lambda: 0,
         )
         monkeypatch.setattr("forven.runtime_worker._terminal_agent_task_ids", lambda _task_ids: set())
@@ -232,10 +234,16 @@ def test_process_agent_tasks_once_does_not_double_book_same_agent(monkeypatch):
     assert claim_calls.count("strategy-developer") == 1
 
 
-def test_process_agent_tasks_once_recovers_completed_develop_candidate(forven_db, monkeypatch):
+@pytest.mark.parametrize("task_type", ["generate_strategies", "develop_candidate"])
+def test_process_agent_tasks_once_recovers_a_completed_creation_task(forven_db, monkeypatch, task_type):
     from forven import runtime_worker as rw
     from forven.db import get_db
+    from forven.hypotheses import create_hypothesis
 
+    idea_id = create_hypothesis(
+        title="Recovered idea", market_thesis="t", mechanism="m", disproof="d",
+        lane="research", source_type="test", target_assets=["ETH/USDT"], target_timeframes=["5m"],
+    )["id"]
     now = datetime.now(timezone.utc)
     started_at = (now - timedelta(minutes=10)).isoformat()
     created_at = (now - timedelta(minutes=11)).isoformat()
@@ -250,8 +258,8 @@ def test_process_agent_tasks_once_recovers_completed_develop_candidate(forven_db
             (
                 99002,
                 "strategy-developer",
-                "develop_candidate",
-                "Develop candidate for HDET",
+                task_type,
+                "Create a strategy",
                 "{}",
                 None,
                 "running",
@@ -263,9 +271,9 @@ def test_process_agent_tasks_once_recovers_completed_develop_candidate(forven_db
             """
             INSERT INTO strategies (
                 id, name, type, symbol, timeframe, params, status, stage,
-                origin_task_id, created_at, updated_at
+                origin_task_id, hypothesis_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "SDET02",
@@ -277,6 +285,7 @@ def test_process_agent_tasks_once_recovers_completed_develop_candidate(forven_db
                 "quick_screen",
                 "quick_screen",
                 "T99002",
+                idea_id,
                 now.isoformat(),
                 now.isoformat(),
             ),
@@ -326,7 +335,7 @@ def test_recovery_ignores_a_candidate_rejected_at_registration(forven_db):
     with get_db() as conn:
         conn.execute(
             "INSERT INTO agent_tasks (id, agent_id, type, title, input_data, status, created_at, started_at) "
-            "VALUES (99003, 'strategy-developer', 'develop_candidate', 'Develop', '{}', 'running', ?, ?)",
+            "VALUES (99003, 'strategy-developer', 'generate_strategies', 'Create', '{}', 'running', ?, ?)",
             ((now - timedelta(minutes=11)).isoformat(), (now - timedelta(minutes=10)).isoformat()),
         )
         conn.execute(
@@ -336,9 +345,33 @@ def test_recovery_ignores_a_candidate_rejected_at_registration(forven_db):
             (now.isoformat(), now.isoformat()),
         )
 
-    assert rw._recover_durable_completed_develop_candidate_tasks() == 0
+    assert rw._recover_durable_completed_creation_tasks() == 0
     with get_db() as conn:
         assert conn.execute("SELECT status FROM agent_tasks WHERE id = 99003").fetchone()["status"] == "running"
+
+
+def test_recovery_needs_the_strategy_to_name_its_idea(forven_db):
+    """A strategy without an idea does not complete a creation task (the runner's rule)."""
+    from forven import runtime_worker as rw
+    from forven.db import get_db
+
+    now = datetime.now(timezone.utc)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO agent_tasks (id, agent_id, type, title, input_data, status, created_at, started_at) "
+            "VALUES (99005, 'strategy-developer', 'generate_strategies', 'Create', '{}', 'running', ?, ?)",
+            ((now - timedelta(minutes=11)).isoformat(), (now - timedelta(minutes=10)).isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, symbol, timeframe, params, status, stage, "
+            "origin_task_id, created_at, updated_at) VALUES ('SDET05', 'No idea', 't', 'BTC/USDT', '1h', '{}', "
+            "'quick_screen', 'quick_screen', 'T99005', ?, ?)",
+            (now.isoformat(), now.isoformat()),
+        )
+
+    assert rw._recover_durable_completed_creation_tasks() == 0
+    with get_db() as conn:
+        assert conn.execute("SELECT status FROM agent_tasks WHERE id = 99005").fetchone()["status"] == "running"
 
 
 def test_process_agent_tasks_once_preempts_stale_research_for_strategy_creation(forven_db, monkeypatch):
@@ -456,192 +489,6 @@ def test_process_agent_tasks_once_preempts_stale_research_for_strategy_creation(
     assert research["status"] == "cancelled"
     assert "Preempted by higher-priority strategy creation task" in research["error"]
     assert develop["status"] == "done"
-
-
-def test_refine_crucible_research_is_not_preempted(forven_db):
-    """refine_crucible feeds the develop_candidate stage — preempting it to make room
-    for a waiting develop_candidate is self-defeating (it starves the funnel), so it
-    must be exempt even when a higher-priority develop_candidate is pending."""
-    from forven import runtime_worker as rw
-    from forven.db import get_db
-
-    now = datetime.now(timezone.utc)
-    old_started = (now - timedelta(minutes=5)).isoformat()
-    created_at = (now - timedelta(minutes=6)).isoformat()
-    pending_created = (now - timedelta(minutes=1)).isoformat()
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO agent_tasks (id, agent_id, type, title, input_data, status, priority, created_at, started_at)
-            VALUES (?, 'strategy-developer', 'research', ?, ?, 'running', 0, ?, ?)
-            """,
-            (
-                99101,
-                "Refine crucible HREF",
-                json.dumps({"origin_mode": "crucible_planner", "action_kind": "refine_crucible", "crucible_id": "HYP-ref"}),
-                created_at,
-                old_started,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_tasks (id, agent_id, type, title, input_data, status, priority, created_at)
-            VALUES (?, 'strategy-developer', 'develop_candidate', 'Develop candidate for HREF', ?, 'pending', 4, ?)
-            """,
-            (
-                99102,
-                json.dumps({"origin_mode": "crucible_planner", "action_kind": "develop_candidate", "crucible_id": "HYP-ref"}),
-                pending_created,
-            ),
-        )
-
-    preempted = rw._preempt_research_for_waiting_develop_candidate_tasks()
-
-    assert 99101 not in preempted
-    with get_db() as conn:
-        refine = conn.execute("SELECT status FROM agent_tasks WHERE id = ?", (99101,)).fetchone()
-    assert refine["status"] == "running"
-
-
-def test_crucible_planner_backtest_task_runs_deterministically(forven_db, monkeypatch):
-    from forven import runtime_worker as rw
-    from forven.db import get_db
-
-    now = datetime.now(timezone.utc).isoformat()
-    payload = {
-        "origin_mode": "crucible_planner",
-        "action_kind": "run_backtest",
-        "strategy_id": "SDET01",
-        "crucible_id": "HYP-det",
-    }
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO strategies (
-                id, name, type, symbol, timeframe, params, status, stage, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "SDET01",
-                "Deterministic Backtest Candidate",
-                "rsi_momentum",
-                "BTC/USDT",
-                "1h",
-                json.dumps({"rsi_period": 14}),
-                "quick_screen",
-                "quick_screen",
-                now,
-                now,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO agent_tasks (
-                id, agent_id, type, title, input_data, strategy_id, status, created_at, started_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                99001,
-                "simulation-agent",
-                "backtest",
-                "Backtest SDET01",
-                json.dumps(payload),
-                "SDET01",
-                "running",
-                now,
-                now,
-            ),
-        )
-
-    calls: list[tuple[str, str, str, str, dict]] = []
-
-    async def _fake_run_backtest_validation(
-        strategy_id: str,
-        strategy_type: str,
-        symbol: str,
-        timeframe: str = "1h",
-        bars: int | None = None,
-        params: dict | None = None,
-    ) -> dict:
-        calls.append((strategy_id, strategy_type, symbol, timeframe, params or {}))
-        return {
-            "result_id": "BT-DET-1",
-            "metrics": {"profit_factor": float("inf")},
-        }
-
-    async def _unexpected_agent_runner(_agent, _task):
-        raise AssertionError("planner backtests must not enter the agent tool loop")
-
-    monkeypatch.setattr("forven.evolution.run_backtest_validation", _fake_run_backtest_validation)
-    monkeypatch.setattr("forven.agents.runner.run_agent_task", _unexpected_agent_runner)
-
-    result = asyncio.run(
-        rw._run_agent_task(
-            {"id": "simulation-agent"},
-            {
-                "id": 99001,
-                "agent_id": "simulation-agent",
-                "type": "backtest",
-                "title": "Backtest SDET01",
-                "input_data": json.dumps(payload),
-                "strategy_id": "SDET01",
-            },
-        )
-    )
-
-    assert result["execution"] == "deterministic_crucible_backtest"
-    assert calls == [("SDET01", "rsi_momentum", "BTC/USDT", "1h", {"rsi_period": 14})]
-    with get_db() as conn:
-        row = conn.execute("SELECT status, output_data, audit_log FROM agent_tasks WHERE id = ?", (99001,)).fetchone()
-    assert row["status"] == "done"
-    output = json.loads(row["output_data"])
-    assert output["result"]["result_id"] == "BT-DET-1"
-    assert output["result"]["metrics"]["profit_factor"] is None
-    assert output["result"]["metrics"]["profit_factor_is_infinite"] is True
-    audit = json.loads(row["audit_log"])
-    assert audit[-1]["event"] == "completed"
-    assert audit[-1]["execution"] == "deterministic_crucible_backtest"
-
-
-def test_crucible_planner_backtest_uses_sandbox_runtime_type(forven_db, monkeypatch):
-    """Agent candidates are sandbox-only: `type` is the declared TYPE_NAME, which
-    the parent registry never holds. Backtesting it reported an orphan."""
-    from forven import runtime_worker as rw
-    from forven.db import get_db
-
-    now = datetime.now(timezone.utc).isoformat()
-    payload = {"origin_mode": "crucible_planner", "action_kind": "run_backtest", "strategy_id": "SDET02"}
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO strategies (id, name, type, runtime_type, symbol, timeframe, params, status, stage, "
-            "sandbox_only, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,?,?)",
-            ("SDET02", "Sandboxed", "btc_declared_type", "imported__dropzone_btc_declared_type_abc123",
-             "BTC/USDT", "4h", "{}", "quick_screen", "quick_screen", now, now),
-        )
-        conn.execute(
-            "INSERT INTO agent_tasks (id, agent_id, type, title, input_data, strategy_id, status, created_at, started_at) "
-            "VALUES (99002, 'simulation-agent', 'backtest', 'Backtest SDET02', ?, 'SDET02', 'running', ?, ?)",
-            (json.dumps(payload), now, now),
-        )
-
-    seen: list[str] = []
-
-    async def _fake_run_backtest_validation(strategy_id, strategy_type, symbol, timeframe="1h", bars=None, params=None):
-        seen.append(strategy_type)
-        return {"result_id": "BT-DET-2", "metrics": {}}
-
-    monkeypatch.setattr("forven.evolution.run_backtest_validation", _fake_run_backtest_validation)
-    asyncio.run(
-        rw._run_agent_task(
-            {"id": "simulation-agent"},
-            {"id": 99002, "agent_id": "simulation-agent", "type": "backtest", "title": "Backtest SDET02",
-             "input_data": json.dumps(payload), "strategy_id": "SDET02"},
-        )
-    )
-
-    assert seen == ["imported__dropzone_btc_declared_type_abc123"]
 
 
 def test_process_brain_tasks_once_claims_and_runs(monkeypatch):

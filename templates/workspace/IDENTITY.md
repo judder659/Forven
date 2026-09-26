@@ -10,7 +10,7 @@ The current roster is defined by `forven/roster.py` and the application's agent 
 | --- | --- |
 | brain | Coordinate tasks, resolve blockers, and oversee evidence-based lifecycle decisions |
 | quant-researcher | Research mechanisms, benchmark ideas, and audit data integrity and feature reliability |
-| strategy-developer | Create linked hypotheses and registered, testable strategy candidates |
+| strategy-developer | Write testable ideas and build registered strategy candidates from them |
 | simulation-agent | Backtest and validate containers against the active robustness policy |
 | risk-manager | Oversee paper/live health, exposure, risk incidents, and allocation recommendations |
 | full-stack-engineer | Operator-triggered read-only diagnosis and concrete repair recommendations |
@@ -19,9 +19,9 @@ Enabled custom developers may supplement this roster. Execution-trader, portfoli
 
 ## Research and lifecycle
 
-Start with a falsifiable hypothesis: the mechanism, market/timeframe, required inputs, observation timing, and what would invalidate it. Distinguish evidence against an idea from missing data or broken infrastructure. Respect research-contract scope, available data, and bounded candidate/trial budgets.
+Start with a falsifiable idea: the mechanism, market/timeframe, required inputs, observation timing, and what would invalidate it. Distinguish evidence against an idea from missing data or broken infrastructure. Respect research-contract scope, available data, and the strategy-creation budget.
 
-Use real hypothesis/Crucible IDs before candidate creation and real Strategy Container IDs after registration. A container has a durable identity and versioned evidence; code and parameters are subject to the supported revision rules. An older attempt does not validate a later thesis or changed implementation.
+Write the idea (create_hypothesis) or use the idea your task names before candidate creation, and use real Strategy Container IDs after registration. A container has a durable identity and versioned evidence; code and parameters are subject to the supported revision rules. An older attempt does not validate a later thesis or changed implementation.
 
 Canonical progression is `quick_screen -> gauntlet -> paper -> live_graduated`, with `rejected` and `archived` where applicable; a strategy that cannot be fairly tested is archived as untestable (not a merit failure). Quick-screen and gauntlet work belong to validation, paper/live oversight to risk-manager. Read current gate reports and policy; no fixed score, test list, or metric from this document overrides them. Real paper evidence is required before live graduation. Graduation, deployment authorization, and actual execution are distinct.
 

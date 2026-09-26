@@ -27,8 +27,8 @@ def test_research_admitted_after_long_wait_is_not_preempted_again() -> None:
     with db.get_db() as conn:
         conn.execute("INSERT INTO agent_tasks (id,agent_id,type,title,status,priority,source,created_at,started_at,input_data) VALUES (91001,'strategy-developer','research','probe','running',1,'system',?,?,'{}')",
                      ((now-timedelta(minutes=60)).isoformat(),(now-timedelta(minutes=5)).isoformat()))
-        conn.execute("INSERT INTO agent_tasks (id,agent_id,type,title,status,priority,source,created_at) VALUES (91002,'strategy-developer','develop_candidate','probe','pending',4,'system',?)", (now.isoformat(),))
-    assert runtime_worker._preempt_research_for_waiting_develop_candidate_tasks() == set()
+        conn.execute("INSERT INTO agent_tasks (id,agent_id,type,title,status,priority,source,created_at) VALUES (91002,'strategy-developer','generate_strategies','probe','pending',4,'system',?)", (now.isoformat(),))
+    assert runtime_worker._preempt_research_for_waiting_creation_tasks() == set()
     with db.get_db() as conn:
         assert conn.execute('SELECT status FROM agent_tasks WHERE id=91001').fetchone()[0] == 'running'
 

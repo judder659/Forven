@@ -15,9 +15,16 @@ from .context import _current_agent_id_var, _current_strategy_id_var, _current_t
 from .tool_registry import register_tool
 
 _PARENT_STRATEGY_ID_DESCRIPTION = (
-    "When this candidate mutates an existing sibling strategy, that sibling's strategy id "
-    "(e.g. S10418); it is recorded as this strategy's parent. Omit for a fresh variant. "
-    "The parent must belong to the same hypothesis."
+    "When this candidate mutates an existing strategy, that strategy's id (e.g. S10418); "
+    "it is recorded as this strategy's parent. Omit for a fresh variant."
+)
+_HYPOTHESIS_ID_DESCRIPTION = (
+    "The idea this strategy tests: the hypothesis_id returned by create_hypothesis, or the "
+    "one your task names. Required inside a strategy-creation task."
+)
+_MISSING_IDEA_ERROR = (
+    "Error: this task creates strategies from a written idea. Write it first with "
+    "create_hypothesis (or use the hypothesis_id your task names) and pass that hypothesis_id."
 )
 
 log = logging.getLogger("forven.agents.runner")
@@ -64,12 +71,11 @@ def _format_strategy_validation_failure(result: dict, original_code: str) -> str
     return "\n".join(lines)
 
 
-def _current_candidate_provenance(crucible_id: str) -> dict[str, str | None]:
+def _current_candidate_provenance() -> dict[str, str | None]:
     agent_id = str(_current_agent_id_var.get() or "").strip()
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
     if not agent_id:
         return {
-            "origin_crucible_id": None,
             "origin_agent_id": None,
             "origin_task_id": None,
             "origin_model": None,
@@ -86,7 +92,6 @@ def _current_candidate_provenance(crucible_id: str) -> dict[str, str | None]:
     except Exception:
         origin_model = None
     return {
-        "origin_crucible_id": str(crucible_id or "").strip() or None,
         "origin_agent_id": agent_id,
         "origin_task_id": task_display_id or None,
         "origin_model": origin_model,
@@ -101,14 +106,12 @@ def _persist_strategy_provenance(strategy_id: str, provenance: dict[str, str | N
         conn.execute(
             """
             UPDATE strategies
-            SET origin_crucible_id = ?,
-                origin_agent_id = ?,
+            SET origin_agent_id = ?,
                 origin_task_id = ?,
                 origin_model = ?
             WHERE id = ?
             """,
             (
-                provenance.get("origin_crucible_id"),
                 provenance.get("origin_agent_id"),
                 provenance.get("origin_task_id"),
                 provenance.get("origin_model"),
@@ -163,23 +166,23 @@ _TOOL_CALL_MARGIN_SECONDS = 10.0
 
 
 def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_reason: str | None = None) -> str:
-    """Check a crucible candidate right after registration.
+    """Check a strategy-creation task's candidate right after registration.
 
     Returns an agent-facing ``Error: ...`` when the candidate cannot count
     (archived as untestable at intake, or too few trades on its own market and
     timeframe), a short trade note when it passed, or "" when this is not a
-    candidate task or the check could not run.
+    creation task or the check could not run.
     """
-    from forven.crucible_tasks import (
+    from forven.strategies.candidate_checks import (
         CANDIDATE_TRADE_CHECK_MAX_SECONDS,
         REJECTED_CANDIDATE_STATUSES,
         check_candidate_trades,
-        current_task_is_candidate_task,
+        current_task_is_creation_task,
         reject_unfit_candidate,
     )
 
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
-    if not strategy_id or not current_task_is_candidate_task(task_display_id):
+    if not strategy_id or not current_task_is_creation_task(task_display_id):
         return ""
     if untestable_reason:
         with get_db() as conn:
@@ -622,6 +625,37 @@ def _tool_run_code(code: str) -> str:
         output += f"\nExit code: {result['returncode']}"
     return output or "(no output)"
 
+def _agent_registration_error() -> str | None:
+    from forven.strategies.candidate_checks import validate_agent_registration
+
+    reason = validate_agent_registration(
+        str(_current_agent_id_var.get() or "").strip(),
+        str(_current_task_display_id_var.get() or "").strip(),
+    )
+    return f"Error: {reason}" if reason else None
+
+
+def _resolve_idea_for_registration(raw_hypothesis_id: object) -> tuple[str | None, str | None]:
+    """(canonical hypothesis id or None, agent-facing error or None)."""
+    from forven.hypotheses import require_hypothesis
+    from forven.strategies.candidate_checks import current_task_is_creation_task
+
+    requested = str(raw_hypothesis_id or "").strip()
+    if not requested:
+        task_display_id = str(_current_task_display_id_var.get() or "").strip()
+        if current_task_is_creation_task(task_display_id):
+            return None, _MISSING_IDEA_ERROR
+        return None, None
+    try:
+        return str(require_hypothesis(requested)["id"]), None
+    except ValueError as exc:
+        return None, f"Error: {exc}"
+
+
+def _idea_suffix(hypothesis_id: str | None) -> str:
+    return f" for idea {hypothesis_id}" if hypothesis_id else ""
+
+
 @register_tool(
     name="register_strategy",
     description=(
@@ -632,16 +666,14 @@ def _tool_run_code(code: str) -> str:
         "or class attributes; generate_signal(df) must return a scalar Signal for the latest bar. Use "
         "generate_signals(df) for aligned vectorized output: DirectionalSignals or an entry/exit "
         "Series tuple (a four-Series directional tuple is also accepted). Do not return a single "
-        "Series. Agent-generated strategies must include "
-        "hypothesis_id so the resulting strategy container is registered directly against its parent hypothesis."
+        "Series. Pass the hypothesis_id of the idea the strategy tests."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Full Python source code of the strategy module. Must import and extend BaseStrategy, implement generate_signal(df) returning a scalar Signal for the latest bar, and export module-level STRATEGY_CLASS and TYPE_NAME. Prefer inheriting BaseStrategy.__init__; an override must accept (strategy_id, params=None) and call super()."},
             "type_name": {"type": "string", "description": "Unique type name for the strategy (e.g., 'fisher_momentum', 'qqe_trend'). Alphanumeric and underscores only."},
-            "hypothesis_id": {"type": "string", "description": "Parent hypothesis ID for the strategy container that will be registered from this module."},
-            "crucible_id": {"type": "string", "description": "Planner-approved crucible/hypothesis ID for this candidate."},
+            "hypothesis_id": {"type": "string", "description": _HYPOTHESIS_ID_DESCRIPTION},
             "cited_skills": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -649,42 +681,33 @@ def _tool_run_code(code: str) -> str:
             },
             "parent_strategy_id": {"type": "string", "description": _PARENT_STRATEGY_ID_DESCRIPTION},
         },
-        "required": ["code", "type_name", "hypothesis_id"],
+        "required": ["code", "type_name"],
     },
     permissions={"role:strategy-developer", None},
 )
 def _tool_register_strategy(params: dict) -> str:
     """Validate, save to custom/ directory, and register a new strategy type."""
-    from forven.crucible_tasks import validate_candidate_strategy_creation
-
     started_at = time.monotonic()
     code = params.get("code", "")
     type_name = params.get("type_name", "")
-    crucible_id = str(params.get("crucible_id") or params.get("hypothesis_id") or "").strip()
-    hypothesis_id = str(params.get("hypothesis_id") or crucible_id).strip()
-
-    if not code or not type_name or not hypothesis_id:
-        return "Error: 'code', 'type_name', and 'hypothesis_id' are required"
+    if not code or not type_name:
+        return "Error: 'code' and 'type_name' are required"
 
     if not type_name.replace("_", "").isalnum():
         return "Error: type_name must be alphanumeric with underscores only"
 
-    validation = validate_candidate_strategy_creation(
-        crucible_id,
-        str(_current_agent_id_var.get() or "").strip(),
-        str(_current_task_display_id_var.get() or "").strip(),
-        hypothesis_id,
-    )
-    if not validation.allowed:
-        return f"Error: {validation.reason}"
-    crucible_id = str(validation.crucible_id or crucible_id).strip()
-    hypothesis_id = str(validation.hypothesis_id or hypothesis_id).strip()
-    provenance = _current_candidate_provenance(crucible_id)
+    registration_error = _agent_registration_error()
+    if registration_error:
+        return registration_error
+    hypothesis_id, idea_error = _resolve_idea_for_registration(params.get("hypothesis_id"))
+    if idea_error:
+        return idea_error
+    provenance = _current_candidate_provenance()
     # Check lineage before the module is written: a rejected parent must not
     # leave a saved file that blocks a corrected retry under the same type_name.
     parent_strategy_id = str(params.get("parent_strategy_id") or "").strip() or None
     with get_db() as conn:
-        lineage_error = parent_strategy_lineage_error(conn, parent_strategy_id, hypothesis_id)
+        lineage_error = parent_strategy_lineage_error(conn, parent_strategy_id)
     if lineage_error:
         return f"Error: {lineage_error}"
 
@@ -731,7 +754,7 @@ def _tool_register_strategy(params: dict) -> str:
             hypothesis_id=hypothesis_id,
             # Write the origin task atomically with the strategy row so a crash
             # between creation and the _persist_strategy_provenance backfill below
-            # can't orphan the develop_candidate task from its strategy.
+            # can't orphan the creation task from its strategy.
             origin_task_id=provenance.get("origin_task_id"),
             parent_strategy_id=parent_strategy_id,
         )
@@ -776,10 +799,10 @@ def _tool_register_strategy(params: dict) -> str:
                 return trade_note
             return (
                 f"Strategy type '{type_name}' registered successfully as "
-                f"{registered_strategy_id} for hypothesis {hypothesis_id}.{trade_note}"
+                f"{registered_strategy_id}{_idea_suffix(hypothesis_id)}.{trade_note}"
             )
         return (
-            f"Strategy type '{type_name}' registered successfully for hypothesis {hypothesis_id}, "
+            f"Strategy type '{type_name}' registered successfully{_idea_suffix(hypothesis_id)}, "
             "but no strategy container id was returned."
         )
     except Exception as e:
@@ -924,26 +947,16 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                 timeframe_filter=params.get("timeframe_filter", ""),
             )
         elif tool_name == "forven_create_strategy":
-            from forven.crucible_tasks import validate_candidate_strategy_creation
-
             started_at = time.monotonic()
             strategy_type = params.get("strategy_type") or params.get("type", "backtest")
             strategy_name = params.get("name", "")
-            crucible_id = str(params.get("crucible_id") or params.get("hypothesis_id") or "").strip()
-            hypothesis_id = str(params.get("hypothesis_id") or crucible_id).strip()
-            if not hypothesis_id:
-                return json.dumps({"error": "hypothesis_id is required for all new strategies"})
-            validation = validate_candidate_strategy_creation(
-                crucible_id,
-                str(_current_agent_id_var.get() or "").strip(),
-                str(_current_task_display_id_var.get() or "").strip(),
-                hypothesis_id,
-            )
-            if not validation.allowed:
-                return json.dumps({"error": validation.reason})
-            crucible_id = str(validation.crucible_id or crucible_id).strip()
-            hypothesis_id = str(validation.hypothesis_id or hypothesis_id).strip()
-            provenance = _current_candidate_provenance(crucible_id)
+            registration_error = _agent_registration_error()
+            if registration_error:
+                return json.dumps({"error": registration_error})
+            hypothesis_id, idea_error = _resolve_idea_for_registration(params.get("hypothesis_id"))
+            if idea_error:
+                return json.dumps({"error": idea_error})
+            provenance = _current_candidate_provenance()
             parent_strategy_id = str(params.get("parent_strategy_id") or "").strip() or None
 
             # Check if this is a certified strategy family that doesn't need rule-blobs
@@ -981,8 +994,8 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
             if isinstance(result, dict):
                 created_id = str(result.get("id") or result.get("strategy_id") or "")
                 _persist_strategy_provenance(created_id, provenance)
-                # Link the running develop task as register_strategy does: the
-                # runner only counts a develop task as successful once linked.
+                # Link the running creation task as register_strategy does: the
+                # runner only counts a creation task as successful once linked.
                 cited_skills = params.get("cited_skills")
                 _persist_task_strategy_link(created_id, cited_skills if isinstance(cited_skills, list) else [])
                 trade_note = _candidate_trade_gate(created_id, started_at=started_at)
@@ -1106,8 +1119,7 @@ register_tool(
         "type": "object",
         "properties": {
             "name": {"type": "string", "description": "Unique strategy name"},
-            "hypothesis_id": {"type": "string", "description": "Parent hypothesis ID for this strategy."},
-            "crucible_id": {"type": "string", "description": "Planner-approved crucible/hypothesis ID for this candidate."},
+            "hypothesis_id": {"type": "string", "description": _HYPOTHESIS_ID_DESCRIPTION},
             "strategy_type": {
                 "type": "string",
                 "description": (
@@ -1122,7 +1134,7 @@ register_tool(
             "notes": {"type": "string", "description": "Notes explaining the strategy logic"},
             "parent_strategy_id": {"type": "string", "description": _PARENT_STRATEGY_ID_DESCRIPTION},
         },
-        "required": ["name", "hypothesis_id", "strategy_type", "symbol", "params"],
+        "required": ["name", "strategy_type", "symbol", "params"],
     },
     permissions={"role:strategy-developer", None},
 )(_make_jbt_handler("forven_create_strategy"))

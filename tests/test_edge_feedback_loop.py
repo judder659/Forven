@@ -6,7 +6,8 @@ diversity guard steered by generation frequency alone, cited_skills was never
 written so skill outcome closure never fired, and ideation (research context)
 never saw the quant-skills KB. These tests pin the closed loop:
 
-- family_outcome_stats + survivor-weighted diversity guard (dead vs live regions)
+- family_outcome_stats + survivor-weighted diversity guard (dead vs live regions;
+  a survivor made money in paper, reaching paper is not enough)
 - render_failure_taxonomy consuming gate_rejections
 - register-time citation persistence (agent_tasks.strategy_id backfill +
   output_data merge) feeding skill_outcomes closure
@@ -23,20 +24,29 @@ from forven.db import get_db
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _insert_strategy(sid: str, name: str, *, stage: str = "archived", created_days_ago: int = 1):
+def _insert_strategy(
+    sid: str,
+    name: str,
+    *,
+    stage: str = "archived",
+    created_days_ago: int = 1,
+    status_reason: str | None = None,
+):
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO strategies (id, name, type, stage, created_at) "
-            "VALUES (?, ?, ?, ?, datetime('now', ?))",
-            (sid, name, name, stage, f"-{int(created_days_ago)} days"),
+            "INSERT INTO strategies (id, name, type, stage, status_reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now', ?))",
+            (sid, name, name, stage, status_reason, f"-{int(created_days_ago)} days"),
         )
 
 
-def _insert_event(sid: str, to_state: str):
+def _insert_paper_trade(sid: str, net_pnl_pct: float, *, status: str = "CLOSED"):
     with get_db() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
         conn.execute(
-            "INSERT INTO strategy_events (strategy_id, to_state) VALUES (?, ?)",
-            (sid, to_state),
+            "INSERT INTO trades (id, strategy, strategy_id, asset, direction, net_pnl_pct, status,"
+            " execution_type, source) VALUES (?, ?, ?, 'BTC', 'long', ?, ?, 'paper', 'paper')",
+            (f"TR{count}", sid, sid, net_pnl_pct, status),
         )
 
 
@@ -53,22 +63,29 @@ def _insert_rejection(gate: str, reason_code: str, strategy_type: str, regime: s
 
 
 def test_family_outcome_stats_counts_attempts_and_survivors(forven_db):
-    _insert_strategy("S1", "rsi_reversal_btc")
+    # A survivor made money over its closed paper trades.
+    _insert_strategy("S1", "rsi_reversal_btc", stage="paper")
+    _insert_paper_trade("S1", 2.5)
+    _insert_paper_trade("S1", -1.0)
+    _insert_paper_trade("S1", -9.0, status="OPEN")  # open trades do not count
     _insert_strategy("S2", "rsi_divergence_eth")
-    _insert_strategy("S3", "rsi_pullback_sol")
-    _insert_event("S1", "paper")  # one RSI survivor via events
+    # Reaching paper and losing there is not survival.
+    _insert_strategy("S3", "rsi_pullback_sol", stage="paper")
+    _insert_paper_trade("S3", -0.5)
     _insert_strategy("S4", "funding_carry_btc")
-    _insert_strategy("S5", "funding_squeeze_eth")
-    # Survivor detectable from current stage even without an event row.
+    # Untestable archives are not attempts.
+    _insert_strategy("S5", "funding_squeeze_eth", status_reason="untestable:no_data: feed missing")
+    # In paper without closed trades yet: not a survivor.
     _insert_strategy("S6", "macd_trend_btc", stage="paper")
     # Outside the window — must not count.
     _insert_strategy("S7", "rsi_ancient", created_days_ago=200)
+    _insert_paper_trade("S7", 5.0)
 
     stats = sd.family_outcome_stats(days=90)
 
     assert stats["rsi"] == {"attempts": 3, "survivors": 1}
-    assert stats["funding"] == {"attempts": 2, "survivors": 0}
-    assert stats["macd"] == {"attempts": 1, "survivors": 1}
+    assert stats["funding"] == {"attempts": 1, "survivors": 0}
+    assert stats["macd"] == {"attempts": 1, "survivors": 0}
 
 
 def test_family_outcome_stats_fails_soft_without_db(monkeypatch):
@@ -97,9 +114,9 @@ def test_guard_flags_dead_regions_and_survivors(monkeypatch):
 
     guard = sd.render_strategy_diversity_guard()
 
-    assert "Proven-dead regions" in guard
+    assert "Dead regions" in guard
     assert "Bollinger / band mean reversion: 12 candidates, 0 survivors" in guard
-    assert "funding/carry (2/5 reached paper)" in guard
+    assert "funding/carry (2/5 made money in paper)" in guard
     assert "30 candidates" not in guard  # 'other' bucket excluded from dead list
     assert "VWAP" not in guard           # under DEAD_FAMILY_MIN_ATTEMPTS
 
@@ -128,7 +145,7 @@ def test_guard_keeps_saturation_lines_alongside_outcomes(monkeypatch):
     guard = sd.render_strategy_diversity_guard()
 
     assert "Prefer families outside the saturated set" in guard
-    assert "Proven-dead regions" in guard
+    assert "Dead regions" in guard
 
 
 # ── failure taxonomy rendering ───────────────────────────────────────────────

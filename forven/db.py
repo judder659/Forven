@@ -995,6 +995,7 @@ CREATE TABLE IF NOT EXISTS hypotheses (
     contested_at TEXT,
     archive_reason TEXT,
     feasibility JSON,
+    disproof TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
 );
@@ -1908,50 +1909,6 @@ def _ensure_strategy_recovery_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(STRATEGY_RECOVERY_SCHEMA_SQL)
 
 
-def _extract_hypothesis_evidence_id(verdict_memo: object) -> str | None:
-    memo = _parse_json_value(verdict_memo)
-    if not isinstance(memo, dict):
-        return None
-    for key in ("evidence_id", "initial_viability_evidence_id"):
-        value = str(memo.get(key) or "").strip()
-        if value:
-            return value
-    return None
-
-
-def _backfill_proven_hypothesis_protection(conn: sqlite3.Connection, now_iso: str) -> None:
-    rows = conn.execute(
-        """
-        SELECT id, verdict_memo, verdict_memo_at, verdict_memo_by, updated_at
-        FROM hypotheses
-        WHERE status = 'proven'
-          AND COALESCE(protection_status, 'unprotected') = 'unprotected'
-        """
-    ).fetchall()
-    for row in rows:
-        evidence_id = _extract_hypothesis_evidence_id(row["verdict_memo"])
-        conn.execute(
-            """
-            UPDATE hypotheses
-            SET protection_status = 'protected',
-                protected_at = COALESCE(protected_at, ?, ?, ?),
-                protected_by = COALESCE(protected_by, ?, 'migration'),
-                initial_viability_evidence_id = COALESCE(initial_viability_evidence_id, ?),
-                updated_at = COALESCE(updated_at, ?)
-            WHERE id = ?
-            """,
-            (
-                row["verdict_memo_at"],
-                row["updated_at"],
-                now_iso,
-                row["verdict_memo_by"],
-                evidence_id,
-                now_iso,
-                row["id"],
-            ),
-        )
-
-
 def _run_migrations(conn: sqlite3.Connection):
     """Run additive schema migrations for existing databases."""
     version_row = conn.execute("SELECT MAX(version) AS version FROM schema_version").fetchone()
@@ -2118,19 +2075,12 @@ def _run_migrations(conn: sqlite3.Connection):
     # What the thesis needs from the runtime (cross-asset / multi-timeframe
     # joins, external inputs), declared at create/refine; readiness enforces it.
     _ensure_column(conn, "hypotheses", "feasibility", "JSON")
+    # The result that would show the idea is wrong, written with the idea.
+    _ensure_column(conn, "hypotheses", "disproof", "TEXT")
     _ensure_column(conn, "strategies", "origin_crucible_id", "TEXT")
     _ensure_column(conn, "strategies", "origin_agent_id", "TEXT")
     _ensure_column(conn, "strategies", "origin_task_id", "TEXT")
     _ensure_column(conn, "strategies", "origin_model", "TEXT")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_hypotheses_protection_status "
-        "ON hypotheses (protection_status)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_strategies_origin_crucible "
-        "ON strategies (origin_crucible_id)"
-    )
-    _backfill_proven_hypothesis_protection(conn, now_iso)
     # Pipeline inflation fix: demotion tracking + failure reason
     _ensure_column(conn, "strategies", "demotion_count", "INTEGER DEFAULT 0")
     _ensure_column(conn, "strategies", "status_reason", "TEXT")
@@ -4522,7 +4472,7 @@ def create_approval(
     is the storage primitive it writes through.
 
     This shim exists only so the seven existing importers
-    (brain, policy, crucibles, agents.tools_brain, lab_matrix_engine,
+    (brain, policy, agents.tools_brain, lab_matrix_engine,
     live_graduation, plus tests) keep working untouched. Point new code at the
     control-plane function.
     """
@@ -5122,27 +5072,18 @@ def get_agent_spend(days: int = 30) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def parent_strategy_lineage_error(
-    conn, parent_strategy_id: str | None, hypothesis_id: str | None,
-) -> str | None:
-    """Why ``parent_strategy_id`` cannot parent a new strategy for ``hypothesis_id``.
+def parent_strategy_lineage_error(conn, parent_strategy_id: str | None) -> str | None:
+    """Why ``parent_strategy_id`` cannot parent a new strategy, or None.
 
-    None when there is no parent or it is valid. Lineage must stay inside one
-    hypothesis; callers can check this before doing any irreversible work.
+    None when there is no parent or it exists. Callers check this before doing
+    any irreversible work.
     """
     parent = str(parent_strategy_id or "").strip()
     if not parent:
         return None
-    row = conn.execute("SELECT hypothesis_id FROM strategies WHERE id = ?", (parent,)).fetchone()
+    row = conn.execute("SELECT 1 FROM strategies WHERE id = ?", (parent,)).fetchone()
     if not row:
         return f"parent_strategy_id {parent!r} not found"
-    parent_hyp = str(row["hypothesis_id"] or "").strip() or None
-    new_hyp = str(hypothesis_id or "").strip() or None
-    if parent_hyp != new_hyp:
-        return (
-            f"parent_strategy_id {parent!r} belongs to hypothesis {parent_hyp!r}, "
-            f"but new strategy is for hypothesis {new_hyp!r}; lineage cannot cross hypotheses"
-        )
     return None
 
 
@@ -5167,9 +5108,8 @@ def create_strategy_container(
 ) -> tuple[str, str, int]:
     """Create a strategy container row with canonical immutable Sxxxxx IDs.
 
-    If `parent_strategy_id` is provided, validates it exists and shares the
-    same `hypothesis_id` as this new strategy — lineage cannot cross
-    hypotheses. Raises ValueError on mismatch.
+    If `parent_strategy_id` is provided, validates that it exists; a variant
+    may test a different idea than its parent. Raises ValueError when missing.
 
     A strategy that cannot be fairly tested is created directly in the
     graveyard (stage='archived') with an untestable `status_reason`.
@@ -5200,7 +5140,7 @@ def create_strategy_container(
         # carry trade_mode='both' that the archetype CANNOT run — a long-only
         # built-in (macd, williams_r, ...) stamped with 'both' by a CRUX-1
         # short/both authoring directive it can't honor — clamp to the runnable
-        # long side at MINT. Left as-is, the deterministic crucible/validation
+        # long side at MINT. Left as-is, the deterministic validation
         # backtest hard-fails "does not support trade_mode='both'", which the
         # pipeline classifies terminal (_DETERMINISTIC_ERROR_TOKENS) and ARCHIVES
         # the whole strategy over a config technicality (the 2026-07-08 alert
@@ -5277,7 +5217,7 @@ def create_strategy_container(
             )
         symbol = str(_symbol_verdict.get("symbol") or symbol)
     normalized_parent = str(parent_strategy_id or "").strip() or None
-    lineage_error = parent_strategy_lineage_error(conn, normalized_parent, hypothesis_id)
+    lineage_error = parent_strategy_lineage_error(conn, normalized_parent)
     if lineage_error:
         raise ValueError(lineage_error)
     requested_id = str(strategy_id or "").strip().upper()
@@ -5398,9 +5338,6 @@ def create_strategy_container(
             now,
             now,
         ),
-    )
-    importlib.import_module("forven.crucible_operations").capture_attempt(
-        conn, final_strategy_id, normalized_hypothesis_id
     )
     return final_strategy_id, display_id, base_id
 
@@ -8609,51 +8546,3 @@ def delete_bot_template(template_id: str) -> None:
             raise ValueError("Cannot delete built-in templates")
         conn.execute("DELETE FROM bot_templates WHERE id = ?", (template_id,))
 
-
-def get_data_gap_requesters(gap_ids: list[str]) -> dict[str, list[dict]]:
-    """Map each data_gap id to the hypotheses that requested it.
-
-    A hypothesis requests a gap either directly (data_gap_links.hypothesis_id)
-    or via one of its strategies (data_gap_links.strategy_id -> strategies.hypothesis_id).
-    Returns {gap_id: [{"id", "display_id", "title"}, ...]} with each hypothesis
-    listed at most once per gap, ordered by display_id for stable rendering.
-
-    Additive, read-only helper — used to surface click-through links from a gap
-    to its requesting crucible(s). Returns {} for an empty input.
-    """
-    cleaned = [str(g).strip() for g in gap_ids if str(g).strip()]
-    if not cleaned:
-        return {}
-    placeholders = ",".join("?" for _ in cleaned)
-    out: dict[str, list[dict]] = {gid: [] for gid in cleaned}
-    seen: dict[str, set[str]] = {gid: set() for gid in cleaned}
-    with get_db() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT dgl.data_gap_id AS gap_id,
-                   h.id AS hypothesis_id,
-                   h.display_id AS display_id,
-                   h.title AS title
-            FROM data_gap_links dgl
-            LEFT JOIN strategies s ON s.id = dgl.strategy_id
-            JOIN hypotheses h
-              ON h.id = dgl.hypothesis_id OR h.id = s.hypothesis_id
-            WHERE dgl.data_gap_id IN ({placeholders})
-            ORDER BY COALESCE(h.display_id, h.id)
-            """,
-            tuple(cleaned),
-        ).fetchall()
-    for row in rows:
-        gap_id = str(row["gap_id"])
-        hyp_id = str(row["hypothesis_id"])
-        if gap_id not in out or hyp_id in seen[gap_id]:
-            continue
-        seen[gap_id].add(hyp_id)
-        out[gap_id].append(
-            {
-                "id": hyp_id,
-                "display_id": row["display_id"],
-                "title": row["title"],
-            }
-        )
-    return out

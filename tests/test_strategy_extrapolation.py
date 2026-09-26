@@ -50,7 +50,8 @@ def test_extrapolate_strips_code_fence():
 
 
 def test_record_extrapolation_gaps_only_low_confidence_inferred(forven_db):
-    from forven.hypotheses import create_hypothesis, list_hypothesis_data_gaps
+    from forven.db import get_db
+    from forven.hypotheses import create_hypothesis
 
     h = create_hypothesis(
         title="t", market_thesis="m", mechanism="x", why_now=None,
@@ -68,4 +69,8 @@ def test_record_extrapolation_gaps_only_low_confidence_inferred(forven_db):
     assert "regime" not in recorded
     assert "indicators" not in recorded
     # The gap was actually persisted (record_data_gap accepted the call).
-    assert len(list_hypothesis_data_gaps(h["id"])) >= 1
+    with get_db() as conn:
+        linked_gaps = conn.execute(
+            "SELECT COUNT(*) FROM data_gap_links WHERE hypothesis_id = ?", (h["id"],)
+        ).fetchone()[0]
+    assert linked_gaps >= 1

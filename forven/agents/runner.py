@@ -1115,15 +1115,17 @@ def _should_queue_brain_callback_for_completed_task(
     input_data: dict[str, object] | None,
 ) -> bool:
     normalized_task_type = str(task.get("type") or "").strip().lower()
+    payload = input_data if isinstance(input_data, dict) else {}
+    origin_mode = str(payload.get("origin_mode") or "").strip().lower()
+    # The pipeline judges what an autonomous creation task registered; a Brain
+    # review of every one would only spend tokens.
+    if origin_mode == "autonomous_creation":
+        return False
     if normalized_task_type != "research":
         return True
     if not _agent_is_strategy_developer(agent_id):
         return True
 
-    payload = input_data if isinstance(input_data, dict) else {}
-    origin_mode = str(payload.get("origin_mode") or "").strip().lower()
-    if origin_mode == "crucible_planner":
-        return False
     if origin_mode != "autonomous":
         return True
 
@@ -1135,163 +1137,6 @@ def _should_queue_brain_callback_for_completed_task(
             task_display_id = ""
 
     return not _research_task_already_performed_first_wave(task_display_id)
-
-
-def _list_hypotheses_for_follow_through() -> list[dict]:
-    from forven.hypotheses import list_hypotheses
-
-    return list_hypotheses()
-
-
-def _list_hypothesis_strategies_for_follow_through(hypothesis_id: str) -> list[dict]:
-    from forven.hypotheses import list_hypothesis_strategies
-
-    return list_hypothesis_strategies(hypothesis_id)
-
-
-def _hypothesis_target_strategy_count() -> int:
-    """Target number of strategies per hypothesis before follow-through stops queueing.
-
-    Pulled from hypothesis_discipline.verdict_rolling_window so the queueing target
-    matches the evidence window the verdict loop requires for disproof.
-    """
-    from forven.research_contract import get_hypothesis_discipline_settings
-
-    try:
-        return int(get_hypothesis_discipline_settings()["verdict_rolling_window"])
-    except Exception:
-        return 10
-
-
-def _assign_follow_through_task(**kwargs):
-    from forven.brain import assign_task
-
-    return assign_task(**kwargs)
-
-
-def _parse_task_iso_datetime(raw: object) -> datetime | None:
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
-def _queue_autonomous_research_follow_through_if_needed(
-    conn,
-    *,
-    agent_id: str,
-    task: dict,
-    input_data: dict[str, object] | None,
-) -> int | None:
-    """Queue a follow-through task when ideation leaves fresh hypotheses empty."""
-
-    if not _agent_is_strategy_developer(agent_id):
-        return None
-
-    payload = input_data if isinstance(input_data, dict) else {}
-    origin_mode = str(payload.get("origin_mode") or "").strip().lower()
-    if origin_mode == "crucible_planner":
-        return None
-    if origin_mode != "autonomous":
-        return None
-
-    raw_follow_through = payload.get("follow_through_hypotheses")
-    follow_through_ids = {
-        str(item.get("id") or "").strip()
-        for item in raw_follow_through
-        if isinstance(item, dict) and str(item.get("id") or "").strip()
-    } if isinstance(raw_follow_through, list) else set()
-
-    task_created_at = _parse_task_iso_datetime(task.get("created_at"))
-    candidates: list[tuple[datetime, dict]] = []
-    for hypothesis in _list_hypotheses_for_follow_through():
-        hypothesis_id = str(hypothesis.get("id") or "").strip()
-        if not hypothesis_id:
-            continue
-
-        status = str(hypothesis.get("status") or "").strip().lower()
-        manager_state = str(hypothesis.get("manager_state") or "").strip().lower()
-        if status in {"archived", "validated", "rejected", "trash", "deleted"}:
-            continue
-        if manager_state in {"archived", "trash", "deleted"}:
-            continue
-        existing_strategies = _list_hypothesis_strategies_for_follow_through(hypothesis_id)
-        if len(existing_strategies) >= _hypothesis_target_strategy_count():
-            continue
-
-        created_at = _parse_task_iso_datetime(hypothesis.get("created_at"))
-        origin_agent = str(hypothesis.get("origin_agent_id") or "").strip()
-        created_during_task = (
-            created_at is not None
-            and task_created_at is not None
-            and created_at >= task_created_at
-            and origin_agent == str(agent_id).strip()
-        )
-        if not created_during_task and hypothesis_id not in follow_through_ids:
-            continue
-
-        candidates.append((created_at or datetime.now(timezone.utc), hypothesis))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    for _, hypothesis in candidates:
-        hypothesis_id = str(hypothesis.get("id") or "").strip()
-        display_id = str(hypothesis.get("display_id") or hypothesis_id).strip() or hypothesis_id
-        title = f"Strategy Candidates from {display_id}"
-        existing = conn.execute(
-            """
-            SELECT 1
-            FROM agent_tasks
-            WHERE title = ?
-              AND status IN ('pending', 'running', 'done', 'reviewed')
-            LIMIT 1
-            """,
-            (title,),
-        ).fetchone()
-        if existing:
-            continue
-
-        description = (
-            f"FOLLOW-THROUGH STRATEGY CYCLE - hypothesis {display_id}.\n\n"
-            f"Title: {str(hypothesis.get('title') or '').strip()}\n\n"
-            "Create at least one linked strategy candidate for this hypothesis unless a tool call proves a concrete blocker.\n"
-            "1. Use forven_create_strategy or register_strategy to create a linked strategy container.\n"
-            "2. Create only testable candidates; if runtime support or data is genuinely missing, report the verified blocker instead of creating a strategy.\n"
-            "3. Run at least one backtest for any created candidate, or cite the exact failing tool output.\n"
-            "4. Do not claim funding data, backtest support, or registration is unavailable without verifying locally with tools first.\n"
-            "5. Use the exact provided hypothesis_id/crucible_id; do not call create_hypothesis.\n"
-            "6. End with the created strategy ids, or the exact verified blocker if creation failed."
-        )
-        assigned = _assign_follow_through_task(
-            agent_id="strategy-developer",
-            task_type="develop_candidate",
-            title=title,
-            description=description,
-            input_data={
-                "_channel": str(payload.get("_channel") or "chat"),
-                "origin_mode": "autonomous_follow_through",
-                "action_kind": "develop_candidate",
-                "crucible_id": hypothesis_id,
-                "source_task_display_id": str(task.get("display_id") or "").strip(),
-                "hypothesis_id": hypothesis_id,
-                "hypothesis_display_id": display_id,
-                "hypothesis_title": str(hypothesis.get("title") or "").strip(),
-            },
-        )
-        try:
-            return int(assigned)
-        except Exception:
-            return None
-
-    return None
 
 
 def _parse_json_object_or_empty(raw: object) -> dict[str, object]:
@@ -1447,8 +1292,11 @@ async def _run_agent_task_inner(
         )
         input_data = _coerce_task_input_data(task)
 
+        # A task that names its idea is checked against it before any model
+        # spend; a task whose agent writes the idea picks a market it can test.
         readiness = None
-        if (task_type in {"develop_candidate", "generate_strategies"} and not execution.checkpoint.get("messages")
+        if (task_type in {"develop_candidate", "generate_strategies"} and input_data.get("hypothesis_id")
+                and not execution.checkpoint.get("messages")
                 and not execution.checkpoint.get("inflight") and not execution.checkpoint.get("pending_handoff")):
             from forven.strategies.idea_readiness import candidate_readiness
 
@@ -1545,25 +1393,19 @@ async def _run_agent_task_inner(
             if successful:
                 provider, model_id = successful["provider"], successful["model"]
         cost_usd = recorded["cost_usd"] if recorded else estimate_cost_usd(provider, model_id, usage)
-        if task_type == "research" and input_data.get("origin_mode") in {
-            "operator_manual_entry", "operator_url_paste", "operator_urls_paste",
-        }:
-            from forven.api_domains.hypotheses import generate_strategies_payload
-
-            if not execution.checkpoint.get("development_task_id"):
-                try:
-                    handoff = generate_strategies_payload(str(input_data.get("hypothesis_id") or ""))
-                except Exception as exc:
-                    raise IncompleteTask("Research finished, but candidate handoff needs attention: " + str(getattr(exc, "detail", exc)), response) from exc
-                execution.save(development_task_id=handoff["task"]["task_id"])
         if task_type in {"develop_candidate", "generate_strategies"}:
             with get_db() as conn:
                 artifact = conn.execute(
-                    "SELECT s.id FROM agent_tasks t JOIN strategies s ON s.id=t.strategy_id WHERE t.id=?",
+                    "SELECT s.id, s.hypothesis_id FROM agent_tasks t JOIN strategies s ON s.id=t.strategy_id WHERE t.id=?",
                     (task_id,),
                 ).fetchone()
             if not artifact:
                 raise IncompleteTask("Candidate development returned without a registered strategy.", response)
+            if not str(artifact["hypothesis_id"] or "").strip():
+                raise IncompleteTask(
+                    "Strategy creation registered a strategy without a written idea (hypothesis_id).",
+                    response,
+                )
 
         # Prepend a ground-truth tool-execution ledger so operators can cross-
         # check the agent's narrative against what actually happened. The LLM
@@ -1676,13 +1518,10 @@ async def _run_agent_task_inner(
             except Exception as exc:
                 log.warning("Auto-handoff failed for %s: %s", strategy_id, exc)
 
-        # Complete the task row first. Defer follow-through and brain-callback
-        # queuing to AFTER this write transaction commits, because those helpers
-        # call assign_task / INSERT INTO tasks which open their own connections
-        # and would otherwise race the outer RESERVED lock → busy_timeout →
-        # "database is locked" (affecting research tasks that complete via this
-        # path).
-        queue_follow_through = False
+        # Complete the task row first. Defer brain-callback queuing to AFTER
+        # this write transaction commits, because it inserts into tasks on its
+        # own connection and would otherwise race the outer RESERVED lock →
+        # busy_timeout → "database is locked".
         queue_brain_callback = False
         if handoff_target_agent:
             execution.save(pending_handoff=handoff_target_agent)
@@ -1719,7 +1558,6 @@ async def _run_agent_task_inner(
                      usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("total_tokens", 0),
                      provider, model_id, cost_usd, task_id),
                 )
-                queue_follow_through = True
                 queue_brain_callback = _should_queue_brain_callback_for_completed_task(
                     agent_id=agent_id,
                     task=task,
@@ -1740,14 +1578,6 @@ async def _run_agent_task_inner(
         except Exception:
             pass
 
-        if queue_follow_through:
-            with get_db() as conn:
-                _queue_autonomous_research_follow_through_if_needed(
-                    conn,
-                    agent_id=agent_id,
-                    task=task,
-                    input_data=input_data,
-                )
         if queue_brain_callback:
             with get_db() as conn:
                 _maybe_queue_brain_callback(conn, agent_id, task, target_channel)

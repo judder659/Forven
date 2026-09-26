@@ -16,16 +16,14 @@ from forven.throughput_policy import (
 )
 
 _PRESET_NAMES = ("trickle", "conserve", "balanced", "max")
-_BUDGET_KEY = "crucible_daily_develop_budget"
+_BUDGET_KEY = "strategy_creation_daily_budget"
 _FLAT_KEYS = tuple(THROUGHPUT_DEFAULTS)
 
 
 def _settings_for_bundle(bundle: dict) -> dict:
     """A forven:settings-shaped dict holding exactly this bundle's values."""
     settings = {key: bundle[key] for key in _FLAT_KEYS}
-    settings["research_settings"] = {
-        "hypothesis_discipline": {_BUDGET_KEY: bundle[_BUDGET_KEY]}
-    }
+    settings["research_settings"] = {_BUDGET_KEY: bundle[_BUDGET_KEY]}
     return settings
 
 
@@ -46,10 +44,7 @@ def test_balanced_equals_shipped_defaults_both_directions():
     balanced = THROUGHPUT_PRESETS["balanced"]
     for key in _FLAT_KEYS:
         assert balanced[key] == _DEFAULT_SETTINGS_PAYLOAD[key], key
-    assert (
-        balanced[_BUDGET_KEY]
-        == _DEFAULT_RESEARCH_SETTINGS["hypothesis_discipline"][_BUDGET_KEY]
-    )
+    assert balanced[_BUDGET_KEY] == _DEFAULT_RESEARCH_SETTINGS[_BUDGET_KEY]
 
 
 def test_every_preset_value_is_within_bounds():
@@ -64,21 +59,18 @@ def test_every_preset_value_is_within_bounds():
 def test_preset_values_round_trip_real_settings_coercion(forven_db):
     """Write each preset through the REAL section handlers; nothing may change."""
     from forven.api_core import _apply_settings_section, _load_settings_payload
-    from forven.research_contract import get_hypothesis_discipline_settings
+    from forven.research_contract import get_effective_research_settings
 
     for name, bundle in THROUGHPUT_PRESETS.items():
         _apply_settings_section(
             "bot-operations", {key: bundle[key] for key in _FLAT_KEYS}
         )
-        _apply_settings_section(
-            "research",
-            {"hypothesis_discipline": {_BUDGET_KEY: bundle[_BUDGET_KEY]}},
-        )
+        _apply_settings_section("research", {_BUDGET_KEY: bundle[_BUDGET_KEY]})
         stored = _load_settings_payload()
         for key in _FLAT_KEYS:
             assert stored[key] == bundle[key], (name, key)
-        discipline = get_hypothesis_discipline_settings(stored)
-        assert discipline[_BUDGET_KEY] == bundle[_BUDGET_KEY], name
+        research = get_effective_research_settings(stored)
+        assert research[_BUDGET_KEY] == bundle[_BUDGET_KEY], name
         assert effective_throughput_preset(stored) == name
 
 
@@ -96,7 +88,7 @@ def test_single_knob_nudge_derives_custom():
     assert effective_throughput_preset(settings) == "custom"
 
     budget_nudged = _settings_for_bundle(THROUGHPUT_PRESETS["conserve"])
-    budget_nudged["research_settings"]["hypothesis_discipline"][_BUDGET_KEY] += 1
+    budget_nudged["research_settings"][_BUDGET_KEY] += 1
     assert effective_throughput_preset(budget_nudged) == "custom"
 
 
@@ -113,7 +105,7 @@ def test_derivation_never_raises_on_garbage():
     }
     settings = _settings_for_bundle(THROUGHPUT_PRESETS["trickle"])
     settings["research_settings"] = "corrupt"
-    # Flat knobs match trickle but the budget falls back to the default (150),
+    # Flat knobs match trickle but the budget falls back to the default (40),
     # so no bundle matches — must degrade to custom, not raise.
     assert effective_throughput_preset(settings) == "custom"
 
@@ -151,12 +143,7 @@ def test_get_settings_effective_tracks_stored_values(forven_db):
         {key: THROUGHPUT_PRESETS["conserve"][key] for key in _FLAT_KEYS},
     )
     api_core._apply_settings_section(
-        "research",
-        {
-            "hypothesis_discipline": {
-                _BUDGET_KEY: THROUGHPUT_PRESETS["conserve"][_BUDGET_KEY]
-            }
-        },
+        "research", {_BUDGET_KEY: THROUGHPUT_PRESETS["conserve"][_BUDGET_KEY]}
     )
     assert api_core.get_settings()["throughput_preset_effective"] == "conserve"
 
@@ -170,22 +157,20 @@ def test_get_settings_effective_tracks_stored_values(forven_db):
 
 
 def test_partial_research_write_preserves_customized_siblings(forven_db):
-    """Editing one hypothesis_discipline leaf must not reset its siblings.
+    """Editing one nested research leaf must not reset its siblings.
 
     Regression for the section-'research' shallow spread: a partial nested
-    payload used to replace the whole hypothesis_discipline dict, silently
-    resetting customized siblings (e.g. active_pool_cap) back to defaults.
+    payload used to replace the whole nested dict, silently resetting
+    customized siblings back to defaults.
     """
     from forven.api_core import _apply_settings_section, _load_settings_payload
-    from forven.research_contract import get_hypothesis_discipline_settings
+    from forven.research_contract import get_effective_research_settings
 
-    _apply_settings_section(
-        "research", {"hypothesis_discipline": {"active_pool_cap": 55}}
-    )
-    _apply_settings_section("research", {"hypothesis_discipline": {_BUDGET_KEY: 60}})
-    discipline = get_hypothesis_discipline_settings(_load_settings_payload())
-    assert discipline[_BUDGET_KEY] == 60
-    assert discipline["active_pool_cap"] == 55
+    _apply_settings_section("research", {"research_holdout": {"min_trades": 9}})
+    _apply_settings_section("research", {"research_holdout": {"max_family_shots": 5}})
+    holdout = get_effective_research_settings(_load_settings_payload())["research_holdout"]
+    assert holdout["max_family_shots"] == 5
+    assert holdout["min_trades"] == 9
 
 
 # --------------------------------------------------------------- telemetry

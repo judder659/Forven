@@ -63,25 +63,6 @@ PAGES: list[dict] = [
         ],
     },
     {
-        "route": "/hypotheses",
-        "name": "The Crucible",
-        "kind": "hypotheses",
-        "summary": "Trading ideas (hypotheses) under test: add ideas manually or from a URL, run discovery, generate strategies from an idea.",
-        "actions": [
-            "Add a manual idea or harvest one from a URL",
-            "Run idea discovery",
-            "Generate strategies from a crucible",
-            "Bulk archive/trash/restore; run LLM triage/cleanup",
-        ],
-    },
-    {
-        "route": "/hypotheses/data-gaps",
-        "name": "Data Gaps",
-        "kind": "hypotheses",
-        "summary": "Leaderboard of missing data inputs that block better validation or execution.",
-        "actions": ["Review which data gaps matter most"],
-    },
-    {
         "route": "/backtest/new",
         "name": "Manual Backtest",
         "kind": "backtest",
@@ -305,10 +286,10 @@ HOWTOS: dict[str, dict] = {
         "steps": [
             "Fastest: tell me the idea right here — I can create it (assistant_create_strategy) and backtest it immediately.",
             "Visual: Strategy Creator (/strategy-creator) → build entry/exit rules → Save → 'Send to Forge →'.",
-            "Idea-first: add the idea in The Crucible (/hypotheses) and use 'generate strategies' so it stays linked to its hypothesis.",
+            "Idea-first: The Forge (/lab) → 'Submit idea' → describe it or paste a URL; the strategy-developer writes it up and builds strategies from it.",
             "All paths land the strategy in the quick_screen stage of The Forge (/lab).",
         ],
-        "routes": ["/strategy-creator", "/hypotheses", "/lab"],
+        "routes": ["/strategy-creator", "/lab"],
     },
     "run-backtest": {
         "title": "Backtest a strategy",
@@ -378,9 +359,8 @@ HOWTOS: dict[str, dict] = {
             "Upload CSVs for data the fetchers don't cover.",
             "Seed/refresh the perp research universe to widen discovery.",
             "Coverage is also self-healing: backtests demand-backfill what they need, and a scheduled job keeps series current.",
-            "The Data Gaps page (/hypotheses/data-gaps) ranks which missing inputs matter most.",
         ],
-        "routes": ["/data", "/hypotheses/data-gaps"],
+        "routes": ["/data"],
     },
     "bot-factory": {
         "title": "Run an autonomous trading bot",
@@ -440,15 +420,15 @@ HOWTOS: dict[str, dict] = {
         ],
         "routes": ["/settings", "/settings/approvals", "/settings/profile"],
     },
-    "crucibles": {
-        "title": "Work with ideas in The Crucible",
+    "ideas": {
+        "title": "Turn an idea into strategies",
         "steps": [
-            "Add an idea manually or harvest one from a URL (/hypotheses).",
-            "Run discovery to source new ideas automatically.",
-            "On a crucible's detail page: queue research, ask for a verdict memo, or generate strategies from it.",
-            "Bulk archive/trash/restore and LLM triage keep the list clean.",
+            "The Forge (/lab) → 'Submit idea': describe the idea, fill in any fields you know, or paste a URL.",
+            "The strategy-developer writes it up (what it exploits, why, and what would prove it wrong) and builds strategies from it.",
+            "Those strategies enter quick_screen; each strategy's page shows the idea it tests.",
+            "Separately, the strategy-creation job writes and builds new ideas on its own within the daily budget (Settings › Research).",
         ],
-        "routes": ["/hypotheses"],
+        "routes": ["/lab"],
     },
     "notifications": {
         "title": "Set up notifications",
@@ -549,11 +529,12 @@ CONCEPTS: dict[str, dict] = {
             "assistant (me) runs under the same identity but only acts when you ask."
         ),
     },
-    "crucible": {
-        "title": "Crucibles (hypotheses)",
+    "idea": {
+        "title": "Ideas",
         "body": (
-            "A crucible is a trading idea under test — every strategy is born from one, so "
-            "performance evidence flows back to the idea. Managed at /hypotheses."
+            "An idea is the written reason behind a strategy: the market behaviour it exploits, why "
+            "that edge exists, and the result that would prove it wrong. Agents write one before "
+            "building strategies; each strategy's page shows its idea."
         ),
     },
     "wallets": {
@@ -589,7 +570,6 @@ CONCEPTS: dict[str, dict] = {
 
 _PARAM_ROUTE_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"^/lab/strategy/[^/?#]+$"),
-    re.compile(r"^/hypotheses/[^/?#]+$"),
     re.compile(r"^/bot-factory/[^/?#]+$"),
     re.compile(r"^/tasks/[^/?#]+$"),
     re.compile(r"^/integrations/mcp/[^/?#]+$"),

@@ -20,7 +20,6 @@ export const NAV_HREFS = [
 	'/',
 	'/data',
 	'/strategy-creator',
-	'/hypotheses',
 	'/backtest/new',
 	'/lab',
 	'/risk',

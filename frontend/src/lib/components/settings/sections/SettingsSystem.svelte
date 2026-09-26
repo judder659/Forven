@@ -81,33 +81,33 @@
 		'bot-operations.agent_task_claim_limit',
 		'bot-operations.backtest_subprocess_budget',
 		'bot-operations.gauntlet_drain_workers',
-		'research.crucible_daily_develop_budget',
+		'research.strategy_creation_daily_budget',
 	];
 	const throughputEntries = areaEntries.filter((e) =>
 		THROUGHPUT_PRESET_ENTRY_IDS.includes(e.id),
 	);
-	// Outcome-phrased blurbs: the develop budget is the dominant AI-call-volume
+	// Outcome-phrased blurbs: the creation budget is the dominant AI-call-volume
 	// driver, so each preset is described by what it spends, not what it sets.
 	const THROUGHPUT_PRESET_META: Array<{ name: string; label: string; blurb: string }> = [
 		{
 			name: 'trickle',
 			label: 'Trickle',
-			blurb: '≈20 develops/day, hours-scale agent cadence, single-file workers — for hard-capped free models.',
+			blurb: '4 strategy-creation tasks/day, hours-scale agent cadence, single-file workers — for hard-capped free models.',
 		},
 		{
 			name: 'conserve',
 			label: 'Conserve',
-			blurb: '≈60 develops/day, slowed cadence, small batches — for free or rate-limited routes; the fix if you are seeing provider 429s.',
+			blurb: '12 strategy-creation tasks/day, slowed cadence, small batches — for free or rate-limited routes; the fix if you are seeing provider 429s.',
 		},
 		{
 			name: 'balanced',
 			label: 'Balanced',
-			blurb: '≈150 develops/day — the shipped defaults for a normal paid provider key.',
+			blurb: '40 strategy-creation tasks/day — the shipped defaults for a normal paid provider key.',
 		},
 		{
 			name: 'max',
 			label: 'Max',
-			blurb: '≈500 develops/day, minutes-scale cadence, all workers up — requires a high-limit paid or local model; a free route will rate-limit instantly.',
+			blurb: '120 strategy-creation tasks/day, minutes-scale cadence, all workers up — requires a high-limit paid or local model; a free route will rate-limit instantly.',
 		},
 	];
 

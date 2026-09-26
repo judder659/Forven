@@ -81,11 +81,11 @@ describe('API Client', () => {
 		});
 	});
 
-	describe('hypotheses barrel exports', () => {
-		it('exposes the hypothesis client helpers', () => {
-			expect(typeof api.getHypotheses).toBe('function');
-			expect(typeof api.getHypothesisDetail).toBe('function');
-			expect(typeof api.getRankedDataGaps).toBe('function');
+	describe('ideas barrel exports', () => {
+		it('exposes the idea client helpers', () => {
+			expect(typeof api.submitIdea).toBe('function');
+			expect(typeof api.previewIdeaUrl).toBe('function');
+			expect(typeof api.getIdea).toBe('function');
 		});
 	});
 

@@ -20,13 +20,6 @@ def _coerce_lines(value: str | None, *, limit: int | None = None) -> list[str]:
     return lines
 
 
-def _coerce_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _coerce_bool(value: Any, default: bool) -> bool:
     if value is None:
         return default
@@ -116,12 +109,6 @@ def render_research_contract(contract: ResearchContract) -> str:
             f"- Constraint memory: {bool(memory_mode.get('constraint_memory'))}",
             f"- Inspiration memory mode: {memory_mode.get('inspiration_memory', 'off')}",
             f"- External sources allowed: {contract.external_sources_allowed}",
-            (
-                "- Spawn limits: "
-                f"{contract.spawn_limits.get('per_run', 0)} per run, "
-                f"{contract.spawn_limits.get('rolling_window', 0)} per "
-                f"{contract.spawn_limits.get('window_days', 0)} days"
-            ),
         ]
     )
 
@@ -148,13 +135,6 @@ def coerce_research_contract(value: Any) -> ResearchContract:
     if isinstance(raw_memory_mode, Mapping):
         memory_mode.update({str(key): raw_memory_mode[key] for key in raw_memory_mode})
 
-    spawn_limits = dict(defaults.spawn_limits)
-    raw_spawn_limits = payload.get("spawn_limits")
-    if isinstance(raw_spawn_limits, Mapping):
-        for key in ("per_run", "rolling_window", "window_days"):
-            if raw_spawn_limits.get(key) is not None:
-                spawn_limits[key] = _coerce_int(raw_spawn_limits[key], spawn_limits[key])
-
     allowed_external_source_types = payload.get("allowed_external_source_types")
     if not isinstance(allowed_external_source_types, Sequence) or isinstance(
         allowed_external_source_types, (str, bytes)
@@ -179,7 +159,6 @@ def coerce_research_contract(value: Any) -> ResearchContract:
         ),
         allowed_external_source_types=[str(item) for item in allowed_external_source_types],
         novelty_threshold=novelty_threshold,
-        spawn_limits=spawn_limits,
     )
 
 

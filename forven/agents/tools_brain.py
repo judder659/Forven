@@ -62,9 +62,9 @@ def _reject_bootstrap_quant_research_assignment(agent_id: str, task_type: str) -
     if str(payload.get("source") or "").strip().lower() != "bootstrap":
         return None
     return (
-        "Bootstrap must begin with the strategy-developer swarm creating first-class hypotheses "
-        "and immediate strategy candidates. Defer quant-researcher support research until after "
-        "the first strategy-developer hypothesis wave is underway."
+        "Bootstrap must begin with the strategy-developer writing ideas and building strategy "
+        "candidates from them. Defer quant-researcher support research until after the first "
+        "strategies are underway."
     )
 
 
@@ -241,8 +241,7 @@ def _tool_promote_strategy(params: dict) -> str:
         "type": "object",
         "properties": {
             "strategy_id": {"type": "string", "description": "Unique strategy ID (e.g., 'btc-rsi-momentum-v2')"},
-            "hypothesis_id": {"type": "string", "description": "Parent hypothesis ID for this strategy."},
-            "crucible_id": {"type": "string", "description": "Planner-approved crucible/hypothesis ID for this candidate."},
+            "hypothesis_id": {"type": "string", "description": "The idea this strategy tests (optional)."},
             "name": {"type": "string", "description": "Human-readable strategy name"},
             "strategy_type": {
                 "type": "string",
@@ -255,11 +254,11 @@ def _tool_promote_strategy(params: dict) -> str:
             "symbol": {"type": "string", "description": "Trading symbol: BTC, ETH, SOL"},
             "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs are accepted"},
             "timeframe": {"type": "string", "description": "Timeframe: 1h, 4h, 1d (default: 1h)"},
-            "notes": {"type": "string", "description": "Notes about the strategy hypothesis"},
+            "notes": {"type": "string", "description": "Notes about the strategy's idea"},
             "model": {"type": "string", "description": "AI provider that created this strategy (auto-detected if omitted)"},
             "model_id": {"type": "string", "description": "AI model ID that created this strategy (auto-detected if omitted)"},
         },
-        "required": ["strategy_id", "hypothesis_id", "name", "strategy_type", "symbol", "params"],
+        "required": ["strategy_id", "name", "strategy_type", "symbol", "params"],
     },
     permissions={"brain", None},
 )
@@ -267,14 +266,10 @@ def _tool_create_strategy(params: dict) -> str:
     """Create a new strategy (Brain-only tool)."""
     from forven.brain import create_strategy
     from forven.ai import normalize_provider_and_model
-    from forven.agents.tools_research import assert_hypothesis_spawn_allowed
-    from forven.crucible_tasks import validate_candidate_strategy_creation
+    from forven.strategies.candidate_checks import validate_agent_registration
     from forven.strategies.certification import certify_execution_strategy
 
-    crucible_id = str(params.get("crucible_id") or params.get("hypothesis_id") or "").strip()
-    hypothesis_id = str(params.get("hypothesis_id") or crucible_id).strip()
-    if not hypothesis_id:
-        return "Error creating strategy: hypothesis_id is required for all new strategies."
+    hypothesis_id = str(params.get("hypothesis_id") or "").strip() or None
 
     # Resolve which AI model is creating this strategy
     strat_model = params.get("model")
@@ -304,11 +299,9 @@ def _tool_create_strategy(params: dict) -> str:
 
     agent_id = str(_current_agent_id_var.get() or "").strip()
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
-    validation = validate_candidate_strategy_creation(crucible_id, agent_id, task_display_id, hypothesis_id)
-    if not validation.allowed:
-        return f"Error creating strategy: {validation.reason}"
-    crucible_id = str(validation.crucible_id or crucible_id).strip()
-    hypothesis_id = str(validation.hypothesis_id or hypothesis_id).strip()
+    registration_error = validate_agent_registration(agent_id, task_display_id)
+    if registration_error:
+        return f"Error creating strategy: {registration_error}"
 
     certification = certify_execution_strategy(
         params.get("strategy_type"),
@@ -334,11 +327,6 @@ def _tool_create_strategy(params: dict) -> str:
     if certification_error:
         return f"Error creating strategy: {certification_error}"
 
-    try:
-        assert_hypothesis_spawn_allowed(hypothesis_id)
-    except ValueError as exc:
-        return f"Error creating strategy: {exc}"
-
     result = create_strategy(
         strategy_id=params["strategy_id"],
         hypothesis_id=hypothesis_id,
@@ -350,7 +338,6 @@ def _tool_create_strategy(params: dict) -> str:
         notes=params.get("notes", ""),
         model=strat_model,
         model_id=strat_model_id,
-        origin_crucible_id=crucible_id if agent_id else None,
         origin_agent_id=agent_id or None,
         origin_task_id=task_display_id or None,
         origin_model=strat_model_id or strat_model,

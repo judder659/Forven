@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from forven.db import factory_reset, get_db, kv_set
+from forven.db import factory_reset, get_db
 
 
 def test_create_hypothesis_persists_first_class_fields_and_lists(forven_db):
@@ -95,148 +95,6 @@ def test_add_hypothesis_artifact_persists_source_provenance(forven_db):
     assert row is not None
     assert row["hypothesis_id"] == hypothesis["id"]
     assert row["source_title"] == "Funding rates and reversals"
-
-
-def test_hypothesis_manager_state_defaults_and_lifecycle_transitions(forven_db):
-    from forven.hypotheses import (
-        archive_hypothesis,
-        create_hypothesis,
-        restore_hypothesis,
-        trash_hypothesis,
-    )
-
-    created = create_hypothesis(
-        title="Lifecycle coverage",
-        market_thesis="Operators need a separate inventory lifecycle.",
-        mechanism="Track manager state without touching research status.",
-        lane="exploration",
-        source_type="agent_original",
-        target_assets=["BTC-PERP"],
-        target_timeframes=["1h"],
-    )
-
-    assert created["manager_state"] == "active"
-    assert created["archived_at"] is None
-    assert created["deleted_at"] is None
-    assert created["restored_at"] is None
-
-    archived = archive_hypothesis(created["id"])
-    assert archived["manager_state"] == "archived"
-    assert archived["archived_at"] is not None
-    assert archived["deleted_at"] is None
-
-    trashed = trash_hypothesis(created["id"])
-    assert trashed["manager_state"] == "trash"
-    assert trashed["archived_at"] is not None
-    assert trashed["deleted_at"] is not None
-
-    restored = restore_hypothesis(created["id"])
-    assert restored["manager_state"] == "active"
-    assert restored["archived_at"] is None
-    assert restored["deleted_at"] is None
-    assert restored["restored_at"] is not None
-
-
-def test_list_hypotheses_filters_by_view_search_and_sort(forven_db):
-    from forven.hypotheses import archive_hypothesis, create_hypothesis, list_hypotheses, trash_hypothesis
-
-    alpha = create_hypothesis(
-        title="Alpha funding fade",
-        market_thesis="Funding matters.",
-        mechanism="Fade crowded longs.",
-        lane="exploration",
-        source_type="agent_original",
-        target_assets=["BTC-PERP"],
-        target_timeframes=["15m"],
-    )
-    beta = create_hypothesis(
-        title="Beta breakout",
-        market_thesis="Breakouts need context.",
-        mechanism="Depth confirms continuation.",
-        lane="benchmarking",
-        source_type="public_benchmark",
-        target_assets=["ETH-PERP"],
-        target_timeframes=["1h"],
-    )
-    gamma = create_hypothesis(
-        title="Gamma range reversion",
-        market_thesis="Overnight mean reversion exists.",
-        mechanism="Fade Asia extension.",
-        lane="exploitation",
-        source_type="agent_original",
-        target_assets=["SOL-PERP"],
-        target_timeframes=["30m"],
-    )
-
-    archive_hypothesis(beta["id"])
-    trash_hypothesis(gamma["id"])
-
-    active = list_hypotheses(view="active")
-    archived = list_hypotheses(view="archived")
-    trash = list_hypotheses(view="trash")
-    searched = list_hypotheses(view="active", search="funding")
-
-    # Filter out the migration-seeded HYP-LEGACY bucket (archived by default).
-    archived_ids = [item["id"] for item in archived if item["id"] != "HYP-LEGACY"]
-
-    assert [item["id"] for item in active] == [alpha["id"]]
-    assert archived_ids == [beta["id"]]
-    assert [item["id"] for item in trash] == [gamma["id"]]
-    assert [item["id"] for item in searched] == [alpha["id"]]
-
-
-def test_bulk_hypothesis_lifecycle_mutations_only_touch_requested_ids(forven_db):
-    from forven.hypotheses import (
-        bulk_archive_hypotheses,
-        bulk_restore_hypotheses,
-        bulk_trash_hypotheses,
-        create_hypothesis,
-        get_hypothesis,
-    )
-
-    first = create_hypothesis(
-        title="First bulk hypothesis",
-        market_thesis="First.",
-        mechanism="First mechanism.",
-        lane="exploration",
-        source_type="agent_original",
-        target_assets=["BTC-PERP"],
-        target_timeframes=["1h"],
-    )
-    second = create_hypothesis(
-        title="Second bulk hypothesis",
-        market_thesis="Second.",
-        mechanism="Second mechanism.",
-        lane="benchmarking",
-        source_type="public_benchmark",
-        target_assets=["ETH-PERP"],
-        target_timeframes=["4h"],
-    )
-    third = create_hypothesis(
-        title="Third bulk hypothesis",
-        market_thesis="Third.",
-        mechanism="Third mechanism.",
-        lane="exploitation",
-        source_type="agent_original",
-        target_assets=["SOL-PERP"],
-        target_timeframes=["30m"],
-    )
-
-    archived = bulk_archive_hypotheses([first["id"], second["display_id"], "HYP-UNKNOWN"])
-    assert {item["id"] for item in archived} == {first["id"], second["id"]}
-    assert {item["manager_state"] for item in archived} == {"archived"}
-
-    trashed = bulk_trash_hypotheses([second["id"]])
-    assert [item["id"] for item in trashed] == [second["id"]]
-    assert trashed[0]["manager_state"] == "trash"
-
-    restored = bulk_restore_hypotheses([second["display_id"], "HYP-MISSING"])
-    assert [item["id"] for item in restored] == [second["id"]]
-    assert restored[0]["manager_state"] == "active"
-
-    assert get_hypothesis(first["id"])["manager_state"] == "archived"
-    assert get_hypothesis(second["id"])["manager_state"] == "active"
-    assert get_hypothesis(third["id"])["manager_state"] == "active"
 
 
 def test_record_data_gap_rolls_up_repeated_requests_and_links_to_strategy_or_hypothesis(forven_db):
@@ -437,39 +295,6 @@ def test_deleting_hypothesis_nulls_strategy_and_child_backlinks(forven_db):
 
     assert child_row["derived_from_hypothesis_id"] is None
     assert strategy_row["hypothesis_id"] is None
-
-
-def test_get_hypothesis_spawn_stats_uses_live_research_settings(forven_db):
-    from forven.hypotheses import create_hypothesis, get_hypothesis_spawn_stats
-
-    hypothesis = create_hypothesis(
-        title="Live settings hypothesis",
-        market_thesis="Spawn caps should follow operator settings.",
-        mechanism="Read limits from effective research settings.",
-        lane="exploration",
-        source_type="agent_original",
-        target_assets=["BTC-PERP"],
-        target_timeframes=["1h"],
-    )
-
-    kv_set(
-        "forven:settings",
-        {
-            "research_settings": {
-                "spawn_limits": {
-                    "per_run": 5,
-                    "rolling_window": 9,
-                    "window_days": 3,
-                }
-            }
-        },
-    )
-
-    stats = get_hypothesis_spawn_stats(hypothesis["id"])
-
-    assert stats["per_run_limit"] == 5
-    assert stats["rolling_window_limit"] == 9
-    assert stats["window_days"] == 3
 
 
 def test_brain_create_strategy_rejects_unknown_hypothesis_id(forven_db):

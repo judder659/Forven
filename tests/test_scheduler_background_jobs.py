@@ -183,12 +183,12 @@ def test_graduation_sweep_does_not_block_live_scanner(monkeypatch, forven_db):
     asyncio.run(scenario())
 
 
-def test_tick_does_not_block_due_queue_on_promotion_loop(monkeypatch, forven_db):
+def test_tick_does_not_block_due_queue_on_a_slow_background_job(monkeypatch, forven_db):
     now = datetime.now(timezone.utc)
     _insert_scheduler_job(
-        "test-promotion-loop",
+        "test-slow-optimization",
         (now - timedelta(minutes=10)).isoformat(),
-        {"kind": "hypothesis_promotion_loop"},
+        {"kind": "param_optimization"},
     )
     _insert_scheduler_job(
         "test-quick-followup",
@@ -227,7 +227,7 @@ def test_tick_does_not_block_due_queue_on_promotion_loop(monkeypatch, forven_db)
         async def fake_run_job(job: dict) -> tuple[str, str | None]:
             job_id = str(job["id"])
             calls.append(job_id)
-            if job_id == "test-promotion-loop":
+            if job_id == "test-slow-optimization":
                 await release_slow_job.wait()
             return "ok", None
 
@@ -238,11 +238,11 @@ def test_tick_does_not_block_due_queue_on_promotion_loop(monkeypatch, forven_db)
 
             assert "test-quick-followup" in calls
             quick_row = _read_scheduler_job("test-quick-followup")
-            slow_row = _read_scheduler_job("test-promotion-loop")
+            slow_row = _read_scheduler_job("test-slow-optimization")
             assert quick_row["running_since"] is None
             assert quick_row["last_status"] == "ok"
             assert slow_row["running_since"]
-            assert "test-promotion-loop" in scheduler._SCHEDULER_BACKGROUND_JOB_IDS
+            assert "test-slow-optimization" in scheduler._SCHEDULER_BACKGROUND_JOB_IDS
         finally:
             release_slow_job.set()
             tasks = list(scheduler._SCHEDULER_BACKGROUND_TASKS)

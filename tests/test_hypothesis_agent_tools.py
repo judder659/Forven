@@ -19,6 +19,7 @@ def _hypothesis_payload(**overrides):
         "title": "Funding dislocation mean reversion",
         "market_thesis": "Crowded positive funding precedes short-term mean reversion.",
         "mechanism": "Fade stretched funding after liquidation spikes.",
+        "disproof": "Fading funding extremes loses money after costs.",
         "why_now": "Perps remain crowded after sharp rotations.",
         "lane": "benchmarking",
         "source_type": "public_benchmark",
@@ -50,6 +51,7 @@ def test_research_tools_create_hypothesis_and_attach_artifacts_and_gaps(forven_d
                 "title": "Funding dislocation mean reversion",
                 "market_thesis": "Crowded positive funding precedes short-term mean reversion.",
                 "mechanism": "Fade stretched funding after liquidation spikes.",
+                "disproof": "Fading funding extremes loses money after costs.",
                 "why_now": "Perps remain crowded after sharp rotations.",
                 "lane": "benchmarking",
                 "source_type": "public_benchmark",
@@ -131,7 +133,7 @@ def test_create_hypothesis_blocked_inside_candidate_task(forven_db):
 
     assert result["ok"] is False
     assert result["error_code"] == "hypothesis_creation_blocked_for_task"
-    assert "forven_create_strategy" in result["guidance"]
+    assert "register_strategy" in result["guidance"]
     with get_db() as conn:
         count = conn.execute(
             "SELECT COUNT(*) AS n FROM hypotheses WHERE title = ?",
@@ -140,7 +142,7 @@ def test_create_hypothesis_blocked_inside_candidate_task(forven_db):
     assert count == 0
 
 
-def test_create_hypothesis_allowed_for_propose_crucible_task(forven_db):
+def test_create_hypothesis_allowed_for_a_creation_task(forven_db):
     tools_research = importlib.import_module("forven.agents.tools_research")
     from forven.agents.context import reset_tool_context, set_tool_context
     from forven.db import get_db
@@ -153,16 +155,11 @@ def test_create_hypothesis_allowed_for_propose_crucible_task(forven_db):
             """
             INSERT INTO agent_tasks
                 (agent_id, type, title, description, input_data, display_id, status)
-            VALUES (?, 'research', 'Propose first crucible', 'Propose a crucible', ?, ?, 'running')
+            VALUES (?, 'generate_strategies', 'Create a strategy', 'Write an idea', ?, ?, 'running')
             """,
             (
                 "strategy-developer",
-                json.dumps(
-                    {
-                        "origin_mode": "crucible_planner",
-                        "action_kind": "propose_crucible",
-                    }
-                ),
+                json.dumps({"origin_mode": "autonomous_creation"}),
                 "T0101",
             ),
         )
@@ -177,7 +174,7 @@ def test_create_hypothesis_allowed_for_propose_crucible_task(forven_db):
     assert result["hypothesis"]["id"].startswith("HYP-")
 
 
-def test_propose_task_can_declare_feasibility_and_refine_can_update_it(forven_db):
+def test_creation_task_can_declare_feasibility_and_update_it(forven_db):
     tools_research = importlib.import_module("forven.agents.tools_research")
     from forven.agents.context import reset_tool_context, set_tool_context
     from forven.db import get_db
@@ -188,8 +185,8 @@ def test_propose_task_can_declare_feasibility_and_refine_can_update_it(forven_db
     with get_db() as conn:
         conn.execute(
             "INSERT INTO agent_tasks (agent_id, type, title, description, input_data, display_id, status) "
-            "VALUES ('strategy-developer', 'research', 'Propose', 'p', ?, 'T0102', 'running')",
-            (json.dumps({"origin_mode": "crucible_planner", "action_kind": "propose_crucible"}),),
+            "VALUES ('strategy-developer', 'generate_strategies', 'Create', 'p', ?, 'T0102', 'running')",
+            (json.dumps({"origin_mode": "autonomous_creation"}),),
         )
 
     tokens = set_tool_context("strategy-developer", "T0102")
@@ -209,28 +206,6 @@ def test_propose_task_can_declare_feasibility_and_refine_can_update_it(forven_db
     ))
     assert updated["ok"] is True
     assert get_hypothesis(hypothesis_id)["feasibility"]["needs_cross_asset"] is False
-
-
-def test_assert_hypothesis_spawn_allowed_raises_when_limits_reached(monkeypatch):
-    tools_research = importlib.import_module("forven.agents.tools_research")
-
-    monkeypatch.setattr(
-        tools_research,
-        "get_hypothesis_spawn_stats",
-        lambda hypothesis_id: {
-            "spawned_in_current_run": 2,
-            "spawned_in_window": 2,
-            "per_run_limit": 2,
-            "rolling_window_limit": 6,
-        },
-    )
-
-    try:
-        tools_research.assert_hypothesis_spawn_allowed("HYP-123")
-    except ValueError as exc:
-        assert "per-run" in str(exc)
-    else:
-        raise AssertionError("expected per-run spawn limit failure")
 
 
 def test_strategy_developer_hypothesis_creation_normalizes_lane_and_source(monkeypatch, forven_db):
@@ -278,6 +253,7 @@ def test_strategy_developer_hypothesis_creation_normalizes_lane_and_source(monke
                 "title": "Legacy taxonomy candidate",
                 "market_thesis": "A legacy ideation label should normalize.",
                 "mechanism": "Normalize metadata before persistence.",
+                "disproof": "Metadata stays unnormalized.",
                 "lane": "research",
                 "source_type": "research_experiment",
                 "origin_agent_id": "quant-researcher",
@@ -350,6 +326,7 @@ def test_custom_strategy_agent_normalizes_origin_role_to_strategy_developer(monk
                 "title": "Custom strategy developer provenance",
                 "market_thesis": "Custom strategy agents should normalize to the canonical role.",
                 "mechanism": "Use the persisted agent role instead of the raw agent id.",
+                "disproof": "The raw agent id is stored as the role.",
                 "lane": "exploration",
                 "source_type": "agent_original",
                 "target_assets": ["BTC-PERP"],
@@ -766,7 +743,8 @@ def test_extrapolate_strategy_spec_tool_reconstructs_from_cached_artifact(forven
         _tool_attach_hypothesis_artifact,
         _tool_extrapolate_strategy_spec,
     )
-    from forven.hypotheses import create_hypothesis, list_hypothesis_data_gaps
+    from forven.db import get_db
+    from forven.hypotheses import create_hypothesis
 
     hyp = create_hypothesis(
         title="t", market_thesis="m", mechanism="x", why_now="n",
@@ -799,7 +777,11 @@ def test_extrapolate_strategy_spec_tool_reconstructs_from_cached_artifact(forven
     assert "exit" in res["inferred_fields"]
     assert res["claimed_edge"] == "RSI(2) reverts"
     assert res["recorded_gaps"] == ["exit"]
-    assert len(list_hypothesis_data_gaps(hyp["id"])) >= 1
+    with get_db() as conn:
+        linked_gaps = conn.execute(
+            "SELECT COUNT(*) FROM data_gap_links WHERE hypothesis_id = ?", (hyp["id"],)
+        ).fetchone()[0]
+    assert linked_gaps >= 1
 
     # record_gaps=False skips gap recording (no recorded_gaps key).
     _raw2 = _tool_extrapolate_strategy_spec({"hypothesis_id": hyp["id"], "record_gaps": False})

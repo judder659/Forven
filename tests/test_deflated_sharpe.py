@@ -106,76 +106,62 @@ def test_compute_strategy_dsr_best_effort(forven_db):
 
 # --- swarm-level trials factor (issue #17) -----------------------------------
 
-def _seed_hypothesis(hid: str, title: str, *, status: str, assets: list[str]):
-    import json
-
+def _seed_strategy(
+    sid: str,
+    *,
+    type_: str = "ema_cross",
+    symbol: str = "SOL/USDT",
+    stage: str = "gauntlet",
+    status_reason: str | None = None,
+    stage_changed_at: str | None = None,
+):
     from forven.db import get_db
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO hypotheses "
-            "(id,title,market_thesis,mechanism,target_assets,target_timeframes,lane,"
-            " source_type,status,manager_state,novelty_score,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
-            (hid, title, title, title, json.dumps(assets), json.dumps(["4h"]),
-             "momentum", "agent", status, "active", 0.5),
+            "INSERT INTO strategies (id, name, type, symbol, stage, status_reason, stage_changed_at,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,COALESCE(?, datetime('now')),"
+            " datetime('now'), datetime('now'))",
+            (sid, sid, type_, symbol, stage, status_reason, stage_changed_at),
         )
 
 
-def _seed_strategy(sid: str, *, hypothesis_id: str | None = None, origin_crucible_id: str | None = None):
-    from forven.db import get_db
-
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO strategies (id, name, hypothesis_id, origin_crucible_id) VALUES (?,?,?,?)",
-            (sid, sid, hypothesis_id, origin_crucible_id),
-        )
+def _seed_ema_cluster(survivor_id: str, failed: int):
+    """A SOL EMA survivor plus ``failed`` same-cluster siblings rejected on merit."""
+    _seed_strategy(survivor_id)
+    for i in range(failed):
+        _seed_strategy(f"SF{i}", stage="rejected")
 
 
-def _seed_ema_cluster(survivor_id: str, disproven: int):
-    _seed_hypothesis(survivor_id, "SOL EMA Cross Trend", status="proven", assets=["SOL"])
-    for i in range(disproven):
-        _seed_hypothesis(f"HD{i}", f"SOL EMA Variant {i}", status="disproven", assets=["SOL"])
-
-
-def test_swarm_cluster_attempts_counts_disproven_siblings(forven_db):
+def test_swarm_cluster_attempts_counts_failed_siblings(forven_db):
     from forven.gauntlet.deflated_sharpe import _swarm_cluster_attempts
 
-    _seed_ema_cluster("HS", disproven=2)
-    _seed_hypothesis("HX1", "BTC EMA Cross", status="disproven", assets=["BTC"])    # diff asset
-    _seed_hypothesis("HX2", "SOL RSI Momentum", status="disproven", assets=["SOL"])  # diff family
-    _seed_strategy("S1", hypothesis_id="HS")
+    _seed_ema_cluster("S1", failed=2)
+    _seed_strategy("SX1", symbol="BTC/USDT", stage="rejected")      # diff asset
+    _seed_strategy("SX2", type_="rsi_momentum", stage="rejected")   # diff family
+    _seed_strategy("SX3", stage="archived", status_reason="untestable:no_signal: 0 trades")
+    _seed_strategy("SX4", stage="archived", status_reason="failed walk-forward")  # merit
+    _seed_strategy("SX5", stage="paper")                              # still alive
 
-    assert _swarm_cluster_attempts("S1", 0) == 2
-
-
-def test_swarm_cluster_attempts_origin_crucible_fallback(forven_db):
-    from forven.gauntlet.deflated_sharpe import _swarm_cluster_attempts
-
-    _seed_ema_cluster("HS", disproven=1)
-    _seed_strategy("S1", origin_crucible_id="HS")  # linked via crucible, not hypothesis_id
-
-    assert _swarm_cluster_attempts("S1", 0) == 1
+    assert _swarm_cluster_attempts("S1", 0) == 3
 
 
 def test_swarm_cluster_attempts_fail_open(forven_db):
     from forven.gauntlet.deflated_sharpe import _swarm_cluster_attempts
 
-    _seed_strategy("S-nolink")
-    assert _swarm_cluster_attempts("S-nolink", 0) == 0  # no hypothesis link -> no penalty
-    assert _swarm_cluster_attempts("missing", 0) == 0   # unknown strategy -> no penalty
+    _seed_strategy("S-unplaced", type_="mystery_thing")
+    _seed_strategy("SF0", type_="mystery_thing", stage="rejected")
+    assert _swarm_cluster_attempts("S-unplaced", 0) == 0  # no family -> no penalty
+    assert _swarm_cluster_attempts("missing", 0) == 0     # unknown strategy -> no penalty
 
 
 def test_swarm_cluster_attempts_respects_lookback_window(forven_db):
-    from forven.db import get_db
     from forven.gauntlet.deflated_sharpe import _swarm_cluster_attempts
 
-    _seed_ema_cluster("HS", disproven=1)
-    _seed_strategy("S1", hypothesis_id="HS")
-    with get_db() as conn:
-        conn.execute("UPDATE hypotheses SET updated_at = '2020-01-01T00:00:00+00:00' WHERE id = 'HD0'")
+    _seed_strategy("S1")
+    _seed_strategy("SF0", stage="rejected", stage_changed_at="2020-01-01T00:00:00+00:00")
 
-    assert _swarm_cluster_attempts("S1", 30) == 0  # disproven outside the window
+    assert _swarm_cluster_attempts("S1", 30) == 0  # failed outside the window
     assert _swarm_cluster_attempts("S1", 0) == 1   # 0 = unbounded
 
 
@@ -198,9 +184,8 @@ def _seed_backtest_rows(sid: str, opt_trials: int):
 def test_compute_strategy_dsr_applies_swarm_factor(forven_db, monkeypatch):
     from forven.gauntlet.deflated_sharpe import compute_strategy_dsr
 
-    _seed_ema_cluster("HS", disproven=3)
-    _seed_strategy("S-swarm", hypothesis_id="HS")
-    _seed_strategy("S-solo")  # same returns/trials, no hypothesis link
+    _seed_ema_cluster("S-swarm", failed=3)
+    _seed_strategy("S-solo", symbol="BTC/USDT")  # same returns/trials, no failed siblings
     _seed_backtest_rows("S-swarm", opt_trials=10)
     _seed_backtest_rows("S-solo", opt_trials=10)
 
@@ -217,7 +202,7 @@ def test_compute_strategy_dsr_applies_swarm_factor(forven_db, monkeypatch):
     assert solo["trials_source"] == "optimization_result"
     assert swarm["n_trials_base"] == 10
     assert swarm["swarm_cluster_attempts"] == 3
-    assert swarm["n_trials"] == 40  # 10 optimizer x (1 survivor + 3 disproven siblings)
+    assert swarm["n_trials"] == 40  # 10 optimizer x (1 survivor + 3 failed siblings)
     assert swarm["trials_source"] == "optimization_result+swarm"
     assert swarm["dsr"] <= solo["dsr"]  # more effective trials -> more deflation
 
@@ -225,8 +210,7 @@ def test_compute_strategy_dsr_applies_swarm_factor(forven_db, monkeypatch):
 def test_compute_strategy_dsr_swarm_knob_off(forven_db, monkeypatch):
     from forven.gauntlet.deflated_sharpe import compute_strategy_dsr
 
-    _seed_ema_cluster("HS", disproven=3)
-    _seed_strategy("S-swarm", hypothesis_id="HS")
+    _seed_ema_cluster("S-swarm", failed=3)
     _seed_backtest_rows("S-swarm", opt_trials=10)
 
     trades = [{"net_pnl_pct": r} for r in _STRONG]

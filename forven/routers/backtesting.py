@@ -8,7 +8,7 @@ from forven import api_core as core
 from forven.api_domains import data as data_domain
 from forven.api_security import require_operator_access
 from forven.db import create_strategy_container, get_db, parent_strategy_lineage_error
-from forven.hypotheses import get_hypothesis_spawn_stats, require_hypothesis
+from forven.hypotheses import require_hypothesis
 from forven.strategies.certification import (
     EXECUTION_CERTIFIED_FAMILIES,
     certification_status_reason,
@@ -74,20 +74,13 @@ def create_backtesting_strategy(
 
     strategy_symbol = str(data.get("symbol", symbol) or "").upper()
     strategy_timeframe = str(data.get("timeframe", timeframe) or "1h")
-    linked_hypothesis_id = str(data.get("hypothesis_id", hypothesis_id) or "").strip()
+    linked_hypothesis_id = str(data.get("hypothesis_id", hypothesis_id) or "").strip() or None
     parent_strategy_id = str(data.get("parent_strategy_id") or "").strip() or None
-    if not linked_hypothesis_id:
-        raise HTTPException(status_code=422, detail="hypothesis_id is required for new strategies")
-    try:
-        linked_hypothesis_id = str(require_hypothesis(linked_hypothesis_id)["id"])
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    spawn_stats = get_hypothesis_spawn_stats(linked_hypothesis_id)
-    if spawn_stats["spawned_in_current_run"] >= spawn_stats["per_run_limit"]:
-        raise HTTPException(status_code=422, detail="Hypothesis reached per-run strategy spawn limit.")
-    if spawn_stats["spawned_in_window"] >= spawn_stats["rolling_window_limit"]:
-        raise HTTPException(status_code=422, detail="Hypothesis reached rolling strategy spawn limit.")
+    if linked_hypothesis_id:
+        try:
+            linked_hypothesis_id = str(require_hypothesis(linked_hypothesis_id)["id"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     strategy_params = data.get("params")
     if strategy_params is None:
@@ -134,7 +127,7 @@ def create_backtesting_strategy(
                     f"unknown_symbol: {strategy_symbol!r} is not a resolvable market "
                     "symbol (expected e.g. 'BTC/USDT' or a bare base asset). The "
                     "strategy was NOT created — do not substitute a proxy symbol; "
-                    "if the required substrate has no dataset, leave the hypothesis "
+                    "if the required substrate has no dataset, leave the idea "
                     "without a strategy until the data exists."
                 ),
             )
@@ -226,7 +219,7 @@ def create_backtesting_strategy(
         note_lines.append(f"Untestable — created in the graveyard: {status_reason}")
 
     with get_db() as conn:
-        lineage_error = parent_strategy_lineage_error(conn, parent_strategy_id, linked_hypothesis_id)
+        lineage_error = parent_strategy_lineage_error(conn, parent_strategy_id)
         if lineage_error:
             raise HTTPException(status_code=422, detail=f"{lineage_error}. The strategy was NOT created.")
         strategy_id, _display_id, _base_id = create_strategy_container(

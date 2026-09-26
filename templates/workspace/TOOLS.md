@@ -18,7 +18,7 @@ The tool list and schemas supplied for the current agent/task are authoritative.
 - `read_file` reads workspace-relative files. It is not arbitrary repository access.
 - `write_file` writes permitted notes/artifacts under the workspace. Preserve existing notes; respect protected files and allowed suffixes.
 - `run_code` is a guarded numeric scratchpad, not an application/database/network inspection environment.
-- `register_strategy` validates code and registers a candidate linked to a real hypothesis. Confirm the returned container ID; file creation alone is insufficient.
+- `register_strategy` validates code and registers a candidate linked to its idea (hypothesis_id). Confirm the returned container ID; file creation alone is insufficient.
 - `request_fix` records a bug report for operator triage. It does not open an approval, dispatch an automatic engineer task, or modify code.
 
 ## External development harness

@@ -5,59 +5,22 @@ import importlib
 from forven.db import init_db
 from forven.research_contract import (
     build_research_contract,
-    choose_research_lane,
     default_research_settings,
+    get_effective_research_settings,
 )
 
+_RETIRED_KEYS = ("hypothesis_discipline", "lane_weights", "spawn_limits", "memory_modes", "autonomous_discovery")
 
-def test_default_research_settings_enable_public_benchmarking():
+
+def test_default_research_settings_enable_public_benchmarking_and_creation_budget():
     settings = default_research_settings()
 
     assert settings["external_benchmarking_enabled"] is True
-    assert settings["lane_weights"] == {
-        "exploration": 0.3,
-        "exploitation": 0.5,
-        "benchmarking": 0.2,
-    }
-    assert settings["spawn_limits"] == {"per_run": 3, "rolling_window": 8, "window_days": 7}
-
-
-def test_choose_research_lane_uses_lane_weights():
-    settings = default_research_settings()
-
-    lanes = [choose_research_lane(settings=settings, cycle_index=index) for index in range(10)]
-
-    assert lanes.count("exploration") == 3
-    assert lanes.count("exploitation") == 5
-    assert lanes.count("benchmarking") == 2
-
-
-def test_choose_research_lane_skips_zero_weight_lanes():
-    settings = default_research_settings()
-    settings["lane_weights"] = {
-        "exploration": 1.0,
-        "exploitation": 0.0,
-        "benchmarking": 0.0,
-    }
-
-    lanes = [choose_research_lane(settings=settings, cycle_index=index) for index in range(12)]
-
-    assert lanes == ["exploration"] * 12
-
-
-def test_choose_research_lane_falls_back_to_default_mix_when_all_weights_are_zero():
-    settings = default_research_settings()
-    settings["lane_weights"] = {
-        "exploration": 0.0,
-        "exploitation": 0.0,
-        "benchmarking": 0.0,
-    }
-
-    lanes = [choose_research_lane(settings=settings, cycle_index=index) for index in range(10)]
-
-    assert lanes.count("exploration") == 3
-    assert lanes.count("exploitation") == 5
-    assert lanes.count("benchmarking") == 2
+    assert settings["strategy_creation_daily_budget"] == 40
+    assert settings["strategy_creation_max_in_flight"] == 2
+    assert settings["candidate_min_feed_coverage_pct"] == 50
+    for key in _RETIRED_KEYS:
+        assert key not in settings
 
 
 def test_exploration_contract_keeps_constraint_memory_and_optional_inspiration():
@@ -83,27 +46,6 @@ def test_exploration_contract_keeps_constraint_memory_and_optional_inspiration()
         "paper",
     ]
     assert contract.novelty_threshold == 0.65
-    assert contract.spawn_limits == {"per_run": 3, "rolling_window": 8, "window_days": 7}
-
-
-def test_contract_merges_partial_memory_mode_overrides_with_lane_defaults():
-    settings = default_research_settings()
-    settings["memory_modes"] = {
-        "benchmarking": {
-            "inspiration_memory": "optional",
-        }
-    }
-
-    contract = build_research_contract(
-        lane="benchmarking",
-        settings=settings,
-        available_datasets=["ohlcv"],
-    )
-
-    assert contract.memory_mode == {
-        "constraint_memory": True,
-        "inspiration_memory": "optional",
-    }
 
 
 def test_benchmarking_contract_allows_external_sources_when_enabled():
@@ -116,6 +58,38 @@ def test_benchmarking_contract_allows_external_sources_when_enabled():
     assert contract.external_sources_allowed is True
     assert contract.memory_mode["inspiration_memory"] == "bounded"
     assert contract.novelty_threshold == 0.35
+
+
+def test_effective_settings_drop_retired_crucible_blocks():
+    stored = {
+        "research_settings": {
+            "hypothesis_discipline": {"active_pool_cap": 7, "crucible_daily_develop_budget": 2000},
+            "lane_weights": {"exploration": 1.0},
+            "spawn_limits": {"per_run": 9},
+            "memory_modes": {"exploration": {"inspiration_memory": "bounded"}},
+            "autonomous_discovery": {"enabled": True},
+            "strategy_creation_daily_budget": 5,
+        }
+    }
+
+    effective = get_effective_research_settings(stored)
+
+    for key in _RETIRED_KEYS:
+        assert key not in effective
+    assert effective["strategy_creation_daily_budget"] == 5
+
+
+def test_feed_coverage_threshold_moves_out_of_the_retired_block():
+    legacy = {"research_settings": {"hypothesis_discipline": {"candidate_min_feed_coverage_pct": 70}}}
+    assert get_effective_research_settings(legacy)["candidate_min_feed_coverage_pct"] == 70
+
+    both = {
+        "research_settings": {
+            "hypothesis_discipline": {"candidate_min_feed_coverage_pct": 70},
+            "candidate_min_feed_coverage_pct": 30,
+        }
+    }
+    assert get_effective_research_settings(both)["candidate_min_feed_coverage_pct"] == 30
 
 
 def test_seed_default_research_settings_adds_missing_defaults(tmp_path, monkeypatch):
@@ -143,7 +117,7 @@ def test_seed_default_research_settings_adds_missing_defaults(tmp_path, monkeypa
     assert written["forven:settings"]["research_settings"] == default_research_settings()
 
 
-def test_seed_default_research_settings_deep_merges_lane_memory_defaults(tmp_path, monkeypatch):
+def test_seed_default_research_settings_drops_stored_retired_blocks(tmp_path, monkeypatch):
     monkeypatch.setenv("FORVEN_DB_PATH", str(tmp_path / "forven.db"))
     init_db()
     from forven import api_core
@@ -156,11 +130,8 @@ def test_seed_default_research_settings_deep_merges_lane_memory_defaults(tmp_pat
             return {
                 "exchange": "hyperliquid",
                 "research_settings": {
-                    "memory_modes": {
-                        "benchmarking": {
-                            "inspiration_memory": "optional",
-                        }
-                    }
+                    "memory_modes": {"benchmarking": {"inspiration_memory": "optional"}},
+                    "hypothesis_discipline": {"candidate_min_feed_coverage_pct": 65},
                 },
             }
         return default
@@ -173,11 +144,6 @@ def test_seed_default_research_settings_deep_merges_lane_memory_defaults(tmp_pat
 
     payload = api_core.seed_default_research_settings()
 
-    assert payload["research_settings"]["memory_modes"]["benchmarking"] == {
-        "constraint_memory": True,
-        "inspiration_memory": "optional",
-    }
-    assert written["forven:settings"]["research_settings"]["memory_modes"]["benchmarking"] == {
-        "constraint_memory": True,
-        "inspiration_memory": "optional",
-    }
+    for key in _RETIRED_KEYS:
+        assert key not in payload["research_settings"]
+    assert payload["research_settings"]["candidate_min_feed_coverage_pct"] == 65

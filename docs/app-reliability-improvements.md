@@ -8,12 +8,12 @@ and forward execution more explicitly, while making stalled work easier to diagn
 - Creator revisions retain their selected market, timeframe, parameters and execution
   settings when handed to Forge. Input preflight explains known missing feeds before
   generation; it does not certify an arbitrary strategy's quality or tradability.
-- Crucible intake exposes actionable input and creation failures, improves dialog
-  focus and scrolling, and keeps candidate outcomes separate from agent task counts.
+- The Lab's Submit idea dialog reports input, fetch and queueing failures, keeps focus
+  and scrolling usable, and queues a strategy-creation task for the operator's idea.
 - Gauntlet work uses bounded workers, durable history, cancellation and retry checks,
   and recovery paths that preserve failed evidence rather than inventing a pass.
-- The research queue can resume eligible candidates that stopped before model or
-  tool execution once their required data becomes available.
+- A strategy-creation task that registered its strategy before a restart or tool limit
+  is recovered as complete instead of being run again.
 
 ## Execution evidence
 

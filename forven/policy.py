@@ -228,13 +228,13 @@ DEFAULT_PIPELINE_CONFIG = {
         "deflated_sharpe_gate_enabled": False,
         "min_deflated_sharpe": 0.90,
         "deflated_sharpe_default_trials": 50,
-        # Swarm-level selection bias (issue #17): the swarm tries many sibling
-        # hypotheses per idea-cluster (family x asset) and only survivors reach
+        # Swarm-level selection bias (issue #17): the agents try many sibling
+        # strategies per idea-cluster (family x asset) and only survivors reach
         # the gauntlet, so the per-strategy optimizer trial count understates the
         # true selection pressure. When enabled, DSR n_trials is multiplied by
-        # (1 + disproven same-cluster hypotheses within the lookback window;
-        # 0 = unbounded). Safe to leave on: it only changes the computed DSR —
-        # the reject gate above stays opt-in.
+        # (1 + same-cluster siblings that failed on merit within the lookback
+        # window; 0 = unbounded). Safe to leave on: it only changes the computed
+        # DSR — the reject gate above stays opt-in.
         "dsr_swarm_trials_enabled": True,
         "dsr_swarm_lookback_days": 90,
     },

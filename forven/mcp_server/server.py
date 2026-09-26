@@ -664,25 +664,24 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         ),
     )
     def forven_create_strategy(
-        hypothesis_id: str,
         strategy_type: str,
         symbol: str,
         timeframe: str,
         parameters: dict[str, Any],
         name: str = "",
+        hypothesis_id: str | None = None,
     ) -> dict[str, Any]:
-        return forven.post(
-            "/api/backtesting/strategies",
-            {
-                "hypothesis_id": hypothesis_id,
-                "type": strategy_type,
-                "strategy_type": strategy_type,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "params": parameters,
-                "name": name,
-            },
-        )
+        body: dict[str, Any] = {
+            "type": strategy_type,
+            "strategy_type": strategy_type,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "params": parameters,
+            "name": name,
+        }
+        if hypothesis_id:
+            body["hypothesis_id"] = hypothesis_id
+        return forven.post("/api/backtesting/strategies", body)
 
     @server.tool(
         name="forven_run_optimization",

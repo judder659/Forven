@@ -33,9 +33,7 @@ log = logging.getLogger("forven.scheduler")
 
 
 _DEFAULT_JOB_IDS = {
-    "forven-crucible-planner",
-    "forven-crucible-discovery",
-    "forven-ideation-daily",
+    "forven-strategy-creation",
     "forven-testing-cycle",
     "forven-paper-graduation",
     "forven-risk-audit",
@@ -89,10 +87,6 @@ _DEFAULT_JOB_IDS = {
     # above is exactly this omission, and it has silently deleted seeded jobs twice.
     "forven-db-backup",
     "forven-capital-slot-dedupe",
-    "forven-hypothesis-verdict-loop",
-    "forven-hypothesis-promotion-loop",
-    "forven-hypothesis-revisit-pass",
-    "forven-hypothesis-unstarted-ageout",
     "forven-gauntlet-step-loop",
     "forven-phantom-sweep",
     "forven-param-optimization",
@@ -144,9 +138,6 @@ def _default_job_ids() -> set[str]:
     return ids
 
 
-_SUPERSEDED_CRUCIBLE_AGENT_JOB_IDS = {
-    "forven-ideation-daily",
-}
 _LEGACY_DEFAULT_JOB_PREFIXES = ("juddex-",)
 # P1-5: Unified timeout source of truth.
 # Agent task timeout MUST exceed evolution testing timeout to prevent orphaned runs.
@@ -165,8 +156,6 @@ _STALE_RECOVERY_MINUTES = recommended_stale_recovery_minutes()
 _DATA_MANAGER_JOB_TIMEOUT_SECONDS = 60
 _DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS = 150
 _DAILY_LEARNING_HARD_TIMEOUT_SECONDS = 120
-_CRUCIBLE_PLANNER_INTERVAL_SECONDS = 5 * 60
-_CRUCIBLE_PLANNER_LIMIT = 5
 
 _DATA_MANAGER_TIMEOUT_DEFAULTS = {
     "data_manager_collect_ohlcv": float(_DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS),
@@ -208,9 +197,7 @@ _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS: dict[str, dict[str, object]] = {
 # Jobs that can be deferred when a user is actively running tests.
 # Critical jobs (scanner-hourly, risk-audit, slippage-monitor) still run.
 _DEFERRABLE_JOBS = {
-    "forven-crucible-planner",
-    "forven-crucible-discovery",
-    "forven-ideation-daily",
+    "forven-strategy-creation",
     "forven-testing-cycle",
     "forven-paper-graduation",
     "forven-decay-tracker",
@@ -221,18 +208,14 @@ _DEFERRABLE_JOBS = {
     "forven-quant-skills-consolidation",
 }
 _GENERATION_JOB_IDS = {
-    "forven-crucible-planner",
-    "forven-crucible-discovery",
-    "forven-ideation-daily",
+    "forven-strategy-creation",
     "forven-testing-cycle",
     "forven-auto-intake",
 }
 # Jobs that CREATE new work — blocked when pipeline is saturated.
 # Testing is NOT included because it DRAINS the backlog.
 _PIPELINE_INTAKE_JOB_IDS = {
-    "forven-crucible-planner",
-    "forven-crucible-discovery",
-    "forven-ideation-daily",
+    "forven-strategy-creation",
     "forven-auto-intake",
 }
 # Backpressure gates only jobs that CREATE work. The scanner jobs
@@ -256,15 +239,12 @@ _BACKGROUND_SCHEDULER_JOB_KINDS = {
     # heavy work off the inline due-job drain so it cannot hold the critical
     # execution scanner behind it.
     "evolution_graduation",
-    "crucible_planner",
     "param_optimization",
     "data_manager_backfill",
     "data_engine_catchup",  # network-heavy drain job: must run concurrently, not
     # inline — inline a slow/hung run blocks the due-job loop and holds up every
     # other inline job behind it (scanner, phantom recovery, validation cycle).
     "gauntlet_step_loop",
-    "hypothesis_promotion_loop",
-    "hypothesis_verdict_loop",
 }
 _SCHEDULER_BACKGROUND_TASKS: set[asyncio.Task] = set()
 _SCHEDULER_BACKGROUND_JOB_IDS: set[str] = set()
@@ -426,18 +406,6 @@ def _load_runtime_scheduler_tuning() -> dict[str, int | bool]:
         "throughput_auto_scheduler_control": _coerce_bool(
             settings.get("throughput_auto_scheduler_control"),
             True,
-        ),
-        "crucible_planner_interval_minutes": _coerce_int(
-            settings.get("crucible_planner_interval_minutes"),
-            _CRUCIBLE_PLANNER_INTERVAL_SECONDS // 60,
-            1,
-            1440,
-        ),
-        "crucible_planner_limit": _coerce_int(
-            settings.get("crucible_planner_limit"),
-            _CRUCIBLE_PLANNER_LIMIT,
-            1,
-            100,
         ),
         # Fallbacks come from the shared single-source constants (they used to be
         # hardcoded 15/15/5 here — dead in practice, since startup seeding persists
@@ -630,11 +598,7 @@ def _apply_runtime_scheduler_overrides() -> int:
         return 0
 
     overrides = {
-        "forven-crucible-planner": (
-            "interval",
-            _runtime_interval_expr(int(tuning["crucible_planner_interval_minutes"])),
-        ),
-        "forven-ideation-daily": ("interval", _runtime_interval_expr(int(tuning["ideation_interval_minutes"]))),
+        "forven-strategy-creation": ("interval", _runtime_interval_expr(int(tuning["ideation_interval_minutes"]))),
         "forven-testing-cycle": ("interval", _runtime_interval_expr(int(tuning["testing_interval_minutes"]))),
         "forven-paper-graduation": ("interval", _runtime_interval_expr(int(tuning["graduation_interval_minutes"]))),
         "forven-scanner-signal": ("interval", _runtime_interval_expr(int(tuning["scanner_signal_interval_minutes"]))),
@@ -653,13 +617,6 @@ def _apply_runtime_scheduler_overrides() -> int:
             current_type = str(row["schedule_type"] or "").strip().lower()
             current_expr = str(row["schedule_expr"] or "").strip()
             payload_update = None
-            if job_id == "forven-crucible-planner":
-                payload = json.loads(row["payload"] or "{}")
-                if isinstance(payload, dict):
-                    desired_limit = int(tuning["crucible_planner_limit"])
-                    if int(payload.get("limit") or 0) != desired_limit:
-                        payload["limit"] = desired_limit
-                        payload_update = json.dumps(payload, separators=(",", ":"))
             if current_type == schedule_type and current_expr == schedule_expr and payload_update is None:
                 continue
             timezone_name = str(row["timezone"] or "UTC")
@@ -1128,15 +1085,13 @@ def _job_running_stale_seconds(job: dict) -> int:
             kind,
             payload.get("timeout_seconds") if isinstance(payload, dict) else None,
         )
-    elif kind in {"crucible_planner", "hypothesis_promotion_loop"}:
-        timeout_seconds = 90
-    elif kind in {"hypothesis_verdict_loop", "gauntlet_step_loop"}:
+    elif kind == "strategy_creation":
+        timeout_seconds = 60
+    elif kind == "gauntlet_step_loop":
         timeout_seconds = 5 * 60
     elif kind in {
         "brain_invoke",
         "daily_learning",
-        "evolution_ideation",
-        "evolution_coding",
         "evolution_graduation",
         "evolution_review",
         "risk_audit",
@@ -1481,26 +1436,11 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             await run_daily_learning()
             return "ok", None
 
-        # Crucible planner - unified broad autonomous work router
-        if kind == "crucible_planner":
-            from forven.crucible_planner import run_crucible_planner_cycle
-            limit = _coerce_int(payload.get("limit"), 3, 1, 100) if isinstance(payload, dict) else 3
-            await _run_sync_job(run_crucible_planner_cycle, limit=limit, timeout_seconds=90)
-            return "ok", None
-
-        # Crucible discovery - autonomous external-source harvesting (no-ops unless
-        # the autonomous_discovery.enabled setting is on; default OFF).
-        if kind == "crucible_discovery":
-            from forven.crucible_discovery import run_crucible_discovery
-            await _run_sync_job(run_crucible_discovery, timeout_seconds=60)
-            return "ok", None
-
-        # Evolution pipeline steps. The broad ideation/coding cycles are retired;
-        # an (always force-disabled, but manually runnable) ideation job routes
-        # straight to the crucible planner.
-        if kind in {"evolution_ideation", "evolution_coding"}:
-            from forven.crucible_planner import run_crucible_planner_cycle
-            await _run_sync_job(run_crucible_planner_cycle, limit=3)
+        # Strategy creation - queue one idea-to-strategy task for the
+        # strategy-developer when the daily budget and in-flight cap allow.
+        if kind == "strategy_creation":
+            from forven.strategy_creation import run_creation_cycle
+            await _run_sync_job(run_creation_cycle, timeout_seconds=60)
             return "ok", None
 
         if kind == "evolution_testing":
@@ -2192,13 +2132,6 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 )
             return "ok", None
 
-        # Hypothesis verdict loop — LLM reads child metrics and writes a memo
-        if kind == "hypothesis_verdict_loop":
-            from forven.hypothesis_verdict import run_verdict_loop
-            max_per_tick = int(payload.get("max_per_tick", 10)) if isinstance(payload, dict) else 10
-            await _run_sync_job(run_verdict_loop, max_per_tick=max_per_tick, timeout_seconds=300)
-            return "ok", None
-
         # Gauntlet step loop — advance every non-terminal gauntlet workflow
         # by one step. Without this, workflows created at quick_screen
         # promotion sit in `pending` forever because the only other caller
@@ -2242,34 +2175,6 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             from forven.phantom_recovery import run_phantom_recovery_sweep
             limit = int(payload.get("limit", 5)) if isinstance(payload, dict) else 5
             await _run_sync_job(run_phantom_recovery_sweep, limit=limit, timeout_seconds=120)
-            return "ok", None
-
-        # Hypothesis promotion loop — pick top-K promising and dispatch research
-        if kind == "hypothesis_promotion_loop":
-            from forven.hypothesis_promotion import run_promotion_loop
-            top_k = int(payload.get("top_k", 3)) if isinstance(payload, dict) else 3
-            max_in_flight = int(payload.get("max_in_flight", 5)) if isinstance(payload, dict) else 5
-            await _run_sync_job(
-                run_promotion_loop,
-                top_k=top_k,
-                max_in_flight=max_in_flight,
-                timeout_seconds=90,
-            )
-            return "ok", None
-
-        # Hypothesis revisit pass — move graduated hypotheses back to active when due
-        if kind == "hypothesis_revisit_pass":
-            from forven.hypothesis_revisit import run_revisit_pass
-            await _run_sync_job(run_revisit_pass)
-            return "ok", None
-
-        # Unstarted age-out drain — archive 'proposed' crucibles that never started
-        # (no live strategies, no in-flight task, idle past unstarted_ageout_days) so
-        # the active pool reflects real research instead of an idle proposal backlog.
-        if kind == "hypothesis_unstarted_ageout":
-            from forven.hypothesis_cleanup import run_unstarted_ageout_pass
-            batch_size = int(payload.get("batch_size", 50)) if isinstance(payload, dict) else 50
-            await _run_sync_job(run_unstarted_ageout_pass, batch_size=batch_size)
             return "ok", None
 
         # Overnight Pipeline Summary
@@ -3033,12 +2938,6 @@ def seed_forven_jobs():
     tuning = _load_runtime_scheduler_tuning()
     auto_cadence = bool(tuning.get("throughput_auto_scheduler_control"))
 
-    ideation_schedule_type = "interval" if auto_cadence else "cron"
-    ideation_schedule_expr = (
-        _runtime_interval_expr(int(tuning["ideation_interval_minutes"]))
-        if auto_cadence
-        else "0 9 * * *"
-    )
     # (Daily Coding Cycle retired — its schedule is no longer computed/registered.)
     testing_schedule_expr = (
         _runtime_interval_expr(int(tuning["testing_interval_minutes"]))
@@ -3048,19 +2947,17 @@ def seed_forven_jobs():
     scanner_signal_schedule_expr = _runtime_interval_expr(int(tuning["scanner_signal_interval_minutes"]))
     scanner_execution_schedule_expr = _runtime_interval_expr(int(tuning["scanner_execution_interval_minutes"]))
 
-    # 1. Ideation Cycle — Daily at 9 AM (Quant Researcher)
+    # 1. Strategy creation — the strategy-developer writes an idea and builds
+    # strategies from it. The cadence follows the ideation throughput setting;
+    # the daily budget and in-flight cap (research settings) bound the volume.
     add_job(
-        job_id="forven-ideation-daily",
-        name="Daily Ideation Cycle",
-        schedule_type=ideation_schedule_type,
-        schedule_expr=ideation_schedule_expr,
-        command="ideation-cycle",
-        timezone_str="UTC" if auto_cadence else "America/Halifax",
-        payload={
-            "kind": "evolution_ideation",
-            "provider": "openai",
-            "model": default_openai_model,
-        },
+        job_id="forven-strategy-creation",
+        name="Strategy Creation",
+        schedule_type="interval",
+        schedule_expr=_runtime_interval_expr(int(tuning["ideation_interval_minutes"])),
+        command="strategy-creation",
+        timezone_str="UTC",
+        payload={"kind": "strategy_creation"},
     )
 
     # 1.5. Daily Coding Cycle — RETIRED. The autonomous code-modification path
@@ -3068,34 +2965,6 @@ def seed_forven_jobs():
     # not registered: a mature system fixes its own code through the normal
     # human / Claude-Code dev workflow (PRs + review + tests). Agents still
     # surface defects via request_fix -> the operator bug-triage queue.
-
-    # 1.75. Crucible Planner - unified broad autonomous work router
-    add_job(
-        job_id="forven-crucible-planner",
-        name="Crucible Planner",
-        schedule_type="interval",
-        schedule_expr=_runtime_interval_expr(int(tuning["crucible_planner_interval_minutes"])),
-        command="crucible-planner",
-        timezone_str="UTC",
-        payload={
-            "kind": "crucible_planner",
-            "limit": int(tuning["crucible_planner_limit"]),
-        },
-    )
-
-    # 1.8. Crucible Discovery - autonomous external-source harvesting. The job is
-    # always seeded but no-ops unless the autonomous_discovery.enabled setting is
-    # on (default OFF = operator-approves), so it's wired without surprising the
-    # operator with unattended harvesting.
-    add_job(
-        job_id="forven-crucible-discovery",
-        name="Crucible Discovery",
-        schedule_type="interval",
-        schedule_expr="3600000",  # hourly
-        command="crucible-discovery",
-        timezone_str="UTC",
-        payload={"kind": "crucible_discovery"},
-    )
 
     # 2. Testing & Validation Check — Every 1 hour (Simulation Agent)
     add_job(
@@ -3722,67 +3591,6 @@ def seed_forven_jobs():
         payload={"kind": "hl_venue_collect", "timeout_seconds": 180},
     )
 
-    # 23. Hypothesis verdict loop — every 5 min. Without this the active-pool
-    # cap silently traps the system: hypotheses never receive verdicts, never
-    # graduate, never free their slot — so new hypotheses are refused.
-    add_job(
-        job_id="forven-hypothesis-verdict-loop",
-        name="Hypothesis verdict loop (LLM memo trigger)",
-        schedule_type="interval",
-        schedule_expr="300000",
-        command="hypothesis_verdict_loop",
-        timezone_str="UTC",
-        payload={"kind": "hypothesis_verdict_loop", "max_per_tick": 10},
-    )
-
-    # 24. Hypothesis promotion loop — every 5 min. Picks top-K promising
-    # hypotheses and dispatches one strategy-developer research task each.
-    add_job(
-        job_id="forven-hypothesis-promotion-loop",
-        name="Hypothesis promotion loop (pick top-K and dispatch)",
-        schedule_type="interval",
-        schedule_expr="300000",
-        command="hypothesis_promotion_loop",
-        timezone_str="UTC",
-        payload={"kind": "hypothesis_promotion_loop", "top_k": 3, "max_in_flight": 5},
-    )
-
-    with get_db() as conn:
-        conn.execute(
-            """
-            UPDATE scheduler_jobs
-            SET enabled = 1
-            WHERE id = 'forven-hypothesis-promotion-loop'
-            """,
-        )
-
-    # 25. Hypothesis revisit pass — daily. Moves graduated hypotheses back to
-    # active when the revisit interval elapses.
-    add_job(
-        job_id="forven-hypothesis-revisit-pass",
-        name="Hypothesis revisit pass (graduated -> active when due)",
-        schedule_type="interval",
-        schedule_expr="86400000",
-        command="hypothesis_revisit_pass",
-        timezone_str="UTC",
-        payload={"kind": "hypothesis_revisit_pass"},
-    )
-
-    # 25b. Unstarted age-out drain — every 6h. The active-pool cap is insert-time
-    # only, so without a healthy drain the pool fills with 'proposed' crucibles that
-    # never start (no live strategies, never dispatched) and can only leave via
-    # pool-pressure eviction. This archives those after unstarted_ageout_days so the
-    # pool reflects real research, not an idle backlog (2026-06-05 remediation).
-    add_job(
-        job_id="forven-hypothesis-unstarted-ageout",
-        name="Hypothesis unstarted age-out (drain never-started proposals)",
-        schedule_type="interval",
-        schedule_expr="21600000",
-        command="hypothesis_unstarted_ageout",
-        timezone_str="UTC",
-        payload={"kind": "hypothesis_unstarted_ageout", "batch_size": 50},
-    )
-
     # 26. Gauntlet workflow advancer — every 2 min. Without this, gauntlet
     # workflows created at quick_screen promotion sit `pending` forever:
     # the only other caller of resume_workflow is the manual HTTP router.
@@ -3802,12 +3610,6 @@ def seed_forven_jobs():
             "max_workflows": int(tuning["gauntlet_step_loop_max_workflows"]),
         },
     )
-
-    with get_db() as conn:
-        conn.execute(
-            f"UPDATE scheduler_jobs SET enabled = 0 WHERE id IN ({','.join('?' for _ in _SUPERSEDED_CRUCIBLE_AGENT_JOB_IDS)})",
-            tuple(_SUPERSEDED_CRUCIBLE_AGENT_JOB_IDS),
-        )
     log.info("Seeded Forven Continuous Learning jobs")
 
 
