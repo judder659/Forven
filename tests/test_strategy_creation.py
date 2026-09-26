@@ -339,6 +339,26 @@ def test_autonomous_tasks_cannot_repeat_a_recent_idea(auto_mode, running_task):
     assert duplicate["error_code"] == "duplicate_hypothesis"
 
 
+def test_a_renamed_strategy_developer_keeps_its_creation_tools(forven_db):
+    """Core agents get their role from their id, not from editable name/role text."""
+    import forven.agents.tools_backtesting  # noqa: F401 - registers the tools
+    import forven.agents.tools_research  # noqa: F401 - registers the tools
+    from forven.agents.instructions import AGENT_INSTRUCTIONS
+    from forven.agents.manager import create_agent
+    from forven.agents.runner import _tools_context_for_task_type
+    from forven.agents.tool_registry import get_tools_for_agent
+
+    create_agent(
+        agent_id="strategy-developer",
+        name="Strat Dev",
+        role=AGENT_INSTRUCTIONS["strategy-developer"]["role"],
+    )
+    context = _tools_context_for_task_type("generate_strategies")
+    names = {tool["name"] for tool in get_tools_for_agent("strategy-developer", context=context)}
+
+    assert {"create_hypothesis", "register_strategy", "forven_create_strategy"} <= names
+
+
 def test_register_strategy_in_a_creation_task_needs_an_idea(auto_mode, running_task):
     from forven.agents.tools_backtesting import _MISSING_IDEA_ERROR, _tool_register_strategy
 
