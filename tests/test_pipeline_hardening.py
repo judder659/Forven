@@ -2767,9 +2767,9 @@ def test_failure_tier_classification():
 # ── PASS 3 TESTS: Scheduler Defaults + Throttle + Agent Awareness ─────────
 
 
-def test_default_ideation_interval_is_120(forven_db):
+def test_default_ideation_interval_is_30(forven_db):
     from forven.api_core import _DEFAULT_SETTINGS_PAYLOAD
-    assert _DEFAULT_SETTINGS_PAYLOAD["ideation_interval_minutes"] == 120
+    assert _DEFAULT_SETTINGS_PAYLOAD["ideation_interval_minutes"] == 30
 
 
 def test_default_coding_interval_is_60(forven_db):

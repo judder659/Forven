@@ -22,7 +22,7 @@ CREATION_TASK_TYPE = "generate_strategies"
 AUTONOMOUS_ORIGIN = "autonomous_creation"
 OPERATOR_ORIGIN = "operator_idea"
 
-DEFAULT_DAILY_BUDGET = 12  # mirrors research_contract's shipped default
+DEFAULT_DAILY_BUDGET = 40  # mirrors research_contract's shipped default
 DEFAULT_MAX_IN_FLIGHT = 2
 _DAILY_BUDGET_RANGE = (0, 500)
 _MAX_IN_FLIGHT_RANGE = (1, 20)
@@ -117,7 +117,11 @@ def creation_task_counts() -> dict[str, int]:
 
 
 def run_creation_cycle() -> dict[str, Any]:
-    """Queue one autonomous creation task when the mode, budget and in-flight cap allow."""
+    """Fill the free in-flight slots with autonomous creation tasks, within today's budget.
+
+    Each scheduler check can queue several tasks, so the daily budget, not the
+    check interval, sets the volume.
+    """
     from forven.system_mode_policy import autonomous_hypothesis_generation_allowed
     from forven.system_pause import get_system_mode
 
@@ -133,15 +137,28 @@ def run_creation_cycle() -> dict[str, Any]:
 
     from forven.brain import assign_task
 
-    task_id = assign_task(
-        agent_id=CREATION_AGENT_ID,
-        task_type=CREATION_TASK_TYPE,
-        title=AUTONOMOUS_TASK_TITLE,
-        description=AUTONOMOUS_TASK_DESCRIPTION,
-        input_data={"origin_mode": AUTONOMOUS_ORIGIN},
+    room = min(
+        settings["max_in_flight"] - counts["in_flight"],
+        settings["daily_budget"] - counts["created_today"],
     )
-    log.info("strategy creation: queued task %s (%d/%d today)", task_id, counts["created_today"] + 1, settings["daily_budget"])
-    return {"status": "queued", "task_id": int(task_id) if task_id else None, **counts, **settings}
+    day = datetime.now(timezone.utc).date().isoformat()
+    task_ids = []
+    for index in range(room):
+        task_id = assign_task(
+            agent_id=CREATION_AGENT_ID,
+            task_type=CREATION_TASK_TYPE,
+            # Distinct titles: pending tasks with the same agent, type and title
+            # dedupe into one, which would cap creation at one task in flight.
+            title=f"{AUTONOMOUS_TASK_TITLE} ({day} #{counts['created_today'] + index + 1})",
+            description=AUTONOMOUS_TASK_DESCRIPTION,
+            input_data={"origin_mode": AUTONOMOUS_ORIGIN},
+        )
+        task_ids.append(int(task_id) if task_id else None)
+    log.info(
+        "strategy creation: queued %d task(s) (%d/%d today)",
+        len(task_ids), counts["created_today"] + len(task_ids), settings["daily_budget"],
+    )
+    return {"status": "queued", "task_id": task_ids[0], "task_ids": task_ids, **counts, **settings}
 
 
 def _operator_task_description(idea: dict[str, Any], source: dict[str, Any] | None) -> str:

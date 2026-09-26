@@ -16,7 +16,7 @@ def test_default_research_settings_enable_public_benchmarking_and_creation_budge
     settings = default_research_settings()
 
     assert settings["external_benchmarking_enabled"] is True
-    assert settings["strategy_creation_daily_budget"] == 12
+    assert settings["strategy_creation_daily_budget"] == 40
     assert settings["strategy_creation_max_in_flight"] == 2
     assert settings["candidate_min_feed_coverage_pct"] == 50
     for key in _RETIRED_KEYS:

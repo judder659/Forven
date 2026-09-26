@@ -1042,7 +1042,7 @@ def evolution_ideate():
     init_db()
     result = run_creation_cycle()
     if result.get("status") == "queued":
-        click.echo(f"Queued strategy-creation task {result.get('task_id')}")
+        click.echo(f"Queued strategy-creation task(s) {result.get('task_ids')}")
     else:
         click.echo(f"No task queued: {result.get('reason')}")
 

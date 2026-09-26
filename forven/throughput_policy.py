@@ -28,7 +28,9 @@ from forven.research_contract import (
 # _DEFAULT_SETTINGS_PAYLOAD (api_core) and the scheduler's _runtime_tuning
 # fallbacks both reference these, so the two can no longer drift apart.
 THROUGHPUT_DEFAULTS: dict[str, int] = {
-    "ideation_interval_minutes": 120,
+    # The strategy-creation check: each one fills the free in-flight slots, so
+    # checks/day x tasks in flight must cover the daily budget (48 x 2 >= 40).
+    "ideation_interval_minutes": 30,
     "coding_interval_minutes": 60,
     "testing_interval_minutes": 60,
     "graduation_interval_minutes": 120,
@@ -60,7 +62,7 @@ THROUGHPUT_SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
 # Complete value maps — every preset lists every key, and "balanced" IS the
 # shipped defaults (pinned by tests in both directions). The creation budget is
 # the dominant AI-call-volume driver, so the outcome help text in the UI is
-# phrased off it (trickle 2 strategy-creation tasks/day ... max 30).
+# phrased off it (trickle 4 strategy-creation tasks/day ... max 120).
 THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
     "trickle": {
         "ideation_interval_minutes": 480,
@@ -70,7 +72,7 @@ THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
         "agent_task_claim_limit": 1,
         "backtest_subprocess_budget": 1,
         "gauntlet_drain_workers": 1,
-        _CREATION_BUDGET_KEY: 2,
+        _CREATION_BUDGET_KEY: 4,
     },
     "conserve": {
         "ideation_interval_minutes": 240,
@@ -80,7 +82,7 @@ THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
         "agent_task_claim_limit": 3,
         "backtest_subprocess_budget": 2,
         "gauntlet_drain_workers": 1,
-        _CREATION_BUDGET_KEY: 6,
+        _CREATION_BUDGET_KEY: 12,
     },
     "balanced": {
         **THROUGHPUT_DEFAULTS,
@@ -94,7 +96,7 @@ THROUGHPUT_PRESETS: dict[str, dict[str, int]] = {
         "agent_task_claim_limit": 20,
         "backtest_subprocess_budget": 8,
         "gauntlet_drain_workers": 6,
-        _CREATION_BUDGET_KEY: 30,
+        _CREATION_BUDGET_KEY: 120,
     },
 }
 

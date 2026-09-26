@@ -62,7 +62,7 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     },
     # Strategy creation (forven.strategy_creation): autonomous idea-to-strategy
     # tasks queued per UTC day, and creation tasks allowed in flight at once.
-    "strategy_creation_daily_budget": 12,
+    "strategy_creation_daily_budget": 40,
     "strategy_creation_max_in_flight": 2,
     # A new agent candidate whose input feeds cover less than this percent of the
     # quick-screen window cannot be fairly tested there (a recently collected feed

@@ -11,7 +11,7 @@ def test_get_settings_includes_research_settings_defaults(forven_db):
     research_settings = settings.get("research_settings")
     assert isinstance(research_settings, dict)
     assert research_settings["external_benchmarking_enabled"] is True
-    assert research_settings["strategy_creation_daily_budget"] == 12
+    assert research_settings["strategy_creation_daily_budget"] == 40
     assert research_settings["strategy_creation_max_in_flight"] == 2
     assert research_settings["candidate_min_feed_coverage_pct"] == 50
     assert "book" in research_settings["allowed_external_source_types"]

@@ -47,19 +47,34 @@ def auto_mode(forven_db):
 # ── run_creation_cycle ─────────────────────────────────────────────────────────
 
 
-def test_cycle_queues_one_autonomous_creation_task(auto_mode):
-    from forven.strategy_creation import AUTONOMOUS_ORIGIN, run_creation_cycle
+def test_cycle_fills_the_free_in_flight_slots(auto_mode):
+    from forven.strategy_creation import AUTONOMOUS_ORIGIN, DEFAULT_MAX_IN_FLIGHT, run_creation_cycle
 
     result = run_creation_cycle()
 
     assert result["status"] == "queued"
     with get_db() as conn:
         rows = _task_rows(conn)
-    assert len(rows) == 1
+    assert len(rows) == DEFAULT_MAX_IN_FLIGHT == len(set(result["task_ids"]))
     assert rows[0]["agent_id"] == "strategy-developer"
     assert json.loads(rows[0]["input_data"])["origin_mode"] == AUTONOMOUS_ORIGIN
     assert "create_hypothesis" in rows[0]["description"]
     assert "disproof" in rows[0]["description"]
+
+
+def test_cycle_queues_only_what_the_budget_and_free_slots_allow(auto_mode, monkeypatch):
+    import forven.strategy_creation as creation
+
+    monkeypatch.setattr(creation, "creation_settings", lambda raw_settings=None: {"daily_budget": 3, "max_in_flight": 5})
+    with get_db() as conn:
+        _insert_creation_task(conn, origin=creation.AUTONOMOUS_ORIGIN, status="done")
+        _insert_creation_task(conn, origin=creation.AUTONOMOUS_ORIGIN, status="running")
+
+    first = creation.run_creation_cycle()
+    second = creation.run_creation_cycle()
+
+    assert len(first["task_ids"]) == 1  # budget 3, two already queued today
+    assert second == {**second, "status": "skipped", "reason": "daily budget spent"}
 
 
 def test_cycle_stops_at_the_daily_budget(auto_mode, monkeypatch):

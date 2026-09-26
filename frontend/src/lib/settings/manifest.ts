@@ -2615,18 +2615,19 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   },
   {
     id: 'bot-operations.ideation_interval_minutes',
-    label: 'Ideation interval',
+    label: 'Strategy-creation check interval',
     unit: 'minutes',
     // Defaults below mirror THROUGHPUT_DEFAULTS (forven/throughput_policy.py),
     // the backend's single source; they used to say 15/15/15 and drift.
-    default: 120,
+    default: 30,
     type: 'number',
     area: 'system',
     subsection: 'system-throughput',
     backendSection: 'bot-operations',
     backendPath: 'ideation_interval_minutes',
-    description: 'Minutes between ideation agent runs.',
-    usedBy: ['forven.scheduler', 'forven.agents.runner'],
+    description:
+      'Minutes between strategy-creation checks. Each check fills the free in-flight slots, up to the daily budget, so checks per day times tasks in flight caps how much of the budget can be used.',
+    usedBy: ['forven.scheduler', 'forven.strategy_creation'],
     advanced: true,
   },
   {
@@ -2676,7 +2677,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     id: 'research.strategy_creation_daily_budget',
     label: 'Daily strategy-creation budget',
     unit: 'tasks/day',
-    default: 12,
+    default: 40,
     type: 'number',
     area: 'system',
     subsection: 'system-throughput',

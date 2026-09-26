@@ -1661,14 +1661,14 @@ Crypto exchanges typically charge 0.1% (10 bps) per trade, meaning a round-trip 
 	},
 	ideation_interval_minutes_setting: {
 		id: 'ideation_interval_minutes_setting',
-		term: 'Ideation Cadence (Minutes)',
-		shortDescription: 'How often quant-research ideation tasks are generated.',
+		term: 'Strategy-Creation Check Interval (Minutes)',
+		shortDescription: 'How often the scheduler checks whether to queue strategy-creation tasks.',
 		category: 'optimization',
-		fullDescription: 'Lower values increase strategy idea throughput but can flood downstream coding and review stages.',
+		fullDescription: 'Each check fills the free in-flight slots, up to the daily strategy-creation budget. The budget sets the volume; this interval only limits how fast it can be used (checks per day times tasks in flight).',
 		interpretations: [
-			{ range: '1440 min (24h)', label: 'Recommended', color: 'green', description: 'Daily throughput with manageable queue pressure.' },
-			{ range: '< 720 min', label: 'Aggressive', color: 'yellow', description: 'Use only if downstream capacity is strong and API limits allow.' },
-			{ range: '> 1440 min', label: 'Slow', color: 'yellow', description: 'Lower generation rate, useful for low-load operation.' }
+			{ range: '15-30 min', label: 'Recommended', color: 'green', description: 'Budgets up to about 90 tasks/day are reachable with 2 tasks in flight.' },
+			{ range: '60-240 min', label: 'Slow', color: 'yellow', description: 'Fine for small budgets; a large budget may not be used up.' },
+			{ range: '> 240 min', label: 'Trickle', color: 'yellow', description: 'A few checks per day, for hard-capped free models.' }
 		]
 	},
 	coding_interval_minutes_setting: {

@@ -105,7 +105,7 @@ def test_derivation_never_raises_on_garbage():
     }
     settings = _settings_for_bundle(THROUGHPUT_PRESETS["trickle"])
     settings["research_settings"] = "corrupt"
-    # Flat knobs match trickle but the budget falls back to the default (12),
+    # Flat knobs match trickle but the budget falls back to the default (40),
     # so no bundle matches — must degrade to custom, not raise.
     assert effective_throughput_preset(settings) == "custom"
 

@@ -92,22 +92,22 @@
 		{
 			name: 'trickle',
 			label: 'Trickle',
-			blurb: '2 strategy-creation tasks/day, hours-scale agent cadence, single-file workers — for hard-capped free models.',
+			blurb: '4 strategy-creation tasks/day, hours-scale agent cadence, single-file workers — for hard-capped free models.',
 		},
 		{
 			name: 'conserve',
 			label: 'Conserve',
-			blurb: '6 strategy-creation tasks/day, slowed cadence, small batches — for free or rate-limited routes; the fix if you are seeing provider 429s.',
+			blurb: '12 strategy-creation tasks/day, slowed cadence, small batches — for free or rate-limited routes; the fix if you are seeing provider 429s.',
 		},
 		{
 			name: 'balanced',
 			label: 'Balanced',
-			blurb: '12 strategy-creation tasks/day — the shipped defaults for a normal paid provider key.',
+			blurb: '40 strategy-creation tasks/day — the shipped defaults for a normal paid provider key.',
 		},
 		{
 			name: 'max',
 			label: 'Max',
-			blurb: '30 strategy-creation tasks/day, minutes-scale cadence, all workers up — requires a high-limit paid or local model; a free route will rate-limit instantly.',
+			blurb: '120 strategy-creation tasks/day, minutes-scale cadence, all workers up — requires a high-limit paid or local model; a free route will rate-limit instantly.',
 		},
 	];
 
