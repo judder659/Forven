@@ -56,8 +56,11 @@ def _check_task_owner(
     normalized_task_type = str(task_type or "").strip().lower()
 
     # strategy-developer codes containers at any stage; ownership is irrelevant.
+    # A creation task's own strategy passes to the pipeline while the task may
+    # still be retried or resumed.
     if normalized_agent == "strategy-developer" and normalized_task_type in (
         "code_strategy", "code_strategy_container", "coding_cycle", "phantom_repair",
+        "develop_candidate", "generate_strategies",
     ):
         return None, True
 

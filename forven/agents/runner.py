@@ -59,7 +59,7 @@ from .ownership import (
 )
 
 from forven.agents.execution_state import (
-    IncompleteTask, block_task, current_execution, load_execution, record_response, task_usage,
+    IncompleteTask, ToolLimitReached, block_task, current_execution, load_execution, record_response, task_usage,
 )
 
 log = logging.getLogger("forven.agents.runner")
@@ -727,7 +727,7 @@ async def _call_with_tools_single(
                 if transcript is not None:
                     transcript.write("event", content=stuck_nudge, tool_round=round_num)
 
-    raise IncompleteTask("Tool-call limit reached before completion; resume from the saved checkpoint.", last_nonempty_text)
+    raise ToolLimitReached("Tool-call limit reached before completion; resume from the saved checkpoint.", last_nonempty_text)
 
 
 _AGENT_TASK_TIMEOUT_SECONDS = DEFAULT_AGENT_TASK_TIMEOUT_SECONDS  # 15-minute hard wall-clock limit per task
@@ -1139,6 +1139,15 @@ def _should_queue_brain_callback_for_completed_task(
     return not _research_task_already_performed_first_wave(task_display_id)
 
 
+def _creation_task_strategy(task_id: int):
+    """The strategy a creation task registered (id, hypothesis_id), or None."""
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT s.id, s.hypothesis_id FROM agent_tasks t JOIN strategies s ON s.id=t.strategy_id WHERE t.id=?",
+            (task_id,),
+        ).fetchone()
+
+
 def _parse_json_object_or_empty(raw: object) -> dict[str, object]:
     text = str(raw or "").strip()
     if not text:
@@ -1380,10 +1389,18 @@ async def _run_agent_task_inner(
         transcript.set_attempt(provider, model_id)
         transcript.write("user", content=prompt)
 
-        response, usage = await _call_with_tools(
-            provider, model_id, messages, context, tools=agent_tools, agent_id=agent_id, trace=ai_trace,
-            transcript=transcript,
-        )
+        try:
+            response, usage = await _call_with_tools(
+                provider, model_id, messages, context, tools=agent_tools, agent_id=agent_id, trace=ai_trace,
+                transcript=transcript,
+            )
+        except ToolLimitReached as exc:
+            # A creation task that already registered a strategy for its idea has
+            # delivered; running out of rounds while exploring further is not a block.
+            linked = _creation_task_strategy(task_id) if task_type in {"develop_candidate", "generate_strategies"} else None
+            if not linked or not str(linked["hypothesis_id"] or "").strip():
+                raise
+            response, usage = exc.partial or "Stopped at the tool-call limit after registering the strategy.", {}
         recorded = task_usage(task_id)
         if recorded:
             provider, model_id = recorded["provider"], recorded["model_id"]
@@ -1394,11 +1411,7 @@ async def _run_agent_task_inner(
                 provider, model_id = successful["provider"], successful["model"]
         cost_usd = recorded["cost_usd"] if recorded else estimate_cost_usd(provider, model_id, usage)
         if task_type in {"develop_candidate", "generate_strategies"}:
-            with get_db() as conn:
-                artifact = conn.execute(
-                    "SELECT s.id, s.hypothesis_id FROM agent_tasks t JOIN strategies s ON s.id=t.strategy_id WHERE t.id=?",
-                    (task_id,),
-                ).fetchone()
+            artifact = _creation_task_strategy(task_id)
             if not artifact:
                 raise IncompleteTask("Candidate development returned without a registered strategy.", response)
             if not str(artifact["hypothesis_id"] or "").strip():
