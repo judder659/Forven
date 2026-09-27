@@ -78,8 +78,10 @@
 	}
 
 	const stepLabels: Record<string, string> = {
+		stage: 'Lifecycle Stage',
 		multi_tf_sweep: 'Multi-Timeframe Gauntlet Sweep',
 		validation_artifacts: 'Validation Suite (WFA, MC, Jitter, Cost, Regime)',
+		promotion_gate: 'Gauntlet -> Paper Promotion Gate',
 		paper_duration: 'Paper Trading Duration',
 		paper_trades: 'Paper Trade Count',
 		paper_return: 'Paper Return',
@@ -90,8 +92,10 @@
 	};
 
 	const compactStepLabels: Record<string, string> = {
+		stage: 'Lifecycle Stage',
 		multi_tf_sweep: 'Multi-Timeframe Sweep',
 		validation_artifacts: 'Validation Suite',
+		promotion_gate: 'Promotion Gate',
 		paper_duration: 'Paper Trading Duration',
 		paper_trades: 'Paper Trade Count',
 		paper_return: 'Paper Return',

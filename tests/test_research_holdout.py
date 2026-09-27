@@ -378,6 +378,95 @@ def test_admission_refusals_are_not_attempts(forven_db, holdout_on):
     assert engine.holdout_state("S-BUSY")["state"] == "missing"
 
 
+# --- the gate report -------------------------------------------------------------------
+
+
+def _gauntlet_candidate(monkeypatch, sid, *, verdict):
+    """A clean candidate that passes every other paper check; its held-back test ended in ``verdict``."""
+    from tests.test_baseline_hurdle import _stub_paper_gate
+
+    _stub_paper_gate(monkeypatch, {"status": "pass", "passed": True, "folds": 4, "pass_rate": 1.0})
+    _insert_strategy(sid)
+    metrics = {  # the passing blob of tests/test_baseline_hurdle.py::_insert_gauntlet_strategy
+        "robustness_score": 80,
+        "total_trades": 60,
+        "out_of_sample": {
+            "sharpe": 1.0, "profit_factor": 1.3, "win_rate": 55.0, "total_return_pct": 12.0, "max_drawdown_pct": 0.10,
+        },
+    }
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET metrics = ? WHERE id = ?", (json.dumps(metrics), sid))
+        conn.commit()
+    if verdict:
+        _insert_holdout(sid, status="succeeded", verdict=verdict)
+
+
+def _archive(sid):
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET stage = 'archived', status = 'archived' WHERE id = ?", (sid,))
+        conn.commit()
+
+
+def test_gate_report_never_greens_a_failed_held_back_test(forven_db, monkeypatch, holdout_on):
+    """S10860 (2026-09-27): archived after its held-back test FAILED, yet the readiness
+    report behind forven_get_gate_report said ready with no failed step. It ran only
+    the evidence checklist, never the gate or the stage."""
+    _gauntlet_candidate(monkeypatch, "S-RPT", verdict="FAIL")
+
+    report = policy.check_promotion_readiness("S-RPT")
+    gate = next(step for step in report["steps"] if step["name"] == "promotion_gate")
+    assert report["ready"] is False
+    assert gate["status"] == "failed" and gate["reason_code"] == "holdout_reject" and gate["kind"] == "merit"
+    assert gate["detail"].startswith("Held-back test failed: lost money")
+
+    _archive("S-RPT")
+    report = policy.check_promotion_readiness("S-RPT")
+    failed = {step["name"]: step for step in report["steps"] if step["status"] == "failed"}
+    assert report["ready"] is False
+    assert report["steps"][0] is failed["stage"] and failed["stage"]["reason_code"] == "archived"
+    assert failed["promotion_gate"]["reason_code"] == "holdout_reject"
+
+    with get_db() as conn:  # a read: nothing recorded against the strategy
+        assert conn.execute("SELECT COUNT(*) FROM gate_rejections").fetchone()[0] == 0
+
+
+def test_gate_report_is_ready_only_once_the_held_back_test_passes(forven_db, monkeypatch, holdout_on):
+    monkeypatch.setattr(engine, "run_holdout_submit", lambda sid, source="system": pytest.fail("a read spent the one shot"))
+    _gauntlet_candidate(monkeypatch, "S-RDY", verdict=None)
+
+    report = policy.check_promotion_readiness("S-RDY")
+    gate = next(step for step in report["steps"] if step["name"] == "promotion_gate")
+    assert report["ready"] is False and gate["reason_code"] == "holdout_pending" and gate["kind"] == "evidence"
+
+    _insert_holdout("S-RDY", status="succeeded", verdict="PASS")
+    report = policy.check_promotion_readiness("S-RDY")
+    gate = next(step for step in report["steps"] if step["name"] == "promotion_gate")
+    assert report["ready"] is True and gate["status"] == "passed" and "reason_code" not in gate
+
+
+def test_mcp_gate_report_surfaces_the_held_back_fail(forven_db, monkeypatch, holdout_on):
+    import asyncio
+
+    from forven.mcp_server.server import build_server
+    from tests.test_mcp_server import StubClient
+
+    _gauntlet_candidate(monkeypatch, "S-MCP", verdict="FAIL")
+    _archive("S-MCP")
+    readiness = policy.check_promotion_readiness("S-MCP")
+    server = build_server(client=StubClient(responses={"/api/lifecycle/strategies/S-MCP/readiness": readiness}))
+
+    _content, report = asyncio.run(server.call_tool("forven_get_gate_report", {"strategy_id": "S-MCP"}))
+
+    assert report["promotion_ready"] is False
+    assert [(g["id"], g["reason_code"]) for g in report["failed_gates"]] == [
+        ("stage", "archived"),
+        ("promotion_gate", "holdout_reject"),
+    ]
+    assert report["latest_gate_failure"]["id"] == "stage"
+    assert not any("All gates green" in action for action in report["next_actions"])
+    assert any("held-back test FAILED" in action for action in report["next_actions"])
+
+
 # --- the evaluation itself -------------------------------------------------------------
 
 
