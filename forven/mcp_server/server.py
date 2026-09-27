@@ -296,7 +296,9 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             "file's default_params; (7) forven_run_robustness — the PERSISTED "
             "validation suite the paper gate reads — and poll "
             "forven_get_robustness_result; (8) forven_get_gate_report, then "
-            "forven_promote_strategy when every gate is green. Sessions are "
+            "forven_promote_strategy when every gate is green, or when the "
+            "only failed gate is holdout_pending (that attempt submits the "
+            "one-shot held-back test). Sessions are "
             "automatic: one opens on your first write, tags all later work, "
             "and closes when you disconnect. Never pass force=true to skip a "
             "gate — a genuine rejection is the system working."
@@ -495,8 +497,8 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             elif code == "holdout_pending":
                 next_actions.append(
                     "Held-back test pending — its verdict decides the paper hop. If it has "
-                    "not run yet, a non-forced forven_promote_strategy attempt submits it; "
-                    "then re-check this report."
+                    "not run yet, a non-forced forven_start_paper_session attempt submits "
+                    "it; then re-check this report."
                 )
         return {
             "strategy_id": strategy_id,
@@ -877,8 +879,10 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         description=(
             "FINAL STEP — promote a gauntlet strategy to PAPER through the "
             "normal lifecycle gate. Only call when forven_get_gate_report "
-            "shows promotion_ready=true with empty failed_gates. Never "
-            "force."
+            "shows promotion_ready=true with empty failed_gates, or when its "
+            "only failed gate has reason_code holdout_pending: that attempt "
+            "submits the one-shot held-back test, whose verdict then decides. "
+            "Never force."
         ),
     )
     def forven_start_paper_session(
