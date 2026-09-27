@@ -147,10 +147,27 @@ _PARAM_JITTER_DEADLINE_CEILING = 18 * 60  # hard cap so a genuinely stuck rerun 
 # is LOST and promotion blocks with "missing required verdict tests: param_jitter"
 # (the exact false-negative this sizing was meant to remove). So the sizing target
 # and the deadline are both capped at (outer_budget - est_rerun - margin). Outer
-# budgets: the submit path's _robustness_timeout_seconds() (600s default) and the
-# gauntlet step tick (~300s, _PARAM_JITTER_INLINE_BUDGET_S).
+# budgets: the submit path's _robustness_timeout_seconds() (600s default), and for
+# an inline sweep whatever is left of the caller's work budget (see
+# _param_jitter_outer_budget_s).
 _PARAM_JITTER_DEADLINE_MARGIN_S = 90.0
-_PARAM_JITTER_INLINE_BUDGET_S = 300.0  # gauntlet/inline step tick budget
+_PARAM_JITTER_INLINE_BUDGET_S = 300.0  # inline sweep with no work budget (the HTTP endpoint)
+
+
+def _param_jitter_outer_budget_s() -> float:
+    """Hard budget bounding an INLINE param-jitter sweep.
+
+    The gauntlet runs this step in its background worker, which gives each step
+    ``STEP_BUDGET_SECONDS`` through ``forven.work_budget``. Size the sweep to what
+    is left of that. The fixed 300s is only for a caller with no work budget.
+    Sizing every gauntlet sweep to 300s capped the graceful deadline near 108s and
+    overrode the configured param_jitter_deadline_seconds: a slow strategy got one
+    chunk of reruns, and S10869 reached paper on 4 of 15.
+    """
+    from forven.work_budget import remaining_time
+
+    remaining = remaining_time(float("inf"))  # raises once the budget is spent
+    return float(remaining) if np.isfinite(remaining) else _PARAM_JITTER_INLINE_BUDGET_S
 
 
 def _param_jitter_deadline_cap_s(outer_budget_s: float, est_rerun_s: float) -> float:
@@ -730,6 +747,7 @@ def _load_rerun_candles(
     end_date: str | None = None,
     max_bars: int = _RERUN_MAX_BARS,
     as_of: str | None = None,
+    warmup_bars: int = 210,
 ):
     """Load candles for a robustness rerun over the strategy's ACTUAL window.
 
@@ -738,6 +756,11 @@ def _load_rerun_candles(
     legitimately contain zero trades. Caps at ``max_bars`` (keeping the most
     recent bars) so sub-hourly windows can't blow up compute; falls back to a
     recent ``max_bars`` window when no date range is available.
+
+    A baseline's persisted start is the first bar it LOADED, warm-up included, so
+    callers replaying a baseline window pass ``warmup_bars=0``. Adding the default
+    210 again moved the rerun's in-sample/out-of-sample split ~63 bars earlier
+    than the baseline's, so the "unchanged" rerun no longer reproduced it.
     """
     from forven.strategies.backtest import load_backtest_candles
 
@@ -749,6 +772,7 @@ def _load_rerun_candles(
             start_date=start_date,
             end_date=end_date,
             as_of=as_of,
+            warmup_bars=warmup_bars,
         )
         if candles is not None and not candles.empty and len(candles) > max_bars:
             candles = candles.tail(max_bars)
@@ -799,15 +823,21 @@ def _jitter_param_value(value: object, factor: float) -> object:
         return value
     jittered = float(value) * float(factor)
     if isinstance(value, int) and not isinstance(value, bool):
-        minimum = 1 if value > 0 else 0
+        if value == 0:
+            # 0 * factor is 0, as for a float 0.0. An int zero is often a flag or
+            # an "off" switch; stepping it to 1 would test a different strategy.
+            return 0
         rounded = int(round(jittered))
         if rounded == value and factor != 1.0:
             # A small integer param (e.g. <= 4) rounds back to itself under a ±10%
             # jitter, making the rerun byte-identical to the baseline and trivially
             # "stable" — which inflates the jitter pass-rate. Force at least a ±1 step in
             # the draw's direction so the perturbation actually bites.
-            rounded = value + (1 if factor > 1.0 else -1)
-        return max(minimum, rounded)
+            grow = factor > 1.0
+            rounded = value + (1 if grow else -1) if value > 0 else value - (1 if grow else -1)
+        # Keep the sign: a negative int (an offset, a short-side threshold) used to
+        # be clamped to 0 on every draw.
+        return max(1, rounded) if value > 0 else min(-1, rounded)
     return float(jittered)
 
 
@@ -1041,7 +1071,9 @@ def _monte_carlo_bootstrap_worker(
         )
         max_drawdowns.append(float(np.nanmax(drawdown_pct)) if drawdown_pct.size else 0.0)
 
-        if len(sampled) > 1 and np.std(sampled) > 0:
+        # A tolerance, not > 0: the std of identical returns comes out as rounding
+        # noise (~1e-18), which made a ~1e15 "Sharpe" and crashed the histogram.
+        if len(sampled) > 1 and np.std(sampled) > 1e-12:
             # Per-TRADE Sharpe of the bootstrapped path. (Was * sqrt(252), which
             # annualizes as if these were daily returns — they are per-trade returns at
             # an arbitrary frequency, so the 252 factor was a meaningless scale. This is
@@ -1294,8 +1326,8 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
         # guaranteed P25-4 reject whenever that window is negative). A strategy
         # with no fitted parameters cannot be parameter-overfit, so record an
         # explicit NOT_APPLICABLE verdict. pass_rate/stable_pct are deliberately
-        # ABSENT: the P25-4 paper gate and the composite scorer both skip the
-        # jitter check when no rate is present.
+        # ABSENT, so the P25-4 paper gate skips its rate check; the gauntlet step
+        # and _validation_row_passed pass the test on `not_applicable`.
         return {
             "method": "rerun_parameter_jitter",
             "strategy_type": strategy_type,
@@ -1319,6 +1351,7 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
         end_date=baseline_context.get("end_date"),
         max_bars=jitter_max_bars,
         as_of=body.as_of,
+        warmup_bars=0,  # the baseline's start already includes its warm-up
     )
     if candles.empty:
         raise HTTPException(400, "No candle data available for parameter jitter reruns.")
@@ -1394,19 +1427,29 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
             as_of=body.as_of,
         )
 
+    def _reference() -> dict:
+        # The unperturbed rerun goes FIRST, inside the sweep and its deadline. It
+        # used to run after the sweep, so a slow strategy spent one more full rerun
+        # after the deadline fired. A failure falls back to the persisted Sharpe.
+        try:
+            return _rerun(dict(base_params))
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
     # Deadline generous enough to COMPLETE the (now feasibly-sized) sample at the estimated
     # per-rerun cost; honour a larger operator-configured deadline, and hard-cap so a
     # genuinely stuck rerun can't wedge the gauntlet.
     adaptive_deadline_s = min(
         float(_PARAM_JITTER_DEADLINE_CEILING),
         _deadline_cap_s,  # never let the graceful deadline exceed the outer hard kill
-        max(jitter_deadline_s, _est_rerun_s * n_iters / max(jitter_workers, 1) * 1.4 + 30.0),
+        max(jitter_deadline_s, _est_rerun_s * (n_iters + 1) / max(jitter_workers, 1) * 1.4 + 30.0),
     )
     runs, deadline_hit = _run_backtests_chunked_parallel(
-        [(lambda p=p: _rerun(p)) for p in perturbations],
+        [_reference] + [(lambda p=p: _rerun(p)) for p in perturbations],
         workers=jitter_workers,
         deadline_s=adaptive_deadline_s,
     )
+    reference_run, runs = runs[0], runs[1:]
     if deadline_hit:
         log.warning(
             "param_jitter: deadline %.0fs hit after %d/%d reruns for %s (%d workers) — "
@@ -1444,6 +1487,21 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
     jitter_pass_rate_min = float(robustness_cfg.get("param_jitter_pass_rate_min", 0.70))
 
     sharpes_arr = _finite_array(sharpes)
+    # A sweep that fell short of its planned sample and below the evidence floor has
+    # no verdict. Raising stores an errored row, which every reader skips, and the
+    # gauntlet retries the step. A verdict here was a pass rate over as few as 4
+    # reruns, which the evidence check (reading the planned count) then accepted.
+    from forven.gauntlet.legitimacy import PARAM_JITTER_MIN_RERUNS
+
+    n_measured = int(sharpes_arr.size)
+    needed = min(PARAM_JITTER_MIN_RERUNS, n_iters)
+    if n_measured < needed:
+        why = "the time budget ran out" if deadline_hit else "the other reruns failed"
+        raise HTTPException(
+            500,
+            f"Parameter jitter measured only {n_measured} of {n_iters} reruns ({why}); "
+            f"at least {needed} are needed for a verdict.",
+        )
     # Degradation-aware pass rate. Merely staying Sharpe-positive is NOT robustness:
     # a strategy whose Sharpe collapses 3.0 -> 0.05 under every perturbation has 100%
     # positive runs yet is fragile/overfit, and the old `mean(sharpes > 0)` verdict let
@@ -1459,15 +1517,12 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
     # this gives param_jitter the same apples-to-apples reference. Falls back to
     # original_sharpe if the unperturbed rerun fails.
     reference_sharpe = original_sharpe
-    try:
-        _ref_run = _rerun(dict(base_params))
-        if isinstance(_ref_run, dict) and not _ref_run.get("error"):
-            _ref_metrics = _ref_run.get("metrics") if isinstance(_ref_run.get("metrics"), dict) else {}
-            reference_sharpe = _coerce_float(
-                _ref_metrics.get("sharpe_ratio", _ref_metrics.get("sharpe")), original_sharpe
-            )
-    except Exception:
-        reference_sharpe = original_sharpe
+    if isinstance(reference_run, dict) and not reference_run.get("error"):
+        # Same measure as the jittered reruns above.
+        _ref_metrics = _extract_primary_backtest_metrics(reference_run)
+        reference_sharpe = _coerce_float(
+            _ref_metrics.get("sharpe", _ref_metrics.get("sharpe_ratio")), original_sharpe
+        )
     jitter_pass_rate = _jitter_pass_rate(sharpes_arr, reference_sharpe, allowed_degradation)
     return {
         "method": "rerun_parameter_jitter",
@@ -1477,6 +1532,7 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
         "original_return": round(original_return, 3),
         "n_iterations": n_iters,
         "iterations_completed": len(iterations),
+        "n_measured": n_measured,  # reruns that produced a Sharpe: the evidence count
         "deadline_hit": deadline_hit,
         "jitter_pct": body.jitter_pct,
         "mean_sharpe": round(float(np.mean(sharpes_arr)), 3),
@@ -1538,6 +1594,9 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
     # false-failing this required test and blocking otherwise-valid strategies.
     win_start = (str(getattr(body, "start_date", "") or "").strip()) or None
     win_end = (str(getattr(body, "end_date", "") or "").strip()) or None
+    # A requested start gets the usual warm-up before it; a baseline's persisted
+    # start already includes one (see _load_rerun_candles).
+    warmup_bars = 210 if win_start else 0
     if (not win_start or not win_end) and baseline_ctx is not None:
         win_start = win_start or baseline_ctx.get("start_date")
         win_end = win_end or baseline_ctx.get("end_date")
@@ -1565,6 +1624,7 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         end_date=win_end,
         max_bars=cost_stress_max_bars,
         as_of=body.as_of,
+        warmup_bars=warmup_bars,
     )
     if candles.empty:
         raise HTTPException(400, "No candle data available for cost-stress reruns.")
@@ -1903,23 +1963,27 @@ def _log_robustness_finalized(
             payload["reasons"] = [str(r)[:200] for r in reasons[:5]]
 
         if result_type == "walk_forward":
-            for k in ("fold_count", "avg_is_sharpe", "avg_oos_sharpe", "degradation", "verdict_threshold"):
+            if isinstance(result.get("splits"), list):
+                payload["fold_count"] = len(result["splits"])
+            for k in ("avg_is_sharpe", "avg_oos_sharpe", "degradation", "verdict_threshold"):
                 if k in result and result[k] is not None:
                     payload[k] = result[k]
         elif result_type == "monte_carlo":
-            for k in ("percentile_rank", "verdict_threshold", "n_simulations"):
+            for k in ("percentile_rank", "prob_profitable", "verdict_threshold", "n_simulations"):
                 if k in result and result[k] is not None:
                     payload[k] = result[k]
         elif result_type == "param_jitter":
-            for k in ("pass_rate", "verdict_threshold", "n_variants"):
+            for k in ("pass_rate", "verdict_threshold", "n_iterations", "n_measured", "n_variants"):
                 if k in result and result[k] is not None:
                     payload[k] = result[k]
         elif result_type == "cost_stress":
-            metrics = result.get("stressed_metrics") or {}
+            # The stressed rerun's metrics live under "stressed" (_snapshot_from_metrics
+            # keys); the log keeps the field names it always documented.
+            metrics = result.get("stressed") or {}
             if isinstance(metrics, dict):
-                for k in ("sharpe", "total_return_pct", "max_drawdown_pct"):
-                    if metrics.get(k) is not None:
-                        payload[f"stressed_{k}"] = metrics[k]
+                for src, k in (("sharpe", "sharpe"), ("total_return", "total_return_pct"), ("max_drawdown", "max_drawdown_pct")):
+                    if metrics.get(src) is not None:
+                        payload[f"stressed_{k}"] = metrics[src]
             if result.get("verdict_threshold") is not None:
                 payload["verdict_threshold"] = result["verdict_threshold"]
         elif result_type == "regime_split":
@@ -2010,6 +2074,11 @@ def _validation_row_passed(
 
     verdicts = [metrics.get("verdict"), config.get("verdict")]
     explicit_verdicts = [verdict for verdict in verdicts if str(verdict or "").strip()]
+    if rt == "param_jitter" and metrics.get("not_applicable") is True:
+        # No numeric parameters to jitter. The gauntlet step and the paper gate both
+        # pass that; this reader (the composite score and the post-validation
+        # promotion check) used to call it an unknown verdict and count a failure.
+        explicit_verdicts = [v for v in explicit_verdicts if str(v).strip().upper() != "NOT_APPLICABLE"]
     if any(_verdict_failed(verdict) for verdict in explicit_verdicts):
         return False, "validation verdict failed"
     if explicit_verdicts and not any(_verdict_successful(verdict) for verdict in explicit_verdicts):
@@ -2132,17 +2201,24 @@ def _test_pass_margin(result_type: str, metrics: dict, config: dict) -> float:
             ratio = _num("stressed_sharpe_ratio", "sharpe_retention", "stressed_ratio")
             if ratio is not None:
                 return _clamp01(ratio)
-            degr = _num("degradation_pct", "degradation")
+            # degradation_pct is always percent points (0.5 = half a percent); the
+            # old "> 1 means percent" guess read a 0.5% loss as 50%.
+            degr_pct = _num("degradation_pct")
+            if degr_pct is not None:
+                return _clamp01(1.0 - degr_pct / 100.0)
+            degr = _num("degradation")
             if degr is not None:
-                d = degr / 100.0 if degr > 1 else degr
-                return _clamp01(1.0 - d)
+                return _clamp01(1.0 - degr)
             return 0.5
 
         if rt in ("regime_split", "regimesplit"):
-            frac = _num("profitable_regime_pct", "profitable_pct", "profitable_regime_fraction")
-            if frac is not None:
-                return _clamp01(frac / 100.0 if frac > 1 else frac)
-            return 0.5
+            # profitable_regime_share is what the test emits; the rest are legacy.
+            frac = _num("profitable_regime_share", "profitable_regime_pct", "profitable_pct", "profitable_regime_fraction")
+            if frac is None:
+                return 0.5
+            frac = frac / 100.0 if frac > 1 else frac
+            thr = float(rcfg.get("regime_split_profitable_min", 0.5) or 0.5)
+            return _clamp01((frac - thr) / max(1.0 - thr, 0.01))
     except Exception:
         return 0.5
 
@@ -2957,9 +3033,9 @@ def run_param_jitter_inline(body: ParamJitterBody | None = None, **kwargs) -> di
         result_type="param_jitter",
         context=_prepare_param_jitter_context(body),
         request_payload=_model_to_dict(body),
-        # Inline/gauntlet path: the scheduler hard-kills the gauntlet step at ~300s,
-        # so cap the graceful deadline below that to keep a verdict.
-        runner=lambda: _run_param_jitter_analysis(body, outer_budget_s=_PARAM_JITTER_INLINE_BUDGET_S),
+        # Inline/gauntlet path: size to what is left of the caller's work budget
+        # (the gauntlet worker's step budget), else the inline default.
+        runner=lambda: _run_param_jitter_analysis(body, outer_budget_s=_param_jitter_outer_budget_s()),
     )
 
 

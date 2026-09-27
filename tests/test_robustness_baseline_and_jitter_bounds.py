@@ -108,7 +108,8 @@ def test_param_jitter_with_no_numeric_params_is_not_applicable(forven_db):
     assert result["not_applicable"] is True
     assert result["n_variants"] == 0
     # pass_rate/stable_pct must be ABSENT — their absence is what makes the
-    # P25-4 paper gate and the composite scorer skip the jitter check.
+    # P25-4 paper gate skip its rate check. The composite scorer passes the test
+    # on `not_applicable` (see test_robustness_oracle).
     assert "pass_rate" not in result
     assert "stable_pct" not in result
 
