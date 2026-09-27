@@ -137,7 +137,10 @@ _ROBUSTNESS_RERUN_MAX_WORKERS = 4
 # param_jitter"). We size the sweep to the per-backtest cost so the FULL sample
 # COMPLETES (a complete smaller sample beats a truncated one), keeping a statistical
 # floor. No verdict threshold is touched.
-_PARAM_JITTER_MIN_ITERATIONS = 15      # statistical floor — never run fewer than this
+# Planning floor: never SIZE a sweep below this. The evidence floor, the fewest
+# finished reruns a verdict may rest on, is gauntlet.legitimacy.PARAM_JITTER_MIN_RERUNS
+# (10); the gap absorbs a deadline that trims a sized sweep.
+_PARAM_JITTER_MIN_ITERATIONS = 15
 _PARAM_JITTER_TARGET_SECONDS = 10 * 60  # wall-clock the full sweep should finish within
 _PARAM_JITTER_DEADLINE_CEILING = 18 * 60  # hard cap so a genuinely stuck rerun can't wedge the step
 # The graceful inner deadline ("verdict from completed reruns") MUST fire before
