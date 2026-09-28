@@ -172,6 +172,11 @@ export interface CatalogRow {
 	consumers: ConsumerSummary;
 	frozen: boolean;
 	frozen_reason: string | null;
+	/** Whether a refresh can do anything for it (false: recorded live from a
+	 *  feed, or nothing collects it); null or absent = unknown. */
+	refreshable?: boolean | null;
+	/** Why a refresh can't help, in plain words. */
+	refresh_note?: string | null;
 	delisted: boolean;
 	/** Forward-filled (fabricated) bars from trades-built venues. */
 	synthetic_bars: number;
@@ -390,6 +395,11 @@ export interface SlaSeriesRow {
 	consumers: ConsumerSummary;
 	frozen: boolean;
 	frozen_reason: string | null;
+	/** Whether a refresh can do anything for it (false: recorded live from a
+	 *  feed, or nothing collects it); null or absent = unknown. */
+	refreshable?: boolean | null;
+	/** Why a refresh can't help, in plain words. */
+	refresh_note?: string | null;
 }
 
 /** GET /api/data/sla?stream=&limit_worst=50 */

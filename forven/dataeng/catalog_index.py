@@ -347,6 +347,19 @@ def asset_class_of(symbol: str, source: str | None, registry: dict[str, dict[str
     return memo[key]
 
 
+def _refresh_hint(verdict: Any) -> dict[str, Any]:
+    """Whether a user's refresh can do anything for the series, from the
+    collector's row; unknown (None) without one."""
+    if verdict is not None:
+        from forven.dataeng import collector
+
+        try:
+            return collector.refresh_hint(verdict)
+        except Exception as exc:  # a hint never fails the catalog
+            log.debug("catalog: refresh hint failed for %s: %s", getattr(verdict, "id", "?"), exc)
+    return {"refreshable": None, "refresh_note": None}
+
+
 def build_row(
     series: SeriesFile,
     *,
@@ -416,6 +429,7 @@ def build_row(
         "consumers": consumers.summary(),
         "frozen": is_frozen,
         "frozen_reason": frozen_reason,
+        **_refresh_hint(verdict),
         "delisted": bool(consumers.delisted),
         "synthetic_bars": bars_in_ranges(stamps["synthetic_ranges"], tf_ms),
         "patched_bars": bars_in_ranges(stamps["patched_ranges"], tf_ms),

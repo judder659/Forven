@@ -497,6 +497,11 @@ def test_observed_streams_are_never_queued(env):
     assert rows[okx].tier == "idle"  # a user download no strategy reads
     queued = dict(queue_ids(env))
     assert liq not in queued and hl_funding not in queued and okx not in queued
+    # The UI names what a refresh can't reach instead of offering a dead button.
+    assert collector.refresh_hint(rows[liq]) == {
+        "refreshable": False, "refresh_note": "Recorded live from the OKX feed; a refresh can't fetch missed values"}
+    assert collector.refresh_hint(rows[okx])["refreshable"] is False
+    assert collector.refresh_hint(rows[hl_funding]) == {"refreshable": True, "refresh_note": None}
 
 
 def test_stream_tiers_follow_what_enrichment_reads(env):
@@ -865,7 +870,11 @@ def test_census_shape(client, env):
     assert body["policy"]["pipeline"] == {"missed_bars": 3.0, "floor_minutes": 120.0}
     assert body["breach_multiplier"] == 3.0
     (row,) = body["worst"]
-    assert set(row) == {"symbol", "display_symbol", "timeframe", "stream", "venue", "sla", "consumers", "frozen", "frozen_reason"}
+    assert set(row) == {
+        "symbol", "display_symbol", "timeframe", "stream", "venue", "sla", "consumers", "frozen", "frozen_reason",
+        "refreshable", "refresh_note",
+    }
+    assert row["refreshable"] is True and row["refresh_note"] is None
     assert row["display_symbol"] == "BTC/USDT" and f"{row['stream']}:{row['venue']}:{row['symbol']}:{row['timeframe']}" == btc
     assert set(row["sla"]) == {"tier", "state", "lag_seconds", "allowed_seconds", "ratio", "last_bar_ts", "priority"}
     assert row["consumers"] == {

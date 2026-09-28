@@ -15,6 +15,7 @@
 	import type {
 		CollectorStatus,
 		DataLogEntry,
+		SlaCensus,
 		SlaSeriesRow,
 		SlaState,
 		StorageInventory,
@@ -110,10 +111,12 @@
 		clearInterval(timer);
 		attentionGuard.cancel();
 	});
-	// Work landed: the collector card and incidents follow (the layout reloads the census).
+	// Work landed: the collector card and incidents follow (the layout reloads the
+	// census), and "Queued" marks give way to the rows' new state.
 	let landedSeen = $jobsLanded;
 	$: if ($jobsLanded !== landedSeen) {
 		landedSeen = $jobsLanded;
+		pending = {};
 		void Promise.all([loadCollector(), loadIncidents()]);
 	}
 
@@ -130,6 +133,8 @@
 	$: tone = TONE[verdict?.tone ?? 'neutral'];
 	$: groups = census ? groupAttention(rows, census, 99).map((g) => ({ ...g, rows: g.rows.slice(0, PER_GROUP[g.tier]), hidden: g.total - Math.min(g.rows.length, PER_GROUP[g.tier]) })) : [];
 	$: liveOrPaperLate = census ? tierProblems(census, 'live').total + tierProblems(census, 'paper').total : 0;
+	// "Fix all" only when a refresh can help one of them (a live feed's series can't be re-fetched).
+	$: fixable = rows.some((r) => (r.sla.tier === 'live' || r.sla.tier === 'paper') && ['late', 'breach', 'missing'].includes(r.sla.state) && !r.frozen && r.refreshable !== false);
 	$: reclaimable = storage.data?.reclaimable.reduce((sum, g) => sum + g.bytes, 0) ?? 0;
 	$: capacityShort = collector.data ? collector.data.demand_per_hour > collector.data.capacity_per_hour : false;
 
@@ -165,7 +170,9 @@
 		if (result) void loadPlan();
 	}
 
-	const stateCounts = (tier: (typeof TIERS)[number]) => census?.by_tier[tier] ?? ({} as Record<SlaState, number>);
+	// Takes the census as an argument: a template call that only closes over it
+	// is not re-run when a new census lands.
+	const stateCounts = (from: SlaCensus, tier: (typeof TIERS)[number]) => from.by_tier[tier] ?? ({} as Record<SlaState, number>);
 </script>
 
 <svelte:head><title>Data · Health | Forven</title></svelte:head>
@@ -190,7 +197,7 @@
 			<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 				<span class="h-2.5 w-2.5 shrink-0 {tone.dot}" aria-hidden="true"></span>
 				<h1 id="dm-verdict" class="min-w-0 flex-1 text-[17px] font-bold leading-tight {tone.text}" aria-live="polite">{verdict.headline}</h1>
-				{#if liveOrPaperLate}
+				{#if liveOrPaperLate && fixable}
 					<button type="button" on:click={fixAll} disabled={fixingAll} class="terminal-button-primary text-[10px] disabled:opacity-50"
 						title="Bring every late live and paper series current now">{fixingAll ? 'Starting…' : 'Fix all late live & paper'}</button>
 				{/if}
@@ -215,7 +222,7 @@
 		<!-- Tier cards -->
 		<section class="grid grid-cols-2 gap-2 md:grid-cols-5" aria-label="Freshness by tier">
 			{#each TIERS as tier (tier)}
-				{@const counts = stateCounts(tier)}
+				{@const counts = stateCounts(census, tier)}
 				{@const total = tierTotal(census, tier)}
 				<a href={catalogHref({ tier })} title={TIER_HELP[tier]} data-testid="tier-{tier}"
 					class="group border border-[#222] bg-[#050505] px-3 py-2.5 transition-colors hover:border-[#444]">
@@ -276,7 +283,9 @@
 										<div class="text-[11px] text-[#888]">{whyText(row)}</div>
 									</div>
 									<div class="flex shrink-0 items-center gap-1.5">
-										{#if pending[id] === 'queued'}
+										{#if row.refreshable === false}
+											<span class="max-w-[280px] text-right text-[10px] leading-tight text-[#777]">{row.refresh_note ?? 'A refresh can’t fetch this series'}</span>
+										{:else if pending[id] === 'queued'}
 											<span class="text-[10px] uppercase tracking-wider text-sky-300">Queued ✓</span>
 										{:else}
 											<button type="button" on:click={() => refreshRow(row)} disabled={pending[id] === 'sending'}

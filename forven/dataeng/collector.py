@@ -1401,17 +1401,17 @@ def _row_for(sid: str, snapshot: Snapshot) -> SeriesRow:
 def manual_action(row: SeriesRow, mode: str) -> tuple[str, str | None]:
     """What a user's refresh/repair does to a series: (action, skip reason)."""
     if row.stream == "liquidations":
-        return "skip", "liquidations are captured by the OKX WebSocket process (see Sources)"
+        return "skip", "Recorded live from the OKX feed; a refresh can't fetch missed values"
     if row.stream == "funding" and row.venue == HL_VENUE:
         return "hl_funding", None
     if row.refresher is None:
         if row.stream == "ohlcv" and row.file is None and _canonical_file_exists(row.symbol, row.timeframe):
-            return "skip", "the stored file is unreadable; repair or delete it first"
-        return "skip", "nothing refreshes this series automatically; download it again from Get data"
+            return "skip", "The stored file can't be read; repair or delete it first"
+        return "skip", "Nothing collects this series; download it again from Get data"
     if row.file is None:
         if row.refresher in _BOOTSTRAPPABLE:
             return "bootstrap", None
-        return "skip", "nothing stored yet; its collection job creates it"
+        return "skip", "Nothing stored yet; its collection job creates it"
     if mode == "repair" and row.refresher in _GAP_REPAIRABLE:
         return "repair", None
     if mode == "queue" and row.refresher in _GAP_REPAIRABLE and not is_due(row, tick_seconds=0) and _gap_candidate(row, load_unfillable()):
@@ -1545,6 +1545,12 @@ for _kind in ("tail_refresh", "gap_repair", "stream_collect"):
 def collectable(row: SeriesRow) -> bool:
     """Whether a user's refresh can do anything for this series."""
     return manual_action(row, "refresh")[0] != "skip"
+
+
+def refresh_hint(row: SeriesRow) -> dict[str, Any]:
+    """Wire fields: whether a user's refresh can do anything, and why not."""
+    action, reason = manual_action(row, "refresh")
+    return {"refreshable": action != "skip", "refresh_note": reason}
 
 
 def resolve_scope(scope: str, snapshot: Snapshot | None = None) -> list[SeriesRow]:

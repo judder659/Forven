@@ -123,6 +123,7 @@ def series_row(row: collector.SeriesRow) -> dict[str, Any]:
         "consumers": consumer_summary(row),
         "frozen": row.frozen,
         "frozen_reason": row.frozen_reason,
+        **collector.refresh_hint(row),
     }
 
 

@@ -313,7 +313,7 @@
 				{#if d.updated_at}<span title={formatUtc(d.updated_at, { seconds: true })}>written {formatRelative(d.updated_at, $clock)}</span>{/if}
 			</div>
 			<div class="mt-3 flex flex-wrap gap-1.5">
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || d.frozen} on:click={() => refresh('refresh')} title={d.frozen ? 'Unfreeze it first' : 'Bring it current now'}>{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
+				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || d.frozen || d.refreshable === false} on:click={() => refresh('refresh')} title={d.frozen ? 'Unfreeze it first' : d.refreshable === false ? (d.refresh_note ?? 'A refresh can’t fetch this series') : 'Bring it current now'}>{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
 				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !d.gap_count} on:click={() => refresh('repair')} title={d.gap_count ? `Re-fetch the ${formatCount(d.gap_count)} gaps` : 'No gaps to repair'}>{busy === 'repair' ? 'Sending…' : 'Repair gaps'}</button>
 				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !canExtend(d)} on:click={extend} title={canExtend(d) ? 'Download older history from Binance Vision' : 'Deep history covers research candles, funding, OI and basis'}>{busy === 'extend' ? 'Sending…' : 'Extend history'}</button>
 				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !canExport(d)} on:click={exportCsv} title={canExport(d) ? 'Save every bar as CSV' : 'CSV export covers research candle series'}>{busy === 'export' ? 'Exporting…' : 'Export CSV'}</button>
