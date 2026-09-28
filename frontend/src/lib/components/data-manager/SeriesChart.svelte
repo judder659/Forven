@@ -28,6 +28,9 @@
 	export let focusToken = 0;
 	/** Bump to go back to the full history. */
 	export let resetToken = 0;
+	/** Bump after new bars landed: reloads what is on screen and keeps the zoom
+	 * (a view that ends at the latest bar slides to take in the new ones). */
+	export let reloadToken = 0;
 
 	const dispatch = createEventDispatcher<{ view: { resolution: string; raw: boolean; bars: number; start: number; end: number; loading: boolean; error: string } }>();
 	const MAX_POINTS = 3000;
@@ -50,6 +53,9 @@
 	let applying = false;
 	let appliedFocus = focusToken;
 	let appliedReset = resetToken;
+	let appliedReload = reloadToken;
+	let requestedWindow: { start: number; end: number } | null = null;
+	let lastAtLoad = 0;
 	const guard = createRequestGuard();
 
 	const fmt = (v: number) => (Math.abs(v) >= 1000 ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : Math.abs(v) >= 1 ? v.toFixed(4).replace(/\.?0+$/, '') : v.toPrecision(4));
@@ -61,6 +67,8 @@
 
 	async function load(window: { start: number; end: number } | null, keepVisible: { from: number; to: number } | null) {
 		const { signal, current } = guard.next();
+		requestedWindow = window;
+		lastAtLoad = toSeconds(last);
 		status = { loading: true, error: '' };
 		emit();
 		try {
@@ -188,6 +196,19 @@
 	$: if (chart && resetToken !== appliedReset) {
 		appliedReset = resetToken;
 		void load(null, null);
+	}
+	$: if (chart && reloadToken !== appliedReload) {
+		appliedReload = reloadToken;
+		reload();
+	}
+
+	function reload() {
+		const range = chart?.timeScale().getVisibleRange();
+		if (!range || !times.length) return void load(requestedWindow, null);
+		const visible = { from: Number(range.from), to: Number(range.to) };
+		const shift = visible.to >= loadedWindow.end ? Math.max(0, toSeconds(last) - lastAtLoad) : 0;
+		const window = requestedWindow && { start: requestedWindow.start + shift, end: requestedWindow.end + shift };
+		void load(window, { from: visible.from + shift, to: visible.to + shift });
 	}
 </script>
 

@@ -8,7 +8,7 @@
 	import { runAction, saveBlob } from '$lib/components/data-manager/actions';
 	import { formatCount, formatRelative, formatUtc, originLabel } from '$lib/components/data-manager/format';
 	import { catalogHref, seriesHref } from '$lib/components/data-manager/links';
-	import { clock, createRequestGuard, loading, pageSearch, settle, type Loadable } from '$lib/stores/dataManager';
+	import { clock, createRequestGuard, jobsLanded, loading, pageSearch, settle, type Loadable } from '$lib/stores/dataManager';
 
 	const LIMIT = 50;
 	const LEVELS: DataLogEntry['level'][] = ['info', 'warning', 'error'];
@@ -83,6 +83,13 @@
 	}
 
 	onMount(() => pageSearch.set(searchInput ?? null));
+
+	// Work landed: its entries appear on the first page (a later page stays put).
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		if (offset === 0) void load();
+	}
 	onDestroy(() => {
 		pageSearch.set(null);
 		guard.cancel();

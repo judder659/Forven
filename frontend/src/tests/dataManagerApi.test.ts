@@ -77,6 +77,9 @@ describe('dataManager API client', () => {
 		await getSeriesRows({ symbol: 'ETH-USDT', timeframe: '8h', stream: 'funding' }, { limit: 100, offset: 200 });
 		expect(lastCall().url).toBe('/api/data/series/ETH-USDT/8h/rows?venue=canonical&stream=funding&limit=100&offset=200');
 		respond({});
+		await getSeriesRows({ symbol: 'ETH-USDT', timeframe: '15m' }, { limit: 50, order: 'desc' });
+		expect(lastCall().url).toBe('/api/data/series/ETH-USDT/15m/rows?venue=canonical&limit=50&order=desc');
+		respond({});
 		await getStreamPoints('ETH-USDT', 'oi', { timeframe: '1h', max_points: 120 });
 		expect(lastCall().url).toBe('/api/data/streams/ETH-USDT/oi/points?timeframe=1h&max_points=120');
 	});

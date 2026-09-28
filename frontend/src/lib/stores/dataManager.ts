@@ -2,8 +2,9 @@
  * Shared state for the Data Manager page (`/data-next`): the jobs summary that
  * drives the header indicator and the Jobs drawer (polled fast while jobs run,
  * slowly otherwise, paused while the tab is hidden), the SLA census cache the
- * header, Health view and /data nav badge share, and helpers every view uses to
- * load data without stale responses or white screens.
+ * header, Health view and /data nav badge share, the "work landed" signal views
+ * reload on, and helpers every view uses to load data without stale responses
+ * or white screens.
  */
 import { get, readable, writable } from 'svelte/store';
 import { ApiError, ApiOutcomeUnknownError, isRouteMissingError } from '$lib/api/core';
@@ -75,6 +76,24 @@ export const JOBS_UNAVAILABLE_MS = 120_000;
 
 export const jobsSummary = writable<Loadable<DataJobSummary>>(loading());
 
+/** Bumps when the summary shows work finishing. Views that show lake state
+ * reload on it, so a refresh, download or delete shows up without a manual
+ * reload. */
+export const jobsLanded = writable(0);
+
+/** Did work finish between two summaries? Fewer jobs running or queued, more
+ * finished in the last day, or a new automatic run that changed something (an
+ * "everything current" collector tick changes nothing). */
+export function workLanded(before: DataJobSummary | null, after: DataJobSummary | null): boolean {
+	if (!before || !after) return false;
+	if (after.running + after.queued < before.running + before.queued) return true;
+	if (after.succeeded_24h + after.failed_24h > before.succeeded_24h + before.failed_24h) return true;
+	const routine = after.last_routine;
+	if (!routine || routine.id === before.last_routine?.id) return false;
+	const result = (routine.result ?? {}) as { refreshed?: number; bars_added?: number };
+	return routine.status !== 'succeeded' || Number(result.refreshed ?? 1) > 0 || Number(result.bars_added ?? 0) > 0;
+}
+
 /** Poll fast while anything runs or is queued (or right after the user started
  * work), slowly otherwise, and rarely while the endpoint does not exist. */
 export function nextJobsDelay(summary: DataJobSummary | null, status: LoadStatus, boostUntil: number, now: number): number {
@@ -109,7 +128,10 @@ async function pollJobs(): Promise<void> {
 	if (typeof document !== 'undefined' && document.hidden) return;
 	pollInFlight = true;
 	try {
-		jobsSummary.set(await settle(getJobsSummary(), get(jobsSummary)));
+		const before = get(jobsSummary);
+		const next = await settle(getJobsSummary(), before);
+		jobsSummary.set(next);
+		if (next.status === 'ready' && workLanded(before.data, next.data)) jobsLanded.update((n) => n + 1);
 	} finally {
 		pollInFlight = false;
 		schedulePoll();
@@ -177,6 +199,7 @@ export async function loadSlaCensus(options: { maxAgeMs?: number; force?: boolea
 export function resetDataManagerState(): void {
 	slaCensus.set(loading());
 	jobsSummary.set(loading());
+	jobsLanded.set(0);
 	censusRequest = null;
 	boostUntil = 0;
 }

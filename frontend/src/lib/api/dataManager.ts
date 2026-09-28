@@ -139,7 +139,7 @@ export function getSeriesGaps(ref: SeriesRef, page: { limit?: number; offset?: n
 
 export function getSeriesRows(
 	ref: SeriesRef,
-	query: { start?: string | null; end?: string | null; limit?: number; offset?: number } = {},
+	query: { start?: string | null; end?: string | null; limit?: number; offset?: number; order?: 'asc' | 'desc' } = {},
 	signal?: AbortSignal,
 ): Promise<RowsResponse> {
 	return fetchApi(
@@ -150,6 +150,7 @@ export function getSeriesRows(
 			end: query.end,
 			limit: query.limit,
 			offset: query.offset,
+			order: query.order,
 		})}`,
 		{ signal },
 	);

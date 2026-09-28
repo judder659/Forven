@@ -11,7 +11,7 @@
 	import { runAction } from '$lib/components/data-manager/actions';
 	import { formatBytes, formatCount, formatRelative, formatUtc, streamLabel } from '$lib/components/data-manager/format';
 	import { seriesHref } from '$lib/components/data-manager/links';
-	import { clock, loading, settle, type Loadable } from '$lib/stores/dataManager';
+	import { clock, jobsLanded, loading, settle, type Loadable } from '$lib/stores/dataManager';
 
 	let storage: Loadable<StorageInventory> = loading();
 	let trash: Loadable<TrashResponse> = loading();
@@ -27,6 +27,13 @@
 	const loadTrash = async () => (trash = await settle(getTrash(), trash));
 	const loadAudit = async () => (audit = await settle(getIdentityAudit(), audit));
 	onMount(() => void Promise.all([loadStorage(), loadTrash(), loadAudit()]));
+
+	// Work landed: a reclaim, delete or download changes the totals and the trash.
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		void Promise.all([loadStorage(), loadTrash()]);
+	}
 
 	$: s = storage.data;
 	$: diskUsed = s ? s.disk.total_bytes - s.disk.free_bytes : 0;

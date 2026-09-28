@@ -301,8 +301,10 @@ def rows(
     end: object = None,
     limit: int = 100,
     offset: int = 0,
+    order: str = "asc",
 ) -> dict[str, Any]:
-    """``RowsResponse``: the stored rows of a window, oldest first, paged."""
+    """``RowsResponse``: the stored rows of a window, paged; oldest first, or
+    newest first with ``order="desc"``."""
     _, series = resolve(symbol, timeframe, stream=stream, venue=venue)
     columns = list(_OHLCV) if series.stream == "ohlcv" else _file_columns(series)
     where, window_params = _window(start, end)
@@ -310,12 +312,13 @@ def rows(
     params.update(window_params)
     limit = max(1, min(int(limit or 100), 5000))
     offset = max(0, int(offset or 0))
+    direction = "DESC" if str(order).lower() == "desc" else "ASC"
     base = f"(SELECT * FROM ({source}){where})"
     select = ", ".join(quality.quote(column) for column in columns)
     with quality.connect() as con:
         total = int(con.execute(f"SELECT count(*) FROM {base}", params).fetchone()[0] or 0)
         records = con.execute(
-            f"SELECT epoch_ms(ts){', ' + select if select else ''} FROM {base} ORDER BY ts LIMIT {limit} OFFSET {offset}",
+            f"SELECT epoch_ms(ts){', ' + select if select else ''} FROM {base} ORDER BY ts {direction} LIMIT {limit} OFFSET {offset}",
             params,
         ).fetchall()
     out = []

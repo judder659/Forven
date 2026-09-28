@@ -46,6 +46,7 @@
 	import {
 		clock,
 		createRequestGuard,
+		jobsLanded,
 		loadSlaCensus,
 		loading,
 		settle,
@@ -109,6 +110,12 @@
 		clearInterval(timer);
 		attentionGuard.cancel();
 	});
+	// Work landed: the collector card and incidents follow (the layout reloads the census).
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		void Promise.all([loadCollector(), loadIncidents()]);
+	}
 
 	// The attention list follows the census: reload it whenever a new census lands.
 	let censusAt = -1;

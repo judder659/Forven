@@ -13,6 +13,7 @@ import {
 	JOBS_SLOW_MS,
 	JOBS_UNAVAILABLE_MS,
 	createRequestGuard,
+	jobsLanded,
 	jobsSummary,
 	loadSlaCensus,
 	nextJobsDelay,
@@ -21,8 +22,10 @@ import {
 	settle,
 	slaCensus,
 	startJobsPolling,
+	workLanded,
 } from '../lib/stores/dataManager';
 import { fixtureCensus } from '../lib/api/dataManagerFixtures';
+import type { DataJob } from '../lib/api/dataManagerTypes';
 
 const idle = { running: 0, queued: 0, failed_24h: 0, succeeded_24h: 3, last_routine: null };
 const busy = { ...idle, running: 2 };
@@ -125,6 +128,33 @@ describe('jobs polling', () => {
 		expect(api.getJobsSummary).toHaveBeenCalledTimes(2);
 		await vi.advanceTimersByTimeAsync(JOBS_FAST_MS);
 		expect(api.getJobsSummary).toHaveBeenCalledTimes(3);
+		stop();
+	});
+
+	it('knows when work landed, and an idle collector tick is not work', () => {
+		const routine = (id: string, result: unknown, status = 'succeeded') => ({ id, status, result }) as unknown as DataJob;
+		const tick = { ...idle, last_routine: routine('r1', { refreshed: 0, bars_added: 0 }) };
+		expect(workLanded(null, idle)).toBe(false);
+		expect(workLanded(busy, idle)).toBe(true);
+		expect(workLanded(idle, { ...idle, succeeded_24h: 4 })).toBe(true); // started and finished between polls
+		expect(workLanded(idle, { ...idle, failed_24h: 1 })).toBe(true);
+		expect(workLanded(idle, busy)).toBe(false);
+		expect(workLanded(idle, tick)).toBe(false);
+		expect(workLanded(tick, tick)).toBe(false);
+		expect(workLanded(tick, { ...idle, last_routine: routine('r2', { refreshed: 3, bars_added: 6 }) })).toBe(true);
+		expect(workLanded(tick, { ...idle, last_routine: routine('r2', null, 'failed') })).toBe(true);
+	});
+
+	it('bumps jobsLanded when a poll sees work finish', async () => {
+		api.getJobsSummary.mockResolvedValue(busy);
+		const stop = startJobsPolling();
+		await flush();
+		expect(get(jobsLanded)).toBe(0);
+		api.getJobsSummary.mockResolvedValue(idle);
+		await vi.advanceTimersByTimeAsync(JOBS_FAST_MS);
+		expect(get(jobsLanded)).toBe(1);
+		await vi.advanceTimersByTimeAsync(JOBS_SLOW_MS);
+		expect(get(jobsLanded)).toBe(1);
 		stop();
 	});
 

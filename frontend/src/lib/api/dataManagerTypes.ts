@@ -303,7 +303,7 @@ export interface GapsResponse {
 	gaps: GapSpan[];
 }
 
-/** GET /api/data/series/{symbol}/{timeframe}/rows?venue=&start=&end=&limit=&offset= (raw stored rows) */
+/** GET /api/data/series/{symbol}/{timeframe}/rows?venue=&start=&end=&limit=&offset=&order=asc|desc (raw stored rows; oldest first unless order=desc) */
 export interface RowsResponse {
 	total: number;
 	columns: string[];

@@ -11,7 +11,7 @@
 	import { buildCoverage, type CoverageCell } from '$lib/components/data-manager/coverage';
 	import { formatBytes, formatCount, formatDuration, plural, STATE_HELP, STATE_LABEL, stateFillClass, STREAM_LABEL, STREAMS, venueShort } from '$lib/components/data-manager/format';
 	import { seriesHref } from '$lib/components/data-manager/links';
-	import { createRequestGuard, loading, pageSearch, settle, type Loadable } from '$lib/stores/dataManager';
+	import { createRequestGuard, jobsLanded, loading, pageSearch, settle, type Loadable } from '$lib/stores/dataManager';
 
 	const PAGE = 500;
 	const LEGEND_STATES = ['fresh', 'late', 'breach', 'frozen', 'missing'] as const;
@@ -28,10 +28,12 @@
 	let selected = new Set<string>();
 	const guard = createRequestGuard();
 
-	async function load() {
+	async function load(options: { quiet?: boolean } = {}) {
 		const { signal, current } = guard.next();
-		rows = loading();
-		selected = new Set();
+		if (!options.quiet) {
+			rows = loading();
+			selected = new Set();
+		}
 		try {
 			const all: CatalogRow[] = [];
 			for (let offset = 0; ; offset += PAGE) {
@@ -46,7 +48,7 @@
 			if (!venues.has(venue)) venue = venues.has('canonical') ? 'canonical' : [...venues][0] ?? 'canonical';
 		} catch (error) {
 			if (!current()) return;
-			rows = await settle<CatalogRow[]>(Promise.reject(error));
+			rows = await settle<CatalogRow[]>(Promise.reject(error), options.quiet ? rows : null);
 		}
 	}
 	const loadPlan = async () => (plan = await settle(getUniversePlanDiff(), plan));
@@ -60,6 +62,13 @@
 		pageSearch.set(null);
 		guard.cancel();
 	});
+
+	// Work landed: redraw the grid in place (the selection stays).
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		void load({ quiet: true });
+	}
 
 	function chooseStream(next: DataStream) {
 		if (next === stream) return;
@@ -204,7 +213,7 @@
 		{/if}
 	{:else}
 		<div class="border border-[#222] bg-[#050505]">
-			<SectionState state={rows} what="The coverage grid" endpoint="GET /api/data/catalog" rows={10} on:retry={load} />
+			<SectionState state={rows} what="The coverage grid" endpoint="GET /api/data/catalog" rows={10} on:retry={() => load()} />
 		</div>
 	{/if}
 </div>

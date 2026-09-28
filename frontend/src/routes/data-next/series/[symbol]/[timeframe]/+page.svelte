@@ -46,7 +46,7 @@
 		venueShort,
 	} from '$lib/components/data-manager/format';
 	import { catalogHref, DM, seriesHref } from '$lib/components/data-manager/links';
-	import { clock, createRequestGuard, loading, settle, slaCensus, type Loadable } from '$lib/stores/dataManager';
+	import { clock, createRequestGuard, jobsLanded, loading, settle, slaCensus, type Loadable } from '$lib/stores/dataManager';
 
 	const ROWS_PAGE = 50;
 
@@ -70,6 +70,7 @@
 	let focus: { start: string; end: string } | null = null;
 	let focusToken = 0;
 	let resetToken = 0;
+	let reloadToken = 0;
 	let chartView = { resolution: '', raw: false, bars: 0, start: 0, end: 0, loading: true, error: '' };
 	let sparks: Record<string, number[]> = {};
 	let gapsShown = 10;
@@ -103,7 +104,7 @@
 			if (!current()) return;
 			detail = { status: 'ready', data, error: '', at: Date.now() };
 			if (!keep) {
-				void loadRows();
+				void loadRows(data);
 				void loadSparks(data);
 			}
 		} catch (error) {
@@ -120,17 +121,51 @@
 	$: d = detail.data;
 	$: step = timeframeSeconds(timeframe);
 
-	async function loadRows() {
-		if (!d?.last_ts) return;
+	// Work landed (this page's refresh, the collector, another tab): show it
+	// without a manual reload. The detail is cheap; the chart, rows and
+	// sparklines reload only when this series actually changed.
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		void reloadAfterWork();
+	}
+
+	async function reloadAfterWork() {
+		const before = d;
+		const key = refKey;
+		if (!before || detail.status !== 'ready') return;
+		await loadDetail(true);
+		const after = detail.data;
+		if (!after || after === before || key !== refKey) return;
+		const moved = (['first_ts', 'last_ts', 'rows', 'gaps_total', 'updated_at'] as const).some((field) => after[field] !== before[field]);
+		if (!moved) return;
+		reloadToken += 1;
+		void loadRows(after);
+		void loadSparks(after);
+	}
+
+	// Takes the series explicitly: right after a load, `d` has not caught up yet.
+	async function loadRows(series: SeriesDetail | null = d) {
+		if (!series?.last_ts) {
+			rows = { status: 'ready', data: { total: 0, columns: [], rows: [] }, error: '', at: Date.now() };
+			return;
+		}
 		const window = rowsWindow ?? {
-			start: new Date(Date.parse(d.last_ts) - (ROWS_PAGE * 2 - 1) * step * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
-			end: d.last_ts,
+			start: new Date(Date.parse(series.last_ts) - (ROWS_PAGE * 2 - 1) * step * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+			end: series.last_ts,
 			label: 'latest bars',
 		};
 		const { signal, current } = rowsGuard.next();
-		const next = await settle(getSeriesRows(ref, { start: window.start, end: window.end, limit: ROWS_PAGE, offset: rowsOffset }, signal), rows);
+		const order = rowsWindow ? 'asc' : 'desc';
+		const next = await settle(getSeriesRows(ref, { start: window.start, end: window.end, limit: ROWS_PAGE, offset: rowsOffset, order }, signal), rows);
 		if (current()) rows = next;
 	}
+	// The latest bars read newest first (what just landed is on top); a month
+	// reads in time order. The arrows always move through time.
+	$: rowsAtStart = rowsOffset === 0;
+	$: rowsAtEnd = !rows.data || rowsOffset + ROWS_PAGE >= rows.data.total;
+	$: earlierDisabled = rowsWindow ? rowsAtStart : rowsAtEnd;
+	$: laterDisabled = rowsWindow ? rowsAtEnd : rowsAtStart;
 
 	// One symbol can own several series of a stream (OI per timeframe, funding per
 	// venue, DVOL per currency), so rows and their sparklines key on all of it.
@@ -184,7 +219,7 @@
 	}
 
 	function pageRows(delta: number) {
-		rowsOffset = Math.max(0, rowsOffset + delta * ROWS_PAGE);
+		rowsOffset = Math.max(0, rowsOffset + (rowsWindow ? delta : -delta) * ROWS_PAGE);
 		void loadRows();
 	}
 
@@ -310,7 +345,7 @@
 						{#if d.first_ts && d.last_ts}
 							{#key refKey}
 								<SeriesChart ref={{ symbol: d.symbol, timeframe: d.timeframe, stream: d.stream, venue: d.venue }} first={d.first_ts} last={d.last_ts}
-									stepSeconds={step} gaps={d.gaps} {focus} {focusToken} {resetToken} on:view={(e) => (chartView = e.detail)} />
+									stepSeconds={step} gaps={d.gaps} {focus} {focusToken} {resetToken} {reloadToken} on:view={(e) => (chartView = e.detail)} />
 							{/key}
 						{:else}
 							<div class="flex h-full items-center justify-center text-[12px] text-[#555]">Nothing stored yet.</div>
@@ -366,14 +401,14 @@
 				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-rows">
 					<header class="flex flex-wrap items-center gap-2 border-b border-[#141414] px-3 py-1.5">
 						<h2 id="dm-rows" class="text-[11px] font-bold uppercase tracking-wider text-white">Stored rows</h2>
-						<span class="text-[10px] text-[#666]">{rowsWindow ? `month ${rowsWindow.label}` : 'latest bars'} · UTC{rows.data ? ` · ${formatCount(rows.data.total)} in the window` : ''}</span>
+						<span class="text-[10px] text-[#666]">{rowsWindow ? `month ${rowsWindow.label}` : 'latest bars, newest first'} · UTC{rows.data ? ` · ${formatCount(rows.data.total)} in the window` : ''}</span>
 						<div class="ml-auto flex items-center gap-1">
-							<button type="button" on:click={() => pageRows(-1)} disabled={rowsOffset === 0} aria-label="Earlier page" class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">←</button>
+							<button type="button" on:click={() => pageRows(-1)} disabled={earlierDisabled} aria-label="Earlier page" class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">←</button>
 							<span class="font-mono text-[10px] text-[#666]">{rows.data?.total ? `${formatCount(rowsOffset + 1)}–${formatCount(Math.min(rows.data.total, rowsOffset + ROWS_PAGE))}` : ''}</span>
-							<button type="button" on:click={() => pageRows(1)} disabled={!rows.data || rowsOffset + ROWS_PAGE >= rows.data.total} aria-label="Later page" class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">→</button>
+							<button type="button" on:click={() => pageRows(1)} disabled={laterDisabled} aria-label="Later page" class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">→</button>
 						</div>
 					</header>
-					<SectionState state={rows} what="Stored rows" endpoint="GET /api/data/series/…/rows" rows={4} on:retry={loadRows}>
+					<SectionState state={rows} what="Stored rows" endpoint="GET /api/data/series/…/rows" rows={4} on:retry={() => loadRows()}>
 						{#if rows.data?.rows.length}
 							<div class="max-h-[340px] overflow-auto">
 								<table class="w-full text-[11px]">

@@ -107,11 +107,12 @@ def get_series_rows(
     end: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    order: str = "asc",
 ):
-    """Raw stored rows of a window, paged (RowsResponse)."""
+    """Raw stored rows of a window, paged (RowsResponse); ``order=desc`` for newest first."""
     return _serve(
         lambda: series_detail.rows(
-            symbol, timeframe, stream=stream, venue=venue, start=start, end=end, limit=limit, offset=offset
+            symbol, timeframe, stream=stream, venue=venue, start=start, end=end, limit=limit, offset=offset, order=order
         )
     )
 

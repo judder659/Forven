@@ -455,6 +455,8 @@ def test_rows_gaps_points_endpoints_and_errors(lake):
     assert rows["columns"] == ["timestamp", "open", "high", "low", "close", "volume"]
     assert rows["total"] == 43 and [r["timestamp"] for r in rows["rows"]] == [
         "2026-03-01T03:00:00Z", "2026-03-01T04:00:00Z", "2026-03-01T05:00:00Z"]
+    newest = client.get("/api/data/series/BTC-USDT/1h/rows", params={"limit": 2, "order": "desc"}).json()
+    assert [r["timestamp"] for r in newest["rows"]] == ["2026-03-02T23:00:00Z", "2026-03-02T22:00:00Z"]
     gaps = client.get("/api/data/series/BTC-USDT/1h/gaps", params={"limit": 1}).json()
     assert gaps["total"] == 2 and gaps["gaps"] == [
         {"start": "2026-03-01T10:00:00Z", "end": "2026-03-01T11:00:00Z", "bars": 2, "kind": "missing"}]

@@ -53,7 +53,7 @@
 		venueShort,
 	} from '$lib/components/data-manager/format';
 	import { DM, seriesHref } from '$lib/components/data-manager/links';
-	import { clock, createRequestGuard, errorMessage, loading, pageSearch, type Loadable } from '$lib/stores/dataManager';
+	import { clock, createRequestGuard, errorMessage, jobsLanded, loading, pageSearch, type Loadable } from '$lib/stores/dataManager';
 
 	const PAGE = 500;
 	const MAX_ROWS = 5000;
@@ -137,6 +137,13 @@
 		pageSearch.set(searchInput ?? null);
 		void load();
 	});
+
+	// Work landed: reload in place (same scroll, same selection).
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		void load({ keepPosition: true });
+	}
 	onDestroy(() => {
 		pageSearch.set(null);
 		guard.cancel();

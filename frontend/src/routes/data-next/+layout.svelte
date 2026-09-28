@@ -10,7 +10,7 @@
 	import { formatCount, formatRelative, formatUtc } from '$lib/components/data-manager/format';
 	import { healthVerdict, type Tone } from '$lib/components/data-manager/health';
 	import { DM } from '$lib/components/data-manager/links';
-	import { clock, jobsSummary, loadSlaCensus, pageSearch, slaCensus, startJobsPolling } from '$lib/stores/dataManager';
+	import { clock, jobsLanded, jobsSummary, loadSlaCensus, pageSearch, slaCensus, startJobsPolling } from '$lib/stores/dataManager';
 
 	const TABS = [
 		{ href: DM, label: 'Health' },
@@ -41,6 +41,12 @@
 		stopJobs?.();
 		clearInterval(censusTimer);
 	});
+	// Work landed: the census (this header and Health's attention list) follows at once.
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		void loadSlaCensus({ force: true });
+	}
 
 	$: census = $slaCensus.data;
 	// Counts only: the Health hero names the strategy when it has the rows at hand.
