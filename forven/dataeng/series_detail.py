@@ -428,6 +428,7 @@ def _streams(snapshot: catalog_index.Snapshot, series: SeriesFile) -> list[dict[
         out.append(
             {
                 "stream": item.stream,
+                "symbol": item.symbol,
                 "timeframe": item.timeframe,
                 "venue": item.venue,
                 "rows": int(item.rows),

@@ -158,12 +158,13 @@ export function getSeriesRows(
 export function getStreamPoints(
 	symbol: string,
 	stream: DataStream,
-	query: WindowQuery & { timeframe?: string } = {},
+	query: WindowQuery & { timeframe?: string; venue?: VenueKey } = {},
 	signal?: AbortSignal,
 ): Promise<StreamPointsResponse> {
 	return fetchApi(
 		`/data/streams/${seg(symbol)}/${seg(stream)}/points${toQuery({
 			timeframe: query.timeframe,
+			venue: query.venue,
 			start: query.start,
 			end: query.end,
 			max_points: query.max_points ?? 1500,

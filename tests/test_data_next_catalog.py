@@ -305,6 +305,28 @@ def test_catalog_quality_cache_fingerprint_invalidation(lake):
     assert "oi:canonical:BTC-USDT:1h" not in catalog.list_series_quality()
 
 
+def test_a_finished_job_shows_on_the_next_catalog_read(lake):
+    from forven.dataeng import catalog_index, jobs
+
+    _build_lake(lake)
+    before = catalog_index.get_snapshot()
+    catalog_index.wait_idle()
+    assert "ohlcv:canonical:SOL-USDT:1h" not in before.by_id
+
+    def runner(ctx):
+        _write(lake / "ohlcv/SOL-USDT/1h.parquet", _bars("2026-09-01", 24), _stamp("binanceusdm", "perp", "SOL-USDT"))
+        return {"series": 1}
+
+    assert jobs.wait_for(jobs.submit("download", runner, title="Download SOL")["id"], timeout=10)["status"] == "succeeded"
+    after = catalog_index.get_snapshot()  # no TTL wait
+    assert "ohlcv:canonical:SOL-USDT:1h" in after.by_id
+    catalog_index.wait_idle()
+
+    # A build that began before the write never replaces the newer snapshot.
+    latest = catalog_index.get_snapshot()
+    catalog_index._store(latest.root, before)
+    assert catalog_index.get_snapshot() is latest
+
 def test_catalog_endpoint_serves_the_snapshot(lake):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

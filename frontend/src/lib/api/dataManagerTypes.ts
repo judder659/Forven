@@ -222,6 +222,8 @@ export interface GapSpan {
 
 export interface StreamSummary {
 	stream: DataStream;
+	/** The stored series' own symbol: the pair, or the currency for market-wide streams (DVOL: "BTC", "ETH"). */
+	symbol?: string;
 	timeframe: string;
 	venue: VenueKey;
 	rows: number;

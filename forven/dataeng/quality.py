@@ -253,7 +253,7 @@ def score(stats: dict[str, Any]) -> tuple[float, list[str]]:
             findings.append(
                 (
                     min(10.0, float(outliers)),
-                    f"{_count(outliers, 'bad tick', 'bad ticks')} (a {OUTLIER_SIGMA:g}-sigma spike that reverts on the next bar)",
+                    f"{_count(outliers, 'possible bad tick', 'possible bad ticks')} (an {OUTLIER_SIGMA:g}-sigma move that reverts on the next bar)",
                 )
             )
     else:

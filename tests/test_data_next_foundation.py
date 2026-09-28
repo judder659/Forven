@@ -280,6 +280,27 @@ def test_classify_error_codes(jobs):
     assert jobs.classify_error(LakeVenueRefused("okx into canonical"))[0] == "venue_refused"
 
 
+def test_finish_hooks_run_before_the_outcome_is_visible(jobs, monkeypatch):
+    monkeypatch.setattr(jobs, "_finish_hooks", [])
+    seen = []
+
+    def hook(job):
+        seen.append((job["status"], jobs.get_job(job["id"])["status"]))
+
+    def broken(job):
+        raise RuntimeError("view cache exploded")
+
+    jobs.on_finish(hook)
+    jobs.on_finish(broken)
+    jobs.on_finish(hook)  # registered once
+    ok = jobs.wait_for(jobs.submit("download", lambda ctx: {"ok": True}, title="ok")["id"], timeout=10)
+    failed = jobs.wait_for(jobs.submit("download", lambda ctx: 1 / 0, title="boom")["id"], timeout=10)
+    assert ok["status"] == "succeeded"  # a failing hook never fails the job
+    assert failed["status"] == "failed"
+    # Whoever sees a job land also sees what it wrote: the hooks ran while it
+    # still read as running.
+    assert seen == [("succeeded", "running"), ("failed", "running")]
+
 def test_cancel_running_job_is_cooperative(jobs):
     started = threading.Event()
 

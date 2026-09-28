@@ -17,7 +17,7 @@
 		refreshSeries,
 		type SeriesRef,
 	} from '$lib/api/dataManager';
-	import type { DataStream, MonthCell, RowsResponse, SeriesDetail } from '$lib/api/dataManagerTypes';
+	import type { DataStream, MonthCell, RowsResponse, SeriesDetail, StreamSummary } from '$lib/api/dataManagerTypes';
 	import DeleteReview from '$lib/components/data-manager/DeleteReview.svelte';
 	import JobRow from '$lib/components/data-manager/JobRow.svelte';
 	import MiniLine from '$lib/components/data-manager/MiniLine.svelte';
@@ -132,6 +132,15 @@
 		if (current()) rows = next;
 	}
 
+	// One symbol can own several series of a stream (OI per timeframe, funding per
+	// venue, DVOL per currency), so rows and their sparklines key on all of it.
+	const RESTATEMENTS_SHOWN = 12;
+	let showAllRestatements = false;
+
+	function streamKey(s: StreamSummary): string {
+		return `${s.stream}|${s.venue}|${s.symbol ?? ''}|${s.timeframe}`;
+	}
+
 	async function loadSparks(series: SeriesDetail) {
 		await Promise.all(
 			series.streams.map(async (s) => {
@@ -141,11 +150,11 @@
 						const bars = await getSeriesBars({ symbol: series.symbol, timeframe: s.timeframe, venue: s.venue }, { max_points: 80 });
 						values = bars.bars.map((b) => b.c);
 					} else {
-						const points = await getStreamPoints(series.symbol, s.stream, { timeframe: s.timeframe, max_points: 80 });
+						const points = await getStreamPoints(s.symbol ?? series.symbol, s.stream, { timeframe: s.timeframe, venue: s.venue, max_points: 80 });
 						const column = points.columns.find((c) => c !== 'timestamp' && c !== 't') ?? '';
 						values = points.points.map((p) => Number(p[column]));
 					}
-					sparks = { ...sparks, [`${s.stream}:${s.timeframe}`]: values };
+					sparks = { ...sparks, [streamKey(s)]: values };
 				} catch {
 					// A missing sparkline is not worth an error; the row still shows its state.
 				}
@@ -432,14 +441,14 @@
 				<!-- Streams -->
 				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-streams">
 					<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-streams" class="text-[11px] font-bold uppercase tracking-wider text-white">{d.stream === 'ohlcv' ? 'Streams for' : 'Other data for'} {d.display_symbol}</h2></header>
-					{#each d.streams as s (s.stream + s.timeframe)}
-						<a href={seriesHref({ symbol: d.symbol, timeframe: s.timeframe, stream: s.stream, venue: s.venue })}
+					{#each d.streams as s (streamKey(s))}
+						<a href={seriesHref({ symbol: s.symbol ?? d.symbol, timeframe: s.timeframe, stream: s.stream, venue: s.venue })}
 							class="flex items-center gap-2 border-b border-[#111] px-3 py-1.5 text-[11px] last:border-b-0 hover:bg-white/[0.02]" title={`Columns: ${s.columns.join(', ')}`}>
 							<div class="min-w-0 flex-1">
-								<div class="flex items-baseline gap-1.5"><span class="text-white">{streamLabel(s.stream)}</span><span class="font-mono text-[10px] text-[#777]">{s.timeframe}</span></div>
+								<div class="flex items-baseline gap-1.5"><span class="text-white">{streamLabel(s.stream)}</span>{#if s.symbol && s.symbol !== d.symbol}<span class="font-mono text-[10px] text-[#aaa]">{s.symbol}</span>{/if}{#if s.venue !== 'canonical'}<span class="text-[10px] text-[#666]">{s.venue}</span>{/if}<span class="font-mono text-[10px] text-[#777]">{s.timeframe}</span></div>
 								<div class="text-[10px] text-[#666]">{formatCount(s.rows)} rows · {historyLength(s.first_ts, s.last_ts)}</div>
 							</div>
-							<MiniLine values={sparks[`${s.stream}:${s.timeframe}`] ?? []} label={`${streamLabel(s.stream)} trend`} />
+							<MiniLine values={sparks[streamKey(s)] ?? []} label={`${streamLabel(s.stream)} trend`} />
 							<StateChip state={s.sla.state} sla={s.sla} />
 						</a>
 					{:else}
@@ -460,9 +469,14 @@
 						<div class="space-y-1 border-t border-[#141414] px-3 py-2 text-[10px]">
 							{#each d.provenance.synthetic_ranges as [from, to]}<div class="text-[#aaa]"><span class="text-[#666]">Synthetic</span> {formatUtc(from, { suffix: false })} → {formatUtc(to)}</div>{/each}
 							{#each d.provenance.patched_ranges as [from, to]}<div class="text-sky-300"><span class="text-[#666]">CSV patch</span> {formatUtc(from, { suffix: false })} → {formatUtc(to)}</div>{/each}
-							{#each d.provenance.restatements as r}
+							{#each showAllRestatements ? d.provenance.restatements : d.provenance.restatements.slice(0, RESTATEMENTS_SHOWN) as r}
 								<div class="text-amber-400/90"><span class="text-[#666]">Restated</span> {formatCount(r.rows)} rows {r.first_ts ? `${formatUtc(r.first_ts, { suffix: false })} → ${formatUtc(r.last_ts)}` : ''} <span class="text-[#666]">(seen {formatUtc(r.observed_at, { date: true })})</span></div>
 							{/each}
+							{#if d.provenance.restatements.length > RESTATEMENTS_SHOWN}
+								<button type="button" class="text-[10px] text-[#888] underline hover:text-white" on:click={() => (showAllRestatements = !showAllRestatements)}>
+									{showAllRestatements ? 'Show fewer' : `Show all ${d.provenance.restatements.length} restatements`}
+								</button>
+							{/if}
 						</div>
 					{:else}
 						<p class="border-t border-[#141414] px-3 py-2 text-[10px] text-[#666]">No synthetic, patched or restated bars.</p>

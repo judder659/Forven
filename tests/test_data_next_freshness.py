@@ -186,6 +186,22 @@ def settings(monkeypatch, **overrides) -> None:
 # ---------------------------------------------------------------- queue order
 
 
+def test_census_built_while_a_job_lands_is_not_cached(monkeypatch):
+    builds = []
+
+    def build():
+        builds.append(object())
+        if len(builds) == 1:
+            collector.invalidate_snapshot()  # a job finishes mid-build
+        return builds[-1]
+
+    monkeypatch.setattr(collector, "build_snapshot", build)
+    collector.invalidate_snapshot()
+    first = collector.get_snapshot()
+    second = collector.get_snapshot()
+    assert first is builds[0] and second is builds[1]
+    assert collector.get_snapshot() is second  # an undisturbed build is cached
+
 def test_intraday_series_is_not_starved_by_a_daily_series(env):
     """A 1m series 180 bars past its allowance outranks a 1d series one bar past
     its allowance (the old planner ranked by raw hours: 120 h vs 5 h)."""

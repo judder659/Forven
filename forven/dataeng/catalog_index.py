@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from forven.dataeng import jobs
 from forven.dataeng import quality as quality_mod
 from forven.dataeng import sla
 from forven.dataeng.lake import CANONICAL_VENUE, SeriesFile, enumerate_series
@@ -562,7 +563,7 @@ def build_snapshot(*, root: Path | str | None = None, catalog: Any = None, now: 
     snapshot = Snapshot(
         root=base,
         generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        built_at=time.monotonic(),
+        built_at=started,  # the lake as of the build's start
         rows=rows,
         by_id={row["id"]: row for row in rows},
         files={item.id: item for item in series},
@@ -636,13 +637,17 @@ _workers: dict[str, threading.Thread] = {}
 
 
 def invalidate(root: Path | str | None = None) -> None:
-    """Mark snapshots stale after a lake write (cheap; the next request
-    triggers a background rebuild)."""
+    """Mark snapshots stale after a lake write (cheap; the next read rebuilds
+    before answering)."""
     with _state_lock:
         if root is None:
             _dirty.update(_snapshots)
         else:
             _dirty.add(str(Path(root)))
+
+
+# A finished download/refresh/delete changes the lake: the next read rebuilds.
+jobs.on_finish(lambda _job: invalidate())
 
 
 def reset() -> None:
@@ -660,7 +665,11 @@ def reset() -> None:
 
 def _store(key: str, snapshot: Snapshot) -> None:
     with _state_lock:
-        _snapshots[key] = snapshot
+        current = _snapshots.get(key)
+        # A background build that began before a job's write must not replace
+        # the rebuild that followed it.
+        if current is None or snapshot.built_at >= current.built_at:
+            _snapshots[key] = snapshot
 
 
 def _worker(key: str) -> None:
@@ -707,13 +716,18 @@ def get_snapshot(*, root: Path | str | None = None, force: bool = False) -> Snap
     key = str(Path(root) if root is not None else lake_root())
     with _state_lock:
         snapshot = _snapshots.get(key)
-        stale = snapshot is None or key in _dirty or time.monotonic() - snapshot.built_at > SNAPSHOT_TTL_SECONDS
+        # A snapshot marked dirty by a finished job is rebuilt before answering,
+        # so an action's result shows on the very next read; one that merely
+        # aged past the TTL refreshes in the background.
+        dirty = key in _dirty
+        stale = snapshot is None or time.monotonic() - snapshot.built_at > SNAPSHOT_TTL_SECONDS
         lock = _build_locks.setdefault(key, threading.Lock())
-    if snapshot is None or force:
+    if snapshot is None or force or dirty:
         with lock:
             with _state_lock:
                 current = _snapshots.get(key)
-            if current is None or force or current is snapshot:
+                still_dirty = key in _dirty
+            if current is None or force or still_dirty:
                 with _state_lock:
                     _dirty.discard(key)
                 current = build_snapshot(root=key)

@@ -81,6 +81,7 @@ Runner = Callable[["JobContext"], "dict[str, Any] | None"]
 RunnerFactory = Callable[[dict[str, Any]], Runner]
 
 _lock = threading.RLock()
+_finish_hooks: list[Callable[[dict[str, Any]], None]] = []
 _executors: dict[str, ThreadPoolExecutor] = {}
 _cancel_flags: set[str] = set()
 _runner_factories: dict[str, RunnerFactory] = {}
@@ -302,6 +303,25 @@ def _log_finish(job: dict[str, Any]) -> None:
         pass
 
 
+def on_finish(callback: Callable[[dict[str, Any]], None]) -> None:
+    """Call ``callback(job)`` when a submitted job's work ends, just before its
+    outcome is recorded (views that cache lake state drop their snapshot, so
+    whoever sees the job land also sees what it wrote)."""
+    with _lock:
+        if callback not in _finish_hooks:
+            _finish_hooks.append(callback)
+
+
+def _run_finish_hooks(job: dict[str, Any]) -> None:
+    with _lock:
+        hooks = list(_finish_hooks)
+    for hook in hooks:
+        try:
+            hook(job)
+        except Exception as exc:  # a view's cache must never fail a job
+            log.debug("data job finish hook failed: %s", exc)
+
+
 def _run(job_id: str, runner: Runner) -> None:
     try:
         job = get_job(job_id)
@@ -309,28 +329,23 @@ def _run(job_id: str, runner: Runner) -> None:
             return  # cancelled (or recovered) before it started
         _update(job_id, status="running", started_at=_now_iso(), attempts=int(job["attempts"]) + 1)
         ctx = JobContext(job_id, job.get("params") or {})
+        outcome: dict[str, Any]
         try:
             ctx.check_cancel()
             result = runner(ctx)
         except JobCancelled as exc:
-            _update(job_id, status="cancelled", finished_at=_now_iso(), message=str(exc)[:500])
+            outcome = {"status": "cancelled", "message": str(exc)[:500]}
         except BaseException as exc:  # noqa: BLE001 - a job must always land terminal
             code, message = classify_error(exc)
             log.warning("data job %s (%s) failed: %s: %s", job_id, job.get("kind"), code, message)
-            _update(
-                job_id,
-                status="failed",
-                finished_at=_now_iso(),
-                error_code=code,
-                error_message=message[:2000],
-            )
+            outcome = {"status": "failed", "error_code": code, "error_message": message[:2000]}
         else:
-            _update(
-                job_id,
-                status="succeeded",
-                finished_at=_now_iso(),
-                result_json=_dumps(result, "null"),
-            )
+            outcome = {"status": "succeeded", "result_json": _dumps(result, "null")}
+        # Drop cached lake views before the outcome is visible, so a reader that
+        # sees the job land also sees what it wrote (even a failed job may have
+        # written part of its work).
+        _run_finish_hooks({**job, "status": outcome["status"]})
+        _update(job_id, finished_at=_now_iso(), **outcome)
         final = get_job(job_id)
         if final is not None:
             _log_finish(final)
@@ -702,6 +717,7 @@ __all__ = [
     "get_job",
     "jobs_summary",
     "list_jobs",
+    "on_finish",
     "prune_jobs",
     "record_routine",
     "recover_interrupted",

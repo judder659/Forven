@@ -684,6 +684,7 @@ def build_snapshot(
 
 _snapshot_lock = threading.Lock()
 _snapshot_cache: tuple[float, Snapshot] | None = None
+_snapshot_generation = 0
 
 
 def get_snapshot(*, refresh: bool = False, max_age: float = SNAPSHOT_TTL_SECONDS) -> Snapshot:
@@ -692,18 +693,28 @@ def get_snapshot(*, refresh: bool = False, max_age: float = SNAPSHOT_TTL_SECONDS
     global _snapshot_cache
     with _snapshot_lock:
         cached = _snapshot_cache
+        generation = _snapshot_generation
     if not refresh and cached is not None and time.monotonic() - cached[0] < max_age:
         return cached[1]
+    started = time.monotonic()
     snap = build_snapshot()
     with _snapshot_lock:
-        _snapshot_cache = (time.monotonic(), snap)
+        # Invalidated mid-build: the lake moved under this answer, so serve it
+        # but don't cache it.
+        if generation == _snapshot_generation:
+            _snapshot_cache = (started, snap)
     return snap
 
 
 def invalidate_snapshot() -> None:
-    global _snapshot_cache
+    global _snapshot_cache, _snapshot_generation
     with _snapshot_lock:
         _snapshot_cache = None
+        _snapshot_generation += 1
+
+
+# A finished download/refresh/delete changes the lake: the next census reads it.
+jobs.on_finish(lambda _job: invalidate_snapshot())
 
 
 # ---------------------------------------------------------------- queue
