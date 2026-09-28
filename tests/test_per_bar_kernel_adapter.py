@@ -322,3 +322,137 @@ def test_kernel_refuses_impure_strategy_with_no_legacy_fallback(forven_db, monke
     monkeypatch.setattr("forven.strategies.registry.get_active", lambda: {pure.strategy_id: pure})
     actions_pure = scanner.manage_positions_via_kernel(pure.strategy_id, strat_pure, account_equity=10000.0)
     assert actions_pure is not scanner.KERNEL_IMPURE_REFUSED
+
+
+# ── adapter caches: keyed on the implementation, the full params and the frame content ──
+# The sandbox worker builds EVERY strategy as cls("isolated", params), so the strategy id
+# and params alone cannot tell two strategies apart there.
+
+def _clear_per_bar_caches():
+    bt._PER_BAR_SIGNALS_CACHE.clear()
+    bt._PER_BAR_PURITY_CACHE.clear()
+
+
+class _UpBars(_PerBarSMA):
+    """Enters on every up-bar. Same merged params as _DownBars."""
+
+    def generate_signal(self, df: pd.DataFrame) -> Signal:
+        c = df["close"]
+        return Signal(entry_signal=bool(c.iloc[-1] > c.iloc[-2]), price=float(c.iloc[-1]))
+
+
+class _DownBars(_PerBarSMA):
+    """Enters on every down-bar. Same merged params as _UpBars."""
+
+    def generate_signal(self, df: pd.DataFrame) -> Signal:
+        c = df["close"]
+        return Signal(entry_signal=bool(c.iloc[-1] < c.iloc[-2]), price=float(c.iloc[-1]))
+
+
+def test_signals_cache_not_shared_between_classes_with_same_id_and_params(forven_db):
+    _clear_per_bar_caches()
+    df = _frame()
+    up = bt._signals_from_per_bar(_UpBars("isolated", {}), df, warmup=WARMUP)
+    down = bt._signals_from_per_bar(_DownBars("isolated", {}), df, warmup=WARMUP)
+    assert up is not None and down is not None
+    assert down is not up, "a second class was served the first class's cached signals"
+    _clear_per_bar_caches()
+    cold_down = bt._signals_from_per_bar(_DownBars("isolated", {}), df, warmup=WARMUP)
+    assert down.long_entries.equals(cold_down.long_entries)
+    assert not down.long_entries.equals(up.long_entries)
+
+
+def test_purity_verdict_not_shared_between_classes_with_same_id_and_params(forven_db):
+    df = _frame()
+    # Pure first: a stateful class with the same id+params must still be refused.
+    _clear_per_bar_caches()
+    assert bt._certify_per_bar_pure(_PerBarSMA("isolated", {}), df, WARMUP)
+    assert not bt._certify_per_bar_pure(_StatefulPerBar("isolated", {}), df, WARMUP)
+    # Impure first: the pure class must still be certified.
+    _clear_per_bar_caches()
+    assert not bt._certify_per_bar_pure(_StatefulPerBar("isolated", {}), df, WARMUP)
+    assert bt._certify_per_bar_pure(_PerBarSMA("isolated", {}), df, WARMUP)
+
+
+class _FundingGatePerBar(_PerBarSMA):
+    """Enters while the latest bar's funding_rate is positive (reads an enrichment column)."""
+
+    def generate_signal(self, df: pd.DataFrame) -> Signal:
+        return Signal(entry_signal=bool(df["funding_rate"].iloc[-1] > 0), price=float(df["close"].iloc[-1]))
+
+
+def test_signals_cache_keys_frame_content_not_just_endpoints(forven_db):
+    _clear_per_bar_caches()
+    df = _frame()
+    df["funding_rate"] = np.where(np.arange(len(df)) % 2 == 0, 1e-4, -1e-4)
+    strat = _FundingGatePerBar("FG", {})
+    first = bt._signals_from_per_bar(strat, df, warmup=WARMUP)
+    # Identical content in a fresh frame object (the scanner rebuilds its frame every
+    # scan) is still a cache hit.
+    assert bt._signals_from_per_bar(strat, df.copy(), warmup=WARMUP) is first
+    # Same length and endpoints, one bar's funding restated: recomputed, not served stale.
+    restated = df.copy()
+    bar = len(df) // 2
+    restated.iloc[bar, restated.columns.get_loc("funding_rate")] *= -1
+    second = bt._signals_from_per_bar(strat, restated, warmup=WARMUP)
+    assert second is not first
+    assert bool(second.long_entries.iloc[bar]) != bool(first.long_entries.iloc[bar])
+    _clear_per_bar_caches()
+    cold = bt._signals_from_per_bar(_FundingGatePerBar("FG", {}), restated, warmup=WARMUP)
+    assert second.long_entries.equals(cold.long_entries)
+
+
+class _LateParamPerBar(_PerBarSMA):
+    """Behaviour is set by ``zz_mode``, which sorts after a 400-char param."""
+
+    @property
+    def default_params(self) -> dict:
+        return {"aa_notes": "x" * 400, "zz_mode": "up"}
+
+    def __init__(self, strategy_id, params=None):
+        super().__init__(strategy_id, params)
+        self._seen = 0
+
+    def generate_signal(self, df: pd.DataFrame) -> Signal:
+        self._seen += 1
+        c = df["close"]
+        mode = self.params["zz_mode"]
+        if mode == "stateful":
+            entry = self._seen > 100
+        elif mode == "down":
+            entry = bool(c.iloc[-1] < c.iloc[-2])
+        else:
+            entry = bool(c.iloc[-1] > c.iloc[-2])
+        return Signal(entry_signal=entry, price=float(c.iloc[-1]))
+
+
+def test_long_params_differing_after_300_chars_do_not_collide(forven_db):
+    up = _LateParamPerBar("LP", {"zz_mode": "up"})
+    down = _LateParamPerBar("LP", {"zz_mode": "down"})
+    stateful = _LateParamPerBar("LP", {"zz_mode": "stateful"})
+
+    def old_repr(s):
+        return repr(sorted((str(k), str(v)) for k, v in s.params.items()))
+
+    # Non-vacuous: the params only diverge past the old 300-char truncation point.
+    assert old_repr(up) != old_repr(down) and old_repr(up)[:300] == old_repr(down)[:300]
+    assert bt._per_bar_params_signature(up) != bt._per_bar_params_signature(down)
+
+    _clear_per_bar_caches()
+    df = _frame()
+    up_sig = bt._signals_from_per_bar(up, df, warmup=WARMUP)
+    down_sig = bt._signals_from_per_bar(down, df, warmup=WARMUP)
+    assert down_sig is not up_sig
+    assert not down_sig.long_entries.equals(up_sig.long_entries)
+    # The purity verdict for the pure mode must not certify the stateful mode.
+    assert not bt._certify_per_bar_pure(stateful, df, WARMUP)
+
+
+def test_unhashable_frame_computes_fresh_and_is_not_cached(forven_db):
+    _clear_per_bar_caches()
+    df = _frame()
+    df["tags"] = [[i] for i in range(len(df))]
+    assert bt._per_bar_frame_signature(df) is None
+    sig = bt._signals_from_per_bar(_PerBarSMA("UH", {}), df, warmup=WARMUP)
+    assert sig is not None and bool(sig.long_entries.any())
+    assert not bt._PER_BAR_SIGNALS_CACHE
