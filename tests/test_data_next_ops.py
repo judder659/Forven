@@ -672,6 +672,57 @@ def test_expired_trash_is_purged_automatically(env):
     assert storage.list_trash()["items"] == []
 
 
+def test_reclaim_dedupes_on_the_selection_not_the_kind(client, messy_lake, monkeypatch):
+    gate = threading.Event()
+    original = storage.trash_paths
+
+    def slow(*args, **kwargs):
+        gate.wait(10)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "trash_paths", slow)
+
+    def reclaim(ids):
+        resp = client.post("/api/data/storage/reclaim", json={"kind": "legacy_root", "item_ids": ids, "confirm": "reclaim legacy_root"})
+        assert resp.status_code == 200, resp.text
+        return resp.json()["job"]
+
+    try:
+        first = reclaim(["funding_btc.parquet"])
+        same = reclaim(["funding_btc.parquet"])
+        other = reclaim(["MATICUSDT_4h.csv"])
+        assert same["id"] == first["id"]  # the identical selection is already queued/running
+        assert other["id"] != first["id"]  # a different selection is its own job, never dropped
+    finally:
+        gate.set()
+    assert _wait(first)["result"]["moved"] == 1 and _wait(other)["result"]["moved"] == 1
+    assert not (messy_lake / "MATICUSDT_4h.csv").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="directory junctions are Windows-only")
+def test_delete_and_restore_through_a_junctioned_data_root(forven_db, tmp_path, monkeypatch):
+    """parquet_path() resolves while the root may be spelled through a junction
+    (a data folder moved to another drive); the trash must still work."""
+    import _winapi
+
+    real = tmp_path / "real"
+    (real / "data" / "ohlcv").mkdir(parents=True)
+    link = tmp_path / "link"
+    _winapi.CreateJunction(str(real), str(link))
+    try:
+        monkeypatch.setattr(data_mod, "DATA_DIR", link / "data" / "ohlcv")
+        _series(link / "data", "BTC-USDT", tail=3)
+        item = data_mod.trash_dataset("BTC-USDT", "1h")
+        assert item is not None and item["id"]
+        assert not (real / "data/ohlcv/BTC-USDT/1h.parquet").exists()
+        assert not (real / "data/ohlcv/BTC-USDT/1h.parquet.tail").exists()
+        storage.restore_trash(item["id"])
+        assert (real / "data/ohlcv/BTC-USDT/1h.parquet").exists()
+        assert (real / "data/ohlcv/BTC-USDT/1h.parquet.tail").exists()
+    finally:
+        os.rmdir(link)  # removes the junction only
+
+
 def test_trash_refuses_paths_outside_the_data_root(env, tmp_path):
     outside = tmp_path / "elsewhere.txt"
     outside.write_text("keep me")

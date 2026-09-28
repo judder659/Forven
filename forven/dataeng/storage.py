@@ -21,6 +21,7 @@ ignores dot-directories, so nothing reads trashed files as series.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -657,7 +658,10 @@ _trash_lock = threading.RLock()
 
 
 def _rel(path: Path, root: Path) -> str:
-    return Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(root))).as_posix()
+    """Path relative to the data root. Both sides are resolved: callers pass
+    resolved series paths (``parquet_path``) while the root may be spelled
+    through a junction/symlink or a short name. Raises ValueError outside it."""
+    return Path(path).resolve(strict=False).relative_to(Path(root).resolve(strict=False)).as_posix()
 
 
 def _write_manifest(item_dir: Path, manifest: dict[str, Any]) -> None:
@@ -1100,13 +1104,17 @@ def submit_reclaim(kind: str, item_ids: list[str] | str, *, origin: str = "user"
         params = {"kind": kind, "item_ids": known}
     label = _GROUP_TEXT[kind][0].lower()
     verb = "Prune" if kind == "revisions" else "Reclaim"
+    # Dedupe on the selection, not the kind: a second, different selection of
+    # the same group while the first is queued must become its own job.
+    selection = "all" if params["item_ids"] == "all" else sorted(params["item_ids"])
+    digest = hashlib.sha1(json.dumps([kind, selection]).encode()).hexdigest()[:16]
     return jobs.submit_registered(
         "reclaim",
         params,
         title=f"{verb} {label}: {count} item{'s' if count != 1 else ''}",
         origin=origin,
         lane="local",
-        dedupe_key=f"reclaim:{kind}",
+        dedupe_key=f"reclaim:{kind}:{digest}",
     )
 
 
