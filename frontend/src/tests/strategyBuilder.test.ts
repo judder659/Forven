@@ -39,6 +39,10 @@ async function open(spec: RuleSpec | Record<string, unknown>) {
 function inputs(label: string) {
 	return [...target.querySelectorAll(`input[aria-label="${label}"]`)] as HTMLInputElement[];
 }
+function buttons(text: string | RegExp) {
+	return [...target.querySelectorAll('button')].filter((b) =>
+		typeof text === 'string' ? b.textContent?.trim() === text : text.test(b.textContent ?? ''));
+}
 async function type(input: HTMLInputElement, value: string) {
 	await fireEvent.input(input, { target: { value } });
 	await settle();
@@ -121,5 +125,76 @@ describe('StrategyBuilder', () => {
 		const length = [...target.querySelectorAll('label')].find((l) => l.textContent?.trim() === 'length')!.querySelector('input')!;
 		await type(length, '');
 		expect(last.errors).toContain('RSI length needs a number.');
+	});
+
+	it('turns a number into a knob named after what it is compared with', async () => {
+		await open({
+			indicators: [{ id: 'rsi', kind: 'rsi', params: { length: 14 } }], params: {},
+			entry_long: { logic: 'and', conditions: [cond('rsi', '<', 30)] },
+			exit_long: null, entry_short: null, exit_short: null,
+		});
+		await fireEvent.click(target.querySelector('button[aria-label="right operand"]')!); await settle();
+		await fireEvent.click(buttons('Knob')[0]); await settle();
+		await fireEvent.click(buttons(/Turn 30 into a knob/)[0]); await settle();
+		expect(last.valid).toBe(true);
+		expect(last.spec.params).toEqual({ rsi_level: 30 });
+		expect(last.spec.entry_long.conditions[0].right).toEqual({ param: 'rsi_level' });
+	});
+
+	it('points the condition that asked for a new indicator at it', async () => {
+		await open({
+			indicators: [], params: {},
+			entry_long: { logic: 'and', conditions: [cond('close', '>', 0)] },
+			exit_long: null, entry_short: null, exit_short: null,
+		});
+		await fireEvent.click(target.querySelector('button[aria-label="right operand"]')!); await settle();
+		await fireEvent.click(buttons('Series')[0]); await settle();
+		await fireEvent.click(buttons(/Add an indicator/)[0]); await settle();
+		const option = [...target.querySelectorAll('[aria-label="Add an indicator"] [role="option"]')]
+			.find((b) => b.textContent?.includes('Bollinger Bands'))!;
+		await fireEvent.click(option); await settle();
+		expect(last.valid).toBe(true);
+		expect(last.spec.indicators).toEqual([{ id: 'bollinger', kind: 'bollinger', params: { length: 20, num_std: 2 } }]);
+		expect(last.spec.entry_long.conditions[0].right).toBe('bollinger');
+	});
+
+	it('applies a formula and refuses one that reads an unknown series', async () => {
+		await open({
+			indicators: [{ id: 'rsi', kind: 'rsi', params: { length: 14 } }], params: { oversold: 30 },
+			entry_long: { logic: 'and', conditions: [cond('rsi', '<', { param: 'oversold' })] },
+			exit_long: null, entry_short: null, exit_short: null,
+		});
+		await fireEvent.click(target.querySelector('button[aria-label="edit as formula"]')!); await settle();
+		const area = target.querySelector('textarea[aria-label="Enter long formula"]') as HTMLTextAreaElement;
+		expect(area.value).toBe('rsi < $oversold');
+
+		await fireEvent.input(area, { target: { value: 'rsi < $oversold and close > sma50' } }); await settle();
+		await fireEvent.click(buttons('Apply')[0]); await settle();
+		expect(target.textContent).toContain('Unknown series "sma50"');
+		expect(last.spec.entry_long.conditions).toHaveLength(1);
+
+		await fireEvent.input(area, { target: { value: 'rsi crosses above $oversold or (close > open and volume > 0)' } }); await settle();
+		await fireEvent.click(buttons('Apply')[0]); await settle();
+		expect(last.valid).toBe(true);
+		expect(last.spec.entry_long).toEqual({
+			logic: 'or',
+			conditions: [
+				cond('rsi', 'crosses_above', { param: 'oversold' }),
+				{ logic: 'and', conditions: [cond('close', '>', 'open'), cond('volume', '>', 0)] },
+			],
+		});
+	});
+
+	it('tunes a knob with its slider without moving the slider range', async () => {
+		await open({
+			indicators: [{ id: 'rsi', kind: 'rsi', params: { length: 14 } }], params: { oversold: 30 },
+			entry_long: { logic: 'and', conditions: [cond('rsi', '<', { param: 'oversold' })] },
+			exit_long: null, entry_short: null, exit_short: null,
+		});
+		const slider = target.querySelector('input[type="range"]') as HTMLInputElement;
+		expect([slider.min, slider.max]).toEqual(['0', '60']);
+		await type(slider, '25');
+		expect(last.spec.params).toEqual({ oversold: 25 });
+		expect([slider.min, slider.max]).toEqual(['0', '60']);
 	});
 });
