@@ -69,3 +69,92 @@ export function formatValue(value: number | null | undefined): string {
 	if (abs >= 1) return String(+value.toFixed(4));
 	return String(+value.toPrecision(4));
 }
+
+type SpecLike = { indicators?: IndicatorInstance[]; params?: Record<string, number> } & Record<string, unknown>;
+
+function asSpec(spec: unknown): SpecLike {
+	return spec && typeof spec === 'object' ? (spec as SpecLike) : {};
+}
+
+/** Display names for every series a spec can read, by series name and by indicator id. */
+export function specSeriesLabels(spec: unknown, metaByKind: Record<string, IndicatorMeta>): Record<string, string> {
+	const labels: Record<string, string> = { ...RAW_COLUMN_LABELS };
+	const instances = asSpec(spec).indicators ?? [];
+	for (const instance of instances) {
+		const meta = metaByKind[instance.kind];
+		labels[instance.id] = indicatorLabel(instance, meta);
+		for (const suffix of meta?.output_suffixes ?? ['']) {
+			const name = `${instance.id}${suffix}`;
+			labels[name] = seriesLabel(name, instances, metaByKind);
+		}
+	}
+	return labels;
+}
+
+/** An operand as text: a series label, "oversold (30)", or a number. */
+export function operandDisplay(operand: unknown, labels: Record<string, string>, knobs: Record<string, number> = {}): string {
+	if (typeof operand === 'number') return formatValue(operand);
+	if (typeof operand === 'string') return labels[operand] ?? operand;
+	if (operand && typeof operand === 'object') {
+		const obj = operand as Record<string, unknown>;
+		if ('param' in obj) {
+			const name = String(obj.param);
+			return name in knobs ? `${name} (${formatValue(Number(knobs[name]))})` : name;
+		}
+		if ('const' in obj) return formatValue(Number(obj.const));
+		const ref = obj.indicator ?? obj.series;
+		if (ref != null) return labels[String(ref).trim()] ?? String(ref);
+	}
+	return String(operand ?? '');
+}
+
+/** The fixed levels a spec's rules compare sub-pane indicators with, keyed by
+ * indicator id: `rsi < 30` draws a line at 30 on the RSI pane. */
+export function specThresholds(
+	value: unknown,
+	metaByKind: Record<string, IndicatorMeta>,
+): Record<string, Array<{ value: number; label: string }>> {
+	const spec = asSpec(value);
+	const owner = new Map<string, string>();
+	for (const instance of spec.indicators ?? []) {
+		const meta = metaByKind[instance.kind];
+		if (meta?.panel !== 'sub') continue;
+		for (const suffix of meta.output_suffixes ?? ['']) owner.set(`${instance.id}${suffix}`, instance.id);
+	}
+	const knobs = spec.params ?? {};
+	const level = (operand: unknown): { value: number; label: string } | null => {
+		if (typeof operand === 'number') return { value: operand, label: '' };
+		if (operand && typeof operand === 'object') {
+			const obj = operand as Record<string, unknown>;
+			if ('const' in obj) return { value: Number(obj.const), label: '' };
+			if ('param' in obj && String(obj.param) in knobs) return { value: Number(knobs[String(obj.param)]), label: String(obj.param) };
+		}
+		return null;
+	};
+	const seriesName = (operand: unknown): string | null => {
+		if (typeof operand === 'string') return operand;
+		if (operand && typeof operand === 'object') {
+			const ref = (operand as Record<string, unknown>).indicator ?? (operand as Record<string, unknown>).series;
+			if (ref != null) return String(ref).trim();
+		}
+		return null;
+	};
+	const out: Record<string, Array<{ value: number; label: string }>> = {};
+	const visit = (item: unknown) => {
+		if (!item || typeof item !== 'object') return;
+		const node = item as { conditions?: unknown[]; left?: unknown; right?: unknown };
+		if (Array.isArray(node.conditions)) {
+			node.conditions.forEach(visit);
+			return;
+		}
+		for (const [a, b] of [[node.left, node.right], [node.right, node.left]]) {
+			const id = owner.get(seriesName(a) ?? '');
+			const found = id ? level(b) : null;
+			if (!id || !found || !Number.isFinite(found.value)) continue;
+			const lines = (out[id] ??= []);
+			if (!lines.some((line) => line.value === found.value)) lines.push(found);
+		}
+	};
+	for (const key of ['entry_long', 'exit_long', 'entry_short', 'exit_short']) visit(spec[key]);
+	return out;
+}

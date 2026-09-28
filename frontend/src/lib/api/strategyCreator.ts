@@ -114,7 +114,9 @@ export interface SampleStats {
 	short_trades: number;
 	net_return: number;
 	win_rate: number;
-	profit_factor: number;
+	/** Null when infinite (no losing trade); see profit_factor_is_infinite. */
+	profit_factor: number | null;
+	profit_factor_is_infinite: boolean;
 	max_drawdown: number;
 	avg_trade: number;
 	avg_bars_held: number;
