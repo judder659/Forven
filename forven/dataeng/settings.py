@@ -12,8 +12,7 @@ class DataEngineSettings(BaseModel):
     enabled_exchanges: list[str] = Field(default_factory=lambda: ["binance"])
     # Research universe (edge-data-expansion Run 1): symbols beyond the trading
     # set that get deep history for strategy DISCOVERY. Seeded via Binance
-    # Vision + REST tail; kept current by the scheduled catch-up (not the
-    # keep-alive, which stays scoped to actively-trading symbols).
+    # Vision + REST tail; kept current by the SLA collector at the universe tier.
     # Ladder: every research symbol gets base_timeframes; the top
     # `intraday_top` by liquidity also get intraday_timeframes; the top
     # `minute_top` also get 1m. metrics_days bounds the daily-file OI/LSR/taker
@@ -45,13 +44,6 @@ class DataEngineSettings(BaseModel):
     # reads reconstruct the values in force at this time from the revision log
     # (T1.6 reproducibility). Empty => latest. Backtest-scoped; live reads ignore it.
     point_in_time_as_of: str = ""
-    # Scheduled catch-up. A background job (forven-data-engine-catchup) drains the
-    # CatchUpPlanner backlog every few minutes so the WHOLE catalog stays current —
-    # not just the active set the OHLCV keep-alive refreshes — without manual
-    # "Execute plan" clicks. auto_catchup_batch = max candle series refreshed per run
-    # (staleness is handled by the planner; current series aren't re-fetched).
-    auto_catchup_enabled: bool = True
-    auto_catchup_batch: int = 12
     # Freshness SLA (forven/dataeng/sla.py) — the ONE definition of how current
     # a stored series must be, per consumer tier. Lag is measured from the last
     # stored bar's OPEN time (the gauntlet data gate's basis), so

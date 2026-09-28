@@ -3086,33 +3086,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.strategies.backtest', 'forven.dataeng.settings'],
   },
   {
-    id: 'data-engine.auto_catchup_enabled',
-    label: 'Auto catch-up',
-    default: true,
-    type: 'toggle',
-    area: 'data',
-    subsection: 'data-engine-core',
-    backendSection: 'data-engine',
-    backendPath: 'data_engine_settings.auto_catchup_enabled',
-    description:
-      'Run a background job every 10 min that drains the backfill plan, keeping the whole catalog current automatically (not just the active keep-alive set). Turn off to only catch up manually.',
-    usedBy: ['forven.scheduler', 'forven.api_domains.data'],
-  },
-  {
-    id: 'data-engine.auto_catchup_batch',
-    label: 'Auto catch-up batch',
-    unit: 'series/run',
-    default: 12,
-    type: 'number',
-    area: 'data',
-    subsection: 'data-engine-core',
-    backendSection: 'data-engine',
-    backendPath: 'data_engine_settings.auto_catchup_batch',
-    description:
-      'Max candle series the auto catch-up refreshes per 10-min run. Higher drains a backlog faster but makes more exchange API calls.',
-    usedBy: ['forven.scheduler', 'forven.api_domains.data'],
-  },
-  {
     id: 'data-engine.source_reconciliation_enabled',
     label: 'Source reconciliation gate',
     // ARCH-05 (2026-07-25): was captioned `false` against a backend that

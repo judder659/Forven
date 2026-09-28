@@ -18,6 +18,7 @@ Examples:
     python -m forven.agent enqueue --file /abs/path/strat.py --dataset BTC/USDT-1h
     python -m forven.agent promote --strategy S02550 --to gauntlet --from quick_screen
     python -m forven.agent wait-paper --strategies S02545,S02604 --timeout 1800
+    python -m forven.agent data-census --stream ohlcv --limit-worst 20
 """
 
 from __future__ import annotations
@@ -76,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("enqueue"); c.add_argument("--file", required=True); c.add_argument("--dataset", required=True)
     c.add_argument("--session"); c.add_argument("--trade-mode"); c.add_argument("--params")
     c = sub.add_parser("wait-paper"); c.add_argument("--strategies", required=True); c.add_argument("--timeout", type=float, default=3600.0); c.add_argument("--interval", type=float, default=90.0)
+    c = sub.add_parser("data-census", help="freshness SLA census of every stored series (GET /api/data/sla)")
+    c.add_argument("--stream", help="ohlcv|funding|oi|basis|iv|ls_ratio|taker|liquidations"); c.add_argument("--limit-worst", type=int, default=50)
     return p
 
 
@@ -135,6 +138,8 @@ def main(argv=None) -> int:
         elif cmd == "enqueue":
             _emit(fc.enqueue_candidate(args.file, args.dataset, session_id=args.session,
                                        trade_mode=args.trade_mode, parameters=_params(args.params)))
+        elif cmd == "data-census":
+            _emit(fc.data_census(stream=args.stream, limit_worst=args.limit_worst))
         elif cmd == "wait-paper":
             ids = [s.strip() for s in args.strategies.split(",") if s.strip()]
             _emit(fc.wait_for_paper(ids, timeout=args.timeout, interval=args.interval))

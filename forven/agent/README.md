@@ -46,6 +46,7 @@ python -m forven.agent gate-report S02545               # why it is/isn't promot
 python -m forven.agent status S02545,S02604             # {stage,status} for polling
 python -m forven.agent runs --limit 10
 python -m forven.agent result <result_id>
+python -m forven.agent data-census --stream ohlcv       # freshness SLA census (late/breach series first)
 
 # write / lifecycle
 python -m forven.agent create-session --label hunt --objective "find paper strats"
@@ -119,6 +120,7 @@ over these — call them directly from any language.
 | GET  | `/api/lifecycle/strategies/{id}/readiness` | paper-readiness detail |
 | GET  | `/api/backtesting/runs?limit=` | recent runs |
 | GET  | `/api/results/{id}` | one backtest result |
+| GET  | `/api/data/sla?stream=&limit_worst=` | freshness SLA census of every stored series |
 | POST | `/api/ai-dropzone/sessions` `{label,actor,objective}` | open session |
 | POST | `/api/ai-dropzone/sessions/{id}/close` | close session |
 | POST | `/api/strategies/intake/register-file` `{file_path,source,session_id?}` | register a `.py` |

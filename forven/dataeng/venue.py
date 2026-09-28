@@ -2,7 +2,8 @@
 
 We validate on Binance USD-M data but EXECUTE on Hyperliquid perps. This
 module persists HL candles for the actively-traded subset into the
-venue-partitioned lake (source=hyperliquid/market=perp), so:
+venue-partitioned lake (source=hyperliquid/market=perp) — the SLA collector
+(forven/dataeng/collector.py) bootstraps and refreshes them — so:
 
 - the source-reconciliation gate can measure Binance↔HL divergence from
   stored series instead of ad-hoc live fetches, and
@@ -128,34 +129,6 @@ def repair_hl_gaps(symbol: str, timeframe: str) -> dict:
         "target_reached": not remaining,
         "no_recent_data": bool(remaining),
     }
-
-
-def collect_hl_venue_series() -> dict:
-    """Sweep the traded subset: HL candles for every (active symbol, active
-    timeframe). Per-pair failures are tallied, not fatal."""
-    from forven.data_manager import data_manager
-
-    symbols = sorted(data_manager.get_active_symbols(include_recent_backtests=False))
-    summary: dict = {"pairs": 0, "rows_added": 0, "failed": 0}
-    details: dict[str, dict[str, int]] = {}
-    for symbol in symbols:
-        timeframes = sorted(data_manager.get_active_timeframes(symbol))
-        for tf in timeframes:
-            summary["pairs"] += 1
-            try:
-                added = collect_hl_series(symbol, tf)
-            except Exception as exc:
-                summary["failed"] += 1
-                log.warning("HL venue collect failed for %s %s: %s", symbol, tf, exc)
-                continue
-            summary["rows_added"] += added
-            details.setdefault(symbol, {})[tf] = added
-    summary["details"] = details
-    log.info(
-        "HL venue collect: %d pairs, %d rows added, %d failed",
-        summary["pairs"], summary["rows_added"], summary["failed"],
-    )
-    return summary
 
 
 def hl_divergence(symbol: str, timeframe: str, *, probe_bars: int = 500) -> dict:

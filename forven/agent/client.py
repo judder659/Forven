@@ -150,6 +150,10 @@ class ForvenAgentClient:
     def get_result(self, result_id: str) -> Any:
         return self.get(f"/api/results/{result_id}")
 
+    def data_census(self, stream: str | None = None, limit_worst: int = 50) -> Any:
+        """Freshness SLA census of every stored series (GET /api/data/sla)."""
+        return self.get("/api/data/sla", params={"stream": stream, "limit_worst": limit_worst})
+
     def get_gate_report(self, strategy_id: str) -> dict:
         """Composite read: container + lifecycle readiness + latest result.
 
