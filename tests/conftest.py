@@ -34,6 +34,34 @@ def _restore_event_loop_policy():
     asyncio.set_event_loop_policy(_DEFAULT_EVENT_LOOP_POLICY)
 
 
+def _clear_data_manager_caches() -> None:
+    """Drop the Data Manager's short process-wide caches (consumer index, SLA
+    policy, collector snapshot, readiness reports, fingerprints, storage
+    inventory). Only modules a test already imported are touched."""
+    import sys
+
+    for module_name, clear in (
+        ("forven.dataeng.consumers", "clear_consumer_cache"),
+        ("forven.dataeng.sla", "clear_policy_cache"),
+        ("forven.dataeng.collector", "invalidate_snapshot"),
+        ("forven.dataeng.contracts", "clear_caches"),
+        ("forven.dataeng.fingerprint", "clear_cache"),
+        ("forven.dataeng.storage", "invalidate_inventory"),
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, clear):
+            getattr(module, clear)()
+
+
+@pytest.fixture(autouse=True)
+def _reset_data_manager_caches():
+    """xdist runs many tests in one worker process: a consumer index or SLA
+    snapshot built by one test (60 s / 15 s TTL) must never answer the next."""
+    _clear_data_manager_caches()
+    yield
+    _clear_data_manager_caches()
+
+
 @pytest.fixture(autouse=True)
 def _preserve_native_duckdb_modules():
     """Re-seed duckdb's native ``sys.modules`` entries after each test.
