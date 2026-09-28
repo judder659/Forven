@@ -8,7 +8,8 @@ import type { DataStream, DownloadRequestItem, HistoryRequest, ImportPreview, Ve
 export type HistoryChoice =
 	| { mode: 'all' }
 	| { mode: 'years'; years: number }
-	/** UTC calendar dates, YYYY-MM-DD, both inclusive. */
+	| { mode: 'days'; days: number }
+	/** UTC: calendar dates (YYYY-MM-DD, both inclusive) or exact ISO timestamps. */
 	| { mode: 'range'; start: string; end: string };
 
 export interface MarketDraft {
@@ -20,8 +21,10 @@ export interface MarketDraft {
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
+const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+const whenMs = (value: string) => (DATE.test(value) ? Date.parse(`${value}T00:00:00Z`) : DATETIME.test(value) ? Date.parse(value) : NaN);
 const todayUtc = (now: number) => new Date(now).toISOString().slice(0, 10);
+const isoSeconds = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 export function validateHistory(choice: HistoryChoice, now: number = Date.now()): string | null {
 	if (choice.mode === 'years') {
@@ -29,11 +32,18 @@ export function validateHistory(choice: HistoryChoice, now: number = Date.now())
 		if (choice.years > 30) return 'Pick 30 years or fewer (or All available).';
 		return null;
 	}
+	if (choice.mode === 'days') {
+		if (!Number.isFinite(choice.days) || choice.days <= 0) return 'Enter how many days of history to download.';
+		if (choice.days > 30 * 365.25) return 'Pick 30 years or fewer (or All available).';
+		return null;
+	}
 	if (choice.mode === 'range') {
-		if (!DATE.test(choice.start) || !Number.isFinite(dayMs(choice.start))) return 'Enter a start date (YYYY-MM-DD, UTC).';
-		if (!DATE.test(choice.end) || !Number.isFinite(dayMs(choice.end))) return 'Enter an end date (YYYY-MM-DD, UTC).';
-		if (dayMs(choice.start) > dayMs(choice.end)) return 'The start date is after the end date.';
-		if (choice.start > todayUtc(now)) return 'The start date is in the future.';
+		const start = whenMs(choice.start);
+		const end = whenMs(choice.end);
+		if (!Number.isFinite(start)) return 'Enter a start date (YYYY-MM-DD, UTC).';
+		if (!Number.isFinite(end)) return 'Enter an end date (YYYY-MM-DD, UTC).';
+		if (start > end) return 'The start date is after the end date.';
+		if (start > now) return 'The start date is in the future.';
 		return null;
 	}
 	return null;
@@ -41,17 +51,57 @@ export function validateHistory(choice: HistoryChoice, now: number = Date.now())
 
 export function historyRequest(choice: HistoryChoice, now: number = Date.now()): HistoryRequest {
 	if (choice.mode === 'years') return { mode: 'days', days: Math.round(choice.years * 365.25) };
+	if (choice.mode === 'days') return { mode: 'days', days: Math.round(choice.days) };
 	if (choice.mode === 'range') {
-		const end = choice.end >= todayUtc(now) ? new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z') : `${choice.end}T23:59:59Z`;
-		return { mode: 'range', start: `${choice.start}T00:00:00Z`, end };
+		const start = DATE.test(choice.start) ? `${choice.start}T00:00:00Z` : isoSeconds(whenMs(choice.start));
+		const end = DATE.test(choice.end)
+			? choice.end >= todayUtc(now) ? isoSeconds(now) : `${choice.end}T23:59:59Z`
+			: isoSeconds(Math.min(now, whenMs(choice.end)));
+		return { mode: 'range', start, end };
 	}
 	return { mode: 'all' };
 }
 
 export function historyText(choice: HistoryChoice): string {
 	if (choice.mode === 'years') return `last ${choice.years} year${choice.years === 1 ? '' : 's'}`;
-	if (choice.mode === 'range') return `${choice.start} → ${choice.end} UTC`;
+	if (choice.mode === 'days') return `last ${choice.days} day${choice.days === 1 ? '' : 's'}`;
+	if (choice.mode === 'range') return `${choice.start.replace('T00:00:00Z', '')} → ${choice.end.replace('T00:00:00Z', '')} UTC`;
 	return 'all available history';
+}
+
+// ---------------------------------------------------------------- deep links
+
+/** Streams a download can collect alongside the candles. */
+export const DOWNLOAD_STREAMS: DataStream[] = ['funding', 'oi', 'basis', 'ls_ratio', 'taker', 'iv'];
+
+export interface GetDataPrefill {
+	symbol: string;
+	timeframes: string[];
+	venue: string | null;
+	history: HistoryChoice | null;
+	streams: DataStream[] | null;
+}
+
+/** Reads a Get-data deep link (the readiness "fix" links use it):
+ * `?symbol=BTC/USDT|BTC-USDT&timeframe=1h&venue=canonical|source:market
+ *  &history=all|<N>d|<startISO>..<endISO>&streams=funding,oi,...` */
+export function parseGetDataQuery(params: URLSearchParams): GetDataPrefill | null {
+	const raw = params.get('symbol');
+	if (!raw?.trim()) return null;
+	const timeframe = params.get('timeframe')?.trim();
+	const venue = params.get('venue')?.trim() || null;
+	const historyParam = params.get('history')?.trim() ?? '';
+	let history: HistoryChoice | null = null;
+	const days = /^(\d+(?:\.\d+)?)d$/i.exec(historyParam);
+	const range = /^(.+?)\.\.(.+)$/.exec(historyParam);
+	if (historyParam === 'all') history = { mode: 'all' };
+	else if (days) history = { mode: 'days', days: Number(days[1]) };
+	else if (range && Number.isFinite(whenMs(range[1])) && Number.isFinite(whenMs(range[2]))) history = { mode: 'range', start: range[1], end: range[2] };
+	const streamsParam = params.get('streams');
+	const streams = streamsParam == null
+		? null
+		: streamsParam.split(',').map((s) => s.trim()).filter((s): s is DataStream => DOWNLOAD_STREAMS.includes(s as DataStream));
+	return { symbol: normalizeSymbol(raw), timeframes: timeframe ? [timeframe] : [], venue, history, streams };
 }
 
 /** One item per timeframe. Perp add-ons (funding, OI, basis) ride on a single

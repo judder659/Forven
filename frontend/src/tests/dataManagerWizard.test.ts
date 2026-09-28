@@ -5,6 +5,7 @@ import {
 	historyRequest,
 	historyText,
 	normalizeSymbol,
+	parseGetDataQuery,
 	validateHistory,
 	validateImport,
 	validateMarketDraft,
@@ -31,6 +32,39 @@ describe('Get data: history', () => {
 		expect(historyRequest({ mode: 'range', start: '2024-01-01', end: '2024-12-31' }, NOW)).toEqual({ mode: 'range', start: '2024-01-01T00:00:00Z', end: '2024-12-31T23:59:59Z' });
 		expect(historyRequest({ mode: 'range', start: '2026-09-01', end: '2026-09-28' }, NOW)).toEqual({ mode: 'range', start: '2026-09-01T00:00:00Z', end: '2026-09-28T19:22:00Z' });
 		expect(historyText({ mode: 'range', start: '2024-01-01', end: '2024-12-31' })).toBe('2024-01-01 → 2024-12-31 UTC');
+	});
+});
+
+describe('Get data: deep links from readiness fixes', () => {
+	const parse = (query: string) => parseGetDataQuery(new URLSearchParams(query));
+
+	it('reads every field of the link format', () => {
+		expect(parse('symbol=BTC/USDT&timeframe=1h&venue=canonical&history=all&streams=funding,oi,basis,ls_ratio,taker,iv')).toEqual({
+			symbol: 'BTC-USDT', timeframes: ['1h'], venue: 'canonical', history: { mode: 'all' }, streams: ['funding', 'oi', 'basis', 'ls_ratio', 'taker', 'iv'],
+		});
+		expect(parse('symbol=ETH-USDT&timeframe=4h&venue=hyperliquid:perp&history=730d')).toMatchObject({
+			symbol: 'ETH-USDT', timeframes: ['4h'], venue: 'hyperliquid:perp', history: { mode: 'days', days: 730 }, streams: null,
+		});
+		expect(parse('symbol=sol-usdt&history=2024-01-01T00:00:00Z..2024-06-30T23:00:00Z')?.history).toEqual({
+			mode: 'range', start: '2024-01-01T00:00:00Z', end: '2024-06-30T23:00:00Z',
+		});
+		expect(parse('symbol=SOL-USDT&history=2024-01-01..2024-06-30')?.history).toEqual({ mode: 'range', start: '2024-01-01', end: '2024-06-30' });
+	});
+
+	it('ignores what it cannot use', () => {
+		expect(parse('timeframe=1h')).toBeNull();
+		expect(parse('symbol=BTC-USDT&history=forever&streams=funding,bogus,liquidations')).toMatchObject({ history: null, streams: ['funding'], timeframes: [], venue: null });
+		expect(parse('symbol=BTC-USDT&history=2024-13-01..2024-06-30')?.history).toBeNull();
+	});
+
+	it('turns days and exact ranges into requests', () => {
+		expect(validateHistory({ mode: 'days', days: 730 }, NOW)).toBeNull();
+		expect(validateHistory({ mode: 'days', days: 0 }, NOW)).toMatch(/how many days/);
+		expect(historyRequest({ mode: 'days', days: 730 }, NOW)).toEqual({ mode: 'days', days: 730 });
+		expect(historyRequest({ mode: 'range', start: '2024-01-01T06:00:00Z', end: '2024-06-30T23:00:00Z' }, NOW)).toEqual({
+			mode: 'range', start: '2024-01-01T06:00:00Z', end: '2024-06-30T23:00:00Z',
+		});
+		expect(historyText({ mode: 'days', days: 90 })).toBe('last 90 days');
 	});
 });
 
