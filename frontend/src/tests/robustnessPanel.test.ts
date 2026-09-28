@@ -436,4 +436,52 @@ describe('RobustnessPanel', () => {
 		expect(String(message)).toContain('Robustness suite: 0 queued, 0 running, 2 failed, 3 skipped.');
 		expect(type).toBe('error');
 	});
+
+	async function costStressRequestFor(baseline: StrategyContainerHistoryItem): Promise<Record<string, unknown>> {
+		for (const submit of [
+			backtestingMocks.submitWalkForwardRobustness,
+			backtestingMocks.submitCostStressRobustness,
+			backtestingMocks.submitMonteCarloRobustness,
+			backtestingMocks.submitParamJitterRobustness,
+			backtestingMocks.submitRegimeSplitRobustness,
+		]) {
+			submit.mockRejectedValue(new Error('not under test'));
+		}
+		app = mount(RobustnessPanel, {
+			target,
+			props: {
+				strategyId: 'S0001',
+				backtestHistory: [baseline],
+				validationHistory: [],
+				defaultSymbol: 'BTC/USDT',
+				defaultTimeframe: '1h',
+				symbolSuggestions: ['BTC/USDT'],
+			},
+		});
+		clickButtonByText(target, 'Run Full Suite');
+		await waitForCondition(() => backtestingMocks.submitCostStressRobustness.mock.calls.length > 0);
+		return backtestingMocks.submitCostStressRobustness.mock.calls[0][0] as Record<string, unknown>;
+	}
+
+	it('stresses the baseline backtest itself, not a re-sent copy of its dates', async () => {
+		// The stored start already includes the warm-up; sent back as a requested date
+		// the rerun added a second one and no longer reproduced the baseline.
+		const request = await costStressRequestFor({
+			...buildBacktestHistoryItem('B-BASE'),
+			start_date: '2023-07-12T18:00:00+00:00',
+			end_date: '2025-12-31T23:00:00+00:00',
+		});
+
+		expect(request.baseline_result_id).toBe('B-BASE');
+		expect(request).not.toHaveProperty('start_date');
+		expect(request).not.toHaveProperty('end_date');
+	});
+
+	it('sends the seeded window when the baseline carries no dates', async () => {
+		const request = await costStressRequestFor(buildBacktestHistoryItem('B-UNDATED'));
+
+		expect(request).not.toHaveProperty('baseline_result_id');
+		expect(String(request.start_date ?? '')).not.toBe('');
+		expect(String(request.end_date ?? '')).not.toBe('');
+	});
 });

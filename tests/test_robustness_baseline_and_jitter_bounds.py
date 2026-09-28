@@ -108,7 +108,8 @@ def test_param_jitter_with_no_numeric_params_is_not_applicable(forven_db):
     assert result["not_applicable"] is True
     assert result["n_variants"] == 0
     # pass_rate/stable_pct must be ABSENT — their absence is what makes the
-    # P25-4 paper gate and the composite scorer skip the jitter check.
+    # P25-4 paper gate skip its rate check. The composite scorer passes the test
+    # on `not_applicable` (see test_robustness_oracle).
     assert "pass_rate" not in result
     assert "stable_pct" not in result
 
@@ -139,10 +140,11 @@ def test_param_jitter_effective_iterations_are_capped():
 
 def test_param_jitter_deadline_cap_finishes_before_the_outer_hard_kill():
     """The graceful param-jitter deadline must leave room for the final in-flight
-    rerun + verdict computation before the OUTER hard kill (submit 600s / gauntlet
-    300s). Otherwise the worker is hard-killed with NO verdict — the exact
-    false-negative ('missing required verdict tests: param_jitter') the adaptive
-    sizing set out to remove. Regression guard for that off-by-budget bug."""
+    rerun + verdict computation before the OUTER hard kill (submit 600s; an inline
+    sweep with no work budget 300s — the gauntlet worker's own budget is covered in
+    test_param_jitter_sweep). Otherwise the worker is hard-killed with NO verdict —
+    the exact false-negative ('missing required verdict tests: param_jitter') the
+    adaptive sizing set out to remove. Regression guard for that off-by-budget bug."""
     from forven.routers.robustness import (
         _PARAM_JITTER_DEADLINE_MARGIN_S,
         _param_jitter_deadline_cap_s,
@@ -150,16 +152,16 @@ def test_param_jitter_deadline_cap_finishes_before_the_outer_hard_kill():
 
     est_rerun_s = 54.0  # ~a non-vectorizable strategy at the default 4380-bar cap
 
-    # Gauntlet step tick (~300s): the deadline + one final in-flight rerun (the
+    # Inline sweep with no work budget (300s): the deadline + one final in-flight rerun (the
     # chunk runner only stops AFTER a rerun crosses the deadline) must finish < 300s.
-    gauntlet_cap = _param_jitter_deadline_cap_s(300.0, est_rerun_s)
-    assert gauntlet_cap + est_rerun_s < 300.0
-    assert gauntlet_cap == max(60.0, 300.0 - est_rerun_s - _PARAM_JITTER_DEADLINE_MARGIN_S)
+    inline_cap = _param_jitter_deadline_cap_s(300.0, est_rerun_s)
+    assert inline_cap + est_rerun_s < 300.0
+    assert inline_cap == max(60.0, 300.0 - est_rerun_s - _PARAM_JITTER_DEADLINE_MARGIN_S)
 
     # Submit path (600s): same safety invariant, and it gets to use more of its budget.
     submit_cap = _param_jitter_deadline_cap_s(600.0, est_rerun_s)
     assert submit_cap + est_rerun_s < 600.0
-    assert submit_cap > gauntlet_cap
+    assert submit_cap > inline_cap
 
     # Never drops below the 60s floor, even with an implausibly small budget.
     assert _param_jitter_deadline_cap_s(30.0, est_rerun_s) == 60.0

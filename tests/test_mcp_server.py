@@ -235,3 +235,40 @@ def test_run_robustness_submits_persisted_endpoints():
     # param_jitter auto-resolved the baseline backtest result.
     jitter_body = next(c[2] for c in stub.calls if c[1] == "/api/robustness/param-jitter/submit")
     assert jitter_body == {"strategy_id": "S00001", "result_id": "S1-btc-1"}
+    # cost_stress replays the same baseline's window, as the gauntlet does.
+    cost_body = next(c[2] for c in stub.calls if c[1] == "/api/robustness/cost-stress/submit")
+    assert cost_body == {
+        "strategy_id": "S00001",
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+        "baseline_result_id": "S1-btc-1",
+    }
+
+
+def _cost_stress_body(results: list[dict[str, Any]]) -> dict[str, Any]:
+    stub = StubClient(
+        responses={
+            "/api/results": {"results": results},
+            "/api/robustness/cost-stress/submit": {"job_id": "j2", "result_id": "r2", "status": "running"},
+        }
+    )
+    server = build_server(client=stub)  # type: ignore[arg-type]
+    asyncio.run(
+        server.call_tool(
+            "forven_run_robustness",
+            {"strategy_id": "S00001", "dataset_id": "BTC/USDT-1h", "tests": ["cost_stress"]},
+        )
+    )
+    return next(c[2] for c in stub.calls if c[1] == "/api/robustness/cost-stress/submit")
+
+
+def test_cost_stress_alone_still_resolves_the_baseline():
+    body = _cost_stress_body([{"result_id": "S1-btc-7", "result_type": "backtest"}])
+
+    assert body["baseline_result_id"] == "S1-btc-7"
+
+
+def test_cost_stress_without_a_backtest_still_submits():
+    body = _cost_stress_body([])
+
+    assert body == {"strategy_id": "S00001", "symbol": "BTC/USDT", "timeframe": "1h"}

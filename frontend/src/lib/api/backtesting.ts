@@ -1324,6 +1324,7 @@ export async function submitCostStressRobustness(request: {
 	slippage_multiplier: number;
 	start_date?: string;
 	end_date?: string;
+	baseline_result_id?: string;
 }): Promise<RobustnessSubmitResponse> {
 	return fetchApi('/robustness/cost-stress/submit', {
 		method: 'POST',

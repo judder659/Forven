@@ -300,7 +300,7 @@ def get_ai_dropzone_context():
             "session_detail": {"method": "GET", "path": "/api/ai-dropzone/sessions/{id}", "description": "Session detail: tagged strategies and recent runs"},
             "session_close": {"method": "POST", "path": "/api/ai-dropzone/sessions/{id}/close", "description": "Close a session (idempotent)"},
             "robustness_walk_forward": {"method": "POST", "path": "/api/robustness/walk-forward/submit", "description": "PERSISTED walk-forward analysis. Body: {strategy_id, symbol, timeframe}. Returns {job_id, result_id}; poll /api/robustness/results/{result_id}."},
-            "robustness_cost_stress": {"method": "POST", "path": "/api/robustness/cost-stress/submit", "description": "PERSISTED cost-stress (2x fees/slippage). Body: {strategy_id, symbol, timeframe}."},
+            "robustness_cost_stress": {"method": "POST", "path": "/api/robustness/cost-stress/submit", "description": "PERSISTED cost-stress (2x fees/slippage). Body: {strategy_id, symbol, timeframe, baseline_result_id}; the rerun replays the baseline backtest's window, so pass the same baseline as param_jitter."},
             "robustness_param_jitter": {"method": "POST", "path": "/api/robustness/param-jitter/submit", "description": "PERSISTED parameter-jitter stability. Body: {strategy_id, result_id} where result_id is a baseline backtest result."},
             "robustness_result": {"method": "GET", "path": "/api/robustness/results/{result_id}", "description": "Poll a submitted robustness run: status + verdict scorecard."},
             "readiness": {"method": "GET", "path": "/api/lifecycle/strategies/{id}/readiness", "description": "Structured promotion checklist: per-gate pass/fail + actionable next step."},

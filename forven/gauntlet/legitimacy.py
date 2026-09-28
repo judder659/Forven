@@ -6,6 +6,11 @@ from typing import Any
 from forven.gauntlet.models import normalize_step_key
 
 
+# Fewest parameter-jitter reruns that count as evidence. The engine will not issue a
+# verdict from a sweep that fell short of its plan and landed below this.
+PARAM_JITTER_MIN_RERUNS = 10
+
+
 def _as_float(value: object, default: float = 0.0) -> float:
     try:
         number = float(value)
@@ -58,9 +63,18 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
         # convert "test does not apply" into a failed gate for every composite.
         if payload.get("not_applicable") is True:
             return {"ok": True, "reason": "parameter jitter not applicable (no numeric parameters)"}
+        # Count the reruns that finished, not the ones planned: a sweep cut short by
+        # its deadline passed here on 4 of 15. n_measured (reruns with a Sharpe) is
+        # exact; older rows fall back to iterations_completed, then the plan.
+        finished = next(
+            (payload.get(key) for key in ("n_measured", "iterations_completed") if payload.get(key) is not None),
+            None,
+        )
         iterations = int(
             _as_float(
-                payload.get("n_iterations")
+                finished
+                if finished is not None
+                else payload.get("n_iterations")
                 or payload.get("iterations")
                 or payload.get("samples")
                 or payload.get("n_variants")
@@ -72,7 +86,7 @@ def validate_robustness_payload(step_key: object, payload: dict[str, Any]) -> di
             math.isfinite(_as_float(payload.get(key), float("nan")))
             for key in ("pass_rate", "stable_pct", "pct_positive_sharpe")
         )
-        if iterations < 10 or not has_rate:
+        if iterations < PARAM_JITTER_MIN_RERUNS or not has_rate:
             return {"ok": False, "reason": "parameter jitter needs iterations and stability/pass-rate evidence"}
         return {"ok": True, "reason": "parameter jitter payload has stability evidence"}
 
