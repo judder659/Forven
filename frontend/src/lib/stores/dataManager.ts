@@ -5,7 +5,7 @@
  * header, Health view and /data nav badge share, and helpers every view uses to
  * load data without stale responses or white screens.
  */
-import { get, writable } from 'svelte/store';
+import { get, readable, writable } from 'svelte/store';
 import { ApiError, ApiOutcomeUnknownError, isRouteMissingError } from '$lib/api/core';
 import { getJobsSummary, getSlaCensus } from '$lib/api/dataManager';
 import type { DataJobSummary, SlaCensus } from '$lib/api/dataManagerTypes';
@@ -183,3 +183,9 @@ export function resetDataManagerState(): void {
 
 /** Search box registered by the current page, so "/" focuses it instead of the header search. */
 export const pageSearch = writable<HTMLInputElement | null>(null);
+
+/** Wall clock for "12 s ago" captions, ticking every 5 s while anything shows one. */
+export const clock = readable(Date.now(), (set) => {
+	const id = setInterval(() => set(Date.now()), 5_000);
+	return () => clearInterval(id);
+});
