@@ -314,7 +314,7 @@ def get_ai_dropzone_context():
             "5. POST /api/backtesting/run {strategy_id, dataset_id, session_id?} — iterate on the design until out-of-sample metrics look genuinely good (PF > ~1.05, positive Sharpe, MaxDD < 30%, >= 15 trades).",
             "6. POST /api/backtesting/optimize — parameter search. Then BAKE the winning params into the file's default_params (gates judge the registered file's defaults, not your run overrides).",
             "7. Submit the PERSISTED robustness suite (walk-forward, cost-stress, param-jitter via /api/robustness/*/submit) — these write the validation artifacts the paper gate reads. Poll /api/robustness/results/{result_id} until done.",
-            "8. GET /api/lifecycle/strategies/{id}/readiness — every gate green? POST /api/strategies/{id}/promote with force=false.",
+            "8. GET /api/lifecycle/strategies/{id}/readiness — every gate green, or is the only failed step promotion_gate with reason_code holdout_pending (that attempt submits the one-shot held-back test)? POST /api/strategies/{id}/promote with force=false.",
             "9. Report honest failures — gates rejecting a weak strategy is the system working. Never force a pass.",
         ],
         "gotchas": [

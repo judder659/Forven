@@ -296,7 +296,9 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             "file's default_params; (7) forven_run_robustness — the PERSISTED "
             "validation suite the paper gate reads — and poll "
             "forven_get_robustness_result; (8) forven_get_gate_report, then "
-            "forven_promote_strategy when every gate is green. Sessions are "
+            "forven_promote_strategy when every gate is green, or when the "
+            "only failed gate is holdout_pending (that attempt submits the "
+            "one-shot held-back test). Sessions are "
             "automatic: one opens on your first write, tags all later work, "
             "and closes when you disconnect. Never pass force=true to skip a "
             "gate — a genuine rejection is the system working."
@@ -414,10 +416,11 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         name="forven_get_gate_report",
         description=(
             "STEP 8 — the single status readout: lifecycle stage, latest "
-            "compact backtest, promotion_ready flag, structured failed_gates "
-            "(each with an actionable hint), and next_actions. Read-only; "
-            "call it whenever you need to know what stands between a "
-            "strategy and promotion."
+            "compact backtest, promotion_ready flag (the real gauntlet->paper "
+            "gate, evaluated as a dry run), structured failed_gates (each "
+            "with a reason_code and actionable hint), and next_actions. "
+            "Read-only; call it whenever you need to know what stands "
+            "between a strategy and promotion."
         ),
     )
     def forven_get_gate_report(strategy_id: str) -> dict[str, Any]:
@@ -449,6 +452,7 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
                             "message": step.get("detail") or "",
                             "severity": "block",
                             "actionable": step.get("actionable"),
+                            "reason_code": step.get("reason_code"),
                         }
                     )
         ready = readiness.get("ready") if isinstance(readiness, dict) else None
@@ -469,6 +473,7 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
                         next_actions.append(f"Note: {detail}")
         for gate in failed_gates:
             action = gate.get("actionable")
+            code = gate.get("reason_code")
             if action in ("run_validation_suite", "re_run_validation_suite"):
                 next_actions.append(
                     "Missing/failing persisted validation — run forven_run_robustness and poll "
@@ -478,6 +483,23 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
                 next_actions.append("Run forven_run_optimization for this strategy.")
             elif action == "run_timeframe_sweep":
                 next_actions.append("Multi-timeframe evidence missing — run backtests on more timeframes.")
+            elif gate["id"] == "stage" and code != "not_found":
+                next_actions.append(
+                    f"Strategy is {code} — out of the pipeline and not promotable. Don't "
+                    "promote it; design a new candidate instead."
+                )
+            elif code == "holdout_reject":
+                next_actions.append(
+                    "The one-shot held-back test FAILED — a merit rejection. Don't promote "
+                    "this strategy or re-tune it against the held-back period; move on to a "
+                    "new candidate."
+                )
+            elif code == "holdout_pending":
+                next_actions.append(
+                    "Held-back test pending — its verdict decides the paper hop. If it has "
+                    "not run yet, a non-forced forven_start_paper_session attempt submits "
+                    "it; then re-check this report."
+                )
         return {
             "strategy_id": strategy_id,
             "strategy": container.get("strategy") if isinstance(container, dict) else container,
@@ -857,8 +879,10 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         description=(
             "FINAL STEP — promote a gauntlet strategy to PAPER through the "
             "normal lifecycle gate. Only call when forven_get_gate_report "
-            "shows promotion_ready=true with empty failed_gates. Never "
-            "force."
+            "shows promotion_ready=true with empty failed_gates, or when its "
+            "only failed gate has reason_code holdout_pending: that attempt "
+            "submits the one-shot held-back test, whose verdict then decides. "
+            "Never force."
         ),
     )
     def forven_start_paper_session(

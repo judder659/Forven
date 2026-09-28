@@ -1043,7 +1043,11 @@ def _advance_gauntlet_readiness(
             return {"action": "drain_timeout", "detail": f"Drain budget expired after completing {len(completed_steps)} steps",
                     "completed_steps": completed_steps}
 
-        readiness = check_promotion_readiness(strategy_id)
+        # Evidence checklist only. On "ready" the caller runs the REAL gate via
+        # _attempt_stage_promotion, which records the rejection and submits a
+        # missing held-back test. A dry-run gate step here would stop the drain
+        # first, and each gate-blocked strategy would then use up an assignment slot.
+        readiness = check_promotion_readiness(strategy_id, include_gate=False)
         if readiness.get("ready"):
             detail = "All readiness checks passed"
             if completed_steps:

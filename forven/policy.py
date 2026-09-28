@@ -1464,14 +1464,52 @@ def _check_artifact_rows_exist(strategy_id: str, required_types: list[str]) -> t
     return True, detail
 
 
-def check_promotion_readiness(strategy_id: str) -> dict:
+_OUT_OF_PIPELINE_STAGES = {"archived", "rejected", "backtest_failed"}
+
+
+def check_promotion_readiness(strategy_id: str, *, include_gate: bool = True) -> dict:
     """Build a full readiness checklist for promoting a strategy to paper trading.
 
     Returns a dict with ``ready`` (bool) and ``steps`` (list of check results).
     Each step has: name, status ('passed'|'failed'|'skipped'|'warning'), detail, actionable.
+    A failing ``stage`` or ``promotion_gate`` step also carries ``reason_code``.
+
+    The multi-TF and artifact-row steps are only an evidence checklist. With
+    ``include_gate`` (the default) the report also checks the lifecycle stage
+    and runs the real gauntlet->paper gate as a dry run, so ``ready`` means a
+    promotion would pass. Without them, S10860 (archived after its held-back
+    test FAILED, 2026-09-27) read as ready with no failed step, and the MCP gate
+    report told agents every gate was green. Read surfaces must keep the
+    default. Only callers that run or already ran the real gate opt out.
     """
     ps = _load_pipeline_settings()
     steps: list[dict] = []
+
+    stage: str | None = None
+    if include_gate:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT stage, status, status_reason FROM strategies WHERE id = ?",
+                (strategy_id,),
+            ).fetchone()
+        if row is None:
+            steps.append({"name": "stage", "status": "failed", "detail": "Strategy not found",
+                          "actionable": None, "reason_code": "not_found"})
+        else:
+            stage = normalize_stage(row["stage"] or row["status"])
+            if stage in _OUT_OF_PIPELINE_STAGES:
+                why = str(row["status_reason"] or "").strip()
+                steps.append({
+                    "name": "stage",
+                    "status": "failed",
+                    "detail": (
+                        f"Strategy is {stage}{f' ({why})' if why else ''} — out of the "
+                        "pipeline, so it is not a paper candidate; recover it to "
+                        "quick_screen to re-enter"
+                    ),
+                    "actionable": None,
+                    "reason_code": stage,
+                })
 
     def _run_check(name: str, enabled_key: str, required_key: str, check_fn, *args):
         enabled = ps.get(enabled_key, True)
@@ -1509,8 +1547,28 @@ def check_promotion_readiness(strategy_id: str) -> dict:
                _check_artifact_rows_exist, strategy_id,
                list(required_tests) or list(_GAUNTLET_VALIDATION_TYPES))
 
+    # 3. The real gate as a dry run: every check a promotion runs, the held-back
+    # test last. Unlike the two steps above, no settings toggle skips it.
+    if stage is not None:
+        steps.append(_promotion_gate_step(strategy_id, stage))
+
     ready = all(s["status"] in ("passed", "skipped", "warning") for s in steps)
     return {"ready": ready, "steps": steps, "strategy_id": strategy_id}
+
+
+def _promotion_gate_step(strategy_id: str, stage: str) -> dict:
+    """The gauntlet->paper gate as a readiness step (a dry run: no writes, no submits)."""
+    try:
+        passed, reason = evaluate_promotion(
+            strategy_id, stage, "paper", record_rejection=False, dry_run=True
+        )
+    except Exception as exc:
+        passed, reason = False, f"Promotion gate unavailable: {exc}"
+    step = {"name": "promotion_gate", "status": "passed" if passed else "failed",
+            "detail": str(reason), "actionable": None}
+    if not passed:
+        step["reason_code"], step["kind"] = classify_rejection_reason(reason)
+    return step
 
 
 def _action_for_check(name: str) -> str | None:

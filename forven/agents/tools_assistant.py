@@ -344,7 +344,8 @@ def _tool_get_gate_report(strategy_id: str) -> str:
         readiness = check_promotion_readiness(sid)
         out["promotion_ready"] = readiness.get("ready")
         out["readiness_steps"] = [
-            {"name": s.get("name"), "status": s.get("status"), "detail": s.get("detail")}
+            {"name": s.get("name"), "status": s.get("status"), "detail": s.get("detail"),
+             "reason_code": s.get("reason_code")}
             for s in (readiness.get("steps") or [])
         ]
     except Exception as exc:

@@ -535,7 +535,9 @@ def _explain_row(row: dict, now: datetime) -> dict:
                             ("wait", "Wait — the gauntlet is processing this strategy"),
                         )
                     )
-        readiness = check_promotion_readiness(strategy_id)
+        # The gauntlet status above already ran this gate; don't run it twice
+        # per strategy on every fleet refresh.
+        readiness = check_promotion_readiness(strategy_id, include_gate=False)
         readiness_steps = readiness.get("steps") or []
         blockers.extend(_readiness_blockers(readiness_steps, "promotion_readiness", seen_reasons))
 
