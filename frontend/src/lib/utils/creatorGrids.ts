@@ -219,6 +219,21 @@ export function hasLocalData(availability: Map<string, Set<string>>, symbol: str
 	return availability.get(baseAsset(symbol))?.has(timeframe) ?? false;
 }
 
+/** Split `items` into at most `parts` contiguous groups of near-equal size. Each
+ * group is one request: a fresh backtest worker spends seconds on first-use
+ * imports, so a few larger requests beat many small ones. */
+export function chunk<T>(items: T[], parts: number): T[][] {
+	const count = Math.max(1, Math.min(parts, items.length));
+	const groups: T[][] = [];
+	let start = 0;
+	for (let i = 0; i < count; i++) {
+		const size = Math.ceil((items.length - start) / (count - i));
+		groups.push(items.slice(start, start + size));
+		start += size;
+	}
+	return groups.filter((group) => group.length);
+}
+
 /** Run `work` over `items` with at most `limit` in flight; stops taking new items once aborted. */
 export async function runPool<T>(items: T[], limit: number, work: (item: T) => Promise<void>, signal: AbortSignal): Promise<void> {
 	let next = 0;

@@ -41,6 +41,7 @@
 	import { specSeriesLabels, specThresholds } from '$lib/utils/ruleLabels';
 	import { diffSpecs, type SpecChange } from '$lib/utils/specDiff';
 	import {
+		chunk,
 		hashSpec,
 		hasLocalData,
 		knobValue,
@@ -730,7 +731,7 @@ TYPE_NAME = "my_strategy"
 		return JSON.stringify({ s: spec, m: market && [market[0].trim().toUpperCase(), market[1]], w: [start, end], tm: tradeMode, x: execution });
 	}
 
-	// ---- Parameter heatmap: one request per row, a few in flight ------------------------
+	// ---- Parameter heatmap: rows (or, with one axis, values) in three requests ------------
 	let heatmapView: HeatmapView | null = null;
 	let heatmapContext = '';
 	let heatmapController: AbortController | null = null;
@@ -759,19 +760,24 @@ TYPE_NAME = "my_strategy"
 			const knob = knobOptions.find((k) => k.target === axis.target && k.name === axis.name && k.indicator === (axis.indicator ?? null));
 			return { ...axis, label: knob?.label ?? axis.name, integer: knob?.integer ?? false, min: knob?.min ?? null };
 		};
-		const rows = axes.y ? axes.y.values : [null];
+		const units = axes.y
+			? chunk(axes.y.values, 3).map((ys) => ({ xs: axes.x.values, ys }))
+			: chunk(axes.x.values, 3).map((xs) => ({ xs, ys: null as number[] | null }));
 		heatmapView = {
 			x: meta(axes.x), y: axes.y ? meta(axes.y) : null, cells: {}, done: 0,
-			total: axes.x.values.length * rows.length, status: 'running', warnings: [],
+			total: axes.x.values.length * (axes.y ? axes.y.values.length : 1), status: 'running', warnings: [],
 		};
 		heatmapContext = toolContext(withoutKnobs(spec, [axes.x, ...(axes.y ? [axes.y] : [])].map(knobRef)), market,
 			startDate, endDate, effectiveTradeMode, previewExecution);
-		await runPool(rows, 3, async (row) => {
+		await runPool(units, 3, async ({ xs, ys }) => {
+			const size = xs.length * (ys ? ys.length : 1);
 			try {
-				const result = await heatmapStrategy({ ...base, x: axes.x, y: axes.y ? { ...axes.y, values: [row as number] } : null }, controller.signal);
+				const result = await heatmapStrategy({
+					...base, x: { ...axes.x, values: xs }, y: axes.y && ys ? { ...axes.y, values: ys } : null,
+				}, controller.signal);
 				if (heatmapController !== controller || !heatmapView) return;
 				for (const cell of result.cells) heatmapView.cells[cellKey(cell.x, cell.y)] = cell;
-				heatmapView.done += axes.x.values.length;
+				heatmapView.done += size;
 				heatmapView.warnings = [...new Set([...heatmapView.warnings, ...result.warnings])];
 				heatmapView = heatmapView;
 				markSeen(result.cells.filter((cell) => !cell.error).map((cell) => {
@@ -781,7 +787,7 @@ TYPE_NAME = "my_strategy"
 				}));
 			} catch (err) {
 				if (controller.signal.aborted || heatmapController !== controller || !heatmapView) return;
-				heatmapView.done += axes.x.values.length;
+				heatmapView.done += size;
 				heatmapView.warnings = [...new Set([...heatmapView.warnings, err instanceof Error ? err.message : 'A heatmap row failed.'])];
 				heatmapView = heatmapView;
 			}
@@ -799,7 +805,7 @@ TYPE_NAME = "my_strategy"
 		currentSpec = clone(withKnobs(liveSpec, changes)) as unknown as RuleSpec;
 	}
 
-	// ---- Market grid: one request per market, a few in flight ---------------------------
+	// ---- Market grid: the markets in three requests -------------------------------------
 	let marketView: MarketView | null = null;
 	let marketContext = '';
 	let marketController: AbortController | null = null;
@@ -841,21 +847,27 @@ TYPE_NAME = "my_strategy"
 			return false;
 		});
 		marketView = marketView;
-		await runPool(runnable, 3, async (cell) => {
+		await runPool(chunk(runnable, 3), 3, async (group) => {
 			try {
-				const result = await compareMarkets({ ...base, markets: [cell] }, controller.signal);
+				const result = await compareMarkets({ ...base, markets: group }, controller.signal);
 				if (marketController !== controller || !marketView) return;
-				const row = result.rows[0] ?? { ...cell, status: 'error' as const, message: result.warnings[0] ?? 'No result.' };
-				marketView.rows[marketKey(cell.symbol, cell.timeframe)] = row;
-				marketView.done += 1;
+				const seen: string[] = [];
+				group.forEach((cell, i) => {
+					const row = result.rows[i] ?? { ...cell, status: 'error' as const, message: result.warnings[0] ?? 'No result.' };
+					marketView!.rows[marketKey(cell.symbol, cell.timeframe)] = row;
+					if (row.status === 'ok') seen.push(resultKey(spec, cell.symbol, cell.timeframe));
+				});
+				marketView.done += group.length;
 				marketView.warnings = [...new Set([...marketView.warnings, ...result.warnings])];
 				marketView = marketView;
-				if (row.status === 'ok') markSeen([resultKey(spec, cell.symbol, cell.timeframe)]);
+				markSeen(seen);
 			} catch (err) {
 				if (controller.signal.aborted || marketController !== controller || !marketView) return;
-				marketView.rows[marketKey(cell.symbol, cell.timeframe)] = { ...cell, status: 'error',
-					message: err instanceof Error ? err.message : 'This market failed.' };
-				marketView.done += 1;
+				for (const cell of group) {
+					marketView.rows[marketKey(cell.symbol, cell.timeframe)] = { ...cell, status: 'error',
+						message: err instanceof Error ? err.message : 'These markets failed.' };
+				}
+				marketView.done += group.length;
 				marketView = marketView;
 			}
 		}, controller.signal);

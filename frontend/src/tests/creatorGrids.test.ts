@@ -3,6 +3,7 @@ import type { IndicatorMeta, MarketRow } from '$lib/api';
 import {
 	axisValues,
 	baseAsset,
+	chunk,
 	defaultRange,
 	hasLocalData,
 	heatmapVerdict,
@@ -111,6 +112,14 @@ describe('market grid', () => {
 		expect(hasLocalData(availability, 'BTC/USDT', '4h')).toBe(false);
 		expect(hasLocalData(availability, 'ADA/USDT', '1h')).toBe(false);
 		expect(baseAsset('SOL-PERP')).toBe('SOL');
+	});
+});
+
+describe('chunk', () => {
+	it('splits work into a few near-equal contiguous requests', () => {
+		expect(chunk([1, 2, 3, 4, 5, 6, 7], 3)).toEqual([[1, 2, 3], [4, 5], [6, 7]]);
+		expect(chunk([1, 2], 3)).toEqual([[1], [2]]);
+		expect(chunk([], 3)).toEqual([]);
 	});
 });
 

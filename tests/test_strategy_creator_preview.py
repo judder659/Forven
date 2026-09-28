@@ -321,12 +321,19 @@ def test_market_grid_backtests_each_local_market_and_never_downloads(candles, mo
     # The scan lists datasets by directory name, as they are stored.
     monkeypatch.setattr(bt, "_local_market_index", lambda: {("BTC-USDT", "1h")})
     monkeypatch.setattr(bt, "fetch_candles", lambda *a, **k: pytest.fail("a missing market must not be downloaded"))
+    workers: list[int] = []
+    run_worker = bt._run_creator_worker
+    monkeypatch.setattr(bt, "_run_creator_worker",
+                        lambda purpose, bars, target, *args: workers.append(len(args[1])) or run_worker(purpose, bars, target, *args))
     result = bt.build_strategy_market_grid(
         markets=[{"symbol": "BTC/USDT", "asset": "BTC", "timeframe": "1h"},
-                 {"symbol": "ETH/USDT", "asset": "ETH", "timeframe": "4h"}],
+                 {"symbol": "ETH/USDT", "asset": "ETH", "timeframe": "4h"},
+                 {"symbol": "BTCUSDT", "asset": "BTC", "timeframe": "1h"}],
         spec=RSI, **_WALK,
     )
-    btc, eth = result["rows"]
+    btc, eth, again = result["rows"]
+    assert workers == [2]  # the request's two runnable markets share one worker
+    assert again["status"] == "ok" and again["out_of_sample"] == btc["out_of_sample"]
     assert eth["status"] == "no_data" and "Data page" in eth["message"]
     assert all("ETH" not in item for item in loaded)
     assert btc["status"] == "ok"

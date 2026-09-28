@@ -3262,6 +3262,18 @@ def _market_worker(frame: pd.DataFrame, spec: dict, asset: str, walk: dict) -> d
             "in_sample": stats["in_sample"], "out_of_sample": stats["out_of_sample"]}
 
 
+def _markets_worker(spec: dict, jobs: list[tuple[pd.DataFrame, str, dict]]) -> list[dict]:
+    """:func:`_market_worker` for several markets in one worker process: a fresh
+    worker spends seconds on first-use imports, so a request's markets share one."""
+    results = []
+    for frame, asset, walk in jobs:
+        try:
+            results.append(_market_worker(frame, spec, asset, walk))
+        except Exception as exc:  # noqa: BLE001 — one market must not sink the rest
+            results.append({"error": str(exc)[:200]})
+    return results
+
+
 def build_strategy_market_grid(
     *,
     markets: list[dict],
@@ -3285,7 +3297,9 @@ def build_strategy_market_grid(
     if not isinstance(spec, dict) or validate_rule_spec(spec):
         return {"rows": [], "warnings": ["Fix the rule spec before comparing markets."]}
     index = _local_market_index()
-    rows = []
+    rows: list[dict] = []
+    jobs: list[tuple[pd.DataFrame, str, dict]] = []
+    job_rows: list[int] = []
     for market in markets[:_MARKETS_MAX]:
         asset = str(market.get("asset") or "").strip().upper()
         timeframe = str(market.get("timeframe") or "").strip()
@@ -3300,13 +3314,23 @@ def build_strategy_market_grid(
                 trade_mode=trade_mode, leverage=leverage, fee_bps=fee_bps, slippage_bps=slippage_bps,
                 initial_capital=initial_capital, execution_controls=execution_controls,
             )
-            if error:
-                rows.append({**row, "status": "skipped", "message": error})
-                continue
-            rows.append({**row, "status": "ok",
-                         **_run_creator_worker("markets", len(frame), _market_worker, frame, spec, asset, walk)})
         except Exception as exc:  # noqa: BLE001 — one market must not sink the grid
             rows.append({**row, "status": "error", "message": str(exc)[:200]})
+            continue
+        if error:
+            rows.append({**row, "status": "skipped", "message": error})
+            continue
+        job_rows.append(len(rows))
+        rows.append(row)
+        jobs.append((frame, asset, walk))
+    if jobs:
+        try:
+            results = _run_creator_worker("markets", sum(len(job[0]) for job in jobs), _markets_worker, spec, jobs)
+        except Exception as exc:  # noqa: BLE001 — report it per market
+            results = [{"error": str(exc)[:200]}] * len(jobs)
+        for at, result in zip(job_rows, results):
+            rows[at] = ({**rows[at], "status": "error", "message": result["error"]} if "error" in result
+                        else {**rows[at], "status": "ok", **result})
     return {"rows": rows, "warnings": []}
 
 
