@@ -13,6 +13,7 @@ backtesting and live scanning.
 """
 
 
+import hashlib
 import json
 
 
@@ -75,6 +76,7 @@ from forven.scanner import (
 
 from forven.strategies.certification import certify_execution_strategy
 from forven.strategies.base import BaseStrategy, DirectionalSignals, TradeMode
+from forven.strategies.experiment_evidence import frame_fingerprint
 
 
 from forven.strategies.params import canonicalize_params, resolve_strategy_family
@@ -4264,15 +4266,37 @@ _PER_BAR_SIGNALS_CACHE: "_OrderedDict[tuple, DirectionalSignals]" = _OrderedDict
 _PER_BAR_SIGNALS_CACHE_MAX = 256
 
 
-def _per_bar_params_signature(strategy_obj) -> str:
-    """Cheap stable signature of a strategy's params, folded into the adapter cache key
+def _per_bar_params_signature(strategy_obj) -> str | None:
+    """Stable signature of a strategy's merged params, folded into the adapter cache keys
     so a param change can't return stale signals (and a same-strategy_id param sweep
-    can't collide)."""
+    can't collide). Hashes the FULL sorted repr: a truncated prefix let two long param
+    dicts that differ only late share a key. repr (not str) keeps 1 and '1' apart.
+
+    None when the params can't be rendered; callers then skip the cache rather than
+    share one fallback key across strategies."""
     try:
         params = getattr(strategy_obj, "params", {}) or {}
-        return repr(sorted((str(k), str(v)) for k, v in params.items()))[:300]
+        canonical = repr(sorted((repr(k), repr(v)) for k, v in params.items()))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     except Exception:
-        return ""
+        return None
+
+
+def _per_bar_frame_signature(df: "pd.DataFrame") -> str | None:
+    """Content identity of the frame the per-bar walk reads (index, every column's name,
+    dtype and values), so the same window endpoints with restated enrichment (e.g. a
+    funding_rate or ls_ratio revision) recompute instead of serving stale signals.
+
+    Hashes the whole frame because each bar's window is a slice of all of it. Measured
+    at ~2-4 ms on a 1500-bar enriched scanner frame (the cached kernel pass it guards
+    takes ~120 ms) and ~18 ms at 45k bars, where a cold walk takes seconds.
+
+    None when the frame can't be hashed (e.g. an object column holding lists); callers
+    then compute fresh and don't store."""
+    try:
+        return frame_fingerprint(df)
+    except Exception:
+        return None
 
 
 def _per_bar_checker(obj):
@@ -4388,7 +4412,7 @@ def _probe_per_bar_pure(strategy_obj, df: "pd.DataFrame", warmup: int) -> bool:
 
 
 def _certify_per_bar_pure(strategy_obj, df: "pd.DataFrame", warmup: int) -> bool:
-    """Cached purity verdict (probed once per strategy+params).
+    """Cached purity verdict (probed once per strategy class+id+params).
 
     A frame too short to probe (warmup band / a tiny WFA fold) returns True
     TRANSIENTLY — WITHOUT caching — so a later real probe on a full frame supersedes
@@ -4399,8 +4423,14 @@ def _certify_per_bar_pure(strategy_obj, df: "pd.DataFrame", warmup: int) -> bool
     lo = max(int(warmup), 0)
     if n - lo < 3:
         return True  # too few tradeable bars to probe — allow transiently, do NOT cache
+    params_sig = _per_bar_params_signature(strategy_obj)
+    if params_sig is None:
+        return _probe_per_bar_pure(strategy_obj, df, warmup)  # unkeyable — probe, don't cache
     sid = str(getattr(strategy_obj, "strategy_id", "") or id(strategy_obj))
-    key = (sid, _per_bar_params_signature(strategy_obj))
+    # Keyed on the implementation too: the sandbox worker builds EVERY strategy as
+    # cls("isolated", params), so id+params alone let one strategy's probe certify (or
+    # refuse) a different strategy with the same params.
+    key = (type(strategy_obj), sid, params_sig)
     cached = _PER_BAR_PURITY_CACHE.get(key)
     if cached is not None:
         _PER_BAR_PURITY_CACHE.move_to_end(key)
@@ -4493,11 +4523,22 @@ def _signals_from_per_bar(
 
     n = len(df)
     idx = df.index
-    cache_key = (sid, _per_bar_params_signature(strategy_obj), mode, n, int(warmup), str(idx[0]), str(idx[-1]))
-    cached = _PER_BAR_SIGNALS_CACHE.get(cache_key)
-    if cached is not None:
-        _PER_BAR_SIGNALS_CACHE.move_to_end(cache_key)
-        return cached
+    # The key names the implementation (the worker builds every strategy as
+    # cls("isolated", params), so id+params can't tell two strategies apart) and the
+    # frame's content (the same endpoints can carry restated enrichment). Anything that
+    # can't be keyed is computed fresh and not stored.
+    params_sig = _per_bar_params_signature(strategy_obj)
+    frame_sig = _per_bar_frame_signature(df) if params_sig is not None else None
+    cache_key = None
+    if frame_sig is not None:
+        cache_key = (
+            type(strategy_obj), sid, params_sig, mode, n, int(warmup),
+            str(idx[0]), str(idx[-1]), frame_sig,
+        )
+        cached = _PER_BAR_SIGNALS_CACHE.get(cache_key)
+        if cached is not None:
+            _PER_BAR_SIGNALS_CACHE.move_to_end(cache_key)
+            return cached
 
     long_e = np.zeros(n, dtype=bool)
     long_x = np.zeros(n, dtype=bool)
@@ -4569,9 +4610,10 @@ def _signals_from_per_bar(
         short_entries=pd.Series(short_e, index=idx),
         short_exits=pd.Series(short_x, index=idx),
     )
-    _PER_BAR_SIGNALS_CACHE[cache_key] = result
-    if len(_PER_BAR_SIGNALS_CACHE) > _PER_BAR_SIGNALS_CACHE_MAX:
-        _PER_BAR_SIGNALS_CACHE.popitem(last=False)
+    if cache_key is not None:
+        _PER_BAR_SIGNALS_CACHE[cache_key] = result
+        if len(_PER_BAR_SIGNALS_CACHE) > _PER_BAR_SIGNALS_CACHE_MAX:
+            _PER_BAR_SIGNALS_CACHE.popitem(last=False)
     return result
 
 
