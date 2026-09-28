@@ -72,7 +72,7 @@ def _save_series(d, tmp_path, ts_ms):
     d.save_parquet(monkey_df, "BTC-USDT", "1h", source="test")
 
 
-def test_backfill_fetches_each_detected_gap(monkeypatch, tmp_path):
+def test_backfill_fetches_detected_gaps_and_counts_only_landed_ones(monkeypatch, tmp_path):
     from forven import data as d
 
     if not d._using_pyarrow():
@@ -90,10 +90,12 @@ def test_backfill_fetches_each_detected_gap(monkeypatch, tmp_path):
     result = d.backfill_ohlcv_gaps("BTC-USDT", "1h")
     assert result["gaps_found"] == 2
     assert result["gaps_attempted"] == 2
-    assert result["gaps_filled"] == 2
-    # each fetch targets a gap's missing range [start, end+tf]
-    assert (2 * _TF, 4 * _TF) in calls
-    assert (6 * _TF, 8 * _TF) in calls
+    # The fake venue returned nothing: no gap was filled (this used to report
+    # "2/2 gaps filled" for every fetch call, landed or not).
+    assert result["gaps_filled"] == 0
+    assert result["gaps_remaining"] == 2
+    # Gaps within one request page share one window [first missing, last missing + tf].
+    assert (2 * _TF, 8 * _TF) in calls
 
 
 def test_backfill_noop_when_contiguous_and_current(monkeypatch, tmp_path):
@@ -137,8 +139,9 @@ def test_backfill_extends_stale_tail(monkeypatch, tmp_path):
     )
     result = d.backfill_ohlcv_gaps("BTC-USDT", "1h")
     assert result["gaps_found"] == 0
-    # the extension fetch starts from the last stored bar (3*_TF) up to ~now
-    assert len(calls) == 1 and calls[0][0] == 3 * _TF
+    # the extension fetch starts at the bar after the last stored one (the
+    # cheap tail-append path) and runs up to now
+    assert calls == [(4 * _TF, None)]
     # the mock fetch added no recent bars, so it could NOT be brought current —
     # reported honestly (this is the delisted-symbol case, e.g. MATIC).
     assert result["extended_to_now"] is False

@@ -20,7 +20,7 @@ from forven.gauntlet.store import create_or_get_workflow
 from forven.monitoring import run_decay_tracker
 from forven.policy import evaluate_promotion
 from forven.scheduler import (
-    _DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS,
+    _DATA_SLA_COLLECT_TIMEOUT_SECONDS,
     _USER_PRIORITY_MAX_DEFER_SECONDS,
     _job_hard_timeout_seconds,
     _job_running_stale_seconds,
@@ -1249,17 +1249,18 @@ def test_data_manager_scheduler_jobs_run_with_hard_timeout(monkeypatch):
     status, error = asyncio.run(
         run_job(
             {
-                "id": "forven-data-ohlcv-keepalive",
-                "name": "DataManager OHLCV Keep-Alive",
-                "command": "data-ohlcv-keepalive",
-                "payload": json.dumps({"kind": "data_manager_collect_ohlcv"}),
+                "id": "forven-data-sla-collector",
+                "name": "Data Collector (freshness SLA)",
+                "command": "data-sla-collector",
+                "payload": json.dumps({"kind": "data_sla_collect"}),
             }
         )
     )
 
     assert status == "ok"
     assert error is None
-    assert captured == [(_DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS, {"max_pairs_per_run": 1})]
+    # The tick stops 30 s before the scheduler's own timeout.
+    assert captured == [(float(_DATA_SLA_COLLECT_TIMEOUT_SECONDS), {"deadline_seconds": _DATA_SLA_COLLECT_TIMEOUT_SECONDS - 30.0})]
 
 
 def test_scheduler_hard_timeout_budget_expands_for_longer_jobs(forven_db):
@@ -1270,14 +1271,14 @@ def test_scheduler_hard_timeout_budget_expands_for_longer_jobs(forven_db):
             "SELECT * FROM scheduler_jobs WHERE id = ?",
             ("forven-daily-learning",),
         ).fetchone())
-        data_keepalive = dict(conn.execute(
+        data_collector = dict(conn.execute(
             "SELECT * FROM scheduler_jobs WHERE id = ?",
-            ("forven-data-ohlcv-keepalive",),
+            ("forven-data-sla-collector",),
         ).fetchone())
 
     assert _job_hard_timeout_seconds(daily_learning) == 665.0
-    # keepalive timeout raised to 150s (8 pairs/run) -> 150*1.4 + 5s headroom
-    assert _job_hard_timeout_seconds(data_keepalive) == 215.0
+    # SLA collector: 180 s timeout + 60 s lock window + 5 s headroom
+    assert _job_hard_timeout_seconds(data_collector) == 245.0
 
 
 def test_scheduler_user_priority_deferral_window_is_bounded(forven_db):

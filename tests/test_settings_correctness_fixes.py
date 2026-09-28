@@ -237,10 +237,10 @@ class TestDataEngineNestedPartialSave:
     def test_top_level_keys_still_merge(self, forven_db):
         put_settings_section(
             "data-engine",
-            {"data_engine_settings": {"auto_catchup_enabled": False}},
+            {"data_engine_settings": {"gauntlet_as_of_pin": False}},
         )
         des = _load_settings_payload()["data_engine_settings"]
-        assert des["auto_catchup_enabled"] is False
+        assert des["gauntlet_as_of_pin"] is False
         # Nested defaults still filled for genuinely-missing keys (source
         # reconciliation now defaults ON — the Binance↔HL divergence safety net).
         assert des["source_reconciliation"]["enabled"] is True

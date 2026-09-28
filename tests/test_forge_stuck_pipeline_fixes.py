@@ -1,7 +1,8 @@
 """Fixes for the Forge stuck-strategy clusters (2026-07-16).
 
 Covers:
-  * catch-up plan ordered by staleness (head-of-line starvation fix)
+  * (catch-up plan ordering moved to tests/test_data_next_freshness.py: the SLA
+    collector queue orders by lag / allowance, so nothing starves)
   * ensure_coverage strike-out for unfillable series (fake symbols)
   * SYMBOL-VALID-1 mint-time symbol validation / repair
   * funding-collector skip for unknown assets
@@ -11,80 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
-
-
-# ---------------------------------------------------------------------------
-# Catch-up plan ordering
-# ---------------------------------------------------------------------------
-
-
-class _FakeCatalog:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def list_coverage(self):
-        return list(self._rows)
-
-
-def _coverage_row(symbol: str, timeframe: str, end_ts: datetime, *, row_count: int = 100000) -> dict:
-    start = end_ts - timedelta(days=400)
-    return {
-        "source": "binance",
-        "market": "spot",
-        "symbol": symbol,
-        "timeframe": timeframe,
-        "stream": "candles",
-        "path": f"{symbol}/{timeframe}.parquet",
-        "start_ts": start.isoformat(),
-        "end_ts": end_ts.isoformat(),
-        "row_count": row_count,
-    }
-
-
-def test_catchup_plan_orders_by_staleness_not_alphabet():
-    from forven.dataeng.catchup import CatchUpPlanner
-
-    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
-    rows = [
-        # Alphabetically first, barely stale (20 minutes behind on 5m bars).
-        _coverage_row("AAA-USDT", "5m", now - timedelta(minutes=20)),
-        # Alphabetically last, frozen for two weeks.
-        _coverage_row("ZZZ-USDT", "1h", now - timedelta(days=14)),
-        # Middle staleness.
-        _coverage_row("MMM-USDT", "4h", now - timedelta(days=2)),
-    ]
-    planner = CatchUpPlanner(catalog=_FakeCatalog(rows))
-    planner._bootstrap_tasks = lambda now_ts, covered: []  # isolate gap-fill ordering
-
-    plan = planner.plan(now=now)
-    symbols = [t.symbol for t in plan]
-
-    assert symbols == ["ZZZ-USDT", "MMM-USDT", "AAA-USDT"], (
-        "plan must serve the most-stale series first, not alphabetical order: "
-        f"{symbols}"
-    )
-
-
-def test_catchup_plan_appends_bootstraps_after_gap_fills():
-    from forven.dataeng.catchup import CatchUpPlanner, CatchUpTask
-
-    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
-    rows = [_coverage_row("AAA-USDT", "1h", now - timedelta(days=3))]
-    planner = CatchUpPlanner(catalog=_FakeCatalog(rows))
-    bootstrap = CatchUpTask(
-        source="binance", market="spot", symbol="NEW-USDT", timeframe="1h",
-        stream="candles", start_ts=now.isoformat(), end_ts=now.isoformat(),
-        reason="bootstrap",
-    )
-    planner._bootstrap_tasks = lambda now_ts, covered: [bootstrap]
-
-    plan = planner.plan(now=now)
-
-    assert [t.symbol for t in plan] == ["AAA-USDT", "NEW-USDT"]
-    assert plan[-1].reason == "bootstrap"
 
 
 # ---------------------------------------------------------------------------

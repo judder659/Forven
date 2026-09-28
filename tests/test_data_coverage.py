@@ -256,8 +256,9 @@ def test_data_health_endpoint_returns_per_stream_freshness(client):
 def test_data_health_reflects_recent_collection(client, monkeypatch):
     from forven.data_manager import data_manager
     _reset_data_manager_stats()
-    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: set())
-    data_manager.collect_funding()
+    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: {"NEWCOIN-USDT"})
+    monkeypatch.setattr(data_manager._funding, "collect", lambda symbol: 2)
+    data_manager.collect_funding()  # discovery of a new symbol records a run
     resp = client.get("/api/data/health")
     assert resp.status_code == 200
     body = resp.json()

@@ -8,8 +8,8 @@ Covers:
   failures; empty windows are benign) and scaffolding removal.
 - Phase 4: ingestion runs surviving restart via KV (interrupted runs surfaced
   as failed), backfill progress/cancel, /data/versions from the revision log.
-- Phase 5: completeness-aware catch-up planning (gappy-but-current series get
-  a "gaps" task).
+- Phase 5: completeness-aware planning now lives in the SLA collector queue
+  (tests/test_data_next_freshness.py).
 - Sim coverage gate in scanner.fetch_candles.
 """
 
@@ -581,69 +581,6 @@ class TestDatasetVersions:
         assert current and current[0]["checksum"]  # single-series query -> checksum
         restated = [v for v in versions if v["source"] == "restatement"]
         assert restated[0]["row_count"] == 1
-
-
-# ---------------------------------------------------------------------------
-# Phase 5: completeness-aware planning
-# ---------------------------------------------------------------------------
-
-
-class _StubCatalog:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def list_coverage(self):
-        return self._rows
-
-
-def _coverage_row(*, end_ts: str, start_ts: str, row_count: int, stream: str = "candles"):
-    return {
-        "source": "binance",
-        "market": "perp",
-        "symbol": SYMBOL,
-        "timeframe": TF,
-        "stream": stream,
-        "start_ts": start_ts,
-        "end_ts": end_ts,
-        "row_count": row_count,
-    }
-
-
-class TestCompletenessPlanning:
-    NOW = pd.Timestamp("2026-06-10T00:30:00Z").to_pydatetime()
-
-    def _plan(self, rows):
-        from forven.dataeng.catchup import CatchUpPlanner
-
-        return CatchUpPlanner(_StubCatalog(rows)).plan(now=self.NOW)
-
-    def test_gappy_current_series_gets_gaps_task(self):
-        # Current at the tail (end = latest closed bar) but only half the bars.
-        tasks = self._plan([
-            _coverage_row(start_ts="2026-06-01T00:00:00Z", end_ts="2026-06-09T23:00:00Z", row_count=108),
-        ])
-        assert len(tasks) == 1
-        assert tasks[0].reason == "gaps"
-
-    def test_complete_current_series_not_planned(self):
-        # 2026-06-01T00 .. 2026-06-09T23 = 216 hourly bars, all present.
-        tasks = self._plan([
-            _coverage_row(start_ts="2026-06-01T00:00:00Z", end_ts="2026-06-09T23:00:00Z", row_count=216),
-        ])
-        assert tasks == []
-
-    def test_stale_series_planned_as_stale(self):
-        tasks = self._plan([
-            _coverage_row(start_ts="2026-06-01T00:00:00Z", end_ts="2026-06-05T00:00:00Z", row_count=97),
-        ])
-        assert len(tasks) == 1
-        assert tasks[0].reason == "stale"
-
-    def test_non_candle_streams_ignored(self):
-        tasks = self._plan([
-            _coverage_row(start_ts="2026-06-01T00:00:00Z", end_ts="2026-06-05T00:00:00Z", row_count=1, stream="trades"),
-        ])
-        assert tasks == []
 
 
 # ---------------------------------------------------------------------------

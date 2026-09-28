@@ -510,46 +510,45 @@ class TestQualityReport:
 
 
 class TestCandleFreshness:
-    def _setup(self, monkeypatch, lake, *, bars_ago: int):
-        from forven.data_manager import data_manager
+    """Live and paper strategies' candles, classified through the freshness SLA
+    (consumers come from the consumer index, not get_running_bots)."""
 
-        start = _closed_start(60)
-        # count=61 -> last bar opens 2h before now (closed 1h ago) = fresh;
-        # larger bars_ago pushes the last bar further into the past.
-        frame = _bars(start, 61 - bars_ago)
-        save_parquet(frame, SYMBOL, TF)
-        monkeypatch.setattr(
-            "forven.db.get_running_bots",
-            lambda: [{"locked_pairs": '["BTC"]'}],
-        )
-        monkeypatch.setattr(data_manager, "get_active_timeframes", lambda s: {"1h"})
+    def _setup(self, monkeypatch, lake, *, symbol: str = "BTC", stage: str = "live_graduated"):
+        from forven.dataeng import collector, consumers
+
+        monkeypatch.setattr(data_mod, "data_root", lambda: lake.parent)
+        index = consumers.ConsumerIndex()
+        index.add_strategy({"id": "S1", "name": "s1", "symbol": symbol, "timeframe": TF, "stage": stage})
+        monkeypatch.setattr(consumers, "get_consumer_index", lambda **_k: index)
+        collector.invalidate_snapshot()
+
+    def teardown_method(self):
+        from forven.dataeng import collector
+
+        collector.invalidate_snapshot()
 
     def test_fresh_candles_pass(self, monkeypatch, lake):
         from forven.health_monitor import check_candle_freshness
 
-        self._setup(monkeypatch, lake, bars_ago=0)
-        checks = check_candle_freshness()
-        assert checks, "expected at least one check"
-        by_name = {c.name: c for c in checks}
-        assert by_name["candle:BTC"].passed is True
+        self._setup(monkeypatch, lake)
+        # 62 bars: the last one is the latest CLOSED bar (opened in the previous hour)
+        save_parquet(_bars(_closed_start(60), 62), SYMBOL, TF)
+        by_name = {c.name: c for c in check_candle_freshness()}
+        assert by_name["candle:BTC-USDT:1h"].passed is True
 
     def test_stale_candles_flagged(self, monkeypatch, lake):
         from forven.health_monitor import Severity, check_candle_freshness
 
-        self._setup(monkeypatch, lake, bars_ago=30)  # ~30h stale on 1h
-        checks = check_candle_freshness()
-        by_name = {c.name: c for c in checks}
-        assert by_name["candle:BTC"].passed is False
-        assert by_name["candle:BTC"].severity == Severity.CRITICAL
+        self._setup(monkeypatch, lake)
+        save_parquet(_bars(_closed_start(60), 31), SYMBOL, TF)  # ~32 h stale on 1h: live breach
+        by_name = {c.name: c for c in check_candle_freshness()}
+        assert by_name["candle:BTC-USDT:1h"].passed is False
+        assert by_name["candle:BTC-USDT:1h"].severity == Severity.CRITICAL
 
     def test_missing_dataset_is_critical(self, monkeypatch, lake):
         from forven.health_monitor import Severity, check_candle_freshness
 
-        monkeypatch.setattr(
-            "forven.db.get_running_bots",
-            lambda: [{"locked_pairs": '["ZZZCOIN"]'}],
-        )
-        checks = check_candle_freshness()
-        by_name = {c.name: c for c in checks}
-        assert by_name["candle:ZZZCOIN"].passed is False
-        assert by_name["candle:ZZZCOIN"].severity == Severity.CRITICAL
+        self._setup(monkeypatch, lake, symbol="ZZZCOIN/USDT")
+        by_name = {c.name: c for c in check_candle_freshness()}
+        assert by_name["candle:ZZZCOIN-USDT:1h"].passed is False
+        assert by_name["candle:ZZZCOIN-USDT:1h"].severity == Severity.CRITICAL
