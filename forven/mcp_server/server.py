@@ -637,7 +637,11 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             "pass compact=false or use forven_get_result(result_id) for full "
             "trades. parameters overrides default_params for EXPLORATION "
             "only — gates judge the registered file's defaults, so bake "
-            "winners into the file. Auto-tags to the active session."
+            "winners into the file. data_venue picks the stored candles: "
+            "'canonical' (default, the Binance USD-M research lake) or a "
+            "stored venue series such as 'hyperliquid:perp' / 'okx:spot' "
+            "(enrichment streams stay canonical; a venue run never promotes). "
+            "Auto-tags to the active session."
         ),
     )
     def forven_run_backtest(
@@ -650,6 +654,7 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         end: str | None = None,
         leverage: float | None = None,
         trade_mode: str | None = None,
+        data_venue: str | None = None,
         compact: bool = True,
     ) -> Any:
         sid = sessions.resolve(session_id, auto_label=f"auto · backtest {strategy_id}")
@@ -672,6 +677,8 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             body["leverage"] = leverage
         if trade_mode:
             body["trade_mode"] = trade_mode
+        if data_venue:
+            body["data_venue"] = data_venue
         result = forven.post("/api/backtesting/run", body)
         if not compact:
             return result

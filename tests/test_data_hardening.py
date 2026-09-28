@@ -260,13 +260,13 @@ class TestTailStorage:
         assert frame is not None
         assert len(frame) == 15
 
-    def test_datahub_quality_counts_tail_rows(self, lake):
-        from forven.dataeng.hub import DataHub
+    def test_quality_counts_tail_rows(self, lake):
+        from forven.data import compute_data_quality
 
         start = _closed_start(60)
         save_parquet(_bars(start, 10), SYMBOL, TF)
         append_bars(SYMBOL, TF, _bars(start + timedelta(hours=10), 5))
-        quality = DataHub().quality(SYMBOL, TF)
+        quality = compute_data_quality(SYMBOL, TF)
         assert quality["row_count"] == 15
 
     def test_market_metadata_stamped(self, lake):

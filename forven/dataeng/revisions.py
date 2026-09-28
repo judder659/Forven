@@ -226,6 +226,50 @@ def revision_events(path: Path | None, *, limit: int = 200) -> list[dict]:
     ]
 
 
+def latest_restatements(
+    root: Path,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Newest restatement events across every revision log under ``root``
+    (optionally one symbol / timeframe), in one DuckDB scan that reads only
+    the ``observed_at`` and ``timestamp`` columns."""
+    base = Path(root)
+    files = sorted(
+        path
+        for path in base.glob("*/*.parquet")
+        if (symbol is None or path.parent.name == symbol) and (timeframe is None or path.stem == timeframe)
+    )
+    if not files:
+        return []
+    from forven.dataeng.catalog_index import iso_ms
+    from forven.dataeng.quality import connect
+
+    with connect() as con:
+        records = con.execute(
+            "SELECT filename, observed_at, count(*), epoch_ms(min(timestamp)), epoch_ms(max(timestamp)) "
+            "FROM read_parquet(?, filename=true, union_by_name=true) "
+            "GROUP BY filename, observed_at ORDER BY observed_at DESC LIMIT ?",
+            [[str(path) for path in files], max(1, int(limit))],
+        ).fetchall()
+    events = []
+    for filename, observed, count, first, last in records:
+        path = Path(filename)
+        events.append(
+            {
+                "symbol": path.parent.name,
+                "timeframe": path.stem,
+                "observed_at": _iso_text(observed),
+                "rows": int(count),
+                "first_ts": iso_ms(first),
+                "last_ts": iso_ms(last),
+            }
+        )
+    return events
+
+
 def restated_by_month(path: Path | None) -> dict[str, int]:
     """Distinct restated bars per UTC month ("YYYY-MM") in a revision log."""
     if path is None or not Path(path).exists():

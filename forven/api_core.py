@@ -6588,6 +6588,7 @@ def _persist_completed_backtest_run(
     lifecycle_id: str | None = None,
     session_id: str | None = None,
     as_of: str | None = None,
+    data_venue: str | None = None,
 ) -> dict[str, object]:
     metrics = run.get("metrics")
     if not isinstance(metrics, dict):
@@ -6666,6 +6667,7 @@ def _persist_completed_backtest_run(
         "leverage": leverage,
         "job_id": job_id,
         "dropzone_session_id": (str(session_id).strip() or None) if session_id else None,
+        "data_venue": data_venue,
     }
     # Verdict auditability (edge-data-expansion Run 2): record the identity of
     # the data this result was scored on (checksum/rows/span/market/as_of).
@@ -7676,6 +7678,13 @@ def post_backtest_submit(
         manual_execution_controls=manual_execution_controls,
         settings=settings,
     )
+    data_venue = (str(body.data_venue).strip().lower() or None) if body.data_venue else None
+    if data_venue == "canonical":
+        data_venue = None
+    if data_venue is not None:
+        # Scored on a non-canonical venue: never refreshes the strategy's
+        # stored metrics or promotes it.
+        sync_strategy_state = False
 
     try:
         run = backtest_strategy(
@@ -7698,6 +7707,7 @@ def post_backtest_submit(
             initial_capital=body.initial_capital,
             execution_controls=manual_execution_controls or None,
             as_of=(str(body.as_of).strip() or None) if body.as_of else None,
+            data_venue=data_venue,
         )
     except HTTPException:
         raise
@@ -7782,6 +7792,7 @@ def post_backtest_submit(
         "job_id": job_id,
         "preserve_result": bool(body.preserve_result),
         "as_of": (str(body.as_of).strip() or None) if body.as_of else None,
+        "data_venue": data_venue,
     }
     if background_job:
         # Keep the job running until trades and chart artifacts are saved too.
@@ -8666,6 +8677,10 @@ def post_backtesting_run(body: dict):
                 _nw_error: Exception | None = None
                 result = None
                 _bars_override = body.get("bars")
+                # "canonical" (default) or a stored venue series ("okx:spot").
+                _data_venue = str(body.get("data_venue") or "").strip().lower() or None
+                if _data_venue == "canonical":
+                    _data_venue = None
                 if _bars_override is None and (body.get("start") or body.get("end")):
                     _bars_override = _estimate_backtest_bars(
                         body.get("start"), body.get("end"), timeframe
@@ -8689,6 +8704,7 @@ def post_backtesting_run(body: dict):
                         start_date=body.get("start") or body.get("start_date"),
                         end_date=body.get("end") or body.get("end_date"),
                         as_of=body.get("as_of"),
+                        data_venue=_data_venue,
                         sync_strategy_state=False,
                     )
                     if isinstance(result, dict) and not result.get("error"):
@@ -8722,6 +8738,7 @@ def post_backtesting_run(body: dict):
                             lifecycle_id=body.get("lifecycle_id"),
                             session_id=body.get("session_id"),
                             as_of=body.get("as_of"),
+                            data_venue=_data_venue,
                         )
                         result.setdefault("job_id", str(persisted.get("job_id") or ""))
                         result.setdefault("result_id", str(persisted.get("result_id") or ""))

@@ -130,6 +130,11 @@ class BacktestSubmitBody(BaseModel):
     # this instant from the revision log. Gauntlet stages pass their
     # candidate's creation time so every stage scores identical data.
     as_of: str | None = Field(default=None, max_length=64)
+    # Which stored candles to test on: "canonical" (the research lake, default)
+    # or a venue series such as "okx:spot" / "hyperliquid:perp". Enrichment
+    # streams stay canonical; a venue run never refreshes the strategy's
+    # stored metrics or promotes it.
+    data_venue: str | None = Field(default=None, max_length=64)
 
 
 class OptimizationSubmitBody(BaseModel):

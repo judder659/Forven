@@ -290,6 +290,8 @@ class Snapshot:
     facets: dict[str, dict[str, int]]
     quality_due: int
     consumers: dict[str, SeriesConsumerInfo] = field(default_factory=dict)
+    # Cached quality rows (fingerprint, stats, computed_at) keyed by series id.
+    quality: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _kv(key: str) -> dict[str, Any]:
@@ -389,7 +391,8 @@ def build_row(
         "venue": series.venue,
         "source": source,
         "market": market,
-        "asset_class": asset_class_of(series.symbol, source, registry, asset_memo),
+        # Deribit DVOL is a crypto volatility index; everything else follows its symbol.
+        "asset_class": "crypto" if series.stream == "iv" else asset_class_of(series.symbol, source, registry, asset_memo),
         "first_ts": iso_ms(series.first_ms),
         "last_ts": iso_ms(series.last_ms),
         "rows": int(series.rows),
@@ -526,6 +529,7 @@ def build_snapshot(*, root: Path | str | None = None, catalog: Any = None, now: 
         facets=_facets(rows),
         quality_due=due,
         consumers=consumers,
+        quality=cached_quality,
     )
     log.debug("catalog snapshot: %d series in %.2fs (%d quality due)", len(rows), time.monotonic() - started, due)
     return snapshot

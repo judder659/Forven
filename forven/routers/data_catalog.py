@@ -5,11 +5,11 @@ docs/data-manager-next/CONTRACT.md (workstream D). Keep endpoints thin;
 logic lives in forven/dataeng/ or forven/api_domains/.
 """
 
+import json
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import ORJSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from forven.api_security import require_operator_access
 from forven.dataeng import catalog_index, series_detail
@@ -17,15 +17,17 @@ from forven.dataeng import catalog_index, series_detail
 router = APIRouter(tags=["data"], dependencies=[Depends(require_operator_access)])
 
 
-def _serve(build: Callable[[], Any]) -> ORJSONResponse:
-    """Run a view; a missing series is a 404, bad input a 400. ORJSON skips
-    FastAPI's jsonable_encoder, which dominates large catalog pages."""
+def _serve(build: Callable[[], Any]) -> Response:
+    """Run a view; a missing series is a 404, bad input a 400. The payloads are
+    plain JSON-safe dicts, so they are dumped directly: FastAPI's
+    jsonable_encoder would dominate a large catalog page."""
     try:
-        return ORJSONResponse(build())
+        payload = build()
     except series_detail.SeriesNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=json.dumps(payload, separators=(",", ":"), allow_nan=False), media_type="application/json")
 
 
 @router.get("/api/data/catalog")

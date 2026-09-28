@@ -850,186 +850,125 @@ def get_data_quality(symbol: str, timeframe: str, remote_skip: bool = False):
     return payload
 
 
-# Data-quality leaderboard. The frontend used to have NO backend route for this
-# (it called /data/quality/reports, got a 404, and fell back to firing up to
-# ~100 CONCURRENT /api/data/quality requests — one full parquet scan each). That
-# fan-out saturated the worker threadpool, starved the asyncio event loop, and
-# dropped the live websocket every time the Data page's Overview tab mounted.
-# Computing the reports server-side in ONE sequential, TTL-cached pass keeps the
-# heavy work off that fan-out so it can never again starve the loop.
-_QUALITY_REPORTS_TTL_SECONDS = 120.0
-# Keyed on (data root, limit) so distinct lakes (e.g. per-test tmp dirs) never
-# share an entry.
-_quality_reports_cache: dict[tuple[str, int], tuple[float, list[dict]]] = {}
-_quality_reports_lock = threading.Lock()
+# Data-quality leaderboard (the old /data page), served from the Data Manager
+# catalog: every canonical OHLCV series, worst first, scored by the one rubric
+# in forven/dataeng/quality.py (freshness is the SLA, not part of the score).
+# Nothing here loads a series: scores come from the catalog's quality cache,
+# which a background pass fills and refreshes when files change.
 
 
-def _quality_score(q: dict) -> float:
-    """Mirror of the frontend's computeFallbackQualityScore so the leaderboard
-    score is identical whether it comes from this route or the legacy fallback."""
-    row_count = max(1, int(q.get("row_count") or 0))
-    total_cells = max(1, row_count * 5)
-    integrity = q.get("integrity") or {}
-    outliers = q.get("outliers") or {}
-    freshness = q.get("freshness") or {}
-    score = 100.0
-    score -= min(30.0, (int(q.get("gaps") or 0) / row_count) * 1000)
-    score -= min(20.0, (int(q.get("null_values") or 0) / total_cells) * 1000)
-    score -= min(10.0, int(integrity.get("invalid_high_low") or 0) * 2)
-    score -= min(10.0, int(integrity.get("invalid_close_range") or 0) * 2)
-    if freshness.get("is_stale"):
-        score -= 10.0
-    outlier_ratio = (int(outliers.get("close") or 0) + int(outliers.get("volume") or 0)) / row_count
-    score -= min(10.0, outlier_ratio * 500)
-    return max(0.0, min(100.0, round(score * 10) / 10))
-
-
-def _quality_report_from(ds: dict, q: dict, idx: int) -> dict:
-    integrity = q.get("integrity") or {}
-    outliers = q.get("outliers") or {}
-    freshness = q.get("freshness") or {}
-    price = q.get("price_range") or {}
-    vol = q.get("volume_stats") or {}
-    symbol = _to_ui_symbol(q.get("symbol") or ds.get("symbol"))
-    timeframe = str(q.get("timeframe") or ds.get("timeframe") or "")
+def _leaderboard_row(row: dict, quality_row: dict, idx: int) -> dict:
+    """One ``QualityReport`` row (frontend/src/lib/api/data.ts) from a catalog row."""
+    stats = quality_row.get("stats") or {}
+    summary = quality_row.get("summary") or {}
+    symbol = _to_ui_symbol(row["symbol"])
+    first_ms = stats.get("first_ms")
+    last_ms = stats.get("last_ms")
+    lag = row["sla"].get("lag_seconds")
     return {
-        "id": f"quality-{idx}-{symbol}-{timeframe}",
+        "id": f"quality-{idx}-{symbol}-{row['timeframe']}",
         "symbol": symbol,
-        "timeframe": timeframe,
-        "row_count": int(q.get("row_count") or 0),
-        "start_ts": q.get("start"),
-        "end_ts": q.get("end"),
-        "duration_days": float(q.get("duration_days") or 0.0),
-        "gaps": int(q.get("gaps") or 0),
-        "gap_details": q.get("gap_details") or [],
-        "null_values": int(q.get("null_values") or 0),
-        "price_range_min": float(price.get("min") or 0.0),
-        "price_range_max": float(price.get("max") or 0.0),
-        "volume_min": float(vol.get("min") or 0.0),
-        "volume_max": float(vol.get("max") or 0.0),
-        "volume_avg": float(vol.get("avg") or 0.0),
-        "outliers_close": int(outliers.get("close") or 0),
-        "outliers_volume": int(outliers.get("volume") or 0),
-        "invalid_high_low": int(integrity.get("invalid_high_low") or 0),
-        "invalid_close_range": int(integrity.get("invalid_close_range") or 0),
-        "freshness_hours": float(freshness.get("hours_ago") or 0.0),
-        "is_stale": bool(freshness.get("is_stale") or False),
-        "quality_score": _quality_score(q),
-        "computed_at": _now(),
+        "timeframe": row["timeframe"],
+        "row_count": int(stats.get("rows") or row["rows"] or 0),
+        "start_ts": row["first_ts"],
+        "end_ts": row["last_ts"],
+        "duration_days": round(max(0, (last_ms or 0) - (first_ms or 0)) / 86_400_000, 6) if first_ms and last_ms else 0.0,
+        "gaps": int(stats.get("missing_bars") or 0),
+        "gap_details": [],
+        "null_values": int(stats.get("null_rows") or 0),
+        "price_range_min": float(stats.get("price_min") or 0.0),
+        "price_range_max": float(stats.get("price_max") or 0.0),
+        "volume_min": float(stats.get("volume_min") or 0.0),
+        "volume_max": float(stats.get("volume_max") or 0.0),
+        "volume_avg": float(stats.get("volume_avg") or 0.0),
+        "outliers_close": int(stats.get("outliers") or 0),
+        "outliers_volume": int(stats.get("volume_outliers") or 0),
+        "invalid_high_low": int(stats.get("invalid_high_low") or 0),
+        "invalid_close_range": int(stats.get("invalid_range") or 0),
+        "freshness_hours": round(float(lag) / 3600.0, 3) if lag is not None else 0.0,
+        "is_stale": row["sla"]["state"] in ("late", "breach"),
+        "quality_score": summary.get("score"),
+        "quality_issues": summary.get("issues") or [],
+        "computed_at": quality_row.get("computed_at") or _now(),
     }
 
 
-def _compute_quality_reports(limit: int) -> list[dict]:
-    from concurrent.futures import ThreadPoolExecutor
+def _scored(snapshot, row: dict) -> dict | None:
+    from forven.dataeng.catalog_index import quality_summary
 
-    from forven.data import compute_data_quality
-
-    datasets = get_datasets_stub(remote_skip=True)
-    datasets = sorted(
-        (d for d in datasets if isinstance(d, dict)),
-        key=lambda d: core._to_datetime_sort_key(d.get("end_ts") or d.get("start_ts")),
-        reverse=True,
-    )[:limit]
-
-    def _one(ds: dict) -> tuple[dict, dict] | None:
-        symbol = str(ds.get("symbol") or "").strip()
-        timeframe = str(ds.get("timeframe") or "").strip()
-        if not symbol or not timeframe:
-            return None
-        try:
-            q = compute_data_quality(symbol, timeframe)
-        except Exception:
-            # A single unreadable/missing series must not sink the whole report.
-            return None
-        return (ds, q) if isinstance(q, dict) else None
-
-    # Bounded parallelism: parquet reads release the GIL, so a few workers cut the
-    # cold-cache build time without the 100-wide saturation that started all this.
-    reports: list[dict] = []
-    if not datasets:
-        return reports
-    with ThreadPoolExecutor(max_workers=min(4, len(datasets))) as pool:
-        for pair in pool.map(_one, datasets):  # map preserves recency order
-            if pair is None:
-                continue
-            ds, q = pair
-            reports.append(_quality_report_from(ds, q, len(reports)))
-    return reports
+    cached = snapshot.quality.get(row["id"])
+    if not cached or (cached.get("stats") or {}).get("error"):
+        return None
+    return {**cached, "summary": quality_summary(cached)}
 
 
 def get_quality_reports(limit: int = 100) -> list[dict]:
-    """Server-side data-quality leaderboard, computed once and cached briefly.
+    """Every canonical OHLCV series with a computed quality score, worst first.
 
-    Remote data mode owns its own catalog, so we don't scan the local lake there
-    — return an empty list (the UI shows "no reports yet") rather than proxying a
-    slow per-series fan-out.
+    Remote data mode owns its own catalog, so the local lake is not read there:
+    an empty list comes back (the UI shows "no reports yet"). Right after a
+    backend start the list fills in as the catalog's background pass scores
+    series.
     """
     remote_enabled, _ = _remote_data_engine_config()
     if remote_enabled:
         return []
 
-    from forven.data import DATA_DIR
+    from forven.dataeng import catalog_index
 
-    cache_limit = max(1, min(int(limit or 100), 500))
-    cache_key = (str(DATA_DIR), cache_limit)
-    now = time.time()
-    cached = _quality_reports_cache.get(cache_key)
-    if cached and (now - cached[0]) < _QUALITY_REPORTS_TTL_SECONDS:
-        return cached[1]
-
-    # Serialize recomputation so a burst of concurrent callers shares one pass
-    # instead of each launching its own full-lake scan.
-    with _quality_reports_lock:
-        cached = _quality_reports_cache.get(cache_key)
-        now = time.time()
-        if cached and (now - cached[0]) < _QUALITY_REPORTS_TTL_SECONDS:
-            return cached[1]
-        reports = _compute_quality_reports(cache_limit)
-        _quality_reports_cache[cache_key] = (time.time(), reports)
-        return reports
+    snapshot = catalog_index.get_snapshot()
+    scored = []
+    for row in snapshot.rows:
+        if row["stream"] != "ohlcv" or row["venue"] != catalog_index.CANONICAL_VENUE:
+            continue
+        quality_row = _scored(snapshot, row)
+        if quality_row is not None and quality_row["summary"].get("score") is not None:
+            scored.append((row, quality_row))
+    scored.sort(key=lambda pair: (pair[1]["summary"]["score"], pair[0]["id"]))
+    cap = max(1, min(int(limit or 100), 5000))
+    return [_leaderboard_row(row, quality_row, idx) for idx, (row, quality_row) in enumerate(scored[:cap])]
 
 
 def get_quality_report(symbol: str, timeframe: str) -> dict:
-    """Single-series quality report in leaderboard row shape.
+    """Single-series quality report in leaderboard row shape, from the catalog;
+    a series not scored yet is scored now (and cached)."""
+    from forven.data import symbol_to_fs
+    from forven.dataeng import catalog_index
 
-    The frontend has always called /data/quality/reports/{symbol}/{timeframe};
-    the route never existed server-side, so every call 404'd into a client-side
-    recompute fallback. Serve it from the cached leaderboard when present,
-    else compute the one series directly.
-    """
-    from forven.data import compute_data_quality, symbol_to_fs
-
-    fs_symbol = symbol_to_fs(symbol)
-    ui_symbol = _to_ui_symbol(fs_symbol)
-    for cached_at, reports in list(_quality_reports_cache.values()):
-        if (time.time() - cached_at) >= _QUALITY_REPORTS_TTL_SECONDS:
-            continue
-        for report in reports:
-            if report.get("symbol") == ui_symbol and report.get("timeframe") == timeframe:
-                return report
-    try:
-        q = compute_data_quality(fs_symbol, timeframe)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _quality_report_from({"symbol": fs_symbol, "timeframe": timeframe}, q, 0)
+    found = catalog_index.find("ohlcv", catalog_index.CANONICAL_VENUE, symbol_to_fs(symbol), str(timeframe))
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"dataset not found: {symbol_to_fs(symbol)} {timeframe}")
+    snapshot, series = found
+    row = snapshot.by_id.get(series.id)
+    quality_row = _scored(snapshot, row) if row is not None else None
+    if row is None or quality_row is None:
+        catalog = catalog_index.catalog_for(snapshot.root)
+        catalog_index.refresh_quality([series], catalog=catalog, min_interval=0.0)
+        snapshot = catalog_index.get_snapshot(root=snapshot.root, force=True)
+        row = snapshot.by_id.get(series.id)
+        quality_row = _scored(snapshot, row) if row is not None else None
+    if row is None or quality_row is None:
+        raise HTTPException(status_code=404, detail=f"quality unavailable: {series.symbol} {timeframe}")
+    return _leaderboard_row(row, quality_row, 0)
 
 
 def get_dataset_versions(symbol: str | None = None, timeframe: str | None = None, limit: int = 50) -> list[dict]:
     """Dataset version history — REAL, backed by the point-in-time revision log.
 
-    The frontend has always called /data/versions; no server route existed, so
-    it 404'd into a client-side reconstruction with checksum=None. Rows:
+    Rows:
     - one "current" row per series (live snapshot; checksum included only for
       a single-series query — hashing every file on the unfiltered call is a
       full-lake read);
     - one row per RESTATEMENT event (bars superseded at the same observed_at),
-      from the append-only revision lake.
+      from the append-only revision lake (one DuckDB scan of the logs'
+      timestamp/observed_at columns).
     """
     from forven.data import compute_checksum, scan_datasets, symbol_to_fs
-    from forven.dataeng.revisions import read_revisions, revisions_root
+    from forven.dataeng.revisions import latest_restatements, revisions_root
 
     fs_filter = symbol_to_fs(symbol) if symbol else None
     single_series = bool(fs_filter and timeframe)
+    capped = max(1, int(limit or 50))
     rows: list[dict] = []
 
     for ds in scan_datasets():
@@ -1054,44 +993,29 @@ def get_dataset_versions(symbol: str | None = None, timeframe: str | None = None
             }
         )
 
-    # Restatement events: enumerate only series that HAVE a revision log.
-    root = revisions_root()
-    if root.exists():
-        for sym_dir in sorted(root.iterdir()):
-            if not sym_dir.is_dir():
-                continue
-            if fs_filter and sym_dir.name != fs_filter:
-                continue
-            for rev_file in sorted(sym_dir.glob("*.parquet")):
-                rev_tf = rev_file.stem
-                if timeframe and rev_tf != timeframe:
-                    continue
-                try:
-                    revisions = read_revisions(sym_dir.name, rev_tf)
-                except Exception:
-                    continue
-                if revisions is None or revisions.empty:
-                    continue
-                grouped = revisions.groupby("observed_at")
-                for observed_at, group in grouped:
-                    ts = pd.to_datetime(group["timestamp"], utc=True, errors="coerce").dropna()
-                    rows.append(
-                        {
-                            "id": f"rev-{sym_dir.name}-{rev_tf}-{observed_at}",
-                            "symbol": _to_ui_symbol(sym_dir.name),
-                            "timeframe": rev_tf,
-                            "source": "restatement",
-                            "row_count": int(len(group)),
-                            "start_ts": ts.min().isoformat() if len(ts) else None,
-                            "end_ts": ts.max().isoformat() if len(ts) else None,
-                            "checksum": None,
-                            "ingestion_run_id": None,
-                            "created_at": str(observed_at),
-                        }
-                    )
+    try:
+        events = latest_restatements(revisions_root(), symbol=fs_filter, timeframe=timeframe, limit=capped)
+    except Exception as exc:
+        log.warning("dataset versions: revision logs unreadable: %s", exc)
+        events = []
+    for event in events:
+        rows.append(
+            {
+                "id": f"rev-{event['symbol']}-{event['timeframe']}-{event['observed_at']}",
+                "symbol": _to_ui_symbol(event["symbol"]),
+                "timeframe": event["timeframe"],
+                "source": "restatement",
+                "row_count": event["rows"],
+                "start_ts": event["first_ts"],
+                "end_ts": event["last_ts"],
+                "checksum": None,
+                "ingestion_run_id": None,
+                "created_at": event["observed_at"],
+            }
+        )
 
     rows.sort(key=lambda row: core._to_datetime_sort_key(row.get("created_at")), reverse=True)
-    return rows[: max(1, int(limit or 50))]
+    return rows[:capped]
 
 
 def get_quality_gate(symbol: str, timeframe: str, window_days: int | None = None) -> dict:
@@ -2402,6 +2326,14 @@ def post_universe_config(payload: dict) -> dict:
             if not (lo <= value <= hi):
                 raise HTTPException(status_code=400, detail=f"{key} must be between {lo} and {hi}")
             config[key] = value
+    if "asset_classes" in payload:
+        from forven.dataeng.universe import ASSET_CLASSES
+
+        raw = payload["asset_classes"]
+        chosen = [str(value).strip().lower() for value in raw] if isinstance(raw, list) else []
+        if not chosen or any(value not in ASSET_CLASSES for value in chosen):
+            raise HTTPException(status_code=400, detail=f"asset_classes must be a non-empty subset of {list(ASSET_CLASSES)}")
+        config["asset_classes"] = [value for value in ASSET_CLASSES if value in chosen]
     # Tier tops can't exceed the universe size (a 1m tier larger than the plan
     # is meaningless and confuses the estimate).
     config["intraday_top"] = min(int(config.get("intraday_top", 20)), int(config.get("size", 50)))
@@ -2462,68 +2394,32 @@ def post_cancel_universe_seed() -> dict:
 
 
 def get_coverage() -> dict:
-    """Return row counts and date ranges per symbol per stream.
+    """Row counts and date ranges per symbol per stream (the old coverage
+    matrix): canonical OHLCV timeframes plus the symbol's funding, OI and basis
+    series, from the lake's cached parquet footers (no tree of full reads).
+    Empty series are omitted."""
+    from forven.dataeng.catalog_index import lake_root
+    from forven.dataeng.lake import CANONICAL_VENUE, enumerate_series
 
-    Scans data/ohlcv/, data/funding/, data/oi/ directories.
-    Missing parquet files are omitted from the result.
-    """
-    from forven.data import DATA_DIR, coverage_entry, prune_coverage_cache
-    from forven.data_manager import BASIS_DIR, FUNDING_DIR, OI_DIR
-
+    series = enumerate_series(streams=("ohlcv", "funding", "oi", "basis"), root=lake_root())
+    symbols = {item.symbol for item in series if item.stream == "ohlcv" and item.venue == CANONICAL_VENUE}
     result: dict = {}
-    ohlcv_root = Path(DATA_DIR)
-
-    if not ohlcv_root.exists():
-        return result
-
-    visited: set[str] = set()
-
-    def _entry_for(path: Path) -> dict | None:
-        visited.add(str(path))
-        return coverage_entry(path)
-
-    for sym_dir in sorted(ohlcv_root.iterdir()):
-        if not sym_dir.is_dir() or sym_dir.name.startswith("."):
+    for item in series:
+        if item.venue != CANONICAL_VENUE or item.symbol not in symbols:
             continue
-        symbol = sym_dir.name
-        result[symbol] = {}
-
-        # OHLCV timeframes
-        for pq_file in sorted(sym_dir.glob("*.parquet")):
-            entry = _entry_for(pq_file)
-            if entry is not None:
-                result[symbol][f"ohlcv/{pq_file.stem}"] = entry
-
-        # Funding
-        funding_path = FUNDING_DIR / symbol / "history.parquet"
-        if funding_path.exists():
-            entry = _entry_for(funding_path)
-            if entry is not None:
-                result[symbol]["funding"] = entry
-
-        # OI timeframes
-        oi_sym_dir = OI_DIR / symbol
-        if oi_sym_dir.exists():
-            for pq_file in sorted(oi_sym_dir.glob("*.parquet")):
-                entry = _entry_for(pq_file)
-                if entry is not None:
-                    result[symbol][f"oi/{pq_file.stem}"] = entry
-
-        # Basis (perp premium index) timeframes
-        basis_sym_dir = BASIS_DIR / symbol
-        if basis_sym_dir.exists():
-            for pq_file in sorted(basis_sym_dir.glob("*.parquet")):
-                entry = _entry_for(pq_file)
-                if entry is not None:
-                    result[symbol][f"basis/{pq_file.stem}"] = entry
-
-        if not result[symbol]:
-            del result[symbol]
-
-    # Keep the per-file cache bounded to series that still exist (delistings,
-    # deletes and re-uploads otherwise leak entries in the long-lived worker).
-    prune_coverage_cache(visited)
-
+        if not item.rows or item.first_ms is None or item.last_ms is None:
+            continue
+        key = "funding" if item.stream == "funding" else f"{item.stream}/{item.timeframe}"
+        start_ts = pd.Timestamp(item.first_ms, unit="ms", tz="UTC")
+        end_ts = pd.Timestamp(item.last_ms, unit="ms", tz="UTC")
+        result.setdefault(item.symbol, {})[key] = {
+            "rows": int(item.rows),
+            "from": start_ts.strftime("%Y-%m-%d"),
+            "to": end_ts.strftime("%Y-%m-%d"),
+            # Precise last-bar timestamp so the matrix can compute hour-granular,
+            # timeframe-aware freshness.
+            "to_ts": end_ts.isoformat().replace("+00:00", "Z"),
+        }
     return result
 
 
