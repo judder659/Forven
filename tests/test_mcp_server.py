@@ -31,6 +31,7 @@ EXPECTED_TOOL_NAMES = {
     "forven_get_robustness_result",
     "forven_get_gate_report",
     "forven_get_quant_skills",
+    "forven_get_data_readiness",
     "forven_create_session",
     "forven_close_session",
     "forven_register_strategy_file",

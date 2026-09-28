@@ -96,6 +96,7 @@ tool resumes that session.
 | `forven_get_gate_report` | THE status readout: stage, latest metrics, promotion_ready, failed_gates, next_actions. |
 | `forven_get_paper_readiness` | Gate report framed against the paper target. |
 | `forven_get_quant_skills` | Curated insights by regime. Check before designing. |
+| `forven_get_data_readiness` | The data contract: `strategy_id`, or `symbol` + `timeframe` (+ `streams` such as `['funding','oi']`, `history_days`, `strategy_type`) → verdict ready / needs_data / blocked, a one-sentence summary, and each requirement (candles, history depth, freshness, every feed) with a fix. Check it before writing a strategy that reads anything beyond candles. |
 
 ### Write
 
@@ -116,6 +117,7 @@ tool resumes that session.
 
 1. `forven_get_context` (overview) → then `section='template'` and `section='gotchas'` before writing code
 2. `forven_get_quant_skills` — priors, to skip known dead ends
+   - Reading funding / OI / basis / IV / long-short / taker / liquidations? `forven_get_data_readiness` for the market first. `blocked` means no download can supply it (liquidation history starts at its forward-only capture) — choose another input rather than build a strategy that can never trade.
 3. Write the strategy `.py` into the workspace
 4. `forven_register_strategy_file` → `strategy_id`
 5. `forven_run_backtest` — iterate until OOS metrics are genuinely good

@@ -292,7 +292,9 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             "promote trading strategies through the REAL lifecycle gates. "
             "The loop: (1) forven_get_context (overview first, then the "
             "'template' and 'gotchas' sections before writing any code); "
-            "(2) forven_get_quant_skills for priors; (3) write a strategy .py "
+            "(2) forven_get_quant_skills for priors; before using any input "
+            "beyond candles, forven_get_data_readiness for the market; "
+            "(3) write a strategy .py "
             "into the workspace; (4) forven_register_strategy_file; "
             "(5) forven_run_backtest and iterate on the design; "
             "(6) forven_run_optimization, then bake winning params into the "
@@ -537,6 +539,43 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
                 "min_confidence": min_confidence,
             },
         )
+
+    @server.tool(
+        name="forven_get_data_readiness",
+        description=(
+            "Check the DATA before writing a strategy that reads anything beyond "
+            "candles (funding, oi, basis, iv, ls_ratio, taker, liquidations): "
+            "pass symbol + timeframe (+ streams, e.g. ['funding','oi']) for an "
+            "idea, or strategy_id for a registered strategy. Returns verdict "
+            "ready / needs_data / blocked, a one-sentence summary and one row per "
+            "requirement (candles, history depth for the research window + "
+            "warmup, freshness, each feed) with a fix. 'blocked' cannot be fixed "
+            "by downloading — e.g. liquidation history before its forward-only "
+            "capture began — so pick another input instead of building a "
+            "strategy that can never trade."
+        ),
+    )
+    def forven_get_data_readiness(
+        strategy_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        streams: list[str] | None = None,
+        history_days: int | None = None,
+        strategy_type: str | None = None,
+    ) -> Any:
+        sid = str(strategy_id or "").strip()
+        if sid:
+            return forven.get(f"/api/data/readiness/strategy/{sid}")
+        if not symbol or not timeframe:
+            return {"error": "Pass strategy_id, or symbol and timeframe (e.g. 'BTC/USDT', '1h')."}
+        body: dict[str, Any] = {"symbol": symbol, "timeframe": timeframe}
+        if streams:
+            body["streams"] = list(streams)
+        if history_days:
+            body["history_days"] = history_days
+        if strategy_type:
+            body["strategy_type"] = strategy_type
+        return forven.post("/api/data/readiness", body)
 
     # ── Write tools ────────────────────────────────────────────────────
 
