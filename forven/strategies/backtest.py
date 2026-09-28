@@ -1808,8 +1808,9 @@ def _load_dataset_frame(
     holdout, reading only what the window (or the most recent ``required_bars``)
     needs. The windowed read is kept only when it provably equals the whole
     series for the slicing that follows: enough warm-up bars before the start
-    (or the most recent bars) are present, or the read reaches the series'
-    first bar. Otherwise the whole series is read, exactly as before."""
+    (or enough recent bars) are present. Otherwise — no footer bounds, a window
+    reaching the series' first bar, a hole wider than the slack — the whole
+    series is read, exactly as before."""
     from forven.data import (
         _footer_bounds,
         _stored_series_bounds,
@@ -1824,7 +1825,8 @@ def _load_dataset_frame(
         first_ms, last_ms = _stored_series_bounds(symbol, timeframe)
 
         def read(start: object, end: object) -> pd.DataFrame | None:
-            return load_parquet(symbol, timeframe, as_of=as_of, start=start, end=end)
+            window = {key: value for key, value in (("start", start), ("end", end)) if value is not None}
+            return load_parquet(symbol, timeframe, as_of=as_of, **window)
     else:
         path = venue_parquet_path(venue[0], venue[1], symbol, timeframe)
         first_ms, last_ms = _footer_bounds(path)[1:] if path.exists() else (None, None)
@@ -1843,7 +1845,7 @@ def _load_dataset_frame(
         start_ts, end_ts = end_ts, start_ts
     if first_ms is None or last_ms is None:
         # No footer bounds (absent, or empty): the read itself decides, as before.
-        return sealed(None, end_ts)
+        return sealed(None, None)
     if start_ts is not None:
         read_start_ms = int(start_ts.timestamp() * 1000) - (max(int(warmup_bars), 0) + 1) * tf_ms * _WINDOW_READ_SLACK
 
@@ -1856,13 +1858,13 @@ def _load_dataset_frame(
         def enough(frame: pd.DataFrame) -> bool:
             return len(frame) >= max(int(required_bars), 1)
     else:
-        return sealed(None, end_ts)
+        return sealed(None, None)
     if read_start_ms <= first_ms:
-        return sealed(None, end_ts)
+        return sealed(None, None)
     frame = sealed(pd.Timestamp(read_start_ms, unit="ms", tz="UTC"), end_ts)
     if not frame.empty and enough(frame):
         return frame
-    return sealed(None, end_ts)
+    return sealed(None, None)
 
 
 def load_backtest_candles(
