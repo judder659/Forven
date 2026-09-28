@@ -649,6 +649,8 @@ def delete_series(
             skipped.append({"series": key, "reason": "not stored"})
         else:
             trashed.append(item)
+    if trashed:
+        purge_expired_trash_in_background()
     return {"trashed": trashed, "skipped": skipped}
 
 
@@ -672,6 +674,7 @@ def legacy_delete(symbol: str, timeframe: str) -> dict[str, Any]:
     item = storage.trash_series("ohlcv", "canonical", key["symbol"], key["timeframe"], reason="deleted from the /data page")
     if item is None:
         raise HTTPException(status_code=404, detail=f"dataset not found: {symbol} {timeframe}")
+    purge_expired_trash_in_background()
     return item
 
 
@@ -734,6 +737,23 @@ def purge_trash(item_ids: list[str] | str, confirm: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- startup
 
 
+def purge_expired_trash_in_background() -> threading.Thread:
+    """Purge trash past its retention off the request/startup path (a large
+    expired item can take seconds to remove). Runs at API startup, after
+    deletes, and at the end of every reclaim job."""
+    root = storage.storage_root()  # the lake this call is about, fixed now
+
+    def _purge() -> None:
+        try:
+            storage.purge_expired_trash(root=root)
+        except Exception as exc:
+            log.warning("data trash: expired purge failed: %s", exc)
+
+    thread = threading.Thread(target=_purge, name="forven-data-trash-purge", daemon=True)
+    thread.start()
+    return thread
+
+
 def run_startup_maintenance() -> dict[str, Any]:
     """API process startup only: mark jobs a previous process left queued or
     running as interrupted, prune old job rows, and purge expired trash (in the
@@ -747,16 +767,7 @@ def run_startup_maintenance() -> dict[str, Any]:
         out["pruned"] = jobs.prune_jobs()
     except Exception as exc:
         log.warning("data jobs: pruning failed: %s", exc)
-
-    def _purge() -> None:
-        try:
-            storage.purge_expired_trash()
-        except Exception as exc:
-            log.warning("data trash: expired purge failed: %s", exc)
-
-    thread = threading.Thread(target=_purge, name="forven-data-trash-purge", daemon=True)
-    thread.start()
-    out["purge_thread"] = thread
+    out["purge_thread"] = purge_expired_trash_in_background()
     return out
 
 
