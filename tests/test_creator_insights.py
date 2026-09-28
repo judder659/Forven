@@ -64,3 +64,16 @@ def test_traps_flag_decay_concentration_costs_and_idleness():
 
     costly = [{**trades[0], "pnl_pct": 0.001, "cost_drag_pct": 0.01}, {**trades[1], "pnl_pct": 0.001, "cost_drag_pct": 0.01}]
     assert "costs" in {trap["code"] for trap in insights.traps(in_stats, {"trades": 40, "net_return": 0.01}, costly, frame)}
+
+
+def _knob(label, *oos):
+    steps = (-0.25, -0.1, 0.1, 0.25)
+    return {"label": label, "variants": [{"step": s, "oos_return": r} for s, r in zip(steps, oos)]}
+
+
+def test_sensitivity_verdict_names_knobs_a_small_nudge_breaks():
+    assert insights.sensitivity_verdict(0.10, [_knob("a", -0.2, 0.08, 0.07, 0.3)])["status"] == "stable"
+    fragile = insights.sensitivity_verdict(0.10, [_knob("a", 0.2, 0.09, 0.08, 0.1), _knob("b", 0.1, -0.01, 0.2, 0.1)])
+    assert fragile["status"] == "fragile" and [f["knob"] for f in fragile["fragile"]] == ["b"]
+    assert insights.sensitivity_verdict(-0.02, [_knob("a", 0.2, 0.2, 0.2, 0.2)])["status"] == "losing"
+    assert insights.compound_return([{"pnl_pct": 0.1}, {"pnl_pct": -0.5}]) == (1.1 * 0.5) - 1

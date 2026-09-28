@@ -659,6 +659,12 @@ def post_backtest_preview_chart(body: core.PreviewChartBody):
     return core.post_backtest_preview_chart(body)
 
 
+@router.post("/api/backtests/preview-sensitivity")
+def post_backtest_preview_sensitivity(body: core.PreviewChartBody):
+    """Stress test: each knob of a visual spec nudged ±10% and ±25%."""
+    return core.post_backtest_preview_sensitivity(body)
+
+
 @router.post("/api/backtests/nl-to-spec")
 async def post_nl_to_spec(body: core.NlToSpecBody):
     """Generate a rule_engine spec from a natural-language strategy description."""

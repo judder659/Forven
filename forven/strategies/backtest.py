@@ -2871,6 +2871,162 @@ def _preview_insights(
     }
 
 
+def _preview_walk_settings(
+    params: dict,
+    *,
+    asset: str,
+    timeframe: str,
+    trade_mode: str,
+    leverage: float | None,
+    fee_bps: float | None,
+    slippage_bps: float | None,
+    initial_capital: float | None,
+    execution_controls: dict | None,
+) -> dict:
+    """The walk arguments a manual backtest resolves from the same request."""
+    from forven.api_core import get_settings
+
+    settings = get_settings()
+    return {
+        "leverage": float(leverage) if leverage is not None else resolve_leverage(params),
+        "fee_bps": float(fee_bps if fee_bps is not None else settings.get("backtest_fee_bps", 4.5)),
+        "slippage_bps": float(slippage_bps if slippage_bps is not None else settings.get("backtest_slippage_bps", 2.0)),
+        "trade_mode": trade_mode,
+        "execution_controls": execution_controls or None,
+        "initial_capital": float(initial_capital) if initial_capital else 10000.0,
+        "asset": asset,
+        "timeframe": timeframe,
+        "include_funding": bool(settings.get("backtest_include_funding", True)),
+    }
+
+
+_SENSITIVITY_STEPS = (-0.25, -0.1, 0.1, 0.25)
+_SENSITIVITY_MAX_KNOBS = 6
+
+
+def _spec_knobs(spec: dict) -> list[dict]:
+    """The numbers a rule spec is tuned by: its params, then its indicators' settings."""
+    from forven.strategies import indicators as registry
+
+    knobs: list[dict] = []
+    for name, value in (spec.get("params") or {}).items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value != 0:
+            knobs.append({"target": "param", "name": str(name), "label": str(name),
+                          "value": float(value), "integer": False, "min": None})
+    for ind in spec.get("indicators") or []:
+        definition = registry.REGISTRY.get(str(ind.get("kind") or "").lower()) if isinstance(ind, dict) else None
+        if definition is None:
+            continue
+        resolved = definition.resolve_params(ind.get("params"))
+        for param in definition.params:
+            if resolved[param.key]:
+                knobs.append({"target": "indicator", "indicator": str(ind.get("id")), "name": param.key,
+                              "label": f"{ind.get('id')} {param.key}", "value": float(resolved[param.key]),
+                              "integer": param.integer, "min": param.min})
+    return knobs[:_SENSITIVITY_MAX_KNOBS]
+
+
+def _nudge_spec(spec: dict, knob: dict, value: float) -> dict:
+    nudged = json.loads(json.dumps(spec))
+    if knob["target"] == "param":
+        nudged["params"][knob["name"]] = value
+        return nudged
+    for ind in nudged.get("indicators") or []:
+        if isinstance(ind, dict) and str(ind.get("id")) == knob["indicator"]:
+            ind["params"] = {**(ind.get("params") if isinstance(ind.get("params"), dict) else {}), knob["name"]: value}
+    return nudged
+
+
+def _sensitivity_worker(frame: pd.DataFrame, spec: dict, asset: str, knobs: list[dict], walk: dict) -> dict:
+    """The base walk and every knob nudged by every step (a worker-process target)."""
+    from forven.strategies import creator_insights as insights
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    def run(variant: dict) -> dict:
+        params = {"spec": variant, "_asset": asset}
+        in_trades, out_trades, _ = _preview_backtest_trades(
+            frame, RuleEngineStrategy("rule_engine__sensitivity", params), params, **walk
+        )
+        return {"trades": len(in_trades) + len(out_trades),
+                "net_return": insights.compound_return(in_trades + out_trades),
+                "oos_trades": len(out_trades), "oos_return": insights.compound_return(out_trades)}
+
+    rows = []
+    for knob in knobs:
+        variants = []
+        for step in _SENSITIVITY_STEPS:
+            value = round(knob["value"] * (1.0 + step), 6)
+            if knob["integer"]:
+                value = max(int(round(value)), int(knob["min"] or 1))
+                if value == int(knob["value"]):
+                    continue
+            variants.append({"step": step, "value": value, **run(_nudge_spec(spec, knob, value))})
+        rows.append({**knob, "variants": variants})
+    return {"base": run(spec), "knobs": rows}
+
+
+def build_strategy_sensitivity(
+    *,
+    asset: str,
+    timeframe: str,
+    start_date: str | None,
+    end_date: str | None,
+    spec: dict,
+    trade_mode: str = "long_only",
+    leverage: float | None = None,
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
+    initial_capital: float | None = None,
+    execution_controls: dict | None = None,
+) -> dict:
+    """Stress test for a rule spec: each knob (spec params, then indicator
+    settings; at most six) nudged by -25%, -10%, +10% and +25%, re-running the
+    backtest's walks on the preview's candles. The walks run in a worker process,
+    as backtests do, so the API process that also scans live markets is not held
+    for their duration. Returns ``base``, per-knob ``knobs`` rows and a ``verdict``."""
+    from forven.strategies import creator_insights as insights
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy, validate_rule_spec
+
+    resolved_asset = str(asset or "").strip().upper()
+    resolved_tf = str(timeframe or "1h").strip() or "1h"
+    if not isinstance(spec, dict) or validate_rule_spec(spec):
+        return {"base": None, "knobs": [], "verdict": None, "warnings": ["Fix the rule spec before a stress test."]}
+    knobs = _spec_knobs(spec)
+    if not knobs:
+        return {"base": None, "knobs": [], "verdict": None,
+                "warnings": ["This rule has no numbers to nudge. Add a parameter or an indicator."]}
+    frame = load_backtest_candles(resolved_asset, timeframe=resolved_tf, start_date=start_date,
+                                  end_date=end_date, enrich_market_data=True)
+    if frame is None or len(frame) < 210:
+        return {"base": None, "knobs": [], "verdict": None,
+                "warnings": [f"Not enough candles for {resolved_asset} {resolved_tf} in this window."]}
+    params = {"spec": spec, "_asset": resolved_asset}
+    resolved_mode, mode_error = resolve_backtest_trade_mode(
+        trade_mode, strategy_type="rule_engine", params=params, strategy_obj=RuleEngineStrategy("rule_engine", params)
+    )
+    if mode_error:
+        return {"base": None, "knobs": [], "verdict": None, "warnings": [mode_error]}
+    walk = _preview_walk_settings(
+        params, asset=resolved_asset, timeframe=resolved_tf, trade_mode=resolved_mode, leverage=leverage,
+        fee_bps=fee_bps, slippage_bps=slippage_bps, initial_capital=initial_capital,
+        execution_controls=execution_controls,
+    )
+    if _should_use_process_isolation():
+        from forven.strategies.concurrency import backtest_subprocess_slot
+
+        with backtest_subprocess_slot("sensitivity"), concurrent.futures.ProcessPoolExecutor(
+            max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+        ) as executor:
+            future = executor.submit(_sensitivity_worker, frame, spec, resolved_asset, knobs, walk)
+            result = _wait_for_worker_result(
+                executor, future, _scale_isolation_timeout(len(frame), _WALK_FORWARD_TIMEOUT, _WALK_FORWARD_TIMEOUT_MAX)
+            )
+    else:
+        result = _sensitivity_worker(frame, spec, resolved_asset, knobs, walk)
+    return {**result, "verdict": insights.sensitivity_verdict(result["base"]["oos_return"], result["knobs"]),
+            "warnings": []}
+
+
 def build_strategy_preview_chart_context(
     *,
     asset: str,
@@ -2899,7 +3055,6 @@ def build_strategy_preview_chart_context(
     has tried, for the deflated Sharpe). Nothing is persisted. Returns bars +
     overlays + markers in the shape of :func:`build_backtest_chart_context`.
     """
-    from forven.api_core import get_settings
     from forven.research_contract import research_read_cutoff
     from forven.research_holdout import seal_window
     from forven.strategies.builtin.rule_engine import RuleEngineStrategy, validate_rule_spec
@@ -2985,19 +3140,14 @@ def build_strategy_preview_chart_context(
         warnings.append(f"Only {len(frame)} bars in this window; a backtest needs at least 210.")
         return finish()
 
-    settings = get_settings()
     try:
         in_trades, out_trades, oos_start = _preview_backtest_trades(
             frame, strategy_obj, params,
-            leverage=float(leverage) if leverage is not None else resolve_leverage(params),
-            fee_bps=float(fee_bps if fee_bps is not None else settings.get("backtest_fee_bps", 4.5)),
-            slippage_bps=float(slippage_bps if slippage_bps is not None else settings.get("backtest_slippage_bps", 2.0)),
-            trade_mode=resolved_mode,
-            execution_controls=execution_controls or None,
-            initial_capital=float(initial_capital) if initial_capital else 10000.0,
-            asset=resolved_asset,
-            timeframe=resolved_tf,
-            include_funding=bool(settings.get("backtest_include_funding", True)),
+            **_preview_walk_settings(
+                params, asset=resolved_asset, timeframe=resolved_tf, trade_mode=resolved_mode,
+                leverage=leverage, fee_bps=fee_bps, slippage_bps=slippage_bps,
+                initial_capital=initial_capital, execution_controls=execution_controls,
+            ),
         )
     except Exception as exc:
         warnings.append(f"Trade preview unavailable: {exc}")

@@ -222,3 +222,34 @@ def test_more_variants_tried_means_lower_odds_the_edge_is_real(candles):
 def test_overlays_name_their_indicator_and_pane(candles):
     ctx = _preview(BOTH, trade_mode="both")
     assert {(line["group"], line["panel"]) for line in ctx["main_indicators"]} == {("fast", "main"), ("slow", "main")}
+
+
+# --- stress test --------------------------------------------------------------------
+def test_stress_test_nudges_each_knob_and_matches_the_preview(candles):
+    result = bt.build_strategy_sensitivity(
+        asset="BTC", timeframe="1h", start_date=START, end_date=END, spec=RSI, trade_mode="long_only",
+        leverage=1.0, fee_bps=10, slippage_bps=5, initial_capital=10_000, execution_controls={"sizing_mode": "full"},
+    )
+    assert result["base"]["trades"] == _preview()["trade_count"]
+    labels = [knob["label"] for knob in result["knobs"]]
+    assert labels == ["oversold", "exit_level", "rsi length"]
+    oversold = result["knobs"][0]
+    assert [v["step"] for v in oversold["variants"]] == [-0.25, -0.1, 0.1, 0.25]
+    assert oversold["variants"][0]["value"] == 22.5
+    length = result["knobs"][2]
+    assert all(isinstance(v["value"], int) and v["value"] != 14 for v in length["variants"])
+    assert result["verdict"]["status"] in {"stable", "fragile", "losing"}
+
+
+def test_stress_test_needs_something_to_nudge(candles):
+    spec = {"indicators": [], "params": {}, "entry_long": {"conditions": [{"left": "close", "op": ">", "right": "open"}]}}
+    result = bt.build_strategy_sensitivity(asset="BTC", timeframe="1h", start_date=START, end_date=END, spec=spec)
+    assert result["knobs"] == [] and "no numbers to nudge" in result["warnings"][0]
+
+
+def test_stress_test_request_forwards_the_backtest_execution_settings(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(bt, "build_strategy_sensitivity", lambda **kw: captured.update(kw) or {"ok": True})
+    core.post_backtest_preview_sensitivity(core.PreviewChartBody(spec=RSI, symbol="SOL/USDT", stop_loss_pct=2.0, leverage=2))
+    assert captured["asset"] == "SOL" and captured["leverage"] == 2
+    assert captured["execution_controls"] == {"stop_loss_pct": 2.0}

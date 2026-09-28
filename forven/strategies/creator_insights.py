@@ -116,6 +116,34 @@ def sample_stats(trades: list[dict], frame: pd.DataFrame, metrics: Mapping) -> d
     }
 
 
+def compound_return(trades: list[dict]) -> float:
+    """Net return of a trade sequence, compounded on closed trades."""
+    growth = 1.0
+    for trade in trades:
+        growth *= max(0.0, 1.0 + _pnl(trade))
+    return growth - 1.0
+
+
+def sensitivity_verdict(base_oos: float, knobs: list[dict]) -> dict:
+    """Stable when every ±10% nudge keeps the out-of-sample result's sign and at
+    least half its size; each fragile knob is named with its worst ±10% nudge."""
+    if base_oos <= 0:
+        return {"status": "losing", "fragile": [],
+                "text": "The rule loses out-of-sample as it stands, so its stability is not the question yet."}
+    fragile = []
+    for knob in knobs:
+        near = [v for v in knob["variants"] if abs(v["step"]) <= 0.1 + 1e-9 and v.get("oos_return") is not None]
+        worst = min(near, key=lambda v: v["oos_return"], default=None)
+        if worst is not None and worst["oos_return"] < 0.5 * base_oos:
+            fragile.append({"knob": knob["label"], "step": worst["step"], "oos_return": worst["oos_return"]})
+    if not fragile:
+        return {"status": "stable", "fragile": [],
+                "text": "Every ±10% nudge keeps at least half of the out-of-sample result."}
+    names = ", ".join(item["knob"] for item in fragile)
+    return {"status": "fragile", "fragile": fragile,
+            "text": f"A ±10% nudge to {names} loses more than half of the out-of-sample result."}
+
+
 def traps(in_stats: Mapping, out_stats: Mapping, trades: list[dict], frame: pd.DataFrame) -> list[dict]:
     """Common ways a backtest flatters a rule, found in this run."""
     found: list[dict] = []
