@@ -2041,12 +2041,16 @@ class DataManager:
         gap_days = (oldest_ts.to_pydatetime().replace(tzinfo=timezone.utc) - bv_start_dt).days
         return gap_days > 30
 
-    def _backfill_ohlcv(self, fs_sym: str, bv_symbol: str) -> dict:
+    def _backfill_ohlcv(self, fs_sym: str, bv_symbol: str, *, timeframes=None) -> dict:
+        """``timeframes`` limits the stored series extended (None = all)."""
         from forven.data import DATA_DIR, load_parquet, save_parquet, _get_dataset_lock
         out: dict = {}
         sym_dir = Path(DATA_DIR) / fs_sym
-        timeframes = [p.stem for p in sym_dir.glob("*.parquet")] if sym_dir.exists() else []
-        for tf in timeframes:
+        stored = [p.stem for p in sym_dir.glob("*.parquet")] if sym_dir.exists() else []
+        wanted = None if timeframes is None else {str(tf) for tf in timeframes}
+        for tf in stored:
+            if wanted is not None and tf not in wanted:
+                continue
             try:
                 existing = load_parquet(fs_sym, tf)
                 oldest = pd.to_datetime(existing["timestamp"].iloc[0], utc=True) if existing is not None and not existing.empty else None
@@ -2168,33 +2172,46 @@ class DataManager:
                 out[f"oi:{tf}_error"] = str(exc)
         return out
 
+    def backfill_symbols(self) -> list[str]:
+        """Stored canonical symbols Binance Vision can extend: BASE-QUOTE folders
+        under data/ohlcv holding at least one series. Venue partitions
+        (``source=hyperliquid``), stray folders (``RETRY``, ``BTCUSD``) and
+        dot-directories are not symbols."""
+        from forven.data import DATA_DIR
+        from forven.dataeng.storage import is_symbol_dir_name
+
+        data_dir = Path(DATA_DIR)
+        if not data_dir.is_dir():
+            return []
+        return sorted(
+            d.name
+            for d in data_dir.iterdir()
+            if d.is_dir() and is_symbol_dir_name(d.name) and any(d.glob("*.parquet"))
+        )
+
     def backfill(
         self,
         symbol: str | None = None,
         streams: tuple = ("ohlcv", "funding", "oi"),
         *,
+        timeframes=None,
         progress_cb=None,
         cancel_event=None,
     ) -> dict:
         """Bulk-backfill historical data from Binance Vision.
 
-        If symbol is None, backfills all symbols discovered from the data/ohlcv/ directory.
-        streams controls which stream types are backfilled.
+        If symbol is None, backfills every stored symbol (:meth:`backfill_symbols`).
+        streams controls which stream types are backfilled; ``timeframes``
+        limits which stored OHLCV series are extended (None = all of them).
         ``progress_cb(done, total, current_symbol)`` is invoked before each
         symbol; ``cancel_event`` (threading.Event) is checked between symbols
         for a cooperative stop. Returns a summary dict (with ``cancelled``
-        set when stopped early).
+        set when stopped early). The Data Manager runs this as a
+        ``history_extend`` job (forven/api_domains/data_ops.py).
         """
-        from forven.data import DATA_DIR, symbol_to_fs
+        from forven.data import symbol_to_fs
 
-        if symbol is not None:
-            fs_symbols = [symbol_to_fs(symbol)]
-        else:
-            data_dir = Path(DATA_DIR)
-            fs_symbols = sorted(
-                d.name for d in data_dir.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
-            )
+        fs_symbols = [symbol_to_fs(symbol)] if symbol is not None else self.backfill_symbols()
 
         summary: dict = {}
         total = len(fs_symbols)
@@ -2211,7 +2228,7 @@ class DataManager:
             bv_symbol = bv_client.fs_to_bv(fs_sym)
             summary[fs_sym] = {}
             if "ohlcv" in streams:
-                summary[fs_sym].update(self._backfill_ohlcv(fs_sym, bv_symbol))
+                summary[fs_sym].update(self._backfill_ohlcv(fs_sym, bv_symbol, timeframes=timeframes))
             if "funding" in streams:
                 summary[fs_sym].update(self._backfill_funding(fs_sym, bv_symbol))
             if "oi" in streams or "metrics" in streams:

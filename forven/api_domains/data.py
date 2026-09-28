@@ -798,15 +798,17 @@ def delete_dataset_stub(symbol: str, timeframe: str, remote_skip: bool = False):
             "timeframe": timeframe,
         }
 
-    from forven.data import delete_dataset
+    # Moves the series to the Data Manager trash (restorable); 409 when a
+    # live/paper/pipeline consumer reads it (the new delete review can override).
+    from forven.api_domains.data_ops import legacy_delete
 
     try:
-        deleted = bool(delete_dataset(symbol, timeframe))
+        legacy_delete(symbol, timeframe)
+    except HTTPException:
+        raise
     except Exception as exc:
         log.error("Failed to delete dataset %s %s: %s", symbol, timeframe, exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    if not deleted:
-        raise HTTPException(status_code=404, detail=f"dataset not found: {symbol} {timeframe}")
     return {
         "status": "deleted",
         "symbol": _to_ui_symbol(symbol),
@@ -1203,75 +1205,13 @@ def get_collection_health() -> dict:
 
 
 def get_data_activity(limit: int = 200) -> dict:
-    """Unified chronological log of data actions for the /data Activity tab.
+    """Chronological log of data actions for the old /data Activity tab:
+    ``activity_log`` rows with ``source='data'`` plus the non-routine data
+    jobs (downloads, deep history, reclaims, ...). The new page reads the
+    categorized Data Log (``/api/data/log``, forven/dataeng/datalog.py)."""
+    from forven.dataeng.datalog import legacy_events
 
-    Merges the audit trail of maintenance actions (backfills, source
-    reconciliation — ``activity_log`` rows with ``source='data'``) with genuine
-    download runs (``get_active_ingestion_runs``). Reconstructed catalog rows are
-    deliberately excluded: this is an *actions* log, not a dataset snapshot.
-    """
-    import json as _json
-
-    from forven.db import get_db
-
-    events: list[dict] = []
-
-    try:
-        with get_db() as conn:
-            rows = conn.execute(
-                "SELECT created_at, level, message, data FROM activity_log "
-                "WHERE source = 'data' ORDER BY id DESC LIMIT ?",
-                (int(limit),),
-            ).fetchall()
-        for row in rows:
-            try:
-                detail = _json.loads(row["data"]) if row["data"] else {}
-            except Exception:
-                detail = {}
-            if not isinstance(detail, dict):
-                detail = {}
-            events.append({
-                "ts": row["created_at"],
-                "level": str(row["level"] or "info"),
-                "action": str(detail.get("action") or "event"),
-                "message": str(row["message"] or ""),
-                "detail": detail,
-            })
-    except Exception as exc:
-        log.debug("activity_log read failed: %s", exc)
-
-    try:
-        from forven.data import get_active_ingestion_runs
-
-        for run in get_active_ingestion_runs() or []:
-            status = str(run.get("status") or "")
-            symbol = run.get("symbol")
-            timeframe = run.get("timeframe")
-            source = run.get("source") or "?"
-            bars = int(run.get("bars_new") or 0) or int(run.get("bars_fetched") or 0)
-            if status == "failed":
-                message = f"Download failed: {symbol} {timeframe} from {source}"
-            else:
-                message = f"Downloaded {symbol} {timeframe} from {source} — {bars:,} bars"
-            events.append({
-                "ts": run.get("completed_at") or run.get("started_at"),
-                "level": "error" if status == "failed" else "info",
-                "action": "download",
-                "message": message,
-                "detail": {
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "source": source,
-                    "status": status,
-                    "bars": bars,
-                    "error": run.get("error"),
-                },
-            })
-    except Exception as exc:
-        log.debug("ingestion-run read failed: %s", exc)
-
-    events.sort(key=lambda event: str(event.get("ts") or ""), reverse=True)
-    return {"events": events[: int(limit)], "generated_at": _now()}
+    return {"events": legacy_events(int(limit)), "generated_at": _now()}
 
 
 def post_scan_orphans() -> dict:
@@ -2119,122 +2059,30 @@ def get_active_symbols_with_reasons() -> list[dict]:
         return []
 
 
-_backfill_lock = threading.Lock()
-_backfill_cancel = threading.Event()
-_BACKFILL_STATE_KV_KEY = "data:backfill_state"
-_backfill_state: dict = {
-    "running": False,
-    "last_started_at": None,
-    "last_result": None,
-    "last_error": None,
-    "progress": None,
-    "cancel_requested": False,
-}
-_backfill_state_loaded = False
-
-
-def _load_backfill_state_locked() -> None:
-    """Seed last_result/last_error from KV once per process so the status
-    endpoint survives a restart (it was a process-local dict that reset to
-    empty). ``running`` is never restored — a restart kills the thread."""
-    global _backfill_state_loaded
-    if _backfill_state_loaded:
-        return
-    _backfill_state_loaded = True
-    try:
-        from forven.db import kv_get
-
-        saved = kv_get(_BACKFILL_STATE_KV_KEY, None)
-        if isinstance(saved, dict):
-            for key in ("last_started_at", "last_result", "last_error"):
-                if _backfill_state.get(key) is None:
-                    _backfill_state[key] = saved.get(key)
-    except Exception:
-        pass
-
-
-def _persist_backfill_state_locked() -> None:
-    try:
-        from forven.db import kv_set_best_effort
-
-        kv_set_best_effort(
-            _BACKFILL_STATE_KV_KEY,
-            {
-                "last_started_at": _backfill_state.get("last_started_at"),
-                "last_result": _backfill_state.get("last_result"),
-                "last_error": _backfill_state.get("last_error"),
-            },
-        )
-    except Exception:
-        pass
+# Binance Vision deep history for the old page's Maintenance tab. Runs as a
+# history_extend data job (forven/api_domains/data_ops.py); these keep the old
+# payloads, derived from the latest job of that kind.
 
 
 def get_backfill_status() -> dict:
-    """Return current backfill state (running flag, per-symbol progress,
-    last result/error — the latter restart-surviving via KV)."""
-    with _backfill_lock:
-        _load_backfill_state_locked()
-        return dict(_backfill_state)
+    """``BackfillStatus`` (running, cancel_requested, progress, last result/error)."""
+    from forven.api_domains.data_ops import backfill_status
+
+    return backfill_status()
 
 
 def post_cancel_backfill() -> dict:
-    """Request a cooperative stop of the running BV backfill (takes effect
-    between symbols)."""
-    with _backfill_lock:
-        if not _backfill_state["running"]:
-            raise HTTPException(status_code=409, detail="No backfill running")
-        _backfill_cancel.set()
-        _backfill_state["cancel_requested"] = True
-    return {"status": "cancelling"}
+    """Cooperative stop of the running deep-history job (between symbols)."""
+    from forven.api_domains.data_ops import cancel_backfill
+
+    return cancel_backfill()
 
 
 def post_trigger_backfill(symbol: str | None = None) -> dict:
-    """Trigger a Binance Vision backfill in a background thread."""
-    with _backfill_lock:
-        if _backfill_state["running"]:
-            raise HTTPException(status_code=409, detail="Backfill already running")
-        _load_backfill_state_locked()
-        _backfill_cancel.clear()
-        _backfill_state.update(
-            {
-                "running": True,
-                "last_started_at": _now(),
-                "last_result": None,
-                "last_error": None,
-                "progress": None,
-                "cancel_requested": False,
-            }
-        )
+    """Start a deep-history job for one symbol or every stored symbol."""
+    from forven.api_domains.data_ops import trigger_backfill
 
-    def _on_progress(done: int, total: int, current_symbol: str) -> None:
-        with _backfill_lock:
-            _backfill_state["progress"] = {
-                "done": int(done),
-                "total": int(total),
-                "current_symbol": current_symbol,
-            }
-
-    def _run() -> None:
-        try:
-            from forven.data_manager import data_manager
-            result = data_manager.backfill(
-                symbol=symbol, progress_cb=_on_progress, cancel_event=_backfill_cancel
-            )
-            with _backfill_lock:
-                _backfill_state["running"] = False
-                _backfill_state["last_result"] = result
-                _backfill_state["progress"] = None
-                _persist_backfill_state_locked()
-        except Exception as exc:
-            log.warning("post_trigger_backfill failed: %s", exc)
-            with _backfill_lock:
-                _backfill_state["running"] = False
-                _backfill_state["last_error"] = str(exc)
-                _backfill_state["progress"] = None
-                _persist_backfill_state_locked()
-
-    threading.Thread(target=_run, daemon=True, name="bv-backfill-ui").start()
-    return {"status": "started", "symbol": symbol}
+    return trigger_backfill(symbol)
 
 
 _DEPTH_CALIBRATION_KV_PREFIX = "data:depth_calibration:"
@@ -2284,59 +2132,6 @@ def _log_data_action_safe(action: str, message: str, **detail) -> None:
         pass
 
 
-_universe_lock = threading.Lock()
-_universe_cancel = threading.Event()
-_UNIVERSE_STATE_KV_KEY = "data:universe_seed_state"
-_universe_state: dict = {
-    "running": False,
-    "last_started_at": None,
-    "last_result": None,
-    "last_error": None,
-    "progress": None,
-}
-_universe_state_loaded = False
-
-
-def _load_universe_state_locked() -> None:
-    """Seed last_started/result/error from KV once per process. A seed that was
-    RUNNING when the process died is surfaced as failed ('backend restarted')
-    instead of silently blanking — the seed is resumable, so restarting it is
-    always safe. Caller holds _universe_lock."""
-    global _universe_state_loaded
-    if _universe_state_loaded:
-        return
-    _universe_state_loaded = True
-    try:
-        from forven.db import kv_get
-
-        saved = kv_get(_UNIVERSE_STATE_KV_KEY, None)
-        if isinstance(saved, dict):
-            for key in ("last_started_at", "last_result", "last_error"):
-                if _universe_state.get(key) is None:
-                    _universe_state[key] = saved.get(key)
-            if saved.get("running") and not _universe_state.get("last_error"):
-                _universe_state["last_error"] = "backend restarted mid-seed — restart the seed (it resumes)"
-    except Exception:
-        pass
-
-
-def _persist_universe_state_locked() -> None:
-    try:
-        from forven.db import kv_set_best_effort
-
-        kv_set_best_effort(
-            _UNIVERSE_STATE_KV_KEY,
-            {
-                "running": bool(_universe_state.get("running")),
-                "last_started_at": _universe_state.get("last_started_at"),
-                "last_result": _universe_state.get("last_result"),
-                "last_error": _universe_state.get("last_error"),
-            },
-        )
-    except Exception:
-        pass
-
-
 def get_data_universe() -> dict:
     """Symbol registry (inception/delist/liquidity) + the planned research
     universe ladder + seed job state."""
@@ -2352,9 +2147,9 @@ def get_data_universe() -> dict:
     except Exception as exc:
         log.warning("get_data_universe plan failed: %s", exc)
         plan = []
-    with _universe_lock:
-        _load_universe_state_locked()
-        seed_state = dict(_universe_state)
+    from forven.api_domains.data_ops import universe_seed_state
+
+    seed_state = universe_seed_state()  # latest universe_seed job
     config: dict = {}
     try:
         from forven.dataeng.settings import load_data_engine_settings
@@ -2419,46 +2214,19 @@ def post_refresh_universe_registry() -> dict:
 
 
 def post_seed_research_universe() -> dict:
-    """Seed deep history for the research universe in a background thread.
-    Idempotent/resumable; cancel via post_cancel_universe_seed."""
-    with _universe_lock:
-        if _universe_state["running"]:
-            raise HTTPException(status_code=409, detail="Universe seed already running")
-        _load_universe_state_locked()
-        _universe_cancel.clear()
-        _universe_state.update(
-            {"running": True, "last_started_at": _now(), "last_result": None, "last_error": None, "progress": None}
-        )
-        _persist_universe_state_locked()
+    """Seed deep history for the research universe as a ``universe_seed`` data
+    job -> ``UniverseSeedResponse`` (``already_running`` with the active job
+    instead of a second one). Resumable: stored series are skipped."""
+    from forven.api_domains.data_ops import start_universe_seed
 
-    def _on_progress(done: int, total: int, symbol: str) -> None:
-        with _universe_lock:
-            _universe_state["progress"] = {"done": int(done), "total": int(total), "current_symbol": symbol}
-
-    def _run() -> None:
-        try:
-            from forven.dataeng.universe import seed_research_universe
-
-            result = seed_research_universe(progress_cb=_on_progress, cancel_event=_universe_cancel)
-            with _universe_lock:
-                _universe_state.update({"running": False, "last_result": result, "progress": None})
-                _persist_universe_state_locked()
-        except Exception as exc:
-            log.warning("Research universe seed failed: %s", exc)
-            with _universe_lock:
-                _universe_state.update({"running": False, "last_error": str(exc), "progress": None})
-                _persist_universe_state_locked()
-
-    threading.Thread(target=_run, daemon=True, name="universe-seed").start()
-    return {"status": "started"}
+    return start_universe_seed()
 
 
 def post_cancel_universe_seed() -> dict:
-    with _universe_lock:
-        if not _universe_state["running"]:
-            raise HTTPException(status_code=409, detail="No universe seed running")
-        _universe_cancel.set()
-    return {"status": "cancelling"}
+    """Cooperative stop of the running seed (between symbols); 409 when idle."""
+    from forven.api_domains.data_ops import cancel_universe_seed
+
+    return cancel_universe_seed()
 
 
 def get_coverage() -> dict:
