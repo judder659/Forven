@@ -84,6 +84,10 @@ class NlToSpecBody(BaseModel):
     timeframe: str = "1h"
 
 
+class NlEditSpecBody(NlToSpecBody):
+    spec: dict  # the rule spec to change; ``description`` says how
+
+
 class BacktestSubmitBody(BaseModel):
     strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
     strategy_name: str | None = Field(default=None, max_length=256)

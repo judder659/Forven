@@ -141,6 +141,7 @@ from forven.api_models import (  # noqa: F401
     ManualStrategyBody,
     MarkTradeFailedBody,
     ModelPolicyUpdateBody,
+    NlEditSpecBody,
     NlToSpecBody,
     OptimizationSubmitBody,
     PaperAdjustLevelBody,
@@ -6926,6 +6927,15 @@ def post_backtest_preview_sensitivity(body: PreviewChartBody) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — report it on the panel, never break the page
         return {"base": None, "knobs": [], "verdict": None, "warnings": [f"Stress test failed: {exc}"]}
+
+
+async def post_nl_edit_spec(body: NlEditSpecBody) -> dict:
+    """Apply a natural-language change to a rule_engine spec (the whole updated spec)."""
+    from forven.strategies.nl_spec_gen import nl_edit_rule_spec
+
+    return await nl_edit_rule_spec(
+        instruction=body.description, spec=body.spec, symbol=body.symbol, timeframe=body.timeframe,
+    )
 
 
 async def post_nl_to_spec(body: NlToSpecBody) -> dict:

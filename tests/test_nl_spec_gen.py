@@ -34,3 +34,51 @@ def test_mixed_logic_keeps_one_group_level():
         c("close"), {"logic": "or", "conditions": [c("open"), c("high"), c("low")]},
     ]}
     assert validate_rule_spec(spec) == []
+
+
+def _ready(monkeypatch, reply):
+    import json as _json
+
+    from forven import ai
+
+    calls = []
+    monkeypatch.setattr("forven.strategies.idea_readiness.check_idea_readiness",
+                        lambda *a, **k: {"can_generate": True, "issues": [], "warnings": ["checked"]})
+    monkeypatch.setattr(ai, "resolve_available_provider", lambda: "stub")
+    monkeypatch.setattr(ai, "_provider_has_credentials", lambda provider: True)
+
+    async def call_ai(provider, *, prompt, system, max_tokens, temperature):
+        calls.append(prompt)
+        return _json.dumps(reply)
+
+    monkeypatch.setattr(ai, "call_ai", call_ai)
+    return calls
+
+
+CURRENT = {"indicators": [{"id": "rsi", "kind": "rsi", "params": {"length": 14}}], "params": {"lo": 30},
+           "entry_long": {"logic": "and", "conditions": [c("rsi", "<", {"param": "lo"})]},
+           "exit_long": None, "entry_short": None, "exit_short": None}
+
+
+def test_edit_sends_the_current_spec_and_returns_the_whole_updated_one(monkeypatch):
+    import asyncio
+
+    from forven.strategies.nl_spec_gen import nl_edit_rule_spec
+
+    updated = {**CURRENT, "indicators": CURRENT["indicators"] + [{"id": "ema200", "kind": "ema", "params": {"length": 200}}],
+               "entry_long": {"logic": "and", "conditions": [c("rsi", "<", {"param": "lo"}), c("close", ">", "ema200")]}}
+    calls = _ready(monkeypatch, updated)
+    result = asyncio.run(nl_edit_rule_spec(instruction="add a 200 EMA trend filter", spec=CURRENT, symbol="BTC/USDT"))
+    assert result["valid"] and result["spec"]["entry_long"]["conditions"][1] == c("close", ">", "ema200")
+    assert '"lo": 30' in calls[0] and "add a 200 EMA trend filter" in calls[0]
+
+
+def test_edit_needs_an_instruction_and_a_spec(monkeypatch):
+    import asyncio
+
+    from forven.strategies.nl_spec_gen import nl_edit_rule_spec
+
+    calls = _ready(monkeypatch, CURRENT)
+    assert "Describe the change" in asyncio.run(nl_edit_rule_spec(instruction=" ", spec=CURRENT))["errors"][0]
+    assert "no strategy" in asyncio.run(nl_edit_rule_spec(instruction="tighten", spec=None))["errors"][0]
+    assert calls == []

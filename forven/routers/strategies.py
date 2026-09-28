@@ -671,6 +671,12 @@ async def post_nl_to_spec(body: core.NlToSpecBody):
     return await core.post_nl_to_spec(body)
 
 
+@router.post("/api/backtests/nl-edit-spec")
+async def post_nl_edit_spec(body: core.NlEditSpecBody):
+    """Apply a natural-language change to a visual spec."""
+    return await core.post_nl_edit_spec(body)
+
+
 @router.post("/api/backtests/idea-readiness")
 def post_idea_readiness(body: core.NlToSpecBody) -> dict:
     """Check local inputs without generating code or collecting data."""

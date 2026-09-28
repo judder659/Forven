@@ -151,23 +151,15 @@ def _parse_failure_message(raw: object, exc: Exception | None) -> str:
     )
 
 
-async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: str = "1h") -> dict:
-    """Return ``{valid, spec, errors, warnings, provider}``.
-
-    ``spec`` is a normalized rule-engine spec (may still carry validation
-    ``errors`` for the UI to surface); ``valid`` is True only when
-    ``validate_rule_spec`` passes.
-    """
+async def _draft_spec(instruction: str, symbol: str, timeframe: str, user: str) -> dict:
+    """Readiness check, then ask the model for a spec. Returns the
+    ``{valid, spec, errors, warnings, provider}`` shape both entry points share."""
     from forven import ai
-
-    description = str(description or "").strip()
-    if not description:
-        return {"valid": False, "spec": None, "errors": ["Describe a strategy first."], "warnings": [], "provider": None}
 
     from forven.strategies.idea_readiness import check_idea_readiness
     import asyncio
 
-    readiness = await asyncio.to_thread(check_idea_readiness, description, symbol, timeframe, visual=True)
+    readiness = await asyncio.to_thread(check_idea_readiness, instruction, symbol, timeframe, visual=True)
     if not readiness["can_generate"]:
         return {"valid": False, "spec": None, "errors": readiness["issues"],
                 "warnings": readiness["warnings"], "provider": None, "readiness": readiness}
@@ -185,11 +177,6 @@ async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: s
         }
 
     system = _build_system_prompt()
-    user = (
-        f"Asset: {symbol}. Timeframe: {timeframe}.\n"
-        f"Strategy idea:\n{description}\n\n"
-        "Return ONLY the JSON rule spec."
-    )
     raw: str = ""
     spec: dict | None = None
     call_error: Exception | None = None
@@ -232,4 +219,39 @@ async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: s
     }
 
 
-__all__ = ["nl_to_rule_spec"]
+async def nl_to_rule_spec(*, description: str, symbol: str = "BTC", timeframe: str = "1h") -> dict:
+    """Return ``{valid, spec, errors, warnings, provider}``.
+
+    ``spec`` is a normalized rule-engine spec (may still carry validation
+    ``errors`` for the UI to surface); ``valid`` is True only when
+    ``validate_rule_spec`` passes.
+    """
+    description = str(description or "").strip()
+    if not description:
+        return {"valid": False, "spec": None, "errors": ["Describe a strategy first."], "warnings": [], "provider": None}
+    return await _draft_spec(description, symbol, timeframe, (
+        f"Asset: {symbol}. Timeframe: {timeframe}.\n"
+        f"Strategy idea:\n{description}\n\n"
+        "Return ONLY the JSON rule spec."
+    ))
+
+
+async def nl_edit_rule_spec(*, instruction: str, spec: dict, symbol: str = "BTC", timeframe: str = "1h") -> dict:
+    """Apply a plain-English change to an existing spec; same return shape as
+    :func:`nl_to_rule_spec`. The model returns the whole updated spec, so the
+    caller can show the change as a diff before accepting it."""
+    instruction = str(instruction or "").strip()
+    if not instruction:
+        return {"valid": False, "spec": None, "errors": ["Describe the change first."], "warnings": [], "provider": None}
+    if not isinstance(spec, dict):
+        return {"valid": False, "spec": None, "errors": ["There is no strategy to change."], "warnings": [], "provider": None}
+    return await _draft_spec(instruction, symbol, timeframe, (
+        f"Asset: {symbol}. Timeframe: {timeframe}.\n"
+        f"Current rule spec:\n{json.dumps(spec)}\n\n"
+        f"Change to make:\n{instruction}\n\n"
+        "Keep every part the change does not touch exactly as it is (ids, params and "
+        "conditions). Return ONLY the complete updated JSON rule spec."
+    ))
+
+
+__all__ = ["nl_edit_rule_spec", "nl_to_rule_spec"]
