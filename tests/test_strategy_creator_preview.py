@@ -163,3 +163,94 @@ def test_preview_request_forwards_the_backtest_execution_settings(monkeypatch):
     assert captured["asset"] == "ETH" and captured["timeframe"] == "4h"
     assert (captured["leverage"], captured["fee_bps"], captured["initial_capital"]) == (3, 7, 5000)
     assert captured["execution_controls"] == {"sizing_mode": "fraction", "risk_per_trade": 0.01, "stop_loss_pct": 2.5}
+
+
+# --- insights: why each trade happened, rule spans, honest vitals -------------------
+def test_every_trade_is_explained_by_a_rule_that_held_on_its_signal_bar(candles):
+    ctx = _preview(BOTH, trade_mode="both", execution_controls={"sizing_mode": "full", "take_profit_pct": 3.0})
+
+    assert ctx["trades"] and len(ctx["trades"]) == ctx["trade_count"]
+    bar_times = [bar["timestamp"] for bar in ctx["bars"]]
+    for trade in ctx["trades"]:
+        assert trade["entry_rule"]["result"] is True, trade
+        # The fill is the open of the bar after the signal bar.
+        assert bar_times.index(trade["entry_signal_time"]) + 1 == bar_times.index(trade["entry_time"])
+        if trade["exit_reason"] == "signal":
+            assert trade["exit_rule"]["result"] is True, trade
+            assert bar_times.index(trade["exit_signal_time"]) + 1 == bar_times.index(trade["exit_time"])
+        else:
+            assert trade["exit_rule"] is None
+    assert {"take_profit", "signal"} & {trade["exit_reason"] for trade in ctx["trades"]}
+    assert {trade["sample"] for trade in ctx["trades"]} == {"in", "out"}
+
+
+def test_crossover_explanations_carry_the_prior_bar(candles):
+    ctx = _preview(BOTH, trade_mode="both")
+    condition = ctx["trades"][0]["entry_rule"]["items"][0]
+    assert condition["op"] in {"crosses_above", "crosses_below"}
+    assert {"left_value", "right_value", "left_prev", "right_prev"} <= set(condition)
+    if condition["op"] == "crosses_above":
+        assert condition["left_prev"] <= condition["right_prev"] and condition["left_value"] > condition["right_value"]
+
+
+def test_rule_spans_mark_where_the_entry_rule_held(candles):
+    ctx = _preview()
+    spans = ctx["rule_spans"]["entry_long"]
+    assert spans and all(start <= end for start, end in spans)
+    covered = sum(1 for bar in ctx["bars"] if any(s <= bar["timestamp"] <= e for s, e in spans))
+    assert covered == ctx["signal_bars"]["entry_long"]
+
+
+def test_vitals_split_like_the_backtest_and_add_up(candles):
+    ctx = _preview()
+    vitals = ctx["vitals"]
+    assert vitals["in_sample"]["trades"] + vitals["out_of_sample"]["trades"] == vitals["all"]["trades"] == ctx["trade_count"]
+    assert vitals["out_of_sample"]["start"] == ctx["oos_start"]
+    assert vitals["in_sample"]["end"] < ctx["oos_start"]
+    assert 0 <= vitals["all"]["exposure"] <= 1
+    assert vitals["all"]["fees"] > 0
+    json.dumps(ctx, allow_nan=False)  # the API sends strict JSON
+
+
+def test_more_variants_tried_means_lower_odds_the_edge_is_real(candles):
+    few = _preview(trials=1)["vitals"]["deflated_sharpe"]
+    many = _preview(trials=500)["vitals"]["deflated_sharpe"]
+    assert few is not None and many is not None
+    assert many["trials"] == 500
+    assert many["probability"] <= few["probability"]
+
+
+def test_overlays_name_their_indicator_and_pane(candles):
+    ctx = _preview(BOTH, trade_mode="both")
+    assert {(line["group"], line["panel"]) for line in ctx["main_indicators"]} == {("fast", "main"), ("slow", "main")}
+
+
+# --- stress test --------------------------------------------------------------------
+def test_stress_test_nudges_each_knob_and_matches_the_preview(candles):
+    result = bt.build_strategy_sensitivity(
+        asset="BTC", timeframe="1h", start_date=START, end_date=END, spec=RSI, trade_mode="long_only",
+        leverage=1.0, fee_bps=10, slippage_bps=5, initial_capital=10_000, execution_controls={"sizing_mode": "full"},
+    )
+    assert result["base"]["trades"] == _preview()["trade_count"]
+    labels = [knob["label"] for knob in result["knobs"]]
+    assert labels == ["oversold", "exit_level", "rsi length"]
+    oversold = result["knobs"][0]
+    assert [v["step"] for v in oversold["variants"]] == [-0.25, -0.1, 0.1, 0.25]
+    assert oversold["variants"][0]["value"] == 22.5
+    length = result["knobs"][2]
+    assert all(isinstance(v["value"], int) and v["value"] != 14 for v in length["variants"])
+    assert result["verdict"]["status"] in {"stable", "fragile", "losing"}
+
+
+def test_stress_test_needs_something_to_nudge(candles):
+    spec = {"indicators": [], "params": {}, "entry_long": {"conditions": [{"left": "close", "op": ">", "right": "open"}]}}
+    result = bt.build_strategy_sensitivity(asset="BTC", timeframe="1h", start_date=START, end_date=END, spec=spec)
+    assert result["knobs"] == [] and "no numbers to nudge" in result["warnings"][0]
+
+
+def test_stress_test_request_forwards_the_backtest_execution_settings(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(bt, "build_strategy_sensitivity", lambda **kw: captured.update(kw) or {"ok": True})
+    core.post_backtest_preview_sensitivity(core.PreviewChartBody(spec=RSI, symbol="SOL/USDT", stop_loss_pct=2.0, leverage=2))
+    assert captured["asset"] == "SOL" and captured["leverage"] == 2
+    assert captured["execution_controls"] == {"stop_loss_pct": 2.0}

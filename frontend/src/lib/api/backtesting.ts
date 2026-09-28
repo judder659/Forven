@@ -287,6 +287,10 @@ export interface BacktestChartIndicator {
 	name: string;
 	color?: string | null;
 	data: BacktestChartPoint[];
+	/** Rule-engine overlays: the indicator instance id, its kind and default pane. */
+	group?: string;
+	kind?: string;
+	panel?: 'main' | 'sub';
 	[key: string]: unknown;
 }
 

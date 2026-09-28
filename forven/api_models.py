@@ -74,12 +74,18 @@ class PreviewChartBody(BaseModel):
     atr_stop_multiplier: float | None = Field(default=None, gt=0, le=50)
     kelly_multiplier: float | None = Field(default=None, gt=0, le=5)
     kelly_lookback: int | None = Field(default=None, ge=1, le=100_000)
+    # Strategy variants the author has tried so far, for the deflated Sharpe.
+    trials: int | None = Field(default=None, ge=1, le=1_000_000)
 
 
 class NlToSpecBody(BaseModel):
     description: str = Field(min_length=1, max_length=4000)
     symbol: str = "BTC"
     timeframe: str = "1h"
+
+
+class NlEditSpecBody(NlToSpecBody):
+    spec: dict  # the rule spec to change; ``description`` says how
 
 
 class BacktestSubmitBody(BaseModel):

@@ -141,6 +141,7 @@ from forven.api_models import (  # noqa: F401
     ManualStrategyBody,
     MarkTradeFailedBody,
     ModelPolicyUpdateBody,
+    NlEditSpecBody,
     NlToSpecBody,
     OptimizationSubmitBody,
     PaperAdjustLevelBody,
@@ -6893,6 +6894,7 @@ def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
             slippage_bps=body.slippage_bps,
             initial_capital=body.initial_capital,
             execution_controls=execution_controls or None,
+            trials=body.trials,
         )
     except Exception as exc:  # noqa: BLE001 — preview must never break the page
         return {
@@ -6902,6 +6904,38 @@ def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
             "strategy_meta": "", "strategy_params": {"spec": spec},
             "warnings": [f"Preview chart unavailable: {exc}"],
         }
+
+
+def post_backtest_preview_sensitivity(body: PreviewChartBody) -> dict:
+    """Stress test for a no-code rule_engine spec: each knob nudged ±10% and ±25%
+    against the same candles and execution settings as the live preview."""
+    from forven.strategies.backtest import build_strategy_sensitivity
+
+    try:
+        return build_strategy_sensitivity(
+            asset=_extract_base_asset_symbol(body.symbol),
+            timeframe=str(body.timeframe or "1h").strip() or "1h",
+            start_date=(str(body.start).strip() or None) if body.start else None,
+            end_date=(str(body.end).strip() or None) if body.end else None,
+            spec=body.spec if isinstance(body.spec, dict) else {},
+            trade_mode=str(body.trade_mode or "long_only").strip() or "long_only",
+            leverage=body.leverage,
+            fee_bps=body.fee_bps,
+            slippage_bps=body.slippage_bps,
+            initial_capital=body.initial_capital,
+            execution_controls=_collect_honored_backtest_execution_controls(body) or None,
+        )
+    except Exception as exc:  # noqa: BLE001 — report it on the panel, never break the page
+        return {"base": None, "knobs": [], "verdict": None, "warnings": [f"Stress test failed: {exc}"]}
+
+
+async def post_nl_edit_spec(body: NlEditSpecBody) -> dict:
+    """Apply a natural-language change to a rule_engine spec (the whole updated spec)."""
+    from forven.strategies.nl_spec_gen import nl_edit_rule_spec
+
+    return await nl_edit_rule_spec(
+        instruction=body.description, spec=body.spec, symbol=body.symbol, timeframe=body.timeframe,
+    )
 
 
 async def post_nl_to_spec(body: NlToSpecBody) -> dict:
@@ -6916,6 +6950,19 @@ async def post_nl_to_spec(body: NlToSpecBody) -> dict:
 
 
 _MANUAL_STRATEGY_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+
+
+def _forge_strategy_running_type(type_name: str) -> str | None:
+    """A Forge strategy whose evidence was produced by this runtime type's code.
+    Manual backtests' scratch rows (stage 'prebuilt') do not count."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(NULLIF(display_id, ''), id) AS ref FROM strategies "
+            "WHERE (type = ? OR runtime_type = ?) AND COALESCE(stage, '') != 'prebuilt' "
+            "ORDER BY created_at LIMIT 1",
+            (type_name, type_name),
+        ).fetchone()
+    return row["ref"] if row else None
 
 
 def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
@@ -7021,9 +7068,7 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     except OSError:
         current_code = None
     if current_code is not None and current_code.splitlines() != final_code.splitlines():
-        from forven.strategy_creator import forge_strategy_running_type
-
-        holder = forge_strategy_running_type(type_name)
+        holder = _forge_strategy_running_type(type_name)
         if holder:
             return {"valid": True, "registered": False, "strategy_name": type_name,
                     "default_params": {},

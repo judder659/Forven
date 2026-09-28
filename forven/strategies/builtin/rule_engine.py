@@ -200,6 +200,65 @@ def indicator_output_names(kind: str, out_id: str) -> list[str]:
     return _indicators.output_names(kind, out_id)
 
 
+def _traced_value(values: np.ndarray, pos: int) -> float | None:
+    if pos < 0 or pos >= len(values):
+        return None
+    value = float(values[pos])
+    return float(f"{value:.6g}") if np.isfinite(value) else None
+
+
+class RuleTrace:
+    """A condition tree with every operand and result series computed once, so
+    the rule's state on any bar is a lookup. Combines results exactly like
+    :func:`eval_tree`."""
+
+    def __init__(self, tree: dict, table: dict[str, pd.Series], params: dict, index: pd.Index):
+        self.logic = "or" if str(tree.get("logic") or "and").strip().lower() == "or" else "and"
+        self._items: list[tuple[str, object]] = []
+        parts: list[np.ndarray] = []
+        for cond in tree.get("conditions") or []:
+            if not isinstance(cond, dict):
+                continue
+            if "conditions" in cond:
+                group = RuleTrace(cond, table, params, index)
+                self._items.append(("group", group))
+                parts.append(group.result)
+                continue
+            left = _as_series(_resolve_operand(cond.get("left"), table, params, index), index)
+            right = _as_series(_resolve_operand(cond.get("right"), table, params, index), index)
+            result = eval_condition(cond, table, params, index).to_numpy(dtype=bool)
+            self._items.append(("cond", {
+                "left": cond.get("left"), "op": str(cond.get("op") or "").strip(), "right": cond.get("right"),
+                "left_values": left.to_numpy(dtype=float), "right_values": right.to_numpy(dtype=float),
+                "result": result,
+            }))
+            parts.append(result)
+        acc = parts[0] if parts else np.zeros(len(index), dtype=bool)
+        for part in parts[1:]:
+            acc = (acc | part) if self.logic == "or" else (acc & part)
+        self.result = acc
+
+    def at(self, pos: int) -> dict:
+        """The tree on bar ``pos``: each condition's operand values (and the prior
+        bar's for crossovers) and each node's result."""
+        items: list[dict] = []
+        for kind, item in self._items:
+            if kind == "group":
+                items.append({"kind": "group", **item.at(pos)})
+                continue
+            row = {
+                "kind": "cond", "left": item["left"], "op": item["op"], "right": item["right"],
+                "left_value": _traced_value(item["left_values"], pos),
+                "right_value": _traced_value(item["right_values"], pos),
+                "result": bool(item["result"][pos]),
+            }
+            if item["op"] in ("crosses_above", "crosses_below"):
+                row["left_prev"] = _traced_value(item["left_values"], pos - 1)
+                row["right_prev"] = _traced_value(item["right_values"], pos - 1)
+            items.append(row)
+        return {"logic": self.logic, "result": bool(self.result[pos]), "items": items}
+
+
 def _operand_series_name(operand) -> str | None:
     """The series an operand reads by name (bare string or {series}/{indicator})."""
     if isinstance(operand, str):

@@ -1,8 +1,13 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
-	import type { IndicatorMeta } from '$lib/api';
+	import { createEventDispatcher, tick } from 'svelte';
+	import type { IndicatorMeta, RuleSideKey } from '$lib/api';
+	import { portal } from '$lib/actions/portal';
 	import { RESERVED_PARAM_NAMES } from '$lib/utils/ruleSpec';
-	import type { RuleSpec } from './templates';
+	import { formatValue, RAW_COLUMN_LABELS, seriesLabel } from '$lib/utils/ruleLabels';
+	import { formulaToSide, sideToFormula } from '$lib/utils/ruleFormula';
+	import OperandChip from './OperandChip.svelte';
+	import OperatorChip from './OperatorChip.svelte';
+	import type { Condition, Group, RuleSpec } from './templates';
 
 	const dispatch = createEventDispatcher<{
 		change: { spec: Record<string, unknown>; valid: boolean; errors: string[] };
@@ -11,18 +16,17 @@
 	export let indicators: IndicatorMeta[] = [];
 	export let initialSpec: RuleSpec | null = null;
 	export let disabled = false;
+	/** Bars on which each side's rule held in the latest preview, out of barCount. */
+	export let signalBars: Partial<Record<RuleSideKey, number>> = {};
+	export let barCount = 0;
 
 	// OHLCV + crypto-native enrichment columns the engine always exposes.
-	const RAW_COLUMNS = [
-		'close', 'open', 'high', 'low', 'volume',
+	const PRICE_COLUMNS = ['close', 'open', 'high', 'low', 'volume'];
+	const DATA_COLUMNS = [
 		'funding_rate', 'open_interest', 'taker_buy_sell_ratio',
 		'ls_ratio', 'long_liq_usd', 'short_liq_usd', 'liq_imbalance',
 	];
-	const OPERATORS = ['<', '<=', '>', '>=', '==', '!=', 'crosses_above', 'crosses_below'];
-	const OP_LABELS: Record<string, string> = {
-		'<': '<', '<=': '≤', '>': '>', '>=': '≥', '==': '=', '!=': '≠',
-		crosses_above: 'crosses ↑', crosses_below: 'crosses ↓',
-	};
+	const RAW_COLUMNS = [...PRICE_COLUMNS, ...DATA_COLUMNS];
 
 	type OperandType = 'series' | 'param' | 'const';
 	interface Operand { type: OperandType; value: string | number; }
@@ -33,14 +37,16 @@
 	interface Side { logic: 'and' | 'or'; rows: Row[]; }
 	// prevId / prevName: the name conditions currently use, so a rename re-points them.
 	interface Instance { uid: number; id: string; prevId: string; kind: string; params: Record<string, number>; }
-	interface Param { uid: number; name: string; prevName: string; value: number; }
+	// lo/hi/step: the slider's range. It is set when a value is loaded or typed,
+	// not while dragging, so the range never moves under the pointer.
+	interface Param { uid: number; name: string; prevName: string; value: number; lo: number; hi: number; step: number; }
 
 	let uid = 1;
 	const nextUid = () => uid++;
 
 	let instances: Instance[] = [];
 	let params: Param[] = [];
-	let sides: Record<'entry_long' | 'exit_long' | 'entry_short' | 'exit_short', Side> = {
+	let sides: Record<RuleSideKey, Side> = {
 		entry_long: { logic: 'and', rows: [] },
 		exit_long: { logic: 'or', rows: [] },
 		entry_short: { logic: 'and', rows: [] },
@@ -60,9 +66,14 @@
 	$: availableSeries = [...RAW_COLUMNS, ...instances.flatMap(outputNames)];
 	$: paramNames = params.map((p) => p.name.trim()).filter(Boolean);
 
-	// ---- Palette --------------------------------------------------------------
+	// ---- Indicator palette ------------------------------------------------------
+	let paletteOpen = false;
 	let paletteSearch = '';
 	let paletteCat = 'All';
+	let paletteIndex = 0;
+	let paletteInput: HTMLInputElement | undefined;
+	// The operand whose "Add an indicator…" opened the palette; it reads the new indicator.
+	let pendingOperand: Operand | null = null;
 	$: categories = ['All', ...Array.from(new Set(indicators.map((m) => m.category)))];
 	$: paletteResults = indicators.filter((m) => {
 		if (paletteCat !== 'All' && m.category !== paletteCat) return false;
@@ -75,6 +86,29 @@
 			m.description.toLowerCase().includes(q)
 		);
 	});
+	$: if (paletteIndex >= paletteResults.length) paletteIndex = Math.max(0, paletteResults.length - 1);
+
+	async function openPalette(target: Operand | null = null) {
+		if (disabled) return;
+		pendingOperand = target;
+		paletteSearch = '';
+		paletteIndex = 0;
+		paletteOpen = true;
+		await tick();
+		paletteInput?.focus();
+	}
+	function closePalette() {
+		paletteOpen = false;
+		pendingOperand = null;
+	}
+	function onPaletteKey(event: KeyboardEvent) {
+		if (event.key === 'ArrowDown') paletteIndex = Math.min(paletteResults.length - 1, paletteIndex + 1);
+		else if (event.key === 'ArrowUp') paletteIndex = Math.max(0, paletteIndex - 1);
+		else if (event.key === 'Enter' && paletteResults[paletteIndex]) addIndicator(paletteResults[paletteIndex]);
+		else if (event.key === 'Escape') closePalette();
+		else return;
+		event.preventDefault();
+	}
 
 	function uniqueId(base: string): string {
 		const taken = new Set(instances.map((i) => i.id));
@@ -88,20 +122,59 @@
 		const params0: Record<string, number> = {};
 		for (const p of meta.params) params0[p.key] = p.default;
 		const id = uniqueId(meta.kind);
-		instances = [...instances, { uid: nextUid(), id, prevId: id, kind: meta.kind, params: params0 }];
+		const inst: Instance = { uid: nextUid(), id, prevId: id, kind: meta.kind, params: params0 };
+		instances = [...instances, inst];
+		if (pendingOperand) {
+			pendingOperand.type = 'series';
+			pendingOperand.value = outputNames(inst)[0];
+		}
+		closePalette();
+		bump();
 	}
 	function removeIndicator(i: number) {
 		instances = instances.filter((_, idx) => idx !== i);
 	}
 
+	// ---- Knobs (named parameters) -------------------------------------------------
+	function sliderRange(value: number): { lo: number; hi: number; step: number } {
+		const v = Number.isFinite(value) ? value : 0;
+		if (v === 0) return { lo: -1, hi: 1, step: 0.01 };
+		const span = Math.abs(v);
+		const step = Number.isInteger(v) && span >= 5 ? 1 : 10 ** (Math.floor(Math.log10(span)) - 2);
+		return { lo: v > 0 ? 0 : v - span, hi: v > 0 ? v + span : 0, step };
+	}
+	function mkParam(name: string, value: number): Param {
+		return { uid: nextUid(), name, prevName: name, value, ...sliderRange(value) };
+	}
+	function uniqueParamName(base: string): string {
+		const clean = base.replace(/\W/g, '_').replace(/^(\d)/, '_$1') || 'knob';
+		const taken = new Set(params.map((p) => p.name.trim()));
+		const free = (name: string) => !taken.has(name) && !RESERVED_PARAM_NAMES.includes(name);
+		if (free(clean)) return clean;
+		let n = 2;
+		while (!free(`${clean}${n}`)) n++;
+		return `${clean}${n}`;
+	}
 	function addParam() {
-		const taken = new Set(params.map((p) => p.name));
-		let n = params.length + 1;
-		while (taken.has(`param${n}`)) n++;
-		params = [...params, { uid: nextUid(), name: `param${n}`, prevName: `param${n}`, value: 0 }];
+		params = [...params, mkParam(uniqueParamName('knob'), 0)];
 	}
 	function removeParam(i: number) {
 		params = params.filter((_, idx) => idx !== i);
+	}
+	function commitParam(p: Param) {
+		// Re-centre the slider when a typed value leaves its range.
+		if (typeof p.value === 'number' && Number.isFinite(p.value) && (p.value < p.lo || p.value > p.hi)) {
+			Object.assign(p, sliderRange(p.value));
+		}
+		bump();
+	}
+	/** Point an operand at a new knob holding `value`, named after what it is compared with. */
+	function makeKnob(target: Operand, other: Operand, value: number) {
+		const name = uniqueParamName(other.type === 'series' ? `${other.value}_level` : 'level');
+		params = [...params, mkParam(name, value)];
+		target.type = 'param';
+		target.value = name;
+		bump();
 	}
 
 	// ---- Renames: re-point the conditions that use the old name ----------------
@@ -142,7 +215,8 @@
 
 	// ---- Conditions -----------------------------------------------------------
 	function mkCond(): Cond {
-		return { uid: nextUid(), left: { type: 'series', value: availableSeries[0] ?? 'close' }, op: '>', right: { type: 'const', value: 0 } };
+		const left = instances.length ? outputNames(instances[0])[0] : 'close';
+		return { uid: nextUid(), left: { type: 'series', value: left }, op: '>', right: { type: 'const', value: 0 } };
 	}
 	function addCond(side: Side) {
 		side.rows = [...side.rows, { kind: 'cond', ...mkCond() }];
@@ -164,10 +238,13 @@
 		group.conds = group.conds.filter((_, idx) => idx !== i);
 		bump();
 	}
-	function onOperandTypeChange(o: Operand) {
-		if (o.type === 'const') o.value = 0;
-		else if (o.type === 'series') o.value = RAW_COLUMNS[0];
-		else o.value = paramNames[0] ?? '';
+	function setOperand(o: Operand, next: { type: OperandType; value: string | number }) {
+		o.type = next.type;
+		o.value = next.value;
+		bump();
+	}
+	function flipLogic(target: { logic: 'and' | 'or' }) {
+		target.logic = target.logic === 'and' ? 'or' : 'and';
 		bump();
 	}
 
@@ -176,6 +253,7 @@
 		if (!showShort) {
 			sides.entry_short = { logic: 'and', rows: [] };
 			sides.exit_short = { logic: 'or', rows: [] };
+			formulaOpen = { ...formulaOpen, entry_short: false, exit_short: false };
 		}
 		bump();
 	}
@@ -260,11 +338,7 @@
 				if (o.type === 'param' && !paramSet.has(String(o.value))) errs.push(`${label}: unknown parameter "${o.value}".`);
 			}
 		};
-		const sideLabels: [keyof typeof sides, string][] = [
-			['entry_long', 'Entry Long'], ['exit_long', 'Exit Long'],
-			['entry_short', 'Entry Short'], ['exit_short', 'Exit Short'],
-		];
-		for (const [key, label] of sideLabels) {
+		for (const { key, label } of SIDE_META) {
 			if (!showShort && (key === 'entry_short' || key === 'exit_short')) continue;
 			for (const row of sides[key].rows) {
 				if (row.kind === 'group') row.conds.forEach((c) => checkCond(label, c));
@@ -321,7 +395,7 @@
 	function parseSpec(s: RuleSpec) {
 		return {
 			instances: (s.indicators ?? []).map((i): Instance => ({ uid: nextUid(), id: i.id, prevId: i.id, kind: i.kind, params: { ...(i.params ?? {}) } })),
-			params: Object.entries(s.params ?? {}).map(([name, value]): Param => ({ uid: nextUid(), name, prevName: name, value: Number(value) })),
+			params: Object.entries(s.params ?? {}).map(([name, value]): Param => mkParam(name, Number(value))),
 			showShort: !!(s.entry_short || s.exit_short),
 			sides: {
 				entry_long: loadSide(s.entry_long),
@@ -339,247 +413,311 @@
 	$: if (initialSpec && initialSpec !== _lastLoaded) {
 		_lastLoaded = initialSpec;
 		({ instances, params, showShort, sides } = parseSpec(initialSpec));
+		formulaOpen = {};
+	}
+
+	// ---- Formula view: a side as text, applied on demand ------------------------
+	let formulaOpen: Partial<Record<RuleSideKey, boolean>> = {};
+	let formulaText: Partial<Record<RuleSideKey, string>> = {};
+	let formulaError: Partial<Record<RuleSideKey, string>> = {};
+
+	function openFormula(key: RuleSideKey) {
+		formulaText[key] = sideToFormula(sideToSpec(sides[key]) as Group | null);
+		formulaError[key] = '';
+		formulaOpen[key] = true;
+	}
+	function closeFormula(key: RuleSideKey) {
+		formulaOpen[key] = false;
+	}
+	function unknownReference(side: Group | null): string | null {
+		const series = new Set(availableSeries);
+		const knobs = new Set(paramNames);
+		const walk = (items: Array<Condition | Group>): string | null => {
+			for (const item of items) {
+				if ('conditions' in item) {
+					const inner = walk(item.conditions);
+					if (inner) return inner;
+					continue;
+				}
+				for (const o of [item.left, item.right]) {
+					if (typeof o === 'string' && !series.has(o)) {
+						return `Unknown series "${o}". Use a price column or an indicator output: ${[...series].filter((s) => !DATA_COLUMNS.includes(s)).join(', ')}.`;
+					}
+					if (o && typeof o === 'object' && 'param' in o && !knobs.has(String(o.param))) {
+						return `Unknown knob "$${o.param}". Add it under Knobs first.`;
+					}
+				}
+			}
+			return null;
+		};
+		return side ? walk(side.conditions) : null;
+	}
+	function applyFormula(key: RuleSideKey) {
+		const parsed = formulaToSide(formulaText[key] ?? '', sides[key].logic);
+		if (parsed.error) {
+			formulaError[key] = parsed.at ? `${parsed.error} (at character ${parsed.at + 1}).` : `${parsed.error}.`;
+			return;
+		}
+		const unknown = unknownReference(parsed.side);
+		if (unknown) {
+			formulaError[key] = unknown;
+			return;
+		}
+		const next = loadSide(parsed.side);
+		// An emptied side keeps its usual combine logic.
+		if (!parsed.side) next.logic = sides[key].logic;
+		sides[key] = next;
+		formulaOpen[key] = false;
+		bump();
+	}
+	function onFormulaKey(event: KeyboardEvent, key: RuleSideKey) {
+		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+			event.preventDefault();
+			event.stopPropagation();
+			applyFormula(key);
+		} else if (event.key === 'Escape') {
+			event.stopPropagation();
+			closeFormula(key);
+		}
+	}
+
+	// ---- Display ----------------------------------------------------------------
+	$: seriesGroups = [
+		{ label: 'Price', items: PRICE_COLUMNS.map((c) => ({ value: c, label: RAW_COLUMN_LABELS[c] ?? c })) },
+		...(instances.length
+			? [{ label: 'Your indicators', items: instances.flatMap((inst) => outputNames(inst).map((name) => ({ value: name, label: seriesLabel(name, instances, metaByKind) }))) }]
+			: []),
+		{ label: 'Market data', items: DATA_COLUMNS.map((c) => ({ value: c, label: RAW_COLUMN_LABELS[c] ?? c })) },
+	];
+	$: knobList = params.filter((p) => p.name.trim()).map((p) => ({ name: p.name.trim(), value: p.value }));
+
+	function operandLabel(o: Operand, ..._deps: unknown[]): string {
+		if (o.type === 'const') return formatValue(Number(o.value));
+		if (o.type === 'param') {
+			const knob = params.find((p) => p.name.trim() === String(o.value));
+			return knob ? `${o.value} · ${formatValue(knob.value)}` : String(o.value);
+		}
+		return seriesLabel(String(o.value), instances, metaByKind);
+	}
+	function operandMissing(o: Operand, ..._deps: unknown[]): boolean {
+		if (o.type === 'series') return !availableSeries.includes(String(o.value));
+		if (o.type === 'param') return !paramNames.includes(String(o.value));
+		return false;
+	}
+
+	// How many conditions read each series / knob, to flag unused ones.
+	$: usage = countUsage(sides, showShort);
+	function countUsage(..._deps: unknown[]): Map<string, number> {
+		const counts = new Map<string, number>();
+		for (const { key } of SIDE_META) {
+			if (!showShort && (key === 'entry_short' || key === 'exit_short')) continue;
+			for (const row of sides[key].rows) {
+				for (const c of row.kind === 'group' ? row.conds : [row]) {
+					for (const o of [c.left, c.right]) {
+						const k = `${o.type}:${String(o.value).trim()}`;
+						counts.set(k, (counts.get(k) ?? 0) + 1);
+					}
+				}
+			}
+		}
+		return counts;
+	}
+	function instanceUses(inst: Instance, ..._deps: unknown[]): number {
+		return outputNames(inst).reduce((n, name) => n + (usage.get(`series:${name}`) ?? 0), 0);
+	}
+	function paramUses(p: Param, ..._deps: unknown[]): number {
+		return usage.get(`param:${p.name.trim()}`) ?? 0;
+	}
+
+	function signalText(key: RuleSideKey, ..._deps: unknown[]): string {
+		const n = signalBars[key];
+		if (n == null) return '';
+		const pct = barCount > 0 ? ` · ${((n / barCount) * 100).toFixed(n / barCount < 0.01 ? 2 : 1)}%` : '';
+		return `true on ${n.toLocaleString()} bars${pct}`;
 	}
 
 	const inputCls =
-		'border border-[#333] bg-black px-2 py-1 text-[12px] text-white outline-none transition-colors focus:border-white disabled:opacity-40';
+		'border border-[#2a2a2a] bg-black px-1.5 py-0.5 text-[12px] text-white outline-none transition-colors focus:border-white disabled:opacity-40';
 
-	const SIDE_META: { key: keyof typeof sides; label: string; short: boolean }[] = [
-		{ key: 'entry_long', label: 'Entry — Long', short: false },
-		{ key: 'exit_long', label: 'Exit — Long', short: false },
-		{ key: 'entry_short', label: 'Entry — Short', short: true },
-		{ key: 'exit_short', label: 'Exit — Short', short: true },
+	const SIDE_META: { key: RuleSideKey; label: string; title: string; short: boolean; dot: string; empty: string }[] = [
+		{ key: 'entry_long', label: 'Entry Long', title: 'Enter long', short: false, dot: 'bg-emerald-500',
+			empty: 'No long entry. Add a condition, or trade the short side only.' },
+		{ key: 'exit_long', label: 'Exit Long', title: 'Exit long', short: false, dot: 'bg-emerald-900',
+			empty: 'No exit rule. Longs close on your stops and targets (Risk).' },
+		{ key: 'entry_short', label: 'Entry Short', title: 'Enter short', short: true, dot: 'bg-orange-500',
+			empty: 'No short entry.' },
+		{ key: 'exit_short', label: 'Exit Short', title: 'Exit short', short: true, dot: 'bg-orange-900',
+			empty: 'No exit rule. Shorts close on your stops and targets (Risk).' },
 	];
 	$: visibleSides = SIDE_META.filter((s) => !s.short || showShort);
 </script>
 
+{#snippet condition(cond: Cond, connector: string, onRemove: () => void)}
+	<div class="group/cond flex min-h-[26px] flex-wrap items-center gap-1.5">
+		<span class="w-7 shrink-0 text-right text-[10px] uppercase tracking-wide text-[#555]">{connector}</span>
+		<OperandChip type={cond.left.type} value={cond.left.value} label={operandLabel(cond.left, instances, params)}
+			missing={operandMissing(cond.left, availableSeries, paramNames)} {seriesGroups} knobs={knobList} {disabled} ariaLabel="left operand"
+			on:change={(e) => setOperand(cond.left, e.detail)}
+			on:addIndicator={() => openPalette(cond.left)}
+			on:newKnob={(e) => makeKnob(cond.left, cond.right, e.detail)} />
+		<OperatorChip op={cond.op} {disabled} on:change={(e) => { cond.op = e.detail; bump(); }} />
+		<OperandChip type={cond.right.type} value={cond.right.value} label={operandLabel(cond.right, instances, params)}
+			missing={operandMissing(cond.right, availableSeries, paramNames)} {seriesGroups} knobs={knobList} {disabled} ariaLabel="right operand"
+			on:change={(e) => setOperand(cond.right, e.detail)}
+			on:addIndicator={() => openPalette(cond.right)}
+			on:newKnob={(e) => makeKnob(cond.right, cond.left, e.detail)} />
+		<button type="button" on:click={onRemove} {disabled} aria-label="remove condition"
+			class="ml-auto px-1 text-[11px] text-[#444] opacity-0 transition-opacity hover:text-red-400 focus:opacity-100 group-hover/cond:opacity-100">✕</button>
+	</div>
+{/snippet}
+
 <!-- input/change bubble up; bump() recomputes derived spec -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="space-y-4" on:input={bump} on:change={bump}>
-	<!-- Indicator palette + active instances -->
-	<div class="border border-[#222] bg-[#050505] p-3">
-		<div class="text-[10px] uppercase tracking-wider text-[#666]">Indicators</div>
-		<div class="mt-2 flex flex-wrap items-center gap-2">
-			<input
-				bind:value={paletteSearch}
-				{disabled}
-				placeholder="Search 40+ indicators…"
-				class={`${inputCls} w-48`}
-				aria-label="search indicators"
-			/>
-			<div class="flex flex-wrap gap-1">
-				{#each categories as cat}
-					<button type="button" on:click={() => (paletteCat = cat)} {disabled}
-						class="border px-2 py-1 text-[10px] uppercase tracking-wide transition-colors {paletteCat === cat ? 'border-white bg-white text-black' : 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white'}">
-						{cat}
-					</button>
-				{/each}
-			</div>
-		</div>
-		<div class="mt-2 grid max-h-44 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
-			{#each paletteResults as meta (meta.kind)}
-				<button type="button" on:click={() => addIndicator(meta)} {disabled}
-					class="group flex items-start gap-2 border border-[#222] bg-black px-2 py-1.5 text-left transition-colors hover:border-white disabled:opacity-40">
-					<span class="mt-0.5 text-[#666] group-hover:text-white">＋</span>
-					<span class="min-w-0">
-						<span class="block truncate text-[12px] text-[#aaa] group-hover:text-white">{meta.label}</span>
-						<span class="block truncate text-[10px] text-[#555]">{meta.category}</span>
-					</span>
-				</button>
-			{/each}
-			{#if paletteResults.length === 0}
-				<div class="col-span-full px-2 py-3 text-[11px] text-[#555]">No indicators match “{paletteSearch}”.</div>
-			{/if}
-		</div>
+<div class="space-y-3" on:input={bump} on:change={bump}>
+	<!-- Rules, one card per side -->
+	{#each visibleSides as sm (sm.key)}
+		{@const side = sides[sm.key]}
+		<section class="border border-[#222] bg-[#050505]" aria-label={sm.title}>
+			<header class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[#141414] px-3 py-1.5">
+				<span class="h-2 w-2 shrink-0 {sm.dot}"></span>
+				<h3 class="text-[11px] font-bold uppercase tracking-wider text-white">{sm.title}</h3>
+				<span class="text-[11px] text-[#666]">
+					when{#if side.rows.length > 1}
+						<button type="button" on:click={() => flipLogic(side)} {disabled} aria-label="combine logic"
+							title="Switch between all and any"
+							class="mx-1 border border-[#333] px-1 text-[10px] font-bold tracking-wider text-white hover:border-white">{side.logic === 'and' ? 'ALL' : 'ANY'}</button>of these hold{/if}
+				</span>
+				<span class="ml-auto text-[10px] text-[#555]" data-testid={`signal-${sm.key}`}>{signalText(sm.key, signalBars, barCount)}</span>
+				<button type="button" on:click={() => (formulaOpen[sm.key] ? closeFormula(sm.key) : openFormula(sm.key))} {disabled}
+					aria-label="edit as formula" aria-pressed={!!formulaOpen[sm.key]} title="Edit this rule as a formula"
+					class="border px-1.5 font-mono text-[11px] italic transition-colors {formulaOpen[sm.key] ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#777] hover:border-[#666] hover:text-white'}">ƒx</button>
+			</header>
 
-		<!-- Active indicator instances -->
-		<div class="mt-3 space-y-2">
+			<div class="px-2 py-2">
+				{#if formulaOpen[sm.key]}
+					<textarea bind:value={formulaText[sm.key]} rows="3" spellcheck="false" aria-label={`${sm.title} formula`}
+						on:keydown={(e) => onFormulaKey(e, sm.key)} on:input|stopPropagation
+						placeholder="rsi < $oversold and (close > ema200 or macd crosses above macd_signal)"
+						class="w-full resize-y border border-[#333] bg-black px-2 py-1.5 font-mono text-[12px] leading-5 text-white outline-none focus:border-white"></textarea>
+					{#if formulaError[sm.key]}
+						<div class="mt-1 border border-amber-900 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-400" role="alert">{formulaError[sm.key]}</div>
+					{/if}
+					<div class="mt-1.5 flex flex-wrap items-center gap-2">
+						<button type="button" on:click={() => applyFormula(sm.key)} class="terminal-button-primary px-2 py-0.5 text-[10px]">Apply</button>
+						<button type="button" on:click={() => closeFormula(sm.key)} class="terminal-button px-2 py-0.5 text-[10px]">Cancel</button>
+						<span class="text-[10px] text-[#555]">Series by id, knobs as <span class="font-mono text-[#888]">$name</span>, <span class="font-mono text-[#888]">&lt; &gt;= crosses above</span>, <span class="font-mono text-[#888]">and / or</span>, parentheses. Ctrl+Enter applies.</span>
+					</div>
+				{:else}
+					<div class="space-y-1">
+						{#each side.rows as row, ri (row.uid)}
+							{@const connector = ri === 0 ? 'if' : side.logic}
+							{#if row.kind === 'group'}
+								<div class="flex items-start gap-1.5">
+									<span class="w-7 shrink-0 pt-1 text-right text-[10px] uppercase tracking-wide text-[#555]">{connector}</span>
+									<div class="min-w-0 flex-1 border-l border-[#333] py-0.5 pl-1">
+										<div class="flex items-center gap-1.5 pb-0.5 text-[10px] text-[#666]">
+											<button type="button" on:click={() => flipLogic(row)} {disabled} aria-label="group logic"
+												class="border border-[#333] px-1 font-bold tracking-wider text-white hover:border-white">{row.logic === 'and' ? 'ALL' : 'ANY'}</button>
+											of
+											<button type="button" on:click={() => removeRow(side, ri)} {disabled} aria-label="remove group"
+												class="ml-auto px-1 text-[#444] hover:text-red-400">✕ group</button>
+										</div>
+										{#each row.conds as cond, ci (cond.uid)}
+											{@render condition(cond, ci === 0 ? '' : row.logic, () => removeGroupCond(row, ci))}
+										{/each}
+										<button type="button" on:click={() => addGroupCond(row)} {disabled}
+											class="ml-8 mt-0.5 text-[10px] text-[#666] hover:text-white">＋ condition in group</button>
+									</div>
+								</div>
+							{:else}
+								{@render condition(row, connector, () => removeRow(side, ri))}
+							{/if}
+						{/each}
+						{#if side.rows.length === 0}
+							<div class="px-1 py-1 text-[11px] text-[#555]">{sm.empty}</div>
+						{/if}
+					</div>
+					<div class="mt-1.5 flex items-center gap-3 pl-8">
+						<button type="button" on:click={() => addCond(side)} {disabled} class="text-[10px] text-[#777] hover:text-white">＋ Condition</button>
+						<button type="button" on:click={() => addGroup(side)} {disabled} class="text-[10px] text-[#777] hover:text-white">＋ Group</button>
+					</div>
+				{/if}
+			</div>
+		</section>
+	{/each}
+
+	<div class="flex items-center gap-3 px-1">
+		{#if !showShort}
+			<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#888] hover:text-white">+ Add short side</button>
+		{:else}
+			<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#666] hover:text-red-400">− Remove short side</button>
+		{/if}
+	</div>
+
+	<!-- Indicators -->
+	<section class="border border-[#222] bg-[#050505]" aria-label="Indicators">
+		<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
+			<h3 class="text-[11px] font-bold uppercase tracking-wider text-white">Indicators</h3>
+			<span class="text-[10px] text-[#555]">{instances.length}</span>
+			<button type="button" on:click={() => openPalette()} {disabled}
+				class="ml-auto border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white disabled:opacity-40">＋ Indicator</button>
+		</header>
+		<div class="divide-y divide-[#111]">
 			{#each instances as inst, i (inst.uid)}
 				{@const meta = metaByKind[inst.kind]}
-				<div class="flex flex-wrap items-center gap-2 border border-[#222] bg-black p-2">
-					<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#888]">{meta?.label ?? inst.kind}</span>
-					<input class={`${inputCls} w-24`} bind:value={inst.id} {disabled} placeholder="id" aria-label="indicator id"
+				{@const uses = instanceUses(inst, usage)}
+				<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5">
+					<span class="w-32 truncate text-[12px] text-[#ddd]" title={meta?.description ?? inst.kind}>{meta?.label ?? inst.kind}</span>
+					<input class={`${inputCls} w-24 font-mono`} bind:value={inst.id} {disabled} placeholder="id" aria-label="indicator id"
 						on:input={(e) => { inst.id = e.currentTarget.value; renameIndicator(inst); }} />
 					{#each meta?.params ?? [] as p}
 						<label class="flex items-center gap-1 text-[10px] text-[#666]">
 							{p.key}
-							<input type="number" class={`${inputCls} w-16`} bind:value={inst.params[p.key]}
+							<input type="number" class={`${inputCls} w-14`} bind:value={inst.params[p.key]}
 								min={p.min} max={p.max} step={p.step} {disabled} />
 						</label>
 					{/each}
-					<span class="ml-auto font-mono text-[10px] text-[#555]">→ {outputNames(inst).join(', ')}</span>
+					<span class="ml-auto text-[10px] {uses ? 'text-[#555]' : 'text-amber-500/80'}"
+						title={uses ? `${uses} condition${uses === 1 ? '' : 's'} read this indicator` : 'No condition reads this indicator'}>{uses ? `used ×${uses}` : 'unused'}</span>
 					<button type="button" on:click={() => removeIndicator(i)} {disabled}
-						class="px-1.5 text-[12px] text-[#555] hover:text-red-400" aria-label="remove indicator">✕</button>
+						class="px-1 text-[11px] text-[#444] hover:text-red-400" aria-label="remove indicator">✕</button>
 				</div>
 			{/each}
 			{#if instances.length === 0}
-				<div class="border border-dashed border-[#333] px-3 py-2 text-[11px] text-[#555]">
-					No indicators yet — click one above, or build conditions on raw price/volume.
-				</div>
+				<div class="px-3 py-2 text-[11px] text-[#555]">No indicators yet. Add one, or write rules on price and market data.</div>
 			{/if}
 		</div>
-	</div>
+	</section>
 
-	<!-- Parameters -->
-	<div>
-		<div class="flex items-center justify-between">
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">
-				Parameters <span class="normal-case tracking-normal text-[#555]">(tunable knobs you can reference in conditions)</span>
-			</div>
+	<!-- Knobs: named numbers the rules read -->
+	<section class="border border-[#222] bg-[#050505]" aria-label="Knobs">
+		<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
+			<h3 class="text-[11px] font-bold uppercase tracking-wider text-white">Knobs</h3>
+			<span class="truncate text-[10px] text-[#555]">named numbers your rules read · drag to tune, stress-test to check</span>
 			<button type="button" on:click={addParam} {disabled}
-				class="terminal-button px-2 py-1 text-[10px]">+ Parameter</button>
-		</div>
-		<div class="mt-2 flex flex-wrap gap-2">
+				class="ml-auto shrink-0 border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white disabled:opacity-40">＋ Knob</button>
+		</header>
+		<div class="divide-y divide-[#111]">
 			{#each params as p, i (p.uid)}
-				<div class="flex items-center gap-1.5 border border-[#222] bg-[#050505] p-1.5">
-					<input class={`${inputCls} w-28`} bind:value={p.name} {disabled} placeholder="name" aria-label="parameter name"
+				{@const uses = paramUses(p, usage)}
+				<div class="flex items-center gap-2 px-3 py-1.5">
+					<input class={`${inputCls} w-32 font-mono text-sky-300`} bind:value={p.name} {disabled} placeholder="name" aria-label="parameter name"
 						on:input={(e) => { p.name = e.currentTarget.value; renameParam(p); }} />
-					<span class="text-[#555]">=</span>
-					<input type="number" class={`${inputCls} w-20`} bind:value={p.value} {disabled} step="any" aria-label="parameter value" />
+					<input type="number" class={`${inputCls} w-20 font-mono`} bind:value={p.value} {disabled} step="any" aria-label="parameter value"
+						on:change={() => commitParam(p)} />
+					<input type="range" min={p.lo} max={p.hi} step={p.step} value={p.value} {disabled} aria-label={`tune ${p.name}`}
+						on:input={(e) => { p.value = Number(e.currentTarget.value); }}
+						class="min-w-0 flex-1 accent-sky-400" />
+					<span class="w-14 shrink-0 text-right text-[10px] {uses ? 'text-[#555]' : 'text-amber-500/80'}">{uses ? `used ×${uses}` : 'unused'}</span>
 					<button type="button" on:click={() => removeParam(i)} {disabled}
-						class="px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove parameter">✕</button>
+						class="px-1 text-[11px] text-[#444] hover:text-red-400" aria-label="remove parameter">✕</button>
 				</div>
 			{/each}
 			{#if params.length === 0}
-				<span class="text-[11px] text-[#555]">No parameters.</span>
+				<div class="px-3 py-2 text-[11px] text-[#555]">No knobs. Click a number in a rule and choose “Turn it into a knob” to tune it here.</div>
 			{/if}
 		</div>
-	</div>
-
-	<!-- Short side toggle -->
-	{#if !showShort}
-		<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#888] hover:text-white">+ Add short side</button>
-	{:else}
-		<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#666] hover:text-red-400">− Remove short side</button>
-	{/if}
-
-	<!-- Condition sides -->
-	{#each visibleSides as sm (sm.key)}
-		{@const side = sides[sm.key]}
-		<div class="border border-[#222] bg-[#050505] p-3">
-			<div class="flex items-center justify-between">
-				<div class="text-[10px] uppercase tracking-wider text-[#888]">{sm.label}</div>
-				<div class="flex items-center gap-2">
-					{#if side.rows.length > 1}
-						<select class={inputCls} bind:value={side.logic} {disabled} aria-label="combine logic">
-							<option value="and">ALL (AND)</option>
-							<option value="or">ANY (OR)</option>
-						</select>
-					{/if}
-					<button type="button" on:click={() => addCond(side)} {disabled}
-						class="terminal-button px-2 py-1 text-[10px]">+ Condition</button>
-					<button type="button" on:click={() => addGroup(side)} {disabled}
-						class="terminal-button px-2 py-1 text-[10px]">+ Group</button>
-				</div>
-			</div>
-			<div class="mt-2 space-y-2">
-				{#each side.rows as row, ri (row.uid)}
-					{#if row.kind === 'group'}
-						<div class="border border-[#333] bg-black p-2">
-							<div class="mb-1.5 flex items-center justify-between">
-								<select class={inputCls} bind:value={row.logic} {disabled} aria-label="group logic">
-									<option value="or">ANY (OR)</option>
-									<option value="and">ALL (AND)</option>
-								</select>
-								<button type="button" on:click={() => removeRow(side, ri)} {disabled}
-									class="px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove group">✕ group</button>
-							</div>
-							<div class="space-y-2">
-								{#each row.conds as cond (cond.uid)}
-									<div class="flex flex-wrap items-center gap-2">
-										<!-- left -->
-										<select class={inputCls} bind:value={cond.left.type} on:change={() => onOperandTypeChange(cond.left)} {disabled} aria-label="left type">
-											<option value="series">Series</option><option value="param">Param</option><option value="const">Value</option>
-										</select>
-										{#if cond.left.type === 'series'}
-											<select class={inputCls} bind:value={cond.left.value} {disabled}>
-												{#if !availableSeries.includes(String(cond.left.value))}<option value={cond.left.value}>{cond.left.value} — missing</option>{/if}
-												{#each availableSeries as s}<option value={s}>{s}</option>{/each}
-											</select>
-										{:else if cond.left.type === 'param'}
-											<select class={inputCls} bind:value={cond.left.value} {disabled}>
-												{#if !paramNames.includes(String(cond.left.value))}<option value={cond.left.value}>{cond.left.value} — missing</option>{/if}
-												{#each paramNames as p}<option value={p}>{p}</option>{/each}
-											</select>
-										{:else}
-											<input type="number" class={`${inputCls} w-24`} bind:value={cond.left.value} {disabled} step="any" />
-										{/if}
-										<select class={`${inputCls} font-mono`} bind:value={cond.op} {disabled} aria-label="operator">
-											{#each OPERATORS as o}<option value={o}>{OP_LABELS[o]}</option>{/each}
-										</select>
-										<!-- right -->
-										<select class={inputCls} bind:value={cond.right.type} on:change={() => onOperandTypeChange(cond.right)} {disabled} aria-label="right type">
-											<option value="series">Series</option><option value="param">Param</option><option value="const">Value</option>
-										</select>
-										{#if cond.right.type === 'series'}
-											<select class={inputCls} bind:value={cond.right.value} {disabled}>
-												{#if !availableSeries.includes(String(cond.right.value))}<option value={cond.right.value}>{cond.right.value} — missing</option>{/if}
-												{#each availableSeries as s}<option value={s}>{s}</option>{/each}
-											</select>
-										{:else if cond.right.type === 'param'}
-											<select class={inputCls} bind:value={cond.right.value} {disabled}>
-												{#if !paramNames.includes(String(cond.right.value))}<option value={cond.right.value}>{cond.right.value} — missing</option>{/if}
-												{#each paramNames as p}<option value={p}>{p}</option>{/each}
-											</select>
-										{:else}
-											<input type="number" class={`${inputCls} w-24`} bind:value={cond.right.value} {disabled} step="any" />
-										{/if}
-										<button type="button" on:click={() => removeGroupCond(row, row.conds.indexOf(cond))} {disabled}
-											class="ml-auto px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove condition">✕</button>
-									</div>
-								{/each}
-								<button type="button" on:click={() => addGroupCond(row)} {disabled}
-									class="text-[11px] text-[#888] hover:text-white">+ condition in group</button>
-							</div>
-						</div>
-					{:else}
-						<div class="flex flex-wrap items-center gap-2">
-							<select class={inputCls} bind:value={row.left.type} on:change={() => onOperandTypeChange(row.left)} {disabled} aria-label="left type">
-								<option value="series">Series</option><option value="param">Param</option><option value="const">Value</option>
-							</select>
-							{#if row.left.type === 'series'}
-								<select class={inputCls} bind:value={row.left.value} {disabled}>
-									{#if !availableSeries.includes(String(row.left.value))}<option value={row.left.value}>{row.left.value} — missing</option>{/if}
-									{#each availableSeries as s}<option value={s}>{s}</option>{/each}
-								</select>
-							{:else if row.left.type === 'param'}
-								<select class={inputCls} bind:value={row.left.value} {disabled}>
-									{#if !paramNames.includes(String(row.left.value))}<option value={row.left.value}>{row.left.value} — missing</option>{/if}
-									{#each paramNames as p}<option value={p}>{p}</option>{/each}
-								</select>
-							{:else}
-								<input type="number" class={`${inputCls} w-24`} bind:value={row.left.value} {disabled} step="any" />
-							{/if}
-							<select class={`${inputCls} font-mono`} bind:value={row.op} {disabled} aria-label="operator">
-								{#each OPERATORS as o}<option value={o}>{OP_LABELS[o]}</option>{/each}
-							</select>
-							<select class={inputCls} bind:value={row.right.type} on:change={() => onOperandTypeChange(row.right)} {disabled} aria-label="right type">
-								<option value="series">Series</option><option value="param">Param</option><option value="const">Value</option>
-							</select>
-							{#if row.right.type === 'series'}
-								<select class={inputCls} bind:value={row.right.value} {disabled}>
-									{#if !availableSeries.includes(String(row.right.value))}<option value={row.right.value}>{row.right.value} — missing</option>{/if}
-									{#each availableSeries as s}<option value={s}>{s}</option>{/each}
-								</select>
-							{:else if row.right.type === 'param'}
-								<select class={inputCls} bind:value={row.right.value} {disabled}>
-									{#if !paramNames.includes(String(row.right.value))}<option value={row.right.value}>{row.right.value} — missing</option>{/if}
-									{#each paramNames as p}<option value={p}>{p}</option>{/each}
-								</select>
-							{:else}
-								<input type="number" class={`${inputCls} w-24`} bind:value={row.right.value} {disabled} step="any" />
-							{/if}
-							<button type="button" on:click={() => removeRow(side, ri)} {disabled}
-								class="ml-auto px-1 text-[12px] text-[#555] hover:text-red-400" aria-label="remove condition">✕</button>
-						</div>
-					{/if}
-				{/each}
-				{#if side.rows.length === 0}
-					<div class="text-[11px] text-[#555]">No conditions{sm.short ? ' (short side optional)' : ''}.</div>
-				{/if}
-			</div>
-		</div>
-	{/each}
+	</section>
 
 	{#if errors.length}
 		<div class="space-y-1" role="alert">
@@ -587,3 +725,41 @@
 		</div>
 	{/if}
 </div>
+
+{#if paletteOpen}
+	<div use:portal class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[12vh]" role="presentation"
+		on:pointerdown={(e) => { if (e.target === e.currentTarget) closePalette(); }}>
+		<div role="dialog" aria-modal="true" aria-label="Add an indicator"
+			class="flex max-h-[70vh] w-full max-w-2xl flex-col border border-[#333] bg-[#070707] shadow-2xl shadow-black">
+			<div class="flex items-center gap-2 border-b border-[#1c1c1c] p-2">
+				<input bind:this={paletteInput} bind:value={paletteSearch} on:keydown={onPaletteKey}
+					placeholder={`Search ${indicators.length || ''} indicators…`} aria-label="search indicators"
+					class="min-w-0 flex-1 border border-[#333] bg-black px-2 py-1.5 text-[13px] text-white outline-none focus:border-white" />
+				<button type="button" on:click={closePalette} class="px-2 text-[10px] uppercase tracking-wider text-[#666] hover:text-white">Esc</button>
+			</div>
+			<div class="flex flex-wrap gap-1 border-b border-[#1c1c1c] px-2 py-1.5">
+				{#each categories as cat}
+					<button type="button" on:click={() => { paletteCat = cat; paletteIndex = 0; paletteInput?.focus(); }}
+						class="border px-2 py-0.5 text-[10px] uppercase tracking-wide transition-colors {paletteCat === cat ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#666] hover:border-[#555] hover:text-white'}">{cat}</button>
+				{/each}
+			</div>
+			<div class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label="indicators">
+				{#each paletteResults as meta, i (meta.kind)}
+					<button type="button" role="option" aria-selected={i === paletteIndex} on:click={() => addIndicator(meta)}
+						on:mousemove={() => (paletteIndex = i)}
+						class="flex w-full items-baseline gap-3 px-3 py-1.5 text-left {i === paletteIndex ? 'bg-[#151515]' : ''}">
+						<span class="w-44 shrink-0 truncate text-[12px] text-white">{meta.label}</span>
+						<span class="min-w-0 flex-1 truncate text-[11px] text-[#666]">{meta.description}</span>
+						<span class="shrink-0 text-[9px] uppercase tracking-wider text-[#444]">{meta.category}</span>
+					</button>
+				{/each}
+				{#if paletteResults.length === 0}
+					<div class="px-3 py-3 text-[11px] text-[#555]">No indicators match “{paletteSearch}”.</div>
+				{/if}
+			</div>
+			<div class="border-t border-[#1c1c1c] px-3 py-1.5 text-[10px] text-[#555]">
+				↑↓ to move · Enter to add{#if pendingOperand} · the condition you came from will read the new indicator{/if}
+			</div>
+		</div>
+	</div>
+{/if}

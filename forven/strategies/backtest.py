@@ -2452,7 +2452,9 @@ def _build_rule_engine_chart_indicators(
             data = _indicator_points(enriched, name)
             if not data:
                 continue
-            entry = {"name": name, "color": palette[color_idx % len(palette)], "data": data}
+            # group/kind/panel let a chart give each indicator its own scale.
+            entry = {"name": name, "color": palette[color_idx % len(palette)], "data": data,
+                     "group": out_id, "kind": kind, "panel": panel}
             color_idx += 1
             (main_indicators if panel == "main" else sub_indicators).append(entry)
     return main_indicators, sub_indicators, warnings
@@ -2787,25 +2789,242 @@ def _preview_backtest_trades(
     asset: str,
     timeframe: str,
     include_funding: bool,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict], "pd.Timestamp"]:
     """The trades a manual backtest takes on ``frame``: the in-sample and
-    out-of-sample walks of :func:`_isolated_backtest_worker`, without the
-    metrics and funding PnL it adds afterwards (neither moves a trade)."""
+    out-of-sample walks of :func:`_isolated_backtest_worker` (funding accrued
+    in-walk when the frame carries it), plus where the out-of-sample part
+    starts. Each trade is tagged ``sample`` 'in' or 'out'."""
     from forven.strategies.execution_contract import EXECUTION_WARMUP
 
     type_name = strategy_obj.strategy_type
     is_df, oos_context_df, oos_start = _in_and_out_of_sample_frames(frame, EXECUTION_WARMUP)
 
-    def walk(df: pd.DataFrame) -> list[dict]:
-        return _run_signal_walk(
+    def walk(df: pd.DataFrame, sample: str) -> list[dict]:
+        trades = _run_signal_walk(
             SIGNAL_CHECKERS.get(type_name), df, params, EXECUTION_WARMUP, leverage, strategy_obj,
             strategy_type=type_name, fee_bps=fee_bps, slippage_bps=slippage_bps,
             regime_gate=False, trade_mode=trade_mode, execution_controls=execution_controls,
             initial_capital=initial_capital, asset=asset, resolved_timeframe=timeframe,
             include_funding=include_funding,
         )
+        return [{**trade, "sample": sample} for trade in trades]
 
-    return list(walk(is_df)) + _filter_trades_from_start(walk(oos_context_df), oos_start)
+    in_trades = walk(is_df, "in")
+    out_trades = _filter_trades_from_start(walk(oos_context_df, "out"), oos_start)
+    return in_trades, out_trades, oos_start
+
+
+def _preview_insights(
+    frame: pd.DataFrame,
+    spec: dict,
+    params: dict,
+    signals,
+    in_trades: list[dict],
+    out_trades: list[dict],
+    oos_start: "pd.Timestamp",
+    *,
+    timeframe: str,
+    trade_mode: str,
+    trials: int | None,
+    max_trades: int,
+) -> dict:
+    """Trade records with the rule state behind each fill, rule-true spans, and
+    closed-trade stats per sample (see :mod:`forven.strategies.creator_insights`)."""
+    from forven.gauntlet.deflated_sharpe import deflated_sharpe_ratio
+    from forven.strategies import creator_insights as insights
+    from forven.strategies.builtin.rule_engine import RuleTrace, build_series_table
+
+    sides = [side for side in ("entry_long", "exit_long", "entry_short", "exit_short")
+             if isinstance(spec.get(side), dict) and spec[side].get("conditions")]
+    table = build_series_table(frame, spec)
+    traces = {side: RuleTrace(spec[side], table, params, frame.index) for side in sides}
+
+    in_frame = frame.loc[:oos_start].iloc[:-1]
+    out_frame = frame.loc[oos_start:]
+    stats = {}
+    for sample, sample_trades, sample_frame in (("in_sample", in_trades, in_frame), ("out_of_sample", out_trades, out_frame),
+                                                ("all", in_trades + out_trades, frame)):
+        metrics = compute_metrics(
+            sample_trades, max(len(sample_frame), 1), timeframe=timeframe, trade_mode=trade_mode,
+            start_date=sample_frame.index[0].isoformat() if len(sample_frame) else None,
+            end_date=sample_frame.index[-1].isoformat() if len(sample_frame) else None,
+        )
+        stats[sample] = insights.sample_stats(sample_trades, sample_frame, metrics)
+
+    deflated = None
+    oos_returns = [float(t.get("pnl_pct_raw", t.get("pnl_pct", 0.0)) or 0.0) for t in out_trades]
+    if len(oos_returns) >= 5:
+        verdict = deflated_sharpe_ratio(oos_returns, max(int(trials or 1), 1))
+        if verdict.get("dsr") is not None:
+            deflated = {"probability": verdict["dsr"], "trials": verdict["n_trials"]}
+
+    trades = in_trades + out_trades
+    return {
+        "trades": insights.trade_records(frame, trades[-max_trades:], traces),
+        "rule_spans": insights.rule_spans(frame, signals, sides),
+        "oos_start": oos_start.isoformat(),
+        "vitals": {
+            **stats,
+            "deflated_sharpe": deflated,
+            "traps": insights.traps(stats["in_sample"], stats["out_of_sample"], trades, frame),
+        },
+    }
+
+
+def _preview_walk_settings(
+    params: dict,
+    *,
+    asset: str,
+    timeframe: str,
+    trade_mode: str,
+    leverage: float | None,
+    fee_bps: float | None,
+    slippage_bps: float | None,
+    initial_capital: float | None,
+    execution_controls: dict | None,
+) -> dict:
+    """The walk arguments a manual backtest resolves from the same request."""
+    from forven.api_core import get_settings
+
+    settings = get_settings()
+    return {
+        "leverage": float(leverage) if leverage is not None else resolve_leverage(params),
+        "fee_bps": float(fee_bps if fee_bps is not None else settings.get("backtest_fee_bps", 4.5)),
+        "slippage_bps": float(slippage_bps if slippage_bps is not None else settings.get("backtest_slippage_bps", 2.0)),
+        "trade_mode": trade_mode,
+        "execution_controls": execution_controls or None,
+        "initial_capital": float(initial_capital) if initial_capital else 10000.0,
+        "asset": asset,
+        "timeframe": timeframe,
+        "include_funding": bool(settings.get("backtest_include_funding", True)),
+    }
+
+
+_SENSITIVITY_STEPS = (-0.25, -0.1, 0.1, 0.25)
+_SENSITIVITY_MAX_KNOBS = 6
+
+
+def _spec_knobs(spec: dict) -> list[dict]:
+    """The numbers a rule spec is tuned by: its params, then its indicators' settings."""
+    from forven.strategies import indicators as registry
+
+    knobs: list[dict] = []
+    for name, value in (spec.get("params") or {}).items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value != 0:
+            knobs.append({"target": "param", "name": str(name), "label": str(name),
+                          "value": float(value), "integer": False, "min": None})
+    for ind in spec.get("indicators") or []:
+        definition = registry.REGISTRY.get(str(ind.get("kind") or "").lower()) if isinstance(ind, dict) else None
+        if definition is None:
+            continue
+        resolved = definition.resolve_params(ind.get("params"))
+        for param in definition.params:
+            if resolved[param.key]:
+                knobs.append({"target": "indicator", "indicator": str(ind.get("id")), "name": param.key,
+                              "label": f"{ind.get('id')} {param.key}", "value": float(resolved[param.key]),
+                              "integer": param.integer, "min": param.min})
+    return knobs[:_SENSITIVITY_MAX_KNOBS]
+
+
+def _nudge_spec(spec: dict, knob: dict, value: float) -> dict:
+    nudged = json.loads(json.dumps(spec))
+    if knob["target"] == "param":
+        nudged["params"][knob["name"]] = value
+        return nudged
+    for ind in nudged.get("indicators") or []:
+        if isinstance(ind, dict) and str(ind.get("id")) == knob["indicator"]:
+            ind["params"] = {**(ind.get("params") if isinstance(ind.get("params"), dict) else {}), knob["name"]: value}
+    return nudged
+
+
+def _sensitivity_worker(frame: pd.DataFrame, spec: dict, asset: str, knobs: list[dict], walk: dict) -> dict:
+    """The base walk and every knob nudged by every step (a worker-process target)."""
+    from forven.strategies import creator_insights as insights
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    def run(variant: dict) -> dict:
+        params = {"spec": variant, "_asset": asset}
+        in_trades, out_trades, _ = _preview_backtest_trades(
+            frame, RuleEngineStrategy("rule_engine__sensitivity", params), params, **walk
+        )
+        return {"trades": len(in_trades) + len(out_trades),
+                "net_return": insights.compound_return(in_trades + out_trades),
+                "oos_trades": len(out_trades), "oos_return": insights.compound_return(out_trades)}
+
+    rows = []
+    for knob in knobs:
+        variants = []
+        for step in _SENSITIVITY_STEPS:
+            value = round(knob["value"] * (1.0 + step), 6)
+            if knob["integer"]:
+                value = max(int(round(value)), int(knob["min"] or 1))
+                if value == int(knob["value"]):
+                    continue
+            variants.append({"step": step, "value": value, **run(_nudge_spec(spec, knob, value))})
+        rows.append({**knob, "variants": variants})
+    return {"base": run(spec), "knobs": rows}
+
+
+def build_strategy_sensitivity(
+    *,
+    asset: str,
+    timeframe: str,
+    start_date: str | None,
+    end_date: str | None,
+    spec: dict,
+    trade_mode: str = "long_only",
+    leverage: float | None = None,
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
+    initial_capital: float | None = None,
+    execution_controls: dict | None = None,
+) -> dict:
+    """Stress test for a rule spec: each knob (spec params, then indicator
+    settings; at most six) nudged by -25%, -10%, +10% and +25%, re-running the
+    backtest's walks on the preview's candles. The walks run in a worker process,
+    as backtests do, so the API process that also scans live markets is not held
+    for their duration. Returns ``base``, per-knob ``knobs`` rows and a ``verdict``."""
+    from forven.strategies import creator_insights as insights
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy, validate_rule_spec
+
+    resolved_asset = str(asset or "").strip().upper()
+    resolved_tf = str(timeframe or "1h").strip() or "1h"
+    if not isinstance(spec, dict) or validate_rule_spec(spec):
+        return {"base": None, "knobs": [], "verdict": None, "warnings": ["Fix the rule spec before a stress test."]}
+    knobs = _spec_knobs(spec)
+    if not knobs:
+        return {"base": None, "knobs": [], "verdict": None,
+                "warnings": ["This rule has no numbers to nudge. Add a parameter or an indicator."]}
+    frame = load_backtest_candles(resolved_asset, timeframe=resolved_tf, start_date=start_date,
+                                  end_date=end_date, enrich_market_data=True)
+    if frame is None or len(frame) < 210:
+        return {"base": None, "knobs": [], "verdict": None,
+                "warnings": [f"Not enough candles for {resolved_asset} {resolved_tf} in this window."]}
+    params = {"spec": spec, "_asset": resolved_asset}
+    resolved_mode, mode_error = resolve_backtest_trade_mode(
+        trade_mode, strategy_type="rule_engine", params=params, strategy_obj=RuleEngineStrategy("rule_engine", params)
+    )
+    if mode_error:
+        return {"base": None, "knobs": [], "verdict": None, "warnings": [mode_error]}
+    walk = _preview_walk_settings(
+        params, asset=resolved_asset, timeframe=resolved_tf, trade_mode=resolved_mode, leverage=leverage,
+        fee_bps=fee_bps, slippage_bps=slippage_bps, initial_capital=initial_capital,
+        execution_controls=execution_controls,
+    )
+    if _should_use_process_isolation():
+        from forven.strategies.concurrency import backtest_subprocess_slot
+
+        with backtest_subprocess_slot("sensitivity"), concurrent.futures.ProcessPoolExecutor(
+            max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+        ) as executor:
+            future = executor.submit(_sensitivity_worker, frame, spec, resolved_asset, knobs, walk)
+            result = _wait_for_worker_result(
+                executor, future, _scale_isolation_timeout(len(frame), _WALK_FORWARD_TIMEOUT, _WALK_FORWARD_TIMEOUT_MAX)
+            )
+    else:
+        result = _sensitivity_worker(frame, spec, resolved_asset, knobs, walk)
+    return {**result, "verdict": insights.sensitivity_verdict(result["base"]["oos_return"], result["knobs"]),
+            "warnings": []}
 
 
 def build_strategy_preview_chart_context(
@@ -2822,6 +3041,7 @@ def build_strategy_preview_chart_context(
     slippage_bps: float | None = None,
     initial_capital: float | None = None,
     execution_controls: dict | None = None,
+    trials: int | None = None,
     max_trade_markers: int = 1000,
 ) -> dict:
     """Live preview chart for a no-code rule_engine spec.
@@ -2829,18 +3049,15 @@ def build_strategy_preview_chart_context(
     Candles come through the backtest's own loader, so the research-holdout
     seal and data-feed enrichment match "Run Backtest", and the markers are the
     trades the backtest takes with the same execution settings. ``signal_bars``
-    counts the bars on which each condition side is true. Nothing is persisted.
-    Returns bars + overlays + markers in the shape of
-    :func:`build_backtest_chart_context`.
+    counts the bars on which each condition side is true; ``trades`` explain
+    each fill, ``rule_spans`` mark where rules held, and ``vitals`` summarise
+    the in-sample and out-of-sample parts (``trials`` = variants the author
+    has tried, for the deflated Sharpe). Nothing is persisted. Returns bars +
+    overlays + markers in the shape of :func:`build_backtest_chart_context`.
     """
-    from forven.api_core import get_settings
     from forven.research_contract import research_read_cutoff
     from forven.research_holdout import seal_window
-    from forven.strategies.builtin.rule_engine import (
-        RuleEngineStrategy,
-        spec_feed_columns,
-        validate_rule_spec,
-    )
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy, validate_rule_spec
 
     resolved_asset = str(asset or "").strip().upper()
     resolved_tf = str(timeframe or "1h").strip() or "1h"
@@ -2852,6 +3069,7 @@ def build_strategy_preview_chart_context(
         "strategy_meta": _build_chart_strategy_meta(resolved_asset, resolved_tf, start_date, end_date),
         "strategy_params": {"spec": spec if isinstance(spec, dict) else {}},
         "trade_count": 0, "exit_reasons": {}, "signal_bars": {}, "holdout_cutoff": None,
+        "trades": [], "rule_spans": {}, "oos_start": None, "vitals": None,
     }
 
     def finish() -> dict:
@@ -2882,9 +3100,8 @@ def build_strategy_preview_chart_context(
             timeframe=resolved_tf,
             start_date=start_date,
             end_date=end_date,
-            # Funding and OI are fetched remotely; entries and exits depend on
-            # them only when the spec reads them.
-            enrich_market_data=bool(spec_feed_columns(spec) & {"funding_rate", "open_interest"}),
+            # Always enriched: funding belongs in each trade's net P&L, as in Run Backtest.
+            enrich_market_data=True,
         )
     except Exception as exc:
         warnings.append(f"Candles unavailable for {resolved_asset} {resolved_tf}: {exc}")
@@ -2923,26 +3140,29 @@ def build_strategy_preview_chart_context(
         warnings.append(f"Only {len(frame)} bars in this window; a backtest needs at least 210.")
         return finish()
 
-    settings = get_settings()
     try:
-        trades = _preview_backtest_trades(
+        in_trades, out_trades, oos_start = _preview_backtest_trades(
             frame, strategy_obj, params,
-            leverage=float(leverage) if leverage is not None else resolve_leverage(params),
-            fee_bps=float(fee_bps if fee_bps is not None else settings.get("backtest_fee_bps", 4.5)),
-            slippage_bps=float(slippage_bps if slippage_bps is not None else settings.get("backtest_slippage_bps", 2.0)),
-            trade_mode=resolved_mode,
-            execution_controls=execution_controls or None,
-            initial_capital=float(initial_capital) if initial_capital else 10000.0,
-            asset=resolved_asset,
-            timeframe=resolved_tf,
-            include_funding=bool(settings.get("backtest_include_funding", True)),
+            **_preview_walk_settings(
+                params, asset=resolved_asset, timeframe=resolved_tf, trade_mode=resolved_mode,
+                leverage=leverage, fee_bps=fee_bps, slippage_bps=slippage_bps,
+                initial_capital=initial_capital, execution_controls=execution_controls,
+            ),
         )
     except Exception as exc:
         warnings.append(f"Trade preview unavailable: {exc}")
         return finish()
 
+    trades = in_trades + out_trades
     context["trade_count"] = len(trades)
     context["exit_reasons"] = dict(Counter(str(trade.get("exit_reason") or "signal") for trade in trades))
+    try:
+        context.update(_preview_insights(
+            frame, spec, strategy_obj._effective_spec_params(spec), signals, in_trades, out_trades, oos_start,
+            timeframe=resolved_tf, trade_mode=resolved_mode, trials=trials, max_trades=max_trade_markers,
+        ))
+    except Exception as exc:
+        warnings.append(f"Trade details unavailable: {exc}")
     if len(trades) > max_trade_markers:
         warnings.append(f"The chart shows the last {max_trade_markers} of {len(trades)} trades.")
         trades = trades[-max_trade_markers:]
