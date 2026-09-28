@@ -24,11 +24,11 @@
 	}
 </script>
 
-<form on:submit|preventDefault={submit} on:keydown={onKey} class="space-y-2">
+<form on:submit|preventDefault={submit} class="space-y-2">
 	<slot />
 	<label class="block text-[11px] text-[#888]">
 		Type <span class="select-all font-mono text-white">{phrase}</span> to confirm
-		<input bind:this={input} bind:value={typed} autocomplete="off" spellcheck="false" placeholder={phrase}
+		<input bind:this={input} bind:value={typed} on:keydown={onKey} autocomplete="off" spellcheck="false" placeholder={phrase}
 			class="terminal-input mt-1 font-mono text-[12px]" aria-label={`Type ${phrase} to confirm`} />
 	</label>
 	<div class="flex justify-end gap-2">

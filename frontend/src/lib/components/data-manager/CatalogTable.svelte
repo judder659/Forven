@@ -101,6 +101,8 @@
 
 	function rowClick(event: MouseEvent, row: CatalogRow, index: number) {
 		active = index;
+		// Keep keyboard focus on the grid: a focused row may be windowed out of the DOM.
+		viewport?.focus({ preventScroll: true });
 		const target = event.target as HTMLElement;
 		if (target.closest('input, a, button')) return;
 		if (event.shiftKey || event.ctrlKey || event.metaKey) {
@@ -152,7 +154,7 @@
 			{#if row}
 				<!-- Keyboard: the grid handles Enter and Space for the active row. -->
 				<!-- svelte-ignore a11y-click-events-have-key-events -->
-				<div role="row" id="dm-cat-row-{i}" aria-rowindex={i + 2} aria-selected={selected.has(row.id)} data-testid="catalog-row"
+				<div role="row" id="dm-cat-row-{i}" tabindex="-1" aria-rowindex={i + 2} aria-selected={selected.has(row.id)} data-testid="catalog-row"
 					on:click={(e) => rowClick(e, row, i)}
 					class="grid h-[34px] cursor-pointer items-center border-b border-[#101010] px-3 text-[11px] transition-colors {i === active ? 'bg-white/[0.06] shadow-[inset_2px_0_0_#fff]' : selected.has(row.id) ? 'bg-sky-500/[0.06]' : 'hover:bg-white/[0.025]'}"
 					style="grid-template-columns: {template}; column-gap: {GRID_GAP}px">

@@ -23,6 +23,7 @@
 	};
 	const MARK: Partial<Record<SlaState, string>> = { late: '!', breach: '‼', frozen: '*', missing: '∅' };
 
+	let root: HTMLDivElement | undefined;
 	let active: [number, number] = [0, 0];
 	let anchor: [number, number] | null = null;
 	let dragFrom: [number, number] | null = null;
@@ -93,6 +94,7 @@
 	}
 	function click(event: MouseEvent, cell: CoverageCell, pos: [number, number]) {
 		active = pos;
+		root?.focus({ preventScroll: true });
 		if (dragged) {
 			dragged = false;
 			anchor = dragFrom;
@@ -126,7 +128,7 @@
 	$: template = `minmax(128px, 168px) repeat(${model.timeframes.length}, minmax(50px, 60px))`;
 </script>
 
-<div role="grid" tabindex="0" aria-label="Coverage: symbols by timeframe" aria-rowcount={rowsFlat.length + 1} aria-colcount={model.timeframes.length + 1}
+<div bind:this={root} role="grid" tabindex="0" aria-label="Coverage: symbols by timeframe" aria-rowcount={rowsFlat.length + 1} aria-colcount={model.timeframes.length + 1}
 	aria-activedescendant={activeKey ? cellId(activeKey) : undefined} on:keydown={onKey} data-testid="coverage-grid"
 	class="relative min-h-0 flex-1 select-none overflow-auto border border-[#222] bg-[#050505] outline-none focus-visible:border-[#666]">
 	<div class="grid w-max min-w-full" style="grid-template-columns: {template}">
@@ -152,7 +154,7 @@
 						{@const isActive = active[0] === r && active[1] === c}
 						<!-- Keyboard: the grid handles arrows, Enter and Space for the active cell. -->
 						<!-- svelte-ignore a11y-click-events-have-key-events -->
-						<div id={cellId(cell.key)} role="gridcell" aria-selected={isSel} aria-label={label(cell)} title={label(cell)}
+						<div id={cellId(cell.key)} role="gridcell" tabindex="-1" aria-selected={isSel} aria-label={label(cell)} title={label(cell)}
 							on:mousedown={(e) => down(e, [r, c])} on:mouseenter={() => enter([r, c])} on:click={(e) => click(e, cell, [r, c])}
 							class="relative m-[1px] flex h-[20px] cursor-pointer items-center justify-center font-mono text-[10px] tabular-nums {cellClass(cell)} {isSel ? 'outline outline-1 outline-white' : ''} {isActive ? 'ring-1 ring-inset ring-sky-400' : ''}"
 							style={mode === 'depth' && cell.row && cell.row.rows > 0 ? `background: rgba(147, 197, 253, ${0.08 + 0.55 * depthShade(cell.row.first_ts, cell.row.last_ts)})` : ''}>
