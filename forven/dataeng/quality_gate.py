@@ -180,9 +180,12 @@ def check_series_quality(
 def dataset_fingerprint(symbol: str, timeframe: str, *, as_of: object | None = None) -> dict[str, Any]:
     """Compact identity of the data a verdict is computed on.
 
-    Stamped into backtest/gauntlet result payloads so 'this PASS was scored on
-    data X' is recorded — and drift (rebuilds, venue changes, restatements) is
-    DETECTABLE by comparing fingerprints instead of remembered by operators.
+    Stamped into backtest result configs as ``data_identity`` so 'this PASS was
+    scored on data X' is recorded — and drift (rebuilds, venue changes,
+    restatements) is DETECTABLE by comparing identities instead of remembered
+    by operators. A strategy's asset ("BTC", "BTC/USDT") resolves to the stored
+    canonical pair ("BTC-USDT") first — the bare base used to resolve an
+    ``ohlcv/BTC/`` path that does not exist, leaving 81% of identities empty.
     Cheap: footer reads + one file hash. Never raises."""
     from forven.data import (
         _footer_bounds,
@@ -190,9 +193,12 @@ def dataset_fingerprint(symbol: str, timeframe: str, *, as_of: object | None = N
         get_dataset_market,
         get_dataset_source,
         parquet_path,
+        symbol_to_fs,
         tail_path,
     )
+    from forven.dataeng.coverage import canonical_market_symbol
 
+    symbol = symbol_to_fs(canonical_market_symbol(symbol) or str(symbol or ""))
     out: dict[str, Any] = {
         "symbol": str(symbol),
         "timeframe": str(timeframe),

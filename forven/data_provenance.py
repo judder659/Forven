@@ -47,6 +47,9 @@ log = logging.getLogger("forven.data_provenance")
 
 DATA_FINGERPRINT_KEY = "data_fingerprint"
 DATA_FINGERPRINT_DETAIL_KEY = "data_fingerprint_detail"
+# The dataset identity dict (checksum/rows/span/market/as_of) that api_core
+# stamps; it once lived under DATA_FINGERPRINT_KEY and shadowed the hash.
+DATA_IDENTITY_KEY = "data_identity"
 
 _TAIL_ROWS = 1500
 _CACHE_TTL_SECONDS = 600.0
@@ -147,12 +150,17 @@ def stamp_data_fingerprint(config: dict | None, symbol: str, timeframe: str) -> 
     """Return ``config`` with the current data fingerprint stamped.
 
     An existing stamp is preserved (completion writers merge over the
-    submission-time config). Failure-proof: stamping must never break artifact
+    submission-time config). A non-string value under the key is the legacy
+    dataset-identity dict, not a stamp: it moves to ``data_identity`` and the
+    hash is stamped. Failure-proof: stamping must never break artifact
     persistence, so any fault returns the config unstamped.
     """
     stamped = dict(config) if isinstance(config, dict) else {}
-    if DATA_FINGERPRINT_KEY in stamped:
+    existing = stamped.get(DATA_FINGERPRINT_KEY)
+    if isinstance(existing, str) and existing:
         return stamped
+    if existing is not None and not isinstance(existing, str):
+        stamped.setdefault(DATA_IDENTITY_KEY, stamped.pop(DATA_FINGERPRINT_KEY))
     try:
         digest, semantics = data_fingerprint(symbol, timeframe)
         stamped[DATA_FINGERPRINT_KEY] = digest
@@ -163,7 +171,9 @@ def stamp_data_fingerprint(config: dict | None, symbol: str, timeframe: str) -> 
 
 
 def artifact_data_fingerprint(config: object) -> str | None:
-    """Extract the stamped fingerprint; None = pre-provenance (grandfathered)."""
+    """Extract the stamped fingerprint; None = pre-provenance (grandfathered).
+    Only a string is a stamp: the legacy dataset-identity dict that api_core
+    wrote under the same key reads as unstamped, never as a mismatch."""
     blob = config
     if isinstance(blob, (str, bytes, bytearray)):
         try:
@@ -173,7 +183,7 @@ def artifact_data_fingerprint(config: object) -> str | None:
     if not isinstance(blob, dict):
         return None
     raw = blob.get(DATA_FINGERPRINT_KEY)
-    return str(raw) if raw else None
+    return raw if isinstance(raw, str) and raw else None
 
 
 def is_stale_data_artifact(config: object, symbol: str, timeframe: str) -> bool:
@@ -193,6 +203,7 @@ def is_stale_data_artifact(config: object, symbol: str, timeframe: str) -> bool:
 __all__ = [
     "DATA_FINGERPRINT_KEY",
     "DATA_FINGERPRINT_DETAIL_KEY",
+    "DATA_IDENTITY_KEY",
     "artifact_data_fingerprint",
     "clear_fingerprint_cache",
     "data_fingerprint",
