@@ -246,10 +246,11 @@ it('runs a heatmap a row per request, counts every cell, and a cell sets both kn
 	await fireEvent.click(button('Run heatmap')); await settle();
 
 	const requests = api.heatmapStrategy.mock.calls.map((call: any[]) => call[0]);
+	// Round steps centred on the current values (oversold 30, exit_level 55).
 	expect(requests.map((r: any) => [r.x.name, r.x.values, r.y.name, r.y.values])).toEqual([
-		['oversold', [15, 30, 45], 'exit_level', [27.5]],
-		['oversold', [15, 30, 45], 'exit_level', [55]],
-		['oversold', [15, 30, 45], 'exit_level', [82.5]],
+		['oversold', [10, 30, 50], 'exit_level', [30]],
+		['oversold', [10, 30, 50], 'exit_level', [55]],
+		['oversold', [10, 30, 50], 'exit_level', [80]],
 	]);
 	expect(target.querySelectorAll('[data-testid="heatmap-grid"] button').length).toBe(9);
 	expect(target.querySelector('[data-testid="heatmap-verdict"]')?.textContent).toContain('Plateau');
@@ -259,8 +260,8 @@ it('runs a heatmap a row per request, counts every cell, and a cell sets both kn
 	expect(api.previewStrategyChart.mock.calls.at(-1)![0].trials).toBe(9);
 	expect(text()).toContain('9 results seen');
 
-	await fireEvent.click(target.querySelector('[data-testid="heatmap-grid"] button[title^="oversold 15 · exit_level 82.5"]')!); await settle();
-	expect([knob('oversold').value, knob('exit_level').value]).toEqual(['15', '82.5']);
+	await fireEvent.click(target.querySelector('[data-testid="heatmap-grid"] button[title^="oversold 10 · exit_level 80"]')!); await settle();
+	expect([knob('oversold').value, knob('exit_level').value]).toEqual(['10', '80']);
 });
 
 it('compares markets with local data only, and a cell switches the preview there', async () => {

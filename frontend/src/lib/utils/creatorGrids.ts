@@ -99,6 +99,25 @@ export function defaultRange(value: number): { from: number; to: number } {
 	return { from: Math.min(a, b), to: Math.max(a, b) };
 }
 
+/** The round step (1, 2, 2.5 or 5 times a power of ten) nearest to `raw`. */
+function niceStep(raw: number): number {
+	if (!(raw > 0)) return 1;
+	const power = 10 ** Math.floor(Math.log10(raw));
+	const candidates = [1, 2, 2.5, 5, 10].map((unit) => unit * power);
+	return candidates.reduce((best, c) => (Math.abs(Math.log(c / raw)) < Math.abs(Math.log(best / raw)) ? c : best));
+}
+
+/** A default sweep of `steps` values centred on the current value, in round steps
+ * spanning about half to one and a half times it. */
+export function niceRange(value: number, steps: number, integer: boolean): { from: number; to: number } {
+	const { from, to } = defaultRange(value);
+	const count = Math.max(2, Math.round(steps));
+	let step = niceStep((to - from) / (count - 1));
+	if (integer) step = Math.max(1, Math.round(step));
+	const below = Math.floor((count - 1) / 2);
+	return { from: +(value - step * below).toFixed(6), to: +(value + step * (count - 1 - below)).toFixed(6) };
+}
+
 /** Evenly spaced values from `from` to `to`, rounded like the setting, within its bounds, without repeats. */
 export function axisValues(from: number, to: number, steps: number, knob: Pick<KnobOption, 'integer' | 'min' | 'max'>): number[] {
 	const count = Math.max(1, Math.min(9, Math.round(steps)));
@@ -171,11 +190,15 @@ export function marketVerdict(rows: MarketRow[]): Verdict | null {
 	const mid = Math.floor(returns.length / 2);
 	const median = returns.length % 2 ? returns[mid] : (returns[mid - 1] + returns[mid]) / 2;
 	const positive = returns.filter((value) => value > 0).length;
+	const share = positive / scored.length;
 	const counted = `${positive} of ${scored.length} markets`;
 	const medianText = `median ${median > 0 ? '+' : ''}${(median * 100).toFixed(1)}%`;
 	if (!positive) return { status: 'none', text: `No market is profitable out-of-sample (${medianText}).${thinNote}` };
-	if (positive / scored.length >= 0.6 && median > 0) {
+	if (share >= 0.6 && median > 0) {
 		return { status: 'broad', text: `Profitable out-of-sample on ${counted} (${medianText}): the edge carries beyond one market.${thinNote}` };
+	}
+	if (share < 0.5 && median <= 0) {
+		return { status: 'none', text: `Loses out-of-sample on most markets: ${counted} ${positive === 1 ? 'is' : 'are'} profitable (${medianText}).${thinNote}` };
 	}
 	return { status: 'narrow', text: `Profitable out-of-sample on only ${counted} (${medianText}): the edge may belong to the market it was built on.${thinNote}` };
 }

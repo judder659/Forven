@@ -7,6 +7,7 @@ import {
 	defaultRange,
 	hasLocalData,
 	heatmapVerdict,
+	niceRange,
 	knobValue,
 	marketAvailability,
 	marketVerdict,
@@ -62,6 +63,15 @@ describe('axis values', () => {
 		expect(axisValues(15, 45, 7, { integer: false, min: null, max: null })).toEqual([15, 20, 25, 30, 35, 40, 45]);
 	});
 
+	it('centres default sweeps on the current value in round steps', () => {
+		expect(niceRange(30, 7, false)).toEqual({ from: 15, to: 45 });
+		expect(niceRange(55, 7, false)).toEqual({ from: 25, to: 85 });
+		expect(niceRange(55, 3, false)).toEqual({ from: 30, to: 80 });
+		expect(niceRange(14, 7, true)).toEqual({ from: 5, to: 23 });
+		expect(niceRange(-2, 5, false)).toEqual({ from: -3, to: -1 });
+		expect(axisValues(25, 85, 7, { integer: false, min: null, max: null })).toEqual([25, 35, 45, 55, 65, 75, 85]);
+	});
+
 	it('rounds whole-number settings, respects their bounds and drops repeats', () => {
 		expect(axisValues(1, 21, 7, { integer: true, min: 2, max: null })).toEqual([2, 4, 8, 11, 14, 18, 21]);
 		expect(axisValues(1, 3, 9, { integer: true, min: 2, max: 3 })).toEqual([2, 3]);
@@ -96,8 +106,11 @@ describe('market grid', () => {
 
 	it('judges whether an edge carries across markets', () => {
 		expect(marketVerdict([row(0.05), row(0.02), row(0.01), row(-0.01)])?.status).toBe('broad');
-		expect(marketVerdict([row(0.05), row(-0.02), row(-0.01)])?.status).toBe('narrow');
+		expect(marketVerdict([row(0.05), row(0.01), row(-0.02), row(-0.01)])?.status).toBe('narrow');
 		expect(marketVerdict([row(-0.05), row(-0.02)])?.status).toBe('none');
+		const mostlyLosing = marketVerdict([row(0.001), row(-0.05), row(-0.03), row(-0.04)]);
+		expect(mostlyLosing?.status).toBe('none');
+		expect(mostlyLosing?.text).toContain('1 of 4 markets is profitable');
 		const thin = marketVerdict([row(0.05), row(0.1, 3)]);
 		expect(thin?.status).toBe('unknown');
 		expect(thin?.text).toContain('fewer than 5');

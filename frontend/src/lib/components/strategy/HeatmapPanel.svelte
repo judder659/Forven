@@ -21,7 +21,7 @@
 	// cell is usually fitted noise. Click a cell to use its settings.
 	import { createEventDispatcher } from 'svelte';
 	import type { HeatmapAxisRequest } from '$lib/api';
-	import { axisValues, defaultRange, heatmapVerdict, type KnobOption } from '$lib/utils/creatorGrids';
+	import { axisValues, heatmapVerdict, niceRange, type KnobOption } from '$lib/utils/creatorGrids';
 	import { formatValue } from '$lib/utils/ruleLabels';
 
 	export let knobs: KnobOption[] = [];
@@ -49,16 +49,21 @@
 	let yTo = 0;
 	// Set once the author picks the y setting, so "none" stays none.
 	let yTouched = false;
+	// Typed ranges are kept when the step count changes; defaults follow it.
+	let xEdited = false;
+	let yEdited = false;
 
 	const knobFor = (key: string) => knobs.find((knob) => knob.key === key);
 	function resetRange(axis: 'x' | 'y') {
 		const knob = knobFor(axis === 'x' ? xKey : yKey);
 		if (!knob) return;
-		const { from, to } = defaultRange(knob.value);
-		const lo = knob.integer ? Math.max(knob.min ?? -Infinity, Math.round(from)) : +from.toPrecision(6);
-		const hi = knob.integer ? Math.round(to) : +to.toPrecision(6);
-		if (axis === 'x') [xFrom, xTo] = [lo, hi];
-		else [yFrom, yTo] = [lo, hi];
+		const { from, to } = niceRange(knob.value, steps, knob.integer);
+		if (axis === 'x') [xFrom, xTo, xEdited] = [from, to, false];
+		else [yFrom, yTo, yEdited] = [from, to, false];
+	}
+	function onSteps() {
+		if (!xEdited) resetRange('x');
+		if (!yEdited) resetRange('y');
 	}
 	// Pick sensible axes when the knob list first arrives or a picked knob disappears.
 	$: if (knobs.length && !knobFor(xKey)) {
@@ -131,11 +136,11 @@
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-[9px] uppercase tracking-wider text-[#555]">From</span>
-			<input type="number" bind:value={xFrom} step="any" aria-label="x from" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+			<input type="number" bind:value={xFrom} on:input={() => (xEdited = true)} step="any" aria-label="x from" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-[9px] uppercase tracking-wider text-[#555]">To</span>
-			<input type="number" bind:value={xTo} step="any" aria-label="x to" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+			<input type="number" bind:value={xTo} on:input={() => (xEdited = true)} step="any" aria-label="x to" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-[9px] uppercase tracking-wider text-[#555]">Down (y)</span>
@@ -148,16 +153,16 @@
 		{#if yKnob}
 			<label class="flex flex-col gap-1">
 				<span class="text-[9px] uppercase tracking-wider text-[#555]">From</span>
-				<input type="number" bind:value={yFrom} step="any" aria-label="y from" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+				<input type="number" bind:value={yFrom} on:input={() => (yEdited = true)} step="any" aria-label="y from" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
 			</label>
 			<label class="flex flex-col gap-1">
 				<span class="text-[9px] uppercase tracking-wider text-[#555]">To</span>
-				<input type="number" bind:value={yTo} step="any" aria-label="y to" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+				<input type="number" bind:value={yTo} on:input={() => (yEdited = true)} step="any" aria-label="y to" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
 			</label>
 		{/if}
 		<label class="flex flex-col gap-1">
 			<span class="text-[9px] uppercase tracking-wider text-[#555]">Steps</span>
-			<select bind:value={steps} aria-label="heatmap steps" class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[12px] text-white outline-none focus:border-white">
+			<select bind:value={steps} on:change={onSteps} aria-label="heatmap steps" class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[12px] text-white outline-none focus:border-white">
 				{#each [3, 5, 7, 9] as n}<option value={n}>{n}</option>{/each}
 			</select>
 		</label>
