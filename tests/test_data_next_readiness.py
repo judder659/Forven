@@ -396,6 +396,22 @@ def test_sandbox_strategy_reads_feeds_from_its_source_file(lake_root, monkeypatc
     assert inputs["status"] == "warn" and "sandbox-only" in inputs["detail"]
 
 
+def test_spec_strategy_type_may_name_a_registered_strategy(lake_root, monkeypatch):
+    """The manual backtest form sends an app strategy's id as its type."""
+    from forven.dataeng.contracts import spec_contract
+
+    now = _now()
+    _ohlcv(lake_root, "BTC-USDT", "1h", _full_history(now), now - H)
+    _resolve_declared(monkeypatch)
+    _insert_strategy("S-APP", symbol="ETH/USDT", timeframe="4h", stage="archived", params={"feeds": ["basis"]})
+    report = spec_contract("BTC-USDT", "1h", strategy_type="S-APP", now=now)
+    assert _stream_req(report, "basis")["status"] == "missing"
+    assert report["subject"] == {"symbol": "BTC-USDT", "timeframe": "1h"}  # the form's market, not the row's
+    # An unknown type is a UI hint, never an error: candles only.
+    plain = spec_contract("BTC-USDT", "1h", strategy_type="no_such_family", now=now)
+    assert plain["verdict"] == "ready" and [r["kind"] for r in plain["requirements"]] == ["series", "history", "freshness"]
+
+
 def test_strategy_contract_errors(lake_root):
     from forven.dataeng.contracts import spec_contract, strategy_contract
 

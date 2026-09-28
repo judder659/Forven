@@ -19,6 +19,8 @@
 	import DateRangeFieldset from '$lib/components/ui/DateRangeFieldset.svelte';
 	import ParameterEditor from '$lib/components/ui/ParameterEditor.svelte';
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
+	import ReadinessChip from '$lib/components/data-readiness/ReadinessChip.svelte';
+	import type { ReadinessQuery } from '$lib/api/dataReadiness';
 
 	const BAR_CAP = 100_000;
 
@@ -75,6 +77,16 @@
 
 	$: busy = submitStatus === 'submitting';
 	$: estimatedBars = estimateBarCount(startDate, endDate, timeframe);
+	// Data readiness for the market, the window back to its start, and the
+	// feeds the selected strategy reads.
+	$: readinessDays = Math.ceil((Date.now() - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
+	let readinessQuery: ReadinessQuery;
+	$: readinessQuery = {
+		symbol,
+		timeframe,
+		...(readinessDays > 0 ? { history_days: readinessDays } : {}),
+		...(selectedStrategy ? { strategy_type: selectedStrategy.api_name || selectedStrategy.name } : {}),
+	};
 	$: numberOrNull = (v: string) => (v.trim() === '' ? null : Number(v));
 
 	function rebuildStrategies() {
@@ -374,7 +386,10 @@
 
 			<!-- Market Scope -->
 			<div class="terminal-card mt-4 p-4">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Market Scope</div>
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Market Scope</div>
+					<ReadinessChip query={readinessQuery} align="right" />
+				</div>
 				<div class="mt-3 grid gap-4 md:grid-cols-2">
 					<SymbolInput id="bt-symbol" bind:value={symbol} disabled={busy} suggestions={symbolSuggestions} helpText="Backtested on the base asset (e.g. BTC)." />
 					<TimeframeSelect id="bt-timeframe" bind:value={timeframe} disabled={busy} />

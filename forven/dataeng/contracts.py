@@ -726,8 +726,9 @@ def spec_contract(
     now: object | None = None,
 ) -> dict[str, Any]:
     """Readiness of a strategy being written: its market, the feeds it reads
-    (``streams`` named explicitly, a registered ``strategy_type``'s class, or
-    ``code`` scanned as text — never executed) and its history.
+    (``streams`` named explicitly, a registered ``strategy_type``'s class —
+    or a strategy id's own detection — or ``code`` scanned as text, never
+    executed) and its history, judged by the pipeline tier.
 
     An unresolvable ``strategy_type`` adds nothing (the check falls back to the
     candles and any named streams). Raises ValueError on bad input."""
@@ -741,18 +742,22 @@ def spec_contract(
     params: dict | None = None
     if strategy_type:
         # A registered type is judged with its own default params (they decide
-        # the feeds of a params-driven class such as the rule engine).
+        # the feeds of a params-driven class such as the rule engine); a
+        # strategy id (what the manual backtest form holds for app-generated
+        # strategies) with that strategy's own params.
         params = _default_params(strategy_type, display)
         try:
             needs = detect_feed_needs(strategy_type, display, params=params)
         except Exception as exc:
             log.debug("readiness: could not inspect %s: %s", strategy_type, exc)
             needs = FeedNeeds(basis="unresolved")
-        if needs.basis == "class":
-            columns |= needs.columns
-            cross |= needs.cross_asset
-        else:
+        if needs.basis != "class":
             params = None
+            row = _strategy_row(str(strategy_type).strip())
+            if row is not None:
+                needs, params, _why = _row_needs(row, display)
+        columns |= needs.columns
+        cross |= needs.cross_asset
     if code:
         needs = detect_feed_needs(None, display, source=str(code))
         columns |= needs.columns
@@ -794,6 +799,40 @@ def _strategy_row(strategy_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def _row_needs(row: dict[str, Any], asset: str) -> tuple[FeedNeeds, dict, str | None]:
+    """(feeds, params, why its inputs could not be checked) for a strategy
+    row: its class, else the source file it was registered from (scanned as
+    text), else unverified."""
+    try:
+        params = json.loads(row.get("params") or "{}")
+    except (TypeError, ValueError):
+        params = {}
+    params = params if isinstance(params, dict) else {}
+    runtime_type = str(row.get("runtime_type") or row.get("type") or "")
+    unverified: str | None = None
+    try:
+        needs = detect_feed_needs(runtime_type, asset, params=params)
+    except Exception as exc:
+        needs, unverified = FeedNeeds(basis="unresolved"), f"inspection failed: {exc}"
+    if needs.basis in ("sandbox", "unresolved"):
+        source_ref = str(row.get("source_ref") or "").strip()
+        source = None
+        if source_ref and Path(source_ref).is_file():
+            try:
+                source = Path(source_ref).read_text(encoding="utf-8")
+            except OSError:
+                source = None
+        if source is not None:
+            needs, unverified = detect_feed_needs(None, asset, source=source), None
+        elif unverified is None:
+            unverified = (
+                "sandbox-only runtime and its source file is not readable"
+                if needs.basis == "sandbox"
+                else "its strategy class could not be loaded"
+            )
+    return needs, params, unverified
+
+
 def strategy_contract(strategy_id: str, *, now: object | None = None) -> dict[str, Any]:
     """Readiness of a registered strategy on its own symbol and timeframe.
     Raises LookupError for an unknown strategy, ValueError when it names no
@@ -801,35 +840,11 @@ def strategy_contract(strategy_id: str, *, now: object | None = None) -> dict[st
     row = _strategy_row(str(strategy_id or "").strip())
     if row is None:
         raise LookupError(f"Unknown strategy {strategy_id!r}")
-    try:
-        params = json.loads(row.get("params") or "{}")
-    except (TypeError, ValueError):
-        params = {}
-    params = params if isinstance(params, dict) else {}
     fs = fs_symbol(row.get("symbol"))
     if not fs or fs == "GENERIC":
         raise ValueError(f"Strategy {row['id']} has no market symbol")
+    needs, params, unverified = _row_needs(row, fs.replace("-", "/"))
     tf = _timeframe(row.get("timeframe") or params.get("_timeframe") or "1h")
-    display = fs.replace("-", "/")
-    runtime_type = str(row.get("runtime_type") or row.get("type") or "")
-    unverified: str | None = None
-    try:
-        needs = detect_feed_needs(runtime_type, display, params=params)
-    except Exception as exc:
-        needs, unverified = FeedNeeds(basis="unresolved"), f"inspection failed: {exc}"
-    if needs.basis in ("sandbox", "unresolved"):
-        source_ref = Path(str(row.get("source_ref") or ""))
-        source = None
-        if str(row.get("source_ref") or "").strip() and source_ref.is_file():
-            try:
-                source = source_ref.read_text(encoding="utf-8")
-            except OSError:
-                source = None
-        if source is not None:
-            needs = detect_feed_needs(None, display, source=source)
-            unverified = None
-        elif unverified is None:
-            unverified = "sandbox-only runtime and its source file is not readable" if needs.basis == "sandbox" else "its strategy class could not be loaded"
     stage = str(row.get("stage") or row.get("status") or "").strip().lower()
     subject = _Subject(
         symbol=fs, timeframe=tf, venue=CANONICAL_VENUE, tier=_STAGE_TIER.get(stage, "pipeline"),
