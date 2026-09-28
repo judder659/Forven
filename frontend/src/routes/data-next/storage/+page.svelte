@@ -9,7 +9,7 @@
 	import SectionState from '$lib/components/data-manager/SectionState.svelte';
 	import TypedConfirm from '$lib/components/data-manager/TypedConfirm.svelte';
 	import { runAction } from '$lib/components/data-manager/actions';
-	import { formatBytes, formatCount, formatRelative, formatUtc, streamLabel } from '$lib/components/data-manager/format';
+	import { formatBytes, formatCount, formatRelative, formatUtc, plural, streamLabel } from '$lib/components/data-manager/format';
 	import { seriesHref } from '$lib/components/data-manager/links';
 	import { clock, jobsLanded, loading, settle, type Loadable } from '$lib/stores/dataManager';
 
@@ -47,7 +47,7 @@
 			success: () =>
 				group.kind === 'revisions'
 					? `Pruning old revision entries (${formatBytes(group.bytes)}). Progress is in Jobs.`
-					: `Moving ${formatCount(group.count)} items (${formatBytes(group.bytes)}) to the trash. Progress is in Jobs.`,
+					: `Moving ${plural(group.count, 'item')} (${formatBytes(group.bytes)}) to the trash. Progress is in Jobs.`,
 		});
 		reclaiming = false;
 		if (job) {
@@ -79,6 +79,15 @@
 			void loadTrash();
 			void loadStorage();
 		}
+	}
+
+	// A countdown rounds up: an item trashed just now under a 7-day retention
+	// goes in 7 d, not 6.
+	function purgeIn(iso: string, now: number): string {
+		const left = Date.parse(iso) - now;
+		if (!Number.isFinite(left) || left <= 0) return 'at the next cleanup';
+		const days = left / 86_400_000;
+		return days >= 1 ? `in ${Math.ceil(days)} d` : `in ${Math.max(1, Math.ceil(left / 3_600_000))} h`;
 	}
 
 	const AUDIT_LABEL: Record<string, string> = {
@@ -119,7 +128,7 @@
 					<div class="bg-[#050505] px-3 py-2.5">
 						<div class="text-[9px] uppercase tracking-wider text-[#555]">Trash</div>
 						<div class="font-mono text-[18px] tabular-nums text-white">{formatBytes(s.trash.bytes)}</div>
-						<div class="text-[10px] text-[#666]">{formatCount(s.trash.items)} items · kept {s.trash.retention_days} days</div>
+						<div class="text-[10px] text-[#666]">{plural(s.trash.items, 'item')} · kept {s.trash.retention_days} days</div>
 					</div>
 				</div>
 			{/if}
@@ -136,7 +145,7 @@
 							<span class="text-[#ccc]">{streamLabel(b.stream)}</span>
 							<div class="h-1.5 bg-[#141414]"><div class="h-full bg-[#8b8b8b]" style="width: {(b.bytes / streamMax) * 100}%"></div></div>
 							<span class="text-right font-mono text-[10px] tabular-nums text-white">{formatBytes(b.bytes)}</span>
-							<span class="text-right text-[10px] text-[#666]">{formatCount(b.files)} files</span>
+							<span class="text-right text-[10px] text-[#666]">{plural(b.files, 'file')}</span>
 						</div>
 					{/each}
 					<div class="pt-1 text-[10px] text-[#666]">Revision log: {formatBytes(s.revisions.bytes)} in {formatCount(s.revisions.files)} files since {formatUtc(s.revisions.oldest, { date: true })}; entries older than {s.revisions.keep_days} days can be pruned{s.revisions.prunable_bytes != null ? ` (${formatBytes(s.revisions.prunable_bytes)})` : ''}.</div>
@@ -170,7 +179,7 @@
 							<div class="flex flex-wrap items-baseline gap-2">
 								<span class="text-[12px] text-white">{group.label}</span>
 								<span class="font-mono text-[11px] tabular-nums text-[#ddd]">{formatBytes(group.bytes)}</span>
-								<span class="text-[10px] text-[#666]">{formatCount(group.count)} {group.kind === 'empty_dirs' || group.kind === 'stray_dirs' ? 'folders' : 'items'}</span>
+								<span class="text-[10px] text-[#666]">{plural(group.count, group.kind === 'empty_dirs' || group.kind === 'stray_dirs' ? 'folder' : 'item')}</span>
 								<span class="border px-1 text-[9px] uppercase tracking-wider {group.safe ? 'border-emerald-900 text-emerald-400' : 'border-amber-900 text-amber-400'}"
 									title={group.safe ? 'Reclaiming cannot lose data a series needs' : 'Look at the items before reclaiming them'}>{group.safe ? 'Safe' : 'Review first'}</span>
 							</div>
@@ -209,7 +218,7 @@
 									{#if group.kind === 'revisions'}
 										Prunes {formatBytes(group.bytes)} of revision history older than {s.revisions.keep_days} days. Restatements inside a saved verdict’s window are kept.
 									{:else}
-										Moves {formatCount(group.count)} items ({formatBytes(group.bytes)}) to the trash. You can restore them for {s.trash.retention_days} days.
+										Moves {plural(group.count, 'item')} ({formatBytes(group.bytes)}) to the trash. You can restore them for {s.trash.retention_days} days.
 									{/if}
 								</p>
 							</TypedConfirm>
@@ -244,7 +253,7 @@
 					<span class="text-white">{item.label}</span>
 					<span class="font-mono text-[10px] text-[#888]">{formatBytes(item.bytes)}</span>
 					<span class="text-[10px] text-[#666]" title={formatUtc(item.deleted_at)}>{item.reason} · {formatRelative(item.deleted_at, $clock)}</span>
-					<span class="text-[10px] text-[#555]" title={formatUtc(item.purge_after)}>purged {formatRelative(item.purge_after, $clock)}</span>
+					<span class="text-[10px] text-[#555]" title={formatUtc(item.purge_after)}>purged {purgeIn(item.purge_after, $clock)}</span>
 					<button type="button" on:click={() => restore(item.id, item.label)} disabled={restoring[item.id]}
 						class="ml-auto border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#ddd] hover:border-white hover:text-white disabled:opacity-40">{restoring[item.id] ? 'Restoring…' : 'Restore'}</button>
 				</div>
