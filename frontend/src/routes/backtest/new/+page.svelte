@@ -735,7 +735,8 @@
 								<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-[#888]">built-in</span>
 							{/if}
 						</div>
-						{#if selected.description}
+						<!-- A stored strategy's "description" is its notes column: an audit trail, not a summary. -->
+						{#if selected.description && builtinSelected}
 							<p class="mt-1.5 text-[#777]">{selected.description}</p>
 						{/if}
 						{#if native?.symbol || native?.timeframe}
@@ -802,7 +803,8 @@
 				</div>
 				{#if hiddenParamCount > 0}
 					<p class="mt-2 text-[11px] text-[#555]">
-						{hiddenParamCount} internal field{hiddenParamCount === 1 ? '' : 's'} (market, leverage, trade mode, execution profile, data contract) are set in the sections above and below.
+						{hiddenParamCount === 1 ? '1 more field is' : `${hiddenParamCount} more fields are`} not listed here: market, leverage,
+						trade mode and execution profile are set in Market and Execution, and internal data-contract fields are fixed.
 					</p>
 				{/if}
 			</section>
@@ -944,7 +946,7 @@
 					{#if selected}
 						<span class="font-mono text-[#bbb]">{marketLabel(symbol, timeframe)}</span>
 						· {fmtDay(startDate)} → {fmtDay(endDate)} · {formatBarEstimate(estimatedBars)}
-						· {runOverrides.length ? runOverrides.join(' · ') : 'strategy as stored'}
+						· {runOverrides.length ? runOverrides.join(' · ') : "strategy's own settings"}
 						{#if validationError}
 							<div class="mt-1 text-amber-400">{validationError}</div>
 						{/if}
