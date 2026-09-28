@@ -313,7 +313,13 @@
 			start_date: baselineWindowStart,
 			end_date: baselineWindowEnd,
 		};
+		autoSeededCostStressWindow = {
+			start: baselineWindowStart,
+			end: baselineWindowEnd,
+			baselineId: activeBaseline?.start_date ? activeBaseline.result_id : '',
+		};
 	}
+	let autoSeededCostStressWindow = { start: '', end: '', baselineId: '' };
 	$: anyLoading = suiteRunning || Object.values(loading).some(Boolean);
 	// Reactive verdict map — ensures the scorecard re-renders when result
 	// variables change.  Using {@const verdictFor(key)} inside {#each} over a
@@ -1205,13 +1211,26 @@
 
 		setLoading('cost_stress', true);
 		setError('cost_stress', '');
+		// Still the window seeded from the baseline backtest: send the baseline, not
+		// its dates, so the rerun replays that exact frame. Its stored start already
+		// includes the warm-up; sent back as a requested date it gained a second one.
+		const replayBaselineId =
+			autoSeededCostStressWindow.baselineId &&
+			costStressForm.start_date === autoSeededCostStressWindow.start &&
+			costStressForm.end_date === autoSeededCostStressWindow.end
+				? autoSeededCostStressWindow.baselineId
+				: '';
 		try {
 			const response = await submitCostStressRobustness({
 				strategy_id: strategyId,
 				symbol: costStressForm.symbol.trim(),
 				timeframe: costStressForm.timeframe.trim(),
-				start_date: costStressForm.start_date || undefined,
-				end_date: costStressForm.end_date || undefined,
+				...(replayBaselineId
+					? { baseline_result_id: replayBaselineId }
+					: {
+							start_date: costStressForm.start_date || undefined,
+							end_date: costStressForm.end_date || undefined,
+						}),
 				fee_multiplier: Number(costStressForm.fee_multiplier),
 				slippage_multiplier: Number(costStressForm.slippage_multiplier),
 			});

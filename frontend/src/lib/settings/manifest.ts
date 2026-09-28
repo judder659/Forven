@@ -2354,8 +2354,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     subsection: 'lab-stage-windows',
     backendSection: 'backtesting-defaults',
     backendPath: 'cost_stress_duration_days',
-    description: 'Backtest window for the cost-stress robustness rerun (capped at 50k bars on fine timeframes). 0 = inherit the Default backtest window.',
-    usedBy: ['forven.routers.robustness', 'forven.api_core'],
+    description: 'Window for a cost-stress rerun that has no baseline backtest and no requested dates (capped at 50k bars on fine timeframes). Gauntlet runs replay the baseline backtest\'s own window instead. 0 = inherit the Default backtest window.',
+    usedBy: ['forven.robustness.engine', 'forven.api_core'],
   },
   {
     id: 'backtesting-defaults.evolution_duration_days',

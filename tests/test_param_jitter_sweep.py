@@ -39,7 +39,13 @@ def _candles(periods: int = 720) -> pd.DataFrame:
     )
 
 
-def _wire(monkeypatch, strategy_id: str, *, thresholds: dict | None = None) -> list[dict]:
+def _wire(
+    monkeypatch,
+    strategy_id: str,
+    *,
+    thresholds: dict | None = None,
+    window: tuple[str, str] = ("2023-12-23T06:00:00+00:00", "2024-01-31T00:00:00+00:00"),
+) -> list[dict]:
     """Baseline detail, candles, config and a recording backtest. Returns the calls."""
     import forven.api_core as api_core
     import forven.policy as policy
@@ -50,8 +56,8 @@ def _wire(monkeypatch, strategy_id: str, *, thresholds: dict | None = None) -> l
         "strategy_id": strategy_id,
         "symbol": "BTC/USDT",
         "timeframe": "1h",
-        "start": "2023-12-23T06:00:00+00:00",
-        "end": "2024-01-31T00:00:00+00:00",
+        "start": window[0],
+        "end": window[1],
         "metrics": {"total_return": 0.10, "sharpe_ratio": 1.2, "total_trades": 30},
         "config": {"strategy_id": strategy_id, "symbol": "BTC/USDT", "timeframe": "1h", "params": dict(BASE_PARAMS)},
     }
@@ -189,6 +195,60 @@ def test_cost_stress_adds_warmup_only_before_a_requested_start(forven_db, monkey
     assert (requested["start_date"], requested["warmup_bars"]) == ("2024-01-01", 210)
 
 
+def _cost_stress_bars(monkeypatch, strategy_id: str, frame_bars: int, **body) -> list[int]:
+    """Run cost stress over a loader that returns ``frame_bars`` bars; return the
+    bar count each of the two reruns received."""
+    import forven.api_core as api_core
+    import forven.strategies.backtest as backtest
+
+    monkeypatch.setattr(api_core, "get_settings", lambda: {"backtest_fee_bps": 4.5, "backtest_slippage_bps": 2.0})
+    monkeypatch.setattr(backtest, "load_backtest_candles", lambda **_k: _candles(frame_bars))
+    bars: list[int] = []
+
+    def fake_backtest(**kwargs):
+        bars.append(len(kwargs["candles_df"]))
+        return {"metrics": {"sharpe": 0.9, "total_trades": 40}}
+
+    monkeypatch.setattr(backtest, "backtest_strategy", fake_backtest)
+    engine._run_cost_stress_analysis(
+        CostStressBody(strategy_id=strategy_id, symbol="BTC/USDT", timeframe="1h", **body)
+    )
+    return bars
+
+
+def test_cost_stress_replays_the_whole_baseline_window(forven_db, monkeypatch):
+    """Five years at 1h is 43,800 bars. The old cap at the cost_stress stage horizon
+    (730 days = 17,520 bars) judged the last two years instead of the baseline."""
+    strategy_id = _strategy()
+    _wire(monkeypatch, strategy_id, window=("2020-12-22T06:00:00+00:00", "2025-12-31T23:00:00+00:00"))
+
+    assert _cost_stress_bars(monkeypatch, strategy_id, 43_800, baseline_result_id="base") == [43_800, 43_800]
+
+
+def test_cost_stress_caps_a_requested_window_at_the_dated_ceiling(forven_db, monkeypatch):
+    strategy_id = _strategy()
+    _wire(monkeypatch, strategy_id)
+
+    bars = _cost_stress_bars(
+        monkeypatch, strategy_id, 150_000, start_date="2008-01-01", end_date="2025-12-31"
+    )
+
+    assert bars == [engine._REQUESTED_WINDOW_MAX_BARS] * 2
+
+
+def test_cost_stress_without_a_window_uses_the_stage_horizon(forven_db, monkeypatch):
+    strategy_id = _strategy()
+    _wire(monkeypatch, strategy_id)
+    seen: list[dict] = []
+    monkeypatch.setattr(engine, "_load_rerun_candles", lambda *a, **k: seen.append(k) or _candles())
+
+    _cost_stress_bars(monkeypatch, strategy_id, 720)
+
+    # No baseline and no dates: the stage horizon (730 days at 1h) sizes the rerun.
+    assert seen[0]["start_date"] is None
+    assert seen[0]["max_bars"] == 730 * 24
+
+
 def test_load_rerun_candles_passes_the_warmup_to_the_loader(monkeypatch):
     import forven.strategies.backtest as backtest
 
@@ -199,3 +259,18 @@ def test_load_rerun_candles_passes_the_warmup_to_the_loader(monkeypatch):
     engine._load_rerun_candles("BTC/USDT", "1h", start_date="2024-01-01", end_date="2024-01-31")
 
     assert [call["warmup_bars"] for call in seen] == [0, 210]
+
+
+def test_an_uncapped_rerun_keeps_its_window_and_never_swaps_in_another(monkeypatch):
+    import forven.strategies.backtest as backtest
+
+    calls: list[dict] = []
+    frames = iter([_candles(20_000), _candles(0)])
+    monkeypatch.setattr(backtest, "load_backtest_candles", lambda **k: calls.append(k) or next(frames))
+
+    whole = engine._load_rerun_candles("BTC/USDT", "1h", start_date="2023-01-01", end_date="2025-06-30", max_bars=None)
+    empty = engine._load_rerun_candles("BTC/USDT", "1h", start_date="2019-01-01", end_date="2019-02-01", max_bars=None)
+
+    assert len(whole) == 20_000
+    # An empty window stays empty: no fallback to a recent slice the baseline never saw.
+    assert empty.empty and len(calls) == 2

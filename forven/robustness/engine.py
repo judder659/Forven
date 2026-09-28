@@ -733,13 +733,17 @@ def _raise_zero_trade_prerequisite(label: str) -> None:
 
 # DEFAULT upper bound on bars loaded for a robustness RERUN, used only when a caller
 # passes no max_bars. param_jitter overrides it with its own configurable cap
-# (robustness_thresholds.param_jitter_max_bars), and cost_stress overrides it with the
-# global "Backtest window" setting (backtest_duration_days) so it evaluates over the
-# same horizon as the rest of the pipeline rather than a fixed ~1y slice. ~1 year of
-# hourly data: large enough to capture trades for low-frequency 1h/4h strategies (the
-# old fixed 720-bar ~30-day window false-failed strategies that don't trade in the
-# most recent month), and below the non-vectorized matrix cap (10k).
+# (robustness_thresholds.param_jitter_max_bars); cost_stress replays the baseline's
+# window whole and caps only a requested window or a rerun with no window (see
+# _run_cost_stress_analysis). ~1 year of hourly data: large enough to capture trades
+# for low-frequency 1h/4h strategies (the old fixed 720-bar ~30-day window
+# false-failed strategies that don't trade in the most recent month), and below the
+# non-vectorized matrix cap (10k).
 _RERUN_MAX_BARS = 8760
+
+# Ceiling for a rerun over a window a caller asked for: the same bound a dated
+# backtest's bar estimate has (api_core._estimate_backtest_bars).
+_REQUESTED_WINDOW_MAX_BARS = 100_000
 
 
 def _load_rerun_candles(
@@ -748,7 +752,7 @@ def _load_rerun_candles(
     *,
     start_date: str | None = None,
     end_date: str | None = None,
-    max_bars: int = _RERUN_MAX_BARS,
+    max_bars: int | None = _RERUN_MAX_BARS,
     as_of: str | None = None,
     warmup_bars: int = 210,
 ):
@@ -758,7 +762,8 @@ def _load_rerun_candles(
     rerun trades like the baseline did, instead of a fixed recent slice that can
     legitimately contain zero trades. Caps at ``max_bars`` (keeping the most
     recent bars) so sub-hourly windows can't blow up compute; falls back to a
-    recent ``max_bars`` window when no date range is available.
+    recent ``max_bars`` window when no date range is available. ``max_bars=None``
+    replays the dated window whole and never falls back to a different one.
 
     A baseline's persisted start is the first bar it LOADED, warm-up included, so
     callers replaying a baseline window pass ``warmup_bars=0``. Adding the default
@@ -777,8 +782,10 @@ def _load_rerun_candles(
             as_of=as_of,
             warmup_bars=warmup_bars,
         )
-        if candles is not None and not candles.empty and len(candles) > max_bars:
+        if candles is not None and not candles.empty and max_bars is not None and len(candles) > max_bars:
             candles = candles.tail(max_bars)
+    if max_bars is None:
+        return candles if candles is not None else pd.DataFrame()
     if candles is None or candles.empty:
         candles = load_backtest_candles(
             asset=symbol,
@@ -1597,29 +1604,37 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
     # false-failing this required test and blocking otherwise-valid strategies.
     win_start = (str(getattr(body, "start_date", "") or "").strip()) or None
     win_end = (str(getattr(body, "end_date", "") or "").strip()) or None
+    requested_window = bool(win_start or win_end)
     # A requested start gets the usual warm-up before it; a baseline's persisted
     # start already includes one (see _load_rerun_candles).
     warmup_bars = 210 if win_start else 0
     if (not win_start or not win_end) and baseline_ctx is not None:
         win_start = win_start or baseline_ctx.get("start_date")
         win_end = win_end or baseline_ctx.get("end_date")
-    # Honor the ONE global backtest window (Settings > Lab > "Backtest window") so
-    # cost-stress evaluates over the same horizon as the baseline backtest instead of
-    # a fixed ~1y slice. Bound the bar count for compute safety: _estimate_backtest_bars
-    # with no explicit start/end is UNCAPPED, so on fine timeframes the global window
-    # explodes (730d @1m = ~1.05M bars, a memory/step-timeout risk). Cap at the
-    # walk-forward ceiling (50k bars) — coarser timeframes (1h+) still get the full
-    # window; sub-hourly reruns are bounded. Falls back to the module default on error.
-    try:
-        from forven.api_core import _estimate_backtest_bars, stage_backtest_duration_days
+    # Judge the costs on the evidence the strategy was validated on. The baseline's
+    # window is replayed whole: the baseline already ran that exact frame, so it is
+    # computable, and only the costs differ between the two reruns and the baseline.
+    # This rerun used to be capped at the cost_stress stage horizon (730 days) while
+    # gauntlet baselines span 1.5-5 years, so 41 of 44 verdicts in Sept 2026 judged a
+    # different, shorter slice than the baseline: S10016 passed on 24 trades against
+    # a 0-trade baseline, S09866 on 20 recent trades against a losing 188.
+    # A requested window keeps the dated-backtest ceiling, and a rerun with no window
+    # at all is sized by the stage horizon, bounded at the walk-forward ceiling.
+    if win_start and win_end and not requested_window:
+        cost_stress_max_bars: int | None = None
+    elif win_start and win_end:
+        cost_stress_max_bars = _REQUESTED_WINDOW_MAX_BARS
+    else:
+        try:
+            from forven.api_core import _estimate_backtest_bars, stage_backtest_duration_days
 
-        cost_stress_days = stage_backtest_duration_days("cost_stress")
-        cost_stress_max_bars = min(
-            _estimate_backtest_bars(None, None, body.timeframe, duration_days_override=cost_stress_days),
-            50_000,
-        )
-    except Exception:
-        cost_stress_max_bars = _RERUN_MAX_BARS
+            cost_stress_days = stage_backtest_duration_days("cost_stress")
+            cost_stress_max_bars = min(
+                _estimate_backtest_bars(None, None, body.timeframe, duration_days_override=cost_stress_days),
+                50_000,
+            )
+        except Exception:
+            cost_stress_max_bars = _RERUN_MAX_BARS
     candles = _load_rerun_candles(
         body.symbol,
         body.timeframe,
@@ -1644,8 +1659,8 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         persist_legacy_run=False,
         candles_df=candles,
         regime_gate=False,  # Cost-stress tests parameter sensitivity, not regime fit
-        # Canonical params, but a short 720-bar window (and possibly non-default
-        # fees) — this rerun's metrics must not refresh the strategy row.
+        # Canonical params, but a rerun (possibly over a different window, with
+        # non-default fees) — its metrics must not refresh the strategy row.
         sync_strategy_state=False,
         as_of=body.as_of,
     )
