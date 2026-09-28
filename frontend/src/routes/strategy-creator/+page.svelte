@@ -37,7 +37,6 @@
 	import { specSeriesLabels, specThresholds } from '$lib/utils/ruleLabels';
 	import { diffSpecs, type SpecChange } from '$lib/utils/specDiff';
 	import type { ExecutionRequestFields } from '$lib/api';
-	import { portal } from '$lib/actions/portal';
 	import ParameterEditor from '$lib/components/ui/ParameterEditor.svelte';
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
 	import StrategyBuilder from '$lib/components/strategy/StrategyBuilder.svelte';
@@ -1495,7 +1494,6 @@ TYPE_NAME = "my_strategy"
 </div>
 
 {#if launcherOpen}
-<div use:portal>
 	<StrategyLauncher {library} {libraryLoading} templates={STRATEGY_TEMPLATES} {prebuilt} {appStrategies} {includeAppGenerated} {appLoading}
 		{currentLibraryId} {forging} tab={launcherTab}
 		on:close={() => (launcherOpen = false)}
@@ -1508,12 +1506,10 @@ TYPE_NAME = "my_strategy"
 		on:system={(e) => openSystemStrategy(e.detail.id, findStrategy(e.detail.source === 'pre' ? prebuilt : appStrategies, e.detail.id))}
 		on:toggleApp={toggleAppGenerated}
 		on:import={() => { launcherOpen = false; showImportDialog = true; }} />
-</div>
 {/if}
 
 <!-- Save prompt: overwrite the opened strategy or create a new one -->
 {#if savePromptOpen}
-<div use:portal>
 	<button type="button" class="fixed inset-0 z-40 bg-black/50" on:click={() => (savePromptOpen = false)} aria-label="Cancel save"></button>
 	<div class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-[#333] bg-[#050505] p-5">
 		<h3 class="border-b border-[#222] pb-3 text-sm font-bold uppercase tracking-widest text-white">Save strategy</h3>
@@ -1543,14 +1539,11 @@ TYPE_NAME = "my_strategy"
 			</button>
 		</div>
 	</div>
-</div>
 {/if}
 
 {#if showImportDialog}
-	<div use:portal>
-		<StrategyImportDialog
-			on:close={() => (showImportDialog = false)}
-			on:imported={(e) => onStrategyImported(e.detail)}
-		/>
-	</div>
+	<StrategyImportDialog
+		on:close={() => (showImportDialog = false)}
+		on:imported={(e) => onStrategyImported(e.detail)}
+	/>
 {/if}
