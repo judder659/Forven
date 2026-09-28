@@ -36,7 +36,7 @@
 
 <div class="space-y-2">
 	<p class="text-[11px] text-[#666]">
-		{variants.length} version{variants.length === 1 ? '' : 's'} of the rules previewed this session. The deflated Sharpe counts all {resultsSeen} result{resultsSeen === 1 ? '' : 's'} you have looked at, including each market and every stress-test, heatmap and market-grid cell: the more results seen on the same data, the likelier the best looks good by luck.
+		{variants.length} version{variants.length === 1 ? '' : 's'} of the rules previewed this session. The deflated Sharpe counts all {resultsSeen} result{resultsSeen === 1 ? '' : 's'} seen: each version on each market, and every stress-test, heatmap and market-grid cell. The more results seen on the same data, the likelier the best looks good by luck.
 	</p>
 	<div class="max-h-[320px] divide-y divide-[#111] overflow-y-auto border border-[#161616]">
 		{#each newestFirst as variant (variant.key)}

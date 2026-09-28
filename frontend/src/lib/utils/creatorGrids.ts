@@ -153,7 +153,7 @@ export function heatmapVerdict(cells: HeatmapCellLike[], xValues: number[], yVal
 	const best = scored.reduce((a, b) => ((b.oos_return ?? -Infinity) > (a.oos_return ?? -Infinity) ? b : a));
 	const bestReturn = best.oos_return ?? 0;
 	const profitable = scored.filter((c) => (c.oos_return ?? 0) > 0).length;
-	const share = `${profitable} of ${scored.length} settings make money out-of-sample.`;
+	const share = `${profitable} of ${scored.length} setting${scored.length === 1 ? '' : 's'} ${profitable === 1 ? 'makes' : 'make'} money out-of-sample.`;
 	if (bestReturn <= 0) return { status: 'losing', text: `No setting in this grid makes money out-of-sample.` };
 	const xi = xValues.indexOf(best.x);
 	const yi = yValues.indexOf(best.y);

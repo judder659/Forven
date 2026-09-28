@@ -1414,7 +1414,7 @@ TYPE_NAME = "my_strategy"
 		<button type="button" on:click={showExecution} title="Execution settings"
 			class="ml-auto max-w-full truncate border border-[#222] px-2 py-0.5 text-[10px] text-[#888] hover:border-[#555] hover:text-white">{executionSummary}</button>
 		{#if mode === 'visual'}
-			<span class="text-[10px] text-[#555]" title="Results you have looked at this session: each version of the rules on each market, and every stress-test, heatmap and market-grid cell. The deflated Sharpe charges for each.">
+			<span class="text-[10px] text-[#555]" title="Results seen this session: each version of the rules on each market, and every stress-test, heatmap and market-grid cell. The deflated Sharpe charges for each.">
 				{trials} result{trials === 1 ? '' : 's'} seen
 			</span>
 		{/if}
