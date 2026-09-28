@@ -1068,3 +1068,23 @@ def test_remote_fetch_and_submit_return_what_the_remote_said(monkeypatch):
     run = data_domain.post_data_ingestion_submit("BTC/USDT", "1h", limit=1000)
     assert (run["id"], run["status"], run["bars_fetched"], run["bars_new"]) == ("r-2", "running", 7, 0)
     assert run["completed_at"] is None
+
+
+def test_venue_lookup_answers_from_an_expired_market_list_and_refreshes_behind(monkeypatch):
+    monkeypatch.setattr(fdata, "_market_cache", {"okx": {"expires_at": time.time() - 1, "markets": {"OLD/USDT": {}}}})
+    loaded = threading.Event()
+    calls = []
+
+    def load(exchange_id):
+        calls.append(exchange_id)
+        fdata._market_cache[exchange_id] = {"expires_at": time.time() + 3600, "markets": {"NEW/USDT": {}}}
+        loaded.set()
+        return {"NEW/USDT": {}}
+
+    monkeypatch.setattr(fdata, "_cached_markets", load)
+    assert fdata.cached_markets_stale_ok("okx") == {"OLD/USDT": {}}  # at once, not after a reload
+    assert loaded.wait(5)
+    assert fdata.cached_markets_stale_ok("okx") == {"NEW/USDT": {}} and calls == ["okx"]
+    assert fdata.cached_markets_stale_ok("bybit") == {"NEW/USDT": {}}  # never loaded: waits for its load
+    assert calls == ["okx", "bybit"]
+

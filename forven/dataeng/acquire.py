@@ -80,9 +80,10 @@ def _safe_fs_symbol(symbol: str) -> str:
 
 
 def _venue_markets(exchange_id: str) -> dict[str, Any] | None:
-    """A venue's market list, or None when it cannot be loaded right now."""
+    """A venue's market list, or None when it cannot be loaded right now. An
+    expired list answers at once (listings change rarely; it refreshes behind)."""
     try:
-        markets = fdata._cached_markets(exchange_id)
+        markets = fdata.cached_markets_stale_ok(exchange_id)
     except Exception as exc:
         log.warning("Could not load %s markets: %s", exchange_id, exc)
         return None

@@ -3430,6 +3430,39 @@ def _cached_markets(exchange_id: str) -> dict[str, Any]:
     return dict(markets)
 
 
+_market_refreshing: set[str] = set()
+
+
+def cached_markets_stale_ok(exchange_id: str) -> dict[str, Any]:
+    """A venue's market list for advisory reads (where can this be downloaded
+    from?): an expired list is served at once while one background refresh
+    runs, so only a venue never loaded since start-up waits for its load. The
+    write path keeps asking ``_cached_markets``."""
+    key = exchange_id.lower()
+    with _market_cache_lock:
+        cached = _market_cache.get(key) or {}
+        markets = cached.get("markets")
+        expired = time.time() >= float(cached.get("expires_at", 0.0))
+        refresh = bool(markets) and expired and key not in _market_refreshing
+        if refresh:
+            _market_refreshing.add(key)
+    if not markets:
+        return _cached_markets(exchange_id)
+    if refresh:
+        threading.Thread(target=_refresh_markets, args=(key,), name=f"forven-markets-{key}", daemon=True).start()
+    return dict(markets)
+
+
+def _refresh_markets(key: str) -> None:
+    try:
+        _cached_markets(key)
+    except Exception as exc:  # the stale list keeps serving; the next read retries
+        log.debug("background %s markets refresh failed: %s", key, exc)
+    finally:
+        with _market_cache_lock:
+            _market_refreshing.discard(key)
+
+
 def search_ccxt_symbols(query: str, exchange_id: str = "binance", limit: int = 200) -> list[dict[str, Any]]:
     markets = _cached_markets(exchange_id)
     needle = str(query or "").strip().lower()
