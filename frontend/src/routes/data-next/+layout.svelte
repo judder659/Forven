@@ -43,7 +43,8 @@
 	});
 
 	$: census = $slaCensus.data;
-	$: verdict = census ? healthVerdict(census, census.worst) : null;
+	// Counts only: the Health hero names the strategy when it has the rows at hand.
+	$: verdict = census ? healthVerdict(census) : null;
 	$: summary = $jobsSummary.data;
 	$: jobsState =
 		$jobsSummary.status === 'unavailable'

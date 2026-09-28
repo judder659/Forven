@@ -3,10 +3,12 @@ import {
 	activeFilterCount,
 	applyView,
 	BUILTIN_VIEWS,
+	DEFAULT_COLUMNS,
 	EMPTY_FILTERS,
 	filtersFromParams,
 	filtersToParams,
 	filtersToQuery,
+	gridMinWidth,
 	gridTemplate,
 	loadColumns,
 	loadViews,
@@ -89,7 +91,10 @@ describe('saved views', () => {
 		expect(loadColumns(store)).toContain('quality');
 		saveColumns(['tf', 'freshness', 'bogus' as never], store);
 		expect(loadColumns(store)).toEqual(['tf', 'freshness']);
-		expect(gridTemplate(['tf', 'size'])).toBe('28px minmax(180px,1.4fr) 52px 76px');
+		expect(gridTemplate(['tf', 'size'])).toBe('16px minmax(150px,1.2fr) 34px 60px');
+		// Every column fits a 1280 px window beside the sidebar; narrower windows scroll sideways.
+		expect(gridMinWidth(DEFAULT_COLUMNS)).toBeLessThanOrEqual(1280 - 240 - 34);
+		expect(gridMinWidth(['tf'])).toBe(16 + 150 + 34 + 2 * 8 + 24);
 	});
 });
 

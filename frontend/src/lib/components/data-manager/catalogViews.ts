@@ -191,22 +191,29 @@ export interface ColumnDef {
 	label: string;
 	/** CSS grid track. */
 	width: string;
+	/** Smallest width of the track in px (the table scrolls sideways below the sum). */
+	min: number;
 	title: string;
 	sort?: SortKey;
 	align?: 'right';
 }
 
 export const COLUMNS: ColumnDef[] = [
-	{ key: 'tf', label: 'TF', width: '52px', title: 'Timeframe (bar size)' },
-	{ key: 'stream', label: 'Stream', width: '104px', title: 'What the series holds: candles or an enrichment stream' },
-	{ key: 'history', label: 'History', width: 'minmax(170px,1.3fr)', title: 'First and last stored bar (UTC) and the span between them', sort: 'last_ts' },
-	{ key: 'completeness', label: 'Complete', width: '104px', title: 'Stored bars ÷ the bars the span implies', sort: 'completeness' },
-	{ key: 'freshness', label: 'Freshness', width: '150px', title: 'The server’s freshness state, and how far behind the series is against what its tier allows', sort: 'priority' },
-	{ key: 'quality', label: 'Quality', width: '70px', title: 'Quality score 0–100 (completeness, gaps, invalid bars, outliers). Freshness is not part of it.', sort: 'quality', align: 'right' },
-	{ key: 'consumers', label: 'Used by', width: 'minmax(120px,1fr)', title: 'Strategies, bots and workflows that read the series', sort: 'consumers' },
-	{ key: 'size', label: 'Size', width: '76px', title: 'Size on disk', sort: 'size', align: 'right' },
-	{ key: 'updated', label: 'Updated', width: '86px', title: 'Last write to the series files', align: 'right' },
+	{ key: 'tf', label: 'TF', width: '34px', min: 34, title: 'Timeframe (bar size)' },
+	{ key: 'stream', label: 'Stream', width: '86px', min: 86, title: 'What the series holds: candles or an enrichment stream' },
+	{ key: 'history', label: 'History', width: 'minmax(112px,0.9fr)', min: 112, title: 'First stored bar (UTC) and how much history there is; hover for the last bar', sort: 'last_ts' },
+	{ key: 'completeness', label: 'Complete', width: '86px', min: 86, title: 'Stored bars ÷ the bars the span implies', sort: 'completeness' },
+	{ key: 'freshness', label: 'Freshness', width: '138px', min: 138, title: 'The server’s freshness state, and how far behind the series is against what its tier allows', sort: 'priority' },
+	{ key: 'quality', label: 'Qual.', width: '42px', min: 42, title: 'Quality score 0–100 (completeness, gaps, invalid bars, outliers). Freshness is not part of it.', sort: 'quality', align: 'right' },
+	{ key: 'consumers', label: 'Used by', width: 'minmax(92px,0.8fr)', min: 92, title: 'Strategies, bots and workflows that read the series', sort: 'consumers' },
+	{ key: 'size', label: 'Size', width: '60px', min: 60, title: 'Size on disk', sort: 'size', align: 'right' },
+	{ key: 'updated', label: 'Updated', width: '66px', min: 66, title: 'Last write to the series files', align: 'right' },
 ];
+
+const LEAD_TRACKS = ['16px', 'minmax(150px,1.2fr)'];
+const LEAD_MIN = 16 + 150;
+export const GRID_GAP = 8;
+const GRID_PADDING = 24;
 
 export const DEFAULT_COLUMNS: ColumnKey[] = COLUMNS.map((c) => c.key);
 
@@ -234,5 +241,11 @@ export function saveColumns(columns: ColumnKey[], store: Storage | null = storag
 
 /** The CSS grid template for the visible columns (checkbox and symbol first). */
 export function gridTemplate(columns: ColumnKey[]): string {
-	return ['28px', 'minmax(180px,1.4fr)', ...COLUMNS.filter((c) => columns.includes(c.key)).map((c) => c.width)].join(' ');
+	return [...LEAD_TRACKS, ...COLUMNS.filter((c) => columns.includes(c.key)).map((c) => c.width)].join(' ');
+}
+
+/** Width below which the table scrolls sideways instead of squeezing cells. */
+export function gridMinWidth(columns: ColumnKey[]): number {
+	const shown = COLUMNS.filter((c) => columns.includes(c.key));
+	return LEAD_MIN + shown.reduce((sum, c) => sum + c.min, 0) + (shown.length + 1) * GRID_GAP + GRID_PADDING;
 }
