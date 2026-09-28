@@ -73,14 +73,6 @@ export interface SettingsEntry {
   advanced?: boolean;
 }
 
-const DATA_ENGINE_EXCHANGE_OPTIONS = [
-  { value: 'binance', label: 'Binance' },
-  { value: 'bybit', label: 'Bybit' },
-  { value: 'okx', label: 'OKX' },
-  { value: 'coinbase', label: 'Coinbase' },
-  { value: 'kraken', label: 'Kraken' },
-];
-
 export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'home', label: 'Home', description: 'Daily controls, search, and recently changed settings.', deepLinks: [] },
   { id: 'data', label: 'Data', description: 'Data engine, freshness SLAs, collection budget, storage housekeeping and the research universe.', deepLinks: [{ label: 'Data Manager', href: '/data' }] },
@@ -3035,27 +3027,14 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'data-engine.enabled',
     label: 'Data Engine enabled',
-    default: false,
+    default: true,
     type: 'toggle',
     area: 'data',
     subsection: 'data-engine-core',
     backendSection: 'data-engine',
     backendPath: 'data_engine_settings.enabled',
-    description: 'Route compatible data reads and collectors through the new DataHub path.',
-    usedBy: ['forven.data', 'forven.data_manager', 'forven.dataeng.settings'],
-  },
-  {
-    id: 'data-engine.enabled_exchanges',
-    label: 'Enabled exchanges',
-    default: ['binance'],
-    type: 'csv',
-    options: DATA_ENGINE_EXCHANGE_OPTIONS,
-    area: 'data',
-    subsection: 'data-engine-core',
-    backendSection: 'data-engine',
-    backendPath: 'data_engine_settings.enabled_exchanges',
-    description: 'Exchange adapters registered by the Data Engine source registry.',
-    usedBy: ['forven.dataeng.registry', 'forven.dataeng.ccxt_source'],
+    description: 'Read candles and enrichment through the DataHub (DuckDB, windowed reads) and collect streams through the source registry. Off falls back to the legacy parquet read path, which is kept only as a fallback and will be removed.',
+    usedBy: ['forven.data', 'forven.data_manager', 'forven.dataeng.hub', 'forven.dataeng.settings'],
   },
   {
     id: 'data-engine.point_in_time_mode',

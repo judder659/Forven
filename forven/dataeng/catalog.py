@@ -68,13 +68,21 @@ class CoverageRow:
 _catalog_io_lock = threading.Lock()
 _CATALOG_OPEN_RETRIES = 4
 _CATALOG_RETRY_SLEEP_SECONDS = 0.3
+# Catalog files whose schema this process already ensured: every Catalog()
+# used to re-run the DDL batch under the lock, and the Data Manager reads the
+# registry/quality tables on request paths.
+_initialized_paths: set[str] = set()
 
 
 class Catalog:
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path is not None else default_catalog_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        key = str(self.path.resolve())
+        if key in _initialized_paths and self.path.exists():
+            return
         self._initialize()
+        _initialized_paths.add(key)
 
     @contextmanager
     def connect(self):
@@ -190,6 +198,23 @@ class Catalog:
                     delist_ts TIMESTAMPTZ,               -- last bar when no active market remains
                     quote_volume_24h DOUBLE,             -- liquidity rank input
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            # crypto / tradfi, from the venue's market metadata (NULL = not
+            # classified yet; readers treat it as crypto).
+            con.execute("ALTER TABLE symbol_registry ADD COLUMN IF NOT EXISTS asset_class VARCHAR")
+            # One quality rubric per stored series (forven/dataeng/quality.py),
+            # cached by the series files' (size, mtime) fingerprint.
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS series_quality (
+                    series_id VARCHAR PRIMARY KEY,
+                    fingerprint VARCHAR NOT NULL,
+                    score DOUBLE,
+                    issues_json VARCHAR NOT NULL,
+                    stats_json VARCHAR NOT NULL,
+                    computed_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -408,29 +433,32 @@ class Catalog:
         inception_ts: str | None = None,
         delist_ts: str | None = None,
         quote_volume_24h: float | None = None,
+        asset_class: str | None = None,
     ) -> None:
+        # INSERT OR REPLACE resets every unlisted column, so callers pass the
+        # full row (including a previously stored asset_class).
         with self.connect() as con:
             con.execute(
                 """
                 INSERT OR REPLACE INTO symbol_registry (
                     symbol, market, status, inception_ts, delist_ts,
-                    quote_volume_24h, updated_at
+                    quote_volume_24h, asset_class, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, now())
+                VALUES (?, ?, ?, ?, ?, ?, ?, now())
                 """,
-                [symbol, market, status, inception_ts, delist_ts, quote_volume_24h],
+                [symbol, market, status, inception_ts, delist_ts, quote_volume_24h, asset_class],
             )
 
     def list_symbol_registry(self) -> list[dict[str, Any]]:
         with self.connect() as con:
             rows = con.execute(
                 """
-                SELECT symbol, market, status, inception_ts, delist_ts, quote_volume_24h
+                SELECT symbol, market, status, inception_ts, delist_ts, quote_volume_24h, asset_class
                 FROM symbol_registry
                 ORDER BY symbol
                 """
             ).fetchall()
-        keys = ["symbol", "market", "status", "inception_ts", "delist_ts", "quote_volume_24h"]
+        keys = ["symbol", "market", "status", "inception_ts", "delist_ts", "quote_volume_24h", "asset_class"]
         result: list[dict[str, Any]] = []
         for values in rows:
             row = dict(zip(keys, values, strict=True))
@@ -439,6 +467,64 @@ class Catalog:
             row["quote_volume_24h"] = float(row["quote_volume_24h"]) if row["quote_volume_24h"] is not None else None
             result.append(row)
         return result
+
+    # -- series quality cache (forven/dataeng/quality.py) -------------------
+    def list_series_quality(self) -> dict[str, dict[str, Any]]:
+        """Every cached quality row, keyed by series id."""
+        import json
+
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT series_id, fingerprint, score, issues_json, stats_json, computed_at FROM series_quality"
+            ).fetchall()
+        result: dict[str, dict[str, Any]] = {}
+        for series_id, fingerprint, score, issues_json, stats_json, computed_at in rows:
+            try:
+                issues = json.loads(issues_json or "[]")
+                stats = json.loads(stats_json or "{}")
+            except ValueError:
+                issues, stats = [], {}
+            result[str(series_id)] = {
+                "fingerprint": fingerprint,
+                "score": None if score is None else float(score),
+                "issues": issues if isinstance(issues, list) else [],
+                "stats": stats if isinstance(stats, dict) else {},
+                "computed_at": _utc_iso(computed_at),
+            }
+        return result
+
+    def upsert_series_quality(self, rows: list[dict[str, Any]]) -> None:
+        """rows: {series_id, fingerprint, score, issues, stats, computed_at}."""
+        import json
+
+        if not rows:
+            return
+        with self.connect() as con:
+            con.executemany(
+                """
+                INSERT OR REPLACE INTO series_quality
+                    (series_id, fingerprint, score, issues_json, stats_json, computed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    [
+                        row["series_id"],
+                        row["fingerprint"],
+                        row.get("score"),
+                        json.dumps(row.get("issues") or []),
+                        json.dumps(row.get("stats") or {}, default=str),
+                        row["computed_at"],
+                    ]
+                    for row in rows
+                ],
+            )
+
+    def delete_series_quality(self, series_ids: list[str]) -> int:
+        if not series_ids:
+            return 0
+        with self.connect() as con:
+            con.executemany("DELETE FROM series_quality WHERE series_id = ?", [[sid] for sid in series_ids])
+        return len(series_ids)
 
 
 def _read_parquet_bounds(path: Path) -> tuple[str | None, str | None, int]:

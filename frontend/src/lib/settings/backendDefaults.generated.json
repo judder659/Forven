@@ -28,10 +28,7 @@
     "data_engine_settings.collector.max_tick_seconds": 90,
     "data_engine_settings.collector.strike_out_after": 3,
     "data_engine_settings.collector.tick_seconds": 120,
-    "data_engine_settings.enabled": false,
-    "data_engine_settings.enabled_exchanges": [
-      "binance"
-    ],
+    "data_engine_settings.enabled": true,
     "data_engine_settings.point_in_time_as_of": "",
     "data_engine_settings.point_in_time_mode": "latest",
     "data_engine_settings.research_universe.asset_classes": [

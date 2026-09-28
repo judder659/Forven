@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class DataEngineSettings(BaseModel):
-    enabled: bool = False
-    enabled_exchanges: list[str] = Field(default_factory=lambda: ["binance"])
+    # DataHub reads (DuckDB, windowed) and registry-routed stream collection.
+    # On by default: the legacy read path stays only as its fallback.
+    enabled: bool = True
     # Research universe (edge-data-expansion Run 1): symbols beyond the trading
     # set that get deep history for strategy DISCOVERY. Seeded via Binance
     # Vision + REST tail; kept current by the SLA collector at the universe tier.

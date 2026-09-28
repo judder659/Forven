@@ -23,6 +23,14 @@ from forven.data_manager import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def legacy_data_engine(monkeypatch):
+    """Pin the legacy (non-DataHub) read/collect path. The DataHub is the
+    default; these tests cover the legacy exchange collectors and _enrich_*
+    joins, which stay as its fallback."""
+    monkeypatch.setattr("forven.data._data_engine_read_enabled", lambda: False)
+
+
 def _make_ohlcv(n: int = 10) -> pd.DataFrame:
     ts = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC")
     return pd.DataFrame({
@@ -141,6 +149,7 @@ def test_funding_collector_creates_file(tmp_path):
     assert path.exists()
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_funding_collector_incremental(tmp_path):
     """Second collect should only add new rows."""
     collector = FundingCollector()
@@ -182,6 +191,7 @@ def test_funding_collector_idempotent(tmp_path):
     assert len(loaded) == 3
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_funding_collector_raises_on_failure():
     collector = FundingCollector()
     with patch("forven.data_manager._get_futures_exchange", side_effect=RuntimeError("no exchange")):
@@ -207,6 +217,7 @@ def _mock_oi_rows(n: int = 3):
     ]
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_oi_collector_creates_file(tmp_path):
     collector = OICollector()
     with patch("forven.data_manager.OI_DIR", tmp_path / "oi"):
@@ -219,6 +230,7 @@ def test_oi_collector_creates_file(tmp_path):
     assert path.exists()
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_oi_collector_raises_on_failure():
     collector = OICollector()
     with patch("forven.data_manager._get_futures_exchange", side_effect=RuntimeError("no exchange")):
@@ -372,6 +384,7 @@ def test_enrich_empty_df_returns_unchanged():
     assert result.empty
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_enrich_exception_returns_original(tmp_path):
     """Any exception in enrich should return the original df unchanged."""
     dm = DataManager()
@@ -1011,6 +1024,7 @@ def test_data_manager_is_lazy():
 # T19 — Collector validation (drop future-ts / negative rows)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_funding_collector_drops_future_rows(monkeypatch, tmp_path):
     from forven.data_manager import FundingCollector
     future = int((pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=30)).timestamp() * 1000)
@@ -1035,6 +1049,7 @@ def test_funding_collector_drops_future_rows(monkeypatch, tmp_path):
     assert added == 1
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_oi_collector_drops_negative_open_interest(monkeypatch, tmp_path):
     from forven.data_manager import OICollector
     base_ms = int(pd.Timestamp("2026-01-01", tz="UTC").timestamp() * 1000)

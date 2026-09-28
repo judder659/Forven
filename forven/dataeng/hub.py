@@ -34,27 +34,29 @@ class DataHub:
         market: str = "spot",
         as_of: object | None = None,
     ) -> pd.DataFrame | None:
-        """Candle read. With ``as_of=None`` (default) this is exactly the legacy
-        latest-value read. With ``as_of=T`` it reconstructs the values that were in
-        force at time ``T`` from the append-only revision log (point-in-time, T1.6),
-        giving reproducible backtests robust to vendor restatements.
-
-        ``as_of`` reconstruction applies to full-OHLCV reads only (this slice's
-        revision log is OHLCV); with a partial ``columns`` projection the latest
-        value is returned unchanged. ``as_of`` may be naive (interpreted UTC) or
-        tz-aware."""
+        """Candle read of bars in [start, end] (inclusive; naive = UTC). With
+        ``as_of=None`` (default) this is exactly the legacy latest-value read.
+        With ``as_of=T`` it reconstructs the values that were in force at time
+        ``T`` from the append-only revision log (point-in-time, T1.6), giving
+        reproducible backtests robust to vendor restatements; a partial
+        ``columns`` projection is applied after the reconstruction, and a
+        reconstruction failure raises ``AsOfReconstructionError``."""
         ref = to_ref(symbol, source=source, market=market, timeframe=timeframe)
         paths = self._series_paths(ref.to_fs(), timeframe)
         if not paths:
             return None
 
         selected = _resolve_columns(columns)
-        frame = _read_candles_path(paths, start=start, end=end, columns=selected)
-        normalized = _normalize_projected_frame(frame, selected)
-        if as_of is not None and selected == _OHLCV_COLUMNS:
-            from forven.dataeng.revisions import reconstruct_as_of
+        read = selected if as_of is None else list(dict.fromkeys([*_OHLCV_COLUMNS, *selected]))
+        frame = _read_candles_path(paths, start=start, end=end, columns=read)
+        normalized = _normalize_projected_frame(frame, read)
+        if as_of is None:
+            return normalized
+        from forven.dataeng.revisions import reconstruct_as_of
 
-            normalized = reconstruct_as_of(normalized, symbol, timeframe, as_of)
+        normalized = reconstruct_as_of(normalized, symbol, timeframe, as_of)
+        if read != selected:
+            normalized = normalized[[column for column in selected if column in normalized.columns]].reset_index(drop=True)
         return normalized
 
     def enrich(
@@ -133,13 +135,6 @@ class DataHub:
                     pass
             return result
 
-    def quality(self, symbol: str, timeframe: str) -> dict[str, object]:
-        ref = to_ref(symbol, source="binance", market="spot", timeframe=timeframe)
-        paths = self._series_paths(ref.to_fs(), timeframe)
-        if not paths:
-            raise FileNotFoundError(f"dataset not found: {ref.to_fs()} {timeframe}")
-        return _quality_from_path(paths, ref.to_fs(), timeframe)
-
     def status(self) -> dict[str, object]:
         from forven.dataeng.catalog import Catalog
         from forven.dataeng.settings import load_data_engine_settings
@@ -175,16 +170,14 @@ class DataHub:
             for state in get_stream_manager().status()
         ]
 
+        # Sources: every source the circuit-breaker registry knows (registered
+        # adapters and any source that recorded a success or failure), plus the
+        # sources stamped in the persisted coverage.
         registry = get_source_registry()
         source_health = []
         source_ids = {str(row.get("source") or "") for row in coverage}
-        try:
-            source_ids.update(load_data_engine_settings().enabled_exchanges)
-        except Exception:
-            pass
+        source_ids.update(registry.source_ids())
         for source_id in sorted(source for source in source_ids if source):
-            if not source_id:
-                continue
             try:
                 health = registry.health(source_id)
             except Exception:
@@ -274,8 +267,11 @@ def _read_candles_path(
         predicates.append("timestamp <= ?")
         params.append(_as_utc_timestamp(end))
     where = f" WHERE {' AND '.join(predicates)}" if predicates else ""
-    query = f"SELECT {quoted_columns} FROM read_parquet(?){where} ORDER BY timestamp"
+    # "<x>.parquet" sorts before "<x>.parquet.tail", so the keep-last dedup
+    # downstream keeps the tail's row on a duplicate timestamp.
+    query = f"SELECT {quoted_columns} FROM read_parquet(?, filename=true){where} ORDER BY timestamp, filename"
     with duckdb.connect(":memory:") as con:
+        con.execute("SET TimeZone='UTC'")
         return con.execute(query, params).fetchdf()
 
 
@@ -610,126 +606,3 @@ def _enrich_with_duckdb(df: pd.DataFrame, specs: list[_EnrichmentSpec]) -> pd.Da
 
 def _joined_col(alias: str, output_col: str) -> str:
     return f"{alias}__{output_col}"
-
-
-def _quality_from_path(paths: Path | list[Path], symbol: str, timeframe: str) -> dict[str, object]:
-    from forven.data import _freshness_for, _timeframe_to_ms, _to_iso
-
-    path_list = [str(p) for p in (paths if isinstance(paths, list) else [paths])]
-    timeframe_ms = _timeframe_to_ms(timeframe)
-    with duckdb.connect(":memory:") as con:
-        stats = con.execute(
-            """
-            WITH src AS (
-                SELECT timestamp, open, high, low, close, volume
-                FROM read_parquet(?)
-                -- cold+tail may briefly overlap in the crash window between a
-                -- cold replace and the tail clear; count each bar once.
-                QUALIFY row_number() OVER (PARTITION BY timestamp) = 1
-            ),
-            agg AS (
-                SELECT
-                    count(*) AS row_count,
-                    min(timestamp) AS start_ts,
-                    max(timestamp) AS end_ts,
-                    sum(
-                        CASE WHEN open IS NULL OR high IS NULL OR low IS NULL OR close IS NULL OR volume IS NULL
-                        THEN 1 ELSE 0 END
-                    ) AS null_values,
-                    min(low) AS price_min,
-                    max(high) AS price_max,
-                    min(volume) AS volume_min,
-                    max(volume) AS volume_max,
-                    avg(volume) AS volume_avg,
-                    avg(close) AS close_mean,
-                    stddev_pop(close) AS close_std,
-                    avg(volume) AS volume_mean,
-                    stddev_pop(volume) AS volume_std,
-                    sum(CASE WHEN high < low THEN 1 ELSE 0 END) AS invalid_high_low,
-                    sum(CASE WHEN close > high OR close < low THEN 1 ELSE 0 END) AS invalid_close_range
-                FROM src
-            )
-            SELECT
-                row_count, start_ts, end_ts, null_values,
-                price_min, price_max, volume_min, volume_max, volume_avg,
-                COALESCE((
-                    SELECT count(*) FROM src, agg
-                    WHERE close_std > 0 AND abs(close - close_mean) > (3 * close_std)
-                ), 0) AS close_outliers,
-                COALESCE((
-                    SELECT count(*) FROM src, agg
-                    WHERE volume_std > 0 AND abs(volume - volume_mean) > (3 * volume_std)
-                ), 0) AS volume_outliers,
-                invalid_high_low,
-                invalid_close_range
-            FROM agg
-            """,
-            [path_list],
-        ).fetchone()
-        gap_rows = con.execute(
-            """
-            WITH deduped AS (
-                SELECT timestamp
-                FROM read_parquet(?)
-                QUALIFY row_number() OVER (PARTITION BY timestamp) = 1
-            ),
-            ordered AS (
-                SELECT
-                    timestamp,
-                    lag(timestamp) OVER (ORDER BY timestamp) AS prev_ts
-                FROM deduped
-            )
-            SELECT prev_ts, timestamp
-            FROM ordered
-            WHERE prev_ts IS NOT NULL
-              AND date_diff('millisecond', prev_ts, timestamp) > ?
-            ORDER BY timestamp
-            LIMIT 200
-            """,
-            [path_list, timeframe_ms],
-        ).fetchall()
-
-    if stats is None or int(stats[0] or 0) == 0:
-        raise FileNotFoundError(f"dataset not found: {symbol} {timeframe}")
-
-    start = pd.Timestamp(stats[1])
-    end = pd.Timestamp(stats[2])
-    duration_days = max(0.0, (end - start).total_seconds() / 86400.0)
-    total_gaps = 0
-    gap_details: list[dict[str, str]] = []
-    for prev_ts, next_ts in gap_rows:
-        prev = pd.Timestamp(prev_ts)
-        current = pd.Timestamp(next_ts)
-        diff_ms = int((current - prev).total_seconds() * 1000)
-        missing = max(1, int(round(diff_ms / timeframe_ms)) - 1)
-        total_gaps += missing
-        gap_details.append(
-            {
-                "timestamp": _to_iso(prev + pd.Timedelta(milliseconds=timeframe_ms)) or "",
-                "gap_size": f"{missing} bars",
-            }
-        )
-
-    return {
-        "symbol": symbol,
-        "timeframe": timeframe,
-        "row_count": int(stats[0]),
-        "start": _to_iso(start),
-        "end": _to_iso(end),
-        "duration_days": round(duration_days, 6),
-        "gaps": total_gaps,
-        "gap_details": gap_details,
-        "null_values": int(stats[3] or 0),
-        "price_range": {"min": float(stats[4] or 0.0), "max": float(stats[5] or 0.0)},
-        "volume_stats": {
-            "min": float(stats[6] or 0.0),
-            "max": float(stats[7] or 0.0),
-            "avg": float(stats[8] or 0.0),
-        },
-        "outliers": {"close": int(stats[9] or 0), "volume": int(stats[10] or 0)},
-        "integrity": {
-            "invalid_high_low": int(stats[11] or 0),
-            "invalid_close_range": int(stats[12] or 0),
-        },
-        "freshness": _freshness_for(timeframe, end),
-    }
