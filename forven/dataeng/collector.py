@@ -1318,7 +1318,7 @@ def _run_tick(
             started_at=started_at,
             finished_at=finished_at,
             origin="sla",
-            error=("internal", errors[0]["error"]) if status == "failed" and errors else None,
+            error=(errors[0]["code"], errors[0]["error"]) if status == "failed" and errors else None,
         )
     except Exception as exc:  # noqa: BLE001 - the tick's work already landed
         log.warning("collector: could not record the tick: %s", exc)
