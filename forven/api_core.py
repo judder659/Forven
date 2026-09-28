@@ -158,6 +158,9 @@ from forven.api_models import (  # noqa: F401
     SendToForgeBody,
     SettingsApiKeyBody,
     SettingsTestRemoteEngineBody,
+    StrategyHeatmapAxis,
+    StrategyHeatmapBody,
+    StrategyMarketsBody,
 )
 
 # ARCH-06 step 3 (partial): the DECLARATIVE half of the settings subsystem —
@@ -7735,6 +7738,64 @@ def _resolve_backtest_submit(body: BacktestSubmitBody, *, backfill: bool = True)
         "risk_parity_warning": risk_parity_warning,
         "manual_execution_controls": manual_execution_controls,
     }
+
+
+def _strategy_tool_run(body: BacktestSubmitBody, resolved: dict) -> dict:
+    """What the strategy page's Heatmap and Markets tabs run: the manual backtest
+    ``body`` describes, as ``_resolve_backtest_submit`` resolved it."""
+    return {
+        "strategy_id": resolved["strategy_id"],
+        "strategy_type": resolved["strategy_type"],
+        "params": resolved["execution_params"],
+        "leverage": resolved["leverage"],
+        "asset": resolved["asset"],
+        "timeframe": resolved["timeframe"],
+        "bars": resolved["bars"],
+        "trade_mode": body.trade_mode,
+        "allow_shorting": body.allow_shorting,
+        "start_date": (str(body.start).strip() or None) if body.start else None,
+        "end_date": (str(body.end).strip() or None) if body.end else None,
+        "fee_bps": body.fee_bps,
+        "slippage_bps": body.slippage_bps,
+        "initial_capital": body.initial_capital,
+        "execution_controls": resolved["manual_execution_controls"] or None,
+        "as_of": (str(body.as_of).strip() or None) if body.as_of else None,
+    }
+
+
+def post_strategy_param_heatmap(body: StrategyHeatmapBody) -> dict:
+    """Parameter heatmap for a saved strategy: its manual backtest, as the Gauntlet
+    tab runs it, repeated over a grid of two of its settings. Nothing is saved."""
+    from forven.strategies.backtest import build_strategy_param_heatmap
+
+    run = _strategy_tool_run(body, _resolve_backtest_submit(body, backfill=False))
+    try:
+        return json_safe_payload(build_strategy_param_heatmap(
+            run=run, x_axis=body.x.model_dump(), y_axis=body.y.model_dump() if body.y else None,
+        ))
+    except Exception as exc:  # noqa: BLE001 — report it on the tab, never break the page
+        return {"x": None, "y": None, "cells": [], "warnings": [f"Heatmap failed: {exc}"]}
+
+
+def post_strategy_markets(body: StrategyMarketsBody) -> dict:
+    """A saved strategy's manual backtest on several markets. Nothing is saved."""
+    from forven.strategies.backtest import build_strategy_markets
+
+    run = _strategy_tool_run(body, _resolve_backtest_submit(body, backfill=False))
+    markets = [
+        {
+            "symbol": market.symbol.strip(),
+            "asset": _extract_base_asset_symbol(market.symbol),
+            "timeframe": market.timeframe.strip(),
+            "bars": _estimate_backtest_bars(body.start, body.end, market.timeframe.strip(),
+                                            duration_days_override=body.duration_days),
+        }
+        for market in body.markets
+    ]
+    try:
+        return json_safe_payload(build_strategy_markets(run=run, markets=markets))
+    except Exception as exc:  # noqa: BLE001 — report it on the tab, never break the page
+        return {"rows": [], "warnings": [f"Market comparison failed: {exc}"]}
 
 
 def post_backtest_submit(

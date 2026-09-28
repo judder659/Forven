@@ -156,6 +156,23 @@ class BacktestSubmitBody(BaseModel):
     as_of: str | None = Field(default=None, max_length=64)
 
 
+
+class StrategyHeatmapAxis(BaseModel):
+    """A heatmap axis for a saved strategy: a param, or a knob or indicator setting in its rule spec."""
+    target: Literal["param", "spec_param", "spec_indicator"]
+    name: str = Field(min_length=1, max_length=80)
+    indicator: str | None = Field(default=None, max_length=80)
+    values: list[float] = Field(min_length=1, max_length=9)
+
+
+class StrategyHeatmapBody(BacktestSubmitBody):
+    x: StrategyHeatmapAxis
+    y: StrategyHeatmapAxis | None = None
+
+
+class StrategyMarketsBody(BacktestSubmitBody):
+    markets: list[MarketRef] = Field(min_length=1, max_length=24)
+
 class OptimizationSubmitBody(BaseModel):
     minimum_validation_bars: int | None = Field(default=None, ge=420, le=50_000)
     strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
