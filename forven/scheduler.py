@@ -61,10 +61,9 @@ _DEFAULT_JOB_IDS = {
     "forven-source-reconciliation",
     "forven-market-data-collect",
     "forven-funding-history-reconcile",
-    "forven-data-ohlcv-keepalive",
+    "forven-data-sla-collector",
     "forven-data-oi-collect",
     "forven-data-funding-collect",
-    "forven-data-engine-catchup",
     "forven-data-bv-backfill",
     "forven-overnight-summary",
     "forven-data-lsr-collect",
@@ -74,7 +73,6 @@ _DEFAULT_JOB_IDS = {
     "forven-data-macro-collect",
     "forven-data-btcdom-collect",
     "forven-data-basis-collect",
-    "forven-data-iv-collect",
     "forven-data-hl-venue-collect",
     "forven-quant-skills-consolidation",
     "forven-stale-triage",
@@ -154,11 +152,17 @@ _AGENT_TASK_TIMEOUT_MINUTES = recommended_agent_reaper_timeout_minutes()
 _JOB_RUNNING_STALE_SECONDS = _AGENT_TASK_TIMEOUT_MINUTES * 60
 _STALE_RECOVERY_MINUTES = recommended_stale_recovery_minutes()
 _DATA_MANAGER_JOB_TIMEOUT_SECONDS = 60
-_DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS = 150
 _DAILY_LEARNING_HARD_TIMEOUT_SECONDS = 120
 
+# The SLA collector (forven/dataeng/collector.py): one job keeps every stored
+# series inside its freshness SLA. Its tick stops at
+# min(collector.max_tick_seconds, timeout - 30 s), so it always returns before
+# the scheduler would abandon the thread.
+_DATA_SLA_COLLECTOR_JOB_ID = "forven-data-sla-collector"
+_DATA_SLA_COLLECT_TIMEOUT_SECONDS = 180
+
 _DATA_MANAGER_TIMEOUT_DEFAULTS = {
-    "data_manager_collect_ohlcv": float(_DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS),
+    "data_sla_collect": float(_DATA_SLA_COLLECT_TIMEOUT_SECONDS),
     "data_manager_collect_oi": 180.0,
     "data_manager_collect_funding": 180.0,
     "data_manager_collect_lsr": 120.0,
@@ -168,19 +172,19 @@ _DATA_MANAGER_TIMEOUT_DEFAULTS = {
     "data_manager_collect_macro": 180.0,
     "data_manager_collect_btcdom": 120.0,
     "data_manager_collect_basis": 120.0,
-    "data_manager_collect_iv": 120.0,
     "hl_venue_collect": 180.0,
 }
 
+# Job kinds the SLA collector replaced: the OHLCV keep-alive, the Data Engine
+# catch-up and the implied-vol collect. Their rows are disabled by
+# migrate_data_sla_collector (and reaped by reconcile_forven_jobs); a row left
+# enabled on a half-migrated database runs as a logged no-op.
+_RETIRED_DATA_JOB_KINDS = frozenset({"data_manager_collect_ohlcv", "data_engine_catchup", "data_manager_collect_iv"})
+_RETIRED_DATA_JOB_IDS = ("forven-data-ohlcv-keepalive", "forven-data-engine-catchup", "forven-data-iv-collect")
+_HL_FUNDING_JOB_NAME = "Hyperliquid Funding Snapshot"
+
 _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS: dict[str, dict[str, object]] = {
-    "forven-data-ohlcv-keepalive": {
-        "kind": "data_manager_collect_ohlcv",
-        # Refresh the 8 stalest pairs per 15-min run (staleness-ranked, not blind
-        # round-robin) so a small active universe stays fully fresh within a few
-        # runs instead of one pair at a time.
-        "max_pairs_per_run": 8,
-        "timeout_seconds": _DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS,
-    },
+    _DATA_SLA_COLLECTOR_JOB_ID: {"kind": "data_sla_collect", "timeout_seconds": _DATA_SLA_COLLECT_TIMEOUT_SECONDS},
     "forven-data-oi-collect": {"kind": "data_manager_collect_oi", "timeout_seconds": 180},
     "forven-data-funding-collect": {"kind": "data_manager_collect_funding", "timeout_seconds": 180},
     "forven-data-lsr-collect": {"kind": "data_manager_collect_lsr", "timeout_seconds": 120},
@@ -190,7 +194,6 @@ _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS: dict[str, dict[str, object]] = {
     "forven-data-macro-collect": {"kind": "data_manager_collect_macro", "timeout_seconds": 180},
     "forven-data-btcdom-collect": {"kind": "data_manager_collect_btcdom", "timeout_seconds": 120},
     "forven-data-basis-collect": {"kind": "data_manager_collect_basis", "timeout_seconds": 120},
-    "forven-data-iv-collect": {"kind": "data_manager_collect_iv", "timeout_seconds": 120},
     "forven-data-hl-venue-collect": {"kind": "hl_venue_collect", "timeout_seconds": 180},
 }
 
@@ -241,7 +244,7 @@ _BACKGROUND_SCHEDULER_JOB_KINDS = {
     "evolution_graduation",
     "param_optimization",
     "data_manager_backfill",
-    "data_engine_catchup",  # network-heavy drain job: must run concurrently, not
+    "data_sla_collect",  # network-heavy collection tick: must run concurrently, not
     # inline — inline a slow/hung run blocks the due-job loop and holds up every
     # other inline job behind it (scanner, phantom recovery, validation cycle).
     "gauntlet_step_loop",
@@ -677,38 +680,85 @@ def migrate_legacy_scanner_cadence() -> bool:
     return True
 
 
-def migrate_data_engine_catchup_cadence() -> bool:
-    """Upgrade the Data Engine catch-up cadence from 10m to 30m on EXISTING installs.
+def _collector_tick_ms() -> int:
+    """The SLA collector's cadence from Settings -> Data (collector.tick_seconds)."""
+    try:
+        from forven.dataeng.collector import collector_settings
 
-    The fresh-seed default is now 1800000 (30m) in seed_forven_jobs, but that path
-    only runs on an empty DB — an already-seeded deployment (the live single-worker
-    box this cadence change exists to protect from WS starvation) keeps the old
-    600000 (10m) row forever. This in-place migration brings it in line, gated on
-    the row STILL matching the old seeded default so operator-customized schedules
-    are left untouched. Mirrors migrate_legacy_scanner_cadence.
+        return int(collector_settings()["tick_seconds"]) * 1000
+    except Exception:
+        return 120_000
+
+
+def _add_sla_collector_job() -> None:
+    add_job(
+        job_id=_DATA_SLA_COLLECTOR_JOB_ID,
+        name="Data Collector (freshness SLA)",
+        schedule_type="interval",
+        schedule_expr=str(_collector_tick_ms()),
+        command="data-sla-collector",
+        timezone_str="UTC",
+        payload={"kind": "data_sla_collect", "timeout_seconds": _DATA_SLA_COLLECT_TIMEOUT_SECONDS},
+    )
+
+
+def migrate_data_sla_collector() -> bool:
+    """Named, idempotent migration to the SLA collector (Data Manager rebuild).
+
+    Disables the jobs the collector replaced (OHLCV keep-alive, Data Engine
+    catch-up, implied-vol collect), makes sure ``forven-data-sla-collector``
+    exists, and renames the Hyperliquid job, which now only snapshots funding
+    (the collector refreshes the venue candles). Returns True when it changed
+    anything; a second run changes nothing. Existing rows of the retired jobs
+    stay disabled until reconcile_forven_jobs reaps them (they are no longer
+    defaults); their dispatch branches are logged no-ops either way.
     """
+    changed: list[str] = []
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT schedule_type, schedule_expr, timezone FROM scheduler_jobs WHERE id = ?",
-            ("forven-data-engine-catchup",),
+        placeholders = ",".join("?" for _ in _RETIRED_DATA_JOB_IDS)
+        for row in conn.execute(
+            f"SELECT id FROM scheduler_jobs WHERE enabled = 1 AND id IN ({placeholders})",
+            _RETIRED_DATA_JOB_IDS,
+        ).fetchall():
+            conn.execute("UPDATE scheduler_jobs SET enabled = 0 WHERE id = ?", (row["id"],))
+            changed.append(f"disabled {row['id']}")
+        hl_row = conn.execute(
+            "SELECT name FROM scheduler_jobs WHERE id = ?", ("forven-data-hl-venue-collect",)
         ).fetchone()
-        if not row:
-            return False
+        if hl_row is not None and hl_row["name"] != _HL_FUNDING_JOB_NAME:
+            conn.execute(
+                "UPDATE scheduler_jobs SET name = ? WHERE id = ?",
+                (_HL_FUNDING_JOB_NAME, "forven-data-hl-venue-collect"),
+            )
+            changed.append("renamed forven-data-hl-venue-collect")
+        has_collector = conn.execute(
+            "SELECT 1 FROM scheduler_jobs WHERE id = ?", (_DATA_SLA_COLLECTOR_JOB_ID,)
+        ).fetchone()
+    if has_collector is None:
+        _add_sla_collector_job()
+        changed.append(f"added {_DATA_SLA_COLLECTOR_JOB_ID}")
+    if changed:
+        log.info("Migrated data jobs to the SLA collector: %s", "; ".join(changed))
+    return bool(changed)
 
-        schedule_type = str(row["schedule_type"] or "").strip().lower()
-        schedule_expr = str(row["schedule_expr"] or "").strip()
-        timezone_str = str(row["timezone"] or "UTC").strip() or "UTC"
 
-        if schedule_type != "interval" or schedule_expr != "600000":
-            return False
-
-        next_run = _compute_next_run("interval", "1800000", timezone_str)
-        conn.execute(
-            "UPDATE scheduler_jobs SET schedule_expr = ?, next_run_at = ? WHERE id = ?",
-            ("1800000", next_run, "forven-data-engine-catchup"),
-        )
-    log.info("Migrated Data Engine catch-up cadence from 10m to 30m (forven-data-engine-catchup)")
-    return True
+def _sync_data_collector_cadence() -> None:
+    """Keep forven-data-sla-collector on collector.tick_seconds (Settings ->
+    Data is the source of truth for its cadence)."""
+    try:
+        desired = str(_collector_tick_ms())
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT schedule_type, schedule_expr FROM scheduler_jobs WHERE id = ?",
+                (_DATA_SLA_COLLECTOR_JOB_ID,),
+            ).fetchone()
+            if row is not None and (row["schedule_type"] != "interval" or str(row["schedule_expr"]) != desired):
+                conn.execute(
+                    "UPDATE scheduler_jobs SET schedule_type = 'interval', schedule_expr = ? WHERE id = ?",
+                    (desired, _DATA_SLA_COLLECTOR_JOB_ID),
+                )
+    except Exception as exc:
+        log.debug("SLA collector cadence sync skipped: %s", exc)
 
 
 def get_jobs() -> list[dict]:

@@ -1125,19 +1125,66 @@ def detect_series_gaps(timestamps_ms: list[int], timeframe_ms: int) -> list[dict
     return gaps
 
 
+def _stored_timestamps_ms(symbol: str, timeframe: str) -> list[int]:
+    """Sorted, unique bar-open times (epoch ms) of a stored canonical series,
+    read from the ``timestamp`` column of the cold file and its tail only —
+    never a full-series load. [] when absent; raises on an unreadable file."""
+    import numpy as np
+
+    parts = []
+    for path in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)):
+        if not path.exists():
+            continue
+        if not _using_pyarrow():
+            _require_pyarrow_for_lake()
+        column = pq.read_table(path, columns=["timestamp"]).column("timestamp").to_pandas()
+        stamps = pd.to_datetime(column, utc=True, errors="coerce").dropna()
+        parts.append(stamps.astype("int64").to_numpy() // 1_000_000)
+    if not parts:
+        return []
+    return np.unique(np.concatenate(parts)).tolist()
+
+
 def scan_ohlcv_gaps(symbol: str, timeframe: str) -> list[dict[str, int]]:
     """Detect internal gaps in a stored OHLCV series (missing closed bars between
-    the first and last bar). Returns [] when the series is absent or contiguous."""
+    the first and last bar). Returns [] when the series is absent or contiguous.
+    Reads the timestamp column only."""
     try:
-        df = load_parquet(symbol, timeframe)
+        stamps = _stored_timestamps_ms(symbol, timeframe)
     except Exception:
         return []
-    if df is None or df.empty or "timestamp" not in df.columns:
-        return []
-    tf_ms = _timeframe_to_ms(timeframe)
-    ts_sorted = df["timestamp"].sort_values()
-    ts_ms = [int(t.value // 1_000_000) for t in ts_sorted]  # ns -> ms
-    return detect_series_gaps(ts_ms, tf_ms)
+    return detect_series_gaps(stamps, _timeframe_to_ms(timeframe))
+
+
+def _gap_windows(gaps: list[dict[str, int]], tf_ms: int) -> list[tuple[int, int, list[dict[str, int]]]]:
+    """Group gaps whose distance is within one request page into one fetch
+    window (start_ms, end_ms, gaps), newest window first."""
+    windows: list[tuple[int, int, list[dict[str, int]]]] = []
+    for gap in sorted(gaps, key=lambda g: g["start_ms"]):
+        if windows and gap["start_ms"] - windows[-1][1] <= CHUNK_LIMIT * tf_ms:
+            start, _end, members = windows[-1]
+            windows[-1] = (start, gap["end_ms"], members + [gap])
+        else:
+            windows.append((gap["start_ms"], gap["end_ms"], [gap]))
+    return windows[::-1]
+
+
+def _missing_ranges(start_ms: int, end_ms: int, present: list[int], tf_ms: int) -> list[tuple[int, int]]:
+    """Bar-open ranges inside [start_ms, end_ms] with no stored bar. ``present``
+    is the sorted stored timestamps."""
+    import bisect
+
+    ranges: list[tuple[int, int]] = []
+    cursor = start_ms
+    lo = bisect.bisect_left(present, start_ms)
+    hi = bisect.bisect_right(present, end_ms)
+    for stamp in present[lo:hi]:
+        if stamp > cursor:
+            ranges.append((cursor, stamp - tf_ms))
+        cursor = max(cursor, stamp + tf_ms)
+    if cursor <= end_ms:
+        ranges.append((cursor, end_ms))
+    return [(a, b) for a, b in ranges if b >= a]
 
 
 def reconcile_close_prices(frame_a: pd.DataFrame, frame_b: pd.DataFrame) -> dict[str, Any]:
@@ -1206,98 +1253,110 @@ def backfill_ohlcv_gaps(
     *,
     max_gaps: int | None = None,
     exchange_id: str = "binance",
+    max_pages: int | None = None,
+    extend_tail: bool = True,
+    log_action: bool = True,
 ) -> dict[str, Any]:
-    """Fill internal gaps in a stored OHLCV series AND extend it to the present.
+    """Repair interior gaps of a stored canonical OHLCV series and (by default)
+    bring its tail current.
 
-    Detects missing closed bars between the first and last stored bar and fetches
-    each, then extends the tail from the last stored bar up to now — so clicking a
-    stale series in the coverage matrix actually brings it CURRENT (the matrix colour
-    is last-bar freshness, not gap count, so filling only internal gaps would leave a
-    stale series looking unchanged). The closed-only + OHLC-sanity write gates apply
-    on every merge. Returns gaps_found / gaps_attempted / gaps_filled /
-    gaps_remaining / bars_added / extended_to_now.
+    - Gaps come from the ``timestamp`` column of the cold file and tail only —
+      never a full-series load (this used to load the series ~6 times).
+    - Gaps the venue already proved it cannot fill (``data:unfillable_gaps``)
+      are skipped; gaps within one request page of each other share one fetch
+      window, newest first, up to ``max_gaps`` gaps / ``max_pages`` pages.
+    - ``gaps_filled`` counts gaps whose bars actually landed. After a fetch
+      that succeeded, bars still missing are proven unfillable and recorded.
+    - The tail extension is the cheap incremental fetch (from the bar after
+      the stored one, so it takes the tail-append fast path).
+
+    Returns gaps_found / gaps_unfillable (skipped, known) / gaps_attempted /
+    gaps_filled / gaps_remaining / bars_added / unfillable_recorded / requests
+    / extended_to_now / no_recent_data.
     """
+    import math
+
+    from forven.dataeng import collector
+
+    fs_symbol = symbol_to_fs(symbol)
     tf_ms = _timeframe_to_ms(timeframe)
-    rows_before = _series_row_count(symbol, timeframe)
-    gaps = scan_ohlcv_gaps(symbol, timeframe)
+    sid = collector.series_id("ohlcv", "canonical", fs_symbol, timeframe)
+    before = _stored_timestamps_ms(fs_symbol, timeframe)
+    gaps = detect_series_gaps(before, tf_ms)
+    known = collector.unfillable_ranges(sid)
+    open_gaps = [g for g in gaps if not collector.is_known_unfillable(g["start_ms"], g["end_ms"], known)]
+    known_unfillable = len(gaps) - len(open_gaps)
+    if max_gaps and max_gaps > 0:
+        open_gaps = sorted(open_gaps, key=lambda g: g["start_ms"], reverse=True)[:max_gaps]
+
+    attempted: list[dict[str, int]] = []
+    fetched: list[dict[str, int]] = []
+    requests = 0
+    pages_left = max_pages
+    for start, end, members in _gap_windows(open_gaps, tf_ms):
+        pages = max(1, math.ceil(((end - start) // tf_ms + 1) / CHUNK_LIMIT))
+        if pages_left is not None and attempted and pages > pages_left:
+            break
+        attempted.extend(members)
+        requests += pages
+        if pages_left is not None:
+            pages_left -= pages
+        try:
+            fetch_ohlcv_chunked(fs_symbol, timeframe, exchange_id=exchange_id, since_ms=start, until_ms=end + tf_ms)
+            fetched.extend(members)
+        except Exception as exc:
+            log.warning("backfill: gap fetch failed for %s %s [%s-%s]: %s", fs_symbol, timeframe, start, end, exc)
+
+    attempted_extend = False
+    if extend_tail and before and int(time.time() * 1000) - before[-1] > tf_ms * 2:
+        attempted_extend = True
+        requests += 1
+        try:
+            fetch_ohlcv_chunked(fs_symbol, timeframe, exchange_id=exchange_id, since_ms=before[-1] + tf_ms)
+        except Exception as exc:
+            log.warning("backfill: tail extension failed for %s %s: %s", fs_symbol, timeframe, exc)
+
+    after = _stored_timestamps_ms(fs_symbol, timeframe) if (attempted or attempted_extend) else before
+    filled = 0
+    unfillable: list[tuple[int, int]] = []
+    for gap in fetched:
+        missing = _missing_ranges(gap["start_ms"], gap["end_ms"], after, tf_ms)
+        if sum((b - a) // tf_ms + 1 for a, b in missing) < gap["missing_bars"]:
+            filled += 1
+        unfillable.extend(missing)
+    recorded = collector.record_unfillable(sid, unfillable, tf_ms) if unfillable else 0
+    is_current = bool(after) and int(time.time() * 1000) - after[-1] <= tf_ms * 2
     result: dict[str, Any] = {
-        "symbol": symbol,
+        "symbol": fs_symbol,
         "timeframe": timeframe,
         "gaps_found": len(gaps),
-        "gaps_attempted": 0,
-        "gaps_filled": 0,
-        "gaps_remaining": len(gaps),
-        "bars_added": 0,
-        "extended_to_now": False,
+        "gaps_unfillable": known_unfillable,
+        "gaps_attempted": len(attempted),
+        "gaps_filled": filled,
+        "gaps_remaining": len(detect_series_gaps(after, tf_ms)) if after is not before else len(gaps),
+        "bars_added": max(0, len(after) - len(before)),
+        "unfillable_recorded": recorded,
+        "requests": requests,
+        "extended_to_now": attempted_extend and is_current,
+        # A delisted / no-longer-traded symbol (e.g. MATIC after the POL rebrand)
+        # has no recent bars; say so instead of claiming it was brought current.
+        "no_recent_data": attempted_extend and not is_current,
     }
 
-    selected = gaps[:max_gaps] if (max_gaps and max_gaps > 0) else gaps
-    result["gaps_attempted"] = len(selected)
-    for gap in selected:
-        try:
-            fetch_ohlcv_chunked(
-                symbol,
-                timeframe,
-                exchange_id=exchange_id,
-                since_ms=int(gap["start_ms"]),
-                until_ms=int(gap["end_ms"]) + tf_ms,
-            )
-            result["gaps_filled"] += 1
-        except Exception as exc:
-            log.warning(
-                "backfill: gap fetch failed for %s %s [%s-%s]: %s",
-                symbol, timeframe, gap.get("start_ms"), gap.get("end_ms"), exc,
-            )
-
-    # Extend the tail to "now" when the latest stored bar is behind (more than ~2
-    # intervals old). This is what makes a click on a stale matrix cell turn green.
-    attempted_extend = False
-    try:
-        frame = load_parquet(symbol, timeframe)
-        if frame is not None and not frame.empty and "timestamp" in frame.columns:
-            last_ms = int(frame["timestamp"].max().value // 1_000_000)
-            if int(time.time() * 1000) - last_ms > tf_ms * 2:
-                attempted_extend = True
-                fetch_ohlcv_chunked(
-                    symbol,
-                    timeframe,
-                    exchange_id=exchange_id,
-                    since_ms=last_ms,
-                    until_ms=int(time.time() * 1000),
-                )
-    except Exception as exc:
-        log.warning("backfill: tail extension failed for %s %s: %s", symbol, timeframe, exc)
-
-    result["bars_added"] = max(0, _series_row_count(symbol, timeframe) - rows_before)
-    result["gaps_remaining"] = len(scan_ohlcv_gaps(symbol, timeframe))
-
-    # Did it ACTUALLY become current? A delisted / no-longer-traded symbol (e.g.
-    # MATIC after the POL rebrand) has no recent bars to fetch, so an extension
-    # attempt cannot bring it current — report that honestly instead of lying with
-    # "brought current".
-    is_current = False
-    try:
-        latest = load_parquet(symbol, timeframe)
-        if latest is not None and not latest.empty and "timestamp" in latest.columns:
-            last_now = int(latest["timestamp"].max().value // 1_000_000)
-            is_current = int(time.time() * 1000) - last_now <= tf_ms * 2
-    except Exception:
-        pass
-    result["extended_to_now"] = attempted_extend and is_current
-    result["no_recent_data"] = attempted_extend and not is_current
-
-    if result["gaps_found"] or result["bars_added"] or attempted_extend:
+    if log_action and (attempted or result["bars_added"] or attempted_extend):
         _log_data_action(
             "backfill",
-            f"Backfilled {symbol} {timeframe}: +{result['bars_added']:,} bars "
-            f"({result['gaps_filled']}/{result['gaps_found']} gaps filled, {result['gaps_remaining']} remaining)"
+            f"Backfilled {fs_symbol} {timeframe}: +{result['bars_added']:,} bars "
+            f"({filled}/{len(attempted)} gaps filled, {result['gaps_remaining']} remaining"
+            + (f", {recorded} ranges the venue cannot fill" if recorded else "")
+            + ")"
             + (", brought current" if result["extended_to_now"] else "")
             + (", no newer data (symbol may be delisted)" if result["no_recent_data"] else ""),
-            level="info" if (result["gaps_filled"] or result["bars_added"]) else "warning",
-            symbol=symbol,
+            level="info" if (filled or result["bars_added"]) else "warning",
+            symbol=fs_symbol,
             timeframe=timeframe,
             gaps_found=result["gaps_found"],
-            gaps_filled=result["gaps_filled"],
+            gaps_filled=filled,
             bars_added=result["bars_added"],
             gaps_remaining=result["gaps_remaining"],
             extended_to_now=result["extended_to_now"],
@@ -2820,18 +2879,24 @@ def _gap_details(timestamps: pd.Series, timeframe_ms: int) -> tuple[int, list[di
 
 
 def _freshness_for(timeframe: str, last_ts: pd.Timestamp) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
-    if last_ts.tzinfo is None:
-        last_ts = last_ts.tz_localize("UTC")
-    else:
-        last_ts = last_ts.tz_convert("UTC")
-    delta_hours = max(0.0, (now - last_ts.to_pydatetime()).total_seconds() / 3600.0)
-    tf_hours = max(1.0 / 60.0, _timeframe_to_ms(timeframe) / 3_600_000.0)
-    stale_threshold = max(1.0, tf_hours * 6.0)
+    """Freshness block of a quality report, classified through the freshness
+    SLA at the pipeline tier — the gauntlet data gate's own rule — so the
+    report can never call "fresh" what the gate blocks."""
+    from forven.dataeng import sla
+
+    last_ts = last_ts.tz_localize("UTC") if last_ts.tzinfo is None else last_ts.tz_convert("UTC")
+    lag = sla.lag_seconds(last_ts) or 0.0
+    try:
+        allowed = sla.allowed_lag_seconds(timeframe, "pipeline")
+        state = sla.classify(lag, timeframe, "pipeline")
+    except ValueError:  # unrecognised timeframe: report the age, judge nothing
+        allowed, state = None, "fresh"
     return {
         "last_update": _to_iso(last_ts),
-        "hours_ago": round(delta_hours, 3),
-        "is_stale": delta_hours > stale_threshold,
+        "hours_ago": round(lag / 3600.0, 3),
+        "is_stale": state != "fresh",
+        "state": state,
+        "allowed_hours": round(allowed / 3600.0, 3) if allowed is not None else None,
     }
 
 

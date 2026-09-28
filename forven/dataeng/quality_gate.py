@@ -29,15 +29,10 @@ MIN_COMPLETENESS = 0.98
 # distorts indicators/exits far more than scattered missing bars.
 MAX_GAP_BARS = 12
 # Freshness: when the window ends "now", the last stored bar may lag by at
-# most max(MAX_STALENESS_BARS bars, FRESHNESS_FLOOR_HOURS). The absolute floor
-# matters for FAST timeframes: collection cadences (15-min keep-alive rotation
-# for traded symbols, 30-min catch-up for the research catalog) mean a 1m
-# series is legitimately tens of minutes behind — a bars-only limit would
-# demand 3-minute freshness no collector provides and permanently block every
-# 1m series. For an eval window of weeks, a tail lagging under the floor is
-# immaterial to the verdict.
-MAX_STALENESS_BARS = 3
-FRESHNESS_FLOOR_HOURS = 2.0
+# most the freshness SLA's "pipeline" tier (forven/dataeng/sla.py; Settings ->
+# Data): max((missed_bars + 1) x timeframe, floor), 3 bars / 2 h by default.
+# The same rule drives the collection queue, so the collector keeps pipeline
+# series inside exactly the limit the gate enforces.
 
 
 @dataclass
@@ -64,7 +59,6 @@ def check_series_quality(
     warmup_bars: int = 0,
     min_completeness: float = MIN_COMPLETENESS,
     max_gap_bars: int = MAX_GAP_BARS,
-    max_staleness_bars: int = MAX_STALENESS_BARS,
 ) -> QualityVerdict:
     """Fitness of a stored series for scoring a verdict over a window.
 
@@ -75,8 +69,8 @@ def check_series_quality(
       unknown symbols pass — unknown != inactive);
     - completeness: bars present / bars expected inside the window;
     - max_gap: no single interior gap of ``max_gap_bars``+ inside the window;
-    - freshness: last bar within ``max_staleness_bars`` of a now-ish
-      ``window_end`` (skipped for historical windows).
+    - freshness: last bar within the SLA's pipeline-tier allowance of a
+      now-ish ``window_end`` (skipped for historical windows).
 
     Read cost: one series load (the caller is about to load it anyway) plus
     footer reads. Never raises — an internal error returns ok=False with an
@@ -158,11 +152,10 @@ def check_series_quality(
 
         # Freshness only matters when the window ends around "now".
         if end >= now - pd.Timedelta(milliseconds=tf_ms):
+            from forven.dataeng.sla import gate_allowed_staleness_hours
+
             staleness_hours = (now - last_ts).total_seconds() / 3600.0
-            allowed_hours = max(
-                (float(max_staleness_bars) + 1) * tf_ms / 3_600_000.0,  # +1: the closing bar itself
-                FRESHNESS_FLOOR_HOURS,
-            )
+            allowed_hours = gate_allowed_staleness_hours(timeframe)
             verdict.details["staleness_hours"] = round(staleness_hours, 2)
             verdict.details["allowed_staleness_hours"] = round(allowed_hours, 2)
             if staleness_hours > allowed_hours:
