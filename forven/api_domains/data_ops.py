@@ -140,6 +140,15 @@ class _CancelSignal(threading.Event):
         return self._ctx.cancelled()
 
 
+def _symbol_step(ctx: jobs.JobContext, done: int, total: int, message: str) -> None:
+    """Per-symbol progress, always persisted: ``progress()`` is throttled for
+    per-page updates and would drop a symbol that follows a fast one, leaving
+    the previous symbol's name on screen while the next one runs."""
+    ctx.progress(done, total, unit="symbols")
+    ctx.set_total(total, "symbols")  # forces the write of ``done``
+    ctx.note(message)
+
+
 def _progress_compat(job: dict[str, Any], verb: str) -> dict[str, Any] | None:
     """The old page's ``{done, total, current_symbol}``; the runners write the
     current symbol into the job message as ``"<verb><SYMBOL>"``."""
@@ -226,13 +235,12 @@ def _history_runner(params: dict[str, Any]) -> jobs.Runner:
         manager = data_manager_mod.get_data_manager()
         targets = params.get("targets") or [{"symbol": s} for s in manager.backfill_symbols()]
         total = len(targets)
-        ctx.set_total(total, "symbols")
         results: dict[str, dict[str, Any]] = {}
         rows_added = errors = failed_symbols = 0
         for idx, target in enumerate(targets):
             ctx.check_cancel()  # cooperative stop between symbols
             symbol = str(target["symbol"])
-            ctx.progress(idx, total, unit="symbols", message=f"{_EXTENDING}{symbol}")
+            _symbol_step(ctx, idx, total, f"{_EXTENDING}{symbol}")
             streams = tuple(params.get("streams") or target.get("streams") or DEFAULT_HISTORY_STREAMS)
             summary = manager.backfill(symbol=symbol, streams=streams, timeframes=target.get("timeframes"))
             stats = summary.get(symbol) or next((v for v in summary.values() if isinstance(v, dict)), {})
@@ -246,7 +254,7 @@ def _history_runner(params: dict[str, Any]) -> jobs.Runner:
             first = next((v for s in results.values() for k, v in s.items() if str(k).endswith("_error")), "")
             raise RuntimeError(f"deep history failed for every symbol ({errors} error(s)); first: {first}")
         note = f"{rows_added:,} rows added over {total} symbol(s)" + (f", {errors} error(s)" if errors else "")
-        ctx.progress(total, total, unit="symbols", message=note)
+        _symbol_step(ctx, total, total, note)
         return {"symbols": results, "symbols_done": total, "rows_added": rows_added, "errors": errors}
 
     return run
@@ -352,7 +360,7 @@ def _universe_seed_runner(params: dict[str, Any]) -> jobs.Runner:
         from forven.dataeng import universe as universe_mod
 
         def progress(done: int, total: int, symbol: str) -> None:
-            ctx.progress(done, total, unit="symbols", message=f"{_SEEDING}{symbol}")
+            _symbol_step(ctx, done, total, f"{_SEEDING}{symbol}")
 
         summary = universe_mod.seed_research_universe(progress_cb=progress, cancel_event=_CancelSignal(ctx))
         seeded, current = int(summary.get("series_seeded") or 0), int(summary.get("series_current") or 0)
@@ -362,7 +370,7 @@ def _universe_seed_runner(params: dict[str, Any]) -> jobs.Runner:
         note = f"{seeded} series downloaded, {current} already current" + (
             f", {summary['errors']} error(s)" if summary.get("errors") else ""
         )
-        ctx.progress(planned, planned, unit="symbols", message=note)
+        _symbol_step(ctx, planned, planned, note)
         return summary
 
     return run
