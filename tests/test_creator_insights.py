@@ -1,4 +1,5 @@
 """Unit tests for the Strategy Creator's preview insights (pure functions)."""
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -64,6 +65,15 @@ def test_traps_flag_decay_concentration_costs_and_idleness():
 
     costly = [{**trades[0], "pnl_pct": 0.001, "cost_drag_pct": 0.01}, {**trades[1], "pnl_pct": 0.001, "cost_drag_pct": 0.01}]
     assert "costs" in {trap["code"] for trap in insights.traps(in_stats, {"trades": 40, "net_return": 0.01}, costly, frame)}
+
+
+def test_sample_stats_send_an_infinite_profit_factor_as_a_flag():
+    wins = [{"direction": "long", "bars_held": 2, "pnl_pct": 0.02}]
+    stats = insights.sample_stats(wins, FRAME, {"total_trades": 1, "profit_factor": float("inf")})
+    assert stats["profit_factor"] is None and stats["profit_factor_is_infinite"] is True
+    json.dumps(stats, allow_nan=False)  # strict JSON, as the API sends it
+    finite = insights.sample_stats(wins, FRAME, {"total_trades": 1, "profit_factor": 1.5})
+    assert finite["profit_factor"] == 1.5 and finite["profit_factor_is_infinite"] is False
 
 
 def _knob(label, *oos):

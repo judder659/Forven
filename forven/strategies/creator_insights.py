@@ -13,6 +13,7 @@ and liquidation exits happen within the exit bar and are explained by price.
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Any, Mapping
 
@@ -97,13 +98,17 @@ def sample_stats(trades: list[dict], frame: pd.DataFrame, metrics: Mapping) -> d
     """Headline numbers for one sample from its trades and its ``compute_metrics``
     output (closed-trade basis: no bar-by-bar mark to market)."""
     bars = max(len(frame), 1)
+    # A sample without a losing trade has an infinite profit factor, which strict
+    # JSON cannot carry: send null plus a flag instead.
+    profit_factor = float(metrics.get("profit_factor") or 0.0)
     return {
         "trades": int(metrics.get("total_trades") or 0),
         "long_trades": sum(1 for t in trades if t.get("direction") != "short"),
         "short_trades": sum(1 for t in trades if t.get("direction") == "short"),
         "net_return": float(metrics.get("total_return_pct") or 0.0),
         "win_rate": float(metrics.get("win_rate") or 0.0),
-        "profit_factor": float(metrics.get("profit_factor") or 0.0),
+        "profit_factor": profit_factor if math.isfinite(profit_factor) else None,
+        "profit_factor_is_infinite": math.isinf(profit_factor),
         "max_drawdown": float(metrics.get("max_drawdown_pct") or 0.0),
         "avg_trade": float(metrics.get("avg_trade_pct") or 0.0),
         "avg_bars_held": float(metrics.get("avg_bars_held") or 0.0),

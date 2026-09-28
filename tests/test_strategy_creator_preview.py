@@ -209,6 +209,7 @@ def test_vitals_split_like_the_backtest_and_add_up(candles):
     assert vitals["in_sample"]["end"] < ctx["oos_start"]
     assert 0 <= vitals["all"]["exposure"] <= 1
     assert vitals["all"]["fees"] > 0
+    json.dumps(ctx, allow_nan=False)  # the API sends strict JSON
 
 
 def test_more_variants_tried_means_lower_odds_the_edge_is_real(candles):
