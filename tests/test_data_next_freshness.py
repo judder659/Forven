@@ -374,6 +374,23 @@ def test_strike_out_freezes_dead_series_but_never_live_ones(env):
     assert [c for c in env.fetch.calls[before:] if c[0] == "DEAD-USDT"] == []
 
 
+def test_an_empty_fetch_just_past_the_allowance_is_not_a_strike(env):
+    """A venue may publish the closed bucket a few minutes late: right after a
+    series crosses its allowance an empty fetch is retried next tick, not
+    struck and backed off for 30 minutes."""
+    strategy(env, "S1", "BTC/USDT", "1h", "live_graduated")
+    iv_files(env, last=NOW - H)
+    btc = ohlcv(env, "BTC-USDT", "1h", last=NOW - 2 * H - pd.Timedelta(minutes=5))
+    env.fetch.bars["BTC-USDT:1h"] = 0
+
+    collector.run_tick(now=NOW)
+    assert btc not in collector._load_series_state()
+    collector.run_tick(now=NOW + pd.Timedelta(minutes=2))
+    assert len(env.fetch.calls) == 2  # retried on the next tick
+    collector.run_tick(now=NOW + pd.Timedelta(minutes=12))  # now 2 h 17 m behind: a strike
+    assert collector._load_series_state()[btc]["strikes"] == 1
+
+
 def test_transient_errors_back_off_without_striking(env):
     class NetworkError(Exception):
         pass

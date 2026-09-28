@@ -89,6 +89,10 @@ ERROR_BACKOFF_SECONDS = 300.0
 BOOTSTRAP_RETRY_SECONDS = 600.0
 # A venue that fails this many times in a row is skipped for the rest of a tick.
 VENUE_FAILURES_PER_TICK = 3
+# Venues can publish a closed bar/bucket a few minutes late (Binance's
+# futures/data endpoints especially): an empty fetch only counts as "no newer
+# data" once the series is past its allowance by min(one bar, this grace).
+STRIKE_GRACE_SECONDS = 900.0
 # Scheduler hard timeout of one tick; the tick's own deadline stays below it.
 DEFAULT_TICK_TIMEOUT_SECONDS = 180.0
 TICK_TIMEOUT_MARGIN_SECONDS = 30.0
@@ -970,6 +974,15 @@ def _backoff_seconds(strikes: int) -> float:
     return min(MAX_BACKOFF_SECONDS, FIRST_BACKOFF_SECONDS * (2 ** max(0, strikes - 1)))
 
 
+def _clearly_overdue(row: SeriesRow) -> bool:
+    """Past the allowance by more than a late publication could explain."""
+    lag = row.sla.get("lag_seconds")
+    if lag is None:
+        return False
+    grace = min(sla.timeframe_seconds(row.timeframe), STRIKE_GRACE_SECONDS)
+    return float(lag) > float(row.sla["allowed_seconds"]) + grace
+
+
 def _apply_outcome(
     task: Task,
     outcome: Outcome,
@@ -1000,10 +1013,10 @@ def _apply_outcome(
             state["last_error"] = outcome.error
         return None
     if outcome.ok:
-        # Nothing newer. Only a series that was already late (a closed bar
-        # past its allowance must exist) or a bootstrap counts as a strike; a
-        # "due" series fetched right at a bar boundary may just be early.
-        strike = task.action == "bootstrap" or row.state in ("late", "breach") or bool(outcome.freeze_reason)
+        # Nothing newer. Only a series clearly past its allowance (a closed
+        # bar must exist by now) or a bootstrap counts as a strike; one fetched
+        # right at a bar boundary may just be ahead of the venue's publication.
+        strike = task.action == "bootstrap" or _clearly_overdue(row) or bool(outcome.freeze_reason)
     else:
         strike = outcome.code in STRIKE_ERROR_CODES
         state["last_error"] = outcome.error
