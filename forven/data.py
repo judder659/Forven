@@ -528,29 +528,73 @@ def _footer_bounds(path: Path) -> tuple[int, int | None, int | None]:
     return rows, _to_ms(ts.iloc[0]), _to_ms(ts.iloc[-1])
 
 
-def read_lake_frame(symbol: str, timeframe: str) -> pd.DataFrame | None:
+def _utc_bound(value: object | None) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    ts = pd.Timestamp(value)
+    if pd.isna(ts):
+        raise ValueError(f"not a timestamp: {value!r}")
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _read_parquet_window(path: Path, start: pd.Timestamp | None, end: pd.Timestamp | None) -> pd.DataFrame:
+    """One lake file, row groups outside [start, end] skipped by a pyarrow
+    filter when the timestamp column supports it (callers mask exactly)."""
+    if not _using_pyarrow():
+        _require_pyarrow_for_lake()
+    filters = []
+    if start is not None:
+        filters.append(("timestamp", ">=", start))
+    if end is not None:
+        filters.append(("timestamp", "<=", end))
+    if filters:
+        try:
+            return pq.read_table(path, filters=filters).to_pandas()
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError, TypeError, ValueError):
+            pass  # a legacy file whose timestamp column cannot be compared: read whole
+    return pq.read_table(path).to_pandas()
+
+
+def _mask_window(frame: pd.DataFrame, start: pd.Timestamp | None, end: pd.Timestamp | None) -> pd.DataFrame:
+    if frame is None or (start is None and end is None) or frame.empty:
+        return frame
+    keep = pd.Series(True, index=frame.index)
+    if start is not None:
+        keep &= frame["timestamp"] >= start
+    if end is not None:
+        keep &= frame["timestamp"] <= end
+    return frame[keep].reset_index(drop=True)
+
+
+def read_lake_frame(
+    symbol: str,
+    timeframe: str,
+    *,
+    start: object | None = None,
+    end: object | None = None,
+) -> pd.DataFrame | None:
     """Raw cold+tail merged read of a stored series (normalized; tail wins on
-    duplicate timestamps). No data-engine delegation, no as_of — this is the
+    duplicate timestamps), optionally limited to bars in [start, end]
+    (inclusive, naive = UTC). No data-engine delegation, no as_of — this is the
     storage primitive both the legacy read path and the DataHub build on.
     Returns None when neither file exists; raises on a corrupt file."""
+    start_ts, end_ts = _utc_bound(start), _utc_bound(end)
     cold = parquet_path(symbol, timeframe)
     tail = tail_path(symbol, timeframe)
     frames: list[pd.DataFrame] = []
     if cold.exists():
-        if not _using_pyarrow():
-            _require_pyarrow_for_lake()
-        frames.append(pq.read_table(cold).to_pandas())
+        frames.append(_read_parquet_window(cold, start_ts, end_ts))
     if tail.exists():
-        if not _using_pyarrow():
-            _require_pyarrow_for_lake()
-        frames.append(pq.read_table(tail).to_pandas())
+        frames.append(_read_parquet_window(tail, start_ts, end_ts))
     if not frames:
         return None
-    if len(frames) == 1:
-        return _normalize_ohlcv_frame(frames[0])
     # concat order [cold, tail] + keep-last dedup in _normalize_ohlcv_frame
     # makes tail rows win over a (crash-window) duplicate in cold.
-    return _normalize_ohlcv_frame(pd.concat(frames, ignore_index=True))
+    non_empty = [frame for frame in frames if not frame.empty]
+    if not non_empty:
+        return _normalize_ohlcv_frame(frames[0])
+    merged = non_empty[0] if len(non_empty) == 1 else pd.concat(non_empty, ignore_index=True)
+    return _mask_window(_normalize_ohlcv_frame(merged), start_ts, end_ts)
 
 
 def _write_lake_parquet(frame: pd.DataFrame, path: Path, *, symbol: str, timeframe: str, source: str) -> None:
@@ -710,19 +754,41 @@ def _normalize_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def load_parquet(symbol: str, timeframe: str, *, as_of: object | None = None) -> pd.DataFrame | None:
+class AsOfReconstructionError(RuntimeError):
+    """A point-in-time (``as_of``) read could not reconstruct the values in
+    force at the pinned time. Raised instead of returning the latest values
+    (plan F4): a pinned verdict must never be silently scored on today's data."""
+
+
+def load_parquet(
+    symbol: str,
+    timeframe: str,
+    *,
+    as_of: object | None = None,
+    start: object | None = None,
+    end: object | None = None,
+    columns: list[str] | tuple[str, ...] | None = None,
+) -> pd.DataFrame | None:
     """Read a stored OHLCV series.
+
+    ``start``/``end`` limit the read to bars in [start, end] (inclusive, naive =
+    UTC) and ``columns`` projects to timestamp + those columns; the result
+    equals the full read masked to the window. Callers that only need a window
+    pass it — the lake holds multi-million-row 1m series.
 
     With ``as_of=T`` the series is reconstructed to the values that were in force at
     time ``T`` from the append-only revision log (point-in-time / T1.6); ``as_of=None``
     (default) returns the latest values, byte-identical to the legacy read. as_of is
     opt-in PER CALL — live/scanner reads never pass it, so only a backtest that
-    explicitly pins a time reads historically (a global pin would corrupt live reads)."""
+    explicitly pins a time reads historically (a global pin would corrupt live reads).
+    A reconstruction failure raises ``AsOfReconstructionError``."""
     if _data_engine_read_enabled():
         try:
             from forven.dataeng.hub import get_data_hub
 
-            return get_data_hub().candles(symbol, timeframe, as_of=as_of)
+            return get_data_hub().candles(symbol, timeframe, start=start, end=end, columns=columns, as_of=as_of)
+        except AsOfReconstructionError:
+            raise
         except Exception as exc:
             # Loud: a persistent hub failure means engine-on reads silently
             # degrade to the legacy path and the two can drift unnoticed.
@@ -738,16 +804,16 @@ def load_parquet(symbol: str, timeframe: str, *, as_of: object | None = None) ->
                     )
             _require_pyarrow_for_lake()
         return None
-    frame = read_lake_frame(symbol, timeframe)
+    frame = read_lake_frame(symbol, timeframe, start=start, end=end)
     if frame is None:
         return None
     if as_of is not None:
-        try:
-            from forven.dataeng.revisions import reconstruct_as_of
+        from forven.dataeng.revisions import reconstruct_as_of
 
-            frame = reconstruct_as_of(frame, symbol, timeframe, as_of)
-        except Exception as exc:
-            log.debug("as_of reconstruction failed for %s %s: %s", symbol, timeframe, exc)
+        frame = reconstruct_as_of(frame, symbol, timeframe, as_of)
+    if columns is not None:
+        wanted = ["timestamp", *[str(c) for c in columns if str(c) != "timestamp" and str(c) in frame.columns]]
+        frame = frame[wanted].reset_index(drop=True)
     return frame
 
 
@@ -1370,6 +1436,11 @@ def _dataset_from_file(path: Path, symbol: str, timeframe: str) -> dict[str, Any
 
 
 def _scan_datasets_uncached() -> list[dict[str, Any]]:
+    """Canonical OHLCV series under DATA_DIR (the ``_dataset_from_file`` shape),
+    from the lake's footer cache: a rescan after a write costs a stat() per
+    unchanged file instead of two footer reads."""
+    from forven.dataeng.lake import _footer
+
     datasets: list[dict[str, Any]] = []
     if not DATA_DIR.exists():
         return datasets
@@ -1378,11 +1449,32 @@ def _scan_datasets_uncached() -> list[dict[str, Any]]:
             continue
         symbol = symbol_dir.name
         for parquet_file in sorted(symbol_dir.glob("*.parquet")):
-            timeframe = parquet_file.stem
-            try:
-                datasets.append(_dataset_from_file(parquet_file, symbol, timeframe))
-            except Exception:
-                continue
+            head = _footer(parquet_file)
+            if head is None:
+                continue  # unreadable: the orphan scan reports it
+            rows, start_ms, end_ms, source, market = head
+            tail = _footer(Path(str(parquet_file) + ".tail")) if Path(str(parquet_file) + ".tail").exists() else None
+            if tail is not None:
+                rows += tail[0]
+                if tail[1] is not None and (start_ms is None or tail[1] < start_ms):
+                    start_ms = tail[1]
+                if tail[2] is not None and (end_ms is None or tail[2] > end_ms):
+                    end_ms = tail[2]
+            source_name = source or "ccxt"
+            asset_class = classify_dataset_asset_class(symbol, source_name)
+            datasets.append(
+                {
+                    "symbol": symbol_to_fs(symbol),
+                    "timeframe": parquet_file.stem,
+                    "source": source_name,
+                    "start_ts": _to_iso(pd.Timestamp(start_ms, unit="ms", tz="UTC")) if start_ms is not None else None,
+                    "end_ts": _to_iso(pd.Timestamp(end_ms, unit="ms", tz="UTC")) if end_ms is not None else None,
+                    "row_count": rows,
+                    "asset_class": asset_class,
+                    "market_type": dataset_market_type(asset_class),
+                    "market": market or "unstamped",
+                }
+            )
     datasets.sort(
         key=lambda row: (
             row.get("symbol", ""),
@@ -1396,6 +1488,12 @@ def _invalidate_catalog_cache() -> None:
     with _catalog_cache_lock:
         _catalog_cache["expires_at"] = 0.0
         _catalog_cache["datasets"] = []
+    try:
+        from forven.dataeng import catalog_index
+
+        catalog_index.invalidate()
+    except Exception as exc:  # the Data Manager catalog is an accelerator
+        log.debug("catalog snapshot invalidation skipped: %s", exc)
 
 
 def peek_cached_datasets() -> list[dict[str, Any]]:
@@ -1496,19 +1594,6 @@ def coverage_entry(path: Path) -> dict[str, Any] | None:
     with _coverage_cache_lock:
         _coverage_cache[key] = (mtime_ns, size, entry)
     return dict(entry) if entry is not None else None
-
-
-def prune_coverage_cache(live_keys: set[str]) -> None:
-    """Drop cached entries for parquet paths no longer present.
-
-    The cache key is the file path, so a deleted, renamed or delisted series
-    (e.g. MATIC -> POL) would otherwise leave its tuple resident for the life of
-    the long-lived single-worker process. Callers pass the set of paths they just
-    visited so the cache stays bounded to currently-existing files.
-    """
-    with _coverage_cache_lock:
-        for key in [k for k in _coverage_cache if k not in live_keys]:
-            del _coverage_cache[key]
 
 
 def list_data_sources() -> list[dict[str, Any]]:
@@ -1704,14 +1789,31 @@ def venue_parquet_path(source: str, market: str, symbol: str, timeframe: str) ->
     return path
 
 
-def load_venue_frame(source: str, market: str, symbol: str, timeframe: str) -> pd.DataFrame | None:
-    """Normalized read of a venue series (None when absent)."""
+def load_venue_frame(
+    source: str,
+    market: str,
+    symbol: str,
+    timeframe: str,
+    *,
+    start: object | None = None,
+    end: object | None = None,
+    as_of: object | None = None,
+) -> pd.DataFrame | None:
+    """Normalized read of a venue series (None when absent), optionally limited
+    to bars in [start, end]. Venue series keep no revision log, so ``as_of``
+    only drops bars stamped after it."""
     path = venue_parquet_path(source, market, symbol, timeframe)
     if not path.exists():
         return None
-    if not _using_pyarrow():
-        _require_pyarrow_for_lake()
-    return _normalize_ohlcv_frame(pq.read_table(path).to_pandas())
+    start_ts, end_ts = _utc_bound(start), _utc_bound(end)
+    frame = _mask_window(_normalize_ohlcv_frame(_read_parquet_window(path, start_ts, end_ts)), start_ts, end_ts)
+    if as_of is not None:
+        try:
+            pin = _utc_bound(as_of)
+        except (TypeError, ValueError) as exc:
+            raise AsOfReconstructionError(f"as_of is not a timestamp: {as_of!r}") from exc
+        frame = frame[frame["timestamp"] <= pin].reset_index(drop=True)
+    return frame
 
 
 def save_venue_frame(df: pd.DataFrame, source: str, market: str, symbol: str, timeframe: str) -> int:
@@ -2789,36 +2891,6 @@ def dataset_ohlcv(symbol: str, timeframe: str, limit: int = 100, *, before: obje
     }
 
 
-def _gap_details(timestamps: pd.Series, timeframe_ms: int) -> tuple[int, list[dict[str, str]]]:
-    if len(timestamps) < 2:
-        return 0, []
-    # Vectorized gap detection. The previous implementation iterated EVERY row
-    # in pure Python with .iloc indexing, so a near-complete multi-million-row
-    # 1m series ran millions of slow Python ops while holding the GIL. Computing
-    # the per-bar diffs vectorially and only walking the (few) gap positions
-    # keeps this fast — under load the old loop starved the asyncio event loop
-    # and dropped the live websocket. Output semantics are preserved exactly:
-    # the same per-gap "missing" math and the same 200-detail cap.
-    timestamps = timestamps.reset_index(drop=True)
-    diffs_ms = timestamps.diff().dt.total_seconds().mul(1000).fillna(0)
-    gap_positions = diffs_ms.index[diffs_ms > timeframe_ms]
-    total_missing = 0
-    details: list[dict[str, str]] = []
-    for idx in gap_positions:
-        diff_ms = int(diffs_ms.iat[idx])
-        missing = max(1, int(round(diff_ms / timeframe_ms)) - 1)
-        total_missing += missing
-        details.append(
-            {
-                "timestamp": _to_iso(timestamps.iat[idx - 1] + pd.Timedelta(milliseconds=timeframe_ms)) or "",
-                "gap_size": f"{missing} bars",
-            }
-        )
-        if len(details) >= 200:
-            break
-    return total_missing, details
-
-
 def _freshness_for(timeframe: str, last_ts: pd.Timestamp) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     if last_ts.tzinfo is None:
@@ -2836,77 +2908,51 @@ def _freshness_for(timeframe: str, last_ts: pd.Timestamp) -> dict[str, Any]:
 
 
 def compute_data_quality(symbol: str, timeframe: str) -> dict[str, Any]:
+    """Quality report of a canonical OHLCV series in the legacy ``/data/quality``
+    shape, scored by the one rubric (forven/dataeng/quality.py) and returned as
+    ``quality_score``/``quality_issues``. ``gaps`` counts missing bars,
+    ``outliers.close`` extreme log returns (8 sigma), ``outliers.volume``
+    volumes beyond 3 sigma; ``gap_details`` lists the first 200 holes."""
+    from forven.dataeng import quality
+
     fs_symbol = symbol_to_fs(symbol)
-    # DuckDB quality REGARDLESS of the engine flag: a native-code scan with
-    # column projection instead of a full pandas load. The pandas body below
-    # took seconds per call on post-backfill 1m series (millions of rows) and
-    # runs on every dataset selection in the UI — it is now only the fallback
-    # when DuckDB errors. Value parity between the two implementations is
-    # test-asserted (test_dataeng_foundation quality parity).
-    try:
-        from forven.dataeng.hub import get_data_hub
-
-        return get_data_hub().quality(fs_symbol, timeframe)
-    except FileNotFoundError:
-        raise
-    except Exception as exc:
-        log.warning("DuckDB quality scan failed for %s %s; pandas fallback: %s", fs_symbol, timeframe, exc)
-
-    frame = load_parquet(fs_symbol, timeframe)
-    if frame is None or frame.empty:
+    tf_ms = _timeframe_to_ms(timeframe)
+    paths = [p for p in (parquet_path(fs_symbol, timeframe), tail_path(fs_symbol, timeframe)) if p.exists()]
+    if not paths:
         raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
-
-    frame = _normalize_ohlcv_frame(frame)
-    ts = frame["timestamp"].sort_values().reset_index(drop=True)
-    start = ts.iloc[0]
-    end = ts.iloc[-1]
-    duration_days = max(0.0, (end - start).total_seconds() / 86400.0)
-
-    timeframe_ms = _timeframe_to_ms(timeframe)
-    gaps, gap_details = _gap_details(ts, timeframe_ms)
-
-    null_values = int(frame[["open", "high", "low", "close", "volume"]].isna().sum().sum())
-    price_min = float(frame["low"].min()) if len(frame) else 0.0
-    price_max = float(frame["high"].max()) if len(frame) else 0.0
-    volume_min = float(frame["volume"].min()) if len(frame) else 0.0
-    volume_max = float(frame["volume"].max()) if len(frame) else 0.0
-    volume_avg = float(frame["volume"].mean()) if len(frame) else 0.0
-
-    close_std = float(frame["close"].std(ddof=0) or 0.0)
-    close_mean = float(frame["close"].mean() or 0.0)
-    if close_std > 0:
-        close_outliers = int((frame["close"].sub(close_mean).abs() > (3 * close_std)).sum())
-    else:
-        close_outliers = 0
-
-    volume_std = float(frame["volume"].std(ddof=0) or 0.0)
-    volume_mean = float(frame["volume"].mean() or 0.0)
-    if volume_std > 0:
-        volume_outliers = int((frame["volume"].sub(volume_mean).abs() > (3 * volume_std)).sum())
-    else:
-        volume_outliers = 0
-
-    invalid_high_low = int((frame["high"] < frame["low"]).sum())
-    invalid_close_range = int(((frame["close"] > frame["high"]) | (frame["close"] < frame["low"])).sum())
-
+    stats = quality.compute_stats(paths, tf_ms)
+    if not stats["rows"]:
+        raise FileNotFoundError(f"dataset not found: {fs_symbol} {timeframe}")
+    score, issues = quality.score(stats)
+    start = pd.Timestamp(stats["first_ms"], unit="ms", tz="UTC")
+    end = pd.Timestamp(stats["last_ms"], unit="ms", tz="UTC")
     return {
         "symbol": fs_symbol,
         "timeframe": timeframe,
-        "row_count": int(len(frame)),
+        "row_count": int(stats["rows"]),
         "start": _to_iso(start),
         "end": _to_iso(end),
-        "duration_days": round(duration_days, 6),
-        "gaps": gaps,
-        "gap_details": gap_details,
-        "null_values": null_values,
-        "price_range": {"min": price_min, "max": price_max},
-        "volume_stats": {"min": volume_min, "max": volume_max, "avg": volume_avg},
-        "outliers": {"close": close_outliers, "volume": volume_outliers},
+        "duration_days": round(max(0.0, (end - start).total_seconds() / 86400.0), 6),
+        "gaps": int(stats["missing_bars"]),
+        "gap_details": [
+            {"timestamp": _to_iso(pd.Timestamp(first, unit="ms", tz="UTC")) or "", "gap_size": f"{bars} bars"}
+            for first, _last, bars in quality.list_gaps(paths, tf_ms)[:200]
+        ],
+        "null_values": int(stats["null_rows"]),
+        "price_range": {"min": stats["price_min"] or 0.0, "max": stats["price_max"] or 0.0},
+        "volume_stats": {
+            "min": stats["volume_min"] or 0.0,
+            "max": stats["volume_max"] or 0.0,
+            "avg": stats["volume_avg"] or 0.0,
+        },
+        "outliers": {"close": int(stats["outliers"]), "volume": int(stats["volume_outliers"])},
         "integrity": {
-            "invalid_high_low": invalid_high_low,
-            "invalid_close_range": invalid_close_range,
+            "invalid_high_low": int(stats["invalid_high_low"]),
+            "invalid_close_range": int(stats["invalid_range"]),
         },
         "freshness": _freshness_for(timeframe, end),
+        "quality_score": score,
+        "quality_issues": issues,
     }
 
 
