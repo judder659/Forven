@@ -997,6 +997,16 @@ def test_data_log_categories_rollup_and_dedupe(client, log_feed):
     assert not any(e["action"] == "tail_refresh" and e["category"] == "routine" for e in routine)
 
 
+def test_a_many_series_job_logs_its_totals_not_its_last_step():
+    from forven.dataeng.datalog import _job_message
+
+    job = {"title": "Refresh 15 late live & paper series", "status": "succeeded", "message": "ETH/USDT 1h: +2 bars",
+           "series": [{"symbol": "BTC-USDT"}, {"symbol": "ETH-USDT"}],
+           "result": {"refreshed": 15, "bars_added": 266, "failed": 1, "skipped": 0}}
+    assert _job_message(job) == "Refresh 15 late live & paper series: done — 15 refreshed, +266 bars, 1 failed"
+    single = {**job, "title": "Refresh ETH/USDT 1h", "series": [{"symbol": "ETH-USDT"}]}
+    assert _job_message(single) == "Refresh ETH/USDT 1h: done — ETH/USDT 1h: +2 bars"
+
 def ts_sorted(entries: list[dict]) -> bool:
     stamps = [e["ts"] for e in entries]
     return stamps == sorted(stamps, reverse=True)

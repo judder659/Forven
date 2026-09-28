@@ -145,12 +145,32 @@ def job_category(job: dict[str, Any]) -> str:
     return "user" if job.get("origin") == "user" else "routine"
 
 
+def _result_totals(result: Any) -> str | None:
+    """"15 refreshed, +266 bars, 1 failed" from a job's counts; None without any."""
+    if not isinstance(result, dict):
+        return None
+
+    def count(key: str) -> int:
+        value = result.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    parts = [f"{count('refreshed'):,} refreshed"] if count("refreshed") else []
+    bars = count("bars_added") or count("rows_added")
+    if bars or parts:
+        parts.append(f"+{bars:,} bars")
+    parts += [f"{count(key):,} {key}" for key in ("failed", "skipped") if count(key)]
+    return ", ".join(parts) or None
+
+
 def _job_message(job: dict[str, Any]) -> str:
     status = str(job.get("status") or "")
     text = f"{job.get('title') or job.get('kind')}: {_JOB_WORD.get(status, status)}"
     error = job.get("error") or {}
+    totals = _result_totals(job.get("result")) if len(job.get("series") or []) > 1 else None
     if error.get("message"):
         text += f" — {str(error['message'])[:240]}"
+    elif totals and status == "succeeded":
+        text += f" — {totals}"  # a many-series job's last progress line names one series only
     elif job.get("message") and status in ("running", "succeeded", "cancelled"):
         text += f" — {str(job['message'])[:240]}"
     return text
