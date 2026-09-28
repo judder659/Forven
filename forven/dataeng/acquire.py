@@ -477,13 +477,16 @@ def estimate(items: object) -> dict[str, Any]:
     free_bytes, reserve_gb = _disk()
     runnable = [p for p in plans if not p.blocked]
     total_bytes = sum(p.bytes for p in runnable)
-    # Lanes run in parallel; within a lane jobs share its workers.
-    lane_seconds: dict[str, float] = {}
+    # Lanes run in parallel; within a lane jobs share its workers, and one
+    # download never splits across them (the total is never below a row's time).
+    lane_seconds: dict[str, list[float]] = {}
     for p in runnable:
-        lane = _lane(p.exchange or "")
-        lane_seconds[lane] = lane_seconds.get(lane, 0.0) + p.seconds
+        lane_seconds.setdefault(_lane(p.exchange or ""), []).append(p.seconds)
     total_seconds = max(
-        (seconds / max(1, jobs.LANE_WORKERS.get(lane, 1)) for lane, seconds in lane_seconds.items()),
+        (
+            max(sum(seconds) / max(1, jobs.LANE_WORKERS.get(lane, 1)), max(seconds))
+            for lane, seconds in lane_seconds.items()
+        ),
         default=0.0,
     )
     warnings: list[str] = []

@@ -472,6 +472,10 @@ def test_estimate_math(acquire, monkeypatch):
     assert any("4 of 8" in w for w in out["warnings"])
     # Lanes run in parallel: the total is the slowest lane, not the sum.
     assert out["total_seconds"] == pytest.approx(max(kraken["seconds_estimate"], okx["seconds_estimate"]), abs=0.2)
+    # One download never splits across a lane's workers: alone, it takes its own time.
+    alone = acquire.estimate([dict(canon["item"])])
+    (only,) = alone["estimates"]
+    assert only["seconds_estimate"] > 0 and alone["total_seconds"] == pytest.approx(only["seconds_estimate"], abs=0.1)
 
     with pytest.raises(ValueError):
         acquire.estimate([])

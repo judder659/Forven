@@ -7,6 +7,7 @@
 	import {
 		estimateDownloads,
 		getAcquireTargets,
+		getJob,
 		getUniversePlanDiff,
 		resolveIdentity,
 		seedUniverse,
@@ -48,7 +49,7 @@
 		type HistoryChoice,
 		type MarketDraft,
 	} from '$lib/components/data-manager/wizard';
-	import { clock, createRequestGuard, loading, settle, type Loadable } from '$lib/stores/dataManager';
+	import { clock, createRequestGuard, jobsSummary, loading, settle, type Loadable } from '$lib/stores/dataManager';
 
 	const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
 	/** Deribit publishes implied volatility (DVOL) for these bases only. */
@@ -76,6 +77,21 @@
 	let estimateTimer: ReturnType<typeof setTimeout> | undefined;
 	let starting = false;
 	let started: DataJob[] = [];
+
+	// The started jobs follow the summary poll (fast while anything runs) until
+	// they land, so "queued" turns into done or failed here too.
+	const LANDED = new Set<DataJob['status']>(['succeeded', 'failed', 'cancelled', 'interrupted']);
+	let startedSeenAt = -1;
+	$: if (started.length && $jobsSummary.at !== startedSeenAt) {
+		startedSeenAt = $jobsSummary.at;
+		void followStarted();
+	}
+	async function followStarted() {
+		const open = started.filter((job) => !LANDED.has(job.status));
+		if (!open.length) return;
+		const fresh = new Map((await Promise.all(open.map((job) => getJob(job.id).catch(() => job)))).map((job) => [job.id, job]));
+		started = started.map((job) => fresh.get(job.id) ?? job);
+	}
 	// Universe
 	let plan: Loadable<UniversePlanDiff> | null = null;
 	let seeding = false;
