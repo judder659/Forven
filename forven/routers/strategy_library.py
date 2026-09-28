@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +27,7 @@ router = APIRouter(tags=["strategy-library"], dependencies=[Depends(require_oper
 _VALID_KINDS = {"visual", "code"}
 # strftime literal reused across writes (a constant we control — not user input).
 _NOW = "strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')"
+_FORGE_SEND_LOCK = threading.Lock()
 
 
 class LibraryCreateBody(BaseModel):
@@ -247,6 +249,14 @@ def duplicate_library_entry(sid: str, body: LibraryDuplicateBody):
 
 @router.post("/api/strategy-library/{sid}/send-to-forge")
 def send_library_entry_to_forge(sid: str, body: LibraryForgeBody | None = None):
+    # One send at a time, so a double click cannot mint two Forge strategies.
+    with _FORGE_SEND_LOCK:
+        return _send_to_forge(sid, body)
+
+
+def _send_to_forge(sid: str, body: LibraryForgeBody | None) -> dict:
+    from forven.strategy_creator import forge_strategy
+
     with get_db() as conn:
         row = _fetch(conn, sid)
     if not row:
@@ -254,6 +264,10 @@ def send_library_entry_to_forge(sid: str, body: LibraryForgeBody | None = None):
     entry = _row_to_dict(row)
     if body and body.expected_version is not None and entry["version"] != body.expected_version:
         raise HTTPException(status_code=409, detail="Strategy changed. Reload before sending to Forge.")
+    # A saved change clears forge_strategy_id, so a link here belongs to this revision.
+    existing = forge_strategy(entry["forge_strategy_id"])
+    if existing:
+        return {"ok": True, "id": sid, "forge": existing, "strategy": entry, "already_in_forge": True}
 
     if entry["kind"] == "visual":
         if not isinstance(entry["spec"], dict):

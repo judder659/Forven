@@ -68,3 +68,27 @@ def test_visual_forge_persists_profile_used_by_engine(forven_db):
     assert params["leverage"] == 2
     assert params["_creator_context"]["fee_bps"] == 10
     assert row["stage"] == "quick_screen"
+
+
+def test_send_to_forge_returns_the_revisions_existing_forge_strategy(forven_db):
+    from forven.db import get_db
+
+    entry = create()
+    first = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=1))
+    again = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=1))
+    assert again["already_in_forge"] is True
+    assert again["forge"]["strategy_id"] == first["forge"]["strategy_id"]
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM strategies WHERE type = 'rule_engine'").fetchone()[0] == 1
+
+    # A saved change is a new revision, which goes to the Forge on its own.
+    library.update_library_entry(entry["id"], library.LibraryUpdateBody(timeframe="4h", expected_version=1))
+    revised = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=2))
+    assert not revised.get("already_in_forge")
+    assert revised["forge"]["strategy_id"] != first["forge"]["strategy_id"]
+
+    # Deleted from the Forge, the same revision can be sent again.
+    with get_db() as conn:
+        conn.execute("DELETE FROM strategies WHERE id = ?", (revised["forge"]["strategy_id"],))
+    resent = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=2))
+    assert not resent.get("already_in_forge")
