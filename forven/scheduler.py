@@ -3587,6 +3587,11 @@ def reconcile_forven_jobs() -> dict[str, int]:
         {"removed": <count>, "added": <count>}
     """
     removed = 0
+    # Add the SLA collector job BEFORE looking for missing defaults: a missing
+    # default triggers the full reseed below, which rewrites every job row and
+    # would reset the operator's schedules and enabled flags on the first boot
+    # after the Data Manager rebuild ships. Idempotent.
+    migrate_data_sla_collector()
     # PORT-GATE-1: expected ids are dynamic — the portfolio layer's jobs count
     # as defaults only while its master switch is on, so disabling the layer
     # reaps its jobs here and re-enabling restores them via the reseed below.

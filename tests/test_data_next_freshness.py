@@ -1050,3 +1050,26 @@ def test_data_census_cli(monkeypatch, capsys):
     assert cli.main(["data-census", "--stream", "ohlcv", "--limit-worst", "5"]) == 0
     assert seen == [("GET", "/api/data/sla", {"stream": "ohlcv", "limit_worst": 5})]
     assert json.loads(capsys.readouterr().out)["total"] == 3
+
+
+def test_upgrade_keeps_operator_job_settings(forven_db):
+    """An install that predates the collector must not get a full job reseed
+    (which would reset the operator's schedules and enabled flags)."""
+    from forven import scheduler
+    from forven.db import get_db
+
+    scheduler.seed_forven_jobs()
+    with get_db() as conn:
+        conn.execute("DELETE FROM scheduler_jobs WHERE id = 'forven-data-sla-collector'")
+        row = conn.execute("SELECT id FROM scheduler_jobs WHERE id NOT LIKE 'forven-data-%' ORDER BY id LIMIT 1").fetchone()
+        custom_id = row["id"]
+        conn.execute("UPDATE scheduler_jobs SET enabled = 0, schedule_expr = '987654' WHERE id = ?", (custom_id,))
+
+    result = scheduler.reconcile_forven_jobs()
+
+    assert result["added"] == 0
+    with get_db() as conn:
+        custom = conn.execute("SELECT enabled, schedule_expr FROM scheduler_jobs WHERE id = ?", (custom_id,)).fetchone()
+        collector = conn.execute("SELECT enabled FROM scheduler_jobs WHERE id = 'forven-data-sla-collector'").fetchone()
+    assert (custom["enabled"], custom["schedule_expr"]) == (0, "987654")
+    assert collector is not None
