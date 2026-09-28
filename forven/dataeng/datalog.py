@@ -194,6 +194,26 @@ def _job_entry(job: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+# Parsed activity rows by id: the table is append-only, so a parsed row stays
+# valid (entries are never mutated after parsing). The raw row is compared on
+# every hit, so a reused id (another database, a reset) is never served stale.
+_entry_cache: dict[int, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+_ENTRY_CACHE_MAX = 60_000
+
+
+def _cached_activity_entry(row: Any) -> dict[str, Any] | None:
+    row_id, raw = int(row[0]), (row[1], row[2], row[3], row[4])
+    hit = _entry_cache.get(row_id)
+    if hit is not None and hit[0] == raw:
+        return hit[1]
+    entry = _activity_entry(row_id, *raw)
+    if entry is not None:
+        if len(_entry_cache) >= _ENTRY_CACHE_MAX:
+            _entry_cache.clear()
+        _entry_cache[row_id] = (raw, entry)
+    return entry
+
+
 def _activity_entry(row_id: int, created_at: Any, level: Any, message: Any, data: Any) -> dict[str, Any] | None:
     try:
         detail = json.loads(data) if data else {}
@@ -244,7 +264,7 @@ def _scan_activity(since: str | None, until: str | None) -> list[dict[str, Any]]
             reached_since = False
             for row in batch:
                 scanned += 1
-                entry = _activity_entry(row[0], row[1], row[2], row[3], row[4])
+                entry = _cached_activity_entry(row)
                 ts = entry["ts"] if entry else None
                 if entry is None or ts is None:
                     continue

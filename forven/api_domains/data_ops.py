@@ -509,17 +509,26 @@ def _human_bytes(value: int) -> str:
     return f"{size:.1f} GB"
 
 
-def _lake_index(streams: set[str]) -> dict[str, Any]:
+def _is_canonical_ohlcv(key: dict[str, str]) -> bool:
+    return key["stream"] == "ohlcv" and key["venue"] == "canonical"
+
+
+def _lake_index(keys: list[dict[str, str]]) -> dict[str, Any]:
+    """Stored series for the non-canonical keys (canonical OHLCV is read
+    directly from its own files — no lake-wide enumeration for the common case)."""
     from forven.dataeng import lake
 
+    streams = {k["stream"] for k in keys if not _is_canonical_ohlcv(k)}
+    if not streams:
+        return {}
     return {s.id: s for s in lake.enumerate_series(streams=tuple(streams), root=storage.storage_root())}
 
 
 def _check(key: dict[str, str], index: Any, lake_index: dict[str, Any]) -> dict[str, Any]:
     exists, size, rows = False, 0, 0
-    stored = lake_index.get(f"{key['stream']}:{key['venue']}:{key['symbol']}:{key['timeframe']}")
-    if key["stream"] == "ohlcv" and key["venue"] == "canonical":
+    if _is_canonical_ohlcv(key):
         from forven.data import parquet_path, tail_path
+        from forven.dataeng.lake import _footer
 
         try:
             paths = [parquet_path(key["symbol"], key["timeframe"]), tail_path(key["symbol"], key["timeframe"])]
@@ -528,9 +537,11 @@ def _check(key: dict[str, str], index: Any, lake_index: dict[str, Any]) -> dict[
         present = [p for p in paths if p.exists()]
         exists = bool(present)
         size = sum(p.stat().st_size for p in present)
-        rows = int(stored.rows) if stored is not None else 0
-    elif stored is not None:
-        exists, size, rows = True, int(stored.size_bytes), int(stored.rows)
+        rows = sum(int(footer[0]) for footer in (_footer(p) for p in present) if footer is not None)
+    else:
+        stored = lake_index.get(f"{key['stream']}:{key['venue']}:{key['symbol']}:{key['timeframe']}")
+        if stored is not None:
+            exists, size, rows = True, int(stored.size_bytes), int(stored.rows)
     view = _consumer_view(index, key)
     tier = view["tier"]
     blocking = tier in _BLOCKING_TIERS
@@ -580,7 +591,7 @@ def delete_check(symbol: str, timeframe: str, stream: str = "ohlcv", venue: str 
     from forven.dataeng.consumers import get_consumer_index
 
     key = _series_key({"symbol": symbol, "timeframe": timeframe, "stream": stream, "venue": venue})
-    return _check(key, get_consumer_index(), _lake_index({key["stream"]}))
+    return _check(key, get_consumer_index(), _lake_index([key]))
 
 
 def _blocking_reason(check: dict[str, Any]) -> str:
@@ -608,7 +619,7 @@ def delete_series(
         if key not in keys:
             keys.append(key)
     index = get_consumer_index()
-    lake_index = _lake_index({k["stream"] for k in keys})
+    lake_index = _lake_index(keys)
     checks = [_check(key, index, lake_index) for key in keys]
     expected = checks[0]["confirm_phrase"] if len(checks) == 1 else f"delete {len(checks)} series"
     if _phrase(confirm) != _phrase(expected):
