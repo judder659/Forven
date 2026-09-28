@@ -106,6 +106,15 @@ def test_an_execution_profile_equal_to_the_stored_one_is_not_a_what_if(submit_sp
     assert submit_spy["config"]["what_if"] is True
 
 
+def test_the_risk_control_warning_is_stored_with_the_result(submit_spy, monkeypatch):
+    # Background runs return only job ids; the page reads warnings off the result.
+    monkeypatch.setattr(core, "_validate_local_backtest_risk_controls",
+                        lambda params, **_: "stop_loss_pct in params is not enforced by the engine")
+    _run(stop_loss_pct=5.0)
+    warnings = submit_spy["config"]["warnings"]
+    assert warnings[0] == "stop_loss_pct in params is not enforced by the engine"
+
+
 def test_auto_assign_ignores_what_if_rows(forven_db):
     from forven.db import auto_assign_best_symbol_timeframe, create_strategy_container, get_db
     from forven.policy import resolve_best_symbol_timeframe

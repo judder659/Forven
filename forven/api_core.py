@@ -7876,9 +7876,12 @@ def post_backtest_submit(
     # Flag when this backtest's execution profile can't be reproduced live, so the
     # operator sees it on submit AND on every history row (persisted in config).
     execution_profile_warnings = _execution_profile_parity_warnings(manual_execution_controls, leverage=body.leverage)
-    if execution_profile_warnings:
+    # A background run's caller only ever sees the stored result, so warnings
+    # belong in its config, not just in this response.
+    stored_warnings = ([risk_parity_warning] if risk_parity_warning else []) + execution_profile_warnings
+    if stored_warnings:
         _existing = compact_config.get("warnings")
-        compact_config["warnings"] = (list(_existing) if isinstance(_existing, list) else []) + execution_profile_warnings
+        compact_config["warnings"] = (list(_existing) if isinstance(_existing, list) else []) + stored_warnings
 
     # (A `lifecycle_tag` local lived here. Its only reader was the ChromaDB
     # `store_backtest_result(lifecycle_strategy_id=...)` call removed in
