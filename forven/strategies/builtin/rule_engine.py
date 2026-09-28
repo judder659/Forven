@@ -369,6 +369,18 @@ class RuleEngineStrategy(BaseStrategy):
         requirements[0]["columns"] = sorted(spec_feed_columns(self._spec()))
         return requirements
 
+    @property
+    def supported_trade_modes(self) -> set[str]:
+        """The sides this spec has entry conditions for."""
+        spec = self._spec()
+        has_long, has_short = (
+            isinstance(spec.get(key), dict) and bool(spec[key].get("conditions"))
+            for key in ("entry_long", "entry_short")
+        )
+        if has_long and has_short:
+            return {"long_only", "short_only", "both"}
+        return {"short_only"} if has_short else {"long_only"}
+
     def _effective_spec_params(self, spec: dict) -> dict:
         """Spec params overlaid with any top-level overrides.
 

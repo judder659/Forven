@@ -257,6 +257,22 @@ def test_send_visual_strategy_to_forge(forven_db):
     assert isinstance(strat.params.get("spec"), dict)
 
 
+def test_send_both_sided_visual_strategy_keeps_its_short_side(forven_db):
+    """create_strategy_container clamps an unsupported 'both' to long_only; a spec
+    with long and short entries supports it, so the short side survives."""
+    import json
+
+    from forven.db import get_db
+    down = {"conditions": [{"left": "rsi", "op": ">", "right": {"param": "overbought"}}]}
+    spec = {**_FORGE_SPEC, "entry_short": down, "exit_short": _FORGE_SPEC["entry_long"]}
+    res = core.send_manual_strategy_to_forge(core.SendToForgeBody(
+        mode="visual", spec=spec, params={"trade_mode": "both"}, symbol="BTC/USDT", timeframe="1h",
+    ))
+    with get_db() as conn:
+        row = conn.execute("SELECT params FROM strategies WHERE id = ?", (res["strategy_id"],)).fetchone()
+    assert json.loads(row["params"])["trade_mode"] == "both"
+
+
 def test_send_code_strategy_to_forge(forven_db):
     """A registered code strategy type lands in the Forge."""
     res = core.send_manual_strategy_to_forge(
