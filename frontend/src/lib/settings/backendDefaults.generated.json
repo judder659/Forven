@@ -24,7 +24,7 @@
     "cost_stress_duration_days": 0,
     "daemon_candle_cache_refresh_seconds": 90,
     "data_engine_settings.collector.enabled": true,
-    "data_engine_settings.collector.max_requests_per_minute": 300,
+    "data_engine_settings.collector.max_requests_per_minute": 120,
     "data_engine_settings.collector.max_tick_seconds": 90,
     "data_engine_settings.collector.strike_out_after": 3,
     "data_engine_settings.collector.tick_seconds": 120,

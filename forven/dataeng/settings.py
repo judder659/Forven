@@ -69,7 +69,9 @@ class DataEngineSettings(BaseModel):
             "enabled": True,
             "tick_seconds": 120,
             "max_tick_seconds": 90,
-            "max_requests_per_minute": 300,
+            # Binance caps futures/data endpoints near 1,000 requests per 5 min
+            # per IP, and live trading shares this IP: 120/min leaves headroom.
+            "max_requests_per_minute": 120,
             "strike_out_after": 3,
         }
     )

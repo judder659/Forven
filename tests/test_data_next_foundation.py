@@ -35,6 +35,8 @@ def test_timeframe_seconds_known_and_generic():
     assert sla.timeframe_seconds("1h") == 3600
     assert sla.timeframe_seconds("15m") == 900
     assert sla.timeframe_seconds("2d") == 2 * 86400
+    assert sla.timeframe_seconds("1H") == 3600
+    assert sla.timeframe_seconds("1M") == 30 * 86400  # a month, not a minute
     with pytest.raises(ValueError):
         sla.timeframe_seconds("banana")
 
@@ -71,6 +73,10 @@ def test_priority_weights_tiers_and_ranks_missing_high():
     idle_far_late = sla.priority(250 * H, "1h", "idle", policy=policy)  # ratio 10 x 1
     assert live_one_late > idle_far_late
     assert sla.priority(None, "1h", "universe", policy=policy) == pytest.approx(10 * sla.TIER_WEIGHTS["universe"])
+    # A research series dead for months never outranks slightly-late paper data.
+    dead_research = sla.priority(5000 * H, "1h", "universe", policy=policy)
+    paper_slightly_late = sla.priority(1.2 * policy.allowed_lag_seconds("1h", "paper"), "1h", "paper", policy=policy)
+    assert dead_research < paper_slightly_late
 
 
 def test_assess_wire_shape():

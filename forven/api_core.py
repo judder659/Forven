@@ -6686,7 +6686,17 @@ def _persist_completed_backtest_run(
     try:
         from forven.dataeng.quality_gate import dataset_fingerprint
 
-        config_payload["data_identity"] = dataset_fingerprint(asset, timeframe, as_of=as_of)
+        identity = dataset_fingerprint(asset, timeframe, as_of=as_of)
+        try:
+            # Per-month hashes of the bar VALUES in the scored window, so a
+            # later restatement or rebuild of those months is detectable
+            # (forven/dataeng/fingerprint.py; layout changes do not move them).
+            from forven.dataeng.fingerprint import month_identity
+
+            identity.update(month_identity(identity.get("symbol") or asset, timeframe, submit_start, submit_end))
+        except Exception:
+            pass
+        config_payload["data_identity"] = identity
     except Exception:
         pass
     compact_config = {k: v for k, v in config_payload.items() if v is not None}

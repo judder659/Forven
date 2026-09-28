@@ -214,7 +214,8 @@ def test_live_ranks_before_idle_and_dead_series_are_capped(env):
     assert rows[live].tier == "live" and rows[live].sla["priority"] == pytest.approx(120, rel=0.01)
     # Uncapped this would be 900 and beat the live series on every tick.
     assert rows[dead].tier == "idle" and rows[dead].sla["priority"] == pytest.approx(10.0)
-    assert sla.priority(rows[dead].sla["lag_seconds"], "1h", "idle", policy=POLICY) > 800
+    # the cap lives in sla.priority itself, so every caller ranks the same way
+    assert sla.priority(rows[dead].sla["lag_seconds"], "1h", "idle", policy=POLICY) == pytest.approx(10.0)
 
 
 def test_due_lookahead_refreshes_before_a_series_goes_late(env):

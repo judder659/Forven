@@ -7,7 +7,7 @@ logic lives in forven/dataeng/ or forven/api_domains/.
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from forven.api_domains import data_ops
@@ -47,13 +47,19 @@ class DeleteBody(BaseModel):
     override_consumers: bool = False
 
 
+
+def _joined(values: list[str] | None) -> str | None:
+    """Multi-value filters arrive as repeated params (?status=a&status=b) or
+    comma-separated (?status=a,b); the domain functions take the comma form."""
+    return ",".join(v for v in values if v) if values else None
+
 # ---------------------------------------------------------------- jobs
 
 
 @router.get("/api/data/jobs")
 def list_data_jobs(
-    status: str | None = None,
-    kind: str | None = None,
+    status: list[str] | None = Query(None),
+    kind: list[str] | None = Query(None),
     origin: str | None = None,
     routine: bool | None = None,
     symbol: str | None = None,
@@ -62,7 +68,7 @@ def list_data_jobs(
     offset: int = 0,
 ):
     return data_ops.list_data_jobs(
-        status=status, kind=kind, origin=origin, routine=routine, symbol=symbol, since=since, limit=limit, offset=offset
+        status=_joined(status), kind=_joined(kind), origin=origin, routine=routine, symbol=symbol, since=since, limit=limit, offset=offset
     )
 
 
@@ -149,10 +155,10 @@ def delete_series(body: DeleteBody):
 
 @router.get("/api/data/log")
 def get_data_log(
-    category: str | None = None,
-    level: str | None = None,
+    category: list[str] | None = Query(None),
+    level: list[str] | None = Query(None),
     symbol: str | None = None,
-    action: str | None = None,
+    action: list[str] | None = Query(None),
     since: str | None = None,
     until: str | None = None,
     q: str | None = None,
@@ -161,7 +167,7 @@ def get_data_log(
 ):
     try:
         return datalog.query_log(
-            category=category, level=level, symbol=symbol, action=action, since=since, until=until, q=q, limit=limit, offset=offset
+            category=_joined(category), level=_joined(level), symbol=symbol, action=_joined(action), since=since, until=until, q=q, limit=limit, offset=offset
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -169,16 +175,16 @@ def get_data_log(
 
 @router.get("/api/data/log/export")
 def export_data_log(
-    category: str | None = None,
-    level: str | None = None,
+    category: list[str] | None = Query(None),
+    level: list[str] | None = Query(None),
     symbol: str | None = None,
-    action: str | None = None,
+    action: list[str] | None = Query(None),
     since: str | None = None,
     until: str | None = None,
     q: str | None = None,
 ):
     try:
-        text = datalog.export_csv(category=category, level=level, symbol=symbol, action=action, since=since, until=until, q=q)
+        text = datalog.export_csv(category=_joined(category), level=_joined(level), symbol=symbol, action=_joined(action), since=since, until=until, q=q)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Response(

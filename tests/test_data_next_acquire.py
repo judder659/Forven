@@ -616,10 +616,16 @@ def test_download_collects_perp_streams_after_the_candles(acquire, monkeypatch):
                 raise RuntimeError("venue down")
             return self.rows
 
+    class _Iv:
+        def collect(self):
+            calls.append(("iv",))
+            return {"btc": 2, "eth": 1}
+
     class _Manager:
         _funding = _Collector("funding", 3)
         _oi = _Collector("oi", 5)
         _basis = _Collector("basis", None)
+        _iv = _Iv()
 
     monkeypatch.setattr(dm, "get_data_manager", lambda: _Manager())
     now = _hour_now()
@@ -633,9 +639,14 @@ def test_download_collects_perp_streams_after_the_candles(acquire, monkeypatch):
          "streams": ["funding"]},
     ])
     result = _wait(perp["id"])["result"]
-    assert result["streams"] == {"funding": {"rows_added": 3}, "oi": {"rows_added": 5}, "basis": {"error": "venue down"}}
+    assert result["streams"] == {
+        "funding": {"rows_added": 3},
+        "oi": {"rows_added": 5},
+        "basis": {"error": "venue down"},
+        "iv": {"rows_added": 3},  # market-wide DVOL: rows summed over BTC and ETH
+    }
     assert "streams" not in _wait(venue["id"])["result"]  # venue series collect no perp streams
-    assert calls == [("funding", "BTC-USDT"), ("oi", "BTC-USDT", "1h"), ("basis", "BTC-USDT")]
+    assert calls == [("funding", "BTC-USDT"), ("oi", "BTC-USDT", "1h"), ("basis", "BTC-USDT"), ("iv",)]
 
 
 def test_hyperliquid_download_uses_the_venue_collector(acquire, monkeypatch):
@@ -1016,6 +1027,10 @@ def test_canonical_backtest_carries_hash_and_identity(lake, forven_db):
     assert isinstance(config["data_fingerprint"], str) and config["data_fingerprint"]
     assert config["data_identity"]["symbol"] == "BTC-USDT"
     assert config["data_identity"]["checksum"] and config["data_identity"]["row_count"] == 50
+    # Value fingerprints of the scored window ride along for drift detection.
+    identity = config["data_identity"]
+    assert identity["venue"] == "canonical" and identity["months_version"] >= 1
+    assert identity["months"] and all(isinstance(h, dict) or isinstance(h, str) for h in identity["months"].values())
 
 
 # ============================================================ A.5 honest payloads

@@ -1080,3 +1080,25 @@ def test_api_startup_runs_the_data_job_maintenance(env, monkeypatch):
     monkeypatch.setattr(api_core, "_API_EVENT_LOOP", api_core._API_EVENT_LOOP)  # restored after the test
     asyncio.run(api_core._on_startup())
     assert calls == ["ran"]
+
+
+def test_multi_value_filters_accept_repeated_and_comma_forms(client):
+    """The UI sends multi-value filters as repeated params; comma form works too."""
+    from forven.dataeng import jobs
+
+    jobs.record_routine("sla_collect", "Automatic collection", origin="sla")
+    failed = jobs.submit("download", lambda ctx: (_ for _ in ()).throw(RuntimeError("boom")), title="bad download")
+    jobs.wait_for(failed["id"], timeout=10)
+    ok = jobs.submit("download", lambda ctx: {}, title="good download")
+    jobs.wait_for(ok["id"], timeout=10)
+
+    repeated = client.get("/api/data/jobs?status=failed&status=succeeded&kind=download").json()
+    comma = client.get("/api/data/jobs?status=failed,succeeded&kind=download").json()
+    assert repeated["total"] == comma["total"] == 2
+    only_failed = client.get("/api/data/jobs?status=failed").json()
+    assert [job["title"] for job in only_failed["jobs"]] == ["bad download"]
+
+    log_repeated = client.get("/api/data/log?category=user&category=incident")
+    log_comma = client.get("/api/data/log?category=user,incident")
+    assert log_repeated.status_code == log_comma.status_code == 200
+    assert log_repeated.json()["total"] == log_comma.json()["total"]

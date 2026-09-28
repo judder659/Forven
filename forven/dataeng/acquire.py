@@ -47,7 +47,7 @@ HOUR_MS = 3_600_000
 SPOT_VENUES = ("okx", "bybit", "coinbase", "kraken")
 HL_VENUE = "hyperliquid:perp"
 HL_MAX_BARS = 5000  # Hyperliquid serves only its latest 5,000 candles per interval
-STREAM_ADDONS = ("funding", "oi", "basis")
+STREAM_ADDONS = ("funding", "oi", "basis", "ls_ratio", "taker", "iv")
 _VENUE_LABELS = {
     "binance": "Binance",
     "binanceusdm": "Binance USD-M",
@@ -438,7 +438,7 @@ def _plan(item: dict[str, Any], series_index: dict[tuple[str, str, str], lake.Se
     if unsupported:
         plan.warnings.append(f"Not collected with downloads: {', '.join(unsupported)}.")
     if any(s in STREAM_ADDONS for s in extra) and not (plan.destination == "canonical" and plan.market == "perp"):
-        plan.warnings.append("Funding, open interest and basis are collected for Binance USD-M perps only.")
+        plan.warnings.append("Funding, open interest, basis, long/short ratio, taker volume and IV are collected with Binance USD-M perp downloads only.")
     return plan
 
 
@@ -642,6 +642,10 @@ def _collect_streams(ctx: jobs.JobContext, symbol: str, timeframe: str, streams:
         "funding": lambda: manager._funding.collect(symbol),
         "oi": lambda: manager._oi.collect(symbol, timeframe),
         "basis": lambda: manager._basis.collect(symbol),
+        "ls_ratio": lambda: manager._lsr.collect(symbol),
+        "taker": lambda: manager._taker.collect(symbol),
+        # Deribit DVOL is market-wide (BTC and ETH); the collector returns rows per currency.
+        "iv": lambda: sum(int(v or 0) for v in (manager._iv.collect() or {}).values()),
     }
     out: dict[str, Any] = {}
     for stream in streams:

@@ -82,15 +82,11 @@ def timeframe_seconds(timeframe: str) -> float:
     tf = str(timeframe or "").strip()
     if tf in _TIMEFRAME_SECONDS:
         return _TIMEFRAME_SECONDS[tf]
-    lowered = tf.lower()
-    if lowered in _TIMEFRAME_SECONDS:
-        return _TIMEFRAME_SECONDS[lowered]
-    unit = lowered[-1:] if lowered else ""
-    number = lowered[:-1]
-    if number.isdigit() and int(number) > 0:
-        scale = {"m": 60.0, "h": 3600.0, "d": 86400.0, "w": 604800.0}.get(unit)
-        if scale is not None:
-            return int(number) * scale
+    number, unit = tf[:-1], tf[-1:]
+    # "M" is a month; every other unit is case-insensitive ("1H" == "1h").
+    scale = 30 * 86400.0 if unit == "M" else {"m": 60.0, "h": 3600.0, "d": 86400.0, "w": 604800.0}.get(unit.lower())
+    if number.isdigit() and int(number) > 0 and scale is not None:
+        return int(number) * scale
     raise ValueError(f"unrecognised timeframe: {timeframe!r}")
 
 
@@ -226,13 +222,19 @@ def classify(
     return "breach"
 
 
+# Lateness counts at most this many allowances toward priority, so a research
+# series that has been dead for months can never outrank late live data
+# (10 x universe weight 5 = 50 < 1.2 x paper weight 50).
+PRIORITY_RATIO_CAP = 10.0
+
+
 def priority(lag: float | None, timeframe: str, tier: str, *, policy: SlaPolicy | None = None) -> float:
-    """Collection priority: how many allowances late, weighted by tier. A
-    missing series ranks as ten allowances late."""
+    """Collection priority: allowances late (capped at PRIORITY_RATIO_CAP),
+    weighted by tier. A missing series ranks as the cap."""
     active = policy or load_policy()
     allowed = active.allowed_lag_seconds(timeframe, tier)
-    ratio = 10.0 if lag is None else (lag / allowed if allowed > 0 else 0.0)
-    return ratio * TIER_WEIGHTS.get(tier, 1.0)
+    ratio = PRIORITY_RATIO_CAP if lag is None else (lag / allowed if allowed > 0 else 0.0)
+    return min(ratio, PRIORITY_RATIO_CAP) * TIER_WEIGHTS.get(tier, 1.0)
 
 
 def assess(
@@ -270,6 +272,7 @@ __all__ = [
     "STATES",
     "TIERS",
     "TIER_WEIGHTS",
+    "PRIORITY_RATIO_CAP",
     "SlaPolicy",
     "allowed_lag_seconds",
     "assess",

@@ -65,11 +65,11 @@ _VENUE_HEALTH_KEY = "data:venue_health"  # {lane: {last_success_at, last_failure
 # ---------------------------------------------------------------- tuning
 
 TIER_RANK: dict[str, int] = {tier: rank for rank, tier in enumerate(sla.TIERS)}
-# Queue priority is sla.priority with the lag capped at RATIO_CAP allowances —
-# sla.priority's own convention for a missing series. Uncapped, a dead research
-# series 900 allowances behind (weight 1 -> 900) would outrank a live series
-# one allowance late (weight 100) on every tick until it struck out.
-RATIO_CAP = 10.0
+# Queue priority is sla.priority, whose lateness term is capped at
+# sla.PRIORITY_RATIO_CAP allowances: uncapped, a dead research series 900
+# allowances behind would outrank a live series one allowance late on every
+# tick until it struck out.
+RATIO_CAP = sla.PRIORITY_RATIO_CAP
 PAGE_BARS = 1000  # forven.data.CHUNK_LIMIT: bars per candle request
 # One refresh fetches at most this many pages; a series further behind catches
 # up over successive ticks instead of blocking a tick (or the budget) on it.
@@ -146,7 +146,7 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "tick_seconds": 120,
     "max_tick_seconds": 90,
-    "max_requests_per_minute": 300,
+    "max_requests_per_minute": 120,
     "strike_out_after": 3,
 }
 _SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
@@ -516,14 +516,8 @@ def assess(
     now: pd.Timestamp,
     policy: sla.SlaPolicy,
 ) -> dict[str, Any]:
-    """``sla.assess`` with the queue priority: the lag term capped at
-    RATIO_CAP allowances (see RATIO_CAP)."""
-    out = sla.assess(last_ms, timeframe, tier, frozen=frozen, now=now, policy=policy)
-    lag = out.get("lag_seconds")
-    if not frozen and lag is not None:
-        capped = min(float(lag), RATIO_CAP * float(out["allowed_seconds"]))
-        out["priority"] = round(sla.priority(capped, timeframe, tier, policy=policy), 3)
-    return out
+    """``sla.assess`` (its priority is already capped, see RATIO_CAP)."""
+    return sla.assess(last_ms, timeframe, tier, frozen=frozen, now=now, policy=policy)
 
 
 def _merge_consumers(into: consumers_mod.SeriesConsumers, other: consumers_mod.SeriesConsumers) -> None:
