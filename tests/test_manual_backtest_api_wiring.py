@@ -257,6 +257,22 @@ def test_send_visual_strategy_to_forge(forven_db):
     assert isinstance(strat.params.get("spec"), dict)
 
 
+def test_send_both_sided_visual_strategy_keeps_its_short_side(forven_db):
+    """create_strategy_container clamps an unsupported 'both' to long_only; a spec
+    with long and short entries supports it, so the short side survives."""
+    import json
+
+    from forven.db import get_db
+    down = {"conditions": [{"left": "rsi", "op": ">", "right": {"param": "overbought"}}]}
+    spec = {**_FORGE_SPEC, "entry_short": down, "exit_short": _FORGE_SPEC["entry_long"]}
+    res = core.send_manual_strategy_to_forge(core.SendToForgeBody(
+        mode="visual", spec=spec, params={"trade_mode": "both"}, symbol="BTC/USDT", timeframe="1h",
+    ))
+    with get_db() as conn:
+        row = conn.execute("SELECT params FROM strategies WHERE id = ?", (res["strategy_id"],)).fetchone()
+    assert json.loads(row["params"])["trade_mode"] == "both"
+
+
 def test_send_code_strategy_to_forge(forven_db):
     """A registered code strategy type lands in the Forge."""
     res = core.send_manual_strategy_to_forge(
@@ -420,3 +436,40 @@ def test_explicit_symbol_and_timeframe_still_override_the_row(captured, monkeypa
     assert kw["asset"] == "ETH"
     assert kw["timeframe"] == "1d"
     assert kw["sync_strategy_state"] is False
+
+
+def test_manual_registration_never_rewrites_code_a_forge_strategy_ran(forven_db, monkeypatch):
+    """Two drafts sharing a TYPE_NAME must not swap the code under a Forge strategy."""
+    import os
+
+    from forven.db import get_db
+    monkeypatch.setattr("forven.selfheal.validate_strategy_code", lambda code: {"valid": True, "code": code})
+    custom_dir = os.path.join(os.path.dirname(core.__file__), "strategies", "custom")
+    os.makedirs(custom_dir, exist_ok=True)
+    manual_path = os.path.join(custom_dir, "manual_manual_wiring_test.py")
+    with open(manual_path, "w", encoding="utf-8") as fh:
+        fh.write(_VALID_STRATEGY)
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO strategies (id, name, type, runtime_type, params, symbol, timeframe, status, stage, source, created_at, updated_at) "
+                "VALUES ('S09999', 'Tested', 'manual_wiring_test', 'manual_wiring_test', '{}', 'BTC', '1h', 'active', 'quick_screen', 'manual_backtest', '2026-01-01', '2026-01-01')"
+            )
+        changed = _VALID_STRATEGY.replace('"oversold": 30', '"oversold": 25')
+        res = core.register_manual_backtest_strategy(core.ManualStrategyBody(code=changed))
+        assert res["registered"] is False
+        assert "belongs to Forge strategy S09999" in res["errors"][0]
+        with open(manual_path, encoding="utf-8") as fh:
+            assert fh.read() == _VALID_STRATEGY
+    finally:
+        os.remove(manual_path)
+
+
+def test_send_visual_strategy_refuses_a_spec_param_a_setting_would_override(forven_db):
+    spec = {**_FORGE_SPEC, "params": {"oversold": 30, "overbought": 70, "leverage": 5}}
+    with pytest.raises(core.HTTPException) as error:
+        core.send_manual_strategy_to_forge(core.SendToForgeBody(
+            mode="visual", spec=spec, params={"leverage": 2}, symbol="BTC/USDT", timeframe="1h",
+        ))
+    assert error.value.status_code == 400
+    assert "leverage" in error.value.detail

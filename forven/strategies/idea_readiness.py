@@ -71,9 +71,12 @@ def check_idea_readiness(description: str, symbol: str | None, timeframe: str | 
         try:
             data = importlib.import_module("forven.data")
             parquet_path, tail_path = data.parquet_path, data.tail_path
+            # The spellings the backtest loader tries, so "BTC" finds BTC/USDT.
+            candidates = importlib.import_module("forven.strategies.backtest")._dataset_symbol_candidates(symbol)
             import pyarrow.parquet as pq
 
-            paths = [p for p in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)) if p.exists()]
+            paths = [p for candidate in candidates
+                     for p in (parquet_path(candidate, timeframe), tail_path(candidate, timeframe)) if p.exists()]
             if not paths or not any(pq.read_metadata(p).num_rows > 0 for p in paths):
                 issues.append(f"No local candles for {symbol} / {timeframe}. Collect them on the Data page, then retry.")
             if required:

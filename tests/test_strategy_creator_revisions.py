@@ -68,3 +68,59 @@ def test_visual_forge_persists_profile_used_by_engine(forven_db):
     assert params["leverage"] == 2
     assert params["_creator_context"]["fee_bps"] == 10
     assert row["stage"] == "quick_screen"
+
+
+def test_send_to_forge_returns_the_revisions_existing_forge_strategy(forven_db):
+    from forven.db import get_db
+
+    entry = create()
+    first = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=1))
+    again = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=1))
+    assert again["already_in_forge"] is True
+    assert again["forge"]["strategy_id"] == first["forge"]["strategy_id"]
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM strategies WHERE type = 'rule_engine'").fetchone()[0] == 1
+
+    # A saved change is a new revision, which goes to the Forge on its own.
+    library.update_library_entry(entry["id"], library.LibraryUpdateBody(timeframe="4h", expected_version=1))
+    revised = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=2))
+    assert not revised.get("already_in_forge")
+    assert revised["forge"]["strategy_id"] != first["forge"]["strategy_id"]
+
+    # Deleted from the Forge, the same revision can be sent again.
+    with get_db() as conn:
+        conn.execute("DELETE FROM strategies WHERE id = ?", (revised["forge"]["strategy_id"],))
+    resent = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=2))
+    assert not resent.get("already_in_forge")
+
+
+@pytest.mark.parametrize("body", [
+    {"name": "   "}, {"name": "x", "kind": "notebook"}, {"name": "x", "timeframe": "1 hour"},
+    {"name": "x", "symbol": "BTC USDT"}, {"name": "x", "tags": ["t"] * 21},
+])
+def test_library_create_rejects_malformed_fields(body):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        library.LibraryCreateBody(**body)
+
+
+def test_library_status_is_draft_or_tested_from_clients():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        library.LibraryUpdateBody(status="in_forge")
+    assert library.LibraryCreateBody(name="  Spaced  ", symbol=" ETH/USDT ").name == "Spaced"
+
+
+def test_a_forge_strategy_deleted_from_the_lab_frees_the_revision(forven_db):
+    from forven.db import get_db
+
+    entry = create()
+    sent = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=1))
+    assert library.get_library_entry(entry["id"])["forge_strategy_id"] == sent["forge"]["strategy_id"]
+    with get_db() as conn:
+        conn.execute("DELETE FROM strategies WHERE id = ?", (sent["forge"]["strategy_id"],))
+
+    listed = next(row for row in library.list_library()["strategies"] if row["id"] == entry["id"])
+    assert listed["forge_strategy_id"] is None and listed["status"] == "draft"

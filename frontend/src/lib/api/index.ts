@@ -22,6 +22,7 @@ export type {
 	IndicatorMeta,
 	IndicatorParamMeta,
 	PreviewChartContext,
+	ExecutionRequestFields,
 	NlToSpecResponse,
 	LibraryStrategy,
 	LibraryStrategyInput,

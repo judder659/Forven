@@ -19,7 +19,7 @@ def _patch(monkeypatch, *, required, present, fetch=None):
     import forven.strategies.backtest as backtest_mod
 
     monkeypatch.setattr(backtest_mod, "_resolve_strategy_class", lambda _t: _DummyStrategy)
-    monkeypatch.setattr(da, "infer_required_columns", lambda _cls, _sym: frozenset(required))
+    monkeypatch.setattr(da, "infer_required_columns", lambda _cls, _sym, _params=None: frozenset(required))
 
     # ``present`` may be a set (static) or a callable returning the current set,
     # so a fetch can flip availability mid-evaluation.
@@ -159,3 +159,51 @@ def test_columns_in_source_matches_quoted_literals_only():
     assert "funding_rate" in found
     assert "basis" not in found  # bare word / prose, not a quoted column literal
     assert "close" not in found  # OHLCV column, not in feed vocabulary
+
+
+# --- rule engine (visual strategies) ----------------------------------------
+_RSI_SPEC = {
+    "indicators": [{"id": "rsi", "kind": "rsi", "params": {"length": 14}}],
+    "params": {"oversold": 30},
+    "entry_long": {"logic": "and", "conditions": [{"left": "rsi", "op": "<", "right": {"param": "oversold"}}]},
+}
+
+
+def _rule_engine_verdict(monkeypatch, spec, present):
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    monkeypatch.setattr(da, "_present_columns", lambda _sym, _tf: frozenset(present))
+    return da.evaluate_data_availability(
+        "rule_engine", "DOGE/USDT", "1h", auto_fetch=False,
+        strategy_cls=RuleEngineStrategy, params={"spec": spec},
+    )
+
+
+def test_ohlcv_rule_spec_needs_no_feed_even_though_the_engine_source_names_them(monkeypatch):
+    # rule_engine.py quotes every feed column; an RSI spec must not inherit them,
+    # or every visual backtest blocks wherever liquidations are not collected.
+    res = _rule_engine_verdict(monkeypatch, _RSI_SPEC, present=set())
+    assert res.ok and not res.blocked
+    assert res.required == []
+
+
+def test_rule_spec_requires_the_feeds_it_references(monkeypatch):
+    spec = {
+        "indicators": [{"id": "fz", "kind": "funding_zscore", "params": {"length": 96}}],
+        "entry_long": {"logic": "and", "conditions": [
+            {"left": "fz", "op": "<", "right": -1.5},
+            {"logic": "or", "conditions": [{"left": {"series": "ls_ratio"}, "op": ">", "right": 1}]},
+        ]},
+        "exit_long": {"conditions": [{"left": "long_liq_usd", "op": ">", "right": 0}]},
+    }
+    res = _rule_engine_verdict(monkeypatch, spec, present={"funding_rate", "ls_ratio"})
+    assert res.required == ["funding_rate", "long_liq_usd", "ls_ratio"]
+    assert res.blocked and res.missing_unfetchable == ["long_liq_usd"]
+
+
+def test_rule_spec_requirements_follow_params_not_a_class_cache(monkeypatch):
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    funding_spec = {"entry_long": {"conditions": [{"left": "funding_rate", "op": "<", "right": 0}]}}
+    assert da.infer_required_columns(RuleEngineStrategy, "BTC", {"spec": funding_spec}) == {"funding_rate"}
+    assert da.infer_required_columns(RuleEngineStrategy, "BTC", {"spec": _RSI_SPEC}) == frozenset()

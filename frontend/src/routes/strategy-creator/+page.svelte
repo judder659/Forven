@@ -29,6 +29,8 @@
 	import { resolveDateRangePreset, estimateBarCount } from '$lib/utils/dateRange';
 	import { addToast } from '$lib/stores/processTracker';
 	import { chartContextToWorkspaceProps } from '$lib/utils/chartContext';
+	import { builderIncompatibility } from '$lib/utils/ruleSpec';
+	import type { ExecutionRequestFields } from '$lib/api';
 	import SymbolInput from '$lib/components/ui/SymbolInput.svelte';
 	import TimeframeSelect from '$lib/components/ui/TimeframeSelect.svelte';
 	import DateRangeFieldset from '$lib/components/ui/DateRangeFieldset.svelte';
@@ -98,7 +100,7 @@
 	}
 
 	// Templates
-	function applyTemplate(id: string) {
+	function applyTemplate(id: string, { quiet = false } = {}) {
 		const t = STRATEGY_TEMPLATES.find((x) => x.id === id);
 		if (!t) return;
 		restoreExecution({});
@@ -109,7 +111,7 @@
 		strategyDescription = t.description;
 		mode = 'visual';
 		currentLibraryId = null;
-		addToast(`Loaded template “${t.name}”`, 'info');
+		if (!quiet) addToast(`Loaded template “${t.name}”`, 'info');
 	}
 	function blankCanvas() {
 		restoreExecution({});
@@ -127,7 +129,12 @@
 		mode = 'visual';
 	}
 
-	// Code mode
+	// Code mode. Each new draft gets its own TYPE_NAME: registering code under a
+	// name another draft already sent to the Forge is refused.
+	function customTemplate(): string {
+		const typeName = `my_strategy_${Math.random().toString(36).slice(2, 8)}`;
+		return CUSTOM_TEMPLATE.replaceAll('my_strategy', typeName);
+	}
 	const CUSTOM_TEMPLATE = `import pandas as pd
 import numpy as np
 from forven.strategies.base import BaseStrategy, Signal
@@ -179,7 +186,7 @@ class MyStrategy(BaseStrategy):
 STRATEGY_CLASS = MyStrategy
 TYPE_NAME = "my_strategy"
 `;
-	let customCode = CUSTOM_TEMPLATE;
+	let customCode = customTemplate();
 	type CustomStatus = 'idle' | 'validating' | 'loaded' | 'failed';
 	let customStatus: CustomStatus = 'idle';
 	let customErrors: string[] = [];
@@ -205,7 +212,9 @@ TYPE_NAME = "my_strategy"
 				validatedCode = code;
 				customLoadedName = res.strategy_name;
 				customStatus = 'loaded';
-				paramsDraft = { ...(res.default_params ?? {}), ...paramsDraft };
+				// Keep edited values for this strategy's params; drop another strategy's.
+				const defaults = res.default_params ?? {};
+				paramsDraft = { ...defaults, ...Object.fromEntries(Object.entries(paramsDraft).filter(([key]) => key in defaults)) };
 			} else {
 				customStatus = 'failed';
 				if (customErrors.length === 0) customErrors = ['Strategy failed validation.'];
@@ -260,7 +269,10 @@ TYPE_NAME = "my_strategy"
 			aiCheckedKey = key;
 			aiReadiness = res.readiness ?? null;
 			aiProvider = res.provider ?? null;
-			if (res.spec) {
+			const unsupported = res.spec ? builderIncompatibility(res.spec) : null;
+			if (unsupported) {
+				aiError = `${unsupported} Describe the idea with simpler condition groups and generate again.`;
+			} else if (res.spec) {
 				currentSpec = clone(res.spec as unknown as RuleSpec);
 				currentLibraryId = null;
 				mode = 'visual';
@@ -287,7 +299,8 @@ TYPE_NAME = "my_strategy"
 	let slippageBps = 5;
 	let leverage = 1;
 	let tradeMode: 'long_only' | 'short_only' | 'both' = 'long_only';
-	let sizingMode: 'full' | 'fraction' | 'fixed' | 'atr' | 'kelly' = 'full';
+	type SizingMode = 'full' | 'fraction' | 'fixed' | 'atr' | 'kelly';
+	let sizingMode: SizingMode = 'full';
 	let riskPerTrade = 0.02;
 	let fixedSize = 1000;
 	let atrStopMultiplier = 2;
@@ -297,19 +310,65 @@ TYPE_NAME = "my_strategy"
 	let takeProfitPct: number | null = null;
 	let trailingStopPct: number | null = null;
 	let timeStopBars: number | null = null;
-	$: numberOrNull = (v: string) => (v.trim() === '' ? null : Number(v));
+	// Stops are positive; an empty, zero or negative entry means none.
+	$: numberOrNull = (v: string) => {
+		const n = Number(v);
+		return v.trim() === '' || !(n > 0) ? null : n;
+	};
 	$: estimatedBars = estimateBarCount(startDate, endDate, timeframe);
+	$: hasExitControl = [stopLossPct, takeProfitPct, trailingStopPct, timeStopBars].some((v) => v != null);
+	// Full equity without an exit control is no active profile, so the engine
+	// sizes by its default instead: 1% risk against a 2x ATR stop it places
+	// itself (sizing.normalize_execution_controls, sizing.default_controls).
+	$: fullFallsBack = sizingMode === 'full' && !hasExitControl;
+	$: riskPct = +(Number(riskPerTrade) * 100).toFixed(2);
+	$: executionSummary = [
+		fullFallsBack ? 'Default sizing: 1% risk, 2× ATR stop'
+			: sizingMode === 'full' ? 'Full equity'
+			: sizingMode === 'fraction' ? `${riskPct}% risk per trade`
+			: sizingMode === 'fixed' ? `${Number(fixedSize).toLocaleString()} per trade`
+			: sizingMode === 'atr' ? `${riskPct}% risk, ${atrStopMultiplier}× ATR stop`
+			: 'Kelly sizing',
+		stopLossPct != null ? `stop ${stopLossPct}%` : '',
+		takeProfitPct != null ? `target ${takeProfitPct}%` : '',
+		trailingStopPct != null ? `trail ${trailingStopPct}%` : '',
+		timeStopBars != null ? `${timeStopBars}-bar time stop` : '',
+		`${leverage}× leverage`,
+	].filter(Boolean).join(' · ');
+
+	// The execution settings a backtest takes; the preview simulates the same.
+	let executionRequest: ExecutionRequestFields;
+	$: executionRequest = {
+		initial_capital: initialCapital,
+		fee_bps: feeBps,
+		slippage_bps: slippageBps,
+		leverage,
+		sizing_mode: sizingMode,
+		risk_per_trade: sizingMode === 'fraction' || sizingMode === 'atr' ? riskPerTrade : undefined,
+		fixed_size: sizingMode === 'fixed' ? fixedSize : undefined,
+		atr_stop_multiplier: sizingMode === 'atr' ? atrStopMultiplier : undefined,
+		kelly_multiplier: sizingMode === 'kelly' ? kellyMultiplier : undefined,
+		kelly_lookback: sizingMode === 'kelly' ? kellyLookback : undefined,
+		stop_loss_pct: stopLossPct,
+		take_profit_pct: takeProfitPct,
+		trailing_stop_pct: trailingStopPct,
+		time_stop_bars: timeStopBars,
+	};
 
 	// Live preview chart
 	let previewCtx: PreviewChartContext | null = null;
 	let previewLoading = false;
 	let previewError = '';
 	let previewKey = '';
+	let previewSeq = 0;
 	let previewTimer: ReturnType<typeof setTimeout> | undefined;
 	let fitToken = 0;
 	onDestroy(() => clearTimeout(previewTimer));
 
 	$: chartProps = chartContextToWorkspaceProps(previewCtx);
+	$: exitReasons = Object.entries(previewCtx?.exit_reasons ?? {}).sort((a, b) => b[1] - a[1]);
+	// The chart shows an older draft while the builder has errors.
+	$: previewStale = !!previewCtx && !liveValid;
 
 	function schedulePreview() {
 		clearTimeout(previewTimer);
@@ -317,10 +376,12 @@ TYPE_NAME = "my_strategy"
 	}
 	async function runPreview() {
 		if (mode !== 'visual' || !liveValid || !liveSpec) return;
+		// Only the latest request may land; an older, slower one would show a stale draft.
+		const seq = ++previewSeq;
 		previewLoading = true;
 		previewError = '';
 		try {
-			previewCtx = await previewStrategyChart({
+			const ctx = await previewStrategyChart({
 				spec: liveSpec,
 				symbol: symbol.trim(),
 				timeframe,
@@ -328,17 +389,29 @@ TYPE_NAME = "my_strategy"
 				end: endDate,
 				trade_mode: effectiveTradeMode,
 				name: strategyName,
+				...previewExecution,
 			});
+			if (seq !== previewSeq) return;
+			previewCtx = ctx;
 			fitToken += 1;
 		} catch (err) {
-			previewError = err instanceof Error ? err.message : 'Preview failed';
+			if (seq === previewSeq) previewError = err instanceof Error ? err.message : 'Preview failed';
 		} finally {
-			previewLoading = false;
+			if (seq === previewSeq) previewLoading = false;
 		}
 	}
-	// Auto-refresh the preview when the visual spec / market scope changes.
+	// A blank or out-of-range number would fail the whole preview request; the
+	// preview leaves it out and Run Backtest reports it.
+	let previewExecution: ExecutionRequestFields;
+	$: previewExecution = Object.fromEntries(
+		Object.entries(executionRequest).filter(([key, value]) =>
+			typeof value === 'number'
+				? Number.isFinite(value) && (value > 0 || (value === 0 && key.endsWith('_bps')))
+				: value != null)
+	);
+	// Auto-refresh the preview when the visual spec, market scope or execution settings change.
 	$: if (mode === 'visual' && liveValid && liveSpec) {
-		const key = JSON.stringify({ s: liveSpec, symbol, timeframe, startDate, endDate, tm: effectiveTradeMode });
+		const key = JSON.stringify({ s: liveSpec, symbol, timeframe, startDate, endDate, tm: effectiveTradeMode, x: previewExecution });
 		if (key !== previewKey) {
 			previewKey = key;
 			schedulePreview();
@@ -432,6 +505,11 @@ TYPE_NAME = "my_strategy"
 		try {
 			const detail = await getSystemStrategyDetail(id);
 			const spec = (detail.params && typeof detail.params === 'object' ? (detail.params as Record<string, unknown>).spec : null);
+			const unsupported = spec && typeof spec === 'object' ? builderIncompatibility(spec) : null;
+			if (unsupported) {
+				nonEditableNotice = `“${detail.name || displayName}” can’t be opened in the visual builder. ${unsupported}`;
+				return;
+			}
 			if (spec && typeof spec === 'object') {
 				currentSpec = clone(spec as unknown as RuleSpec);
 				symbol = detail.symbol || symbol;
@@ -474,7 +552,7 @@ TYPE_NAME = "my_strategy"
     function restoreExecution(params: Record<string, unknown>) {
         const profile = (params.execution_profile || {}) as Record<string, number | string | null>;
         const context = (params._creator_context || {}) as Record<string, number | string>;
-        sizingMode = (profile.sizing_mode || 'full') as typeof sizingMode;
+        sizingMode = (profile.sizing_mode || 'full') as SizingMode;
         riskPerTrade = Number(profile.risk_per_trade ?? 0.02);
         fixedSize = Number(profile.fixed_size ?? 1000);
         atrStopMultiplier = Number(profile.atr_stop_multiplier ?? 2);
@@ -538,6 +616,11 @@ TYPE_NAME = "my_strategy"
 	}
 
 	function openLibraryEntry(entry: LibraryStrategy) {
+		const unsupported = entry.kind === 'code' ? null : builderIncompatibility(entry.spec);
+		if (unsupported) {
+			addToast(`“${entry.name}” can’t be opened in the visual builder. ${unsupported}`, 'error');
+			return;
+		}
 		strategyName = entry.name;
 		strategyDescription = entry.description || '';
 		symbol = entry.symbol || symbol;
@@ -546,7 +629,7 @@ TYPE_NAME = "my_strategy"
 		restoreExecution(entry.params || {});
 		if (entry.kind === 'code') {
 			mode = 'code';
-			customCode = entry.code || CUSTOM_TEMPLATE;
+			customCode = entry.code || customTemplate();
 			customStatus = 'idle';
 			customLoadedName = '';
 			paramsDraft = Object.fromEntries(Object.entries(entry.params || {}).filter(([key]) => !['execution_profile', '_creator_context', 'leverage', 'trade_mode'].includes(key)));
@@ -571,6 +654,7 @@ TYPE_NAME = "my_strategy"
 
 	async function deleteEntry(entry: LibraryStrategy, ev: Event) {
 		ev.stopPropagation();
+		if (!confirm(`Delete “${entry.name}” from your library?`)) return;
 		try {
 			await deleteLibraryStrategy(entry.id);
 			if (currentLibraryId === entry.id) currentLibraryId = null;
@@ -593,7 +677,12 @@ TYPE_NAME = "my_strategy"
 		try {
 			const res = await sendLibraryStrategyToForge(entry.id, entry.version);
 			await loadLibrary();
-			addToast(`Sent “${entry.name}” to the Forge (${res.forge.stage})`, 'success', `/lab/strategy/${res.forge.strategy_id}`);
+			const link = `/lab/strategy/${encodeURIComponent(res.forge.strategy_id)}`;
+			if (res.already_in_forge) {
+				addToast(`“${entry.name}” is already in the Forge as ${res.forge.display_id || res.forge.strategy_id} (${res.forge.stage})`, 'info', link);
+			} else {
+				addToast(`Sent “${entry.name}” to the Forge (${res.forge.stage})`, 'success', link);
+			}
 		} catch (err) {
 			addToast(err instanceof Error ? err.message : 'Send to Forge failed', 'error');
 		} finally { forging = false; }
@@ -619,9 +708,12 @@ TYPE_NAME = "my_strategy"
 		if (!symbol.trim()) return 'Symbol is required.';
 		if (startDate && endDate && startDate >= endDate) return 'Start date must be before end date.';
 		if (!(initialCapital > 0)) return 'Initial capital must be greater than 0.';
-		if (leverage < 1 || leverage > 125) return 'Leverage must be between 1 and 125.';
+		if (!(feeBps >= 0 && slippageBps >= 0)) return 'Fee and slippage must be 0 or more.';
+		if (!(leverage >= 1 && leverage <= 125)) return 'Leverage must be between 1 and 125.';
 		if (sizingMode === 'fraction' && stopLossPct == null && trailingStopPct == null)
 			return 'Fraction sizing needs a Stop Loss % or Trailing Stop %.';
+		if (sizingMode === 'kelly')
+			return 'Kelly sizing sizes each trade from the strategy’s own closed trades. A backtest starts with none, so it would open no trades. Choose another sizing mode.';
 		if (estimatedBars != null && estimatedBars > BAR_CAP)
 			return `This window is ~${estimatedBars.toLocaleString()} bars; the engine caps at ${BAR_CAP.toLocaleString()}.`;
 		return null;
@@ -646,22 +738,9 @@ TYPE_NAME = "my_strategy"
 			end: endDate,
 			params,
 			preserve_result: true,
-			initial_capital: initialCapital,
-			fee_bps: feeBps,
-			slippage_bps: slippageBps,
-			leverage,
 			trade_mode: effectiveTradeMode,
 			allow_shorting: effectiveTradeMode !== 'long_only',
-			sizing_mode: sizingMode,
-			risk_per_trade: sizingMode === 'fraction' || sizingMode === 'atr' ? riskPerTrade : undefined,
-			fixed_size: sizingMode === 'fixed' ? fixedSize : undefined,
-			atr_stop_multiplier: sizingMode === 'atr' ? atrStopMultiplier : undefined,
-			kelly_multiplier: sizingMode === 'kelly' ? kellyMultiplier : undefined,
-			kelly_lookback: sizingMode === 'kelly' ? kellyLookback : undefined,
-			stop_loss_pct: stopLossPct,
-			take_profit_pct: takeProfitPct,
-			trailing_stop_pct: trailingStopPct,
-			time_stop_bars: timeStopBars,
+			...executionRequest,
 		};
 	}
 
@@ -739,7 +818,7 @@ TYPE_NAME = "my_strategy"
 		loadLibrary();
 		loadPrebuilt();
 		// Seed with a template so the page is productive on first load.
-		applyTemplate(STRATEGY_TEMPLATES[0].id);
+		applyTemplate(STRATEGY_TEMPLATES[0].id, { quiet: true });
 	});
 </script>
 
@@ -864,7 +943,7 @@ TYPE_NAME = "my_strategy"
 										class="terminal-button-primary text-[10px] disabled:opacity-40">
 										{customStatus === 'validating' ? 'Validating…' : 'Validate & load'}
 									</button>
-									<button type="button" on:click={() => (customCode = CUSTOM_TEMPLATE)} disabled={busy}
+									<button type="button" on:click={() => (customCode = customTemplate())} disabled={busy}
 										class="terminal-button text-[10px]">Reset template</button>
 									{#if customStatus === 'loaded' && customLoadedName}
 										<span class="inline-flex items-center gap-1.5 text-[12px] text-emerald-400">
@@ -898,8 +977,11 @@ TYPE_NAME = "my_strategy"
 
 				<!-- Execution settings -->
 				<div class="terminal-card p-4">
-					<button type="button" class="flex w-full items-center justify-between text-left" on:click={() => (showAdvanced = !showAdvanced)} aria-expanded={showAdvanced}>
-						<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution Settings</div>
+					<button type="button" class="flex w-full items-center justify-between gap-3 text-left" on:click={() => (showAdvanced = !showAdvanced)} aria-expanded={showAdvanced}>
+						<div class="min-w-0">
+							<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution Settings</div>
+							<div class="mt-1 truncate text-[11px] text-[#888]" data-testid="execution-summary">{executionSummary}</div>
+						</div>
 						<span class="text-sm text-[#555]">{showAdvanced ? '−' : '+'}</span>
 					</button>
 					{#if showAdvanced}
@@ -920,7 +1002,8 @@ TYPE_NAME = "my_strategy"
 							{/if}
 							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Sizing Mode</div>
 								<select bind:value={sizingMode} disabled={busy} class="terminal-select mt-1.5">
-									<option value="full">Full equity</option><option value="fraction">Fraction (risk)</option><option value="fixed">Fixed notional</option><option value="atr">ATR risk</option><option value="kelly">Kelly</option>
+									<option value="full">Full equity</option><option value="fraction">Fraction (risk)</option><option value="fixed">Fixed notional</option><option value="atr">ATR risk</option>
+									<option value="kelly" disabled>Kelly (opens no trades)</option>
 								</select></label>
 							{#if sizingMode === 'fraction' || sizingMode === 'atr'}
 								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Risk Per Trade</div>
@@ -941,6 +1024,15 @@ TYPE_NAME = "my_strategy"
 									<input type="number" bind:value={kellyLookback} step="10" min="1" disabled={busy} class="terminal-input mt-1.5" /></label>
 							{/if}
 						</div>
+						{#if fullFallsBack}
+							<p class="mt-3 text-[11px] text-[#888]" data-testid="sizing-note">
+								With no stop, target, trailing or time stop, the engine does not size at full equity. It risks 1% of equity per trade against a 2× ATR stop that it places itself. Add an exit below to trade full equity.
+							</p>
+						{:else if sizingMode === 'kelly'}
+							<p class="mt-3 text-[11px] text-amber-400" data-testid="sizing-note">
+								Kelly sizes each trade from the strategy’s own closed trades. A backtest starts with none, so it opens no trades. Choose another sizing mode.
+							</p>
+						{/if}
 						<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Stop Loss %</div>
 								<input type="number" value={stopLossPct ?? ''} on:input={(e) => (stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
@@ -983,15 +1075,26 @@ TYPE_NAME = "my_strategy"
 								fitContentToken={fitToken}
 							/>
 						</div>
+						{#if previewStale}
+							<div class="mt-2 border border-[#333] bg-[#111] px-3 py-1.5 text-[11px] text-[#999]" role="status">
+								The chart shows the last valid draft. Fix the builder errors to update it.
+							</div>
+						{/if}
 						{#if previewError}
 							<div class="mt-2 border border-red-900 bg-red-500/5 px-3 py-1.5 text-[11px] text-red-400">{previewError}</div>
 						{:else if previewCtx}
-							<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-								<span class="text-[#555]">Entries: <span class="font-mono text-white">{chartProps.entryMarkers.length}</span></span>
-								<span class="text-[#555]">Exits: <span class="font-mono text-[#aaa]">{chartProps.exitMarkers.length}</span></span>
+							<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]" data-testid="preview-stats">
+								<span class="text-[#555]">Trades: <span class="font-mono text-white">{previewCtx.trade_count ?? chartProps.entryMarkers.length}</span></span>
+								{#if exitReasons.length}
+									<span class="text-[#555]">Exits: <span class="font-mono text-[#aaa]">{exitReasons.map(([reason, count]) => `${reason.replaceAll('_', ' ')} ${count}`).join(' · ')}</span></span>
+								{/if}
+								{#if previewCtx.signal_bars && Object.keys(previewCtx.signal_bars).length}
+									<span class="text-[#555]">Entry rule true on <span class="font-mono text-[#aaa]">{((previewCtx.signal_bars.entry_long ?? 0) + (previewCtx.signal_bars.entry_short ?? 0)).toLocaleString()}</span> bars</span>
+								{/if}
 								<span class="text-[#555]">Bars: <span class="font-mono text-[#aaa]">{chartProps.data.length.toLocaleString()}</span></span>
 							</div>
-							{#each chartProps.warnings.slice(0, 3) as w}
+							<p class="mt-1 text-[10px] text-[#555]">Markers are the trades Run Backtest takes with these execution settings. Its result scores only the out-of-sample last 30% of the window.</p>
+							{#each chartProps.warnings.slice(0, 4) as w}
 								<div class="mt-1 border border-amber-900 bg-amber-500/5 px-3 py-1 text-[11px] text-amber-400">{w}</div>
 							{/each}
 						{/if}
@@ -1011,7 +1114,10 @@ TYPE_NAME = "my_strategy"
 							class="terminal-button text-xs">
 							{saving ? 'Saving…' : currentLibraryId ? 'Save' : 'Save to library'}
 						</button>
-						{#if currentLibraryId}
+						{#if currentLibraryId && savedEntry?.forge_strategy_id && !dirty}
+							<a href={`/lab/strategy/${encodeURIComponent(savedEntry.forge_strategy_id)}`}
+								class="terminal-button text-xs" title="This saved revision is already in the Forge">Open in Forge →</a>
+						{:else if currentLibraryId}
 							<button type="button" on:click={(e) => { const entry = library.find((l) => l.id === currentLibraryId); if (entry) forgeEntry(entry, e); }}
 								disabled={dirty || forging || saving || busy}
 								class="terminal-button text-xs disabled:opacity-40"
@@ -1063,23 +1169,28 @@ TYPE_NAME = "my_strategy"
 			{:else}
 				<div class="mt-4 space-y-2">
 					{#each library as entry (entry.id)}
-						<button type="button" on:click={() => openLibraryEntry(entry)}
-							class="block w-full border bg-[#050505] p-3 text-left transition-colors hover:border-white {currentLibraryId === entry.id ? 'border-white' : 'border-[#222]'}">
-							<div class="flex items-center justify-between gap-2">
-								<span class="truncate text-sm text-white">{entry.name}</span>
-								<span class="shrink-0 border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#888]">{entry.status}</span>
-							</div>
-							<div class="mt-0.5 truncate text-[11px] text-[#555]">
-								{entry.kind} · {entry.symbol} {entry.timeframe}{entry.description ? ` · ${entry.description}` : ''}
-							</div>
+						<div class="border bg-[#050505] p-3 transition-colors hover:border-white {currentLibraryId === entry.id ? 'border-white' : 'border-[#222]'}">
+							<button type="button" on:click={() => openLibraryEntry(entry)} class="block w-full text-left">
+								<div class="flex items-center justify-between gap-2">
+									<span class="truncate text-sm text-white">{entry.name}</span>
+									<span class="shrink-0 border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#888]">{entry.status}</span>
+								</div>
+								<div class="mt-0.5 truncate text-[11px] text-[#555]">
+									{entry.kind} · {entry.symbol} {entry.timeframe}{entry.description ? ` · ${entry.description}` : ''}
+								</div>
+							</button>
 							<div class="mt-2 flex items-center gap-3 text-[11px]">
-								<span class="text-white">Open</span>
-								<span class="text-[#666] hover:text-white" role="button" tabindex="0" on:click={(e) => duplicateEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && duplicateEntry(entry, e)}>Duplicate</span>
-								<span class="text-[#888] hover:text-white" role="button" tabindex="0" on:click={(e) => forgeEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && forgeEntry(entry, e)}>→ Forge</span>
-								{#if entry.forge_strategy_id}<span class="text-emerald-400">in forge</span>{/if}
-								<span class="ml-auto text-[#555] hover:text-red-400" role="button" tabindex="0" on:click={(e) => deleteEntry(entry, e)} on:keydown={(e) => e.key === 'Enter' && deleteEntry(entry, e)}>Delete</span>
+								<button type="button" class="text-white" on:click={() => openLibraryEntry(entry)}>Open</button>
+								<button type="button" class="text-[#666] hover:text-white" on:click={(e) => duplicateEntry(entry, e)}>Duplicate</button>
+								{#if entry.forge_strategy_id}
+									<a class="text-emerald-400 hover:text-white" href={`/lab/strategy/${encodeURIComponent(entry.forge_strategy_id)}`}>In Forge →</a>
+								{:else}
+									<button type="button" class="text-[#888] hover:text-white disabled:opacity-40" disabled={forging}
+										on:click={(e) => forgeEntry(entry, e)}>→ Forge</button>
+								{/if}
+								<button type="button" class="ml-auto text-[#555] hover:text-red-400" on:click={(e) => deleteEntry(entry, e)}>Delete</button>
 							</div>
-						</button>
+						</div>
 					{/each}
 				</div>
 			{/if}

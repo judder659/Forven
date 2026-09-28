@@ -147,7 +147,7 @@ _REQUIRED_CACHE: dict[str, frozenset[str]] = {}
 _REQUIRED_CACHE_LOCK = threading.Lock()
 
 
-def _declared_columns(strategy_cls, asset: str) -> set[str]:
+def _declared_columns(strategy_cls, asset: str, params: dict | None = None) -> set[str]:
     """Read explicitly-declared feed columns off ``data_requirements()``.
 
     Supports a forward-looking ``columns`` / ``feeds`` key on any requirement
@@ -155,7 +155,7 @@ def _declared_columns(strategy_cls, asset: str) -> set[str]:
     """
     declared: set[str] = set()
     try:
-        tmp = strategy_cls("_preflight", {"_asset": asset})
+        tmp = strategy_cls("_preflight", {**(params or {}), "_asset": asset})
         reqs = tmp.data_requirements() or []
     except Exception:
         return declared
@@ -270,10 +270,18 @@ def infer_cross_asset_columns(strategy_cls, asset: str) -> frozenset[str]:
     return frozenset(found)
 
 
-def infer_required_columns(strategy_cls, asset: str) -> frozenset[str]:
-    """Feed columns a strategy needs: declared ∪ source-scanned. Cached per class."""
+def infer_required_columns(strategy_cls, asset: str, params: dict | None = None) -> frozenset[str]:
+    """Feed columns a strategy needs: declared ∪ source-scanned. Cached per class.
+
+    A class with ``DATA_COLUMNS_FROM_PARAMS`` reads feeds chosen by its params
+    (the rule engine reads what its spec references) and declares exactly those
+    in ``data_requirements()``. Its answer comes from an instance built with
+    ``params``, without a source scan or the per-class cache.
+    """
     if strategy_cls is None:
         return frozenset()
+    if getattr(strategy_cls, "DATA_COLUMNS_FROM_PARAMS", False):
+        return frozenset(_declared_columns(strategy_cls, asset, params))
     cache_key = f"{getattr(strategy_cls, '__module__', '')}.{getattr(strategy_cls, '__qualname__', '')}"
     with _REQUIRED_CACHE_LOCK:
         cached = _REQUIRED_CACHE.get(cache_key)
@@ -472,6 +480,7 @@ def evaluate_data_availability(
     strategy_id: str | None = None,
     auto_fetch: bool = True,
     strategy_cls: type | None = None,
+    params: dict | None = None,
 ) -> DataAvailabilityResult:
     """Precheck the data a strategy needs against what's available.
 
@@ -482,7 +491,8 @@ def evaluate_data_availability(
     set cannot safely certify a backtest input.
 
     ``strategy_cls`` lets registration-time callers probe a class that is not
-    yet resolvable through the runtime registry.
+    yet resolvable through the runtime registry. ``params`` are the strategy's
+    params, which decide the feeds a ``DATA_COLUMNS_FROM_PARAMS`` class reads.
     """
     result = DataAvailabilityResult()
     try:
@@ -545,7 +555,7 @@ def evaluate_data_availability(
             )
             return result
 
-        required = infer_required_columns(cls, symbol)
+        required = infer_required_columns(cls, symbol, params)
         result.required = sorted(required)
         if not required:
             return result  # fast path: OHLCV-only strategy

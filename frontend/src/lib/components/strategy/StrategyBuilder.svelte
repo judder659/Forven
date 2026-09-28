@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { IndicatorMeta } from '$lib/api';
+	import { RESERVED_PARAM_NAMES } from '$lib/utils/ruleSpec';
 	import type { RuleSpec } from './templates';
 
 	const dispatch = createEventDispatcher<{
@@ -30,8 +31,9 @@
 	interface GroupRow { kind: 'group'; uid: number; logic: 'and' | 'or'; conds: Cond[]; }
 	type Row = CondRow | GroupRow;
 	interface Side { logic: 'and' | 'or'; rows: Row[]; }
-	interface Instance { uid: number; id: string; kind: string; params: Record<string, number>; }
-	interface Param { uid: number; name: string; value: number; }
+	// prevId / prevName: the name conditions currently use, so a rename re-points them.
+	interface Instance { uid: number; id: string; prevId: string; kind: string; params: Record<string, number>; }
+	interface Param { uid: number; name: string; prevName: string; value: number; }
 
 	let uid = 1;
 	const nextUid = () => uid++;
@@ -49,13 +51,14 @@
 	$: metaByKind = Object.fromEntries(indicators.map((m) => [m.kind, m]));
 
 	function outputNames(inst: Instance): string[] {
+		const id = inst.id.trim();
 		const meta = metaByKind[inst.kind];
-		if (!meta) return [inst.id];
-		return meta.output_suffixes.map((s) => `${inst.id}${s}`);
+		if (!meta) return [id];
+		return meta.output_suffixes.map((s) => `${id}${s}`);
 	}
 
 	$: availableSeries = [...RAW_COLUMNS, ...instances.flatMap(outputNames)];
-	$: paramNames = params.map((p) => p.name).filter(Boolean);
+	$: paramNames = params.map((p) => p.name.trim()).filter(Boolean);
 
 	// ---- Palette --------------------------------------------------------------
 	let paletteSearch = '';
@@ -84,18 +87,57 @@
 	function addIndicator(meta: IndicatorMeta) {
 		const params0: Record<string, number> = {};
 		for (const p of meta.params) params0[p.key] = p.default;
-		instances = [...instances, { uid: nextUid(), id: uniqueId(meta.kind), kind: meta.kind, params: params0 }];
+		const id = uniqueId(meta.kind);
+		instances = [...instances, { uid: nextUid(), id, prevId: id, kind: meta.kind, params: params0 }];
 	}
 	function removeIndicator(i: number) {
 		instances = instances.filter((_, idx) => idx !== i);
 	}
 
 	function addParam() {
-		const nm = `param${params.length + 1}`;
-		params = [...params, { uid: nextUid(), name: nm, value: 0 }];
+		const taken = new Set(params.map((p) => p.name));
+		let n = params.length + 1;
+		while (taken.has(`param${n}`)) n++;
+		params = [...params, { uid: nextUid(), name: `param${n}`, prevName: `param${n}`, value: 0 }];
 	}
 	function removeParam(i: number) {
 		params = params.filter((_, idx) => idx !== i);
+	}
+
+	// ---- Renames: re-point the conditions that use the old name ----------------
+	function eachOperand(visit: (o: Operand) => void) {
+		for (const side of Object.values(sides)) {
+			for (const row of side.rows) {
+				for (const c of row.kind === 'group' ? row.conds : [row]) {
+					visit(c.left);
+					visit(c.right);
+				}
+			}
+		}
+	}
+	function renameIndicator(inst: Instance) {
+		const from = inst.prevId;
+		const to = inst.id.trim();
+		// Wait for a free id: re-pointing onto a name in use would merge references.
+		if (!to || to === from || RAW_COLUMNS.includes(to) || instances.some((o) => o !== inst && o.id.trim() === to)) return;
+		const suffixes = metaByKind[inst.kind]?.output_suffixes ?? [''];
+		const renamed = new Map(suffixes.map((s) => [`${from}${s}`, `${to}${s}`]));
+		eachOperand((o) => {
+			const next = o.type === 'series' ? renamed.get(String(o.value)) : undefined;
+			if (next) o.value = next;
+		});
+		inst.prevId = to;
+		bump();
+	}
+	function renameParam(p: Param) {
+		const from = p.prevName;
+		const to = p.name.trim();
+		if (!to || to === from || params.some((o) => o !== p && o.name.trim() === to)) return;
+		eachOperand((o) => {
+			if (o.type === 'param' && o.value === from) o.value = to;
+		});
+		p.prevName = to;
+		bump();
 	}
 
 	// ---- Conditions -----------------------------------------------------------
@@ -169,8 +211,8 @@
 	}
 
 	$: spec = {
-		indicators: instances.map((i) => ({ id: i.id, kind: i.kind, params: { ...i.params } })),
-		params: Object.fromEntries(params.filter((p) => p.name).map((p) => [p.name, Number(p.value)])),
+		indicators: instances.map((i) => ({ id: i.id.trim(), kind: i.kind, params: { ...i.params } })),
+		params: Object.fromEntries(params.filter((p) => p.name.trim()).map((p) => [p.name.trim(), Number(p.value)])),
 		entry_long: sideToSpec(sides.entry_long),
 		exit_long: sideToSpec(sides.exit_long),
 		entry_short: showShort ? sideToSpec(sides.entry_short) : null,
@@ -181,10 +223,29 @@
 		const errs: string[] = [];
 		const ids = new Set<string>();
 		for (const inst of instances) {
-			if (!inst.id.trim()) errs.push('Every indicator needs an id.');
-			else if (RAW_COLUMNS.includes(inst.id)) errs.push(`Indicator id "${inst.id}" collides with a price/data column.`);
-			else if (ids.has(inst.id)) errs.push(`Duplicate indicator id "${inst.id}".`);
-			else ids.add(inst.id);
+			const id = inst.id.trim();
+			if (!id) errs.push('Every indicator needs an id.');
+			else if (RAW_COLUMNS.includes(id)) errs.push(`Indicator id "${id}" collides with a price/data column.`);
+			else if (ids.has(id)) errs.push(`Duplicate indicator id "${id}".`);
+			else ids.add(id);
+			// The engine silently swaps an unusable setting for its default.
+			const meta = metaByKind[inst.kind];
+			for (const p of meta?.params ?? []) {
+				const value = inst.params[p.key];
+				const label = `${meta?.label ?? inst.kind} ${p.key}`;
+				if (typeof value !== 'number' || !Number.isFinite(value)) errs.push(`${label} needs a number.`);
+				else if (value < p.min) errs.push(`${label} must be at least ${p.min}.`);
+				else if (p.step >= 1 && !Number.isInteger(value)) errs.push(`${label} must be a whole number.`);
+			}
+		}
+		const names = new Set<string>();
+		for (const p of params) {
+			const name = p.name.trim();
+			if (!name) errs.push('Every parameter needs a name.');
+			else if (RESERVED_PARAM_NAMES.includes(name)) errs.push(`Parameter name "${name}" is reserved for a strategy setting. Choose another name.`);
+			else if (names.has(name)) errs.push(`Duplicate parameter "${name}".`);
+			else names.add(name);
+			if (typeof p.value !== 'number' || !Number.isFinite(p.value)) errs.push(`Parameter "${name}" needs a number.`);
 		}
 		const hasEntry =
 			!!(spec.entry_long as { conditions?: unknown[] } | null)?.conditions?.length ||
@@ -213,7 +274,7 @@
 		return errs;
 	}
 
-	$: errors = validateDeps(spec, instances, params, availableSeries, paramNames, sides, showShort);
+	$: errors = validateDeps(spec, instances, params, availableSeries, paramNames, sides, showShort, metaByKind);
 	function validateDeps(..._deps: unknown[]): string[] {
 		return validate();
 	}
@@ -227,6 +288,9 @@
 			const obj = o as Record<string, unknown>;
 			if ('param' in obj) return { type: 'param', value: String(obj.param) };
 			if ('const' in obj) return { type: 'const', value: Number(obj.const) };
+			// The engine also reads a series written as {series: name} or {indicator: name}.
+			const ref = obj.indicator ?? obj.series;
+			if (ref != null) return { type: 'series', value: String(ref).trim() };
 		}
 		if (typeof o === 'string') {
 			const n = Number(o);
@@ -254,21 +318,27 @@
 		});
 		return { logic: grp.logic === 'or' ? 'or' : 'and', rows };
 	}
-	function loadSpec(s: RuleSpec) {
-		instances = (s.indicators ?? []).map((i) => ({ uid: nextUid(), id: i.id, kind: i.kind, params: { ...(i.params ?? {}) } }));
-		params = Object.entries(s.params ?? {}).map(([name, value]) => ({ uid: nextUid(), name, value: Number(value) }));
-		showShort = !!(s.entry_short || s.exit_short);
-		sides = {
-			entry_long: loadSide(s.entry_long),
-			exit_long: loadSide(s.exit_long),
-			entry_short: loadSide(s.entry_short),
-			exit_short: loadSide(s.exit_short),
+	function parseSpec(s: RuleSpec) {
+		return {
+			instances: (s.indicators ?? []).map((i): Instance => ({ uid: nextUid(), id: i.id, prevId: i.id, kind: i.kind, params: { ...(i.params ?? {}) } })),
+			params: Object.entries(s.params ?? {}).map(([name, value]): Param => ({ uid: nextUid(), name, prevName: name, value: Number(value) })),
+			showShort: !!(s.entry_short || s.exit_short),
+			sides: {
+				entry_long: loadSide(s.entry_long),
+				exit_long: loadSide(s.exit_long),
+				entry_short: loadSide(s.entry_short),
+				exit_short: loadSide(s.exit_short),
+			},
 		};
 	}
+	// Assign the loaded state right here, not inside a helper: the compiler orders
+	// `$:` blocks by the assignments it can see, and the derived spec below must
+	// run after this block. (Mounted with a spec already set, e.g. on returning to
+	// the Visual tab, the builder otherwise reported an empty spec.)
 	let _lastLoaded: RuleSpec | null = null;
 	$: if (initialSpec && initialSpec !== _lastLoaded) {
 		_lastLoaded = initialSpec;
-		loadSpec(initialSpec);
+		({ instances, params, showShort, sides } = parseSpec(initialSpec));
 	}
 
 	const inputCls =
@@ -328,7 +398,8 @@
 				{@const meta = metaByKind[inst.kind]}
 				<div class="flex flex-wrap items-center gap-2 border border-[#222] bg-black p-2">
 					<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[#888]">{meta?.label ?? inst.kind}</span>
-					<input class={`${inputCls} w-24`} bind:value={inst.id} {disabled} placeholder="id" aria-label="indicator id" />
+					<input class={`${inputCls} w-24`} bind:value={inst.id} {disabled} placeholder="id" aria-label="indicator id"
+						on:input={(e) => { inst.id = e.currentTarget.value; renameIndicator(inst); }} />
 					{#each meta?.params ?? [] as p}
 						<label class="flex items-center gap-1 text-[10px] text-[#666]">
 							{p.key}
@@ -361,7 +432,8 @@
 		<div class="mt-2 flex flex-wrap gap-2">
 			{#each params as p, i (p.uid)}
 				<div class="flex items-center gap-1.5 border border-[#222] bg-[#050505] p-1.5">
-					<input class={`${inputCls} w-28`} bind:value={p.name} {disabled} placeholder="name" aria-label="parameter name" />
+					<input class={`${inputCls} w-28`} bind:value={p.name} {disabled} placeholder="name" aria-label="parameter name"
+						on:input={(e) => { p.name = e.currentTarget.value; renameParam(p); }} />
 					<span class="text-[#555]">=</span>
 					<input type="number" class={`${inputCls} w-20`} bind:value={p.value} {disabled} step="any" aria-label="parameter value" />
 					<button type="button" on:click={() => removeParam(i)} {disabled}

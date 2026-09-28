@@ -28,6 +28,14 @@ def test_local_candles_and_named_inputs(candles, monkeypatch):
     assert check_idea_readiness("Use funding rate", "BTC/USDT", "1h")["can_generate"]
 
 
+def test_bare_base_asset_finds_the_pair_dataset_like_the_backtest(candles):
+    # Lifecycle strategies store "BTC"; the backtest loader reads BTC/USDT for it.
+    report = check_idea_readiness("RSI below 30", "BTC", "1h")
+    assert report["can_generate"], report["issues"]
+    assert report["symbol"] == "BTC"
+    assert not check_idea_readiness("RSI below 30", "ETH", "1h")["can_generate"]
+
+
 def test_unknown_market_is_not_defaulted(candles):
     report = check_idea_readiness("RSI", None, None)
     assert report["status"] == "review"

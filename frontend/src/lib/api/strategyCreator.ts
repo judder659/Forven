@@ -33,10 +33,11 @@ export async function getIndicators(): Promise<IndicatorMeta[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Live preview chart (bars + overlays + signal markers from a visual spec)
+// Live preview chart (bars + overlays + the trades a backtest would take)
 // ---------------------------------------------------------------------------
 export interface PreviewChartContext {
 	bars: OHLCVBar[];
+	/** One marker per trade the backtest's walks take (not per signal bar). */
 	entry_markers: BacktestChartMarker[];
 	exit_markers: BacktestChartMarker[];
 	main_indicators: BacktestChartIndicator[];
@@ -44,7 +45,32 @@ export interface PreviewChartContext {
 	strategy_name?: string | null;
 	strategy_meta?: string | null;
 	strategy_params: Record<string, unknown>;
+	trade_count?: number;
+	/** Trades per exit reason: signal, stop_loss, take_profit, trailing_stop, time_stop, liquidation. */
+	exit_reasons?: Record<string, number>;
+	/** Bars on which each defined condition side is true. */
+	signal_bars?: Partial<Record<'entry_long' | 'exit_long' | 'entry_short' | 'exit_short', number>>;
+	/** Start of the research holdout's held-back period, when it is on. */
+	holdout_cutoff?: string | null;
 	warnings: string[];
+}
+
+/** Execution settings a manual backtest takes; the preview simulates the same. */
+export interface ExecutionRequestFields {
+	initial_capital?: number;
+	fee_bps?: number;
+	slippage_bps?: number;
+	leverage?: number;
+	sizing_mode?: 'full' | 'fraction' | 'fixed' | 'atr' | 'kelly';
+	risk_per_trade?: number;
+	fixed_size?: number;
+	atr_stop_multiplier?: number;
+	kelly_multiplier?: number;
+	kelly_lookback?: number;
+	stop_loss_pct?: number | null;
+	take_profit_pct?: number | null;
+	trailing_stop_pct?: number | null;
+	time_stop_bars?: number | null;
 }
 
 export async function previewStrategyChart(request: {
@@ -55,7 +81,7 @@ export async function previewStrategyChart(request: {
 	end?: string;
 	trade_mode?: string;
 	name?: string;
-}): Promise<PreviewChartContext> {
+} & ExecutionRequestFields): Promise<PreviewChartContext> {
 	return fetchApi('/backtests/preview-chart', {
 		method: 'POST',
 		body: JSON.stringify(request),
@@ -204,6 +230,8 @@ export interface SendLibraryToForgeResponse {
 	id: string;
 	forge: { ok: boolean; strategy_id: string; display_id: string; stage: string; type: string };
 	strategy: LibraryStrategy;
+	/** This saved revision was already in the Forge; nothing new was created. */
+	already_in_forge?: boolean;
 }
 
 export async function sendLibraryStrategyToForge(id: string, expectedVersion?: number): Promise<SendLibraryToForgeResponse> {

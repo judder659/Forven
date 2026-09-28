@@ -6869,12 +6869,14 @@ def post_backtest_preview(body: BacktestPreviewBody):
 
 
 def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
-    """Live chart context (bars + indicator overlays + entry/exit markers) for a
+    """Live chart context (bars + indicator overlays + trade markers) for a
     no-code rule_engine spec — computed in-process, never persisted. Powers the
     Strategy Creator's live preview chart. Never 500s; degrades to warnings."""
     asset = _extract_base_asset_symbol(body.symbol)
     timeframe = str(body.timeframe or "1h").strip() or "1h"
     spec = body.spec if isinstance(body.spec, dict) else {}
+    # The same controls post_backtest_submit hands the engine.
+    execution_controls = _collect_honored_backtest_execution_controls(body)
     try:
         from forven.strategies.backtest import build_strategy_preview_chart_context
 
@@ -6886,6 +6888,11 @@ def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
             spec=spec,
             trade_mode=str(body.trade_mode or "long_only").strip() or "long_only",
             strategy_name=str(body.name or "Visual strategy"),
+            leverage=body.leverage,
+            fee_bps=body.fee_bps,
+            slippage_bps=body.slippage_bps,
+            initial_capital=body.initial_capital,
+            execution_controls=execution_controls or None,
         )
     except Exception as exc:  # noqa: BLE001 — preview must never break the page
         return {
@@ -7006,6 +7013,23 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     except Exception:
         reset = discover = None  # type: ignore
 
+    # A Forge strategy was tested on this file's code; swapping the code under it
+    # would leave its evidence describing other code (and fail its identity check).
+    try:
+        with open(manual_path, encoding="utf-8") as fh:
+            current_code = fh.read()
+    except OSError:
+        current_code = None
+    if current_code is not None and current_code.splitlines() != final_code.splitlines():
+        from forven.strategy_creator import forge_strategy_running_type
+
+        holder = forge_strategy_running_type(type_name)
+        if holder:
+            return {"valid": True, "registered": False, "strategy_name": type_name,
+                    "default_params": {},
+                    "errors": [f"TYPE_NAME '{type_name}' belongs to Forge strategy {holder}, which was tested on its current code. Give this version its own TYPE_NAME and strategy_type."],
+                    "warnings": warnings}
+
     with open(manual_path, "w", encoding="utf-8") as fh:
         fh.write(final_code)
 
@@ -7119,6 +7143,16 @@ def send_manual_strategy_to_forge(body: SendToForgeBody) -> dict:
         strategy_type = "rule_engine"
         from forven.strategy_creator import creator_execution_params
         params: dict = {**creator_execution_params(body.params), "spec": spec, "_asset": asset}
+        # The engine lets a strategy-level param override the spec param of the
+        # same name (the optimizer tunes knobs that way), so a spec param named
+        # like a saved setting would silently read that setting instead.
+        spec_params = spec.get("params") if isinstance(spec.get("params"), dict) else {}
+        shadowed = sorted(set(spec_params) & set(params))
+        if shadowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Rename spec parameter(s) {', '.join(shadowed)}: the strategy setting of the same name would override them.",
+            )
         source_ref = "manual_backtest:visual_builder"
         name = (body.name or "").strip() or f"{asset} rule strategy"
     elif mode == "code":

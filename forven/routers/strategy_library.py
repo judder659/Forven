@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from forven import api_core as core
 from forven.api_security import require_operator_access
@@ -23,36 +25,43 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["strategy-library"], dependencies=[Depends(require_operator_access)])
 
-_VALID_KINDS = {"visual", "code"}
 # strftime literal reused across writes (a constant we control — not user input).
 _NOW = "strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')"
+_FORGE_SEND_LOCK = threading.Lock()
+
+
+_Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
+_Symbol = Annotated[str, StringConstraints(strip_whitespace=True, max_length=40, pattern=r"^[A-Za-z0-9./:_-]+$")]
+_Timeframe = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[1-9][0-9]*[mhdwM]$")]
+_Tags = Annotated[list[Annotated[str, StringConstraints(max_length=40)]], Field(max_length=20)]
 
 
 class LibraryCreateBody(BaseModel):
-    name: str = Field(min_length=1, max_length=140)
-    kind: str = "visual"
+    name: _Name
+    kind: Literal["visual", "code"] = "visual"
     description: str = Field(default="", max_length=2000)
     spec: dict | None = None
     code: str | None = Field(default=None, max_length=200_000)
-    symbol: str = "BTC/USDT"
-    timeframe: str = "1h"
+    symbol: _Symbol = "BTC/USDT"
+    timeframe: _Timeframe = "1h"
     params: dict | None = None
-    tags: list[str] | None = None
+    tags: _Tags | None = None
 
 
 class LibraryUpdateBody(BaseModel):
     expected_version: int | None = None
-    kind: str | None = None
-    name: str | None = Field(default=None, max_length=140)
+    kind: Literal["visual", "code"] | None = None
+    name: _Name | None = None
     description: str | None = Field(default=None, max_length=2000)
     spec: dict | None = None
     code: str | None = Field(default=None, max_length=200_000)
-    symbol: str | None = None
-    timeframe: str | None = None
+    symbol: _Symbol | None = None
+    timeframe: _Timeframe | None = None
     params: dict | None = None
-    tags: list[str] | None = None
-    status: str | None = None
-    last_result_id: str | None = None
+    tags: _Tags | None = None
+    # in_forge is set only by send-to-forge.
+    status: Literal["draft", "tested"] | None = None
+    last_result_id: str | None = Field(default=None, max_length=256)
 
 
 class LibraryForgeBody(BaseModel):
@@ -73,6 +82,9 @@ def _loads(value, default):
 
 
 def _row_to_dict(row) -> dict:
+    # A Forge strategy deleted from the lab no longer holds this revision; the
+    # draft can then be sent again.
+    in_forge = bool(row["forge_strategy_id"] and row["forge_exists"])
     return {
         "id": row["id"],
         "owner": row["owner"],
@@ -85,41 +97,37 @@ def _row_to_dict(row) -> dict:
         "timeframe": row["timeframe"],
         "params": _loads(row["params_json"], {}),
         "tags": _loads(row["tags_json"], []),
-        "status": row["status"],
+        "status": "draft" if row["status"] == "in_forge" and not in_forge else row["status"],
         "version": row["version"],
         "parent_library_id": row["parent_library_id"],
-        "forge_strategy_id": row["forge_strategy_id"],
+        "forge_strategy_id": row["forge_strategy_id"] if in_forge else None,
         "last_result_id": row["last_result_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
 
 
+_SELECT = (
+    "SELECT u.*, EXISTS(SELECT 1 FROM strategies s WHERE s.id = u.forge_strategy_id) AS forge_exists "
+    "FROM user_strategies u"
+)
+
+
 def _fetch(conn, sid: str):
-    return conn.execute(
-        "SELECT * FROM user_strategies WHERE id = ? AND deleted_at IS NULL", (sid,)
-    ).fetchone()
+    return conn.execute(f"{_SELECT} WHERE u.id = ? AND u.deleted_at IS NULL", (sid,)).fetchone()
 
 
 @router.get("/api/strategy-library")
 def list_library(include_deleted: bool = False, limit: int = 200):
     bounded = max(1, min(int(limit or 200), 1000))
     with get_db() as conn:
-        if include_deleted:
-            rows = conn.execute(
-                "SELECT * FROM user_strategies ORDER BY updated_at DESC LIMIT ?", (bounded,)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM user_strategies WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?",
-                (bounded,),
-            ).fetchall()
+        live_only = "" if include_deleted else "WHERE u.deleted_at IS NULL "
+        rows = conn.execute(f"{_SELECT} {live_only}ORDER BY u.updated_at DESC LIMIT ?", (bounded,)).fetchall()
     return {"strategies": [_row_to_dict(r) for r in rows]}
 
 
 @router.post("/api/strategy-library")
 def create_library_entry(body: LibraryCreateBody):
-    kind = body.kind if body.kind in _VALID_KINDS else "visual"
     sid = f"lib_{uuid4().hex[:12]}"
     with get_db() as conn:
         conn.execute(
@@ -130,7 +138,7 @@ def create_library_entry(body: LibraryCreateBody):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, {_NOW}, {_NOW})
             """,
             (
-                sid, body.name.strip(), kind, body.description or "",
+                sid, body.name, body.kind, body.description or "",
                 json.dumps(body.spec) if isinstance(body.spec, dict) else None,
                 body.code,
                 body.symbol or "BTC/USDT", body.timeframe or "1h",
@@ -160,11 +168,9 @@ def update_library_entry(sid: str, body: LibraryUpdateBody):
         vals.append(val)
 
     if body.kind is not None:
-        if body.kind not in _VALID_KINDS:
-            raise HTTPException(status_code=422, detail="Invalid strategy kind")
         add("kind", body.kind)
     if body.name is not None:
-        add("name", body.name.strip())
+        add("name", body.name)
     if body.description is not None:
         add("description", body.description)
     if body.spec is not None:
@@ -247,6 +253,14 @@ def duplicate_library_entry(sid: str, body: LibraryDuplicateBody):
 
 @router.post("/api/strategy-library/{sid}/send-to-forge")
 def send_library_entry_to_forge(sid: str, body: LibraryForgeBody | None = None):
+    # One send at a time, so a double click cannot mint two Forge strategies.
+    with _FORGE_SEND_LOCK:
+        return _send_to_forge(sid, body)
+
+
+def _send_to_forge(sid: str, body: LibraryForgeBody | None) -> dict:
+    from forven.strategy_creator import forge_strategy
+
     with get_db() as conn:
         row = _fetch(conn, sid)
     if not row:
@@ -254,6 +268,10 @@ def send_library_entry_to_forge(sid: str, body: LibraryForgeBody | None = None):
     entry = _row_to_dict(row)
     if body and body.expected_version is not None and entry["version"] != body.expected_version:
         raise HTTPException(status_code=409, detail="Strategy changed. Reload before sending to Forge.")
+    # A saved change clears forge_strategy_id, so a link here belongs to this revision.
+    existing = forge_strategy(entry["forge_strategy_id"])
+    if existing:
+        return {"ok": True, "id": sid, "forge": existing, "strategy": entry, "already_in_forge": True}
 
     if entry["kind"] == "visual":
         if not isinstance(entry["spec"], dict):

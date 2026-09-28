@@ -199,3 +199,21 @@ def test_strategy_raises_on_invalid_spec():
     strat = re.RuleEngineStrategy("rule_engine", {"spec": {"entry_long": None}})
     with pytest.raises(ValueError):
         strat.generate_signals(_df([1, 2, 3, 4, 5]))
+
+
+_UP = {"conditions": [{"left": "close", "op": "crosses_above", "right": 100}]}
+_DOWN = {"conditions": [{"left": "close", "op": "crosses_below", "right": 100}]}
+
+
+@pytest.mark.parametrize("sides, modes", [
+    ({"entry_long": _UP, "exit_long": _DOWN}, {"long_only"}),
+    ({"entry_short": _DOWN, "exit_short": _UP}, {"short_only"}),
+    ({"entry_long": _UP, "exit_long": _DOWN, "entry_short": _DOWN, "exit_short": _UP}, {"long_only", "short_only", "both"}),
+])
+def test_supported_trade_modes_follow_the_spec_sides(sides, modes):
+    from forven.strategies.backtest import resolve_backtest_trade_mode
+
+    strat = re.RuleEngineStrategy("rule_engine", {"spec": {"indicators": [], **sides}})
+    assert strat.supported_trade_modes == modes
+    for mode in modes:
+        assert resolve_backtest_trade_mode(mode, strategy_type="rule_engine", params=strat.params, strategy_obj=strat) == (mode, None)
