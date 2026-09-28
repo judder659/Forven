@@ -106,7 +106,7 @@
 	{/if}
 	{#if job.error}
 		<div class="mt-1 text-[11px] {job.status === 'interrupted' ? 'text-amber-400' : 'text-red-400'}" title={job.error.message}>
-			{errorText(job.error.code)}{#if job.error.message && job.error.code !== 'cancelled'}<span class="text-[#777]"> · {job.error.message}</span>{/if}
+			{errorText(job.error.code)}{#if job.error.message && job.error.code !== 'cancelled'}<span class="text-[#777]">{' '}· {job.error.message}</span>{/if}
 		</div>
 	{/if}
 </div>

@@ -367,7 +367,7 @@
 	<!-- Bulk actions -->
 	{#if selected.size}
 		<div class="flex shrink-0 flex-wrap items-center gap-1.5 border border-[#333] bg-[#0a0a0a] px-3 py-1.5" role="toolbar" aria-label="Actions on the selected series" data-testid="bulk-bar">
-			<span class="mr-1 text-[11px] text-white"><span class="font-mono tabular-nums">{formatCount(selected.size)}</span> selected{#if hiddenSelected}<span class="text-[#777]"> ({hiddenSelected} hidden by the filters)</span>{/if}</span>
+			<span class="mr-1 text-[11px] text-white"><span class="font-mono tabular-nums">{formatCount(selected.size)}</span> selected{#if hiddenSelected}<span class="text-[#777]">{' '}({hiddenSelected} hidden by the filters)</span>{/if}</span>
 			<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => bulkRefresh('refresh')} title="Bring them current now">{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
 			<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => bulkRefresh('repair')} title="Re-fetch the missing bars inside their history">{busy === 'repair' ? 'Sending…' : 'Repair gaps'}</button>
 			<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !extendable.length} on:click={bulkExtend}

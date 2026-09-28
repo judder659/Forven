@@ -263,7 +263,7 @@
 			</div>
 			<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[#888]">
 				<StateChip state={d.sla.state} sla={d.sla} caption />
-				<span title={d.quality.issues.join('\n') || 'No issues found'}>Quality <span class="font-mono text-white">{d.quality.score == null ? '—' : Math.round(d.quality.score)}</span>{#if d.quality.issues.length}<span class="text-[#666]"> · {d.quality.issues.length} issue{d.quality.issues.length === 1 ? '' : 's'}</span>{/if}</span>
+				<span title={d.quality.issues.join('\n') || 'No issues found'}>Quality <span class="font-mono text-white">{d.quality.score == null ? '—' : Math.round(d.quality.score)}</span>{#if d.quality.issues.length}<span class="text-[#666]">{' '}· {d.quality.issues.length} issue{d.quality.issues.length === 1 ? '' : 's'}</span>{/if}</span>
 				<span title={TIER_HELP[d.consumers.tier]}>Used by <span class="text-white">{formatCount(d.consumers.count)}</span> <span class="text-[#666]">({TIER_LABEL[d.consumers.tier].toLowerCase()})</span></span>
 				<span><span class="font-mono text-white">{formatCount(d.rows)}</span> rows · {historyLength(d.first_ts, d.last_ts)} · {formatBytes(d.size_bytes)}</span>
 				{#if d.updated_at}<span title={formatUtc(d.updated_at, { seconds: true })}>written {formatRelative(d.updated_at, $clock)}</span>{/if}
@@ -392,11 +392,11 @@
 					<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11px]">
 						<dt class="text-[#666]">State</dt><dd title={STATE_HELP[d.sla.state]}><StateChip state={d.sla.state} /></dd>
 						<dt class="text-[#666]">Tier</dt><dd class="text-[#ccc]" title={TIER_HELP[d.sla.tier]}>{TIER_LABEL[d.sla.tier]}</dd>
-						<dt class="text-[#666]">Last bar</dt><dd class="text-[#ccc]">{d.sla.last_bar_ts ? `${formatUtc(d.sla.last_bar_ts)}` : 'none'}{#if d.sla.last_bar_ts}<span class="text-[#666]"> · opened {formatRelative(d.sla.last_bar_ts, $clock)}</span>{/if}</dd>
+						<dt class="text-[#666]">Last bar</dt><dd class="text-[#ccc]">{d.sla.last_bar_ts ? `${formatUtc(d.sla.last_bar_ts)}` : 'none'}{#if d.sla.last_bar_ts}<span class="text-[#666]">{' '}· opened {formatRelative(d.sla.last_bar_ts, $clock)}</span>{/if}</dd>
 						<dt class="text-[#666]">Behind</dt><dd class="text-[#ccc]">{formatDuration(d.sla.lag_seconds)} <span class="text-[#666]">of {formatDuration(d.sla.allowed_seconds)} allowed</span></dd>
 						{#if policy}<dt class="text-[#666]">Rule</dt><dd class="text-[#888]">{TIER_LABEL[d.sla.tier]} series may miss {policy.missed_bars} bar{policy.missed_bars === 1 ? '' : 's'}, at least {formatDuration(policy.floor_minutes * 60)}; <a href="/settings#data" class="underline hover:text-white">change</a></dd>{/if}
-						<dt class="text-[#666]">Quality</dt><dd class="text-[#ccc]">{d.quality.score == null ? 'not scored yet' : `${Math.round(d.quality.score)} / 100`}{#if d.quality.computed_at}<span class="text-[#666]" title={formatUtc(d.quality.computed_at)}> · scored {formatRelative(d.quality.computed_at, $clock)}</span>{/if}</dd>
-						<dt class="text-[#666]">Complete</dt><dd class="text-[#ccc]">{formatPercent(d.completeness, 2)}{#if d.gap_count}<span class="text-[#666]"> · {plural(d.gap_count, 'gap')}, largest {plural(d.largest_gap_bars ?? 0, 'bar')}</span>{/if}</dd>
+						<dt class="text-[#666]">Quality</dt><dd class="text-[#ccc]">{d.quality.score == null ? 'not scored yet' : `${Math.round(d.quality.score)} / 100`}{#if d.quality.computed_at}<span class="text-[#666]" title={formatUtc(d.quality.computed_at)}>{' '}· scored {formatRelative(d.quality.computed_at, $clock)}</span>{/if}</dd>
+						<dt class="text-[#666]">Complete</dt><dd class="text-[#ccc]">{formatPercent(d.completeness, 2)}{#if d.gap_count}<span class="text-[#666]">{' '}· {plural(d.gap_count, 'gap')}, largest {plural(d.largest_gap_bars ?? 0, 'bar')}</span>{/if}</dd>
 					</dl>
 					{#if d.quality.issues.length}
 						<ul class="space-y-0.5 border-t border-[#141414] px-3 py-2 text-[11px] text-amber-400/90">

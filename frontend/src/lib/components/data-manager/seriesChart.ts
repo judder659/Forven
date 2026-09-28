@@ -66,7 +66,10 @@ export function windowToFetch(
 	const span = Math.max(series.step, visible.to - visible.from);
 	const beyondStart = visible.from < loaded.start - series.step && loaded.start > series.first + series.step;
 	const beyondEnd = visible.to > loaded.end + series.step && loaded.end < series.last - series.step;
-	const coarse = !loaded.raw && countInRange(loaded.times, visible.from, visible.to) < minBars;
+	// Only a zoom into part of the loaded window can get finer bars: refetching
+	// the window already in view would return the same buckets again.
+	const zoomedIn = visible.to - visible.from < (loaded.end - loaded.start) * 0.9;
+	const coarse = !loaded.raw && zoomedIn && countInRange(loaded.times, visible.from, visible.to) < minBars;
 	if (!beyondStart && !beyondEnd && !coarse) return null;
 	return {
 		start: Math.max(series.first, Math.floor(visible.from - span / 2)),
