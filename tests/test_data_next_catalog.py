@@ -185,6 +185,20 @@ def test_quality_stats_from_files_tail_wins(tmp_path):
     assert quality.list_gaps([cold, tail], H_MS) == [(_ms("2026-01-01 10:00"), _ms("2026-01-02 00:00"), 15)]
 
 
+
+def test_quality_outliers_are_spikes_that_revert_not_large_moves(tmp_path):
+    """A repricing that stays is market data; a spike that snaps back is a bad tick."""
+    from forven.dataeng import quality
+
+    moved = _bars("2026-01-01", 300)
+    moved.loc[150:, ["open", "high", "low", "close"]] *= 1.5
+    assert quality.compute_stats([_write(tmp_path / "a" / "1h.parquet", moved)], H_MS)["outliers"] == 0
+
+    spiked = _bars("2026-01-01", 300)
+    spiked.loc[150, ["close", "high"]] = spiked.loc[150, "close"] * 3
+    assert quality.compute_stats([_write(tmp_path / "b" / "1h.parquet", spiked)], H_MS)["outliers"] == 1
+
+
 # ---------------------------------------------------------------- catalog
 
 

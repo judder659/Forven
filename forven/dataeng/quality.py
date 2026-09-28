@@ -11,8 +11,11 @@ the old quality leaderboard and ``compute_data_quality`` all read this rubric:
     invalid OHLC rows                        -> -min(20, 5 per row)
         high < low, open/close outside [low, high], a price <= 0, volume < 0
     rows with a null/NaN open/high/low/close -> -min(10, 1 per row)
-    outliers                                 -> -min(10, 1 per bar)
-        |log close-to-close return| > 8 x the std-dev of the series' log returns
+    outliers (bad ticks)                     -> -min(10, 1 per bar)
+        a close that jumps more than 8 x the std-dev of the series' log
+        returns AND reverts by more than that on the next bar. A large move
+        alone is not a data error: crypto returns are fat-tailed, and scoring
+        every 8-sigma move put ordinary intraday history below 90.
 
 completeness = stored bars / bars the [first, last] span implies (capped at 1).
 A gap is a run of one or more missing bars between two stored bars.
@@ -115,6 +118,7 @@ def compute_stats(paths: Sequence[Path], timeframe_ms: int, *, stream: str = "oh
                             THEN ln(close / lag(close) OVER w) END AS lr
                 FROM src WINDOW w AS (ORDER BY ts)
             ),
+            rev AS (SELECT *, lead(lr) OVER (ORDER BY ts) AS lr_next FROM seq),
             sig AS (SELECT coalesce(stddev_pop(lr), 0) AS s FROM seq WHERE isfinite(lr)),
             vol AS (SELECT coalesce(avg(volume), 0) AS m, coalesce(stddev_pop(volume), 0) AS s
                     FROM seq WHERE isfinite(volume))
@@ -128,14 +132,16 @@ def compute_stats(paths: Sequence[Path], timeframe_ms: int, *, stream: str = "oh
                    count(*) FILTER (WHERE {finite} AND (high < low OR open > high OR open < low OR close > high
                                     OR close < low OR open <= 0 OR high <= 0 OR low <= 0 OR close <= 0 OR volume < 0)),
                    count(*) FILTER (WHERE NOT coalesce({finite}, false)),
-                   count(*) FILTER (WHERE isfinite(lr) AND (SELECT s FROM sig) > 0
-                                    AND abs(lr) > {OUTLIER_SIGMA} * (SELECT s FROM sig)),
+                   count(*) FILTER (WHERE isfinite(lr) AND isfinite(lr_next) AND (SELECT s FROM sig) > 0
+                                    AND abs(lr) > {OUTLIER_SIGMA} * (SELECT s FROM sig)
+                                    AND abs(lr_next) > {OUTLIER_SIGMA} * (SELECT s FROM sig)
+                                    AND sign(lr) <> sign(lr_next)),
                    count(*) FILTER (WHERE isfinite(volume) AND (SELECT s FROM vol) > 0
                                     AND abs(volume - (SELECT m FROM vol)) > 3 * (SELECT s FROM vol)),
                    min(low) FILTER (WHERE isfinite(low)), max(high) FILTER (WHERE isfinite(high)),
                    min(volume) FILTER (WHERE isfinite(volume)), max(volume) FILTER (WHERE isfinite(volume)),
                    avg(volume) FILTER (WHERE isfinite(volume))
-            FROM seq
+            FROM rev
         """
     else:
         nulls = " OR ".join(f"{quote(c)} IS NULL OR isnan(CAST({quote(c)} AS DOUBLE))" for c in columns) or "false"
@@ -247,7 +253,7 @@ def score(stats: dict[str, Any]) -> tuple[float, list[str]]:
             findings.append(
                 (
                     min(10.0, float(outliers)),
-                    f"{_count(outliers, 'extreme price move', 'extreme price moves')} (more than {OUTLIER_SIGMA:g} sigma)",
+                    f"{_count(outliers, 'bad tick', 'bad ticks')} (a {OUTLIER_SIGMA:g}-sigma spike that reverts on the next bar)",
                 )
             )
     else:

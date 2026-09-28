@@ -356,24 +356,33 @@ def build_row(
     registry: dict[str, dict[str, Any]],
     asset_memo: dict,
     now: object | None = None,
+    verdict: Any = None,
 ) -> dict[str, Any]:
-    """One ``CatalogRow``."""
+    """One ``CatalogRow``. ``verdict`` is the collector's row for the series
+    (tier, SLA, frozen state); when given it wins, so the catalog and the SLA
+    census can never disagree."""
     tf_ms = timeframe_ms(series.timeframe)
-    frozen_entry = frozen.get(series.id)
-    frozen_reason = None
-    if frozen_entry is not None:
-        frozen_reason = str(frozen_entry.get("reason") or "frozen") if isinstance(frozen_entry, dict) else str(frozen_entry)
-    try:
-        assessment = sla.assess(
-            series.last_ms if series.rows else None,
-            series.timeframe,
-            consumers.tier,
-            frozen=frozen_entry is not None,
-            now=now,
-            policy=policy,
-        )
-    except ValueError:  # a timeframe sla cannot size; judge it as a daily series
-        assessment = sla.assess(series.last_ms, "1d", consumers.tier, frozen=frozen_entry is not None, now=now, policy=policy)
+    if verdict is not None:
+        is_frozen = bool(verdict.frozen)
+        frozen_reason = verdict.frozen_reason if is_frozen else None
+        assessment = dict(verdict.sla)
+    else:
+        frozen_entry = frozen.get(series.id)
+        is_frozen = frozen_entry is not None
+        frozen_reason = None
+        if frozen_entry is not None:
+            frozen_reason = str(frozen_entry.get("reason") or "frozen") if isinstance(frozen_entry, dict) else str(frozen_entry)
+        try:
+            assessment = sla.assess(
+                series.last_ms if series.rows else None,
+                series.timeframe,
+                consumers.tier,
+                frozen=is_frozen,
+                now=now,
+                policy=policy,
+            )
+        except ValueError:  # a timeframe sla cannot size; judge it as a daily series
+            assessment = sla.assess(series.last_ms, "1d", consumers.tier, frozen=is_frozen, now=now, policy=policy)
     expected = None
     completeness = None
     if tf_ms and series.rows and series.first_ms is not None and series.last_ms is not None:
@@ -404,7 +413,7 @@ def build_row(
         "quality": quality_summary(quality_row),
         "sla": assessment,
         "consumers": consumers.summary(),
-        "frozen": frozen_entry is not None,
+        "frozen": is_frozen,
         "frozen_reason": frozen_reason,
         "delisted": bool(consumers.delisted),
         "synthetic_bars": bars_in_ranges(stamps["synthetic_ranges"], tf_ms),
@@ -474,6 +483,24 @@ def quality_due(series: SeriesFile, cached: dict[str, Any] | None, *, now: float
     return age >= min_interval
 
 
+def _collector_verdicts(base: str) -> dict[str, Any]:
+    """The collector's per-series rows (tier, SLA, frozen) keyed by series id,
+    when the catalog describes the same lake the collector watches. Empty on
+    any failure: the catalog then judges freshness itself."""
+    try:
+        from forven.data import data_root
+
+        # The collector enumerates data_root(); only its own lake's rows apply.
+        if Path(base).resolve() != Path(data_root()).resolve():
+            return {}
+        from forven.dataeng import collector
+
+        return collector.get_snapshot().by_id()
+    except Exception as exc:
+        log.debug("catalog: collector snapshot unavailable: %s", exc)
+        return {}
+
+
 def build_snapshot(*, root: Path | str | None = None, catalog: Any = None, now: object | None = None) -> Snapshot:
     """Build a snapshot synchronously (no quality scoring)."""
     from forven.dataeng.consumers import get_consumer_index
@@ -496,13 +523,25 @@ def build_snapshot(*, root: Path | str | None = None, catalog: Any = None, now: 
         cached_quality = {}
     registry = registry_rows(catalog)
     resolver = ConsumerResolver(index, series)
+    verdicts = _collector_verdicts(base)
     asset_memo: dict = {}
     rows: list[dict[str, Any]] = []
     consumers: dict[str, SeriesConsumerInfo] = {}
     due = 0
     wall_now = time.time()
     for item in series:
-        info = resolver.for_series(item)
+        verdict = verdicts.get(item.id)
+        if verdict is not None:
+            found = verdict.consumers
+            info = SeriesConsumerInfo(
+                verdict.tier,
+                list(found.strategies) if found else [],
+                list(found.bots) if found else [],
+                list(found.workflows) if found else [],
+                bool(verdict.delisted),
+            )
+        else:
+            info = resolver.for_series(item)
         consumers[item.id] = info
         cached = cached_quality.get(item.id)
         if quality_due(item, cached, now=wall_now):
@@ -517,6 +556,7 @@ def build_snapshot(*, root: Path | str | None = None, catalog: Any = None, now: 
                 registry=registry,
                 asset_memo=asset_memo,
                 now=now,
+                verdict=verdict,
             )
         )
     snapshot = Snapshot(

@@ -1108,6 +1108,12 @@ def _housekeeping() -> None:
         ensure_universe_coverage()
     except Exception as exc:  # noqa: BLE001
         log.warning("collector: generation-universe coverage skipped: %s", exc)
+    try:
+        # Each tick records a routine job row (~720/day): keep the table bounded
+        # between restarts too, not only at startup.
+        jobs.prune_jobs()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("collector: data job prune skipped: %s", exc)
 
 
 def _sync_delisted(snapshot: Snapshot, frozen_map: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], list[str]]:
