@@ -672,6 +672,7 @@
 		<div>
 			<h1 class="text-2xl font-semibold tracking-tight text-white">Data</h1>
 			<p class="mt-1 text-xs text-[#666]">See collection progress, check market coverage, and resolve missing data for research and trading.</p>
+			<a href="/data-next" class="mt-1 inline-block text-[11px] text-[#aaa] underline-offset-2 hover:text-white hover:underline">Try the new Data Manager →</a>
 		</div>
 		<div class="flex flex-col gap-2 sm:flex-row">
 			<button
