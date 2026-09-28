@@ -96,7 +96,7 @@ export interface DataJob {
 	routine: boolean;
 	params: Record<string, unknown>;
 	series: Array<Partial<SeriesKey> & { symbol: string }>;
-	progress: { done: number; total: number | null; unit: string | null };
+	progress: { done: number; total: number | null; unit: string | null; current?: string | null };
 	message: string | null;
 	result: unknown;
 	/** code: rate_limited | venue_down | unknown_symbol | delisted | venue_refused | shrink_refused |
@@ -112,10 +112,16 @@ export interface DataJob {
 	updated_at: string;
 }
 
-/** GET /api/data/jobs */
+/** GET /api/data/jobs?status=&kind=&origin=&routine=&symbol=&since=&limit=&offset=
+ *  status/kind take several values as repeated params (?status=failed&status=queued) or comma-separated. */
 export interface DataJobList {
 	total: number;
 	jobs: DataJob[];
+}
+
+/** POST /api/data/jobs/{id}/cancel and /retry (409 when not retryable) */
+export interface DataJobResponse {
+	job: DataJob;
 }
 
 /** GET /api/data/jobs/summary */
@@ -147,7 +153,7 @@ export interface CatalogRow {
 	venue: VenueKey;
 	/** forven_source stamp: binanceusdm | binance-vision | binance | hyperliquid | okx | csv | ... */
 	source: string | null;
-	/** perp | spot | unknown | unstamped */
+	/** perp | spot | unknown | unstamped; null for enrichment streams (their files carry no stamp) */
 	market: string | null;
 	/** crypto | tradfi | stock | etf | forex | index */
 	asset_class: string;
@@ -302,7 +308,8 @@ export interface RowsResponse {
 	rows: Array<Record<string, number | string | null>>;
 }
 
-/** GET /api/data/streams/{symbol}/{stream}/points?timeframe=&start=&end=&max_points=1500 */
+/** GET /api/data/streams/{symbol}/{stream}/points?timeframe=&venue=&start=&end=&max_points=1500
+ *  Each point carries its time as `t` (like Bar) plus the stream's value columns. */
 export interface StreamPointsResponse {
 	symbol: string;
 	stream: DataStream;
@@ -363,7 +370,7 @@ export interface UniversePlanDiff {
 	planned_series: number;
 	present_series: number;
 	missing: Array<{ symbol: string; rank: number; timeframes: string[]; asset_class: string }>;
-	/** Stored research-style series no longer in the plan (e.g. fell out of the top N). */
+	/** Stored canonical candle series outside the plan whose tier is idle (e.g. fell out of the top N). */
 	extra: Array<{ symbol: string; timeframes: string[] }>;
 	/** Latest universe_seed job, if any. */
 	seed_job: DataJob | null;
@@ -407,6 +414,8 @@ export interface CollectorTick {
 	failed: number;
 	/** Due series left for the next tick (budget or deadline reached). */
 	deferred: number;
+	bootstrapped?: number;
+	frozen?: number;
 }
 
 /** GET /api/data/collector */
@@ -505,6 +514,7 @@ export interface StorageInventory {
 	top_series: Array<{ symbol: string; timeframe: string; stream: DataStream; venue: VenueKey; bytes: number }>;
 	reclaimable: ReclaimGroup[];
 	trash: { items: number; bytes: number; oldest: string | null; retention_days: number };
+	/** prunable_bytes is proportional to prunable rows (an estimate). */
 	revisions: { bytes: number; files: number; oldest: string | null; keep_days: number; prunable_bytes: number | null };
 }
 
@@ -518,7 +528,7 @@ export interface ReclaimRequest {
 
 export interface TrashItem {
 	id: string;
-	kind: 'series' | 'backup' | 'legacy' | 'dir';
+	kind: 'series' | 'backup' | 'legacy' | 'dir' | 'temp';
 	label: string;
 	original_path: string;
 	bytes: number;
@@ -526,6 +536,23 @@ export interface TrashItem {
 	purge_after: string;
 	reason: string;
 	series: SeriesKey | null;
+}
+
+/** POST /api/data/trash/{id}/restore -> { restored: TrashItem }; 409 detail { message, conflicts } when the
+ *  original path has been re-created since. */
+export interface TrashRestoreResponse {
+	restored: TrashItem;
+}
+
+/** POST /api/data/trash/purge — confirm is "empty trash" for 'all', else "purge <n> item(s)"; 'expired' needs none. */
+export interface TrashPurgeRequest {
+	item_ids?: string[] | 'all' | 'expired';
+	confirm?: string;
+}
+
+export interface TrashPurgeResult {
+	purged: number;
+	bytes: number;
 }
 
 /** GET /api/data/trash */
@@ -582,6 +609,7 @@ export interface DataLogEntry {
 }
 
 /** GET /api/data/log?category=&level=&symbol=&action=&since=&until=&q=&limit=&offset=
+ *  category/level/action take several values as repeated params or comma-separated.
  *  (GET /api/data/log/export with the same params returns text/csv) */
 export interface DataLogResponse {
 	total: number;
@@ -601,6 +629,8 @@ export interface VenueTarget {
 	/** Where a download would be stored. */
 	destination: 'canonical' | 'venue';
 	note: string;
+	/** First available bar on the venue when known (listing date). */
+	history_start?: string | null;
 }
 
 /** GET /api/data/acquire/targets?symbol= */
@@ -626,8 +656,11 @@ export interface DownloadRequestItem {
 }
 
 export interface DownloadEstimate {
+	/** Echoes the request with the symbol normalized ("BTC-USDT"). */
 	item: DownloadRequestItem;
 	destination: 'canonical' | 'venue';
+	/** Where the series lands ("canonical" or "<source>:<market>"). */
+	venue?: VenueKey;
 	existing_rows: number;
 	existing_first: string | null;
 	existing_last: string | null;
@@ -729,8 +762,18 @@ export interface ReadinessRequirement {
 	fix: { action: 'download' | 'extend_history' | 'refresh' | 'none'; label: string; request?: DownloadRequestItem } | null;
 }
 
+/** POST /api/data/readiness body. `code` is scanned as text, never run; `strategy_type` may be a strategy id. */
+export interface ReadinessRequest {
+	symbol: string;
+	timeframe: string;
+	streams?: DataStream[];
+	history_days?: number;
+	strategy_type?: string;
+	code?: string;
+}
+
 /** GET /api/data/readiness/strategy/{strategy_id}
- *  POST /api/data/readiness  body: { symbol, timeframe, streams?, history_days?, strategy_type?, code? } */
+ *  POST /api/data/readiness  body: ReadinessRequest */
 export interface ReadinessReport {
 	subject: { strategy_id?: string; name?: string; symbol: string; timeframe: string };
 	verdict: 'ready' | 'needs_data' | 'blocked';
@@ -748,6 +791,9 @@ export interface SeriesFingerprint {
 	months: Array<{ month: string; rows: number; hash: string }>;
 	/** Verdicts scored on this series whose recorded month hashes no longer match. */
 	drifted_verdicts: Array<{ result_id: string; strategy_id: string; result_type: string; created_at: string; months: string[] }>;
+	/** Verdicts compared, and verdicts skipped because they carry no month stamp. */
+	checked_verdicts?: number;
+	skipped_unstamped?: number;
 }
 
 /** GET /api/data/divergence/{symbol}?timeframe=1h */
