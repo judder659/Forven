@@ -35,7 +35,9 @@ describe('Data Manager formatting', () => {
 		expect(formatRelative('2026-09-28T18:30:00Z', NOW)).toBe('52 min ago');
 		expect(formatRelative('2026-09-28T14:00:00Z', NOW)).toBe('5 h ago');
 		expect(formatRelative('2026-09-25T19:22:00Z', NOW)).toBe('3 d ago');
-		expect(formatRelative('2026-09-28T19:22:18Z', NOW)).toBe('in 18 s');
+		expect(formatRelative('2026-09-28T19:22:18Z', NOW, { upcoming: true })).toBe('in 18 s');
+		expect(formatRelative('2026-09-28T19:22:18Z', NOW)).toBe('just now'); // a past event newer than the clock tick
+		expect(formatRelative('2026-09-28T19:23:00Z', NOW)).toBe('in 1 min'); // far enough ahead to be real skew
 		expect(formatRelative('2026-09-28T19:21:59Z', NOW)).toBe('just now');
 		expect(formatRelative('2019-09-08T00:00:00Z', NOW)).toBe('7 y ago');
 	});

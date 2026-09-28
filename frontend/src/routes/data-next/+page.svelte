@@ -357,7 +357,7 @@
 							{/if}
 							<div>
 								<span class="text-[#666]">Next run</span>
-								{c.next_tick_at ? formatRelative(c.next_tick_at, $clock) : '—'} · every {formatDuration(c.tick_seconds)} · {formatCount(c.queue_depth)} waiting
+								{c.next_tick_at ? formatRelative(c.next_tick_at, $clock, { upcoming: true }) : '—'} · every {formatDuration(c.tick_seconds)} · {formatCount(c.queue_depth)} waiting
 							</div>
 							<div><span class="text-[#666]">Refreshed in the last hour</span> <span class="font-mono tabular-nums">{formatCount(c.refreshed_last_hour)}</span></div>
 							<div title="Refreshes per hour needed to keep every non-frozen series inside its allowance, against what the request budget allows">

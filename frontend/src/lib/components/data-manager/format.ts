@@ -35,11 +35,15 @@ export function formatUtc(iso: string | null | undefined, options: { seconds?: b
 	return `${date} ${time}${options.suffix === false ? '' : ' UTC'}`;
 }
 
-/** "12 s ago", "5 min ago", "3 h ago", "2 d ago"; "in 18 s" for the future. */
-export function formatRelative(iso: string | null | undefined, now: number = Date.now()): string {
+/** "12 s ago", "5 min ago", "3 h ago", "2 d ago"; "in 18 s" for the future.
+ * `now` usually comes from the 5-second `clock`, so a stamp of something that
+ * already happened can land just past it: up to 30 s ahead reads "just now"
+ * unless the time is `upcoming` (a scheduled run). */
+export function formatRelative(iso: string | null | undefined, now: number = Date.now(), options: { upcoming?: boolean } = {}): string {
 	const t = parse(iso);
 	if (t == null) return '—';
-	const seconds = Math.round((now - t) / 1000);
+	let seconds = Math.round((now - t) / 1000);
+	if (!options.upcoming && seconds < 0 && seconds > -30) seconds = 0;
 	const future = seconds < 0;
 	const s = Math.abs(seconds);
 	let text: string;
