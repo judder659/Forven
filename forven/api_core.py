@@ -6125,6 +6125,29 @@ def _get_strategy_row_by_id(strategy_id: str) -> dict | None:
     return dict(fallback) if fallback else None
 
 
+def _scratch_runtime_type(strategy_id: str) -> str | None:
+    """The registered type a scratch strategy id names, or None.
+
+    The id may be a registered type directly, OR a per-run scratch id of the
+    form "<type>__<suffix>" (e.g. rule_engine__<spechash>) minted so distinct
+    ad-hoc visual strategies don't all collide under the bare type. Resolve
+    the runtime type from the prefix in that case.
+    """
+    from forven.strategies.registry import _TYPE_MAP, discover
+
+    normalized = str(strategy_id or "").strip()
+    if not normalized:
+        return None
+    discover()
+    if normalized in _TYPE_MAP:
+        return normalized
+    if "__" in normalized:
+        prefix = normalized.split("__", 1)[0]
+        if prefix in _TYPE_MAP:
+            return prefix
+    return None
+
+
 def _require_existing_strategy_row(strategy_id: str) -> dict:
     row = _get_strategy_row_by_id(strategy_id)
     if row:
@@ -6136,19 +6159,9 @@ def _require_existing_strategy_row(strategy_id: str) -> dict:
     # Persist a minimal row so downstream artifacts (e.g. backtest_results) can
     # satisfy their FK on strategies(id).
     try:
-        from forven.strategies.registry import _TYPE_MAP, discover
-        discover()
-        # The id may be a registered type directly, OR a per-run scratch id of the
-        # form "<type>__<suffix>" (e.g. rule_engine__<spechash>) minted so distinct
-        # ad-hoc visual strategies don't all collide under the bare type. Resolve
-        # the runtime type from the prefix in that case.
-        runtime_type: str | None = None
-        if normalized in _TYPE_MAP:
-            runtime_type = normalized
-        elif "__" in normalized:
-            prefix = normalized.split("__", 1)[0]
-            if prefix in _TYPE_MAP:
-                runtime_type = prefix
+        from forven.strategies.registry import _TYPE_MAP
+
+        runtime_type = _scratch_runtime_type(normalized)
         if runtime_type:
             import json as _json
             cls = _TYPE_MAP[runtime_type]
@@ -6812,16 +6825,18 @@ def post_backtest_preview(body: BacktestPreviewBody):
     timeframe = str(body.timeframe or "1h").strip() or "1h"
 
     # Resolve strategy_type + base params (best-effort; preview must never 500).
+    # Read-only: a built-in that has never been backtested has no strategies row,
+    # and previewing it must not mint the scratch row a real run creates.
     requested = str(body.strategy_name or "").strip()
     base_params: dict = {}
     explicit_type: str | None = None
     try:
-        row = _require_existing_strategy_row(requested)
+        row = _get_strategy_row_by_id(requested)
         if isinstance(row, dict):
             base_params = _parse_strategy_params_blob(row.get("params")) or {}
             explicit_type = resolve_execution_strategy_type(row)
-            if not (asset and asset.strip()):
-                asset = _extract_base_asset_symbol(str(row.get("symbol") or body.symbol))
+        else:
+            explicit_type = _scratch_runtime_type(requested)
     except Exception:
         row = None
 
@@ -7553,6 +7568,56 @@ def _is_canonical_backtest_submit(
     return True
 
 
+def _is_what_if_backtest_submit(
+    body: "BacktestSubmitBody",
+    *,
+    strategy_row: dict,
+    strategy_type: str,
+    base_params: dict,
+    merged_params: dict,
+    execution_params: dict,
+    manual_execution_controls: dict,
+    settings: dict,
+) -> bool:
+    """Return True when a submitted backtest changes what the strategy IS.
+
+    Custom params, an execution profile other than the stored one, another trade
+    mode or another leverage test a variant, not the stored strategy. Such a run
+    is kept as evidence of that variant, but it must never re-home the strategy
+    onto the market where the variant happened to score best. Varying only the
+    market, window or costs is not a what-if: the timeframe sweep submits stored
+    params on other timeframes and relies on those rows to pick the context.
+    """
+    from forven.strategies import sizing as _sizing
+    from forven.strategies.backtest import resolve_backtest_trade_mode
+
+    if merged_params != base_params:
+        return True
+    if isinstance(body.definition_json, dict) and body.definition_json != _parse_strategy_params_blob(
+        strategy_row.get("definition_json")
+    ):
+        return True
+    requested_controls = _sizing.normalize_execution_controls(manual_execution_controls)
+    if requested_controls is not None and requested_controls != _sizing.normalize_execution_controls(
+        _sizing.extract_execution_profile(base_params)
+    ):
+        return True
+    if str(body.trade_mode or "").strip() or body.allow_shorting:
+        requested_mode, requested_error = resolve_backtest_trade_mode(
+            body.trade_mode, allow_shorting=body.allow_shorting, strategy_type=strategy_type, params=base_params,
+        )
+        stored_mode, _ = resolve_backtest_trade_mode(None, strategy_type=strategy_type, params=base_params)
+        if requested_error or requested_mode != stored_mode:
+            return True
+    if body.leverage is not None:
+        stored_leverage = _coerce_legacy_metadata_float(execution_params.get("leverage"), None)
+        if stored_leverage is None or stored_leverage <= 0:
+            stored_leverage = float(settings.get("default_leverage", 1.0) or 1.0)
+        if abs(float(body.leverage) - float(stored_leverage)) > 1e-9:
+            return True
+    return False
+
+
 def post_backtest_submit(
     body: BacktestSubmitBody, *, skip_auto_trash: bool = False,
     job_id: str | None = None, result_id: str | None = None,
@@ -7676,6 +7741,16 @@ def post_backtest_submit(
         manual_execution_controls=manual_execution_controls,
         settings=settings,
     )
+    what_if = _is_what_if_backtest_submit(
+        body,
+        strategy_row=strategy_row,
+        strategy_type=strategy_type,
+        base_params=base_params,
+        merged_params=merged_params,
+        execution_params=execution_params,
+        manual_execution_controls=manual_execution_controls,
+        settings=settings,
+    )
 
     try:
         run = backtest_strategy(
@@ -7782,6 +7857,9 @@ def post_backtest_submit(
         "job_id": job_id,
         "preserve_result": bool(body.preserve_result),
         "as_of": (str(body.as_of).strip() or None) if body.as_of else None,
+        # Read by policy.resolve_best_symbol_timeframe: a variant's rows never
+        # choose the stored strategy's market.
+        "what_if": True if what_if else None,
     }
     if background_job:
         # Keep the job running until trades and chart artifacts are saved too.
@@ -7798,9 +7876,12 @@ def post_backtest_submit(
     # Flag when this backtest's execution profile can't be reproduced live, so the
     # operator sees it on submit AND on every history row (persisted in config).
     execution_profile_warnings = _execution_profile_parity_warnings(manual_execution_controls, leverage=body.leverage)
-    if execution_profile_warnings:
+    # A background run's caller only ever sees the stored result, so warnings
+    # belong in its config, not just in this response.
+    stored_warnings = ([risk_parity_warning] if risk_parity_warning else []) + execution_profile_warnings
+    if stored_warnings:
         _existing = compact_config.get("warnings")
-        compact_config["warnings"] = (list(_existing) if isinstance(_existing, list) else []) + execution_profile_warnings
+        compact_config["warnings"] = (list(_existing) if isinstance(_existing, list) else []) + stored_warnings
 
     # (A `lifecycle_tag` local lived here. Its only reader was the ChromaDB
     # `store_backtest_result(lifecycle_strategy_id=...)` call removed in
@@ -7882,11 +7963,13 @@ def post_backtest_submit(
     except Exception:
         pass
 
-    # Auto-assign best symbol to strategy after persisting backtest result
-    try:
-        auto_assign_best_symbol(strategy_id)
-    except Exception:
-        pass  # best-effort; don't break backtest flow
+    # Auto-assign best symbol to strategy after persisting backtest result. A
+    # what-if run tested a variant, so it never re-homes the stored strategy.
+    if not what_if:
+        try:
+            auto_assign_best_symbol(strategy_id)
+        except Exception:
+            pass  # best-effort; don't break backtest flow
 
     if not skip_auto_trash and not bool(body.preserve_result):
         auto_trash, auto_reason = _should_auto_trash_backtest_result(

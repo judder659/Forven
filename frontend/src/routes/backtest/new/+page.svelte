@@ -1,300 +1,669 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import {
-		getStrategies,
+		ApiError,
+		getJob,
+		getManualBacktestDefaults,
 		getPrebuiltStrategies,
-		submitBacktest,
-		previewSignals,
 		getResult,
+		getStrategies,
 		getSymbols,
-		type Strategy,
-		type SignalPreview,
+		previewSignals,
+		submitBacktest,
 		type BacktestResult,
+		type ManualBacktestDefaults,
+		type SignalPreview,
+		type Strategy,
 	} from '$lib/api';
-	import { resolveDateRangePreset, estimateBarCount } from '$lib/utils/dateRange';
+	import { estimateBarCount, formatBarEstimate, resolveDateRangePreset } from '$lib/utils/dateRange';
 	import { addToast } from '$lib/stores/processTracker';
 	import SymbolInput from '$lib/components/ui/SymbolInput.svelte';
 	import TimeframeSelect from '$lib/components/ui/TimeframeSelect.svelte';
 	import DateRangeFieldset from '$lib/components/ui/DateRangeFieldset.svelte';
 	import ParameterEditor from '$lib/components/ui/ParameterEditor.svelte';
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
+	import {
+		TRADE_MODES,
+		TRADE_MODE_LABELS,
+		buildBacktestRequest,
+		changedParams,
+		decayNote,
+		describeProfile,
+		editableParams,
+		isBuiltin,
+		marketLabel,
+		nativeMarket,
+		overrideLabels,
+		profileDraftFrom,
+		profileFromDraft,
+		profileIsInert,
+		sameMarket,
+		sampleSplit,
+		shiftedByHoldout,
+		strategyKey,
+		strategyOptionLabel,
+		strategyProfile,
+		testedWindow,
+		validateRun,
+		type ProfileDraft,
+		type RunSettings,
+		type TradeMode,
+	} from '$lib/utils/manualBacktest';
 
-	const BAR_CAP = 100_000;
+	// --- Strategies ---------------------------------------------------------------
 
-	let prebuiltStrategies: Strategy[] = [];
-	let appStrategies: Strategy[] = [];
-	let strategies: Strategy[] = [];
-	let includeAppGenerated = false;
-	let selectedStrategy: Strategy | null = null;
-	let selectedKey = '';
-	let paramsDraft: Record<string, unknown> = {};
-	let loadingStrategies = true;
-	let loadError = '';
+	type Source = 'builtin' | 'mine';
+	const MINE_GROUPS = [
+		{ status: 'live_graduated', label: 'Live' },
+		{ status: 'paper', label: 'Paper' },
+		{ status: 'gauntlet', label: 'Gauntlet' },
+		{ status: 'quick_screen', label: 'Quick screen' },
+	] as const;
+
+	let source: Source = 'builtin';
+	let builtins: Strategy[] = [];
+	let builtinsLoading = true;
+	let builtinsError = '';
+	let mineGroups: { label: string; strategies: Strategy[] }[] = [];
+	let mineLoading = false;
+	let mineLoaded = false;
+	let mineError = '';
 	let symbolSuggestions: string[] = [];
+	let defaults: ManualBacktestDefaults | null = null;
 
-	// Form state
-	const defaultRange = resolveDateRangePreset('1y');
+	let selected: Strategy | null = null;
+	let selectedKey = '';
+	let baseParams: Record<string, unknown> = {};
+	let paramsDraft: Record<string, unknown> = {};
+	let paramsHaveErrors = false;
+	let paramEditorKey = 0;
+
+	$: mineCount = mineGroups.reduce((n, g) => n + g.strategies.length, 0);
+	$: builtinSelected = isBuiltin(selected);
+	$: hiddenParamCount = selected
+		? Object.keys(selected.raw_params ?? {}).length - Object.keys(baseParams).length
+		: 0;
+	$: editedParamCount = Object.keys(changedParams(paramsDraft, baseParams)).length;
+
+	// --- Market ---------------------------------------------------------------------
+
+	const todayUtc = new Date().toISOString().slice(0, 10);
 	let symbol = 'BTC/USDT';
 	let timeframe = '1h';
-	let startDate = defaultRange.startDate;
-	let endDate = defaultRange.endDate;
+	const initialWindow = resolveDateRangePreset('2y');
+	let startDate = initialWindow.startDate;
+	let endDate = initialWindow.endDate;
 
-	// Advanced execution config
-	let showAdvanced = false;
-	let initialCapital = 10000;
-	let feeBps = 10;
-	let slippageBps = 5;
-	let leverage = 1;
-	let tradeMode: 'long_only' | 'short_only' | 'both' = 'long_only';
-	let sizingMode: 'full' | 'fraction' | 'fixed' | 'atr' | 'kelly' = 'full';
-	let riskPerTrade = 0.02;
-	let fixedSize = 1000;
-	let atrStopMultiplier = 2;
-	let kellyMultiplier = 0.5;
-	let kellyLookback = 100;
-	let stopLossPct: number | null = null;
-	let takeProfitPct: number | null = null;
-	let trailingStopPct: number | null = null;
-	let timeStopBars: number | null = null;
+	$: holdoutCutoff = defaults?.holdout_cutoff ?? null;
+	$: holdoutDay = holdoutCutoff ? holdoutCutoff.slice(0, 10) : '';
+	$: estimatedBars = estimateBarCount(startDate, endDate, timeframe);
+	$: native = selected ? nativeMarket(selected) : null;
+	$: offMarket = Boolean(native && !sameMarket(native, symbol, timeframe));
 
-	// Preview state
-	let previewLoading = false;
+	// --- Execution ------------------------------------------------------------------
+
+	let showExecution = false;
+	let initialCapital: number | null = null;
+	let feeBps: number | null = null;
+	let slippageBps: number | null = null;
+	let leverage: number | null = null;
+	let tradeMode: TradeMode | '' = '';
+	let overrideProfile = false;
+	let profileDraft: ProfileDraft = profileDraftFrom(null);
+
+	$: ownProfile = selected ? strategyProfile(selected.raw_params) : null;
+	$: strategyLeverage = (() => {
+		const raw = Number(selected?.raw_params?.leverage);
+		return Number.isFinite(raw) && raw > 0 ? raw : null;
+	})();
+	$: defaultTradeMode = selected ? ownTradeMode(selected) : 'long_only';
+	$: allowedTradeModes = selected && builtinSelected && selected.trade_modes?.length
+		? (TRADE_MODES.filter((m) => selected?.trade_modes?.includes(m)) as TradeMode[])
+		: TRADE_MODES;
+	$: sizingSummary = overrideProfile
+		? `Override: ${describeProfile(profileFromDraft(profileDraft))}`
+		: profileIsInert(ownProfile)
+			? describeProfile(null)
+			: `Strategy's own profile: ${describeProfile(ownProfile)}`;
+
+	function ownTradeMode(strategy: Strategy): TradeMode {
+		if (isBuiltin(strategy) && strategy.default_trade_mode) return strategy.default_trade_mode as TradeMode;
+		const raw = strategy.raw_params ?? {};
+		const configured = String(raw.trade_mode ?? '').trim().toLowerCase();
+		if (configured === 'short_only' || configured === 'both' || configured === 'long_only') return configured;
+		const side = String(raw.position ?? raw.direction ?? '').trim().toLowerCase();
+		return side === 'short' ? 'short_only' : 'long_only';
+	}
+
+	function numberOrNull(value: string): number | null {
+		if (value.trim() === '') return null;
+		const n = Number(value);
+		return Number.isFinite(n) ? n : NaN;
+	}
+
+	function resetExecution() {
+		initialCapital = null;
+		feeBps = null;
+		slippageBps = null;
+		leverage = null;
+		tradeMode = '';
+		overrideProfile = false;
+		profileDraft = profileDraftFrom(ownProfile);
+	}
+
+	function toggleProfileOverride() {
+		overrideProfile = !overrideProfile;
+		if (overrideProfile) profileDraft = profileDraftFrom(ownProfile);
+	}
+
+	// --- The run as configured ------------------------------------------------------
+
+	$: settings = selected
+		? ({
+			strategy: selected,
+			symbol,
+			timeframe,
+			startDate,
+			endDate,
+			params: paramsDraft,
+			initialCapital,
+			feeBps,
+			slippageBps,
+			leverage,
+			tradeMode,
+			profile: overrideProfile ? profileDraft : null,
+		} satisfies RunSettings)
+		: null;
+	$: validationError = !settings
+		? 'Choose a strategy to backtest.'
+		: paramsHaveErrors
+			? 'Fix the highlighted parameter before running.'
+			: validateRun(settings, { estimatedBars, today: todayUtc });
+	$: runOverrides = settings ? overrideLabels(settings) : [];
+
+	// --- Signal preview -------------------------------------------------------------
+
 	let preview: SignalPreview | null = null;
+	let previewFor = '';
+	let previewLoading = false;
 	let previewError = '';
 
-	// Submission + result state
-	type SubmitStatus = 'idle' | 'submitting' | 'failed';
-	let submitStatus: SubmitStatus = 'idle';
-	let submitError = '';
-	let submitWarning = '';
-	let resultLoading = false;
-	let inlineResult: BacktestResult | null = null;
-	let lastResultId = '';
-	let lastStrategyId = '';
-
-	$: busy = submitStatus === 'submitting';
-	$: estimatedBars = estimateBarCount(startDate, endDate, timeframe);
-	$: numberOrNull = (v: string) => (v.trim() === '' ? null : Number(v));
-
-	function rebuildStrategies() {
-		const seen = new Set<string>();
-		const merged: Strategy[] = [];
-		for (const s of prebuiltStrategies) {
-			const key = s.api_name || s.name;
-			if (!seen.has(key)) {
-				seen.add(key);
-				merged.push(s);
-			}
-		}
-		if (includeAppGenerated) {
-			for (const s of appStrategies) {
-				const key = s.api_name || s.name;
-				if (!seen.has(key)) {
-					seen.add(key);
-					merged.push(s);
-				}
-			}
-		}
-		strategies = merged.sort((a, b) => a.name.localeCompare(b.name));
-	}
-
-	function toggleAppGenerated() {
-		includeAppGenerated = !includeAppGenerated;
-		rebuildStrategies();
-	}
-
-	async function loadStrategies() {
-		loadingStrategies = true;
-		loadError = '';
-		try {
-			const [prebuiltRes, appRes] = await Promise.all([getPrebuiltStrategies(), getStrategies()]);
-			prebuiltStrategies = prebuiltRes.strategies;
-			appStrategies = appRes.strategies;
-			rebuildStrategies();
-		} catch (err) {
-			loadError = err instanceof Error ? err.message : 'Failed to load strategies';
-		} finally {
-			loadingStrategies = false;
-		}
-	}
-
-	async function loadSymbols() {
-		try {
-			symbolSuggestions = await getSymbols();
-		} catch {
-			symbolSuggestions = [];
-		}
-	}
-
-	onMount(() => {
-		loadStrategies();
-		loadSymbols();
-	});
-
-	function applyStrategy(key: string) {
-		selectedKey = key;
-		selectedStrategy = strategies.find((s) => (s.api_name || s.name) === key) ?? null;
-		preview = null;
-		previewError = '';
-		if (selectedStrategy?.parameters) {
-			paramsDraft = Object.fromEntries(
-				Object.entries(selectedStrategy.parameters).map(([k, spec]) => [k, spec.default]),
-			);
-		} else {
-			paramsDraft = {};
-		}
-		const sSym = (selectedStrategy as Record<string, unknown> | null)?.symbol;
-		const sTf = (selectedStrategy as Record<string, unknown> | null)?.timeframe;
-		if (typeof sSym === 'string' && sSym.trim()) symbol = sSym.trim();
-		if (typeof sTf === 'string' && sTf.trim()) timeframe = sTf.trim();
-	}
-
-	function onStrategySelect(event: Event) {
-		applyStrategy((event.target as HTMLSelectElement).value);
-	}
-
-	function onParamsChange(event: CustomEvent<Record<string, unknown>>) {
-		paramsDraft = event.detail;
-		preview = null;
-	}
-
-	function validate(): string | null {
-		if (!selectedStrategy) return 'Select a strategy to backtest.';
-		if (!symbol.trim()) return 'Symbol is required.';
-		if (startDate && endDate && startDate >= endDate) return 'Start date must be before end date.';
-		if (!Number.isFinite(initialCapital) || initialCapital <= 0) return 'Initial capital must be greater than 0.';
-		if (!Number.isFinite(feeBps) || feeBps < 0) return 'Fee (bps) cannot be negative.';
-		if (!Number.isFinite(slippageBps) || slippageBps < 0) return 'Slippage (bps) cannot be negative.';
-		if (!Number.isFinite(leverage) || leverage < 1) return 'Leverage must be at least 1.';
-		if (leverage > 125) return 'Leverage above 125× is not supported.';
-		if (sizingMode === 'fraction') {
-			if (!(riskPerTrade > 0 && riskPerTrade <= 1)) return 'Risk per trade must be between 0 and 1.';
-			if (stopLossPct == null && trailingStopPct == null)
-				return 'Fraction (risk-based) sizing needs a Stop Loss % or Trailing Stop %.';
-		}
-		if (sizingMode === 'fixed' && !(fixedSize > 0)) return 'Fixed size must be greater than 0.';
-		if (sizingMode === 'atr') {
-			if (!(atrStopMultiplier > 0)) return 'ATR stop multiplier must be greater than 0.';
-			if (!(riskPerTrade > 0 && riskPerTrade <= 1)) return 'Risk per trade must be between 0 and 1.';
-		}
-		if (sizingMode === 'kelly') {
-			if (!(kellyMultiplier > 0 && kellyMultiplier <= 5)) return 'Kelly multiplier must be between 0 and 5.';
-			if (!(Number.isInteger(kellyLookback) && kellyLookback >= 1)) return 'Kelly lookback must be a positive whole number.';
-		}
-		if (stopLossPct != null && !(stopLossPct > 0 && stopLossPct <= 100)) return 'Stop Loss % must be between 0 and 100.';
-		if (takeProfitPct != null && !(takeProfitPct > 0)) return 'Take Profit % must be greater than 0.';
-		if (trailingStopPct != null && !(trailingStopPct > 0 && trailingStopPct <= 100)) return 'Trailing Stop % must be between 0 and 100.';
-		if (timeStopBars != null && !(Number.isInteger(timeStopBars) && timeStopBars >= 1)) return 'Time Stop must be a positive whole number of bars.';
-		if (estimatedBars != null && estimatedBars > BAR_CAP)
-			return `This window is ~${estimatedBars.toLocaleString()} bars; the engine caps at ${BAR_CAP.toLocaleString()}.`;
-		return null;
-	}
-
-	function buildRequest() {
-		const strategyId = selectedStrategy!.api_name || selectedStrategy!.name;
-		return {
-			strategy_id: strategyId,
-			strategy_name: strategyId,
-			strategy_version: selectedStrategy!.version,
-			symbol: symbol.trim(),
-			timeframe,
-			start: startDate,
-			end: endDate,
-			params: Object.keys(paramsDraft).length > 0 ? paramsDraft : undefined,
-			preserve_result: true,
-			initial_capital: initialCapital,
-			fee_bps: feeBps,
-			slippage_bps: slippageBps,
-			leverage,
-			trade_mode: tradeMode,
-			allow_shorting: tradeMode !== 'long_only',
-			sizing_mode: sizingMode,
-			risk_per_trade: sizingMode === 'fraction' || sizingMode === 'atr' ? riskPerTrade : undefined,
-			fixed_size: sizingMode === 'fixed' ? fixedSize : undefined,
-			atr_stop_multiplier: sizingMode === 'atr' ? atrStopMultiplier : undefined,
-			kelly_multiplier: sizingMode === 'kelly' ? kellyMultiplier : undefined,
-			kelly_lookback: sizingMode === 'kelly' ? kellyLookback : undefined,
-			stop_loss_pct: stopLossPct,
-			take_profit_pct: takeProfitPct,
-			trailing_stop_pct: trailingStopPct,
-			time_stop_bars: timeStopBars,
-		};
-	}
+	$: previewKey = settings
+		? JSON.stringify([strategyKey(settings.strategy), symbol, timeframe, startDate, endDate, tradeMode, paramsDraft])
+		: '';
+	$: previewStale = Boolean(preview && previewFor !== previewKey);
 
 	async function handlePreview() {
-		if (!selectedStrategy) {
-			previewError = 'Select a strategy first.';
+		if (!settings) return;
+		// Signals depend on the strategy, market, window and params only; a
+		// half-typed execution override must not block a preview.
+		const signalSettings: RunSettings = {
+			...settings, initialCapital: null, feeBps: null, slippageBps: null, leverage: null, profile: null,
+		};
+		const problem = paramsHaveErrors
+			? 'Fix the highlighted parameter before previewing.'
+			: validateRun(signalSettings, { estimatedBars, today: todayUtc });
+		if (problem) {
+			previewError = problem;
 			return;
 		}
+		const request = buildBacktestRequest(signalSettings);
+		const key = previewKey;
 		previewLoading = true;
 		previewError = '';
-		preview = null;
 		try {
 			preview = await previewSignals({
-				strategy_name: selectedStrategy.api_name || selectedStrategy.name,
-				strategy_version: selectedStrategy.version,
-				symbol: symbol.trim(),
-				timeframe,
-				start: startDate,
-				end: endDate,
-				trade_mode: tradeMode,
-				params: Object.keys(paramsDraft).length > 0 ? paramsDraft : undefined,
+				strategy_name: request.strategy_name,
+				symbol: request.symbol,
+				timeframe: request.timeframe,
+				start: request.start,
+				end: request.end,
+				trade_mode: tradeMode || defaultTradeMode,
+				params: request.params,
 			});
+			previewFor = key;
 		} catch (err) {
+			preview = null;
 			previewError = err instanceof Error ? err.message : 'Signal preview failed';
 		} finally {
 			previewLoading = false;
 		}
 	}
 
-	async function handleSubmit() {
-		const error = validate();
-		if (error) {
-			submitError = error;
+	// --- Runs -----------------------------------------------------------------------
+
+	type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+	interface RunRecord {
+		resultId: string;
+		jobId: string;
+		strategyKey: string;
+		label: string;
+		market: string;
+		requestedStart: string;
+		requestedEnd: string;
+		overrides: string[];
+		submittedAt: number;
+		finishedAt?: number;
+		status: RunStatus;
+		progress?: string;
+		error?: string;
+		summary?: { returnPct: number | null; sharpe: number | null; maxDrawdownPct: number | null; trades: number | null };
+	}
+
+	const RUNS_KEY = 'forven.manualBacktest.runs.v1';
+	const VIEWED_KEY = 'forven.manualBacktest.viewed.v1';
+	const MAX_RUNS = 12;
+	const POLL_LIMIT_MS = 30 * 60 * 1000;
+
+	let runs: RunRecord[] = [];
+	let submitting = false;
+	let submitError = '';
+	let now = Date.now();
+	let clock: ReturnType<typeof setInterval> | null = null;
+	let destroyed = false;
+	const following = new Set<string>();
+	const abandoned = new Set<string>();
+
+	let viewedId = '';
+	let viewedResult: BacktestResult | null = null;
+	let viewedLoading = false;
+	let viewedError = '';
+	const resultCache = new Map<string, BacktestResult>();
+
+	$: activeRun = runs.find((r) => r.status === 'queued' || r.status === 'running') ?? null;
+	$: viewedRun = runs.find((r) => r.resultId === viewedId) ?? null;
+	$: window_ = viewedResult ? testedWindow(viewedResult) : null;
+	$: split = viewedResult ? sampleSplit(viewedResult) : null;
+	$: decay = decayNote(split);
+	$: bySide = (() => {
+		const sides = (viewedResult?.metrics as Record<string, unknown> | undefined)?.by_side as
+			Record<string, Record<string, unknown>> | undefined;
+		if (!sides) return [];
+		return Object.entries(sides)
+			.filter(([, s]) => Number(s?.total_trades ?? 0) > 0)
+			.map(([side, s]) => ({
+				side,
+				trades: Number(s.total_trades ?? 0),
+				winRate: Number(s.win_rate ?? 0) * 100,
+				returnPct: Number(s.total_return_pct ?? 0) * 100,
+			}));
+	})();
+	$: resultWarnings = viewedResult ? collectWarnings(viewedResult) : [];
+	$: holdoutShifted = Boolean(viewedRun && shiftedByHoldout(viewedRun.requestedEnd, holdoutCutoff));
+	$: fundingIncomplete = (viewedResult?.metrics as Record<string, unknown> | undefined)?.funding_complete === false;
+
+	function collectWarnings(result: BacktestResult): string[] {
+		const out = new Set<string>();
+		for (const list of [result.config?.warnings, (result as unknown as Record<string, unknown>).warnings]) {
+			if (Array.isArray(list)) for (const w of list) if (typeof w === 'string' && w.trim()) out.add(w.trim());
+		}
+		return [...out];
+	}
+
+	function saveRuns() {
+		try {
+			sessionStorage.setItem(RUNS_KEY, JSON.stringify(runs));
+			sessionStorage.setItem(VIEWED_KEY, viewedId);
+		} catch {
+			// Private windows and blocked storage: history just won't survive a reload.
+		}
+	}
+
+	function restoreRuns() {
+		try {
+			const raw = JSON.parse(sessionStorage.getItem(RUNS_KEY) ?? '[]');
+			if (Array.isArray(raw)) runs = raw.filter((r) => r && typeof r.resultId === 'string').slice(0, MAX_RUNS);
+			viewedId = sessionStorage.getItem(VIEWED_KEY) ?? '';
+		} catch {
+			runs = [];
+		}
+	}
+
+	function updateRun(resultId: string, patch: Partial<RunRecord>) {
+		runs = runs.map((r) => (r.resultId === resultId ? { ...r, ...patch } : r));
+		saveRuns();
+	}
+
+	function summarize(result: BacktestResult): RunRecord['summary'] {
+		const m = (result.metrics ?? {}) as Record<string, unknown>;
+		const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+		const ret = n(m.total_return);
+		const dd = n(m.max_drawdown);
+		return {
+			returnPct: ret === null ? null : ret * 100,
+			sharpe: n(m.sharpe_ratio),
+			maxDrawdownPct: dd === null ? null : Math.abs(dd) * 100,
+			trades: n(m.total_trades),
+		};
+	}
+
+	function ensureClock() {
+		if (!clock) clock = setInterval(() => (now = Date.now()), 1000);
+	}
+
+	async function followJob(record: RunRecord) {
+		if (following.has(record.resultId)) return;
+		following.add(record.resultId);
+		ensureClock();
+		try {
+			for (let attempt = 0; !destroyed && !abandoned.has(record.resultId); attempt += 1) {
+				if (Date.now() - record.submittedAt > POLL_LIMIT_MS) {
+					updateRun(record.resultId, { status: 'failed', error: 'Stopped waiting after 30 minutes. The run may still finish; check the strategy report.' });
+					return;
+				}
+				try {
+					const job = await getJob(record.jobId);
+					if (abandoned.has(record.resultId)) return;
+					const status = String(job.status || '').toLowerCase();
+					if (status === 'succeeded') {
+						updateRun(record.resultId, { status: 'succeeded', progress: undefined, finishedAt: Date.now() });
+						await loadResult(record.resultId, { select: viewedId === record.resultId || !viewedId, scroll: false });
+						return;
+					}
+					if (status === 'failed' || status === 'cancelled') {
+						updateRun(record.resultId, { status: 'failed', error: job.error || 'The backtest failed.', finishedAt: Date.now() });
+						if (viewedId === record.resultId) viewedError = job.error || 'The backtest failed.';
+						addToast(`Backtest failed: ${job.error || record.label}`, 'error');
+						return;
+					}
+					updateRun(record.resultId, { status: status === 'queued' ? 'queued' : 'running', progress: job.progress || undefined });
+				} catch {
+					// A dropped poll is not a failed run; try again.
+				}
+				await new Promise((resolve) => setTimeout(resolve, attempt < 20 ? 1500 : 4000));
+			}
+		} finally {
+			following.delete(record.resultId);
+			if (!following.size && clock) {
+				clearInterval(clock);
+				clock = null;
+			}
+		}
+	}
+
+	async function loadResult(resultId: string, { select = true, scroll = true } = {}) {
+		if (select) {
+			viewedId = resultId;
+			viewedError = '';
+			saveRuns();
+		}
+		const cached = resultCache.get(resultId);
+		if (cached) {
+			if (viewedId === resultId) viewedResult = cached;
 			return;
 		}
-		submitStatus = 'submitting';
-		submitError = '';
-		submitWarning = '';
-		inlineResult = null;
-		const request = buildRequest();
-		const strategyId = request.strategy_id;
+		if (viewedId === resultId) {
+			viewedLoading = true;
+			viewedResult = null;
+		}
 		try {
-			const job = await submitBacktest(request);
-			lastStrategyId = strategyId;
-			if (job.warning) submitWarning = job.warning;
-			if (job.status === 'succeeded') addToast(`Backtest for ${strategyId} completed`, 'success');
-			else addToast(`Backtest for ${strategyId} queued (job ${job.job_id})`, 'info');
-			submitStatus = 'idle';
-			if (job.result_id) {
-				lastResultId = job.result_id;
-				resultLoading = true;
-				try {
-					inlineResult = await getResult(job.result_id);
-				} catch {
-					inlineResult = null;
-				} finally {
-					resultLoading = false;
-				}
-				queueMicrotask(() => document.getElementById('bt-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+			const result = await getResult(resultId);
+			resultCache.set(resultId, result);
+			const record = runs.find((r) => r.resultId === resultId);
+			if (record && result) updateRun(resultId, { summary: summarize(result) });
+			if (viewedId === resultId) {
+				viewedResult = result;
+				if (select && scroll) scrollToId('bt-result-detail');
 			}
 		} catch (err) {
-			submitStatus = 'failed';
-			submitError = err instanceof Error ? err.message : 'Backtest submission failed';
+			if (viewedId === resultId) viewedError = err instanceof Error ? err.message : 'Could not load the result.';
+		} finally {
+			if (viewedId === resultId) viewedLoading = false;
 		}
+	}
+
+	function showRun(record: RunRecord) {
+		if (record.status === 'succeeded') {
+			void loadResult(record.resultId);
+			return;
+		}
+		viewedId = record.resultId;
+		viewedResult = null;
+		viewedError = record.status === 'failed' ? record.error || 'The backtest failed.' : '';
+		saveRuns();
+	}
+
+	async function handleSubmit() {
+		if (!settings || !selected) return;
+		if (validationError) {
+			submitError = validationError;
+			return;
+		}
+		if (activeRun) {
+			submitError = 'A backtest is already running. Wait for it to finish.';
+			return;
+		}
+		submitError = '';
+		submitting = true;
+		const request = buildBacktestRequest(settings);
+		try {
+			const job = await submitBacktest(request, { background: true });
+			if (!job.result_id || !job.job_id) throw new Error('The backend did not return a job to follow.');
+			const record: RunRecord = {
+				resultId: job.result_id,
+				jobId: job.job_id,
+				strategyKey: request.strategy_id,
+				label: strategyOptionLabel(selected),
+				market: marketLabel(request.symbol, request.timeframe),
+				requestedStart: request.start,
+				requestedEnd: request.end,
+				overrides: runOverrides,
+				submittedAt: Date.now(),
+				status: 'queued',
+			};
+			runs = [record, ...runs.filter((r) => r.resultId !== record.resultId)].slice(0, MAX_RUNS);
+			viewedId = record.resultId;
+			viewedResult = null;
+			viewedError = '';
+			saveRuns();
+			scrollToId('bt-result-detail');
+			void followJob(record);
+		} catch (err) {
+			submitError = err instanceof ApiError && err.status === 429
+				? 'The backtest queue is full. Wait for a running backtest to finish, then try again.'
+				: err instanceof Error ? err.message : 'Backtest submission failed.';
+		} finally {
+			submitting = false;
+		}
+	}
+
+	/** After the next render, bring a section into view (a no-op where the DOM can't scroll). */
+	function scrollToId(id: string) {
+		queueMicrotask(() => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+	}
+
+	/**
+	 * Stop following a run that looks stuck (e.g. the backend restarted under it),
+	 * so the page can start another. The backend may still finish and save it.
+	 */
+	function stopWaiting(record: RunRecord) {
+		abandoned.add(record.resultId);
+		updateRun(record.resultId, {
+			status: 'failed',
+			error: 'Stopped waiting. If the backend finishes the run, it is saved to the strategy and shows in its report.',
+			finishedAt: Date.now(),
+		});
+		if (viewedId === record.resultId) viewedError = 'Stopped waiting for this run.';
 	}
 
 	function openFullReport() {
-		if (!lastStrategyId) return;
-		goto(`/lab/strategy/${encodeURIComponent(lastStrategyId)}?returnTo=/backtest/new`);
+		const id = String(viewedResult?.strategy_id || viewedRun?.strategyKey || '').trim();
+		if (!id) return;
+		goto(`/lab/strategy/${encodeURIComponent(id)}?returnTo=${encodeURIComponent('/backtest/new')}`);
 	}
 
-	function resetForNextRun() {
-		inlineResult = null;
-		lastResultId = '';
-		submitWarning = '';
-		queueMicrotask(() => document.getElementById('bt-config')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+	function clearHistory() {
+		runs = runs.filter((r) => r.status === 'queued' || r.status === 'running');
+		if (!runs.some((r) => r.resultId === viewedId)) {
+			viewedId = '';
+			viewedResult = null;
+		}
+		saveRuns();
+	}
+
+	// --- Selecting a strategy -------------------------------------------------------
+
+	function applyStrategy(strategy: Strategy | null) {
+		selected = strategy;
+		selectedKey = strategy ? strategyKey(strategy) : '';
+		baseParams = editableParams(strategy?.raw_params);
+		paramsDraft = JSON.parse(JSON.stringify(baseParams));
+		paramsHaveErrors = false;
+		paramEditorKey += 1;
+		preview = null;
+		previewError = '';
+		submitError = '';
+		// Trade mode, leverage and the execution profile belong to a strategy;
+		// capital and costs are the operator's and carry over.
+		tradeMode = '';
+		leverage = null;
+		overrideProfile = false;
+		profileDraft = profileDraftFrom(strategy ? strategyProfile(strategy.raw_params) : null);
+		if (strategy) useStrategyMarket(strategy);
+	}
+
+	function useStrategyMarket(strategy: Strategy) {
+		const market = nativeMarket(strategy);
+		if (market.symbol) symbol = market.symbol;
+		if (market.timeframe) timeframe = market.timeframe;
+	}
+
+	function allStrategies(): Strategy[] {
+		return [...builtins, ...mineGroups.flatMap((g) => g.strategies)];
+	}
+
+	function onStrategySelect(event: Event) {
+		const key = (event.currentTarget as HTMLSelectElement).value;
+		applyStrategy(allStrategies().find((s) => strategyKey(s) === key) ?? null);
+	}
+
+	function resetParams() {
+		paramsDraft = JSON.parse(JSON.stringify(baseParams));
+		paramsHaveErrors = false;
+		paramEditorKey += 1;
+	}
+
+	function onParamsChange(event: CustomEvent<Record<string, unknown>>) {
+		paramsDraft = event.detail;
+	}
+
+	async function setSource(next: Source) {
+		source = next;
+		if (next === 'mine' && !mineLoaded) await loadMine();
+	}
+
+	async function loadBuiltins() {
+		builtinsLoading = true;
+		builtinsError = '';
+		try {
+			const res = await getPrebuiltStrategies();
+			builtins = res.strategies
+				.filter((s) => strategyKey(s) !== 'rule_engine')
+				.sort((a, b) => a.name.localeCompare(b.name));
+		} catch (err) {
+			builtinsError = err instanceof Error ? err.message : 'Failed to load strategies';
+		} finally {
+			builtinsLoading = false;
+		}
+	}
+
+	async function loadMine() {
+		mineLoading = true;
+		mineError = '';
+		const settled = await Promise.allSettled(
+			MINE_GROUPS.map((g) => getStrategies({ status: g.status, limit: 500 })),
+		);
+		const groups: { label: string; strategies: Strategy[] }[] = [];
+		const failures: string[] = [];
+		settled.forEach((outcome, i) => {
+			if (outcome.status === 'fulfilled') {
+				const list = outcome.value.strategies.sort((a, b) =>
+					String(b.display_id ?? '').localeCompare(String(a.display_id ?? ''), undefined, { numeric: true }),
+				);
+				if (list.length) groups.push({ label: MINE_GROUPS[i].label, strategies: list });
+			} else {
+				failures.push(MINE_GROUPS[i].label);
+			}
+		});
+		mineGroups = groups;
+		mineLoaded = failures.length < MINE_GROUPS.length;
+		if (failures.length) mineError = `Could not load: ${failures.join(', ')}.`;
+		mineLoading = false;
+	}
+
+	async function applyDeepLink() {
+		const wanted = ($page.url.searchParams.get('strategy') ?? '').trim();
+		if (!wanted) return;
+		const match = (list: Strategy[]) =>
+			list.find((s) => strategyKey(s) === wanted || (s.display_id ?? '') === wanted) ?? null;
+		let found = match(builtins);
+		if (!found) {
+			await setSource('mine');
+			found = match(mineGroups.flatMap((g) => g.strategies));
+		}
+		if (found) {
+			source = isBuiltin(found) ? 'builtin' : 'mine';
+			applyStrategy(found);
+		} else {
+			submitError = `Strategy “${wanted}” is not in the built-in, live, paper or Forge lists.`;
+		}
+	}
+
+	onMount(async () => {
+		restoreRuns();
+		for (const record of runs) {
+			if (record.status === 'queued' || record.status === 'running') void followJob(record);
+		}
+		if (viewedId && runs.some((r) => r.resultId === viewedId && r.status === 'succeeded')) {
+			void loadResult(viewedId, { select: false });
+		}
+		void getSymbols().then((s) => (symbolSuggestions = s)).catch(() => (symbolSuggestions = []));
+		void getManualBacktestDefaults()
+			.then((d) => {
+				defaults = d;
+				// Presets end at the holdout cutoff: research windows past it are
+				// shifted back anyway, so the form shows the window that really runs.
+				const untouched = startDate === initialWindow.startDate && endDate === initialWindow.endDate;
+				if (d.holdout_cutoff && untouched) {
+					const w = resolveDateRangePreset('2y', { maxDate: d.holdout_cutoff.slice(0, 10) });
+					startDate = w.startDate;
+					endDate = w.endDate;
+				}
+			})
+			.catch(() => (defaults = null));
+		await loadBuiltins();
+		await applyDeepLink();
+	});
+
+	onDestroy(() => {
+		destroyed = true;
+		if (clock) clearInterval(clock);
+	});
+
+	// --- Formatting -----------------------------------------------------------------
+
+	function fmtPct(v: number | null | undefined, dp = 2): string {
+		return v === null || v === undefined || !Number.isFinite(v) ? '–' : `${v >= 0 ? '+' : ''}${v.toFixed(dp)}%`;
+	}
+	function fmtNum(v: number | null | undefined, dp = 2): string {
+		return v === null || v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(dp);
+	}
+	function fmtDay(value: string | null | undefined): string {
+		if (!value) return '–';
+		const d = new Date(`${value.slice(0, 10)}T00:00:00Z`);
+		return Number.isNaN(d.getTime())
+			? value
+			: d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+	}
+	function fmtElapsed(ms: number): string {
+		const s = Math.max(0, Math.round(ms / 1000));
+		return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+	}
+	function toneFor(v: number | null | undefined): string {
+		if (v === null || v === undefined || !Number.isFinite(v)) return 'text-[#888]';
+		return v >= 0 ? 'text-emerald-400' : 'text-red-400';
 	}
 </script>
 
@@ -303,232 +672,491 @@
 </svelte:head>
 
 <div class="mx-auto max-w-7xl px-4 py-6">
-	<div>
-		<!-- Header -->
-		<div class="mb-4 border-b border-[#222] pb-4">
-			<div class="flex flex-wrap items-end justify-between gap-4">
-				<div>
-					<h1 class="text-lg font-bold uppercase tracking-widest text-white">Manual Backtest</h1>
-					<p class="mt-1 text-xs text-[#666]">
-						Pick a strategy, configure execution, preview signals, and run — results appear inline.
-					</p>
-				</div>
-				<a href="/strategy-creator"
-					class="terminal-button text-xs">
-					Build your own → Strategy Creator
-				</a>
+	<!-- Header -->
+	<div class="mb-4 border-b border-[#222] pb-4">
+		<div class="flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<h1 class="text-lg font-bold uppercase tracking-widest text-white">Manual Backtest</h1>
+				<p class="mt-1 text-xs text-[#666]">
+					Backtest a built-in template or one of your strategies on any market. Anything you leave blank runs the way the strategy itself does.
+				</p>
 			</div>
+			<a href="/strategy-creator" class="terminal-button text-xs">Build your own → Strategy Creator</a>
 		</div>
+	</div>
 
-		<form id="bt-config" on:submit|preventDefault={handleSubmit} novalidate>
-			<!-- Strategy Selection -->
-			<div class="terminal-card p-4">
-				<div class="flex items-center justify-between gap-3">
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">
-						Strategy
-						<span class="ml-2 border border-[#333] px-1.5 py-0.5 text-[9px] tabular-nums text-[#888]">{strategies.length}</span>
-					</div>
+	<form id="bt-config" on:submit|preventDefault={handleSubmit} novalidate>
+		<!-- Strategy -->
+		<section class="terminal-card p-4" aria-labelledby="bt-strategy-label">
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<label id="bt-strategy-label" for="bt-strategy" class="text-[10px] uppercase tracking-wider text-[#666]">Strategy</label>
+				<div class="inline-flex border border-[#333]" role="group" aria-label="Strategy source">
 					<button
 						type="button"
-						on:click={toggleAppGenerated}
-						disabled={busy}
-						aria-pressed={includeAppGenerated}
-						class="inline-flex items-center gap-2 border px-3 py-1 text-[10px] uppercase tracking-wide transition-colors {includeAppGenerated
-							? 'border-white bg-white text-black'
-							: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white'}"
+						class="px-3 py-1 text-[10px] uppercase tracking-wide {source === 'builtin' ? 'bg-white text-black' : 'text-[#888] hover:text-white'}"
+						aria-pressed={source === 'builtin'}
+						on:click={() => setSource('builtin')}
 					>
-						<span class="inline-block h-1.5 w-1.5 rounded-full {includeAppGenerated ? 'bg-black' : 'bg-[#555]'}"></span>
-						Include app-generated strategies
+						Built-in <span class="tabular-nums">({builtins.length})</span>
+					</button>
+					<button
+						type="button"
+						class="border-l border-[#333] px-3 py-1 text-[10px] uppercase tracking-wide {source === 'mine' ? 'bg-white text-black' : 'text-[#888] hover:text-white'}"
+						aria-pressed={source === 'mine'}
+						on:click={() => setSource('mine')}
+					>
+						My strategies{#if mineLoaded}&nbsp;<span class="tabular-nums">({mineCount})</span>{/if}
+					</button>
+				</div>
+			</div>
+
+			<div class="mt-3">
+				{#if source === 'builtin' && builtinsLoading}
+					<div class="text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading strategies…</div>
+				{:else if source === 'builtin' && builtinsError}
+					<div class="flex flex-wrap items-center gap-3" role="alert">
+						<span class="text-sm text-red-400">{builtinsError}</span>
+						<button type="button" on:click={loadBuiltins} class="terminal-button text-[10px]">Retry</button>
+					</div>
+				{:else if source === 'mine' && mineLoading}
+					<div class="text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading your live, paper and Forge strategies…</div>
+				{:else}
+					<select id="bt-strategy" class="terminal-select" on:change={onStrategySelect} value={selectedKey}>
+						<option value="" disabled>Select a strategy…</option>
+						{#if source === 'builtin'}
+							{#each builtins as strategy (strategyKey(strategy))}
+								<option value={strategyKey(strategy)}>{strategyOptionLabel(strategy)}</option>
+							{/each}
+						{:else}
+							{#each mineGroups as group (group.label)}
+								<optgroup label={group.label}>
+									{#each group.strategies as strategy (strategyKey(strategy))}
+										<option value={strategyKey(strategy)}>{strategyOptionLabel(strategy)}</option>
+									{/each}
+								</optgroup>
+							{/each}
+						{/if}
+					</select>
+					{#if source === 'mine' && mineError}
+						<div class="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-amber-400" role="alert">
+							{mineError}
+							<button type="button" on:click={loadMine} class="terminal-button text-[10px]">Retry</button>
+						</div>
+					{:else if source === 'mine' && mineLoaded && mineCount === 0}
+						<p class="mt-2 text-[11px] text-[#666]">No live, paper or Forge strategies yet. Archived strategies are not listed.</p>
+					{/if}
+				{/if}
+
+				{#if selected}
+					<div class="mt-3 border border-[#1a1a1a] bg-[#050505] p-3 text-[11px]">
+						<div class="flex flex-wrap items-center gap-2">
+							<span class="font-mono text-white">{strategyOptionLabel(selected)}</span>
+							{#if selected.stage && !builtinSelected}
+								<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-[#888]">{selected.stage.replace(/_/g, ' ')}</span>
+							{/if}
+							{#if builtinSelected}
+								<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-[#888]">built-in</span>
+							{/if}
+						</div>
+						<!-- A stored strategy's "description" is its notes column: an audit trail, not a summary. -->
+						{#if selected.description && builtinSelected}
+							<p class="mt-1.5 text-[#777]">{selected.description}</p>
+						{/if}
+						{#if native?.symbol || native?.timeframe}
+							<p class="mt-1.5 text-[#666]">
+								{builtinSelected ? 'Written for' : 'Runs on'}
+								<span class="font-mono text-[#aaa]">{marketLabel(native.symbol, native.timeframe)}</span>
+							</p>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		<!-- Market -->
+		<section class="terminal-card mt-4 p-4">
+			<div class="text-[10px] uppercase tracking-wider text-[#666]">Market</div>
+			<div class="mt-3 grid gap-4 md:grid-cols-2">
+				<SymbolInput id="bt-symbol" bind:value={symbol} suggestions={symbolSuggestions} helpText="The engine backtests the base asset (ETH/USDT runs ETH)." />
+				<TimeframeSelect id="bt-timeframe" bind:value={timeframe} />
+			</div>
+			{#if selected && native && offMarket}
+				<div class="mt-3 flex flex-wrap items-center gap-3 border border-amber-900 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400" role="status">
+					<span>
+						{#if builtinSelected}
+							This template was written for {marketLabel(native.symbol, native.timeframe)}.
+						{:else}
+							{selected.display_id || 'This strategy'} trades {marketLabel(native.symbol, native.timeframe)}. A run on another market describes a variant, not the strategy as it trades.
+						{/if}
+					</span>
+					<button type="button" class="terminal-button text-[10px]" on:click={() => selected && useStrategyMarket(selected)}>
+						Use {marketLabel(native.symbol, native.timeframe)}
+					</button>
+				</div>
+			{/if}
+			<div class="mt-4">
+				<DateRangeFieldset idPrefix="bt-date" bind:startDate bind:endDate {timeframe} maxDate={holdoutDay} />
+			</div>
+			{#if holdoutCutoff}
+				<p class="mt-2 text-[11px] text-[#666]">
+					Research holdout: data from <span class="text-[#aaa]">{fmtDay(holdoutCutoff)}</span> on is held back for each new
+					strategy's one-shot test, so backtests end there. A window that reaches past it is shifted back to end at the cutoff.
+				</p>
+			{/if}
+		</section>
+
+		<!-- Parameters -->
+		{#if selected}
+			<section class="terminal-card mt-4 p-4">
+				<div class="flex flex-wrap items-center justify-between gap-3">
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">
+						Strategy parameters
+						{#if editedParamCount}
+							<span class="ml-2 border border-[#555] px-1.5 py-0.5 text-[9px] text-white">{editedParamCount} changed</span>
+						{/if}
+					</div>
+					<button type="button" class="terminal-button text-[10px]" on:click={resetParams} disabled={!editedParamCount}>
+						Reset to {builtinSelected ? 'template defaults' : 'stored values'}
 					</button>
 				</div>
 				<div class="mt-3">
-					{#if loadingStrategies}
-						<div class="text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading strategies…</div>
-					{:else if loadError}
-						<div class="flex flex-wrap items-center gap-3" role="alert">
-							<span class="text-sm text-red-400">{loadError}</span>
-							<button type="button" on:click={loadStrategies}
-								class="terminal-button text-[10px]">Retry</button>
+					{#key paramEditorKey}
+						<ParameterEditor params={paramsDraft} bind:hasErrors={paramsHaveErrors} on:paramsChange={onParamsChange} />
+					{/key}
+				</div>
+				{#if hiddenParamCount > 0}
+					<p class="mt-2 text-[11px] text-[#555]">
+						{hiddenParamCount === 1 ? '1 more field is' : `${hiddenParamCount} more fields are`} not listed here: market, leverage,
+						trade mode and execution profile are set in Market and Execution, and internal data-contract fields are fixed.
+					</p>
+				{/if}
+			</section>
+		{/if}
+
+		<!-- Execution -->
+		<section class="terminal-card mt-4 p-4">
+			<button type="button" class="flex w-full items-start justify-between gap-3 text-left" on:click={() => (showExecution = !showExecution)} aria-expanded={showExecution}>
+				<div>
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution</div>
+					<div class="mt-1 text-[11px] text-[#999]">{sizingSummary}</div>
+				</div>
+				<span class="text-sm text-[#555]">{showExecution ? '−' : '+'}</span>
+			</button>
+			{#if showExecution}
+				<div class="mt-4 border-t border-[#222] pt-4">
+					<p class="text-[11px] text-[#666]">Leave a field blank to use the strategy's own setting or the engine default shown in it.</p>
+					<div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Initial capital</div>
+							<input type="number" value={initialCapital ?? ''} on:input={(e) => (initialCapital = numberOrNull(e.currentTarget.value))} step="1000" min="1"
+								placeholder={(defaults?.initial_capital ?? 10000).toLocaleString()} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fees (bps)</div>
+							<input type="number" value={feeBps ?? ''} on:input={(e) => (feeBps = numberOrNull(e.currentTarget.value))} step="0.5" min="0"
+								placeholder={defaults ? `${defaults.fee_bps} (default)` : 'Default'} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Slippage (bps)</div>
+							<input type="number" value={slippageBps ?? ''} on:input={(e) => (slippageBps = numberOrNull(e.currentTarget.value))} step="0.5" min="0"
+								placeholder={defaults ? `${defaults.slippage_bps} (default)` : 'Default'} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Leverage</div>
+							<input type="number" value={leverage ?? ''} on:input={(e) => (leverage = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="125"
+								placeholder={strategyLeverage !== null ? `${strategyLeverage}× (strategy)` : `${defaults?.leverage ?? 1}× (default)`} class="terminal-input mt-1.5" /></label>
+						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trade direction</div>
+							<select bind:value={tradeMode} class="terminal-select mt-1.5">
+								<option value="">Strategy default ({TRADE_MODE_LABELS[defaultTradeMode].toLowerCase()})</option>
+								{#each allowedTradeModes as mode}
+									<option value={mode}>{TRADE_MODE_LABELS[mode]}</option>
+								{/each}
+							</select></label>
+					</div>
+					{#if builtinSelected && selected?.trade_modes?.length}
+						<p class="mt-1 text-[11px] text-[#555]">This template can trade: {selected.trade_modes.map((m) => TRADE_MODE_LABELS[m as TradeMode] ?? m).join(', ').toLowerCase()}.</p>
+					{:else if selected && tradeMode && tradeMode !== defaultTradeMode}
+						<p class="mt-1 text-[11px] text-[#555]">The run fails if the strategy can't trade that side.</p>
+					{/if}
+
+					<div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+						<label class="flex cursor-pointer items-center gap-2 text-[11px] text-[#aaa]">
+							<input type="checkbox" checked={overrideProfile} on:change={toggleProfileOverride} class="h-3.5 w-3.5 accent-white" />
+							Override the execution profile (sizing and exits)
+						</label>
+						<button type="button" class="terminal-button text-[10px]" on:click={resetExecution}>Reset execution</button>
+					</div>
+					{#if overrideProfile}
+						<p class="mt-2 text-[11px] text-[#666]">
+							An override replaces the strategy's own profile for this run; it is not merged with it.
+						</p>
+						<div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Sizing</div>
+								<select bind:value={profileDraft.sizingMode} class="terminal-select mt-1.5">
+									<option value="atr">ATR risk (risk % against an ATR stop)</option>
+									<option value="fraction">Risk % against your stop</option>
+									<option value="fixed">Fixed notional</option>
+									<option value="full">Full equity</option>
+									<option value="kelly" disabled>Kelly (opens no trades in a backtest)</option>
+								</select></label>
+							{#if profileDraft.sizingMode === 'fraction' || profileDraft.sizingMode === 'atr'}
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Risk per trade (%)</div>
+									<input type="number" value={profileDraft.riskPct ?? ''} on:input={(e) => (profileDraft.riskPct = numberOrNull(e.currentTarget.value))} step="0.25" min="0.01" max="100" class="terminal-input mt-1.5" /></label>
+							{/if}
+							{#if profileDraft.sizingMode === 'fixed'}
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Position size (quote)</div>
+									<input type="number" value={profileDraft.fixedSize ?? ''} on:input={(e) => (profileDraft.fixedSize = numberOrNull(e.currentTarget.value))} step="100" min="1" class="terminal-input mt-1.5" /></label>
+							{/if}
+							{#if profileDraft.sizingMode === 'atr'}
+								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">ATR stop (× ATR)</div>
+									<input type="number" value={profileDraft.atrMultiplier ?? ''} on:input={(e) => (profileDraft.atrMultiplier = numberOrNull(e.currentTarget.value))} step="0.1" min="0.1" max="50" class="terminal-input mt-1.5" /></label>
+							{/if}
 						</div>
-					{:else}
-						<select
-							id="bt-strategy"
-							class="terminal-select"
-							on:change={onStrategySelect}
-							disabled={busy}
-							value={selectedKey}
-						>
-							<option value="" disabled>Select a strategy…</option>
-							{#each strategies as strategy}
-								<option value={strategy.api_name || strategy.name}>
-									{strategy.name}{strategy.api_name && strategy.api_name !== strategy.name ? ` (${strategy.api_name})` : ''}
-								</option>
-							{/each}
-						</select>
-						{#if selectedStrategy?.description}
-							<div class="mt-2 text-[11px] text-[#666]">{selectedStrategy.description}</div>
-						{/if}
+						<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Stop loss %</div>
+								<input type="number" value={profileDraft.stopLossPct ?? ''} on:input={(e) => (profileDraft.stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="100" placeholder="None" class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Take profit %</div>
+								<input type="number" value={profileDraft.takeProfitPct ?? ''} on:input={(e) => (profileDraft.takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="1000" placeholder="None" class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trailing stop %</div>
+								<input type="number" value={profileDraft.trailingStopPct ?? ''} on:input={(e) => (profileDraft.trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="100" placeholder="None" class="terminal-input mt-1.5" /></label>
+							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Time stop (bars)</div>
+								<input type="number" value={profileDraft.timeStopBars ?? ''} on:input={(e) => (profileDraft.timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" class="terminal-input mt-1.5" /></label>
+						</div>
 					{/if}
 				</div>
-			</div>
+			{/if}
+		</section>
 
-			<!-- Market Scope -->
-			<div class="terminal-card mt-4 p-4">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Market Scope</div>
-				<div class="mt-3 grid gap-4 md:grid-cols-2">
-					<SymbolInput id="bt-symbol" bind:value={symbol} disabled={busy} suggestions={symbolSuggestions} helpText="Backtested on the base asset (e.g. BTC)." />
-					<TimeframeSelect id="bt-timeframe" bind:value={timeframe} disabled={busy} />
+		<!-- Preview -->
+		<section class="terminal-card mt-4 p-4">
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div>
+					<div class="text-[10px] uppercase tracking-wider text-[#666]">Signal preview</div>
+					<p class="mt-1 text-[11px] text-[#555]">Counts entry and exit signals over the window, before any sizing or stops. Nothing is saved.</p>
 				</div>
-				<div class="mt-4">
-					<DateRangeFieldset idPrefix="bt-date" bind:startDate bind:endDate {timeframe} />
-				</div>
+				<button type="button" on:click={handlePreview} disabled={previewLoading || !selected} class="terminal-button text-[10px]">
+					{previewLoading ? 'Previewing…' : preview && !previewStale ? 'Refresh preview' : 'Preview signals'}
+				</button>
 			</div>
+			{#if previewError}
+				<div class="mt-3 border border-red-900 bg-red-500/5 px-3 py-2 text-[11px] text-red-400" role="alert">{previewError}</div>
+			{:else if preview}
+				{#if previewStale}
+					<p class="mt-3 text-[11px] text-amber-400">The settings changed since this preview. Refresh it to match.</p>
+				{/if}
+				<div class="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-5 {previewStale ? 'opacity-50' : ''}">
+					<div><span class="text-[#555]">Bars:</span> <span class="font-mono text-[#aaa]">{preview.total_bars.toLocaleString()}</span></div>
+					<div><span class="text-[#555]">Entries:</span> <span class="font-mono text-white">{preview.entry_count}</span></div>
+					<div><span class="text-[#555]">Exits:</span> <span class="font-mono text-[#aaa]">{preview.exit_count}</span></div>
+					<div><span class="text-[#555]">Bars between entries:</span> <span class="font-mono text-[#aaa]">{preview.avg_bars_between_entries == null ? '–' : Math.round(preview.avg_bars_between_entries).toLocaleString()}</span></div>
+					<div><span class="text-[#555]">Density:</span>
+						<span class="font-mono {preview.signal_density === 'dense' ? 'text-emerald-400' : preview.signal_density === 'moderate' ? 'text-amber-400' : 'text-[#888]'}">{preview.signal_density}</span></div>
+				</div>
+				{#if preview.sample_entries?.length}
+					<div class="mt-2 text-[11px] text-[#555]">
+						First entries:
+						<span class="font-mono text-[#888]">{preview.sample_entries.slice(0, 5).map((e) => String(e.timestamp).slice(0, 16).replace('T', ' ')).join(' · ')}</span>
+					</div>
+				{/if}
+				{#if preview.warnings?.length}
+					<div class="mt-2 space-y-1">
+						{#each preview.warnings as w}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{w}</div>{/each}
+					</div>
+				{/if}
+			{/if}
+		</section>
 
-			<!-- Strategy Parameters -->
-			{#if selectedStrategy}
-				<div class="terminal-card mt-4 p-4">
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">Strategy Parameters</div>
-					<div class="mt-3">
-						<ParameterEditor params={paramsDraft} saving={busy} on:paramsChange={onParamsChange} />
+		<!-- Run -->
+		<section class="terminal-card mt-4 p-4">
+			{#if submitError}
+				<div class="mb-3 border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{submitError}</div>
+			{/if}
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="min-w-0 text-[11px] text-[#777]">
+					{#if selected}
+						<span class="font-mono text-[#bbb]">{marketLabel(symbol, timeframe)}</span>
+						· {fmtDay(startDate)} → {fmtDay(endDate)} · {formatBarEstimate(estimatedBars)}
+						· {runOverrides.length ? runOverrides.join(' · ') : "strategy's own settings"}
+						{#if validationError}
+							<div class="mt-1 text-amber-400">{validationError}</div>
+						{/if}
+					{:else}
+						Choose a strategy to backtest.
+					{/if}
+				</div>
+				<button type="submit" disabled={submitting || Boolean(activeRun) || Boolean(validationError)} aria-busy={submitting || Boolean(activeRun)}
+					class="terminal-button-primary text-xs disabled:cursor-not-allowed disabled:opacity-40">
+					{#if submitting}
+						Submitting…
+					{:else if activeRun}
+						Running… {fmtElapsed(now - activeRun.submittedAt)}
+					{:else}
+						Run backtest
+					{/if}
+				</button>
+			</div>
+		</section>
+	</form>
+
+	<!-- Results -->
+	{#if runs.length || viewedId}
+		<section id="bt-results" class="mt-6 scroll-mt-6">
+			{#if runs.length}
+				<div class="terminal-card p-4">
+					<div class="flex items-center justify-between gap-3">
+						<div class="text-[10px] uppercase tracking-wider text-[#666]">Runs this session</div>
+						<button type="button" class="text-[10px] uppercase tracking-wider text-[#666] underline hover:text-white" on:click={clearHistory}>Clear</button>
+					</div>
+					<div class="mt-2 overflow-x-auto">
+						<table class="w-full text-[11px]">
+							<thead class="text-[#555]">
+								<tr class="border-b border-[#1a1a1a]">
+									<th class="px-2 py-1.5 text-left font-medium">Strategy</th>
+									<th class="px-2 py-1.5 text-left font-medium">Market</th>
+									<th class="px-2 py-1.5 text-left font-medium">Window</th>
+									<th class="px-2 py-1.5 text-left font-medium">Changes</th>
+									<th class="px-2 py-1.5 text-right font-medium">Return</th>
+									<th class="px-2 py-1.5 text-right font-medium">Sharpe</th>
+									<th class="px-2 py-1.5 text-right font-medium">Max DD</th>
+									<th class="px-2 py-1.5 text-right font-medium">Trades</th>
+								</tr>
+							</thead>
+							<tbody class="font-mono text-[#888]">
+								{#each runs as run (run.resultId)}
+									<tr class="border-b border-[#111] {run.resultId === viewedId ? 'bg-white/5 text-white' : ''}">
+										<td class="max-w-[16rem] truncate px-2 py-1.5" title={run.label}>
+											<button type="button" class="max-w-full truncate text-left hover:text-white hover:underline" on:click={() => showRun(run)}
+												aria-current={run.resultId === viewedId ? 'true' : undefined}>{run.label}</button>
+										</td>
+										<td class="px-2 py-1.5">{run.market}</td>
+										<td class="whitespace-nowrap px-2 py-1.5 text-[#666]">{run.requestedStart} → {run.requestedEnd}</td>
+										<td class="max-w-[14rem] truncate px-2 py-1.5 text-[#666]" title={run.overrides.join(' · ')}>{run.overrides.length ? run.overrides.join(' · ') : '—'}</td>
+										{#if run.status === 'succeeded' && run.summary}
+											<td class="px-2 py-1.5 text-right {toneFor(run.summary.returnPct)}">{fmtPct(run.summary.returnPct)}</td>
+											<td class="px-2 py-1.5 text-right">{fmtNum(run.summary.sharpe)}</td>
+											<td class="px-2 py-1.5 text-right">{run.summary.maxDrawdownPct === null ? '–' : `${run.summary.maxDrawdownPct.toFixed(1)}%`}</td>
+											<td class="px-2 py-1.5 text-right">{run.summary.trades ?? '–'}</td>
+										{:else if run.status === 'failed'}
+											<td class="px-2 py-1.5 text-right text-red-400" colspan="4">failed</td>
+										{:else if run.status === 'succeeded'}
+											<td class="px-2 py-1.5 text-right text-[#666]" colspan="4">done</td>
+										{:else}
+											<td class="px-2 py-1.5 text-right text-amber-400" colspan="4">{run.status}… {fmtElapsed(now - run.submittedAt)}</td>
+										{/if}
+									</tr>
+								{/each}
+							</tbody>
+						</table>
 					</div>
 				</div>
 			{/if}
 
-			<!-- Advanced Execution Config -->
-			<div class="terminal-card mt-4 p-4">
-				<button type="button" class="flex w-full items-center justify-between text-left" on:click={() => (showAdvanced = !showAdvanced)} aria-expanded={showAdvanced}>
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution Settings</div>
-					<span class="text-sm text-[#555]">{showAdvanced ? '−' : '+'}</span>
-				</button>
-				{#if showAdvanced}
-					<div class="mt-4 border-t border-[#222] pt-4 text-[10px] uppercase tracking-wider text-[#555]">Capital &amp; Costs</div>
-					<div class="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Initial Capital</div>
-							<input type="number" bind:value={initialCapital} step="1000" min="100" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fee (bps)</div>
-							<input type="number" bind:value={feeBps} step="1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Slippage (bps)</div>
-							<input type="number" bind:value={slippageBps} step="1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Leverage</div>
-							<input type="number" bind:value={leverage} step="0.5" min="1" max="125" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trade Direction</div>
-							<select bind:value={tradeMode} disabled={busy} class="terminal-select mt-1.5">
-								<option value="long_only">Long only</option><option value="short_only">Short only</option><option value="both">Both (hedged)</option>
-							</select></label>
-					</div>
-					<div class="mt-5 text-[10px] uppercase tracking-wider text-[#555]">Position Sizing</div>
-					<div class="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Sizing Mode</div>
-							<select bind:value={sizingMode} disabled={busy} class="terminal-select mt-1.5">
-								<option value="full">Full equity (default)</option><option value="fraction">Fraction (risk-based)</option><option value="fixed">Fixed notional</option><option value="atr">ATR risk</option><option value="kelly">Kelly</option>
-							</select></label>
-						{#if sizingMode === 'fraction' || sizingMode === 'atr'}
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Risk Per Trade</div>
-								<input type="number" bind:value={riskPerTrade} step="0.005" min="0" max="1" disabled={busy} class="terminal-input mt-1.5" /></label>
-						{/if}
-						{#if sizingMode === 'fixed'}
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fixed Size (quote)</div>
-								<input type="number" bind:value={fixedSize} step="100" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
-						{/if}
-						{#if sizingMode === 'atr'}
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">ATR Stop Multiplier</div>
-								<input type="number" bind:value={atrStopMultiplier} step="0.1" min="0" disabled={busy} class="terminal-input mt-1.5" /></label>
-						{/if}
-						{#if sizingMode === 'kelly'}
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Kelly Multiplier</div>
-								<input type="number" bind:value={kellyMultiplier} step="0.05" min="0" max="5" disabled={busy} class="terminal-input mt-1.5" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Kelly Lookback (trades)</div>
-								<input type="number" bind:value={kellyLookback} step="10" min="1" disabled={busy} class="terminal-input mt-1.5" /></label>
-						{/if}
-					</div>
-					<div class="mt-5 text-[10px] uppercase tracking-wider text-[#555]">Exits &amp; Stops</div>
-					<div class="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Stop Loss %</div>
-							<input type="number" value={stopLossPct ?? ''} on:input={(e) => (stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Take Profit %</div>
-							<input type="number" value={takeProfitPct ?? ''} on:input={(e) => (takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trailing Stop %</div>
-							<input type="number" value={trailingStopPct ?? ''} on:input={(e) => (trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0" max="100" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Time Stop (bars)</div>
-							<input type="number" value={timeStopBars ?? ''} on:input={(e) => (timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" disabled={busy} class="terminal-input mt-1.5" /></label>
-					</div>
-				{/if}
-			</div>
-
-			<!-- Preview -->
-			<div class="terminal-card mt-4 p-4">
-				<div class="flex items-center justify-between">
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">Signal Preview</div>
-					<button type="button" on:click={handlePreview} disabled={busy || previewLoading || !selectedStrategy}
-						class="terminal-button text-[10px]">
-						{previewLoading ? 'Previewing…' : 'Preview signals'}
-					</button>
-				</div>
-				{#if previewError}
-					<div class="mt-3 border border-red-900 bg-red-500/5 px-3 py-2 text-[11px] text-red-400" role="alert">{previewError}</div>
-				{:else if preview}
-					<div class="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-						<div><span class="text-[#555]">Bars:</span> <span class="font-mono text-[#aaa]">{preview.total_bars.toLocaleString()}</span></div>
-						<div><span class="text-[#555]">Entries:</span> <span class="font-mono text-white">{preview.entry_count}</span></div>
-						<div><span class="text-[#555]">Exits:</span> <span class="font-mono text-[#aaa]">{preview.exit_count}</span></div>
-						<div><span class="text-[#555]">Density:</span>
-							<span class="font-mono {preview.signal_density === 'dense' ? 'text-emerald-400' : preview.signal_density === 'moderate' ? 'text-amber-400' : 'text-[#888]'}">{preview.signal_density}</span></div>
-					</div>
-					{#if preview.warnings.length}
-						<div class="mt-2 space-y-1">
-							{#each preview.warnings as w}<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{w}</div>{/each}
-						</div>
-					{/if}
-				{:else}
-					<p class="mt-2 text-[11px] text-[#555]">Check signal density and data coverage for your config before committing to a full run.</p>
-				{/if}
-			</div>
-
-			<!-- Submit -->
-			<div class="terminal-card mt-4 p-4">
-				{#if submitError}<div class="mb-4 border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{submitError}</div>{/if}
-				<div class="flex flex-wrap items-center gap-3">
-					<button type="submit" disabled={busy || resultLoading || !selectedStrategy} aria-busy={busy}
-						class="terminal-button-primary text-xs disabled:cursor-not-allowed disabled:opacity-40">
-						{#if busy || resultLoading}Running backtest…{:else}Run Backtest{/if}
-					</button>
-				</div>
-			</div>
-		</form>
-
-		<!-- Inline results -->
-		{#if resultLoading || inlineResult || submitWarning}
-			<div id="bt-results" class="mt-6 scroll-mt-6">
-				{#if submitWarning}
-					<div class="mb-4 border border-amber-900 bg-amber-500/5 px-4 py-3 text-sm text-amber-400" role="alert">⚠ {submitWarning}</div>
-				{/if}
-				<div class="border-b border-[#222] pb-4">
-					<div class="flex flex-wrap items-center justify-between gap-3">
-						<div>
+			{#if viewedRun}
+				<div id="bt-result-detail" class="mt-4 scroll-mt-6 border-b border-[#222] pb-4">
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div class="min-w-0">
 							<h2 class="text-sm font-bold uppercase tracking-widest text-white">Result</h2>
-							<p class="mt-1 text-xs text-[#666]">Out-of-sample performance for the run you just submitted.</p>
+							<p class="mt-1 text-xs text-[#888]">
+								<span class="font-mono text-[#bbb]">{viewedRun.label}</span> on <span class="font-mono text-[#bbb]">{viewedRun.market}</span>
+							</p>
+							{#if window_}
+								<p class="mt-1 text-[11px] text-[#666]">
+									Tested {fmtDay(window_.start)} → {fmtDay(window_.end)}.
+									Metrics and trades below are out-of-sample only: {fmtDay(window_.outOfSampleStart)} → {fmtDay(window_.outOfSampleEnd)}, the last 30% of the window.
+								</p>
+							{/if}
 						</div>
 						<div class="flex items-center gap-2">
-							<button type="button" on:click={resetForNextRun}
+							<button type="button" on:click={() => scrollToId('bt-config')}
 								class="terminal-button text-[10px]">Adjust &amp; re-run</button>
-							<button type="button" on:click={openFullReport} disabled={!lastStrategyId}
+							<button type="button" on:click={openFullReport} disabled={!viewedResult}
 								class="terminal-button-primary text-[10px] disabled:opacity-40">Open full report →</button>
 						</div>
 					</div>
 				</div>
-				<div class="mt-4">
-					{#if resultLoading}
+
+				<div class="mt-4 space-y-4">
+					{#if viewedRun.status === 'queued' || viewedRun.status === 'running'}
+						<div class="terminal-card p-6 text-center text-xs text-[#888]" role="status" aria-live="polite">
+							<div class="uppercase tracking-widest text-[#aaa]">{viewedRun.status === 'queued' ? 'Queued' : 'Running'} · {fmtElapsed(now - viewedRun.submittedAt)}</div>
+							{#if viewedRun.progress}<div class="mt-1 text-[#666]">{viewedRun.progress}</div>{/if}
+							<div class="mt-2 text-[11px] text-[#555]">You can keep editing or leave the page; the run keeps going and is saved to the strategy.</div>
+							{#if now - viewedRun.submittedAt > 60_000}
+								<button type="button" class="terminal-button mt-3 text-[10px]" on:click={() => viewedRun && stopWaiting(viewedRun)}>Stop waiting</button>
+							{/if}
+						</div>
+					{:else if viewedError}
+						<div class="border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{viewedError}</div>
+					{:else if viewedLoading}
 						<div class="terminal-card p-8 text-center text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading result…</div>
-					{:else if inlineResult}
-						<BacktestResultSummary result={inlineResult} />
-					{:else if lastResultId}
+					{:else if viewedResult}
+						{#if holdoutShifted}
+							<div class="border border-amber-900 bg-amber-500/5 px-4 py-3 text-[11px] text-amber-400" role="status">
+								You asked for data up to {fmtDay(viewedRun.requestedEnd)}, but data from {fmtDay(holdoutCutoff)} on is held back, so the engine
+								shifted the window back to end at the cutoff (same length). The dates above are the ones it tested.
+							</div>
+						{/if}
+						{#if resultWarnings.length || fundingIncomplete}
+							<div class="space-y-1">
+								{#each resultWarnings as w}
+									<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{w}</div>
+								{/each}
+								{#if fundingIncomplete}
+									<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">
+										Funding history is incomplete for this window, so some funding payments are missing from the returns.
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						{#if split}
+							<div class="border border-[#1a1a1a] bg-[#050505] p-4">
+								<div class="text-[10px] uppercase tracking-widest text-[#666]">In-sample vs out-of-sample</div>
+								<div class="mt-2 overflow-x-auto">
+									<table class="w-full text-[11px]">
+										<thead class="text-[#555]">
+											<tr class="border-b border-[#1a1a1a]">
+												<th class="px-2 py-1 text-left font-medium">Period</th>
+												<th class="px-2 py-1 text-right font-medium">Return</th>
+												<th class="px-2 py-1 text-right font-medium">Sharpe</th>
+												<th class="px-2 py-1 text-right font-medium">Max DD</th>
+												<th class="px-2 py-1 text-right font-medium">Win rate</th>
+												<th class="px-2 py-1 text-right font-medium">Trades</th>
+											</tr>
+										</thead>
+										<tbody class="font-mono text-[#aaa]">
+											{#each [
+												{ name: 'In-sample', dates: window_ ? `${fmtDay(window_.inSampleStart)} → ${fmtDay(window_.inSampleEnd)}` : '', stats: split.inSample },
+												{ name: 'Out-of-sample', dates: window_ ? `${fmtDay(window_.outOfSampleStart)} → ${fmtDay(window_.outOfSampleEnd)}` : '', stats: split.outOfSample },
+											] as row}
+												<tr class="border-b border-[#111]">
+													<td class="px-2 py-1.5 text-left">{row.name}<span class="ml-2 text-[10px] text-[#555]">{row.dates}</span></td>
+													<td class="px-2 py-1.5 text-right {toneFor(row.stats.totalReturnPct)}">{fmtPct(row.stats.totalReturnPct)}</td>
+													<td class="px-2 py-1.5 text-right">{fmtNum(row.stats.sharpe)}</td>
+													<td class="px-2 py-1.5 text-right">{row.stats.maxDrawdownPct === null ? '–' : `${row.stats.maxDrawdownPct.toFixed(1)}%`}</td>
+													<td class="px-2 py-1.5 text-right">{row.stats.winRatePct === null ? '–' : `${row.stats.winRatePct.toFixed(0)}%`}</td>
+													<td class="px-2 py-1.5 text-right">{row.stats.trades ?? '–'}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+								{#if decay}
+									<p class="mt-2 text-[11px] text-amber-400">{decay}</p>
+								{/if}
+								{#if bySide.length > 1}
+									<p class="mt-2 text-[11px] text-[#666]">
+										Out-of-sample by side:
+										{#each bySide as s, i}
+											{i ? ' · ' : ''}<span class="font-mono text-[#aaa]">{s.side} {s.trades} trades, {s.winRate.toFixed(0)}% wins, <span class={toneFor(s.returnPct)}>{fmtPct(s.returnPct)}</span></span>
+										{/each}
+									</p>
+								{/if}
+							</div>
+						{/if}
+
+						<BacktestResultSummary result={viewedResult} />
+					{:else if viewedRun.status === 'succeeded'}
 						<div class="terminal-card p-6 text-sm text-[#888]">
-							Result saved (<span class="font-mono">{lastResultId}</span>) but the summary could not be loaded here.
-							<button type="button" on:click={openFullReport} class="ml-1 text-white underline">Open the full report</button>.
+							Result saved (<span class="font-mono">{viewedRun.resultId}</span>) but could not be loaded here.
+							<button type="button" on:click={() => viewedRun && loadResult(viewedRun.resultId)} class="ml-1 text-white underline">Try again</button>
 						</div>
 					{/if}
 				</div>
-			</div>
-		{/if}
-	</div>
+			{/if}
+		</section>
+	{/if}
 </div>

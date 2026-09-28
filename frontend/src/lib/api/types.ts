@@ -12,6 +12,22 @@ export interface Strategy {
 	 * Example: rule-builder strategies use "[Rule] <name>".
 	 */
 	api_name?: string;
+	/** Strategy rows: the S-number, pipeline stage and the market it runs on. */
+	display_id?: string | null;
+	stage?: string | null;
+	symbol?: string | null;
+	timeframe?: string | null;
+	source?: string | null;
+	/** Built-in catalog: the asset the template was written for. */
+	asset?: string | null;
+	/** Built-in catalog: trade modes a backtest can request, and the default one. */
+	trade_modes?: string[];
+	default_trade_mode?: string | null;
+	/**
+	 * The parameter values exactly as the backend holds them (nested
+	 * `execution_profile` dicts and lists intact). `parameters` stringifies those.
+	 */
+	raw_params?: Record<string, unknown>;
 }
 
 export interface ParamSpec {

@@ -714,6 +714,24 @@ def _build_sqlite_backtest_detail(result_id: str) -> dict | None:
         v = metrics_raw.get(k)
         if v is not None and k not in metrics_out:
             metrics_out[k] = _coerce_legacy_metadata_float(v)
+    # The engine's own blocks, as stored: the in-sample/out-of-sample split (each
+    # with its dates), the per-side breakdown, and the flags that qualify a number
+    # (a short window's CAGR, a thin sample's Sharpe, a loss-free profit factor).
+    for k in ("in_sample", "out_of_sample", "by_side"):
+        v = metrics_raw.get(k)
+        if isinstance(v, dict) and v:
+            metrics_out[k] = v
+    for k in (
+        "annualized_return_reliable", "sharpe_is_reliable", "profit_factor_is_infinite",
+        "funding_applied", "funding_complete",
+    ):
+        v = metrics_raw.get(k)
+        if isinstance(v, bool):
+            metrics_out[k] = v
+    for k in ("funding_coverage_pct", "avg_bars_held", "breakeven_trades"):
+        v = metrics_raw.get(k)
+        if v is not None:
+            metrics_out[k] = _coerce_legacy_metadata_float(v)
     metrics_out["status"] = status
     if error_detail:
         metrics_out["error"] = error_detail
