@@ -78,6 +78,7 @@ def data_root() -> Path:
 CHUNK_LIMIT = 1000
 CATALOG_CACHE_TTL_SECONDS = 30
 MARKET_CACHE_TTL_SECONDS = 3600
+MARKET_FAILURE_TTL_SECONDS = 60
 
 TIMEFRAME_MS: dict[str, int] = {
     "1m": 60_000,
@@ -1796,16 +1797,15 @@ def _save_venue_frame_locked(
 
 def _binance_perp_symbol(symbol: str) -> str | None:
     """The listed USD-M linear perp ("BTC/USDT:USDT") for a USDT/USDC pair, else
-    None. A failed market load falls back to None (spot), as it always has."""
+    None (spot is canonical only for bases without a perp). Raises when the USD-M
+    market list cannot be loaded: guessing spot then would splice spot bars into
+    a perp series — the silent perp->spot fallback this used to take."""
     ccxt_symbol = symbol_to_ccxt(symbol)
     parts = ccxt_symbol.split("/")
     if len(parts) == 2 and parts[1] in ("USDT", "USDC"):
         perp_symbol = f"{ccxt_symbol}:{parts[1]}"
-        try:
-            if perp_symbol in _cached_markets("binanceusdm"):
-                return perp_symbol
-        except Exception as exc:
-            log.warning("USD-M market resolution failed for %s (falling back to spot): %s", ccxt_symbol, exc)
+        if perp_symbol in _cached_markets("binanceusdm"):
+            return perp_symbol
     return None
 
 
@@ -1862,7 +1862,8 @@ def resolve_series_target(exchange_id: str, symbol: str) -> dict[str, Any]:
     series. Any other exchange (okx, bybit, coinbase, kraken, hyperliquid, a
     CSV file, polygon) writes the venue series ohlcv/source={src}/market={mkt}/
     — or the canonical path when Binance lists neither a perp nor a spot market
-    for the pair (nothing canonical can exist for it)."""
+    for the pair (nothing canonical can exist for it). For "binance", raises
+    when the USD-M market list cannot be loaded (see _binance_perp_symbol)."""
     source = str(exchange_id or "binance").strip().lower() or "binance"
     if source == "binance" and _binance_perp_symbol(symbol) is not None:
         source = "binanceusdm"
@@ -1876,13 +1877,18 @@ def _resolve_ohlcv_target(exchange_id: str, symbol: str) -> tuple[Any, str, str]
     exchange, a USDT/USDC pair with a listed USD-M linear perp fetches the
     PERP klines (binanceusdm, "BTC/USDT:USDT") — matching the HL-perp
     execution venue and the Binance Vision futures history that deep-backfills
-    the same series. Spot is the automatic fallback for bases without a perp.
-    Explicit non-binance exchange_ids are honoured unchanged (where their bars
-    are stored is resolve_series_target's decision).
+    the same series. Spot is the automatic fallback for bases without a perp;
+    when the USD-M market list cannot be loaded the fetch fails (venue down)
+    instead of guessing spot. Explicit non-binance exchange_ids are honoured
+    unchanged (where their bars are stored is resolve_series_target's decision).
     """
     normalized = str(exchange_id or "binance").strip().lower() or "binance"
     if normalized == "binance":
-        perp_symbol = _binance_perp_symbol(symbol)
+        try:
+            perp_symbol = _binance_perp_symbol(symbol)
+        except Exception as exc:
+            log.warning("USD-M markets unavailable; not guessing spot vs perp for %s: %s", symbol, exc)
+            raise
         if perp_symbol is not None:
             return get_exchange("binanceusdm"), perp_symbol, "binanceusdm"
     return get_exchange(normalized), symbol_to_ccxt(symbol), normalized
@@ -3245,15 +3251,33 @@ def search_source_symbols(
 
 
 def _cached_markets(exchange_id: str) -> dict[str, Any]:
+    """A venue's market list, cached for an hour. A failed refresh keeps serving
+    the last good list (listings change rarely); with none to serve, the failure
+    is remembered briefly so a Binance outage costs one timeout, not one per
+    lookup — every perp/listing decision on the write path asks this."""
     now = time.time()
     key = exchange_id.lower()
     with _market_cache_lock:
         cached = _market_cache.get(key)
         if cached and now < float(cached.get("expires_at", 0.0)):
+            if cached.get("error"):
+                if ccxt is not None:
+                    raise ccxt.ExchangeNotAvailable(f"{key} markets unavailable: {cached['error']}")
+                raise RuntimeError(f"{key} markets unavailable: {cached['error']}")
             return dict(cached.get("markets", {}))
 
     exchange = get_exchange(exchange_id)
-    markets = exchange.load_markets()
+    try:
+        markets = exchange.load_markets()
+    except Exception as exc:
+        with _market_cache_lock:
+            stale = (_market_cache.get(key) or {}).get("markets")
+            if stale:
+                log.warning("Could not refresh %s markets; serving the last good list: %s", key, exc)
+                _market_cache[key] = {"expires_at": now + MARKET_FAILURE_TTL_SECONDS, "markets": stale}
+                return dict(stale)
+            _market_cache[key] = {"expires_at": now + MARKET_FAILURE_TTL_SECONDS, "error": str(exc)[:300]}
+        raise
 
     with _market_cache_lock:
         _market_cache[key] = {

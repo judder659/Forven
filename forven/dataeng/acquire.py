@@ -111,6 +111,15 @@ def _lane(exchange: str) -> str:
     return "binance" if exchange in fdata.CANONICAL_SOURCES else exchange
 
 
+def _download_target(exchange: str, fs_symbol: str) -> dict[str, Any]:
+    """Where a download from a non-canonical venue lands. Hyperliquid downloads
+    run its venue collector, which always keeps the hyperliquid:perp series."""
+    if exchange == "hyperliquid":
+        return {"venue": HL_VENUE, "source": "hyperliquid", "market": "perp", "fs_symbol": fs_symbol,
+                "canonical": False, "destination": "venue"}
+    return fdata._series_target(exchange, fs_symbol)
+
+
 # ---------------------------------------------------------------- targets
 
 
@@ -124,7 +133,10 @@ def targets(symbol: str) -> dict[str, Any]:
         markets = dict(zip(exchanges, pool.map(_venue_markets, exchanges)))
 
     listing = fdata._binance_listing(fs_symbol)
-    perp = fdata._binance_perp_symbol(fs_symbol) if listing else None
+    try:
+        perp = fdata._binance_perp_symbol(fs_symbol) if listing else None
+    except Exception:  # spot listed, USD-M list unavailable: perp vs spot unknown
+        listing, perp = None, None
     if listing and perp:
         canonical = {"exchange": "binanceusdm", "market": "perp", "listed": True,
                      "note": "Binance USD-M perp — the canonical research series every backtest reads."}
@@ -140,7 +152,7 @@ def targets(symbol: str) -> dict[str, Any]:
     rows: list[dict[str, Any]] = [{"venue": "canonical", "canonical": True, "destination": "canonical", **canonical}]
 
     for exchange in (*SPOT_VENUES, "hyperliquid"):
-        target = fdata._series_target(exchange, fs_symbol)
+        target = _download_target(exchange, fs_symbol)
         venue_markets = markets.get(exchange)
         listed = bool(venue_markets) and _venue_market_symbol(exchange, fs_symbol) in venue_markets
         if target["destination"] == "canonical":
@@ -333,10 +345,13 @@ def _plan(item: dict[str, Any], series_index: dict[tuple[str, str, str], lake.Se
         if listing is False:
             plan.blocked = f"Binance lists neither a USD-M perp nor a spot market for {display}; choose another venue."
             return plan
+        try:
+            perp = fdata._binance_perp_symbol(plan.symbol)
+        except Exception:
+            listing, perp = None, None
         if listing is None:
             plan.warnings.append("Binance markets could not be loaded; the listing is checked again when the download runs.")
-        target = fdata.resolve_series_target("binance", plan.symbol)
-        perp = fdata._binance_perp_symbol(plan.symbol)
+        target = fdata._series_target("binanceusdm" if perp or listing is None else "binance", plan.symbol)
         listing_ms = _listing_ms(_venue_markets("binanceusdm"), perp) if perp else None
     else:
         markets = _venue_markets(exchange)
@@ -346,7 +361,7 @@ def _plan(item: dict[str, Any], series_index: dict[tuple[str, str, str], lake.Se
         elif market_symbol not in markets:
             plan.blocked = f"{display} is not listed on {_label(exchange)}."
             return plan
-        target = fdata._series_target(exchange, plan.symbol)
+        target = _download_target(exchange, plan.symbol)
         listing_ms = _listing_ms(markets, market_symbol)
     plan.destination = target["destination"]
     plan.storage_venue = target["venue"]
@@ -375,17 +390,15 @@ def _plan(item: dict[str, Any], series_index: dict[tuple[str, str, str], lake.Se
         plan.blocked = str(exc)
         return plan
     if start is None:  # "all available" on a venue that publishes no listing date
-        if first is None:
-            start = end - ASSUMED_HISTORY_DAYS * DAY_MS // plan.tf_ms * plan.tf_ms
+        start = first if first is not None else end - ASSUMED_HISTORY_DAYS * DAY_MS // plan.tf_ms * plan.tf_ms
+        if exchange != "hyperliquid":  # its 5,000-candle cap is the real limit there
             plan.warnings.append(
-                f"{_label(exchange)} publishes no listing date; the estimate assumes about "
-                f"{ASSUMED_HISTORY_DAYS // 365} years of history."
-            )
-        else:
-            start = first
-            plan.warnings.append(
-                f"{_label(exchange)} publishes no listing date; history before the stored first bar "
-                "(if any) is not in this estimate."
+                f"{_label(exchange)} publishes no listing date; "
+                + (
+                    "history before the stored first bar (if any) is not in this estimate."
+                    if first is not None
+                    else f"the estimate assumes about {ASSUMED_HISTORY_DAYS // 365} years of history."
+                )
             )
     plan.windows = _missing_windows(start, end, first, last, plan.tf_ms)
     new_bars = sum(_bars(w, plan.tf_ms) for w in plan.windows)

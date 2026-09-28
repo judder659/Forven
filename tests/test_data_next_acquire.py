@@ -265,6 +265,70 @@ def test_fetch_is_refused_before_paging_when_another_family_owns_canonical(lake)
     assert fdata._candle_breaker("okx").status == "closed"
 
 
+def test_unloadable_usdm_markets_fail_the_fetch_instead_of_guessing_spot(lake, monkeypatch):
+    from forven.dataeng import acquire
+
+    now = _hour_now()
+    canonical = _seed_canonical(start=now - 100 * H, count=50)
+    before = canonical.read_bytes()
+    spot = FakeOHLCV(1.0, now - 100 * H, now - H)
+    _exchange("binance", spot)
+
+    def _markets(exchange_id):
+        if exchange_id == "binanceusdm":
+            raise ConnectionError("fapi.binance.com unreachable")
+        return dict(LISTINGS.get(exchange_id, {}))
+
+    monkeypatch.setattr(fdata, "_cached_markets", _markets)
+    with pytest.raises(ConnectionError):
+        fdata.fetch_ohlcv_chunked("BTC/USDT", "1h", since_ms=now - 50 * H, limit=None)
+    assert spot.calls == [] and canonical.read_bytes() == before
+    canonical_target = next(t for t in acquire.targets("BTC/USDT")["targets"] if t["venue"] == "canonical")
+    assert canonical_target["listed"] is False and "could not be loaded" in canonical_target["note"]
+
+    # A pair that cannot have a USD-M perp never needs that list: its spot series is canonical.
+    fdata.fetch_ohlcv_chunked("ETH/BTC", "1h", since_ms=now - 10 * H, limit=None)
+    assert spot.calls and fdata.get_dataset_source("ETH-BTC", "1h") == "binance"
+
+
+def test_market_cache_serves_the_last_good_list_and_remembers_failures(monkeypatch):
+    from types import SimpleNamespace
+
+    import ccxt
+
+    class Flaky:
+        def __init__(self, fail: bool) -> None:
+            self.fail, self.calls = fail, 0
+
+        def load_markets(self):
+            self.calls += 1
+            if self.fail:
+                raise ConnectionError("venue down")
+            return {"BTC/USDT": {}}
+
+    okx, kraken = Flaky(False), Flaky(True)
+    monkeypatch.setattr(fdata, "_exchange_cache", {"okx": okx, "kraken": kraken})
+    monkeypatch.setattr(fdata, "_market_cache", {})
+    clock = [1_000.0]
+    monkeypatch.setattr(fdata, "time", SimpleNamespace(time=lambda: clock[0]))
+
+    assert fdata._cached_markets("okx") == {"BTC/USDT": {}}
+    clock[0] += fdata.MARKET_CACHE_TTL_SECONDS + 1
+    okx.fail = True
+    assert fdata._cached_markets("okx") == {"BTC/USDT": {}}  # refresh failed: last good list
+    assert fdata._cached_markets("okx") == {"BTC/USDT": {}} and okx.calls == 2
+
+    with pytest.raises(ConnectionError):
+        fdata._cached_markets("kraken")
+    with pytest.raises(ccxt.ExchangeNotAvailable):  # remembered: no second timeout
+        fdata._cached_markets("kraken")
+    assert kraken.calls == 1
+    clock[0] += fdata.MARKET_FAILURE_TTL_SECONDS + 1
+    with pytest.raises(ConnectionError):
+        fdata._cached_markets("kraken")
+    assert kraken.calls == 2
+
+
 def test_polygon_equity_keeps_writing_canonical(lake, monkeypatch):
     import forven.polygon_client as polygon_client
 
@@ -345,6 +409,7 @@ def test_targets_describe_where_each_venue_stores_bars(acquire):
     foo = {t["venue"]: t for t in acquire.targets("FOO/EUR")["targets"]}
     assert foo["canonical"]["listed"] is False
     assert foo["kraken:spot"]["destination"] == "canonical"
+    assert foo["hyperliquid:perp"]["destination"] == "venue"  # the HL collector keeps its own series
     spot = {t["venue"]: t for t in acquire.targets("ETH/BTC")["targets"]}
     assert (spot["canonical"]["exchange"], spot["canonical"]["market"]) == ("binance", "spot")
 
