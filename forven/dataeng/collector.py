@@ -772,13 +772,16 @@ def build_queue(
     states: dict[str, dict[str, Any]] | None = None,
     memo: dict[str, Any] | None = None,
 ) -> list[Task]:
-    """Work the collector owns, most urgent first: refreshes and bootstraps
-    by (capped) SLA priority, then interior-gap repair by tier. Frozen and
-    observed-only series never appear; nor do series in back-off."""
+    """Work the collector owns, most urgent first: refreshes of stored series
+    by (capped) SLA priority, then bootstraps of missing ones (cheap, but a
+    large newly active set must never starve series a strategy already runs
+    on), then interior-gap repair by tier. Frozen and observed-only series
+    never appear; nor do series in back-off."""
     tick = float(tick_seconds if tick_seconds is not None else collector_settings()["tick_seconds"])
     states = states if states is not None else _load_series_state()
     memo = memo if memo is not None else (load_unfillable() if include_gaps else {})
-    due: list[Task] = []
+    refreshes: list[Task] = []
+    bootstraps: list[Task] = []
     gaps: list[Task] = []
     for row in snapshot.rows:
         if row.frozen or row.refresher is None:
@@ -787,17 +790,22 @@ def build_queue(
             continue
         if row.file is None:
             if row.refresher in _BOOTSTRAPPABLE:
-                due.append(Task(row, "bootstrap"))
+                bootstraps.append(Task(row, "bootstrap"))
             continue
         if is_due(row, tick_seconds=tick):
-            due.append(Task(row, "refresh"))
+            refreshes.append(Task(row, "refresh"))
         elif include_gaps and row.refresher in _GAP_REPAIRABLE:
             fillable = _gap_candidate(row, memo)
             if fillable:
                 gaps.append(Task(row, "gaps", fillable_bars=fillable))
-    due.sort(key=lambda t: (-float(t.row.sla.get("priority") or 0.0), TIER_RANK.get(t.row.tier, 9), t.row.id))
+
+    def by_priority(task: Task) -> tuple[float, int, str]:
+        return (-float(task.row.sla.get("priority") or 0.0), TIER_RANK.get(task.row.tier, 9), task.row.id)
+
+    refreshes.sort(key=by_priority)
+    bootstraps.sort(key=by_priority)
     gaps.sort(key=lambda t: (TIER_RANK.get(t.row.tier, 9), -t.fillable_bars, t.row.id))
-    return due + gaps
+    return refreshes + bootstraps + gaps
 
 
 def _canonical_window(row: SeriesRow, now_ms: int) -> tuple[int, int, int | None]:
