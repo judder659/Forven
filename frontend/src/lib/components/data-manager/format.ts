@@ -3,7 +3,7 @@
  * score and allowance they present comes from the server; nothing here decides
  * whether data is fresh or good.
  */
-import type { DataJob, DataJobKind, DataJobStatus, DataStream, SlaAssessment, SlaState, SlaTier } from '$lib/api/dataManagerTypes';
+import type { ConsumerSummary, DataJob, DataJobKind, DataJobStatus, DataStream, SlaAssessment, SlaState, SlaTier } from '$lib/api/dataManagerTypes';
 
 const MINUTE = 60;
 const HOUR = 3600;
@@ -362,3 +362,12 @@ export function jobSeriesText(job: Pick<DataJob, 'series'>): string {
 export function plural(count: number, one: string, many = `${one}s`): string {
 	return `${formatCount(count)} ${count === 1 ? one : many}`;
 }
+
+/** Read market-wide rather than by named strategies (implied vol feeds every
+ * strategy with vol features): no consumer list, yet a live, paper or
+ * pipeline tier. */
+export function isMarketWide(row: { consumers: ConsumerSummary; sla: Pick<SlaAssessment, 'tier'> }): boolean {
+	return row.consumers.count === 0 && (row.sla.tier === 'live' || row.sla.tier === 'paper' || row.sla.tier === 'pipeline');
+}
+
+export const MARKET_WIDE_HELP = 'Read market-wide: every strategy with implied-vol features uses it, so it is kept as fresh as the most important of them.';

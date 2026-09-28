@@ -8,7 +8,7 @@
 	import { clock } from '$lib/stores/dataManager';
 	import StateChip from './StateChip.svelte';
 	import { COLUMNS, GRID_GAP, gridMinWidth, gridTemplate, type ColumnKey, type SortKey } from './catalogViews';
-	import { formatBytes, formatPercent, formatRelative, formatUtc, historyLength, streamLabel, TIER_LABEL, venueLabel, venueShort } from './format';
+	import { formatBytes, formatPercent, formatRelative, formatUtc, historyLength, isMarketWide, MARKET_WIDE_HELP, streamLabel, TIER_LABEL, venueLabel, venueShort } from './format';
 	import { seriesHref } from './links';
 	import { moveIndex, scrollTopFor, windowRange } from './windowing';
 
@@ -194,10 +194,13 @@
 								{#if row.quality.score == null}<span class="text-[#555]">—</span>{:else}<span class="text-[#ddd]">{Math.round(row.quality.score)}</span>{#if row.quality.issues.length}<span class="text-[9px] text-[#888]">·{row.quality.issues.length}</span>{/if}{/if}
 							</div>
 						{:else if column.key === 'consumers'}
-							<div role="gridcell" class="flex min-w-0 items-center gap-1.5" title={row.consumers.count ? consumerTitle(row) : 'Nothing reads it'}>
+							<div role="gridcell" class="flex min-w-0 items-center gap-1.5" title={row.consumers.count ? consumerTitle(row) : isMarketWide(row) ? MARKET_WIDE_HELP : 'Nothing reads it'}>
 								{#if row.consumers.count}
 									<span class="shrink-0 border border-[#333] px-1 text-[9px] font-bold uppercase tracking-wider text-[#ccc]">{TIER_LABEL[row.consumers.tier]}</span>
 									<span class="truncate font-mono text-[10px] text-[#aaa]">{row.consumers.top[0]?.id ?? ''}{row.consumers.count > 1 ? ` +${row.consumers.count - 1}` : ''}</span>
+								{:else if isMarketWide(row)}
+									<span class="shrink-0 border border-[#333] px-1 text-[9px] font-bold uppercase tracking-wider text-[#ccc]">{TIER_LABEL[row.sla.tier]}</span>
+									<span class="truncate text-[10px] text-[#888]">market-wide</span>
 								{:else}<span class="text-[#444]">—</span>{/if}
 							</div>
 						{:else if column.key === 'size'}

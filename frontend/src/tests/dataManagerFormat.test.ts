@@ -9,6 +9,7 @@ import {
 	formatRelative,
 	formatUtc,
 	historyLength,
+	isMarketWide,
 	jobEtaSeconds,
 	jobSeriesText,
 	lagCaption,
@@ -103,5 +104,13 @@ describe('Data Manager formatting', () => {
 		expect(jobEtaSeconds({ ...running, status: 'queued' }, NOW)).toBeNull();
 		expect(jobSeriesText({ series: [{ symbol: 'BTC-USDT', timeframe: '1h', stream: 'ohlcv' }, { symbol: 'ETH-USDT' }] })).toBe('BTC-USDT 1h +1 more');
 		expect(jobSeriesText({ series: [{ symbol: 'ETH-USDT', timeframe: '8h', stream: 'funding' }] })).toBe('ETH-USDT 8h funding');
+	});
+
+	it('calls a series read by no named strategy but a live tier market-wide', () => {
+		const none = { count: 0, tier: 'idle' as const, top: [] };
+		expect(isMarketWide({ consumers: none, sla: { tier: 'live' } })).toBe(true);
+		expect(isMarketWide({ consumers: none, sla: { tier: 'universe' } })).toBe(false);
+		expect(isMarketWide({ consumers: none, sla: { tier: 'idle' } })).toBe(false);
+		expect(isMarketWide({ consumers: { ...none, count: 2, tier: 'live' }, sla: { tier: 'live' } })).toBe(false);
 	});
 });

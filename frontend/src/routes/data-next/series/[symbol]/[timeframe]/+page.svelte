@@ -35,6 +35,8 @@
 		formatRelative,
 		formatUtc,
 		historyLength,
+		isMarketWide,
+		MARKET_WIDE_HELP,
 		plural,
 		STATE_HELP,
 		streamLabel,
@@ -308,7 +310,11 @@
 			<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[#888]">
 				<StateChip state={d.sla.state} sla={d.sla} caption />
 				<span title={d.quality.issues.join('\n') || 'No issues found'}>Quality <span class="font-mono text-white">{d.quality.score == null ? '—' : Math.round(d.quality.score)}</span>{#if d.quality.issues.length}<span class="text-[#666]">{' '}· {d.quality.issues.length} issue{d.quality.issues.length === 1 ? '' : 's'}</span>{/if}</span>
-				<span title={TIER_HELP[d.consumers.tier]}>Used by <span class="text-white">{formatCount(d.consumers.count)}</span> <span class="text-[#666]">({TIER_LABEL[d.consumers.tier].toLowerCase()})</span></span>
+				{#if isMarketWide(d)}
+					<span title={MARKET_WIDE_HELP}>Used <span class="text-white">market-wide</span> <span class="text-[#666]">({TIER_LABEL[d.sla.tier].toLowerCase()})</span></span>
+				{:else}
+					<span title={TIER_HELP[d.consumers.tier]}>Used by <span class="text-white">{formatCount(d.consumers.count)}</span> <span class="text-[#666]">({TIER_LABEL[d.consumers.tier].toLowerCase()})</span></span>
+				{/if}
 				<span><span class="font-mono text-white">{formatCount(d.rows)}</span> rows · {historyLength(d.first_ts, d.last_ts)} · {formatBytes(d.size_bytes)}</span>
 				{#if d.updated_at}<span title={formatUtc(d.updated_at, { seconds: true })}>written {formatRelative(d.updated_at, $clock)}</span>{/if}
 			</div>
@@ -469,7 +475,7 @@
 							{/if}
 						</div>
 					{:else}
-						<p class="px-3 py-3 text-[11px] text-[#666]">Nothing reads this series{d.sla.tier === 'universe' ? '; it is kept for the research universe' : ''}.</p>
+						<p class="px-3 py-3 text-[11px] text-[#666]">{isMarketWide(d) ? MARKET_WIDE_HELP : `Nothing reads this series${d.sla.tier === 'universe' ? '; it is kept for the research universe' : ''}.`}</p>
 					{/each}
 				</section>
 
