@@ -321,12 +321,13 @@ TYPE_NAME = "my_strategy"
 	// sizes by its default instead: 1% risk against a 2x ATR stop it places
 	// itself (sizing.normalize_execution_controls, sizing.default_controls).
 	$: fullFallsBack = sizingMode === 'full' && !hasExitControl;
+	$: riskPct = +(Number(riskPerTrade) * 100).toFixed(2);
 	$: executionSummary = [
 		fullFallsBack ? 'Default sizing: 1% risk, 2× ATR stop'
 			: sizingMode === 'full' ? 'Full equity'
-			: sizingMode === 'fraction' ? `${riskPerTrade * 100}% risk per trade`
-			: sizingMode === 'fixed' ? `${fixedSize} per trade`
-			: sizingMode === 'atr' ? `${riskPerTrade * 100}% risk, ${atrStopMultiplier}× ATR stop`
+			: sizingMode === 'fraction' ? `${riskPct}% risk per trade`
+			: sizingMode === 'fixed' ? `${Number(fixedSize).toLocaleString()} per trade`
+			: sizingMode === 'atr' ? `${riskPct}% risk, ${atrStopMultiplier}× ATR stop`
 			: 'Kelly sizing',
 		stopLossPct != null ? `stop ${stopLossPct}%` : '',
 		takeProfitPct != null ? `target ${takeProfitPct}%` : '',
