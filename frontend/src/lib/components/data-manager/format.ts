@@ -9,6 +9,13 @@ const MINUTE = 60;
 const HOUR = 3600;
 const DAY = 86400;
 
+/** Bar width in seconds ("15m" -> 900, "1w" -> 604800); 3600 when unreadable. */
+export function timeframeSeconds(timeframe: string): number {
+	const match = /^(\d+)([mhdw])$/.exec(timeframe.trim().toLowerCase());
+	if (!match) return HOUR;
+	return Number(match[1]) * { m: MINUTE, h: HOUR, d: DAY, w: 7 * DAY }[match[2] as 'm' | 'h' | 'd' | 'w'];
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 function parse(iso: string | null | undefined): number | null {
