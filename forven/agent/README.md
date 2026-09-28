@@ -43,6 +43,8 @@ python -m forven.agent skills --regime range_bound
 python -m forven.agent list --status paper
 python -m forven.agent strategy S02545                  # full container
 python -m forven.agent gate-report S02545               # why it is/isn't promotable
+python -m forven.agent readiness --symbol BTC/USDT --timeframe 1h --streams funding,oi  # is the data there?
+python -m forven.agent readiness --strategy S02545      # the data contract of a registered strategy
 python -m forven.agent status S02545,S02604             # {stage,status} for polling
 python -m forven.agent runs --limit 10
 python -m forven.agent result <result_id>
@@ -83,6 +85,8 @@ if verdict["enqueued"]:
 
 ## The strategy-discovery loop (what the gates actually want)
 
+0. **Check the data** before designing around anything beyond candles —
+   `readiness --symbol … --timeframe … --streams …` (see *Data readiness* below).
 1. **Design** a `.py` strategy (extend `forven.strategies.base.BaseStrategy`;
    vectorized `generate_signals` returning a 4-tuple of bool Series; stateless;
    closed-bar only — never `.shift(-1)`; **no `stop_loss_pct` in `default_params`**;
@@ -104,6 +108,36 @@ if verdict["enqueued"]:
   kurtosis. Together with cost_stress this is a vise; few archetypes thread it.
 - Never set `force=true` to skip a gate.
 
+## Data readiness (check before you build)
+
+A strategy that reads a feed the lake cannot supply runs to a silent 0-trade
+result (the "data-substrate mismatch"). Ask first:
+
+```bash
+python -m forven.agent readiness --symbol ETH/USDT --timeframe 4h --streams funding,oi
+python -m forven.agent readiness --symbol BTC/USDT --timeframe 1h --code-file /abs/draft.py   # scans the draft's columns
+python -m forven.agent readiness --strategy S02545
+```
+
+```python
+report = fc.get_data_readiness(symbol="ETH/USDT", timeframe="4h", streams=["funding", "oi"])
+report["verdict"]   # "ready" | "needs_data" | "blocked"
+report["summary"]   # one sentence
+for req in report["requirements"]:   # candles, history, freshness, each feed (+ venue divergence when on the capital path)
+    print(req["status"], req["label"], req["detail"], (req["fix"] or {}).get("label"))
+```
+
+- `ready` — build it. Warnings (a late feed, a young symbol) don't block.
+- `needs_data` — each `missing` row carries a `fix` with a download request; the
+  operator (or the Data page) can fetch it. The backtest also auto-downloads
+  fetchable feeds.
+- `blocked` — no download can supply it: liquidation history starts at its
+  forward-only capture (OKX), a second asset's columns, an unknown symbol.
+  Choose another input; do not substitute a proxy.
+
+The history requirement is the pipeline's research window (the quick screen's,
+730 days by default) plus the strategy's warmup; streams must cover the window.
+
 ## Endpoint reference (for non-Python harnesses: Node/Tauri, curl, Codex)
 
 All under `http://127.0.0.1:8003`. JSON bodies. The CLI/library are just sugar
@@ -117,6 +151,8 @@ over these — call them directly from any language.
 | GET  | `/api/strategies?status=` | list strategies |
 | GET  | `/api/strategies/{id}/container` | full strategy (status under `configuration`) |
 | GET  | `/api/lifecycle/strategies/{id}/readiness` | paper-readiness detail |
+| GET  | `/api/data/readiness/strategy/{id}` | data contract of a strategy |
+| POST | `/api/data/readiness` `{symbol,timeframe,streams?,history_days?,strategy_type?,code?}` | data contract of an idea |
 | GET  | `/api/backtesting/runs?limit=` | recent runs |
 | GET  | `/api/results/{id}` | one backtest result |
 | POST | `/api/ai-dropzone/sessions` `{label,actor,objective}` | open session |

@@ -784,3 +784,104 @@ def test_endpoints_return_the_contract_shapes(client, lake_root, monkeypatch):
         "symbol", "timeframe", "research_venue", "execution_venue", "overlap_bars",
         "max_close_divergence_pct", "mean_abs_divergence_pct", "computed_at", "status", "detail",
     }
+
+
+# ---------------------------------------------------------------- agent surfaces
+
+
+class _StubHTTP:
+    """Records calls the MCP tool makes; answers every path with a canned report."""
+
+    base_url = "http://stub"
+    api_key = ""
+    operator_key = ""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, Any]] = []
+
+    def get(self, path: str, params: dict | None = None) -> Any:
+        self.calls.append(("GET", path, params))
+        return {"verdict": "ready", "path": path}
+
+    def post(self, path: str, json_body: dict | None = None) -> Any:
+        self.calls.append(("POST", path, json_body))
+        return {"verdict": "needs_data", "path": path}
+
+
+def test_mcp_readiness_tool_routes_to_the_endpoints():
+    import asyncio
+
+    from forven.mcp_server.server import build_server
+
+    stub = _StubHTTP()
+    server = build_server(client=stub)  # type: ignore[arg-type]
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+    tool = tools["forven_get_data_readiness"]
+    assert "blocked" in tool.description and "liquidation" in tool.description
+    assert {"strategy_id", "symbol", "timeframe", "streams", "history_days", "strategy_type"} <= set(tool.inputSchema["properties"])
+
+    asyncio.run(server.call_tool("forven_get_data_readiness", {"strategy_id": "S01566"}))
+    asyncio.run(server.call_tool("forven_get_data_readiness", {"symbol": "ETH/USDT", "timeframe": "4h", "streams": ["funding", "oi"], "history_days": 365}))
+    asyncio.run(server.call_tool("forven_get_data_readiness", {"symbol": "ETH/USDT"}))  # incomplete: no HTTP call
+    assert stub.calls == [
+        ("GET", "/api/data/readiness/strategy/S01566", None),
+        ("POST", "/api/data/readiness", {"symbol": "ETH/USDT", "timeframe": "4h", "streams": ["funding", "oi"], "history_days": 365}),
+    ]
+
+
+def test_agent_cli_readiness_command(monkeypatch, capsys, tmp_path):
+    from forven.agent import cli
+    from forven.agent.client import ForvenAgentClient
+
+    calls: list[tuple[str, str, Any]] = []
+
+    def _request(self, method, path, params=None, body=None, timeout=None):
+        calls.append((method, path, body))
+        return {"verdict": "ready", "summary": "Ready."}
+
+    monkeypatch.setattr(ForvenAgentClient, "_request", _request)
+    draft = tmp_path / "draft.py"
+    draft.write_text('x = df["basis"]\n', encoding="utf-8")
+
+    assert cli.main(["readiness", "--strategy", "S02545"]) == 0
+    assert json.loads(capsys.readouterr().out)["verdict"] == "ready"
+    assert cli.main(["readiness", "--symbol", "BTC/USDT", "--timeframe", "1h", "--streams", "funding, oi",
+                     "--history-days", "365", "--code-file", str(draft)]) == 0
+    assert calls == [
+        ("GET", "/api/data/readiness/strategy/S02545", None),
+        ("POST", "/api/data/readiness", {"symbol": "BTC/USDT", "timeframe": "1h", "streams": ["funding", "oi"],
+                                         "history_days": 365, "code": 'x = df["basis"]\n'}),
+    ]
+    with pytest.raises(SystemExit):
+        cli.main(["readiness", "--symbol", "BTC/USDT"])
+
+
+def test_agent_client_readiness_over_http(monkeypatch):
+    """The stdlib client builds the real URL and JSON body."""
+    import io
+    import urllib.request
+
+    from forven.agent.client import ForvenAgentClient
+
+    seen: list[tuple[str, str, bytes | None]] = []
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _urlopen(req, timeout=None):
+        seen.append((req.get_method(), req.full_url, req.data))
+        return _Response(b'{"verdict": "blocked"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    fc = ForvenAgentClient(base_url="http://backend.test")
+    assert fc.get_data_readiness("S 1")["verdict"] == "blocked"
+    fc.get_data_readiness(symbol="SOL/USDT", timeframe="1h", streams=["liquidations"])
+    assert seen[0][:2] == ("GET", "http://backend.test/api/data/readiness/strategy/S%201")
+    assert seen[1][0] == "POST" and seen[1][1] == "http://backend.test/api/data/readiness"
+    assert json.loads(seen[1][2]) == {"symbol": "SOL/USDT", "timeframe": "1h", "streams": ["liquidations"]}
+    with pytest.raises(ValueError):
+        fc.get_data_readiness(symbol="SOL/USDT")
