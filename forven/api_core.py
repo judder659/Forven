@@ -6893,6 +6893,7 @@ def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
             slippage_bps=body.slippage_bps,
             initial_capital=body.initial_capital,
             execution_controls=execution_controls or None,
+            trials=body.trials,
         )
     except Exception as exc:  # noqa: BLE001 — preview must never break the page
         return {
@@ -6916,6 +6917,19 @@ async def post_nl_to_spec(body: NlToSpecBody) -> dict:
 
 
 _MANUAL_STRATEGY_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+
+
+def _forge_strategy_running_type(type_name: str) -> str | None:
+    """A Forge strategy whose evidence was produced by this runtime type's code.
+    Manual backtests' scratch rows (stage 'prebuilt') do not count."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(NULLIF(display_id, ''), id) AS ref FROM strategies "
+            "WHERE (type = ? OR runtime_type = ?) AND COALESCE(stage, '') != 'prebuilt' "
+            "ORDER BY created_at LIMIT 1",
+            (type_name, type_name),
+        ).fetchone()
+    return row["ref"] if row else None
 
 
 def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
@@ -7021,9 +7035,7 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     except OSError:
         current_code = None
     if current_code is not None and current_code.splitlines() != final_code.splitlines():
-        from forven.strategy_creator import forge_strategy_running_type
-
-        holder = forge_strategy_running_type(type_name)
+        holder = _forge_strategy_running_type(type_name)
         if holder:
             return {"valid": True, "registered": False, "strategy_name": type_name,
                     "default_params": {},

@@ -258,9 +258,19 @@ def send_library_entry_to_forge(sid: str, body: LibraryForgeBody | None = None):
         return _send_to_forge(sid, body)
 
 
-def _send_to_forge(sid: str, body: LibraryForgeBody | None) -> dict:
-    from forven.strategy_creator import forge_strategy
+def _forge_strategy(strategy_id: str | None) -> dict | None:
+    """The Forge strategy a saved revision was sent to, while it still exists."""
+    if not strategy_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id AS strategy_id, display_id, stage, type FROM strategies WHERE id = ?",
+            (strategy_id,),
+        ).fetchone()
+    return {"ok": True, **dict(row)} if row else None
 
+
+def _send_to_forge(sid: str, body: LibraryForgeBody | None) -> dict:
     with get_db() as conn:
         row = _fetch(conn, sid)
     if not row:
@@ -269,7 +279,7 @@ def _send_to_forge(sid: str, body: LibraryForgeBody | None) -> dict:
     if body and body.expected_version is not None and entry["version"] != body.expected_version:
         raise HTTPException(status_code=409, detail="Strategy changed. Reload before sending to Forge.")
     # A saved change clears forge_strategy_id, so a link here belongs to this revision.
-    existing = forge_strategy(entry["forge_strategy_id"])
+    existing = _forge_strategy(entry["forge_strategy_id"])
     if existing:
         return {"ok": True, "id": sid, "forge": existing, "strategy": entry, "already_in_forge": True}
 
