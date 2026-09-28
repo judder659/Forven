@@ -137,7 +137,7 @@ def get_stream_points(
 @router.get("/api/data/identity/resolve")
 def get_identity_resolve(q: str = ""):
     """Symbol search across spellings, venues and what is stored (IdentityResolveResponse)."""
-    from forven.dataeng.identity import resolve_symbol
+    from forven.dataeng.identity_audit import resolve_symbol
 
     return _serve(lambda: resolve_symbol(q))
 
@@ -146,7 +146,7 @@ def get_identity_resolve(q: str = ""):
 def get_identity_audit():
     """Alias duplicates, unknown symbols, stray/empty folders, delisted-but-collected
     and unstamped series — report only, nothing is moved (IdentityAuditResponse)."""
-    from forven.dataeng.identity import audit_identity
+    from forven.dataeng.identity_audit import audit_identity
 
     return _serve(audit_identity)
 

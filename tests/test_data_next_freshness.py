@@ -873,7 +873,7 @@ def test_collector_status_shape(client, env):
     assert body["last_tick"]["refreshed"] == 1 and body["refreshed_last_hour"] == 1
     assert body["demand_per_hour"] > 0 and body["capacity_per_hour"] > 0
     assert [b["venue"] for b in body["budget"]] == ["binance", "hyperliquid", "deribit"]
-    assert body["budget"][0] == {"venue": "binance", "used_last_minute": 1, "limit_per_minute": 300}
+    assert body["budget"][0] == {"venue": "binance", "used_last_minute": 1, "limit_per_minute": 120}
 
 
 def test_venues_shape(client, env):

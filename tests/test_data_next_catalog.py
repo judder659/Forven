@@ -185,7 +185,6 @@ def test_quality_stats_from_files_tail_wins(tmp_path):
     assert quality.list_gaps([cold, tail], H_MS) == [(_ms("2026-01-01 10:00"), _ms("2026-01-02 00:00"), 15)]
 
 
-
 def test_quality_outliers_are_spikes_that_revert_not_large_moves(tmp_path):
     """A repricing that stays is market data; a spike that snaps back is a bad tick."""
     from forven.dataeng import quality
@@ -455,7 +454,8 @@ def test_rows_gaps_points_endpoints_and_errors(lake):
 
 def test_identity_resolve_candidates(lake):
     from forven.dataeng.catalog import Catalog
-    from forven.dataeng.identity import resolve_symbol, split_pair
+    from forven.dataeng.identity import split_pair
+    from forven.dataeng.identity_audit import resolve_symbol
 
     now = pd.Timestamp.now(tz="UTC").floor("h")
     _write(lake / "ohlcv/BTC-USDT/1h.parquet", _bars("2024-01-01", 30), _stamp("binanceusdm", "perp", "BTC-USDT"))
@@ -489,7 +489,7 @@ def test_identity_resolve_candidates(lake):
 
 def test_identity_audit_reports_without_moving(lake):
     from forven.dataeng.catalog import Catalog
-    from forven.dataeng.identity import audit_identity
+    from forven.dataeng.identity_audit import audit_identity
 
     stamp = _stamp("binance", "spot", "X")
     for name in ("BTC-USDT", "BTC-USD", "BTCUSD", "RETRY", "USDT-TRY", "ETH-BTC"):
@@ -529,7 +529,7 @@ def test_identity_audit_reports_without_moving(lake):
 
 
 def test_identity_audit_skips_registry_checks_without_a_registry(lake):
-    from forven.dataeng.identity import audit_identity
+    from forven.dataeng.identity_audit import audit_identity
 
     _write(lake / "ohlcv/SOL-USDT/1h.parquet", _bars("2024-01-01", 5), _stamp("binanceusdm", "perp", "SOL-USDT"))
     _write(lake / "ohlcv/USDT-TRY/1h.parquet", _bars("2024-01-01", 5), _stamp("binance", "spot", "USDT-TRY"))

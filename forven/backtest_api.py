@@ -39,7 +39,6 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 
-from forven.config import FORVEN_HOME
 
 log = logging.getLogger("forven.api")
 
@@ -176,7 +175,7 @@ def _result_data_dirs() -> list[str]:
     repo_root = os.path.abspath(os.path.join(os.path.dirname(core.__file__), os.pardir))
     candidates = [
         os.path.join(repo_root, "data", "results"),
-        os.path.join(str(FORVEN_HOME), "data", "results"),
+        os.path.join(str(core.FORVEN_HOME), "data", "results"),
     ]
     out: list[str] = []
     seen: set[str] = set()

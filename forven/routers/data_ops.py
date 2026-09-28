@@ -47,7 +47,6 @@ class DeleteBody(BaseModel):
     override_consumers: bool = False
 
 
-
 def _joined(values: list[str] | None) -> str | None:
     """Multi-value filters arrive as repeated params (?status=a&status=b) or
     comma-separated (?status=a,b); the domain functions take the comma form."""
