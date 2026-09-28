@@ -41,13 +41,19 @@
 	$: profitFactor = pick(m, 'profit_factor');
 	$: pfInfinite = m?.profit_factor_is_infinite === true;
 	$: expectancy = pick(m, 'expectancy', 'avg_trade_pct');
-	// annualized_return_pct is already percent points; cagr (if used) is a fraction.
+	// The engine stores CAGR as a fraction under both `cagr` and (despite the
+	// name) `annualized_return_pct`. Prefer `cagr`; for a result that only has
+	// `annualized_return_pct`, fall back to the same fraction-vs-percent guess
+	// the other ratios use.
 	$: annualized = (() => {
-		const a = num(m?.annualized_return_pct);
-		if (a !== null) return a;
 		const c = num(m?.cagr);
-		return c === null ? null : (Math.abs(c) <= 1.5 ? c * 100 : c);
+		if (c !== null) return c * 100;
+		const a = num(m?.annualized_return_pct);
+		return a === null ? null : (Math.abs(a) <= 1.5 ? a * 100 : a);
 	})();
+	// A few weeks of out-of-sample data annualize into nonsense; the engine flags it.
+	$: annualizedReliable = m?.annualized_return_reliable !== false;
+	$: sharpeReliable = m?.sharpe_is_reliable !== false;
 	$: totalTrades = pick(m, 'total_trades') ?? (result?.trades?.length ?? 0);
 
 	function asPct(v: number | null, dp = 2): string {
@@ -65,8 +71,17 @@
 
 	$: tiles = [
 		{ label: 'Total Return', value: pctDirect(totalReturnPct === null ? null : totalReturnPct * 100), tone: (totalReturnPct ?? 0) >= 0 ? 'pos' : 'neg', title: 'Out-of-sample total return.' },
-		{ label: 'Annualized', value: pctDirect(annualized), tone: (annualized ?? 0) >= 0 ? 'pos' : 'neg', title: 'Annualized (CAGR) return.' },
-		{ label: 'Sharpe', value: asNum(sharpe), tone: (sharpe ?? 0) >= 1 ? 'pos' : (sharpe ?? 0) < 0 ? 'neg' : 'neutral', title: 'Risk-adjusted return (annualized).' },
+		annualizedReliable
+			? { label: 'Annualized', value: pctDirect(annualized), tone: (annualized ?? 0) >= 0 ? 'pos' : 'neg', title: 'Annualized (CAGR) return.' }
+			: { label: 'Annualized', value: '–', tone: 'neutral', title: 'Not shown: the out-of-sample window is too short to annualize reliably.' },
+		{
+			label: sharpeReliable ? 'Sharpe' : 'Sharpe*',
+			value: asNum(sharpe),
+			tone: !sharpeReliable ? 'neutral' : (sharpe ?? 0) >= 1 ? 'pos' : (sharpe ?? 0) < 0 ? 'neg' : 'neutral',
+			title: sharpeReliable
+				? 'Risk-adjusted return (annualized).'
+				: 'Risk-adjusted return (annualized). * Too few trades for a reliable Sharpe.',
+		},
 		{ label: 'Sortino', value: asNum(sortino), tone: 'neutral', title: 'Downside risk-adjusted return.' },
 		{ label: 'Calmar', value: asNum(calmar), tone: 'neutral', title: 'Return / max drawdown.' },
 		{ label: 'Max DD', value: pctDirect(maxDrawdownPct === null ? null : maxDrawdownPct * 100), tone: 'neg', title: 'Maximum peak-to-trough drawdown.' },
@@ -128,7 +143,11 @@
 	})();
 
 	$: hasEquity = Array.isArray(result?.equity_curve) && result.equity_curve.length > 1;
-	$: visibleTrades = trades.slice(0, 50);
+	const TRADE_PREVIEW_ROWS = 50;
+	let showAllTrades = false;
+	// A different result starts collapsed again.
+	$: result, (showAllTrades = false);
+	$: visibleTrades = showAllTrades ? trades : trades.slice(0, TRADE_PREVIEW_ROWS);
 
 	function fmtTime(ts: unknown): string {
 		const s = String(ts ?? '');
@@ -183,6 +202,15 @@
 				<div class="text-[10px] uppercase tracking-widest text-[#666]">
 					Trades <span class="ml-1 normal-case tracking-normal text-[#555]">(out-of-sample · showing {visibleTrades.length} of {trades.length})</span>
 				</div>
+				{#if trades.length > TRADE_PREVIEW_ROWS}
+					<button
+						type="button"
+						class="text-[10px] uppercase tracking-wider text-[#888] underline hover:text-white"
+						on:click={() => (showAllTrades = !showAllTrades)}
+					>
+						{showAllTrades ? `Show first ${TRADE_PREVIEW_ROWS}` : `Show all ${trades.length}`}
+					</button>
+				{/if}
 			</div>
 
 			{#if summary}
