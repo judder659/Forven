@@ -1,14 +1,14 @@
 // Helpers for the Strategy Creator's parameter heatmap and market grid: which
 // numbers a rule is tuned by, the values an axis sweeps, what a grid says about
 // robustness, and which markets have local data.
-import type { IndicatorMeta, MarketRow, SampleStats } from '$lib/api';
+import type { AxisTarget, IndicatorMeta, MarketRow, SampleStats } from '$lib/api';
 
 type Spec = Record<string, unknown>;
 
 /** A number a rule is tuned by: one of its params ("knobs") or an indicator setting. */
 export interface KnobOption {
 	key: string;
-	target: 'param' | 'indicator';
+	target: AxisTarget;
 	name: string;
 	indicator: string | null;
 	label: string;
@@ -55,7 +55,7 @@ export function specKnobs(spec: Spec | null, metaByKind: Record<string, Indicato
 	return knobs;
 }
 
-type KnobRef = Pick<KnobOption, 'target' | 'name' | 'indicator'>;
+export type KnobRef = Pick<KnobOption, 'target' | 'name' | 'indicator'>;
 
 export function knobValue(spec: Spec | null, knob: KnobRef): number | null {
 	if (!spec) return null;
@@ -130,6 +130,60 @@ export function axisValues(from: number, to: number, steps: number, knob: Pick<K
 		if (!values.includes(value)) values.push(value);
 	}
 	return values;
+}
+
+// ---- A saved strategy's settings (strategy page) -------------------------------------
+/** The numbers a saved strategy is tuned by: its numeric params (execution
+ * settings and private `_` params aside) and, for a visual strategy, the knobs
+ * and indicator settings in its rule spec. Whole-number values sweep as whole
+ * numbers, as the Optimization tab treats them. */
+export function containerKnobs(
+	params: Record<string, unknown>,
+	specs: Record<string, { min?: number; max?: number }>,
+	skip: Set<string>,
+): KnobOption[] {
+	const knobs: KnobOption[] = [];
+	const bound = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+	for (const [name, value] of Object.entries(params)) {
+		if (skip.has(name) || name.startsWith('_') || typeof value !== 'number' || !Number.isFinite(value)) continue;
+		knobs.push({ key: `param:${name}`, target: 'param', name, indicator: null, label: name, value,
+			integer: Number.isInteger(value), min: bound(specs[name]?.min), max: bound(specs[name]?.max) });
+	}
+	const spec = params.spec as { params?: Record<string, unknown>; indicators?: Array<{ id: string; params?: Record<string, unknown> }> } | undefined;
+	if (spec && typeof spec === 'object') {
+		for (const [name, value] of Object.entries(spec.params ?? {})) {
+			if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+			knobs.push({ key: `spec:${name}`, target: 'spec_param', name, indicator: null, label: name, value,
+				integer: false, min: null, max: null });
+		}
+		for (const instance of spec.indicators ?? []) {
+			for (const [name, value] of Object.entries(instance.params ?? {})) {
+				if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+				knobs.push({ key: `specind:${instance.id}:${name}`, target: 'spec_indicator', name, indicator: instance.id,
+					label: `${instance.id} ${name}`, value, integer: Number.isInteger(value), min: null, max: null });
+			}
+		}
+	}
+	return knobs;
+}
+
+const specRef = (knob: KnobRef): KnobRef => ({ ...knob, target: knob.target === 'spec_param' ? 'param' : 'indicator' });
+
+export function containerKnobValue(params: Record<string, unknown> | undefined, knob: KnobRef): number | null {
+	if (!params) return null;
+	if (knob.target === 'param') return typeof params[knob.name] === 'number' ? (params[knob.name] as number) : null;
+	return knobValue((params.spec as Spec) ?? null, specRef(knob));
+}
+
+/** A copy of a saved strategy's params with some settings changed. */
+export function withContainerKnobs(params: Record<string, unknown>, changes: Array<[KnobRef, number | null]>): Record<string, unknown> {
+	const next = clone(params);
+	for (const [knob, value] of changes) {
+		if (value === null) continue;
+		if (knob.target === 'param') next[knob.name] = value;
+		else if (next.spec && typeof next.spec === 'object') next.spec = withKnobs(next.spec as Spec, [[specRef(knob), value]]);
+	}
+	return next;
 }
 
 // ---- Verdicts --------------------------------------------------------------------

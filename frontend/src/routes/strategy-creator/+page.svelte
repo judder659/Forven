@@ -41,17 +41,16 @@
 	import { specSeriesLabels, specThresholds } from '$lib/utils/ruleLabels';
 	import { diffSpecs, type SpecChange } from '$lib/utils/specDiff';
 	import {
-		chunk,
 		hashSpec,
 		hasLocalData,
 		knobValue,
 		marketAvailability,
 		resultKey,
-		runPool,
 		specKnobs,
 		withKnobs,
 		withoutKnobs,
 	} from '$lib/utils/creatorGrids';
+	import { runHeatmapRequests, runMarketRequests } from '$lib/utils/gridRuns';
 	import type { ExecutionRequestFields } from '$lib/api';
 	import ParameterEditor from '$lib/components/ui/ParameterEditor.svelte';
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
@@ -759,37 +758,31 @@ TYPE_NAME = "my_strategy"
 			const knob = knobOptions.find((k) => k.target === axis.target && k.name === axis.name && k.indicator === (axis.indicator ?? null));
 			return { ...axis, label: knob?.label ?? axis.name, integer: knob?.integer ?? false, min: knob?.min ?? null };
 		};
-		const units = axes.y
-			? chunk(axes.y.values, 3).map((ys) => ({ xs: axes.x.values, ys }))
-			: chunk(axes.x.values, 3).map((xs) => ({ xs, ys: null as number[] | null }));
 		heatmapView = {
 			x: meta(axes.x), y: axes.y ? meta(axes.y) : null, cells: {}, done: 0,
 			total: axes.x.values.length * (axes.y ? axes.y.values.length : 1), status: 'running', warnings: [],
 		};
 		heatmapContext = toolContext(withoutKnobs(spec, [axes.x, ...(axes.y ? [axes.y] : [])].map(knobRef)), market,
 			startDate, endDate, effectiveTradeMode, previewExecution);
-		await runPool(units, 3, async ({ xs, ys }) => {
-			const size = xs.length * (ys ? ys.length : 1);
-			try {
-				const result = await heatmapStrategy({
-					...base, x: { ...axes.x, values: xs }, y: axes.y && ys ? { ...axes.y, values: ys } : null,
-				}, controller.signal);
-				if (heatmapController !== controller || !heatmapView) return;
-				for (const cell of result.cells) heatmapView.cells[cellKey(cell.x, cell.y)] = cell;
+		await runHeatmapRequests(axes, (x, y, signal) => heatmapStrategy({ ...base, x, y }, signal), {
+			cells: (cells, warnings, size) => {
+				if (!heatmapView) return;
+				for (const cell of cells) heatmapView.cells[cellKey(cell.x, cell.y)] = cell;
 				heatmapView.done += size;
-				heatmapView.warnings = [...new Set([...heatmapView.warnings, ...result.warnings])];
+				heatmapView.warnings = [...new Set([...heatmapView.warnings, ...warnings])];
 				heatmapView = heatmapView;
-				markSeen(result.cells.filter((cell) => !cell.error).map((cell) => {
+				markSeen(cells.filter((cell) => !cell.error).map((cell) => {
 					const changes: Array<[ReturnType<typeof knobRef>, number | null]> = [[knobRef(axes.x), cell.x]];
 					if (axes.y) changes.push([knobRef(axes.y), cell.y]);
 					return resultKey(withKnobs(spec, changes), ...market);
 				}));
-			} catch (err) {
-				if (controller.signal.aborted || heatmapController !== controller || !heatmapView) return;
+			},
+			failed: (message, size) => {
+				if (!heatmapView) return;
 				heatmapView.done += size;
-				heatmapView.warnings = [...new Set([...heatmapView.warnings, err instanceof Error ? err.message : 'A heatmap row failed.'])];
+				heatmapView.warnings = [...new Set([...heatmapView.warnings, message])];
 				heatmapView = heatmapView;
-			}
+			},
 		}, controller.signal);
 		if (heatmapController !== controller || !heatmapView) return;
 		heatmapView.status = controller.signal.aborted ? 'cancelled' : 'done';
@@ -846,29 +839,25 @@ TYPE_NAME = "my_strategy"
 			return false;
 		});
 		marketView = marketView;
-		await runPool(chunk(runnable, 3), 3, async (group) => {
-			try {
-				const result = await compareMarkets({ ...base, markets: group }, controller.signal);
-				if (marketController !== controller || !marketView) return;
+		await runMarketRequests(runnable, (group, signal) => compareMarkets({ ...base, markets: group }, signal), {
+			rows: (group, rows, warnings) => {
+				if (!marketView) return;
 				const seen: string[] = [];
 				group.forEach((cell, i) => {
-					const row = result.rows[i] ?? { ...cell, status: 'error' as const, message: result.warnings[0] ?? 'No result.' };
-					marketView!.rows[marketKey(cell.symbol, cell.timeframe)] = row;
-					if (row.status === 'ok') seen.push(resultKey(spec, cell.symbol, cell.timeframe));
+					marketView!.rows[marketKey(cell.symbol, cell.timeframe)] = rows[i];
+					if (rows[i].status === 'ok') seen.push(resultKey(spec, cell.symbol, cell.timeframe));
 				});
 				marketView.done += group.length;
-				marketView.warnings = [...new Set([...marketView.warnings, ...result.warnings])];
+				marketView.warnings = [...new Set([...marketView.warnings, ...warnings])];
 				marketView = marketView;
 				markSeen(seen);
-			} catch (err) {
-				if (controller.signal.aborted || marketController !== controller || !marketView) return;
-				for (const cell of group) {
-					marketView.rows[marketKey(cell.symbol, cell.timeframe)] = { ...cell, status: 'error',
-						message: err instanceof Error ? err.message : 'These markets failed.' };
-				}
+			},
+			failed: (group, message) => {
+				if (!marketView) return;
+				for (const cell of group) marketView.rows[marketKey(cell.symbol, cell.timeframe)] = { ...cell, status: 'error', message };
 				marketView.done += group.length;
 				marketView = marketView;
-			}
+			},
 		}, controller.signal);
 		if (marketController !== controller || !marketView) return;
 		marketView.status = controller.signal.aborted ? 'cancelled' : 'done';

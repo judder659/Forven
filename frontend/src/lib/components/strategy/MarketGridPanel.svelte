@@ -28,6 +28,8 @@
 	export let currentTimeframe = '';
 	export let stale = false;
 	export let canRun = true;
+	/** The footnote under the grid. */
+	export let note = 'Each market is a full backtest with your execution settings, split in-sample / out-of-sample like Run Backtest. Markets without local data are not downloaded; collect them on the Data page. Every result counts toward the deflated Sharpe.';
 
 	const dispatch = createEventDispatcher<{
 		run: { symbols: string[]; timeframes: string[] };
@@ -190,8 +192,6 @@
 				<span class="text-[#ccc]">{verdict.text}</span>
 			</div>
 		{/if}
-		<p class="text-[10px] text-[#555]">
-			Each market is a full backtest with your execution settings, split in-sample / out-of-sample like Run Backtest. Markets without local data are not downloaded; collect them on the Data page. Every result counts toward the deflated Sharpe.
-		</p>
+		<p class="text-[10px] text-[#555]">{note}</p>
 	{/if}
 </div>

@@ -222,8 +222,12 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 // ---------------------------------------------------------------------------
 // Parameter heatmap: one backtest walk per pair of values of two settings
 // ---------------------------------------------------------------------------
+/** A swept setting: a spec knob or indicator setting (Creator), or a saved strategy's
+ * param or, for a visual strategy, a knob or indicator setting in its rule spec. */
+export type AxisTarget = 'param' | 'indicator' | 'spec_param' | 'spec_indicator';
+
 export interface HeatmapAxisRequest {
-	target: 'param' | 'indicator';
+	target: AxisTarget;
 	name: string;
 	indicator?: string | null;
 	values: number[];
@@ -296,6 +300,45 @@ export async function compareMarkets(request: MarketsRequest, signal?: AbortSign
 		method: 'POST',
 		body: JSON.stringify(request),
 		signal: withTimeout(signal, 300_000),
+	});
+}
+
+// ---------------------------------------------------------------------------
+// The same tools for a saved strategy (strategy page): each cell or market is the
+// strategy's manual backtest, as the Gauntlet tab submits it, in its own worker.
+// ---------------------------------------------------------------------------
+export interface StrategyToolRequest {
+	strategy_id: string;
+	strategy_name?: string;
+	symbol?: string;
+	timeframe?: string;
+	start?: string;
+	end?: string;
+	params?: Record<string, unknown>;
+	definition_json?: Record<string, unknown>;
+	/** Execution settings, as the Gauntlet tab sends them. */
+	[setting: string]: unknown;
+}
+
+export async function strategyParamHeatmap(
+	request: StrategyToolRequest & { x: HeatmapAxisRequest; y?: HeatmapAxisRequest | null },
+	signal?: AbortSignal,
+): Promise<HeatmapResult> {
+	return fetchApi('/backtests/strategy-heatmap', {
+		method: 'POST',
+		body: JSON.stringify(request),
+		signal: withTimeout(signal, 900_000),
+	});
+}
+
+export async function strategyMarkets(
+	request: StrategyToolRequest & { markets: Array<{ symbol: string; timeframe: string }> },
+	signal?: AbortSignal,
+): Promise<MarketsResult> {
+	return fetchApi('/backtests/strategy-markets', {
+		method: 'POST',
+		body: JSON.stringify(request),
+		signal: withTimeout(signal, 900_000),
 	});
 }
 
