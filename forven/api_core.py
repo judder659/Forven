@@ -528,6 +528,17 @@ async def _on_startup():
     except Exception as exc:
         log.warning("Research settings seeding failed: %s", exc)
     try:
+        # Data Manager jobs: rows a previous process left queued/running become
+        # "interrupted" (retryable), old rows are pruned, expired trash purged.
+        # API process only, before anything can submit a new data job.
+        from forven.api_domains.data_ops import run_startup_maintenance
+
+        data_jobs = run_startup_maintenance()
+        if data_jobs.get("interrupted"):
+            log.info("Marked %d data job(s) interrupted at API startup.", data_jobs["interrupted"])
+    except Exception as exc:
+        log.warning("Data job startup maintenance failed: %s", exc)
+    try:
         # Orphaned-job sweep belongs HERE, once per API boot — never at module
         # import, which spawn-context pool workers re-execute against the live
         # job table, failing genuinely-running jobs mid-flight (see

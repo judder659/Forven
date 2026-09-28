@@ -205,6 +205,80 @@ def capture_restatements(symbol: str, timeframe: str, new_frame: pd.DataFrame, *
     return append_revision(symbol, timeframe, restated, observed_at or _now_iso())
 
 
+def revision_prune_mask(
+    timestamps: pd.Series,
+    observed_at: pd.Series,
+    *,
+    cutoff: pd.Timestamp,
+    protected: "list[tuple[int, int]] | tuple[tuple[int, int], ...]" = (),
+) -> np.ndarray:
+    """True for revision rows a prune may drop: superseded before ``cutoff``
+    AND whose bar lies outside every protected ``[start_ms, end_ms]`` window.
+
+    Rows with an unparseable ``observed_at`` or bar timestamp are always kept.
+    A protected window is a persisted verdict's scoring window: an ``as_of``
+    re-run of that verdict (and any drift explanation for it) needs the values
+    superseded inside it, whether the restatement happened before or after the
+    verdict was scored — so the window protects rows regardless of order.
+    """
+    observed = pd.to_datetime(observed_at, utc=True, errors="coerce", format="ISO8601")
+    prunable = (observed < cutoff).to_numpy(dtype=bool, na_value=False)
+    if not prunable.any():
+        return prunable
+    bars = pd.to_datetime(timestamps, utc=True, errors="coerce").to_numpy(dtype="datetime64[ms]")
+    prunable &= ~np.isnat(bars)
+    if protected:
+        bar_ms = bars.astype("int64")
+        for start_ms, end_ms in protected:
+            prunable &= ~((bar_ms >= int(start_ms)) & (bar_ms <= int(end_ms)))
+    return prunable
+
+
+def prune_revisions(
+    symbol: str,
+    timeframe: str,
+    *,
+    cutoff: pd.Timestamp,
+    protected: "list[tuple[int, int]] | tuple[tuple[int, int], ...]" = (),
+    dry_run: bool = False,
+) -> dict[str, int | bool]:
+    """Drop a series' superseded values older than ``cutoff`` that no protected
+    window covers (see :func:`revision_prune_mask`). Permanent — the pruned
+    rows are not kept anywhere. ``dry_run`` reads only the two columns the
+    decision needs and changes nothing.
+
+    Returns ``{"rows", "pruned", "bytes_before", "bytes_after", "removed"}``;
+    ``bytes_after`` is estimated (proportional) on a dry run.
+    """
+    path = revision_path(symbol, timeframe)
+    empty = {"rows": 0, "pruned": 0, "bytes_before": 0, "bytes_after": 0, "removed": False}
+    if not path.exists():
+        return empty
+    bytes_before = int(path.stat().st_size)
+    if dry_run:
+        import pyarrow.parquet as pq
+
+        frame = pq.read_table(path, columns=["timestamp", "observed_at"]).to_pandas()
+        mask = revision_prune_mask(frame["timestamp"], frame["observed_at"], cutoff=cutoff, protected=protected)
+        rows, pruned = int(len(frame)), int(mask.sum())
+        kept_bytes = bytes_before - (bytes_before * pruned // rows if rows else 0)
+        return {"rows": rows, "pruned": pruned, "bytes_before": bytes_before, "bytes_after": kept_bytes, "removed": rows > 0 and pruned == rows}
+    with _get_revision_lock(symbol, timeframe):
+        frame = _read_parquet_frame(path)
+        if frame is None or not {"timestamp", "observed_at"}.issubset(frame.columns):
+            raise ValueError(f"revision log {path} is unreadable; not pruning it")
+        mask = revision_prune_mask(frame["timestamp"], frame["observed_at"], cutoff=cutoff, protected=protected)
+        rows, pruned = int(len(frame)), int(mask.sum())
+        if pruned == 0:
+            return {"rows": rows, "pruned": 0, "bytes_before": bytes_before, "bytes_after": bytes_before, "removed": False}
+        kept = frame.loc[~mask].reset_index(drop=True)
+        if kept.empty:
+            path.unlink()
+            return {"rows": rows, "pruned": pruned, "bytes_before": bytes_before, "bytes_after": 0, "removed": True}
+        _write_parquet_frame(path, kept)
+    return {"rows": rows, "pruned": pruned, "bytes_before": bytes_before, "bytes_after": int(path.stat().st_size), "removed": False}
+
+
 def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_of: object) -> pd.DataFrame:
     """Overlay the revision log onto ``main_frame`` to reconstruct values as-of ``as_of``.
 

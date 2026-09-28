@@ -2507,22 +2507,39 @@ def _drop_catalog_coverage(symbol: str, timeframe: str, path: Path) -> None:
         log.debug("catalog coverage cleanup skipped for %s %s: %s", symbol, timeframe, exc)
 
 
-def delete_dataset(symbol: str, timeframe: str) -> bool:
+def trash_dataset(
+    symbol: str,
+    timeframe: str,
+    *,
+    reason: str = "deleted",
+    origin: str = "user",
+) -> dict[str, Any] | None:
+    """Move a canonical OHLCV series (cold file + tail sidecar, together) to
+    the Data Manager trash (forven/dataeng/storage.py) and drop its catalog
+    coverage. Restorable until the trash retention expires. Returns the
+    ``TrashItem``, or None when the series is not stored. Consumer checks are
+    the caller's job (api_domains/data_ops.delete_check)."""
+    from forven.dataeng import storage
+
+    fs_symbol = symbol_to_fs(symbol)
     path = parquet_path(symbol, timeframe)
-    if not path.exists():
-        return False
-    lock = _get_dataset_lock(symbol, timeframe)
-    with lock:
-        if path.exists():
-            path.unlink()
-        tail = tail_path(symbol, timeframe)
-        if tail.exists():
-            try:
-                tail.unlink()
-            except OSError:
-                pass
+    tail = tail_path(symbol, timeframe)
+    with _get_dataset_lock(symbol, timeframe):
+        if not path.exists() and not tail.exists():
+            return None
+        item = storage.trash_paths(
+            [path, tail],
+            kind="series",
+            label=f"{fs_symbol} {timeframe}",
+            reason=reason,
+            series={"symbol": fs_symbol, "timeframe": str(timeframe), "stream": "ohlcv", "venue": "canonical"},
+            origin=origin,
+        )
+    if item is None:
+        return None
     _drop_catalog_coverage(symbol, timeframe, path)
-    # Remove now-empty symbol directories for cleanliness.
+    # Remove a now-empty symbol directory for cleanliness (rmdir refuses a
+    # folder that still holds anything, e.g. backups).
     parent = path.parent
     if parent.exists() and not any(parent.glob("*.parquet")):
         try:
@@ -2530,14 +2547,23 @@ def delete_dataset(symbol: str, timeframe: str) -> bool:
         except Exception:
             pass
     _invalidate_catalog_cache()
+    days = int(storage.storage_settings()["trash_retention_days"])
     _log_data_action(
         "dataset_delete",
-        f"Deleted dataset {symbol} {timeframe}",
+        f"Deleted dataset {fs_symbol} {timeframe} — moved to the trash (restorable for {days} days)",
         level="warning",
-        symbol=symbol,
+        symbol=fs_symbol,
         timeframe=timeframe,
+        trash_id=item["id"],
+        origin=origin,
+        reason=reason,
     )
-    return True
+    return item
+
+
+def delete_dataset(symbol: str, timeframe: str) -> bool:
+    """Legacy entry point: move the series to the trash (see trash_dataset)."""
+    return trash_dataset(symbol, timeframe) is not None
 
 
 # A leftover .tmp lingers forever, so cleanup only needs to *eventually* catch it.
@@ -2670,10 +2696,12 @@ def scan_parquet_orphans() -> dict[str, Any]:
 
 
 def cleanup_parquet_orphans() -> dict[str, Any]:
-    """Delete ONLY the unambiguously-safe orphans (stale ``.tmp`` + zero-byte
-    parquet); orphans flagged ``safe_delete=False`` are left for manual review so a
-    transiently-locked healthy parquet is never destroyed. Logs an ``orphan_cleanup``
-    action when anything is removed."""
+    """Move ONLY the unambiguously-safe orphans (stale ``.tmp`` + zero-byte
+    parquet) to the Data Manager trash; orphans flagged ``safe_delete=False`` are
+    left for manual review so a transiently-locked healthy parquet is never
+    touched. Logs an ``orphan_cleanup`` action when anything is moved."""
+    from forven.dataeng import storage
+
     orphans, _missing = _find_parquet_orphans()
     removed = 0
     skipped = 0
@@ -2684,17 +2712,22 @@ def cleanup_parquet_orphans() -> dict[str, Any]:
             continue
         candidate = Path(str(orphan.get("path") or ""))
         try:
-            if candidate.exists():
-                bytes_freed += int(orphan.get("size_bytes", 0) or 0)
-                candidate.unlink()
+            item = storage.trash_paths(
+                [candidate],
+                kind="legacy",
+                label=f"{orphan.get('symbol')}/{candidate.name}",
+                reason=f"orphan cleanup: {orphan.get('reason')}",
+            )
+            if item is not None:
+                bytes_freed += int(item["bytes"])
                 removed += 1
-        except OSError as exc:
-            log.warning("orphan cleanup: could not remove %s: %s", candidate, exc)
+        except (OSError, ValueError) as exc:
+            log.warning("orphan cleanup: could not move %s to the trash: %s", candidate, exc)
     if removed:
         _invalidate_catalog_cache()
         _log_data_action(
             "orphan_cleanup",
-            f"Removed {removed} orphaned file(s), freed {bytes_freed:,} bytes"
+            f"Moved {removed} orphaned file(s) ({bytes_freed:,} bytes) to the trash"
             + (f"; {skipped} left for review" if skipped else ""),
             removed=removed,
             bytes_freed=bytes_freed,

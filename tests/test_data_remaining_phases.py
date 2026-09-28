@@ -544,7 +544,7 @@ class TestBackfillCancelProgress:
         (lake / "BBB-USDT" / "1h.parquet").write_bytes(b"x")
 
         processed: list[str] = []
-        monkeypatch.setattr(DataManager, "_backfill_ohlcv", lambda self, fs, bv: processed.append(fs) or {})
+        monkeypatch.setattr(DataManager, "_backfill_ohlcv", lambda self, fs, bv, **kw: processed.append(fs) or {})
         monkeypatch.setattr(DataManager, "_backfill_funding", lambda self, fs, bv: {})
         monkeypatch.setattr(DataManager, "_backfill_metrics", lambda self, fs, bv, **kw: {})
 
