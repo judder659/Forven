@@ -88,6 +88,9 @@
 	// Deep links (the readiness "fix" buttons, a symbol with nothing stored)
 	// open the market step with the choice filled in.
 	onMount(() => {
+		// Warm the exchanges' market lists (the first listing check after a restart
+		// or an hour loads six of them, ~10 s) while the user is still choosing.
+		void getAcquireTargets('BTC-USDT').catch(() => undefined);
 		prefill = parseGetDataQuery($page.url.searchParams);
 		if (!prefill) return;
 		query = prefill.symbol;
@@ -365,6 +368,9 @@
 					<!-- 2 Venue -->
 					<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-get-venue">
 						<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-get-venue" class="text-[11px] font-bold uppercase tracking-wider text-white">Where from</h2></header>
+						{#if targets?.status === 'loading'}
+							<p class="px-3 pt-2 text-[11px] text-[#777]">Checking which exchanges list {candidate?.display_symbol ?? 'it'}… the first check in an hour loads each exchange's market list and can take a few seconds.</p>
+						{/if}
 						{#if targets}
 							<SectionState state={targets} what="Download venues" endpoint="GET /api/data/acquire/targets" rows={3} on:retry={() => candidate && choose(candidate)}>
 								<div class="space-y-1 px-3 py-2" role="radiogroup" aria-label="Venue">

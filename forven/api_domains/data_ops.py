@@ -501,12 +501,15 @@ def _ref_label(ref: dict[str, Any]) -> str:
 
 
 def _human_bytes(value: int) -> str:
-    size = float(value)
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024 or unit == "GB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+    """Three significant digits, as the UI's formatBytes shows sizes."""
+    size = float(max(0, value))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            if unit == "B":
+                return f"{size:.0f} B"
+            return f"{size:.{2 if size < 10 else 1 if size < 100 else 0}f} {unit}"
         size /= 1024
-    return f"{size:.1f} GB"
+    return f"{size:.0f} TB"
 
 
 def _is_canonical_ohlcv(key: dict[str, str]) -> bool:

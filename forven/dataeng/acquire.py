@@ -431,7 +431,10 @@ def _plan(item: dict[str, Any], series_index: dict[tuple[str, str, str], lake.Se
         plan.requests = sum(-(-_bars(w, plan.tf_ms) // BARS_PER_REQUEST) for w in plan.windows)
     plan.seconds = plan.requests * rate
     if plan.bytes >= LARGE_DOWNLOAD_BYTES:
-        plan.warnings.append(f"Large download: ~{plan.bytes / 1024**2:,.0f} MB ({plan.new_bars:,} bars).")
+        plan.warnings.append(
+            f"{_display(plan.symbol)} {plan.timeframe} is a large download: ~{plan.bytes / 1024**2:,.0f} MB "
+            f"({plan.new_bars:,} bars)."
+        )
 
     extra = [s for s in plan.streams if s != "ohlcv"]
     unsupported = [s for s in extra if s not in STREAM_ADDONS]

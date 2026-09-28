@@ -327,6 +327,21 @@ def test_a_finished_job_shows_on_the_next_catalog_read(lake):
     catalog_index._store(latest.root, before)
     assert catalog_index.get_snapshot() is latest
 
+
+def test_trash_and_restore_show_on_the_next_catalog_read(lake):
+    from forven.dataeng import catalog_index, storage
+
+    _build_lake(lake)
+    sid = "oi:canonical:BTC-USDT:1h"
+    assert sid in catalog_index.get_snapshot().by_id
+    catalog_index.wait_idle()
+    item = storage.trash_series("oi", "canonical", "BTC-USDT", "1h", reason="test")
+    assert item is not None
+    assert sid not in catalog_index.get_snapshot().by_id  # no TTL wait: a trash is not a job
+    catalog_index.wait_idle()
+    storage.restore_trash(item["id"])
+    assert sid in catalog_index.get_snapshot().by_id
+
 def test_catalog_endpoint_serves_the_snapshot(lake):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

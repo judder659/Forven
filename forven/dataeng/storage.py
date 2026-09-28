@@ -765,7 +765,7 @@ def trash_paths(
                     raise
             shutil.rmtree(item_dir, ignore_errors=True)
             raise
-    invalidate_inventory()
+    _lake_views_changed()
     return _trash_item(manifest, root, settings["trash_retention_days"])
 
 
@@ -902,8 +902,22 @@ def purge_expired_trash(*, root: Path | None = None, now: float | None = None) -
     return result
 
 
-def _after_lake_change(canonical: bool) -> None:
+def _lake_views_changed() -> None:
+    """Files moved in or out of the lake: drop the cached views of it (this
+    inventory, the Data Manager's catalog and census). A trash or a restore is
+    not a job, so no job hook does it."""
     invalidate_inventory()
+    try:
+        from forven.dataeng import catalog_index, collector
+
+        catalog_index.invalidate()
+        collector.invalidate_snapshot()
+    except Exception as exc:
+        log.debug("storage: could not invalidate the lake views: %s", exc)
+
+
+def _after_lake_change(canonical: bool) -> None:
+    _lake_views_changed()
     if canonical:
         try:
             from forven.data import _invalidate_catalog_cache

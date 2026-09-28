@@ -125,7 +125,9 @@
 							<span class="font-mono tabular-nums {e.total_bytes > e.disk_free_bytes * 0.5 ? 'text-amber-400' : 'text-[#888]'}">{formatBytes(e.disk_free_bytes)}</span>
 						</div>
 						{#if blocked}<p class="mt-1 text-[10px] text-[#888]">{plural(blocked, 'series', 'series')} cannot be downloaded (not listed) and will be skipped.</p>{/if}
-						{#each [...new Set([...e.warnings, ...e.estimates.flatMap((x) => x.warnings)])].slice(0, 3) as warning}<p class="mt-1 text-[10px] text-amber-400">{warning}</p>{/each}
+						{@const warnings = [...new Set([...e.warnings, ...e.estimates.flatMap((x) => x.warnings)])]}
+						{#each warnings.slice(0, 3) as warning}<p class="mt-1 text-[10px] text-amber-400">{warning}</p>{/each}
+						{#if warnings.length > 3}<p class="mt-1 text-[10px] text-amber-400/70">and {plural(warnings.length - 3, 'more warning')}</p>{/if}
 						{#if started[preset.id] != null}
 							<p class="mt-2 text-[11px] text-emerald-400">Queued {plural(started[preset.id], 'download')}. <a href="{DM}/jobs" class="underline">See progress</a></p>
 						{:else if nothing}

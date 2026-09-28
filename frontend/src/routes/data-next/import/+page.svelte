@@ -131,7 +131,7 @@
 		<section class="border border-emerald-900/70 bg-emerald-500/[0.03] px-4 py-3" aria-live="polite">
 			<h2 class="text-[14px] font-bold text-emerald-400">Imported {formatCount(result.rows_written)} rows into {result.series.symbol} {result.series.timeframe}</h2>
 			<p class="mt-1 text-[11px] text-[#aaa]">
-				{venueLabel(result.series.venue)} · {formatCount(result.new_bars)} new bars{#if result.overwritten} · {formatCount(result.overwritten)} replaced{/if}{#if result.kept} · {formatCount(result.kept)} stored bars kept{/if}
+				{venueLabel(result.series.venue, 'csv')} · {formatCount(result.new_bars)} new bars{#if result.overwritten} · {formatCount(result.overwritten)} replaced{/if}{#if result.kept} · {formatCount(result.kept)} stored bars kept{/if}
 			</p>
 			{#each result.warnings as warning}<p class="text-[11px] text-amber-400">{warning}</p>{/each}
 			<div class="mt-3 flex gap-2">
