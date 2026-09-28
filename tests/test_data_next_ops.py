@@ -870,3 +870,162 @@ def test_delete_stream_series(client, consumers_lake):
     assert not (root / "funding/XRP-USDT/history.parquet").exists()
     assert client.post(f"/api/data/trash/{done['trashed'][0]['id']}/restore").status_code == 200
     assert (root / "funding/XRP-USDT/history.parquet").exists()
+
+
+# ---------------------------------------------------------------- data log
+
+
+def _activity(conn, level: str, message: str, detail: dict, created_at: str, source: str = "data") -> None:
+    conn.execute(
+        "INSERT INTO activity_log (level, source, message, data, created_at) VALUES (?, ?, ?, ?, ?)",
+        (level, source, message, json.dumps(detail), created_at),
+    )
+
+
+@pytest.fixture
+def log_feed(env):
+    """A realistic mix: routine catch-up lines (old and new timestamp formats),
+    incidents, user actions, jobs of every category."""
+    from forven.db import get_db
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM activity_log")
+        for created, symbol in (("2026-09-28 10:00:05", "BTC-USDT"), ("2026-09-28 10:00:30", "ETH-USDT"), ("2026-09-28T10:00:50+00:00", "BTC-USDT")):
+            _activity(conn, "info", f"Executed Data Engine backfill plan ({symbol})", {"action": "backfill", "symbol": symbol}, created)
+        _activity(conn, "info", "Executed Data Engine backfill plan: 0 task(s)", {"action": "backfill"}, "2026-09-28 10:05:00")
+        _activity(conn, "warning", "Market splice on ETH-BTC 1h: stored perp, incoming spot",
+                  {"action": "market_mismatch", "symbol": "ETH-BTC", "timeframe": "1h"}, "2026-09-28 11:00:00")
+        _activity(conn, "warning", "Executed Data Engine backfill plan: 24 task(s), +43 bars, 5 failed", {"action": "backfill"}, "2026-09-28 11:10:00")
+        _activity(conn, "warning", "Deleted dataset BTC-USDT 1h", {"action": "dataset_delete", "symbol": "BTC-USDT", "timeframe": "1h"}, "2026-09-28 12:00:00")
+        _activity(conn, "info", "Uploaded CSV y.csv -> SOL-USDT 1h: 2 bars", {"action": "csv_upload", "symbol": "SOL-USDT", "timeframe": "1h"}, "2026-09-28 12:10:00")
+        _activity(conn, "error", "CSV upload failed", {"action": "csv_upload", "symbol": "SOL-USDT"}, "2026-09-28 12:20:00")
+        _activity(conn, "info", "unrelated scheduler tick", {"action": "backfill"}, "2026-09-28 12:30:00", source="scheduler")
+
+    download = _wait(jobs.submit("download", lambda ctx: {"bars": 5}, title="Download BTC-USDT 1h", origin="user",
+                                 series=[{"symbol": "BTC-USDT", "timeframe": "1h"}]))
+
+    def boom(ctx):
+        raise RuntimeError("venue down")
+
+    failed = _wait(jobs.submit("tail_refresh", boom, title="Refresh DOGE-USDT 5m", origin="sla",
+                               series=[{"symbol": "DOGE-USDT", "timeframe": "5m"}]))
+    tick = jobs.record_routine("sla_collect", "Automatic collection", result={"refreshed": 3})
+    with get_db() as conn:
+        _activity(conn, "info", "Refreshed XRP-USDT 1h (+2 bars)", {"action": "tail_refresh", "job_id": tick["id"], "symbol": "XRP-USDT"},
+                  "2026-09-28 09:00:00")
+    return {"download": download, "failed": failed, "tick": tick}
+
+
+def test_data_log_categories_rollup_and_dedupe(client, log_feed):
+    body = client.get("/api/data/log", params={"limit": 500}).json()
+    entries = body["entries"]
+    assert body["total"] == len(entries)
+    assert all(e["ts"].endswith("Z") and "T" in e["ts"] for e in entries)
+    assert all(set(e) >= {"id", "ts", "level", "category", "action", "message", "symbol", "timeframe", "job_id", "origin", "detail"} for e in entries)
+    assert not any("scheduler tick" in e["message"] for e in entries)
+    # a finished job's own activity row (action "job") is represented by the job row
+    assert [e["id"] for e in entries if e["job_id"] == log_feed["download"]["id"]] == [f"j:{log_feed['download']['id']}"]
+    assert ts_sorted(entries)
+
+    mine = client.get("/api/data/log", params={"category": "user,incident", "limit": 500}).json()["entries"]
+    by_category = {e["category"] for e in mine}
+    assert by_category == {"user", "incident"}
+    kinds = {(e["category"], e["action"]) for e in mine}
+    assert {("user", "download"), ("user", "dataset_delete"), ("user", "csv_upload"), ("incident", "tail_refresh"),
+            ("incident", "market_mismatch"), ("incident", "backfill"), ("incident", "csv_upload")} == kinds
+    failed = next(e for e in mine if e["job_id"] == log_feed["failed"]["id"])
+    assert failed["level"] == "error" and "venue down" in failed["message"] and failed["symbol"] == "DOGE-USDT"
+
+    routine = client.get("/api/data/log", params={"category": "routine"}).json()["entries"]
+    minute = next(e for e in routine if e["action"] == "backfill" and e["children"] == 3)
+    assert minute["message"].endswith("(+2 similar in this minute)") and minute["symbol"] is None
+    assert minute["ts"] == "2026-09-28T10:00:50Z"
+    assert next(e for e in routine if e["message"].endswith("0 task(s)"))["children"] == 1
+    tick = next(e for e in routine if e["job_id"] == log_feed["tick"]["id"])
+    assert tick["action"] == "sla_collect" and tick["children"] == 2  # the tick + its folded row
+    assert not any(e["action"] == "tail_refresh" and e["category"] == "routine" for e in routine)
+
+
+def ts_sorted(entries: list[dict]) -> bool:
+    stamps = [e["ts"] for e in entries]
+    return stamps == sorted(stamps, reverse=True)
+
+
+def test_data_log_filters_paging_and_export(client, log_feed):
+    def get(**params):
+        resp = client.get("/api/data/log", params=params)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    btc = get(symbol="BTC/USDT", limit=500)["entries"]
+    assert {e["action"] for e in btc} == {"backfill", "dataset_delete", "download"}
+    assert next(e for e in btc if e["action"] == "backfill")["children"] == 2  # only BTC rows of that minute
+    assert {e["level"] for e in get(level="warning", limit=500)["entries"]} == {"warning"}
+    assert [e["action"] for e in get(action="market_mismatch")["entries"]] == ["market_mismatch"]
+    assert [e["action"] for e in get(q="SPLICE")["entries"]] == ["market_mismatch"]
+    window = get(since="2026-09-28T11:30:00Z", until="2026-09-28T12:15:00Z")["entries"]
+    assert [e["action"] for e in window] == ["csv_upload", "dataset_delete"]
+    full = get(limit=500)
+    page = get(limit=2, offset=1)
+    assert page["total"] == full["total"] and [e["id"] for e in page["entries"]] == [e["id"] for e in full["entries"][1:3]]
+    assert client.get("/api/data/log", params={"category": "gossip"}).status_code == 400
+
+    export = client.get("/api/data/log/export", params={"category": "user,incident"})
+    assert export.status_code == 200 and export.headers["content-type"].startswith("text/csv")
+    assert "attachment" in export.headers["content-disposition"]
+    lines = export.text.strip().splitlines()
+    assert lines[0] == "ts,category,level,action,symbol,timeframe,origin,job_id,children,message"
+    assert len(lines) == 1 + get(category="user,incident", limit=500)["total"]
+
+
+def test_old_activity_endpoint_keeps_its_shape(client, log_feed):
+    events = client.get("/api/data/activity", params={"limit": 50}).json()["events"]
+    assert all(set(e) == {"ts", "level", "action", "message", "detail"} for e in events)
+    actions = [e["action"] for e in events]
+    assert "job" not in actions and "download" in actions and "market_mismatch" in actions
+    download = next(e for e in events if e["action"] == "download")
+    assert download["detail"]["symbol"] == "BTC-USDT" and download["detail"]["job_id"] == log_feed["download"]["id"]
+    assert not any(e["detail"].get("kind") == "sla_collect" for e in events)  # routine jobs stay out
+
+
+# ---------------------------------------------------------------- startup
+
+
+def test_startup_maintenance_recovers_prunes_and_purges(env):
+    from forven.api_domains.data_ops import run_startup_maintenance
+    from forven.db import get_db
+
+    with get_db() as conn:
+        for job_id, status, created in (("dj-q", "queued", "2026-09-28T00:00:00Z"), ("dj-r", "running", "2026-09-28T00:00:00Z"),
+                                         ("dj-ancient", "succeeded", "2020-01-01T00:00:00Z")):
+            conn.execute(
+                "INSERT INTO data_jobs (id, kind, title, status, created_at, updated_at) VALUES (?, 'download', 't', ?, ?, 'x')",
+                (job_id, status, created),
+            )
+    target = env / "ohlcv/XRP-USDT/1h.parquet"
+    _write_parquet(target, _bars("2026-01-01", 5))
+    item = storage.trash_paths([target], kind="series", label="XRP", reason="test")
+    manifest = env / ".trash" / item["id"] / "manifest.json"
+    data = json.loads(manifest.read_text())
+    data["deleted_at"] = "2020-01-01T00:00:00Z"  # long past the retention
+    manifest.write_text(json.dumps(data))
+
+    out = run_startup_maintenance()
+    out["purge_thread"].join(10)
+    assert out["interrupted"] == 2 and out["pruned"] >= 1
+    assert jobs.get_job("dj-q")["status"] == jobs.get_job("dj-r")["status"] == "interrupted"
+    assert jobs.get_job("dj-r")["error"]["code"] == "backend_restarted"
+    assert jobs.get_job("dj-ancient") is None
+    assert storage.list_trash()["items"] == []
+
+
+def test_api_startup_runs_the_data_job_maintenance(env, monkeypatch):
+    from forven import api_core
+    import forven.api_domains.data_ops as data_ops
+
+    calls: list[str] = []
+    monkeypatch.setattr(data_ops, "run_startup_maintenance", lambda: calls.append("ran") or {"interrupted": 0})
+    monkeypatch.setattr(api_core, "_bootstrap_scheduler_jobs", lambda: None)
+    monkeypatch.setattr(api_core, "_API_EVENT_LOOP", api_core._API_EVENT_LOOP)  # restored after the test
+    asyncio.run(api_core._on_startup())
+    assert calls == ["ran"]

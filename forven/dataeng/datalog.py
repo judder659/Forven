@@ -241,6 +241,7 @@ def _scan_activity(since: str | None, until: str | None) -> list[dict[str, Any]]
             batch = conn.execute(sql, args).fetchall()
             if not batch:
                 break
+            reached_since = False
             for row in batch:
                 scanned += 1
                 entry = _activity_entry(row[0], row[1], row[2], row[3], row[4])
@@ -248,10 +249,13 @@ def _scan_activity(since: str | None, until: str | None) -> list[dict[str, Any]]
                 if entry is None or ts is None:
                     continue
                 if since and ts < since:
-                    return out  # ids grow with time: everything further back is older
+                    continue
+                reached_since = True
                 if until and ts > until:
                     continue
                 out.append(entry)
+            if since and not reached_since:
+                break  # ids grow with time: a whole batch older than `since` ends the walk
             before = int(batch[-1][0])
     return out
 
