@@ -257,6 +257,7 @@
 	let clock: ReturnType<typeof setInterval> | null = null;
 	let destroyed = false;
 	const following = new Set<string>();
+	const abandoned = new Set<string>();
 
 	let viewedId = '';
 	let viewedResult: BacktestResult | null = null;
@@ -340,13 +341,14 @@
 		following.add(record.resultId);
 		ensureClock();
 		try {
-			for (let attempt = 0; !destroyed; attempt += 1) {
+			for (let attempt = 0; !destroyed && !abandoned.has(record.resultId); attempt += 1) {
 				if (Date.now() - record.submittedAt > POLL_LIMIT_MS) {
 					updateRun(record.resultId, { status: 'failed', error: 'Stopped waiting after 30 minutes. The run may still finish; check the strategy report.' });
 					return;
 				}
 				try {
 					const job = await getJob(record.jobId);
+					if (abandoned.has(record.resultId)) return;
 					const status = String(job.status || '').toLowerCase();
 					if (status === 'succeeded') {
 						updateRun(record.resultId, { status: 'succeeded', progress: undefined, finishedAt: Date.now() });
@@ -463,6 +465,20 @@
 	/** After the next render, bring a section into view (a no-op where the DOM can't scroll). */
 	function scrollToId(id: string) {
 		queueMicrotask(() => document.getElementById(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+	}
+
+	/**
+	 * Stop following a run that looks stuck (e.g. the backend restarted under it),
+	 * so the page can start another. The backend may still finish and save it.
+	 */
+	function stopWaiting(record: RunRecord) {
+		abandoned.add(record.resultId);
+		updateRun(record.resultId, {
+			status: 'failed',
+			error: 'Stopped waiting. If the backend finishes the run, it is saved to the strategy and shows in its report.',
+			finishedAt: Date.now(),
+		});
+		if (viewedId === record.resultId) viewedError = 'Stopped waiting for this run.';
 	}
 
 	function openFullReport() {
@@ -1051,6 +1067,9 @@
 							<div class="uppercase tracking-widest text-[#aaa]">{viewedRun.status === 'queued' ? 'Queued' : 'Running'} · {fmtElapsed(now - viewedRun.submittedAt)}</div>
 							{#if viewedRun.progress}<div class="mt-1 text-[#666]">{viewedRun.progress}</div>{/if}
 							<div class="mt-2 text-[11px] text-[#555]">You can keep editing or leave the page; the run keeps going and is saved to the strategy.</div>
+							{#if now - viewedRun.submittedAt > 60_000}
+								<button type="button" class="terminal-button mt-3 text-[10px]" on:click={() => viewedRun && stopWaiting(viewedRun)}>Stop waiting</button>
+							{/if}
 						</div>
 					{:else if viewedError}
 						<div class="border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{viewedError}</div>

@@ -248,6 +248,28 @@ describe('Manual Backtest page', () => {
 		expect((target.querySelector('#bt-timeframe') as HTMLSelectElement).value).toBe('4h');
 	});
 
+	it('lets you stop waiting for a stuck run and start another', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+		await start();
+		await choose('stochastic');
+		api.submitBacktest.mockResolvedValue({ job_id: 'bt_1', result_id: 'R1', status: 'queued' });
+		api.getJob.mockResolvedValue({ id: 'bt_1', status: 'queued' });
+		await fireEvent.click(button('Run backtest'));
+		await settle();
+		expect(button(/^Running…/)?.disabled).toBe(true);
+		expect(button('Stop waiting')).toBeUndefined();
+
+		await vi.advanceTimersByTimeAsync(61_000);
+		await settle();
+		await fireEvent.click(button('Stop waiting'));
+		await settle();
+		expect(button('Run backtest').disabled).toBe(false);
+		expect(text()).toContain('Stopped waiting');
+		const polls = api.getJob.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(api.getJob.mock.calls.length).toBeLessThanOrEqual(polls + 1);
+	});
+
 	it('explains a full backtest queue', async () => {
 		await start();
 		await choose('stochastic');
