@@ -1092,7 +1092,7 @@ TYPE_NAME = "my_strategy"
 								{/if}
 								<span class="text-[#555]">Bars: <span class="font-mono text-[#aaa]">{chartProps.data.length.toLocaleString()}</span></span>
 							</div>
-							<p class="mt-1 text-[10px] text-[#555]">Markers are the trades Run Backtest takes with these execution settings.</p>
+							<p class="mt-1 text-[10px] text-[#555]">Markers are the trades Run Backtest takes with these execution settings. Its result scores only the out-of-sample last 30% of the window.</p>
 							{#each chartProps.warnings.slice(0, 4) as w}
 								<div class="mt-1 border border-amber-900 bg-amber-500/5 px-3 py-1 text-[11px] text-amber-400">{w}</div>
 							{/each}
