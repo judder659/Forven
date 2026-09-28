@@ -436,3 +436,30 @@ def test_explicit_symbol_and_timeframe_still_override_the_row(captured, monkeypa
     assert kw["asset"] == "ETH"
     assert kw["timeframe"] == "1d"
     assert kw["sync_strategy_state"] is False
+
+
+def test_manual_registration_never_rewrites_code_a_forge_strategy_ran(forven_db, monkeypatch):
+    """Two drafts sharing a TYPE_NAME must not swap the code under a Forge strategy."""
+    import os
+
+    from forven.db import get_db
+    monkeypatch.setattr("forven.selfheal.validate_strategy_code", lambda code: {"valid": True, "code": code})
+    custom_dir = os.path.join(os.path.dirname(core.__file__), "strategies", "custom")
+    os.makedirs(custom_dir, exist_ok=True)
+    manual_path = os.path.join(custom_dir, "manual_manual_wiring_test.py")
+    with open(manual_path, "w", encoding="utf-8") as fh:
+        fh.write(_VALID_STRATEGY)
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO strategies (id, name, type, runtime_type, params, symbol, timeframe, status, stage, source, created_at, updated_at) "
+                "VALUES ('S09999', 'Tested', 'manual_wiring_test', 'manual_wiring_test', '{}', 'BTC', '1h', 'active', 'quick_screen', 'manual_backtest', '2026-01-01', '2026-01-01')"
+            )
+        changed = _VALID_STRATEGY.replace('"oversold": 30', '"oversold": 25')
+        res = core.register_manual_backtest_strategy(core.ManualStrategyBody(code=changed))
+        assert res["registered"] is False
+        assert "belongs to Forge strategy S09999" in res["errors"][0]
+        with open(manual_path, encoding="utf-8") as fh:
+            assert fh.read() == _VALID_STRATEGY
+    finally:
+        os.remove(manual_path)

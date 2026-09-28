@@ -7013,6 +7013,23 @@ def register_manual_backtest_strategy(body: ManualStrategyBody) -> dict:
     except Exception:
         reset = discover = None  # type: ignore
 
+    # A Forge strategy was tested on this file's code; swapping the code under it
+    # would leave its evidence describing other code (and fail its identity check).
+    try:
+        with open(manual_path, encoding="utf-8") as fh:
+            current_code = fh.read()
+    except OSError:
+        current_code = None
+    if current_code is not None and current_code.splitlines() != final_code.splitlines():
+        from forven.strategy_creator import forge_strategy_running_type
+
+        holder = forge_strategy_running_type(type_name)
+        if holder:
+            return {"valid": True, "registered": False, "strategy_name": type_name,
+                    "default_params": {},
+                    "errors": [f"TYPE_NAME '{type_name}' belongs to Forge strategy {holder}, which was tested on its current code. Give this version its own TYPE_NAME and strategy_type."],
+                    "warnings": warnings}
+
     with open(manual_path, "w", encoding="utf-8") as fh:
         fh.write(final_code)
 
