@@ -35,22 +35,12 @@ HEALTH_CIRCUIT_BREAKER_COUNT = 3  # recoveries before escalation
 HEALTH_CIRCUIT_BREAKER_WINDOW = 900  # 15 min window for circuit breaker
 HEALTH_MAX_ALERTS = 100  # rolling alert history size
 HEALTH_WARN_CONSECUTIVE = 2  # consecutive amber checks before Discord alert
-# Data-stream health: consecutive failures -> RED; per-stream staleness SLA (max
-# minutes without a successful collection) before AMBER, operator-overridable via
-# forven:settings.staleness_thresholds.
+# Data-stream health: consecutive collection failures -> RED (telemetry). Data
+# AGE is judged by the freshness SLA (forven/dataeng/sla.py) — the same rule the
+# gate, the collector and the Data page use: a stream is stale when a series a
+# live, paper or pipeline consumer reads is in breach.
 DATA_STREAM_FAILURE_RED = 3
-_DATA_STREAM_SLA_MINUTES = {
-    "ohlcv": 60,
-    "funding": 12 * 60,
-    "oi": 3 * 60,
-    "long_short_ratio": 3 * 60,
-    "taker_volume": 3 * 60,
-    "liquidations": 3 * 60,
-    "fear_greed": 36 * 60,
-    "macro": 36 * 60,
-    "btc_dominance": 12 * 60,
-}
-_DATA_STREAM_SLA_DEFAULT_MINUTES = 6 * 60
+_SLA_WATCHED_TIERS = ("live", "paper", "pipeline")
 
 
 class State(str, Enum):
@@ -686,7 +676,7 @@ def check_data_collector() -> ComponentStatus:
         from forven.scheduler import get_enabled_jobs
         jobs = get_enabled_jobs()
         data_job_ids = {
-            "forven-data-ohlcv-keepalive", "forven-data-funding-collect",
+            "forven-data-sla-collector", "forven-data-funding-collect",
             "forven-data-lsr-collect", "forven-data-taker-collect",
             "forven-data-liquidation-collect", "forven-data-fng-collect",
             "forven-data-macro-collect", "forven-data-btcdom-collect",
@@ -731,22 +721,18 @@ def check_data_collector() -> ComponentStatus:
         )
 
 
-def _stream_staleness_sla_minutes(stream: str) -> float:
-    """Max minutes a stream may go without a successful collection before stale.
+def _sla_breaches_by_stream() -> dict[str, int]:
+    """Series in breach per stream, among those a live, paper or pipeline
+    consumer reads (frozen series excluded) — from the SLA census snapshot."""
+    from forven.dataeng.collector import TELEMETRY_NAMES, get_snapshot
 
-    Operator-overridable via forven:settings.staleness_thresholds (minutes per
-    stream) — wiring the previously-dead staleness_thresholds setting.
-    """
-    try:
-        from forven.db import kv_get
-
-        settings = kv_get("forven:settings", {})
-        overrides = settings.get("staleness_thresholds") if isinstance(settings, dict) else None
-        if isinstance(overrides, dict) and stream in overrides:
-            return float(overrides[stream])
-    except Exception:
-        pass
-    return float(_DATA_STREAM_SLA_MINUTES.get(stream, _DATA_STREAM_SLA_DEFAULT_MINUTES))
+    counts: dict[str, int] = {}
+    for row in get_snapshot().rows:
+        if row.frozen or row.tier not in _SLA_WATCHED_TIERS or row.state != "breach":
+            continue
+        name = TELEMETRY_NAMES.get(row.stream, row.stream)
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def check_data_freshness() -> ComponentStatus:
@@ -754,8 +740,9 @@ def check_data_freshness() -> ComponentStatus:
 
     check_data_collector only proves the data jobs are scheduled (next_run_at).
     This reads the persisted collection telemetry to catch a stream that is
-    repeatedly FAILING or whose last successful collection is stale beyond its
-    SLA — the dominant invisible failure (green dashboard over stale data).
+    repeatedly FAILING, and the freshness SLA census to catch a stream whose
+    live/paper/pipeline series are in breach — the dominant invisible failure
+    (green dashboard over stale data).
     """
     try:
         from forven.data_manager import data_manager_stats
@@ -777,15 +764,10 @@ def check_data_freshness() -> ComponentStatus:
                 err = str(entry.get("last_error") or "")[:60]
                 red.append(f"{stream} ({cf} fails: {err})")
                 continue
-            last_ok = _parse_iso(entry.get("last_success_ts"))
-            if last_ok is None:
-                if int(entry.get("total_calls", 0) or 0) > 0:
-                    amber.append(f"{stream} (no success yet)")
-                continue
-            age_min = (now - last_ok).total_seconds() / 60.0
-            sla = _stream_staleness_sla_minutes(stream)
-            if age_min > sla:
-                amber.append(f"{stream} (stale {age_min:.0f}m > {sla:.0f}m)")
+            if entry.get("last_success_ts") is None and int(entry.get("total_calls", 0) or 0) > 0:
+                amber.append(f"{stream} (no success yet)")
+        for stream, count in sorted(_sla_breaches_by_stream().items()):
+            amber.append(f"{stream} stale ({count} live/paper/pipeline series in breach)")
 
         if red:
             return ComponentStatus(
@@ -815,9 +797,10 @@ def check_data_freshness() -> ComponentStatus:
 
 
 def data_health_score() -> int | None:
-    """Aggregate 0-100 data-health score from collection telemetry, suitable for
-    the autonomous loop to gate on (e.g. refuse to start a gauntlet on degraded
-    data). 100 = all streams fresh and succeeding; deductions per failing/stale
+    """Aggregate 0-100 data-health score from collection telemetry and the
+    freshness SLA, suitable for the autonomous loop to gate on (e.g. refuse
+    to start a gauntlet on degraded data). 100 = every stream succeeding and
+    no live/paper/pipeline series in breach; deductions per failing or stale
     stream. None means collection health has not been established."""
     try:
         from forven.data_manager import data_manager_stats
@@ -825,9 +808,8 @@ def data_health_score() -> int | None:
         stats = data_manager_stats()
         if not stats:
             return None
-        now = datetime.now(timezone.utc)
         score = 100
-        for stream, entry in stats.items():
+        for entry in stats.values():
             if not isinstance(entry, dict):
                 continue
             cf = int(entry.get("consecutive_failures", 0) or 0)
@@ -835,11 +817,7 @@ def data_health_score() -> int | None:
                 score -= 25
             elif cf > 0:
                 score -= 5
-            last_ok = _parse_iso(entry.get("last_success_ts"))
-            if last_ok is not None:
-                age_min = (now - last_ok).total_seconds() / 60.0
-                if age_min > _stream_staleness_sla_minutes(stream):
-                    score -= 10
+        score -= 10 * len(_sla_breaches_by_stream())
         return max(0, min(100, score))
     except Exception:
         return None
@@ -1091,20 +1069,19 @@ def _attempt_recovery_sync(state: HealthState, name: str, status: ComponentStatu
             success = bool(result.get("recovered", 0))
 
         elif name == "data_collector":
-            # Actually trigger a keep-alive sweep (this was an alert-only stub
-            # that reported success without doing anything). Bounded to the 8
-            # stalest pairs — same budget as the scheduled job — and run in a
-            # daemon thread so recovery never blocks the monitor loop.
-            from forven.data_manager import data_manager
+            # Run one SLA collector tick now (the most overdue series first,
+            # within the normal request and time budget) in a daemon thread so
+            # recovery never blocks the monitor loop.
+            from forven.dataeng.collector import run_tick
 
             def _refetch() -> None:
                 try:
-                    data_manager.collect_ohlcv(max_pairs_per_run=8)
+                    run_tick()
                 except Exception as exc:
-                    log.warning("data_collector recovery sweep failed: %s", exc)
+                    log.warning("data_collector recovery tick failed: %s", exc)
 
             threading.Thread(target=_refetch, daemon=True, name="data-collector-recovery").start()
-            action = "Triggered OHLCV keep-alive sweep (8 stalest pairs)"
+            action = "Triggered an SLA collector tick (most overdue series first)"
             success = True
 
         elif name == "lab_worker":
@@ -1163,101 +1140,66 @@ def _attempt_recovery_sync(state: HealthState, name: str, status: ComponentStatu
 # Data integrity checks (Pass 2)
 # ---------------------------------------------------------------------------
 
+def _consumers_label(row: Any) -> str:
+    entry = getattr(row, "consumers", None)
+    if entry is None:
+        return "no consumers"
+    names = [f"{s.get('id')} ({s.get('stage')})" for s in entry.strategies[:3]]
+    names += [f"bot {b.get('name') or b.get('id')}" for b in entry.bots[:2]]
+    more = len(entry.strategies) + len(entry.bots) - len(names)
+    return ", ".join(names) + (f" +{more} more" if more > 0 else "") if names else "no consumers"
+
+
 def check_candle_freshness() -> list[DataCheck]:
-    """Check if candle data for actively-traded symbols is fresh.
+    """Freshness of the candles live and paper strategies — and running bots —
+    trade on, through the freshness SLA at the consumer's tier (the rule the
+    census, the collector and the Data page use).
 
-    Reads the parquet lake (footer timestamps) — the previous implementation
-    queried a SQLite ``ohlcv`` table that does not exist anywhere in the
-    schema, so with any running bot this check emitted "Query failed: no such
-    table" warnings forever and never measured real staleness.
-
-    Thresholds are timeframe-aware with absolute floors: a 4h series is not
-    "stale" after 2 wall-clock hours, and a 1m series is not paged for a
-    keep-alive rotation lag. WARNING past max(2h, 3 bars); CRITICAL past
-    max(6h, 8 bars).
+    CRITICAL: a live-tier series in breach, or missing. WARNING: a live series
+    late, a paper series late / in breach / missing. The consumers come from
+    the consumer index (strategies by stage, running bots by their locked
+    pairs). The previous version read get_running_bots(), which never selects
+    locked_pairs, so it never saw a pair — and it ignored strategies. The
+    actual lag is judged even for a frozen series: frozen means "not
+    collected", which for a traded series is exactly what must page.
     """
-    results = []
+    results: list[DataCheck] = []
     try:
-        from forven.db import get_running_bots
-        running = get_running_bots()
-        if not running:
-            return [DataCheck(name="candle_freshness", passed=True, detail="No active bots")]
+        from forven.dataeng import sla
+        from forven.dataeng.collector import get_snapshot
 
-        # Collect unique symbols from running bots
-        symbols = set()
-        for bot in running:
-            pairs = bot.get("locked_pairs")
-            if isinstance(pairs, str):
-                try:
-                    import json
-                    pairs = json.loads(pairs)
-                except Exception:
-                    pairs = []
-            if isinstance(pairs, list):
-                symbols.update(pairs)
-
-        if not symbols:
-            return [DataCheck(name="candle_freshness", passed=True, detail="No locked pairs")]
-
-        from forven.data import _timeframe_to_ms, dataset_last_timestamp_ms
-        from forven.data_manager import data_manager
-
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        for symbol in sorted(symbols):
-            try:
-                fs_symbol = data_manager._normalize_keepalive_symbol(symbol, require_dataset=True)
-                if fs_symbol is None:
-                    results.append(DataCheck(
-                        name=f"candle:{symbol}",
-                        passed=False,
-                        severity=Severity.CRITICAL,
-                        detail="No candle dataset found for locked pair",
-                    ))
-                    continue
-                timeframes = data_manager.get_active_timeframes(fs_symbol) or {"1h"}
-                worst: tuple[str, float, float] | None = None  # (tf, age_h, age_bars)
-                any_data = False
-                for tf in sorted(timeframes):
-                    last_ms = dataset_last_timestamp_ms(fs_symbol, tf)
-                    if last_ms is None:
-                        continue
-                    any_data = True
-                    tf_ms = max(1, _timeframe_to_ms(tf))
-                    age_h = max(0.0, (now_ms - last_ms) / 3_600_000.0)
-                    age_bars = (now_ms - last_ms) / tf_ms
-                    if worst is None or age_bars > worst[2]:
-                        worst = (tf, age_h, age_bars)
-                if not any_data:
-                    results.append(DataCheck(
-                        name=f"candle:{symbol}",
-                        passed=False,
-                        severity=Severity.CRITICAL,
-                        detail="No candle data found",
-                    ))
-                    continue
-                tf, age_h, age_bars = worst
-                warn = age_h > 2.0 and age_bars > 3.0
-                crit = age_h > 6.0 and age_bars > 8.0
-                if crit or warn:
-                    results.append(DataCheck(
-                        name=f"candle:{symbol}",
-                        passed=False,
-                        severity=Severity.CRITICAL if crit else Severity.WARNING,
-                        detail=f"Last {tf} candle {age_h:.1f}h ago ({age_bars:.1f} bars)",
-                    ))
-                else:
-                    results.append(DataCheck(
-                        name=f"candle:{symbol}",
-                        passed=True,
-                        detail=f"Fresh ({tf}: {age_h:.1f}h ago)",
-                    ))
-            except Exception as exc:
+        snapshot = get_snapshot()
+        rows = [
+            row for row in snapshot.rows
+            if row.stream == "ohlcv" and row.venue == "canonical" and row.tier in ("live", "paper")
+        ]
+        if not rows:
+            return [DataCheck(name="candle_freshness", passed=True, detail="No live or paper series")]
+        for row in sorted(rows, key=lambda r: (r.tier != "live", r.symbol, r.timeframe)):
+            name = f"candle:{row.symbol}:{row.timeframe}"
+            lag = row.sla.get("lag_seconds")
+            allowed_h = float(row.sla["allowed_seconds"]) / 3600.0
+            state = sla.classify(lag, row.timeframe, row.tier, policy=snapshot.policy)
+            if state == "fresh":
                 results.append(DataCheck(
-                    name=f"candle:{symbol}",
-                    passed=False,
-                    severity=Severity.WARNING,
-                    detail=f"Freshness read failed: {exc}",
+                    name=name, passed=True,
+                    detail=f"Fresh ({row.timeframe}: last bar opened {float(lag) / 3600.0:.1f}h ago)",
                 ))
+                continue
+            critical = row.tier == "live" and state in ("breach", "missing")
+            if state == "missing":
+                detail = f"No {row.timeframe} candles stored; feeds {_consumers_label(row)}"
+            else:
+                detail = (
+                    f"Last {row.timeframe} bar opened {float(lag) / 3600.0:.1f}h ago "
+                    f"(allowed {allowed_h:.1f}h, {state}); feeds {_consumers_label(row)}"
+                )
+            results.append(DataCheck(
+                name=name,
+                passed=False,
+                severity=Severity.CRITICAL if critical else Severity.WARNING,
+                detail=detail,
+            ))
     except Exception as exc:
         results.append(DataCheck(
             name="candle_freshness",

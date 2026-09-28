@@ -1249,295 +1249,70 @@ def get_data_engine_status() -> dict:
 
 
 def post_data_engine_backfill_plan() -> dict:
-    from forven.dataeng.catalog import Catalog
-    from forven.dataeng.catchup import CatchUpPlanner
+    """The old /data page's backfill plan: the SLA collector's candle queue
+    (refreshes, bootstraps and gap repairs, most urgent first) in the plan
+    shape the page renders. The collector drains the same queue every tick."""
+    from forven.dataeng import collector
 
-    # Refresh coverage from the lake first, so the plan reflects bars written since
-    # the last scan (collect/backfill update the parquet lake but NOT the catalog —
-    # without this the plan never drains after an Execute).
-    catalog = Catalog()
     try:
-        catalog.scan_lake()
-    except Exception as exc:
-        log.warning("Backfill plan: lake scan failed, using existing coverage: %s", exc)
-    try:
-        tasks = CatchUpPlanner(catalog=catalog).plan()
+        snapshot = collector.get_snapshot(refresh=True)
+        tasks = [t for t in collector.build_queue(snapshot) if t.row.stream == "ohlcv"]
     except Exception as exc:
         log.error("Failed to plan Data Engine backfill: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
         "task_count": len(tasks),
-        "tasks": [
-            {
-                "source": task.source,
-                "market": task.market,
-                "symbol": task.symbol,
-                "timeframe": task.timeframe,
-                "stream": task.stream,
-                "start_ts": task.start_ts,
-                "end_ts": task.end_ts,
-                "permanent": task.permanent,
-            }
-            for task in tasks
-        ],
+        "tasks": [collector.legacy_plan_task(task, snapshot.now) for task in tasks],
     }
-
-
-# Series whose last catch-up attempt stalled (added 0 bars and couldn't fetch
-# newer data — delisted symbol, unfillable gap, persistent fetch error). They
-# are deprioritized for a cooldown window so a permanently-stalled
-# alphabetically-first series can't monopolize every 10-minute batch slot.
-# Process-local is fine: the job runs in-process and re-plans from the lake.
-_CATCHUP_STALL_COOLDOWN_SECS = 6 * 3600.0
-_catchup_stalled: dict[tuple[str, str, str, str], float] = {}
-
-# History window (calendar days) requested when BOOTSTRAPPING a brand-new
-# (symbol, timeframe) that has no catalog row yet. Matches the generation
-# universe's own seed default (coverage.backfill_universe / the global
-# DEFAULT_BACKTEST_DURATION_DAYS = 730), so a freshly-activated symbol lands with
-# the same ~2 years of history the quick-screen/backtest windows expect — a
-# thinner window would manufacture the "too-few-trades" rejections that the
-# demand-driven coverage machinery exists to prevent.
-_BOOTSTRAP_HISTORY_DAYS = 730
-
-
-def execute_data_engine_catchup(
-    max_tasks: int = 10, *, cap: int = 50, deadline_seconds: float | None = None
-) -> dict:
-    """Run a bounded batch of the Data Engine candle catch-up plan and return a
-    summary.
-
-    Pure (raises plain exceptions, never ``HTTPException``) so both the HTTP
-    endpoint and the scheduled ``forven-data-engine-catchup`` auto-drain job can
-    call it. Binance gap-fill tasks use ``backfill_ohlcv_gaps``; Hyperliquid
-    tasks use its venue collector and gap repair, then verify stored bars. Unsupported
-    venue repairs fail explicitly. The Binance helper reports bars_added and a
-    no_recent_data flag so a series that genuinely can't
-    advance is counted as ``failed`` rather than silently reported as a green
-    success. ``bootstrap`` tasks — an active (symbol, timeframe) with no catalog
-    row — instead route to the demand-driven coverage machinery
-    (``ensure_coverage``), which backfill_ohlcv_gaps can't serve (it only extends
-    an EXISTING series, so a brand-new symbol is a 0-bar no-op there).
-
-    ``deadline_seconds`` is a wall-clock budget: the batch stops gracefully once
-    it is exceeded (returning partial progress; the next run continues the drain).
-    The scheduler passes a value below its own job timeout so this job always
-    returns in time instead of overrunning — an overrun can't be killed (Python
-    threads), leaving a zombie thread that holds the scheduler lock.
-    """
-    job_start = time.monotonic()
-
-    # Self-healing coverage: ensure the generation universe (scan symbols × screen and
-    # sweep timeframes) has enough history for the screen window, triggering async
-    # backfills for any shortfall. The planner below only keeps EXISTING catalog series
-    # current — it never adds history a generated strategy needs. Cheap when already
-    # covered; non-blocking (submit_ingestion is async). Never fail the drain on it.
-    try:
-        from forven.dataeng.coverage import ensure_universe_coverage
-
-        ensure_universe_coverage()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Data Engine catch-up: universe coverage ensure skipped: %s", exc)
-
-    # Keep the symbol registry current (new listings, delistings) on the same
-    # cadence — one markets+tickers call per 30-min run. Best-effort, and
-    # gated on the same network switch as auto-backfill so the test suite
-    # never hits the venue (load_markets + fetch_tickers hang/slow tests).
-    try:
-        from forven.dataeng.coverage import _autobackfill_enabled
-        from forven.dataeng.universe import refresh_symbol_registry
-
-        if _autobackfill_enabled():
-            refresh_symbol_registry()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Data Engine catch-up: symbol registry refresh skipped: %s", exc)
-
-    from forven.dataeng.catalog import Catalog
-    from forven.dataeng.catchup import CatchUpPlanner, execute_candle_catchup
-
-    # Refresh coverage from the parquet lake BEFORE planning. backfill writes
-    # bars to parquet but nothing else updates the DuckDB series_coverage
-    # table (scan_lake is its sole writer), so without this rescan the
-    # scheduled job re-plans — and re-executes — the same alphabetically-first
-    # batch forever and the backlog never drains autonomously.
-    catalog = Catalog()
-    try:
-        catalog.scan_lake()
-    except Exception as exc:
-        log.warning("Data Engine catch-up: lake scan failed, using existing coverage: %s", exc)
-    tasks = CatchUpPlanner(catalog=catalog).plan()
-
-    # The planner emits OHLCV (candles) catch-up tasks; trades/orderbook are
-    # microstructure streams not collected through this path.
-    candle_tasks = [t for t in tasks if str(t.stream or "").lower() == "candles"]
-
-    # Stable sort: series that stalled recently go to the back of the queue so
-    # the bounded batch advances past them instead of retrying the same
-    # unfillable head every run.
-    now_mono = time.monotonic()
-    candle_tasks.sort(
-        key=lambda t: (
-            1
-            if (now_mono - _catchup_stalled.get((t.source, t.market, t.symbol, t.timeframe), -_CATCHUP_STALL_COOLDOWN_SECS))
-            < _CATCHUP_STALL_COOLDOWN_SECS
-            else 0
-        )
-    )
-    batch = candle_tasks[: max(1, min(int(max_tasks or 10), cap))]
-
-    executed = rows_added = failed = bootstrapped = 0
-    deadline_hit = False
-    results: list[dict] = []
-    for t in batch:
-        identity = {"source": t.source, "market": t.market, "symbol": t.symbol, "timeframe": t.timeframe}
-        series_key = (t.source, t.market, t.symbol, t.timeframe)
-        # Wall-clock budget: stop before the scheduler's job timeout so this job
-        # always returns (an overrun leaves an unkillable zombie thread holding
-        # the scheduler lock). Partial progress is fine — the next run continues.
-        if deadline_seconds is not None and (time.monotonic() - job_start) >= deadline_seconds:
-            deadline_hit = True
-            log.warning(
-                "Data Engine catch-up: %.0fs deadline reached after %d/%d task(s) — "
-                "stopping; next run continues the drain.",
-                deadline_seconds, executed, len(batch),
-            )
-            break
-        executed += 1
-        # A bootstrap task targets a brand-new (symbol, timeframe) with NO catalog
-        # row. backfill_ohlcv_gaps only EXTENDS an existing series — on a symbol
-        # with no stored bars it is a harmless 0-bar no-op, so history never
-        # actually lands. Route those to the demand-driven coverage machinery
-        # (ensure_coverage), which was built exactly to make a pair exist with
-        # enough history via an async submit_ingestion download.
-        is_bootstrap = str(getattr(t, "reason", "stale") or "") == "bootstrap"
-        try:
-            if is_bootstrap:
-                added, kicked_off = _execute_bootstrap_task(t)
-                rows_added += added
-                if kicked_off:
-                    bootstrapped += 1
-                # A bootstrap is never a "stall": ensure_coverage degrades to
-                # "ready" (source exhausted / autobackfill disabled) rather than
-                # failing, so it must not enter the stall cooldown.
-                _catchup_stalled.pop(series_key, None)
-                results.append(
-                    {
-                        **identity,
-                        "rows_added": added,
-                        "bootstrap": True,
-                        "backfilling": kicked_off,
-                    }
-                )
-                continue
-            res = execute_candle_catchup(t)
-            added = int(res.get("bars_added") or 0)
-            rows_added += added
-            # Count an unreached venue tail as incomplete even if some bars landed.
-            # Legacy primary repairs report a stall through no_recent_data.
-            stalled = res.get("target_reached") is False or (added == 0 and bool(res.get("no_recent_data")))
-            if stalled:
-                failed += 1
-                _catchup_stalled[series_key] = time.monotonic()
-            else:
-                _catchup_stalled.pop(series_key, None)
-            results.append(
-                {
-                    **identity, "rows_added": added, "stalled": stalled,
-                    **{key: res[key] for key in ("gaps_remaining", "unavailable_bars") if key in res},
-                }
-            )
-        except Exception as exc:
-            # Per-task isolation: one unfetchable bootstrap / backfill must not
-            # abort the rest of the plan (mirror the existing gap-fill handling).
-            failed += 1
-            _catchup_stalled[series_key] = time.monotonic()
-            results.append({**identity, "error": str(exc)[:200]})
-
-    try:
-        from forven.data import _log_data_action
-
-        # Bootstraps kick off ASYNC downloads (submit_ingestion runs on the data
-        # thread pool), so their bars usually land on a LATER run — surfacing the
-        # bootstrap count keeps "+Y bars" honest instead of hiding an in-flight
-        # fetch as a silent 0-bar success.
-        bootstrap_note = f", {bootstrapped} bootstrapped" if bootstrapped else ""
-        unavailable = sum(int(result.get("unavailable_bars", 0)) for result in results)
-        repair_note = f", {unavailable} missing bars outside venue retention" if unavailable else ""
-        _log_data_action(
-            "backfill",
-            f"Executed Data Engine backfill plan: {executed} task(s), +{rows_added:,} bars, "
-            f"{failed} failed{bootstrap_note}{repair_note}",
-            level="warning" if failed else "info",
-            executed=executed,
-            failed=failed,
-            rows_added=rows_added,
-            bootstrapped=bootstrapped,
-        )
-    except Exception:
-        pass
-
-    return {
-        "planned_total": len(tasks),
-        "candle_total": len(candle_tasks),
-        "executed": executed,
-        "rows_added": rows_added,
-        "failed": failed,
-        "bootstrapped": bootstrapped,
-        "deadline_hit": deadline_hit,
-        "results": results[:50],
-    }
-
-
-def _execute_bootstrap_task(task) -> tuple[int, bool]:
-    """Bootstrap a brand-new (symbol, timeframe) via the demand-driven coverage
-    machinery. Returns ``(bars_added, kicked_off)`` where ``bars_added`` is any
-    history that already landed for this series by the time we look (0 while an
-    async download is still in flight) and ``kicked_off`` is True when a fresh
-    async backfill was submitted / an in-flight one reused.
-
-    ensure_coverage is non-blocking: it submits the download onto the data thread
-    pool and returns immediately. So the honest bar count for THIS run is whatever
-    the run store already reports for the submitted ingestion (usually 0 — the
-    bars land on a later catch-up run, by which point the now-catalogued series
-    drains as an ordinary gap-fill task and its bars are counted there).
-    """
-    from forven.dataeng.coverage import ensure_coverage
-
-    source = str(getattr(task, "source", "") or "binance") or "binance"
-    res = ensure_coverage(
-        task.symbol, task.timeframe, _BOOTSTRAP_HISTORY_DAYS, exchange=source
-    )
-    kicked_off = str(res.get("status") or "") == "backfilling"
-
-    # Fold in any bars that already landed for the submitted ingestion. Pending /
-    # running downloads report 0 (nothing has landed yet) — honest, not a stall.
-    added = 0
-    run_id = res.get("run_id")
-    if run_id:
-        try:
-            from forven.data import get_ingestion_run
-
-            run = get_ingestion_run(str(run_id)) or {}
-            added = int(run.get("bars_new") or 0)
-        except Exception:
-            added = 0
-    return added, kicked_off
 
 
 def post_execute_data_engine_backfill(max_tasks: int = 10) -> dict:
-    """Execute a bounded batch of the Data Engine catch-up plan, so the plan is
-    actionable rather than preview-only.
+    """The old page's "Execute plan": run the head of the candle queue now as
+    one user refresh job (Jobs view / Data Log) and wait for it. Returns the
+    old summary shape; a queue item that fetched nothing newer while its
+    series was late counts as failed, never as a green success."""
+    from forven.dataeng import collector, jobs
 
-    Thin HTTP wrapper around :func:`execute_data_engine_catchup`. Bounded per call;
-    the caller re-plans afterward (the plan endpoint rescans the lake) to see the
-    backlog drain. The same logic runs automatically via the scheduled
-    ``forven-data-engine-catchup`` job.
-    """
     try:
-        return execute_data_engine_catchup(max_tasks)
+        snapshot = collector.get_snapshot(refresh=True)
+        queue = collector.build_queue(snapshot)
+        candles = [t for t in queue if t.row.stream == "ohlcv"]
+        batch = candles[: max(1, min(int(max_tasks or 10), 50))]
+        if not batch:
+            return {"planned_total": len(queue), "candle_total": 0, "executed": 0, "rows_added": 0,
+                    "failed": 0, "bootstrapped": 0, "deadline_hit": False, "results": []}
+        job = collector.submit_refresh(
+            series=[t.row.id for t in batch],
+            mode="queue",
+            title=f"Execute backfill plan ({len(batch)} series)",
+        )
+        done = jobs.wait_for(job["id"], timeout=600.0) or job
     except Exception as exc:
         log.error("Failed to execute Data Engine backfill: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    outcome = done.get("result") if isinstance(done.get("result"), dict) else {}
+    results = []
+    for item in outcome.get("results") or []:
+        entry = {"symbol": item.get("symbol"), "timeframe": item.get("timeframe"), "rows_added": int(item.get("bars_added") or 0)}
+        if item.get("error"):
+            entry["error"] = str(item["error"])[:200]
+        elif item.get("action") in ("refresh", "gaps") and not item.get("bars_added"):
+            entry["stalled"] = True
+        results.append(entry)
+    failed = sum(1 for r in results if r.get("error") or r.get("stalled"))
+    if done.get("status") == "failed" and not results:
+        failed = len(batch)
+    return {
+        "planned_total": len(queue),
+        "candle_total": len(candles),
+        "executed": len(results) or len(batch),
+        "rows_added": int(outcome.get("bars_added") or 0),
+        "failed": failed,
+        "bootstrapped": sum(1 for r in outcome.get("results") or [] if r.get("action") == "bootstrap"),
+        "deadline_hit": done.get("status") in ("queued", "running"),
+        "results": results[:50],
+        "job_id": done.get("id"),
+    }
 
 
 def post_backfill_gaps(symbol: str, timeframe: str, max_gaps: int | None = None) -> dict:
@@ -1814,46 +1589,45 @@ _collect_debounce: dict[tuple[str, str], float] = {}
 _collect_debounce_lock = threading.Lock()
 _COLLECT_DEBOUNCE_SECS = 60.0
 
-# Cadences per stream (seconds) — amber if age > 2×
-_STREAM_CADENCES = {
-    "ohlcv": 900,       # 15 min
-    "funding": 28800,   # 8 h
-    "oi": 3600,         # 1 h
-}
+def _stream_health_from_footer(row_count: int, last_ms: int | None, timeframe: str, tier: str) -> dict:
+    """Stream health from footer stats only — NEVER a full column/series load —
+    classified through the freshness SLA at the series' consumer tier:
+    "live" = fresh, "accumulating" = late or in breach, "no_data" = missing."""
+    from forven.dataeng import sla
 
-
-
-
-def _stream_health_from_footer(row_count: int, last_ms: int | None, cadence_secs: int) -> dict:
-    """Stream health from footer stats only — NEVER a full column/series load.
-    The previous implementation loaded the ENTIRE series into pandas just to
-    read the last timestamp; on the post-backfill 1m series (millions of rows)
-    that made the Datasets tab take seconds per click on the single worker."""
     if not row_count or last_ms is None:
         return {"status": "no_data", "row_count": 0, "last_updated": None, "data_age_hours": None}
-    now = datetime.now(timezone.utc)
     last_ts = pd.Timestamp(last_ms, unit="ms", tz="UTC")
-    age_secs = (now - last_ts).total_seconds()
+    assessment = sla.assess(last_ms, timeframe, tier)
     return {
-        "status": "live" if age_secs <= cadence_secs * 2 else "accumulating",
+        "status": "live" if assessment["state"] == "fresh" else "accumulating",
         "row_count": int(row_count),
         "last_updated": last_ts.isoformat(),
-        "data_age_hours": round(age_secs / 3600, 2),
+        "data_age_hours": round(float(assessment["lag_seconds"] or 0.0) / 3600, 2),
+        "sla": assessment,
     }
 
 
-def _footer_stream_stats(path) -> tuple[int, int | None]:
-    """(row_count, last_ms) for a stream parquet from its footer; (0, None)
-    when absent/unreadable."""
+def _footer_stream_stats(path) -> tuple[int, int | None, int | None]:
+    """(row_count, first_ms, last_ms) for a stream parquet from its footer;
+    (0, None, None) when absent/unreadable."""
     from forven.data import _footer_bounds
 
     try:
         if not path.exists():
-            return 0, None
-        rows, _, last_ms = _footer_bounds(path)
-        return rows, last_ms
+            return 0, None, None
+        return _footer_bounds(path)
     except Exception:
-        return 0, None
+        return 0, None, None
+
+
+def _funding_cadence(rows: int, first_ms: int | None, last_ms: int | None) -> str:
+    """Nearest of 1h/4h/8h to a funding file's average print spacing (the
+    same inference the lake enumeration uses)."""
+    if rows > 1 and first_ms is not None and last_ms is not None and last_ms > first_ms:
+        hours = (last_ms - first_ms) / 3_600_000.0 / (rows - 1)
+        return f"{min((1, 4, 8), key=lambda cadence: abs(cadence - hours))}h"
+    return "8h"
 
 
 def get_stream_health(symbol: str) -> dict:
@@ -1861,7 +1635,10 @@ def get_stream_health(symbol: str) -> dict:
     try:
         from forven.data import _series_row_count, dataset_last_timestamp_ms, symbol_to_fs
         from forven.data_manager import FUNDING_DIR, OI_DIR, data_manager
+        from forven.dataeng.consumers import get_consumer_index
+
         fs_symbol = symbol_to_fs(symbol)
+        index = get_consumer_index()
 
         # OHLCV — use most recently active timeframe (footer reads only)
         timeframes = data_manager.get_active_timeframes(symbol)
@@ -1869,21 +1646,28 @@ def get_stream_health(symbol: str) -> dict:
         ohlcv_health = _stream_health_from_footer(
             _series_row_count(symbol, tf),
             dataset_last_timestamp_ms(symbol, tf),
-            _STREAM_CADENCES["ohlcv"],
+            tf,
+            index.for_series(fs_symbol, tf).tier,
         )
         ohlcv_health["timeframe"] = tf
 
         # Funding
-        funding_rows, funding_last = _footer_stream_stats(FUNDING_DIR / fs_symbol / "history.parquet")
-        funding_health = _stream_health_from_footer(funding_rows, funding_last, _STREAM_CADENCES["funding"])
+        funding_rows, funding_first, funding_last = _footer_stream_stats(FUNDING_DIR / fs_symbol / "history.parquet")
+        funding_health = _stream_health_from_footer(
+            funding_rows,
+            funding_last,
+            _funding_cadence(funding_rows, funding_first, funding_last),
+            index.symbol_tier(fs_symbol),
+        )
 
         # OI — first timeframe with data
-        oi_rows, oi_last = 0, None
+        oi_rows, oi_last, oi_tf = 0, None, "1h"
         for t in list(timeframes) + ["1h", "4h"]:
-            oi_rows, oi_last = _footer_stream_stats(OI_DIR / fs_symbol / f"{t}.parquet")
+            oi_rows, _, oi_last = _footer_stream_stats(OI_DIR / fs_symbol / f"{t}.parquet")
             if oi_rows:
+                oi_tf = t
                 break
-        oi_health = _stream_health_from_footer(oi_rows, oi_last, _STREAM_CADENCES["oi"])
+        oi_health = _stream_health_from_footer(oi_rows, oi_last, oi_tf, index.for_series(fs_symbol, oi_tf).tier)
 
         # Source reason — two scalar per-symbol counts. The previous code first
         # computed the WHOLE active set (an ~1s unindexed backtest_results scan)
@@ -2004,10 +1788,15 @@ def post_collect_stream(symbol: str, stream: str) -> dict:
     try:
         from forven.data_manager import data_manager
         if stream == "ohlcv":
-            timeframes = data_manager.get_active_timeframes(symbol)
+            # The SLA collector's tail refresh (bootstraps a series not stored yet).
+            from forven.data import symbol_to_fs
+            from forven.dataeng import collector
+
+            fs_symbol = symbol_to_fs(symbol)
             rows_added = 0
-            for tf in timeframes:
-                rows_added += int(data_manager._ohlcv.collect(symbol, tf) or 0)
+            for tf in sorted(data_manager.get_active_timeframes(symbol)):
+                result = collector.refresh_now(collector.series_id("ohlcv", "canonical", fs_symbol, tf))
+                rows_added += int(result.get("bars_added") or 0)
         elif stream == "funding":
             rows_added = data_manager._funding.collect(symbol)
         else:

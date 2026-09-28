@@ -163,14 +163,12 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     defaults = load_data_engine_settings()
     assert defaults.enabled is False
     assert defaults.enabled_exchanges == ["binance"]
-    assert defaults.auto_catchup_batch == 12
 
     api_core.put_settings_section(
         "data-engine",
         {
             "enabled": True,
             "enabled_exchanges": ["binance", "okx"],
-            "auto_catchup_batch": 21,
             "sla_tiers": {"live": {"missed_bars": 2}},
         },
     )
@@ -178,7 +176,6 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     loaded = load_data_engine_settings()
     assert loaded.enabled is True
     assert loaded.enabled_exchanges == ["binance", "okx"]
-    assert loaded.auto_catchup_batch == 21
     assert loaded.sla_tiers["live"]["missed_bars"] == 2
     assert loaded.sla_tiers["live"]["floor_minutes"] == 20
     assert loaded.sla_tiers["pipeline"] == {"missed_bars": 3, "floor_minutes": 120}

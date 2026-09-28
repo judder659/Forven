@@ -56,8 +56,8 @@ from forven.db import (
 from forven.scheduler import (
     get_jobs,
     ensure_monitoring_jobs,
-    migrate_data_engine_catchup_cadence,
     migrate_data_manager_jobs,
+    migrate_data_sla_collector,
     migrate_legacy_scanner_cadence,
     reconcile_forven_jobs,
     seed_forven_jobs,
@@ -397,7 +397,7 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                 added_monitoring = ensure_monitoring_jobs()
                 migrated_scanner = migrate_legacy_scanner_cadence()
                 migrated_data_jobs = migrate_data_manager_jobs()
-                migrated_catchup = migrate_data_engine_catchup_cadence()
+                migrated_collector = migrate_data_sla_collector()
                 if reconciliation["removed"] or reconciliation["added"] or added_monitoring or migrated_data_jobs:
                     log.info(
                         "Scheduler reconciliation from API bootstrap: removed=%d added=%d monitoring_added=%d data_jobs_migrated=%d",
@@ -406,10 +406,10 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                         added_monitoring,
                         migrated_data_jobs,
                     )
-                elif migrated_scanner or migrated_catchup:
+                elif migrated_scanner or migrated_collector:
                     log.info(
-                        "Applied scheduler legacy migration: scanner=%s catchup_cadence=%s",
-                        migrated_scanner, migrated_catchup,
+                        "Applied scheduler legacy migration: scanner=%s sla_collector=%s",
+                        migrated_scanner, migrated_collector,
                     )
         except Exception as e:
             log.error("API scheduler bootstrap failed: %s", e)

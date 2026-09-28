@@ -48,6 +48,7 @@ python -m forven.agent readiness --strategy S02545      # the data contract of a
 python -m forven.agent status S02545,S02604             # {stage,status} for polling
 python -m forven.agent runs --limit 10
 python -m forven.agent result <result_id>
+python -m forven.agent data-census --stream ohlcv       # freshness SLA census (late/breach series first)
 
 # write / lifecycle
 python -m forven.agent create-session --label hunt --objective "find paper strats"
@@ -155,6 +156,7 @@ over these — call them directly from any language.
 | POST | `/api/data/readiness` `{symbol,timeframe,streams?,history_days?,strategy_type?,code?}` | data contract of an idea |
 | GET  | `/api/backtesting/runs?limit=` | recent runs |
 | GET  | `/api/results/{id}` | one backtest result |
+| GET  | `/api/data/sla?stream=&limit_worst=` | freshness SLA census of every stored series |
 | POST | `/api/ai-dropzone/sessions` `{label,actor,objective}` | open session |
 | POST | `/api/ai-dropzone/sessions/{id}/close` | close session |
 | POST | `/api/strategies/intake/register-file` `{file_path,source,session_id?}` | register a `.py` |

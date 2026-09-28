@@ -1,18 +1,17 @@
 import json
 
 from forven.scheduler import (
-    _DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS,
+    _DATA_SLA_COLLECT_TIMEOUT_SECONDS,
     _job_running_stale_seconds,
     migrate_data_manager_jobs,
 )
 
 
-def test_data_manager_ohlcv_keepalive_uses_short_timeout():
-    job = {
-        "payload": json.dumps({"kind": "data_manager_collect_ohlcv", "timeout_seconds": 600}),
-    }
-
-    assert _job_running_stale_seconds(job) == _DATA_MANAGER_OHLCV_KEEPALIVE_TIMEOUT_SECONDS + 60
+def test_sla_collector_lock_window_follows_its_timeout():
+    job = {"payload": json.dumps({"kind": "data_sla_collect"})}
+    assert _job_running_stale_seconds(job) == _DATA_SLA_COLLECT_TIMEOUT_SECONDS + 60
+    custom = {"payload": json.dumps({"kind": "data_sla_collect", "timeout_seconds": 600})}
+    assert _job_running_stale_seconds(custom) == 660
 
 
 def test_migrate_data_manager_jobs_updates_payload_and_clears_stale_shell_errors(monkeypatch):
