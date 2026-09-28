@@ -28,12 +28,13 @@ import os
 import signal
 import sqlite3
 import sys
+import threading
 import time
 import concurrent.futures
 import multiprocessing
 
 
-from collections import Counter
+from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 
 
@@ -2814,6 +2815,32 @@ def _preview_backtest_trades(
     return in_trades, out_trades, oos_start
 
 
+def _sample_stats_by_part(
+    frame: pd.DataFrame,
+    in_trades: list[dict],
+    out_trades: list[dict],
+    oos_start: "pd.Timestamp",
+    *,
+    timeframe: str,
+    trade_mode: str,
+) -> dict:
+    """Closed-trade stats for the in-sample part, the out-of-sample part and both."""
+    from forven.strategies import creator_insights as insights
+
+    in_frame = frame.loc[:oos_start].iloc[:-1]
+    out_frame = frame.loc[oos_start:]
+    stats = {}
+    for sample, sample_trades, sample_frame in (("in_sample", in_trades, in_frame), ("out_of_sample", out_trades, out_frame),
+                                                ("all", in_trades + out_trades, frame)):
+        metrics = compute_metrics(
+            sample_trades, max(len(sample_frame), 1), timeframe=timeframe, trade_mode=trade_mode,
+            start_date=sample_frame.index[0].isoformat() if len(sample_frame) else None,
+            end_date=sample_frame.index[-1].isoformat() if len(sample_frame) else None,
+        )
+        stats[sample] = insights.sample_stats(sample_trades, sample_frame, metrics)
+    return stats
+
+
 def _preview_insights(
     frame: pd.DataFrame,
     spec: dict,
@@ -2838,18 +2865,7 @@ def _preview_insights(
              if isinstance(spec.get(side), dict) and spec[side].get("conditions")]
     table = build_series_table(frame, spec)
     traces = {side: RuleTrace(spec[side], table, params, frame.index) for side in sides}
-
-    in_frame = frame.loc[:oos_start].iloc[:-1]
-    out_frame = frame.loc[oos_start:]
-    stats = {}
-    for sample, sample_trades, sample_frame in (("in_sample", in_trades, in_frame), ("out_of_sample", out_trades, out_frame),
-                                                ("all", in_trades + out_trades, frame)):
-        metrics = compute_metrics(
-            sample_trades, max(len(sample_frame), 1), timeframe=timeframe, trade_mode=trade_mode,
-            start_date=sample_frame.index[0].isoformat() if len(sample_frame) else None,
-            end_date=sample_frame.index[-1].isoformat() if len(sample_frame) else None,
-        )
-        stats[sample] = insights.sample_stats(sample_trades, sample_frame, metrics)
+    stats = _sample_stats_by_part(frame, in_trades, out_trades, oos_start, timeframe=timeframe, trade_mode=trade_mode)
 
     deflated = None
     oos_returns = [float(t.get("pnl_pct_raw", t.get("pnl_pct", 0.0)) or 0.0) for t in out_trades]
@@ -2900,6 +2916,115 @@ def _preview_walk_settings(
     }
 
 
+# Candles for the Strategy Creator's tools, reused briefly: a heatmap or market
+# grid sends one request per row or market, and each would otherwise reload the
+# same window in the API process. Keyed on everything the loader reads.
+_CREATOR_FRAME_TTL_SECONDS = 120.0
+_CREATOR_FRAME_MAX = 6
+_creator_frames: "OrderedDict[tuple, tuple[float, pd.DataFrame]]" = OrderedDict()
+_creator_frame_locks: dict[tuple, threading.Lock] = {}
+_creator_frames_guard = threading.Lock()
+
+
+def _creator_candles(asset: str, timeframe: str, start_date: str | None, end_date: str | None) -> pd.DataFrame:
+    """Enriched ``load_backtest_candles`` for the Strategy Creator, cached for a
+    couple of minutes, one load per window in flight. Tests bypass the cache:
+    their fixtures swap the data under the same window."""
+    def load() -> pd.DataFrame:
+        return load_backtest_candles(asset, timeframe=timeframe, start_date=start_date, end_date=end_date,
+                                     enrich_market_data=True)
+
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return load()
+    from forven.research_contract import research_read_cutoff
+
+    key = (asset, timeframe, start_date, end_date, str(research_read_cutoff()), str(_resolve_point_in_time_as_of()))
+    with _creator_frames_guard:
+        lock = _creator_frame_locks.setdefault(key, threading.Lock())
+    with lock:
+        with _creator_frames_guard:
+            hit = _creator_frames.get(key)
+            if hit is not None and time.monotonic() - hit[0] < _CREATOR_FRAME_TTL_SECONDS:
+                _creator_frames.move_to_end(key)
+                return hit[1].copy()
+        frame = load()
+        if frame is None or frame.empty:
+            return frame
+        with _creator_frames_guard:
+            _creator_frames[key] = (time.monotonic(), frame)
+            _creator_frames.move_to_end(key)
+            while len(_creator_frames) > _CREATOR_FRAME_MAX:
+                evicted, _ = _creator_frames.popitem(last=False)
+                _creator_frame_locks.pop(evicted, None)
+    return frame.copy()
+
+
+def _creator_walk_setup(
+    *,
+    asset: str,
+    timeframe: str,
+    start_date: str | None,
+    end_date: str | None,
+    spec: dict,
+    trade_mode: str,
+    leverage: float | None,
+    fee_bps: float | None,
+    slippage_bps: float | None,
+    initial_capital: float | None,
+    execution_controls: dict | None,
+) -> tuple[pd.DataFrame | None, dict | None, str | None]:
+    """Candles and the backtest's walk settings for a Creator tool, or why not."""
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    frame = _creator_candles(asset, timeframe, start_date, end_date)
+    if frame is None or len(frame) < 210:
+        return None, None, f"Not enough candles for {asset} {timeframe} in this window."
+    params = {"spec": spec, "_asset": asset}
+    resolved_mode, mode_error = resolve_backtest_trade_mode(
+        trade_mode, strategy_type="rule_engine", params=params, strategy_obj=RuleEngineStrategy("rule_engine", params)
+    )
+    if mode_error:
+        return None, None, mode_error
+    walk = _preview_walk_settings(
+        params, asset=asset, timeframe=timeframe, trade_mode=resolved_mode, leverage=leverage,
+        fee_bps=fee_bps, slippage_bps=slippage_bps, initial_capital=initial_capital,
+        execution_controls=execution_controls,
+    )
+    return frame, walk, None
+
+
+def _run_creator_worker(purpose: str, bars: int, target, *args):
+    """``target(*args)`` in a spawned worker under the backtest subprocess budget,
+    as backtests run, so the API process that also scans live markets is not held
+    for the walks' duration. Inline under pytest."""
+    if not _should_use_process_isolation():
+        return target(*args)
+    from forven.strategies.concurrency import backtest_subprocess_slot
+
+    with backtest_subprocess_slot(purpose), concurrent.futures.ProcessPoolExecutor(
+        max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
+        future = executor.submit(target, *args)
+        return _wait_for_worker_result(
+            executor, future, _scale_isolation_timeout(bars, _WALK_FORWARD_TIMEOUT, _WALK_FORWARD_TIMEOUT_MAX)
+        )
+
+
+def _variant_result(frame: pd.DataFrame, variant: dict, asset: str, walk: dict) -> dict:
+    """Trade counts and compounded returns of one spec variant's backtest walks."""
+    from forven.strategies import creator_insights as insights
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    params = {"spec": variant, "_asset": asset}
+    in_trades, out_trades, _ = _preview_backtest_trades(
+        frame, RuleEngineStrategy("rule_engine__variant", params), params, **walk
+    )
+    return {"trades": len(in_trades) + len(out_trades),
+            "net_return": insights.compound_return(in_trades + out_trades),
+            "in_return": insights.compound_return(in_trades),
+            "oos_trades": len(out_trades), "oos_return": insights.compound_return(out_trades)}
+
+
 _SENSITIVITY_STEPS = (-0.25, -0.1, 0.1, 0.25)
 _SENSITIVITY_MAX_KNOBS = 6
 
@@ -2939,18 +3064,6 @@ def _nudge_spec(spec: dict, knob: dict, value: float) -> dict:
 
 def _sensitivity_worker(frame: pd.DataFrame, spec: dict, asset: str, knobs: list[dict], walk: dict) -> dict:
     """The base walk and every knob nudged by every step (a worker-process target)."""
-    from forven.strategies import creator_insights as insights
-    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
-
-    def run(variant: dict) -> dict:
-        params = {"spec": variant, "_asset": asset}
-        in_trades, out_trades, _ = _preview_backtest_trades(
-            frame, RuleEngineStrategy("rule_engine__sensitivity", params), params, **walk
-        )
-        return {"trades": len(in_trades) + len(out_trades),
-                "net_return": insights.compound_return(in_trades + out_trades),
-                "oos_trades": len(out_trades), "oos_return": insights.compound_return(out_trades)}
-
     rows = []
     for knob in knobs:
         variants = []
@@ -2960,9 +3073,9 @@ def _sensitivity_worker(frame: pd.DataFrame, spec: dict, asset: str, knobs: list
                 value = max(int(round(value)), int(knob["min"] or 1))
                 if value == int(knob["value"]):
                     continue
-            variants.append({"step": step, "value": value, **run(_nudge_spec(spec, knob, value))})
+            variants.append({"step": step, "value": value, **_variant_result(frame, _nudge_spec(spec, knob, value), asset, walk)})
         rows.append({**knob, "variants": variants})
-    return {"base": run(spec), "knobs": rows}
+    return {"base": _variant_result(frame, spec, asset, walk), "knobs": rows}
 
 
 def build_strategy_sensitivity(
@@ -2985,7 +3098,7 @@ def build_strategy_sensitivity(
     as backtests do, so the API process that also scans live markets is not held
     for their duration. Returns ``base``, per-knob ``knobs`` rows and a ``verdict``."""
     from forven.strategies import creator_insights as insights
-    from forven.strategies.builtin.rule_engine import RuleEngineStrategy, validate_rule_spec
+    from forven.strategies.builtin.rule_engine import validate_rule_spec
 
     resolved_asset = str(asset or "").strip().upper()
     resolved_tf = str(timeframe or "1h").strip() or "1h"
@@ -2995,36 +3108,198 @@ def build_strategy_sensitivity(
     if not knobs:
         return {"base": None, "knobs": [], "verdict": None,
                 "warnings": ["This rule has no numbers to nudge. Add a parameter or an indicator."]}
-    frame = load_backtest_candles(resolved_asset, timeframe=resolved_tf, start_date=start_date,
-                                  end_date=end_date, enrich_market_data=True)
-    if frame is None or len(frame) < 210:
-        return {"base": None, "knobs": [], "verdict": None,
-                "warnings": [f"Not enough candles for {resolved_asset} {resolved_tf} in this window."]}
-    params = {"spec": spec, "_asset": resolved_asset}
-    resolved_mode, mode_error = resolve_backtest_trade_mode(
-        trade_mode, strategy_type="rule_engine", params=params, strategy_obj=RuleEngineStrategy("rule_engine", params)
+    frame, walk, error = _creator_walk_setup(
+        asset=resolved_asset, timeframe=resolved_tf, start_date=start_date, end_date=end_date, spec=spec,
+        trade_mode=trade_mode, leverage=leverage, fee_bps=fee_bps, slippage_bps=slippage_bps,
+        initial_capital=initial_capital, execution_controls=execution_controls,
     )
-    if mode_error:
-        return {"base": None, "knobs": [], "verdict": None, "warnings": [mode_error]}
-    walk = _preview_walk_settings(
-        params, asset=resolved_asset, timeframe=resolved_tf, trade_mode=resolved_mode, leverage=leverage,
-        fee_bps=fee_bps, slippage_bps=slippage_bps, initial_capital=initial_capital,
-        execution_controls=execution_controls,
-    )
-    if _should_use_process_isolation():
-        from forven.strategies.concurrency import backtest_subprocess_slot
-
-        with backtest_subprocess_slot("sensitivity"), concurrent.futures.ProcessPoolExecutor(
-            max_workers=1, mp_context=multiprocessing.get_context("spawn"),
-        ) as executor:
-            future = executor.submit(_sensitivity_worker, frame, spec, resolved_asset, knobs, walk)
-            result = _wait_for_worker_result(
-                executor, future, _scale_isolation_timeout(len(frame), _WALK_FORWARD_TIMEOUT, _WALK_FORWARD_TIMEOUT_MAX)
-            )
-    else:
-        result = _sensitivity_worker(frame, spec, resolved_asset, knobs, walk)
+    if error:
+        return {"base": None, "knobs": [], "verdict": None, "warnings": [error]}
+    result = _run_creator_worker("sensitivity", len(frame), _sensitivity_worker, frame, spec, resolved_asset, knobs, walk)
     return {**result, "verdict": insights.sensitivity_verdict(result["base"]["oos_return"], result["knobs"]),
             "warnings": []}
+
+
+_HEATMAP_MAX_VALUES = 9
+
+
+def _heatmap_axis(spec: dict, axis: dict) -> tuple[dict | None, str | None]:
+    """A heatmap axis checked against the spec: the knob or indicator setting it
+    names, and its values (whole numbers for whole-number settings, at or above
+    the setting's minimum, without repeats, at most nine). Returns the axis or
+    why it cannot be used."""
+    from forven.strategies import indicators as registry
+
+    target = str(axis.get("target") or "")
+    name = str(axis.get("name") or "")
+    if target == "param":
+        if name not in (spec.get("params") or {}):
+            return None, f'The rule has no knob named "{name}".'
+        resolved = {"target": "param", "name": name, "indicator": None, "label": name, "integer": False, "min": None}
+    elif target == "indicator":
+        indicator_id = str(axis.get("indicator") or "")
+        instance = next((ind for ind in spec.get("indicators") or []
+                         if isinstance(ind, dict) and str(ind.get("id")) == indicator_id), None)
+        definition = registry.REGISTRY.get(str(instance.get("kind") or "").lower()) if instance else None
+        param = next((p for p in definition.params if p.key == name), None) if definition else None
+        if param is None:
+            return None, f'The rule has no indicator setting "{indicator_id} {name}".'
+        resolved = {"target": "indicator", "name": name, "indicator": indicator_id, "label": f"{indicator_id} {name}",
+                    "integer": bool(param.integer), "min": param.min}
+    else:
+        return None, "A heatmap axis must be a knob or an indicator setting."
+    values: list[float] = []
+    for raw in axis.get("values") or []:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value):
+            continue
+        value = int(round(value)) if resolved["integer"] else round(value, 6)
+        if resolved["min"] is not None and value < resolved["min"]:
+            continue
+        if value not in values:
+            values.append(value)
+    if not values:
+        return None, f"No usable values for {resolved['label']}."
+    return {**resolved, "values": values[:_HEATMAP_MAX_VALUES]}, None
+
+
+def _heatmap_worker(frame: pd.DataFrame, spec: dict, asset: str, x_axis: dict, y_axis: dict | None, walk: dict) -> list[dict]:
+    """One walk per (x, y) pair, row by row (a worker-process target)."""
+    cells = []
+    for y_value in (y_axis["values"] if y_axis else [None]):
+        row_spec = _nudge_spec(spec, y_axis, y_value) if y_axis else spec
+        for x_value in x_axis["values"]:
+            try:
+                cells.append({"x": x_value, "y": y_value,
+                              **_variant_result(frame, _nudge_spec(row_spec, x_axis, x_value), asset, walk)})
+            except Exception as exc:  # noqa: BLE001 — one unusable setting must not sink the row
+                cells.append({"x": x_value, "y": y_value, "error": str(exc)[:200]})
+    return cells
+
+
+def build_strategy_heatmap(
+    *,
+    asset: str,
+    timeframe: str,
+    start_date: str | None,
+    end_date: str | None,
+    spec: dict,
+    x_axis: dict,
+    y_axis: dict | None = None,
+    trade_mode: str = "long_only",
+    leverage: float | None = None,
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
+    initial_capital: float | None = None,
+    execution_controls: dict | None = None,
+) -> dict:
+    """Parameter heatmap for a rule spec: one backtest walk per pair of values of
+    two settings (or per value of one), on the preview's candles and execution
+    settings, in a worker process. The Creator asks for a row at a time so the
+    grid fills in as rows finish. Returns the checked axes and a row-major list of
+    cells (``x``, ``y``, trade counts and in-sample / out-of-sample returns, or an
+    ``error``)."""
+    from forven.strategies.builtin.rule_engine import validate_rule_spec
+
+    empty = {"x": None, "y": None, "cells": []}
+    resolved_asset = str(asset or "").strip().upper()
+    resolved_tf = str(timeframe or "1h").strip() or "1h"
+    if not isinstance(spec, dict) or validate_rule_spec(spec):
+        return {**empty, "warnings": ["Fix the rule spec before a heatmap."]}
+    x, x_error = _heatmap_axis(spec, x_axis or {})
+    y, y_error = _heatmap_axis(spec, y_axis) if y_axis else (None, None)
+    if x_error or y_error:
+        return {**empty, "warnings": [x_error or y_error]}
+    if y is not None and (x["target"], x["indicator"], x["name"]) == (y["target"], y["indicator"], y["name"]):
+        return {**empty, "warnings": ["Pick two different settings for the two axes."]}
+    warnings = []
+    for requested, resolved in ((x_axis or {}, x), (y_axis or {}, y)):
+        if resolved is not None and len(resolved["values"]) < len(requested.get("values") or []):
+            warnings.append(f"Some {resolved['label']} values were repeats or below its minimum and were skipped.")
+    frame, walk, error = _creator_walk_setup(
+        asset=resolved_asset, timeframe=resolved_tf, start_date=start_date, end_date=end_date, spec=spec,
+        trade_mode=trade_mode, leverage=leverage, fee_bps=fee_bps, slippage_bps=slippage_bps,
+        initial_capital=initial_capital, execution_controls=execution_controls,
+    )
+    if error:
+        return {"x": x, "y": y, "cells": [], "warnings": [error]}
+    cells = _run_creator_worker("heatmap", len(frame), _heatmap_worker, frame, spec, resolved_asset, x, y, walk)
+    return {"x": x, "y": y, "cells": cells, "warnings": warnings}
+
+
+_MARKETS_MAX = 24
+
+
+def _local_market_index() -> set[tuple[str, str]]:
+    """(symbol, timeframe) pairs with a local dataset."""
+    from forven.data import scan_datasets
+
+    return {(str(row.get("symbol") or "").upper(), str(row.get("timeframe") or "")) for row in scan_datasets()}
+
+
+def _market_worker(frame: pd.DataFrame, spec: dict, asset: str, walk: dict) -> dict:
+    """The backtest walks on one market and their per-part stats (a worker-process target)."""
+    from forven.strategies.builtin.rule_engine import RuleEngineStrategy
+
+    params = {"spec": spec, "_asset": asset}
+    in_trades, out_trades, oos_start = _preview_backtest_trades(
+        frame, RuleEngineStrategy("rule_engine__markets", params), params, **walk
+    )
+    stats = _sample_stats_by_part(frame, in_trades, out_trades, oos_start,
+                                  timeframe=walk["timeframe"], trade_mode=walk["trade_mode"])
+    return {"bars": len(frame), "trades": len(in_trades) + len(out_trades),
+            "in_sample": stats["in_sample"], "out_of_sample": stats["out_of_sample"]}
+
+
+def build_strategy_market_grid(
+    *,
+    markets: list[dict],
+    start_date: str | None,
+    end_date: str | None,
+    spec: dict,
+    trade_mode: str = "long_only",
+    leverage: float | None = None,
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
+    initial_capital: float | None = None,
+    execution_controls: dict | None = None,
+) -> dict:
+    """The same rules and execution settings backtested on several markets, each
+    split in-sample / out-of-sample as Run Backtest splits it, to show whether an
+    edge carries beyond the market it was built on. ``markets`` holds ``symbol``,
+    ``asset`` (the base asset the loader reads) and ``timeframe``. A market
+    without a local dataset is reported, never downloaded."""
+    from forven.strategies.builtin.rule_engine import validate_rule_spec
+
+    if not isinstance(spec, dict) or validate_rule_spec(spec):
+        return {"rows": [], "warnings": ["Fix the rule spec before comparing markets."]}
+    index = _local_market_index()
+    rows = []
+    for market in markets[:_MARKETS_MAX]:
+        asset = str(market.get("asset") or "").strip().upper()
+        timeframe = str(market.get("timeframe") or "").strip()
+        row = {"symbol": str(market.get("symbol") or asset), "timeframe": timeframe}
+        if not any((candidate, timeframe) in index for candidate in _dataset_symbol_candidates(asset)):
+            rows.append({**row, "status": "no_data",
+                         "message": f"No local {timeframe} data for {asset}. Collect it on the Data page."})
+            continue
+        try:
+            frame, walk, error = _creator_walk_setup(
+                asset=asset, timeframe=timeframe, start_date=start_date, end_date=end_date, spec=spec,
+                trade_mode=trade_mode, leverage=leverage, fee_bps=fee_bps, slippage_bps=slippage_bps,
+                initial_capital=initial_capital, execution_controls=execution_controls,
+            )
+            if error:
+                rows.append({**row, "status": "skipped", "message": error})
+                continue
+            rows.append({**row, "status": "ok",
+                         **_run_creator_worker("markets", len(frame), _market_worker, frame, spec, asset, walk)})
+        except Exception as exc:  # noqa: BLE001 — one market must not sink the grid
+            rows.append({**row, "status": "error", "message": str(exc)[:200]})
+    return {"rows": rows, "warnings": []}
 
 
 def build_strategy_preview_chart_context(
@@ -3095,14 +3370,8 @@ def build_strategy_preview_chart_context(
             )
 
     try:
-        frame = load_backtest_candles(
-            resolved_asset,
-            timeframe=resolved_tf,
-            start_date=start_date,
-            end_date=end_date,
-            # Always enriched: funding belongs in each trade's net P&L, as in Run Backtest.
-            enrich_market_data=True,
-        )
+        # Always enriched: funding belongs in each trade's net P&L, as in Run Backtest.
+        frame = _creator_candles(resolved_asset, resolved_tf, start_date, end_date)
     except Exception as exc:
         warnings.append(f"Candles unavailable for {resolved_asset} {resolved_tf}: {exc}")
         return finish()

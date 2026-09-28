@@ -665,6 +665,18 @@ def post_backtest_preview_sensitivity(body: core.PreviewChartBody):
     return core.post_backtest_preview_sensitivity(body)
 
 
+@router.post("/api/backtests/preview-heatmap")
+def post_backtest_preview_heatmap(body: core.PreviewHeatmapBody):
+    """Parameter heatmap: a visual spec walked over a grid of two settings."""
+    return core.post_backtest_preview_heatmap(body)
+
+
+@router.post("/api/backtests/preview-markets")
+def post_backtest_preview_markets(body: core.PreviewMarketsBody):
+    """A visual spec backtested on several markets with the same settings."""
+    return core.post_backtest_preview_markets(body)
+
+
 @router.post("/api/backtests/nl-to-spec")
 async def post_nl_to_spec(body: core.NlToSpecBody):
     """Generate a rule_engine spec from a natural-language strategy description."""

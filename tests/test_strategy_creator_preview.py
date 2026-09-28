@@ -254,3 +254,108 @@ def test_stress_test_request_forwards_the_backtest_execution_settings(monkeypatc
     core.post_backtest_preview_sensitivity(core.PreviewChartBody(spec=RSI, symbol="SOL/USDT", stop_loss_pct=2.0, leverage=2))
     assert captured["asset"] == "SOL" and captured["leverage"] == 2
     assert captured["execution_controls"] == {"stop_loss_pct": 2.0}
+
+
+# --- parameter heatmap ------------------------------------------------------------
+_WALK = dict(start_date=START, end_date=END, trade_mode="long_only", leverage=1.0, fee_bps=10, slippage_bps=5,
+             initial_capital=10_000, execution_controls={"sizing_mode": "full"})
+
+
+def _with(spec: dict, **params) -> dict:
+    return {**spec, "params": {**spec["params"], **params}}
+
+
+def test_heatmap_cells_are_the_backtests_of_those_settings(candles):
+    result = bt.build_strategy_heatmap(
+        asset="BTC", timeframe="1h", spec=RSI,
+        x_axis={"target": "param", "name": "oversold", "values": [25, 30]},
+        y_axis={"target": "param", "name": "exit_level", "values": [50, 55]}, **_WALK,
+    )
+    assert result["warnings"] == []
+    assert [(cell["x"], cell["y"]) for cell in result["cells"]] == [(25, 50), (30, 50), (25, 55), (30, 55)]
+    for cell in result["cells"]:
+        ctx = _preview(_with(RSI, oversold=cell["x"], exit_level=cell["y"]))
+        assert cell["trades"] == ctx["trade_count"]
+        assert cell["oos_trades"] == ctx["vitals"]["out_of_sample"]["trades"]
+    stress = bt.build_strategy_sensitivity(asset="BTC", timeframe="1h", spec=RSI, **_WALK)
+    here = next(cell for cell in result["cells"] if (cell["x"], cell["y"]) == (30, 55))
+    assert {k: here[k] for k in stress["base"]} == stress["base"]
+
+
+def test_heatmap_axes_are_checked_against_the_rule(candles):
+    one_axis = bt.build_strategy_heatmap(
+        asset="BTC", timeframe="1h", spec=RSI,
+        x_axis={"target": "indicator", "indicator": "rsi", "name": "length", "values": [1, 2.4, 2.6, 14, 14]}, **_WALK,
+    )
+    assert one_axis["x"]["values"] == [2, 3, 14] and one_axis["y"] is None
+    assert [cell["y"] for cell in one_axis["cells"]] == [None, None, None]
+    assert "skipped" in one_axis["warnings"][0]
+
+    unknown = bt.build_strategy_heatmap(asset="BTC", timeframe="1h", spec=RSI,
+                                        x_axis={"target": "param", "name": "nope", "values": [1]}, **_WALK)
+    assert unknown["cells"] == [] and 'no knob named "nope"' in unknown["warnings"][0]
+    same = bt.build_strategy_heatmap(asset="BTC", timeframe="1h", spec=RSI,
+                                     x_axis={"target": "param", "name": "oversold", "values": [20, 30]},
+                                     y_axis={"target": "param", "name": "oversold", "values": [25]}, **_WALK)
+    assert same["cells"] == [] and "two different settings" in same["warnings"][0]
+
+
+def test_heatmap_request_forwards_axes_and_execution_settings(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(bt, "build_strategy_heatmap", lambda **kw: captured.update(kw) or {"cells": []})
+    core.post_backtest_preview_heatmap(core.PreviewHeatmapBody(
+        spec=RSI, symbol="ETH/USDT", leverage=3, stop_loss_pct=2.0,
+        x={"target": "param", "name": "oversold", "values": [20, 30]},
+        y={"target": "indicator", "indicator": "rsi", "name": "length", "values": [10, 14]},
+    ))
+    assert captured["asset"] == "ETH" and captured["leverage"] == 3
+    assert captured["execution_controls"] == {"stop_loss_pct": 2.0}
+    assert captured["x_axis"]["name"] == "oversold" and captured["y_axis"]["indicator"] == "rsi"
+
+
+# --- market grid ------------------------------------------------------------------
+def test_market_grid_backtests_each_local_market_and_never_downloads(candles, monkeypatch):
+    loaded: list[str] = []
+    monkeypatch.setattr("forven.data.load_parquet",
+                        lambda symbol, timeframe, *, as_of=None: loaded.append(f"{symbol} {timeframe}") or candles.copy())
+    monkeypatch.setattr(bt, "_local_market_index", lambda: {("BTC/USDT", "1h")})
+    monkeypatch.setattr(bt, "fetch_candles", lambda *a, **k: pytest.fail("a missing market must not be downloaded"))
+    result = bt.build_strategy_market_grid(
+        markets=[{"symbol": "BTC/USDT", "asset": "BTC", "timeframe": "1h"},
+                 {"symbol": "ETH/USDT", "asset": "ETH", "timeframe": "4h"}],
+        spec=RSI, **_WALK,
+    )
+    btc, eth = result["rows"]
+    assert eth["status"] == "no_data" and "Data page" in eth["message"]
+    assert all("ETH" not in item for item in loaded)
+    assert btc["status"] == "ok"
+    vitals = _preview()["vitals"]
+    for part in ("in_sample", "out_of_sample"):
+        assert btc[part]["trades"] == vitals[part]["trades"]
+        assert btc[part]["net_return"] == pytest.approx(vitals[part]["net_return"])
+    json.dumps(result, allow_nan=False)
+
+
+def test_market_grid_request_reads_base_assets(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(bt, "build_strategy_market_grid", lambda **kw: captured.update(kw) or {"rows": []})
+    core.post_backtest_preview_markets(core.PreviewMarketsBody(
+        spec=RSI, markets=[{"symbol": "SOL/USDT", "timeframe": "4h"}, {"symbol": "btcusdt", "timeframe": "1d"}],
+    ))
+    assert captured["markets"] == [{"symbol": "SOL/USDT", "asset": "SOL", "timeframe": "4h"},
+                                   {"symbol": "btcusdt", "asset": "BTC", "timeframe": "1d"}]
+
+
+# --- candle cache -----------------------------------------------------------------
+def test_creator_candles_load_a_window_once_and_hand_out_copies(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    calls: list[tuple] = []
+    frame = pd.DataFrame({"close": [1.0, 2.0]}, index=pd.date_range("2025-01-01", periods=2, freq="1h", tz="UTC"))
+    monkeypatch.setattr(bt, "load_backtest_candles", lambda asset, **kw: calls.append((asset, kw["timeframe"])) or frame.copy())
+    monkeypatch.setattr(bt, "_creator_frames", type(bt._creator_frames)())
+    first = bt._creator_candles("BTC", "1h", START, END)
+    first.loc[first.index[0], "close"] = 99.0
+    second = bt._creator_candles("BTC", "1h", START, END)
+    assert calls == [("BTC", "1h")] and second["close"].iloc[0] == 1.0
+    bt._creator_candles("BTC", "4h", START, END)
+    assert calls == [("BTC", "1h"), ("BTC", "4h")]
