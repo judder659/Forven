@@ -463,3 +463,13 @@ def test_manual_registration_never_rewrites_code_a_forge_strategy_ran(forven_db,
             assert fh.read() == _VALID_STRATEGY
     finally:
         os.remove(manual_path)
+
+
+def test_send_visual_strategy_refuses_a_spec_param_a_setting_would_override(forven_db):
+    spec = {**_FORGE_SPEC, "params": {"oversold": 30, "overbought": 70, "leverage": 5}}
+    with pytest.raises(core.HTTPException) as error:
+        core.send_manual_strategy_to_forge(core.SendToForgeBody(
+            mode="visual", spec=spec, params={"leverage": 2}, symbol="BTC/USDT", timeframe="1h",
+        ))
+    assert error.value.status_code == 400
+    assert "leverage" in error.value.detail

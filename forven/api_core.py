@@ -7143,6 +7143,16 @@ def send_manual_strategy_to_forge(body: SendToForgeBody) -> dict:
         strategy_type = "rule_engine"
         from forven.strategy_creator import creator_execution_params
         params: dict = {**creator_execution_params(body.params), "spec": spec, "_asset": asset}
+        # The engine lets a strategy-level param override the spec param of the
+        # same name (the optimizer tunes knobs that way), so a spec param named
+        # like a saved setting would silently read that setting instead.
+        spec_params = spec.get("params") if isinstance(spec.get("params"), dict) else {}
+        shadowed = sorted(set(spec_params) & set(params))
+        if shadowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Rename spec parameter(s) {', '.join(shadowed)}: the strategy setting of the same name would override them.",
+            )
         source_ref = "manual_backtest:visual_builder"
         name = (body.name or "").strip() or f"{asset} rule strategy"
     elif mode == "code":

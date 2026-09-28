@@ -92,3 +92,22 @@ def test_send_to_forge_returns_the_revisions_existing_forge_strategy(forven_db):
         conn.execute("DELETE FROM strategies WHERE id = ?", (revised["forge"]["strategy_id"],))
     resent = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=2))
     assert not resent.get("already_in_forge")
+
+
+@pytest.mark.parametrize("body", [
+    {"name": "   "}, {"name": "x", "kind": "notebook"}, {"name": "x", "timeframe": "1 hour"},
+    {"name": "x", "symbol": "BTC USDT"}, {"name": "x", "tags": ["t"] * 21},
+])
+def test_library_create_rejects_malformed_fields(body):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        library.LibraryCreateBody(**body)
+
+
+def test_library_status_is_draft_or_tested_from_clients():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        library.LibraryUpdateBody(status="in_forge")
+    assert library.LibraryCreateBody(name="  Spaced  ", symbol=" ETH/USDT ").name == "Spaced"

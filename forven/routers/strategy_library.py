@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from forven import api_core as core
 from forven.api_security import require_operator_access
@@ -24,37 +25,43 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["strategy-library"], dependencies=[Depends(require_operator_access)])
 
-_VALID_KINDS = {"visual", "code"}
 # strftime literal reused across writes (a constant we control — not user input).
 _NOW = "strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')"
 _FORGE_SEND_LOCK = threading.Lock()
 
 
+_Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=140)]
+_Symbol = Annotated[str, StringConstraints(strip_whitespace=True, max_length=40, pattern=r"^[A-Za-z0-9./:_-]+$")]
+_Timeframe = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[1-9][0-9]*[mhdwM]$")]
+_Tags = Annotated[list[Annotated[str, StringConstraints(max_length=40)]], Field(max_length=20)]
+
+
 class LibraryCreateBody(BaseModel):
-    name: str = Field(min_length=1, max_length=140)
-    kind: str = "visual"
+    name: _Name
+    kind: Literal["visual", "code"] = "visual"
     description: str = Field(default="", max_length=2000)
     spec: dict | None = None
     code: str | None = Field(default=None, max_length=200_000)
-    symbol: str = "BTC/USDT"
-    timeframe: str = "1h"
+    symbol: _Symbol = "BTC/USDT"
+    timeframe: _Timeframe = "1h"
     params: dict | None = None
-    tags: list[str] | None = None
+    tags: _Tags | None = None
 
 
 class LibraryUpdateBody(BaseModel):
     expected_version: int | None = None
-    kind: str | None = None
-    name: str | None = Field(default=None, max_length=140)
+    kind: Literal["visual", "code"] | None = None
+    name: _Name | None = None
     description: str | None = Field(default=None, max_length=2000)
     spec: dict | None = None
     code: str | None = Field(default=None, max_length=200_000)
-    symbol: str | None = None
-    timeframe: str | None = None
+    symbol: _Symbol | None = None
+    timeframe: _Timeframe | None = None
     params: dict | None = None
-    tags: list[str] | None = None
-    status: str | None = None
-    last_result_id: str | None = None
+    tags: _Tags | None = None
+    # in_forge is set only by send-to-forge.
+    status: Literal["draft", "tested"] | None = None
+    last_result_id: str | None = Field(default=None, max_length=256)
 
 
 class LibraryForgeBody(BaseModel):
@@ -121,7 +128,6 @@ def list_library(include_deleted: bool = False, limit: int = 200):
 
 @router.post("/api/strategy-library")
 def create_library_entry(body: LibraryCreateBody):
-    kind = body.kind if body.kind in _VALID_KINDS else "visual"
     sid = f"lib_{uuid4().hex[:12]}"
     with get_db() as conn:
         conn.execute(
@@ -132,7 +138,7 @@ def create_library_entry(body: LibraryCreateBody):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, {_NOW}, {_NOW})
             """,
             (
-                sid, body.name.strip(), kind, body.description or "",
+                sid, body.name, body.kind, body.description or "",
                 json.dumps(body.spec) if isinstance(body.spec, dict) else None,
                 body.code,
                 body.symbol or "BTC/USDT", body.timeframe or "1h",
@@ -162,11 +168,9 @@ def update_library_entry(sid: str, body: LibraryUpdateBody):
         vals.append(val)
 
     if body.kind is not None:
-        if body.kind not in _VALID_KINDS:
-            raise HTTPException(status_code=422, detail="Invalid strategy kind")
         add("kind", body.kind)
     if body.name is not None:
-        add("name", body.name.strip())
+        add("name", body.name)
     if body.description is not None:
         add("description", body.description)
     if body.spec is not None:
