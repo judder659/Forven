@@ -1495,6 +1495,7 @@ TYPE_NAME = "my_strategy"
 </div>
 
 {#if launcherOpen}
+<div use:portal>
 	<StrategyLauncher {library} {libraryLoading} templates={STRATEGY_TEMPLATES} {prebuilt} {appStrategies} {includeAppGenerated} {appLoading}
 		{currentLibraryId} {forging} tab={launcherTab}
 		on:close={() => (launcherOpen = false)}
@@ -1507,6 +1508,7 @@ TYPE_NAME = "my_strategy"
 		on:system={(e) => openSystemStrategy(e.detail.id, findStrategy(e.detail.source === 'pre' ? prebuilt : appStrategies, e.detail.id))}
 		on:toggleApp={toggleAppGenerated}
 		on:import={() => { launcherOpen = false; showImportDialog = true; }} />
+</div>
 {/if}
 
 <!-- Save prompt: overwrite the opened strategy or create a new one -->
