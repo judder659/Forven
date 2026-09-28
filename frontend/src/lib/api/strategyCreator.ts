@@ -52,7 +52,87 @@ export interface PreviewChartContext {
 	signal_bars?: Partial<Record<'entry_long' | 'exit_long' | 'entry_short' | 'exit_short', number>>;
 	/** Start of the research holdout's held-back period, when it is on. */
 	holdout_cutoff?: string | null;
+	/** Every trade with the rule state behind it (the most recent 1000). */
+	trades?: PreviewTrade[];
+	/** Runs of bars where each side's rule held, as [first, last] timestamps. */
+	rule_spans?: Partial<Record<RuleSideKey, [string, string][]>>;
+	/** Where the out-of-sample part (what Run Backtest scores) starts. */
+	oos_start?: string | null;
+	vitals?: PreviewVitals | null;
 	warnings: string[];
+}
+
+export type RuleSideKey = 'entry_long' | 'exit_long' | 'entry_short' | 'exit_short';
+
+/** One condition's state on a bar; crossovers also carry the prior bar. */
+export interface RuleConditionState {
+	kind: 'cond';
+	left: unknown;
+	op: string;
+	right: unknown;
+	left_value: number | null;
+	right_value: number | null;
+	left_prev?: number | null;
+	right_prev?: number | null;
+	result: boolean;
+}
+
+export interface RuleGroupState {
+	kind?: 'group';
+	logic: 'and' | 'or';
+	result: boolean;
+	items: Array<RuleConditionState | RuleGroupState>;
+}
+
+export interface PreviewTrade {
+	n: number;
+	direction: 'long' | 'short';
+	/** 'in' = in-sample, 'out' = the out-of-sample part the backtest result scores. */
+	sample: 'in' | 'out';
+	entry_time: string;
+	entry_price: number;
+	exit_time: string;
+	exit_price: number;
+	/** signal, stop_loss, take_profit, trailing_stop, time_stop, liquidation, or window_end. */
+	exit_reason: string;
+	pnl_pct: number;
+	bars_held: number;
+	cost_pct: number;
+	funding_pct: number;
+	size_fraction: number;
+	/** The bar whose close fired the entry (the fill is the next bar's open). */
+	entry_signal_time: string | null;
+	entry_rule: RuleGroupState | null;
+	exit_signal_time: string | null;
+	exit_rule: RuleGroupState | null;
+}
+
+/** Closed-trade stats for one sample (no bar-by-bar mark to market). */
+export interface SampleStats {
+	trades: number;
+	long_trades: number;
+	short_trades: number;
+	net_return: number;
+	win_rate: number;
+	profit_factor: number;
+	max_drawdown: number;
+	avg_trade: number;
+	avg_bars_held: number;
+	exposure: number;
+	fees: number;
+	funding: number;
+	start: string | null;
+	end: string | null;
+	bars: number;
+}
+
+export interface PreviewVitals {
+	in_sample: SampleStats;
+	out_of_sample: SampleStats;
+	all: SampleStats;
+	/** Chance the out-of-sample edge is not selection luck, given the variants tried. */
+	deflated_sharpe: { probability: number; trials: number } | null;
+	traps: Array<{ code: string; level: 'warn' | 'info'; text: string }>;
 }
 
 /** Execution settings a manual backtest takes; the preview simulates the same. */
@@ -73,7 +153,7 @@ export interface ExecutionRequestFields {
 	time_stop_bars?: number | null;
 }
 
-export async function previewStrategyChart(request: {
+export interface PreviewRequest extends ExecutionRequestFields {
 	spec: Record<string, unknown>;
 	symbol: string;
 	timeframe: string;
@@ -81,8 +161,47 @@ export async function previewStrategyChart(request: {
 	end?: string;
 	trade_mode?: string;
 	name?: string;
-} & ExecutionRequestFields): Promise<PreviewChartContext> {
+	/** Strategy variants tried so far, for the deflated Sharpe. */
+	trials?: number;
+}
+
+export async function previewStrategyChart(request: PreviewRequest): Promise<PreviewChartContext> {
 	return fetchApi('/backtests/preview-chart', {
+		method: 'POST',
+		body: JSON.stringify(request),
+		timeoutMs: LONG_TIMEOUT_MS,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Stress test: each knob nudged -25%, -10%, +10%, +25%
+// ---------------------------------------------------------------------------
+export interface SensitivityRun {
+	trades: number;
+	net_return: number;
+	oos_trades: number;
+	oos_return: number;
+}
+
+export interface SensitivityKnob {
+	target: 'param' | 'indicator';
+	name: string;
+	label: string;
+	indicator?: string;
+	value: number;
+	integer: boolean;
+	variants: Array<SensitivityRun & { step: number; value: number }>;
+}
+
+export interface SensitivityResult {
+	base: SensitivityRun | null;
+	knobs: SensitivityKnob[];
+	verdict: { status: 'stable' | 'fragile' | 'losing'; text: string; fragile: Array<{ knob: string; step: number; oos_return: number }> } | null;
+	warnings: string[];
+}
+
+export async function stressTestStrategy(request: PreviewRequest): Promise<SensitivityResult> {
+	return fetchApi('/backtests/preview-sensitivity', {
 		method: 'POST',
 		body: JSON.stringify(request),
 		timeoutMs: LONG_TIMEOUT_MS,
@@ -123,6 +242,20 @@ export async function nlToSpec(request: {
 	timeframe?: string;
 }): Promise<NlToSpecResponse> {
 	return fetchApi('/backtests/nl-to-spec', {
+		method: 'POST',
+		body: JSON.stringify(request),
+		timeoutMs: LONG_TIMEOUT_MS,
+	});
+}
+
+/** Apply a plain-English change to a spec; the response carries the whole updated spec. */
+export async function nlEditSpec(request: {
+	description: string;
+	spec: Record<string, unknown>;
+	symbol?: string;
+	timeframe?: string;
+}): Promise<NlToSpecResponse> {
+	return fetchApi('/backtests/nl-edit-spec', {
 		method: 'POST',
 		body: JSON.stringify(request),
 		timeoutMs: LONG_TIMEOUT_MS,
