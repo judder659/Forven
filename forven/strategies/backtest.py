@@ -3234,10 +3234,18 @@ _MARKETS_MAX = 24
 
 
 def _local_market_index() -> set[tuple[str, str]]:
-    """(symbol, timeframe) pairs with a local dataset."""
+    """(dataset directory name, timeframe) pairs with a local dataset."""
     from forven.data import scan_datasets
 
     return {(str(row.get("symbol") or "").upper(), str(row.get("timeframe") or "")) for row in scan_datasets()}
+
+
+def _has_local_market(index: set[tuple[str, str]], asset: str, timeframe: str) -> bool:
+    """Whether the backtest loader would find a local dataset for this market: it
+    tries the asset's candidates in turn, each stored under its directory name."""
+    from forven.data import symbol_to_fs
+
+    return any((symbol_to_fs(candidate).upper(), timeframe) in index for candidate in _dataset_symbol_candidates(asset))
 
 
 def _market_worker(frame: pd.DataFrame, spec: dict, asset: str, walk: dict) -> dict:
@@ -3282,7 +3290,7 @@ def build_strategy_market_grid(
         asset = str(market.get("asset") or "").strip().upper()
         timeframe = str(market.get("timeframe") or "").strip()
         row = {"symbol": str(market.get("symbol") or asset), "timeframe": timeframe}
-        if not any((candidate, timeframe) in index for candidate in _dataset_symbol_candidates(asset)):
+        if not _has_local_market(index, asset, timeframe):
             rows.append({**row, "status": "no_data",
                          "message": f"No local {timeframe} data for {asset}. Collect it on the Data page."})
             continue

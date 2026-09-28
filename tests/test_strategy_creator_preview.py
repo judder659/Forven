@@ -318,7 +318,8 @@ def test_market_grid_backtests_each_local_market_and_never_downloads(candles, mo
     loaded: list[str] = []
     monkeypatch.setattr("forven.data.load_parquet",
                         lambda symbol, timeframe, *, as_of=None: loaded.append(f"{symbol} {timeframe}") or candles.copy())
-    monkeypatch.setattr(bt, "_local_market_index", lambda: {("BTC/USDT", "1h")})
+    # The scan lists datasets by directory name, as they are stored.
+    monkeypatch.setattr(bt, "_local_market_index", lambda: {("BTC-USDT", "1h")})
     monkeypatch.setattr(bt, "fetch_candles", lambda *a, **k: pytest.fail("a missing market must not be downloaded"))
     result = bt.build_strategy_market_grid(
         markets=[{"symbol": "BTC/USDT", "asset": "BTC", "timeframe": "1h"},
@@ -334,6 +335,14 @@ def test_market_grid_backtests_each_local_market_and_never_downloads(candles, mo
         assert btc[part]["trades"] == vitals[part]["trades"]
         assert btc[part]["net_return"] == pytest.approx(vitals[part]["net_return"])
     json.dumps(result, allow_nan=False)
+
+
+def test_local_market_check_reads_datasets_by_their_directory_names():
+    index = {("ETH-USDC", "4h"), ("ADA-BTC", "1h"), ("SOL-USDT", "1h")}
+    assert bt._has_local_market(index, "ETH", "4h")  # the loader falls back to ETH/USDC
+    assert bt._has_local_market(index, "SOL", "1h")
+    assert not bt._has_local_market(index, "ADA", "1h")  # not a quote the loader reads
+    assert not bt._has_local_market(index, "SOL", "4h")
 
 
 def test_market_grid_request_reads_base_assets(monkeypatch):
