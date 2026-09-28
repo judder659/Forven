@@ -197,12 +197,19 @@
 
 	async function handlePreview() {
 		if (!settings) return;
-		const problem = validationError;
+		// Signals depend on the strategy, market, window and params only; a
+		// half-typed execution override must not block a preview.
+		const signalSettings: RunSettings = {
+			...settings, initialCapital: null, feeBps: null, slippageBps: null, leverage: null, profile: null,
+		};
+		const problem = paramsHaveErrors
+			? 'Fix the highlighted parameter before previewing.'
+			: validateRun(signalSettings, { estimatedBars, today: todayUtc });
 		if (problem) {
 			previewError = problem;
 			return;
 		}
-		const request = buildBacktestRequest(settings);
+		const request = buildBacktestRequest(signalSettings);
 		const key = previewKey;
 		previewLoading = true;
 		previewError = '';
