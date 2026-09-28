@@ -201,6 +201,7 @@ def create_backtesting_strategy(
                 strategy_symbol,
                 strategy_timeframe,
                 auto_fetch=False,
+                params=certification.canonical_params,
             )
             if avail.blocked and (avail.missing_unfetchable or not avail.missing_fetchable):
                 target_stage = "archived"

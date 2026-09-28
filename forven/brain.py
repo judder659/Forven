@@ -4276,6 +4276,7 @@ def _untestable_reentry_block(strategy_id: str, row) -> str | None:
             str(row["timeframe"] or "1h").strip() or "1h",
             strategy_id=strategy_id,
             auto_fetch=False,
+            params=params,
         )
     except Exception as exc:
         return f"data-availability check unavailable: {exc}"

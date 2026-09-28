@@ -200,6 +200,45 @@ def indicator_output_names(kind: str, out_id: str) -> list[str]:
     return _indicators.output_names(kind, out_id)
 
 
+def _operand_series_name(operand) -> str | None:
+    """The series an operand reads by name (bare string or {series}/{indicator})."""
+    if isinstance(operand, str):
+        return operand.strip()
+    if isinstance(operand, dict):
+        ref = operand.get("indicator") or operand.get("series")
+        return str(ref).strip() if ref is not None else None
+    return None
+
+
+def spec_feed_columns(spec: dict) -> set[str]:
+    """Enrichment feed columns a spec reads: condition operands naming a feed,
+    plus the inputs of the indicators it computes (e.g. funding_zscore)."""
+    if not isinstance(spec, dict):
+        return set()
+    columns: set[str] = set()
+    for ind in spec.get("indicators") or []:
+        if isinstance(ind, dict):
+            columns.update(_indicators.required_columns(str(ind.get("kind") or "")))
+
+    def visit(tree) -> None:
+        if not isinstance(tree, dict):
+            return
+        for cond in tree.get("conditions") or []:
+            if not isinstance(cond, dict):
+                continue
+            if "conditions" in cond:
+                visit(cond)
+                continue
+            for side in ("left", "right"):
+                name = _operand_series_name(cond.get(side))
+                if name in _ENRICHMENT_COLUMNS:
+                    columns.add(name)
+
+    for key in ("entry_long", "exit_long", "entry_short", "exit_short"):
+        visit(spec.get(key))
+    return columns
+
+
 def _operand_error(operand, available: set[str], param_names: set[str]) -> str | None:
     if isinstance(operand, (int, float)) and not isinstance(operand, bool):
         return None
@@ -300,6 +339,11 @@ def _spec_min_bars(spec: dict) -> int:
 class RuleEngineStrategy(BaseStrategy):
     """Interprets a declarative rule spec (see module docstring)."""
 
+    # This module names every enrichment feed, so a source scan would demand all
+    # of them for every spec. The data-availability precheck instead reads the
+    # feeds this spec uses from data_requirements().
+    DATA_COLUMNS_FROM_PARAMS = True
+
     @property
     def name(self) -> str:
         return str(self.params.get("name") or "Rule Engine") + f" ({self.asset})"
@@ -319,6 +363,11 @@ class RuleEngineStrategy(BaseStrategy):
     def _spec(self) -> dict:
         spec = self.params.get("spec")
         return spec if isinstance(spec, dict) else {}
+
+    def data_requirements(self) -> list[dict]:
+        requirements = super().data_requirements()
+        requirements[0]["columns"] = sorted(spec_feed_columns(self._spec()))
+        return requirements
 
     def _effective_spec_params(self, spec: dict) -> dict:
         """Spec params overlaid with any top-level overrides.

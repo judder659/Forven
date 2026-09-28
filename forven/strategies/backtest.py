@@ -5441,7 +5441,7 @@ def backtest_strategy(
         from forven.strategies.data_availability import evaluate_data_availability
 
         _avail = evaluate_data_availability(
-            original_strategy_type, asset, resolved_timeframe, strategy_id=strategy_id
+            original_strategy_type, asset, resolved_timeframe, strategy_id=strategy_id, params=params
         )
     except Exception as _avail_exc:  # defensive: an unknown feed set cannot certify input
         from forven.strategies.data_availability import DataAvailabilityResult

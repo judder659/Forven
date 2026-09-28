@@ -91,6 +91,9 @@ class IndicatorDef:
     compute: Callable[[pd.DataFrame, dict, str], dict[str, pd.Series]]
     # Default chart panel: "main" overlays on price, "sub" gets its own pane.
     panel: str = "sub"
+    # Enrichment feed columns the math reads (beyond OHLCV). The data-availability
+    # precheck demands exactly these for a spec that uses this indicator.
+    requires: tuple[str, ...] = ()
 
     def resolve_params(self, raw: dict | None) -> dict:
         raw = raw if isinstance(raw, dict) else {}
@@ -775,9 +778,11 @@ _DEFS: list[IndicatorDef] = [
                  [_P("length", 14, 2, 100, 1)], _single, _f_eom, panel="sub"),
     # ---- Crypto-native (derived from enrichment columns) ----
     IndicatorDef("funding_zscore", "Funding Z-Score", "Crypto", "Z-score of perp funding rate over N bars (0 when no data).",
-                 [_P("length", 96, 5, 1000, 1)], _single, _f_funding_zscore, panel="sub"),
+                 [_P("length", 96, 5, 1000, 1)], _single, _f_funding_zscore, panel="sub",
+                 requires=("funding_rate",)),
     IndicatorDef("oi_roc", "Open Interest ROC", "Crypto", "Percent change in open interest over N bars (0 when no data).",
-                 [_P("length", 24, 1, 400, 1)], _single, _f_oi_roc, panel="sub"),
+                 [_P("length", 24, 1, 400, 1)], _single, _f_oi_roc, panel="sub",
+                 requires=("open_interest",)),
 ]
 
 REGISTRY: dict[str, IndicatorDef] = {d.kind: d for d in _DEFS}
@@ -805,6 +810,12 @@ def default_panel(kind: str) -> str:
     return d.panel if d else "sub"
 
 
+def required_columns(kind: str) -> tuple[str, ...]:
+    """Enrichment feed columns an indicator of this kind reads (empty for OHLCV-only)."""
+    d = REGISTRY.get(str(kind or "").strip().lower())
+    return d.requires if d else ()
+
+
 def compute_indicator(df: pd.DataFrame, ind: dict) -> dict[str, pd.Series]:
     """Compute one indicator spec ({id, kind, params}) into named output Series."""
     kind = str(ind.get("kind") or "").strip().lower()
@@ -828,6 +839,7 @@ __all__ = [
     "indicator_kinds",
     "output_names",
     "default_panel",
+    "required_columns",
     "compute_indicator",
     "metadata",
 ]
