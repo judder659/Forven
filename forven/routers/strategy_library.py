@@ -82,6 +82,9 @@ def _loads(value, default):
 
 
 def _row_to_dict(row) -> dict:
+    # A Forge strategy deleted from the lab no longer holds this revision; the
+    # draft can then be sent again.
+    in_forge = bool(row["forge_strategy_id"] and row["forge_exists"])
     return {
         "id": row["id"],
         "owner": row["owner"],
@@ -94,35 +97,32 @@ def _row_to_dict(row) -> dict:
         "timeframe": row["timeframe"],
         "params": _loads(row["params_json"], {}),
         "tags": _loads(row["tags_json"], []),
-        "status": row["status"],
+        "status": "draft" if row["status"] == "in_forge" and not in_forge else row["status"],
         "version": row["version"],
         "parent_library_id": row["parent_library_id"],
-        "forge_strategy_id": row["forge_strategy_id"],
+        "forge_strategy_id": row["forge_strategy_id"] if in_forge else None,
         "last_result_id": row["last_result_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
 
 
+_SELECT = (
+    "SELECT u.*, EXISTS(SELECT 1 FROM strategies s WHERE s.id = u.forge_strategy_id) AS forge_exists "
+    "FROM user_strategies u"
+)
+
+
 def _fetch(conn, sid: str):
-    return conn.execute(
-        "SELECT * FROM user_strategies WHERE id = ? AND deleted_at IS NULL", (sid,)
-    ).fetchone()
+    return conn.execute(f"{_SELECT} WHERE u.id = ? AND u.deleted_at IS NULL", (sid,)).fetchone()
 
 
 @router.get("/api/strategy-library")
 def list_library(include_deleted: bool = False, limit: int = 200):
     bounded = max(1, min(int(limit or 200), 1000))
     with get_db() as conn:
-        if include_deleted:
-            rows = conn.execute(
-                "SELECT * FROM user_strategies ORDER BY updated_at DESC LIMIT ?", (bounded,)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM user_strategies WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?",
-                (bounded,),
-            ).fetchall()
+        live_only = "" if include_deleted else "WHERE u.deleted_at IS NULL "
+        rows = conn.execute(f"{_SELECT} {live_only}ORDER BY u.updated_at DESC LIMIT ?", (bounded,)).fetchall()
     return {"strategies": [_row_to_dict(r) for r in rows]}
 
 

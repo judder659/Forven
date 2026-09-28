@@ -111,3 +111,16 @@ def test_library_status_is_draft_or_tested_from_clients():
     with pytest.raises(ValidationError):
         library.LibraryUpdateBody(status="in_forge")
     assert library.LibraryCreateBody(name="  Spaced  ", symbol=" ETH/USDT ").name == "Spaced"
+
+
+def test_a_forge_strategy_deleted_from_the_lab_frees_the_revision(forven_db):
+    from forven.db import get_db
+
+    entry = create()
+    sent = library.send_library_entry_to_forge(entry["id"], library.LibraryForgeBody(expected_version=1))
+    assert library.get_library_entry(entry["id"])["forge_strategy_id"] == sent["forge"]["strategy_id"]
+    with get_db() as conn:
+        conn.execute("DELETE FROM strategies WHERE id = ?", (sent["forge"]["strategy_id"],))
+
+    listed = next(row for row in library.list_library()["strategies"] if row["id"] == entry["id"])
+    assert listed["forge_strategy_id"] is None and listed["status"] == "draft"
