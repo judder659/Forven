@@ -792,6 +792,26 @@ def test_timezone_mapping_and_monthly_inference(acquire):
     assert acquire.preview_import(months, "m.csv")["inferred_timeframe"] == "1M"
 
 
+def test_preview_handles_empty_cells_and_mixed_offsets(acquire):
+    messy = (
+        b"timestamp,open,high,low,close,volume,note\n"
+        b"2021-01-01T00:00:00Z,1,2,0.5,1.5,,hello\n"
+        b"2021-01-01T01:00:00Z,,2,0.5,1.5,3,\n"
+        b"2021-01-01T02:00:00Z,1,2,0.5,1.5,3,x\n"
+    )
+    preview = acquire.preview_import(messy, "messy.csv")
+    json.dumps(preview)  # JSON-safe: empty cells are null
+    assert preview["sample"][0]["volume"] is None and preview["invalid_rows"] == 2
+
+    offsets = _csv(
+        [("2021-01-01 00:00:00+0000", 1, 2, 0.5, 1.5, 1), ("2021-01-01 02:00:00+0100", 1, 2, 0.5, 1.5, 1),
+         ("2021-01-01 02:00:00+0000", 1, 2, 0.5, 1.5, 1)]
+    )
+    parsed = acquire.preview_import(offsets, "o.csv", date_format="%Y-%m-%d %H:%M:%S%z")
+    assert parsed["first_ts"] == "2021-01-01T00:00:00Z" and parsed["inferred_timeframe"] == "1h"
+    assert parsed["errors"] == []
+
+
 def test_overlap_diff_and_add_only_patch_keep_the_stored_provenance(acquire):
     now = _hour_now()
     start = now - 100 * H

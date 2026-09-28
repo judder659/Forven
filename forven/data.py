@@ -3114,9 +3114,7 @@ def _parse_timestamp_series(
     string. Naive date/times are read in ``timezone_name`` (default UTC); epoch
     numbers and strings that carry an offset are absolute and ignore it.
     """
-    if date_format:
-        parsed = pd.to_datetime(series, format=date_format, errors="coerce")
-    else:
+    if not date_format:
         numeric = pd.to_numeric(series, errors="coerce")
         if len(numeric) and numeric.notna().mean() >= 0.9:
             magnitude = float(numeric.dropna().abs().median() or 0.0)
@@ -3129,10 +3127,10 @@ def _parse_timestamp_series(
             else:
                 unit = "s"
             return pd.to_datetime(numeric, unit=unit, utc=True, errors="coerce")
-        try:
-            parsed = pd.to_datetime(series, errors="coerce")
-        except (TypeError, ValueError):  # mixed UTC offsets: each string is absolute
-            return pd.to_datetime(series, utc=True, errors="coerce")
+    try:
+        parsed = pd.to_datetime(series, format=date_format or None, errors="coerce")
+    except (TypeError, ValueError):  # mixed UTC offsets: each string is absolute
+        return pd.to_datetime(series, format=date_format or None, utc=True, errors="coerce")
     if not isinstance(parsed.dtype, pd.DatetimeTZDtype):
         parsed = parsed.dt.tz_localize(timezone_name or "UTC", ambiguous="NaT", nonexistent="NaT")
     return parsed.dt.tz_convert("UTC")
