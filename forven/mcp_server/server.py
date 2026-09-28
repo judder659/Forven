@@ -43,9 +43,12 @@ _GATE_PATTERN = re.compile(
 # The persisted robustness tests the paper gate reads, and how each one is
 # submitted. walk_forward/cost_stress take (strategy_id, symbol, timeframe);
 # param_jitter/monte_carlo/regime_split need a baseline backtest result_id.
+# cost_stress also gets the baseline when there is one: the rerun replays its
+# window, as in the gauntlet. Without it the backend falls back to the stage
+# horizon (the last 730 days), a different test from the gauntlet's.
 _ROBUSTNESS_TESTS = {
     "walk_forward": {"path": "/api/robustness/walk-forward/submit", "needs": "symbol"},
-    "cost_stress": {"path": "/api/robustness/cost-stress/submit", "needs": "symbol"},
+    "cost_stress": {"path": "/api/robustness/cost-stress/submit", "needs": "symbol", "baseline": True},
     "param_jitter": {"path": "/api/robustness/param-jitter/submit", "needs": "result"},
     "monte_carlo": {"path": "/api/robustness/monte-carlo/submit", "needs": "result_only"},
     "regime_split": {"path": "/api/robustness/regime-split/submit", "needs": "result_only"},
@@ -729,7 +732,8 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             "dataset_id ('BTC/USDT-1h') defaults to the strategy's stored "
             "symbol/timeframe; param_jitter needs a baseline backtest and "
             "auto-uses the strategy's latest result unless baseline_result_id "
-            "is passed."
+            "is passed. cost_stress reruns that same baseline's window at 2x "
+            "fees/slippage."
         ),
     )
     def forven_run_robustness(
@@ -754,7 +758,10 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             except Exception:
                 pass
         baseline = str(baseline_result_id or "").strip() or None
-        needs_baseline = any(_ROBUSTNESS_TESTS[t]["needs"] in ("result", "result_only") for t in wanted)
+        needs_baseline = any(
+            _ROBUSTNESS_TESTS[t]["needs"] in ("result", "result_only") or _ROBUSTNESS_TESTS[t].get("baseline")
+            for t in wanted
+        )
         if needs_baseline and not baseline:
             try:
                 results = forven.get("/api/results", params={"strategy": strategy_id, "limit": 10})
@@ -784,6 +791,8 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
                     "symbol": symbol,
                     "timeframe": timeframe,
                 }
+                if spec.get("baseline") and baseline:
+                    body["baseline_result_id"] = baseline
             elif needs == "result":
                 if not baseline:
                     errors[test] = (
