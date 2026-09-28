@@ -33,6 +33,7 @@ import concurrent.futures
 import multiprocessing
 
 
+from collections import Counter
 from datetime import datetime, timezone
 
 
@@ -267,6 +268,16 @@ def _resolve_worker_strategy_class(original_strategy_type: str, family_strategy_
     return _resolve_strategy_class(original_strategy_type)
 
 
+def _in_and_out_of_sample_frames(
+    df: "pd.DataFrame", warmup: int
+) -> tuple["pd.DataFrame", "pd.DataFrame", "pd.Timestamp"]:
+    """Split a backtest frame into its in-sample head (first 70%) and the
+    out-of-sample tail padded with ``warmup`` context bars, plus the timestamp
+    where out-of-sample trades start counting."""
+    split_idx = int(len(df) * 0.70)
+    return df.iloc[:split_idx], df.iloc[max(0, split_idx - warmup):], df.index[split_idx]
+
+
 def _isolated_backtest_worker(
     strategy_id: str,
     original_strategy_type: str,
@@ -314,11 +325,8 @@ def _isolated_backtest_worker(
         if strategy_obj is None and not checker and family_strategy_type not in _VECTORIZABLE_TYPES:
             return {"error": f"Unknown strategy type: {original_strategy_type}"}
 
-    split_idx = int(len(df) * 0.70)
-    is_df = df.iloc[:split_idx]
-    oos_context_df = df.iloc[max(0, split_idx - warmup):]
-    oos_start_timestamp = df.index[split_idx]
-    oos_df = df.iloc[split_idx:]
+    is_df, oos_context_df, oos_start_timestamp = _in_and_out_of_sample_frames(df, warmup)
+    oos_df = df.iloc[len(is_df):]
 
     try:
         is_trades = _run_signal_walk(
@@ -2734,6 +2742,72 @@ def build_backtest_chart_context(
     }
 
 
+def _preview_day(value: object) -> str:
+    stamp = pd.to_datetime(value, utc=True, errors="coerce")
+    return str(value or "?") if pd.isna(stamp) else stamp.strftime("%Y-%m-%d")
+
+
+def _preview_feed_warnings(spec: dict, asset: str, timeframe: str) -> list[str]:
+    """Explain a data feed the spec reads that this market lacks. The preview
+    reads such a series as 0; the backtest precheck downloads or refuses it."""
+    from forven.strategies.builtin.rule_engine import TYPE_NAME, RuleEngineStrategy
+    from forven.strategies.data_availability import evaluate_data_availability
+
+    avail = evaluate_data_availability(
+        TYPE_NAME, asset, timeframe, auto_fetch=False,
+        strategy_cls=RuleEngineStrategy, params={"spec": spec},
+    )
+    warnings: list[str] = []
+    if avail.missing_unfetchable:
+        warnings.append(
+            f"This spec reads {', '.join(avail.missing_unfetchable)}, which is not available "
+            f"for {asset} {timeframe} and cannot be downloaded. Run Backtest will refuse it."
+        )
+    if avail.missing_fetchable:
+        warnings.append(
+            f"This spec reads {', '.join(avail.missing_fetchable)}, which is not downloaded for "
+            f"{asset} {timeframe} yet. Run Backtest downloads it first; until then the preview reads 0."
+        )
+    if avail.blocked and not warnings and avail.error:
+        warnings.append(avail.error)
+    return warnings
+
+
+def _preview_backtest_trades(
+    frame: pd.DataFrame,
+    strategy_obj,
+    params: dict,
+    *,
+    leverage: float,
+    fee_bps: float,
+    slippage_bps: float,
+    trade_mode: str,
+    execution_controls: dict | None,
+    initial_capital: float,
+    asset: str,
+    timeframe: str,
+    include_funding: bool,
+) -> list[dict]:
+    """The trades a manual backtest takes on ``frame``: the in-sample and
+    out-of-sample walks of :func:`_isolated_backtest_worker`, without the
+    metrics and funding PnL it adds afterwards (neither moves a trade)."""
+    from forven.strategies.execution_contract import EXECUTION_WARMUP
+
+    type_name = strategy_obj.strategy_type
+    is_df, oos_context_df, oos_start = _in_and_out_of_sample_frames(frame, EXECUTION_WARMUP)
+
+    def walk(df: pd.DataFrame) -> list[dict]:
+        return _run_signal_walk(
+            SIGNAL_CHECKERS.get(type_name), df, params, EXECUTION_WARMUP, leverage, strategy_obj,
+            strategy_type=type_name, fee_bps=fee_bps, slippage_bps=slippage_bps,
+            regime_gate=False, trade_mode=trade_mode, execution_controls=execution_controls,
+            initial_capital=initial_capital, asset=asset, resolved_timeframe=timeframe,
+            include_funding=include_funding,
+        )
+
+    return list(walk(is_df)) + _filter_trades_from_start(walk(oos_context_df), oos_start)
+
+
 def build_strategy_preview_chart_context(
     *,
     asset: str,
@@ -2743,103 +2817,137 @@ def build_strategy_preview_chart_context(
     spec: dict,
     trade_mode: str = "long_only",
     strategy_name: str = "Visual strategy",
-    max_markers: int = 600,
+    leverage: float | None = None,
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
+    initial_capital: float | None = None,
+    execution_controls: dict | None = None,
+    max_trade_markers: int = 1000,
 ) -> dict:
     """Live preview chart for a no-code rule_engine spec.
 
-    Loads local candles, computes the spec's signals in-process (no backtest
-    run, no persistence) and returns bars + indicator overlays + entry/exit
-    markers in the same shape as :func:`build_backtest_chart_context`, so the
-    frontend can feed it straight into the shared chart workspace.
+    Candles come through the backtest's own loader, so the research-holdout
+    seal and data-feed enrichment match "Run Backtest", and the markers are the
+    trades the backtest takes with the same execution settings. ``signal_bars``
+    counts the bars on which each condition side is true. Nothing is persisted.
+    Returns bars + overlays + markers in the shape of
+    :func:`build_backtest_chart_context`.
     """
+    from forven.api_core import get_settings
+    from forven.research_contract import research_read_cutoff
+    from forven.research_holdout import seal_window
     from forven.strategies.builtin.rule_engine import (
         RuleEngineStrategy,
+        spec_feed_columns,
         validate_rule_spec,
-        _spec_min_bars,
     )
 
-    warnings: list[str] = []
     resolved_asset = str(asset or "").strip().upper()
     resolved_tf = str(timeframe or "1h").strip() or "1h"
-
-    if not isinstance(spec, dict):
-        return {
-            "bars": [], "entry_markers": [], "exit_markers": [],
-            "main_indicators": [], "sub_indicators": [],
-            "strategy_name": strategy_name, "strategy_meta": "",
-            "strategy_params": {}, "warnings": ["No rule spec provided."],
-        }
-
-    spec_errors = validate_rule_spec(spec)
-    if spec_errors:
-        warnings.extend(spec_errors[:5])
-
-    warmup = max(210, _spec_min_bars(spec))
-    frame, frame_warnings = _load_local_chart_frame(
-        asset=resolved_asset,
-        timeframe=resolved_tf,
-        start_date=start_date,
-        end_date=end_date,
-        warmup_bars=warmup,
-        allow_remote_fallback=True,
-    )
-    warnings.extend(frame_warnings)
-
-    entry_markers: list[dict] = []
-    exit_markers: list[dict] = []
-    main_indicators: list[dict] = []
-    sub_indicators: list[dict] = []
-
-    if not frame.empty and not spec_errors:
-        try:
-            strat = RuleEngineStrategy(
-                "rule_engine__preview", {"spec": spec, "_asset": resolved_asset}
-            )
-            signals = strat.generate_signals(frame)
-            allow_short = str(trade_mode or "long_only") != "long_only"
-            closes = frame["close"]
-
-            def _emit(mask, bucket, direction, label):
-                if mask is None:
-                    return
-                for ts in frame.index[mask.to_numpy()]:
-                    price = _coerce_chart_float(closes.loc[ts])
-                    stamp = _serialize_chart_timestamp(ts)
-                    if stamp and price is not None:
-                        bucket.append({
-                            "timestamp": stamp, "price": round(price, 8),
-                            "direction": direction, "label": label,
-                        })
-
-            _emit(signals.long_entries, entry_markers, "long", "Long")
-            _emit(signals.long_exits, exit_markers, "long", "Exit")
-            if allow_short:
-                _emit(signals.short_entries, entry_markers, "short", "Short")
-                _emit(signals.short_exits, exit_markers, "short", "Cover")
-        except Exception as exc:
-            warnings.append(f"Signal preview unavailable: {exc}")
-
-        m_ind, s_ind, ind_warnings = _build_chart_indicators(frame, "rule_engine", {"spec": spec})
-        main_indicators, sub_indicators = m_ind, s_ind
-        warnings.extend(ind_warnings)
-
-    # Cap markers so a per-keystroke live preview stays light.
-    if len(entry_markers) > max_markers:
-        entry_markers = entry_markers[-max_markers:]
-    if len(exit_markers) > max_markers:
-        exit_markers = exit_markers[-max_markers:]
-
-    return {
-        "bars": _frame_to_chart_bars(frame),
-        "entry_markers": entry_markers,
-        "exit_markers": exit_markers,
-        "main_indicators": main_indicators,
-        "sub_indicators": sub_indicators,
+    warnings: list[str] = []
+    context: dict = {
+        "bars": [], "entry_markers": [], "exit_markers": [],
+        "main_indicators": [], "sub_indicators": [],
         "strategy_name": str(strategy_name or "Visual strategy"),
         "strategy_meta": _build_chart_strategy_meta(resolved_asset, resolved_tf, start_date, end_date),
-        "strategy_params": {"spec": spec},
-        "warnings": _dedupe_chart_messages(warnings),
+        "strategy_params": {"spec": spec if isinstance(spec, dict) else {}},
+        "trade_count": 0, "exit_reasons": {}, "signal_bars": {}, "holdout_cutoff": None,
     }
+
+    def finish() -> dict:
+        context["warnings"] = _dedupe_chart_messages(warnings)
+        return context
+
+    if not isinstance(spec, dict):
+        warnings.append("No rule spec provided.")
+        return finish()
+    spec_errors = validate_rule_spec(spec)
+    warnings.extend(spec_errors[:5])
+
+    cutoff = research_read_cutoff()
+    if cutoff is not None:
+        context["holdout_cutoff"] = cutoff.isoformat()
+        sealed_start, sealed_end = seal_window(start_date, end_date, cutoff)
+        if (sealed_start, sealed_end) != (start_date, end_date):
+            shown_start, shown_end = _preview_day(sealed_start), _preview_day(sealed_end)
+            context["strategy_meta"] = _build_chart_strategy_meta(resolved_asset, resolved_tf, shown_start, shown_end)
+            warnings.append(
+                f"Research holdout: data from {cutoff:%Y-%m-%d} on is held back for each strategy's "
+                f"final test, so this preview and Run Backtest use {shown_start} to {shown_end} instead."
+            )
+
+    try:
+        frame = load_backtest_candles(
+            resolved_asset,
+            timeframe=resolved_tf,
+            start_date=start_date,
+            end_date=end_date,
+            # Funding and OI are fetched remotely; entries and exits depend on
+            # them only when the spec reads them.
+            enrich_market_data=bool(spec_feed_columns(spec) & {"funding_rate", "open_interest"}),
+        )
+    except Exception as exc:
+        warnings.append(f"Candles unavailable for {resolved_asset} {resolved_tf}: {exc}")
+        return finish()
+    if frame is None or frame.empty:
+        warnings.append(f"No candles for {resolved_asset} {resolved_tf} in this window. Collect them on the Data page.")
+        return finish()
+    context["bars"] = _frame_to_chart_bars(frame)
+    if spec_errors:
+        return finish()
+
+    warnings.extend(_preview_feed_warnings(spec, resolved_asset, resolved_tf))
+    context["main_indicators"], context["sub_indicators"], indicator_warnings = _build_chart_indicators(
+        frame, "rule_engine", {"spec": spec}
+    )
+    warnings.extend(indicator_warnings)
+
+    params = {"spec": spec, "_asset": resolved_asset}
+    strategy_obj = RuleEngineStrategy("rule_engine__preview", params)
+    try:
+        signals = strategy_obj.generate_signals(frame)
+    except Exception as exc:
+        warnings.append(f"Signal preview unavailable: {exc}")
+        return finish()
+    sides = (("entry_long", "long_entries"), ("exit_long", "long_exits"),
+             ("entry_short", "short_entries"), ("exit_short", "short_exits"))
+    context["signal_bars"] = {side: int(getattr(signals, attr).sum()) for side, attr in sides if spec.get(side)}
+
+    resolved_mode, mode_error = resolve_backtest_trade_mode(
+        trade_mode, strategy_type=strategy_obj.strategy_type, params=params, strategy_obj=strategy_obj
+    )
+    if mode_error:
+        warnings.append(mode_error)
+        return finish()
+    if len(frame) < 210:
+        warnings.append(f"Only {len(frame)} bars in this window; a backtest needs at least 210.")
+        return finish()
+
+    settings = get_settings()
+    try:
+        trades = _preview_backtest_trades(
+            frame, strategy_obj, params,
+            leverage=float(leverage) if leverage is not None else resolve_leverage(params),
+            fee_bps=float(fee_bps if fee_bps is not None else settings.get("backtest_fee_bps", 4.5)),
+            slippage_bps=float(slippage_bps if slippage_bps is not None else settings.get("backtest_slippage_bps", 2.0)),
+            trade_mode=resolved_mode,
+            execution_controls=execution_controls or None,
+            initial_capital=float(initial_capital) if initial_capital else 10000.0,
+            asset=resolved_asset,
+            timeframe=resolved_tf,
+            include_funding=bool(settings.get("backtest_include_funding", True)),
+        )
+    except Exception as exc:
+        warnings.append(f"Trade preview unavailable: {exc}")
+        return finish()
+
+    context["trade_count"] = len(trades)
+    context["exit_reasons"] = dict(Counter(str(trade.get("exit_reason") or "signal") for trade in trades))
+    if len(trades) > max_trade_markers:
+        warnings.append(f"The chart shows the last {max_trade_markers} of {len(trades)} trades.")
+        trades = trades[-max_trade_markers:]
+    context["entry_markers"], context["exit_markers"] = _build_trade_markers(trades)
+    return finish()
 
 
 def build_backtest_chart_context_from_result_detail(result_detail: dict) -> dict:

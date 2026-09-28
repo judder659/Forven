@@ -58,6 +58,22 @@ class PreviewChartBody(BaseModel):
     end: str | None = None
     trade_mode: str | None = None
     name: str | None = Field(default=None, max_length=140)
+    # The execution settings a manual backtest takes (BacktestSubmitBody's
+    # bounds), so the preview marks the trades "Run Backtest" would take.
+    initial_capital: float | None = Field(default=None, gt=0, le=1e12)
+    fee_bps: float | None = Field(default=None, ge=0, le=1000)
+    slippage_bps: float | None = Field(default=None, ge=0, le=1000)
+    leverage: float | None = Field(default=None, gt=0, le=125)
+    stop_loss_pct: float | None = Field(default=None, gt=0, le=100)
+    take_profit_pct: float | None = Field(default=None, gt=0, le=1000)
+    trailing_stop_pct: float | None = Field(default=None, gt=0, le=100)
+    time_stop_bars: int | None = Field(default=None, ge=1, le=1_000_000)
+    sizing_mode: str | None = None
+    fixed_size: float | None = Field(default=None, gt=0, le=1e12)
+    risk_per_trade: float | None = Field(default=None, gt=0, le=1)
+    atr_stop_multiplier: float | None = Field(default=None, gt=0, le=50)
+    kelly_multiplier: float | None = Field(default=None, gt=0, le=5)
+    kelly_lookback: int | None = Field(default=None, ge=1, le=100_000)
 
 
 class NlToSpecBody(BaseModel):

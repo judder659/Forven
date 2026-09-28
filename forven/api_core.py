@@ -6869,12 +6869,14 @@ def post_backtest_preview(body: BacktestPreviewBody):
 
 
 def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
-    """Live chart context (bars + indicator overlays + entry/exit markers) for a
+    """Live chart context (bars + indicator overlays + trade markers) for a
     no-code rule_engine spec — computed in-process, never persisted. Powers the
     Strategy Creator's live preview chart. Never 500s; degrades to warnings."""
     asset = _extract_base_asset_symbol(body.symbol)
     timeframe = str(body.timeframe or "1h").strip() or "1h"
     spec = body.spec if isinstance(body.spec, dict) else {}
+    # The same controls post_backtest_submit hands the engine.
+    execution_controls = _collect_honored_backtest_execution_controls(body)
     try:
         from forven.strategies.backtest import build_strategy_preview_chart_context
 
@@ -6886,6 +6888,11 @@ def post_backtest_preview_chart(body: PreviewChartBody) -> dict:
             spec=spec,
             trade_mode=str(body.trade_mode or "long_only").strip() or "long_only",
             strategy_name=str(body.name or "Visual strategy"),
+            leverage=body.leverage,
+            fee_bps=body.fee_bps,
+            slippage_bps=body.slippage_bps,
+            initial_capital=body.initial_capital,
+            execution_controls=execution_controls or None,
         )
     except Exception as exc:  # noqa: BLE001 — preview must never break the page
         return {
