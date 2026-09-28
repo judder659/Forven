@@ -3,6 +3,7 @@
 	// (with its library actions), or a strategy already in the system.
 	import { createEventDispatcher, onMount, tick } from 'svelte';
 	import type { LibraryStrategy, Strategy } from '$lib/api';
+	import { portal } from '$lib/actions/portal';
 	import type { StrategyTemplate } from './templates';
 
 	export let library: LibraryStrategy[] = [];
@@ -59,7 +60,7 @@
 
 <svelte:window on:keydown={onKey} />
 
-<div class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[8vh]" role="presentation"
+<div use:portal class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[8vh]" role="presentation"
 	on:pointerdown={(e) => { if (e.target === e.currentTarget) dispatch('close'); }}>
 	<div role="dialog" aria-modal="true" aria-label="Open a strategy"
 		class="flex h-[76vh] w-full max-w-4xl flex-col border border-[#333] bg-[#060606] shadow-2xl shadow-black">

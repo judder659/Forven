@@ -97,7 +97,9 @@ export interface PreviewTrade {
 	exit_reason: string;
 	pnl_pct: number;
 	bars_held: number;
+	/** Fees and slippage, as a fraction of equity (a cost, positive). */
 	cost_pct: number;
+	/** Funding as a gain: negative when the position paid funding. */
 	funding_pct: number;
 	size_fraction: number;
 	/** The bar whose close fired the entry (the fill is the next bar's open). */

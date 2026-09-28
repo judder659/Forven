@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher, tick } from 'svelte';
 	import type { IndicatorMeta, RuleSideKey } from '$lib/api';
+	import { portal } from '$lib/actions/portal';
 	import { RESERVED_PARAM_NAMES } from '$lib/utils/ruleSpec';
 	import { formatValue, RAW_COLUMN_LABELS, seriesLabel } from '$lib/utils/ruleLabels';
 	import { formulaToSide, sideToFormula } from '$lib/utils/ruleFormula';
@@ -726,7 +727,7 @@
 </div>
 
 {#if paletteOpen}
-	<div class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[12vh]" role="presentation"
+	<div use:portal class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[12vh]" role="presentation"
 		on:pointerdown={(e) => { if (e.target === e.currentTarget) closePalette(); }}>
 		<div role="dialog" aria-modal="true" aria-label="Add an indicator"
 			class="flex max-h-[70vh] w-full max-w-2xl flex-col border border-[#333] bg-[#070707] shadow-2xl shadow-black">

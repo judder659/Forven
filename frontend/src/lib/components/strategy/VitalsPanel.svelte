@@ -58,7 +58,7 @@
 			<span class="text-[9px] uppercase tracking-wider text-[#555]">Deflated Sharpe</span>
 			{#if dsr}
 				<span class="font-mono {dsrTone}">{(dsr.probability * 100).toFixed(0)}%</span>
-				<span class="text-[#777]">chance the out-of-sample edge is more than the luck of trying {dsr.trials} variant{dsr.trials === 1 ? '' : 's'}</span>
+				<span class="text-[#777]">chance the out-of-sample edge is real, allowing for the {dsr.trials} version{dsr.trials === 1 ? '' : 's'} of the rules tried</span>
 			{:else}
 				<span class="text-[#666]">needs at least 5 out-of-sample trades</span>
 			{/if}

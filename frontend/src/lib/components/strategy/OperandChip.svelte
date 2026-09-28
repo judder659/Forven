@@ -2,6 +2,7 @@
 	// One side of a condition, shown as a chip; its picker chooses a data
 	// series, a knob (named parameter) or a fixed number.
 	import { createEventDispatcher, tick } from 'svelte';
+	import { anchored } from '$lib/actions/anchored';
 	import { dismissable } from '$lib/actions/dismissable';
 
 	type OperandType = 'series' | 'param' | 'const';
@@ -26,6 +27,7 @@
 	let draft = '';
 	let searchInput: HTMLInputElement | undefined;
 	let numberInput: HTMLInputElement | undefined;
+	let chip: HTMLButtonElement | undefined;
 
 	async function toggle() {
 		if (disabled) return;
@@ -56,14 +58,14 @@
 </script>
 
 <span class="relative inline-block">
-	<button type="button" on:click={toggle} {disabled} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open}
+	<button type="button" bind:this={chip} on:click={toggle} {disabled} aria-label={ariaLabel} aria-haspopup="dialog" aria-expanded={open}
 		class="max-w-[220px] truncate border px-1.5 py-0.5 text-left text-[12px] transition-colors disabled:opacity-40
 			{missing ? 'border-red-700 text-red-300' : type === 'const' ? 'border-[#2a2a2a] font-mono text-[#e5e5e5] hover:border-[#666]' : type === 'param' ? 'border-sky-900 text-sky-300 hover:border-sky-600' : 'border-[#333] text-white hover:border-white'}">
 		{label}
 	</button>
 	{#if open}
-		<div use:dismissable={() => (open = false)} role="dialog" aria-label="choose a value"
-			class="absolute left-0 top-full z-40 mt-1 w-72 border border-[#333] bg-[#080808] shadow-2xl shadow-black">
+		<div use:anchored={chip} use:dismissable={() => (open = false)} role="dialog" aria-label="choose a value"
+			class="fixed z-50 w-72 border border-[#333] bg-[#080808] shadow-2xl shadow-black">
 			<div class="flex border-b border-[#1f1f1f] text-[10px] uppercase tracking-wider">
 				{#each [['series', 'Series'], ['param', 'Knob'], ['const', 'Number']] as [key, name]}
 					<button type="button" on:click={async () => { tab = key as OperandType; await tick(); (tab === 'const' ? numberInput : searchInput)?.focus(); }}

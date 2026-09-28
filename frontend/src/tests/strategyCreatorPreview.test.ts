@@ -20,7 +20,8 @@ let target: HTMLDivElement;
 let app: ReturnType<typeof mount>;
 
 async function settle() { for (let i = 0; i < 12; i++) { await Promise.resolve(); await tick(); } }
-function button(text: string) { return [...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)!; }
+// Overlays (launcher, save prompt) render under <body>, outside the page.
+function button(text: string) { return [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)!; }
 function text() { return target.textContent ?? ''; }
 function preview(tradeCount: number, extra: Record<string, unknown> = {}) {
 	return { bars: [], entry_markers: [], exit_markers: [], main_indicators: [], sub_indicators: [],
@@ -104,13 +105,33 @@ it('charges the deflated Sharpe for each distinct version of the rules previewed
 	expect(text()).toContain('2 versions tried');
 });
 
-it('undoes and redoes rule edits', async () => {
+it('undoes and redoes rule edits, one step per number tuned', async () => {
 	await fireEvent.input(knob('oversold'), { target: { value: '25' } }); await settle();
+	await fireEvent.input(knob('oversold'), { target: { value: '20' } }); await settle();
 	await fireEvent.click(target.querySelector('button[aria-label="Undo"]')!); await settle();
 	expect(knob('oversold').value).toBe('30');
 	expect((await runAndReadSpec()).params.oversold).toBe(30);
 	await fireEvent.click(target.querySelector('button[aria-label="Redo"]')!); await settle();
-	expect(knob('oversold').value).toBe('25');
+	expect(knob('oversold').value).toBe('20');
+});
+
+it('keeps slow tuning of one number as one undo step, and another number as the next', async () => {
+	const clock = vi.spyOn(Date, 'now');
+	try {
+		clock.mockReturnValue(1_000_000);
+		await fireEvent.input(knob('oversold'), { target: { value: '25' } }); await settle();
+		clock.mockReturnValue(1_010_000);
+		await fireEvent.input(knob('oversold'), { target: { value: '20' } }); await settle();
+		clock.mockReturnValue(1_020_000);
+		await fireEvent.input(knob('exit_level'), { target: { value: '60' } }); await settle();
+		const undo = target.querySelector('button[aria-label="Undo"]')!;
+		await fireEvent.click(undo); await settle();
+		expect([knob('oversold').value, knob('exit_level').value]).toEqual(['20', '55']);
+		await fireEvent.click(undo); await settle();
+		expect([knob('oversold').value, knob('exit_level').value]).toEqual(['30', '55']);
+	} finally {
+		clock.mockRestore();
+	}
 });
 
 it('shows an AI change as a diff and applies it only when accepted', async () => {

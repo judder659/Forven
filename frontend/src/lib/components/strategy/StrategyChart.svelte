@@ -151,7 +151,8 @@
 			return;
 		}
 		const x = chart.timeScale().timeToCoordinate(toTime(oosStart) as Time);
-		oosX = x === null || x > mainEl.clientWidth - 80 ? null : Math.max(0, Math.round(x));
+		// Negative: the boundary is off to the left and every visible bar is out-of-sample.
+		oosX = x === null || x > mainEl.clientWidth - 80 ? null : Math.round(x);
 	}
 
 	function setMarkers() {
@@ -323,7 +324,11 @@
 	}
 
 	function paneAction(node: HTMLDivElement, group: { id: string; lines: BacktestChartIndicator[] }) {
-		const paneChart = createChart(node, { ...CHART_OPTIONS, width: node.clientWidth, height: node.clientHeight, timeScale: { visible: false, borderColor: '#1a1a1a' } });
+		// The price chart carries the TradingView attribution once for the stack.
+		const paneChart = createChart(node, {
+			...CHART_OPTIONS, layout: { ...CHART_OPTIONS.layout, attributionLogo: false },
+			width: node.clientWidth, height: node.clientHeight, timeScale: { visible: false, borderColor: '#1a1a1a' },
+		});
 		const pane: Pane = { id: group.id, chart: paneChart, anchor: paneChart.addLineSeries({ visible: false }), series: new Map(), lines: [], legend: '' };
 		panes = [...panes, pane];
 		fillPane(pane, group.lines);
@@ -406,7 +411,9 @@
 		{#if legend}
 			<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate text-[10px] text-[#8a8a8a]">{legend}</div>
 		{/if}
-		{#if oosX !== null}
+		{#if oosX !== null && oosX < 0}
+			<div class="pointer-events-none absolute left-2 top-5 z-10 whitespace-nowrap bg-black/70 px-1 text-[9px] uppercase tracking-wider text-[#777]">out-of-sample</div>
+		{:else if oosX !== null}
 			<div class="pointer-events-none absolute top-0 z-10 h-full border-l border-dashed border-[#333]" style="left: {oosX}px">
 				<span class="ml-1 mt-5 inline-block whitespace-nowrap bg-black/70 px-1 text-[9px] uppercase tracking-wider text-[#777]">out-of-sample →</span>
 			</div>

@@ -167,11 +167,13 @@ def traps(in_stats: Mapping, out_stats: Mapping, trades: list[dict], frame: pd.D
         if best / total > 0.5:
             found.append({"code": "concentration", "level": "warn",
                           "text": f"{best / total:.0%} of the net profit comes from {month} alone."})
+    # Funding on a trade is gain-positive: only funding paid is a cost.
     costs = sum(float(t.get("cost_drag_pct") or 0.0) - min(0.0, _funding(t)) for t in trades)
     gross = total + costs
     if gross > 0 and costs / gross > 0.5:
-        found.append({"code": "costs", "level": "warn",
-                      "text": f"Fees, slippage and funding take {costs / gross:.0%} of the gross profit."})
+        text = (f"Fees, slippage and funding take {costs / gross:.0%} of the gross profit." if costs <= gross
+                else f"Fees, slippage and funding cost {costs:.1%}, more than the {gross:.1%} the rule makes before costs.")
+        found.append({"code": "costs", "level": "warn", "text": text})
     if trades and len(frame) > 1:
         window = frame.index[-1] - frame.index[0]
         idle = frame.index[-1] - pd.Timestamp(trades[-1]["entry_time"])

@@ -150,7 +150,7 @@ describe('StrategyBuilder', () => {
 		await fireEvent.click(target.querySelector('button[aria-label="right operand"]')!); await settle();
 		await fireEvent.click(buttons('Series')[0]); await settle();
 		await fireEvent.click(buttons(/Add an indicator/)[0]); await settle();
-		const option = [...target.querySelectorAll('[aria-label="Add an indicator"] [role="option"]')]
+		const option = [...document.querySelectorAll('[aria-label="Add an indicator"] [role="option"]')]
 			.find((b) => b.textContent?.includes('Bollinger Bands'))!;
 		await fireEvent.click(option); await settle();
 		expect(last.valid).toBe(true);

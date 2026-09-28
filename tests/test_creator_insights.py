@@ -64,7 +64,12 @@ def test_traps_flag_decay_concentration_costs_and_idleness():
     assert {"few_trades", "decay", "concentration", "stale"} <= codes
 
     costly = [{**trades[0], "pnl_pct": 0.001, "cost_drag_pct": 0.01}, {**trades[1], "pnl_pct": 0.001, "cost_drag_pct": 0.01}]
-    assert "costs" in {trap["code"] for trap in insights.traps(in_stats, {"trades": 40, "net_return": 0.01}, costly, frame)}
+    found = {trap["code"]: trap["text"] for trap in insights.traps(in_stats, {"trades": 40, "net_return": 0.01}, costly, frame)}
+    assert found["costs"] == "Fees, slippage and funding take 91% of the gross profit."
+    # Costs beyond the gross profit are stated as amounts, not a percentage over 100.
+    losing = [{**t, "pnl_pct": -0.009, "funding_cost_pct": -0.0015} for t in costly]
+    found = {trap["code"]: trap["text"] for trap in insights.traps(in_stats, {"trades": 40, "net_return": -0.01}, losing, frame)}
+    assert found["costs"] == "Fees, slippage and funding cost 2.3%, more than the 0.5% the rule makes before costs."
 
 
 def test_sample_stats_send_an_infinite_profit_factor_as_a_flag():

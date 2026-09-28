@@ -73,8 +73,8 @@
 		<div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] sm:grid-cols-4" data-testid="trade-facts">
 			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Entry</div><div class="font-mono text-[#ddd]">{stamp(trade.entry_time)}</div><div class="font-mono text-[11px] text-[#888]">@ {formatValue(trade.entry_price)}</div></div>
 			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Exit · {EXIT_REASONS[trade.exit_reason] ?? trade.exit_reason.replaceAll('_', ' ')}</div><div class="font-mono text-[#ddd]">{stamp(trade.exit_time)}</div><div class="font-mono text-[11px] text-[#888]">@ {formatValue(trade.exit_price)}</div></div>
-			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Result</div><div class="font-mono text-[15px] {trade.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.pnl_pct)}</div><div class="text-[11px] text-[#888]">{trade.bars_held} bars held</div></div>
-			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Costs</div><div class="font-mono text-[11px] text-[#aaa]">fees {pct(-trade.cost_pct)}</div><div class="font-mono text-[11px] text-[#aaa]">funding {pct(-trade.funding_pct, 3)}</div><div class="font-mono text-[11px] text-[#666]">size {(trade.size_fraction * 100).toFixed(0)}% of equity</div></div>
+			<div title="Return on equity after fees and funding, as the backtest counts it"><div class="text-[9px] uppercase tracking-wider text-[#555]">Result</div><div class="font-mono text-[15px] {trade.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.pnl_pct)}</div><div class="text-[11px] text-[#888]">{trade.bars_held} bars held</div></div>
+			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Costs</div><div class="font-mono text-[11px] text-[#aaa]">fees {pct(-trade.cost_pct)}</div><div class="font-mono text-[11px] text-[#aaa]" title="Funding paid is negative, funding received positive">funding {pct(trade.funding_pct, 3)}</div><div class="font-mono text-[11px] text-[#666]">size {(trade.size_fraction * 100).toFixed(0)}% of equity</div></div>
 		</div>
 
 		<div class="border-t border-[#161616] pt-2">

@@ -37,6 +37,7 @@
 	import { specSeriesLabels, specThresholds } from '$lib/utils/ruleLabels';
 	import { diffSpecs, type SpecChange } from '$lib/utils/specDiff';
 	import type { ExecutionRequestFields } from '$lib/api';
+	import { portal } from '$lib/actions/portal';
 	import ParameterEditor from '$lib/components/ui/ParameterEditor.svelte';
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
 	import StrategyBuilder from '$lib/components/strategy/StrategyBuilder.svelte';
@@ -121,15 +122,36 @@
 	let history: string[] = [];
 	let historyIndex = -1;
 	let lastRecordAt = 0;
+	let lastNumberPath: string | null = null;
 	const COALESCE_MS = 800;
+	/** The path of the one number that differs between two specs of the same shape, else null. */
+	function changedNumber(before: unknown, after: unknown): string | null {
+		const paths: string[] = [];
+		const same = (x: unknown, y: unknown, path: string): boolean => {
+			if (typeof x === 'number' && typeof y === 'number') {
+				if (x !== y) paths.push(path);
+				return true;
+			}
+			if (!x || !y || typeof x !== 'object' || typeof y !== 'object') return x === y;
+			const xk = Object.keys(x);
+			const yk = Object.keys(y);
+			if (Array.isArray(x) !== Array.isArray(y) || xk.length !== yk.length || xk.some((k, i) => k !== yk[i])) return false;
+			return xk.every((k) => same((x as Record<string, unknown>)[k], (y as Record<string, unknown>)[k], `${path}/${k}`));
+		};
+		return same(before, after, '') && paths.length === 1 ? paths[0] : null;
+	}
 	function recordHistory(spec: Record<string, unknown>) {
 		const json = JSON.stringify(spec);
 		// A restored version echoes back from the builder unchanged.
 		if (history[historyIndex] === json) return;
 		const now = Date.now();
-		// A burst of edits (typing, dragging a slider) is one step.
-		const coalesce = now - lastRecordAt < COALESCE_MS && historyIndex > 0 && historyIndex === history.length - 1;
+		// One step per gesture: a burst of edits, or edits to the same number
+		// (typing a value, dragging a slider).
+		const numberPath = history[historyIndex] ? changedNumber(JSON.parse(history[historyIndex]), spec) : null;
+		const sameNumber = numberPath !== null && numberPath === lastNumberPath;
+		const coalesce = (sameNumber || now - lastRecordAt < COALESCE_MS) && historyIndex > 0 && historyIndex === history.length - 1;
 		lastRecordAt = now;
+		lastNumberPath = numberPath;
 		history = [...history.slice(0, coalesce ? historyIndex : historyIndex + 1), json].slice(-200);
 		historyIndex = history.length - 1;
 	}
@@ -137,20 +159,21 @@
 		history = [];
 		historyIndex = -1;
 		lastRecordAt = 0;
+		lastNumberPath = null;
 	}
 	$: canUndo = mode === 'visual' && historyIndex > 0;
 	$: canRedo = mode === 'visual' && historyIndex < history.length - 1;
-	function undo() {
-		if (!canUndo) return;
-		historyIndex -= 1;
+	function stepHistory(delta: number) {
+		historyIndex += delta;
 		lastRecordAt = 0;
+		lastNumberPath = null;
 		currentSpec = JSON.parse(history[historyIndex]);
 	}
+	function undo() {
+		if (canUndo) stepHistory(-1);
+	}
 	function redo() {
-		if (!canRedo) return;
-		historyIndex += 1;
-		lastRecordAt = 0;
-		currentSpec = JSON.parse(history[historyIndex]);
+		if (canRedo) stepHistory(1);
 	}
 
 	// A different strategy starts a fresh line of research: its own undo history
@@ -1488,6 +1511,7 @@ TYPE_NAME = "my_strategy"
 
 <!-- Save prompt: overwrite the opened strategy or create a new one -->
 {#if savePromptOpen}
+<div use:portal>
 	<button type="button" class="fixed inset-0 z-40 bg-black/50" on:click={() => (savePromptOpen = false)} aria-label="Cancel save"></button>
 	<div class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-[#333] bg-[#050505] p-5">
 		<h3 class="border-b border-[#222] pb-3 text-sm font-bold uppercase tracking-widest text-white">Save strategy</h3>
@@ -1517,11 +1541,14 @@ TYPE_NAME = "my_strategy"
 			</button>
 		</div>
 	</div>
+</div>
 {/if}
 
 {#if showImportDialog}
-	<StrategyImportDialog
-		on:close={() => (showImportDialog = false)}
-		on:imported={(e) => onStrategyImported(e.detail)}
-	/>
+	<div use:portal>
+		<StrategyImportDialog
+			on:close={() => (showImportDialog = false)}
+			on:imported={(e) => onStrategyImported(e.detail)}
+		/>
+	</div>
 {/if}

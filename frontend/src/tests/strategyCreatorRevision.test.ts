@@ -17,7 +17,8 @@ let target: HTMLDivElement;
 let app: ReturnType<typeof mount>;
 let stored: any[];
 async function settle() { for (let i=0;i<12;i++) { await Promise.resolve(); await tick(); } }
-function button(text: string) { return [...target.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!; }
+// Overlays (launcher, save prompt) render under <body>, outside the page.
+function button(text: string) { return [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!; }
 beforeEach(async () => {
  vi.clearAllMocks(); stored=[];
  api.getIndicators.mockResolvedValue([]); api.getSymbols.mockResolvedValue([]);
@@ -64,7 +65,7 @@ it('requires revalidation after code edits and does not submit the previous code
 });
 it('saves execution context and blocks sending unsaved edits',async () => {
  await fireEvent.click(button('Save to library'));await settle();
- const buttons=[...target.querySelectorAll('button')];
+ const buttons=[...document.querySelectorAll('button')];
  const save=buttons.find(b=>b.textContent?.includes('Save as new'));
  expect(save).toBeTruthy(); await fireEvent.click(save!);await settle();
  expect(api.createLibraryStrategy).toHaveBeenCalled();
@@ -99,7 +100,7 @@ it('restores saved execution settings when reopening a library strategy', async 
  await fireEvent.click(button('Save to library'));await settle();await fireEvent.click(button('Save as new'));await settle();
  await fireEvent.input(input('Leverage'),{target:{value:'8'}});await settle();
  await fireEvent.click(button('Open…'));await settle();
- await fireEvent.click(target.querySelector('[data-testid="library-open-lib_test"]')!);await settle();
+ await fireEvent.click(document.querySelector('[data-testid="library-open-lib_test"]')!);await settle();
  expect(input('Leverage').value).toBe('3');
  expect(input('Fee (bps)').value).toBe('12');
  expect(input('Stop Loss %').value).toBe('2.5');
