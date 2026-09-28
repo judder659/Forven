@@ -171,7 +171,7 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
             "enabled": True,
             "enabled_exchanges": ["binance", "okx"],
             "auto_catchup_batch": 21,
-            "source_priority": {"candles": ["okx", "binance"]},
+            "sla_tiers": {"live": {"missed_bars": 2}},
         },
     )
 
@@ -179,8 +179,9 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     assert loaded.enabled is True
     assert loaded.enabled_exchanges == ["binance", "okx"]
     assert loaded.auto_catchup_batch == 21
-    assert loaded.source_priority["candles"] == ["okx", "binance"]
-    assert loaded.source_priority["funding"] == ["binance"]
+    assert loaded.sla_tiers["live"]["missed_bars"] == 2
+    assert loaded.sla_tiers["live"]["floor_minutes"] == 20
+    assert loaded.sla_tiers["pipeline"] == {"missed_bars": 3, "floor_minutes": 120}
 
 
 def test_datahub_candles_matches_legacy_load_parquet_with_flag(forven_db, monkeypatch, tmp_path):

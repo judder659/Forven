@@ -40,6 +40,11 @@ from forven.routers.auth import router as auth_router
 from forven.routers.agents import router as agents_router
 from forven.routers.agent_toolsets import router as agent_toolsets_router
 from forven.routers.data import router as data_router
+from forven.routers.data_acquire import router as data_acquire_router
+from forven.routers.data_catalog import router as data_catalog_router
+from forven.routers.data_ops import router as data_ops_router
+from forven.routers.data_readiness import router as data_readiness_router
+from forven.routers.data_sla import router as data_sla_router
 from forven.routers.deepdive import router as deepdive_router
 from forven.routers.assistant import router as assistant_router
 from forven.routers.jobs import router as jobs_router
@@ -763,6 +768,11 @@ app.include_router(approvals_router)
 app.include_router(ops_router)
 app.include_router(analytics_router)
 app.include_router(data_router)
+app.include_router(data_acquire_router)
+app.include_router(data_catalog_router)
+app.include_router(data_ops_router)
+app.include_router(data_readiness_router)
+app.include_router(data_sla_router)
 app.include_router(tasks_router)
 app.include_router(trading_router)
 app.include_router(paper_router)

@@ -220,19 +220,19 @@ class TestDataEngineNestedPartialSave:
         assert sr["block_when_missing"] is True
         assert sr["staleness_hours"] == 24
 
-    def test_editing_one_source_priority_preserves_other_streams(self, forven_db):
+    def test_editing_one_sla_tier_preserves_other_tiers(self, forven_db):
         put_settings_section(
             "data-engine",
-            {"data_engine_settings": {"source_priority": {"funding": ["bybit", "binance"]}}},
+            {"data_engine_settings": {"sla_tiers": {"paper": {"floor_minutes": 90}}}},
         )
         put_settings_section(
             "data-engine",
-            {"data_engine_settings": {"source_priority": {"candles": ["okx"]}}},
+            {"data_engine_settings": {"sla_tiers": {"live": {"missed_bars": 0}}}},
         )
-        priority = _load_settings_payload()["data_engine_settings"]["source_priority"]
-        assert priority["candles"] == ["okx"]
-        assert priority["funding"] == ["bybit", "binance"]
-        assert priority["oi"] == ["binance"]
+        tiers = _load_settings_payload()["data_engine_settings"]["sla_tiers"]
+        assert tiers["live"] == {"missed_bars": 0, "floor_minutes": 20}
+        assert tiers["paper"] == {"missed_bars": 2, "floor_minutes": 90}
+        assert tiers["pipeline"] == {"missed_bars": 3, "floor_minutes": 120}
 
     def test_top_level_keys_still_merge(self, forven_db):
         put_settings_section(

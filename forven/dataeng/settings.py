@@ -10,18 +10,6 @@ from pydantic import BaseModel, Field
 class DataEngineSettings(BaseModel):
     enabled: bool = False
     enabled_exchanges: list[str] = Field(default_factory=lambda: ["binance"])
-    source_priority: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "candles": ["binance"],
-            "funding": ["binance"],
-            "oi": ["binance"],
-            "lsr": ["binance"],
-            "taker": ["binance"],
-            "macro": ["binance"],
-        }
-    )
-    onchain_provider: str = ""
-    onchain_api_key: str = ""
     # Research universe (edge-data-expansion Run 1): symbols beyond the trading
     # set that get deep history for strategy DISCOVERY. Seeded via Binance
     # Vision + REST tail; kept current by the scheduled catch-up (not the
@@ -40,6 +28,10 @@ class DataEngineSettings(BaseModel):
             "intraday_top": 20,
             "minute_top": 10,
             "metrics_days": 365,
+            # Which instruments the liquidity-ranked plan may pick: "crypto"
+            # perps and/or "tradfi" perps (stocks, commodities, FX listed as
+            # USD-M perps). Both by default — the operator narrows it.
+            "asset_classes": ["crypto", "tradfi"],
         }
     )
     stream_reconnect_initial_seconds: float = 1.0
@@ -60,12 +52,44 @@ class DataEngineSettings(BaseModel):
     # (staleness is handled by the planner; current series aren't re-fetched).
     auto_catchup_enabled: bool = True
     auto_catchup_batch: int = 12
-    staleness_thresholds: dict[str, int] = Field(
+    # Freshness SLA (forven/dataeng/sla.py) — the ONE definition of how current
+    # a stored series must be, per consumer tier. Lag is measured from the last
+    # stored bar's OPEN time (the gauntlet data gate's basis), so
+    #   allowed lag = max((missed_bars + 1) x timeframe, floor_minutes).
+    # "pipeline" is the gauntlet data gate's own limit; the other tiers scale
+    # around it. A series is "late" past its allowed lag and "breach" past
+    # sla_breach_multiplier x allowed.
+    sla_tiers: dict[str, dict[str, float]] = Field(
         default_factory=lambda: {
-            "candles_minutes": 90,
-            "funding_minutes": 540,
-            "oi_minutes": 120,
-            "macro_minutes": 1440,
+            "live": {"missed_bars": 1, "floor_minutes": 20},
+            "paper": {"missed_bars": 2, "floor_minutes": 45},
+            "pipeline": {"missed_bars": 3, "floor_minutes": 120},
+            "universe": {"missed_bars": 6, "floor_minutes": 360},
+            "idle": {"missed_bars": 24, "floor_minutes": 1440},
+        }
+    )
+    sla_breach_multiplier: float = 3.0
+    # SLA-driven collection queue (forven/dataeng/collector.py): one loop that
+    # refreshes the most-overdue series first (lag / allowed x tier weight)
+    # within a per-venue request budget and a wall-clock budget per tick.
+    collector: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "enabled": True,
+            "tick_seconds": 120,
+            "max_tick_seconds": 90,
+            "max_requests_per_minute": 300,
+            "strike_out_after": 3,
+        }
+    )
+    # Lake housekeeping (forven/dataeng/storage.py). Deleted series go to a
+    # trash folder first and are purged after trash_retention_days; downloads
+    # refuse to start below min_free_disk_gb; revision_keep_days is the default
+    # cut-off offered by the revision-log prune action (never automatic).
+    storage: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "trash_retention_days": 7,
+            "min_free_disk_gb": 5.0,
+            "revision_keep_days": 180,
         }
     )
     # Cross-venue source-reconciliation promotion gate. The out-of-band
