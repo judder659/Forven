@@ -72,6 +72,8 @@ reference its output series by that id plus the listed suffix):
 - A {{"param": "name"}} operand reads an editable knob from "params"; a bare number is a constant.
 - Operators allowed: {operators}. Use crosses_above/crosses_below for crossovers.
 - Provide at least one entry side (entry_long or entry_short). Set unused sides to null.
+- Nest at most one level: a side's "conditions" may contain {{"logic", "conditions"}} groups, \
+but a group's "conditions" must be plain conditions.
 - Prefer putting tunable thresholds (e.g. 30, 70, 200) into "params" and referencing them, \
 so the user can adjust them later.
 - Keep ids and column names lowercase. Do NOT invent indicator kinds or operators."""
@@ -88,16 +90,44 @@ def _extract_json(text: str) -> dict:
     return json.loads(body)
 
 
+def _simplify_group(group: dict) -> dict:
+    """Lift a nested group into its parent where that keeps the meaning (same
+    logic, or a single condition), so the draft fits the visual builder, which
+    shows one level of groups."""
+    logic = "or" if str(group.get("logic") or "and").strip().lower() == "or" else "and"
+    conditions: list = []
+    for item in group.get("conditions") or []:
+        if isinstance(item, dict) and isinstance(item.get("conditions"), list):
+            inner = _simplify_group(item)
+            if not inner["conditions"]:
+                continue  # the builder drops an empty group as well
+            if inner["logic"] == logic or len(inner["conditions"]) == 1:
+                conditions.extend(inner["conditions"])
+                continue
+            item = inner
+        conditions.append(item)
+    return {"logic": logic, "conditions": conditions}
+
+
+def _normalize_side(value: object, default_logic: str) -> dict | None:
+    # Models often write a side as a bare list of conditions.
+    if isinstance(value, list):
+        value = {"logic": default_logic, "conditions": value}
+    if not isinstance(value, dict) or not value.get("conditions"):
+        return None
+    return _simplify_group({"logic": value.get("logic") or default_logic, "conditions": value["conditions"]})
+
+
 def _normalize_spec(obj: object) -> dict:
     if not isinstance(obj, dict):
         raise ValueError("AI response was not a JSON object")
     return {
         "indicators": obj.get("indicators") if isinstance(obj.get("indicators"), list) else [],
         "params": obj.get("params") if isinstance(obj.get("params"), dict) else {},
-        "entry_long": obj.get("entry_long") or None,
-        "exit_long": obj.get("exit_long") or None,
-        "entry_short": obj.get("entry_short") or None,
-        "exit_short": obj.get("exit_short") or None,
+        "entry_long": _normalize_side(obj.get("entry_long"), "and"),
+        "exit_long": _normalize_side(obj.get("exit_long"), "or"),
+        "entry_short": _normalize_side(obj.get("entry_short"), "and"),
+        "exit_short": _normalize_side(obj.get("exit_short"), "or"),
     }
 
 
