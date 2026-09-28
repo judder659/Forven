@@ -244,7 +244,7 @@ def test_liquidations_before_capture_start_are_blocked(lake_root):
     assert liq["status"] == "blocked" and liq["fix"] is None
     assert capture_start.strftime("%Y-%m-%d") in liq["detail"]
     assert report["verdict"] == "blocked"
-    assert report["summary"].startswith("Blocked: Liquidations for BTC-USDT starts")
+    assert report["summary"].startswith("Blocked: Stored liquidations data for BTC-USDT starts")
 
     # A short window that starts after capture is fine.
     short = spec_contract("BTC-USDT", "1h", streams=["liquidations"], history_days=60, now=now)

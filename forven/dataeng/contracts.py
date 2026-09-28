@@ -80,12 +80,10 @@ _STAGE_TIER: dict[str, str] = {
 }
 # Stages whose promotion reads the research-vs-execution divergence.
 _CAPITAL_PATH_STAGES = frozenset({"gauntlet", *PAPER_STAGES, *LIVE_STAGES})
-_TIER_WORDS = {
-    "live": "live strategies",
-    "paper": "paper strategies",
-    "pipeline": "the pipeline's data gate",
-    "universe": "the research universe",
-    "idle": "unused series",
+_TIER_ALLOWS = {
+    "live": "live strategies allow",
+    "paper": "paper strategies allow",
+    "pipeline": "the pipeline's data gate allows",
 }
 _CRYPTO_QUOTES = ("USDT", "USDC", "BUSD", "USD")
 
@@ -446,20 +444,20 @@ def _freshness_requirement(subject: _Subject, primary: lake.SeriesFile, now: pd.
     key = f"freshness:{venue}:{fs}:{tf}"
     label = f"Freshness ({tier} tier)"
     lag, allowed = assessment["lag_seconds"], assessment["allowed_seconds"]
-    who = _TIER_WORDS.get(tier, tier)
+    allows = _TIER_ALLOWS.get(tier, f"the {tier} tier allows")
     state = assessment["state"]
     if state == "frozen":
         why = "the symbol is delisted, so no new bars will come" if frozen == "delisted" else f"collection is frozen ({frozen}); unfreeze it on the Data page"
         return _req(key, "freshness", label, fs, tf, "ohlcv", "blocked", f"The last bar is {_ago(lag)} old and {why}.")
     if state == "fresh":
-        return _req(key, "freshness", label, fs, tf, "ohlcv", "ok", f"Last bar {_ago(lag)} ago; {who} allow {_ago(allowed)}.")
+        return _req(key, "freshness", label, fs, tf, "ohlcv", "ok", f"Last bar {_ago(lag)} ago; {allows} {_ago(allowed)}.")
     refresh = _fix(
         "refresh", f"Refresh {fs} {tf}",
         _download(fs, tf, venue, max(1, math.ceil((lag or 0) / _DAY_S) + 1)),
     )
     if state == "late":
-        return _req(key, "freshness", label, fs, tf, "ohlcv", "warn", f"Last bar {_ago(lag)} ago; {who} allow {_ago(allowed)}. The collector should catch it up.", fix=refresh)
-    return _req(key, "freshness", label, fs, tf, "ohlcv", "missing", f"Last bar {_ago(lag)} ago, far past the {_ago(allowed)} {who} allow.", fix=refresh)
+        return _req(key, "freshness", label, fs, tf, "ohlcv", "warn", f"Last bar {_ago(lag)} ago; {allows} {_ago(allowed)}. The collector should catch it up.", fix=refresh)
+    return _req(key, "freshness", label, fs, tf, "ohlcv", "missing", f"Last bar {_ago(lag)} ago, far beyond the {_ago(allowed)} {allows}.", fix=refresh)
 
 
 def _stream_timeframe(feed: Feed, timeframe: str) -> str:
@@ -501,6 +499,7 @@ def _stream_requirements(
         iv = feed.stream == "iv"
         label = f"{symbol} implied volatility (Deribit DVOL)" if iv else feed.label.capitalize()
         what = f"{symbol} implied volatility" if iv else f"{feed.label} for {fs}"
+        data_noun = f"{symbol} implied volatility data" if iv else f"{feed.label} data for {fs}"
         absent = [c for c in columns if c not in files]
         stream_tf = _stream_timeframe(feed, tf)
         if absent:
@@ -541,7 +540,7 @@ def _stream_requirements(
         elif not feed.fetchable and covered < min_coverage:
             status = "blocked"
             detail = (
-                f"{what[0].upper() + what[1:]} starts {_day(first)}, after the research window starts ({_day(window_start)}), "
+                f"Stored {data_noun} starts {_day(first)}, after the research window starts ({_day(window_start)}), "
                 "and the earlier history cannot be downloaded (captured forward-only)."
             )
         elif covered < min_coverage:
