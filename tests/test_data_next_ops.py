@@ -737,3 +737,136 @@ def test_revision_prune_fails_closed_without_verdict_windows(env, monkeypatch):
     done = _wait(storage.submit_reclaim("revisions", "all"))
     assert done["status"] == "failed" and "locked" in done["error"]["message"]
     assert len(revisions.read_revisions("BTC-USDT", "1h")) == 5  # untouched
+
+
+# ---------------------------------------------------------------- safe delete
+
+
+@pytest.fixture
+def consumers_lake(env, monkeypatch):
+    """S1 live on BTC 1h, S2 paper on ETH 15m, LINK in the universe plan,
+    ADA in the keep-alive set, MULTI delisted, XRP idle."""
+    import forven.data_manager as dm
+    import forven.dataeng.universe as universe
+    from forven.db import get_db
+    from forven.dataeng import consumers
+
+    with get_db() as conn:
+        _seed_strategy(conn, "S1", "BTC/USDT", "1h", "live_graduated")
+        _seed_strategy(conn, "S2", "ETH", "15m", "paper")
+    monkeypatch.setattr(universe, "plan_research_universe", lambda *a, **k: [{"symbol": "LINK-USDT", "rank": 3, "timeframes": ["1h"]}])
+    monkeypatch.setattr(universe, "delisted_symbols", lambda *a, **k: {"MULTI-USDT"})
+    monkeypatch.setattr(dm.DataManager, "get_active_symbols", lambda self, include_recent_backtests=False: {"ADA/USDT"})
+    monkeypatch.setattr(dm.DataManager, "get_active_timeframes", lambda self, symbol: {"1h"})
+    consumers.clear_consumer_cache()
+    _series(env, "BTC-USDT", tail=5)
+    for symbol in ("LINK-USDT", "ADA-USDT", "MULTI-USDT", "XRP-USDT"):
+        _series(env, symbol)
+    _series(env, "ETH-USDT", "15m")
+    return env
+
+
+def test_delete_check_classifies_consumers(client, consumers_lake):
+    def check(symbol, tf="1h", **params):
+        resp = client.get("/api/data/delete/check", params={"symbol": symbol, "timeframe": tf, **params})
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    btc = check("BTC/USDT")
+    assert btc["series"] == {"symbol": "BTC-USDT", "timeframe": "1h", "stream": "ohlcv", "venue": "canonical"}
+    assert btc["exists"] is True and btc["rows"] == 53 and btc["bytes"] > 0
+    assert btc["consumers"] == [{"kind": "strategy", "id": "S1", "name": "strategy S1", "stage": "live_graduated"}]
+    assert btc["blocking"] is True and btc["will_rebootstrap"] is True
+    assert btc["confirm_phrase"] == "delete BTC-USDT 1h"
+    assert any("S1 (live)" in w for w in btc["warnings"])
+    assert any("restorable for 7 days" in w for w in btc["warnings"])
+
+    eth = check("ETH-USDT", "15m")
+    assert eth["blocking"] is True and eth["consumers"][0]["stage"] == "paper"
+
+    link = check("LINK-USDT")
+    assert link["blocking"] is False and link["will_rebootstrap"] is True
+    assert any("research-universe plan (rank 4)" in w for w in link["warnings"])
+    ada = check("ADA-USDT")
+    assert ada["will_rebootstrap"] is True and any("keep-alive" in w for w in ada["warnings"])
+    multi = check("MULTI-USDT")
+    assert any("delisted" in w for w in multi["warnings"])
+    xrp = check("XRP-USDT")
+    assert (xrp["blocking"], xrp["will_rebootstrap"], xrp["consumers"]) == (False, False, [])
+    missing = check("DOGE-USDT")
+    assert missing["exists"] is False and missing["bytes"] == 0 and "Nothing is stored" in missing["warnings"][0]
+    assert client.get("/api/data/delete/check", params={"symbol": "BTC-USDT", "timeframe": "1h", "stream": "news"}).status_code == 400
+
+
+def test_delete_needs_confirmation_and_an_override_for_consumers(client, consumers_lake, tmp_path, monkeypatch):
+    import forven.dataeng.catalog as catalog_mod
+    from forven.dataeng.catalog import Catalog, CoverageRow
+
+    root = consumers_lake
+    cold, tail = root / "ohlcv/BTC-USDT/1h.parquet", root / "ohlcv/BTC-USDT/1h.parquet.tail"
+    before = (cold.read_bytes(), tail.read_bytes())
+    catalog_path = tmp_path / "catalog.duckdb"
+    monkeypatch.setattr(catalog_mod, "default_catalog_path", lambda: catalog_path)
+    Catalog(catalog_path).upsert_series_coverage(
+        CoverageRow(source="binanceusdm", market="perp", symbol="BTC-USDT", timeframe="1h", stream="candles",
+                    path=str(cold), start_ts="2026-01-01T00:00:00+00:00", end_ts="2026-01-03T04:00:00+00:00", row_count=53)
+    )
+    btc = {"symbol": "BTC-USDT", "timeframe": "1h"}
+
+    wrong = client.post("/api/data/delete", json={"series": [btc], "confirm": "delete it"})
+    assert wrong.status_code == 400 and "delete BTC-USDT 1h" in wrong.json()["detail"]
+    blocked = client.post("/api/data/delete", json={"series": [btc], "confirm": "delete BTC-USDT 1h"}).json()
+    assert blocked["trashed"] == [] and "S1 (live)" in blocked["skipped"][0]["reason"]
+    assert cold.exists() and tail.exists()
+
+    done = client.post("/api/data/delete", json={"series": [btc], "confirm": "delete BTC-USDT 1h", "override_consumers": True}).json()
+    assert done["skipped"] == [] and len(done["trashed"]) == 1
+    item = done["trashed"][0]
+    assert item["kind"] == "series" and item["original_path"] == str(cold) and "consumer override" in item["reason"]
+    assert item["series"] == {"symbol": "BTC-USDT", "timeframe": "1h", "stream": "ohlcv", "venue": "canonical"}
+    assert not cold.exists() and not tail.exists()  # the tail sidecar moved with its cold file
+    assert Catalog(catalog_path).list_coverage() == []  # DuckDB coverage dropped
+
+    assert client.post(f"/api/data/trash/{item['id']}/restore").status_code == 200
+    assert (cold.read_bytes(), tail.read_bytes()) == before
+
+    batch = [{"symbol": "LINK-USDT", "timeframe": "1h"}, {"symbol": "XRP/USDT", "timeframe": "1h"}, {"symbol": "DOGE-USDT", "timeframe": "1h"}]
+    assert client.post("/api/data/delete", json={"series": batch, "confirm": "delete LINK-USDT 1h"}).status_code == 400
+    result = client.post("/api/data/delete", json={"series": batch, "confirm": "delete 3 series"}).json()
+    assert {i["series"]["symbol"] for i in result["trashed"]} == {"LINK-USDT", "XRP-USDT"}
+    assert result["skipped"] == [{"series": {"symbol": "DOGE-USDT", "timeframe": "1h", "stream": "ohlcv", "venue": "canonical"}, "reason": "not stored"}]
+    assert client.post("/api/data/delete", json={"series": [], "confirm": ""}).status_code == 400
+
+
+def test_legacy_delete_endpoint_moves_to_trash_and_refuses_consumers(client, consumers_lake):
+    blocked = client.delete("/api/datasets/BTC-USDT/1h")
+    assert blocked.status_code == 409
+    assert "S1 (live)" in blocked.json()["detail"] and "override" in blocked.json()["detail"]
+    assert (consumers_lake / "ohlcv/BTC-USDT/1h.parquet").exists()
+
+    ok = client.delete("/api/datasets/XRP/USDT/1h")
+    assert ok.status_code == 200 and ok.json() == {"status": "deleted", "symbol": "XRP/USDT", "timeframe": "1h"}
+    assert not (consumers_lake / "ohlcv/XRP-USDT/1h.parquet").exists()
+    trashed = client.get("/api/data/trash").json()["items"]
+    assert [i["series"]["symbol"] for i in trashed] == ["XRP-USDT"]
+    assert client.delete("/api/datasets/DOGE-USDT/1h").status_code == 404
+
+
+def test_delete_stream_series(client, consumers_lake):
+    root = consumers_lake
+    for symbol in ("BTC-USDT", "XRP-USDT"):
+        _write_parquet(root / "funding" / symbol / "history.parquet", _bars("2026-01-01", 30, "8h"))
+    _write_parquet(root / "volatility/dvol_btc_1h.parquet", _bars("2026-01-01", 30))
+
+    btc = client.get("/api/data/delete/check", params={"symbol": "BTC-USDT", "timeframe": "8h", "stream": "funding"}).json()
+    assert btc["exists"] is True and btc["blocking"] is True  # the symbol feeds a live strategy
+    assert [c["id"] for c in btc["consumers"]] == ["S1"]
+    iv = client.get("/api/data/delete/check", params={"symbol": "btc", "timeframe": "1h", "stream": "iv", "venue": "deribit:index"}).json()
+    assert iv["exists"] is True and iv["will_rebootstrap"] is True and iv["series"]["symbol"] == "BTC"
+
+    xrp = {"symbol": "XRP-USDT", "timeframe": "8h", "stream": "funding", "venue": "canonical"}
+    done = client.post("/api/data/delete", json={"series": [xrp], "confirm": "delete XRP-USDT 8h"}).json()
+    assert len(done["trashed"]) == 1 and done["trashed"][0]["series"] == xrp
+    assert not (root / "funding/XRP-USDT/history.parquet").exists()
+    assert client.post(f"/api/data/trash/{done['trashed'][0]['id']}/restore").status_code == 200
+    assert (root / "funding/XRP-USDT/history.parquet").exists()
