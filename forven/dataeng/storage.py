@@ -514,7 +514,7 @@ def _revision_candidates(root: Path, now: float) -> tuple[list[_Found], dict[str
             try:
                 plan = revisions.prune_revisions(symbol, timeframe, cutoff=cutoff, protected=protected, dry_run=True)
             except Exception as exc:
-                log.debug("storage: revision plan failed for %s: %s", path, exc)
+                log.warning("storage: revision prune plan failed for %s: %s", path, exc)
                 continue
             with _plan_lock:
                 _plan_cache[str(path)] = (key, plan)

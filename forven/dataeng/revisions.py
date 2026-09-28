@@ -222,7 +222,8 @@ def revision_prune_mask(
     verdict was scored — so the window protects rows regardless of order.
     """
     observed = pd.to_datetime(observed_at, utc=True, errors="coerce", format="ISO8601")
-    prunable = (observed < cutoff).to_numpy(dtype=bool, na_value=False)
+    # NaT compares False (kept); copy: pandas may hand back a read-only view.
+    prunable = np.array(observed < cutoff, dtype=bool)
     if not prunable.any():
         return prunable
     bars = pd.to_datetime(timestamps, utc=True, errors="coerce").to_numpy(dtype="datetime64[ms]")

@@ -370,3 +370,370 @@ def test_history_extend_refuses_to_start_when_disk_is_low(client, env, fake_bv, 
     job = client.post("/api/data/history/extend", json={}).json()["job"]
     done = _wait(job)
     assert done["status"] == "failed" and done["error"]["code"] == "disk_full"
+
+
+# ---------------------------------------------------------------- universe seed
+
+
+@pytest.fixture
+def fake_seed(env, monkeypatch):
+    """seed_research_universe stand-in: walks a 3-symbol plan, honouring the
+    cancel_event between symbols exactly like the real one."""
+    import forven.dataeng.universe as universe
+
+    state = {"gate": threading.Event(), "started": threading.Event(), "done": []}
+    state["gate"].set()
+
+    def seed(*, progress_cb=None, cancel_event=None, catalog=None):
+        plan = ["BTC-USDT", "ETH-USDT", "SOL-USDT"]
+        summary = {"planned": len(plan), "series_seeded": 0, "series_current": 0, "errors": 0}
+        for idx, symbol in enumerate(plan):
+            if cancel_event is not None and cancel_event.is_set():
+                summary["cancelled"] = True
+                break
+            if progress_cb is not None:
+                progress_cb(idx, len(plan), symbol)
+            state["started"].set()
+            state["gate"].wait(10)
+            state["done"].append(symbol)
+            summary["series_seeded"] += 1
+        return summary
+
+    monkeypatch.setattr(universe, "seed_research_universe", seed)
+    return state
+
+
+def test_universe_seed_job_lifecycle_and_old_payload(client, fake_seed):
+    fake_seed["gate"].clear()
+    first = client.post("/api/data/universe/seed")
+    assert first.status_code == 200
+    body = first.json()
+    assert body["status"] == "started"
+    job = body["job"]
+    assert job["kind"] == "universe_seed" and job["lane"] == "binance-vision"
+    try:
+        assert fake_seed["started"].wait(5)
+        again = client.post("/api/data/universe/seed").json()
+        assert again["status"] == "already_running" and again["job"]["id"] == job["id"]
+        seed = client.get("/api/data/universe").json()["seed"]
+        assert seed["running"] is True and seed["last_error"] is None
+        assert seed["progress"] == {"done": 0, "total": 3, "current_symbol": "BTC-USDT"}
+    finally:
+        fake_seed["gate"].set()
+    done = _wait(job)
+    assert done["status"] == "succeeded"
+    assert done["result"]["series_seeded"] == 3
+    assert done["progress"]["done"] == done["progress"]["total"] == 3.0
+    seed = client.get("/api/data/universe").json()["seed"]
+    assert seed == {
+        "running": False,
+        "last_started_at": done["started_at"],
+        "last_result": done["result"],
+        "last_error": None,
+        "progress": None,
+    }
+    assert client.post("/api/data/universe/seed/cancel").status_code == 409  # nothing running
+
+
+def test_universe_seed_cancel_between_symbols(client, fake_seed):
+    fake_seed["gate"].clear()
+    job = client.post("/api/data/universe/seed").json()["job"]
+    try:
+        assert fake_seed["started"].wait(5)
+        resp = client.post("/api/data/universe/seed/cancel")
+        assert resp.status_code == 200 and resp.json()["status"] == "cancelling"
+    finally:
+        fake_seed["gate"].set()
+    done = _wait(job)
+    assert done["status"] == "cancelled"
+    assert fake_seed["done"] == ["BTC-USDT"]
+    assert "1 series downloaded" in done["message"]
+    seed = client.get("/api/data/universe").json()["seed"]
+    assert seed["running"] is False and seed["last_result"] == {"cancelled": True}
+
+
+def test_stale_seed_kv_never_reads_as_running(client, fake_seed):
+    """The live KV still says running since 2026-07-06; the job store rules."""
+    from forven.db import kv_set
+
+    kv_set("data:universe_seed_state", {"running": True, "last_started_at": "2026-07-06T11:43:35+00:00"})
+    seed = client.get("/api/data/universe").json()["seed"]
+    assert seed == {"running": False, "last_started_at": None, "last_result": None, "last_error": None, "progress": None}
+
+
+def test_interrupted_seed_is_reported_and_retryable(client, fake_seed):
+    from forven.api_domains.data_ops import run_startup_maintenance
+    from forven.db import get_db
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO data_jobs (id, kind, title, status, lane, params_json, created_at, started_at, updated_at) "
+            "VALUES ('dj-seed-old', 'universe_seed', 'Seed the research universe', 'running', 'binance-vision', '{}', "
+            "'2026-07-06T11:43:35Z', '2026-07-06T11:43:35Z', 'x')"
+        )
+    out = run_startup_maintenance()
+    out["purge_thread"].join(10)
+    assert out["interrupted"] == 1
+    seed = client.get("/api/data/universe").json()["seed"]
+    assert seed["running"] is False and "restarted" in seed["last_error"]
+    old = client.get("/api/data/jobs/dj-seed-old").json()
+    assert old["status"] == "interrupted" and old["retryable"] is True
+    retried = client.post("/api/data/jobs/dj-seed-old/retry").json()["job"]
+    assert _wait(retried)["status"] == "succeeded"  # resumes (the seed skips stored series)
+
+
+# ---------------------------------------------------------------- storage
+
+
+def _write_revisions(symbol: str, tf: str, bars: pd.DataFrame, observed_at: str) -> None:
+    from forven.dataeng import revisions
+
+    revisions.append_revision(symbol, tf, bars, observed_at)
+
+
+def _backtest(conn, sid: str, symbol: str, tf: str, start: str, end: str, created: str, *, deleted: bool = False) -> None:
+    exists = conn.execute("SELECT 1 FROM strategies WHERE id = ?", (sid,)).fetchone()
+    if not exists:
+        _seed_strategy(conn, sid, symbol, tf, "archived")
+    conn.execute(
+        "INSERT INTO backtest_results (result_id, strategy_id, symbol, timeframe, start_date, end_date, created_at, deleted_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (f"r-{sid}-{start}", sid, symbol, tf, start, end, created, created if deleted else None),
+    )
+
+
+@pytest.fixture
+def messy_lake(env):
+    """A lake with one of everything the inventory must find — and things it
+    must leave alone."""
+    root = env
+    old = 3 * 3600
+    _series(root, "BTC-USDT", tail=5)
+    bak = root / "ohlcv/BTC-USDT/1h.parquet.spotmix.bak"
+    _write_parquet(bak, _bars("2019-01-01", 400))  # reconciled: live 1h is binanceusdm
+    orphan_bak = root / "ohlcv/ETH-USDT/4h.parquet.spotmix.bak"
+    _write_parquet(orphan_bak, _bars("2019-01-01", 100))  # no live series next to it
+    _series(root, "RETRY")
+    _series(root, "BTCUSD")
+    _write_parquet(root / "ohlcv/source=hyperliquid/market=perp/BTC-USDT/1h.parquet", _bars("2026-01-01", 10))
+    for name in ("COPPER-USDT", "PERP-USDT"):
+        (root / "oi" / name).mkdir(parents=True)
+        _age(root / "oi" / name, old)
+    (root / "oi/FRESH-USDT").mkdir(parents=True)  # just created: not offered
+    stale_tmp = root / "ohlcv/BTC-USDT/5m.parquet.tmp"
+    stale_tmp.write_bytes(b"half a write")
+    _age(stale_tmp, old)
+    (root / "ohlcv/BTC-USDT/15m.parquet.tmp").write_bytes(b"in flight")
+    empty = root / "ohlcv/SOL-USDT/1h.parquet"
+    empty.parent.mkdir(parents=True)
+    empty.write_bytes(b"")
+    _age(empty, old)
+    _write_parquet(root / "funding/BTC-USDT/history.parquet", _bars("2026-01-01", 30, "8h"))
+    (root / "funding_btc.parquet").write_bytes(b"x" * 100)
+    (root / "binance_ohlcv.db").write_bytes(b"")
+    (root / "MATICUSDT_4h.csv").write_text("t,o\n1,2\n")
+    (root / "catalog.duckdb").write_bytes(b"duck")
+    (root / "catalog.duckdb.wal").write_bytes(b"wal")
+    (root / "funding_rates").mkdir()
+    (root / "funding_rates/binance_usdt_funding_rates.parquet").write_bytes(b"y" * 50)
+    (root / "macro").mkdir()
+    (root / "macro/vix_1d.parquet").write_bytes(b"z")
+    return root
+
+
+def _group(inv: dict, kind: str) -> dict:
+    return next(g for g in inv["reclaimable"] if g["kind"] == kind)
+
+
+def test_storage_inventory_finds_every_group(client, messy_lake):
+    inv = client.get("/api/data/storage", params={"refresh": "true"}).json()
+    root = messy_lake
+    assert inv["data_root"] == str(root)
+    assert inv["disk"]["total_bytes"] > 0 and inv["disk"]["min_free_gb"] == 5.0
+    assert [g["kind"] for g in inv["reclaimable"]] == ["backups", "legacy_root", "empty_dirs", "stray_dirs", "orphan_tmp", "revisions"]
+
+    backups = _group(inv, "backups")
+    assert {i["id"] for i in backups["items"]} == {"ohlcv/BTC-USDT/1h.parquet.spotmix.bak", "ohlcv/ETH-USDT/4h.parquet.spotmix.bak"}
+    assert backups["safe"] is False  # the ETH backup may be the only copy
+    notes = {i["id"]: i.get("note", "") for i in backups["items"]}
+    assert "binanceusdm" in notes["ohlcv/BTC-USDT/1h.parquet.spotmix.bak"]
+    assert "only copy" in notes["ohlcv/ETH-USDT/4h.parquet.spotmix.bak"]
+
+    legacy = _group(inv, "legacy_root")
+    assert {i["id"] for i in legacy["items"]} == {"funding_btc.parquet", "binance_ohlcv.db", "MATICUSDT_4h.csv", "funding_rates"}
+    assert legacy["safe"] is False and legacy["count"] == 4
+
+    assert {i["id"] for i in _group(inv, "empty_dirs")["items"]} == {"oi/COPPER-USDT", "oi/PERP-USDT"}
+    assert _group(inv, "empty_dirs")["safe"] is True
+    stray = _group(inv, "stray_dirs")
+    assert {i["id"] for i in stray["items"]} == {"ohlcv/RETRY", "ohlcv/BTCUSD"} and stray["safe"] is False
+    tmp = _group(inv, "orphan_tmp")
+    assert {i["id"] for i in tmp["items"]} == {"ohlcv/BTC-USDT/5m.parquet.tmp", "ohlcv/SOL-USDT/1h.parquet"}
+    assert tmp["safe"] is True
+
+    # the lake itself: every series from the footers, the tail counted with its cold file
+    ids = {(s["stream"], s["venue"], s["symbol"], s["timeframe"]) for s in inv["top_series"]}
+    assert ("ohlcv", "canonical", "BTC-USDT", "1h") in ids and ("ohlcv", "hyperliquid:perp", "BTC-USDT", "1h") in ids
+    assert inv["lake"]["series"] == len(inv["top_series"]) == 5  # BTC, RETRY, BTCUSD, HL BTC, funding BTC
+    assert inv["lake"]["files"] == 6  # + the BTC tail
+    assert {row["stream"] for row in inv["by_stream"]} == {"ohlcv", "funding"}
+    assert inv["trash"] == {"items": 0, "bytes": 0, "oldest": None, "retention_days": 7}
+    assert inv["revisions"]["files"] == 0 and inv["revisions"]["prunable_bytes"] == 0
+
+
+def test_legacy_root_never_offers_the_app_database(env, monkeypatch):
+    import forven.config as config
+
+    (env / "forven.db").write_bytes(b"")
+    (env / "notes.txt").write_text("old")
+    assert {f.path.name for f in storage.reclaim_items("legacy_root")} == {"forven.db", "notes.txt"}
+    monkeypatch.setattr(config, "FORVEN_DB", env / "forven.db")
+    assert {f.path.name for f in storage.reclaim_items("legacy_root")} == {"notes.txt"}
+    monkeypatch.setattr(config, "FORVEN_HOME", env)  # a data root equal to FORVEN_HOME lists nothing
+    assert storage.reclaim_items("legacy_root") == []
+
+
+def test_reclaim_to_trash_restore_conflict_and_purge(client, messy_lake):
+    root = messy_lake
+    bak = root / "ohlcv/BTC-USDT/1h.parquet.spotmix.bak"
+    original = bak.read_bytes()
+    wrong = client.post("/api/data/storage/reclaim", json={"kind": "backups", "item_ids": "all", "confirm": "yes"})
+    assert wrong.status_code == 400 and "reclaim backups" in wrong.json()["detail"]
+    assert client.post("/api/data/storage/reclaim", json={"kind": "nope", "item_ids": "all", "confirm": "reclaim nope"}).status_code == 400
+    stale = client.post("/api/data/storage/reclaim", json={"kind": "backups", "item_ids": ["ohlcv/GONE"], "confirm": "reclaim backups"})
+    assert stale.status_code == 400
+
+    resp = client.post("/api/data/storage/reclaim", json={"kind": "backups", "item_ids": "all", "confirm": "Reclaim  Backups"})
+    assert resp.status_code == 200
+    job = resp.json()["job"]
+    assert job["kind"] == "reclaim" and job["origin"] == "user" and job["lane"] == "local"
+    done = _wait(job)
+    assert done["status"] == "succeeded" and done["result"]["moved"] == 2 and done["result"]["failed"] == []
+    assert not bak.exists() and not (root / "ohlcv/ETH-USDT/4h.parquet.spotmix.bak").exists()
+    assert (root / "ohlcv/BTC-USDT/1h.parquet").exists()  # the live series is untouched
+
+    trash = client.get("/api/data/trash").json()
+    assert trash["retention_days"] == 7 and len(trash["items"]) == 2
+    item = next(i for i in trash["items"] if i["original_path"] == str(bak))
+    assert item["kind"] == "backup" and item["reason"] == "reclaim backups"
+    assert item["series"] == {"symbol": "BTC-USDT", "timeframe": "1h", "stream": "ohlcv", "venue": "canonical"}
+    assert item["bytes"] == len(original)
+    assert pd.Timestamp(item["purge_after"]) - pd.Timestamp(item["deleted_at"]) == pd.Timedelta(days=7)
+    assert trash["bytes"] == sum(i["bytes"] for i in trash["items"])
+    assert _group(client.get("/api/data/storage").json(), "backups")["count"] == 0  # cache invalidated
+
+    restored = client.post(f"/api/data/trash/{item['id']}/restore")
+    assert restored.status_code == 200 and restored.json()["restored"]["id"] == item["id"]
+    assert bak.read_bytes() == original  # byte-identical round trip
+    assert client.post(f"/api/data/trash/{item['id']}/restore").status_code == 404
+
+    other = next(i for i in client.get("/api/data/trash").json()["items"])
+    Path(other["original_path"]).parent.mkdir(parents=True, exist_ok=True)
+    Path(other["original_path"]).write_bytes(b"re-created since")
+    conflict = client.post(f"/api/data/trash/{other['id']}/restore")
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["conflicts"] == [other["original_path"]]
+    assert Path(other["original_path"]).read_bytes() == b"re-created since"  # nothing overwritten
+
+    assert client.post("/api/data/trash/purge", json={"item_ids": "all", "confirm": "purge"}).status_code == 400
+    assert client.post("/api/data/trash/purge", json={"item_ids": [other["id"]], "confirm": "empty trash"}).status_code == 400
+    purged = client.post("/api/data/trash/purge", json={"item_ids": [other["id"]], "confirm": "purge 1 item"})
+    assert purged.status_code == 200 and purged.json() == {"purged": 1, "bytes": other["bytes"]}
+    assert client.get("/api/data/trash").json()["items"] == []
+    assert not any((root / ".trash").iterdir())
+
+
+def test_reclaim_stray_empty_and_temp_items(client, messy_lake):
+    root = messy_lake
+    for kind, expected in (("stray_dirs", 2), ("empty_dirs", 2), ("orphan_tmp", 2), ("legacy_root", 4)):
+        job = client.post("/api/data/storage/reclaim", json={"kind": kind, "item_ids": "all", "confirm": f"reclaim {kind}"}).json()["job"]
+        done = _wait(job)
+        assert done["status"] == "succeeded" and done["result"]["moved"] == expected, (kind, done)
+    assert not (root / "ohlcv/RETRY").exists() and not (root / "oi/COPPER-USDT").exists()
+    assert (root / "oi/FRESH-USDT").exists() and (root / "ohlcv/BTC-USDT/15m.parquet.tmp").exists()
+    assert (root / "catalog.duckdb").exists() and (root / "macro/vix_1d.parquet").exists()
+    kinds = {i["kind"] for i in client.get("/api/data/trash").json()["items"]}
+    assert kinds == {"dir", "legacy"}
+    retry = next(i for i in client.get("/api/data/trash").json()["items"] if i["original_path"] == str(root / "ohlcv/RETRY"))
+    assert client.post(f"/api/data/trash/{retry['id']}/restore").status_code == 200
+    assert (root / "ohlcv/RETRY/1h.parquet").exists()
+    inv = client.get("/api/data/storage", params={"refresh": "true"}).json()
+    assert _group(inv, "stray_dirs")["count"] == 1 and inv["trash"]["items"] == 9
+
+
+def test_expired_trash_is_purged_automatically(env):
+    target = env / "ohlcv/XRP-USDT/1h.parquet"
+    _write_parquet(target, _bars("2026-01-01", 10))
+    item = storage.trash_paths([target], kind="series", label="XRP", reason="test")
+    assert storage.purge_expired_trash(now=time.time() + 6 * DAY)["purged"] == 0
+    assert storage.list_trash()["items"][0]["id"] == item["id"]
+    result = storage.purge_expired_trash(now=time.time() + 8 * DAY)
+    assert result["purged"] == 1 and result["ids"] == [item["id"]]
+    assert storage.list_trash()["items"] == []
+
+
+def test_trash_refuses_paths_outside_the_data_root(env, tmp_path):
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text("keep me")
+    with pytest.raises(ValueError):
+        storage.trash_paths([outside], kind="legacy", label="x", reason="test")
+    assert outside.exists()
+    (env / ".trash").mkdir(exist_ok=True)
+    with pytest.raises(ValueError):
+        storage.trash_paths([env / ".trash"], kind="dir", label="x", reason="test")
+
+
+def test_revision_prune_keeps_verdict_windows_and_recent_rows(client, env):
+    from forven.db import get_db
+    from forven.dataeng import revisions
+
+    old_observed = "2025-01-10T00:00:00Z"  # far older than revision_keep_days (180)
+    recent = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_revisions("BTC-USDT", "1h", _bars("2024-06-01", 24), old_observed)  # inside a verdict window
+    _write_revisions("BTC-USDT", "1h", _bars("2023-01-01", 24), old_observed)  # outside every window
+    _write_revisions("BTC-USDT", "1h", _bars("2023-02-01", 24), recent)  # too recent to prune
+    _write_revisions("ETH-USDT", "4h", _bars("2023-01-01", 12, "4h"), old_observed)
+    with get_db() as conn:
+        # a verdict scored BEFORE the restatement still protects it (as_of re-runs need it)
+        _backtest(conn, "S1", "BTC", "1h", "2024-05-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", "2024-12-01T00:00:00+00:00")
+        # a soft-deleted result protects nothing
+        _backtest(conn, "S2", "BTC/USDT", "1h", "2023-01-01T00:00:00+00:00", "2023-12-31T00:00:00+00:00", "2025-06-01T00:00:00+00:00", deleted=True)
+
+    inv = client.get("/api/data/storage", params={"refresh": "true"}).json()
+    group = _group(inv, "revisions")
+    assert {i["id"] for i in group["items"]} == {"revisions/BTC-USDT/1h.parquet", "revisions/ETH-USDT/4h.parquet"}
+    assert group["safe"] is True and group["bytes"] > 0
+    assert inv["revisions"]["files"] == 2 and inv["revisions"]["prunable_bytes"] == group["bytes"]
+    assert inv["revisions"]["oldest"] == "2025-01-10T00:00:00Z" and inv["revisions"]["keep_days"] == 180
+    btc_note = next(i for i in group["items"] if i["id"].startswith("revisions/BTC"))["note"]
+    assert btc_note.startswith("24 of 72")
+
+    job = client.post("/api/data/storage/reclaim", json={"kind": "revisions", "item_ids": "all", "confirm": "reclaim revisions"}).json()["job"]
+    assert job["title"].startswith("Prune revision log")
+    done = _wait(job)
+    assert done["status"] == "succeeded", done
+    assert done["result"]["rows_pruned"] == 36 and done["result"]["files_removed"] == 1
+    kept = revisions.read_revisions("BTC-USDT", "1h")
+    kept_months = set(pd.to_datetime(kept["timestamp"], utc=True).dt.strftime("%Y-%m"))
+    assert kept_months == {"2024-06", "2023-02"}  # verdict window + recent restatement
+    assert revisions.read_revisions("ETH-USDT", "4h") is None  # nothing protected it
+    assert client.get("/api/data/trash").json()["items"] == []  # pruned, not trashed
+    again = client.get("/api/data/storage", params={"refresh": "true"}).json()
+    assert _group(again, "revisions")["count"] == 0
+
+
+def test_revision_prune_fails_closed_without_verdict_windows(env, monkeypatch):
+    from forven.dataeng import revisions
+
+    _write_revisions("BTC-USDT", "1h", _bars("2023-01-01", 5), "2025-01-10T00:00:00Z")
+
+    def broken():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(storage, "protected_windows", broken)
+    assert storage.reclaim_items("revisions") == []  # not offered without the windows
+    fake = storage._Found(revisions.revision_path("BTC-USDT", "1h"), 1, 0.0)
+    monkeypatch.setattr(storage, "reclaim_items", lambda kind, root=None: [fake])
+    done = _wait(storage.submit_reclaim("revisions", "all"))
+    assert done["status"] == "failed" and "locked" in done["error"]["message"]
+    assert len(revisions.read_revisions("BTC-USDT", "1h")) == 5  # untouched
