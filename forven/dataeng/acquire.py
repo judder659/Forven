@@ -745,11 +745,22 @@ def _job_to_run(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def ingestion_runs(limit: int = 500) -> list[dict[str, Any]]:
-    return [_job_to_run(job) for job in jobs.list_jobs(kinds=[DOWNLOAD_KIND], limit=limit)["jobs"]]
+    # Fail soft like the in-memory store this replaces: coverage.ensure_coverage
+    # reads runs on the gauntlet drain path, which must never wedge on a read.
+    try:
+        listed = jobs.list_jobs(kinds=[DOWNLOAD_KIND], limit=limit)["jobs"]
+    except Exception as exc:
+        log.warning("Download runs unreadable from the job store: %s", exc)
+        return []
+    return [_job_to_run(job) for job in listed]
 
 
 def ingestion_run(run_id: str) -> dict[str, Any] | None:
-    job = jobs.get_job(run_id)
+    try:
+        job = jobs.get_job(run_id)
+    except Exception as exc:
+        log.warning("Download run %s unreadable from the job store: %s", run_id, exc)
+        return None
     if job is None or job.get("kind") != DOWNLOAD_KIND:
         return None
     return _job_to_run(job)
@@ -852,7 +863,7 @@ def _parse_file(
     sample = [{str(k): _json_safe(v) for k, v in row.items()} for row in head.to_dict("records")]
     parsed = _ParsedFile(
         filename=filename, rows=int(len(raw)), columns=columns, mapping=mapping, sample=sample,
-        frame=fdata._normalize_ohlcv_frame(None), errors=errors,
+        frame=fdata._normalize_ohlcv_frame(pd.DataFrame()), errors=errors,
     )
     if missing:
         return parsed
@@ -902,6 +913,8 @@ def _timeframe_label(ms: int) -> str | None:
 def _infer_timeframe(frame: pd.DataFrame) -> tuple[str | None, float, int]:
     """(timeframe from the median bar spacing, share of intervals exactly one
     bar apart, number of intervals)."""
+    if len(frame) < 2:
+        return None, 0.0, 0
     deltas = np.diff(_stamps_ms(frame))
     deltas = deltas[deltas > 0]
     if not len(deltas):

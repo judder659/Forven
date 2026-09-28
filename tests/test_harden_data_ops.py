@@ -249,12 +249,18 @@ def test_fabricated_bars_are_marked_in_the_lake_metadata(lake, monkeypatch):
     )
     data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", all_available=True)
 
-    stored = data_mod.load_parquet(SYMBOL, TF)
+    # Kraken bars land in the kraken venue series (plan F1); the stamp goes with them.
+    stored = data_mod.load_venue_frame("kraken", "spot", SYMBOL, TF)
     assert len(stored) == 4  # the fetched window itself IS filled
-    ranges = data_mod.synthetic_bar_ranges(SYMBOL, TF)
+    ranges = _venue_synthetic_ranges()
     assert ranges, "fabricated bars must be recorded, not laundered into real data"
     start_ms = data_mod._to_ms(base) + H_MS
     assert ranges == [(start_ms, start_ms + H_MS)]
+
+
+def _venue_synthetic_ranges() -> list[tuple[int, int]]:
+    path = data_mod.venue_parquet_path("kraken", "spot", SYMBOL, TF)
+    return data_mod._read_bar_ranges(path, data_mod.SYNTHETIC_RANGES_KEY)
 
 
 def test_synthetic_marks_survive_a_later_save(lake, monkeypatch):
@@ -273,12 +279,13 @@ def test_synthetic_marks_survive_a_later_save(lake, monkeypatch):
         lambda *a, **k: data_mod._normalize_ohlcv_frame(gappy),
     )
     data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", all_available=True)
-    marked = data_mod.synthetic_bar_ranges(SYMBOL, TF)
+    marked = _venue_synthetic_ranges()
     assert marked
 
-    # A plain re-save (e.g. tail compaction) must not erase the fabrication mark.
-    data_mod.save_parquet(data_mod.load_parquet(SYMBOL, TF), SYMBOL, TF, source="kraken")
-    assert data_mod.synthetic_bar_ranges(SYMBOL, TF) == marked
+    # A plain re-save must not erase the fabrication mark.
+    stored = data_mod.load_venue_frame("kraken", "spot", SYMBOL, TF)
+    data_mod.save_venue_frame(stored, "kraken", "spot", SYMBOL, TF)
+    assert _venue_synthetic_ranges() == marked
 
 
 def test_fabricated_range_detection_is_exact():
@@ -296,7 +303,7 @@ def test_fabricated_range_detection_is_exact():
 # ---------------------------------------------------------------------------
 
 
-def test_csv_patch_keeps_the_series_provenance_and_warns(lake, caplog):
+def test_csv_patch_keeps_the_series_provenance_and_marks_the_patch(lake):
     start = _closed_start(80)
     data_mod.save_parquet(_bars(start, 60), SYMBOL, TF, source="binanceusdm")
     assert data_mod.get_dataset_market(SYMBOL, TF) == "perp"
@@ -305,25 +312,22 @@ def test_csv_patch_keeps_the_series_provenance_and_warns(lake, caplog):
     for i in range(3):
         stamp = (start + timedelta(hours=60 + i)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
         csv_rows.append(f"{stamp},100,100,100,100,1")
-    data_mod._market_mismatch_logged.clear()
-    with caplog.at_level("WARNING"):
-        data_mod.process_csv_upload(
-            "\n".join(csv_rows).encode("utf-8"), "patch.csv", SYMBOL, TF
-        )
+    data_mod.process_csv_upload("\n".join(csv_rows).encode("utf-8"), "patch.csv", SYMBOL, TF)
 
+    # The patch keeps the stored provenance and records exactly which bars it wrote.
     assert data_mod.get_dataset_source(SYMBOL, TF) == "binanceusdm"
     assert data_mod.get_dataset_market(SYMBOL, TF) == "perp"
-    assert any("MARKET SPLICE" in rec.getMessage() for rec in caplog.records)
+    first = data_mod._to_ms(start + timedelta(hours=60))
+    assert data_mod.patched_bar_ranges(SYMBOL, TF) == [(first, first + 2 * H_MS)]
 
 
-def test_unmapped_exchange_source_does_not_spam_the_splice_warning(lake, caplog):
+def test_another_venue_cannot_write_into_the_canonical_series(lake):
     start = _closed_start(80)
     data_mod.save_parquet(_bars(start, 20), SYMBOL, TF, source="binance")
-    data_mod._market_mismatch_logged.clear()
-    with caplog.at_level("WARNING"):
-        # "bybit" simply isn't classified; that is not a splice.
-        data_mod._warn_market_mismatch(SYMBOL, TF, "bybit")
-    assert not any("MARKET SPLICE" in rec.getMessage() for rec in caplog.records)
+    before = data_mod.parquet_path(SYMBOL, TF).read_bytes()
+    with pytest.raises(data_mod.LakeVenueRefused, match="bybit"):
+        data_mod.save_parquet(_bars(start, 21), SYMBOL, TF, source="bybit")
+    assert data_mod.parquet_path(SYMBOL, TF).read_bytes() == before
 
 
 # ---------------------------------------------------------------------------

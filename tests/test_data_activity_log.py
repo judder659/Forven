@@ -206,9 +206,17 @@ def test_dataset_delete_logs(forven_db, monkeypatch, tmp_path):
     assert deleted[0]["level"] == "warning"
 
 
+def _binance_lists_btc(monkeypatch):
+    # A new file series for a Binance-listed pair lands in the csv:unknown
+    # venue series, never the canonical one (plan F2).
+    listed = {"binanceusdm": {"BTC/USDT:USDT": {}}, "binance": {"BTC/USDT": {}}}
+    monkeypatch.setattr(d, "_cached_markets", lambda ex: dict(listed.get(ex, {})))
+
+
 def test_csv_upload_logs(forven_db, monkeypatch, tmp_path):
     _clear_activity()
     monkeypatch.setattr(d, "DATA_DIR", tmp_path / "ohlcv")
+    _binance_lists_btc(monkeypatch)
     csv = (
         "timestamp,open,high,low,close,volume\n"
         "2026-01-01T00:00:00Z,1,2,0.5,1.5,10\n"
@@ -232,6 +240,7 @@ def test_csv_upload_drops_unclosed_current_bar(forven_db, monkeypatch, tmp_path)
 
         pytest.skip("pyarrow required")
     monkeypatch.setattr(d, "DATA_DIR", tmp_path / "ohlcv")
+    _binance_lists_btc(monkeypatch)
     tf_ms = 3_600_000
     now_ms = int(time.time() * 1000)
     cur_open = now_ms - (now_ms % tf_ms)  # current interval — still forming, not closed
@@ -247,7 +256,7 @@ def test_csv_upload_drops_unclosed_current_bar(forven_db, monkeypatch, tmp_path)
     )
     result = d.process_csv_upload(csv.encode(), "forming.csv", "BTC-USDT", "1h")
     assert result["row_count"] == 1  # only the closed bar persisted
-    stored = d.load_parquet("BTC-USDT", "1h")
+    stored = d.load_venue_frame("csv", "unknown", "BTC-USDT", "1h")
     last_ms = int(stored["timestamp"].max().value // 1_000_000)
     assert last_ms == closed_open  # the forming bar was dropped
 

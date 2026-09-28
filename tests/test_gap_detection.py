@@ -184,8 +184,8 @@ def test_dataset_ohlcv_reports_real_source(monkeypatch, tmp_path):
 
         pytest.skip("pyarrow required")
     monkeypatch.setattr(d, "DATA_DIR", tmp_path)
-    _save_series(d, tmp_path, [0, _TF, 2 * _TF])
-    # re-save with a real source so the metadata carries it
+    # Saved with a real source so the metadata carries it (relabelling a file
+    # another source wrote is refused since plan F1).
     df = pd.DataFrame(
         {
             "timestamp": pd.to_datetime([0, _TF, 2 * _TF], unit="ms", utc=True),

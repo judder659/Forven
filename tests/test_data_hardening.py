@@ -8,7 +8,7 @@ Covers:
   guard on the engine-on path) + DatetimeIndex frame support.
 - The dry-run signal-validation guard actually running (previously called a
   nonexistent DataManager.get_ohlcv and silently allowed everything).
-- Ingestion-run store: keyed lookup + bounded pruning.
+- Ingestion runs read from the job store: keyed lookup.
 - Per-series quality report domain endpoint.
 - Lake-backed candle-freshness health check.
 """
@@ -435,47 +435,24 @@ class TestDryRunGuard:
 
 
 class TestIngestionRunStore:
-    def test_keyed_lookup(self):
-        from forven.data import _ingestion_runs, _ingestion_runs_lock, get_ingestion_run
+    """Ingestion runs are download jobs now (forven.dataeng.jobs): keyed lookup
+    by job id, and only download jobs read as runs. Retention is the job
+    store's prune_jobs (tests/test_data_next_foundation.py)."""
 
-        with _ingestion_runs_lock:
-            _ingestion_runs["run-hardening-1"] = {"id": "run-hardening-1", "status": "running"}
-        try:
-            run = get_ingestion_run("run-hardening-1")
-            assert run is not None and run["status"] == "running"
-            assert get_ingestion_run("run-missing") is None
-        finally:
-            with _ingestion_runs_lock:
-                _ingestion_runs.pop("run-hardening-1", None)
+    def test_keyed_lookup(self, forven_db):
+        from forven.data import get_ingestion_run
+        from forven.db import get_db
 
-    def test_prune_evicts_oldest_terminal_only(self, monkeypatch):
-        from forven.data import (
-            _ingestion_runs,
-            _ingestion_runs_lock,
-            _prune_ingestion_runs_locked,
-        )
-
-        monkeypatch.setattr(data_mod, "_INGESTION_RUNS_MAX", 5)
-        with _ingestion_runs_lock:
-            saved = dict(_ingestion_runs)
-            _ingestion_runs.clear()
-            for i in range(8):
-                _ingestion_runs[f"r{i}"] = {
-                    "id": f"r{i}",
-                    "status": "completed",
-                    "completed_at": f"2026-01-0{i + 1}T00:00:00Z",
-                }
-            _ingestion_runs["running-1"] = {"id": "running-1", "status": "running"}
-            _prune_ingestion_runs_locked()
-            try:
-                assert "running-1" in _ingestion_runs  # never evicted
-                assert len(_ingestion_runs) <= 5 + 1
-                # oldest terminal runs evicted first
-                assert "r0" not in _ingestion_runs
-                assert "r7" in _ingestion_runs
-            finally:
-                _ingestion_runs.clear()
-                _ingestion_runs.update(saved)
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO data_jobs (id, kind, title, status, params_json, created_at, updated_at) VALUES "
+                "('dj-hardening-1', 'download', 't', 'running', '{\"symbol\":\"BTC-USDT\",\"timeframe\":\"1h\"}', 'now', 'now'), "
+                "('dj-hardening-2', 'reclaim', 't', 'running', '{}', 'now', 'now')"
+            )
+        run = get_ingestion_run("dj-hardening-1")
+        assert run is not None and run["status"] == "running" and run["symbol"] == "BTC-USDT"
+        assert get_ingestion_run("dj-hardening-2") is None  # not a download
+        assert get_ingestion_run("run-missing") is None
 
 
 # ---------------------------------------------------------------------------
