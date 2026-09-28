@@ -3,11 +3,12 @@
 Covers:
 - Phase 1: perp-canonical OHLCV target resolution (binanceusdm when a USD-M
   perp is listed, spot fallback otherwise) in both data.py and market_data.py,
-  plus the soft market-splice write guard.
+  plus the market-splice warning inside the canonical family.
 - Phase 3: candle-path circuit breaker (fail fast after repeated venue
   failures; empty windows are benign) and scaffolding removal.
-- Phase 4: ingestion runs surviving restart via KV (interrupted runs surfaced
-  as failed), backfill progress/cancel, /data/versions from the revision log.
+- Phase 4: ingestion runs surviving restart as download jobs (interrupted runs
+  surfaced as failed), backfill progress/cancel, /data/versions from the
+  revision log.
 - Phase 5: completeness-aware catch-up planning (gappy-but-current series get
   a "gaps" task).
 - Sim coverage gate in scanner.fetch_candles.
@@ -112,10 +113,22 @@ class TestPerpResolution:
 # ---------------------------------------------------------------------------
 # Capped venue WITHOUT a trades fallback: an unservable request (all_available,
 # far-past since, big limit) must NEVER hard-fail — it collapses to the recent
-# window and MERGES (accumulation preserved), warning ONLY when the user picked
-# an explicit start older than the reachable window. Tested against a synthetic
-# capped venue since Kraken (the only real capped venue) now uses trades.
+# window and MERGES (accumulation preserved), flagging `capped` ONLY when the
+# user picked an explicit start older than the reachable window. Tested against
+# a synthetic capped venue since Kraken (the only real capped venue) now uses
+# trades. Binance lists the pair, so the venue's bars land in its own venue
+# series (plan F1) and every record carries that note in `warning`.
 # ---------------------------------------------------------------------------
+
+_BINANCE_LISTS_BTC = {"binanceusdm": {"BTC/USDT:USDT": {}}, "binance": {"BTC/USDT": {}}}
+
+
+def _binance_markets(exchange_id: str) -> dict:
+    return dict(_BINANCE_LISTS_BTC.get(exchange_id, {}))
+
+
+def _cap_warning(rec: dict) -> bool:
+    return "history API" in str(rec.get("warning") or "")
 
 
 class TestVenueOhlcvCap:
@@ -148,16 +161,17 @@ class TestVenueOhlcvCap:
         monkeypatch.setattr(data_mod, "_fetch_ohlcv_once", _once)
         monkeypatch.setattr(data_mod, "_fetch_range", _range)
         monkeypatch.setattr(data_mod, "get_exchange", lambda ex: object())
-        monkeypatch.setattr(data_mod, "_cached_markets", lambda ex: {})
+        monkeypatch.setattr(data_mod, "_cached_markets", _binance_markets)
 
-    def test_all_available_downloads_without_warning(self, lake, monkeypatch):
+    def test_all_available_downloads_without_cap_warning(self, lake, monkeypatch):
         seen: dict = {}
         self._wire(monkeypatch, seen)
         rec = data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id=self.CAP_VENUE, all_available=True)
         assert seen.get("once_called") is True
         assert seen.get("once_since") is None  # never the since=0 that 400s
         assert not rec.get("capped")
-        assert not rec.get("warning")
+        assert not _cap_warning(rec)
+        assert rec["destination"] == "venue"  # its own series, not the canonical one
 
     def test_far_past_since_clamps_and_warns(self, lake, monkeypatch):
         seen: dict = {}
@@ -166,7 +180,7 @@ class TestVenueOhlcvCap:
         rec = data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id=self.CAP_VENUE, since_ms=old)
         assert seen.get("once_since") is None  # collapsed to recent-window fetch
         assert rec["capped"] is True
-        assert rec.get("warning")
+        assert _cap_warning(rec)
 
     def test_in_window_since_not_clamped(self, lake, monkeypatch):
         seen: dict = {}
@@ -175,7 +189,7 @@ class TestVenueOhlcvCap:
         rec = data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id=self.CAP_VENUE, since_ms=recent_since)
         assert seen.get("range_start") == recent_since
         assert not rec.get("capped")
-        assert not rec.get("warning")
+        assert not _cap_warning(rec)
 
     def test_binance_all_available_unaffected(self, lake, monkeypatch):
         seen: dict = {}
@@ -184,12 +198,14 @@ class TestVenueOhlcvCap:
         assert seen.get("range_start") == 0  # deep paging from 0 preserved
         assert not rec.get("capped")
         assert not rec.get("warning")
+        assert rec["destination"] == "canonical"
 
 
 # ---------------------------------------------------------------------------
 # Kraken full history via the Trades feed. Deep requests (all_available,
 # far-past since, big limit) reconstruct candles from the uncapped Trades
-# endpoint; recent/small requests keep the fast OHLC path.
+# endpoint; recent/small requests keep the fast OHLC path. Binance lists the
+# pair, so everything lands in the kraken:spot venue series (plan F1).
 # ---------------------------------------------------------------------------
 
 
@@ -224,7 +240,7 @@ class TestKrakenTradesHistory:
         monkeypatch.setattr(data_mod, "_fetch_range", _range)
         monkeypatch.setattr(data_mod, "_fetch_ohlcv_once", _once)
         monkeypatch.setattr(data_mod, "get_exchange", lambda ex: object())
-        monkeypatch.setattr(data_mod, "_cached_markets", lambda ex: {})
+        monkeypatch.setattr(data_mod, "_cached_markets", _binance_markets)
 
     def test_all_available_builds_full_history_from_zero(self, lake, monkeypatch):
         seen: dict = {}
@@ -233,7 +249,8 @@ class TestKrakenTradesHistory:
         wins = seen.get("trades_windows")
         assert wins and len(wins) == 1 and wins[0][0] == 0  # trades from the start
         assert "range_start" not in seen  # OHLC deep path not used
-        assert not rec.get("capped") and not rec.get("warning")
+        assert not rec.get("capped") and not _cap_warning(rec)
+        assert rec["venue"] == "kraken:spot"
 
     def test_far_past_since_builds_from_trades(self, lake, monkeypatch):
         seen: dict = {}
@@ -242,7 +259,7 @@ class TestKrakenTradesHistory:
         rec = data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", since_ms=old)
         wins = seen.get("trades_windows")
         assert wins and wins[0][0] == old
-        assert not rec.get("capped") and not rec.get("warning")
+        assert not rec.get("capped") and not _cap_warning(rec)
 
     def test_large_limit_builds_from_trades(self, lake, monkeypatch):
         seen: dict = {}
@@ -268,15 +285,16 @@ class TestKrakenTradesHistory:
 
     def test_backfill_full_merges_not_tail_append(self, lake, monkeypatch):
         # A trades backfill spans old→now; with a recent bar already on disk the
-        # tail-append fast-path would drop the older bars — the full merge must run.
-        data_mod.save_parquet(_bars(_closed_start(2), 1), SYMBOL, TF, source="kraken")
+        # older bars must merge in, not be dropped.
+        data_mod.save_venue_frame(_bars(_closed_start(2), 1), "kraken", "spot", SYMBOL, TF)
         old_bars = _bars(_closed_start(200), 50)  # all older than the seeded bar
         seen: dict = {}
         self._wire(monkeypatch, seen, bars=old_bars)
         old = int(datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
         data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", since_ms=old)
-        after = len(data_mod.load_parquet(SYMBOL, TF))
+        after = len(data_mod.load_venue_frame("kraken", "spot", SYMBOL, TF))
         assert after >= 50  # backfilled bars persisted, not dropped
+        assert not data_mod.parquet_path(SYMBOL, TF).exists()  # the canonical series is untouched
 
     def test_all_available_does_not_fabricate_over_stored_gaps(self, lake, monkeypatch):
         # REVERSED by HARDEN-DATA-OPS (forward-filled-bars-unmarked). This used
@@ -298,17 +316,18 @@ class TestKrakenTradesHistory:
                  "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1},
             ]
         )
-        data_mod.save_parquet(gappy, SYMBOL, TF, source="kraken")
+        data_mod.save_venue_frame(gappy, "kraken", "spot", SYMBOL, TF)
         monkeypatch.setattr(
             data_mod, "_build_ohlcv_from_trades",
             lambda *a, **k: data_mod._normalize_ohlcv_frame(pd.DataFrame()),
         )
         monkeypatch.setattr(data_mod, "get_exchange", lambda ex: object())
-        monkeypatch.setattr(data_mod, "_cached_markets", lambda ex: {})
+        monkeypatch.setattr(data_mod, "_cached_markets", _binance_markets)
         data_mod.fetch_ohlcv_chunked(SYMBOL, TF, exchange_id="kraken", all_available=True)
-        df = data_mod.load_parquet(SYMBOL, TF)
+        df = data_mod.load_venue_frame("kraken", "spot", SYMBOL, TF)
         assert len(df) == 2  # stored hole left visible, not papered over
-        assert data_mod.synthetic_bar_ranges(SYMBOL, TF) == []  # nothing fabricated
+        venue_path = data_mod.venue_parquet_path("kraken", "spot", SYMBOL, TF)
+        assert data_mod._read_bar_ranges(venue_path, data_mod.SYNTHETIC_RANGES_KEY) == []  # nothing fabricated
 
 
 class TestTradesOhlcvBuild:
@@ -411,17 +430,29 @@ class TestCsvUploadFormats:
         b"1609466400,29180.0,29250.0,29100.0,29120.0,5.1,150"
     )
 
+    @pytest.fixture(autouse=True)
+    def _binance_lists_the_pairs(self, monkeypatch):
+        # A new file series for a Binance-listed pair is its own csv:unknown
+        # venue series (plan F2), never the canonical research series.
+        listed = {"binanceusdm": {"BTC/USDT:USDT": {}}, "binance": {"ETH/USDT": {}, "SOL/USDT": {}}}
+        monkeypatch.setattr(data_mod, "_cached_markets", lambda ex: dict(listed.get(ex, {})))
+
+    @staticmethod
+    def _stored(symbol: str) -> pd.DataFrame:
+        return data_mod.load_venue_frame("csv", "unknown", symbol, "1h")
+
     def test_headerless_epoch_seconds_upload(self, lake):
         p = data_mod.preview_csv(self.KRAKEN_RAW)
         assert p["detected_timestamp_column"] == "timestamp"
         assert all(p["has_required_columns"].values())
 
         rec = data_mod.process_csv_upload(self.KRAKEN_RAW, "XBTUSDT_60.csv", "BTC-USDT", "1h")
-        df = data_mod.load_parquet("BTC-USDT", "1h")
+        df = self._stored("BTC-USDT")
         # Epoch seconds parsed to 2021, NOT 1970.
         assert str(df["timestamp"].iloc[0]).startswith("2021-01-01")
         assert float(df["open"].iloc[0]) == 29000.1
         assert int(rec["row_count"]) == 3
+        assert rec["venue"] == "csv:unknown" and not data_mod.parquet_path("BTC-USDT", "1h").exists()
 
     def test_millisecond_epoch_with_header(self, lake):
         csv = (
@@ -430,7 +461,7 @@ class TestCsvUploadFormats:
             b"1609462800000,1.5,2.5,1,2,12"
         )
         data_mod.process_csv_upload(csv, "x.csv", "ETH-USDT", "1h")
-        df = data_mod.load_parquet("ETH-USDT", "1h")
+        df = self._stored("ETH-USDT")
         assert str(df["timestamp"].iloc[0]).startswith("2021-01-01")
 
     def test_iso_string_timestamps_still_work(self, lake):
@@ -440,7 +471,7 @@ class TestCsvUploadFormats:
             b"2021-01-01T01:00:00Z,1.5,2.5,1,2,12"
         )
         data_mod.process_csv_upload(csv, "y.csv", "SOL-USDT", "1h")
-        df = data_mod.load_parquet("SOL-USDT", "1h")
+        df = self._stored("SOL-USDT")
         assert str(df["timestamp"].iloc[0]).startswith("2021-01-01")
 
     def test_headerless_unknown_layout_raises_clear_error(self, lake):
@@ -487,7 +518,8 @@ class TestCandleBreaker:
 
     def test_empty_window_is_benign(self, lake, monkeypatch):
         start = _closed_start(30)
-        data_mod.save_parquet(_bars(start, 10), SYMBOL, TF)
+        # Unknown Binance listing ({} markets): Kraken bars take its venue series.
+        data_mod.save_venue_frame(_bars(start, 10), "kraken", "spot", SYMBOL, TF)
 
         monkeypatch.setattr(data_mod, "_fetch_range", lambda *a, **k: data_mod._normalize_ohlcv_frame(pd.DataFrame()))
         monkeypatch.setattr(data_mod, "get_exchange", lambda ex: object())
@@ -507,31 +539,24 @@ class TestCandleBreaker:
 
 
 class TestRunPersistence:
-    @pytest.fixture(autouse=True)
-    def _isolate_runs(self):
-        with data_mod._ingestion_runs_lock:
-            saved = dict(data_mod._ingestion_runs)
-            loaded = data_mod._ingestion_runs_loaded
-            data_mod._ingestion_runs.clear()
-            data_mod._ingestion_runs_loaded = False
-        yield
-        with data_mod._ingestion_runs_lock:
-            data_mod._ingestion_runs.clear()
-            data_mod._ingestion_runs.update(saved)
-            data_mod._ingestion_runs_loaded = loaded
+    """Ingestion runs are download jobs: the job store survives a restart and
+    the API startup marks in-flight jobs interrupted (jobs.recover_interrupted)."""
 
-    def test_interrupted_runs_surface_as_failed_after_restart(self, monkeypatch):
-        monkeypatch.setattr(
-            "forven.db.kv_get",
-            lambda key, default=None: [
-                {"id": "run-a", "status": "running", "started_at": "2026-07-01T00:00:00Z"},
-                {"id": "run-b", "status": "completed", "started_at": "2026-07-01T01:00:00Z"},
-            ] if key == data_mod._INGESTION_RUNS_KV_KEY else default,
-        )
+    def test_interrupted_runs_surface_as_failed_after_restart(self, forven_db):
+        from forven.dataeng import jobs
+        from forven.db import get_db
+
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO data_jobs (id, kind, title, status, created_at, updated_at) VALUES "
+                "('dj-a', 'download', 'a', 'running', '2026-07-01T00:00:00Z', 'x'), "
+                "('dj-b', 'download', 'b', 'succeeded', '2026-07-01T01:00:00Z', 'x')"
+            )
+        jobs.recover_interrupted()
         runs = {run["id"]: run for run in data_mod.get_active_ingestion_runs()}
-        assert runs["run-a"]["status"] == "failed"
-        assert "restarted" in runs["run-a"]["error"]
-        assert runs["run-b"]["status"] == "completed"
+        assert runs["dj-a"]["status"] == "failed"
+        assert "restarted" in runs["dj-a"]["error"]
+        assert runs["dj-b"]["status"] == "completed"
 
 
 class TestBackfillCancelProgress:

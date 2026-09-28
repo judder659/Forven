@@ -6681,11 +6681,12 @@ def _persist_completed_backtest_run(
     # Verdict auditability (edge-data-expansion Run 2): record the identity of
     # the data this result was scored on (checksum/rows/span/market/as_of).
     # Drift — rebuilds, venue changes, restatements — becomes DETECTABLE by
-    # comparing fingerprints instead of remembered by operators.
+    # comparing identities instead of remembered by operators. Its own key:
+    # "data_fingerprint" is the DATA-PROV-1 semantic hash (data_provenance).
     try:
         from forven.dataeng.quality_gate import dataset_fingerprint
 
-        config_payload["data_fingerprint"] = dataset_fingerprint(asset, timeframe, as_of=as_of)
+        config_payload["data_identity"] = dataset_fingerprint(asset, timeframe, as_of=as_of)
     except Exception:
         pass
     compact_config = {k: v for k, v in config_payload.items() if v is not None}
@@ -7798,11 +7799,12 @@ def post_backtest_submit(
         # Keep the job running until trades and chart artifacts are saved too.
         config_payload.update(status="running", background_submit=True, heartbeat_at=_now())
     # Verdict auditability (edge-data-expansion Run 2): stamp the identity of
-    # the data this result was scored on so drift is detectable, not remembered.
+    # the data this result was scored on so drift is detectable, not remembered
+    # (its own key; "data_fingerprint" is the DATA-PROV-1 semantic hash).
     try:
         from forven.dataeng.quality_gate import dataset_fingerprint
 
-        config_payload["data_fingerprint"] = dataset_fingerprint(asset, timeframe, as_of=body.as_of)
+        config_payload["data_identity"] = dataset_fingerprint(asset, timeframe, as_of=body.as_of)
     except Exception:
         pass
     compact_config = {k: v for k, v in config_payload.items() if v is not None}

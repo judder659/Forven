@@ -589,56 +589,56 @@ def post_data_ingestion_submit(
             resp = httpx.post(url, json=payload, timeout=20.0)
             resp.raise_for_status()
             data = resp.json()
-
-            run = {
-                "id": data.get("run_id"),
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "source": "remote_lake",
-                "status": data.get("status", "completed"),
-                "bars_fetched": limit if limit else 50000,
-                "bars_new": limit if limit else 50000,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "error": None,
-            }
-            from forven.data import _ingestion_runs, _ingestion_runs_lock
-
-            with _ingestion_runs_lock:
-                _ingestion_runs[data.get("run_id")] = run
-            return run
         except Exception as exc:
             log.warning("Remote data ingestion failed: %s", exc)
             raise HTTPException(
                 status_code=503,
                 detail=f"Remote data ingestion failed: {exc}",
             ) from exc
+        data = data if isinstance(data, dict) else {}
+        # Only what the remote reported: the run is polled through the remote
+        # run listing (get_data_ingestion_run), never fabricated locally.
+        return {
+            "id": data.get("run_id") or data.get("id"),
+            "symbol": _to_ui_symbol(symbol),
+            "timeframe": timeframe,
+            "source": exchange,
+            "status": data.get("status") or "pending",
+            "bars_fetched": int(data.get("bars_fetched") or 0),
+            "bars_new": int(data.get("bars_new") or 0),
+            "started_at": data.get("started_at") or datetime.now(timezone.utc).isoformat(),
+            "completed_at": data.get("completed_at"),
+            "error": data.get("error"),
+            "remote": True,
+        }
 
     from forven.data import submit_ingestion
 
-    return submit_ingestion(
-        symbol=symbol,
-        timeframe=timeframe,
-        exchange=exchange,
-        limit=limit if not all_available else None,
-        since_ms=since,
-        until_ms=until,
-        all_available=all_available,
-    )
+    try:
+        return submit_ingestion(
+            symbol=symbol,
+            timeframe=timeframe,
+            exchange=exchange,
+            limit=limit if not all_available else None,
+            since_ms=since,
+            until_ms=until,
+            all_available=all_available,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def get_data_ingestion_run(run_id: str):
-    # Live runs (and remote-mode fabricated runs) are keyed in the in-memory
-    # run store — a direct lookup, not the previous linear scan of up to 10k
-    # reconstructed rows on every 1.5s frontend poll.
+    # Local runs are download jobs — a keyed lookup in the job store, not the
+    # previous linear scan of up to 10k reconstructed rows on every 1.5s poll.
     from forven.data import get_ingestion_run
 
     run = get_ingestion_run(str(run_id))
     if run is not None:
         run["symbol"] = _to_ui_symbol(run.get("symbol"))
         return run
-    # Synthetic catalog ids ("dataset-N-...") and remote-listed runs still go
-    # through the composite listing.
+    # Synthetic catalog ids ("dataset-N-...") and remote runs (remote mode)
+    # go through the composite listing.
     rows = get_data_ingestion_runs(limit=10_000, offset=0)
     match = next((row for row in rows if str(row.get("id")) == str(run_id)), None)
     if match is None:
@@ -677,26 +677,24 @@ def post_fetch_data(
         try:
             resp = httpx.post(url, json=payload, timeout=20.0)
             resp.raise_for_status()
-            return {
-                "symbol": _to_ui_symbol(symbol),
-                "timeframe": timeframe,
-                "source": exchange,
-                "start_ts": "2015-01-01T00:00:00Z",
-                "end_ts": datetime.now().isoformat() + "Z",
-                "row_count": limit if limit else 50000,
-                "bars_fetched": limit if limit else 50000,
-                "bars_new": limit if limit else 50000,
-            }
         except Exception as exc:
             log.warning("Remote direct data fetch failed: %s", exc)
             raise HTTPException(
                 status_code=503,
                 detail=f"Remote direct data fetch failed: {exc}",
             ) from exc
+        # The remote's own answer, never invented bar counts or date ranges.
+        try:
+            remote = resp.json()
+        except ValueError:
+            remote = None
+        if isinstance(remote, dict):
+            return remote
+        return {"symbol": _to_ui_symbol(symbol), "timeframe": timeframe, "source": exchange, "status": "submitted"}
+
+    from forven.data import LakeVenueRefused, fetch_ohlcv_chunked
 
     try:
-        from forven.data import fetch_ohlcv_chunked
-
         payload = fetch_ohlcv_chunked(
             symbol=symbol,
             timeframe=timeframe,
@@ -710,6 +708,8 @@ def post_fetch_data(
             payload = dict(payload)
             payload["symbol"] = _to_ui_symbol(payload.get("symbol"))
         return payload
+    except LakeVenueRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         log.error("Failed to fetch data for %s: %s", symbol, exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1573,7 +1573,7 @@ def post_upload_csv(
     timestamp_column: str | None = None,
     date_format: str | None = None,
 ):
-    from forven.data import process_csv_upload
+    from forven.data import LakeVenueRefused, process_csv_upload
 
     try:
         payload = process_csv_upload(
@@ -1584,8 +1584,10 @@ def post_upload_csv(
             ts_col=timestamp_column,
             date_format=date_format,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:  # includes acquire.ImportRejected (400 or 409)
+        raise HTTPException(status_code=getattr(exc, "status", 400), detail=str(exc)) from exc
+    except LakeVenueRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         log.error("CSV upload failed for %s %s: %s", symbol, timeframe, exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
