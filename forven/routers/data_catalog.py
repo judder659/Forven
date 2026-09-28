@@ -9,7 +9,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from forven.api_security import require_operator_access
 from forven.dataeng import catalog_index, series_detail
@@ -33,18 +33,20 @@ def _serve(build: Callable[[], Any]) -> Response:
 @router.get("/api/data/catalog")
 def get_catalog(
     q: str | None = None,
-    stream: str | None = None,
-    venue: str | None = None,
-    tier: str | None = None,
-    state: str | None = None,
-    asset_class: str | None = None,
-    timeframe: str | None = None,
+    stream: list[str] | None = Query(None),
+    venue: list[str] | None = Query(None),
+    tier: list[str] | None = Query(None),
+    state: list[str] | None = Query(None),
+    asset_class: list[str] | None = Query(None),
+    timeframe: list[str] | None = Query(None),
     sort: str | None = None,
     order: str | None = None,
     limit: int = 200,
     offset: int = 0,
 ):
-    """Every stored series with freshness, quality and consumers (CatalogResponse)."""
+    """Every stored series with freshness, quality and consumers (CatalogResponse).
+    Filters take repeated params (``tier=live&tier=paper``) or comma-separated
+    values (``tier=live,paper``)."""
     return _serve(
         lambda: catalog_index.query(
             catalog_index.get_snapshot(),

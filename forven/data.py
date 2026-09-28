@@ -1453,7 +1453,8 @@ def _scan_datasets_uncached() -> list[dict[str, Any]]:
             if head is None:
                 continue  # unreadable: the orphan scan reports it
             rows, start_ms, end_ms, source, market = head
-            tail = _footer(Path(str(parquet_file) + ".tail")) if Path(str(parquet_file) + ".tail").exists() else None
+            tail_file = Path(str(parquet_file) + ".tail")
+            tail = _footer(tail_file) if tail_file.exists() else None
             if tail is not None:
                 rows += tail[0]
                 if tail[1] is not None and (start_ms is None or tail[1] < start_ms):

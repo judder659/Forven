@@ -695,10 +695,13 @@ def wait_idle(root: Path | str | None = None, timeout: float = 60.0) -> None:
         thread.join(timeout)
 
 
-def _split(value: str | None) -> set[str] | None:
+def _split(value: str | Iterable[str] | None) -> set[str] | None:
+    """Filter values from a comma-separated string, a list of them (repeated
+    query params), or None."""
     if value is None:
         return None
-    parts = {part.strip() for part in str(value).split(",") if part.strip()}
+    values = [value] if isinstance(value, str) else list(value)
+    parts = {part.strip() for item in values for part in str(item).split(",") if part.strip()}
     return parts or None
 
 
@@ -735,18 +738,18 @@ def query(
     snapshot: Snapshot,
     *,
     q: str | None = None,
-    stream: str | None = None,
-    venue: str | None = None,
-    tier: str | None = None,
-    state: str | None = None,
-    asset_class: str | None = None,
-    timeframe: str | None = None,
+    stream: str | Iterable[str] | None = None,
+    venue: str | Iterable[str] | None = None,
+    tier: str | Iterable[str] | None = None,
+    state: str | Iterable[str] | None = None,
+    asset_class: str | Iterable[str] | None = None,
+    timeframe: str | Iterable[str] | None = None,
     sort: str | None = None,
     order: str | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """``CatalogResponse``. Filters take comma-separated values; ``q`` matches a
+    """``CatalogResponse``. Filters take a list and/or comma-separated values; ``q`` matches a
     symbol spelled any way (BTC, btcusdt, BTC/USDT). Facets count the whole
     catalog, ignoring filters. Nulls sort last in either order."""
     filters = {

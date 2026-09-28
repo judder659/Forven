@@ -308,6 +308,13 @@ def test_catalog_endpoint_serves_the_snapshot(lake):
     body = first.json()
     assert set(body) == {"generated_at", "total", "rows", "facets"}
     assert body["total"] == 4 and body["facets"]["stream"]["ohlcv"] == 4
+    # Multi-value filters: repeated params and comma-separated values alike.
+    repeated = client.get("/api/data/catalog", params=[("stream", "ohlcv"), ("venue", "canonical"), ("venue", "okx:spot")]).json()
+    joined = client.get("/api/data/catalog", params={"stream": "ohlcv", "venue": "canonical,okx:spot"}).json()
+    assert repeated["total"] == joined["total"] == 3
+    assert {row["id"] for row in repeated["rows"]} == {row["id"] for row in joined["rows"]}
+    missing = client.get("/api/data/series/BTC-USDT/1m")
+    assert missing.status_code == 404 and "BTC-USDT" in missing.json()["detail"]
     catalog_index.wait_idle()  # the background pass scores every series
     scored = client.get("/api/data/catalog", params={"sort": "quality"}).json()
     catalog_index.wait_idle()
