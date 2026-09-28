@@ -629,8 +629,17 @@ MIN_FUNDING_INTERVAL_HOURS = 1.0
 MAX_FUNDING_INTERVAL_HOURS = 24.0
 # Back-compat alias: the old name is the *fallback* divisor now, not the rule.
 _BINANCE_FUNDING_INTERVAL_HOURS = DEFAULT_FUNDING_INTERVAL_HOURS
-_FUNDING_SERIES_CACHE: dict[str, tuple[float, list[tuple[int, float]]]] = {}
-_OI_SERIES_CACHE: dict[str, tuple[float, list[tuple[int, float]]]] = {}
+# Each entry records the window it was FETCHED for, and only answers requests that
+# window covers. Checking only the start let a load that ended earlier answer a
+# later, longer one: the optimizer's selection-window pre-load (ending 2022-09-14)
+# served S10810's validation window (ending 2025-12-31), so every load in the next
+# five minutes forward-filled one funding print across three years — a
+# confirmation and a walk-forward with zero out-of-sample trades that a retry past
+# the TTL did not reproduce (2026-09-26). Same class for S10713.
+# symbol -> (fetched_at, window_start_ms, window_end_ms, rows, rows_are_per_hour)
+_FUNDING_SERIES_CACHE: dict[str, tuple[float, int, int, list[tuple[int, float]], bool]] = {}
+# symbol -> (fetched_at, start_ms, end_ms, interval, series)
+_OI_SERIES_CACHE: dict[str, tuple[float, int, int, str, list[tuple[int, float]]]] = {}
 _SERIES_CACHE_TTL = 300.0  # funding events are 4-8h apart; 5-min cache is plenty
 
 
@@ -697,6 +706,7 @@ def _binance_futures_exchange():
 
 
 def _fetch_binance_funding_series_raw(symbol: str, start_ms: int, end_ms: int) -> list[tuple[int, float]]:
+    """PER-SETTLEMENT ``(ts_ms, rate)`` prints in ``[start_ms, end_ms]``, as paginated."""
     exchange = _binance_futures_exchange()
     raw: list[tuple[int, float]] = []
     since = int(start_ms)
@@ -714,10 +724,10 @@ def _fetch_binance_funding_series_raw(symbol: str, start_ms: int, end_ms: int) -
         if len(batch) < per_call or last_ts >= end_ms or last_ts <= since:
             break
         since = last_ts + 1
-    # Collect the PER-SETTLEMENT rates first, then convert per print: the divisor
-    # is this symbol's own observed cadence, not a hardcoded 8 (see the section
-    # comment above / funding_interval_hours_per_print).
-    return _to_per_hour_funding(raw)
+    # Returned unconverted: fetch_binance_funding_series converts per print after
+    # windowing, so the divisor is this symbol's own observed cadence (see the
+    # section comment above / funding_interval_hours_per_print).
+    return raw
 
 
 def _read_binance_funding_parquet_series(symbol: str, start_ms: int, end_ms: int) -> list[tuple[int, float]]:
@@ -782,22 +792,28 @@ def fetch_binance_funding_series(coin: str, start_ms: int | None = None, end_ms:
     end_ms = int(end_ms) if end_ms else int(now * 1000)
     start_ms = int(start_ms) if start_ms else end_ms - 730 * 24 * 3600 * 1000
     cached = _FUNDING_SERIES_CACHE.get(symbol)
-    if cached and (now - cached[0]) < _SERIES_CACHE_TTL and cached[1] and cached[1][0][0] <= start_ms:
-        series = cached[1]
+    if cached and (now - cached[0]) < _SERIES_CACHE_TTL and cached[1] <= start_ms and end_ms <= cached[2]:
+        rows, per_hour = cached[3], cached[4]
     else:
         try:
-            series = _fetch_binance_funding_series_raw(symbol, start_ms, end_ms)
+            rows = _fetch_binance_funding_series_raw(symbol, start_ms, end_ms)
         except Exception as exc:
             log.warning(
                 "Binance funding fetch failed for %s (%s); falling back to on-disk parquet",
                 symbol, exc,
             )
-            series = []
-        if not series:
-            series = _read_binance_funding_parquet_series(symbol, start_ms, end_ms)
-        if series:
-            _FUNDING_SERIES_CACHE[symbol] = (now, series)
-    return [(ts, rate) for ts, rate in series if start_ms <= ts <= end_ms]
+            rows = []
+        per_hour = False
+        if not rows:
+            rows = _read_binance_funding_parquet_series(symbol, start_ms, end_ms)
+            per_hour = True  # converted over the whole file, independent of the window
+        if rows:
+            _FUNDING_SERIES_CACHE[symbol] = (now, start_ms, end_ms, rows, per_hour)
+    window = [(ts, rate) for ts, rate in rows if start_ms <= ts <= end_ms]
+    # Live prints are converted after windowing — the window's last print takes the
+    # window's median interval — so a covering cached fetch returns exactly what a
+    # fresh fetch of this window would.
+    return window if per_hour else _to_per_hour_funding(window)
 
 
 def fetch_binance_oi_series(coin: str, start_ms: int | None = None, end_ms: int | None = None, *, interval: str = "1h") -> list[tuple[int, float]]:
@@ -809,8 +825,11 @@ def fetch_binance_oi_series(coin: str, start_ms: int | None = None, end_ms: int 
     end_ms = int(end_ms) if end_ms else int(now * 1000)
     start_ms = int(start_ms) if start_ms else end_ms - 30 * 24 * 3600 * 1000
     cached = _OI_SERIES_CACHE.get(symbol)
-    if cached and (now - cached[0]) < _SERIES_CACHE_TTL:
-        series = cached[1]
+    # Only the identical request: a fetch returns at most 500 points from its own
+    # ``since``, so a cached wider window cannot answer another one the way a fresh
+    # fetch would.
+    if cached and (now - cached[0]) < _SERIES_CACHE_TTL and cached[1:4] == (start_ms, end_ms, interval):
+        series = cached[4]
     else:
         try:
             exchange = _binance_futures_exchange()
@@ -826,7 +845,7 @@ def fetch_binance_oi_series(coin: str, start_ms: int | None = None, end_ms: int 
             if ts and oi is not None:
                 series.append((ts, float(oi)))
         series.sort(key=lambda pair: pair[0])
-        _OI_SERIES_CACHE[symbol] = (now, series)
+        _OI_SERIES_CACHE[symbol] = (now, start_ms, end_ms, interval, series)
     return [(ts, oi) for ts, oi in series if start_ms <= ts <= end_ms]
 
 
