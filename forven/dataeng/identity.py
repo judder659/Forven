@@ -156,6 +156,7 @@ _CRYPTO_QUOTES = ("USDT", "USDC", "FDUSD", "BUSD", "BTC", "ETH", "BNB")
 _SPLIT_QUOTES = ("FDUSD", "USDT", "USDC", "BUSD", "USD", "BTC", "ETH", "BNB")
 _STREAM_DIRS = ("funding", "oi", "basis", "derivatives")
 _RECENT_WRITE_SECONDS = 7 * 86400
+_STALE_BAR_SECONDS = 3 * 86400
 
 
 def split_pair(text: str) -> tuple[str, str | None]:
@@ -297,7 +298,9 @@ def audit_identity() -> dict:
     """``IdentityAuditResponse``: lake folders and series whose identity does not
     fit — alias duplicates (BTCUSD, BTC-USD next to BTC-USDT), unknown symbols,
     empty or stray folders, delisted symbols still being written, and series
-    written before provenance stamping. Report only: nothing is moved."""
+    written before provenance stamping. Report only: nothing is moved. The
+    registry-relative checks (unknown symbol, delisted but collected) are
+    skipped while the symbol registry is empty (never refreshed)."""
     import time as _time
     from datetime import datetime, timezone
     from pathlib import Path
@@ -348,11 +351,16 @@ def audit_identity() -> dict:
                 f"Compare it with {base}-USDT, then merge or retire it.",
                 [f"{folder.parent.relative_to(root).as_posix()}/{base}-USDT"] if f"{base}-USDT" in series_dirs else [])
             return
-        if name in registry:
+        if name in registry or not registry:
             return
         if quote in _STABLE_QUOTES or base in _STABLE_QUOTES or quote not in _CRYPTO_QUOTES:
             add("unknown_symbol", folder, name, "Not in the Binance USD-M symbol registry (not a listed perp).",
                 "Keep it only if a strategy needs it; otherwise retire it.")
+
+    newest_bar: dict[str, int] = {}
+    for item in snapshot.files.values():
+        if item.stream == "ohlcv" and item.venue == "canonical" and item.last_ms:
+            newest_bar[item.symbol] = max(newest_bar.get(item.symbol, 0), int(item.last_ms))
 
     for name in sorted(canonical_dirs):
         folder = ohlcv / name
@@ -365,11 +373,22 @@ def audit_identity() -> dict:
                 "Review it, then move it to the trash from Storage.", files=files)
             continue
         check_name(folder, name, canonical_dirs)
+        # Delisted and still rewritten, yet no new bars arrive: collection is futile.
+        # (A delisted perp whose bars stay current is served by the spot fallback.)
         row = registry.get(name)
-        newest = max((f.stat().st_mtime for f in files), default=0.0)
-        if row and row.get("status") == "delisted" and name not in frozen_symbols and now - newest < _RECENT_WRITE_SECONDS:
-            written = datetime.fromtimestamp(newest, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-            add("delisted_collected", folder, name, f"Delisted on Binance but still being written (last write {written}).",
+        newest_write = max((f.stat().st_mtime for f in files), default=0.0)
+        last_bar_s = newest_bar.get(name, 0) / 1000.0
+        if (
+            row
+            and row.get("status") == "delisted"
+            and name not in frozen_symbols
+            and now - newest_write < _RECENT_WRITE_SECONDS
+            and now - last_bar_s > _STALE_BAR_SECONDS
+        ):
+            written = datetime.fromtimestamp(newest_write, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            last_bar = datetime.fromtimestamp(last_bar_s, tz=timezone.utc).date().isoformat() if last_bar_s else "never"
+            add("delisted_collected", folder, name,
+                f"Delisted on Binance: no new bars since {last_bar}, but its files are still rewritten (last write {written}).",
                 "Freeze it so the collector stops refreshing it.", files=files)
 
     for sources in sorted(p for p in ohlcv.glob("source=*/market=*") if p.is_dir()) if ohlcv.is_dir() else []:

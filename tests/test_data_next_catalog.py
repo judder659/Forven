@@ -473,7 +473,9 @@ def test_identity_audit_reports_without_moving(lake):
     stamp = _stamp("binance", "spot", "X")
     for name in ("BTC-USDT", "BTC-USD", "BTCUSD", "RETRY", "USDT-TRY", "ETH-BTC"):
         _write(lake / f"ohlcv/{name}/1h.parquet", _bars("2024-01-01", 5), stamp)
-    _write(lake / "ohlcv/OLD-USDT/1h.parquet", _bars("2024-01-01", 5), stamp)  # delisted, still written today
+    _write(lake / "ohlcv/OLD-USDT/1h.parquet", _bars("2024-01-01", 5), stamp)  # delisted, stale, still rewritten today
+    now = pd.Timestamp.now(tz="UTC").floor("h")
+    _write(lake / "ohlcv/SPOTLY-USDT/1h.parquet", _bars(now - pd.Timedelta(hours=4), 5), stamp)  # delisted perp, bars current
     _write(lake / "ohlcv/NOSTAMP-USDT/1h.parquet", _bars("2024-01-01", 5))  # never stamped
     (lake / "ohlcv/EMPTY-USDT").mkdir()
     (lake / "ohlcv/JUNK").mkdir()
@@ -484,6 +486,7 @@ def test_identity_audit_reports_without_moving(lake):
     for symbol in ("BTC-USDT", "NOSTAMP-USDT"):
         catalog.upsert_symbol_registry(symbol, market="perp", status="active")
     catalog.upsert_symbol_registry("OLD-USDT", market="perp", status="delisted")
+    catalog.upsert_symbol_registry("SPOTLY-USDT", market="perp", status="delisted")
     before = sorted(p.as_posix() for p in lake.rglob("*"))
 
     issues = audit_identity()["issues"]
@@ -502,6 +505,14 @@ def test_identity_audit_reports_without_moving(lake):
     bare = next(issue for issue in issues if issue["path"] == "ohlcv/BTCUSD")
     assert bare["related"] == ["ohlcv/BTC-USD", "ohlcv/BTC-USDT"] and bare["bytes"] > 0 and bare["suggestion"]
     assert sorted(p.as_posix() for p in lake.rglob("*")) == before  # report only
+
+
+def test_identity_audit_skips_registry_checks_without_a_registry(lake):
+    from forven.dataeng.identity import audit_identity
+
+    _write(lake / "ohlcv/SOL-USDT/1h.parquet", _bars("2024-01-01", 5), _stamp("binanceusdm", "perp", "SOL-USDT"))
+    _write(lake / "ohlcv/USDT-TRY/1h.parquet", _bars("2024-01-01", 5), _stamp("binance", "spot", "USDT-TRY"))
+    assert audit_identity()["issues"] == []  # nothing is "unknown" to a registry that was never refreshed
 
 
 # ---------------------------------------------------------------- universe

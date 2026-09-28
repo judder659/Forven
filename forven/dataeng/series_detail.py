@@ -149,27 +149,37 @@ def revision_file(root: str, series: SeriesFile) -> Path | None:
     return Path(root) / "revisions" / series.symbol / f"{series.timeframe}.parquet"
 
 
-def month_map(root: str, series: SeriesFile) -> list[dict[str, Any]]:
+def holes(series: SeriesFile) -> list[tuple[int, int, int]]:
+    """Every hole of a series (first/last missing bar ms, bars), in time order."""
+    tf_ms = catalog_index.timeframe_ms(series.timeframe)
+    if not tf_ms or not series.rows:
+        return []
+    return quality.list_gaps(series.paths, tf_ms)
+
+
+def month_map(root: str, series: SeriesFile, series_holes: list[tuple[int, int, int]] | None = None) -> list[dict[str, Any]]:
     """Bars expected vs present per month, with synthetic, patched and
-    restated counts (``MonthCell``)."""
+    restated counts (``MonthCell``). Stored bars sit on the timeframe grid
+    between the holes, so present = expected - missing, per month, from the
+    hole list (no second scan of the series)."""
     tf_ms = catalog_index.timeframe_ms(series.timeframe)
     if not tf_ms or not series.rows or series.first_ms is None or series.last_ms is None:
         return []
-    source, params = quality.relation(series.paths, [])
-    with quality.connect() as con:
-        present = dict(con.execute(f"SELECT strftime(ts, '%Y-%m'), count(*) FROM ({source}) GROUP BY 1", params).fetchall())
+    series_holes = holes(series) if series_holes is None else series_holes
     stamps = catalog_index.read_stamps(series) if series.stream == "ohlcv" else {"synthetic_ranges": [], "patched_ranges": []}
     from forven.dataeng.revisions import restated_by_month
 
     restated = restated_by_month(revision_file(root, series))
+    missing_ranges = [(start, end) for start, end, _ in series_holes]
     cells = []
     for month, lo, hi_exclusive in _month_bounds(series.first_ms, series.last_ms):
         hi = min(hi_exclusive - 1, series.last_ms)
+        expected = _grid_count(series.first_ms, max(lo, series.first_ms), hi, tf_ms)
         cells.append(
             {
                 "month": month,
-                "expected": _grid_count(series.first_ms, max(lo, series.first_ms), hi, tf_ms),
-                "present": int(present.get(month, 0)),
+                "expected": expected,
+                "present": max(0, expected - _ranges_in(missing_ranges, lo, hi, tf_ms)),
                 "synthetic": _ranges_in(stamps["synthetic_ranges"], lo, hi_exclusive - 1, tf_ms),
                 "patched": _ranges_in(stamps["patched_ranges"], lo, hi_exclusive - 1, tf_ms),
                 "restated": int(restated.get(month, 0)),
@@ -178,7 +188,7 @@ def month_map(root: str, series: SeriesFile) -> list[dict[str, Any]]:
     return cells
 
 
-def gap_spans(series: SeriesFile) -> list[dict[str, Any]]:
+def gap_spans(series: SeriesFile, series_holes: list[tuple[int, int, int]] | None = None) -> list[dict[str, Any]]:
     """Holes (``missing``, or ``unfillable`` when the collector proved the venue
     has no bars there) plus forward-filled ranges (``synthetic``), largest first."""
     tf_ms = catalog_index.timeframe_ms(series.timeframe)
@@ -188,7 +198,7 @@ def gap_spans(series: SeriesFile) -> list[dict[str, Any]]:
         pair for pair in (catalog_index.unfillable_map().get(series.id) or []) if isinstance(pair, (list, tuple)) and len(pair) == 2
     )
     spans = []
-    for start, end, bars in quality.list_gaps(series.paths, tf_ms):
+    for start, end, bars in holes(series) if series_holes is None else series_holes:
         covered = any(a <= start and b >= end for a, b in unfillable)
         spans.append({"start": catalog_index.iso_ms(start), "end": catalog_index.iso_ms(end), "bars": bars,
                       "kind": "unfillable" if covered else "missing"})
@@ -540,10 +550,11 @@ def detail(symbol: str, timeframe: str, *, stream: str = "ohlcv", venue: str | N
             registry=catalog_index.registry_rows(catalog),
             asset_memo={},
         )
-    spans = gap_spans(series)
+    series_holes = holes(series)
+    spans = gap_spans(series, series_holes)
     return {
         **row,
-        "month_map": month_map(snapshot.root, series),
+        "month_map": month_map(snapshot.root, series, series_holes),
         "gaps": spans[:MAX_GAPS_IN_DETAIL],
         "gaps_total": len(spans),
         "streams": _streams(snapshot, series),
@@ -567,6 +578,7 @@ __all__ = [
     "detail",
     "gap_spans",
     "gaps",
+    "holes",
     "month_map",
     "pick_bucket",
     "resolve",

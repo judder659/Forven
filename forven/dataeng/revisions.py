@@ -270,20 +270,35 @@ def latest_restatements(
     return events
 
 
+_restated_cache: dict[str, tuple[tuple[int, int], dict[str, int]]] = {}
+
+
 def restated_by_month(path: Path | None) -> dict[str, int]:
-    """Distinct restated bars per UTC month ("YYYY-MM") in a revision log."""
-    if path is None or not Path(path).exists():
+    """Distinct restated bars per UTC month ("YYYY-MM") in a revision log,
+    memoized per file (size, mtime): logs only change on a restatement."""
+    if path is None:
         return {}
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return {}
+    key = (int(st.st_size), int(st.st_mtime_ns))
+    hit = _restated_cache.get(str(path))
+    if hit is not None and hit[0] == key:
+        return dict(hit[1])
     from forven.dataeng.quality import connect
 
     with connect() as con:
-        return {
-            str(month): int(count)
-            for month, count in con.execute(
-                "SELECT strftime(timestamp, '%Y-%m'), count(DISTINCT timestamp) FROM read_parquet(?) GROUP BY 1",
+        counts = {
+            pd.Timestamp(int(month_ms), unit="ms", tz="UTC").strftime("%Y-%m"): int(count)
+            for month_ms, count in con.execute(
+                "SELECT epoch_ms(date_trunc('month', CAST(timestamp AS TIMESTAMP))), count(DISTINCT timestamp) "
+                "FROM read_parquet(?) GROUP BY 1",
                 [str(path)],
             ).fetchall()
         }
+    _restated_cache[str(path)] = (key, counts)
+    return dict(counts)
 
 
 def _iso_text(value: object) -> str | None:
