@@ -16,6 +16,8 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 const backtestingMocks = vi.hoisted(() => ({
+	getHoldoutSummary: vi.fn(),
+	getRobustnessResult: vi.fn(),
 	getStrategyOpenPosition: vi.fn(),
 	updateStrategyDefaultParams: vi.fn(),
 }));
