@@ -885,7 +885,12 @@ def _is_better_context_candidate(
 
 
 def resolve_best_symbol_timeframe(strategy_id: str) -> tuple[str | None, str | None, float, dict]:
-    """Pick the best (symbol, timeframe) context for *strategy_id* from backtest results."""
+    """Pick the best (symbol, timeframe) context for *strategy_id* from backtest results.
+
+    What-if results (another params set, execution profile, trade mode or
+    leverage — see api_core._is_what_if_backtest_submit) describe a variant, not
+    the stored strategy, so they never compete.
+    """
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -897,6 +902,9 @@ def resolve_best_symbol_timeframe(strategy_id: str) -> tuple[str | None, str | N
               AND br.deleted_at IS NULL
               AND TRIM(UPPER(br.symbol)) NOT IN ('', 'GENERIC')
               AND TRIM(COALESCE(br.timeframe, '')) <> ''
+              AND COALESCE(
+                  CASE WHEN json_valid(br.config_json) THEN json_extract(br.config_json, '$.what_if') END, 0
+              ) = 0
             ORDER BY br.created_at DESC
             """,
             (strategy_id,),

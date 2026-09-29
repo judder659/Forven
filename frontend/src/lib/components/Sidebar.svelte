@@ -157,7 +157,8 @@
 	$: markActiveRouteSeen($page.url.pathname, $navRouteMetrics, $navEventPulses);
 </script>
 
-<aside class="relative z-40 w-60 flex-shrink-0 border-r border-[#222] bg-black flex flex-col">
+<!-- No z-index: page overlays inside <main> must paint over the sidebar (see +layout.svelte). -->
+<aside class="relative w-60 flex-shrink-0 border-r border-[#222] bg-black flex flex-col">
 	<div class="px-3 py-4 border-b border-[#222] flex items-center justify-center gap-2">
 		<div class="w-2 h-2 bg-white shrink-0" title="forven"></div>
 		<div class="text-sm font-mono lowercase tracking-wide text-white">forven</div>

@@ -54,7 +54,9 @@ export async function previewSignals(request: {
 	try {
 		return await fetchApi('/backtests/preview', {
 			method: 'POST',
-			body: JSON.stringify(request)
+			body: JSON.stringify(request),
+			// Signal generation over a long window of fine bars can outlast the default 30s.
+			timeoutMs: LONG_TIMEOUT_MS,
 		});
 	} catch (error) {
 		if (isRouteMissingError(error)) {
@@ -62,6 +64,22 @@ export async function previewSignals(request: {
 		}
 		throw error;
 	}
+}
+
+/** What a manual backtest uses for each setting left blank (GET /api/backtests/defaults). */
+export interface ManualBacktestDefaults {
+	fee_bps: number;
+	slippage_bps: number;
+	initial_capital: number;
+	leverage: number;
+	duration_days: number;
+	include_funding: boolean;
+	/** Research reads stop here; a window reaching past it is shifted back to end at it. */
+	holdout_cutoff: string | null;
+}
+
+export async function getManualBacktestDefaults(): Promise<ManualBacktestDefaults> {
+	return fetchApi('/backtests/defaults');
 }
 
 export async function submitBacktest(request: {

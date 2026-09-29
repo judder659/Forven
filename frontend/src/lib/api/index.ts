@@ -137,6 +137,7 @@ export {
 } from './strategies';
 
 export {
+	getManualBacktestDefaults,
 	previewSignals,
 	submitBacktest,
 	registerCustomStrategy,
@@ -212,6 +213,7 @@ export {
 	runVerdict,
 } from './backtesting';
 export type {
+	ManualBacktestDefaults,
 	StrategyIndicator,
 	SignalPreview,
 	RegisterCustomStrategyResponse,

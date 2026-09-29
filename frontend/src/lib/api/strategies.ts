@@ -53,6 +53,36 @@ function normalizeStrategyParameters(raw: unknown): Record<string, ParamSpec> {
 	return out;
 }
 
+function parseRecord(raw: unknown): Record<string, unknown> | null {
+	if (typeof raw === 'string') {
+		try {
+			return asRecord(JSON.parse(raw));
+		} catch {
+			return null;
+		}
+	}
+	return asRecord(raw);
+}
+
+/** Parameter values as the backend holds them: a row's `params` blob, or a catalog's spec defaults. */
+function rawParameterValues(row: Record<string, unknown>): Record<string, unknown> {
+	const stored = parseRecord(row.params);
+	if (stored) return { ...stored };
+	const specs = parseRecord(row.parameters);
+	if (!specs) return {};
+	const out: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(specs)) {
+		const spec = asRecord(value);
+		out[key] = spec && 'default' in spec ? spec.default : value;
+	}
+	return out;
+}
+
+function optionalText(value: unknown): string | null {
+	const text = typeof value === 'string' ? value.trim() : '';
+	return text || null;
+}
+
 function normalizeStrategyRecord(raw: unknown): Strategy | null {
 	const row = asRecord(raw);
 	if (!row) return null;
@@ -69,6 +99,17 @@ function normalizeStrategyRecord(raw: unknown): Strategy | null {
 		version: String(row.version ?? '1.0.0'),
 		description,
 		parameters: normalizeStrategyParameters(row.parameters ?? row.params),
+		display_id: optionalText(row.display_id),
+		stage: optionalText(row.stage),
+		symbol: optionalText(row.symbol),
+		timeframe: optionalText(row.timeframe),
+		source: optionalText(row.source),
+		asset: optionalText(row.asset),
+		trade_modes: Array.isArray(row.trade_modes)
+			? row.trade_modes.filter((mode): mode is string => typeof mode === 'string')
+			: undefined,
+		default_trade_mode: optionalText(row.default_trade_mode),
+		raw_params: rawParameterValues(row),
 	};
 }
 
@@ -91,8 +132,17 @@ export function normalizeStrategyPayload(payload: unknown): { strategies: Strate
 	return { strategies: [] };
 }
 
-export async function getStrategies(): Promise<{ strategies: Strategy[] }> {
-	const payload = await fetchApi<unknown>('/strategies');
+/**
+ * Strategy rows. Without a status the backend returns its 500 most recent rows,
+ * which are mostly archived; pass a status (paper, live_graduated, ...) to get
+ * one stage.
+ */
+export async function getStrategies(options: { status?: string; limit?: number } = {}): Promise<{ strategies: Strategy[] }> {
+	const query = new URLSearchParams();
+	if (options.status) query.set('status', options.status);
+	if (options.limit != null) query.set('limit', String(options.limit));
+	const qs = query.toString();
+	const payload = await fetchApi<unknown>(qs ? `/strategies?${qs}` : '/strategies');
 	return normalizeStrategyPayload(payload);
 }
 

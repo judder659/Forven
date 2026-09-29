@@ -266,7 +266,9 @@
 >
 	<Sidebar {connectionStatus} />
 
-	<!-- Main Content -->
+	<!-- Main Content: z-0 keeps every page z-index, modals included, below the
+	     fixed chrome after it (chat button, toasts, assistant, wizard, save bar).
+	     The sidebar has no z-index and comes first, so page overlays cover it. -->
 	<main class="flex-1 min-w-0 bg-black flex flex-col relative z-0">
 		<RiskDisclaimerBanner />
 		<UpdateBanner />

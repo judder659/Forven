@@ -4,7 +4,6 @@
 	// in on open, Escape closes, and the layout returns focus to the indicator.
 	import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
 	import { fly } from 'svelte/transition';
-	import { portal } from '$lib/actions/portal';
 	import { listJobs } from '$lib/api/dataManager';
 	import type { DataJob } from '$lib/api/dataManagerTypes';
 	import { clock, createRequestGuard, jobsSummary, loading, settle, type Loadable } from '$lib/stores/dataManager';
@@ -55,7 +54,7 @@
 	}
 </script>
 
-<div use:portal in:fly={{ x: 420, duration: 180 }} role="dialog" tabindex="-1" aria-modal="false" aria-labelledby="dm-jobs-title" on:keydown={onKey}
+<div in:fly={{ x: 420, duration: 180 }} role="dialog" tabindex="-1" aria-modal="false" aria-labelledby="dm-jobs-title" on:keydown={onKey}
 	class="fixed right-0 top-0 z-[60] flex h-full w-[420px] max-w-[92vw] flex-col border-l border-[#333] bg-[#050505] font-mono text-white shadow-[-16px_0_40px_rgba(0,0,0,0.7)]">
 	<header class="flex items-start gap-3 border-b border-[#1a1a1a] px-4 py-3">
 		<div class="min-w-0 flex-1">
