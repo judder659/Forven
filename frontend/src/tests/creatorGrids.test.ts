@@ -4,6 +4,7 @@ import {
 	axisValues,
 	baseAsset,
 	chunk,
+	currentSettingVerdict,
 	defaultRange,
 	hasLocalData,
 	heatmapVerdict,
@@ -13,6 +14,7 @@ import {
 	marketVerdict,
 	resultKey,
 	runPool,
+	sameValue,
 	specKnobs,
 	withKnobs,
 	withoutKnobs,
@@ -119,6 +121,39 @@ describe('heatmap verdict', () => {
 		expect(heatmapVerdict(idle, [1, 2, 3], [null])?.status).toBe('losing');
 		const working = [1, 2, 3].flatMap((y) => [1, 2, 3].map((x) => ({ x, y, trades: 10 + x + y, oos_return: x === 2 && y === 2 ? 0.1 : 0.08 })));
 		expect(heatmapVerdict(working, [1, 2, 3], [1, 2, 3])?.status).toBe('plateau');
+	});
+});
+
+describe('current setting verdict', () => {
+	// S07239's kc_period sweep: its own 63 sits on a plateau; the best cell, 66, is a spike.
+	const xs = [53, 56, 60, 63, 66, 70, 73];
+	const oos = [0.06, 0.067, 0.081, 0.082, 0.178, 0.085, 0.038];
+	const sweep = xs.map((x, i) => ({ x, y: null, trades: 60 + (i % 3), oos_return: oos[i] }));
+
+	it('judges the current setting on its own neighbours, apart from the best cell', () => {
+		const own = currentSettingVerdict(sweep, xs, [null], { x: 63, y: null }, 'kc_period 63');
+		expect(own).toMatchObject({ status: 'plateau', best: false });
+		expect(own?.text).toBe('kc_period 63 (+8.2% out-of-sample): 2 of 2 neighbours keep at least half its return, so it does not hinge on one exact value.');
+		expect(heatmapVerdict(sweep, xs, [null])?.status).toBe('spike');
+	});
+	it('says when the current setting is the best cell, loses money, or is not on the grid', () => {
+		const top = currentSettingVerdict(sweep, xs, [null], { x: 66, y: null }, 'kc_period 66');
+		expect(top).toMatchObject({ status: 'spike', best: true });
+		expect(top?.text).toContain('It is also the best cell here. 7 of 7 settings make money out-of-sample.');
+		const coarse = [38, 63, 88].map((x, i) => ({ x, y: null, trades: 60, oos_return: [-0.043, 0.082, 0.014][i] }));
+		expect(currentSettingVerdict(coarse, [38, 63, 88], [null], { x: 38, y: null }, 'kc_period 38')?.text)
+			.toBe('kc_period 38 loses money out-of-sample here (-4.3%).');
+		expect(currentSettingVerdict(sweep, xs, [null], { x: 61, y: null }, 'kc_period 61')).toMatchObject({ status: 'off_grid', best: false });
+		expect(currentSettingVerdict(sweep, xs, [null], { x: null, y: null }, 'kc_period')).toBeNull();
+	});
+	it('matches rounded values and counts every neighbour on two axes', () => {
+		const xs2 = [0.1, 0.2, 0.30000000000000004];
+		const cells = [1, 2, 3].flatMap((y) => xs2.map((x) => ({ x, y, trades: 10, oos_return: x > 0.25 && y === 2 ? 0.05 : 0.04 })));
+		expect(sameValue(0.3, 0.30000000000000004)).toBe(true);
+		expect(sameValue(0.3, 0.31)).toBe(false);
+		expect(currentSettingVerdict(cells, xs2, [1, 2, 3], { x: 0.3, y: 2 }, 'a 0.3 · b 2')?.text).toContain('5 of 5 neighbours');
+		expect(currentSettingVerdict(cells, xs2, [1, 2, 3], { x: 0.2, y: 2 }, 'a 0.2 · b 2')?.text).toContain('8 of 8 neighbours');
+		expect(currentSettingVerdict(cells, xs2, [1, 2, 3], { x: 0.2, y: null }, 'a 0.2')).toBeNull();
 	});
 });
 

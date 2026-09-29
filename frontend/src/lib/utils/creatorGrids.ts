@@ -228,6 +228,50 @@ function axisHasNoEffect(scored: HeatmapCellLike[], along: 'x' | 'y'): boolean {
 	return traded;
 }
 
+/** Whether two setting values are the same, allowing for float rounding. */
+export function sameValue(a: number | null, b: number | null): boolean {
+	if (a === null || b === null) return a === b;
+	return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+const signedPct = (v: number) => `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+
+/** The cells with a result, by grid position. */
+function scoredCells(cells: HeatmapCellLike[]): Map<string, HeatmapCellLike> {
+	return new Map(cells.filter((c) => c.oos_return !== undefined && !c.error).map((c) => [`${c.x}|${c.y}`, c]));
+}
+
+function profitableShare(scored: HeatmapCellLike[]): string {
+	const profitable = scored.filter((c) => (c.oos_return ?? 0) > 0).length;
+	return `${profitable} of ${scored.length} setting${scored.length === 1 ? '' : 's'} ${profitable === 1 ? 'makes' : 'make'} money out-of-sample.`;
+}
+
+/** How many of a cell's grid neighbours keep at least half its out-of-sample return. */
+function neighbourSupport(
+	at: Map<string, HeatmapCellLike>,
+	cell: HeatmapCellLike,
+	xValues: number[],
+	yValues: Array<number | null>,
+): { holding: number; total: number } {
+	const xi = xValues.indexOf(cell.x);
+	const yi = yValues.indexOf(cell.y);
+	const target = cell.oos_return ?? 0;
+	let holding = 0;
+	let total = 0;
+	for (let dy = -1; dy <= 1; dy++) {
+		for (let dx = -1; dx <= 1; dx++) {
+			if (!dx && !dy) continue;
+			const x = xValues[xi + dx];
+			const y = yValues[yi + dy];
+			const other = x === undefined || y === undefined ? undefined : at.get(`${x}|${y}`);
+			if (!other) continue;
+			total += 1;
+			if ((other.oos_return ?? 0) >= 0.5 * target) holding += 1;
+		}
+	}
+	return { holding, total };
+}
+
 /** Whether the best cell sits on a plateau (neighbours keep most of its result) or a lone
  * spike. A setting that changes nothing is reported first: its flat grid would otherwise
  * read as a plateau. */
@@ -237,13 +281,12 @@ export function heatmapVerdict(
 	yValues: Array<number | null>,
 	labels: { x: string; y: string | null } = { x: 'the across setting', y: 'the down setting' },
 ): Verdict | null {
-	const at = new Map(cells.filter((c) => c.oos_return !== undefined && !c.error).map((c) => [`${c.x}|${c.y}`, c]));
+	const at = scoredCells(cells);
 	if (!at.size) return null;
 	const scored = [...at.values()];
 	const best = scored.reduce((a, b) => ((b.oos_return ?? -Infinity) > (a.oos_return ?? -Infinity) ? b : a));
 	const bestReturn = best.oos_return ?? 0;
-	const profitable = scored.filter((c) => (c.oos_return ?? 0) > 0).length;
-	const share = `${profitable} of ${scored.length} setting${scored.length === 1 ? '' : 's'} ${profitable === 1 ? 'makes' : 'make'} money out-of-sample.`;
+	const share = profitableShare(scored);
 	const deadX = axisHasNoEffect(scored, 'x');
 	const deadY = yValues.some((y) => y !== null) && axisHasNoEffect(scored, 'y');
 	if (deadX || deadY) {
@@ -254,25 +297,55 @@ export function heatmapVerdict(
 			+ `at all, or not in this range. ${share}` };
 	}
 	if (bestReturn <= 0) return { status: 'losing', text: `No setting in this grid makes money out-of-sample.` };
-	const xi = xValues.indexOf(best.x);
-	const yi = yValues.indexOf(best.y);
-	const neighbours: HeatmapCellLike[] = [];
-	for (let dy = -1; dy <= 1; dy++) {
-		for (let dx = -1; dx <= 1; dx++) {
-			if (!dx && !dy) continue;
-			const x = xValues[xi + dx];
-			const y = yValues[yi + dy];
-			const cell = x === undefined || y === undefined ? undefined : at.get(`${x}|${y}`);
-			if (cell) neighbours.push(cell);
-		}
-	}
-	if (!neighbours.length) return { status: 'unknown', text: share };
-	const holding = neighbours.filter((c) => (c.oos_return ?? 0) >= 0.5 * bestReturn).length;
-	const ratio = holding / neighbours.length;
-	const counted = `${holding} of ${neighbours.length} neighbours of the best setting keep at least half its out-of-sample return`;
+	const { holding, total } = neighbourSupport(at, best, xValues, yValues);
+	if (!total) return { status: 'unknown', text: share };
+	const ratio = holding / total;
+	const counted = `${holding} of ${total} neighbours of the best setting keep at least half its out-of-sample return`;
 	if (ratio >= 0.6) return { status: 'plateau', text: `Plateau: ${counted}, so the edge does not hinge on one exact setting. ${share}` };
 	if (ratio <= 0.25) return { status: 'spike', text: `Spike: only ${counted}. A lone bright cell is usually fitted noise. ${share}` };
 	return { status: 'uneven', text: `Uneven: ${counted}. ${share}` };
+}
+
+export interface SettingVerdict extends Verdict {
+	/** The setting is also the grid's best cell, so this one verdict covers both. */
+	best: boolean;
+}
+
+/** The same plateau test for the setting in use now (`current`), which need not be the
+ * best cell: a lone bright cell elsewhere says nothing against it, and a plateau
+ * elsewhere says nothing for it. `name` describes it ("kc_period 63"). Null when there
+ * is nothing to judge; status `off_grid` when its values are not on the grid. */
+export function currentSettingVerdict(
+	cells: HeatmapCellLike[],
+	xValues: number[],
+	yValues: Array<number | null>,
+	current: { x: number | null; y: number | null },
+	name: string,
+): SettingVerdict | null {
+	const at = scoredCells(cells);
+	const twoAxes = yValues.some((y) => y !== null);
+	if (!at.size || current.x === null || (twoAxes && current.y === null)) return null;
+	const x = xValues.find((value) => sameValue(value, current.x));
+	const y = twoAxes ? yValues.find((value) => sameValue(value, current.y)) : null;
+	if (x === undefined || y === undefined) {
+		return { status: 'off_grid', best: false,
+			text: `${name} is not on this grid, so it is not judged. Include its value in the range to judge it.` };
+	}
+	const cell = at.get(`${x}|${y}`);
+	if (!cell) return null;
+	const scored = [...at.values()];
+	const own = cell.oos_return ?? 0;
+	const best = scored.every((other) => (other.oos_return ?? -Infinity) <= own + 1e-12);
+	const also = best ? ` It is also the best cell here. ${profitableShare(scored)}` : '';
+	if (own <= 0) return { status: 'losing', best, text: `${name} loses money out-of-sample here (${signedPct(own)}).${also}` };
+	const where = `${name} (${signedPct(own)} out-of-sample)`;
+	const { holding, total } = neighbourSupport(at, cell, xValues, yValues);
+	if (!total) return { status: 'unknown', best, text: `${where} has no neighbours on this grid to compare.${also}` };
+	const ratio = holding / total;
+	const counted = `${holding} of ${total} neighbours keep at least half its return`;
+	if (ratio >= 0.6) return { status: 'plateau', best, text: `${where}: ${counted}, so it does not hinge on one exact value.${also}` };
+	if (ratio <= 0.25) return { status: 'spike', best, text: `${where}: only ${counted}. A lone bright cell is usually fitted noise.${also}` };
+	return { status: 'uneven', best, text: `${where}: ${counted}.${also}` };
 }
 
 const MIN_SCORED_TRADES = 5;
