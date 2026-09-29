@@ -3,10 +3,10 @@
 // model the Summary scorecard and the Robustness stress matrix both render.
 //
 // Payload units (as the engine persists them): Monte Carlo probabilities and
-// distributions are percent points; jitter pass rate / thresholds, cost-stress
-// threshold, regime share and WFA max degradation are fractions; cost-stress
-// degradation is percent points; regime win rate and average return are percent
-// points.
+// distributions are percent points; jitter pass rate / thresholds, regime share and
+// WFA max degradation are fractions; cost-stress degradation is percent points and
+// its verdict_threshold is the minimum STRESSED SHARPE (not a share lost); regime win
+// rate and average return are percent points.
 
 import { getRobustnessResult, getHoldoutSummary, type HoldoutSummary, type PersistedRobustnessResult } from '$lib/api/backtesting';
 import { explainStrategy, getGauntletStatus, type GauntletStatus, type GauntletTestEntry, type GauntletTestKey } from '$lib/api/lifecycle';
@@ -259,7 +259,13 @@ function withStale(evidence: string, stale: boolean): string {
 	return stale ? `${STALE_NOTE}${evidence}` : evidence;
 }
 
-export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
+export interface StressLimits {
+	/** Pipeline robustness_thresholds.cost_stress_max_degradation_pct: the strict
+	 *  paper → live gate's cap on the share of Sharpe lost at stressed costs. */
+	costMaxDegradationPct?: number | null;
+}
+
+export function buildStressRows(evidence: ContainerEvidence, limits: StressLimits = {}): StressRow[] {
 	const tests = evidence.gauntlet?.tests ?? ({} as Record<GauntletTestKey, GauntletTestEntry | null>);
 	const payload = (key: GauntletTestKey) => asBag(evidence.payloads[key]?.payload);
 	const rows: Array<Omit<StressRow, 'basis'>> = [];
@@ -332,6 +338,8 @@ export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 		const jit = payload('parameter_jitter');
 		const passRate = toNumber(jit.pass_rate);
 		const threshold = toNumber(jit.verdict_threshold);
+		// A rerun holds when its Sharpe keeps at least (1 − allowed_degradation) of the baseline's.
+		const keepShare = 1 - (toNumber(jit.allowed_degradation) ?? 0.5);
 		const planned = toNumber(jit.n_iterations);
 		const completed = toNumber(jit.iterations_completed) ?? (Array.isArray(jit.sharpe_values) ? jit.sharpe_values.length : null);
 		const weak = completed !== null && completed < MIN_JITTER_RERUNS;
@@ -343,7 +351,7 @@ export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 			question: 'Does it survive small parameter changes?',
 			value: passRate === null ? '—' : `${pctText(passRate * 100)} of reruns held`,
 			bullet: passRate === null || threshold === null ? null : { min: 0, max: 100, value: passRate * 100, threshold: threshold * 100, direction: 'ge' },
-			thresholdText: threshold === null ? '' : `≥ ${pctText(threshold * 100)} keep half the Sharpe`,
+			thresholdText: threshold === null ? '' : `≥ ${pctText(threshold * 100)} keep ${pctText(keepShare * 100)} of the Sharpe`,
 			verdict,
 			tone: toneFor(verdict, weak, stale),
 			evidence: withStale(completed === null ? 'Rerun count not recorded' : `${completed} of ${planned ?? '?'} reruns finished${jit.deadline_hit === true ? ' (time limit)' : ''}`, stale),
@@ -354,25 +362,35 @@ export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 		});
 	}
 
-	// Cost stress: Sharpe lost at multiplied fees and slippage.
+	// Cost stress: the runner passes when the Sharpe at multiplied fees and slippage stays
+	// at or above a floor (verdict_threshold); the strict paper → live gate also caps the
+	// share of Sharpe lost (pipeline cost_stress_max_degradation_pct).
 	{
 		const entry = tests.cost_stress;
 		const cost = payload('cost_stress');
+		const stressedSharpe = toNumber(asBag(cost.stressed).sharpe);
+		const originalSharpe = toNumber(asBag(cost.original).sharpe);
+		const minSharpe = toNumber(cost.verdict_threshold);
 		const degradation = toNumber(cost.degradation_pct);
-		const threshold = toNumber(cost.verdict_threshold);
+		const maxLoss = limits.costMaxDegradationPct ?? null;
+		const overLiveCap = degradation !== null && maxLoss !== null && degradation > maxLoss;
 		const stale = entry?.stale === true;
 		const verdict = entryVerdict(entry, cost.verdict);
 		const trades = toNumber(asBag(cost.original).total_trades);
+		const top = Math.max(minSharpe === null ? 0 : minSharpe * 2, (originalSharpe ?? 0) * 1.15, (stressedSharpe ?? 0) * 1.15, 0.5);
 		rows.push({
 			key: 'cost_stress',
 			label: 'Cost stress',
 			question: `Does it survive ${toNumber(cost.fee_multiplier) ?? 2}× fees and slippage?`,
-			value: degradation === null ? '—' : `−${pctText(degradation, 1)} Sharpe`,
-			bullet: degradation === null || threshold === null ? null : { min: 0, max: Math.max(60, threshold * 200), value: degradation, threshold: threshold * 100, direction: 'le' },
-			thresholdText: threshold === null ? '' : `≤ ${pctText(threshold * 100)} lost`,
+			value: stressedSharpe === null ? '—' : `Sharpe ${numText(stressedSharpe)}${degradation === null ? '' : ` (−${pctText(degradation, 1)})`}`,
+			bullet: stressedSharpe === null || minSharpe === null ? null : { min: Math.min(0, stressedSharpe), max: top, value: stressedSharpe, threshold: minSharpe, direction: 'ge' },
+			thresholdText: [minSharpe === null ? null : `stressed Sharpe ≥ ${numText(minSharpe)}`, maxLoss === null ? null : `live gate ≤ ${pctText(maxLoss)} lost`].filter(Boolean).join(' · '),
 			verdict,
 			tone: toneFor(verdict, false, stale),
-			evidence: withStale(trades === null ? 'Trade count not recorded' : `${trades} trades, the baseline run's window`, stale),
+			evidence: withStale(
+				[trades === null ? 'Trade count not recorded' : `${trades} trades, the baseline run's window`, overLiveCap ? `loses more than the live gate's ${pctText(maxLoss ?? 0)} cap` : null].filter(Boolean).join(' · '),
+				stale,
+			),
 			weak: false,
 			stale,
 			resultId: entry?.result_id ?? null,
@@ -380,7 +398,10 @@ export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 			detail: {
 				multiplier: toNumber(cost.fee_multiplier),
 				degradationPct: degradation,
-				thresholdPct: threshold === null ? null : threshold * 100,
+				stressedSharpe,
+				originalSharpe,
+				minSharpe,
+				maxDegradationPct: maxLoss,
 			},
 		});
 	}

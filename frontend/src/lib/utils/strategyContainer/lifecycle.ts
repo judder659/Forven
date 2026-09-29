@@ -3,7 +3,7 @@
 
 import type { LifecycleEvent } from '$lib/api';
 import { normalizeLifecycleStage } from '$lib/utils/lifecyclePresentation';
-import { fmtDateUtc, isNum, parseTimestamp } from './format';
+import { fmtDateUtc, fmtNum, isNum, parseTimestamp } from './format';
 
 export const RAIL_STAGES = [
 	{ key: 'quick_screen', label: 'Quick screen' },
@@ -104,6 +104,20 @@ export interface GateEta {
 }
 
 const MONTH_MS = 30.4375 * 86_400_000;
+
+/** "May 1, 2027 – Jun 18, 2027", or one date when both ends fall on the same day. */
+export function fmtEtaWindow(eta: GateEta): string {
+	const a = fmtDateUtc(eta.earliest);
+	const b = fmtDateUtc(eta.latest);
+	return a === b ? a : `${a} – ${b}`;
+}
+
+/** "5.8–7.1", or one rate when only one is known. */
+export function fmtEtaRates(eta: GateEta): string {
+	const a = fmtNum(eta.rates[0], 1);
+	const b = fmtNum(eta.rates[1], 1);
+	return a === b ? a : `${a}–${b}`;
+}
 
 /**
  * When the paper → live gate can pass on forward evidence, if trades arrive at the

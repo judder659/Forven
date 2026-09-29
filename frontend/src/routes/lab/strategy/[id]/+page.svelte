@@ -135,9 +135,9 @@
 		type ContainerEvidence,
 	} from '$lib/utils/strategyContainer/evidence';
 	import { bookStats, buildLadder, paperEquityPath } from '$lib/utils/strategyContainer/ladder';
-	import { buildRail, paperGateEta, stageEntries } from '$lib/utils/strategyContainer/lifecycle';
+	import { buildRail, fmtEtaWindow, paperGateEta, stageEntries } from '$lib/utils/strategyContainer/lifecycle';
 	import { buildFindings, summarizeVerdict } from '$lib/utils/strategyContainer/verdict';
-	import { fmtDateUtc, fmtNum, fmtUsd, toNumber } from '$lib/utils/strategyContainer/format';
+	import { fmtNum, fmtUsd, toNumber } from '$lib/utils/strategyContainer/format';
 
 	let showImportDialog = false;
 
@@ -501,7 +501,8 @@
 	$: evidenceForRows = evidence.gauntlet
 		? { ...evidence, gauntlet: { ...evidence.gauntlet, tests: { ...evidence.gauntlet.tests, ...robustnessStatusOverrides } } }
 		: evidence;
-	$: stressRows = buildStressRows(evidenceForRows);
+	$: costMaxDegradationPct = finiteOrNull(thresholdSection(pipelineThresholds, 'robustness_thresholds')?.cost_stress_max_degradation_pct);
+	$: stressRows = buildStressRows(evidenceForRows, { costMaxDegradationPct });
 	$: walkForwardEvidence = readWalkForward(evidence.payloads.walk_forward?.payload);
 	$: heldBack = readHeldBack(evidence.holdout);
 	$: mcPayload = bagOf(evidence.payloads.monte_carlo?.payload);
@@ -636,7 +637,7 @@
 		if (stage === 'paper') {
 			return {
 				label: 'Next gate · paper → live',
-				headline: gateEta ? `Earliest ${fmtDateUtc(gateEta.earliest)} – ${fmtDateUtc(gateEta.latest)}.` : paperNeedTrades !== null ? `Needs ${paperNeedDays ?? '—'} days and ${paperNeedTrades} closed trades.` : 'Forward evidence on paper.',
+				headline: gateEta ? `Earliest ${fmtEtaWindow(gateEta)}.` : paperNeedTrades !== null ? `Needs ${paperNeedDays ?? '—'} days and ${paperNeedTrades} closed trades.` : 'Forward evidence on paper.',
 				detail: gateEta ? `${gateEta.remainingTrades} closed trades to go at the backtest's pace.` : '',
 				terminal: '',
 			};
@@ -5000,9 +5001,13 @@
 						<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="forward-cone">
 							<div>
 								<h2 class="m-0 text-[13px] font-semibold text-white">What paper should look like</h2>
-								<div class="text-[11px] text-[#666]">The next {mcFan.length ? mcFan[mcFan.length - 1][0] : '—'} trades, resampled from the walk-forward's out-of-sample trades. Paper is drawn on top as it trades.</div>
+								<div class="text-[11px] text-[#666]">{mcFan.length ? `The next ${mcFan[mcFan.length - 1][0]} trades, resampled from the walk-forward's out-of-sample trades. Paper is drawn on top as it trades.` : "The walk-forward's out-of-sample trades, resampled, set the range paper should land in."}</div>
 							</div>
-							<ForwardCone fan={mcFan} paper={paperEquity} />
+							<ForwardCone
+			fan={mcFan}
+			paper={paperEquity}
+			emptyText={mcPayload ? 'This Monte Carlo run predates stored resampled paths; rerun it to draw the cone.' : 'Run the Monte Carlo test to see where paper should land.'}
+		/>
 							{#if mcFan.length && refOosRate}
 								<p class="m-0 text-[11px] leading-relaxed text-[#777]">If paper sits under the 5th percentile after 20 or more trades, the backtest edge is probably not showing up forward. At {fmtNum(refOosRate, 1)} trades a month, 20 trades takes about {Math.round((20 / refOosRate) * 30.4)} days.</p>
 							{/if}
@@ -6008,7 +6013,7 @@
 							</article>
 							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-cost">
 								<div><h2 class="m-0 text-[13px] font-semibold text-white">Cost stress</h2><div class="text-[11px] text-[#666]">{costPayload ? `${costPayload.fee_multiplier ?? '—'}× fees and ${costPayload.slippage_multiplier ?? '—'}× slippage (base ${costPayload.base_fee_bps ?? '—'} / ${costPayload.base_slippage_bps ?? '—'} bps), the baseline run's window` : 'Higher fees and slippage on the baseline run'}</div></div>
-								<CostStressDumbbell payload={costPayload} />
+								<CostStressDumbbell payload={costPayload} maxDegradationPct={costMaxDegradationPct} />
 							</article>
 							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-regime">
 								<div><h2 class="m-0 text-[13px] font-semibold text-white">Regime split</h2><div class="text-[11px] text-[#666]">Average return per trade by the market regime at entry (walk-forward trades).</div></div>

@@ -50,16 +50,16 @@
 			</div>
 			<div class="grid content-start gap-2.5">
 				<div><div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">By exit</div><div class="text-[11px] text-[#666]">Net PnL by how trades closed</div></div>
-				{#if exitRows.length}<SignedBars rows={exitRows} format={(value) => fmtUsd(value, 0)} testid="attribution-exits" />{:else}<div class="text-[12px] text-[#666]">No trades.</div>{/if}
+				{#if exitRows.length}<SignedBars rows={exitRows} format={(value) => fmtUsd(value, 0)} testid="attribution-exits" />{:else}<div class="text-[12px] text-[#666]">Trades not stored for this run.</div>{/if}
 			</div>
 			<div class="grid content-start gap-2.5">
 				<div>
 					<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Concentration</div>
 					<div class="text-[11px] text-[#666]" data-testid="attribution-concentration">
-						{concentration ? `Top ${concentration.top} trades = ${fmtPct(concentration.share, 0, false)} of net profit` : trades.length ? 'Net profit is not positive; nothing to concentrate' : 'No trades'}
+						{concentration ? `Top ${concentration.top} trades = ${fmtPct(concentration.share, 0, false)} of net profit` : trades.length ? 'Net profit is not positive; nothing to concentrate' : 'Trades not stored for this run'}
 					</div>
 				</div>
-				<ConcentrationChart rows={trades} />
+				{#if trades.length}<ConcentrationChart rows={trades} />{/if}
 			</div>
 		</div>
 		{#if sides.length === 0 && trades.length > 0}

@@ -4,9 +4,9 @@
 import type { Baseline, HeldBack, StressRow, WalkForwardEvidence } from './evidence';
 import { ALPHA_T_BAR, DSR_BAR } from './evidence';
 import type { BookStats } from './ladder';
-import type { GateEta } from './lifecycle';
+import { fmtEtaRates, fmtEtaWindow, type GateEta } from './lifecycle';
 import type { Concentration, ExitGroup, Slice } from './metrics';
-import { fmtDateUtc, fmtFraction, fmtMonthYear, fmtNum, fmtPct, fmtUsd, isNum, toNumber } from './format';
+import { fmtFraction, fmtMonthYear, fmtNum, fmtPct, fmtUsd, isNum, toNumber } from './format';
 
 export type FindingTone = 'ok' | 'caution' | 'fail' | 'info';
 
@@ -168,23 +168,34 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 8. Costs survived.
+	// 8. Costs: the runner's floor on the stressed Sharpe, and the live gate's cap on the loss.
 	const cost = input.stressRows.find((row) => row.key === 'cost_stress');
-	if (cost && cost.tone === 'ok') {
+	if (cost && cost.verdict.startsWith('PASS')) {
 		const d = cost.detail ?? {};
 		const multiplier = isNum(d.multiplier) ? `${fmtNum(d.multiplier, 0)}×` : 'higher';
-		out.push({
-			key: 'costs', tone: 'ok', title: 'Survives higher costs.',
-			body: `At ${multiplier} fees and slippage the Sharpe drops ${fmtPct(d.degradationPct, 1, false)}${isNum(d.thresholdPct) ? ` (limit ${fmtPct(d.thresholdPct, 0, false)})` : ''}.`,
-			short: 'it survives higher costs', rule: 'cost stress PASS', target: { tab: 'robustness', anchor: 'rb-cost' },
-		});
+		const overCap = isNum(d.degradationPct) && isNum(d.maxDegradationPct) && d.degradationPct > d.maxDegradationPct;
+		const body = [
+			`At ${multiplier} fees and slippage the Sharpe ${isNum(d.degradationPct) ? `drops ${fmtPct(d.degradationPct, 1, false)}` : 'changes'}${isNum(d.stressedSharpe) ? ` to ${fmtNum(d.stressedSharpe)}` : ''}${isNum(d.minSharpe) ? `; the test needs at least ${fmtNum(d.minSharpe)}` : ''}.`,
+			isNum(d.maxDegradationPct) ? `The paper → live gate also allows at most ${fmtPct(d.maxDegradationPct, 0, false)} of the Sharpe lost${overCap ? ', so it would stop this strategy there.' : '.'}` : null,
+		].filter(Boolean).join(' ');
+		out.push(
+			overCap
+				? {
+						key: 'costs', tone: 'caution', title: 'Higher costs would stop it at the live gate.', body,
+						short: 'higher costs would stop it at the live gate', rule: 'stressed Sharpe ≥ floor; paper → live: Sharpe lost ≤ cap', target: { tab: 'robustness', anchor: 'rb-cost' },
+					}
+				: {
+						key: 'costs', tone: 'ok', title: 'Survives higher costs.', body,
+						short: 'it survives higher costs', rule: 'stressed Sharpe ≥ floor (cost stress PASS)', target: { tab: 'robustness', anchor: 'rb-cost' },
+					},
+		);
 	}
 
 	// 9. How far the paper → live gate is.
 	if (input.stage === 'paper' && input.gate) {
 		out.push({
 			key: 'gate', tone: 'info', title: 'Paper → live is months away.',
-			body: `The gate needs ${input.paperNeed.days ?? '—'} days and ${input.paperNeed.trades ?? '—'} closed paper trades (${input.gate.remainingTrades} to go). At ${fmtNum(input.gate.rates[0], 1)}–${fmtNum(input.gate.rates[1], 1)} trades a month the earliest is ${fmtDateUtc(input.gate.earliest)} – ${fmtDateUtc(input.gate.latest)}.`,
+			body: `The gate needs ${input.paperNeed.days ?? '—'} days and ${input.paperNeed.trades ?? '—'} closed paper trades (${input.gate.remainingTrades} to go). At ${fmtEtaRates(input.gate)} trades a month the earliest is ${fmtEtaWindow(input.gate)}.`,
 			short: '', rule: 'paper_trading.min_closed_trades ÷ the backtest trade rate', target: { tab: 'summary', anchor: 'gate-card' },
 		});
 	}

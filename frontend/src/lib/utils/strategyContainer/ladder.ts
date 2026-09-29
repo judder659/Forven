@@ -15,6 +15,16 @@ export function tradeBook(row: Record<string, unknown>): Book {
 	return String(row.execution_type ?? '').trim().toLowerCase().includes('paper') ? 'paper' : 'live';
 }
 
+/**
+ * A closed trade: marked CLOSED, or carrying a close time and not marked OPEN. The
+ * uncapped growth endpoint returns closed rows with no status at all.
+ */
+export function isClosedTrade(row: Record<string, unknown>): boolean {
+	const status = String(row.status ?? '').trim().toUpperCase();
+	if (status === 'OPEN') return false;
+	return status === 'CLOSED' || (typeof row.closed_at === 'string' && row.closed_at.trim() !== '');
+}
+
 export interface BookStats {
 	book: Book;
 	count: number;
@@ -31,7 +41,7 @@ export interface BookStats {
 /** Realized stats of one book's CLOSED trades (never mixing paper and live dollars). */
 export function bookStats(trades: Record<string, unknown>[], book: Book): BookStats | null {
 	const closed = trades
-		.filter((row) => tradeBook(row) === book && String(row.status ?? '').trim().toUpperCase() === 'CLOSED')
+		.filter((row) => tradeBook(row) === book && isClosedTrade(row))
 		.map((row) => ({ pnl: toNumber(row.pnl_usd) ?? toNumber(row.pnl), closedAt: Date.parse(String(row.closed_at ?? '')), openedAt: typeof row.opened_at === 'string' ? row.opened_at : null }))
 		.filter((row): row is { pnl: number; closedAt: number; openedAt: string | null } => row.pnl !== null)
 		.sort((a, b) => (Number.isFinite(a.closedAt) ? a.closedAt : 0) - (Number.isFinite(b.closedAt) ? b.closedAt : 0));
@@ -65,7 +75,7 @@ export function bookStats(trades: Record<string, unknown>[], book: Book): BookSt
 /** Paper book equity after each closed trade, from the $10k start, oldest first. */
 export function paperEquityPath(trades: Record<string, unknown>[]): number[] {
 	const pnls = trades
-		.filter((row) => tradeBook(row) === 'paper' && String(row.status ?? '').trim().toUpperCase() === 'CLOSED')
+		.filter((row) => tradeBook(row) === 'paper' && isClosedTrade(row))
 		.map((row) => ({ pnl: toNumber(row.pnl_usd) ?? toNumber(row.pnl), closedAt: Date.parse(String(row.closed_at ?? '')) }))
 		.filter((row): row is { pnl: number; closedAt: number } => row.pnl !== null)
 		.sort((a, b) => (Number.isFinite(a.closedAt) ? a.closedAt : 0) - (Number.isFinite(b.closedAt) ? b.closedAt : 0));

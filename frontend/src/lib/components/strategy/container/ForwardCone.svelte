@@ -11,6 +11,7 @@
 	/** Paper equity after each closed trade, starting at the book's base. */
 	export let paper: number[] = [];
 	export let height = 230;
+	export let emptyText = 'Run the Monte Carlo test to see where paper should land.';
 
 	let width = 560;
 	let cursor: number | null = null;
@@ -94,5 +95,5 @@
 		</div>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Run the Monte Carlo test to see where paper should land.</div>
+	<div class="text-[12px] text-[#666]" data-testid="forward-cone-empty">{emptyText}</div>
 {/if}

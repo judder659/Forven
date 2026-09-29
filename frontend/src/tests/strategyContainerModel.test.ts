@@ -14,6 +14,7 @@ import {
 	underwater,
 } from '../lib/utils/strategyContainer/metrics';
 import { buildStressRows, monteCarloFan, readHeldBack, readWalkForward, type ContainerEvidence } from '../lib/utils/strategyContainer/evidence';
+import { bookStats, paperEquityPath } from '../lib/utils/strategyContainer/ladder';
 import { buildRail, paperGateEta } from '../lib/utils/strategyContainer/lifecycle';
 import { buildFindings, summarizeVerdict } from '../lib/utils/strategyContainer/verdict';
 
@@ -60,7 +61,7 @@ function evidenceFixture(overrides: { jitterCompleted?: number; stale?: boolean 
 			} },
 			monte_carlo: { result_id: 'MC', payload: { prob_profitable: 94.1, n_simulations: 1000, n_trades: 50, verdict: 'PASS', verdict_thresholds: { min_prob_profitable: 65, max_dd_p95: 40 }, drawdown_distribution: { p95: 14.67 } } },
 			parameter_jitter: { result_id: 'PJ', payload: { pass_rate: 1, verdict_threshold: 0.6, n_iterations: 15, iterations_completed: overrides.jitterCompleted ?? 4, deadline_hit: true, verdict: 'PASS' } },
-			cost_stress: { result_id: 'CS', payload: { degradation_pct: 22.7, verdict_threshold: 0.3, fee_multiplier: 2, verdict: 'PASS', original: { total_trades: 43 } } },
+			cost_stress: { result_id: 'CS', payload: { degradation_pct: 22.7, verdict_threshold: 0.3, fee_multiplier: 2, verdict: 'PASS', original: { total_trades: 43, sharpe: 1.066 }, stressed: { total_trades: 43, sharpe: 0.824 } } },
 			regime_split: { result_id: 'RS', payload: { profitable_regime_share: 0.667, verdict_threshold: 0.5, verdict: 'PASS', regimes: [{ name: 'TREND_UP' }, { name: 'TREND_DOWN' }, { name: 'RANGE_BOUND' }, { name: 'HIGH_VOL' }], dropped_low_trade_regimes: ['HIGH_VOL'], regime_min_trades: 5 } },
 		} as unknown as ContainerEvidence['payloads'],
 	};
@@ -146,7 +147,9 @@ describe('strategy container evidence', () => {
 		expect(byKey.monte_carlo.tone).toBe('ok');
 		expect(byKey.parameter_jitter.tone).toBe('caution');
 		expect(byKey.parameter_jitter.evidence).toBe('4 of 15 reruns finished (time limit)');
-		expect(byKey.cost_stress.bullet).toMatchObject({ value: 22.7, threshold: 30, direction: 'le' });
+		// The runner's threshold is a floor on the stressed Sharpe, not a share lost.
+		expect(byKey.cost_stress.value).toBe('Sharpe 0.82 (−22.7%)');
+		expect(byKey.cost_stress.bullet).toMatchObject({ value: 0.824, threshold: 0.3, direction: 'ge' });
 		expect(byKey.held_back.verdict).toBe('PASS');
 		expect(byKey.baseline.weak).toBe(true);
 		expect(byKey.deflated_sharpe.verdict).toBe('LOW');
@@ -275,5 +278,39 @@ describe('strategy container lifecycle and verdict', () => {
 		expect(thin?.body.match(/Parameters changed/g)?.length).toBe(1);
 		expect(thin?.body).toContain('Parameters changed after parameter jitter ran, so that verdict describes an older version');
 		expect(thin?.body).toContain('Walk-forward: 2 folds · 8–14 trades each');
+	});
+	it('counts closed trades from growth rows that carry no status, never summing books', () => {
+		// The uncapped execution-growth endpoint returns only closed rows: close time, pnl, type.
+		const rows = [
+			{ closed_at: '2026-07-22T00:00:00Z', opened_at: '2026-07-21T00:00:00Z', pnl: -3.1, execution_type: 'live' },
+			{ closed_at: '2026-07-25T00:00:00Z', opened_at: '2026-07-24T00:00:00Z', pnl: 1.2, execution_type: 'live' },
+			{ closed_at: '2026-07-10T00:00:00Z', opened_at: '2026-07-09T00:00:00Z', pnl: 40, execution_type: 'paper_challenger' },
+			{ status: 'OPEN', closed_at: null, opened_at: '2026-09-28T00:00:00Z', pnl: null, execution_type: 'live' },
+		];
+		const live = bookStats(rows, 'live');
+		expect(live).toMatchObject({ count: 2, wins: 1 });
+		expect(live?.pnl).toBeCloseTo(-1.9);
+		expect(bookStats(rows, 'paper')).toMatchObject({ count: 1, pnl: 40, totalReturn: 0.004 });
+		expect(paperEquityPath(rows)).toEqual([10000, 10040]);
+	});
+	it('reads cost stress as a floor on the stressed Sharpe and flags the live gate cap', () => {
+		// S07664's stored run: 42.6% of the Sharpe lost at 2x costs, stressed Sharpe 0.313, runner PASS.
+		const evidence = evidenceFixture();
+		evidence.payloads.cost_stress = {
+			result_id: 'CS',
+			payload: { degradation_pct: 42.6, verdict_threshold: 0.3, fee_multiplier: 2, verdict: 'PASS', original: { total_trades: 23, sharpe: 0.545 }, stressed: { total_trades: 23, sharpe: 0.313 } },
+		} as unknown as NonNullable<ContainerEvidence['payloads']['cost_stress']>;
+		const judge = (cap: number) =>
+			buildFindings({
+				inSample: null, outOfSample: readSlice(OOS_BLOCK), heldBack: null, walkForward: null,
+				stressRows: buildStressRows(evidence, { costMaxDegradationPct: cap }), dsr: null, concentration: null, exits: [],
+				tradeCount: 105, stage: 'paper', gate: null, paperNeed: { days: null, trades: null },
+			}).find((finding) => finding.key === 'costs');
+		const row = buildStressRows(evidence, { costMaxDegradationPct: 60 }).find((item) => item.key === 'cost_stress');
+		expect(row?.thresholdText).toBe('stressed Sharpe ≥ 0.30 · live gate ≤ 60% lost');
+		expect(row?.tone).toBe('ok');
+		expect(judge(60)).toMatchObject({ tone: 'ok', title: 'Survives higher costs.' });
+		expect(judge(60)?.body).toBe('At 2× fees and slippage the Sharpe drops 42.6% to 0.31; the test needs at least 0.30. The paper → live gate also allows at most 60% of the Sharpe lost.');
+		expect(judge(40)).toMatchObject({ tone: 'caution', title: 'Higher costs would stop it at the live gate.' });
 	});
 });

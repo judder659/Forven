@@ -1,6 +1,5 @@
 <script lang="ts">
-	import type { GateEta } from '$lib/utils/strategyContainer/lifecycle';
-	import { fmtDateUtc, fmtNum } from '$lib/utils/strategyContainer/format';
+	import { fmtEtaRates, fmtEtaWindow, type GateEta } from '$lib/utils/strategyContainer/lifecycle';
 
 	/** The next gate: its live checklist (slotted) and, on paper, when it can pass. */
 	export let title = 'Next gate';
@@ -17,8 +16,8 @@
 	<slot />
 	{#if eta}
 		<p class="m-0 text-[11px] leading-relaxed text-[#777]" data-testid="gate-eta">
-			Needs {needDays ?? '—'} days and {needTrades ?? '—'} closed paper trades ({eta.remainingTrades} to go). At the backtest's {fmtNum(eta.rates[0], 1)}–{fmtNum(eta.rates[1], 1)} trades a month the earliest pass is
-			<b class="font-medium text-white">{fmtDateUtc(eta.earliest)} – {fmtDateUtc(eta.latest)}</b>.
+			Needs {needDays ?? '—'} days and {needTrades ?? '—'} closed paper trades ({eta.remainingTrades} to go). At the backtest's {fmtEtaRates(eta)} trades a month the earliest pass is
+			<b class="font-medium text-white">{fmtEtaWindow(eta)}</b>.
 		</p>
 	{/if}
 </aside>

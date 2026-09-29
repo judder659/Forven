@@ -4,6 +4,8 @@
 
 	/** Baseline against stressed costs for Sharpe, return and profit factor. */
 	export let payload: Record<string, unknown> | null = null;
+	/** The strict paper → live gate's cap on the share of Sharpe lost (percent points). */
+	export let maxDegradationPct: number | null = null;
 	export let height = 150;
 
 	let width = 420;
@@ -23,7 +25,9 @@
 	$: h = height - M.t - M.b;
 	$: band = rows.length ? h / rows.length : h;
 	$: degradation = toNumber(payload?.degradation_pct);
-	$: threshold = toNumber(payload?.verdict_threshold);
+	/** The runner's floor on the stressed Sharpe. */
+	$: minSharpe = toNumber(payload?.verdict_threshold);
+	$: stressedSharpe = toNumber(stressed.sharpe);
 	$: tradesA = toNumber(original.total_trades);
 	$: tradesB = toNumber(stressed.total_trades);
 </script>
@@ -50,7 +54,8 @@
 			</svg>
 		</div>
 		<p class="m-0 text-[11px] leading-relaxed text-[#777]">
-			{#if isNum(degradation)}Sharpe falls {fmtPct(degradation, 1, false)} under {isNum(multiplier) ? `${multiplier}×` : 'higher'} fees and slippage{isNum(threshold) ? `; the gate allows ${fmtPct(threshold * 100, 0, false)}` : ''}.{/if}
+			{#if isNum(degradation)}Sharpe falls {fmtPct(degradation, 1, false)}{isNum(stressedSharpe) ? ` to ${fmtNum(stressedSharpe)}` : ''} under {isNum(multiplier) ? `${multiplier}×` : 'higher'} fees and slippage.{/if}
+			{#if isNum(minSharpe)} The test needs a stressed Sharpe of at least {fmtNum(minSharpe)}{isNum(maxDegradationPct) ? `; the paper → live gate also caps the loss at ${fmtPct(maxDegradationPct, 0, false)}${isNum(degradation) && degradation > maxDegradationPct ? ', which this exceeds' : ''}` : ''}.{/if}
 			{#if isNum(tradesA) && isNum(tradesB)}{tradesA === tradesB ? ` Trade count is unchanged (${tradesB}), so costs trim each trade rather than removing marginal ones.` : ` Trades fall from ${tradesA} to ${tradesB}.`}{/if}
 		</p>
 	</div>
