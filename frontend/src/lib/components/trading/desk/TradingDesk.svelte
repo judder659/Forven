@@ -613,7 +613,7 @@
 
 			<DeskStatusLine {mode} dashboard={dash} {jobs} wsConnected={$forvenWsConnected} now={clock} />
 			<DeskAccountStrip {mode} dashboard={dash} {risk} {fleet} {sessions} {openPnl} openLegs={allLegs.length} {openLong} {openShort} {riskAtStops} {maxBookRiskPct} now={clock} />
-			<DeskAttention items={attention} on:show={(event) => selectStrategy(event.detail.strategyId, event.detail.tab)} />
+			<DeskAttention {mode} items={attention} on:show={(event) => selectStrategy(event.detail.strategyId, event.detail.tab)} />
 
 			<div class="grid gap-2.5 lg:grid-cols-[272px_minmax(0,1fr)] 2xl:grid-cols-[292px_minmax(0,1fr)_372px]">
 				<DeskStrategyRail
