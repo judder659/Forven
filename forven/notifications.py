@@ -136,13 +136,14 @@ _DISCORD_CONFIGURED_TTL_SECONDS = 60.0
 
 
 def _discord_configured() -> bool:
-    """True iff a Discord bot token is configured (env var or config file).
+    """True iff Discord can be reached: a bot token (env var or config file) or,
+    failing that, a Discord webhook URL (Settings or DISCORD_WEBHOOK_URL).
 
-    Presence-only — never decrypts or validates the token; an invalid token
-    should still surface as a real delivery error. Cached briefly (the config
-    file is read per call otherwise) and fail-OPEN: if the check itself errors,
-    delivery proceeds and any genuine problem surfaces through the normal
-    delivery-error path.
+    Presence-only for the token — never decrypts or validates it; an invalid
+    token should still surface as a real delivery error. Cached briefly (the
+    config file is read per call otherwise; a settings save resets the cache)
+    and fail-OPEN on the token check: if it errors, delivery proceeds and any
+    genuine problem surfaces through the normal delivery-error path.
     """
     global _DISCORD_CONFIGURED_CACHE
     import time as _time
@@ -161,8 +162,18 @@ def _discord_configured() -> bool:
             configured = bool(str((load_config() or {}).get("discord_token", "") or "").strip())
     except Exception:
         return True  # fail open — see docstring
+    if not configured:
+        from forven.discord_webhook import webhook_configured
+
+        configured = webhook_configured()
     _DISCORD_CONFIGURED_CACHE = (now, configured)
     return configured
+
+
+def reset_discord_configured_cache() -> None:
+    """Forget the cached answer (after the Discord credentials change)."""
+    global _DISCORD_CONFIGURED_CACHE
+    _DISCORD_CONFIGURED_CACHE = None
 
 
 def emit_notification(

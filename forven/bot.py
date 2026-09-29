@@ -2103,9 +2103,39 @@ def _clear_discord_channel_circuit(channel_id) -> None:
     _DISCORD_FORBIDDEN_CHANNELS.pop(str(channel_id), None)
 
 
+def _bot_token_or_none() -> str | None:
+    """The bot token, or None when none is configured (a webhook may stand in)."""
+    try:
+        return get_bot_token()
+    except ValueError:
+        return None
+
+
+def _webhook_fallback(channel_name: str, content: str) -> bool | None:
+    """Deliver through the Discord webhook when no bot token is configured.
+
+    Returns the webhook result, or None when there is no webhook either (the
+    caller then fails the usual way). A webhook posts into one channel, so the
+    intended channel rides along as the post's display name.
+    """
+    from forven.discord_webhook import get_discord_webhook_url, post_webhook_message
+
+    url = get_discord_webhook_url()
+    if not url:
+        return None
+    return post_webhook_message(content, channel_label=channel_name, url=url)
+
+
 def send_thread_sync(channel_name: str, title: str, message: str, channel_id: str | None = None) -> bool:
-    """Synchronous send to a new thread via Discord REST API."""
+    """Synchronous send to a new thread via Discord REST API (or the webhook)."""
     import httpx
+
+    if _bot_token_or_none() is None:
+        # A webhook cannot open a thread in a text channel: post the digest as
+        # one message, headed by the thread title.
+        delivered = _webhook_fallback(channel_name, f"**{str(title or '').strip()}**\n{message}")
+        if delivered is not None:
+            return delivered
 
     target_id = channel_id or CHANNELS.get(channel_name)
     if not target_id:
@@ -2161,8 +2191,17 @@ def send_thread_sync(channel_name: str, title: str, message: str, channel_id: st
 
 
 def send_sync(channel_name: str, message: str, channel_id: str | None = None) -> bool:
-    """Synchronous send via Discord REST API — works from any process."""
+    """Synchronous send via Discord REST API — works from any process.
+
+    Without a bot token, a configured Discord webhook delivers instead (every
+    message into the webhook's channel, labelled with the intended one).
+    """
     import httpx
+
+    if _bot_token_or_none() is None:
+        delivered = _webhook_fallback(channel_name, message)
+        if delivered is not None:
+            return delivered
 
     target_id = channel_id or CHANNELS.get(channel_name)
     if not target_id:

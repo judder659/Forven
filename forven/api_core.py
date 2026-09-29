@@ -1228,6 +1228,14 @@ def _has_open_book_routed_trades() -> bool:
         return False
 
 
+def _discord_webhook_is_valid(secrets: dict) -> bool:
+    """A stored webhook counts only if it is a real Discord webhook URL (delivery
+    ignores anything else — forven.discord_webhook)."""
+    from forven.discord_webhook import is_discord_webhook_url
+
+    return is_discord_webhook_url(str(secrets.get("discord_webhook_url", "")).strip())
+
+
 def _load_settings_secrets() -> dict:
     raw = kv_get(_SETTINGS_SECRET_STORAGE_KEY, {})
     if not isinstance(raw, dict):
@@ -1277,7 +1285,7 @@ def _load_settings_payload() -> dict:
     secrets = _load_settings_secrets()
     payload["agent_model_keys"] = _coerce_agent_model_keys(payload.get("agent_model_keys"))
     payload["hyperliquid_has_key"] = bool(str(secrets.get("hyperliquid_private_key", "")).strip())
-    payload["discord_webhook_configured"] = bool(str(secrets.get("discord_webhook_url", "")).strip())
+    payload["discord_webhook_configured"] = _discord_webhook_is_valid(secrets)
     # Check if main bot token is configured in config.json or DISCORD_TOKEN env var
     try:
         import os as _os
@@ -1835,6 +1843,15 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
         if "discord_webhook_url" in payload:
             webhook_url = str(payload.get("discord_webhook_url") or "").strip()
             if webhook_url:
+                # Delivery posts to this URL (forven.discord_webhook), so only a
+                # real Discord webhook is accepted — never an arbitrary endpoint.
+                from forven.discord_webhook import is_discord_webhook_url
+
+                if not is_discord_webhook_url(webhook_url):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Discord webhook URL must look like https://discord.com/api/webhooks/<id>/<token>",
+                    )
                 secrets["discord_webhook_url"] = webhook_url
             else:
                 secrets.pop("discord_webhook_url", None)
@@ -2215,7 +2232,7 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
         raise HTTPException(status_code=400, detail=f"Unsupported settings section: {section}")
 
     updates["hyperliquid_has_key"] = bool(str(secrets.get("hyperliquid_private_key", "")).strip())
-    updates["discord_webhook_configured"] = bool(str(secrets.get("discord_webhook_url", "")).strip())
+    updates["discord_webhook_configured"] = _discord_webhook_is_valid(secrets)
     try:
         import os as _os
         from forven.config import load_config as _load_cfg
@@ -2249,6 +2266,16 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
         _SETTINGS_SECRET_STORAGE_KEY: _encrypt_settings_secrets(secrets),
         _SETTINGS_STORAGE_KEY: updates,
     })
+
+    if section == "notifications" and ("discord_bot_token" in payload or "discord_webhook_url" in payload):
+        # Delivery caches "is Discord reachable?" for a minute; a just-saved bot
+        # token or webhook must take effect at once (e.g. for "Send a test").
+        try:
+            from forven.notifications import reset_discord_configured_cache
+
+            reset_discord_configured_cache()
+        except Exception:
+            log.debug("Could not reset the Discord-configured cache", exc_info=True)
 
     if section == "bot-operations":
         try:

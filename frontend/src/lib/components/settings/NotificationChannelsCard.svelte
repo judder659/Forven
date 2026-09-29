@@ -31,9 +31,11 @@
 	let confirmReset = false;
 	let testing = false;
 
-	// Delivery goes through the bot (forven.notifications._discord_configured
-	// checks the token); without one, notifications stay in the app.
-	$: discordConnected = Boolean(settings.discord_bot_token_configured);
+	// Delivery goes through the bot when a token is set, otherwise through the
+	// webhook (forven.discord_webhook); with neither, notifications stay in the app.
+	$: botConnected = Boolean(settings.discord_bot_token_configured);
+	$: webhookOnly = !botConnected && Boolean(settings.discord_webhook_configured);
+	$: discordConnected = botConnected || webhookOnly;
 	$: discordMuted = String(settings.notification_level ?? 'all') === 'none';
 
 	onMount(() => {
@@ -174,12 +176,18 @@
 		{#if !discordConnected}
 			<p class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-2 text-[12px] text-sc-ink2">
 				Discord isn't connected, so everything stays in the app. The Discord switches take effect once a
-				Discord bot token is saved under Discord transport below.
+				Discord bot token or webhook URL is saved under Discord transport below.
 			</p>
 		{:else if discordMuted}
 			<p class="rounded-md border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[12px] text-yellow-400">
 				Discord delivery is switched off under Delivery policy below, so nothing goes to Discord whatever these
 				switches say.
+			</p>
+		{:else if webhookOnly}
+			<p class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-2 text-[12px] text-sc-ink2" data-testid="webhook-hint">
+				Connected by webhook: everything switched on for Discord goes to that webhook's channel, posted as
+				"Forven · alerts", "Forven · paper-trades" and so on. Add a bot token to route each kind to its own
+				channel.
 			</p>
 		{/if}
 
