@@ -212,6 +212,93 @@ export async function stressTestStrategy(request: PreviewRequest): Promise<Sensi
 	});
 }
 
+/** Cancellable, with a timeout either way (a passed signal would otherwise replace the default timeout). */
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
+	const timeout = AbortSignal.timeout(ms);
+	if (!signal) return timeout;
+	return typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : signal;
+}
+
+// ---------------------------------------------------------------------------
+// Parameter heatmap: one backtest walk per pair of values of two settings
+// ---------------------------------------------------------------------------
+export interface HeatmapAxisRequest {
+	target: 'param' | 'indicator';
+	name: string;
+	indicator?: string | null;
+	values: number[];
+}
+
+export interface HeatmapAxis extends HeatmapAxisRequest {
+	label: string;
+	integer: boolean;
+	min: number | null;
+}
+
+/** One cell: returns are compounded closed-trade returns (fractions), or an error. */
+export interface HeatmapCell {
+	x: number;
+	y: number | null;
+	trades?: number;
+	net_return?: number;
+	in_return?: number;
+	oos_trades?: number;
+	oos_return?: number;
+	error?: string;
+}
+
+export interface HeatmapResult {
+	x: HeatmapAxis | null;
+	y: HeatmapAxis | null;
+	cells: HeatmapCell[];
+	warnings: string[];
+}
+
+export interface HeatmapRequest extends PreviewRequest {
+	x: HeatmapAxisRequest;
+	y?: HeatmapAxisRequest | null;
+}
+
+export async function heatmapStrategy(request: HeatmapRequest, signal?: AbortSignal): Promise<HeatmapResult> {
+	return fetchApi('/backtests/preview-heatmap', {
+		method: 'POST',
+		body: JSON.stringify(request),
+		signal: withTimeout(signal, 300_000),
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Market grid: the same rules and settings on several markets
+// ---------------------------------------------------------------------------
+export interface MarketRow {
+	symbol: string;
+	timeframe: string;
+	/** no_data: no local dataset (never downloaded); skipped: too few candles or an unusable setting. */
+	status: 'ok' | 'no_data' | 'skipped' | 'error';
+	message?: string;
+	bars?: number;
+	trades?: number;
+	in_sample?: SampleStats;
+	out_of_sample?: SampleStats;
+}
+
+export interface MarketsResult {
+	rows: MarketRow[];
+	warnings: string[];
+}
+
+export interface MarketsRequest extends PreviewRequest {
+	markets: Array<{ symbol: string; timeframe: string }>;
+}
+
+export async function compareMarkets(request: MarketsRequest, signal?: AbortSignal): Promise<MarketsResult> {
+	return fetchApi('/backtests/preview-markets', {
+		method: 'POST',
+		body: JSON.stringify(request),
+		signal: withTimeout(signal, 300_000),
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Natural-language -> rule spec
 // ---------------------------------------------------------------------------

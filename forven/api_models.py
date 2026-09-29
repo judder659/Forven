@@ -10,6 +10,8 @@ should not live inside a 12k-line module they then have to import.
 `from forven.api_core import XBody` keep working untouched.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -76,6 +78,28 @@ class PreviewChartBody(BaseModel):
     kelly_lookback: int | None = Field(default=None, ge=1, le=100_000)
     # Strategy variants the author has tried so far, for the deflated Sharpe.
     trials: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+class HeatmapAxis(BaseModel):
+    """One heatmap axis: a spec param ("knob") or an indicator setting, and its values."""
+    target: Literal["param", "indicator"]
+    name: str = Field(min_length=1, max_length=80)
+    indicator: str | None = Field(default=None, max_length=80)
+    values: list[float] = Field(min_length=1, max_length=9)
+
+
+class PreviewHeatmapBody(PreviewChartBody):
+    x: HeatmapAxis
+    y: HeatmapAxis | None = None
+
+
+class MarketRef(BaseModel):
+    symbol: str = Field(min_length=1, max_length=40)
+    timeframe: str = Field(min_length=1, max_length=8)
+
+
+class PreviewMarketsBody(PreviewChartBody):
+    markets: list[MarketRef] = Field(min_length=1, max_length=24)
 
 
 class NlToSpecBody(BaseModel):

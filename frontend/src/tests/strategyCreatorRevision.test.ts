@@ -2,7 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { mount, unmount, tick } from 'svelte';
 import { fireEvent } from '@testing-library/svelte';
 const api = vi.hoisted(() => Object.fromEntries([
- 'getIndicators','previewStrategyChart','stressTestStrategy','nlToSpec','nlEditSpec','listStrategyLibrary','createLibraryStrategy',
+ 'getIndicators','previewStrategyChart','stressTestStrategy','heatmapStrategy','compareMarkets','getDatasets','nlToSpec','nlEditSpec','listStrategyLibrary','createLibraryStrategy',
  'updateLibraryStrategy','deleteLibraryStrategy','duplicateLibraryStrategy','sendLibraryStrategyToForge',
  'getSystemStrategyDetail','getPrebuiltStrategies','getStrategies','submitBacktest','registerCustomStrategy','getResult','getSymbols',
 ].map(name => [name, vi.fn()])));
@@ -22,7 +22,7 @@ function button(text: string) { return [...document.querySelectorAll('button')].
 beforeEach(async () => {
  vi.clearAllMocks(); stored=[];
  api.getIndicators.mockResolvedValue([]); api.getSymbols.mockResolvedValue([]);
- api.getPrebuiltStrategies.mockResolvedValue({strategies:[]});
+ api.getPrebuiltStrategies.mockResolvedValue({strategies:[]}); api.getDatasets.mockResolvedValue([]);
  api.listStrategyLibrary.mockImplementation(async () => stored);
  api.createLibraryStrategy.mockImplementation(async (body) => { const row={...body,id:'lib_test',version:1,status:'draft'};stored=[row];return row; });
  api.registerCustomStrategy.mockResolvedValue({valid:true,registered:true,strategy_name:'example',default_params:{period:14}});
