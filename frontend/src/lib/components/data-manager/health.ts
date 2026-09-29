@@ -142,35 +142,32 @@ function emptyIndicator(): SystemNavIndicator {
 	return { kind: 'none', severity: 'neutral', label: '', summary: '', count: 0, item_ids: [] };
 }
 
-/** Live and paper problems only: the sidebar never shows research counts.
- * A live series past the breach limit (or missing) is a standing hazard and
- * shows as a status pill; anything else is the number of late series. Both
- * stay while the problem does (item_ids let the sidebar mark new ones). */
+const BAD_STATES: SlaState[] = ['breach', 'missing'];
+
+/** Live and paper series past the BREACH limit (or missing) only: the sidebar
+ * never shows research counts, and plain "late" stays on the Data page — hourly
+ * series read a few seconds late at every bar boundary until the collector
+ * catches up, which made the badge flicker every hour. A badly stale live
+ * series is a standing hazard (status pill); paper ones are a count. Both stay
+ * while the problem does (item_ids let the sidebar mark new ones). */
 export function buildDataNavIndicator(census: SlaCensus): SystemNavIndicator {
 	const live = tierProblems(census, 'live');
 	const paper = tierProblems(census, 'paper');
-	const total = live.total + paper.total;
+	const total = live.bad + paper.bad;
 	if (!total) return emptyIndicator();
 	const ids = census.worst
-		.filter((row) => (row.sla.tier === 'live' || row.sla.tier === 'paper') && isProblem(row.sla.state))
+		.filter((row) => (row.sla.tier === 'live' || row.sla.tier === 'paper') && BAD_STATES.includes(row.sla.state))
 		.map((row) => `${row.stream}:${row.venue}:${row.symbol}:${row.timeframe}:${row.sla.state}`)
 		.sort();
 	// `worst` is ranked across tiers, so it may not hold every live/paper row:
 	// stand in for the rest with the counts, so a change there still reads as new.
-	if (ids.length < total) ids.push(`counts:${[live.bad, live.late, paper.bad, paper.late].join('.')}`);
-	const parts = [live.total ? `${plural(live.total, 'live series', 'live series')}` : '', paper.total ? `${plural(paper.total, 'paper series', 'paper series')}` : '']
+	if (ids.length < total) ids.push(`counts:${live.bad}.${paper.bad}`);
+	const parts = [live.bad ? `${plural(live.bad, 'live series', 'live series')}` : '', paper.bad ? `${plural(paper.bad, 'paper series', 'paper series')}` : '']
 		.filter(Boolean)
 		.join(' and ');
-	const summary = `${parts} ${total === 1 ? 'is' : 'are'} late`;
+	const summary = `${parts} ${total === 1 ? 'is' : 'are'} badly stale or missing`;
 	if (live.bad) {
 		return { kind: 'status', severity: 'danger', label: 'STALE', summary, count: total, item_ids: ids };
 	}
-	return {
-		kind: 'count',
-		severity: live.late || paper.bad ? 'danger' : 'warn',
-		label: String(total),
-		summary,
-		count: total,
-		item_ids: ids,
-	};
+	return { kind: 'count', severity: 'warn', label: String(total), summary, count: total, item_ids: ids };
 }

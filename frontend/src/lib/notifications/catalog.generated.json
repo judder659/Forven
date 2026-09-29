@@ -396,7 +396,7 @@
       "id": "data",
       "href": "/data",
       "label": "Data",
-      "description": "Market data behind a live or paper strategy that is running late.",
+      "description": "Market data behind a live or paper strategy that is badly stale or missing. Brief lateness stays on the Data page.",
       "key": "badge_data",
       "default": true,
       "mode": "total"

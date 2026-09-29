@@ -30,7 +30,7 @@
 	// A status pill (e.g. STALE live data) is a standing hazard: always bright.
 	$: palette = badge?.fresh || badge?.kind === 'status' ? FRESH : SEEN;
 	$: tone = palette[badge?.severity ?? 'neutral'] ?? palette.neutral;
-	$: tooltip = badge ? `${badge.summary}${badge.fresh && badge.kind === 'count' ? ' · new since you last looked' : ''}` : '';
+	$: tooltip = badge?.summary ?? '';
 </script>
 
 {#if badge && badge.kind === 'status' && badge.label}

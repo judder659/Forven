@@ -133,11 +133,13 @@ function toView(
 	}
 
 	const count = Math.max(0, Number(indicator.count ?? 0) || 0);
+	const fresh = unseen.length > 0;
+	const tooltip = fresh ? `${summary} · new since you last looked` : summary;
 	if (indicator.kind === 'status') {
-		return { kind: 'status', count, label: String(indicator.label ?? ''), severity: indicator.severity, summary, fresh: unseen.length > 0 };
+		return { kind: 'status', count, label: String(indicator.label ?? ''), severity: indicator.severity, summary: tooltip, fresh };
 	}
 	if (count <= 0) return null;
-	return { kind: 'count', count, label: '', severity: indicator.severity, summary, fresh: unseen.length > 0 };
+	return { kind: 'count', count, label: '', severity: indicator.severity, summary: tooltip, fresh };
 }
 
 /** What each sidebar link shows, or null for no badge. */

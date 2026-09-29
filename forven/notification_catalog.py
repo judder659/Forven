@@ -273,7 +273,7 @@ NAV_BADGES: tuple[NavBadge, ...] = (
         "data",
         "/data",
         "Data",
-        "Market data behind a live or paper strategy that is running late.",
+        "Market data behind a live or paper strategy that is badly stale or missing. Brief lateness stays on the Data page.",
         default=True,
         mode="total",
     ),

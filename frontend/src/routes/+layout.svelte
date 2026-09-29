@@ -136,10 +136,6 @@
 	// navigation. Pages enrich this with their entity/visible-data via setPageContext.
 	$: setRoute($page.url.pathname);
 
-	function shouldEnableLiveChannels(pathname: string): boolean {
-		return !(pathname === '/settings' || pathname.startsWith('/settings/'));
-	}
-
 	function startPollers(): void {
 		if (pollersActive) return;
 		startHeartbeat();
@@ -174,12 +170,11 @@
 		wsChannelActive = false;
 	}
 
+	// The heartbeat runs on every page, Settings included: it is the only source
+	// of the sidebar badge counts, which otherwise froze (or, on a fresh load,
+	// vanished) while Settings was open.
 	$: if (typeof window !== 'undefined' && connectionStatus === 'connected') {
-		if (shouldEnableLiveChannels($page.url.pathname)) {
-			startPollers();
-		} else {
-			stopPollers();
-		}
+		startPollers();
 	}
 
 	$: if (typeof window !== 'undefined') {
