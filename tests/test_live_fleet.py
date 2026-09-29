@@ -220,3 +220,98 @@ def test_equity_history_sums_net_live_pnl(forven_db):
     curve = get_equity_history()["curve"]
 
     assert [point["pnl"] for point in curve] == [4.0, 0]
+
+
+def _blocked_exit(sid: str, at: datetime, reason: str) -> None:
+    _scan(sid, at, signal_type="exit", matched=True, reason=reason)
+
+
+def test_paper_fleet_uses_paper_stage_and_paper_trades(forven_db):
+    from forven.api_domains.live_fleet import build_paper_fleet
+
+    _strategy("S1")
+    _strategy("P1", stage="paper")
+    _strategy("P2", stage="paper_trading")
+    _strategy("A1", stage="archived")
+    for sid in ("S1", "P1", "P2", "A1"):
+        _scan(sid, _ago(minutes=2))
+    _trade("E1", "P1", execution_type="paper", status="OPEN", opened=_ago(hours=2))
+    _trade("E2", "P1", execution_type="paper", pnl_usd=12.0, opened=_ago(days=2))
+    _trade("E3", "P1", execution_type="live", pnl_usd=99.0, opened=_ago(days=1))
+    # Archived paper history stays out of the paper rollup.
+    _trade("E4", "A1", execution_type="paper", pnl_usd=-500.0, opened=_ago(days=3))
+
+    payload = build_paper_fleet(now=NOW)
+    rows = _by_id(payload)
+
+    assert payload["mode"] == "paper"
+    assert set(rows) == {"P1", "P2"}
+    assert rows["P1"]["state"] == "in_position"
+    assert rows["P1"]["trades"]["closed"] == 1
+    assert rows["P1"]["trades"]["net_pnl_usd"] == 12.0
+    assert payload["realized"]["all"]["closed"] == 1
+    assert payload["realized"]["all"]["net_pnl_usd"] == 12.0
+    assert [fill["id"] for fill in payload["recent_fills"]] == ["E1", "E2"]
+    assert payload["capacity"] is None and payload["live_bots_armed"] == 0
+
+
+def test_refused_exits_split_by_open_position(forven_db):
+    _strategy("S1")
+    _scan("S1", _ago(minutes=1))
+    _trade("E1", "S1", opened=_ago(days=5), closed=_ago(days=4))
+    _blocked_exit("S1", _ago(days=4, hours=12), "could not resolve strategy instance")  # held
+    _blocked_exit("S1", _ago(days=2), "could not resolve strategy instance")  # flat
+    _scan("S1", _ago(days=1), signal_type="exit", matched=True, reason="no_actionable_position_or_order")
+
+    exits = _by_id(build_live_fleet(now=NOW))["S1"]["blocked_exits"]
+
+    assert exits["count"] == 2
+    assert exits["positioned_count"] == 1
+    assert exits["last_reason"] == "could not resolve strategy instance"
+    assert exits["last_positioned_at"] == _ago(days=4, hours=12).strftime(SCANNER_TS)
+
+
+def test_exit_refused_on_open_position_is_exit_blocked(forven_db):
+    _strategy("S1")
+    _strategy("S2")
+    for sid in ("S1", "S2"):
+        _scan(sid, _ago(minutes=1))
+    _trade("E1", "S1", status="OPEN", opened=_ago(hours=6))
+    _blocked_exit("S1", _ago(hours=2), "Live execution settings are unverified")
+    # A refusal from before the current position opened does not strand it.
+    _blocked_exit("S2", _ago(hours=9), "could not resolve strategy instance")
+    _trade("E2", "S2", status="OPEN", opened=_ago(hours=6))
+
+    rows = _by_id(build_live_fleet(now=NOW))
+
+    assert rows["S1"]["state"] == "exit_blocked"
+    assert rows["S2"]["state"] == "in_position"
+
+
+def test_backtest_oos_is_served_with_each_strategy(forven_db):
+    _strategy("S1")
+    _strategy("S2")
+    for sid in ("S1", "S2"):
+        _scan(sid, _ago(minutes=1))
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET metrics = ? WHERE id = 'S1'",
+            ('{"out_of_sample": {"total_trades": 43, "win_rate": 0.4186, "backtest_months": 14.38, "profit_factor": 2.479}}',),
+        )
+        conn.execute("UPDATE strategies SET metrics = 'not json' WHERE id = 'S2'")
+
+    rows = _by_id(build_live_fleet(now=NOW))
+
+    assert rows["S1"]["backtest_oos"]["total_trades"] == 43
+    assert rows["S1"]["backtest_oos"]["win_rate"] == 0.4186
+    assert rows["S1"]["backtest_oos"]["avg_bars_held"] is None
+    assert rows["S2"]["backtest_oos"] is None
+
+
+def test_unknown_fleet_mode_is_rejected(forven_db):
+    import pytest
+
+    from forven.api_domains.live_fleet import build_fleet
+
+    with pytest.raises(ValueError):
+        build_fleet("backtest", now=NOW)

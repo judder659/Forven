@@ -57,6 +57,11 @@ def dashboard_live_fleet():
     return live_fleet_domain.build_live_fleet()
 
 
+@router.get("/api/dashboard/paper-fleet")
+def dashboard_paper_fleet():
+    return live_fleet_domain.build_paper_fleet()
+
+
 @router.get("/api/dashboard/kpis")
 def dashboard_kpis_stub():
     return analytics_domain.get_dashboard_kpis_stub()

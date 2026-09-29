@@ -1,9 +1,8 @@
 /**
  * Shared indicator helpers for chart panels.
  *
- * Extracted so the live-trading page can render indicator overlays / panels
- * identically to PaperTrades.svelte (which carries its own local copies of the
- * same pure functions). Keep these in sync if PaperTrades' versions change.
+ * Pure helpers that map session indicator payloads onto ChartWorkspace
+ * overlays and lower panels.
  */
 import type { IndicatorConfig } from '$lib/stores/chartStore';
 import type { SessionIndicatorConfig, SessionIndicatorsResponse } from '$lib/api/paper';
@@ -96,7 +95,7 @@ export function formatIndicatorValue(value: number | null, name: string): string
 
 /**
  * Turn a SessionIndicatorsResponse into the main/sub IndicatorConfig arrays that
- * ChartWorkspace consumes, honoring a visibility map. Mirrors PaperTrades.
+ * ChartWorkspace consumes, honoring a visibility map.
  */
 export function buildChartIndicators(
 	data: SessionIndicatorsResponse,

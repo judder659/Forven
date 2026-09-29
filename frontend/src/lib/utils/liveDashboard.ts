@@ -200,6 +200,14 @@ export function buildAttentionItems(input: AttentionInput): AttentionItem[] {
 				detail: age ? `Last scan ${age} ago.` : 'No scans since it went live.',
 				href: `/lab/strategy/${encodeURIComponent(strategy.strategy_id)}`,
 			});
+		} else if (strategy.state === 'exit_blocked') {
+			items.push({
+				id: `exit-blocked-${strategy.strategy_id}`,
+				severity: 'critical',
+				title: `${strategy.strategy_id} could not exit an open position`,
+				detail: strategy.blocked_exits?.last_positioned_reason || undefined,
+				href: `/live-trades?select=${encodeURIComponent(strategy.strategy_id)}`,
+			});
 		} else if (strategy.state === 'blocked') {
 			const blocked = strategy.blocked_entries;
 			items.push({

@@ -198,8 +198,39 @@ export async function getDashboardFunnel(): Promise<DashboardFunnelStage[]> {
 
 // ---- Live fleet (GET /api/dashboard/live-fleet) ----
 
-/** stale wins over in_position: an open position the scanner stopped evaluating cannot exit. */
-export type LiveStrategyState = 'in_position' | 'blocked' | 'watching' | 'stale';
+/**
+ * stale wins over in_position: an open position the scanner stopped evaluating cannot exit.
+ * exit_blocked: an open position whose exit signal was refused after it was entered.
+ */
+export type LiveStrategyState = 'in_position' | 'exit_blocked' | 'blocked' | 'watching' | 'stale';
+
+/** Out-of-sample backtest figures the desk compares live results against (fractions). */
+export interface FleetBacktestOos {
+	total_trades: number | null;
+	wins: number | null;
+	losses: number | null;
+	win_rate: number | null;
+	profit_factor: number | null;
+	avg_trade_pct: number | null;
+	avg_bars_held: number | null;
+	backtest_months: number | null;
+	sharpe: number | null;
+	max_drawdown_pct: number | null;
+	total_return_pct: number | null;
+	start_date: string | null;
+	end_date: string | null;
+}
+
+/** Refused exit signals, split by whether a position was open at the time. */
+export interface FleetBlockedExits {
+	window_days: number;
+	count: number;
+	positioned_count: number;
+	last_at: string | null;
+	last_reason: string | null;
+	last_positioned_at: string | null;
+	last_positioned_reason: string | null;
+}
 
 export interface LiveFleetStrategy {
 	strategy_id: string;
@@ -236,6 +267,8 @@ export interface LiveFleetStrategy {
 		top_reason: string | null;
 		top_count: number;
 	};
+	blocked_exits?: FleetBlockedExits;
+	backtest_oos?: FleetBacktestOos | null;
 }
 
 export interface LiveRealizedWindow {
@@ -283,6 +316,7 @@ export interface LiveCapacityReport {
 }
 
 export interface LiveFleet {
+	mode?: 'live' | 'paper';
 	generated_at: string;
 	stale_after_seconds: number;
 	strategies: LiveFleetStrategy[];
