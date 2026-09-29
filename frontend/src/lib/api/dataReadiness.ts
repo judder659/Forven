@@ -46,7 +46,7 @@ export function getVenueDivergence(symbol: string, timeframe = '1h'): Promise<Ve
 }
 
 /** The Get-data page, pre-filled with a fix's download request:
- *  /data-next/get?symbol=&timeframe=&venue=&history=(all | <N>d | <start>..<end>)&streams=a,b */
+ *  /data/get?symbol=&timeframe=&venue=&history=(all | <N>d | <start>..<end>)&streams=a,b */
 export function readinessFixHref(fix: ReadinessRequirement['fix']): string | null {
 	const item: DownloadRequestItem | undefined = fix?.request;
 	if (!item) return null;
@@ -56,7 +56,7 @@ export function readinessFixHref(fix: ReadinessRequirement['fix']): string | nul
 		: `${item.history.start}..${item.history.end}`;
 	const params = new URLSearchParams({ symbol: item.symbol, timeframe: item.timeframe, venue: item.venue, history });
 	if (item.streams?.length) params.set('streams', item.streams.join(','));
-	return `/data-next/get?${params.toString()}`;
+	return `/data/get?${params.toString()}`;
 }
 
 // Feed columns a rule spec can read (rule_engine._ENRICHMENT_COLUMNS), and the

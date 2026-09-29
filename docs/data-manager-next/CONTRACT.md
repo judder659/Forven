@@ -1,5 +1,9 @@
 # Data Manager rebuild — build contract
 
+> **Status (2026-09-28): shipped.** The user approved the preview; the new Data Manager replaced
+> the old page at `/data` (read the `/data-next` paths below as `/data`). This file stays as the
+> build contract and the record of the design.
+
 The plan is `docs/data-manager-next-level-2026-09-28.md` (read §3 findings and §4 phases first).
 This file is how the work is split so several people can build it in parallel without
 colliding. **Wire shapes are `frontend/src/lib/api/dataManagerTypes.ts` — that file is the

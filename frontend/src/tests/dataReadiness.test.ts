@@ -38,14 +38,14 @@ describe('data readiness client', () => {
 				label: 'Download open interest for BTC-USDT',
 				request: { symbol: 'BTC-USDT', timeframe: '1h', venue: 'canonical', history: { mode: 'days', days: 730 }, streams: ['oi', 'funding'] },
 			}),
-		).toBe('/data-next/get?symbol=BTC-USDT&timeframe=1h&venue=canonical&history=730d&streams=oi%2Cfunding');
+		).toBe('/data/get?symbol=BTC-USDT&timeframe=1h&venue=canonical&history=730d&streams=oi%2Cfunding');
 		expect(
 			readinessFixHref({
 				action: 'extend_history',
 				label: 'x',
 				request: { symbol: 'ETH-USDT', timeframe: '4h', venue: 'hyperliquid:perp', history: { mode: 'all' } },
 			}),
-		).toBe('/data-next/get?symbol=ETH-USDT&timeframe=4h&venue=hyperliquid%3Aperp&history=all');
+		).toBe('/data/get?symbol=ETH-USDT&timeframe=4h&venue=hyperliquid%3Aperp&history=all');
 		expect(readinessFixHref({ action: 'none', label: 'x' })).toBeNull();
 		expect(readinessFixHref(null)).toBeNull();
 	});

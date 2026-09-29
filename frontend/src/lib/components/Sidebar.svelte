@@ -132,8 +132,6 @@
 	function isRouteActive(href: string, pathname: string): boolean {
 		if (href === '/') return pathname === '/';
 		if (pathname === href) return true;
-		// The new Data Manager (preview) is the Data section too.
-		if (href === '/data' && (pathname === '/data-next' || pathname.startsWith('/data-next/'))) return true;
 		if (!pathname.startsWith(`${href}/`)) return false;
 		return !allNavHrefs.some((other) =>
 			other !== href

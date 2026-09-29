@@ -30,15 +30,6 @@ vi.mock('$lib/stores/navMetrics', () => ({
 	markNavIndicatorSeen: vi.fn(),
 }));
 
-vi.mock('$lib/stores/dataFetch', () => ({
-	dataFetchState: {
-		subscribe(callback: (value: { status: string; label: string }) => void) {
-			callback({ status: 'idle', label: '' });
-			return () => {};
-		},
-	},
-}));
-
 import Sidebar from '../lib/components/Sidebar.svelte';
 
 type MountedComponent = ReturnType<typeof mount>;

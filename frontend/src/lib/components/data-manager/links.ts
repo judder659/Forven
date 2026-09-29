@@ -2,7 +2,7 @@
  * file-system symbol ("BTC-USDT"), never the display form ("BTC/USDT"). */
 import type { SymbolCandidate } from '$lib/api/dataManagerTypes';
 
-export const DM = '/data-next';
+export const DM = '/data';
 
 export function seriesHref(ref: { symbol: string; timeframe: string; stream?: string; venue?: string }): string {
 	const params = new URLSearchParams();

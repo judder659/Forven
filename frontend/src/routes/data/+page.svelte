@@ -1,1187 +1,448 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import DataPanel from '$lib/components/research/DataPanel.svelte';
-	import DataInspector from '$lib/components/research/DataInspector.svelte';
-	import CoverageMatrix from '$lib/components/research/CoverageMatrix.svelte';
-	import SourceHealth from '$lib/components/research/SourceHealth.svelte';
-	import QualityLeaderboard from '$lib/components/research/QualityLeaderboard.svelte';
-	import StorageMaintenance from '$lib/components/research/StorageMaintenance.svelte';
-	import SeriesDrillDown from '$lib/components/research/SeriesDrillDown.svelte';
-	import DataActivityLog from '$lib/components/research/DataActivityLog.svelte';
+	// Health: is my data OK, what needs attention and why, and how do I fix it.
+	// Every state, lag and allowance shown here comes from the server.
+	import { onDestroy, onMount } from 'svelte';
 	import {
-		getDatasets,
-		getIngestionRuns,
-		getDataQualityExtended,
-		getDataEngineStatus,
-		planDataEngineBackfill,
-		executeDataEngineBackfill,
-		getSettings,
-		type Dataset,
-		type DataQualityExtended,
-		type DataEngineStatus,
-		type DataEngineBackfillPlan,
-		type DataEngineBackfillResult,
-		type IngestionRun,
-		type ForvenSettings,
-	} from '$lib/api';
-	import {
-		getDataUniverse,
-		refreshUniverseRegistry,
+		getCatalog,
+		getCollectorStatus,
+		getDataLog,
+		getStorage,
+		getUniversePlanDiff,
+		getVenues,
+		refreshSeries,
 		seedUniverse,
-		cancelUniverseSeed,
-		getBackfillStatus,
-		triggerBackfill,
-		cancelBackfill,
-		getDataHealth,
-		updateUniverseConfig,
-		type DataUniverse,
-		type BackfillStatus,
-		type DataHealth,
-	} from '$lib/api/data';
-	import { dataFetchState, clearDataFetchTask } from '$lib/stores/dataFetch';
-	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
+	} from '$lib/api/dataManager';
+	import type {
+		CollectorStatus,
+		DataLogEntry,
+		SlaCensus,
+		SlaSeriesRow,
+		SlaState,
+		StorageInventory,
+		UniversePlanDiff,
+		VenueHealth,
+	} from '$lib/api/dataManagerTypes';
+	import SectionState from '$lib/components/data-manager/SectionState.svelte';
+	import StackedBar from '$lib/components/data-manager/StackedBar.svelte';
+	import StateChip from '$lib/components/data-manager/StateChip.svelte';
+	import { keyOf, runAction } from '$lib/components/data-manager/actions';
+	import {
+		errorText,
+		formatBytes,
+		formatCount,
+		formatDuration,
+		formatRelative,
+		formatUtc,
+		plural,
+		STATE_LABEL,
+		STATES,
+		stateTextClass,
+		streamLabel,
+		TIER_HELP,
+		TIER_LABEL,
+		TIERS,
+	} from '$lib/components/data-manager/format';
+	import { groupAttention, healthVerdict, tierProblems, tierTotal, whyText, type Tone } from '$lib/components/data-manager/health';
+	import { catalogHref, DM, seriesHref } from '$lib/components/data-manager/links';
+	import {
+		clock,
+		createRequestGuard,
+		jobsLanded,
+		loadSlaCensus,
+		loading,
+		settle,
+		slaCensus,
+		type Loadable,
+	} from '$lib/stores/dataManager';
 
-	let loading = true;
-	let refreshing = false;
-	let error: string | null = null;
-	let remoteDataConfigured = false;
-	let drillSeries: { symbol: string; timeframe: string } | null = null;
-	let remoteDataUrl: string | null = null;
-	let remoteDataError: string | null = null;
-
-	let datasets: Dataset[] = [];
-	let runs: IngestionRun[] = [];
-	let runsReconstructed = false;
-	let selectedDataset: Dataset | null = null;
-	let quality: DataQualityExtended | null = null;
-	let dataEngineStatus: DataEngineStatus | null = null;
-	let dataEnginePlan: DataEngineBackfillPlan | null = null;
-	let qualityLoading = false;
-	let dataEngineLoading = false;
-	let dataEngineError: string | null = null;
-	let dataEngineExecuting = false;
-	let dataEngineExecResult: DataEngineBackfillResult | null = null;
-	let inspectorMode: 'details' | 'fetch' = 'details';
-
-	type DataTab = 'overview' | 'datasets' | 'maintenance' | 'data-log';
-	const TABS: { id: DataTab; label: string }[] = [
-		{ id: 'overview', label: 'Overview' },
-		{ id: 'datasets', label: 'Datasets' },
-		{ id: 'maintenance', label: 'Maintenance' },
-		{ id: 'data-log', label: 'Data Log' },
-	];
-	const initialTab = $page.url.searchParams.get('tab');
-	let activeTab: DataTab = TABS.some((t) => t.id === initialTab) ? (initialTab as DataTab) : 'overview';
-
-	function selectTab(tab: DataTab): void {
-		activeTab = tab;
-		const url = new URL($page.url);
-		url.searchParams.set('tab', tab);
-		goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
-	}
-
-	function openDownload(): void {
-		inspectorMode = 'fetch';
-		selectTab('datasets');
-	}
-
-	function parseTs(value: string | null | undefined): number {
-		if (!value) return 0;
-		const parsed = Date.parse(value);
-		return Number.isFinite(parsed) ? parsed : 0;
-	}
-
-	function formatTimestamp(value: string | null | undefined): string {
-		if (!value) return '--';
-		const ts = new Date(value);
-		if (Number.isNaN(ts.getTime())) return '--';
-		return ts.toLocaleString([], {
-			year: 'numeric',
-			month: 'short',
-			day: '2-digit',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	}
-
-	function datasetMarket(dataset: Dataset): string {
-		const marketType = String(dataset.market_type || '').trim().toLowerCase();
-		if (marketType) return marketType;
-		const assetClass = String(dataset.asset_class || '').trim().toLowerCase();
-		if (assetClass === 'stock' || assetClass === 'etf') return 'equity';
-		return assetClass || 'unknown';
-	}
-
-	function marketLabel(market: string): string {
-		if (market === 'equity') return 'Stocks / ETFs';
-		if (market === 'crypto') return 'Crypto';
-		if (market === 'forex') return 'Forex';
-		if (market === 'index') return 'Indices';
-		return market ? market[0].toUpperCase() + market.slice(1) : 'Unknown';
-	}
-
-	function runFromDataset(dataset: Dataset, index: number): IngestionRun {
-		const completedAt = dataset.end_ts || dataset.start_ts || null;
-		return {
-			id: `dataset-${index}-${dataset.symbol}-${dataset.timeframe}`,
-			symbol: dataset.symbol,
-			timeframe: dataset.timeframe,
-			source: dataset.source || 'local',
-			status: 'completed',
-			idempotency_key: null,
-			bars_fetched: dataset.row_count,
-			bars_new: dataset.row_count,
-			bars_updated: 0,
-			error: null,
-			prior_version_id: null,
-			new_version_id: null,
-			started_at: completedAt || new Date().toISOString(),
-			completed_at: completedAt,
-			duration_ms: null,
-		};
-	}
-
-	function sameDataset(a: Dataset | null, b: Dataset | null): boolean {
-		if (!a || !b) return a === b;
-		return a.symbol === b.symbol && a.timeframe === b.timeframe;
-	}
-
-	function pickSelection(
-		rows: Dataset[],
-		preferred?: { symbol: string; timeframe: string }
-	): Dataset | null {
-		if (preferred) {
-			const preferredMatch = rows.find(
-				(row) => row.symbol === preferred.symbol && row.timeframe === preferred.timeframe
-			);
-			if (preferredMatch) return preferredMatch;
-		}
-		if (selectedDataset) {
-			const currentMatch = rows.find(
-				(row) => row.symbol === selectedDataset?.symbol && row.timeframe === selectedDataset?.timeframe
-			);
-			if (currentMatch) return currentMatch;
-		}
-		return rows[0] ?? null;
-	}
-
-	async function loadQuality(dataset: Dataset | null): Promise<void> {
-		quality = null;
-		if (!dataset) return;
-		qualityLoading = true;
-		try {
-			quality = await getDataQualityExtended(dataset.symbol, dataset.timeframe);
-		} catch {
-			quality = null;
-		} finally {
-			qualityLoading = false;
-		}
-	}
-
-	async function loadData(preferred?: { symbol: string; timeframe: string }): Promise<void> {
-		const failures: string[] = [];
-		const datasetsPromise = getDatasets();
-		// Show the dataset list as soon as its own request answers — the tab must
-		// not sit on "Loading..." because one of the six status calls below is slow.
-		void datasetsPromise
-			.then((rows) => {
-				if (Array.isArray(rows)) {
-					datasets = rows;
-					loading = false;
-				}
-			})
-			.catch(() => {});
-		const [settingsResult, datasetsResult, runsResult, dataEngineResult, lakeResult, universeResult] = await Promise.allSettled([
-			getSettings(),
-			datasetsPromise,
-			getIngestionRuns({ limit: 500 }),
-			getDataEngineStatus(),
-			getDataHealth(),
-			getDataUniverse(),
-		]);
-
-		lakeHealth = lakeResult.status === 'fulfilled' ? lakeResult.value : null;
-		if (universeResult.status === 'fulfilled') {
-			universe = universeResult.value;
-			opsLoaded = true;
-		}
-
-		if (settingsResult.status === 'fulfilled') {
-			const settings = settingsResult.value as ForvenSettings;
-			const remoteUrl = String(settings.remote_engine_url || '').trim();
-			remoteDataConfigured = Boolean(settings.remote_engine_enabled && remoteUrl);
-			remoteDataUrl = remoteUrl || null;
-		} else {
-			remoteDataConfigured = false;
-			remoteDataUrl = null;
-		}
-
-		let nextDatasets: Dataset[] = [];
-		if (datasetsResult.status === 'fulfilled') {
-			nextDatasets = Array.isArray(datasetsResult.value) ? datasetsResult.value : [];
-		} else {
-			failures.push(
-				datasetsResult.reason instanceof Error
-					? datasetsResult.reason.message
-					: 'Failed to load datasets'
-			);
-		}
-		datasets = nextDatasets;
-
-		let nextRuns: IngestionRun[] = [];
-		let usedReconstruction = false;
-		if (runsResult.status === 'fulfilled') {
-			const loadedRuns = Array.isArray(runsResult.value) ? runsResult.value : [];
-			if (loadedRuns.length > 0) {
-				nextRuns = loadedRuns;
-			} else if (remoteDataConfigured) {
-				nextRuns = [];
-			} else {
-				nextRuns = nextDatasets.map(runFromDataset);
-				usedReconstruction = nextRuns.length > 0;
-			}
-		} else {
-			nextRuns = remoteDataConfigured ? [] : nextDatasets.map(runFromDataset);
-			usedReconstruction = !remoteDataConfigured && nextRuns.length > 0;
-			failures.push(
-				runsResult.reason instanceof Error
-					? runsResult.reason.message
-					: 'Failed to load ingestion history'
-			);
-		}
-
-		runs = [...nextRuns].sort((a, b) => {
-			const aTs = parseTs(a.completed_at || a.started_at);
-			const bTs = parseTs(b.completed_at || b.started_at);
-			return bTs - aTs;
-		});
-		runsReconstructed = usedReconstruction;
-		if (dataEngineResult.status === 'fulfilled') {
-			dataEngineStatus = dataEngineResult.value;
-			dataEngineError = null;
-		} else {
-			dataEngineStatus = null;
-			dataEngineError =
-				dataEngineResult.reason instanceof Error
-					? dataEngineResult.reason.message
-					: 'Failed to load Data Engine status';
-		}
-
-		if (remoteDataConfigured) {
-			const remoteFailures: string[] = [];
-			if (datasetsResult.status === 'rejected') {
-				remoteFailures.push(
-					datasetsResult.reason instanceof Error
-						? datasetsResult.reason.message
-						: 'Remote datasets request failed'
-				);
-			}
-			if (runsResult.status === 'rejected') {
-				remoteFailures.push(
-					runsResult.reason instanceof Error
-						? runsResult.reason.message
-						: 'Remote ingestion history request failed'
-				);
-			}
-			remoteDataError = remoteFailures.length > 0 ? remoteFailures.join(' • ') : null;
-		} else {
-			remoteDataError = null;
-		}
-
-		error =
-			!remoteDataConfigured && failures.length > 0
-				? failures.join(' • ')
-				: null;
-
-		const nextSelection = pickSelection(nextDatasets, preferred);
-		const selectionChanged = !sameDataset(selectedDataset, nextSelection);
-		selectedDataset = nextSelection;
-		if (!nextSelection) {
-			inspectorMode = 'fetch';
-			quality = null;
-			qualityLoading = false;
-			return;
-		}
-
-		if (selectionChanged || !quality) {
-			await loadQuality(nextSelection);
-		}
-	}
-
-	async function refreshData(preferred?: { symbol: string; timeframe: string }): Promise<void> {
-		refreshing = true;
-		try {
-			await loadData(preferred);
-		} finally {
-			refreshing = false;
-		}
-	}
-
-	function hasActiveRuns(list: IngestionRun[]): boolean {
-		return list.some((r) => r.status === 'running' || r.status === 'pending');
-	}
-
-	// Lightweight poll: only re-fetch ingestion runs (the thing that changes during a
-	// download). Skip when runs are reconstructed from the catalog — there is no real
-	// run log to poll. Returns true when an active run just transitioned to a terminal
-	// state, signalling the caller to do a full refresh of datasets + quality.
-	async function pollRuns(): Promise<boolean> {
-		if (remoteDataConfigured || runsReconstructed) return false;
-		const wasActive = hasActiveRuns(runs);
-		try {
-			const loaded = await getIngestionRuns({ limit: 500 });
-			const nextRuns = Array.isArray(loaded) ? loaded : [];
-			if (nextRuns.length === 0) return false;
-			runs = [...nextRuns].sort((a, b) => {
-				const aTs = parseTs(a.completed_at || a.started_at);
-				const bTs = parseTs(b.completed_at || b.started_at);
-				return bTs - aTs;
-			});
-			return wasActive && !hasActiveRuns(runs);
-		} catch {
-			return false;
-		}
-	}
-
-	function handlePanelSelect(event: CustomEvent<{ dataset: Dataset }>): void {
-		selectedDataset = event.detail.dataset;
-		inspectorMode = 'details';
-		void loadQuality(selectedDataset);
-	}
-
-	function handlePanelRefresh(): void {
-		void refreshData(
-			selectedDataset
-				? { symbol: selectedDataset.symbol, timeframe: selectedDataset.timeframe }
-				: undefined
-		);
-	}
-
-	async function handlePlanBackfill(): Promise<void> {
-		dataEngineLoading = true;
-		dataEngineError = null;
-		try {
-			dataEnginePlan = await planDataEngineBackfill();
-		} catch (err) {
-			dataEnginePlan = null;
-			dataEngineError = err instanceof Error ? err.message : 'Failed to plan Data Engine backfill';
-		} finally {
-			dataEngineLoading = false;
-		}
-	}
-
-	async function handleExecuteBackfill(): Promise<void> {
-		dataEngineExecuting = true;
-		dataEngineError = null;
-		try {
-			dataEngineExecResult = await executeDataEngineBackfill(10);
-		} catch (err) {
-			dataEngineError = err instanceof Error ? err.message : 'Failed to execute backfill plan';
-			dataEngineExecuting = false;
-			return;
-		}
-		// Re-plan (the plan endpoint rescans the lake) + refresh the panel so the
-		// backlog visibly drains. A refresh failure here must NOT masquerade as an
-		// execute failure — the execute already succeeded.
-		try {
-			dataEnginePlan = await planDataEngineBackfill();
-			dataEngineStatus = await getDataEngineStatus();
-		} catch {
-			// keep the exec result; the count just won't refresh this round
-		} finally {
-			dataEngineExecuting = false;
-		}
-	}
-
-	// Candle backlog from the FRESH plan — single source for the button + count.
-	$: dataEngineCandleRemaining = dataEnginePlan
-		? dataEnginePlan.tasks.filter((t) => t.stream === 'candles').length
-		: 0;
-
-	// --- Overview trust strip ---
-	let lakeHealth: DataHealth | null = null;
-
-	function formatBytes(bytes: number | null | undefined): string {
-		const value = Number(bytes) || 0;
-		if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
-		if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(0)} MB`;
-		return `${(value / 1024).toFixed(0)} KB`;
-	}
-
-
-	// Venue split from the stamped market identity of each series.
-	$: venueSplit = datasets.reduce(
-		(acc, dataset) => {
-			const market = String(dataset.market || 'unstamped').toLowerCase();
-			if (market === 'perp') acc.perp += 1;
-			else if (market === 'spot') acc.spot += 1;
-			else acc.other += 1;
-			return acc;
-		},
-		{ perp: 0, spot: 0, other: 0 }
-	);
-
-	// --- Research universe + deep-history operations (maintenance tab) ---
-	let universe: DataUniverse | null = null;
-	let universeError: string | null = null;
-	let universeBusy = false;
-	let bvStatus: BackfillStatus | null = null;
-	let bvError: string | null = null;
-	let bvBusy = false;
-	let opsLoaded = false;
-
-	async function loadOpsPanels(): Promise<void> {
-		try {
-			universe = await getDataUniverse();
-			universeError = null;
-		} catch (err) {
-			universeError = err instanceof Error ? err.message : 'Failed to load universe';
-		}
-		try {
-			bvStatus = await getBackfillStatus();
-			bvError = null;
-		} catch (err) {
-			bvError = err instanceof Error ? err.message : 'Failed to load backfill status';
-		}
-		opsLoaded = true;
-	}
-
-	async function handleRefreshRegistry(): Promise<void> {
-		universeBusy = true;
-		try {
-			await refreshUniverseRegistry();
-			await loadOpsPanels();
-		} catch (err) {
-			universeError = err instanceof Error ? err.message : 'Registry refresh failed';
-		} finally {
-			universeBusy = false;
-		}
-	}
-
-	async function handleSeedUniverse(): Promise<void> {
-		universeBusy = true;
-		try {
-			await seedUniverse();
-			await loadOpsPanels();
-		} catch (err) {
-			universeError = err instanceof Error ? err.message : 'Universe seed failed to start';
-		} finally {
-			universeBusy = false;
-		}
-	}
-
-	async function handleCancelSeed(): Promise<void> {
-		try {
-			await cancelUniverseSeed();
-			await loadOpsPanels();
-		} catch (err) {
-			universeError = err instanceof Error ? err.message : 'Cancel failed';
-		}
-	}
-
-	async function handleTriggerBv(): Promise<void> {
-		bvBusy = true;
-		try {
-			await triggerBackfill();
-			await loadOpsPanels();
-		} catch (err) {
-			bvError = err instanceof Error ? err.message : 'Backfill failed to start';
-		} finally {
-			bvBusy = false;
-		}
-	}
-
-	async function handleCancelBv(): Promise<void> {
-		try {
-			await cancelBackfill();
-			await loadOpsPanels();
-		} catch (err) {
-			bvError = err instanceof Error ? err.message : 'Cancel failed';
-		}
-	}
-
-	function jobPct(progress: { done: number; total: number } | null | undefined): number {
-		if (!progress || !progress.total) return 0;
-		return Math.min(100, Math.round((progress.done / progress.total) * 100));
-	}
-
-	// First visit to the maintenance tab loads the operations panels once;
-	// the poll below keeps them fresh while a job runs.
-	$: if (activeTab === 'maintenance' && !opsLoaded) void loadOpsPanels();
-
-	$: universeSeedRunning = Boolean(universe?.seed?.running);
-	$: universeMinuteTier = (universe?.plan ?? []).filter((p) => p.timeframes.includes('1m')).length;
-
-	// Universe sizing: presets are premades — the number itself stays editable.
-	const UNIVERSE_PRESETS = [
-		{ label: 'Focused', size: 10 },
-		{ label: 'Standard', size: 25 },
-		{ label: 'Comprehensive', size: 50 },
-	];
-	let universeSizeInput: number | null = null;
-	let universeConfigBusy = false;
-
-	$: universeSize = universeSizeInput ?? universe?.config?.size ?? 50;
-
-	// Rough per-tier download footprint (zstd parquet, full perp history):
-	// base ladder (1h/4h/1d) ~10 MB, +intraday (15m/5m) ~50 MB, +1m ~120 MB.
-	$: universeEstimate = (() => {
-		const size = universeSize;
-		const intradayTop = Math.min(universe?.config?.intraday_top ?? 20, size);
-		const minuteTop = Math.min(universe?.config?.minute_top ?? 10, intradayTop);
-		const mb = size * 10 + intradayTop * 50 + minuteTop * 120;
-		return mb >= 1024 ? `~${(mb / 1024).toFixed(1)} GB` : `~${mb} MB`;
-	})();
-
-	async function applyUniverseSize(size: number): Promise<void> {
-		universeConfigBusy = true;
-		try {
-			await updateUniverseConfig({ size });
-			universeSizeInput = null;
-			await loadOpsPanels();
-		} catch (err) {
-			universeError = err instanceof Error ? err.message : 'Failed to update universe size';
-		} finally {
-			universeConfigBusy = false;
-		}
-	}
-
-	async function toggleUniverseEnabled(): Promise<void> {
-		universeConfigBusy = true;
-		try {
-			await updateUniverseConfig({ enabled: !(universe?.config?.enabled ?? true) });
-			await loadOpsPanels();
-		} catch (err) {
-			universeError = err instanceof Error ? err.message : 'Failed to toggle universe';
-		} finally {
-			universeConfigBusy = false;
-		}
-	}
-
-	async function handleFetched(event: CustomEvent<{ dataset: Dataset }>): Promise<void> {
-		const fetched = event.detail.dataset;
-		await refreshData({ symbol: fetched.symbol, timeframe: fetched.timeframe });
-		inspectorMode = 'details';
-	}
-
-	$: totalBars = datasets.reduce((sum, dataset) => sum + (Number(dataset.row_count) || 0), 0);
-	$: latestDatasetTs = Math.max(
-		...datasets.map((dataset) => parseTs(dataset.end_ts || dataset.start_ts)),
-		0
-	);
-	$: latestDatasetLabel =
-		latestDatasetTs > 0 ? formatTimestamp(new Date(latestDatasetTs).toISOString()) : '--';
-	$: availableMarkets = Array.from(
-		new Set(datasets.map((dataset) => datasetMarket(dataset)).filter((market) => market && market !== 'unknown'))
-	).sort();
-	$: availableMarketLabel =
-		availableMarkets.length > 0 ? availableMarkets.map((market) => marketLabel(market)).join(' • ') : 'No local markets yet';
-	$: equitySymbolCount = new Set(
-		datasets.filter((dataset) => datasetMarket(dataset) === 'equity').map((dataset) => dataset.symbol)
-	).size;
-	$: dataEngineCoverageCount = dataEngineStatus?.coverage?.length ?? 0;
-	$: dataEngineLiveCount = (dataEngineStatus?.streams ?? []).filter((stream) => stream.status === 'connected').length;
-	$: dataEngineSourceCount = dataEngineStatus?.sources?.length ?? 0;
-
-	// Source status comes from a circuit breaker, where "closed" = healthy and
-	// "open" = failing — exactly backwards for a casual reader, so translate.
-	const SOURCE_STATUS_LABEL: Record<string, string> = {
-		closed: 'healthy',
-		open: 'failing',
-		'half-open': 'recovering',
+	const TONE: Record<Tone, { text: string; dot: string; box: string }> = {
+		ok: { text: 'text-emerald-400', dot: 'bg-emerald-400', box: 'border-emerald-900/70 bg-emerald-500/[0.03]' },
+		warn: { text: 'text-amber-400', dot: 'bg-amber-400', box: 'border-amber-900/70 bg-amber-500/[0.04]' },
+		bad: { text: 'text-red-400', dot: 'bg-red-500', box: 'border-red-900 bg-red-500/[0.05]' },
+		neutral: { text: 'text-[#ccc]', dot: 'bg-[#666]', box: 'border-[#222] bg-[#050505]' },
 	};
+	const VENUE_STATUS: Record<VenueHealth['status'], { label: string; text: string; dot: string }> = {
+		healthy: { label: 'Healthy', text: 'text-emerald-400', dot: 'bg-emerald-400' },
+		degraded: { label: 'Degraded', text: 'text-amber-400', dot: 'bg-amber-400' },
+		down: { label: 'Down', text: 'text-red-400', dot: 'bg-red-500' },
+		unknown: { label: 'Unknown', text: 'text-[#888]', dot: 'bg-[#555]' },
+	};
+	const PER_GROUP: Record<string, number> = { live: 8, paper: 8, pipeline: 8, universe: 4, idle: 3 };
 
+	let attention: Loadable<SlaSeriesRow[]> = loading();
+	let collector: Loadable<CollectorStatus> = loading();
+	let venues: Loadable<VenueHealth[]> = loading();
+	let storage: Loadable<StorageInventory> = loading();
+	let incidents: Loadable<DataLogEntry[]> = loading();
+	let plan: Loadable<UniversePlanDiff> = loading();
+	const attentionGuard = createRequestGuard();
+
+	/** Live, paper and pipeline problems come from the catalog so none is missed:
+	 * the census `worst` list ranks every tier together. */
+	async function loadAttention() {
+		const { signal, current } = attentionGuard.next();
+		const next = await settle(
+			getCatalog({ tier: ['live', 'paper', 'pipeline'], state: ['late', 'breach', 'missing'], sort: 'priority', order: 'desc', limit: 60 }, signal).then((r) => r.rows as SlaSeriesRow[]),
+			attention,
+		);
+		if (current()) attention = next;
+	}
+	const loadCollector = async () => (collector = await settle(getCollectorStatus(), collector));
+	const loadVenues = async () => (venues = await settle(getVenues().then((r) => r.venues), venues));
+	const loadStorage = async () => (storage = await settle(getStorage(), storage));
+	const loadPlan = async () => (plan = await settle(getUniversePlanDiff(), plan));
+	const loadIncidents = async () =>
+		(incidents = await settle(
+			getDataLog({ category: ['incident'], since: new Date(Date.now() - 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z'), limit: 6 }).then((r) => r.entries),
+			incidents,
+		));
+
+	let timer: ReturnType<typeof setInterval> | undefined;
 	onMount(() => {
-		let isDestroyed = false;
-		async function initialLoad() {
-			try {
-				await loadData();
-			} finally {
-				if (!isDestroyed) loading = false;
-			}
-		}
-		initialLoad();
-
-		let polling = false;
-		const interval = setInterval(() => {
-			if (polling) return;
-			const fetchRunning = $dataFetchState.status === 'running';
-			// Poll while a download is in flight or a run is still active. A live fetch
-			// can populate the real run log even when the table is currently
-			// reconstructed from the catalog, so do a full refresh in that case.
-			if (!hasActiveRuns(runs) && !fetchRunning) return;
-			polling = true;
-			const fullRefresh = fetchRunning && runsReconstructed;
-			const work = fullRefresh
-				? refreshData(
-						selectedDataset
-							? { symbol: selectedDataset.symbol, timeframe: selectedDataset.timeframe }
-							: undefined
-					).then(() => false)
-				: pollRuns();
-			work
-				.then((completed) => {
-					if (isDestroyed) return;
-					if (completed) {
-						// A run finished: refresh datasets + quality once.
-						return refreshData(
-							selectedDataset
-								? { symbol: selectedDataset.symbol, timeframe: selectedDataset.timeframe }
-								: undefined
-						);
-					}
-				})
-				.finally(() => {
-					polling = false;
-				});
-		}, 3000);
-
-		// Keep the maintenance operations panels live while a long job runs
-		// (universe seed / deep-history backfill) — per-symbol progress updates.
-		// In-flight guard mirrors `polling` above so a load that runs longer than
-		// the 4s interval can't stack overlapping requests.
-		let opsPolling = false;
-		const opsInterval = setInterval(() => {
-			if (isDestroyed || opsPolling || activeTab !== 'maintenance') return;
-			if (!(universe?.seed?.running || bvStatus?.running)) return;
-			opsPolling = true;
-			loadOpsPanels().finally(() => {
-				opsPolling = false;
-			});
-		}, 4000);
-
-		return () => {
-			isDestroyed = true;
-			clearInterval(interval);
-			clearInterval(opsInterval);
-		};
+		void loadSlaCensus({ force: true });
+		void Promise.all([loadCollector(), loadVenues(), loadStorage(), loadPlan(), loadIncidents()]);
+		timer = setInterval(() => {
+			void loadCollector();
+			void loadVenues();
+			void loadIncidents();
+		}, 30_000);
 	});
+	onDestroy(() => {
+		clearInterval(timer);
+		attentionGuard.cancel();
+	});
+	// Work landed: the collector card and incidents follow (the layout reloads the
+	// census), and "Queued" marks give way to the rows' new state.
+	let landedSeen = $jobsLanded;
+	$: if ($jobsLanded !== landedSeen) {
+		landedSeen = $jobsLanded;
+		pending = {};
+		void Promise.all([loadCollector(), loadIncidents()]);
+	}
+
+	// The attention list follows the census: reload it whenever a new census lands.
+	let censusAt = -1;
+	$: if ($slaCensus.at !== censusAt && $slaCensus.status !== 'loading') {
+		censusAt = $slaCensus.at;
+		void loadAttention();
+	}
+
+	$: census = $slaCensus.data;
+	$: rows = [...(attention.data ?? []), ...(census?.worst ?? [])];
+	$: verdict = census ? healthVerdict(census, rows) : null;
+	$: tone = TONE[verdict?.tone ?? 'neutral'];
+	$: groups = census ? groupAttention(rows, census, 99).map((g) => ({ ...g, rows: g.rows.slice(0, PER_GROUP[g.tier]), hidden: g.total - Math.min(g.rows.length, PER_GROUP[g.tier]) })) : [];
+	$: liveOrPaperLate = census ? tierProblems(census, 'live').total + tierProblems(census, 'paper').total : 0;
+	// "Fix all" only when a refresh can help one of them (a live feed's series can't be re-fetched).
+	$: fixable = rows.some((r) => (r.sla.tier === 'live' || r.sla.tier === 'paper') && ['late', 'breach', 'missing'].includes(r.sla.state) && !r.frozen && r.refreshable !== false);
+	$: reclaimable = storage.data?.reclaimable.reduce((sum, g) => sum + g.bytes, 0) ?? 0;
+	$: capacityShort = collector.data ? collector.data.demand_per_hour > collector.data.capacity_per_hour : false;
+
+	const idOf = (row: SlaSeriesRow) => `${row.stream}:${row.venue}:${row.symbol}:${row.timeframe}`;
+	let pending: Record<string, 'sending' | 'queued'> = {};
+	let fixingAll = false;
+
+	async function refreshRow(row: SlaSeriesRow) {
+		const id = idOf(row);
+		pending = { ...pending, [id]: 'sending' };
+		const job = await runAction('Refreshing', () => refreshSeries({ series: [keyOf(row)], mode: 'refresh' }), {
+			success: () => `${row.sla.state === 'missing' ? 'Downloading' : 'Refreshing'} ${row.symbol} ${row.timeframe}. Progress is in Jobs.`,
+		});
+		const { [id]: _drop, ...rest } = pending;
+		pending = job ? { ...rest, [id]: 'queued' } : rest;
+	}
+
+	async function fixAll() {
+		fixingAll = true;
+		await runAction('Refreshing late live and paper series', () => refreshSeries({ scope: 'late_live_paper', mode: 'refresh' }), {
+			success: () => 'Refreshing every late live and paper series. Progress is in Jobs.',
+		});
+		fixingAll = false;
+	}
+
+	let seeding = false;
+	async function resumeSeed() {
+		seeding = true;
+		const result = await runAction('Starting the universe seed', () => seedUniverse(), {
+			success: (r) => (r.status === 'already_running' ? 'The universe seed is already running.' : 'Started the universe seed. It resumes where it stopped.'),
+		});
+		seeding = false;
+		if (result) void loadPlan();
+	}
+
+	// Takes the census as an argument: a template call that only closes over it
+	// is not re-run when a new census lands.
+	const stateCounts = (from: SlaCensus, tier: (typeof TIERS)[number]) => from.by_tier[tier] ?? ({} as Record<SlaState, number>);
 </script>
 
-<svelte:head>
-	<title>Data | Forven</title>
-	<meta
-		name="description"
-		content="Download market data, inspect datasets, and review historical ingestion runs."
-	/>
-</svelte:head>
+<svelte:head><title>Data · Health | Forven</title></svelte:head>
 
-<div class="h-full overflow-auto text-white p-4 space-y-4">
-	<header class="flex flex-col gap-3 border-b border-[#222] pb-4 md:flex-row md:items-end md:justify-between">
-		<div>
-			<h1 class="text-2xl font-semibold tracking-tight text-white">Data</h1>
-			<p class="mt-1 text-xs text-[#666]">See collection progress, check market coverage, and resolve missing data for research and trading.</p>
-			<a href="/data-next" class="mt-1 inline-block text-[11px] text-[#aaa] underline-offset-2 hover:text-white hover:underline">Try the new Data Manager →</a>
-		</div>
-		<div class="flex flex-col gap-2 sm:flex-row">
-			<button
-				type="button"
-				on:click={openDownload}
-				class="terminal-button-primary text-xs"
-			>
-				Download Data
-			</button>
-			<button
-				type="button"
-				on:click={() =>
-					refreshData(
-						selectedDataset
-							? { symbol: selectedDataset.symbol, timeframe: selectedDataset.timeframe }
-							: undefined
-					)}
-				disabled={refreshing}
-				class="terminal-button text-xs"
-			>
-				{refreshing ? 'Refreshing...' : 'Refresh'}
-			</button>
-		</div>
-	</header>
-
-	<div class="flex gap-0 border-b border-[#222]">
-		{#each TABS as tab}
-			<button
-				type="button"
-				class="border-b-2 px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-colors {activeTab === tab.id ? 'border-white text-white' : 'border-transparent text-[#555] hover:text-[#999]'}"
-				on:click={() => selectTab(tab.id)}
-			>{tab.label}</button>
-		{/each}
-	</div>
-
-	{#if activeTab === 'overview'}
-	<SourceHealth on:activity={() => selectTab('data-log')} on:maintenance={() => selectTab('maintenance')} />
-	<section class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-
-		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Datasets</div>
-			<div class="text-lg font-semibold mt-1">{datasets.length}</div>
-			<div class="text-[10px] text-gray-500 mt-0.5">{totalBars.toLocaleString()} bars</div>
-		</div>
-		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3" title="Total parquet lake size on disk">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Lake Size</div>
-			<div class="text-lg font-semibold mt-1">{lakeHealth ? formatBytes(lakeHealth.total_parquet_bytes) : '--'}</div>
-			<div class="text-[10px] text-gray-500 mt-0.5">{lakeHealth ? `${lakeHealth.total_parquet_files.toLocaleString()} files` : ''}</div>
-		</div>
-		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3" title="Venue identity of stored series (perp = the venue semantics we execute on). Unstamped = legacy files; run the market reconcile.">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Venue Split</div>
-			<div class="text-sm font-semibold mt-1">
-				<span class="text-cyan-300">{venueSplit.perp} perp</span>
-				<span class="text-gray-600"> · </span>
-				<span class="text-amber-300">{venueSplit.spot} spot</span>
+<div class="space-y-3 p-4 pb-24">
+	<!-- Verdict -->
+	<section class="border px-4 py-3 {tone.box}" aria-labelledby="dm-verdict" data-testid="dm-verdict">
+		{#if $slaCensus.status === 'loading' && !census}
+			<div class="h-6 w-80 animate-pulse bg-[#151515]" aria-label="Checking data"></div>
+			<div class="mt-2 h-3 w-48 animate-pulse bg-[#111]"></div>
+		{:else if $slaCensus.status === 'unavailable'}
+			<h1 id="dm-verdict" class="text-[15px] font-bold text-[#ccc]">Data freshness can’t be checked on this backend yet</h1>
+			<p class="mt-1 text-[11px] text-[#666]">
+				The health verdict reads the freshness census (<span class="font-mono">GET /api/data/sla</span>), which arrives with the Data Manager backend update.
+				Restart the backend to load it.
+			</p>
+		{:else if $slaCensus.status === 'error' && !census}
+			<h1 id="dm-verdict" class="text-[15px] font-bold text-red-400">Could not check data freshness</h1>
+			<p class="mt-1 text-[11px] text-[#888]">{$slaCensus.error}
+				<button type="button" on:click={() => loadSlaCensus({ force: true })} class="ml-2 text-white underline">Retry</button></p>
+		{:else if verdict && census}
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+				<span class="h-2.5 w-2.5 shrink-0 {tone.dot}" aria-hidden="true"></span>
+				<h1 id="dm-verdict" class="min-w-0 flex-1 text-[17px] font-bold leading-tight {tone.text}" aria-live="polite">{verdict.headline}</h1>
+				{#if liveOrPaperLate && fixable}
+					<button type="button" on:click={fixAll} disabled={fixingAll} class="terminal-button-primary text-[10px] disabled:opacity-50"
+						title="Bring every late live and paper series current now">{fixingAll ? 'Starting…' : 'Fix all late live & paper'}</button>
+				{/if}
 			</div>
-			{#if venueSplit.other > 0}
-				<div class="text-[10px] text-gray-500 mt-0.5">{venueSplit.other} unstamped / other</div>
-			{/if}
-		</div>
-		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3" title="Symbol registry: perps listed on the venue vs the research universe planned for deep history">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Universe</div>
-			{#if universe}
-				<div class="text-sm font-semibold mt-1">{universe.plan.length} planned<span class="text-gray-600"> / </span>{universe.active} listed</div>
-				<div class="text-[10px] text-gray-500 mt-0.5">{universe.delisted} delisted kept</div>
-			{:else}
-				<div class="text-lg font-semibold mt-1 text-gray-600">--</div>
-			{/if}
-		</div>
-		<div class="border border-[#222] rounded bg-[#0a0a0a] p-3">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Latest stored bar</div>
-			<div class="text-sm font-semibold mt-1">{latestDatasetLabel}</div>
-			<div class="text-[10px] text-gray-500 mt-0.5">{availableMarketLabel}</div>
-		</div>
+			<p class="mt-1.5 pl-[26px] text-[11px] text-[#666]">
+				<span title={formatUtc(census.generated_at, { seconds: true })}>checked {formatRelative(census.generated_at, $clock)}</span>
+				· {formatCount(census.total)} series{#each verdict.details as detail} · {detail}{/each}
+			</p>
+		{/if}
 	</section>
 
-	<CoverageMatrix on:view={(e) => (drillSeries = e.detail)} />
-
-	<div>
-		<QualityLeaderboard on:select={(e) => (drillSeries = e.detail)} />
-	</div>
+	{#if census && census.total === 0}
+		<section class="border border-[#333] bg-[#050505] px-5 py-6">
+			<h2 class="text-[13px] font-bold text-white">Your data lake is empty</h2>
+			<p class="mt-1 max-w-xl text-[12px] leading-relaxed text-[#888]">
+				Backtests, the gauntlet and paper trading all read stored market data. Pick a starter set and Forven downloads it in
+				the background; you can keep working while it runs.
+			</p>
+			<a href="{DM}/setup" class="terminal-button-primary mt-4 inline-block text-[10px]">Set up data →</a>
+		</section>
+	{:else if census}
+		<!-- Tier cards -->
+		<section class="grid grid-cols-2 gap-2 md:grid-cols-5" aria-label="Freshness by tier">
+			{#each TIERS as tier (tier)}
+				{@const counts = stateCounts(census, tier)}
+				{@const total = tierTotal(census, tier)}
+				<a href={catalogHref({ tier })} title={TIER_HELP[tier]} data-testid="tier-{tier}"
+					class="group border border-[#222] bg-[#050505] px-3 py-2.5 transition-colors hover:border-[#444]">
+					<div class="flex items-baseline justify-between gap-2">
+						<span class="text-[10px] font-bold uppercase tracking-wider text-[#888] group-hover:text-white">{TIER_LABEL[tier]}</span>
+						<span class="font-mono text-[15px] tabular-nums text-white">{formatCount(total)}</span>
+					</div>
+					<div class="mt-2"><StackedBar {counts} /></div>
+					<div class="mt-1.5 flex flex-wrap gap-x-2 text-[10px] leading-4">
+						{#if total === 0}
+							<span class="text-[#555]">no series</span>
+						{:else}
+							{#each STATES.filter((s) => (counts[s] ?? 0) > 0) as state (state)}
+								<span class={stateTextClass(state)}>{formatCount(counts[state])} {STATE_LABEL[state].toLowerCase()}</span>
+							{/each}
+						{/if}
+					</div>
+				</a>
+			{/each}
+		</section>
 	{/if}
 
-	{#if activeTab === 'maintenance'}
-	<!-- All three download mechanisms live in ONE card, ordered from broadest
-	     (add markets) to most surgical (fill gaps) — each row says plainly when
-	     to use it, so users don't have to decode seed/backfill/catch-up jargon. -->
-	<section class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden">
-		<div class="px-3 py-2 border-b border-[#1a1a1a]">
-			<div class="text-[11px] uppercase tracking-wider text-gray-400">Downloads &amp; Coverage</div>
-			<div class="text-[11px] text-gray-500 mt-0.5">
-				Three ways to get data: track more markets, extend their history further back, or fill small recent gaps.
-			</div>
-		</div>
-
-		<!-- 1 · Track more markets (research universe) -->
-		<div class="p-3 border-b border-[#171717]">
-			<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
-				<div class="text-xs font-semibold text-gray-200">1 · Track more markets</div>
-				<div class="flex gap-2">
-					<button
-						type="button"
-						on:click={handleRefreshRegistry}
-						disabled={universeBusy || universeSeedRunning}
-						title="Re-read the exchange's list of tradable perpetuals"
-						class="px-2 py-1 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
-					>Refresh symbol list</button>
-					{#if universeSeedRunning}
-						<button
-							type="button"
-							on:click={handleCancelSeed}
-							class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
-						>Cancel</button>
-					{:else}
-						<button
-							type="button"
-							on:click={handleSeedUniverse}
-							disabled={universeBusy}
-							class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
-						>Download history</button>
-					{/if}
-				</div>
-			</div>
-			<div class="text-[11px] text-gray-500 mb-2 leading-snug max-w-3xl">
-				The research universe is the set of most-liquid perpetuals the system studies for strategy discovery.
-				Pick a size, then <span class="text-gray-300">Download history</span> to fetch each one's complete past
-				(price, funding, open interest, basis). Nothing downloads until you click; safe to cancel — everything
-				already saved is kept, and the next run resumes where it stopped.
-			</div>
-			{#if universeError}
-				<div class="text-[11px] text-red-300 mb-2">{universeError}</div>
-			{/if}
-			{#if universe}
-				<div class="grid grid-cols-3 gap-2 text-center mb-2 max-w-md">
-					<div class="rounded border border-[#1c1c1c] p-2" title="Perpetuals currently tradable on the exchange">
-						<div class="text-sm font-semibold text-gray-100">{universe.active.toLocaleString()}</div>
-						<div class="text-[10px] text-gray-500 uppercase">on exchange</div>
-					</div>
-					<div class="rounded border border-[#1c1c1c] p-2" title="Symbols selected for the research universe at the current size ({universeMinuteTier} also get 1-minute bars)">
-						<div class="text-sm font-semibold text-gray-100">{universe.plan.length.toLocaleString()}</div>
-						<div class="text-[10px] text-gray-500 uppercase">selected ({universeMinuteTier} w/ 1m)</div>
-					</div>
-					<div class="rounded border border-[#1c1c1c] p-2" title="Delisted symbols whose history is kept, so research isn't biased toward survivors">
-						<div class="text-sm font-semibold text-gray-100">{universe.delisted.toLocaleString()}</div>
-						<div class="text-[10px] text-gray-500 uppercase">delisted kept</div>
-					</div>
-				</div>
-
-				<!-- Universe sizing: presets are premades, the number stays editable;
-				     seeding is always manual, so nothing downloads until the click. -->
-				<div class="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
-					<span class="text-gray-500 uppercase text-[10px] tracking-wider">Size</span>
-					{#each UNIVERSE_PRESETS as preset}
-						<button
-							type="button"
-							disabled={universeConfigBusy || universeSeedRunning}
-							on:click={() => void applyUniverseSize(preset.size)}
-							class="px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universeSize === preset.size
-								? 'border-cyan-600 text-cyan-200'
-								: 'border-[#2b2b2b] text-gray-400 hover:border-cyan-700 hover:text-gray-200'}"
-							title={`${preset.size} most liquid perps`}
-						>{preset.label} ({preset.size})</button>
-					{/each}
-					<input
-						type="number"
-						min="1"
-						max="500"
-						class="w-16 bg-[#111] border border-[#2b2b2b] rounded px-1.5 py-0.5 text-gray-200"
-						value={universeSize}
-						disabled={universeConfigBusy || universeSeedRunning}
-						on:change={(e) => {
-							const v = Number(e.currentTarget.value);
-							if (Number.isFinite(v) && v >= 1 && v <= 500) void applyUniverseSize(Math.round(v));
-						}}
-						title="Custom universe size (1-500 most liquid perps)"
-					/>
-					<span class="text-gray-500" title="Rough full-download footprint at this size (perp history + derivatives)">
-						est. {universeEstimate}
-					</span>
-					<button
-						type="button"
-						disabled={universeConfigBusy || universeSeedRunning}
-						on:click={toggleUniverseEnabled}
-						class="ml-auto px-2 py-0.5 rounded border transition-colors disabled:opacity-50 {universe.config?.enabled === false
-							? 'border-[#2b2b2b] text-gray-500 hover:text-gray-300'
-							: 'border-green-900 text-green-300'}"
-						title="When off, the research universe is not planned or downloaded — only your traded symbols keep collecting."
-					>{universe.config?.enabled === false ? 'Universe OFF' : 'Universe ON'}</button>
-				</div>
-				{#if universe.config?.enabled === false}
-					<div class="text-[11px] text-amber-200/80 mb-2">
-						Research universe disabled — no bulk downloads will be planned. Your traded symbols keep collecting normally.
-					</div>
-				{/if}
-				{#if universeSeedRunning && universe.seed.progress}
-					<div class="text-[11px] text-gray-300 mb-1">
-						Downloading {universe.seed.progress.current_symbol} — {universe.seed.progress.done}/{universe.seed.progress.total}
-					</div>
-					<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
-						<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(universe.seed.progress)}%`}></div>
-					</div>
-				{:else if universe.seed.last_error}
-					<div class="text-[11px] text-red-300">Last run failed: {universe.seed.last_error}</div>
-				{:else if universe.seed.last_result}
-					<div class="text-[11px] text-green-400">
-						Last run: {String((universe.seed.last_result as Record<string, unknown>).series_seeded ?? 0)} series downloaded,
-						{String((universe.seed.last_result as Record<string, unknown>).series_current ?? 0)} already current
-					</div>
-				{/if}
-			{:else if !universeError}
-				<div class="text-xs text-gray-500">Loading…</div>
-			{/if}
-		</div>
-
-		<!-- 2 · Extend history further back (deep-history backfill) -->
-		<div class="p-3 border-b border-[#171717]">
-			<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
-				<div class="text-xs font-semibold text-gray-200">2 · Extend history further back</div>
-				<div class="flex gap-2">
-					{#if bvStatus?.running}
-						<button
-							type="button"
-							on:click={handleCancelBv}
-							class="px-2 py-1 text-[11px] rounded border border-red-900 text-red-300 hover:border-red-500 transition-colors"
-						>{bvStatus?.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
-					{:else}
-						<button
-							type="button"
-							on:click={handleTriggerBv}
-							disabled={bvBusy}
-							class="px-2 py-1 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
-						>Extend all symbols</button>
-					{/if}
-				</div>
-			</div>
-			<div class="text-[11px] text-gray-500 mb-2 leading-snug max-w-3xl">
-				Symbols downloaded mid-history stop at their first stored bar. This walks every stored symbol back to
-				its first day on the exchange (price, funding, open interest, basis) using Binance's public archive.
-				Survives restarts; cancelling takes effect between symbols.
-			</div>
-			{#if bvError}
-				<div class="text-[11px] text-red-300 mb-2">{bvError}</div>
-			{/if}
-			{#if bvStatus?.running && bvStatus.progress}
-				<div class="text-[11px] text-gray-300 mb-1">
-					Extending {bvStatus.progress.current_symbol} — {bvStatus.progress.done}/{bvStatus.progress.total} symbols
-				</div>
-				<div class="h-1.5 rounded bg-[#161616] overflow-hidden">
-					<div class="h-full bg-cyan-600 transition-all" style={`width:${jobPct(bvStatus.progress)}%`}></div>
-				</div>
-			{:else if bvStatus?.running}
-				<div class="text-[11px] text-gray-300">Extending history…</div>
-			{:else if bvStatus?.last_error}
-				<div class="text-[11px] text-red-300">Last run failed: {bvStatus.last_error}</div>
-			{:else if bvStatus?.last_started_at}
-				<div class="text-[11px] text-green-400">Last run: {formatTimestamp(bvStatus.last_started_at)} ✓</div>
-			{/if}
-		</div>
-
-		<!-- 3 · Fill recent gaps (data-engine catch-up) -->
-		<div class="p-3">
-			<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
-				<div class="text-xs font-semibold text-gray-200">3 · Fill recent gaps</div>
-				<button
-					type="button"
-					on:click={handlePlanBackfill}
-					disabled={dataEngineLoading}
-					class="px-2 py-1 text-[11px] rounded border border-[#2b2b2b] hover:border-cyan-500 hover:text-cyan-100 transition-colors disabled:opacity-50"
-				>
-					{dataEngineLoading ? 'Checking…' : 'Check for gaps'}
-				</button>
-			</div>
-			<div class="text-[11px] text-gray-500 mb-2 leading-snug max-w-3xl">
-				Tops up bars missed while the app was off and small holes inside stored series. Runs automatically every
-				~10&nbsp;minutes when the Data Engine is on; checking here forces a pass right now.
-			</div>
-			{#if dataEngineStatus && dataEngineStatus.enabled === false}
-				<div class="text-[11px] text-amber-200/80 mb-2">
-					Automatic catch-up is paused — the Data Engine is off. Manual gap-fills here still work; enable it in
-					<a href="/settings#data" class="underline hover:text-amber-100">Settings → Data</a> for hands-free catch-up.
-				</div>
-			{/if}
-			{#if dataEngineError}
-				<div class="text-[11px] text-red-300 mb-2">{dataEngineError}</div>
-			{/if}
-			{#if dataEnginePlan}
-				{#if dataEnginePlan.task_count === 0}
-					<div class="text-xs text-green-400">Everything is current — no gaps found. ✓</div>
+	<div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
+		<!-- Needs attention -->
+		<section class="min-w-0 border border-[#222] bg-[#050505]" aria-labelledby="dm-attention">
+			<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
+				<h2 id="dm-attention" class="text-[11px] font-bold uppercase tracking-wider text-white">Needs attention</h2>
+				<span class="text-[10px] text-[#555]">most important first · live, then paper, pipeline, research</span>
+				<a href={catalogHref({ state: ['late', 'breach', 'missing'] })} class="ml-auto text-[10px] text-[#888] hover:text-white">All problems →</a>
+			</header>
+			<SectionState state={$slaCensus} what="The attention list" endpoint="GET /api/data/sla" rows={6} on:retry={() => loadSlaCensus({ force: true })}>
+				{#if !groups.length}
+					<p class="px-4 py-6 text-[12px] text-[#777]">Nothing needs attention. Every series is within the lag its tier allows.</p>
 				{:else}
-					<div class="text-xs text-gray-200">
-						{dataEnginePlan.task_count.toLocaleString()} gap{dataEnginePlan.task_count === 1 ? '' : 's'} to fill
-					</div>
-					{#if dataEnginePlan.tasks.length > 0}
-						<div class="mt-2 max-h-24 overflow-auto space-y-1">
-							{#each dataEnginePlan.tasks.slice(0, 6) as task}
-								<div class="font-mono text-[11px] text-gray-400">
-									{task.symbol} {task.timeframe} {task.start_ts} → {task.end_ts}
+					{#each groups as group (group.tier)}
+						<div class="border-b border-[#141414] last:border-b-0" data-testid="attention-{group.tier}">
+							<div class="flex items-center gap-2 bg-[#0a0a0a] px-3 py-1 text-[9px] font-bold uppercase tracking-wider">
+								<span class="text-[#aaa]" title={TIER_HELP[group.tier]}>{TIER_LABEL[group.tier]}</span>
+								<span class="text-[#555]">{plural(group.total, 'series', 'series')}</span>
+								{#if group.hidden > 0}
+									<a href={catalogHref({ tier: group.tier, state: ['late', 'breach', 'missing'] })} class="ml-auto font-normal normal-case tracking-normal text-[#777] hover:text-white">
+										+{formatCount(group.hidden)} more in the catalog →</a>
+								{/if}
+							</div>
+							{#if group.tier === 'idle' && !group.rows.length}
+								<p class="px-3 py-2 text-[11px] text-[#666]">Idle series nothing reads. The collector catches up on them when it has spare capacity.</p>
+							{/if}
+							{#each group.rows as row (idOf(row))}
+								{@const id = idOf(row)}
+								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 hover:bg-white/[0.02]">
+									<StateChip state={row.sla.state} sla={row.sla} />
+									<div class="min-w-0 flex-1">
+										<div class="flex flex-wrap items-baseline gap-x-2">
+											<a href={seriesHref(row)} class="text-[12px] font-bold text-white hover:underline">{row.display_symbol}</a>
+											<span class="font-mono text-[11px] text-[#aaa]">{row.timeframe}</span>
+											<span class="text-[10px] text-[#666]">{streamLabel(row.stream).toLowerCase()}{row.venue !== 'canonical' ? ` · ${row.venue}` : ''}</span>
+										</div>
+										<div class="text-[11px] text-[#888]">{whyText(row)}</div>
+									</div>
+									<div class="flex shrink-0 items-center gap-1.5">
+										{#if row.refreshable === false}
+											<span class="max-w-[280px] text-right text-[10px] leading-tight text-[#777]">{row.refresh_note ?? 'A refresh can’t fetch this series'}</span>
+										{:else if pending[id] === 'queued'}
+											<span class="text-[10px] uppercase tracking-wider text-sky-300">Queued ✓</span>
+										{:else}
+											<button type="button" on:click={() => refreshRow(row)} disabled={pending[id] === 'sending'}
+												class="border border-[#333] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#ddd] hover:border-white hover:text-white disabled:opacity-40">
+												{pending[id] === 'sending' ? 'Sending…' : row.sla.state === 'missing' ? 'Download now' : 'Refresh now'}</button>
+										{/if}
+										<a href={seriesHref(row)} class="px-1 text-[10px] uppercase tracking-wider text-[#777] hover:text-white">Details →</a>
+									</div>
 								</div>
 							{/each}
 						</div>
-						<button
-							type="button"
-							on:click={handleExecuteBackfill}
-							disabled={dataEngineExecuting}
-							class="mt-2 px-3 py-1.5 text-[11px] rounded border border-cyan-700 text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors disabled:opacity-50"
-						>
-							{dataEngineExecuting
-								? 'Filling…'
-								: dataEngineExecResult
-									? `Fill ${dataEngineCandleRemaining} more`
-									: 'Fill gaps now'}
-						</button>
-					{/if}
+					{/each}
 				{/if}
-				{#if dataEngineExecResult}
-					<div class="mt-2 text-[11px] {dataEngineExecResult.failed > 0 ? 'text-yellow-400' : dataEngineExecResult.rows_added > 0 ? 'text-green-400' : 'text-gray-400'}">
-						✓ filled {dataEngineExecResult.executed}, +{dataEngineExecResult.rows_added.toLocaleString()} bars{#if dataEngineExecResult.failed > 0}, {dataEngineExecResult.failed} failed{/if}{#if dataEngineCandleRemaining === 0}, all caught up{/if}
-					</div>
-				{/if}
+			</SectionState>
+			{#if attention.status === 'unavailable' && census}
+				<p class="border-t border-[#141414] px-3 py-1.5 text-[10px] text-[#555]">Live and paper rows come from the catalog, which is not available yet; this list shows the census’s most overdue series only.</p>
 			{/if}
-		</div>
-	</section>
+		</section>
 
-	<StorageMaintenance />
-	{/if}
-
-	{#if drillSeries}
-		<SeriesDrillDown
-			symbol={drillSeries.symbol}
-			timeframe={drillSeries.timeframe}
-			on:close={() => (drillSeries = null)}
-		/>
-	{/if}
-
-	{#if remoteDataConfigured && remoteDataError}
-		<div class="border-2 border-red-500 bg-red-950/60 rounded-lg p-4 md:p-5 shadow-[0_0_0_1px_rgba(239,68,68,0.25)]">
-			<div class="text-red-100 font-extrabold text-sm md:text-base tracking-wider uppercase">Remote Data Source Error</div>
-			<p class="text-red-200 text-sm mt-2">
-				Remote Data Mode is enabled in Settings. Local dataset fallback is disabled until remote connectivity is restored.
-			</p>
-			<div class="mt-3 text-[11px] font-mono text-red-100 break-all">
-				Endpoint: {remoteDataUrl || '--'}
-			</div>
-			<div class="mt-2 text-xs text-red-200 whitespace-pre-wrap">{remoteDataError}</div>
-		</div>
-	{/if}
-
-	{#if error}
-		<div class="border border-red-800 bg-red-900/20 text-red-300 text-xs px-3 py-2 rounded">{error}</div>
-	{/if}
-
-	{#if $dataFetchState.status === 'running'}
-		<div class="flex items-start gap-3 border border-cyan-800 bg-cyan-950/30 text-cyan-100 text-xs px-3 py-2 rounded">
-			<div class="mt-0.5 w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0"></div>
-			<div class="min-w-0">
-				<div class="font-semibold">
-					Downloading{$dataFetchState.label ? ` ${$dataFetchState.label}` : ''}{$dataFetchState.isBulk ? ' (bulk)' : ''}...
-				</div>
-				{#if $dataFetchState.progress}
-					<div class="mt-1 font-mono text-cyan-300 break-words">{$dataFetchState.progress}</div>
-				{/if}
-			</div>
-		</div>
-	{:else if $dataFetchState.status === 'success' && $dataFetchState.message}
-		<div class="flex items-start justify-between gap-3 border {$dataFetchState.warning ? 'border-amber-800 bg-amber-950/30 text-amber-200' : 'border-green-800 bg-green-950/30 text-green-200'} text-xs px-3 py-2 rounded">
-			<div class="min-w-0">
-				<div class="font-mono break-words">{$dataFetchState.message}</div>
-				{#if $dataFetchState.warning}
-					<div class="mt-1 break-words text-amber-300">⚠ {$dataFetchState.warning}</div>
-				{/if}
-			</div>
-			<button
-				type="button"
-				on:click={clearDataFetchTask}
-				class="shrink-0 {$dataFetchState.warning ? 'text-amber-400' : 'text-green-400'} hover:text-white transition-colors"
-				aria-label="Dismiss download status"
-			>
-				Dismiss
-			</button>
-		</div>
-	{:else if ($dataFetchState.status === 'error' || $dataFetchState.status === 'cancelled') && $dataFetchState.message}
-		<div class="flex items-start justify-between gap-3 border border-red-800 bg-red-900/20 text-red-300 text-xs px-3 py-2 rounded">
-			<div class="min-w-0 break-words">
-				{$dataFetchState.status === 'cancelled' ? 'Download cancelled' : 'Download failed'}: {$dataFetchState.message}
-			</div>
-			<button
-				type="button"
-				on:click={clearDataFetchTask}
-				class="shrink-0 text-red-400 hover:text-white transition-colors"
-				aria-label="Dismiss download status"
-			>
-				Dismiss
-			</button>
-		</div>
-	{/if}
-
-	{#if activeTab === 'maintenance'}
-	<!-- Status-only card: the catch-up ACTIONS live in "Fill recent gaps" above,
-	     so this stays a read-only glance at the collection machinery. -->
-	<section class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden">
-		<div class="px-3 py-2 border-b border-[#1a1a1a]">
-			<div class="text-[11px] uppercase tracking-wider text-gray-400">Data Engine Status</div>
-			<div class="text-[11px] text-gray-500 mt-0.5">
-				The machinery behind automatic collection — {dataEngineCoverageCount.toLocaleString()} tracked series • {dataEngineLiveCount.toLocaleString()} live streams • {dataEngineSourceCount.toLocaleString()} sources
-			</div>
-		</div>
-		{#if dataEngineStatus && dataEngineStatus.enabled === false}
-			<div class="px-3 py-2 text-[11px] text-amber-200/90 border-b border-amber-900/40 bg-amber-950/20">
-				The Data Engine is <span class="font-semibold">disabled</span> (this is optional). The standard local data path works without it — enable it in
-				<a href="/settings#data" class="underline hover:text-amber-100">Settings → Data</a> to use catalog streaming and automatic catch-up. The counts here stay at zero until it's on.
-			</div>
-		{/if}
-		<div class="grid grid-cols-1 lg:grid-cols-2">
-			<div class="p-3 border-b lg:border-b-0 lg:border-r border-[#171717]">
-				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Exchange connections</div>
-				{#if dataEngineStatus?.sources?.length}
-					<div class="space-y-2">
-						{#each dataEngineStatus.sources as source}
-							<div class="flex items-center justify-between gap-3 text-xs">
-								<span class="font-mono text-gray-200">{source.source}</span>
-								<span
-									title={`circuit ${source.status}`}
-									class={`rounded border px-2 py-0.5 text-[10px] uppercase ${
-										source.status === 'closed'
-											? 'border-green-800 text-green-300'
-											: source.status === 'open'
-												? 'border-red-800 text-red-300'
-												: 'border-yellow-800 text-yellow-300'
-									}`}>{SOURCE_STATUS_LABEL[source.status] ?? source.status}</span>
+		<div class="min-w-0 space-y-3">
+			<!-- Sources -->
+			<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-sources">
+				<header class="flex items-center border-b border-[#141414] px-3 py-1.5">
+					<h2 id="dm-sources" class="text-[11px] font-bold uppercase tracking-wider text-white">Sources</h2>
+				</header>
+				<SectionState state={venues} what="Source health" endpoint="GET /api/data/venues" on:retry={loadVenues}>
+					{#each venues.data ?? [] as venue (venue.venue)}
+						{@const status = VENUE_STATUS[venue.status] ?? VENUE_STATUS.unknown}
+						<div class="border-b border-[#111] px-3 py-2 last:border-b-0" title={`Affects: ${venue.affects}`}>
+							<div class="flex items-center gap-2">
+								<span class="h-1.5 w-1.5 shrink-0 {status.dot}" aria-hidden="true"></span>
+								<span class="text-[12px] text-white">{venue.label}</span>
+								<span class="text-[9px] font-bold uppercase tracking-wider {status.text}">{status.label}</span>
+								<span class="ml-auto text-[10px] text-[#666]" title={formatUtc(venue.last_success_at)}>
+									{venue.last_success_at ? `ok ${formatRelative(venue.last_success_at, $clock)}` : 'never succeeded'}</span>
 							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="text-xs text-gray-500">No connection history yet.</div>
-				{/if}
-			</div>
-			<div class="p-3">
-				<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Live streams</div>
-				{#if dataEngineStatus?.streams?.length}
-					<div class="space-y-2">
-						{#each dataEngineStatus.streams.slice(0, 5) as stream}
-							<div class="flex items-center justify-between gap-3 text-xs">
-								<span class="font-mono text-gray-200">{stream.symbol} / {stream.stream}</span>
-								<span class="text-gray-400">{stream.buffered_rows.toLocaleString()} buffered</span>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="text-xs text-gray-500">No live streams buffering right now.</div>
-				{/if}
-			</div>
-		</div>
-	</section>
-	{/if}
+							<div class="pl-3.5 text-[10px] text-[#777]">{venue.role}</div>
+							{#if venue.status !== 'healthy'}
+								{#if venue.last_error}<div class="pl-3.5 text-[10px] {status.text}">{venue.last_error}{venue.consecutive_failures > 1 ? ` · ${venue.consecutive_failures} failures in a row` : ''}</div>{/if}
+								<div class="pl-3.5 text-[10px] text-[#888]">Affects: {venue.affects}</div>
+							{/if}
+						</div>
+					{:else}
+						<p class="px-3 py-3 text-[11px] text-[#666]">No sources reported.</p>
+					{/each}
+				</SectionState>
+			</section>
 
-	{#if activeTab === 'overview'}
-	<div class="rounded border border-cyan-900/40 bg-cyan-950/15 px-3 py-2 text-xs text-cyan-100">
-		Stored datasets are available for research; each strategy still needs sufficient history, current inputs and compatible market data.
-		{#if equitySymbolCount > 0}
-			<span class="text-cyan-200"> {equitySymbolCount.toLocaleString()} stock / ETF symbols are ready in the local backtest universe.</span>
-		{/if}
+			<!-- Collection -->
+			<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-collector">
+				<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
+					<h2 id="dm-collector" class="text-[11px] font-bold uppercase tracking-wider text-white">Collection</h2>
+					{#if collector.data}
+						<span class="ml-auto text-[9px] font-bold uppercase tracking-wider {collector.data.enabled ? 'text-emerald-400' : 'text-amber-400'}">{collector.data.enabled ? 'On' : 'Off'}</span>
+					{/if}
+				</header>
+				<SectionState state={collector} what="Collector status" endpoint="GET /api/data/collector" on:retry={loadCollector}>
+					{#if collector.data}
+						{@const c = collector.data}
+						<div class="space-y-1.5 px-3 py-2 text-[11px] text-[#aaa]">
+							{#if c.last_tick}
+								<div>
+									<span class="text-[#666]">Last run</span>
+									<span title={formatUtc(c.last_tick.finished_at, { seconds: true })}>{formatRelative(c.last_tick.finished_at, $clock)}</span>:
+									<span class="font-mono tabular-nums">refreshed {formatCount(c.last_tick.refreshed)} · +{formatCount(c.last_tick.bars_added)} bars{#if c.last_tick.failed} · <span class="text-amber-400">{c.last_tick.failed} failed</span>{/if}{#if c.last_tick.deferred} · {formatCount(c.last_tick.deferred)} left for the next run{/if}</span>
+								</div>
+							{:else}
+								<div class="text-[#666]">Has not run yet.</div>
+							{/if}
+							<div>
+								<span class="text-[#666]">Next run</span>
+								{c.next_tick_at ? formatRelative(c.next_tick_at, $clock, { upcoming: true }) : '—'} · every {formatDuration(c.tick_seconds)} · {formatCount(c.queue_depth)} waiting
+							</div>
+							<div><span class="text-[#666]">Refreshed in the last hour</span> <span class="font-mono tabular-nums">{formatCount(c.refreshed_last_hour)}</span></div>
+							<div title="Refreshes per hour needed to keep every non-frozen series inside its allowance, against what the request budget allows">
+								<div class="flex items-baseline gap-2">
+									<span class="text-[#666]">Demand</span>
+									<span class="font-mono tabular-nums {capacityShort ? 'text-amber-400' : ''}">needs ~{formatCount(c.demand_per_hour)}/h · can do {formatCount(c.capacity_per_hour)}/h</span>
+								</div>
+								<div class="mt-1 h-1 bg-[#141414]">
+									<div class="h-full {capacityShort ? 'bg-amber-400/80' : 'bg-[#666]'}" style="width: {Math.min(100, (c.demand_per_hour / Math.max(1, c.capacity_per_hour)) * 100)}%"></div>
+								</div>
+								{#if capacityShort}<div class="mt-1 text-[10px] text-amber-400">More series need refreshing than the budget allows; some will fall behind. Raise the request budget in Settings → Data.</div>{/if}
+							</div>
+							{#if c.budget.length}
+								<div class="grid grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-0.5 pt-1 text-[10px]">
+									{#each c.budget as b (b.venue)}
+										<span class="text-[#666]">{b.venue}</span>
+										<div class="h-1 bg-[#141414]"><div class="h-full bg-[#555]" style="width: {Math.min(100, (b.used_last_minute / Math.max(1, b.limit_per_minute)) * 100)}%"></div></div>
+										<span class="font-mono tabular-nums text-[#888]">{b.used_last_minute}/{b.limit_per_minute} per min</span>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</SectionState>
+				{#if plan.data}
+					{@const p = plan.data}
+					<div class="border-t border-[#141414] px-3 py-2 text-[11px] text-[#aaa]" data-testid="dm-plan-line">
+						<span class="text-[#666]">Research universe</span>
+						{formatCount(p.present_series)} of {formatCount(p.planned_series)} planned series stored{#if p.planned_series > p.present_series} · <span class="text-amber-400">{formatCount(p.planned_series - p.present_series)} missing</span>{/if}
+						{#if p.seed_job && (p.seed_job.status === 'failed' || p.seed_job.status === 'interrupted')}
+							<div class="mt-1 text-[10px] text-amber-400">
+								The last seed stopped {formatRelative(p.seed_job.finished_at ?? p.seed_job.updated_at, $clock)}: {errorText(p.seed_job.error?.code)}.
+								<button type="button" on:click={resumeSeed} disabled={seeding} class="ml-1 text-white underline disabled:opacity-50">{seeding ? 'Starting…' : 'Resume the seed'}</button>
+							</div>
+						{:else if p.planned_series > p.present_series}
+							<a href="{DM}/coverage" class="ml-1 text-[#888] hover:text-white">See them →</a>
+						{/if}
+					</div>
+				{/if}
+			</section>
+
+			<!-- Storage glance -->
+			<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-storage">
+				<header class="flex items-center border-b border-[#141414] px-3 py-1.5">
+					<h2 id="dm-storage" class="text-[11px] font-bold uppercase tracking-wider text-white">Storage</h2>
+					<a href="{DM}/storage" class="ml-auto text-[10px] text-[#888] hover:text-white">Open →</a>
+				</header>
+				<SectionState state={storage} what="The storage inventory" endpoint="GET /api/data/storage" rows={2} on:retry={loadStorage}>
+					{#if storage.data}
+						{@const s = storage.data}
+						<div class="grid grid-cols-2 gap-x-3 gap-y-1.5 px-3 py-2 text-[11px]">
+							<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Lake</div><div class="font-mono tabular-nums text-white">{formatBytes(s.lake.bytes)}</div><div class="text-[10px] text-[#666]">{formatCount(s.lake.series)} series</div></div>
+							<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Disk free</div>
+								<div class="font-mono tabular-nums {s.disk.free_bytes < s.disk.min_free_gb * 1024 ** 3 ? 'text-red-400' : 'text-white'}">{formatBytes(s.disk.free_bytes)}</div>
+								<div class="text-[10px] text-[#666]">of {formatBytes(s.disk.total_bytes)}</div></div>
+							<div class="col-span-2 text-[11px] text-[#aaa]">
+								{#if reclaimable > 0}
+									<a href="{DM}/storage" class="hover:text-white"><span class="font-mono tabular-nums text-white">{formatBytes(reclaimable)}</span> can be reclaimed (backups, legacy files, old revisions) →</a>
+								{:else}
+									Nothing to reclaim.
+								{/if}
+							</div>
+						</div>
+					{/if}
+				</SectionState>
+			</section>
+
+			<!-- Incidents -->
+			<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-incidents">
+				<header class="flex items-center border-b border-[#141414] px-3 py-1.5">
+					<h2 id="dm-incidents" class="text-[11px] font-bold uppercase tracking-wider text-white">Incidents · 24 h</h2>
+					<a href="{DM}/log" class="ml-auto text-[10px] text-[#888] hover:text-white">Log →</a>
+				</header>
+				<SectionState state={incidents} what="Recent incidents" endpoint="GET /api/data/log" rows={2} on:retry={loadIncidents}>
+					{#each incidents.data ?? [] as entry (entry.id)}
+						<div class="flex gap-2 border-b border-[#111] px-3 py-1.5 text-[11px] last:border-b-0">
+							<span class="w-14 shrink-0 text-[10px] text-[#666]" title={formatUtc(entry.ts, { seconds: true })}>{formatRelative(entry.ts, $clock)}</span>
+							<span class="shrink-0 text-[9px] font-bold uppercase tracking-wider {entry.level === 'error' ? 'text-red-400' : entry.level === 'warning' ? 'text-amber-400' : 'text-[#888]'}">{entry.level === 'warning' ? 'warn' : entry.level}</span>
+							<span class="min-w-0 text-[#bbb]">{entry.message}</span>
+						</div>
+					{:else}
+						<p class="px-3 py-3 text-[11px] text-[#666]">No incidents in the last 24 hours.</p>
+					{/each}
+				</SectionState>
+			</section>
+		</div>
 	</div>
-	{/if}
-
-	{#if activeTab === 'datasets'}
-	{#if !loading && !remoteDataConfigured && datasets.length === 0}
-		<div class="rounded-lg border border-cyan-800 bg-cyan-950/20 p-5 flex flex-col items-center text-center gap-2">
-			<div class="text-base font-semibold text-white">Download your first dataset</div>
-			<p class="text-xs text-gray-400 max-w-md">
-				No local datasets yet. Fetch OHLCV history from ccxt, Binance, Polygon, Yahoo, or a CSV
-				upload to start backtesting and optimizing.
-			</p>
-			<button
-				type="button"
-				on:click={openDownload}
-				class="mt-1 px-4 py-2 text-xs rounded border border-cyan-600 bg-cyan-900/30 text-cyan-100 hover:text-white hover:border-cyan-400 transition-colors"
-			>
-				Download Data
-			</button>
-		</div>
-	{/if}
-
-	<section class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-3">
-		<div class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden min-h-[420px]">
-			<DataPanel
-				{datasets}
-				loading={loading && datasets.length === 0}
-				selectedSymbol={selectedDataset?.symbol ?? null}
-				selectedTimeframe={selectedDataset?.timeframe ?? null}
-				on:select={handlePanelSelect}
-				on:refresh={handlePanelRefresh}
-			/>
-		</div>
-		<div class="border border-[#222] rounded bg-[#0a0a0a] overflow-hidden min-h-[420px]">
-			<DataInspector
-				bind:mode={inspectorMode}
-				{selectedDataset}
-				{quality}
-				{qualityLoading}
-				on:fetched={handleFetched}
-				on:refresh={handlePanelRefresh}
-				on:viewSeries={(e) => (drillSeries = e.detail)}
-			/>
-		</div>
-	</section>
-	{/if}
-
-	{#if activeTab === 'data-log'}
-	<DataActivityLog />
-	{/if}
-
 </div>

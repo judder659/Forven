@@ -90,7 +90,6 @@
 	<header class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#1a1a1a] px-4 py-2">
 		<div class="flex items-baseline gap-2">
 			<span class="text-[11px] font-bold uppercase tracking-[0.2em] text-[#777]">Data</span>
-			<span class="border border-[#262626] px-1 py-px text-[8px] uppercase tracking-wider text-[#555]" title="The new Data Manager, in preview. The classic page stays at /data.">Preview</span>
 		</div>
 		<a href={DM} class="flex min-w-0 max-w-full items-center gap-2 text-[11px] hover:underline decoration-[#333] underline-offset-4" data-testid="dm-status-line"
 			title={census ? `Census generated ${formatUtc(census.generated_at, { seconds: true })}` : undefined}>
@@ -128,7 +127,6 @@
 			<a href={tab.href} aria-current={active ? 'page' : undefined}
 				class="-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors {active ? 'border-white text-white' : 'border-transparent text-[#555] hover:text-[#aaa]'}">{tab.label}</a>
 		{/each}
-		<a href="/data" class="ml-auto self-center whitespace-nowrap px-2 text-[9px] uppercase tracking-wider text-[#444] hover:text-[#888]">Classic data page</a>
 	</nav>
 
 	<div class="min-h-0 flex-1 overflow-y-auto">

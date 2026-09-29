@@ -1,5 +1,5 @@
 /**
- * Data Manager API client for the `/data-next` page: one function per endpoint
+ * Data Manager API client for the `/data` page: one function per endpoint
  * in docs/data-manager-next/CONTRACT.md. Wire shapes live in ./dataManagerTypes.
  *
  * Every call goes through fetchApi (auth headers, base discovery, ApiError with

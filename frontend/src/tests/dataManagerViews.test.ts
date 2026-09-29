@@ -24,7 +24,7 @@ vi.mock('$lib/stores/processTracker', () => ({ addToast: toast }));
 import { ApiError } from '../lib/api/core';
 import * as F from '../lib/api/dataManagerFixtures';
 import type { CatalogRow, SlaState } from '../lib/api/dataManagerTypes';
-import HealthPage from '../routes/data-next/+page.svelte';
+import HealthPage from '../routes/data/+page.svelte';
 import CatalogTable from '../lib/components/data-manager/CatalogTable.svelte';
 import CoverageGrid from '../lib/components/data-manager/CoverageGrid.svelte';
 import JobsDrawer from '../lib/components/data-manager/JobsDrawer.svelte';
@@ -130,7 +130,7 @@ describe('Health view', () => {
 		app = mount(HealthPage, { target });
 		await settle(20);
 		expect(text()).toContain('Your data lake is empty');
-		expect(target.querySelector('a[href="/data-next/setup"]')).not.toBeNull();
+		expect(target.querySelector('a[href="/data/setup"]')).not.toBeNull();
 	});
 });
 

@@ -142,7 +142,7 @@ describe('ReadinessChip', () => {
 		expect(missing?.textContent).toContain('Open interest');
 		expect(missing?.textContent).toContain('Missing');
 		const link = missing?.querySelector('a');
-		expect(link?.getAttribute('href')).toBe('/data-next/get?symbol=BTC-USDT&timeframe=1h&venue=canonical&history=730d&streams=oi');
+		expect(link?.getAttribute('href')).toBe('/data/get?symbol=BTC-USDT&timeframe=1h&venue=canonical&history=730d&streams=oi');
 		expect(link?.textContent).toContain('Download open interest for BTC-USDT');
 	});
 

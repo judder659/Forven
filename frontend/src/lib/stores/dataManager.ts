@@ -1,5 +1,5 @@
 /**
- * Shared state for the Data Manager page (`/data-next`): the jobs summary that
+ * Shared state for the Data Manager page (`/data`): the jobs summary that
  * drives the header indicator and the Jobs drawer (polled fast while jobs run,
  * slowly otherwise, paused while the tab is hidden), the SLA census cache the
  * header, Health view and /data nav badge share, the "work landed" signal views

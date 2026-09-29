@@ -1,5 +1,5 @@
 /**
- * Wire types for the Data Manager API (the `/data-next` page).
+ * Wire types for the Data Manager API (the `/data` page).
  *
  * THIS FILE IS THE CONTRACT. Backend routes in forven/routers/data_{acquire,sla,
  * ops,catalog,readiness}.py return exactly these shapes; the UI codes against

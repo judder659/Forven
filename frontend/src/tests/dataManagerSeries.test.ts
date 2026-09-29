@@ -61,17 +61,17 @@ describe('series chart data', () => {
 
 describe('links', () => {
 	it('addresses series by file-system symbol with non-default stream and venue only', () => {
-		expect(seriesHref({ symbol: 'BTC-USDT', timeframe: '1h' })).toBe('/data-next/series/BTC-USDT/1h');
-		expect(seriesHref({ symbol: 'BTC-USDT', timeframe: '4h', stream: 'ohlcv', venue: 'hyperliquid:perp' })).toBe('/data-next/series/BTC-USDT/4h?venue=hyperliquid%3Aperp');
-		expect(seriesHref({ symbol: 'ETH-USDT', timeframe: '8h', stream: 'funding', venue: 'canonical' })).toBe('/data-next/series/ETH-USDT/8h?stream=funding');
-		expect(catalogHref({ tier: ['live', 'paper'], q: 'btc' })).toBe('/data-next/catalog?tier=live&tier=paper&q=btc');
+		expect(seriesHref({ symbol: 'BTC-USDT', timeframe: '1h' })).toBe('/data/series/BTC-USDT/1h');
+		expect(seriesHref({ symbol: 'BTC-USDT', timeframe: '4h', stream: 'ohlcv', venue: 'hyperliquid:perp' })).toBe('/data/series/BTC-USDT/4h?venue=hyperliquid%3Aperp');
+		expect(seriesHref({ symbol: 'ETH-USDT', timeframe: '8h', stream: 'funding', venue: 'canonical' })).toBe('/data/series/ETH-USDT/8h?stream=funding');
+		expect(catalogHref({ tier: ['live', 'paper'], q: 'btc' })).toBe('/data/catalog?tier=live&tier=paper&q=btc');
 	});
 
 	it('sends a search result to its best stored series, or to Get data', () => {
 		const stored = (timeframe: string, venue = 'canonical', stream = 'ohlcv' as const) => ({ timeframe, venue, stream, rows: 10, last_ts: null });
-		expect(candidateHref({ symbol: 'BTC-USDT', stored: [stored('5m'), stored('1h'), stored('1h', 'hyperliquid:perp')] })).toBe('/data-next/series/BTC-USDT/1h');
-		expect(candidateHref({ symbol: 'ETH-USDT', stored: [stored('4h', 'okx:perp')] })).toBe('/data-next/series/ETH-USDT/4h?venue=okx%3Aperp');
-		expect(candidateHref({ symbol: 'QNT-USDT', stored: [] })).toBe('/data-next/get?symbol=QNT-USDT');
+		expect(candidateHref({ symbol: 'BTC-USDT', stored: [stored('5m'), stored('1h'), stored('1h', 'hyperliquid:perp')] })).toBe('/data/series/BTC-USDT/1h');
+		expect(candidateHref({ symbol: 'ETH-USDT', stored: [stored('4h', 'okx:perp')] })).toBe('/data/series/ETH-USDT/4h?venue=okx%3Aperp');
+		expect(candidateHref({ symbol: 'QNT-USDT', stored: [] })).toBe('/data/get?symbol=QNT-USDT');
 	});
 
 	it('knows bar widths', () => {
