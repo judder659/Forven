@@ -137,7 +137,15 @@
 	import { bookStats, buildLadder, paperEquityPath } from '$lib/utils/strategyContainer/ladder';
 	import { buildRail, fmtEtaWindow, paperGateEta, stageEntries } from '$lib/utils/strategyContainer/lifecycle';
 	import { buildFindings, summarizeVerdict } from '$lib/utils/strategyContainer/verdict';
-	import { fmtNum, fmtUsd, toNumber } from '$lib/utils/strategyContainer/format';
+	import { fmtDateUtc, fmtNum, fmtUsd, humanizeStrategyType, toNumber } from '$lib/utils/strategyContainer/format';
+	// The container's theme type: IBM Plex, bundled so the page renders the same offline.
+	import '@fontsource/ibm-plex-sans/latin-400.css';
+	import '@fontsource/ibm-plex-sans/latin-500.css';
+	import '@fontsource/ibm-plex-sans/latin-600.css';
+	import '@fontsource/ibm-plex-sans-condensed/latin-500.css';
+	import '@fontsource/ibm-plex-sans-condensed/latin-600.css';
+	import '@fontsource/ibm-plex-mono/latin-400.css';
+	import '@fontsource/ibm-plex-mono/latin-500.css';
 
 	let showImportDialog = false;
 
@@ -735,6 +743,38 @@
 		if (d.time_stop_bars) rows.push(['Time stop', `${d.time_stop_bars} bars`]);
 		return rows;
 	})();
+
+	// ── Header ─────────────────────────────────────────────────────────────────────
+	$: headerTitle = container
+		? container.strategy.display_name || humanizeStrategyType(String(container.configuration.type ?? '')) || container.strategy.name
+		: strategyId;
+	$: headerTradeMode = (() => {
+		const mode = String(drivingParams.trade_mode ?? '').trim().toLowerCase();
+		return mode === 'both' ? 'Long + short' : mode === 'long_only' ? 'Long only' : mode === 'short_only' ? 'Short only' : '';
+	})();
+	$: headerFacts = container
+		? [
+				{ value: String(container.configuration.symbol ?? container.strategy.symbol ?? '—'), label: '', title: 'Configured market' },
+				{ value: String(container.configuration.timeframe ?? container.strategy.timeframe ?? '—'), label: 'timeframe', title: 'Configured timeframe' },
+				...(headerTradeMode ? [{ value: headerTradeMode, label: '', title: 'Trade mode' }] : []),
+				{ value: String(container.configuration.owner ?? container.strategy.owner ?? '—'), label: 'owner', title: 'Owner' },
+				{ value: fmtDateUtc(container.strategy.created_at), label: 'created', title: 'Created' },
+			]
+		: [];
+	$: tabList = [
+		{ key: 'summary', label: 'Summary', count: null },
+		{ key: 'performance', label: 'Performance', count: null },
+		{ key: 'robustness', label: 'Robustness', count: null },
+		{ key: 'runs', label: 'Runs', count: backtestHistoryRaw.length + optimizationHistory.length },
+		{ key: 'execution', label: 'Paper & live', count: (paperBook?.count ?? 0) + (liveBook?.count ?? 0) },
+		{ key: 'parameters', label: 'Parameters', count: null },
+		{ key: 'activity', label: 'Activity', count: container?.events?.length ?? 0 },
+	] as Array<{ key: TabKey; label: string; count: number | null }>;
+
+	// The header's run buttons open the forms; nothing runs until the form is submitted.
+	async function openNewBacktest(): Promise<void> {
+		await navigateTo('runs', 'runs-new-backtest');
+	}
 
 	async function editParametersOnRuns(): Promise<void> {
 		activeTab = 'runs';
@@ -4703,1067 +4743,976 @@
 </script>
 
 <svelte:head>
-	<title>{container?.strategy.display_name || container?.strategy.name || strategyId} · Lab</title>
+	<title>{headerTitle || strategyId} · Lab</title>
 </svelte:head>
 
-<div class="h-full flex flex-col overflow-hidden">
-	<div class="flex items-center gap-3 border-b border-[#222] bg-[#0b0b0b] px-4 py-2">
-		<button
-			type="button"
-			class="text-xs text-[#555] transition-colors hover:text-white"
-			on:click={goBack}
-		>
-			Back
-		</button>
-		{#if forgeNav}
-			<span class="text-gray-700">|</span>
-			<div class="flex items-center gap-1" data-testid="forge-nav">
-				<button
-					type="button"
-					data-testid="forge-nav-prev"
-					class="border border-[#2b2b2b] bg-black px-2 py-0.5 text-xs text-[#888] transition hover:text-white disabled:cursor-default disabled:opacity-30 disabled:hover:text-[#888]"
-					disabled={!forgeNav.prev}
-					title={forgeNav.prev ? `Previous: ${forgeNav.prev.label || forgeNav.prev.id}` : 'First container in the list'}
-					aria-label="Previous strategy container"
-					on:click={() => goToNeighbor(forgeNav?.prev ?? null)}
-				>
-					‹
-				</button>
-				<span class="font-mono text-[10px] text-[#555]" title="Position in the Forge list you came from">
-					{forgeNav.index + 1}/{forgeNav.total}
-				</span>
-				<button
-					type="button"
-					data-testid="forge-nav-next"
-					class="border border-[#2b2b2b] bg-black px-2 py-0.5 text-xs text-[#888] transition hover:text-white disabled:cursor-default disabled:opacity-30 disabled:hover:text-[#888]"
-					disabled={!forgeNav.next}
-					title={forgeNav.next ? `Next: ${forgeNav.next.label || forgeNav.next.id}` : 'Last container in the list'}
-					aria-label="Next strategy container"
-					on:click={() => goToNeighbor(forgeNav?.next ?? null)}
-				>
-					›
-				</button>
-			</div>
-		{/if}
-		<span class="text-gray-700">|</span>
-		{#if container}
-			{#if editingName}
-				<input
-					use:focusAndSelect
-					class="border border-[#333] bg-black px-2 py-0.5 font-mono text-[11px] text-white focus:border-white focus:outline-none disabled:opacity-50"
-					style="min-width: 220px"
-					maxlength="140"
-					bind:value={nameDraft}
-					placeholder={container.strategy.name}
-					disabled={savingName}
-					on:keydown={onNameKeydown}
-					aria-label="Display name"
-				/>
-				<button
-					type="button"
-					class="border border-emerald-700/60 bg-emerald-950/30 px-2 py-0.5 text-[11px] text-emerald-200 transition hover:bg-emerald-900/40 disabled:opacity-50"
-					title="Save display name (Enter)"
-					disabled={savingName}
-					on:click={saveName}
-				>
-					{savingName ? '…' : 'Save'}
-				</button>
-				<button
-					type="button"
-					class="border border-[#2b2b2b] px-2 py-0.5 text-[11px] text-[#888] transition hover:text-white disabled:opacity-50"
-					title="Cancel (Esc)"
-					disabled={savingName}
-					on:click={cancelEditName}
-				>
-					Cancel
-				</button>
-			{:else}
-				<StrategyLink strategyId={container.strategy.id} label={container.strategy.display_name || container.strategy.name} returnTo={returnTo} />
-				<button
-					type="button"
-					data-testid="edit-display-name-button"
-					class="text-[#555] transition-colors hover:text-white"
-					title="Edit display name"
-					aria-label="Edit display name"
-					on:click={startEditName}
-				>
-					<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M12 20h9" />
-						<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-					</svg>
-				</button>
-				{#if container.strategy.display_name}
-					<span class="font-mono text-[10px] text-[#555]" title="Canonical name">({container.strategy.name})</span>
+<div class="sc-theme flex h-full flex-col overflow-hidden bg-sc-bg font-plex text-[13px] leading-normal text-sc-ink">
+	<header class="shrink-0 border-b border-sc-line bg-sc-bg">
+		<div class={`mx-auto grid max-w-[1480px] gap-3.5 px-5 pt-3.5 ${container && !loading && !error ? '' : 'pb-3.5'}`}>
+			<div class="flex flex-wrap items-center gap-2 text-[12px] text-sc-ink3">
+				<button type="button" class="transition-colors hover:text-sc-ink" on:click={goBack}>‹ Back</button>
+				<span class="text-sc-ink4">·</span>
+				<span>The Forge</span>
+				<span class="text-sc-ink4">/</span>
+				{#if container}
+					<span>{lifecycleStageLabel(currentLifecycleStage)}</span>
+					<span class="text-sc-ink4">/</span>
+					<span class="font-plex-mono">{container.strategy.display_id || container.strategy.id}</span>
+				{:else}
+					<span class="font-plex-mono">{strategyId}</span>
 				{/if}
-			{/if}
-			{#if container.strategy.hypothesis_id}
-				<span class="text-gray-700">|</span>
-				<IdeaPanel
-					ideaId={container.strategy.hypothesis_id}
-					label={container.strategy.hypothesis_display_id || container.strategy.hypothesis_id}
-					strategyId={container.strategy.id}
-				/>
-			{/if}
-			<span class="text-gray-700">•</span>
-			<StageControl
-				bind:this={stageControl}
-				strategyId={container.strategy.id}
-				currentStage={currentLifecycleStage}
-				pipelineStages={PIPELINE_STAGES}
-				on:changed={() => void handleStageChanged()}
-			/>
-			<button
-				type="button"
-				data-testid="active-driver-chip"
-				class={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] transition ${
-					pinnedBacktestId
-						? 'border-emerald-600/60 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
-						: 'border-[#2b2b2b] bg-black text-[#888] hover:text-gray-200'
-				}`}
-				title={pinnedBacktestId
-					? `Gauntlet run ${pinnedBacktestId} is pinned — its params and metrics drive paper/live execution. Click to view.`
-					: 'No run is pinned — the manually-saved container defaults drive paper/live execution. Click to view the Gauntlet history.'}
-				on:click={() => (activeTab = 'runs')}
-			>
-				<span class={`h-1.5 w-1.5 rounded-full ${pinnedBacktestId ? 'bg-emerald-400' : 'bg-gray-500'}`}></span>
-				<span class="uppercase tracking-[0.12em]">Driver</span>
-				<span class="font-mono normal-case tracking-normal">{pinnedBacktestId || 'Container defaults'}</span>
-			</button>
-			{#if container.strategy.parent_strategy_id}
-				<span class="text-gray-700">•</span>
-				<a
-					href={`/lab/strategy/${encodeURIComponent(container.strategy.parent_strategy_id)}`}
-					class="text-[10px] uppercase tracking-widest text-[#888] transition-colors hover:text-white"
-					title={`Iterated from ${container.strategy.parent_strategy_id}`}
-				>
-					⮐ Parent {container.strategy.parent_strategy_id}
-				</a>
-			{/if}
-			<span class="ml-auto"></span>
-			<StrategyExportMenu strategyId={container.strategy.id} displayId={container.strategy.display_id || container.strategy.id} name={container.strategy.name} />
-			<button
-				type="button"
-				data-testid="import-strategy-button"
-				class="border border-[#2b2b2b] bg-black px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-[#aaa] transition hover:text-white"
-				title="Import a strategy export as a new quick_screen container"
-				on:click={() => (showImportDialog = true)}
-			>
-				⤒ Import
-			</button>
-			<button
-				type="button"
-				data-testid="export-tradingview-button"
-				class="terminal-button px-3 py-1 text-[10px] tracking-widest"
-				title="Show a Pine v6 strategy for TradingView verification"
-				on:click={exportToTradingView}
-			>
-				Export to TradingView
-			</button>
-		{:else}
-			<span class="text-xs text-[#888] font-mono">{strategyId}</span>
-		{/if}
-		{#if submitJobId}
-			<span class="ml-auto text-[10px] text-[#555] font-mono">job: {submitJobId}</span>
-		{/if}
-	</div>
-
-	{#if loading}
-		<div class="flex-1 flex items-center justify-center">
-			<div class="text-xs uppercase tracking-widest text-[#555]">Loading container...</div>
-		</div>
-	{:else if error}
-		<div class="flex-1 flex items-center justify-center">
-			<div class="border border-red-900 bg-red-950/20 px-4 py-3 text-sm text-red-300">{error}</div>
-		</div>
-	{:else if container}
-		<div class="border-b border-[#222] bg-[#0a0a0a] px-4">
-			<div role="group" aria-label="Strategy detail sections" class="flex gap-6 text-xs uppercase tracking-wide">
-				{#each [
-					{ key: 'summary', label: 'Summary' },
-					{ key: 'performance', label: 'Performance' },
-					{ key: 'robustness', label: 'Robustness' },
-					{ key: 'runs', label: 'Runs' },
-					{ key: 'execution', label: 'Paper & live' },
-					{ key: 'parameters', label: 'Parameters' },
-					{ key: 'activity', label: 'Activity' },
-				] as tab (tab.key)}
-					<button
-						type="button"
-						data-testid={`strategy-tab-${tab.key}`}
-						aria-pressed={activeTab === tab.key}
-						class="border-b-2 py-2 transition-colors {activeTab === tab.key ? 'border-white text-white' : 'border-transparent text-[#555] hover:text-[#aaa]'}"
-						on:click={() => (activeTab = tab.key as TabKey)}
-					>
-						{tab.label}
-					</button>
-				{/each}
+				{#if forgeNav}
+					<span class="text-sc-ink4">·</span>
+					<div class="flex items-center gap-1.5" data-testid="forge-nav">
+						<button
+							type="button"
+							data-testid="forge-nav-prev"
+							class="h-5 w-[22px] rounded border border-sc-line2 leading-4 text-sc-ink3 transition hover:text-sc-ink disabled:cursor-default disabled:opacity-30 disabled:hover:text-sc-ink3"
+							disabled={!forgeNav.prev}
+							title={forgeNav.prev ? `Previous: ${forgeNav.prev.label || forgeNav.prev.id}` : 'First container in the list'}
+							aria-label="Previous strategy container"
+							on:click={() => goToNeighbor(forgeNav?.prev ?? null)}
+						>‹</button>
+						<span class="font-plex-mono text-[11px]" title="Position in the Forge list you came from">{forgeNav.index + 1} of {forgeNav.total}</span>
+						<button
+							type="button"
+							data-testid="forge-nav-next"
+							class="h-5 w-[22px] rounded border border-sc-line2 leading-4 text-sc-ink3 transition hover:text-sc-ink disabled:cursor-default disabled:opacity-30 disabled:hover:text-sc-ink3"
+							disabled={!forgeNav.next}
+							title={forgeNav.next ? `Next: ${forgeNav.next.label || forgeNav.next.id}` : 'Last container in the list'}
+							aria-label="Next strategy container"
+							on:click={() => goToNeighbor(forgeNav?.next ?? null)}
+						>›</button>
+					</div>
+				{/if}
+				{#if submitJobId}
+					<span class="ml-auto font-plex-mono text-[11px] text-sc-ink3">job {submitJobId}</span>
+				{/if}
 			</div>
-		</div>
 
-		<div class="flex-1 overflow-auto bg-black p-4">
-			{#if submitStatus !== 'idle'}
-				<div class="mb-4 border px-3 py-2 text-xs {submitStatus === 'failed' ? 'border-red-900 bg-red-950/20 text-red-300' : submitStatus === 'completed' ? 'border-emerald-900 bg-emerald-950/20 text-emerald-300' : 'border-[#333] bg-[#050505] text-[#888]'}">
-					<div>{submitMessage}</div>
-					{#if submitStatus === 'running' || submitStatus === 'submitting'}
-						<div class="mt-2 border-t border-current/20 pt-2 text-[11px]">
-							<div class="flex items-center justify-between gap-2">
-								<span class="font-mono uppercase tracking-wide">status: {submitPollingStatus || submitStatus}</span>
-								<span class="font-mono text-[10px] text-[#888]">poll #{submitPollCount}</span>
+			{#if container}
+				<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+					<div class="grid min-w-0 gap-1">
+						{#if editingName}
+							<div class="flex flex-wrap items-center gap-2">
+								<input
+									use:focusAndSelect
+									class="min-w-[280px] rounded-md border border-sc-line2 bg-sc-panel2 px-2.5 py-1 text-[16px] font-semibold text-sc-ink focus:border-sc-ink3 focus:outline-none disabled:opacity-50"
+									maxlength="140"
+									bind:value={nameDraft}
+									placeholder={container.strategy.name}
+									disabled={savingName}
+									on:keydown={onNameKeydown}
+									aria-label="Display name"
+								/>
+								<button
+									type="button"
+									class="rounded-md border border-emerald-700/60 bg-emerald-950/30 px-2.5 py-1 text-[12px] text-emerald-200 transition hover:bg-emerald-900/40 disabled:opacity-50"
+									title="Save display name (Enter)"
+									disabled={savingName}
+									on:click={saveName}
+								>{savingName ? '…' : 'Save'}</button>
+								<button
+									type="button"
+									class="rounded-md border border-sc-line2 px-2.5 py-1 text-[12px] text-sc-ink2 transition hover:text-sc-ink disabled:opacity-50"
+									title="Cancel (Esc)"
+									disabled={savingName}
+									on:click={cancelEditName}
+								>Cancel</button>
 							</div>
-							{#if submitProgress}
-								<div class="mt-1 text-[#aaa]">{submitProgress}</div>
+						{:else}
+							<div class="flex items-center gap-2">
+								<h1 class="m-0 text-[22px] font-semibold leading-tight tracking-[-0.01em] text-sc-ink" data-testid="strategy-title">{headerTitle}</h1>
+								<button
+									type="button"
+									data-testid="edit-display-name-button"
+									class="text-sc-ink4 transition-colors hover:text-sc-ink"
+									title="Edit display name"
+									aria-label="Edit display name"
+									on:click={startEditName}
+								>
+									<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M12 20h9" />
+										<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+									</svg>
+								</button>
+							</div>
+						{/if}
+						<div class="break-all font-plex-mono text-[11px] text-sc-ink3" title="Canonical name">{container.strategy.display_id || container.strategy.id} · {container.strategy.name}</div>
+						<div class="mt-1 flex flex-wrap items-center gap-1.5" data-testid="overview-identity-strip">
+							{#each headerFacts as fact (fact.title)}
+								<span class="rounded-full border border-sc-line2 px-2.5 text-[12px] text-sc-ink2" title={fact.title}><b class="font-medium text-sc-ink">{fact.value}</b>{fact.label ? ` ${fact.label}` : ''}</span>
+							{/each}
+							{#if container.strategy.hypothesis_id}
+								<IdeaPanel
+									ideaId={container.strategy.hypothesis_id}
+									label={container.strategy.hypothesis_display_id || container.strategy.hypothesis_id}
+									strategyId={container.strategy.id}
+								/>
 							{/if}
-							{#if submitProgressPct !== null}
-								<div class="mt-2 h-1.5 w-full bg-[#111]">
-									<div
-										class="h-1.5 bg-white transition-all"
-										style={`width: ${submitProgressPct}%`}
-									></div>
-								</div>
+							{#if container.strategy.parent_strategy_id}
+								<a
+									href={`/lab/strategy/${encodeURIComponent(container.strategy.parent_strategy_id)}`}
+									class="rounded-full border border-sc-line2 px-2.5 text-[12px] text-sc-ink2 transition-colors hover:text-sc-ink"
+									title={`Iterated from ${container.strategy.parent_strategy_id}`}
+								>Parent <b class="font-medium text-sc-ink">{container.strategy.parent_strategy_id}</b></a>
 							{/if}
 						</div>
-					{/if}
-				</div>
-			{/if}
-
-			{#if activeTab === 'summary'}
-				<div class="grid gap-3" data-testid="summary-tab">
-					<div class="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="overview-identity-strip">
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Strategy type">{String(container.configuration.type ?? '-')}</span>
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Owner">{String(container.configuration.owner ?? '-')}</span>
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-white" title="Configured market">{String(container.configuration.symbol ?? '-')}</span>
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-white" title="Configured timeframe">{String(container.configuration.timeframe ?? '-')}</span>
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#888]" title="Created">{fmtDate(container.strategy.created_at)}</span>
-						<span class="ml-auto"></span>
+					</div>
+					<div class="flex flex-wrap items-center gap-2">
+						<button
+							type="button"
+							data-testid="header-run-backtest"
+							class="rounded-md border border-sc-ink bg-sc-ink px-3 py-1.5 text-[12px] font-medium text-[#0b0d10] transition hover:bg-white"
+							title="Open the backtest form on Runs"
+							on:click={() => void openNewBacktest()}
+						>Run backtest</button>
+						<button
+							type="button"
+							data-testid="header-run-robustness"
+							class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] font-medium text-sc-ink transition hover:border-sc-ink4"
+							title="Open the robustness runners"
+							on:click={() => void navigateTo('robustness', 'rb-run')}
+						>Run robustness suite</button>
+						<StageControl
+							bind:this={stageControl}
+							strategyId={container.strategy.id}
+							currentStage={currentLifecycleStage}
+							pipelineStages={PIPELINE_STAGES}
+							on:changed={() => void handleStageChanged()}
+						/>
+						<button
+							type="button"
+							data-testid="active-driver-chip"
+							class={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition ${
+								pinnedBacktestId
+									? 'border-emerald-600/60 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
+									: 'border-sc-line2 text-sc-ink2 hover:text-sc-ink'
+							}`}
+							title={pinnedBacktestId
+								? `Gauntlet run ${pinnedBacktestId} is pinned — its params and metrics drive paper/live execution. Click to view.`
+								: 'No run is pinned — the manually-saved container defaults drive paper/live execution. Click to view the Gauntlet history.'}
+							on:click={() => (activeTab = 'runs')}
+						>
+							<span class={`h-1.5 w-1.5 rounded-full ${pinnedBacktestId ? 'bg-emerald-400' : 'bg-sc-ink4'}`}></span>
+							<span>Driver</span>
+							<span class="font-plex-mono text-[11px]">{pinnedBacktestId || 'container defaults'}</span>
+						</button>
 						<button
 							type="button"
 							data-testid="deepdive-toggle-overview"
-							class="border border-[#333] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-white transition hover:bg-[#111]"
+							class="rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition hover:text-sc-ink"
 							on:click={launchDeepdive}
+						>Deepdive</button>
+						<StrategyExportMenu strategyId={container.strategy.id} displayId={container.strategy.display_id || container.strategy.id} name={container.strategy.name} />
+						<button
+							type="button"
+							data-testid="import-strategy-button"
+							class="rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition hover:text-sc-ink"
+							title="Import a strategy export as a new quick_screen container"
+							on:click={() => (showImportDialog = true)}
+						>Import</button>
+						<button
+							type="button"
+							data-testid="export-tradingview-button"
+							class="rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition hover:text-sc-ink"
+							title="Show a Pine v6 strategy for TradingView verification"
+							on:click={exportToTradingView}
+						>TradingView</button>
+					</div>
+				</div>
+			{/if}
+
+			{#if container && !loading && !error}
+				<LifecycleRail stages={railStages} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
+				<nav class="-mb-px flex gap-0.5 overflow-x-auto" role="group" aria-label="Strategy detail sections">
+					{#each tabList as tab (tab.key)}
+						<button
+							type="button"
+							data-testid={`strategy-tab-${tab.key}`}
+							aria-pressed={activeTab === tab.key}
+							class={`whitespace-nowrap border-b-2 px-3 pb-[11px] pt-2.5 text-[13px] transition-colors ${activeTab === tab.key ? 'border-sc-ink text-sc-ink' : 'border-transparent text-sc-ink3 hover:text-sc-ink2'}`}
+							on:click={() => (activeTab = tab.key)}
 						>
-							🔍 Deepdive
+							{tab.label}{#if tab.count !== null}<span class="ml-1 font-plex-mono text-[11px] text-sc-ink4">{tab.count}</span>{/if}
 						</button>
+					{/each}
+				</nav>
+			{/if}
+		</div>
+	</header>
+
+	{#if loading}
+		<div class="flex-1 flex items-center justify-center">
+			<div class="text-[12px] text-sc-ink3">Loading the strategy…</div>
+		</div>
+	{:else if error}
+		<div class="flex-1 flex items-center justify-center">
+			<div class="rounded-md border border-red-900 bg-red-950/20 px-4 py-3 text-sm text-red-300">{error}</div>
+		</div>
+	{:else if container}
+		<div class="flex-1 overflow-auto">
+			<div class="mx-auto max-w-[1480px] px-5 pb-12 pt-[18px]">
+				{#if submitStatus !== 'idle'}
+					<div class="mb-4 rounded-md border px-3 py-2 text-[12px] {submitStatus === 'failed' ? 'border-red-900 bg-red-950/20 text-red-300' : submitStatus === 'completed' ? 'border-emerald-900 bg-emerald-950/20 text-emerald-300' : 'border-[#333] bg-[#050505] text-[#888]'}">
+						<div>{submitMessage}</div>
+						{#if submitStatus === 'running' || submitStatus === 'submitting'}
+							<div class="mt-2 border-t border-current/20 pt-2 text-[11px]">
+								<div class="flex items-center justify-between gap-2">
+									<span class="font-mono uppercase tracking-wide">status: {submitPollingStatus || submitStatus}</span>
+									<span class="font-mono text-[10px] text-[#888]">poll #{submitPollCount}</span>
+								</div>
+								{#if submitProgress}
+									<div class="mt-1 text-[#aaa]">{submitProgress}</div>
+								{/if}
+								{#if submitProgressPct !== null}
+									<div class="mt-2 h-1.5 w-full bg-[#111]">
+										<div
+											class="h-1.5 bg-white transition-all"
+											style={`width: ${submitProgressPct}%`}
+										></div>
+									</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
-					<LifecycleRail stages={railStages} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
-					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
-						<VerdictCard
-							verdict={evidencePending ? { tone: 'idle', label: 'Reading the evidence', headline: 'Loading the run, the robustness results and the held-back test…' } : verdictSummary}
-							findings={evidencePending ? [] : findings}
-							loading={evidencePending}
-							on:navigate={(event) => void navigateTo(event.detail.tab, event.detail.anchor)}
-						/>
-						<StandingCard
-							composite={gauntletComposite}
-							floor={gauntletFloor}
-							testsPassed={gauntletPassed}
-							testsTotal={gauntletTotal}
-							testsStale={gauntletStale}
-							{heldBack}
-							dsr={dsrValue}
-							{dsrTrials}
-							paper={paperProgress}
-							{tradesPerWeek}
-						/>
-					</div>
-					<EvidenceLadder columns={ladderColumns} runLabel={referenceRunId ? `run ${referenceRunId}` : ''} />
-					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
-						<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="summary-growth">
-							<div class="flex flex-wrap items-baseline justify-between gap-2">
+				{/if}
+
+				{#if activeTab === 'summary'}
+					<div class="grid gap-3" data-testid="summary-tab">
+						<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+							<VerdictCard
+								verdict={evidencePending ? { tone: 'idle', label: 'Reading the evidence', headline: 'Loading the run, the robustness results and the held-back test…' } : verdictSummary}
+								findings={evidencePending ? [] : findings}
+								loading={evidencePending}
+								on:navigate={(event) => void navigateTo(event.detail.tab, event.detail.anchor)}
+							/>
+							<StandingCard
+								composite={gauntletComposite}
+								floor={gauntletFloor}
+								testsPassed={gauntletPassed}
+								testsTotal={gauntletTotal}
+								testsStale={gauntletStale}
+								{heldBack}
+								dsr={dsrValue}
+								{dsrTrials}
+								paper={paperProgress}
+								{tradesPerWeek}
+							/>
+						</div>
+						<EvidenceLadder columns={ladderColumns} runLabel={referenceRunId ? `run ${referenceRunId}` : ''} />
+						<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="summary-growth">
+								<div class="flex flex-wrap items-baseline justify-between gap-2">
+									<div>
+										<h2 class="m-0 text-[13px] font-semibold text-white">Growth of {fmtUsd(refCapital, 0, false)}</h2>
+										<div class="text-[11px] text-[#666]">
+											{#if activeRunItem}
+												Run {referenceRunId} · {pinnedBacktestId && pinnedBacktestId === referenceRunId ? 'pinned, drives paper and live' : 'newest; the saved defaults drive execution'}{refUsesFull ? ' · the shaded span is in-sample' : ''}
+											{:else}
+												No runs yet.
+											{/if}
+										</div>
+									</div>
+									{#if activeRunItem}
+										<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="summary-open-report" on:click={() => { performanceRunId = ''; activeTab = 'performance'; }}>Full report →</button>
+									{/if}
+								</div>
+								{#if !activeRunItem}
+									<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No Gauntlet runs yet — start one from Runs to see how this strategy performs.</div>
+								{:else if overviewResultLoading && !overviewResult}
+									<div class="border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading equity curve…</div>
+								{:else if overviewResultError}
+									<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{overviewResultError}</div>
+								{:else}
+									<GrowthChart strategy={refCurve} benchmark={refBenchmark} oosStart={refOosStart} />
+								{/if}
+								<EvidenceTimeline segments={timelineSegments} folds={walkForwardEvidence?.folds ?? []} />
+							</article>
+							<RobustnessScorecard rows={stressRows} loading={evidenceLoading} on:open={(event) => void openStressRow(event.detail.key)} />
+						</div>
+						<AttributionCard sides={refSides} regimes={refRegimes} exits={refExits} trades={refTrades} start={refSlices.outOfSample?.start ?? null} end={refSlices.outOfSample?.end ?? null} />
+						<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="forward-cone">
 								<div>
-									<h2 class="m-0 text-[13px] font-semibold text-white">Growth of {fmtUsd(refCapital, 0, false)}</h2>
-									<div class="text-[11px] text-[#666]">
-										{#if activeRunItem}
-											Run {referenceRunId} · {pinnedBacktestId && pinnedBacktestId === referenceRunId ? 'pinned, drives paper and live' : 'newest; the saved defaults drive execution'}{refUsesFull ? ' · the shaded span is in-sample' : ''}
+									<h2 class="m-0 text-[13px] font-semibold text-white">What paper should look like</h2>
+									<div class="text-[11px] text-[#666]">{mcFan.length ? `The next ${mcFan[mcFan.length - 1][0]} trades, resampled from the walk-forward's out-of-sample trades. Paper is drawn on top as it trades.` : "The walk-forward's out-of-sample trades, resampled, set the range paper should land in."}</div>
+								</div>
+								<ForwardCone
+				fan={mcFan}
+				paper={paperEquity}
+				emptyText={mcPayload ? 'This Monte Carlo run predates stored resampled paths; rerun it to draw the cone.' : 'Run the Monte Carlo test to see where paper should land.'}
+			/>
+								{#if mcFan.length && refOosRate}
+									<p class="m-0 text-[11px] leading-relaxed text-[#777]">If paper sits under the 5th percentile after 20 or more trades, the backtest edge is probably not showing up forward. At {fmtNum(refOosRate, 1)} trades a month, 20 trades takes about {Math.round((20 / refOosRate) * 30.4)} days.</p>
+								{/if}
+							</article>
+							<GateCard title={gateTitle} eta={gateEta} needDays={paperNeedDays} needTrades={paperNeedTrades}>
+							{#if liveRampInfo}
+								<div class="border border-emerald-900/40 bg-[#090909] p-3" data-testid="overview-live-ramp">
+									<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Live Status</div>
+									<div class="mt-2 grid grid-cols-3 gap-2 text-xs">
+										<div class="border border-[#1f1f1f] bg-black px-2.5 py-2">
+											<div class="text-[9px] uppercase tracking-wide text-[#555]">Days Live</div>
+											<div class="mt-1 font-mono text-sm text-emerald-300">{liveRampInfo.daysLive}</div>
+										</div>
+										<div class="border border-[#1f1f1f] bg-black px-2.5 py-2">
+											<div class="text-[9px] uppercase tracking-wide text-[#555]">Week</div>
+											<div class="mt-1 font-mono text-sm text-[#aaa]">{liveRampInfo.week}</div>
+										</div>
+										<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="From the configured allocation schedule. Advisory only — the live sizer does not currently enforce this ramp.">
+											<div class="text-[9px] uppercase tracking-wide text-[#555]">Ramp Alloc</div>
+											<div class="mt-1 font-mono text-sm text-[#aaa]">{liveRampInfo.allocationPct !== null ? `${liveRampInfo.allocationPct}%` : '—'}</div>
+										</div>
+									</div>
+									<div class="mt-2 text-[11px] text-[#555]">
+										{#if liveRampInfo.killSwitchPct !== null}
+											Decay kill switch at <span class="text-red-300">{liveRampInfo.killSwitchPct}%</span> drawdown.
+										{/if}
+										The allocation ramp is the configured schedule — advisory, not enforced by the sizer.
+									</div>
+								</div>
+							{/if}
+							{#if currentLifecycleStage in TERMINAL_STAGES}
+								<div class="mt-2 border border-red-900/40 bg-red-950/15 px-2 py-1.5 text-xs text-red-200">
+									<span class="font-medium">{lifecycleStageLabel(currentLifecycleStage)}.</span>
+									<span class="ml-1 text-red-300/80">{TERMINAL_STAGES[currentLifecycleStage]}</span>
+								</div>
+								<div class="mt-2">
+									<button
+										type="button"
+										data-testid="overview-revive-button"
+										on:click={() => openStageChange('quick_screen')}
+										class="border border-emerald-700/50 bg-emerald-950/30 px-3 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-900/40"
+									>Revive to Quick Screen</button>
+								</div>
+							{:else}
+								<div class="mt-2 flex gap-1.5">
+									{#each currentStageDescriptors as stage}
+										<button
+											on:click={() => { selectedReadinessStage = stage.key === currentLifecycleStage ? null : stage.key; }}
+											title={stage.tooltip ?? ''}
+											class={`flex-1 border px-2 py-1.5 text-center cursor-pointer transition-colors ${
+												readinessViewStage === stage.key
+													? 'border-[#333] bg-[#0c0c0c] text-white '
+													: stage.kind === 'current'
+														? 'border-[#333] bg-[#0c0c0c] text-white'
+														: stage.kind === 'past'
+															? 'border-emerald-900/40 bg-emerald-950/10 text-emerald-200'
+															: 'border-[#1f1f1f] bg-[#070707] text-[#555] hover:border-gray-700 hover:text-[#888]'
+											}`}
+										>
+											<div class="text-[10px] uppercase tracking-wide">{stage.label}</div>
+										</button>
+									{/each}
+								</div>
+								<div class="mt-2">
+									<PromotionReadiness
+										{strategyId}
+										stage={readinessViewStage}
+										quickScreenRows={quickScreenRows}
+										on:action={(e) => {
+											const action = e.detail?.action;
+											if (action === 'run_optimization' || action === 'apply_best_params' || action === 'run_confirmation_backtest') activeTab = 'runs';
+											else if (action === 'run_validation_suite' || action === 're_run_validation_suite') activeTab = 'robustness';
+										}}
+									/>
+								</div>
+
+								<div class="mt-2 flex flex-wrap items-center gap-2">
+									{#if nextPipelineStage}
+										<button
+											data-testid="overview-promote-button"
+											on:click={() => openStageChange(nextPipelineStage?.key)}
+											class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors"
+										>Promote to {nextPipelineStage.label}</button>
+									{/if}
+									<button on:click={() => goto(`/bot-factory/editor?strategy=${strategyId}`)} class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors">Deploy as Bot</button>
+									<button
+										data-testid="overview-archive-button"
+										on:click={() => openStageChange('archived')}
+										class="border border-red-900/40 bg-red-950/20 px-3 py-1.5 text-xs text-red-300 hover:bg-red-900/30 transition-colors"
+									>Archive</button>
+								</div>
+							{/if}
+						</GateCard>
+						</div>
+					</div>
+				{/if}
+
+				{#if activeTab === 'runs'}
+					<div>
+						<div>
+							<div class="mb-3 flex justify-end">
+								<button
+									type="button"
+									data-testid="deepdive-toggle-backtests"
+									class="border border-[#333] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-white transition hover:bg-[#111]"
+									on:click={launchDeepdive}
+								>
+									🔍 Deepdive
+								</button>
+							</div>
+					<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3" id="runs-new-backtest">
+						<div class="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+							<div class="grid gap-2 sm:grid-cols-2">
+								<SymbolInput id="container-backtest-symbol" label="Symbol" bind:value={backtestForm.symbol} suggestions={symbolSuggestions} helpText={backtestSymbolHelpText} />
+								<TimeframeSelect id="container-backtest-timeframe" label="Timeframe" bind:value={backtestForm.timeframe} />
+							</div>
+							<DateRangeFieldset
+								idPrefix="container-backtest"
+								title="Window"
+								bind:startDate={backtestForm.start_date}
+								bind:endDate={backtestForm.end_date}
+								timeframe={backtestForm.timeframe}
+								accent="cyan"
+							/>
+							<div class="flex items-end">
+								<button
+									type="button"
+									class="w-full border border-[#333] bg-[#0c0c0c] px-5 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:bg-[#111] disabled:opacity-40 lg:w-auto"
+									on:click={submitContainerBacktest}
+									disabled={isAnyRunInFlight}
+								>{submitStatus === 'submitting' || submitStatus === 'running' ? 'Running…' : 'Run the Gauntlet'}</button>
+							</div>
+						</div>
+						<div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#555]">
+							<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5">{backtestBarEstimateLabel}</span>
+							<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5">{backtestWindowSummary}</span>
+							<span class={` border px-1.5 py-0.5 ${gauntletDraftDirty ? 'border-yellow-900 text-yellow-400' : 'border-[#2b2b2b] text-[#555]'}`}>{gauntletDraftDirty ? 'Draft has changes' : 'Defaults synced'}</span>
+						</div>
+					</div>
+
+					<details class={`mb-3 border bg-[#090909] ${gauntletParamsAreActive ? 'border-emerald-700/60 shadow-[inset_2px_0_0_0_rgba(16,185,129,0.9)]' : 'border-[#1d1d1d]'}`} data-testid="backtest-parameter-panel">
+						<summary class="flex cursor-pointer items-center justify-between px-3 py-2">
+							<div class="flex items-center gap-2 text-[10px] uppercase tracking-wide text-[#555]">
+								<span class={gauntletParamsAreActive ? 'text-emerald-300' : ''}>Gauntlet Parameters</span>
+								<span class={` border px-1.5 py-0.5 text-[10px] normal-case tracking-normal ${gauntletDraftSource === 'run' ? 'border-[#333] text-white' : 'border-[#2b2b2b] text-[#555]'}`}>
+									{gauntletDraftSource === 'run' && gauntletDraftSourceId ? `Run ${gauntletDraftSourceId}` : 'Container defaults'}
+								</span>
+								{#if gauntletParamsAreActive}
+									<span class="rounded-full border border-emerald-600/60 bg-emerald-950/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-200" title="No backtest run is pinned — these manually-saved parameters are the active default driving paper/live.">Active</span>
+								{:else}
+									<span class={` border px-1.5 py-0.5 text-[10px] normal-case tracking-normal ${gauntletDraftDirty ? 'border-yellow-900 text-yellow-400' : 'border-[#2b2b2b] text-[#555]'}`}>{gauntletDraftDirty ? 'Unsaved' : 'Synced'}</span>
+								{/if}
+							</div>
+							<div class="flex items-center gap-1.5">
+								<button type="button" class="border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-[#888] hover:text-white disabled:opacity-40" data-testid="backtest-params-reset" on:click|stopPropagation={resetGauntletDraftToDefaults} disabled={(gauntletDraftSource === 'defaults' && !gauntletDraftDirty) || settingDefaultParams}>Reset to Defaults</button>
+								<button type="button" class="border border-emerald-700 bg-emerald-950/30 px-2 py-0.5 text-[10px] uppercase text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-40" data-testid="backtest-params-save" on:click|stopPropagation={saveParameterDraft} disabled={!gauntletDraftDirty || settingDefaultParams || paramsHasErrors || Boolean(executionDraftError)}>{settingDefaultParams ? 'Saving…' : 'Save'}</button>
+							</div>
+						</summary>
+						<div class="border-t border-[#1a1a1a] p-3" data-testid="backtest-parameter-editor">
+							{#if parameterSaveMessage}
+								<div class="mb-2 border border-emerald-900/40 bg-emerald-950/10 px-2 py-1 text-[11px] text-emerald-200">{parameterSaveMessage}</div>
+							{/if}
+							{#if parameterSaveError}
+								<div class="mb-2 border border-red-900/40 bg-red-950/20 px-2 py-1 text-[11px] text-red-300">{parameterSaveError}</div>
+							{/if}
+							<div class="mb-2 text-[10px] uppercase tracking-[0.2em] text-[#555]">Execution Settings</div>
+							<ExecutionSettingsFields
+								bind:draft={executionDraft}
+								error={executionDraftError}
+								disabled={settingDefaultParams}
+								onSizingModeChange={() => applySizingModeDefaults(executionDraft.sizing_mode)}
+							/>
+							<div class="mt-3 border-t border-[#1a1a1a] pt-3">
+								<div class="mb-2 text-[10px] uppercase tracking-[0.2em] text-[#555]">Strategy Parameters</div>
+								{#if !loading}
+									<div class="mb-2 border border-[#1f1f1f] bg-black p-2">
+										<div class="flex flex-wrap items-end gap-2">
+											<label class="flex min-w-[220px] flex-1 flex-col gap-1 text-[10px] uppercase tracking-wide text-[#555]">
+												<span>Add Param</span>
+												<select
+													class="border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-gray-200 disabled:opacity-40"
+													bind:value={selectedAddParamKey}
+													data-testid="add-param-select"
+													disabled={settingDefaultParams || availableAddParamKeys.length === 0}
+												>
+													<option value="">Select a supported param</option>
+													{#each availableAddParamKeys as key}
+														<option value={key}>{key}</option>
+													{/each}
+												</select>
+											</label>
+											<button
+												type="button"
+												class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-[10px] uppercase tracking-wide text-white transition hover:bg-[#111] disabled:opacity-40"
+												on:click={addSelectedParamToDraft}
+												data-testid="add-param-button"
+												disabled={settingDefaultParams || availableAddParamKeys.length === 0}
+											>
+												Add Param
+											</button>
+										</div>
+										{#if addParamHelperText}
+											<div class="mt-2 text-[11px] text-[#555]">{addParamHelperText}</div>
+										{/if}
+									</div>
+								{/if}
+								<ParameterEditor
+									params={visibleParams(paramsDraft)}
+									bind:hasErrors={paramsHasErrors}
+									saving={settingDefaultParams}
+									on:paramsChange={(event) => (paramsDraft = { ...systemParams(paramsDraft), ...event.detail })}
+								/>
+								{#if Object.keys(systemParams(paramsDraft)).length > 0}
+									<div class="mt-2 text-[11px] text-[#555]" data-testid="gauntlet-system-params-note">
+										Contract fields kept as saved (see Raw JSON): {Object.keys(systemParams(paramsDraft)).join(', ')}
+									</div>
+								{/if}
+							</div>
+							<details class="mt-2 border border-[#1f1f1f] bg-black">
+								<summary class="cursor-pointer px-2 py-1.5 text-[10px] uppercase tracking-wide text-[#555]">Raw JSON</summary>
+								<pre class="max-h-[200px] overflow-auto border-t border-[#1a1a1a] p-2 text-[11px] text-[#aaa]">{stableStringify(paramsDraft)}</pre>
+							</details>
+						</div>
+					</details>
+
+					{#if compareSelection.length === 1}
+						<div class="mb-3 border border-[#333] bg-[#0c0c0c] px-3 py-2 text-[11px] text-white" data-testid="compare-hint">
+							<span class="font-mono">{compareSelection[0]}</span> selected — tick a second run's Cmp box to compare.
+							<button type="button" class="ml-2 border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-[#888] hover:text-white" on:click={clearCompareSelection}>Clear</button>
+						</div>
+					{/if}
+
+					{#if comparePairReady && compareItemA && compareItemB}
+						<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3" data-testid="run-compare-panel">
+							<div class="flex flex-wrap items-center gap-2">
+								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Run Comparison</div>
+								<span class="border border-[#333] bg-[#0c0c0c] px-1.5 py-0.5 font-mono text-[11px] text-white">A · {compareItemA.result_id}</span>
+								<span class="text-[#555]">vs</span>
+								<span class="border border-yellow-900 bg-yellow-500/5 px-1.5 py-0.5 font-mono text-[11px] text-yellow-400">B · {compareItemB.result_id}</span>
+								<span class="text-[11px] text-[#555]">Δ = B − A</span>
+								<button
+									type="button"
+									data-testid="compare-clear"
+									class="ml-auto border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-[#888] transition hover:text-white"
+									on:click={clearCompareSelection}
+								>Clear</button>
+							</div>
+
+							<div class="mt-3 grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+								<div>
+									<table class="w-full text-xs" data-testid="compare-metrics-table">
+										<thead class="bg-[#0d0d0d] text-[10px] uppercase tracking-widest text-[#555]">
+											<tr>
+												<th class="px-2 py-1.5 text-left">Metric</th>
+												<th class="px-2 py-1.5 text-right text-white">A</th>
+												<th class="px-2 py-1.5 text-right text-yellow-400">B</th>
+												<th class="px-2 py-1.5 text-right">Δ</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each compareMetricRows as row (row.label)}
+												<tr class="border-t border-[#161616] font-mono">
+													<td class="px-2 py-1.5 text-left text-[#888]">{row.label}</td>
+													<td class="px-2 py-1.5 text-right text-[#aaa]">{row.a}</td>
+													<td class="px-2 py-1.5 text-right text-[#aaa]">{row.b}</td>
+													<td class={`px-2 py-1.5 text-right ${compareDeltaClass(row)}`}>{compareDeltaLabel(row)}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+
+									<div class="mt-3 border-t border-[#1a1a1a] pt-3">
+										<div class="flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#555]">
+											<span>Parameter Diff</span>
+											<span class="rounded-full border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono normal-case tracking-normal text-[#888]">{compareChangedParamCount} changed</span>
+										</div>
+										{#if compareParamDiff.length === 0}
+											<div class="mt-2 text-[11px] text-[#555]">No stored params on either run.</div>
 										{:else}
-											No runs yet.
+											<div class="mt-2 max-h-[260px] overflow-auto">
+												<table class="w-full text-xs" data-testid="compare-param-diff">
+													<tbody>
+														{#each compareParamDiff.filter((row) => !row.same) as row (row.key)}
+															<tr class="border-t border-[#161616] font-mono">
+																<td class="px-2 py-1 text-left text-[#888]">{row.key}</td>
+																<td class="px-2 py-1 text-right text-white">{row.a}</td>
+																<td class="px-2 py-1 text-right text-yellow-400">{row.b}</td>
+															</tr>
+														{/each}
+														{#if compareChangedParamCount === 0}
+															<tr><td class="px-2 py-2 text-[11px] text-[#555]" colspan="3">All {compareParamDiff.length} stored params are identical.</td></tr>
+														{:else if compareParamDiff.length - compareChangedParamCount > 0}
+															<tr><td class="px-2 py-2 text-[11px] text-[#555]" colspan="3">{compareParamDiff.length - compareChangedParamCount} identical param{compareParamDiff.length - compareChangedParamCount === 1 ? '' : 's'} hidden.</td></tr>
+														{/if}
+													</tbody>
+												</table>
+											</div>
 										{/if}
 									</div>
 								</div>
-								{#if activeRunItem}
-									<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="summary-open-report" on:click={() => { performanceRunId = ''; activeTab = 'performance'; }}>Full report →</button>
-								{/if}
-							</div>
-							{#if !activeRunItem}
-								<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No Gauntlet runs yet — start one from Runs to see how this strategy performs.</div>
-							{:else if overviewResultLoading && !overviewResult}
-								<div class="border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading equity curve…</div>
-							{:else if overviewResultError}
-								<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{overviewResultError}</div>
-							{:else}
-								<GrowthChart strategy={refCurve} benchmark={refBenchmark} oosStart={refOosStart} />
-							{/if}
-							<EvidenceTimeline segments={timelineSegments} folds={walkForwardEvidence?.folds ?? []} />
-						</article>
-						<RobustnessScorecard rows={stressRows} loading={evidenceLoading} on:open={(event) => void openStressRow(event.detail.key)} />
-					</div>
-					<AttributionCard sides={refSides} regimes={refRegimes} exits={refExits} trades={refTrades} start={refSlices.outOfSample?.start ?? null} end={refSlices.outOfSample?.end ?? null} />
-					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
-						<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="forward-cone">
-							<div>
-								<h2 class="m-0 text-[13px] font-semibold text-white">What paper should look like</h2>
-								<div class="text-[11px] text-[#666]">{mcFan.length ? `The next ${mcFan[mcFan.length - 1][0]} trades, resampled from the walk-forward's out-of-sample trades. Paper is drawn on top as it trades.` : "The walk-forward's out-of-sample trades, resampled, set the range paper should land in."}</div>
-							</div>
-							<ForwardCone
-			fan={mcFan}
-			paper={paperEquity}
-			emptyText={mcPayload ? 'This Monte Carlo run predates stored resampled paths; rerun it to draw the cone.' : 'Run the Monte Carlo test to see where paper should land.'}
-		/>
-							{#if mcFan.length && refOosRate}
-								<p class="m-0 text-[11px] leading-relaxed text-[#777]">If paper sits under the 5th percentile after 20 or more trades, the backtest edge is probably not showing up forward. At {fmtNum(refOosRate, 1)} trades a month, 20 trades takes about {Math.round((20 / refOosRate) * 30.4)} days.</p>
-							{/if}
-						</article>
-						<GateCard title={gateTitle} eta={gateEta} needDays={paperNeedDays} needTrades={paperNeedTrades}>
-						{#if liveRampInfo}
-							<div class="border border-emerald-900/40 bg-[#090909] p-3" data-testid="overview-live-ramp">
-								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Live Status</div>
-								<div class="mt-2 grid grid-cols-3 gap-2 text-xs">
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Days Live</div>
-										<div class="mt-1 font-mono text-sm text-emerald-300">{liveRampInfo.daysLive}</div>
+
+								<div>
+									<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-[#555]">
+										<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>A · {compareItemA.result_id}</span>
+										<span class="flex items-center gap-1.5"><span class="w-4 border-t border-dashed border-amber-500"></span>B · {compareItemB.result_id}</span>
 									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Week</div>
-										<div class="mt-1 font-mono text-sm text-[#aaa]">{liveRampInfo.week}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="From the configured allocation schedule. Advisory only — the live sizer does not currently enforce this ramp.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Ramp Alloc</div>
-										<div class="mt-1 font-mono text-sm text-[#aaa]">{liveRampInfo.allocationPct !== null ? `${liveRampInfo.allocationPct}%` : '—'}</div>
-									</div>
-								</div>
-								<div class="mt-2 text-[11px] text-[#555]">
-									{#if liveRampInfo.killSwitchPct !== null}
-										Decay kill switch at <span class="text-red-300">{liveRampInfo.killSwitchPct}%</span> drawdown.
-									{/if}
-									The allocation ramp is the configured schedule — advisory, not enforced by the sizer.
-								</div>
-							</div>
-						{/if}
-						{#if currentLifecycleStage in TERMINAL_STAGES}
-							<div class="mt-2 border border-red-900/40 bg-red-950/15 px-2 py-1.5 text-xs text-red-200">
-								<span class="font-medium">{lifecycleStageLabel(currentLifecycleStage)}.</span>
-								<span class="ml-1 text-red-300/80">{TERMINAL_STAGES[currentLifecycleStage]}</span>
-							</div>
-							<div class="mt-2">
-								<button
-									type="button"
-									data-testid="overview-revive-button"
-									on:click={() => openStageChange('quick_screen')}
-									class="border border-emerald-700/50 bg-emerald-950/30 px-3 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-900/40"
-								>Revive to Quick Screen</button>
-							</div>
-						{:else}
-							<div class="mt-2 flex gap-1.5">
-								{#each currentStageDescriptors as stage}
-									<button
-										on:click={() => { selectedReadinessStage = stage.key === currentLifecycleStage ? null : stage.key; }}
-										title={stage.tooltip ?? ''}
-										class={`flex-1 border px-2 py-1.5 text-center cursor-pointer transition-colors ${
-											readinessViewStage === stage.key
-												? 'border-[#333] bg-[#0c0c0c] text-white '
-												: stage.kind === 'current'
-													? 'border-[#333] bg-[#0c0c0c] text-white'
-													: stage.kind === 'past'
-														? 'border-emerald-900/40 bg-emerald-950/10 text-emerald-200'
-														: 'border-[#1f1f1f] bg-[#070707] text-[#555] hover:border-gray-700 hover:text-[#888]'
-										}`}
-									>
-										<div class="text-[10px] uppercase tracking-wide">{stage.label}</div>
-									</button>
-								{/each}
-							</div>
-							<div class="mt-2">
-								<PromotionReadiness
-									{strategyId}
-									stage={readinessViewStage}
-									quickScreenRows={quickScreenRows}
-									on:action={(e) => {
-										const action = e.detail?.action;
-										if (action === 'run_optimization' || action === 'apply_best_params' || action === 'run_confirmation_backtest') activeTab = 'runs';
-										else if (action === 'run_validation_suite' || action === 're_run_validation_suite') activeTab = 'robustness';
-									}}
-								/>
-							</div>
-
-							<div class="mt-2 flex flex-wrap items-center gap-2">
-								{#if nextPipelineStage}
-									<button
-										data-testid="overview-promote-button"
-										on:click={() => openStageChange(nextPipelineStage?.key)}
-										class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors"
-									>Promote to {nextPipelineStage.label}</button>
-								{/if}
-								<button on:click={() => goto(`/bot-factory/editor?strategy=${strategyId}`)} class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors">Deploy as Bot</button>
-								<button
-									data-testid="overview-archive-button"
-									on:click={() => openStageChange('archived')}
-									class="border border-red-900/40 bg-red-950/20 px-3 py-1.5 text-xs text-red-300 hover:bg-red-900/30 transition-colors"
-								>Archive</button>
-							</div>
-						{/if}
-					</GateCard>
-					</div>
-				</div>
-			{/if}
-
-			{#if activeTab === 'runs'}
-				<div>
-					<div>
-						<div class="mb-3 flex justify-end">
-							<button
-								type="button"
-								data-testid="deepdive-toggle-backtests"
-								class="border border-[#333] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-white transition hover:bg-[#111]"
-								on:click={launchDeepdive}
-							>
-								🔍 Deepdive
-							</button>
-						</div>
-				<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3">
-					<div class="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
-						<div class="grid gap-2 sm:grid-cols-2">
-							<SymbolInput id="container-backtest-symbol" label="Symbol" bind:value={backtestForm.symbol} suggestions={symbolSuggestions} helpText={backtestSymbolHelpText} />
-							<TimeframeSelect id="container-backtest-timeframe" label="Timeframe" bind:value={backtestForm.timeframe} />
-						</div>
-						<DateRangeFieldset
-							idPrefix="container-backtest"
-							title="Window"
-							bind:startDate={backtestForm.start_date}
-							bind:endDate={backtestForm.end_date}
-							timeframe={backtestForm.timeframe}
-							accent="cyan"
-						/>
-						<div class="flex items-end">
-							<button
-								type="button"
-								class="w-full border border-[#333] bg-[#0c0c0c] px-5 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:bg-[#111] disabled:opacity-40 lg:w-auto"
-								on:click={submitContainerBacktest}
-								disabled={isAnyRunInFlight}
-							>{submitStatus === 'submitting' || submitStatus === 'running' ? 'Running…' : 'Run the Gauntlet'}</button>
-						</div>
-					</div>
-					<div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#555]">
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5">{backtestBarEstimateLabel}</span>
-						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5">{backtestWindowSummary}</span>
-						<span class={` border px-1.5 py-0.5 ${gauntletDraftDirty ? 'border-yellow-900 text-yellow-400' : 'border-[#2b2b2b] text-[#555]'}`}>{gauntletDraftDirty ? 'Draft has changes' : 'Defaults synced'}</span>
-					</div>
-				</div>
-
-				<details class={`mb-3 border bg-[#090909] ${gauntletParamsAreActive ? 'border-emerald-700/60 shadow-[inset_2px_0_0_0_rgba(16,185,129,0.9)]' : 'border-[#1d1d1d]'}`} data-testid="backtest-parameter-panel">
-					<summary class="flex cursor-pointer items-center justify-between px-3 py-2">
-						<div class="flex items-center gap-2 text-[10px] uppercase tracking-wide text-[#555]">
-							<span class={gauntletParamsAreActive ? 'text-emerald-300' : ''}>Gauntlet Parameters</span>
-							<span class={` border px-1.5 py-0.5 text-[10px] normal-case tracking-normal ${gauntletDraftSource === 'run' ? 'border-[#333] text-white' : 'border-[#2b2b2b] text-[#555]'}`}>
-								{gauntletDraftSource === 'run' && gauntletDraftSourceId ? `Run ${gauntletDraftSourceId}` : 'Container defaults'}
-							</span>
-							{#if gauntletParamsAreActive}
-								<span class="rounded-full border border-emerald-600/60 bg-emerald-950/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-200" title="No backtest run is pinned — these manually-saved parameters are the active default driving paper/live.">Active</span>
-							{:else}
-								<span class={` border px-1.5 py-0.5 text-[10px] normal-case tracking-normal ${gauntletDraftDirty ? 'border-yellow-900 text-yellow-400' : 'border-[#2b2b2b] text-[#555]'}`}>{gauntletDraftDirty ? 'Unsaved' : 'Synced'}</span>
-							{/if}
-						</div>
-						<div class="flex items-center gap-1.5">
-							<button type="button" class="border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-[#888] hover:text-white disabled:opacity-40" data-testid="backtest-params-reset" on:click|stopPropagation={resetGauntletDraftToDefaults} disabled={(gauntletDraftSource === 'defaults' && !gauntletDraftDirty) || settingDefaultParams}>Reset to Defaults</button>
-							<button type="button" class="border border-emerald-700 bg-emerald-950/30 px-2 py-0.5 text-[10px] uppercase text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-40" data-testid="backtest-params-save" on:click|stopPropagation={saveParameterDraft} disabled={!gauntletDraftDirty || settingDefaultParams || paramsHasErrors || Boolean(executionDraftError)}>{settingDefaultParams ? 'Saving…' : 'Save'}</button>
-						</div>
-					</summary>
-					<div class="border-t border-[#1a1a1a] p-3" data-testid="backtest-parameter-editor">
-						{#if parameterSaveMessage}
-							<div class="mb-2 border border-emerald-900/40 bg-emerald-950/10 px-2 py-1 text-[11px] text-emerald-200">{parameterSaveMessage}</div>
-						{/if}
-						{#if parameterSaveError}
-							<div class="mb-2 border border-red-900/40 bg-red-950/20 px-2 py-1 text-[11px] text-red-300">{parameterSaveError}</div>
-						{/if}
-						<div class="mb-2 text-[10px] uppercase tracking-[0.2em] text-[#555]">Execution Settings</div>
-						<ExecutionSettingsFields
-							bind:draft={executionDraft}
-							error={executionDraftError}
-							disabled={settingDefaultParams}
-							onSizingModeChange={() => applySizingModeDefaults(executionDraft.sizing_mode)}
-						/>
-						<div class="mt-3 border-t border-[#1a1a1a] pt-3">
-							<div class="mb-2 text-[10px] uppercase tracking-[0.2em] text-[#555]">Strategy Parameters</div>
-							{#if !loading}
-								<div class="mb-2 border border-[#1f1f1f] bg-black p-2">
-									<div class="flex flex-wrap items-end gap-2">
-										<label class="flex min-w-[220px] flex-1 flex-col gap-1 text-[10px] uppercase tracking-wide text-[#555]">
-											<span>Add Param</span>
-											<select
-												class="border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-gray-200 disabled:opacity-40"
-												bind:value={selectedAddParamKey}
-												data-testid="add-param-select"
-												disabled={settingDefaultParams || availableAddParamKeys.length === 0}
-											>
-												<option value="">Select a supported param</option>
-												{#each availableAddParamKeys as key}
-													<option value={key}>{key}</option>
-												{/each}
-											</select>
-										</label>
-										<button
-											type="button"
-											class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-[10px] uppercase tracking-wide text-white transition hover:bg-[#111] disabled:opacity-40"
-											on:click={addSelectedParamToDraft}
-											data-testid="add-param-button"
-											disabled={settingDefaultParams || availableAddParamKeys.length === 0}
-										>
-											Add Param
-										</button>
-									</div>
-									{#if addParamHelperText}
-										<div class="mt-2 text-[11px] text-[#555]">{addParamHelperText}</div>
-									{/if}
-								</div>
-							{/if}
-							<ParameterEditor
-								params={visibleParams(paramsDraft)}
-								bind:hasErrors={paramsHasErrors}
-								saving={settingDefaultParams}
-								on:paramsChange={(event) => (paramsDraft = { ...systemParams(paramsDraft), ...event.detail })}
-							/>
-							{#if Object.keys(systemParams(paramsDraft)).length > 0}
-								<div class="mt-2 text-[11px] text-[#555]" data-testid="gauntlet-system-params-note">
-									Contract fields kept as saved (see Raw JSON): {Object.keys(systemParams(paramsDraft)).join(', ')}
-								</div>
-							{/if}
-						</div>
-						<details class="mt-2 border border-[#1f1f1f] bg-black">
-							<summary class="cursor-pointer px-2 py-1.5 text-[10px] uppercase tracking-wide text-[#555]">Raw JSON</summary>
-							<pre class="max-h-[200px] overflow-auto border-t border-[#1a1a1a] p-2 text-[11px] text-[#aaa]">{stableStringify(paramsDraft)}</pre>
-						</details>
-					</div>
-				</details>
-
-				{#if compareSelection.length === 1}
-					<div class="mb-3 border border-[#333] bg-[#0c0c0c] px-3 py-2 text-[11px] text-white" data-testid="compare-hint">
-						<span class="font-mono">{compareSelection[0]}</span> selected — tick a second run's Cmp box to compare.
-						<button type="button" class="ml-2 border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-[#888] hover:text-white" on:click={clearCompareSelection}>Clear</button>
-					</div>
-				{/if}
-
-				{#if comparePairReady && compareItemA && compareItemB}
-					<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3" data-testid="run-compare-panel">
-						<div class="flex flex-wrap items-center gap-2">
-							<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Run Comparison</div>
-							<span class="border border-[#333] bg-[#0c0c0c] px-1.5 py-0.5 font-mono text-[11px] text-white">A · {compareItemA.result_id}</span>
-							<span class="text-[#555]">vs</span>
-							<span class="border border-yellow-900 bg-yellow-500/5 px-1.5 py-0.5 font-mono text-[11px] text-yellow-400">B · {compareItemB.result_id}</span>
-							<span class="text-[11px] text-[#555]">Δ = B − A</span>
-							<button
-								type="button"
-								data-testid="compare-clear"
-								class="ml-auto border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase text-[#888] transition hover:text-white"
-								on:click={clearCompareSelection}
-							>Clear</button>
-						</div>
-
-						<div class="mt-3 grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-							<div>
-								<table class="w-full text-xs" data-testid="compare-metrics-table">
-									<thead class="bg-[#0d0d0d] text-[10px] uppercase tracking-widest text-[#555]">
-										<tr>
-											<th class="px-2 py-1.5 text-left">Metric</th>
-											<th class="px-2 py-1.5 text-right text-white">A</th>
-											<th class="px-2 py-1.5 text-right text-yellow-400">B</th>
-											<th class="px-2 py-1.5 text-right">Δ</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each compareMetricRows as row (row.label)}
-											<tr class="border-t border-[#161616] font-mono">
-												<td class="px-2 py-1.5 text-left text-[#888]">{row.label}</td>
-												<td class="px-2 py-1.5 text-right text-[#aaa]">{row.a}</td>
-												<td class="px-2 py-1.5 text-right text-[#aaa]">{row.b}</td>
-												<td class={`px-2 py-1.5 text-right ${compareDeltaClass(row)}`}>{compareDeltaLabel(row)}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-
-								<div class="mt-3 border-t border-[#1a1a1a] pt-3">
-									<div class="flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#555]">
-										<span>Parameter Diff</span>
-										<span class="rounded-full border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono normal-case tracking-normal text-[#888]">{compareChangedParamCount} changed</span>
-									</div>
-									{#if compareParamDiff.length === 0}
-										<div class="mt-2 text-[11px] text-[#555]">No stored params on either run.</div>
+									{#if compareError}
+										<div class="mt-2 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{compareError}</div>
+									{:else if compareLoading}
+										<div class="mt-2 border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading equity curves…</div>
+									{:else if compareOverlayReady}
+										<div class="mt-2" data-testid="compare-equity-overlay">
+											{#key `${compareItemA.result_id}:${compareItemB.result_id}`}
+												<EquityChart
+													data={compareCurveA ?? []}
+													benchmarkData={compareCurveB}
+													benchmarkTitle={`B · ${compareItemB.result_id}`}
+													showDrawdown={false}
+													height={280}
+												/>
+											{/key}
+										</div>
 									{:else}
-										<div class="mt-2 max-h-[260px] overflow-auto">
-											<table class="w-full text-xs" data-testid="compare-param-diff">
-												<tbody>
-													{#each compareParamDiff.filter((row) => !row.same) as row (row.key)}
-														<tr class="border-t border-[#161616] font-mono">
-															<td class="px-2 py-1 text-left text-[#888]">{row.key}</td>
-															<td class="px-2 py-1 text-right text-white">{row.a}</td>
-															<td class="px-2 py-1 text-right text-yellow-400">{row.b}</td>
-														</tr>
-													{/each}
-													{#if compareChangedParamCount === 0}
-														<tr><td class="px-2 py-2 text-[11px] text-[#555]" colspan="3">All {compareParamDiff.length} stored params are identical.</td></tr>
-													{:else if compareParamDiff.length - compareChangedParamCount > 0}
-														<tr><td class="px-2 py-2 text-[11px] text-[#555]" colspan="3">{compareParamDiff.length - compareChangedParamCount} identical param{compareParamDiff.length - compareChangedParamCount === 1 ? '' : 's'} hidden.</td></tr>
-													{/if}
-												</tbody>
-											</table>
+										<div class="mt-2 border border-[#1f1f1f] bg-black px-3 py-4 text-xs text-[#555]">
+											Equity curves are unavailable for one or both runs (older results may not have stored them).
 										</div>
 									{/if}
 								</div>
-							</div>
-
-							<div>
-								<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-[#555]">
-									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>A · {compareItemA.result_id}</span>
-									<span class="flex items-center gap-1.5"><span class="w-4 border-t border-dashed border-amber-500"></span>B · {compareItemB.result_id}</span>
-								</div>
-								{#if compareError}
-									<div class="mt-2 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{compareError}</div>
-								{:else if compareLoading}
-									<div class="mt-2 border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading equity curves…</div>
-								{:else if compareOverlayReady}
-									<div class="mt-2" data-testid="compare-equity-overlay">
-										{#key `${compareItemA.result_id}:${compareItemB.result_id}`}
-											<EquityChart
-												data={compareCurveA ?? []}
-												benchmarkData={compareCurveB}
-												benchmarkTitle={`B · ${compareItemB.result_id}`}
-												showDrawdown={false}
-												height={280}
-											/>
-										{/key}
-									</div>
-								{:else}
-									<div class="mt-2 border border-[#1f1f1f] bg-black px-3 py-4 text-xs text-[#555]">
-										Equity curves are unavailable for one or both runs (older results may not have stored them).
-									</div>
-								{/if}
-							</div>
-						</div>
-					</div>
-				{/if}
-
-				<div class="border border-[#1d1d1d] bg-[#090909] p-3">
-					<div class="flex items-center justify-between gap-2">
-						<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Gauntlet history</div>
-						<span class="text-[11px] text-[#555]">{backtestHistory.length} run{backtestHistory.length === 1 ? '' : 's'}</span>
-					</div>
-					<p class="mt-2 text-[11px] leading-relaxed text-[#555]">
-						Left columns are <span class="text-[#888]">full-window</span> (IS + OOS combined); the
-						<span class="text-[#888]">OOS</span> columns on the right are out-of-sample only.
-						<span class="text-[#888]">ⓘ</span>/<span class="text-[#888]">~</span> marks an approximation
-						(e.g. Sharpe is a month-weighted average and Max DD is the max of the IS/OOS halves, not recomputed
-						from the combined stream). Hover any header for details.
-					</p>
-					{#if backtestHistory.length === 0}
-						<div class="mt-4 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No Gauntlet runs yet.</div>
-					{:else}
-						<div class="mt-4 overflow-hidden border border-[#1f1f1f] bg-[#070707]">
-							<div class="max-h-[620px] overflow-auto">
-								<table class="min-w-full text-xs">
-									<thead class="sticky top-0 z-10 bg-[#0d0d0d] text-[10px] uppercase tracking-widest text-[#555]">
-										<tr>
-											<th class="px-3 py-2 text-left">Run</th>
-											<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('created')}>Created{historySortIndicator('created')}</th>
-											<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('symbol')}>Symbol{historySortIndicator('symbol')}</th>
-											<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('timeframe')}>TF{historySortIndicator('timeframe')}</th>
-											<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('start')}>Start{historySortIndicator('start')}</th>
-											<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('end')}>End{historySortIndicator('end')}</th>
-											<th class="px-3 py-2 text-left">Window</th>
-											<th class="px-3 py-2 text-left">Params</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('cagr')} title="Full-window CAGR (annualized over IS + OOS). Short windows are shown with muted styling.">CAGR{historySortIndicator('cagr')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('sharpe')} title="Full-window Sharpe (approximate: month-weighted average of IS and OOS Sharpe, not recomputed from the combined return stream). Low-trade samples are shown with muted styling.">Sharpe ⓘ{historySortIndicator('sharpe')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('max_drawdown')} title="Full-window max drawdown (approximate: max of IS and OOS max drawdowns; a drawdown that straddles the IS/OOS boundary is understated).">Max DD ⓘ{historySortIndicator('max_drawdown')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('win_rate')} title="Full-window win rate = combined wins / combined closed trades.">Win%{historySortIndicator('win_rate')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('trades')} title="Total completed trades across IS + OOS.">Trades{historySortIndicator('trades')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('profit_factor')} title="Full-window profit factor = combined gross profit / combined gross loss. ∞ if no losing trades.">PF{historySortIndicator('profit_factor')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('robustness')} title={OOS_RETENTION_TITLE}>OOS/IS{historySortIndicator('robustness')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa] border-l border-[#222] pl-3" on:click={() => toggleHistorySort('oos_cagr')} title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling.">OOS CAGR{historySortIndicator('oos_cagr')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('oos_sharpe')} title="Out-of-sample annualized Sharpe. Low-trade samples are shown with muted styling.">OOS Sharpe{historySortIndicator('oos_sharpe')}</th>
-											<th class="px-3 py-2 text-right">Actions</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each backtestHistory as item}
-											<tr
-												data-testid={`backtest-row-${item.result_id}`}
-												class={`border-t border-[#161616] font-mono transition ${
-													pinnedBacktestId && pinnedBacktestId === item.result_id
-														? selectedResultId === item.result_id
-															? 'bg-emerald-950/30 shadow-[inset_2px_0_0_0_rgba(16,185,129,1),inset_-2px_0_0_0_rgba(34,211,238,0.9)]'
-															: 'bg-emerald-950/15 shadow-[inset_2px_0_0_0_rgba(16,185,129,0.9)] hover:bg-emerald-950/25'
-														: selectedResultId === item.result_id
-															? 'bg-[#0c0c0c] shadow-[inset_2px_0_0_0_rgba(34,211,238,0.9)]'
-															: 'hover:bg-[#0d0d0d]'
-												}`}
-												tabindex="0"
-												role="button"
-												on:click={() => void openResult(item)}
-												on:keydown={(event) => {
-													if (event.key === 'Enter' || event.key === ' ') {
-														event.preventDefault();
-														void openResult(item);
-													}
-												}}
-											>
-												<td class="px-3 py-2 text-left">
-													<div class="flex items-center gap-2">
-														<input
-															type="checkbox"
-															data-testid={`compare-select-${item.result_id}`}
-															class="h-3.5 w-3.5 border border-[#2b2b2b] bg-black text-white"
-															title="Select for run comparison (pick two)"
-															checked={compareSelection.includes(item.result_id)}
-															on:click|stopPropagation={() => toggleCompareSelection(item)}
-														/>
-														<span class="text-white">{item.result_id}</span>
-														<span class={`rounded-full border px-2 py-0.5 text-[9px] ${resultTypeBadge(item.result_type)}`}>{resultTypeLabel(item.result_type)}</span>
-														{#if pinnedBacktestId && pinnedBacktestId === item.result_id}
-															<span class="rounded-full border border-emerald-600/60 bg-emerald-950/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200" title="This backtest's metrics and params drive the Lab manager display and paper/live trading.">Active</span>
-														{/if}
-													</div>
-												</td>
-												<td class="px-3 py-2 text-left text-[#888]">{fmtDate(item.created_at)}</td>
-												<td class="px-3 py-2 text-left text-white">{item.symbol || '--'}</td>
-												<td class="px-3 py-2 text-left text-[#aaa]">{item.timeframe || '--'}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{fmtShortDate(item.start_date)}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{fmtShortDate(item.end_date)}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{fmtDuration(item.start_date, item.end_date, readMetricOptional(item, 'backtest_months'))}</td>
-												<td class="px-3 py-2 text-left">
-													<div data-testid={`backtest-param-summary-${item.result_id}`} class="flex max-w-[320px] flex-wrap gap-1">
-														{#if getHistoryParamSource(item) === 'current'}
-															<span class="rounded-full border border-yellow-900 bg-yellow-500/5 px-2 py-0.5 text-[10px] text-yellow-400">
-																Current strategy params
-															</span>
-														{/if}
-														{#if getBacktestVisibleParamSummary(item, Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()])).length > 0}
-															{#each getBacktestVisibleParamSummary(item, Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()])) as entry}
-																<span class={`rounded-full border px-2 py-0.5 text-[10px] ${entry.changed ? 'border-yellow-900 bg-yellow-500/5 text-yellow-400' : 'border-[#2b2b2b] bg-black text-[#aaa]'}`}>
-																	{entry.key}={entry.value}
-																</span>
-															{/each}
-															{#if getBacktestParamOverflowCount(item) > 0}
-																<button
-																	type="button"
-																	data-testid={`backtest-param-overflow-${item.result_id}`}
-																	class="rounded-full border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] text-[#555] transition hover:border-[#555] hover:text-white"
-																	aria-expanded={Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()])}
-																	aria-label={`${Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()]) ? 'Hide extra parameters for' : 'Show all parameters for'} ${item.result_id}`}
-																	on:click|stopPropagation={() => toggleBacktestParamSummary(item)}
-																>
-																	{Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()]) ? 'Show less' : `+${getBacktestParamOverflowCount(item)} more`}
-																</button>
-															{/if}
-														{:else}
-															<span class="text-[11px] text-[#555]">No stored params</span>
-														{/if}
-													</div>
-												</td>
-												<td class={`px-3 py-2 text-right ${isCagrReliable(item) ? signedPercentClass(readPercentMetricOptional(item, 'annualized_return_pct')) : 'text-[#555]'}`}
-													title={isCagrReliable(item) ? 'Full-window CAGR (annualized over IS + OOS)' : `Short window (<1 month) — annualized value may be noisy`}>
-													{formatCagr(item)}
-												</td>
-												<td class={`px-3 py-2 text-right ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`}
-													title={isSharpeReliable(item) ? 'Full-window Sharpe (approximate: month-weighted avg of IS and OOS)' : `Low trade count (<20) — Sharpe may be noisy`}>
-													{formatSharpe(item)}{readFlag(item, 'sharpe_is_approximation') === true ? ' ~' : ''}
-												</td>
-												<td class="px-3 py-2 text-right text-red-400" title={readFlag(item, 'max_drawdown_is_approximation') === true ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{pct(readDrawdownPercentMetric(item, 'max_drawdown_pct', 'max_drawdown'))}{readFlag(item, 'max_drawdown_is_approximation') === true ? ' ~' : ''}</td>
-												<td class="px-3 py-2 text-right text-[#aaa]">{pct(readPercentMetric(item, 'win_rate', 'win_rate_pct'))}</td>
-												<td class="px-3 py-2 text-right text-[#aaa]">{historyTradesCount(item)}</td>
-												<td class="px-3 py-2 text-right text-[#aaa]"
-													title={readFlag(item, 'profit_factor_is_infinite') === true ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>
-													{formatProfitFactor(item)}
-												</td>
-												<td class="px-3 py-2 text-right text-[#aaa]" title={OOS_RETENTION_TITLE}>{formatRobustness(item)}</td>
-												<td class={`px-3 py-2 text-right border-l border-[#222] pl-3 ${isCagrReliable(item) ? signedPercentClass(readOutOfSampleCagr(item)) : 'text-[#555]'}`}
-													title={isCagrReliable(item) ? 'Out-of-sample CAGR (annualized)' : `Short OOS window (<1 month) — annualized value may be noisy`}>
-													{formatOutOfSampleCagr(item)}
-												</td>
-												<td class={`px-3 py-2 text-right ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`}
-													title={isSharpeReliable(item) ? 'Out-of-sample annualized Sharpe' : `Low trade count (<20) — Sharpe may be noisy`}>
-													{formatOutOfSampleSharpe(item)}
-												</td>
-												<td class="px-3 py-2 text-right">
-													<div class="flex items-center justify-end gap-2">
-														<button
-															type="button"
-															data-testid={`set-default-backtest-params-${item.result_id}`}
-															class={` border px-2.5 py-1 text-[10px] uppercase tracking-widest transition disabled:opacity-60 ${
-																pinnedBacktestId && pinnedBacktestId === item.result_id
-																	? 'border-emerald-500 bg-emerald-600/30 text-emerald-100 cursor-default'
-																	: 'border-emerald-700 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
-															}`}
-															on:click|stopPropagation={() => void setBacktestRowAsDefault(item)}
-															disabled={settingDefaultParams || Boolean(pinnedBacktestId && pinnedBacktestId === item.result_id)}
-															title={pinnedBacktestId && pinnedBacktestId === item.result_id ? 'This Gauntlet run is currently active' : 'Make this Gauntlet run the active default'}
-														>
-															{settingDefaultParams
-																? 'Saving…'
-																: pinnedBacktestId && pinnedBacktestId === item.result_id
-																	? 'Active'
-																	: 'Set Default'}
-														</button>
-														<button
-															type="button"
-															data-testid={`open-report-${item.result_id}`}
-															class="border border-[#2b2b2b] bg-black px-2.5 py-1 text-[10px] uppercase tracking-widest text-[#888] transition hover:border-white/20 hover:text-white"
-															title="Open this run's full report on Performance"
-															on:click|stopPropagation={() => openPerformanceReport(item)}
-														>
-															Report
-														</button>
-														<button
-															type="button"
-															data-testid={`edit-backtest-params-${item.result_id}`}
-															class={` border px-2.5 py-1 text-[10px] uppercase tracking-widest transition ${
-																expandedBacktestParamsId === item.result_id
-																	? 'border-[#333] bg-[#0c0c0c] text-white'
-																	: 'border-[#2b2b2b] bg-black text-[#888] hover:border-white/20 hover:text-white'
-															}`}
-															on:click|stopPropagation={() => toggleBacktestParamEditor(item)}
-														>
-															{expandedBacktestParamsId === item.result_id ? 'Hide' : 'Edit'}
-														</button>
-														<button
-															type="button"
-															class="p-1 text-[#555] transition-colors hover:bg-red-900/30 hover:text-red-400"
-															title="Delete result"
-															aria-label={`Move backtest result ${item.result_id} to trash`}
-															on:click={(e) => trashResult(e, item)}
-														>
-															<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-																<path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
-															</svg>
-														</button>
-													</div>
-												</td>
-											</tr>
-											{#if expandedBacktestParamsId === item.result_id}
-												<tr class="border-t border-cyan-950/40 bg-[#050505]">
-													<td colspan="18" class="px-4 py-4">
-														<div class="border border-[#1f1f1f] bg-black p-4">
-															<div class="flex flex-wrap items-start justify-between gap-3">
-																<div>
-																	<div class="text-[10px] uppercase tracking-widest text-[#555]">Run Parameter Editor</div>
-																	<div class="mt-1 text-sm text-[#888]">
-																		Tweak the stored run parameters here, then rerun the exact market window without leaving history.
-																	</div>
-																</div>
-																<div class="flex flex-wrap items-center gap-2">
-																	<button
-																		type="button"
-																		data-testid={`load-backtest-params-${item.result_id}`}
-																		class="border border-[#2b2b2b] bg-[#070707] px-3 py-2 text-[11px] font-medium uppercase tracking-widest text-[#aaa] transition hover:border-white/20 hover:text-white"
-																		on:click|stopPropagation={() => loadBacktestParamsIntoDraft(item)}
-																	>
-																		Load Into Draft
-																	</button>
-																	<button
-																		type="button"
-																		class="border border-[#2b2b2b] bg-[#070707] px-3 py-2 text-[11px] font-medium uppercase tracking-widest text-[#aaa] transition hover:border-white/20 hover:text-white"
-																		on:click|stopPropagation={() => resetBacktestParamDraft(item)}
-																	>
-																		Reset
-																	</button>
-																	<button
-																		type="button"
-																		data-testid={`rerun-backtest-params-${item.result_id}`}
-																		class="border border-[#333] bg-[#0c0c0c] px-3 py-2 text-[11px] font-medium uppercase tracking-widest text-white transition hover:bg-[#111] disabled:opacity-40"
-																		on:click|stopPropagation={() => void rerunBacktestFromHistory(item)}
-																					disabled={isAnyRunInFlight || Boolean(backtestParamDraftErrors[item.result_id])}
-																	>
-																		{backtestParamRunnerId === item.result_id ? 'Running…' : 'Rerun With Changes'}
-																	</button>
-																</div>
-															</div>
-															<div class="mt-3 flex flex-wrap gap-2 text-[11px] text-[#555]">
-																<span class="rounded-full border border-[#2b2b2b] bg-[#070707] px-2 py-1">
-																	{item.symbol || '--'} / {item.timeframe || '--'}
-																</span>
-																<span class="rounded-full border border-[#2b2b2b] bg-[#070707] px-2 py-1">
-																	{fmtShortDate(item.start_date)} -> {fmtShortDate(item.end_date)}
-																</span>
-															</div>
-															<div class="mt-4">
-																{#if getHistoryParamSource(item) === 'current'}
-																	<div class="mb-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-400">
-																		This run did not store its own params. The editor is seeded from the current strategy params as a labeled fallback.
-																	</div>
-																{/if}
-																<div data-testid={`backtest-param-editor-${item.result_id}`}>
-																	<ParameterEditor
-																		params={visibleParams(backtestParamDrafts[item.result_id])}
-																		bind:hasErrors={backtestParamDraftErrors[item.result_id]}
-																		saving={backtestParamRunnerId === item.result_id}
-																		on:paramsChange={(event) => updateBacktestParamDraft(item.result_id, { ...systemParams(backtestParamDrafts[item.result_id]), ...event.detail })}
-																	/>
-																</div>
-															</div>
-														</div>
-													</td>
-												</tr>
-											{/if}
-										{/each}
-									</tbody>
-								</table>
 							</div>
 						</div>
 					{/if}
-				</div>
-				</div>
-			</div>
-				{#if selectedResultSection === 'backtests' && hasRunDetail}
-					{@render runDetail()}
-				{/if}
-			{/if}
 
-			{#if activeTab === 'runs'}
-				<div class="mb-2 mt-6 text-[10px] uppercase tracking-[0.2em] text-[#555]" data-testid="runs-optimization-heading">Optimization</div>
-					<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3">
-						<div class="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
-							<div class="grid gap-2 sm:grid-cols-2">
-								<SymbolInput id="container-opt-symbol" label="Symbol" bind:value={optimizationForm.symbol} suggestions={symbolSuggestions} helpText={optimizationSymbolHelpText} />
-								<TimeframeSelect id="container-opt-timeframe" label="Timeframe" bind:value={optimizationForm.timeframe} />
-							</div>
-							<DateRangeFieldset idPrefix="container-opt" title="Window" bind:startDate={optimizationForm.start_date} bind:endDate={optimizationForm.end_date} timeframe={optimizationForm.timeframe} accent="blue" />
-							<div class="flex items-end">
-								<button type="button" class="w-full border border-[#333] bg-[#0c0c0c] px-5 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:bg-[#111] disabled:opacity-40 lg:w-auto" on:click={submitContainerOptimization} disabled={isAnyRunInFlight}>{submitStatus === 'submitting' || submitStatus === 'running' ? 'Running…' : 'Run Optimization'}</button>
-							</div>
+					<div class="border border-[#1d1d1d] bg-[#090909] p-3">
+						<div class="flex items-center justify-between gap-2">
+							<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Gauntlet history</div>
+							<span class="text-[11px] text-[#555]">{backtestHistory.length} run{backtestHistory.length === 1 ? '' : 's'}</span>
 						</div>
-						<div class="mt-2 grid gap-2 sm:grid-cols-2">
-							<label class="block" for="container-opt-objective">
-								<div class="text-[10px] uppercase tracking-wide text-[#555]">Objective</div>
-								<select id="container-opt-objective" bind:value={optimizationForm.objective} class="mt-1 w-full border border-[#2b2b2b] bg-[#050505] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60">
-									{#each OPTIMIZATION_OBJECTIVES as option}
-										<option value={option.value}>{option.label}</option>
-									{/each}
-								</select>
-							</label>
-							<label class="block" for="container-opt-trials">
-								<div class="text-[10px] uppercase tracking-wide text-[#555]">Trials</div>
-								<input id="container-opt-trials" type="number" min="1" class="mt-1 w-full border border-[#2b2b2b] bg-[#050505] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60" bind:value={optimizationForm.n_trials} />
-							</label>
-						</div>
-						<div data-testid="optimization-params-panel" class="mt-3 border border-[#1d1d1d] bg-black/40 p-3">
-							<div class="flex items-center justify-between gap-2">
-								<div>
-									<div class="text-[10px] uppercase tracking-wide text-[#555]">Optimization Parameters</div>
-									<div class="mt-1 text-xs text-[#888]">Select numeric params to optimize. Unchecked params stay fixed at the current strategy defaults.</div>
-								</div>
-								<div class="rounded-full border border-[#333] bg-[#0c0c0c] px-2 py-1 text-[10px] uppercase tracking-widest text-white">
-									{optimizationParamSelectedCount} selected
+						<p class="mt-2 text-[11px] leading-relaxed text-[#555]">
+							Left columns are <span class="text-[#888]">full-window</span> (IS + OOS combined); the
+							<span class="text-[#888]">OOS</span> columns on the right are out-of-sample only.
+							<span class="text-[#888]">ⓘ</span>/<span class="text-[#888]">~</span> marks an approximation
+							(e.g. Sharpe is a month-weighted average and Max DD is the max of the IS/OOS halves, not recomputed
+							from the combined stream). Hover any header for details.
+						</p>
+						{#if backtestHistory.length === 0}
+							<div class="mt-4 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No Gauntlet runs yet.</div>
+						{:else}
+							<div class="mt-4 overflow-hidden border border-[#1f1f1f] bg-[#070707]">
+								<div class="max-h-[620px] overflow-auto">
+									<table class="min-w-full text-xs">
+										<thead class="sticky top-0 z-10 bg-[#0d0d0d] text-[10px] uppercase tracking-widest text-[#555]">
+											<tr>
+												<th class="px-3 py-2 text-left">Run</th>
+												<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('created')}>Created{historySortIndicator('created')}</th>
+												<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('symbol')}>Symbol{historySortIndicator('symbol')}</th>
+												<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('timeframe')}>TF{historySortIndicator('timeframe')}</th>
+												<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('start')}>Start{historySortIndicator('start')}</th>
+												<th class="px-3 py-2 text-left cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('end')}>End{historySortIndicator('end')}</th>
+												<th class="px-3 py-2 text-left">Window</th>
+												<th class="px-3 py-2 text-left">Params</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('cagr')} title="Full-window CAGR (annualized over IS + OOS). Short windows are shown with muted styling.">CAGR{historySortIndicator('cagr')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('sharpe')} title="Full-window Sharpe (approximate: month-weighted average of IS and OOS Sharpe, not recomputed from the combined return stream). Low-trade samples are shown with muted styling.">Sharpe ⓘ{historySortIndicator('sharpe')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('max_drawdown')} title="Full-window max drawdown (approximate: max of IS and OOS max drawdowns; a drawdown that straddles the IS/OOS boundary is understated).">Max DD ⓘ{historySortIndicator('max_drawdown')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('win_rate')} title="Full-window win rate = combined wins / combined closed trades.">Win%{historySortIndicator('win_rate')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('trades')} title="Total completed trades across IS + OOS.">Trades{historySortIndicator('trades')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('profit_factor')} title="Full-window profit factor = combined gross profit / combined gross loss. ∞ if no losing trades.">PF{historySortIndicator('profit_factor')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('robustness')} title={OOS_RETENTION_TITLE}>OOS/IS{historySortIndicator('robustness')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa] border-l border-[#222] pl-3" on:click={() => toggleHistorySort('oos_cagr')} title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling.">OOS CAGR{historySortIndicator('oos_cagr')}</th>
+												<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('oos_sharpe')} title="Out-of-sample annualized Sharpe. Low-trade samples are shown with muted styling.">OOS Sharpe{historySortIndicator('oos_sharpe')}</th>
+												<th class="px-3 py-2 text-right">Actions</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each backtestHistory as item}
+												<tr
+													data-testid={`backtest-row-${item.result_id}`}
+													class={`border-t border-[#161616] font-mono transition ${
+														pinnedBacktestId && pinnedBacktestId === item.result_id
+															? selectedResultId === item.result_id
+																? 'bg-emerald-950/30 shadow-[inset_2px_0_0_0_rgba(16,185,129,1),inset_-2px_0_0_0_rgba(34,211,238,0.9)]'
+																: 'bg-emerald-950/15 shadow-[inset_2px_0_0_0_rgba(16,185,129,0.9)] hover:bg-emerald-950/25'
+															: selectedResultId === item.result_id
+																? 'bg-[#0c0c0c] shadow-[inset_2px_0_0_0_rgba(34,211,238,0.9)]'
+																: 'hover:bg-[#0d0d0d]'
+													}`}
+													tabindex="0"
+													role="button"
+													on:click={() => void openResult(item)}
+													on:keydown={(event) => {
+														if (event.key === 'Enter' || event.key === ' ') {
+															event.preventDefault();
+															void openResult(item);
+														}
+													}}
+												>
+													<td class="px-3 py-2 text-left">
+														<div class="flex items-center gap-2">
+															<input
+																type="checkbox"
+																data-testid={`compare-select-${item.result_id}`}
+																class="h-3.5 w-3.5 border border-[#2b2b2b] bg-black text-white"
+																title="Select for run comparison (pick two)"
+																checked={compareSelection.includes(item.result_id)}
+																on:click|stopPropagation={() => toggleCompareSelection(item)}
+															/>
+															<span class="text-white">{item.result_id}</span>
+															<span class={`rounded-full border px-2 py-0.5 text-[9px] ${resultTypeBadge(item.result_type)}`}>{resultTypeLabel(item.result_type)}</span>
+															{#if pinnedBacktestId && pinnedBacktestId === item.result_id}
+																<span class="rounded-full border border-emerald-600/60 bg-emerald-950/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200" title="This backtest's metrics and params drive the Lab manager display and paper/live trading.">Active</span>
+															{/if}
+														</div>
+													</td>
+													<td class="px-3 py-2 text-left text-[#888]">{fmtDate(item.created_at)}</td>
+													<td class="px-3 py-2 text-left text-white">{item.symbol || '--'}</td>
+													<td class="px-3 py-2 text-left text-[#aaa]">{item.timeframe || '--'}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{fmtShortDate(item.start_date)}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{fmtShortDate(item.end_date)}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{fmtDuration(item.start_date, item.end_date, readMetricOptional(item, 'backtest_months'))}</td>
+													<td class="px-3 py-2 text-left">
+														<div data-testid={`backtest-param-summary-${item.result_id}`} class="flex max-w-[320px] flex-wrap gap-1">
+															{#if getHistoryParamSource(item) === 'current'}
+																<span class="rounded-full border border-yellow-900 bg-yellow-500/5 px-2 py-0.5 text-[10px] text-yellow-400">
+																	Current strategy params
+																</span>
+															{/if}
+															{#if getBacktestVisibleParamSummary(item, Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()])).length > 0}
+																{#each getBacktestVisibleParamSummary(item, Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()])) as entry}
+																	<span class={`rounded-full border px-2 py-0.5 text-[10px] ${entry.changed ? 'border-yellow-900 bg-yellow-500/5 text-yellow-400' : 'border-[#2b2b2b] bg-black text-[#aaa]'}`}>
+																		{entry.key}={entry.value}
+																	</span>
+																{/each}
+																{#if getBacktestParamOverflowCount(item) > 0}
+																	<button
+																		type="button"
+																		data-testid={`backtest-param-overflow-${item.result_id}`}
+																		class="rounded-full border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] text-[#555] transition hover:border-[#555] hover:text-white"
+																		aria-expanded={Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()])}
+																		aria-label={`${Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()]) ? 'Hide extra parameters for' : 'Show all parameters for'} ${item.result_id}`}
+																		on:click|stopPropagation={() => toggleBacktestParamSummary(item)}
+																	>
+																		{Boolean(expandedBacktestParamSummaryIds[String(item.result_id || '').trim()]) ? 'Show less' : `+${getBacktestParamOverflowCount(item)} more`}
+																	</button>
+																{/if}
+															{:else}
+																<span class="text-[11px] text-[#555]">No stored params</span>
+															{/if}
+														</div>
+													</td>
+													<td class={`px-3 py-2 text-right ${isCagrReliable(item) ? signedPercentClass(readPercentMetricOptional(item, 'annualized_return_pct')) : 'text-[#555]'}`}
+														title={isCagrReliable(item) ? 'Full-window CAGR (annualized over IS + OOS)' : `Short window (<1 month) — annualized value may be noisy`}>
+														{formatCagr(item)}
+													</td>
+													<td class={`px-3 py-2 text-right ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`}
+														title={isSharpeReliable(item) ? 'Full-window Sharpe (approximate: month-weighted avg of IS and OOS)' : `Low trade count (<20) — Sharpe may be noisy`}>
+														{formatSharpe(item)}{readFlag(item, 'sharpe_is_approximation') === true ? ' ~' : ''}
+													</td>
+													<td class="px-3 py-2 text-right text-red-400" title={readFlag(item, 'max_drawdown_is_approximation') === true ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{pct(readDrawdownPercentMetric(item, 'max_drawdown_pct', 'max_drawdown'))}{readFlag(item, 'max_drawdown_is_approximation') === true ? ' ~' : ''}</td>
+													<td class="px-3 py-2 text-right text-[#aaa]">{pct(readPercentMetric(item, 'win_rate', 'win_rate_pct'))}</td>
+													<td class="px-3 py-2 text-right text-[#aaa]">{historyTradesCount(item)}</td>
+													<td class="px-3 py-2 text-right text-[#aaa]"
+														title={readFlag(item, 'profit_factor_is_infinite') === true ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>
+														{formatProfitFactor(item)}
+													</td>
+													<td class="px-3 py-2 text-right text-[#aaa]" title={OOS_RETENTION_TITLE}>{formatRobustness(item)}</td>
+													<td class={`px-3 py-2 text-right border-l border-[#222] pl-3 ${isCagrReliable(item) ? signedPercentClass(readOutOfSampleCagr(item)) : 'text-[#555]'}`}
+														title={isCagrReliable(item) ? 'Out-of-sample CAGR (annualized)' : `Short OOS window (<1 month) — annualized value may be noisy`}>
+														{formatOutOfSampleCagr(item)}
+													</td>
+													<td class={`px-3 py-2 text-right ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`}
+														title={isSharpeReliable(item) ? 'Out-of-sample annualized Sharpe' : `Low trade count (<20) — Sharpe may be noisy`}>
+														{formatOutOfSampleSharpe(item)}
+													</td>
+													<td class="px-3 py-2 text-right">
+														<div class="flex items-center justify-end gap-2">
+															<button
+																type="button"
+																data-testid={`set-default-backtest-params-${item.result_id}`}
+																class={` border px-2.5 py-1 text-[10px] uppercase tracking-widest transition disabled:opacity-60 ${
+																	pinnedBacktestId && pinnedBacktestId === item.result_id
+																		? 'border-emerald-500 bg-emerald-600/30 text-emerald-100 cursor-default'
+																		: 'border-emerald-700 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
+																}`}
+																on:click|stopPropagation={() => void setBacktestRowAsDefault(item)}
+																disabled={settingDefaultParams || Boolean(pinnedBacktestId && pinnedBacktestId === item.result_id)}
+																title={pinnedBacktestId && pinnedBacktestId === item.result_id ? 'This Gauntlet run is currently active' : 'Make this Gauntlet run the active default'}
+															>
+																{settingDefaultParams
+																	? 'Saving…'
+																	: pinnedBacktestId && pinnedBacktestId === item.result_id
+																		? 'Active'
+																		: 'Set Default'}
+															</button>
+															<button
+																type="button"
+																data-testid={`open-report-${item.result_id}`}
+																class="border border-[#2b2b2b] bg-black px-2.5 py-1 text-[10px] uppercase tracking-widest text-[#888] transition hover:border-white/20 hover:text-white"
+																title="Open this run's full report on Performance"
+																on:click|stopPropagation={() => openPerformanceReport(item)}
+															>
+																Report
+															</button>
+															<button
+																type="button"
+																data-testid={`edit-backtest-params-${item.result_id}`}
+																class={` border px-2.5 py-1 text-[10px] uppercase tracking-widest transition ${
+																	expandedBacktestParamsId === item.result_id
+																		? 'border-[#333] bg-[#0c0c0c] text-white'
+																		: 'border-[#2b2b2b] bg-black text-[#888] hover:border-white/20 hover:text-white'
+																}`}
+																on:click|stopPropagation={() => toggleBacktestParamEditor(item)}
+															>
+																{expandedBacktestParamsId === item.result_id ? 'Hide' : 'Edit'}
+															</button>
+															<button
+																type="button"
+																class="p-1 text-[#555] transition-colors hover:bg-red-900/30 hover:text-red-400"
+																title="Delete result"
+																aria-label={`Move backtest result ${item.result_id} to trash`}
+																on:click={(e) => trashResult(e, item)}
+															>
+																<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+																	<path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+																</svg>
+															</button>
+														</div>
+													</td>
+												</tr>
+												{#if expandedBacktestParamsId === item.result_id}
+													<tr class="border-t border-cyan-950/40 bg-[#050505]">
+														<td colspan="18" class="px-4 py-4">
+															<div class="border border-[#1f1f1f] bg-black p-4">
+																<div class="flex flex-wrap items-start justify-between gap-3">
+																	<div>
+																		<div class="text-[10px] uppercase tracking-widest text-[#555]">Run Parameter Editor</div>
+																		<div class="mt-1 text-sm text-[#888]">
+																			Tweak the stored run parameters here, then rerun the exact market window without leaving history.
+																		</div>
+																	</div>
+																	<div class="flex flex-wrap items-center gap-2">
+																		<button
+																			type="button"
+																			data-testid={`load-backtest-params-${item.result_id}`}
+																			class="border border-[#2b2b2b] bg-[#070707] px-3 py-2 text-[11px] font-medium uppercase tracking-widest text-[#aaa] transition hover:border-white/20 hover:text-white"
+																			on:click|stopPropagation={() => loadBacktestParamsIntoDraft(item)}
+																		>
+																			Load Into Draft
+																		</button>
+																		<button
+																			type="button"
+																			class="border border-[#2b2b2b] bg-[#070707] px-3 py-2 text-[11px] font-medium uppercase tracking-widest text-[#aaa] transition hover:border-white/20 hover:text-white"
+																			on:click|stopPropagation={() => resetBacktestParamDraft(item)}
+																		>
+																			Reset
+																		</button>
+																		<button
+																			type="button"
+																			data-testid={`rerun-backtest-params-${item.result_id}`}
+																			class="border border-[#333] bg-[#0c0c0c] px-3 py-2 text-[11px] font-medium uppercase tracking-widest text-white transition hover:bg-[#111] disabled:opacity-40"
+																			on:click|stopPropagation={() => void rerunBacktestFromHistory(item)}
+																						disabled={isAnyRunInFlight || Boolean(backtestParamDraftErrors[item.result_id])}
+																		>
+																			{backtestParamRunnerId === item.result_id ? 'Running…' : 'Rerun With Changes'}
+																		</button>
+																	</div>
+																</div>
+																<div class="mt-3 flex flex-wrap gap-2 text-[11px] text-[#555]">
+																	<span class="rounded-full border border-[#2b2b2b] bg-[#070707] px-2 py-1">
+																		{item.symbol || '--'} / {item.timeframe || '--'}
+																	</span>
+																	<span class="rounded-full border border-[#2b2b2b] bg-[#070707] px-2 py-1">
+																		{fmtShortDate(item.start_date)} -> {fmtShortDate(item.end_date)}
+																	</span>
+																</div>
+																<div class="mt-4">
+																	{#if getHistoryParamSource(item) === 'current'}
+																		<div class="mb-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-400">
+																			This run did not store its own params. The editor is seeded from the current strategy params as a labeled fallback.
+																		</div>
+																	{/if}
+																	<div data-testid={`backtest-param-editor-${item.result_id}`}>
+																		<ParameterEditor
+																			params={visibleParams(backtestParamDrafts[item.result_id])}
+																			bind:hasErrors={backtestParamDraftErrors[item.result_id]}
+																			saving={backtestParamRunnerId === item.result_id}
+																			on:paramsChange={(event) => updateBacktestParamDraft(item.result_id, { ...systemParams(backtestParamDrafts[item.result_id]), ...event.detail })}
+																		/>
+																	</div>
+																</div>
+															</div>
+														</td>
+													</tr>
+												{/if}
+											{/each}
+										</tbody>
+									</table>
 								</div>
 							</div>
-							{#if Object.keys(optimizationParamDrafts).length === 0}
-								<div class="mt-3 border border-[#1a1a1a] bg-[#050505] px-3 py-2 text-xs text-[#555]">
-									No numeric strategy params are available for optimization on this container.
+						{/if}
+					</div>
+					</div>
+				</div>
+					{#if selectedResultSection === 'backtests' && hasRunDetail}
+						{@render runDetail()}
+					{/if}
+				{/if}
+
+				{#if activeTab === 'runs'}
+					<div class="mb-2 mt-6 text-[10px] uppercase tracking-[0.2em] text-[#555]" data-testid="runs-optimization-heading">Optimization</div>
+						<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3">
+							<div class="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+								<div class="grid gap-2 sm:grid-cols-2">
+									<SymbolInput id="container-opt-symbol" label="Symbol" bind:value={optimizationForm.symbol} suggestions={symbolSuggestions} helpText={optimizationSymbolHelpText} />
+									<TimeframeSelect id="container-opt-timeframe" label="Timeframe" bind:value={optimizationForm.timeframe} />
 								</div>
-							{:else}
-								<label class="mt-3 flex w-fit items-center gap-3 text-xs">
-									<input
-										data-testid="opt-param-select-all"
-										type="checkbox"
-										class="h-4 w-4 border border-[#2b2b2b] bg-black text-white"
-										checked={allOptimizationParamsSelected}
-										indeterminate={someOptimizationParamsSelected}
-										on:change={(event) => setAllOptimizationParamsSelected((event.currentTarget as HTMLInputElement).checked)}
-									/>
-									<span class="font-medium uppercase tracking-wide text-[#aaa]">Select all</span>
+								<DateRangeFieldset idPrefix="container-opt" title="Window" bind:startDate={optimizationForm.start_date} bind:endDate={optimizationForm.end_date} timeframe={optimizationForm.timeframe} accent="blue" />
+								<div class="flex items-end">
+									<button type="button" class="w-full border border-[#333] bg-[#0c0c0c] px-5 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:bg-[#111] disabled:opacity-40 lg:w-auto" on:click={submitContainerOptimization} disabled={isAnyRunInFlight}>{submitStatus === 'submitting' || submitStatus === 'running' ? 'Running…' : 'Run Optimization'}</button>
+								</div>
+							</div>
+							<div class="mt-2 grid gap-2 sm:grid-cols-2">
+								<label class="block" for="container-opt-objective">
+									<div class="text-[10px] uppercase tracking-wide text-[#555]">Objective</div>
+									<select id="container-opt-objective" bind:value={optimizationForm.objective} class="mt-1 w-full border border-[#2b2b2b] bg-[#050505] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60">
+										{#each OPTIMIZATION_OBJECTIVES as option}
+											<option value={option.value}>{option.label}</option>
+										{/each}
+									</select>
 								</label>
-								<div class="mt-2 grid gap-2">
-									{#each Object.values(optimizationParamDrafts) as draft (draft.key)}
-										<div class="border border-[#1d1d1d] bg-[#050505] p-3">
-											<div class="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,1fr))]">
-												<label class="flex items-center gap-3 text-sm text-white">
-													<input
-														data-testid={`opt-param-select-${draft.key}`}
-														type="checkbox"
-														class="h-4 w-4 border border-[#2b2b2b] bg-black text-white"
-														checked={draft.selected}
-														on:change={(event) => setOptimizationParamSelected(draft.key, (event.currentTarget as HTMLInputElement).checked)}
-													/>
-													<span class="font-medium uppercase tracking-wide text-gray-200">{draft.key}</span>
-													<span class="rounded-full border border-[#2b2b2b] bg-[#0c0c0c] px-2 py-0.5 text-[10px] uppercase tracking-widest text-white">Current {optimizationParamCurrentLabel(draft.current, draft.kind)}</span>
-												</label>
-												<label class="block">
-													<div class="text-[10px] uppercase tracking-wide text-[#555]">Min</div>
-													<input
-														data-testid={`opt-param-min-${draft.key}`}
-														type="number"
-														step={draft.kind === 'int' ? '1' : 'any'}
-														class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
-														value={draft.min}
-														on:input={(event) => updateOptimizationParamField(draft.key, 'min', (event.currentTarget as HTMLInputElement).value)}
-													/>
-												</label>
-												<label class="block">
-													<div class="text-[10px] uppercase tracking-wide text-[#555]">Max</div>
-													<input
-														data-testid={`opt-param-max-${draft.key}`}
-														type="number"
-														step={draft.kind === 'int' ? '1' : 'any'}
-														class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
-														value={draft.max}
-														on:input={(event) => updateOptimizationParamField(draft.key, 'max', (event.currentTarget as HTMLInputElement).value)}
-													/>
-												</label>
-												<label class="block">
-													<div class="text-[10px] uppercase tracking-wide text-[#555]">Step</div>
-													<input
-														data-testid={`opt-param-step-${draft.key}`}
-														type="number"
-														step={draft.kind === 'int' ? '1' : 'any'}
-														class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
-														value={draft.step}
-														on:input={(event) => updateOptimizationParamField(draft.key, 'step', (event.currentTarget as HTMLInputElement).value)}
-													/>
-												</label>
-												<div class="flex items-end">
-													<div class="border border-[#1d1d1d] bg-[#090909] px-3 py-2 text-[11px] text-[#888]">
-														{draft.kind === 'int' ? 'Whole-number sweep' : 'Decimal sweep'}
-													</div>
-												</div>
-											</div>
-											{#if draft.error}
-												<div data-testid={`opt-param-error-${draft.key}`} class="mt-2 border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-200">
-													{draft.error}
-												</div>
-											{/if}
-										</div>
-									{/each}
-								</div>
-							{/if}
-							<div class="mt-4 border-t border-[#1a1a1a] pt-4">
+								<label class="block" for="container-opt-trials">
+									<div class="text-[10px] uppercase tracking-wide text-[#555]">Trials</div>
+									<input id="container-opt-trials" type="number" min="1" class="mt-1 w-full border border-[#2b2b2b] bg-[#050505] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60" bind:value={optimizationForm.n_trials} />
+								</label>
+							</div>
+							<div data-testid="optimization-params-panel" class="mt-3 border border-[#1d1d1d] bg-black/40 p-3">
 								<div class="flex items-center justify-between gap-2">
-									<div class="text-[10px] uppercase tracking-wide text-[#555]">Execution Settings</div>
+									<div>
+										<div class="text-[10px] uppercase tracking-wide text-[#555]">Optimization Parameters</div>
+										<div class="mt-1 text-xs text-[#888]">Select numeric params to optimize. Unchecked params stay fixed at the current strategy defaults.</div>
+									</div>
 									<div class="rounded-full border border-[#333] bg-[#0c0c0c] px-2 py-1 text-[10px] uppercase tracking-widest text-white">
-										{optimizationExecutionSelectedCount} selected
+										{optimizationParamSelectedCount} selected
 									</div>
 								</div>
-								{#if Object.keys(optimizationExecutionDrafts).length === 0}
+								{#if Object.keys(optimizationParamDrafts).length === 0}
 									<div class="mt-3 border border-[#1a1a1a] bg-[#050505] px-3 py-2 text-xs text-[#555]">
-										No numeric execution settings are active for the current sizing mode.
+										No numeric strategy params are available for optimization on this container.
 									</div>
 								{:else}
 									<label class="mt-3 flex w-fit items-center gap-3 text-xs">
 										<input
-											data-testid="opt-exec-select-all"
+											data-testid="opt-param-select-all"
 											type="checkbox"
 											class="h-4 w-4 border border-[#2b2b2b] bg-black text-white"
-											checked={allOptimizationExecutionSelected}
-											indeterminate={someOptimizationExecutionSelected}
-											on:change={(event) => setAllOptimizationExecutionSelected((event.currentTarget as HTMLInputElement).checked)}
+											checked={allOptimizationParamsSelected}
+											indeterminate={someOptimizationParamsSelected}
+											on:change={(event) => setAllOptimizationParamsSelected((event.currentTarget as HTMLInputElement).checked)}
 										/>
-										<span class="font-medium uppercase tracking-wide text-[#aaa]">Select all execution</span>
+										<span class="font-medium uppercase tracking-wide text-[#aaa]">Select all</span>
 									</label>
 									<div class="mt-2 grid gap-2">
-										{#each Object.values(optimizationExecutionDrafts) as draft (draft.key)}
+										{#each Object.values(optimizationParamDrafts) as draft (draft.key)}
 											<div class="border border-[#1d1d1d] bg-[#050505] p-3">
 												<div class="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,1fr))]">
 													<label class="flex items-center gap-3 text-sm text-white">
 														<input
-															data-testid={`opt-exec-select-${draft.key}`}
+															data-testid={`opt-param-select-${draft.key}`}
 															type="checkbox"
 															class="h-4 w-4 border border-[#2b2b2b] bg-black text-white"
 															checked={draft.selected}
-															on:change={(event) => setOptimizationExecutionSelected(draft.key, (event.currentTarget as HTMLInputElement).checked)}
+															on:change={(event) => setOptimizationParamSelected(draft.key, (event.currentTarget as HTMLInputElement).checked)}
 														/>
 														<span class="font-medium uppercase tracking-wide text-gray-200">{draft.key}</span>
 														<span class="rounded-full border border-[#2b2b2b] bg-[#0c0c0c] px-2 py-0.5 text-[10px] uppercase tracking-widest text-white">Current {optimizationParamCurrentLabel(draft.current, draft.kind)}</span>
@@ -5771,34 +5720,34 @@
 													<label class="block">
 														<div class="text-[10px] uppercase tracking-wide text-[#555]">Min</div>
 														<input
-															data-testid={`opt-exec-min-${draft.key}`}
+															data-testid={`opt-param-min-${draft.key}`}
 															type="number"
 															step={draft.kind === 'int' ? '1' : 'any'}
 															class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
 															value={draft.min}
-															on:input={(event) => updateOptimizationExecutionField(draft.key, 'min', (event.currentTarget as HTMLInputElement).value)}
+															on:input={(event) => updateOptimizationParamField(draft.key, 'min', (event.currentTarget as HTMLInputElement).value)}
 														/>
 													</label>
 													<label class="block">
 														<div class="text-[10px] uppercase tracking-wide text-[#555]">Max</div>
 														<input
-															data-testid={`opt-exec-max-${draft.key}`}
+															data-testid={`opt-param-max-${draft.key}`}
 															type="number"
 															step={draft.kind === 'int' ? '1' : 'any'}
 															class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
 															value={draft.max}
-															on:input={(event) => updateOptimizationExecutionField(draft.key, 'max', (event.currentTarget as HTMLInputElement).value)}
+															on:input={(event) => updateOptimizationParamField(draft.key, 'max', (event.currentTarget as HTMLInputElement).value)}
 														/>
 													</label>
 													<label class="block">
 														<div class="text-[10px] uppercase tracking-wide text-[#555]">Step</div>
 														<input
-															data-testid={`opt-exec-step-${draft.key}`}
+															data-testid={`opt-param-step-${draft.key}`}
 															type="number"
 															step={draft.kind === 'int' ? '1' : 'any'}
 															class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
 															value={draft.step}
-															on:input={(event) => updateOptimizationExecutionField(draft.key, 'step', (event.currentTarget as HTMLInputElement).value)}
+															on:input={(event) => updateOptimizationParamField(draft.key, 'step', (event.currentTarget as HTMLInputElement).value)}
 														/>
 													</label>
 													<div class="flex items-end">
@@ -5808,7 +5757,7 @@
 													</div>
 												</div>
 												{#if draft.error}
-													<div data-testid={`opt-exec-error-${draft.key}`} class="mt-2 border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-200">
+													<div data-testid={`opt-param-error-${draft.key}`} class="mt-2 border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-200">
 														{draft.error}
 													</div>
 												{/if}
@@ -5816,639 +5765,726 @@
 										{/each}
 									</div>
 								{/if}
-							</div>
-						</div>
-					</div>
-
-					<div class="grid grid-cols-1 gap-4">
-						<div class="border border-[#1d1d1d] bg-[#090909] p-4">
-							<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Optimization Runs</div>
-							{#if optimizationHistory.length === 0}
-								<div class="px-3 py-4 text-xs text-[#555]">No optimization runs yet.</div>
-							{:else}
-								<div class="mt-3 grid gap-3">
-									{#each optimizationHistory as item}
-										{@const objectiveName = optimizationObjectiveName(item)}
-										{@const bestParamChips = formatOptimizationChipRecord(getOptimizationHistoryBestParams(item), 8)}
-										{@const executionChips = formatOptimizationChipRecord(getOptimizationHistoryExecutionProfile(item), 8)}
-										{@const topResults = optimizationTopResults(item)}
-										<button
-											data-testid={`optimization-row-${item.result_id}`}
-											class={` border border-[#222] bg-[#090909] px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-[#333] shadow-[0_0_0_1px_rgba(96,165,250,0.08),0_18px_40px_rgba(59,130,246,0.08)]' : ''}`}
-											on:click={() => void openResult(item)}
-										>
-											<div class="flex flex-wrap items-center gap-2 text-xs">
-												<span class="break-all font-mono text-white">{item.result_id}</span>
-												<span class={` border px-1 py-0.5 text-[10px] ${resultTypeBadge(item.result_type)}`}>{item.result_type}</span>
-												<span class={` border px-1.5 py-0.5 text-[10px] ${statusBadgeClass(historyItemStatus(item))}`}>{statusLabel(historyItemStatus(item))}</span>
-												<span class="border border-[#252525] bg-black px-2 py-0.5 font-mono text-[10px] text-[#aaa]">{optimizationRunMarketLabel(item)}</span>
-												<span class="border border-[#252525] bg-black px-2 py-0.5 font-mono text-[10px] text-[#888]">{optimizationRunWindowLabel(item)}</span>
-												<span class="ml-auto text-[#555]">{fmtDate(item.created_at)}</span>
-											</div>
-											{#if historyItemError(item)}
-												<div class="mt-2 border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-200">
-													{historyItemError(item)}
-												</div>
-											{/if}
-											<div class="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3 xl:grid-cols-6">
-												<div class="border-l border-[#333] bg-black/50 px-3 py-2">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">{optimizationObjectiveLabel(objectiveName)}</div>
-													<div class="mt-1 font-mono text-sm text-white">{formatOptimizationObjectiveValue(item)}</div>
-												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Fitness</div>
-													<div class="mt-1 font-mono text-sm text-[#aaa]">{numOrDash(readMetricOptional(item, 'best_fitness', 'fitness'))}</div>
-												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2" title="Full window (in-sample + out-of-sample) of the best candidate; approximate — a month-weighted average of the two halves.">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Sharpe · IS+OOS</div>
-													<div class={`mt-1 font-mono text-sm ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`} title={isSharpeReliable(item) ? undefined : 'Low trade count (<20) — Sharpe may be noisy'}>{formatSharpe(item)}</div>
-												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2" title="Full-window (in-sample + out-of-sample) return of the best candidate.">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Return · IS+OOS</div>
-													<div class={`mt-1 font-mono text-sm ${signedPercentClass(readPercentMetricOptional(item, 'total_return_pct', 'total_return', 'pnl_pct'))}`}>{pctOrDash(readPercentMetricOptional(item, 'total_return_pct', 'total_return', 'pnl_pct'))}</div>
-												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">WFA</div>
-													<div class={`mt-1 font-mono text-sm ${optimizationWfaClass(item)}`}>{optimizationWfaLabel(item)}</div>
-												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Trials</div>
-													<div class="mt-1 font-mono text-sm text-[#aaa]">{historyItemTrials(item) ?? '--'}</div>
-												</div>
-											</div>
-											<div class="mt-3 grid gap-3 border-t border-[#1a1a1a] pt-3 lg:grid-cols-2">
-												<div>
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Best Params</div>
-													{#if bestParamChips.length}
-														<div class="mt-2 flex flex-wrap gap-1.5">
-															{#each bestParamChips as chip}
-																<span class="border border-[#333] bg-[#0c0c0c] px-2 py-1 font-mono text-[10px] text-white">{chip}</span>
-															{/each}
-														</div>
-													{:else}
-														<div class="mt-2 text-[11px] text-[#555]">No optimized signal parameters stored.</div>
-													{/if}
-												</div>
-												<div>
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Execution Profile</div>
-													{#if executionChips.length}
-														<div class="mt-2 flex flex-wrap gap-1.5">
-															{#each executionChips as chip}
-																<span class="border border-emerald-900/50 bg-emerald-950/10 px-2 py-1 font-mono text-[10px] text-emerald-100">{chip}</span>
-															{/each}
-														</div>
-													{:else}
-														<div class="mt-2 text-[11px] text-[#555]">No execution overrides stored.</div>
-													{/if}
-												</div>
-											</div>
-											{#if topResults.length}
-												<div class="mt-3 border-t border-[#1a1a1a] pt-3">
-													<div class="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#555]">
-														<span>Top Candidates</span>
-														<span class="font-mono text-gray-700">{topResults.length}</span>
-													</div>
-													<div class="grid gap-2 xl:grid-cols-3">
-														{#each topResults as candidate, index}
-															{@const candidateParams = optimizationTopParamChips(candidate, 4)}
-															{@const candidateExecution = optimizationTopExecutionChips(candidate, 4)}
-															<div class="border border-[#1f1f1f] bg-black/40 px-3 py-2">
-																<div class="flex items-center gap-2 text-[11px]">
-																	<span class="font-mono text-[#555]">#{index + 1}</span>
-																	<span class="font-mono text-white">{optimizationTopObjectiveLabel(candidate, item)}</span>
-																	<span class="ml-auto font-mono text-[#555]">fit {optimizationTopFitnessLabel(candidate)}</span>
-																</div>
-																<div class="mt-2 flex flex-wrap gap-1">
-																	{#each candidateParams as chip}
-																		<span class="border border-[#282828] px-1.5 py-0.5 font-mono text-[9px] text-[#aaa]">{chip}</span>
-																	{/each}
-																	{#each candidateExecution as chip}
-																		<span class="border border-emerald-900/40 px-1.5 py-0.5 font-mono text-[9px] text-emerald-200">{chip}</span>
-																	{/each}
-																</div>
+								<div class="mt-4 border-t border-[#1a1a1a] pt-4">
+									<div class="flex items-center justify-between gap-2">
+										<div class="text-[10px] uppercase tracking-wide text-[#555]">Execution Settings</div>
+										<div class="rounded-full border border-[#333] bg-[#0c0c0c] px-2 py-1 text-[10px] uppercase tracking-widest text-white">
+											{optimizationExecutionSelectedCount} selected
+										</div>
+									</div>
+									{#if Object.keys(optimizationExecutionDrafts).length === 0}
+										<div class="mt-3 border border-[#1a1a1a] bg-[#050505] px-3 py-2 text-xs text-[#555]">
+											No numeric execution settings are active for the current sizing mode.
+										</div>
+									{:else}
+										<label class="mt-3 flex w-fit items-center gap-3 text-xs">
+											<input
+												data-testid="opt-exec-select-all"
+												type="checkbox"
+												class="h-4 w-4 border border-[#2b2b2b] bg-black text-white"
+												checked={allOptimizationExecutionSelected}
+												indeterminate={someOptimizationExecutionSelected}
+												on:change={(event) => setAllOptimizationExecutionSelected((event.currentTarget as HTMLInputElement).checked)}
+											/>
+											<span class="font-medium uppercase tracking-wide text-[#aaa]">Select all execution</span>
+										</label>
+										<div class="mt-2 grid gap-2">
+											{#each Object.values(optimizationExecutionDrafts) as draft (draft.key)}
+												<div class="border border-[#1d1d1d] bg-[#050505] p-3">
+													<div class="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,1fr))]">
+														<label class="flex items-center gap-3 text-sm text-white">
+															<input
+																data-testid={`opt-exec-select-${draft.key}`}
+																type="checkbox"
+																class="h-4 w-4 border border-[#2b2b2b] bg-black text-white"
+																checked={draft.selected}
+																on:change={(event) => setOptimizationExecutionSelected(draft.key, (event.currentTarget as HTMLInputElement).checked)}
+															/>
+															<span class="font-medium uppercase tracking-wide text-gray-200">{draft.key}</span>
+															<span class="rounded-full border border-[#2b2b2b] bg-[#0c0c0c] px-2 py-0.5 text-[10px] uppercase tracking-widest text-white">Current {optimizationParamCurrentLabel(draft.current, draft.kind)}</span>
+														</label>
+														<label class="block">
+															<div class="text-[10px] uppercase tracking-wide text-[#555]">Min</div>
+															<input
+																data-testid={`opt-exec-min-${draft.key}`}
+																type="number"
+																step={draft.kind === 'int' ? '1' : 'any'}
+																class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
+																value={draft.min}
+																on:input={(event) => updateOptimizationExecutionField(draft.key, 'min', (event.currentTarget as HTMLInputElement).value)}
+															/>
+														</label>
+														<label class="block">
+															<div class="text-[10px] uppercase tracking-wide text-[#555]">Max</div>
+															<input
+																data-testid={`opt-exec-max-${draft.key}`}
+																type="number"
+																step={draft.kind === 'int' ? '1' : 'any'}
+																class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
+																value={draft.max}
+																on:input={(event) => updateOptimizationExecutionField(draft.key, 'max', (event.currentTarget as HTMLInputElement).value)}
+															/>
+														</label>
+														<label class="block">
+															<div class="text-[10px] uppercase tracking-wide text-[#555]">Step</div>
+															<input
+																data-testid={`opt-exec-step-${draft.key}`}
+																type="number"
+																step={draft.kind === 'int' ? '1' : 'any'}
+																class="mt-1 w-full border border-[#2b2b2b] bg-[#090909] px-2 py-1.5 text-sm text-white outline-none focus:border-white/60"
+																value={draft.step}
+																on:input={(event) => updateOptimizationExecutionField(draft.key, 'step', (event.currentTarget as HTMLInputElement).value)}
+															/>
+														</label>
+														<div class="flex items-end">
+															<div class="border border-[#1d1d1d] bg-[#090909] px-3 py-2 text-[11px] text-[#888]">
+																{draft.kind === 'int' ? 'Whole-number sweep' : 'Decimal sweep'}
 															</div>
-														{/each}
+														</div>
 													</div>
+													{#if draft.error}
+														<div data-testid={`opt-exec-error-${draft.key}`} class="mt-2 border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-200">
+															{draft.error}
+														</div>
+													{/if}
 												</div>
-											{/if}
-										</button>
-									{/each}
+											{/each}
+										</div>
+									{/if}
 								</div>
-							{/if}
-						</div>
-					</div>
-				{#if selectedResultSection === 'optimizations' && hasRunDetail}
-					{@render runDetail()}
-				{/if}
-			{/if}
-
-			{#if activeTab === 'performance'}
-				<div class="grid gap-3" data-testid="performance-tab">
-					<RunFacts
-						result={performanceResult}
-						runs={backtestHistory}
-						selectedId={performanceTargetId}
-						pinnedId={pinnedBacktestId}
-						referenceId={referenceRunId}
-						on:select={(event) => void selectPerformanceRun(event.detail.resultId)}
-					/>
-					{#if !performanceTargetId}
-						<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No runs yet — start one from Runs to see the full report.</div>
-					{:else if performanceLoading && !performanceResult}
-						<div class="border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading the run…</div>
-					{:else if performanceError}
-						<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{performanceError}</div>
-					{:else if performanceResult}
-						<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="performance-growth">
-							<div class="flex flex-wrap items-baseline justify-between gap-2">
-								<div>
-									<h2 class="m-0 text-[13px] font-semibold text-white">Growth of {fmtUsd(perfCapital, 0, false)}</h2>
-									<div class="text-[11px] text-[#666]">{perfUsesFull ? 'Whole run, closed-trade equity; the shaded span is in-sample.' : 'Out-of-sample equity (this run stored no full-window curve).'} Log scale keeps early and late moves comparable.</div>
-								</div>
-								{#if performanceItem}
-									<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="performance-open-detail" on:click={() => { activeTab = 'runs'; if (performanceItem) void openResult(performanceItem); }}>Candles &amp; trade chart →</button>
-								{/if}
 							</div>
-							<GrowthChart strategy={perfCurve} benchmark={perfBenchmark} oosStart={perfOosStart} />
-						</article>
-						<div class="grid gap-3 xl:grid-cols-2">
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
-								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Statistics</h2><span class="text-[11px] text-[#666]">In-sample against out-of-sample of this run</span></div>
-								<RunStatsTable inSample={perfSlices.inSample} outOfSample={perfSlices.outOfSample} stats={perfTradeStats} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
-								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Trade returns</h2><span class="text-[11px] text-[#666]">Out-of-sample, % of equity per trade</span></div>
-								<TradeHistogram rows={perfTrades} />
-								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Drawdown periods</h2><span class="text-[11px] text-[#666]">Out-of-sample, deepest first · from the stored (sampled) curve, so depths can read slightly shallower than the engine's max drawdown</span></div>
-								<DrawdownTable periods={perfDrawdowns} />
-							</article>
 						</div>
-						<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
-							<div><h2 class="m-0 text-[13px] font-semibold text-white">Monthly returns</h2><div class="text-[11px] text-[#666]">{perfUsesFull ? 'Whole run, closed-trade equity.' : 'Out-of-sample equity.'} A dash means no trade closed that month.</div></div>
-							<MonthlyHeatmap months={perfMonths} oosStart={perfOosStart} />
-						</article>
-						<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
-							<div><h2 class="m-0 text-[13px] font-semibold text-white">Trades</h2><div class="text-[11px] text-[#666]">This run's stored trades (out-of-sample; the engine does not keep in-sample trades).</div></div>
-							<TradeTable rows={perfTrades} />
-						</article>
-					{/if}
-				</div>
-			{/if}
 
-			{#if activeTab === 'robustness'}
-					<div class="space-y-3">
-						<StressMatrix rows={stressRows} composite={gauntletComposite} floor={gauntletFloor} loading={evidenceLoading} on:select={(event) => void openStressRow(event.detail.key)} />
-						<div class="grid gap-3 xl:grid-cols-2">
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-wfa">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Walk-forward folds</h2><div class="text-[11px] text-[#666]">Sharpe per fold: fitted on the in-sample span, scored on the next one.</div></div>
-								<WalkForwardFolds wf={walkForwardEvidence} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-mc">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Monte Carlo</h2><div class="text-[11px] text-[#666]">Final return of resampled walk-forward trade sequences.</div></div>
-								<MonteCarloOutcome payload={mcPayload} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-jitter">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Parameter jitter</h2><div class="text-[11px] text-[#666]">Sharpe after nudging every parameter.</div></div>
-								<JitterStrip payload={jitterPayload} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-cost">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Cost stress</h2><div class="text-[11px] text-[#666]">{costPayload ? `${costPayload.fee_multiplier ?? '—'}× fees and ${costPayload.slippage_multiplier ?? '—'}× slippage (base ${costPayload.base_fee_bps ?? '—'} / ${costPayload.base_slippage_bps ?? '—'} bps), the baseline run's window` : 'Higher fees and slippage on the baseline run'}</div></div>
-								<CostStressDumbbell payload={costPayload} maxDegradationPct={costMaxDegradationPct} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-regime">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Regime split</h2><div class="text-[11px] text-[#666]">Average return per trade by the market regime at entry (walk-forward trades).</div></div>
-								<RegimeSplit payload={regimePayload} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-holdout">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Held-back test</h2><div class="text-[11px] text-[#666]">One shot on data sealed away from research; its baselines cover the same days.</div></div>
-								<HeldBackCard held={heldBack} />
-							</article>
-							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-dsr">
-								<div><h2 class="m-0 text-[13px] font-semibold text-white">Deflated Sharpe</h2><div class="text-[11px] text-[#666]">Probability the edge is real after counting every variant tried.</div></div>
-								<DeflatedSharpeCard dsr={dsrValue} trials={dsrTrials} />
-							</article>
-						</div>
-						<div class="mt-3 text-[10px] uppercase tracking-[0.2em] text-[#555]" id="rb-run">Run a test</div>
-						<GauntletStatusCard
-							{strategyId}
-							stage={currentLifecycleStage}
-							selectedTestKey={selectedRobustnessTest}
-							testOverrides={robustnessStatusOverrides}
-							on:selectTest={(event) => {
-								selectedRobustnessTest = event.detail.key;
-							}}
-							on:promote={() => openStageChange()}
-						/>
-						<RobustnessPanel
-							{strategyId}
-							{backtestHistory}
-							validationHistory={validationHistory}
-							{symbolSuggestions}
-							defaultSymbol={String(container?.configuration?.symbol ?? '')}
-							defaultTimeframe={String(container?.configuration?.timeframe ?? '1h')}
-							{pinnedBacktestId}
-							activeTestKey={selectedRunnerTestKey(selectedRobustnessTest)}
-							on:testComplete={(event) => noteRobustnessTestComplete(event.detail)}
-						/>
-						{#if selectedRobustnessTest === 'walk_forward'}
+						<div class="grid grid-cols-1 gap-4">
 							<div class="border border-[#1d1d1d] bg-[#090909] p-4">
-								<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Walk Forward Runs</div>
-								{#if walkForwardHistory.length === 0}
-									<div class="px-3 py-4 text-xs text-[#555]">No walk-forward runs yet.</div>
+								<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Optimization Runs</div>
+								{#if optimizationHistory.length === 0}
+									<div class="px-3 py-4 text-xs text-[#555]">No optimization runs yet.</div>
 								{:else}
 									<div class="mt-3 grid gap-3">
-										{#each walkForwardHistory as item}
-											<button class={` border border-[#222] bg-[#090909] px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-[#333] shadow-[0_0_0_1px_rgba(167,139,250,0.08),0_18px_40px_rgba(139,92,246,0.08)]' : ''}`} on:click={() => void openResult(item)}>
-												<div class="flex items-center gap-2 text-xs">
-													<span class="font-mono text-white">{item.result_id}</span>
+										{#each optimizationHistory as item}
+											{@const objectiveName = optimizationObjectiveName(item)}
+											{@const bestParamChips = formatOptimizationChipRecord(getOptimizationHistoryBestParams(item), 8)}
+											{@const executionChips = formatOptimizationChipRecord(getOptimizationHistoryExecutionProfile(item), 8)}
+											{@const topResults = optimizationTopResults(item)}
+											<button
+												data-testid={`optimization-row-${item.result_id}`}
+												class={` border border-[#222] bg-[#090909] px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-[#333] shadow-[0_0_0_1px_rgba(96,165,250,0.08),0_18px_40px_rgba(59,130,246,0.08)]' : ''}`}
+												on:click={() => void openResult(item)}
+											>
+												<div class="flex flex-wrap items-center gap-2 text-xs">
+													<span class="break-all font-mono text-white">{item.result_id}</span>
 													<span class={` border px-1 py-0.5 text-[10px] ${resultTypeBadge(item.result_type)}`}>{item.result_type}</span>
+													<span class={` border px-1.5 py-0.5 text-[10px] ${statusBadgeClass(historyItemStatus(item))}`}>{statusLabel(historyItemStatus(item))}</span>
+													<span class="border border-[#252525] bg-black px-2 py-0.5 font-mono text-[10px] text-[#aaa]">{optimizationRunMarketLabel(item)}</span>
+													<span class="border border-[#252525] bg-black px-2 py-0.5 font-mono text-[10px] text-[#888]">{optimizationRunWindowLabel(item)}</span>
 													<span class="ml-auto text-[#555]">{fmtDate(item.created_at)}</span>
 												</div>
-												<div class="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-													<div class="border border-[#1f1f1f] bg-black px-3 py-2">
-														<div class="text-[10px] uppercase tracking-widest text-[#555]">IS Sharpe</div>
-														<div class="mt-1 font-mono text-sm text-[#aaa]">{formatWalkForwardSharpe(item, 'avg_is_sharpe')}</div>
+												{#if historyItemError(item)}
+													<div class="mt-2 border border-red-900/40 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-200">
+														{historyItemError(item)}
 													</div>
-													<div class="border border-[#1f1f1f] bg-black px-3 py-2">
-														<div class="text-[10px] uppercase tracking-widest text-[#555]">OOS Sharpe</div>
-														<div class="mt-1 font-mono text-sm text-[#aaa]">{formatWalkForwardSharpe(item, 'avg_oos_sharpe')}</div>
+												{/if}
+												<div class="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3 xl:grid-cols-6">
+													<div class="border-l border-[#333] bg-black/50 px-3 py-2">
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">{optimizationObjectiveLabel(objectiveName)}</div>
+														<div class="mt-1 font-mono text-sm text-white">{formatOptimizationObjectiveValue(item)}</div>
 													</div>
-													<div class="border border-[#1f1f1f] bg-black px-3 py-2">
-														<div class="text-[10px] uppercase tracking-widest text-[#555]">Degradation</div>
-														<div class={`mt-1 font-mono text-sm ${walkForwardDegradationClass(item)}`}>{formatWalkForwardDegradation(item)}</div>
+													<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">Fitness</div>
+														<div class="mt-1 font-mono text-sm text-[#aaa]">{numOrDash(readMetricOptional(item, 'best_fitness', 'fitness'))}</div>
 													</div>
-													<div class="border border-[#1f1f1f] bg-black px-3 py-2">
-														<div class="text-[10px] uppercase tracking-widest text-[#555]">OOS Trades</div>
-														<div class="mt-1 font-mono text-sm text-[#aaa]">{formatWalkForwardOosTrades(item)}</div>
+													<div class="border-l border-[#252525] bg-black/40 px-3 py-2" title="Full window (in-sample + out-of-sample) of the best candidate; approximate — a month-weighted average of the two halves.">
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">Sharpe · IS+OOS</div>
+														<div class={`mt-1 font-mono text-sm ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`} title={isSharpeReliable(item) ? undefined : 'Low trade count (<20) — Sharpe may be noisy'}>{formatSharpe(item)}</div>
+													</div>
+													<div class="border-l border-[#252525] bg-black/40 px-3 py-2" title="Full-window (in-sample + out-of-sample) return of the best candidate.">
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">Return · IS+OOS</div>
+														<div class={`mt-1 font-mono text-sm ${signedPercentClass(readPercentMetricOptional(item, 'total_return_pct', 'total_return', 'pnl_pct'))}`}>{pctOrDash(readPercentMetricOptional(item, 'total_return_pct', 'total_return', 'pnl_pct'))}</div>
+													</div>
+													<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">WFA</div>
+														<div class={`mt-1 font-mono text-sm ${optimizationWfaClass(item)}`}>{optimizationWfaLabel(item)}</div>
+													</div>
+													<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">Trials</div>
+														<div class="mt-1 font-mono text-sm text-[#aaa]">{historyItemTrials(item) ?? '--'}</div>
 													</div>
 												</div>
+												<div class="mt-3 grid gap-3 border-t border-[#1a1a1a] pt-3 lg:grid-cols-2">
+													<div>
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">Best Params</div>
+														{#if bestParamChips.length}
+															<div class="mt-2 flex flex-wrap gap-1.5">
+																{#each bestParamChips as chip}
+																	<span class="border border-[#333] bg-[#0c0c0c] px-2 py-1 font-mono text-[10px] text-white">{chip}</span>
+																{/each}
+															</div>
+														{:else}
+															<div class="mt-2 text-[11px] text-[#555]">No optimized signal parameters stored.</div>
+														{/if}
+													</div>
+													<div>
+														<div class="text-[10px] uppercase tracking-widest text-[#555]">Execution Profile</div>
+														{#if executionChips.length}
+															<div class="mt-2 flex flex-wrap gap-1.5">
+																{#each executionChips as chip}
+																	<span class="border border-emerald-900/50 bg-emerald-950/10 px-2 py-1 font-mono text-[10px] text-emerald-100">{chip}</span>
+																{/each}
+															</div>
+														{:else}
+															<div class="mt-2 text-[11px] text-[#555]">No execution overrides stored.</div>
+														{/if}
+													</div>
+												</div>
+												{#if topResults.length}
+													<div class="mt-3 border-t border-[#1a1a1a] pt-3">
+														<div class="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#555]">
+															<span>Top Candidates</span>
+															<span class="font-mono text-gray-700">{topResults.length}</span>
+														</div>
+														<div class="grid gap-2 xl:grid-cols-3">
+															{#each topResults as candidate, index}
+																{@const candidateParams = optimizationTopParamChips(candidate, 4)}
+																{@const candidateExecution = optimizationTopExecutionChips(candidate, 4)}
+																<div class="border border-[#1f1f1f] bg-black/40 px-3 py-2">
+																	<div class="flex items-center gap-2 text-[11px]">
+																		<span class="font-mono text-[#555]">#{index + 1}</span>
+																		<span class="font-mono text-white">{optimizationTopObjectiveLabel(candidate, item)}</span>
+																		<span class="ml-auto font-mono text-[#555]">fit {optimizationTopFitnessLabel(candidate)}</span>
+																	</div>
+																	<div class="mt-2 flex flex-wrap gap-1">
+																		{#each candidateParams as chip}
+																			<span class="border border-[#282828] px-1.5 py-0.5 font-mono text-[9px] text-[#aaa]">{chip}</span>
+																		{/each}
+																		{#each candidateExecution as chip}
+																			<span class="border border-emerald-900/40 px-1.5 py-0.5 font-mono text-[9px] text-emerald-200">{chip}</span>
+																		{/each}
+																	</div>
+																</div>
+															{/each}
+														</div>
+													</div>
+												{/if}
 											</button>
 										{/each}
 									</div>
 								{/if}
 							</div>
+						</div>
+					{#if selectedResultSection === 'optimizations' && hasRunDetail}
+						{@render runDetail()}
+					{/if}
+				{/if}
+
+				{#if activeTab === 'performance'}
+					<div class="grid gap-3" data-testid="performance-tab">
+						<RunFacts
+							result={performanceResult}
+							runs={backtestHistory}
+							selectedId={performanceTargetId}
+							pinnedId={pinnedBacktestId}
+							referenceId={referenceRunId}
+							on:select={(event) => void selectPerformanceRun(event.detail.resultId)}
+						/>
+						{#if !performanceTargetId}
+							<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No runs yet — start one from Runs to see the full report.</div>
+						{:else if performanceLoading && !performanceResult}
+							<div class="border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading the run…</div>
+						{:else if performanceError}
+							<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{performanceError}</div>
+						{:else if performanceResult}
+							<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="performance-growth">
+								<div class="flex flex-wrap items-baseline justify-between gap-2">
+									<div>
+										<h2 class="m-0 text-[13px] font-semibold text-white">Growth of {fmtUsd(perfCapital, 0, false)}</h2>
+										<div class="text-[11px] text-[#666]">{perfUsesFull ? 'Whole run, closed-trade equity; the shaded span is in-sample.' : 'Out-of-sample equity (this run stored no full-window curve).'} Log scale keeps early and late moves comparable.</div>
+									</div>
+									{#if performanceItem}
+										<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="performance-open-detail" on:click={() => { activeTab = 'runs'; if (performanceItem) void openResult(performanceItem); }}>Candles &amp; trade chart →</button>
+									{/if}
+								</div>
+								<GrowthChart strategy={perfCurve} benchmark={perfBenchmark} oosStart={perfOosStart} />
+							</article>
+							<div class="grid gap-3 xl:grid-cols-2">
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+									<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Statistics</h2><span class="text-[11px] text-[#666]">In-sample against out-of-sample of this run</span></div>
+									<RunStatsTable inSample={perfSlices.inSample} outOfSample={perfSlices.outOfSample} stats={perfTradeStats} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+									<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Trade returns</h2><span class="text-[11px] text-[#666]">Out-of-sample, % of equity per trade</span></div>
+									<TradeHistogram rows={perfTrades} />
+									<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Drawdown periods</h2><span class="text-[11px] text-[#666]">Out-of-sample, deepest first · from the stored (sampled) curve, so depths can read slightly shallower than the engine's max drawdown</span></div>
+									<DrawdownTable periods={perfDrawdowns} />
+								</article>
+							</div>
+							<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Monthly returns</h2><div class="text-[11px] text-[#666]">{perfUsesFull ? 'Whole run, closed-trade equity.' : 'Out-of-sample equity.'} A dash means no trade closed that month.</div></div>
+								<MonthlyHeatmap months={perfMonths} oosStart={perfOosStart} />
+							</article>
+							<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Trades</h2><div class="text-[11px] text-[#666]">This run's stored trades (out-of-sample; the engine does not keep in-sample trades).</div></div>
+								<TradeTable rows={perfTrades} />
+							</article>
 						{/if}
 					</div>
-				{#if selectedResultSection === 'robustness' && hasRunDetail}
-					{@render runDetail()}
-				{/if}
 				{/if}
 
-			{#if activeTab === 'robustness' && toolRequest}
-				<div class="mb-2 mt-6 text-[10px] uppercase tracking-[0.2em] text-[#555]" id="rb-sens">Sensitivity</div>
-			{/if}
-			{#if activeTab === 'robustness' && toolRequest}
-				<div class="max-w-5xl space-y-3" data-testid="strategy-heatmap-tab">
-					<div>
-						<div class="text-xs uppercase tracking-widest text-white">Parameter heatmap</div>
-						<p class="mt-1 text-[11px] text-[#777]">
-							Does this strategy work across a range of its settings, or only at one exact point? A robust edge sits on a plateau of neighbouring settings that also work; a lone bright cell is usually fitted noise.
-						</p>
-					</div>
-					<ContainerHeatmap request={toolRequest} knobs={toolKnobs} on:adopt={(e) => adoptHeatmapSettings(e.detail)} />
-				</div>
-			{/if}
-
-			{#if activeTab === 'robustness' && toolRequest}
-				<div class="max-w-5xl space-y-3" data-testid="strategy-markets-tab">
-					<div>
-						<div class="text-xs uppercase tracking-widest text-white">Market grid</div>
-						<p class="mt-1 text-[11px] text-[#777]">
-							Does the edge carry beyond {backtestForm.symbol || 'this market'}? The same strategy and settings on other markets and timeframes: an edge that only shows up where it was built is often fitted to that market.
-						</p>
-					</div>
-					<ContainerMarkets request={toolRequest} availability={toolAvailability} symbolOptions={toolSymbolOptions}
-						currentSymbol={backtestForm.symbol} currentTimeframe={backtestForm.timeframe} on:pick={(e) => useMarket(e.detail)} />
-				</div>
-			{/if}
-
-			{#if activeTab === 'execution'}
-				<div class="space-y-4">
-					<div class="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-growth-card">
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Strategy Growth</div>
-								{#if executionGrowth}
-									<div class="flex items-center gap-2 text-[11px]">
-										<span class={` border px-1.5 py-0.5 font-mono ${executionGrowth.totalPnl >= 0 ? 'border-emerald-900/50 bg-emerald-950/15 text-emerald-300' : 'border-red-900/50 bg-red-950/15 text-red-300'}`}>
-											{formatSignedCurrency(executionGrowth.totalPnl)}
-										</span>
-										<span class="text-[#555]">{executionGrowth.tradeCount} closed trade{executionGrowth.tradeCount === 1 ? '' : 's'}</span>
-									</div>
-								{/if}
+				{#if activeTab === 'robustness'}
+						<div class="space-y-3">
+							<StressMatrix rows={stressRows} composite={gauntletComposite} floor={gauntletFloor} loading={evidenceLoading} on:select={(event) => void openStressRow(event.detail.key)} />
+							<div class="grid gap-3 xl:grid-cols-2">
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-wfa">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Walk-forward folds</h2><div class="text-[11px] text-[#666]">Sharpe per fold: fitted on the in-sample span, scored on the next one.</div></div>
+									<WalkForwardFolds wf={walkForwardEvidence} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-mc">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Monte Carlo</h2><div class="text-[11px] text-[#666]">Final return of resampled walk-forward trade sequences.</div></div>
+									<MonteCarloOutcome payload={mcPayload} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-jitter">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Parameter jitter</h2><div class="text-[11px] text-[#666]">Sharpe after nudging every parameter.</div></div>
+									<JitterStrip payload={jitterPayload} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-cost">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Cost stress</h2><div class="text-[11px] text-[#666]">{costPayload ? `${costPayload.fee_multiplier ?? '—'}× fees and ${costPayload.slippage_multiplier ?? '—'}× slippage (base ${costPayload.base_fee_bps ?? '—'} / ${costPayload.base_slippage_bps ?? '—'} bps), the baseline run's window` : 'Higher fees and slippage on the baseline run'}</div></div>
+									<CostStressDumbbell payload={costPayload} maxDegradationPct={costMaxDegradationPct} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-regime">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Regime split</h2><div class="text-[11px] text-[#666]">Average return per trade by the market regime at entry (walk-forward trades).</div></div>
+									<RegimeSplit payload={regimePayload} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-holdout">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Held-back test</h2><div class="text-[11px] text-[#666]">One shot on data sealed away from research; its baselines cover the same days.</div></div>
+									<HeldBackCard held={heldBack} />
+								</article>
+								<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-dsr">
+									<div><h2 class="m-0 text-[13px] font-semibold text-white">Deflated Sharpe</h2><div class="text-[11px] text-[#666]">Probability the edge is real after counting every variant tried.</div></div>
+									<DeflatedSharpeCard dsr={dsrValue} trials={dsrTrials} />
+								</article>
 							</div>
-							{#if executionGrowth}
-								<div class="mt-1 text-xs text-[#555]" data-testid="overview-growth-mode">
-									{#if executionGrowth.mode === 'paper'}
-										Paper book equity — the strategy's isolated ${PAPER_START_EQUITY.toLocaleString()} book plus realized PnL from each closed paper trade.
+							<div class="mt-3 text-[10px] uppercase tracking-[0.2em] text-[#555]" id="rb-run">Run a test</div>
+							<GauntletStatusCard
+								{strategyId}
+								stage={currentLifecycleStage}
+								selectedTestKey={selectedRobustnessTest}
+								testOverrides={robustnessStatusOverrides}
+								on:selectTest={(event) => {
+									selectedRobustnessTest = event.detail.key;
+								}}
+								on:promote={() => openStageChange()}
+							/>
+							<RobustnessPanel
+								{strategyId}
+								{backtestHistory}
+								validationHistory={validationHistory}
+								{symbolSuggestions}
+								defaultSymbol={String(container?.configuration?.symbol ?? '')}
+								defaultTimeframe={String(container?.configuration?.timeframe ?? '1h')}
+								{pinnedBacktestId}
+								activeTestKey={selectedRunnerTestKey(selectedRobustnessTest)}
+								on:testComplete={(event) => noteRobustnessTestComplete(event.detail)}
+							/>
+							{#if selectedRobustnessTest === 'walk_forward'}
+								<div class="border border-[#1d1d1d] bg-[#090909] p-4">
+									<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Walk Forward Runs</div>
+									{#if walkForwardHistory.length === 0}
+										<div class="px-3 py-4 text-xs text-[#555]">No walk-forward runs yet.</div>
 									{:else}
-										Cumulative realized PnL from closed live trades, in real wallet dollars.
+										<div class="mt-3 grid gap-3">
+											{#each walkForwardHistory as item}
+												<button class={` border border-[#222] bg-[#090909] px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-[#333] shadow-[0_0_0_1px_rgba(167,139,250,0.08),0_18px_40px_rgba(139,92,246,0.08)]' : ''}`} on:click={() => void openResult(item)}>
+													<div class="flex items-center gap-2 text-xs">
+														<span class="font-mono text-white">{item.result_id}</span>
+														<span class={` border px-1 py-0.5 text-[10px] ${resultTypeBadge(item.result_type)}`}>{item.result_type}</span>
+														<span class="ml-auto text-[#555]">{fmtDate(item.created_at)}</span>
+													</div>
+													<div class="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+														<div class="border border-[#1f1f1f] bg-black px-3 py-2">
+															<div class="text-[10px] uppercase tracking-widest text-[#555]">IS Sharpe</div>
+															<div class="mt-1 font-mono text-sm text-[#aaa]">{formatWalkForwardSharpe(item, 'avg_is_sharpe')}</div>
+														</div>
+														<div class="border border-[#1f1f1f] bg-black px-3 py-2">
+															<div class="text-[10px] uppercase tracking-widest text-[#555]">OOS Sharpe</div>
+															<div class="mt-1 font-mono text-sm text-[#aaa]">{formatWalkForwardSharpe(item, 'avg_oos_sharpe')}</div>
+														</div>
+														<div class="border border-[#1f1f1f] bg-black px-3 py-2">
+															<div class="text-[10px] uppercase tracking-widest text-[#555]">Degradation</div>
+															<div class={`mt-1 font-mono text-sm ${walkForwardDegradationClass(item)}`}>{formatWalkForwardDegradation(item)}</div>
+														</div>
+														<div class="border border-[#1f1f1f] bg-black px-3 py-2">
+															<div class="text-[10px] uppercase tracking-widest text-[#555]">OOS Trades</div>
+															<div class="mt-1 font-mono text-sm text-[#aaa]">{formatWalkForwardOosTrades(item)}</div>
+														</div>
+													</div>
+												</button>
+											{/each}
+										</div>
 									{/if}
-									{#if executionGrowth.otherBookTrades > 0}
-										<span class="text-[#777]">
-											{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (both books are summarized below).
-										</span>
-									{/if}
-								</div>
-								<div class="mt-3">
-									<EquityChart
-										data={executionGrowth.points}
-										showDrawdown={executionGrowth.mode === 'paper'}
-										annotations={growthAnnotations}
-										height={220}
-									/>
-								</div>
-							{:else}
-								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
-									No closed paper/live trades yet — real trading growth appears here once the strategy starts closing trades.
 								</div>
 							{/if}
 						</div>
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-parity-card">
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Backtest ↔ Reality</div>
-								{#if executionParity}
-									<span class="text-[11px] text-[#555]">{executionParity.book} fills · avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
-								{/if}
-							</div>
-							{#if executionParity}
-								<div class="mt-1 text-xs text-[#555]">
-									Realized execution costs vs the execution profile's model. Slippage is signed — positive = filled worse than the signal price.
-								</div>
-								<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="overview-parity-metrics">
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed entry slippage vs the signal price across fills. Modeled budget: the execution profile's per-side slippage.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Entry Slippage</div>
-										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.entrySlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.entrySlipBps)}</div>
-										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.entryCount}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed exit slippage vs the signal price across closes.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Exit Slippage</div>
-										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.exitSlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.exitSlipBps)}</div>
-										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.exitCount}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average realized round-trip cost drag per closed trade (gross − net PnL, includes leverage). Modeled: 2 × fee × avg leverage.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Cost / Trade</div>
-										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.costDragPct, modeledCostDragPct)}`}>{executionParity.costDragPct !== null ? `${executionParity.costDragPct.toFixed(3)}%` : '—'}</div>
-										{#if executionParity.costCount > 0}
-											<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
-										{:else}
-											<div class="mt-0.5 text-[10px] text-[#555]" data-testid="overview-parity-cost-unmeasured">not measured — {executionParity.book === 'paper' ? 'paper books PnL net of the modeled fee' : 'no fill recorded its fees'}</div>
-										{/if}
-									</div>
-								</div>
-							{:else}
-								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
-									No fills with recorded slippage/cost data yet — parity metrics appear once the strategy starts trading.
-								</div>
-							{/if}
-						</div>
-					</div>
-					{#if executionRealizedByBook.length > 0}
-						<div class="space-y-1.5 border border-[#1d1d1d] bg-[#090909] p-3" data-testid="execution-summary-strip">
-							{#each executionRealizedByBook as entry (entry.book)}
-								<div class="flex flex-wrap items-center gap-x-5 gap-y-1.5 font-mono text-xs" data-testid={`execution-summary-${entry.book}`}>
-									<span class="w-24 text-[10px] uppercase tracking-[0.2em] text-[#555]" title={entry.book === 'live' ? 'Real exchange fills, in wallet dollars' : `Simulated fills on the ${PAPER_START_EQUITY.toLocaleString()}-dollar paper book`}>Realized · {entry.book}</span>
-									<span><span class="text-[#555]">Closed</span> <span class="text-[#aaa]">{entry.summary.count}</span></span>
-									<span><span class="text-[#555]">Win%</span> <span class="text-[#aaa]">{entry.summary.winRatePct.toFixed(1)}%</span></span>
-									<span><span class="text-[#555]">Total PnL</span> <span class={entry.summary.totalPnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(entry.summary.totalPnlUsd)}</span></span>
-									<span><span class="text-[#555]">PF</span> <span class="text-[#aaa]">{entry.summary.profitFactor !== null ? entry.summary.profitFactor.toFixed(2) : '∞'}</span></span>
-									<span title="Average net PnL per closed trade (fees included)"><span class="text-[#555]">Avg Net</span> <span class={(entry.summary.avgNetPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{entry.summary.avgNetPct !== null ? `${entry.summary.avgNetPct.toFixed(3)}%` : '—'}</span></span>
-								</div>
-							{/each}
-						</div>
+					{#if selectedResultSection === 'robustness' && hasRunDetail}
+						{@render runDetail()}
+					{/if}
 					{/if}
 
-					<div class="border border-[#222] bg-[#090909]" data-testid="execution-open-trades">
-						<div class="flex items-center justify-between gap-2 border-b border-[#1a1a1a] px-3 py-2">
-							<span class="text-[10px] uppercase tracking-wide text-[#555]">Open Positions ({executionOpenTrades.length})</span>
-							{#if executionOpenTrades.length > 0 && closeSessionId}
-								<button
-									type="button"
-									data-testid="execution-close-position"
-									class="border border-red-900/50 bg-red-950/20 px-2.5 py-1 text-[10px] uppercase tracking-wide text-red-300 transition hover:bg-red-900/30 disabled:opacity-50"
-									disabled={closingPosition}
-									on:click={() => void closeOpenPosition()}
-									title={openTradeIsLive
-										? 'Close the LIVE position at market — sends a reduce-only market order to the exchange.'
-										: 'Close the paper position at market — the paper book closes it at a fresh mid.'}
-								>{closingPosition ? 'Closing…' : openTradeIsLive ? 'Close Live Position' : 'Close Position'}</button>
-							{/if}
-						</div>
-						{#if executionOpenTrades.length === 0}
-							<div class="px-3 py-4 text-xs text-[#555]">No open positions.</div>
-						{:else}
-							<div class="max-h-[320px] overflow-auto">
-								<table class="min-w-full text-xs">
-									<thead class="sticky top-0 bg-[#0d0d0d] text-[#555]">
-										<tr>
-											<th class="px-3 py-2 text-left">ID</th>
-											<th class="px-3 py-2 text-left">Asset</th>
-											<th class="px-3 py-2 text-left">Side</th>
-											<th class="px-3 py-2 text-left">Type</th>
-											<th class="px-3 py-2 text-right">Entry</th>
-											<th class="px-3 py-2 text-right">Size</th>
-											<th class="px-3 py-2 text-right">Lev</th>
-											<th class="px-3 py-2 text-right">Stop</th>
-											<th class="px-3 py-2 text-right">Target</th>
-											<th class="px-3 py-2 text-right" title="Signed entry slippage vs the signal price (positive = adverse)">Slip In</th>
-											<th class="px-3 py-2 text-left">Opened</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each executionOpenTrades as row, index}
-											{@const stop = tradeRowSignalPrice(row, 'stop_loss')}
-											{@const target = tradeRowSignalPrice(row, 'take_profit')}
-											<tr class="border-t border-[#111] font-mono">
-												<td class="px-3 py-2 text-white">{getRowId(row, `open-${index}`)}</td>
-												<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
-												<td class={`px-3 py-2 ${getString(row, 'direction') === 'short' ? 'text-red-400' : 'text-emerald-400'}`}>{getString(row, 'direction')}</td>
-												<td class="px-3 py-2 text-[#888]">{getString(row, 'execution_type')}</td>
-												<td class="px-3 py-2 text-right text-[#aaa]">{tradeRowPrice(row, 'fill_entry_price', 'entry_price')}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.size, 0) ? asNumber(row.size, 0).toFixed(4) : '-'}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.leverage, 0) ? `${asNumber(row.leverage, 0).toFixed(1)}×` : '-'}</td>
-												<td class="px-3 py-2 text-right text-red-300">{stop !== null ? stop.toFixed(4) : '-'}</td>
-												<td class="px-3 py-2 text-right text-emerald-300">{target !== null ? target.toFixed(4) : '-'}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{fmtBps(tradeRowSlipBps(row, 'entry_slippage_bps'))}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{fmtDate(row.opened_at)}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						{/if}
-					</div>
-
-					<div class="border border-[#222] bg-[#090909]" data-testid="execution-closed-trades">
-						<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Closed Trades ({executionClosedTrades.length})</div>
-						{#if executionClosedTrades.length === 0}
-							<div class="px-3 py-4 text-xs text-[#555]">No closed trades recorded.</div>
-						{:else}
-							<div class="max-h-[520px] overflow-auto">
-								<table class="min-w-full text-xs">
-									<thead class="sticky top-0 bg-[#0d0d0d] text-[#555]">
-										<tr>
-											<th class="px-3 py-2 text-left">ID</th>
-											<th class="px-3 py-2 text-left">Asset</th>
-											<th class="px-3 py-2 text-left">Side</th>
-											<th class="px-3 py-2 text-left">Type</th>
-											<th class="px-3 py-2 text-right">Entry</th>
-											<th class="px-3 py-2 text-right">Exit</th>
-											<th class="px-3 py-2 text-right">PnL $</th>
-											<th class="px-3 py-2 text-right" title="Net PnL per trade (fees included) as % of margin">Net %</th>
-											<th class="px-3 py-2 text-right" title="Realized round-trip fees (includes leverage)">Fees %</th>
-											<th class="px-3 py-2 text-right" title="Signed entry slippage (positive = adverse)">Slip In</th>
-											<th class="px-3 py-2 text-right" title="Signed exit slippage (positive = adverse)">Slip Out</th>
-											<th class="px-3 py-2 text-left">Reason</th>
-											<th class="px-3 py-2 text-left">Opened</th>
-											<th class="px-3 py-2 text-left">Closed</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each executionClosedTrades as row, index}
-											{@const pnlUsd = tradeRowPnlUsd(row)}
-											{@const netPct = tradeRowNetPct(row)}
-											{@const feesPct = tradeRowFeesPct(row)}
-											<tr class="border-t border-[#111] font-mono hover:bg-[#0d0d0d]">
-												<td class="px-3 py-2 text-white">{getRowId(row, `trade-${index}`)}</td>
-												<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
-												<td class={`px-3 py-2 ${getString(row, 'direction') === 'short' ? 'text-red-400' : 'text-emerald-400'}`}>{getString(row, 'direction')}</td>
-												<td class="px-3 py-2 text-[#888]">{getString(row, 'execution_type')}</td>
-												<td class="px-3 py-2 text-right text-[#aaa]">{tradeRowPrice(row, 'fill_entry_price', 'entry_price')}</td>
-												<td class="px-3 py-2 text-right text-[#aaa]">{tradeRowPrice(row, 'fill_exit_price', 'exit_price')}</td>
-												<td class={`px-3 py-2 text-right ${(pnlUsd ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnlUsd !== null ? formatSignedCurrency(pnlUsd) : '-'}</td>
-												<td class={`px-3 py-2 text-right ${(netPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{netPct !== null ? `${netPct.toFixed(2)}%` : '-'}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{feesPct !== null ? `${feesPct.toFixed(3)}%` : '-'}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{fmtBps(tradeRowSlipBps(row, 'entry_slippage_bps'))}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{fmtBps(tradeRowSlipBps(row, 'exit_slippage_bps'))}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{tradeRowCloseReason(row)}</td>
-												<td class="px-3 py-2 text-left text-[#555]">{fmtDate(row.opened_at)}</td>
-												<td class="px-3 py-2 text-left text-[#555]">{fmtDate(row.closed_at)}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						{/if}
-					</div>
-
-					<details class="border border-[#222] bg-[#090909]">
-						<summary class="cursor-pointer px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Risk Slots ({executionPositions.length})</summary>
-						{#if executionPositions.length === 0}
-							<div class="border-t border-[#1a1a1a] px-3 py-4 text-xs text-[#555]">No live risk-slot reservations.</div>
-						{:else}
-							<div class="max-h-[280px] overflow-auto border-t border-[#1a1a1a]">
-								<table class="min-w-full text-xs">
-									<thead class="bg-[#0d0d0d] text-[#555]">
-										<tr>
-											<th class="px-3 py-2 text-left">Trade</th>
-											<th class="px-3 py-2 text-left">Asset</th>
-											<th class="px-3 py-2 text-left">Side</th>
-											<th class="px-3 py-2 text-right">Risk %</th>
-											<th class="px-3 py-2 text-right">Entry</th>
-											<th class="px-3 py-2 text-left">Type</th>
-											<th class="px-3 py-2 text-left">Book</th>
-											<th class="px-3 py-2 text-left">Opened</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each executionPositions as row, index}
-											<tr class="border-t border-[#111] font-mono">
-												<td class="px-3 py-2 text-white">{getString(row, 'trade_id', getRowId(row, `pos-${index}`))}</td>
-												<td class="px-3 py-2 text-[#aaa]">{getString(row, 'asset')}</td>
-												<td class="px-3 py-2 text-[#aaa]">{getString(row, 'direction')}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.risk_pct, 0) ? `${(asNumber(row.risk_pct, 0) * 100).toFixed(2)}%` : '-'}</td>
-												<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.entry_price, 0) ? asNumber(row.entry_price, 0).toFixed(4) : '-'}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{getString(row, 'execution_type')}</td>
-												<td class="px-3 py-2 text-left text-[#888]">{getString(row, 'book')}</td>
-												<td class="px-3 py-2 text-left text-[#555]">{fmtDate(row.opened_at)}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						{/if}
-					</details>
-				</div>
-			{/if}
-
-			{#if activeTab === 'parameters'}
-				<div class="grid gap-3 xl:grid-cols-2" data-testid="parameters-tab">
-					<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
-						<div class="flex flex-wrap items-start justify-between gap-2">
-							<div>
-								<h2 class="m-0 text-[13px] font-semibold text-white">Strategy parameters</h2>
-								<div class="text-[11px] text-[#666]">{pinnedRunItem ? `Pinned run ${pinnedBacktestId}'s parameters` : 'The saved defaults'} against the declared search space. A value at the edge of its range means the optimum may lie outside what was searched.</div>
-							</div>
-							<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="parameters-edit" on:click={() => void editParametersOnRuns()}>Edit on Runs</button>
-						</div>
-						<ParameterSpace params={drivingParams} space={drivingSpace} />
-					</article>
-					<div class="grid content-start gap-3">
-						<article class="grid gap-1.5 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-driver">
-							<h2 class="m-0 text-[13px] font-semibold text-white">What drives paper and live</h2>
-							<p class="m-0 text-[12px] text-[#aab1bc]">
-								{#if pinnedBacktestId}
-									Pinned run <span class="font-mono text-white">{pinnedBacktestId}</span>: its stored parameters and metrics drive execution. Pin another run, or unpin to fall back to the saved defaults, from Runs.
-								{:else}
-									No run is pinned, so the saved defaults drive execution. Pin a run from Runs to make its parameters the driver.
-								{/if}
+				{#if activeTab === 'robustness' && toolRequest}
+					<div class="mb-2 mt-6 text-[10px] uppercase tracking-[0.2em] text-[#555]" id="rb-sens">Sensitivity</div>
+				{/if}
+				{#if activeTab === 'robustness' && toolRequest}
+					<div class="max-w-5xl space-y-3" data-testid="strategy-heatmap-tab">
+						<div>
+							<div class="text-xs uppercase tracking-widest text-white">Parameter heatmap</div>
+							<p class="mt-1 text-[11px] text-[#777]">
+								Does this strategy work across a range of its settings, or only at one exact point? A robust edge sits on a plateau of neighbouring settings that also work; a lone bright cell is usually fitted noise.
 							</p>
-						</article>
-						<article class="grid gap-2 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-execution">
-							<h2 class="m-0 text-[13px] font-semibold text-white">Execution profile</h2>
-							<div class="grid">
-								{#each executionProfileRows as [label, value] (label)}
-									<div class="flex items-baseline justify-between gap-3 border-b border-[#161616] py-1.5 text-[12px] last:border-b-0"><span class="text-[#aab1bc]">{label}</span><span class="font-mono text-white">{value}</span></div>
+						</div>
+						<ContainerHeatmap request={toolRequest} knobs={toolKnobs} on:adopt={(e) => adoptHeatmapSettings(e.detail)} />
+					</div>
+				{/if}
+
+				{#if activeTab === 'robustness' && toolRequest}
+					<div class="max-w-5xl space-y-3" data-testid="strategy-markets-tab">
+						<div>
+							<div class="text-xs uppercase tracking-widest text-white">Market grid</div>
+							<p class="mt-1 text-[11px] text-[#777]">
+								Does the edge carry beyond {backtestForm.symbol || 'this market'}? The same strategy and settings on other markets and timeframes: an edge that only shows up where it was built is often fitted to that market.
+							</p>
+						</div>
+						<ContainerMarkets request={toolRequest} availability={toolAvailability} symbolOptions={toolSymbolOptions}
+							currentSymbol={backtestForm.symbol} currentTimeframe={backtestForm.timeframe} on:pick={(e) => useMarket(e.detail)} />
+					</div>
+				{/if}
+
+				{#if activeTab === 'execution'}
+					<div class="space-y-4">
+						<div class="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+							<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-growth-card">
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Strategy Growth</div>
+									{#if executionGrowth}
+										<div class="flex items-center gap-2 text-[11px]">
+											<span class={` border px-1.5 py-0.5 font-mono ${executionGrowth.totalPnl >= 0 ? 'border-emerald-900/50 bg-emerald-950/15 text-emerald-300' : 'border-red-900/50 bg-red-950/15 text-red-300'}`}>
+												{formatSignedCurrency(executionGrowth.totalPnl)}
+											</span>
+											<span class="text-[#555]">{executionGrowth.tradeCount} closed trade{executionGrowth.tradeCount === 1 ? '' : 's'}</span>
+										</div>
+									{/if}
+								</div>
+								{#if executionGrowth}
+									<div class="mt-1 text-xs text-[#555]" data-testid="overview-growth-mode">
+										{#if executionGrowth.mode === 'paper'}
+											Paper book equity — the strategy's isolated ${PAPER_START_EQUITY.toLocaleString()} book plus realized PnL from each closed paper trade.
+										{:else}
+											Cumulative realized PnL from closed live trades, in real wallet dollars.
+										{/if}
+										{#if executionGrowth.otherBookTrades > 0}
+											<span class="text-[#777]">
+												{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (both books are summarized below).
+											</span>
+										{/if}
+									</div>
+									<div class="mt-3">
+										<EquityChart
+											data={executionGrowth.points}
+											showDrawdown={executionGrowth.mode === 'paper'}
+											annotations={growthAnnotations}
+											height={220}
+										/>
+									</div>
+								{:else}
+									<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
+										No closed paper/live trades yet — real trading growth appears here once the strategy starts closing trades.
+									</div>
+								{/if}
+							</div>
+							<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-parity-card">
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Backtest ↔ Reality</div>
+									{#if executionParity}
+										<span class="text-[11px] text-[#555]">{executionParity.book} fills · avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
+									{/if}
+								</div>
+								{#if executionParity}
+									<div class="mt-1 text-xs text-[#555]">
+										Realized execution costs vs the execution profile's model. Slippage is signed — positive = filled worse than the signal price.
+									</div>
+									<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="overview-parity-metrics">
+										<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed entry slippage vs the signal price across fills. Modeled budget: the execution profile's per-side slippage.">
+											<div class="text-[9px] uppercase tracking-wide text-[#555]">Entry Slippage</div>
+											<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.entrySlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.entrySlipBps)}</div>
+											<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.entryCount}</div>
+										</div>
+										<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed exit slippage vs the signal price across closes.">
+											<div class="text-[9px] uppercase tracking-wide text-[#555]">Exit Slippage</div>
+											<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.exitSlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.exitSlipBps)}</div>
+											<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.exitCount}</div>
+										</div>
+										<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average realized round-trip cost drag per closed trade (gross − net PnL, includes leverage). Modeled: 2 × fee × avg leverage.">
+											<div class="text-[9px] uppercase tracking-wide text-[#555]">Cost / Trade</div>
+											<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.costDragPct, modeledCostDragPct)}`}>{executionParity.costDragPct !== null ? `${executionParity.costDragPct.toFixed(3)}%` : '—'}</div>
+											{#if executionParity.costCount > 0}
+												<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
+											{:else}
+												<div class="mt-0.5 text-[10px] text-[#555]" data-testid="overview-parity-cost-unmeasured">not measured — {executionParity.book === 'paper' ? 'paper books PnL net of the modeled fee' : 'no fill recorded its fees'}</div>
+											{/if}
+										</div>
+									</div>
+								{:else}
+									<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
+										No fills with recorded slippage/cost data yet — parity metrics appear once the strategy starts trading.
+									</div>
+								{/if}
+							</div>
+						</div>
+						{#if executionRealizedByBook.length > 0}
+							<div class="space-y-1.5 border border-[#1d1d1d] bg-[#090909] p-3" data-testid="execution-summary-strip">
+								{#each executionRealizedByBook as entry (entry.book)}
+									<div class="flex flex-wrap items-center gap-x-5 gap-y-1.5 font-mono text-xs" data-testid={`execution-summary-${entry.book}`}>
+										<span class="w-24 text-[10px] uppercase tracking-[0.2em] text-[#555]" title={entry.book === 'live' ? 'Real exchange fills, in wallet dollars' : `Simulated fills on the ${PAPER_START_EQUITY.toLocaleString()}-dollar paper book`}>Realized · {entry.book}</span>
+										<span><span class="text-[#555]">Closed</span> <span class="text-[#aaa]">{entry.summary.count}</span></span>
+										<span><span class="text-[#555]">Win%</span> <span class="text-[#aaa]">{entry.summary.winRatePct.toFixed(1)}%</span></span>
+										<span><span class="text-[#555]">Total PnL</span> <span class={entry.summary.totalPnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(entry.summary.totalPnlUsd)}</span></span>
+										<span><span class="text-[#555]">PF</span> <span class="text-[#aaa]">{entry.summary.profitFactor !== null ? entry.summary.profitFactor.toFixed(2) : '∞'}</span></span>
+										<span title="Average net PnL per closed trade (fees included)"><span class="text-[#555]">Avg Net</span> <span class={(entry.summary.avgNetPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{entry.summary.avgNetPct !== null ? `${entry.summary.avgNetPct.toFixed(3)}%` : '—'}</span></span>
+									</div>
 								{/each}
 							</div>
-						</article>
-						<article class="grid gap-2 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-contract">
-							<div><h2 class="m-0 text-[13px] font-semibold text-white">Contract fields</h2><div class="text-[11px] text-[#666]">Read by the engine and lifecycle; kept as saved on every edit.</div></div>
-							{#if Object.keys(contractFields).length === 0}
-								<div class="text-[12px] text-[#666]">None.</div>
+						{/if}
+
+						<div class="border border-[#222] bg-[#090909]" data-testid="execution-open-trades">
+							<div class="flex items-center justify-between gap-2 border-b border-[#1a1a1a] px-3 py-2">
+								<span class="text-[10px] uppercase tracking-wide text-[#555]">Open Positions ({executionOpenTrades.length})</span>
+								{#if executionOpenTrades.length > 0 && closeSessionId}
+									<button
+										type="button"
+										data-testid="execution-close-position"
+										class="border border-red-900/50 bg-red-950/20 px-2.5 py-1 text-[10px] uppercase tracking-wide text-red-300 transition hover:bg-red-900/30 disabled:opacity-50"
+										disabled={closingPosition}
+										on:click={() => void closeOpenPosition()}
+										title={openTradeIsLive
+											? 'Close the LIVE position at market — sends a reduce-only market order to the exchange.'
+											: 'Close the paper position at market — the paper book closes it at a fresh mid.'}
+									>{closingPosition ? 'Closing…' : openTradeIsLive ? 'Close Live Position' : 'Close Position'}</button>
+								{/if}
+							</div>
+							{#if executionOpenTrades.length === 0}
+								<div class="px-3 py-4 text-xs text-[#555]">No open positions.</div>
 							{:else}
+								<div class="max-h-[320px] overflow-auto">
+									<table class="min-w-full text-xs">
+										<thead class="sticky top-0 bg-[#0d0d0d] text-[#555]">
+											<tr>
+												<th class="px-3 py-2 text-left">ID</th>
+												<th class="px-3 py-2 text-left">Asset</th>
+												<th class="px-3 py-2 text-left">Side</th>
+												<th class="px-3 py-2 text-left">Type</th>
+												<th class="px-3 py-2 text-right">Entry</th>
+												<th class="px-3 py-2 text-right">Size</th>
+												<th class="px-3 py-2 text-right">Lev</th>
+												<th class="px-3 py-2 text-right">Stop</th>
+												<th class="px-3 py-2 text-right">Target</th>
+												<th class="px-3 py-2 text-right" title="Signed entry slippage vs the signal price (positive = adverse)">Slip In</th>
+												<th class="px-3 py-2 text-left">Opened</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each executionOpenTrades as row, index}
+												{@const stop = tradeRowSignalPrice(row, 'stop_loss')}
+												{@const target = tradeRowSignalPrice(row, 'take_profit')}
+												<tr class="border-t border-[#111] font-mono">
+													<td class="px-3 py-2 text-white">{getRowId(row, `open-${index}`)}</td>
+													<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
+													<td class={`px-3 py-2 ${getString(row, 'direction') === 'short' ? 'text-red-400' : 'text-emerald-400'}`}>{getString(row, 'direction')}</td>
+													<td class="px-3 py-2 text-[#888]">{getString(row, 'execution_type')}</td>
+													<td class="px-3 py-2 text-right text-[#aaa]">{tradeRowPrice(row, 'fill_entry_price', 'entry_price')}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.size, 0) ? asNumber(row.size, 0).toFixed(4) : '-'}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.leverage, 0) ? `${asNumber(row.leverage, 0).toFixed(1)}×` : '-'}</td>
+													<td class="px-3 py-2 text-right text-red-300">{stop !== null ? stop.toFixed(4) : '-'}</td>
+													<td class="px-3 py-2 text-right text-emerald-300">{target !== null ? target.toFixed(4) : '-'}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{fmtBps(tradeRowSlipBps(row, 'entry_slippage_bps'))}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{fmtDate(row.opened_at)}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+							{/if}
+						</div>
+
+						<div class="border border-[#222] bg-[#090909]" data-testid="execution-closed-trades">
+							<div class="border-b border-[#1a1a1a] px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Closed Trades ({executionClosedTrades.length})</div>
+							{#if executionClosedTrades.length === 0}
+								<div class="px-3 py-4 text-xs text-[#555]">No closed trades recorded.</div>
+							{:else}
+								<div class="max-h-[520px] overflow-auto">
+									<table class="min-w-full text-xs">
+										<thead class="sticky top-0 bg-[#0d0d0d] text-[#555]">
+											<tr>
+												<th class="px-3 py-2 text-left">ID</th>
+												<th class="px-3 py-2 text-left">Asset</th>
+												<th class="px-3 py-2 text-left">Side</th>
+												<th class="px-3 py-2 text-left">Type</th>
+												<th class="px-3 py-2 text-right">Entry</th>
+												<th class="px-3 py-2 text-right">Exit</th>
+												<th class="px-3 py-2 text-right">PnL $</th>
+												<th class="px-3 py-2 text-right" title="Net PnL per trade (fees included) as % of margin">Net %</th>
+												<th class="px-3 py-2 text-right" title="Realized round-trip fees (includes leverage)">Fees %</th>
+												<th class="px-3 py-2 text-right" title="Signed entry slippage (positive = adverse)">Slip In</th>
+												<th class="px-3 py-2 text-right" title="Signed exit slippage (positive = adverse)">Slip Out</th>
+												<th class="px-3 py-2 text-left">Reason</th>
+												<th class="px-3 py-2 text-left">Opened</th>
+												<th class="px-3 py-2 text-left">Closed</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each executionClosedTrades as row, index}
+												{@const pnlUsd = tradeRowPnlUsd(row)}
+												{@const netPct = tradeRowNetPct(row)}
+												{@const feesPct = tradeRowFeesPct(row)}
+												<tr class="border-t border-[#111] font-mono hover:bg-[#0d0d0d]">
+													<td class="px-3 py-2 text-white">{getRowId(row, `trade-${index}`)}</td>
+													<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
+													<td class={`px-3 py-2 ${getString(row, 'direction') === 'short' ? 'text-red-400' : 'text-emerald-400'}`}>{getString(row, 'direction')}</td>
+													<td class="px-3 py-2 text-[#888]">{getString(row, 'execution_type')}</td>
+													<td class="px-3 py-2 text-right text-[#aaa]">{tradeRowPrice(row, 'fill_entry_price', 'entry_price')}</td>
+													<td class="px-3 py-2 text-right text-[#aaa]">{tradeRowPrice(row, 'fill_exit_price', 'exit_price')}</td>
+													<td class={`px-3 py-2 text-right ${(pnlUsd ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnlUsd !== null ? formatSignedCurrency(pnlUsd) : '-'}</td>
+													<td class={`px-3 py-2 text-right ${(netPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{netPct !== null ? `${netPct.toFixed(2)}%` : '-'}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{feesPct !== null ? `${feesPct.toFixed(3)}%` : '-'}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{fmtBps(tradeRowSlipBps(row, 'entry_slippage_bps'))}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{fmtBps(tradeRowSlipBps(row, 'exit_slippage_bps'))}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{tradeRowCloseReason(row)}</td>
+													<td class="px-3 py-2 text-left text-[#555]">{fmtDate(row.opened_at)}</td>
+													<td class="px-3 py-2 text-left text-[#555]">{fmtDate(row.closed_at)}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+							{/if}
+						</div>
+
+						<details class="border border-[#222] bg-[#090909]">
+							<summary class="cursor-pointer px-3 py-2 text-[10px] uppercase tracking-wide text-[#555]">Risk Slots ({executionPositions.length})</summary>
+							{#if executionPositions.length === 0}
+								<div class="border-t border-[#1a1a1a] px-3 py-4 text-xs text-[#555]">No live risk-slot reservations.</div>
+							{:else}
+								<div class="max-h-[280px] overflow-auto border-t border-[#1a1a1a]">
+									<table class="min-w-full text-xs">
+										<thead class="bg-[#0d0d0d] text-[#555]">
+											<tr>
+												<th class="px-3 py-2 text-left">Trade</th>
+												<th class="px-3 py-2 text-left">Asset</th>
+												<th class="px-3 py-2 text-left">Side</th>
+												<th class="px-3 py-2 text-right">Risk %</th>
+												<th class="px-3 py-2 text-right">Entry</th>
+												<th class="px-3 py-2 text-left">Type</th>
+												<th class="px-3 py-2 text-left">Book</th>
+												<th class="px-3 py-2 text-left">Opened</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each executionPositions as row, index}
+												<tr class="border-t border-[#111] font-mono">
+													<td class="px-3 py-2 text-white">{getString(row, 'trade_id', getRowId(row, `pos-${index}`))}</td>
+													<td class="px-3 py-2 text-[#aaa]">{getString(row, 'asset')}</td>
+													<td class="px-3 py-2 text-[#aaa]">{getString(row, 'direction')}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.risk_pct, 0) ? `${(asNumber(row.risk_pct, 0) * 100).toFixed(2)}%` : '-'}</td>
+													<td class="px-3 py-2 text-right text-[#888]">{asNumber(row.entry_price, 0) ? asNumber(row.entry_price, 0).toFixed(4) : '-'}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{getString(row, 'execution_type')}</td>
+													<td class="px-3 py-2 text-left text-[#888]">{getString(row, 'book')}</td>
+													<td class="px-3 py-2 text-left text-[#555]">{fmtDate(row.opened_at)}</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+							{/if}
+						</details>
+					</div>
+				{/if}
+
+				{#if activeTab === 'parameters'}
+					<div class="grid gap-3 xl:grid-cols-2" data-testid="parameters-tab">
+						<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+							<div class="flex flex-wrap items-start justify-between gap-2">
+								<div>
+									<h2 class="m-0 text-[13px] font-semibold text-white">Strategy parameters</h2>
+									<div class="text-[11px] text-[#666]">{pinnedRunItem ? `Pinned run ${pinnedBacktestId}'s parameters` : 'The saved defaults'} against the declared search space. A value at the edge of its range means the optimum may lie outside what was searched.</div>
+								</div>
+								<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="parameters-edit" on:click={() => void editParametersOnRuns()}>Edit on Runs</button>
+							</div>
+							<ParameterSpace params={drivingParams} space={drivingSpace} />
+						</article>
+						<div class="grid content-start gap-3">
+							<article class="grid gap-1.5 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-driver">
+								<h2 class="m-0 text-[13px] font-semibold text-white">What drives paper and live</h2>
+								<p class="m-0 text-[12px] text-[#aab1bc]">
+									{#if pinnedBacktestId}
+										Pinned run <span class="font-mono text-white">{pinnedBacktestId}</span>: its stored parameters and metrics drive execution. Pin another run, or unpin to fall back to the saved defaults, from Runs.
+									{:else}
+										No run is pinned, so the saved defaults drive execution. Pin a run from Runs to make its parameters the driver.
+									{/if}
+								</p>
+							</article>
+							<article class="grid gap-2 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-execution">
+								<h2 class="m-0 text-[13px] font-semibold text-white">Execution profile</h2>
 								<div class="grid">
-									{#each Object.entries(contractFields) as [key, value] (key)}
-										<div class="grid grid-cols-[minmax(0,11em)_minmax(0,1fr)] gap-3 border-b border-[#161616] py-1.5 text-[12px] last:border-b-0"><span class="font-mono text-[#aab1bc]">{key}</span><span class="break-all font-mono text-[#ddd]">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span></div>
+									{#each executionProfileRows as [label, value] (label)}
+										<div class="flex items-baseline justify-between gap-3 border-b border-[#161616] py-1.5 text-[12px] last:border-b-0"><span class="text-[#aab1bc]">{label}</span><span class="font-mono text-white">{value}</span></div>
+									{/each}
+								</div>
+							</article>
+							<article class="grid gap-2 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-contract">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Contract fields</h2><div class="text-[11px] text-[#666]">Read by the engine and lifecycle; kept as saved on every edit.</div></div>
+								{#if Object.keys(contractFields).length === 0}
+									<div class="text-[12px] text-[#666]">None.</div>
+								{:else}
+									<div class="grid">
+										{#each Object.entries(contractFields) as [key, value] (key)}
+											<div class="grid grid-cols-[minmax(0,11em)_minmax(0,1fr)] gap-3 border-b border-[#161616] py-1.5 text-[12px] last:border-b-0"><span class="font-mono text-[#aab1bc]">{key}</span><span class="break-all font-mono text-[#ddd]">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span></div>
+										{/each}
+									</div>
+								{/if}
+							</article>
+						</div>
+					</div>
+				{/if}
+
+				{#if activeTab === 'activity'}
+					<div class="grid gap-3" data-testid="activity-tab">
+						<BrainStrategyDecisionsCard strategyId={container.strategy.id} />
+						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="activity-lifecycle-feed">
+							<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Lifecycle</div>
+							{#if orderedRecentEvents.length === 0}
+								<div class="mt-2 text-xs text-[#555]">No events recorded.</div>
+							{:else}
+								<div class="mt-2 space-y-1.5">
+									{#each orderedRecentEvents as event}
+										<div class="border border-[#1f1f1f] bg-[#070707] px-2.5 py-2">
+											<div class="flex items-center justify-between gap-2 text-[11px]">
+												<div class="flex items-center gap-1.5">
+													<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-[#aaa]">{lifecycleStageLabel(event.from_state)}</span>
+													<span class="text-[#555]">-></span>
+													<span class="border border-[#333] bg-[#0c0c0c] px-1.5 py-0.5 font-mono text-white">{lifecycleStageLabel(event.to_state)}</span>
+													<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#555]">{lifecycleActorLabel(event.actor)}</span>
+												</div>
+												<span class="shrink-0 text-[#555]">{fmtDate(event.created_at)}</span>
+											</div>
+											{#if event.reason && event.reason.trim()}
+												<div class="mt-1 text-xs text-[#888]">{event.reason.trim()}</div>
+											{/if}
+										</div>
 									{/each}
 								</div>
 							{/if}
-						</article>
+						</div>
 					</div>
-				</div>
-			{/if}
+				{/if}
 
-			{#if activeTab === 'activity'}
-				<div class="grid gap-3" data-testid="activity-tab">
-					<BrainStrategyDecisionsCard strategyId={container.strategy.id} />
-					<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="activity-lifecycle-feed">
-						<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Lifecycle</div>
-						{#if orderedRecentEvents.length === 0}
-							<div class="mt-2 text-xs text-[#555]">No events recorded.</div>
-						{:else}
-							<div class="mt-2 space-y-1.5">
-								{#each orderedRecentEvents as event}
-									<div class="border border-[#1f1f1f] bg-[#070707] px-2.5 py-2">
-										<div class="flex items-center justify-between gap-2 text-[11px]">
-											<div class="flex items-center gap-1.5">
-												<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-[#aaa]">{lifecycleStageLabel(event.from_state)}</span>
-												<span class="text-[#555]">-></span>
-												<span class="border border-[#333] bg-[#0c0c0c] px-1.5 py-0.5 font-mono text-white">{lifecycleStageLabel(event.to_state)}</span>
-												<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#555]">{lifecycleActorLabel(event.actor)}</span>
-											</div>
-											<span class="shrink-0 text-[#555]">{fmtDate(event.created_at)}</span>
-										</div>
-										{#if event.reason && event.reason.trim()}
-											<div class="mt-1 text-xs text-[#888]">{event.reason.trim()}</div>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				</div>
-			{/if}
-
+			</div>
 		</div>
 	{:else}
 		<!-- Defensive: container is null but not loading/errored (e.g. a future early-return
@@ -6820,3 +6856,10 @@
 		on:imported={(e) => onStrategyImported(e.detail)}
 	/>
 {/if}
+
+<style>
+	/* Legacy markup inside the page asks for Tailwind's font-mono; give it the theme's mono. */
+	.sc-theme :global(.font-mono) {
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	}
+</style>
