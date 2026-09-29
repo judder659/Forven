@@ -21,7 +21,7 @@
 	// cell is usually fitted noise. Click a cell to use its settings.
 	import { createEventDispatcher } from 'svelte';
 	import type { HeatmapAxisRequest } from '$lib/api';
-	import { axisValues, heatmapVerdict, niceRange, type KnobOption } from '$lib/utils/creatorGrids';
+	import { axisValues, currentSettingVerdict, heatmapVerdict, niceRange, sameValue, type KnobOption, type Verdict } from '$lib/utils/creatorGrids';
 	import { formatValue } from '$lib/utils/ruleLabels';
 
 	export let knobs: KnobOption[] = [];
@@ -106,6 +106,22 @@
 	$: verdict = view && view.status !== 'running'
 		? heatmapVerdict(cells, xValues, yValues, { x: view.x.label, y: view.y?.label ?? null })
 		: null;
+	$: currentName = view
+		? `${view.x.label} ${formatValue(current.x)}${view.y ? ` · ${view.y.label} ${formatValue(current.y)}` : ''}`
+		: '';
+	// The current setting gets its own verdict (the best cell may sit elsewhere), unless
+	// the grid's verdict already covers every setting: no effect, or nothing makes money.
+	$: currentVerdict = verdict && !['no_effect', 'losing', 'unknown'].includes(verdict.status)
+		? currentSettingVerdict(cells, xValues, yValues, current, currentName)
+		: null;
+	$: verdictLines = ((): Array<{ key: string; label: string; verdict: Verdict }> => {
+		if (!verdict) return [];
+		if (!currentVerdict) return [{ key: 'grid', label: '', verdict }];
+		const own = { key: 'current', label: 'Current setting', verdict: currentVerdict };
+		return currentVerdict.best ? [own] : [own, { key: 'best', label: 'Best cell', verdict }];
+	})();
+	const chipClass = (status: string) => (status === 'plateau' ? 'border-emerald-700 text-emerald-400'
+		: status === 'spike' || status === 'losing' ? 'border-red-800 text-red-400' : 'border-amber-700 text-amber-400');
 
 	const pct = (v: number) => `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
 	function shade(cell: HeatmapCell | undefined): string {
@@ -128,7 +144,7 @@
 		if (cell.error) return `${where}\n${cell.error}`;
 		return `${where}\nOut-of-sample ${pct(cell.oos_return ?? 0)} on ${cell.oos_trades ?? 0} trades\nIn-sample ${pct(cell.in_return ?? 0)}\nClick to use these settings`;
 	}
-	const isCurrent = (x: number, y: number | null) => current.x === x && (!view?.y || current.y === y);
+	const isCurrent = (x: number, y: number | null) => sameValue(current.x, x) && (!view?.y || sameValue(current.y, y));
 </script>
 
 <div class="space-y-3">
@@ -235,11 +251,17 @@
 			<div class="pt-1 text-center text-[9px] uppercase tracking-wider text-[#666]">{view.x.label} →</div>
 		</div>
 
-		{#if verdict}
-			<div class="flex items-baseline gap-2 text-[12px]" data-testid="heatmap-verdict">
-				<span class="border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider
-					{verdict.status === 'plateau' ? 'border-emerald-700 text-emerald-400' : verdict.status === 'spike' || verdict.status === 'losing' ? 'border-red-800 text-red-400' : 'border-amber-700 text-amber-400'}">{verdict.status.replace('_', ' ')}</span>
-				<span class="text-[#ccc]">{verdict.text}</span>
+		{#if verdictLines.length}
+			<div class="space-y-1.5 text-[12px]" data-testid="heatmap-verdict">
+				{#each verdictLines as line (line.key)}
+					<div class="flex items-baseline gap-2" data-testid="heatmap-verdict-{line.key}">
+						{#if line.label}<span class="w-24 shrink-0 text-[9px] uppercase tracking-wider text-[#666]">{line.label}</span>{/if}
+						{#if line.verdict.status !== 'off_grid'}
+							<span class="shrink-0 border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider {chipClass(line.verdict.status)}">{line.verdict.status.replace('_', ' ')}</span>
+						{/if}
+						<span class={line.verdict.status === 'off_grid' ? 'text-[#777]' : 'text-[#ccc]'}>{line.verdict.text}</span>
+					</div>
+				{/each}
 			</div>
 		{/if}
 		<p class="text-[10px] text-[#555]">{note}</p>
