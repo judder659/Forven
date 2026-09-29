@@ -148,7 +148,7 @@
 		{:else if tab === 'decisions'}
 			<DeskJournalList {mode} events={scopedJournal} windowDays={journalDays} />
 		{:else if tab === 'performance'}
-			<DeskPerformance {mode} rows={scopedRows} fills={scopedFills} {equity} {selectedSid} {scopeLabel} {now} />
+			<DeskPerformance {mode} rows={scopedRows} fills={scopedFills} {equity} {selectedSid} scoped={scope === 'strategy'} {scopeLabel} {now} />
 		{:else}
 			<DeskRiskPanel {mode} {fleet} {risk} rows={scopedRows} />
 		{/if}

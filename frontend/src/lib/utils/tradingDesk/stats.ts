@@ -55,6 +55,13 @@ export interface TradeStats {
 	failed: number;
 	/** Cumulative net P&L after each closed trade, starting at 0. */
 	cumulative: number[];
+	/** Cumulative net P&L after each closed trade, with the close time. */
+	timeline: Array<{ time: number; cum: number }>;
+	/** Closed trades that recorded the capital slice they were sized from, and those slices summed. */
+	sliced: number;
+	sliceSum: number;
+	/** The earliest entry among fills that did not fail. */
+	firstOpened: number | null;
 }
 
 export function statsFor(fills: DeskFill[]): TradeStats {
@@ -78,6 +85,12 @@ export function statsFor(fills: DeskFill[]): TradeStats {
 		.filter((value): value is number => value !== null);
 	const cumulative = [0];
 	for (const value of nets) cumulative.push(cumulative[cumulative.length - 1] + value);
+	const timeline = closed.map((fill, index) => ({ time: parseTs(fill.closed_at) ?? 0, cum: cumulative[index + 1] }));
+	const slices = closed.map((fill) => num(fill.slice_usd) ?? 0).filter((slice) => slice > 0);
+	const opens = fills
+		.filter((fill) => String(fill.status).toUpperCase() !== 'FAILED')
+		.map((fill) => parseTs(fill.opened_at))
+		.filter((value): value is number => value !== null);
 	return {
 		closed,
 		n: closed.length,
@@ -92,6 +105,10 @@ export function statsFor(fills: DeskFill[]): TradeStats {
 		worst: nets.length ? Math.min(...nets) : null,
 		failed: fills.filter((fill) => String(fill.status).toUpperCase() === 'FAILED').length,
 		cumulative,
+		timeline,
+		sliced: slices.length,
+		sliceSum: slices.reduce((sum, slice) => sum + slice, 0),
+		firstOpened: opens.length ? Math.min(...opens) : null,
 	};
 }
 

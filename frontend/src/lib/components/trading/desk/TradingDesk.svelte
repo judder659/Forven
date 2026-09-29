@@ -50,6 +50,7 @@
 	import DeskConfirmDialog, { type ConfirmSpec } from './DeskConfirmDialog.svelte';
 	import DeskDetailsPanel from './DeskDetailsPanel.svelte';
 	import DeskExpectationPanel from './DeskExpectationPanel.svelte';
+	import DeskStrategyPerformance from './DeskStrategyPerformance.svelte';
 	import DeskOrderTicket, { type TicketReview } from './DeskOrderTicket.svelte';
 	import DeskPositionCard, { type PositionAction } from './DeskPositionCard.svelte';
 	import DeskStatusLine from './DeskStatusLine.svelte';
@@ -60,7 +61,7 @@
 	export let dashboard: ForvenDashboardResponse | null = null;
 
 	const STORAGE_KEY = mode === 'live' ? 'forven.live.selectedSessionId' : 'forven.paper.selectedSessionId';
-	const SIDE_TABS: Array<[SideTab, string]> = [['position', 'Position'], ['why', 'Why'], ['expect', 'Expectation'], ['details', 'Details']];
+	const SIDE_TABS: Array<[SideTab, string]> = [['position', 'Position'], ['why', 'Why'], ['expect', 'Performance'], ['details', 'Details']];
 	const BLOT_TABS: BlotTab[] = ['positions', 'orders', 'fills', 'decisions', 'performance', 'risk'];
 
 	let sessions: PaperTradingSession[] = [];
@@ -104,7 +105,7 @@
 	$: dash = $forvenDashboard ?? dashboard;
 	$: risk = $forvenRisk;
 	$: statsMap = statsByStrategy(fills);
-	$: rows = sortRows(buildRows({ mode, sessions, fleet, stats: statsMap, prices, now: rowsNow }));
+	$: rows = sortRows(buildRows({ mode, sessions, fleet, stats: statsMap, prices, sliceUsd, now: rowsNow }));
 	$: selected = rows.find((row) => row.session.id === selectedId) ?? null;
 	$: selectedSid = selected?.sid ?? null;
 	$: expectations = Object.fromEntries(rows.map((row) => [row.sid, row.expectation]));
@@ -167,7 +168,7 @@
 				sessionsLoaded = true;
 				void loadMarket();
 			} else if (selectedId && !next.some((session) => session.id === selectedId) && !archivedDetail) {
-				selectedId = sortRows(buildRows({ mode, sessions: next, fleet, stats: statsMap, prices, now: rowsNow }))[0]?.session.id ?? null;
+				selectedId = sortRows(buildRows({ mode, sessions: next, fleet, stats: statsMap, prices, sliceUsd, now: rowsNow }))[0]?.session.id ?? null;
 			}
 		} catch (error) {
 			if (!sessionsLoaded) loadError = error instanceof Error ? error.message : 'Could not load the strategies.';
@@ -261,17 +262,19 @@
 
 	$: if (railFilter === 'archived' && mode === 'paper') void loadArchived();
 	// Pick the first selection once sessions and the scorecard are in, so a stuck
-	// or blocked strategy leads rather than whichever id sorts first.
+	// or blocked strategy leads rather than whichever id sorts first. The assignment
+	// stays in this block so `selected` (declared above) is ordered after it; set
+	// inside a helper, `selected` stayed null until the next price tick.
 	$: if (!initialPicked && sessionsLoaded && fleetAttempted) {
 		initialPicked = true;
-		pickInitialSelection();
+		selectedId = initialSelection();
 	}
 	$: if (blotTab === 'performance' && mode === 'live' && !equity) void loadEquity();
 
 	// ---- selection ----
 
-	function pickInitialSelection(): void {
-		const sorted = sortRows(buildRows({ mode, sessions, fleet, stats: statsMap, prices, now: rowsNow }));
+	function initialSelection(): string | null {
+		const sorted = sortRows(buildRows({ mode, sessions, fleet, stats: statsMap, prices, sliceUsd, now: rowsNow }));
 		let stored: string | null = null;
 		try {
 			stored = window.localStorage.getItem(STORAGE_KEY);
@@ -282,10 +285,10 @@
 		const match = wanted
 			? sorted.find((row) => row.session.id === wanted || row.sid === wanted)
 			: null;
-		selectedId = match?.session.id ?? sorted[0]?.session.id ?? null;
 		if (preselect && match) writeStored(match.session.id);
 		preselect = null;
 		if (sorted.some((row) => row.legs.length)) blotTab = 'positions';
+		return match?.session.id ?? sorted[0]?.session.id ?? null;
 	}
 
 	function writeStored(id: string | null): void {
@@ -720,7 +723,11 @@
 							{:else if sideTab === 'why'}
 								<DeskWhyPanel {mode} row={selected} dashboard={dash} {risk} {fleet} refusals={selectedRefusals} now={rowsNow} />
 							{:else if sideTab === 'expect'}
-								<DeskExpectationPanel {mode} row={selected} />
+								<DeskStrategyPerformance {mode} row={selected} />
+								<div class="mt-4 grid gap-2 border-t border-sc-line pt-3">
+									<h4 class="text-[12.5px] font-semibold text-sc-ink">Against the backtest</h4>
+									<DeskExpectationPanel {mode} row={selected} />
+								</div>
 							{:else}
 								<DeskDetailsPanel {mode} row={selected} {sliceUsd} {busy} on:saveCeiling={(event) => saveCeiling(event.detail)} />
 							{/if}

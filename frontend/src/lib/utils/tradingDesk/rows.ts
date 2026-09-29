@@ -3,8 +3,9 @@ import type { LiveFleet, LiveFleetStrategy, LiveStrategyState } from '$lib/api/d
 import type { DeskFill, DeskMode } from '$lib/api/desk';
 import type { PaperTradingSession } from '$lib/api/paper';
 import { humanFamily } from './describe';
-import { num, parseTs } from './format';
+import { num } from './format';
 import { assetOf } from './market';
+import { strategyPerformance, type StrategyPerformance } from './performance';
 import { legMath, legsOf, type Leg, type LegMath } from './position';
 import { expectation, statsFor, type Expectation, type TradeStats } from './stats';
 
@@ -21,6 +22,8 @@ export interface DeskRow {
 	mark: number | null;
 	openPnl: number;
 	stats: TradeStats;
+	/** Everything since inception: realized plus open, the return, the paper book and the curve. */
+	perf: StrategyPerformance;
 	expectation: Expectation | null;
 }
 
@@ -80,6 +83,8 @@ export function buildRows(input: {
 	fleet: LiveFleet | null;
 	stats: Map<string, TradeStats>;
 	prices: Record<string, number>;
+	/** Live: today's capital slice per strategy, the base for live returns. */
+	sliceUsd?: number | null;
 	now: number;
 }): DeskRow[] {
 	const fleetById = new Map((input.fleet?.strategies ?? []).map((strategy) => [strategy.strategy_id, strategy]));
@@ -96,6 +101,16 @@ export function buildRows(input: {
 		// The session is fresher than the scorecard for positions.
 		if (legs.length && state !== 'exit_blocked' && state !== 'stale') state = 'in_position';
 		if (!legs.length && (state === 'in_position' || state === 'exit_blocked')) state = 'watching';
+		const perf = strategyPerformance({
+			mode: input.mode,
+			session,
+			stats,
+			legs,
+			legMath: maths,
+			stageSince: fleet?.live_since ?? null,
+			sliceUsd: input.sliceUsd,
+			now: input.now,
+		});
 		return {
 			session,
 			sid,
@@ -109,10 +124,11 @@ export function buildRows(input: {
 			mark,
 			openPnl: maths.reduce((sum, math) => sum + math.pnl, 0),
 			stats,
+			perf,
 			expectation: expectation({
 				backtest: fleet?.backtest_oos,
 				stats,
-				since: parseTs(fleet?.live_since ?? session.started_at),
+				since: perf.since,
 				now: input.now,
 				refusedEntries: fleet?.blocked_entries.count ?? 0,
 				mode: input.mode,

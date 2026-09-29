@@ -7,7 +7,8 @@ import { describeClose, describeRefusal, humanFamily, slippageWords } from '$lib
 import { executionSummary, fillRows } from '$lib/utils/tradingDesk/fills';
 import { ago, dur, fmtCompactUsd, fmtPx, fmtQty, fmtRateHourly, fmtUsd, nextBarClose } from '$lib/utils/tradingDesk/format';
 import { fundingDirection, positionFundingPerHour } from '$lib/utils/tradingDesk/market';
-import { ladder, legMath, legsOf } from '$lib/utils/tradingDesk/position';
+import { drawdown, inception, strategyPerformance } from '$lib/utils/tradingDesk/performance';
+import { ladder, legMath, legsOf, type Leg } from '$lib/utils/tradingDesk/position';
 import { binomCdf, expectation, poissonCdf, statsFor } from '$lib/utils/tradingDesk/stats';
 import { defaultRiskPct, ticketCalc, type TicketInput } from '$lib/utils/tradingDesk/ticket';
 
@@ -264,5 +265,97 @@ describe('attention', () => {
 		expect(live.find((item) => item.id.startsWith('conflict'))?.body).toContain('refuses the others');
 		const paper = buildAttention({ mode: 'paper', dashboard: { trading_allowed: false }, risk, fleet: { ...fleet, capacity: null }, journal: [], expectations: {}, now: NOW });
 		expect(paper.some((item) => item.id === 'trading' || item.id === 'ceilings')).toBe(false);
+	});
+});
+
+describe('performance since inception', () => {
+	const paperSession = (capital: number | null) =>
+		({ id: 'compat:strategy:S7:1', strategy_id: 'S7', initial_capital: 10_000, capital, timeframe: '4h', leverage: 1 }) as unknown as PaperTradingSession;
+	const leg = (overrides: Partial<Leg> = {}): Leg => ({
+		id: 'L1', side: 'long', size: 0.1, entry: 80_000, openedMs: Date.parse('2026-09-18T16:00:00Z'), stop: 77_000, takeProfit: null,
+		stopSource: null, takeProfitSource: null, book: null, manualPause: false, source: null, serverMark: 82_768.5, serverPnl: 276.85, primary: true,
+		...overrides,
+	});
+	const paperFills = [
+		fill({ id: 'P1', strategy_id: 'S7', asset: 'BTC', direction: 'long', opened_at: '2026-09-13T08:00:00Z', closed_at: '2026-09-14T04:00:00Z', net_pnl_usd: -215.59, slice_usd: 10_000 }),
+	];
+
+	it('counts a paper position once: the book already holds the server open P&L', () => {
+		const stats = statsFor(paperFills);
+		const open = leg();
+		const math = legMath(open, 82_628.9, 1, '4h', NOW); // the live mark moved since the server refresh
+		const perf = strategyPerformance({ mode: 'paper', session: paperSession(10_061.26), stats, legs: [open], legMath: [math], stageSince: '2026-09-15T00:00:00Z', now: NOW });
+		expect(perf.realized).toBeCloseTo(-215.59, 2);
+		expect(perf.open).toBeCloseTo(math.pnl, 6);
+		expect(perf.total).toBeCloseTo(10_061.26 - 276.85 - 10_000 + math.pnl, 6);
+		expect(perf.openCosts).toBeCloseTo(0, 6);
+		expect(perf.balance).toBeCloseTo(10_000 + perf.total, 6);
+		expect(perf.returnPct).toBeCloseTo(perf.total / 100, 6);
+	});
+
+	it('starts the paper curve at the book at inception and ends it at the book now', () => {
+		const stats = statsFor(paperFills);
+		const perf = strategyPerformance({ mode: 'paper', session: paperSession(9_784.41), stats, legs: [], legMath: [], stageSince: '2026-09-15T00:00:00Z', now: NOW });
+		// Inception is the first fill (Sep 13), not the later stage date.
+		expect(perf.since).toBe(Date.parse('2026-09-13T08:00:00Z'));
+		expect(perf.curve[0]).toEqual({ time: perf.since, value: 10_000 });
+		expect(perf.curve[1].value).toBeCloseTo(9_784.41, 2);
+		expect(perf.curve[perf.curve.length - 1]).toEqual({ time: NOW, value: perf.balance });
+		expect(perf.maxDrawdown).toBeCloseTo(215.59, 2);
+		expect(perf.maxDrawdownPct).toBeCloseTo(2.1559, 3);
+	});
+
+	it('measures live returns against the average slice its trades were sized from', () => {
+		const fills = [
+			fill({ id: 'L1', strategy_id: 'S5', net_pnl_usd: 5, slice_usd: 500, closed_at: '2026-08-01T00:00:00Z', opened_at: '2026-07-31T00:00:00Z' }),
+			fill({ id: 'L2', strategy_id: 'S5', net_pnl_usd: -1.68, slice_usd: 168, closed_at: '2026-09-01T00:00:00Z', opened_at: '2026-08-31T00:00:00Z' }),
+			fill({ id: 'L3', strategy_id: 'S5', net_pnl_usd: 0.84, slice_usd: null, closed_at: '2026-09-02T00:00:00Z', opened_at: '2026-09-01T12:00:00Z' }),
+		];
+		const stats = statsFor(fills);
+		const session = { id: 'compat:strategy:S5:1', strategy_id: 'S5', capital: 1_010.55, initial_capital: 998.36 } as unknown as PaperTradingSession;
+		const perf = strategyPerformance({ mode: 'live', session, stats, legs: [], legMath: [], stageSince: '2026-07-21T14:40:54Z', sliceUsd: 168, now: NOW });
+		expect(perf.total).toBeCloseTo(5 - 1.68 + 0.84, 6);
+		expect(perf.balance).toBeNull();
+		expect(perf.capital).toBe(168);
+		expect(perf.returnBase).toBeCloseTo(334, 6); // (500 + 168) / 2; the trade with no slice is left out of the average
+		expect(perf.returnPct).toBeCloseTo((4.16 / 334) * 100, 6);
+		expect(perf.returnBasis).toContain('average capital slice');
+		expect(perf.returnBasis).toContain('1 older trade recorded no slice');
+		expect(perf.since).toBe(Date.parse('2026-07-21T14:40:54Z'));
+	});
+
+	it('keeps the live return in the same direction as the dollars when slices changed', () => {
+		// Summing per-trade percentages would give 10/500 − 5/100 = −3% for a +$5 result.
+		const fills = [
+			fill({ id: 'W', net_pnl_usd: 10, slice_usd: 500, closed_at: '2026-08-01T00:00:00Z', opened_at: '2026-07-31T00:00:00Z' }),
+			fill({ id: 'L', net_pnl_usd: -5, slice_usd: 100, closed_at: '2026-09-01T00:00:00Z', opened_at: '2026-08-31T00:00:00Z' }),
+		];
+		const perf = strategyPerformance({ mode: 'live', session: {} as PaperTradingSession, stats: statsFor(fills), legs: [], legMath: [], stageSince: null, sliceUsd: 168, now: NOW });
+		expect(perf.total).toBeCloseTo(5, 6);
+		expect(perf.returnPct).toBeGreaterThan(0);
+		// With no recorded slices and no slice today there is no base, so no return.
+		const bare = [fill({ id: 'X', net_pnl_usd: 1, slice_usd: null, closed_at: '2026-09-01T00:00:00Z', opened_at: '2026-08-31T00:00:00Z' })];
+		const none = strategyPerformance({ mode: 'live', session: {} as PaperTradingSession, stats: statsFor(bare), legs: [], legMath: [], stageSince: null, sliceUsd: null, now: NOW });
+		expect(none.returnPct).toBeNull();
+		expect(none.since).toBe(Date.parse('2026-08-31T00:00:00Z'));
+	});
+
+	it('measures live drawdown in dollars and against the slice', () => {
+		const fills = [
+			fill({ id: 'A', net_pnl_usd: 4, slice_usd: 168, closed_at: '2026-09-01T00:00:00Z', opened_at: '2026-08-31T00:00:00Z' }),
+			fill({ id: 'B', net_pnl_usd: -6, slice_usd: 168, closed_at: '2026-09-02T00:00:00Z', opened_at: '2026-09-01T00:00:00Z' }),
+		];
+		const perf = strategyPerformance({ mode: 'live', session: {} as PaperTradingSession, stats: statsFor(fills), legs: [], legMath: [], stageSince: null, sliceUsd: 168, now: NOW });
+		expect(perf.curve.map((point) => point.value)).toEqual([0, 4, -2, -2]);
+		expect(perf.maxDrawdown).toBeCloseTo(6, 6);
+		expect(perf.maxDrawdownPct).toBeCloseTo((6 / 168) * 100, 6); // both trades were sized from $168
+	});
+
+	it('picks the earlier start and measures drawdown from the running peak', () => {
+		expect(inception('2026-07-05T20:23:58Z', Date.parse('2026-06-30T00:00:00Z'))).toBe(Date.parse('2026-06-30T00:00:00Z'));
+		expect(inception(null, null)).toBeNull();
+		const dd = drawdown([10_000, 10_200, 9_900, 10_100]);
+		expect(dd?.abs).toBe(300);
+		expect(dd?.pctOfPeak).toBeCloseTo((300 / 10_200) * 100, 6);
 	});
 });

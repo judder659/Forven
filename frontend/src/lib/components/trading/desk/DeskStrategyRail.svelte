@@ -1,10 +1,10 @@
 <script lang="ts">
-	/** Strategy list: state, a plain reason, the next bar, and a P&L sparkline per strategy. */
+	/** Strategy list: state, the result since inception, a plain reason, the next bar and the equity curve. */
 	import { createEventDispatcher } from 'svelte';
 	import type { DeskMode } from '$lib/api/desk';
 	import type { LifecycleStrategy } from '$lib/api';
 	import { describeRefusal, tradeModeLabel } from '$lib/utils/tradingDesk/describe';
-	import { ago, cap1, dur, fmtDateTime, fmtPct, fmtPx, fmtQty, fmtTime, fmtUsd, lastBarClose, nextBarClose, toneClass } from '$lib/utils/tradingDesk/format';
+	import { ago, cap1, dur, durShort, fmtDateTime, fmtDay, fmtPct, fmtPx, fmtQty, fmtTime, fmtUsd, lastBarClose, nextBarClose, toneClass } from '$lib/utils/tradingDesk/format';
 	import { STATE_LABEL, type DeskRow, type RailFilter } from '$lib/utils/tradingDesk/rows';
 	import DeskSparkline from './DeskSparkline.svelte';
 
@@ -68,6 +68,15 @@
 		if (pending) return { text: `${pending.signal_type === 'exit' ? 'Exit' : 'Entry'} ${fmtPct(pending.distance_pct, 1, false)} away: ${pending.description}`, tone: 'text-sc-ink2' };
 		return { text: `No signal at the ${fmtTime(lastBarClose(row.timeframe, now))} close`, tone: 'text-sc-ink2' };
 	}
+
+	function resultTitle(row: DeskRow): string {
+		const perf = row.perf;
+		const since = perf.since !== null ? `Since ${fmtDay(perf.since)}` : 'Since inception';
+		const parts = [`${since}: ${fmtUsd(perf.total, { signed: true })}`, `closed trades ${fmtUsd(perf.realized, { signed: true })}`];
+		if (row.legs.length) parts.push(`open ${fmtUsd(perf.open, { signed: true })}`);
+		if (Math.abs(perf.openCosts) >= 0.005) parts.push(`fees and funding on open legs ${fmtUsd(perf.openCosts, { signed: true })}`);
+		return `${parts.join(', ')}.${perf.returnPct !== null ? ` Return ${fmtPct(perf.returnPct, 2)} ${perf.returnBasis}.` : ''}`;
+	}
 </script>
 
 <aside class="flex min-w-0 flex-col overflow-hidden rounded-md border border-sc-line bg-sc-panel" aria-label={mode === 'live' ? 'Live strategies' : 'Paper strategies'} data-testid="desk-rail">
@@ -115,7 +124,7 @@
 		{:else}
 			{#each shown as row (row.session.id)}
 				{@const why = reason(row)}
-				{@const pl = row.legs.length ? row.openPnl : row.stats.net}
+				{@const perf = row.perf}
 				<button
 					type="button"
 					class={`grid w-full gap-0.5 border-b border-l-2 border-sc-line px-3 py-2.5 text-left hover:bg-sc-hover max-lg:min-w-[250px] max-lg:border-b-0 max-lg:border-r ${selectedId === row.session.id ? 'border-l-sc-ink bg-sc-panel2' : 'border-l-transparent'}`}
@@ -129,13 +138,25 @@
 							<i class="inline-block h-1.5 w-1.5 rounded-full bg-current"></i>{STATE_LABEL[row.state]}
 						</span>
 					</div>
-					<span class="truncate text-[12px] text-sc-ink2">{row.name}</span>
-					<span class="text-[11.5px] text-sc-ink3">{row.asset} · {row.timeframe} · {tradeModeLabel(row.session.trade_mode)} · {row.session.leverage ?? 1}×</span>
+					<div class="flex items-baseline justify-between gap-2">
+						<span class="min-w-0 truncate text-[12px] text-sc-ink2">{row.name}</span>
+						<span class={`shrink-0 whitespace-nowrap font-plex-mono text-[12px] font-medium ${toneClass(perf.total)}`} title={resultTitle(row)} data-testid="desk-rail-result">
+							{fmtUsd(perf.total, { signed: true })}{#if perf.returnPct !== null}<span class="ml-1 text-[11px] font-normal">{fmtPct(perf.returnPct, 1)}</span>{/if}
+						</span>
+					</div>
+					<div class="flex items-baseline justify-between gap-2 text-[11.5px] text-sc-ink3">
+						<span class="min-w-0 truncate">{row.asset} · {row.timeframe} · {tradeModeLabel(row.session.trade_mode)} · {row.session.leverage ?? 1}×</span>
+						{#if perf.balance !== null}
+							<span class="shrink-0 whitespace-nowrap" title={`Paper book balance, open P&L included. Every paper strategy starts with ${fmtUsd(perf.capital, { digits: 0 })}.`}>Book <b class="font-plex-mono font-medium text-sc-ink2">{fmtUsd(perf.balance, { digits: 0 })}</b></span>
+						{:else if perf.since !== null}
+							<span class="shrink-0 whitespace-nowrap">since {fmtDay(perf.since)}</span>
+						{/if}
+					</div>
 					<span class={`text-[12px] ${why.tone}`}>{why.text}</span>
 					<div class="mt-0.5 grid grid-cols-[minmax(0,1fr)_76px_auto] items-center gap-2 text-[11.5px] text-sc-ink3">
-						<span>Next bar <b class="font-plex-mono font-medium text-sc-ink2">{dur(nextBarClose(row.timeframe, now) - now)}</b></span>
-						<DeskSparkline points={row.stats.cumulative} label={`${row.sid} cumulative ${mode} P&L`} />
-						<span class={`text-right font-plex-mono text-[12px] ${toneClass(pl)}`} title={row.legs.length ? 'Open P&L' : `Net ${mode} P&L`}>{fmtUsd(pl, { signed: true })}</span>
+						<span class="whitespace-nowrap" title={`The next ${row.timeframe} bar closes in ${dur(nextBarClose(row.timeframe, now) - now)}`}>Next bar <b class="font-plex-mono font-medium text-sc-ink2">{durShort(nextBarClose(row.timeframe, now) - now)}</b></span>
+						<DeskSparkline points={perf.curve.map((point) => point.value - perf.base)} label={`${row.sid} ${mode} P&L since inception`} />
+						<span class="whitespace-nowrap text-right" title={perf.trades ? `${perf.wins} winning trade${perf.wins === 1 ? '' : 's'} of ${perf.trades} closed (${fmtPct((perf.wins / perf.trades) * 100, 0, false)})` : 'No closed trades yet'}>{perf.trades ? `${perf.wins} of ${perf.trades} won` : 'No trades'}</span>
 					</div>
 				</button>
 			{/each}
