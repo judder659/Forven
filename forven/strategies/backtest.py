@@ -2391,6 +2391,10 @@ def _load_local_chart_frame(
     best_frame = _normalize_backtest_frame(None)
 
     best_symbol = ""
+    # Only the chosen series' slice warnings are reported: every candidate symbol
+    # (ETH/USD, ETH/USDC, ETH/USDT, ...) is sliced, and the ones not picked used to
+    # add "Only 0 warmup bars were available for ETH/USD" to a chart built from ETH/USDT.
+    best_slice_warnings: list[str] = []
     should_try_remote_repair = False
 
     for symbol in _dataset_symbol_candidates(resolved_asset):
@@ -2425,8 +2429,6 @@ def _load_local_chart_frame(
             timeframe=resolved_timeframe,
         )
 
-        warnings.extend(slice_warnings)
-
         if working.empty:
 
             continue
@@ -2436,6 +2438,10 @@ def _load_local_chart_frame(
             best_frame = working.copy()
 
             best_symbol = symbol
+
+            best_slice_warnings = list(slice_warnings)
+
+    warnings.extend(best_slice_warnings)
 
     if best_frame.empty:
 

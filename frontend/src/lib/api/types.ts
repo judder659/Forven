@@ -163,6 +163,9 @@ export interface BacktestResult {
 	symbol: string;
 	timeframe: string;
 	created_at: string;
+	/** The window the engine actually ran (config.start/end is the REQUESTED one). */
+	start?: string | null;
+	end?: string | null;
 	metrics: BacktestMetrics;
 	config: BacktestResultConfig;
 	equity_curve?: EquityPoint[];

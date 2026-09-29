@@ -179,7 +179,8 @@
 	// PromotionReadiness on:action maps: 'run_confirmation_backtest' -> 'backtests';
 	//   'run_optimization'/'apply_best_params' -> 'optimizations'; '*_validation_suite' -> 'robustness'.
 	type TabKey = 'overview' | 'backtests' | 'heatmap' | 'markets' | 'optimizations' | 'robustness' | 'execution';
-	type SubmitStatus = 'idle' | 'submitting' | 'running' | 'completed' | 'failed';
+	// 'detached': the page stopped polling a job that is still running server-side.
+	type SubmitStatus = 'idle' | 'submitting' | 'running' | 'completed' | 'failed' | 'detached';
 	type RobustnessRunnerTestKey = 'walk_forward' | 'monte_carlo' | 'param_jitter' | 'cost_stress' | 'regime_split';
 	type RobustnessRunnerCompleteEvent = {
 		key: RobustnessRunnerTestKey;
@@ -286,6 +287,9 @@
 	let selectedResult: BacktestResult | null = null;
 	let selectedResultId: string | null = null;
 	let selectedResultItem: StrategyContainerHistoryItem | null = null;
+	// The tab a selected result belongs to; the result viewer renders only there, so a
+	// Gauntlet run opened on the Gauntlet tab does not trail under Robustness.
+	let selectedResultHomeTab: TabKey | null = null;
 	let selectedChartContext: ResultChartContext | null = null;
 	let chartContextError = '';
 	let chartLoading = false;
@@ -441,7 +445,7 @@
 	$: quickScreenRows = buildQuickScreenEvidenceRows({
 		strategy: container?.strategy ?? null,
 		backtests: backtestHistory,
-		pipelineSettings,
+		thresholds: thresholdSection(pipelineThresholds, 'quick_screen'),
 	});
 	$: executionTrades = container?.execution.trades ?? [];
 	$: executionPositions = container?.execution.positions ?? [];
@@ -450,29 +454,48 @@
 	// ── Overview: realized growth from actual paper/live trading ────────────────
 	// The paper engine trades an isolated book of $10k + realized PnL, so for a
 	// pure-paper strategy `$10k + cumsum(pnl)` IS the real book equity. Live trades
-	// are sized off the real wallet, so with any live fills the curve degrades to
-	// cumulative realized PnL (anchored at 0) rather than implying a fake book.
+	// are sized off the real wallet, so the live curve is cumulative realized PnL
+	// (anchored at 0) rather than implying a fake book. The two books are never
+	// summed: a graduated strategy's paper phase is simulated dollars on a $10k
+	// book, its live phase is real dollars on a small wallet.
 	const PAPER_START_EQUITY = 10000;
+
+	type ExecutionBook = 'paper' | 'live';
 
 	type ExecutionGrowth = {
 		points: EquityPoint[];
-		mode: 'paper' | 'pnl';
+		mode: ExecutionBook;
 		tradeCount: number;
 		totalPnl: number;
+		// Closed trades on the other book, left out of this curve.
+		otherBookTrades: number;
 	};
 
+	// Trades carry execution_type 'paper' or 'live'; anything that is not a paper
+	// row is exchange-backed.
+	function tradeBook(row: Record<string, unknown>): ExecutionBook {
+		return String(row.execution_type ?? '').trim().toLowerCase().includes('paper') ? 'paper' : 'live';
+	}
+
+	function tradesForBook(trades: Record<string, unknown>[], book: ExecutionBook): Record<string, unknown>[] {
+		return trades.filter((row) => tradeBook(row) === book);
+	}
+
+	// The book a strategy is judged on: live once it has any live fill, else paper.
+	function primaryBook(trades: Record<string, unknown>[]): ExecutionBook {
+		return trades.some((row) => tradeBook(row) === 'live') ? 'live' : 'paper';
+	}
+
 	function buildExecutionGrowth(trades: Record<string, unknown>[]): ExecutionGrowth | null {
-		const closed = trades
+		const closedAll = trades
 			.map((row) => {
 				const closedAt = typeof row.closed_at === 'string' && row.closed_at.trim() ? row.closed_at : null;
 				const status = String(row.status ?? '').trim().toUpperCase();
 				if (!closedAt || status === 'OPEN') return null;
 				const closedTs = Date.parse(closedAt);
 				if (!Number.isFinite(closedTs)) return null;
-				const pnl = [row.pnl_usd, row.pnl]
-					.map((value) => Number(value))
-					.find((value) => Number.isFinite(value));
-				if (pnl === undefined) return null;
+				const pnl = finiteOrNull(row.pnl_usd) ?? finiteOrNull(row.pnl);
+				if (pnl === null) return null;
 				const openedAt = typeof row.opened_at === 'string' && row.opened_at.trim() ? row.opened_at : null;
 				const openedTs = openedAt ? Date.parse(openedAt) : Number.NaN;
 				return {
@@ -481,15 +504,16 @@
 					openedAt: Number.isFinite(openedTs) ? openedAt : null,
 					openedTs: Number.isFinite(openedTs) ? openedTs : null,
 					pnl,
-					executionType: String(row.execution_type ?? '').trim().toLowerCase(),
+					book: tradeBook(row),
 				};
 			})
 			.filter((trade): trade is NonNullable<typeof trade> => trade !== null)
 			.sort((left, right) => left.closedTs - right.closedTs);
-		if (closed.length === 0) return null;
+		if (closedAll.length === 0) return null;
 
-		const allPaper = closed.every((trade) => trade.executionType.includes('paper'));
-		const base = allPaper ? PAPER_START_EQUITY : 0;
+		const mode: ExecutionBook = closedAll.some((trade) => trade.book === 'live') ? 'live' : 'paper';
+		const closed = closedAll.filter((trade) => trade.book === mode);
+		const base = mode === 'paper' ? PAPER_START_EQUITY : 0;
 		const points: EquityPoint[] = [];
 		// Anchor the curve at the earliest open so a single closed trade still draws a
 		// segment and the start of trading is visible.
@@ -507,9 +531,10 @@
 		}
 		return {
 			points,
-			mode: allPaper ? 'paper' : 'pnl',
+			mode,
 			tradeCount: closed.length,
 			totalPnl: equity - base,
+			otherBookTrades: closedAll.length - closed.length,
 		};
 	}
 
@@ -587,8 +612,8 @@
 		itemA: StrategyContainerHistoryItem,
 		itemB: StrategyContainerHistoryItem,
 	): Array<{ key: string; a: string; b: string; same: boolean }> {
-		const paramsA = getHistoryParams(itemA);
-		const paramsB = getHistoryParams(itemB);
+		const paramsA = visibleParams(getHistoryParams(itemA));
+		const paramsB = visibleParams(getHistoryParams(itemB));
 		const keys = Array.from(new Set([...Object.keys(paramsA), ...Object.keys(paramsB)])).sort();
 		return keys.map((key) => ({
 			key,
@@ -634,7 +659,7 @@
 				format: formatProfitFactor,
 				higherIsBetter: true,
 			},
-			{ label: 'Rob%', read: readRobustness, format: formatRobustness, higherIsBetter: true },
+			{ label: 'OOS/IS', read: readRobustness, format: formatRobustness, higherIsBetter: true },
 		];
 		return rows.map((row) => {
 			const valueA = row.read(itemA);
@@ -718,7 +743,14 @@
 	// realized round-trip cost drag (pnl_pct − net_pnl_pct, fractions incl. leverage).
 	// Comparing them against the execution profile's modeled costs turns "paper looks
 	// worse than the backtest" into a number.
+	//
+	// Only one book is measured: live fills once the strategy has any (its paper
+	// fills are simulated at the signal price and would dilute real slippage), else
+	// paper. Cost drag is read only from rows that record fees separately
+	// (`fees_pct`): paper rows book PnL net of the modeled fee (pnl_pct ==
+	// net_pnl_pct), so their gross − net is 0 by construction, not a measurement.
 	type ExecutionParity = {
+		book: ExecutionBook;
 		entrySlipBps: number | null;
 		entryCount: number;
 		exitSlipBps: number | null;
@@ -733,23 +765,28 @@
 	}
 
 	function buildExecutionParity(trades: Record<string, unknown>[]): ExecutionParity | null {
+		const book = primaryBook(trades);
 		const entrySlips: number[] = [];
 		const exitSlips: number[] = [];
 		const costDrags: number[] = [];
 		const leverages: number[] = [];
-		for (const row of trades) {
-			const entrySlip = Number(row.entry_slippage_bps);
-			if (Number.isFinite(entrySlip)) entrySlips.push(entrySlip);
-			const exitSlip = Number(row.exit_slippage_bps);
-			if (Number.isFinite(exitSlip)) exitSlips.push(exitSlip);
-			const gross = Number(row.pnl_pct);
-			const net = Number(row.net_pnl_pct);
-			if (Number.isFinite(gross) && Number.isFinite(net)) costDrags.push((gross - net) * 100);
-			const leverage = Number(row.leverage);
-			if (Number.isFinite(leverage) && leverage > 0) leverages.push(leverage);
+		for (const row of tradesForBook(trades, book)) {
+			const closed = String(row.status ?? '').trim().toUpperCase() === 'CLOSED';
+			const entrySlip = finiteOrNull(row.entry_slippage_bps);
+			if (entrySlip !== null) entrySlips.push(entrySlip);
+			const exitSlip = closed ? finiteOrNull(row.exit_slippage_bps) : null;
+			if (exitSlip !== null) exitSlips.push(exitSlip);
+			const gross = finiteOrNull(row.pnl_pct);
+			const net = finiteOrNull(row.net_pnl_pct);
+			if (closed && gross !== null && net !== null && finiteOrNull(row.fees_pct) !== null) {
+				costDrags.push((gross - net) * 100);
+			}
+			const leverage = finiteOrNull(row.leverage);
+			if (leverage !== null && leverage > 0) leverages.push(leverage);
 		}
 		if (entrySlips.length === 0 && exitSlips.length === 0 && costDrags.length === 0) return null;
 		return {
+			book,
 			entrySlipBps: meanOf(entrySlips),
 			entryCount: entrySlips.length,
 			exitSlipBps: meanOf(exitSlips),
@@ -820,15 +857,35 @@
 			daysLive,
 			week,
 			allocationPct,
-			killSwitchPct: thresholds?.live_graduated?.decay_kill_switch_pct ?? null,
+			killSwitchPct: thresholdFractionPct(thresholds?.live_graduated?.decay_kill_switch_pct),
 		};
+	}
+
+	// Pipeline thresholds store drawdown limits as fractions (decay_kill_switch_pct
+	// 0.30 = 30%, paper max_drawdown_pct 0.15 = 15%); min_total_return_pct is already
+	// in percent points.
+	function thresholdFractionPct(value: unknown): number | null {
+		const parsed = finiteOrNull(value);
+		return parsed === null ? null : parsed * 100;
+	}
+
+	function fmtThresholdPct(value: number | null): string {
+		return value === null ? '—' : `${Number(value.toFixed(2))}%`;
 	}
 
 	// ── Execution tab: rich trade/position views ─────────────────────────────────
 	$: executionClosedTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'CLOSED');
 	$: executionOpenTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'OPEN');
-	$: executionRealizedSummary = buildExecutionRealizedSummary(executionClosedTrades);
+	// One summary per book — paper dollars (a simulated $10k book) and live dollars
+	// (the real wallet) are never added together.
+	$: executionRealizedByBook = (['live', 'paper'] as const)
+		.map((book) => ({ book, summary: buildExecutionRealizedSummary(tradesForBook(executionClosedTrades, book)) }))
+		.filter((entry): entry is { book: ExecutionBook; summary: ExecutionRealizedSummary } => entry.summary !== null);
 	$: paperSessionId = String(container?.strategy.paper_session_id ?? '').trim();
+	// The container payload never carries a paper_session_id (the lifecycle row maps it
+	// to null), and the paper-control endpoints resolve a session by its strategy id.
+	$: closeSessionId = paperSessionId || String(container?.strategy.id ?? '').trim();
+	$: openTradeIsLive = executionOpenTrades.some((row) => tradeBook(row) === 'live');
 	let closingPosition = false;
 
 	type ExecutionRealizedSummary = {
@@ -842,30 +899,22 @@
 	};
 
 	function tradeRowPnlUsd(row: Record<string, unknown>): number | null {
-		for (const key of ['pnl_usd', 'pnl'] as const) {
-			const value = Number(row[key]);
-			if (Number.isFinite(value)) return value;
-		}
-		return null;
+		return finiteOrNull(row.pnl_usd) ?? finiteOrNull(row.pnl);
 	}
 
 	// pnl_pct / net_pnl_pct are stored as FRACTIONS (0.05 = 5%) — scale for display.
 	function tradeRowNetPct(row: Record<string, unknown>): number | null {
-		for (const key of ['net_pnl_pct', 'pnl_pct'] as const) {
-			const value = Number(row[key]);
-			if (Number.isFinite(value)) return value * 100;
-		}
-		return null;
+		const value = finiteOrNull(row.net_pnl_pct) ?? finiteOrNull(row.pnl_pct);
+		return value === null ? null : value * 100;
 	}
 
 	function tradeRowFeesPct(row: Record<string, unknown>): number | null {
-		const value = Number(row.fees_pct);
-		return Number.isFinite(value) ? value * 100 : null;
+		const value = finiteOrNull(row.fees_pct);
+		return value === null ? null : value * 100;
 	}
 
 	function tradeRowSlipBps(row: Record<string, unknown>, key: 'entry_slippage_bps' | 'exit_slippage_bps'): number | null {
-		const value = Number(row[key]);
-		return Number.isFinite(value) ? value : null;
+		return finiteOrNull(row[key]);
 	}
 
 	function tradeRowSignal(row: Record<string, unknown>): Record<string, unknown> {
@@ -887,15 +936,16 @@
 		return reason ? reason.replace(/[_-]+/g, ' ') : '-';
 	}
 
-	function tradeRowSignalNumber(row: Record<string, unknown>, key: string): number | null {
-		const value = Number(tradeRowSignal(row)[key]);
-		return Number.isFinite(value) ? value : null;
+	// Stop and target prices: a missing or non-positive level means "none set".
+	function tradeRowSignalPrice(row: Record<string, unknown>, key: string): number | null {
+		const value = finiteOrNull(tradeRowSignal(row)[key]);
+		return value !== null && value > 0 ? value : null;
 	}
 
 	function tradeRowPrice(row: Record<string, unknown>, fillKey: string, signalKey: string): string {
 		for (const key of [fillKey, signalKey]) {
-			const value = Number(row[key]);
-			if (Number.isFinite(value) && value > 0) return value.toFixed(4);
+			const value = finiteOrNull(row[key]);
+			if (value !== null && value > 0) return value.toFixed(4);
 		}
 		return '-';
 	}
@@ -933,13 +983,14 @@
 	}
 
 	async function closeOpenPosition(): Promise<void> {
-		if (!paperSessionId || closingPosition) return;
-		const prompt =
-			"Close this strategy's open position at market?\n\nDispatches on the trade's execution type — paper closes at a fresh mid, live sends a reduce-only market order.";
+		if (!closeSessionId || closingPosition) return;
+		const prompt = openTradeIsLive
+			? "Close this strategy's LIVE position at market?\n\nThis sends a reduce-only market order to the exchange with real money."
+			: "Close this strategy's paper position at market?\n\nThe paper book closes it at a fresh mid price.";
 		if (typeof window !== 'undefined' && !window.confirm(prompt)) return;
 		closingPosition = true;
 		try {
-			await closePaperPosition(paperSessionId, 'Manual close from strategy container');
+			await closePaperPosition(closeSessionId, 'Manual close from strategy container');
 			addToast('Position close requested', 'success', `/lab/strategy/${encodeURIComponent(strategyId)}`);
 			await loadContainer();
 		} catch (err) {
@@ -1002,6 +1053,7 @@
 				: backtestHistory.filter((item) => historyItemHasUsableMetrics(item))
 		: [];
 	$: selectedResultComparableId = selectedResult ? String(selectedResult.id || selectedResultId || '').trim() : '';
+	$: selectedResultWindow = resolveResultWindow(selectedResult);
 	$: selectedResultStatus = resultStatus(selectedResult);
 	$: selectedResultErrorDetail = resultErrorDetail(selectedResult);
 	$: selectedResultHasUsableMetrics = resultHasUsableMetrics(selectedResult);
@@ -1138,11 +1190,59 @@
 		return d.toLocaleString();
 	}
 
+	// Window and bar dates are UTC (the candles are): in a local zone west of UTC a
+	// 2025-01-01T00:00Z start rendered as "Dec 31, 2024".
 	function fmtShortDate(value: string | null | undefined): string {
 		if (!value) return '-';
 		const d = new Date(value);
 		if (Number.isNaN(d.getTime())) return '-';
-		return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+		return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+	}
+
+	// Bar timestamps (trade entries/exits) as "YYYY-MM-DD HH:MM" in UTC, matching the chart.
+	function fmtUtcDateTime(value: unknown): string {
+		if (typeof value !== 'string' || !value.trim()) return '-';
+		const d = new Date(value);
+		if (Number.isNaN(d.getTime())) return '-';
+		return d.toISOString().slice(0, 16).replace('T', ' ');
+	}
+
+	type ResultWindow = {
+		start: string | null;
+		end: string | null;
+		// Set only when the engine ran a window more than a day away from the request.
+		requestedStart: string | null;
+		requestedEnd: string | null;
+	};
+
+	// The window a result actually covers. config.start/end is what was REQUESTED;
+	// the engine can run a different span (the research holdout seal and data
+	// availability both move it), and the top-level start/end records what ran.
+	function resolveResultWindow(result: BacktestResult | null): ResultWindow | null {
+		if (!result) return null;
+		const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+		const actualStart = text(result.start);
+		const actualEnd = text(result.end);
+		const requestedStart = text(result.config?.start);
+		const requestedEnd = text(result.config?.end);
+		// Signed gap in ms (left − right), or null when either side is missing.
+		const gap = (left: string | null, right: string | null): number | null => {
+			if (!left || !right) return null;
+			const delta = Date.parse(left) - Date.parse(right);
+			return Number.isFinite(delta) ? delta : null;
+		};
+		const endGap = gap(actualEnd, requestedEnd);
+		const startGap = gap(actualStart, requestedStart);
+		// The stored start always sits a warm-up (~210 bars) BEFORE the requested one, so
+		// an earlier start is not a move. A different end, or a later start (data began
+		// after the request), is.
+		const moved = (endGap !== null && Math.abs(endGap) > 86_400_000) || (startGap !== null && startGap > 86_400_000);
+		return {
+			start: actualStart ?? requestedStart,
+			end: actualEnd ?? requestedEnd,
+			requestedStart: moved ? requestedStart : null,
+			requestedEnd: moved ? requestedEnd : null,
+		};
 	}
 
 	function fmtBarCount(value: number): string {
@@ -1261,20 +1361,77 @@
 	] as const;
 
 	$: gauntletMinScore = pipelineThresholds?.gauntlet?.min_robustness_score ?? null;
-	// Derive the quick-screen tooltip from the SAME settings the readiness rows use so
-	// the badge hover stays in lockstep with what is actually gated (the old static copy
-	// advertised return >5% / Sharpe >1.0, which matched neither the rows nor the gate).
-	$: quickScreenSharpeThreshold = pipelineSettings?.min_sharpe_ratio ?? 0.5;
-	$: quickScreenDrawdownLimit = pipelineSettings?.max_drawdown_pct ?? 40;
+	// Stage tooltips read the gate's own config (the pipeline thresholds), not static
+	// copy: the old text advertised 14 days / 10 trades for paper while the configured
+	// gate asked for 30 / 50, and quoted the Settings page's 0.5 Sharpe / 40% drawdown
+	// for quick screen while policy._evaluate_quick_screen_gate reads the thresholds.
 	$: displayStages = PIPELINE_STAGES.map((s) => {
 		if (s.key === 'gauntlet' && gauntletMinScore != null) {
 			return { ...s, tooltip: `${s.tooltip} Score must meet or exceed ${gauntletMinScore}.` };
 		}
-		if (s.key === 'quick_screen') {
-			return { ...s, tooltip: `Initial filter (1yr backtest): IS Sharpe > ${quickScreenSharpeThreshold}, min return > 0%, max drawdown < ${quickScreenDrawdownLimit}%, plus required validation artifacts.` };
-		}
-		return { ...s };
+		const configured =
+			s.key === 'quick_screen'
+				? quickScreenStageTooltip(pipelineThresholds)
+				: s.key === 'paper'
+					? paperStageTooltip(pipelineThresholds)
+					: s.key === 'live_graduated'
+						? liveStageTooltip(pipelineThresholds)
+						: null;
+		return configured ? { ...s, tooltip: configured } : { ...s };
 	});
+
+	function thresholdSection(thresholds: PipelineThresholds | null, key: string): Record<string, unknown> | null {
+		const section = (thresholds as Record<string, unknown> | null)?.[key];
+		return section && typeof section === 'object' && !Array.isArray(section) ? (section as Record<string, unknown>) : null;
+	}
+
+	function quickScreenStageTooltip(thresholds: PipelineThresholds | null): string | null {
+		const qs = thresholdSection(thresholds, 'quick_screen');
+		if (!qs) return null;
+		const minTrades = finiteOrNull(qs.min_trades);
+		const minPf = finiteOrNull(qs.min_profit_factor);
+		const minSharpe = finiteOrNull(qs.min_sharpe);
+		const parts = [
+			'IS Sharpe above 0.1',
+			minTrades !== null ? `${minTrades}+ trades` : null,
+			minPf !== null ? `profit factor ≥ ${minPf} in and out of sample` : null,
+			// The gates compare returns in percent points but drawdowns as fractions.
+			`OOS return ≥ ${fmtThresholdPct(finiteOrNull(qs.min_total_return_pct))}`,
+			`drawdown ≤ ${fmtThresholdPct(thresholdFractionPct(qs.max_drawdown_pct))}`,
+			minSharpe !== null ? `OOS Sharpe ≥ ${minSharpe}` : null,
+		].filter(Boolean);
+		return `Entry filter on the strategy's own backtest: ${parts.join(', ')}.`;
+	}
+
+	function paperStageTooltip(thresholds: PipelineThresholds | null): string | null {
+		const paper = thresholdSection(thresholds, 'paper_trading');
+		if (!paper) return null;
+		const days = finiteOrNull(paper.min_paper_days);
+		const trades = finiteOrNull(paper.min_closed_trades);
+		if (days === null || trades === null) return null;
+		return `Forward paper trading: at least ${days} days and ${trades} closed trades, return above ${fmtThresholdPct(finiteOrNull(paper.min_total_return_pct))} and drawdown under ${fmtThresholdPct(thresholdFractionPct(paper.max_drawdown_pct))}, then the strict paper → live gate.`;
+	}
+
+	function liveStageTooltip(thresholds: PipelineThresholds | null): string | null {
+		const live = thresholdSection(thresholds, 'live_graduated');
+		if (!live) return null;
+		const schedule = Array.isArray(live.allocation_schedule) ? (live.allocation_schedule as Array<Record<string, unknown>>) : [];
+		const ramp = schedule
+			.map((rung) => {
+				const pct = finiteOrNull(rung.allocation_pct);
+				const from = finiteOrNull(rung.week_start);
+				const to = finiteOrNull(rung.week_end);
+				if (pct === null || from === null) return null;
+				const weeks = to === null || to >= 999 ? `wk ${from}+` : from === to ? `wk ${from}` : `wk ${from}–${to}`;
+				return `${pct}% (${weeks})`;
+			})
+			.filter(Boolean)
+			.join(' → ');
+		const killSwitch = thresholdFractionPct(live.decay_kill_switch_pct);
+		const rampText = ramp ? ` Configured allocation ramp ${ramp} — advisory, the live sizer does not enforce it.` : '';
+		const killText = killSwitch !== null ? ` Decay kill switch at ${fmtThresholdPct(killSwitch)} drawdown.` : '';
+		return `Graduated to real capital.${rampText}${killText}`;
+	}
 
 	const TERMINAL_STAGES: Record<string, string> = {
 		archived: 'Strategy archived — removed from active pipeline.',
@@ -1313,8 +1470,17 @@
 
 	function asNumber(value: unknown, fallback = 0): number {
 		if (typeof value === 'number' && Number.isFinite(value)) return value;
+		// Number(null), Number('') and Number(false) are all 0: a missing field would
+		// read as a measured zero (a "0.000%" fee, a "+0.0 bps" fill, a 0 target price).
+		if (value === null || value === undefined || typeof value === 'boolean') return fallback;
+		if (typeof value === 'string' && !value.trim()) return fallback;
 		const parsed = Number(value);
 		return Number.isFinite(parsed) ? parsed : fallback;
+	}
+
+	function finiteOrNull(value: unknown): number | null {
+		const parsed = asNumber(value, Number.NaN);
+		return Number.isFinite(parsed) ? parsed : null;
 	}
 
 	function parseDateValue(value: unknown): Date | null {
@@ -1870,8 +2036,27 @@
 		return stableStringify(strategyDefaultsFull[key]) !== stableStringify(value);
 	}
 
+	// `_`-prefixed params are contract fields the engine and lifecycle read (`_asset`,
+	// `_timeframe` — the declared-timeframe contract —, `_data_requirements`,
+	// `_parameter_space`), not tuning knobs. They are hidden from the chips and editors
+	// (they sorted first and pushed the real params behind "+N more") and are always
+	// carried through saves and reruns untouched.
+	function isSystemParam(key: string): boolean {
+		return key.startsWith('_');
+	}
+
+	function visibleParams(record: Record<string, unknown> | null | undefined): Record<string, unknown> {
+		return Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => !isSystemParam(key)));
+	}
+
+	function systemParams(record: Record<string, unknown> | null | undefined): Record<string, unknown> {
+		return Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => isSystemParam(key)));
+	}
+
 	function getBacktestParamSummary(item: StrategyContainerHistoryItem): Array<{ key: string; value: string; changed: boolean }> {
-		return Object.entries(getBacktestParamDraft(item))
+		// execution_profile would only render as "{...}"; the execution settings have their own panel.
+		return Object.entries(visibleParams(getBacktestParamDraft(item)))
+			.filter(([key]) => key !== 'execution_profile')
 			.sort(([left], [right]) => left.localeCompare(right))
 			.map(([key, value]) => ({
 				key,
@@ -2033,13 +2218,25 @@
 		return {};
 	}
 
+	// A percent metric inside a nested in_sample/out_of_sample block, scaled by that
+	// block's own unit (its win_rate), else the parent's. A magnitude guess
+	// (`|x| <= 1 → ×100`) misreads any CAGR above 100%: the engine's 1.17 (117%)
+	// rendered as "1.17%".
+	function nestedPercentMetric(
+		parent: Record<string, unknown>,
+		nested: Record<string, unknown>,
+		key: string,
+	): number | null {
+		const raw = asNumber(nested[key], Number.NaN);
+		if (!Number.isFinite(raw)) return null;
+		const scaleSource = inferUsesRatioPercentScale(nested) !== null ? nested : parent;
+		return normalizePercentMetricValue(scaleSource, key, raw);
+	}
+
 	function readInSampleCagr(item: StrategyContainerHistoryItem): number | null {
 		const top = readPercentMetricOptional(item, 'in_sample_annualized_return_pct', 'is_annualized_return_pct');
 		if (top !== null) return top;
-		const nested = readNestedRecord(item, 'in_sample');
-		const raw = asNumber(nested['annualized_return_pct'], Number.NaN);
-		if (!Number.isFinite(raw)) return null;
-		return Math.abs(raw) <= 1 ? raw * 100 : raw;
+		return nestedPercentMetric(item.metrics ?? {}, readNestedRecord(item, 'in_sample'), 'annualized_return_pct');
 	}
 
 	function readInSampleSharpe(item: StrategyContainerHistoryItem): number | null {
@@ -2053,10 +2250,7 @@
 	function readOutOfSampleCagr(item: StrategyContainerHistoryItem): number | null {
 		const top = readPercentMetricOptional(item, 'out_of_sample_annualized_return_pct', 'oos_annualized_return_pct');
 		if (top !== null) return top;
-		const nested = readNestedRecord(item, 'out_of_sample');
-		const raw = asNumber(nested['annualized_return_pct'], Number.NaN);
-		if (!Number.isFinite(raw)) return null;
-		return Math.abs(raw) <= 1 ? raw * 100 : raw;
+		return nestedPercentMetric(item.metrics ?? {}, readNestedRecord(item, 'out_of_sample'), 'annualized_return_pct');
 	}
 
 	function readOutOfSampleSharpe(item: StrategyContainerHistoryItem): number | null {
@@ -2079,10 +2273,17 @@
 		return value.toFixed(2);
 	}
 
+	// OOS/IS retention: the engine's per-run `robustness` = 1 − max(0, 1 − OOS Sharpe ÷
+	// IS Sharpe), a fraction capped at 1 (negative when the OOS Sharpe turns negative).
+	// It is NOT the Gauntlet composite: some older rows also carry a stamped
+	// composite_robustness_score (0–100, a different measure frozen at stamp time), and
+	// reading that first mixed two measures in one column.
+	const OOS_RETENTION_TITLE =
+		'OOS/IS: the share of the in-sample Sharpe that held up out of sample (OOS Sharpe ÷ IS Sharpe, capped at 100%). Not the Gauntlet composite — that is on the Gauntlet status card.';
+
 	function readRobustness(item: StrategyContainerHistoryItem): number | null {
-		const raw = readMetricOptional(item, 'composite_robustness_score', 'robustness_score', 'robustness', 'gauntlet_score');
-		if (raw === null) return null;
-		return Math.abs(raw) <= 1 ? raw * 100 : raw;
+		const raw = readMetricOptional(item, 'robustness');
+		return raw === null ? null : raw * 100;
 	}
 
 	function formatInSampleCagr(item: StrategyContainerHistoryItem): string {
@@ -2497,62 +2698,34 @@
 	}
 
 	/**
-	 * Build the risk-adjusted metrics grid, surfacing every backend metric not
-	 * already shown in the headline strip. Undefined metrics are silently omitted.
+	 * Build the risk-adjusted metrics grid from the out-of-sample metrics the engine
+	 * emits beyond the headline strip. The engine stores percentages as fractions
+	 * (monthly_return_pct 0.022 = 2.2%/month), so percent values go through the same
+	 * unit inference as the strip. Undefined metrics are silently omitted.
 	 */
 	function buildRiskMetricEntries(result: BacktestResult | null): RiskMetricEntry[] {
 		if (!result || !result.metrics || typeof result.metrics !== 'object') return [];
 		const entries: RiskMetricEntry[] = [];
 
-		const pushRatio = (
-			label: string,
-			title: string,
-			value: number | null,
-			tone: 'neutral' | 'positive' = 'neutral',
-		) => {
+		const sortino = readResultMetricOptional(result, 'sortino_ratio', 'sortino');
+		if (sortino !== null) {
+			entries.push({
+				label: 'Sortino',
+				title: 'Downside-deviation-adjusted return, out of sample (higher is better).',
+				value: formatRatioMetric(sortino),
+				tone: sortino >= 0 ? 'positive' : 'negative',
+			});
+		}
+		const pushSignedPercent = (label: string, title: string, value: number | null) => {
 			if (value === null || !Number.isFinite(value)) return;
-			entries.push({ label, title, value: formatRatioMetric(value), tone: tone === 'positive' ? (value >= 0 ? 'positive' : 'negative') : 'neutral' });
+			entries.push({ label, title, value: `${value.toFixed(2)}%`, tone: value >= 0 ? 'positive' : 'negative' });
 		};
-
-		const pushPercent = (
-			label: string,
-			title: string,
-			value: number | null,
-			signed: boolean,
-		) => {
-			if (value === null || !Number.isFinite(value)) return;
-			const tone: RiskMetricEntry['tone'] = signed ? (value >= 0 ? 'positive' : 'negative') : 'neutral';
-			entries.push({ label, title, value: `${value.toFixed(2)}%`, tone });
-		};
-
-		pushRatio('Sortino', 'Downside-deviation-adjusted return (higher is better).', readResultMetricOptional(result, 'sortino_ratio'), 'positive');
-		pushRatio('Calmar', 'Annualized return / max drawdown (higher is better).', readResultMetricOptional(result, 'calmar_ratio'), 'positive');
-		pushRatio('Omega', 'Probability-weighted gains / losses about a threshold (>1 favorable).', readResultMetricOptional(result, 'omega_ratio'), 'positive');
-		pushRatio('Tail Ratio', 'Right-tail / left-tail magnitude (>1 favorable).', readResultMetricOptional(result, 'tail_ratio'), 'positive');
-		pushRatio('Recovery Factor', 'Net profit / max drawdown (higher is better).', readResultMetricOptional(result, 'recovery_factor'), 'positive');
-		pushRatio('Edge Ratio', 'Average MFE / average MAE (>1 favorable).', readResultMetricOptional(result, 'edge_ratio'), 'positive');
-		pushPercent('VaR', 'Value at Risk — expected loss at the modeled confidence level.', readResultMetricOptional(result, 'value_at_risk'), false);
-		pushPercent('Exp. Shortfall', 'Expected shortfall (average loss beyond VaR).', readResultMetricOptional(result, 'expected_shortfall'), false);
-		pushRatio('Expectancy', 'Average expected outcome per trade (return units).', readResultMetricOptional(result, 'expectancy'), 'positive');
-		pushPercent('Avg MAE', 'Average maximum adverse excursion across trades.', readResultMetricOptional(result, 'avg_mae'), false);
-		pushPercent('Avg MFE', 'Average maximum favorable excursion across trades.', readResultMetricOptional(result, 'avg_mfe'), false);
-		pushRatio('Beta', 'Sensitivity to the benchmark (1 = moves with market).', readResultMetricOptional(result, 'beta'));
-		pushPercent('Alpha', 'Excess return over the benchmark.', readResultMetricOptional(result, 'alpha'), true);
-		pushPercent('Monthly Ret', 'Average monthly return.', readResultMetricOptional(result, 'monthly_return_pct'), true);
-
-		const maxDdDuration = readResultMetricOptional(result, 'max_drawdown_duration');
-		if (maxDdDuration !== null && Number.isFinite(maxDdDuration)) {
-			entries.push({ label: 'Max DD Days', title: 'Longest drawdown duration (days).', value: Math.round(maxDdDuration).toLocaleString(), tone: 'negative' });
+		pushSignedPercent('Monthly Ret', 'Compounded average monthly return, out of sample.', readResultPercentMetricOptional(result, 'monthly_return_pct'));
+		pushSignedPercent('Avg Trade', 'Average net return per trade, out of sample.', readResultPercentMetricOptional(result, 'avg_trade_pct'));
+		const avgBars = readResultMetricOptional(result, 'avg_bars_held');
+		if (avgBars !== null) {
+			entries.push({ label: 'Avg Hold', title: 'Average bars a trade is held, out of sample.', value: `${avgBars.toFixed(1)} bars`, tone: 'neutral' });
 		}
-		const avgDdDuration = readResultMetricOptional(result, 'avg_drawdown_duration');
-		if (avgDdDuration !== null && Number.isFinite(avgDdDuration)) {
-			entries.push({ label: 'Avg DD Days', title: 'Average drawdown duration (days).', value: Math.round(avgDdDuration).toLocaleString(), tone: 'neutral' });
-		}
-		const avgTradeDuration = readResultMetricOptional(result, 'avg_trade_duration');
-		if (avgTradeDuration !== null && Number.isFinite(avgTradeDuration)) {
-			entries.push({ label: 'Avg Hold', title: 'Average trade duration (bars).', value: avgTradeDuration.toFixed(1), tone: 'neutral' });
-		}
-
 		return entries;
 	}
 
@@ -2592,9 +2765,13 @@
 
 	$: selectedTradesHaveExitReason = (selectedResult?.trades ?? []).some((trade) => tradeExitReason(trade) !== null);
 	$: selectedTradesHaveSizeFraction = (selectedResult?.trades ?? []).some((trade) => tradeSizeFraction(trade) !== null);
-	$: selectedTradeColumnCount = 11
+	// The engine does not record per-trade MAE/MFE today; show the columns only when
+	// some trade carries them rather than a column of dashes.
+	$: selectedTradesHaveExcursions = (selectedResult?.trades ?? []).some((trade) => trade.mae != null || trade.mfe != null);
+	$: selectedTradeColumnCount = 9
 		+ (selectedTradesHaveExitReason ? 1 : 0)
-		+ (selectedTradesHaveSizeFraction ? 1 : 0);
+		+ (selectedTradesHaveSizeFraction ? 1 : 0)
+		+ (selectedTradesHaveExcursions ? 2 : 0);
 
 	function isResultCagrReliable(result: BacktestResult | null): boolean {
 		const flag = readResultFlag(result, 'annualized_return_reliable');
@@ -2647,9 +2824,12 @@
 	function readResultInSampleCagr(result: BacktestResult | null): number | null {
 		const top = readResultPercentMetricOptional(result, 'in_sample_annualized_return_pct', 'is_annualized_return_pct');
 		if (top !== null) return top;
-		const nested = readResultNestedRecord(result, 'in_sample');
-		const raw = asNumber(nested['annualized_return_pct'], Number.NaN);
-		if (Number.isFinite(raw)) return Math.abs(raw) <= 1 ? raw * 100 : raw;
+		const nested = nestedPercentMetric(
+			(result?.metrics ?? {}) as Record<string, unknown>,
+			readResultNestedRecord(result, 'in_sample'),
+			'annualized_return_pct',
+		);
+		if (nested !== null) return nested;
 		const overall = readResultPercentMetricOptional(result, 'annualized_return_pct');
 		if (overall !== null) return overall;
 		const match = matchingHistoryItemForResult(result);
@@ -2671,9 +2851,12 @@
 	function readResultOutOfSampleCagr(result: BacktestResult | null): number | null {
 		const top = readResultPercentMetricOptional(result, 'out_of_sample_annualized_return_pct', 'oos_annualized_return_pct');
 		if (top !== null) return top;
-		const nested = readResultNestedRecord(result, 'out_of_sample');
-		const raw = asNumber(nested['annualized_return_pct'], Number.NaN);
-		if (Number.isFinite(raw)) return Math.abs(raw) <= 1 ? raw * 100 : raw;
+		const nested = nestedPercentMetric(
+			(result?.metrics ?? {}) as Record<string, unknown>,
+			readResultNestedRecord(result, 'out_of_sample'),
+			'annualized_return_pct',
+		);
+		if (nested !== null) return nested;
 		const overall = readResultPercentMetricOptional(result, 'annualized_return_pct');
 		if (overall !== null) return overall;
 		const match = matchingHistoryItemForResult(result);
@@ -2693,8 +2876,8 @@
 	}
 
 	function readResultRobustness(result: BacktestResult | null): number | null {
-		const raw = readResultMetricOptional(result, 'composite_robustness_score', 'robustness_score', 'robustness', 'gauntlet_score');
-		if (raw !== null) return Math.abs(raw) <= 1 ? raw * 100 : raw;
+		const raw = readResultMetricOptional(result, 'robustness');
+		if (raw !== null) return raw * 100;
 		const match = matchingHistoryItemForResult(result);
 		return match ? readRobustness(match) : null;
 	}
@@ -2802,6 +2985,13 @@
 		if (normalized === 'optimization') return 'text-[#888] border-[#333]';
 		if (normalized === 'walk_forward') return 'text-[#888] border-[#333]';
 		return 'text-[#888] border-[#333]';
+	}
+
+	function resultHomeTab(type: string | null | undefined): TabKey {
+		const normalized = String(type ?? '').trim().toLowerCase();
+		if (normalized === 'optimization' || normalized === 'grid_search') return 'optimizations';
+		if (['walk_forward', 'monte_carlo', 'param_jitter', 'cost_stress', 'regime_split'].includes(normalized)) return 'robustness';
+		return 'backtests';
 	}
 
 	function resultTypeLabel(type: string | null | undefined): string {
@@ -3320,7 +3510,14 @@
 		if (!resultId) return;
 		selectedResultId = resultId;
 		selectedResultItem = item;
-		loadGauntletDraftFromHistory(item);
+		selectedResultHomeTab = resultHomeTab(item.result_type);
+		// Only a Gauntlet run seeds the Gauntlet draft (its params, execution, market and
+		// window reproduce the run). An optimization or walk-forward card is read-only
+		// here: loading its config silently replaced the draft — and the market/window
+		// the Heatmap and Markets tabs sweep — and a later Save persisted it as defaults.
+		if (selectedResultHomeTab === 'backtests') {
+			loadGauntletDraftFromHistory(item);
+		}
 		selectedResult = null;
 		selectedChartContext = null;
 		resultError = '';
@@ -3411,6 +3608,13 @@
 		return asPlainRecord(item.config?.best_execution_controls);
 	}
 
+	// Older optimization rows stored no objective; the backend scores those by Sharpe
+	// (backtest_api's default), so an empty objective reads as Sharpe, not "Fitness"
+	// (which duplicated the Fitness tile beside it).
+	function optimizationObjectiveName(item: StrategyContainerHistoryItem): string {
+		return String(item.config?.objective || item.metrics?.objective || '').trim() || 'sharpe_ratio';
+	}
+
 	function optimizationObjectiveLabel(value: unknown): string {
 		const normalized = String(value ?? '').trim();
 		const match = OPTIMIZATION_OBJECTIVES.find((option) => option.value === normalized);
@@ -3437,7 +3641,9 @@
 	}
 
 	function formatOptimizationChipRecord(record: Record<string, unknown>, limit = 6): string[] {
+		// execution_profile has its own chip row; `_` keys are contract fields.
 		return Object.entries(record)
+			.filter(([key]) => !isSystemParam(key) && key !== 'execution_profile')
 			.sort(([left], [right]) => left.localeCompare(right))
 			.slice(0, limit)
 			.map(([key, value]) => `${key}=${formatBacktestParamChipValue(value)}`);
@@ -3779,6 +3985,7 @@
 		selectedResult = null;
 		selectedResultId = null;
 		selectedResultItem = null;
+		selectedResultHomeTab = null;
 		selectedChartContext = null;
 		resultError = '';
 		chartContextError = '';
@@ -3815,9 +4022,14 @@
 
 			const defaultSymbol = String(payload.configuration.symbol ?? payload.strategy.symbol ?? '').trim();
 			const defaultTimeframe = String(payload.configuration.timeframe ?? payload.strategy.timeframe ?? '1h').trim() || '1h';
-			const firstBacktest = payload.history.backtests[0];
-			const resolvedStartDate = toDateInput(firstBacktest?.start_date) || defaultOneYearRange.startDate;
-			const resolvedEndDate = toDateInput(firstBacktest?.end_date) || defaultOneYearRange.endDate;
+			// The Gauntlet form defaults to the window of the run that drives execution
+			// (the pinned one), else the newest run.
+			const pinnedRunId = String(payload.strategy.pinned_backtest_id ?? '').trim();
+			const defaultRun =
+				(pinnedRunId ? payload.history.backtests.find((item) => item.result_id === pinnedRunId) : undefined) ??
+				payload.history.backtests[0];
+			const resolvedStartDate = toDateInput(defaultRun?.start_date) || defaultOneYearRange.startDate;
+			const resolvedEndDate = toDateInput(defaultRun?.end_date) || defaultOneYearRange.endDate;
 
 			backtestForm = {
 				symbol: defaultSymbol,
@@ -3917,9 +4129,11 @@
 			await new Promise((resolve) => setTimeout(resolve, attempt < 10 ? 2000 : 5000));
 		}
 		if (destroyed || strategyId !== pollStrategyId) return;
-		submitStatus = 'failed';
-		submitMessage = 'Job polling timed out.';
-		addToast(submitMessage, 'error', `/lab/strategy/${encodeURIComponent(strategyId)}`);
+		// The job has not failed: the server keeps running it after the page stops
+		// asking. Say so instead of reporting a failure.
+		submitStatus = 'detached';
+		submitMessage = `${label} job ${jobId} is still running after ~20 minutes. This page stopped polling; reload the strategy to pick up the result when it finishes.`;
+		addToast(`${label} is still running in the background`, 'info', `/lab/strategy/${encodeURIComponent(strategyId)}`);
 	}
 
 	async function executeBacktestSubmission(request: Parameters<typeof submitBacktest>[0]): Promise<void> {
@@ -4530,24 +4744,24 @@
 										<div class="text-[9px] uppercase tracking-wide text-[#555]">OOS Sharpe</div>
 										<div class={`mt-1 font-mono text-sm ${isSharpeReliable(activeRunItem) ? 'text-[#aaa]' : 'text-[#555]'}`}>{formatOutOfSampleSharpe(activeRunItem)}</div>
 									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Maximum peak-to-trough drawdown">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Max DD</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Full-window (IS + OOS) max drawdown — approximate: the larger of the two halves">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">Max DD · full</div>
 										<div class="mt-1 font-mono text-sm text-red-400">{pct(readDrawdownPercentMetric(activeRunItem, 'max_drawdown_pct', 'max_drawdown'))}</div>
 									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Combined win rate">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Win%</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Full-window (IS + OOS) win rate">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">Win% · full</div>
 										<div class="mt-1 font-mono text-sm text-[#aaa]">{pct(readPercentMetric(activeRunItem, 'win_rate', 'win_rate_pct'))}</div>
 									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Total completed trades">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Trades</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Completed trades across the full window (IS + OOS)">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">Trades · full</div>
 										<div class="mt-1 font-mono text-sm text-[#aaa]">{historyTradesCount(activeRunItem)}</div>
 									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Gross profit / gross loss">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">PF</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Full-window (IS + OOS) gross profit / gross loss">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">PF · full</div>
 										<div class="mt-1 font-mono text-sm text-[#aaa]">{formatProfitFactor(activeRunItem)}</div>
 									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Gauntlet ranking score. Promotion readiness comes from the backend gate and persisted verdicts.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Rob%</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title={OOS_RETENTION_TITLE}>
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">OOS/IS</div>
 										<div class="mt-1 font-mono text-sm text-[#aaa]">{formatRobustness(activeRunItem)}</div>
 									</div>
 								</div>
@@ -4584,11 +4798,16 @@
 								{/if}
 							</div>
 							{#if executionGrowth}
-								<div class="mt-1 text-xs text-[#555]">
+								<div class="mt-1 text-xs text-[#555]" data-testid="overview-growth-mode">
 									{#if executionGrowth.mode === 'paper'}
 										Paper book equity — the strategy's isolated ${PAPER_START_EQUITY.toLocaleString()} book plus realized PnL from each closed paper trade.
 									{:else}
-										Cumulative realized PnL from closed paper/live trades.
+										Cumulative realized PnL from closed live trades, in real wallet dollars.
+									{/if}
+									{#if executionGrowth.otherBookTrades > 0}
+										<span class="text-[#777]">
+											{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (see the Execution tab).
+										</span>
 									{/if}
 								</div>
 								<div class="mt-3">
@@ -4610,7 +4829,7 @@
 							<div class="flex flex-wrap items-center justify-between gap-2">
 								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Backtest ↔ Reality</div>
 								{#if executionParity}
-									<span class="text-[11px] text-[#555]">avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
+									<span class="text-[11px] text-[#555]">{executionParity.book} fills · avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
 								{/if}
 							</div>
 							{#if executionParity}
@@ -4631,7 +4850,11 @@
 									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average realized round-trip cost drag per closed trade (gross − net PnL, includes leverage). Modeled: 2 × fee × avg leverage.">
 										<div class="text-[9px] uppercase tracking-wide text-[#555]">Cost / Trade</div>
 										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.costDragPct, modeledCostDragPct)}`}>{executionParity.costDragPct !== null ? `${executionParity.costDragPct.toFixed(3)}%` : '—'}</div>
-										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
+										{#if executionParity.costCount > 0}
+											<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
+										{:else}
+											<div class="mt-0.5 text-[10px] text-[#555]" data-testid="overview-parity-cost-unmeasured">not measured — {executionParity.book === 'paper' ? 'paper books PnL net of the modeled fee' : 'no fill recorded its fees'}</div>
+										{/if}
 									</div>
 								</div>
 							{:else}
@@ -4779,7 +5002,17 @@
 									{/if}
 								</div>
 							{/if}
-							<ParameterEditor bind:params={paramsDraft} bind:hasErrors={paramsHasErrors} saving={settingDefaultParams} />
+							<ParameterEditor
+								params={visibleParams(paramsDraft)}
+								bind:hasErrors={paramsHasErrors}
+								saving={settingDefaultParams}
+								on:paramsChange={(event) => (paramsDraft = { ...systemParams(paramsDraft), ...event.detail })}
+							/>
+							{#if Object.keys(systemParams(paramsDraft)).length > 0}
+								<div class="mt-2 text-[11px] text-[#555]" data-testid="gauntlet-system-params-note">
+									Contract fields kept as saved (see Raw JSON): {Object.keys(systemParams(paramsDraft)).join(', ')}
+								</div>
+							{/if}
 						</div>
 						<details class="mt-2 border border-[#1f1f1f] bg-black">
 							<summary class="cursor-pointer px-2 py-1.5 text-[10px] uppercase tracking-wide text-[#555]">Raw JSON</summary>
@@ -4866,8 +5099,8 @@
 
 							<div>
 								<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-[#555]">
-									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-white"></span>A · {compareItemA.result_id}</span>
-									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-yellow-500/10"></span>B · {compareItemB.result_id}</span>
+									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>A · {compareItemA.result_id}</span>
+									<span class="flex items-center gap-1.5"><span class="w-4 border-t border-dashed border-amber-500"></span>B · {compareItemB.result_id}</span>
 								</div>
 								{#if compareError}
 									<div class="mt-2 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{compareError}</div>
@@ -4929,7 +5162,7 @@
 											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('win_rate')} title="Full-window win rate = combined wins / combined closed trades.">Win%{historySortIndicator('win_rate')}</th>
 											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('trades')} title="Total completed trades across IS + OOS.">Trades{historySortIndicator('trades')}</th>
 											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('profit_factor')} title="Full-window profit factor = combined gross profit / combined gross loss. ∞ if no losing trades.">PF{historySortIndicator('profit_factor')}</th>
-											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('robustness')} title="Gauntlet ranking score. Promotion readiness comes from the backend gate and persisted verdicts.">Rob%{historySortIndicator('robustness')}</th>
+											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('robustness')} title={OOS_RETENTION_TITLE}>OOS/IS{historySortIndicator('robustness')}</th>
 											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa] border-l border-[#222] pl-3" on:click={() => toggleHistorySort('oos_cagr')} title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling.">OOS CAGR{historySortIndicator('oos_cagr')}</th>
 											<th class="px-3 py-2 text-right cursor-pointer select-none hover:text-[#aaa]" on:click={() => toggleHistorySort('oos_sharpe')} title="Out-of-sample annualized Sharpe. Low-trade samples are shown with muted styling.">OOS Sharpe{historySortIndicator('oos_sharpe')}</th>
 											<th class="px-3 py-2 text-right">Actions</th>
@@ -5026,7 +5259,7 @@
 													title={readFlag(item, 'profit_factor_is_infinite') === true ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>
 													{formatProfitFactor(item)}
 												</td>
-												<td class="px-3 py-2 text-right text-[#aaa]" title="Gauntlet robustness score">{formatRobustness(item)}</td>
+												<td class="px-3 py-2 text-right text-[#aaa]" title={OOS_RETENTION_TITLE}>{formatRobustness(item)}</td>
 												<td class={`px-3 py-2 text-right border-l border-[#222] pl-3 ${isCagrReliable(item) ? signedPercentClass(readOutOfSampleCagr(item)) : 'text-[#555]'}`}
 													title={isCagrReliable(item) ? 'Out-of-sample CAGR (annualized)' : `Short OOS window (<1 month) — annualized value may be noisy`}>
 													{formatOutOfSampleCagr(item)}
@@ -5135,8 +5368,10 @@
 																{/if}
 																<div data-testid={`backtest-param-editor-${item.result_id}`}>
 																	<ParameterEditor
-																		bind:params={backtestParamDrafts[item.result_id]} bind:hasErrors={backtestParamDraftErrors[item.result_id]}
+																		params={visibleParams(backtestParamDrafts[item.result_id])}
+																		bind:hasErrors={backtestParamDraftErrors[item.result_id]}
 																		saving={backtestParamRunnerId === item.result_id}
+																		on:paramsChange={(event) => updateBacktestParamDraft(item.result_id, { ...systemParams(backtestParamDrafts[item.result_id]), ...event.detail })}
 																	/>
 																</div>
 															</div>
@@ -5393,7 +5628,7 @@
 							{:else}
 								<div class="mt-3 grid gap-3">
 									{#each optimizationHistory as item}
-										{@const objectiveName = String(item.config?.objective || item.metrics?.objective || '').trim()}
+										{@const objectiveName = optimizationObjectiveName(item)}
 										{@const bestParamChips = formatOptimizationChipRecord(getOptimizationHistoryBestParams(item), 8)}
 										{@const executionChips = formatOptimizationChipRecord(getOptimizationHistoryExecutionProfile(item), 8)}
 										{@const topResults = optimizationTopResults(item)}
@@ -5424,12 +5659,12 @@
 													<div class="text-[10px] uppercase tracking-widest text-[#555]">Fitness</div>
 													<div class="mt-1 font-mono text-sm text-[#aaa]">{numOrDash(readMetricOptional(item, 'best_fitness', 'fitness'))}</div>
 												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Sharpe</div>
+												<div class="border-l border-[#252525] bg-black/40 px-3 py-2" title="Full window (in-sample + out-of-sample) of the best candidate; approximate — a month-weighted average of the two halves.">
+													<div class="text-[10px] uppercase tracking-widest text-[#555]">Sharpe · IS+OOS</div>
 													<div class={`mt-1 font-mono text-sm ${isSharpeReliable(item) ? 'text-[#aaa]' : 'text-[#555]'}`} title={isSharpeReliable(item) ? undefined : 'Low trade count (<20) — Sharpe may be noisy'}>{formatSharpe(item)}</div>
 												</div>
-												<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
-													<div class="text-[10px] uppercase tracking-widest text-[#555]">Return</div>
+												<div class="border-l border-[#252525] bg-black/40 px-3 py-2" title="Full-window (in-sample + out-of-sample) return of the best candidate.">
+													<div class="text-[10px] uppercase tracking-widest text-[#555]">Return · IS+OOS</div>
 													<div class={`mt-1 font-mono text-sm ${signedPercentClass(readPercentMetricOptional(item, 'total_return_pct', 'total_return', 'pnl_pct'))}`}>{pctOrDash(readPercentMetricOptional(item, 'total_return_pct', 'total_return', 'pnl_pct'))}</div>
 												</div>
 												<div class="border-l border-[#252525] bg-black/40 px-3 py-2">
@@ -5569,7 +5804,7 @@
 				{/if}
 
 
-			{#if (activeTab === 'backtests' || activeTab === 'optimizations' || activeTab === 'robustness') && (resultLoading || !!resultError || !!selectedResult)}
+			{#if activeTab === selectedResultHomeTab && (resultLoading || !!resultError || !!selectedResult)}
 				<div class="mt-3 border border-[#1d1d1d] bg-[#090909] p-3">
 					{#if resultLoading}
 						<div class="py-4 text-center text-sm text-[#555]">Loading result details...</div>
@@ -5583,8 +5818,17 @@
 									<span class={` border px-1.5 py-0.5 text-[10px] ${resultTypeBadge(selectedResult.result_type ?? '')}`}>{resultTypeLabel(selectedResult.result_type)}</span>
 									<span data-testid="selected-result-status-badge" class={` border px-1.5 py-0.5 text-[10px] ${statusBadgeClass(selectedResultStatus)}`}>{statusLabel(selectedResultStatus)}</span>
 									<span class="text-[11px] text-[#888]">{selectedResult.symbol || '--'} / {selectedResult.timeframe || '--'}</span>
-									<span class="text-[11px] text-[#555]">{fmtShortDate(selectedResult.config?.start as string | undefined)} -> {fmtShortDate(selectedResult.config?.end as string | undefined)}</span>
-									<span class="text-[11px] text-[#555]">{fmtDuration(selectedResult.config?.start as string | null | undefined, selectedResult.config?.end as string | null | undefined)}</span>
+									{#if selectedResultWindow}
+										<span class="text-[11px] text-[#555]" data-testid="selected-result-window">{fmtShortDate(selectedResultWindow.start)} -> {fmtShortDate(selectedResultWindow.end)}</span>
+										<span class="text-[11px] text-[#555]">{fmtDuration(selectedResultWindow.start, selectedResultWindow.end)}</span>
+										{#if selectedResultWindow.requestedStart || selectedResultWindow.requestedEnd}
+											<span
+												class="border border-[#2b2b2b] px-1.5 py-0.5 text-[10px] text-[#888]"
+												data-testid="selected-result-requested-window"
+												title="The engine ran a different window than the one requested (the research holdout seal and data availability both move it). The dates on the left are what ran."
+											>requested {fmtShortDate(selectedResultWindow.requestedStart)} -> {fmtShortDate(selectedResultWindow.requestedEnd)}</span>
+										{/if}
+									{/if}
 								</div>
 								{#if isOptimizationResult()}
 									<div class="flex items-center gap-1.5">
@@ -5701,11 +5945,11 @@
 										</div>
 										<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-[#555]">
 											{#if selectedResultUsingFullCurve}
-												<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-white"></span>In-sample</span>
+												<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400/45"></span>In-sample</span>
 											{/if}
-											<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-white"></span>{selectedResultUsingFullCurve ? 'Out-of-sample' : 'Strategy'}</span>
+											<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>{selectedResultUsingFullCurve ? 'Out-of-sample' : 'Strategy'}</span>
 											{#if benchmarkCurveForChart && benchmarkCurveForChart.length > 0}
-												<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-yellow-500/10"></span>Buy &amp; Hold</span>
+												<span class="flex items-center gap-1.5"><span class="w-4 border-t border-dashed border-amber-500"></span>Buy &amp; Hold</span>
 											{/if}
 											<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-red-500/60"></span>Drawdown</span>
 										</div>
@@ -5745,9 +5989,9 @@
 										</div>
 									</div>
 									<div class="border border-[#222] bg-[#070707] px-3 py-2">
-										<div class="text-[9px] font-semibold uppercase tracking-widest text-[#555]">Gauntlet</div>
+										<div class="text-[9px] font-semibold uppercase tracking-widest text-[#555]">Retention</div>
 										<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-													<div title="Gauntlet ranking score. Promotion readiness comes from the backend gate and persisted verdicts."><span class="text-[10px] uppercase text-[#555] mr-1">Rob%</span> <span data-testid="selected-result-robustness" class="text-[#aaa]">{formatResultRobustness(selectedResult)}</span></div>
+													<div title={OOS_RETENTION_TITLE}><span class="text-[10px] uppercase text-[#555] mr-1">OOS/IS</span> <span data-testid="selected-result-robustness" class="text-[#aaa]">{formatResultRobustness(selectedResult)}</span></div>
 										</div>
 									</div>
 									{#if readResultCoverage(selectedResult, 'funding_coverage_pct') !== null || readResultCoverage(selectedResult, 'open_interest_coverage_pct') !== null}
@@ -5787,8 +6031,8 @@
 							{/if}
 							{#if selectedResultMonthlyHeatmap}
 								<div class="mt-3 overflow-x-auto border border-[#1f1f1f] bg-black px-3 py-3" data-testid="selected-result-monthly-heatmap">
-									<div class="text-[10px] uppercase tracking-widest text-[#555]">Monthly returns</div>
-									<div class="mt-1 text-xs text-[#555]">Month-over-month equity change derived from the equity curve. Green = gain, red = loss.</div>
+									<div class="text-[10px] uppercase tracking-widest text-[#555]">Monthly returns · out of sample</div>
+									<div class="mt-1 text-xs text-[#555]">Month-over-month change of the out-of-sample equity curve (the metrics' window, not the full chart above). Green = gain, red = loss.</div>
 									<div class="mt-2">
 										<HeatmapChart
 											data={selectedResultMonthlyHeatmap.data}
@@ -5831,9 +6075,9 @@
 										<tr>
 											<th class="px-2 py-2 text-right">#</th>
 											<th class="px-2 py-2 text-left">Dir</th>
-											<th class="px-2 py-2 text-left">Entry Time</th>
+											<th class="px-2 py-2 text-left" title="Bar time, UTC">Entry (UTC)</th>
 											<th class="px-2 py-2 text-right">Entry</th>
-											<th class="px-2 py-2 text-left">Exit Time</th>
+											<th class="px-2 py-2 text-left" title="Bar time, UTC">Exit (UTC)</th>
 											<th class="px-2 py-2 text-right">Exit</th>
 											{#if selectedTradesHaveExitReason}
 												<th class="px-2 py-2 text-left">Exit Reason</th>
@@ -5843,8 +6087,10 @@
 											{/if}
 											<th class="px-2 py-2 text-right">PnL $</th>
 											<th class="px-2 py-2 text-right">PnL%</th>
-											<th class="px-2 py-2 text-right">MAE%</th>
-											<th class="px-2 py-2 text-right">MFE%</th>
+											{#if selectedTradesHaveExcursions}
+												<th class="px-2 py-2 text-right">MAE%</th>
+												<th class="px-2 py-2 text-right">MFE%</th>
+											{/if}
 											<th class="px-2 py-2 text-right">Bars</th>
 										</tr>
 									</thead>
@@ -5853,9 +6099,9 @@
 											<tr class="border-t border-[#111] hover:bg-[#111]">
 												<td class="px-2 py-1.5 text-right font-mono text-[#555]">{i + 1}</td>
 												<td class="px-2 py-1.5 {trade.direction === 'short' ? 'text-red-400' : 'text-emerald-400'}">{trade.direction ?? 'long'}</td>
-												<td class="px-2 py-1.5 font-mono text-[#888]">{fmtDate(trade.entry_time)}</td>
+												<td class="px-2 py-1.5 font-mono text-[#888]">{fmtUtcDateTime(trade.entry_time)}</td>
 												<td class="px-2 py-1.5 text-right font-mono text-[#aaa]">{asNumber(trade.entry_price, 0).toFixed(2)}</td>
-												<td class="px-2 py-1.5 font-mono text-[#888]">{fmtDate(trade.exit_time)}</td>
+												<td class="px-2 py-1.5 font-mono text-[#888]">{fmtUtcDateTime(trade.exit_time)}</td>
 												<td class="px-2 py-1.5 text-right font-mono text-[#aaa]">{asNumber(trade.exit_price, 0).toFixed(2)}</td>
 												{#if selectedTradesHaveExitReason}
 													<td class="px-2 py-1.5 text-left font-mono text-[#888]">{tradeExitReason(trade) ?? '-'}</td>
@@ -5863,10 +6109,12 @@
 												{#if selectedTradesHaveSizeFraction}
 													<td class="px-2 py-1.5 text-right font-mono text-[#888]">{tradeSizeFraction(trade) != null ? `${(tradeSizeFraction(trade)! * 100).toFixed(1)}%` : '-'}</td>
 												{/if}
-												<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.pnl, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{asNumber(trade.pnl, 0) >= 0 ? '+' : ''}${asNumber(trade.pnl, 0).toFixed(2)}</td>
+												<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.pnl, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatSignedCurrency(asNumber(trade.pnl, 0))}</td>
 												<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.return_pct, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.return_pct)}</td>
-												<td class="px-2 py-1.5 text-right font-mono text-red-400/60">{trade.mae != null ? pct(trade.mae) : '-'}</td>
-												<td class="px-2 py-1.5 text-right font-mono text-emerald-400/60">{trade.mfe != null ? pct(trade.mfe) : '-'}</td>
+												{#if selectedTradesHaveExcursions}
+													<td class="px-2 py-1.5 text-right font-mono text-red-400/60">{trade.mae != null ? pct(trade.mae) : '-'}</td>
+													<td class="px-2 py-1.5 text-right font-mono text-emerald-400/60">{trade.mfe != null ? pct(trade.mfe) : '-'}</td>
+												{/if}
 												<td class="px-2 py-1.5 text-right font-mono text-[#888]">{trade.bars_held ?? '-'}</td>
 											</tr>
 										{/each}
@@ -5900,31 +6148,35 @@
 
 			{#if activeTab === 'execution'}
 				<div class="space-y-4">
-					{#if executionRealizedSummary}
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="execution-summary-strip">
-							<div class="flex flex-wrap items-center gap-x-5 gap-y-1.5 font-mono text-xs">
-								<span class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Realized</span>
-								<span><span class="text-[#555]">Closed</span> <span class="text-[#aaa]">{executionRealizedSummary.count}</span></span>
-								<span><span class="text-[#555]">Win%</span> <span class="text-[#aaa]">{executionRealizedSummary.winRatePct.toFixed(1)}%</span></span>
-								<span><span class="text-[#555]">Total PnL</span> <span class={executionRealizedSummary.totalPnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(executionRealizedSummary.totalPnlUsd)}</span></span>
-								<span><span class="text-[#555]">PF</span> <span class="text-[#aaa]">{executionRealizedSummary.profitFactor !== null ? executionRealizedSummary.profitFactor.toFixed(2) : '∞'}</span></span>
-								<span title="Average net PnL per closed trade (fees included)"><span class="text-[#555]">Avg Net</span> <span class={(executionRealizedSummary.avgNetPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{executionRealizedSummary.avgNetPct !== null ? `${executionRealizedSummary.avgNetPct.toFixed(3)}%` : '—'}</span></span>
-							</div>
+					{#if executionRealizedByBook.length > 0}
+						<div class="space-y-1.5 border border-[#1d1d1d] bg-[#090909] p-3" data-testid="execution-summary-strip">
+							{#each executionRealizedByBook as entry (entry.book)}
+								<div class="flex flex-wrap items-center gap-x-5 gap-y-1.5 font-mono text-xs" data-testid={`execution-summary-${entry.book}`}>
+									<span class="w-24 text-[10px] uppercase tracking-[0.2em] text-[#555]" title={entry.book === 'live' ? 'Real exchange fills, in wallet dollars' : `Simulated fills on the ${PAPER_START_EQUITY.toLocaleString()}-dollar paper book`}>Realized · {entry.book}</span>
+									<span><span class="text-[#555]">Closed</span> <span class="text-[#aaa]">{entry.summary.count}</span></span>
+									<span><span class="text-[#555]">Win%</span> <span class="text-[#aaa]">{entry.summary.winRatePct.toFixed(1)}%</span></span>
+									<span><span class="text-[#555]">Total PnL</span> <span class={entry.summary.totalPnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(entry.summary.totalPnlUsd)}</span></span>
+									<span><span class="text-[#555]">PF</span> <span class="text-[#aaa]">{entry.summary.profitFactor !== null ? entry.summary.profitFactor.toFixed(2) : '∞'}</span></span>
+									<span title="Average net PnL per closed trade (fees included)"><span class="text-[#555]">Avg Net</span> <span class={(entry.summary.avgNetPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>{entry.summary.avgNetPct !== null ? `${entry.summary.avgNetPct.toFixed(3)}%` : '—'}</span></span>
+								</div>
+							{/each}
 						</div>
 					{/if}
 
 					<div class="border border-[#222] bg-[#090909]" data-testid="execution-open-trades">
 						<div class="flex items-center justify-between gap-2 border-b border-[#1a1a1a] px-3 py-2">
 							<span class="text-[10px] uppercase tracking-wide text-[#555]">Open Positions ({executionOpenTrades.length})</span>
-							{#if executionOpenTrades.length > 0 && paperSessionId}
+							{#if executionOpenTrades.length > 0 && closeSessionId}
 								<button
 									type="button"
 									data-testid="execution-close-position"
 									class="border border-red-900/50 bg-red-950/20 px-2.5 py-1 text-[10px] uppercase tracking-wide text-red-300 transition hover:bg-red-900/30 disabled:opacity-50"
 									disabled={closingPosition}
 									on:click={() => void closeOpenPosition()}
-									title="Close the session's open position at market — paper closes at a fresh mid, live sends a reduce-only market order."
-								>{closingPosition ? 'Closing…' : 'Close Position'}</button>
+									title={openTradeIsLive
+										? 'Close the LIVE position at market — sends a reduce-only market order to the exchange.'
+										: 'Close the paper position at market — the paper book closes it at a fresh mid.'}
+								>{closingPosition ? 'Closing…' : openTradeIsLive ? 'Close Live Position' : 'Close Position'}</button>
 							{/if}
 						</div>
 						{#if executionOpenTrades.length === 0}
@@ -5949,8 +6201,8 @@
 									</thead>
 									<tbody>
 										{#each executionOpenTrades as row, index}
-											{@const stop = tradeRowSignalNumber(row, 'stop_loss')}
-											{@const target = tradeRowSignalNumber(row, 'take_profit')}
+											{@const stop = tradeRowSignalPrice(row, 'stop_loss')}
+											{@const target = tradeRowSignalPrice(row, 'take_profit')}
 											<tr class="border-t border-[#111] font-mono">
 												<td class="px-3 py-2 text-white">{getRowId(row, `open-${index}`)}</td>
 												<td class="px-3 py-2 text-white">{getString(row, 'asset')}</td>
