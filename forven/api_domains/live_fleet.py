@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from forven.db import get_db
+from forven.execution_observations import NOT_BLOCKS
 from forven.trade_accounting import net_pnl_sql
 
 log = logging.getLogger("forven.api")
@@ -43,7 +44,6 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 300
 STALE_AFTER_SCAN_INTERVALS = 6
 MIN_STALE_AFTER_SECONDS = 1800
 RECENT_FILLS_LIMIT = 10
-NOT_BLOCKS = ("", "evaluation_only", "no_actionable_position_or_order", "no_signal")
 _NOT_BLOCKS = NOT_BLOCKS
 _SCANNER_TS_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")

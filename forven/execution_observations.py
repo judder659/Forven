@@ -3,6 +3,12 @@
 import json
 import importlib
 
+# scanner_signal_results.block_reason values that record an evaluation, not a
+# refusal: nothing was due, or the signal was only evaluated. This module has no
+# static first-party imports, so the fleet and paper views can share the set
+# without an import edge between them.
+NOT_BLOCKS = ("", "evaluation_only", "no_actionable_position_or_order", "no_signal")
+
 
 def trade_snapshot(strategy_id: str) -> dict[str, dict] | None:
     try:
