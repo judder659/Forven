@@ -561,6 +561,55 @@ def update_strategy_default_params(strategy_id: str, body: PatchResultParamsBody
     )
 
 
+class ExecutionAcceptBody(BaseModel):
+    result_id: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ExecutionRestoreBody(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.get("/api/strategies/{strategy_id}/execution-check")
+def get_execution_check(strategy_id: str):
+    """Why a paper/live strategy can or cannot open new entries, with the guarded fixes."""
+    from forven.strategies import execution_check
+
+    try:
+        return execution_check.execution_check(strategy_id.strip())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/api/strategies/{strategy_id}/execution-check/accept")
+def accept_execution_backtest(strategy_id: str, body: ExecutionAcceptBody):
+    """Live only: accept a completed backtest of the current configuration as the
+    live execution baseline. Research gates are not re-run."""
+    from forven.strategies import execution_check
+
+    try:
+        return execution_check.accept_backtest(
+            strategy_id.strip(), body.result_id.strip(), reason=body.reason, actor="ui",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/strategies/{strategy_id}/execution-check/restore")
+def restore_execution_params(strategy_id: str, body: ExecutionRestoreBody):
+    """Put back the parameters the accepted evidence was validated with."""
+    from forven.strategies import execution_check
+
+    try:
+        return execution_check.restore_validated_params(strategy_id.strip(), reason=body.reason, actor="ui")
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 class PatchDisplayNameBody(BaseModel):
     # None/blank clears the override and falls back to the canonical name.
     display_name: str | None = Field(default=None, max_length=140)

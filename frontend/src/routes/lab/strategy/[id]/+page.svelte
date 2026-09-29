@@ -82,6 +82,8 @@
 	import StrategyExportMenu from '$lib/components/strategy/StrategyExportMenu.svelte';
 	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
 	import StageControl from '$lib/components/strategy/StageControl.svelte';
+	import ExecutionCheckPanel from '$lib/components/strategy/ExecutionCheckPanel.svelte';
+	import { executingEditWarning, isExecutingStage } from '$lib/utils/executionCheck';
 	import IdeaPanel from '$lib/components/strategy/IdeaPanel.svelte';
 	import { getForgeNavPosition, type ForgeNavEntry } from '$lib/stores/forgeNav';
 	import type { StrategyImportResult } from '$lib/api';
@@ -4209,6 +4211,19 @@
 		return `⚠️ This strategy has an open ${pos.direction.toUpperCase()} ${pos.asset} position (entry ${entry})${extra}. Saving these execution settings will UPDATE its stop-loss / take-profit on the live position. Apply anyway?`;
 	}
 
+	// A paper/live strategy only trades the settings it was validated with, so a save
+	// that changes them blocks new entries until accepted or restored (Execution check).
+	// The backend merges top-level keys, so compare against the merged result.
+	function executionEditWarning(paramsToSave: Record<string, unknown>): string | null {
+		if (!container) return null;
+		return executingEditWarning({
+			strategyId: container.strategy.display_id || container.strategy.id,
+			stage: currentLifecycleStage,
+			current: strategyDefaultsFull,
+			next: { ...strategyDefaultsFull, ...paramsToSave },
+		});
+	}
+
 	// Surface what the backend recomputed on the open position after a save.
 	function notifyOpenPositionUpdate(update: OpenPositionUpdate | null | undefined): void {
 		if (!update?.affected) return;
@@ -4245,8 +4260,9 @@
 		const openPositionWarning = describeOpenPositionWarning(
 			await fetchOpenPositionSummary(container.strategy.id),
 		);
-		const confirmMessage = openPositionWarning
-			? `Set these optimized parameters as the strategy defaults?\n\nThis will update the parameters used for paper trading and live execution.\n\n${openPositionWarning}`
+		const warnings = [executionEditWarning(paramsToSave), openPositionWarning].filter(Boolean).join('\n\n');
+		const confirmMessage = warnings
+			? `Set these optimized parameters as the strategy defaults?\n\nThis will update the parameters used for paper trading and live execution.\n\n${warnings}`
 			: 'Set these optimized parameters as the strategy defaults?\n\nThis will update the parameters used for paper trading and live execution.';
 		const confirmed = typeof window === 'undefined' || window.confirm(confirmMessage);
 		if (!confirmed) return;
@@ -4270,8 +4286,9 @@
 		const openPositionWarning = describeOpenPositionWarning(
 			await fetchOpenPositionSummary(container.strategy.id),
 		);
-		const confirmMessage = openPositionWarning
-			? `Set this backtest as the strategy default?\n\nIts parameters will drive paper trading and live execution, and its metrics will display on the Lab manager.\n\n${openPositionWarning}`
+		const warnings = [executionEditWarning(params), openPositionWarning].filter(Boolean).join('\n\n');
+		const confirmMessage = warnings
+			? `Set this backtest as the strategy default?\n\nIts parameters will drive paper trading and live execution, and its metrics will display on the Lab manager.\n\n${warnings}`
 			: 'Set this backtest as the strategy default?\n\nIts parameters will drive paper trading and live execution, and its metrics will display on the Lab manager.';
 		const confirmed = typeof window === 'undefined' || window.confirm(confirmMessage);
 		if (!confirmed) return;
@@ -4345,21 +4362,22 @@
 			addToast('Fix the highlighted parameter errors before saving.', 'error');
 			return;
 		}
-		// This pane has no confirm by default — only prompt when the save would
-		// mutate an open paper/live position.
+		// Persist the execution profile under params.execution_profile — the
+		// canonical home the optimizer / gauntlet / acceptance gate read — alongside
+		// the alpha params, so a tuned profile survives reload and drives backtests
+		// instead of being ephemeral.
+		const paramsToSave = { ...paramsDraft, execution_profile: executionDraftToPayload(executionDraft) };
+		// This pane has no confirm by default — only prompt when the save would change
+		// a trading strategy's validated settings or mutate an open position.
 		const openPositionWarning = describeOpenPositionWarning(
 			await fetchOpenPositionSummary(container.strategy.id),
 		);
-		if (openPositionWarning && typeof window !== 'undefined' && !window.confirm(openPositionWarning)) return;
+		const warnings = [executionEditWarning(paramsToSave), openPositionWarning].filter(Boolean).join('\n\n');
+		if (warnings && typeof window !== 'undefined' && !window.confirm(warnings)) return;
 		settingDefaultParams = true;
 		parameterSaveMessage = '';
 		parameterSaveError = '';
 		try {
-			// Persist the execution profile under params.execution_profile — the
-			// canonical home the optimizer / gauntlet / acceptance gate read — alongside
-			// the alpha params, so a tuned profile survives reload and drives backtests
-			// instead of being ephemeral.
-			const paramsToSave = { ...paramsDraft, execution_profile: executionDraftToPayload(executionDraft) };
 			const res = await updateStrategyDefaultParams(container.strategy.id, paramsToSave, { pinnedBacktestId: null });
 			parameterSaveMessage = 'Default parameters saved.';
 			addToast('Default parameters updated', 'success', `/lab/strategy/${encodeURIComponent(strategyId)}`);
@@ -4918,6 +4936,13 @@
 
 				{#if container && !loading && !error}
 					<LifecycleRail stages={railStages} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
+				{/if}
+				{#if container && !loading && !error && isExecutingStage(currentLifecycleStage)}
+					<ExecutionCheckPanel
+						strategyId={container.strategy.id}
+						refreshKey={`${currentLifecycleStage}|${JSON.stringify(container.configuration.params ?? {})}`}
+						on:changed={() => loadContainer()}
+					/>
 				{/if}
 			</div>
 		</header>

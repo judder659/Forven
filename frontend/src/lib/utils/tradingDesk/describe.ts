@@ -57,6 +57,18 @@ export function describeRefusal(reason: string | null | undefined): RefusalText 
 	if (/could not resolve strategy instance/i.test(text)) {
 		return { short: 'The strategy failed to load for this check', raw };
 	}
+	if (/differs from its promotion backtest: parameters changed/i.test(text)) {
+		return { short: 'Settings changed since validation; accept or restore them', raw };
+	}
+	if (/differs from its promotion backtest: engine changed/i.test(text)) {
+		return { short: 'Backtest engine changed since validation', raw };
+	}
+	if (/differs from its promotion backtest: source identity/i.test(text)) {
+		return { short: 'Strategy code changed since validation', raw };
+	}
+	if (/live execution settings are unverified/i.test(text)) {
+		return { short: 'No accepted live evidence; accept a backtest of these settings', raw };
+	}
 	if (/execution settings are unverified/i.test(text)) {
 		return { short: 'Execution settings unverified; a fresh validation was required', raw };
 	}

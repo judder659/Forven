@@ -60,6 +60,9 @@
 			return { text: `${cap1(leg.side)} ${fmtQty(leg.size)} ${row.asset} · ${fmtUsd(math?.pnl, { signed: true })}${leg.stop !== null ? ` · stop ${fmtPx(leg.stop)}` : ''}${extra}`, tone: 'text-sc-ink2' };
 		}
 		if (row.state === 'stale') return { text: `Not evaluated since ${ago(row.fleet?.last_scan?.at, now)}`, tone: 'text-[#f3a39d]' };
+		if (row.session.status === 'blocked' && row.session.blocked_reason) {
+			return { text: describeRefusal(row.session.blocked_reason).short, tone: 'text-[#e7b24a]' };
+		}
 		if (row.state === 'blocked' && row.fleet) {
 			const blocked = row.fleet.blocked_entries;
 			return { text: `${blocked.count} entries refused in ${blocked.window_days}d · last ${ago(blocked.last_at, now)}`, tone: 'text-[#e7b24a]' };
