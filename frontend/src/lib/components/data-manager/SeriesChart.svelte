@@ -214,11 +214,11 @@
 
 <div class="relative h-full w-full">
 	<div bind:this={el} class="h-full w-full" data-testid="series-chart"></div>
-	{#if legend}<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate font-mono text-[10px] text-[#8a8a8a]">{legend}</div>{/if}
-	{#if status.loading}<div class="pointer-events-none absolute right-16 top-1.5 z-10 text-[10px] uppercase tracking-wider text-[#666]">Loading…</div>{/if}
+	{#if legend}<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate font-mono text-[10px] text-sc-ink2">{legend}</div>{/if}
+	{#if status.loading}<div class="pointer-events-none absolute right-16 top-1.5 z-10 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading…</div>{/if}
 	{#if status.error && !times.length}
 		<div class="absolute inset-0 flex items-center justify-center text-[12px] text-red-400">Could not load the chart: {status.error}</div>
 	{:else if !status.loading && !times.length}
-		<div class="absolute inset-0 flex items-center justify-center text-[12px] text-[#555]">No bars in this range.</div>
+		<div class="absolute inset-0 flex items-center justify-center text-[12px] text-sc-ink3">No bars in this range.</div>
 	{/if}
 </div>

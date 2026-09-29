@@ -406,24 +406,24 @@
 	}
 </script>
 
-<div class="flex h-full min-h-0 flex-col bg-black">
+<div class="flex h-full min-h-0 flex-col bg-sc-bg">
 	<div class="relative min-h-[220px] flex-1" bind:this={mainEl}>
 		{#if legend}
-			<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate text-[10px] text-[#8a8a8a]">{legend}</div>
+			<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate text-[10px] text-sc-ink2">{legend}</div>
 		{/if}
 		{#if oosX !== null && oosX < 0}
-			<div class="pointer-events-none absolute left-2 top-5 z-10 whitespace-nowrap bg-black/70 px-1 text-[9px] uppercase tracking-wider text-[#777]">out-of-sample</div>
+			<div class="pointer-events-none absolute left-2 top-5 z-10 whitespace-nowrap bg-sc-bg/70 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">out-of-sample</div>
 		{:else if oosX !== null}
-			<div class="pointer-events-none absolute top-0 z-10 h-full border-l border-dashed border-[#333]" style="left: {oosX}px">
-				<span class="ml-1 mt-5 inline-block whitespace-nowrap bg-black/70 px-1 text-[9px] uppercase tracking-wider text-[#777]">out-of-sample →</span>
+			<div class="pointer-events-none absolute top-0 z-10 h-full border-l border-dashed border-sc-line2" style="left: {oosX}px">
+				<span class="ml-1 mt-5 inline-block whitespace-nowrap bg-sc-bg/70 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">out-of-sample →</span>
 			</div>
 		{/if}
 	</div>
 	{#each groups as group (group.id)}
-		<div class="relative h-[92px] shrink-0 border-t border-[#1a1a1a]" use:paneAction={group}>
+		<div class="relative h-[92px] shrink-0 border-t border-sc-line" use:paneAction={group}>
 			<div class="pointer-events-none absolute left-2 top-1 z-10 truncate text-[10px]">
-				<span class="text-[#bbb]">{labels[group.id] ?? group.id}</span>
-				<span class="ml-2 text-[#777]">{paneLegends[group.id] ?? ''}</span>
+				<span class="text-sc-ink2">{labels[group.id] ?? group.id}</span>
+				<span class="ml-2 text-sc-ink3">{paneLegends[group.id] ?? ''}</span>
 			</div>
 		</div>
 	{/each}

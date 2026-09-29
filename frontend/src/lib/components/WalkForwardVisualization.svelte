@@ -76,9 +76,9 @@
 	}
 
 	function getParamHeatColor(param: string, value: any): string {
-		if (typeof value !== 'number') return 'bg-[#333]';
+		if (typeof value !== 'number') return 'bg-sc-line2';
 		const range = getParamRange(param);
-		if (range.max === range.min) return 'bg-[#555]';
+		if (range.max === range.min) return 'bg-sc-line2';
 		const normalized = (value - range.min) / (range.max - range.min);
 		// Monochrome lightness ramp (darker = lower, lighter = higher)
 		const lightness = 22 + normalized * 45;
@@ -102,7 +102,7 @@
 <div class="space-y-8">
 	<!-- 1. OVERFITTING GAUGE -->
 	<div class="terminal-card p-4">
-		<h4 class="text-[10px] font-bold text-white uppercase tracking-widest mb-4">Overfitting Analysis</h4>
+		<h4 class="text-[10px] font-bold text-sc-ink uppercase tracking-widest mb-4">Overfitting Analysis</h4>
 
 		<div class="flex items-center gap-8">
 			<!-- Gauge -->
@@ -130,7 +130,7 @@
 					/>
 				</svg>
 				<div class="absolute inset-0 flex items-center justify-center">
-					<span class="text-2xl font-bold text-white">
+					<span class="text-2xl font-bold text-sc-ink">
 						{((metrics.overfitting_ratio || 0) * 100).toFixed(0)}%
 					</span>
 				</div>
@@ -140,32 +140,32 @@
 			<div class="flex-1 space-y-2 text-sm">
 				<div class="flex items-center gap-2">
 					<div class="w-3 h-3 bg-emerald-500"></div>
-					<span class="text-[#888]">&gt;70%: Low overfitting (robust)</span>
+					<span class="text-sc-ink2">&gt;70%: Low overfitting (robust)</span>
 				</div>
 				<div class="flex items-center gap-2">
 					<div class="w-3 h-3 bg-yellow-500"></div>
-					<span class="text-[#888]">30-70%: Moderate overfitting</span>
+					<span class="text-sc-ink2">30-70%: Moderate overfitting</span>
 				</div>
 				<div class="flex items-center gap-2">
 					<div class="w-3 h-3 bg-red-500"></div>
-					<span class="text-[#888]">&lt;30%: High overfitting (avoid)</span>
+					<span class="text-sc-ink2">&lt;30%: High overfitting (avoid)</span>
 				</div>
 			</div>
 
 			<!-- Stats -->
 			<div class="text-right space-y-1">
 				<div>
-					<span class="text-[#666] text-xs">Avg Train:</span>
-					<span class="text-white font-mono ml-2">{(metrics.avg_train_metric || 0).toFixed(3)}</span>
+					<span class="text-sc-ink3 text-xs">Avg Train:</span>
+					<span class="text-sc-ink font-mono ml-2">{(metrics.avg_train_metric || 0).toFixed(3)}</span>
 				</div>
 				<div>
-					<span class="text-[#666] text-xs">Avg Test:</span>
+					<span class="text-sc-ink3 text-xs">Avg Test:</span>
 					<span class="{(metrics.avg_test_metric || 0) > 0 ? 'text-green-400' : 'text-red-400'} font-mono ml-2">
 						{(metrics.avg_test_metric || 0).toFixed(3)}
 					</span>
 				</div>
 				<div>
-					<span class="text-[#666] text-xs">Degradation:</span>
+					<span class="text-sc-ink3 text-xs">Degradation:</span>
 					<span class="text-yellow-400 font-mono ml-2">
 						{(((metrics.avg_train_metric || 0) - (metrics.avg_test_metric || 0)) / Math.abs(metrics.avg_train_metric || 1) * 100).toFixed(1)}%
 					</span>
@@ -176,20 +176,20 @@
 
 	<!-- 2. TIMELINE WITH PERFORMANCE -->
 	<div class="terminal-card p-4">
-		<h4 class="text-[10px] font-bold text-white uppercase tracking-widest mb-4">Fold Timeline & Performance</h4>
+		<h4 class="text-[10px] font-bold text-sc-ink uppercase tracking-widest mb-4">Fold Timeline & Performance</h4>
 
 		<div class="space-y-3">
 			{#each folds as fold, index}
 				{@const testMetric = getTestMetric(fold)}
 				{@const trainMetric = getTrainMetric(fold)}
 				<div class="flex items-center gap-3">
-					<span class="text-[#888] text-xs w-14 font-mono">Fold {index + 1}</span>
+					<span class="text-sc-ink2 text-xs w-14 font-mono">Fold {index + 1}</span>
 
 					<!-- Timeline bar -->
-					<div class="flex-1 h-8 bg-[#111] relative overflow-hidden">
+					<div class="flex-1 h-8 bg-sc-panel2 relative overflow-hidden">
 						<!-- Train segment -->
 						<div
-							class="absolute h-full bg-white/20 flex items-center justify-center text-xs text-white/80"
+							class="absolute h-full bg-sc-ink/20 flex items-center justify-center text-xs text-sc-ink/80"
 							style="left: {getPosition(fold.train_start)}%; width: {Math.max(getPosition(fold.train_end) - getPosition(fold.train_start), 1)}%;"
 						>
 							{#if getPosition(fold.train_end) - getPosition(fold.train_start) > 15}
@@ -198,7 +198,7 @@
 						</div>
 						<!-- Test segment with performance color -->
 						<div
-							class="absolute h-full flex items-center justify-center text-xs text-white font-semibold {getPerformanceColor(testMetric)}"
+							class="absolute h-full flex items-center justify-center text-xs text-sc-ink font-semibold {getPerformanceColor(testMetric)}"
 							style="left: {getPosition(fold.test_start)}%; width: {Math.max(getPosition(fold.test_end) - getPosition(fold.test_start), 1)}%;"
 						>
 							{#if getPosition(fold.test_end) - getPosition(fold.test_start) > 10}
@@ -218,30 +218,30 @@
 		</div>
 
 		<!-- Timeline legend -->
-		<div class="flex justify-between text-xs text-[#666] mt-3 px-14">
+		<div class="flex justify-between text-xs text-sc-ink3 mt-3 px-14">
 			<span>{formatDate(totalStart)}</span>
 			<span>{formatDate(totalEnd)}</span>
 		</div>
 
 		<div class="flex gap-6 mt-4 text-xs justify-center">
 			<div class="flex items-center gap-2">
-				<div class="w-4 h-3 bg-white/20"></div>
-				<span class="text-[#888]">Training (In-Sample)</span>
+				<div class="w-4 h-3 bg-sc-ink/20"></div>
+				<span class="text-sc-ink2">Training (In-Sample)</span>
 			</div>
 			<div class="flex items-center gap-2">
 				<div class="w-4 h-3 bg-emerald-500"></div>
-				<span class="text-[#888]">Test Profit</span>
+				<span class="text-sc-ink2">Test Profit</span>
 			</div>
 			<div class="flex items-center gap-2">
 				<div class="w-4 h-3 bg-red-500"></div>
-				<span class="text-[#888]">Test Loss</span>
+				<span class="text-sc-ink2">Test Loss</span>
 			</div>
 		</div>
 	</div>
 
 	<!-- 3. TRAIN VS TEST BAR CHART -->
 	<div class="terminal-card p-4">
-		<h4 class="text-[10px] font-bold text-white uppercase tracking-widest mb-4">Train vs Test Performance by Fold</h4>
+		<h4 class="text-[10px] font-bold text-sc-ink uppercase tracking-widest mb-4">Train vs Test Performance by Fold</h4>
 
 		<div class="flex items-end gap-2 h-48">
 			{#each folds as fold, index}
@@ -254,7 +254,7 @@
 						<div class="flex-1 flex flex-col justify-end">
 							{#if trainMetric >= 0}
 								<div
-									class="w-full bg-white/40 transition-all"
+									class="w-full bg-sc-ink/40 transition-all"
 									style="height: {(trainMetric / maxMetric) * 100}%;"
 									title="Train: {trainMetric.toFixed(3)}"
 								></div>
@@ -276,13 +276,13 @@
 						</div>
 					</div>
 					<!-- Zero line for negative values -->
-					<div class="w-full h-px bg-[#333]"></div>
+					<div class="w-full h-px bg-sc-line2"></div>
 					<!-- Negative bars -->
 					<div class="w-full flex gap-1 h-8">
 						<div class="flex-1">
 							{#if trainMetric < 0}
 								<div
-									class="w-full bg-white/20 transition-all"
+									class="w-full bg-sc-ink/20 transition-all"
 									style="height: {(Math.abs(trainMetric) / maxMetric) * 100}%;"
 									title="Train: {trainMetric.toFixed(3)}"
 								></div>
@@ -299,19 +299,19 @@
 						</div>
 					</div>
 					<!-- Label -->
-					<span class="text-xs text-[#888] font-mono">F{index + 1}</span>
+					<span class="text-xs text-sc-ink2 font-mono">F{index + 1}</span>
 				</div>
 			{/each}
 		</div>
 
 		<div class="flex gap-6 mt-4 text-xs justify-center">
 			<div class="flex items-center gap-2">
-				<div class="w-4 h-3 bg-white/40"></div>
-				<span class="text-[#888]">Train (In-Sample)</span>
+				<div class="w-4 h-3 bg-sc-ink/40"></div>
+				<span class="text-sc-ink2">Train (In-Sample)</span>
 			</div>
 			<div class="flex items-center gap-2">
 				<div class="w-4 h-3 bg-emerald-500"></div>
-				<span class="text-[#888]">Test (Out-of-Sample)</span>
+				<span class="text-sc-ink2">Test (Out-of-Sample)</span>
 			</div>
 		</div>
 	</div>
@@ -319,13 +319,13 @@
 	<!-- 4. PARAMETER STABILITY HEATMAP -->
 	{#if allParams.length > 0}
 		<div class="terminal-card p-4">
-			<h4 class="text-[10px] font-bold text-white uppercase tracking-widest mb-4">Parameter Stability Across Folds</h4>
-			<p class="text-xs text-[#666] mb-3">Consistent parameters across folds indicate robustness. High variance suggests overfitting.</p>
+			<h4 class="text-[10px] font-bold text-sc-ink uppercase tracking-widest mb-4">Parameter Stability Across Folds</h4>
+			<p class="text-xs text-sc-ink3 mb-3">Consistent parameters across folds indicate robustness. High variance suggests overfitting.</p>
 
 			<div class="overflow-x-auto">
 				<table class="w-full text-xs">
 					<thead>
-						<tr class="text-[#666]">
+						<tr class="text-sc-ink3">
 							<th class="text-left py-2 pr-4 font-normal">Parameter</th>
 							{#each folds as _, index}
 								<th class="text-center py-2 px-2 font-normal">F{index + 1}</th>
@@ -340,13 +340,13 @@
 							{@const variance = calculateVariance(numValues)}
 							{@const range = getParamRange(param)}
 							{@const normalizedVariance = range.max !== range.min ? variance / Math.pow(range.max - range.min, 2) : 0}
-							<tr class="border-t border-[#1a1a1a]">
-								<td class="py-2 pr-4 text-[#888] font-mono">{param}</td>
+							<tr class="border-t border-sc-line">
+								<td class="py-2 pr-4 text-sc-ink2 font-mono">{param}</td>
 								{#each folds as fold}
 									{@const value = fold.best_params?.[param]}
 									<td class="py-2 px-1 text-center">
 										<span
-											class="inline-block px-2 py-1 text-white font-mono"
+											class="inline-block px-2 py-1 text-sc-ink font-mono"
 											style="background-color: {getParamHeatColor(param, value)};"
 										>
 											{typeof value === 'number' ? value.toFixed(value % 1 === 0 ? 0 : 2) : value ?? '-'}
@@ -366,11 +366,11 @@
 
 			<!-- Most robust params -->
 			{#if metrics.most_robust_params && Object.keys(metrics.most_robust_params).length > 0}
-				<div class="mt-4 p-3 bg-[#111] border border-[#1a1a1a]">
-					<p class="text-xs text-[#888] mb-2">Recommended Parameters (most consistent across folds):</p>
+				<div class="rounded-md mt-4 p-3 bg-sc-panel2 border border-sc-line">
+					<p class="text-xs text-sc-ink2 mb-2">Recommended Parameters (most consistent across folds):</p>
 					<div class="flex flex-wrap gap-2">
 						{#each Object.entries(metrics.most_robust_params) as [key, value]}
-							<span class="border border-[#333] bg-[#050505] text-[#888] px-2 py-1 text-sm font-mono">
+							<span class="rounded-md border border-sc-line2 bg-sc-panel text-sc-ink2 px-2 py-1 text-sm font-mono">
 								{key}={value}
 							</span>
 						{/each}
@@ -382,19 +382,19 @@
 
 	<!-- 5. FOLD DETAILS SUMMARY -->
 	<div class="terminal-card p-4">
-		<h4 class="text-[10px] font-bold text-white uppercase tracking-widest mb-4">Fold Performance Summary</h4>
+		<h4 class="text-[10px] font-bold text-sc-ink uppercase tracking-widest mb-4">Fold Performance Summary</h4>
 
 		<div class="grid grid-cols-5 gap-2 text-center">
 			{#each folds as fold, index}
 				{@const testMetric = getTestMetric(fold)}
 				{@const testReturn = fold.test_metrics?.total_return ?? 0}
 				{@const testTrades = fold.test_metrics?.total_trades ?? 0}
-				<div class="bg-[#050505] p-3 {testMetric > 0 ? 'border border-emerald-900' : testMetric < 0 ? 'border border-red-900' : 'border border-[#333]'}">
-					<div class="text-xs text-[#666] mb-1">Fold {index + 1}</div>
-					<div class="text-lg font-bold font-mono {testMetric > 0 ? 'text-emerald-400' : testMetric < 0 ? 'text-red-400' : 'text-[#888]'}">
+				<div class="bg-sc-panel p-3 {testMetric > 0 ? 'border border-emerald-900' : testMetric < 0 ? 'border border-red-900' : 'border border-sc-line2'}">
+					<div class="text-xs text-sc-ink3 mb-1">Fold {index + 1}</div>
+					<div class="text-lg font-bold font-mono {testMetric > 0 ? 'text-emerald-400' : testMetric < 0 ? 'text-red-400' : 'text-sc-ink2'}">
 						{testMetric.toFixed(2)}
 					</div>
-					<div class="text-xs text-[#666] mt-1">
+					<div class="text-xs text-sc-ink3 mt-1">
 						{testReturn.toFixed(1)}% | {testTrades} trades
 					</div>
 				</div>

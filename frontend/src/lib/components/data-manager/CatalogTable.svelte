@@ -122,22 +122,22 @@
 	role="grid" tabindex="0" aria-label="Stored series" aria-rowcount={total + 1} aria-multiselectable="true"
 	aria-activedescendant={active >= 0 && rows[active] ? `dm-cat-row-${active}` : undefined}
 	on:keydown={onKey} on:focus={onFocus} data-testid="catalog-grid"
-	class="relative min-h-0 flex-1 overflow-auto border border-[#222] bg-[#050505] outline-none focus-visible:border-[#666]">
-	<div role="rowgroup" bind:clientHeight={headerHeight} class="sticky top-0 z-10 border-b border-[#1a1a1a] bg-[#0a0a0a]" style="min-width: {minWidth}px">
-		<div role="row" aria-rowindex={1} class="grid items-center px-3 py-1.5 text-[9px] uppercase tracking-wider text-[#555]" style="grid-template-columns: {template}; column-gap: {GRID_GAP}px">
+	class="rounded-md relative min-h-0 flex-1 overflow-auto border border-sc-line bg-sc-panel outline-none focus-visible:border-sc-line2">
+	<div role="rowgroup" bind:clientHeight={headerHeight} class="sticky top-0 z-10 border-b border-sc-line bg-sc-panel" style="min-width: {minWidth}px">
+		<div role="row" aria-rowindex={1} class="grid items-center px-3 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" style="grid-template-columns: {template}; column-gap: {GRID_GAP}px">
 			<div role="columnheader" class="flex items-center">
 				<input type="checkbox" tabindex="-1" checked={allLoadedSelected} on:change={() => dispatch(allLoadedSelected ? 'clearSelection' : 'selectAll')}
 					aria-label={allLoadedSelected ? 'Clear the selection' : 'Select every loaded series'} class="accent-white" />
 			</div>
 			<div role="columnheader" aria-sort={sortState('symbol')} title="Research series (Binance USD-M perp) unless a venue is shown">
-				<button type="button" tabindex="-1" on:click={() => dispatch('sort', 'symbol')} class="uppercase tracking-wider hover:text-white {sort === 'symbol' ? 'text-white' : ''}">
+				<button type="button" tabindex="-1" on:click={() => dispatch('sort', 'symbol')} class="hover:text-sc-ink {sort === 'symbol' ? 'text-sc-ink' : ''}">
 					Series{sort === 'symbol' ? (order === 'asc' ? ' ↑' : ' ↓') : ''}</button>
 			</div>
 			{#each visibleColumns as column (column.key)}
 				<div role="columnheader" aria-sort={sortState(column.sort)} title={column.title} class="truncate {column.align === 'right' ? 'text-right' : ''}">
 					{#if column.sort}
 						<button type="button" tabindex="-1" on:click={() => column.sort && dispatch('sort', column.sort)}
-							class="uppercase tracking-wider hover:text-white {sort === column.sort ? 'text-white' : ''}">
+							class="hover:text-sc-ink {sort === column.sort ? 'text-sc-ink' : ''}">
 							{column.label}{sort === column.sort ? (order === 'asc' ? ' ↑' : ' ↓') : ''}</button>
 					{:else}
 						{column.label}
@@ -156,7 +156,7 @@
 				<!-- svelte-ignore a11y-click-events-have-key-events -->
 				<div role="row" id="dm-cat-row-{i}" tabindex="-1" aria-rowindex={i + 2} aria-selected={selected.has(row.id)} data-testid="catalog-row"
 					on:click={(e) => rowClick(e, row, i)}
-					class="grid h-[34px] cursor-pointer items-center border-b border-[#101010] px-3 text-[11px] transition-colors {i === active ? 'bg-white/[0.06] shadow-[inset_2px_0_0_#fff]' : selected.has(row.id) ? 'bg-sky-500/[0.06]' : 'hover:bg-white/[0.025]'}"
+					class="grid h-[34px] cursor-pointer items-center border-b border-sc-line px-3 text-[11px] transition-colors {i === active ? 'bg-sc-ink/[0.06] shadow-[inset_2px_0_0_#fff]' : selected.has(row.id) ? 'bg-sky-500/[0.06]' : 'hover:bg-sc-ink/[0.025]'}"
 					style="grid-template-columns: {template}; column-gap: {GRID_GAP}px">
 					<div role="gridcell">
 						<input type="checkbox" tabindex="-1" checked={selected.has(row.id)} class="accent-white"
@@ -164,56 +164,56 @@
 							aria-label={`Select ${row.display_symbol} ${row.timeframe} ${streamLabel(row.stream)}`} />
 					</div>
 					<div role="gridcell" class="flex min-w-0 items-center gap-1.5">
-						<a href={seriesHref(row)} tabindex="-1" class="truncate font-bold text-white hover:underline">{row.display_symbol}</a>
+						<a href={seriesHref(row)} tabindex="-1" class="truncate font-bold text-sc-ink hover:underline">{row.display_symbol}</a>
 						{#if row.venue !== 'canonical'}
-							<span class="shrink-0 border border-sky-900 px-1 text-[9px] uppercase tracking-wider text-sky-300" title={venueLabel(row.venue, row.source, row.market)}>{venueShort(row.venue)}</span>
+							<span class="shrink-0 border border-sky-900 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sky-300" title={venueLabel(row.venue, row.source, row.market)}>{venueShort(row.venue)}</span>
 						{/if}
-						{#if row.delisted}<span class="shrink-0 text-[9px] uppercase tracking-wider text-slate-400" title={row.frozen_reason ?? 'Delisted'}>delisted</span>{/if}
-						{#if row.asset_class !== 'crypto'}<span class="shrink-0 text-[9px] uppercase tracking-wider text-[#666]">{row.asset_class}</span>{/if}
+						{#if row.delisted}<span class="shrink-0 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title={row.frozen_reason ?? 'Delisted'}>delisted</span>{/if}
+						{#if row.asset_class !== 'crypto'}<span class="shrink-0 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{row.asset_class}</span>{/if}
 					</div>
 					{#each visibleColumns as column (column.key)}
 						{#if column.key === 'tf'}
-							<div role="gridcell" class="font-mono text-[#ccc]">{row.timeframe}</div>
+							<div role="gridcell" class="font-mono text-sc-ink">{row.timeframe}</div>
 						{:else if column.key === 'stream'}
-							<div role="gridcell" class="truncate text-[10px] text-[#999]">{streamLabel(row.stream)}</div>
+							<div role="gridcell" class="truncate text-[10px] text-sc-ink2">{streamLabel(row.stream)}</div>
 						{:else if column.key === 'history'}
-							<div role="gridcell" class="truncate font-mono text-[10px] tabular-nums text-[#888]" title={row.first_ts ? `${formatUtc(row.first_ts)} → ${formatUtc(row.last_ts)}` : 'Nothing stored'}>
-								{#if row.first_ts}{formatUtc(row.first_ts, { date: true })} <span class="text-[#ccc]">{historyLength(row.first_ts, row.last_ts)}</span>{:else}—{/if}
+							<div role="gridcell" class="truncate font-mono text-[10px] tabular-nums text-sc-ink2" title={row.first_ts ? `${formatUtc(row.first_ts)} → ${formatUtc(row.last_ts)}` : 'Nothing stored'}>
+								{#if row.first_ts}{formatUtc(row.first_ts, { date: true })} <span class="text-sc-ink">{historyLength(row.first_ts, row.last_ts)}</span>{:else}—{/if}
 							</div>
 						{:else if column.key === 'completeness'}
 							<div role="gridcell" class="flex items-center gap-1.5" title={row.gap_count ? `${row.rows.toLocaleString('en-US')} of ${(row.expected_rows ?? 0).toLocaleString('en-US')} bars · ${row.gap_count.toLocaleString('en-US')} gaps, largest ${row.largest_gap_bars} bars` : `${row.rows.toLocaleString('en-US')} bars, no gaps`}>
 								{#if row.completeness != null}
-									<div class="h-1 w-8 shrink-0 bg-[#1a1a1a]"><div class="h-full bg-[#9ca3af]" style="width: {row.completeness * 100}%"></div></div>
-									<span class="font-mono text-[10px] tabular-nums text-[#aaa]">{formatPercent(row.completeness)}</span>
-								{:else}<span class="text-[#555]">—</span>{/if}
+									<div class="h-1 w-8 shrink-0 bg-sc-raise"><div class="h-full bg-[#9ca3af]" style="width: {row.completeness * 100}%"></div></div>
+									<span class="font-mono text-[10px] tabular-nums text-sc-ink2">{formatPercent(row.completeness)}</span>
+								{:else}<span class="text-sc-ink3">—</span>{/if}
 							</div>
 						{:else if column.key === 'freshness'}
 							<div role="gridcell" class="min-w-0"><StateChip state={row.sla.state} sla={row.sla} caption /></div>
 						{:else if column.key === 'quality'}
 							<div role="gridcell" class="text-right font-mono tabular-nums" title={row.quality.issues.length ? row.quality.issues.join('\n') : row.quality.score == null ? 'Not scored yet' : 'No issues found'}>
-								{#if row.quality.score == null}<span class="text-[#555]">—</span>{:else}<span class="text-[#ddd]">{Math.round(row.quality.score)}</span>{#if row.quality.issues.length}<span class="text-[9px] text-[#888]">·{row.quality.issues.length}</span>{/if}{/if}
+								{#if row.quality.score == null}<span class="text-sc-ink3">—</span>{:else}<span class="text-sc-ink">{Math.round(row.quality.score)}</span>{#if row.quality.issues.length}<span class="text-[9px] text-sc-ink2">·{row.quality.issues.length}</span>{/if}{/if}
 							</div>
 						{:else if column.key === 'consumers'}
 							<div role="gridcell" class="flex min-w-0 items-center gap-1.5" title={row.consumers.count ? consumerTitle(row) : isMarketWide(row) ? MARKET_WIDE_HELP : 'Nothing reads it'}>
 								{#if row.consumers.count}
-									<span class="shrink-0 border border-[#333] px-1 text-[9px] font-bold uppercase tracking-wider text-[#ccc]">{TIER_LABEL[row.consumers.tier]}</span>
-									<span class="truncate font-mono text-[10px] text-[#aaa]">{row.consumers.top[0]?.id ?? ''}{row.consumers.count > 1 ? ` +${row.consumers.count - 1}` : ''}</span>
+									<span class="shrink-0 border border-sc-line2 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{TIER_LABEL[row.consumers.tier]}</span>
+									<span class="truncate font-mono text-[10px] text-sc-ink2">{row.consumers.top[0]?.id ?? ''}{row.consumers.count > 1 ? ` +${row.consumers.count - 1}` : ''}</span>
 								{:else if isMarketWide(row)}
-									<span class="shrink-0 border border-[#333] px-1 text-[9px] font-bold uppercase tracking-wider text-[#ccc]">{TIER_LABEL[row.sla.tier]}</span>
-									<span class="truncate text-[10px] text-[#888]">market-wide</span>
-								{:else}<span class="text-[#444]">—</span>{/if}
+									<span class="shrink-0 border border-sc-line2 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{TIER_LABEL[row.sla.tier]}</span>
+									<span class="truncate text-[10px] text-sc-ink2">market-wide</span>
+								{:else}<span class="text-sc-ink4">—</span>{/if}
 							</div>
 						{:else if column.key === 'size'}
-							<div role="gridcell" class="text-right font-mono text-[10px] tabular-nums text-[#888]">{formatBytes(row.size_bytes)}</div>
+							<div role="gridcell" class="text-right font-mono text-[10px] tabular-nums text-sc-ink2">{formatBytes(row.size_bytes)}</div>
 						{:else if column.key === 'updated'}
-							<div role="gridcell" class="truncate text-right text-[10px] text-[#777]" title={formatUtc(row.updated_at, { seconds: true })}>{row.updated_at ? formatRelative(row.updated_at, $clock) : '—'}</div>
+							<div role="gridcell" class="truncate text-right text-[10px] text-sc-ink3" title={formatUtc(row.updated_at, { seconds: true })}>{row.updated_at ? formatRelative(row.updated_at, $clock) : '—'}</div>
 						{/if}
 					{/each}
 				</div>
 			{:else}
-				<div role="row" aria-rowindex={i + 2} aria-busy="true" class="flex h-[34px] items-center gap-3 border-b border-[#101010] px-3">
-					<div class="h-2.5 w-32 animate-pulse bg-[#141414]"></div>
-					<div class="h-2.5 w-full animate-pulse bg-[#0f0f0f]"></div>
+				<div role="row" aria-rowindex={i + 2} aria-busy="true" class="flex h-[34px] items-center gap-3 border-b border-sc-line px-3">
+					<div class="h-2.5 w-32 animate-pulse bg-sc-raise"></div>
+					<div class="h-2.5 w-full animate-pulse bg-sc-panel2"></div>
 				</div>
 			{/if}
 		{/each}

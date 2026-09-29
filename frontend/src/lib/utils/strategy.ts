@@ -402,8 +402,8 @@ export function stageClass(stage: string): string {
 		case 'gauntlet': return 'text-orange-300 border-orange-700 bg-orange-900/20';
 		case 'paper': return 'text-blue-300 border-blue-700 bg-blue-900/20';
 		case 'live_graduated': return 'text-emerald-300 border-emerald-700 bg-emerald-900/20';
-		case 'archived': return 'text-gray-400 border-gray-700 bg-gray-900/20';
+		case 'archived': return 'text-sc-ink2 border-sc-line2 bg-sc-panel2/20';
 		case 'rejected': return 'text-red-400 border-red-900 bg-red-950/20';
-		default: return 'text-gray-300 border-[#333]';
+		default: return 'text-sc-ink2 border-sc-line2';
 	}
 }

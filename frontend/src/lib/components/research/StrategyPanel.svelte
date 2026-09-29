@@ -27,9 +27,9 @@
 	}
 </script>
 
-<div class="flex flex-col h-full bg-[#050505]">
+<div class="flex flex-col h-full bg-sc-panel">
 	<!-- Header / Search -->
-	<div class="p-2 border-b border-[#222] flex gap-2">
+	<div class="p-2 border-b border-sc-line flex gap-2">
 		<input 
 			type="text" 
 			bind:value={searchQuery}
@@ -37,7 +37,7 @@
 			class="terminal-input flex-1"
 		/>
 		<button 
-			class="terminal-button-icon w-8 h-8 flex items-center justify-center bg-[#222] hover:bg-[#333] border border-[#333]"
+			class="rounded-md terminal-button-icon w-8 h-8 flex items-center justify-center bg-sc-raise hover:bg-sc-line2 border border-sc-line2"
 			title="Create New Strategy"
 			on:click={() => dispatch('create')}
 		>
@@ -48,7 +48,7 @@
 	<!-- List -->
 	<div class="flex-1 overflow-y-auto">
 		{#if filteredStrategies.length === 0}
-			<div class="p-4 text-xs text-[#666] text-center">No strategies found</div>
+			<div class="p-4 text-xs text-sc-ink3 text-center">No strategies found</div>
 		{:else}
 			{#each filteredStrategies as strategy}
 				{@const isSelected = selectedStrategy?.name === strategy.name}
@@ -63,13 +63,13 @@
 					<div class="flex flex-col min-w-0">
 						<div class="flex items-center gap-2">
 							<span class="font-bold truncate">{strategy.name}</span>
-							<span class="text-[9px] text-[#666] border border-[#333] px-1">v{strategy.version}</span>
+							<span class="text-[9px] text-sc-ink3 border border-sc-line2 px-1">v{strategy.version}</span>
 						</div>
 						{#if type}
-							<span class="text-[9px] text-[#666] mt-1 uppercase tracking-wider">{type}</span>
+							<span class="text-[9px] text-sc-ink3 mt-1 uppercase tracking-wider">{type}</span>
 						{/if}
 					</div>
-					<div class="text-[10px] text-[#555]">
+					<div class="text-[10px] text-sc-ink3">
 						{Object.keys(strategy.parameters).length} params
 					</div>
 				</div>

@@ -153,9 +153,9 @@
 	}
 </script>
 
-<div class="min-h-screen bg-black text-white p-6 space-y-6">
-	<header class="flex items-baseline justify-between gap-4 border-b border-[#222] pb-4">
-		<h1 class="text-lg font-bold uppercase tracking-widest text-white">Settings</h1>
+<div class="min-h-screen bg-sc-bg text-sc-ink p-6 space-y-6">
+	<header class="flex items-baseline justify-between gap-4 border-b border-sc-line pb-4">
+		<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Settings</h1>
 		<div class="w-full max-w-md"><SettingsSearch /></div>
 	</header>
 
@@ -168,7 +168,7 @@
 			<button
 				type="button"
 				on:click={openWizard}
-				class="terminal-button text-xs"
+				class="terminal-button text-[12px]"
 			>
 				Complete onboarding
 			</button>
@@ -176,7 +176,7 @@
 	{/if}
 
 	{#if loading}
-		<p class="py-20 text-center text-xs uppercase tracking-widest text-[#555]">Loading settings…</p>
+		<p class="py-20 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading settings…</p>
 	{:else if loadError && !settings}
 		<div class="border border-red-900 bg-red-500/5 px-4 py-3">
 			<p class="text-xs text-red-400">Failed to load settings: {loadError}</p>
@@ -197,7 +197,7 @@
 					{#if portfolioLayerOn}
 						<SettingsPortfolio {settings} />
 					{:else}
-						<div class="border border-[#222] bg-[#050505] p-4 text-xs text-[#888]">
+						<div class="rounded-md border border-sc-line bg-sc-panel p-4 text-xs text-sc-ink2">
 							The portfolio layer is disabled. Enable it under System → Experimental features.
 						</div>
 					{/if}
@@ -216,30 +216,30 @@
 
 	{#if leavePromptOpen}
 		<div
-			class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+			class="fixed inset-0 z-50 flex items-center justify-center bg-sc-bg/80 p-4"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="settings-leave-title"
 		>
-			<div class="w-full max-w-md border border-[#222] bg-[#050505] p-5 space-y-4">
-				<h2 id="settings-leave-title" class="text-sm font-bold uppercase tracking-widest text-white">
+			<div class="rounded-md w-full max-w-md border border-sc-line bg-sc-panel p-5 space-y-4">
+				<h2 id="settings-leave-title" class="text-sm font-bold uppercase tracking-widest text-sc-ink">
 					Discard unsaved changes?
 				</h2>
-				<p class="text-xs text-[#888]">
+				<p class="text-xs text-sc-ink2">
 					You have unsaved settings changes. Leaving this page will discard them.
 				</p>
 				<div class="flex justify-end gap-2">
 					<button
 						type="button"
 						on:click={cancelLeave}
-						class="terminal-button text-xs"
+						class="terminal-button text-[12px]"
 					>
 						Stay on page
 					</button>
 					<button
 						type="button"
 						on:click={confirmLeave}
-						class="terminal-button-danger text-xs"
+						class="terminal-button-danger text-[12px]"
 					>
 						Discard &amp; leave
 					</button>

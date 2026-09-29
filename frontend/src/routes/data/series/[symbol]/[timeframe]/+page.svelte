@@ -269,65 +269,65 @@
 <svelte:head><title>{symbol} {timeframe} · Data | Forven</title></svelte:head>
 
 <div class="space-y-3 p-4 pb-24">
-	<nav aria-label="Breadcrumb" class="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[#555]">
-		<a href={catalogHref()} class="hover:text-white">Catalog</a>
+	<nav aria-label="Breadcrumb" class="flex items-center gap-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+		<a href={catalogHref()} class="hover:text-sc-ink">Catalog</a>
 		<span aria-hidden="true">/</span>
-		<a href={catalogHref({ q: symbol })} class="hover:text-white">{symbol}</a>
+		<a href={catalogHref({ q: symbol })} class="hover:text-sc-ink">{symbol}</a>
 		<span aria-hidden="true">/</span>
-		<span class="text-[#999]">{timeframe} {streamLabel(stream).toLowerCase()}</span>
+		<span class="text-sc-ink2">{timeframe} {streamLabel(stream).toLowerCase()}</span>
 	</nav>
 
 	{#if notFound}
-		<section class="border border-[#333] bg-[#050505] px-5 py-6" role="status">
-			<h1 class="text-[15px] font-bold text-white">Nothing is stored for {symbol} {timeframe}{stream === 'ohlcv' ? '' : ` ${streamLabel(stream).toLowerCase()}`}{venue === 'canonical' ? '' : ` on ${venue}`}</h1>
-			<p class="mt-1 text-[12px] text-[#888]">{notFound}</p>
+		<section class="rounded-md border border-sc-line2 bg-sc-panel px-5 py-6" role="status">
+			<h1 class="text-[15px] font-bold text-sc-ink">Nothing is stored for {symbol} {timeframe}{stream === 'ohlcv' ? '' : ` ${streamLabel(stream).toLowerCase()}`}{venue === 'canonical' ? '' : ` on ${venue}`}</h1>
+			<p class="mt-1 text-[12px] text-sc-ink2">{notFound}</p>
 			<div class="mt-3 flex gap-2">
 				<a href="{DM}/get?symbol={encodeURIComponent(symbol)}" class="terminal-button-primary text-[10px]">Get this data</a>
 				<a href={catalogHref({ q: symbol })} class="terminal-button text-[10px]">What is stored for {symbol}</a>
 			</div>
 		</section>
 	{:else if !d}
-		<section class="border border-[#222] bg-[#050505]">
+		<section class="rounded-md border border-sc-line bg-sc-panel">
 			<SectionState state={detail} what="The series" endpoint="GET /api/data/series/{'{symbol}'}/{'{timeframe}'}" rows={6} on:retry={() => loadDetail(false)} />
 		</section>
 	{:else}
 		<!-- Identity, state and actions -->
-		<section class="border border-[#222] bg-[#050505] px-4 py-3" aria-labelledby="dm-series-title">
+		<section class="rounded-md border border-sc-line bg-sc-panel px-4 py-3" aria-labelledby="dm-series-title">
 			<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-				<h1 id="dm-series-title" class="text-[20px] font-bold leading-none text-white">{d.display_symbol}</h1>
-				<span class="font-mono text-[15px] text-[#ccc]">{d.timeframe}</span>
-				<span class="text-[12px] text-[#888]">{streamLabel(d.stream).toLowerCase()}</span>
-				<span class="border px-1.5 py-0.5 text-[10px] {d.venue === 'canonical' ? 'border-[#333] text-[#aaa]' : 'border-sky-900 text-sky-300'}" title={VENUE_HELP}>{venueLabel(d.venue, d.source, d.market)}</span>
+				<h1 id="dm-series-title" class="text-[20px] font-bold leading-none text-sc-ink">{d.display_symbol}</h1>
+				<span class="font-mono text-[15px] text-sc-ink">{d.timeframe}</span>
+				<span class="text-[12px] text-sc-ink2">{streamLabel(d.stream).toLowerCase()}</span>
+				<span class="border px-1.5 py-0.5 text-[10px] {d.venue === 'canonical' ? 'border-sc-line2 text-sc-ink2' : 'border-sky-900 text-sky-300'}" title={VENUE_HELP}>{venueLabel(d.venue, d.source, d.market)}</span>
 				{#if d.venues_available.length > 1}
-					<span class="flex items-center gap-1 text-[10px] text-[#666]">also on
+					<span class="flex items-center gap-1 text-[10px] text-sc-ink3">also on
 						{#each d.venues_available.filter((v) => v !== d?.venue) as other (other)}
-							<a href={seriesHref({ symbol: d.symbol, timeframe: d.timeframe, stream: d.stream, venue: other })} class="border border-[#2a2a2a] px-1 text-[#aaa] hover:border-white hover:text-white">{venueShort(other)}</a>
+							<a href={seriesHref({ symbol: d.symbol, timeframe: d.timeframe, stream: d.stream, venue: other })} class="border border-sc-line2 px-1 text-sc-ink2 hover:border-sc-ink hover:text-sc-ink">{venueShort(other)}</a>
 						{/each}
 					</span>
 				{/if}
-				{#if d.asset_class !== 'crypto'}<span class="text-[10px] uppercase tracking-wider text-[#777]">{d.asset_class}</span>{/if}
+				{#if d.asset_class !== 'crypto'}<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{d.asset_class}</span>{/if}
 			</div>
-			<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[#888]">
+			<div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-sc-ink2">
 				<StateChip state={d.sla.state} sla={d.sla} caption />
-				<span title={d.quality.issues.join('\n') || 'No issues found'}>Quality <span class="font-mono text-white">{d.quality.score == null ? '—' : Math.round(d.quality.score)}</span>{#if d.quality.issues.length}<span class="text-[#666]">{' '}· {d.quality.issues.length} issue{d.quality.issues.length === 1 ? '' : 's'}</span>{/if}</span>
+				<span title={d.quality.issues.join('\n') || 'No issues found'}>Quality <span class="font-mono text-sc-ink">{d.quality.score == null ? '—' : Math.round(d.quality.score)}</span>{#if d.quality.issues.length}<span class="text-sc-ink3">{' '}· {d.quality.issues.length} issue{d.quality.issues.length === 1 ? '' : 's'}</span>{/if}</span>
 				{#if isMarketWide(d)}
-					<span title={MARKET_WIDE_HELP}>Used <span class="text-white">market-wide</span> <span class="text-[#666]">({TIER_LABEL[d.sla.tier].toLowerCase()})</span></span>
+					<span title={MARKET_WIDE_HELP}>Used <span class="text-sc-ink">market-wide</span> <span class="text-sc-ink3">({TIER_LABEL[d.sla.tier].toLowerCase()})</span></span>
 				{:else}
-					<span title={TIER_HELP[d.consumers.tier]}>Used by <span class="text-white">{formatCount(d.consumers.count)}</span> <span class="text-[#666]">({TIER_LABEL[d.consumers.tier].toLowerCase()})</span></span>
+					<span title={TIER_HELP[d.consumers.tier]}>Used by <span class="text-sc-ink">{formatCount(d.consumers.count)}</span> <span class="text-sc-ink3">({TIER_LABEL[d.consumers.tier].toLowerCase()})</span></span>
 				{/if}
-				<span><span class="font-mono text-white">{formatCount(d.rows)}</span> rows · {historyLength(d.first_ts, d.last_ts)} · {formatBytes(d.size_bytes)}</span>
+				<span><span class="font-mono text-sc-ink">{formatCount(d.rows)}</span> rows · {historyLength(d.first_ts, d.last_ts)} · {formatBytes(d.size_bytes)}</span>
 				{#if d.updated_at}<span title={formatUtc(d.updated_at, { seconds: true })}>written {formatRelative(d.updated_at, $clock)}</span>{/if}
 			</div>
 			<div class="mt-3 flex flex-wrap gap-1.5">
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || d.frozen || d.refreshable === false} on:click={() => refresh('refresh')} title={d.frozen ? 'Unfreeze it first' : d.refreshable === false ? (d.refresh_note ?? 'A refresh can’t fetch this series') : 'Bring it current now'}>{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !d.gap_count} on:click={() => refresh('repair')} title={d.gap_count ? `Re-fetch the ${formatCount(d.gap_count)} gaps` : 'No gaps to repair'}>{busy === 'repair' ? 'Sending…' : 'Repair gaps'}</button>
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !canExtend(d)} on:click={extend} title={canExtend(d) ? 'Download older history from Binance Vision' : 'Deep history covers research candles, funding, OI and basis'}>{busy === 'extend' ? 'Sending…' : 'Extend history'}</button>
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !canExport(d)} on:click={exportCsv} title={canExport(d) ? 'Save every bar as CSV' : 'CSV export covers research candle series'}>{busy === 'export' ? 'Exporting…' : 'Export CSV'}</button>
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => setFrozen(!d?.frozen)} title={d.frozen ? 'Collect it again' : 'Stop collecting it (history is kept)'}>{d.frozen ? 'Unfreeze' : 'Freeze'}</button>
-				<button type="button" class="terminal-button-danger text-[10px]" disabled={!!busy} on:click={() => (deleting = true)}>Delete…</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy || d.frozen || d.refreshable === false} on:click={() => refresh('refresh')} title={d.frozen ? 'Unfreeze it first' : d.refreshable === false ? (d.refresh_note ?? 'A refresh can’t fetch this series') : 'Bring it current now'}>{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy || !d.gap_count} on:click={() => refresh('repair')} title={d.gap_count ? `Re-fetch the ${formatCount(d.gap_count)} gaps` : 'No gaps to repair'}>{busy === 'repair' ? 'Sending…' : 'Repair gaps'}</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy || !canExtend(d)} on:click={extend} title={canExtend(d) ? 'Download older history from Binance Vision' : 'Deep history covers research candles, funding, OI and basis'}>{busy === 'extend' ? 'Sending…' : 'Extend history'}</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy || !canExport(d)} on:click={exportCsv} title={canExport(d) ? 'Save every bar as CSV' : 'CSV export covers research candle series'}>{busy === 'export' ? 'Exporting…' : 'Export CSV'}</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy} on:click={() => setFrozen(!d?.frozen)} title={d.frozen ? 'Collect it again' : 'Stop collecting it (history is kept)'}>{d.frozen ? 'Unfreeze' : 'Freeze'}</button>
+				<button type="button" class="terminal-button-danger text-[12px]" disabled={!!busy} on:click={() => (deleting = true)}>Delete…</button>
 			</div>
 			{#if d.frozen}
-				<p class="mt-2 text-[11px] text-slate-400">Frozen: {d.frozen_reason ?? 'not collected'}. The history stays; the collector skips it.</p>
+				<p class="mt-2 text-[11px] text-sc-ink2">Frozen: {d.frozen_reason ?? 'not collected'}. The history stays; the collector skips it.</p>
 			{/if}
 		</section>
 
@@ -338,14 +338,14 @@
 		<div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
 			<div class="min-w-0 space-y-3">
 				<!-- Chart -->
-				<section class="border border-[#222] bg-[#050505]" aria-label="Chart">
-					<header class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#141414] px-3 py-1.5 text-[10px] text-[#666]">
-						<h2 class="text-[11px] font-bold uppercase tracking-wider text-white">{d.stream === 'ohlcv' ? 'Price' : streamLabel(d.stream)}</h2>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Chart">
+					<header class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-sc-line px-3 py-1.5 text-[10px] text-sc-ink3">
+						<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{d.stream === 'ohlcv' ? 'Price' : streamLabel(d.stream)}</h2>
 						<span>{viewText}{chartView.loading ? ' · loading…' : ''}</span>
 						{#if d.stream === 'ohlcv' && d.gaps_total}<span><span class="text-amber-400">▼</span> gap</span>{/if}
 						<span class="ml-auto">scroll to zoom · drag to pan</span>
 						<button type="button" on:click={fullHistory} disabled={!month && !chartView.raw}
-							class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">Full history</button>
+							class="rounded-md border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30">Full history</button>
 					</header>
 					<div class="h-[360px]">
 						{#if d.first_ts && d.last_ts}
@@ -354,16 +354,16 @@
 									stepSeconds={step} gaps={d.gaps} {focus} {focusToken} {resetToken} {reloadToken} on:view={(e) => (chartView = e.detail)} />
 							{/key}
 						{:else}
-							<div class="flex h-full items-center justify-center text-[12px] text-[#555]">Nothing stored yet.</div>
+							<div class="flex h-full items-center justify-center text-[12px] text-sc-ink3">Nothing stored yet.</div>
 						{/if}
 					</div>
 				</section>
 
 				<!-- Coverage timeline -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-months">
-					<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-						<h2 id="dm-months" class="text-[11px] font-bold uppercase tracking-wider text-white">Coverage by month</h2>
-						<span class="text-[10px] text-[#666]">
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-months">
+					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
+						<h2 id="dm-months" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Coverage by month</h2>
+						<span class="text-[10px] text-sc-ink3">
 							{#if d.completeness != null}{formatPercent(d.completeness, 2)} of {formatCount(d.expected_rows)} expected bars stored{/if}
 							{#if d.synthetic_bars} · {formatCount(d.synthetic_bars)} synthetic{/if}
 							{#if d.patched_bars} · {formatCount(d.patched_bars)} from a CSV patch{/if}
@@ -373,23 +373,23 @@
 				</section>
 
 				<!-- Gaps -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-gaps">
-					<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-						<h2 id="dm-gaps" class="text-[11px] font-bold uppercase tracking-wider text-white">Gaps</h2>
-						<span class="text-[10px] text-[#666]">{d.gaps_total ? `${formatCount(d.gaps_total)} gap${d.gaps_total === 1 ? '' : 's'}, largest first` : 'none'}</span>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-gaps">
+					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
+						<h2 id="dm-gaps" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Gaps</h2>
+						<span class="text-[10px] text-sc-ink3">{d.gaps_total ? `${formatCount(d.gaps_total)} gap${d.gaps_total === 1 ? '' : 's'}, largest first` : 'none'}</span>
 					</header>
 					{#if !completeGaps.length}
-						<p class="px-3 py-3 text-[11px] text-[#666]">No missing bars between the first and last stored bar.</p>
+						<p class="px-3 py-3 text-[11px] text-sc-ink3">No missing bars between the first and last stored bar.</p>
 					{:else}
 						<table class="w-full text-[11px]">
-							<thead><tr class="text-[9px] uppercase tracking-wider text-[#555]"><th class="px-3 py-1 text-left font-normal">From (UTC)</th><th class="px-2 py-1 text-left font-normal">To (UTC)</th><th class="px-2 py-1 text-right font-normal">Bars</th><th class="px-3 py-1 text-left font-normal">Kind</th></tr></thead>
+							<thead><tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3"><th class="px-3 py-1 text-left font-normal">From (UTC)</th><th class="px-2 py-1 text-left font-normal">To (UTC)</th><th class="px-2 py-1 text-right font-normal">Bars</th><th class="px-3 py-1 text-left font-normal">Kind</th></tr></thead>
 							<tbody>
 								{#each completeGaps.slice(0, gapsShown) as gap (gap.start)}
-									<tr class="border-t border-[#111]">
-										<td class="px-3 py-1 font-mono text-[10px] text-[#bbb]">{formatUtc(gap.start, { suffix: false })}</td>
-										<td class="px-2 py-1 font-mono text-[10px] text-[#bbb]">{formatUtc(gap.end, { suffix: false })}</td>
-										<td class="px-2 py-1 text-right font-mono tabular-nums text-white">{formatCount(gap.bars)}</td>
-										<td class="px-3 py-1 text-[10px] {gap.kind === 'missing' ? 'text-amber-400' : 'text-[#888]'}"
+									<tr class="border-t border-sc-line">
+										<td class="px-3 py-1 font-mono text-[10px] text-sc-ink2">{formatUtc(gap.start, { suffix: false })}</td>
+										<td class="px-2 py-1 font-mono text-[10px] text-sc-ink2">{formatUtc(gap.end, { suffix: false })}</td>
+										<td class="px-2 py-1 text-right font-mono tabular-nums text-sc-ink">{formatCount(gap.bars)}</td>
+										<td class="px-3 py-1 text-[10px] {gap.kind === 'missing' ? 'text-amber-400' : 'text-sc-ink2'}"
 											title={gap.kind === 'missing' ? 'The venue should have these bars: Repair gaps fetches them' : gap.kind === 'unfillable' ? 'The venue has no bars here (downtime or before listing); not fetched again' : 'Forward-filled bars'}>
 											{gap.kind === 'missing' ? 'missing · fetchable' : gap.kind === 'unfillable' ? 'venue has none' : 'synthetic'}</td>
 									</tr>
@@ -397,39 +397,39 @@
 							</tbody>
 						</table>
 						{#if completeGaps.length > gapsShown}
-							<button type="button" on:click={() => (gapsShown += 40)} class="w-full border-t border-[#111] px-3 py-1.5 text-left text-[10px] uppercase tracking-wider text-[#888] hover:text-white">
+							<button type="button" on:click={() => (gapsShown += 40)} class="w-full border-t border-sc-line px-3 py-1.5 text-left text-[12px] text-sc-ink2 hover:text-sc-ink">
 								Show more ({formatCount(completeGaps.length - gapsShown)} left{d.gaps_total > completeGaps.length ? `, ${formatCount(d.gaps_total - completeGaps.length)} more on the server` : ''})</button>
 						{/if}
 					{/if}
 				</section>
 
 				<!-- Rows -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-rows">
-					<header class="flex flex-wrap items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-						<h2 id="dm-rows" class="text-[11px] font-bold uppercase tracking-wider text-white">Stored rows</h2>
-						<span class="text-[10px] text-[#666]">{rowsWindow ? `month ${rowsWindow.label}` : 'latest bars, newest first'} · UTC{rows.data ? ` · ${formatCount(rows.data.total)} in the window` : ''}</span>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-rows">
+					<header class="flex flex-wrap items-center gap-2 border-b border-sc-line px-3 py-1.5">
+						<h2 id="dm-rows" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Stored rows</h2>
+						<span class="text-[10px] text-sc-ink3">{rowsWindow ? `month ${rowsWindow.label}` : 'latest bars, newest first'} · UTC{rows.data ? ` · ${formatCount(rows.data.total)} in the window` : ''}</span>
 						<div class="ml-auto flex items-center gap-1">
-							<button type="button" on:click={() => pageRows(-1)} disabled={earlierDisabled} aria-label="Earlier page" class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">←</button>
-							<span class="font-mono text-[10px] text-[#666]">{rows.data?.total ? `${formatCount(rowsOffset + 1)}–${formatCount(Math.min(rows.data.total, rowsOffset + ROWS_PAGE))}` : ''}</span>
-							<button type="button" on:click={() => pageRows(1)} disabled={laterDisabled} aria-label="Later page" class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">→</button>
+							<button type="button" on:click={() => pageRows(-1)} disabled={earlierDisabled} aria-label="Earlier page" class="rounded-md border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30">←</button>
+							<span class="font-mono text-[10px] text-sc-ink3">{rows.data?.total ? `${formatCount(rowsOffset + 1)}–${formatCount(Math.min(rows.data.total, rowsOffset + ROWS_PAGE))}` : ''}</span>
+							<button type="button" on:click={() => pageRows(1)} disabled={laterDisabled} aria-label="Later page" class="rounded-md border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30">→</button>
 						</div>
 					</header>
 					<SectionState state={rows} what="Stored rows" endpoint="GET /api/data/series/…/rows" rows={4} on:retry={() => loadRows()}>
 						{#if rows.data?.rows.length}
 							<div class="max-h-[340px] overflow-auto">
 								<table class="w-full text-[11px]">
-									<thead class="sticky top-0 bg-[#0a0a0a]"><tr class="text-[9px] uppercase tracking-wider text-[#555]">{#each rowColumns as column}<th class="px-3 py-1 text-right font-normal first:text-left">{column}</th>{/each}</tr></thead>
+									<thead class="sticky top-0 bg-sc-panel"><tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{#each rowColumns as column}<th class="px-3 py-1 text-right font-normal first:text-left">{column}</th>{/each}</tr></thead>
 									<tbody>
 										{#each rows.data.rows as row, i (i)}
-											<tr class="border-t border-[#111] hover:bg-white/[0.02]">
-												{#each rowColumns as column}<td class="whitespace-nowrap px-3 py-0.5 text-right font-mono text-[10px] tabular-nums text-[#bbb] first:text-left first:text-[#888]">{cellValue(row[column])}</td>{/each}
+											<tr class="border-t border-sc-line hover:bg-sc-ink/[0.02]">
+												{#each rowColumns as column}<td class="whitespace-nowrap px-3 py-0.5 text-right font-mono text-[10px] tabular-nums text-sc-ink2 first:text-left first:text-sc-ink2">{cellValue(row[column])}</td>{/each}
 											</tr>
 										{/each}
 									</tbody>
 								</table>
 							</div>
 						{:else}
-							<p class="px-3 py-3 text-[11px] text-[#666]">No rows in this window.</p>
+							<p class="px-3 py-3 text-[11px] text-sc-ink3">No rows in this window.</p>
 						{/if}
 					</SectionState>
 				</section>
@@ -437,36 +437,36 @@
 
 			<aside class="min-w-0 space-y-3">
 				<!-- Freshness and quality -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-fresh">
-					<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-fresh" class="text-[11px] font-bold uppercase tracking-wider text-white">Freshness & quality</h2></header>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-fresh">
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-fresh" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Freshness & quality</h2></header>
 					<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11px]">
-						<dt class="text-[#666]">State</dt><dd title={STATE_HELP[d.sla.state]}><StateChip state={d.sla.state} /></dd>
-						<dt class="text-[#666]">Tier</dt><dd class="text-[#ccc]" title={TIER_HELP[d.sla.tier]}>{TIER_LABEL[d.sla.tier]}</dd>
-						<dt class="text-[#666]">Last bar</dt><dd class="text-[#ccc]">{d.sla.last_bar_ts ? `${formatUtc(d.sla.last_bar_ts)}` : 'none'}{#if d.sla.last_bar_ts}<span class="text-[#666]">{' '}· opened {formatRelative(d.sla.last_bar_ts, $clock)}</span>{/if}</dd>
-						<dt class="text-[#666]">Behind</dt><dd class="text-[#ccc]">{formatDuration(d.sla.lag_seconds)} <span class="text-[#666]">of {formatDuration(d.sla.allowed_seconds)} allowed</span></dd>
-						{#if policy}<dt class="text-[#666]">Rule</dt><dd class="text-[#888]">{TIER_LABEL[d.sla.tier]} series may miss {policy.missed_bars} bar{policy.missed_bars === 1 ? '' : 's'}, at least {formatDuration(policy.floor_minutes * 60)}; <a href="/settings#data" class="underline hover:text-white">change</a></dd>{/if}
-						<dt class="text-[#666]">Quality</dt><dd class="text-[#ccc]">{d.quality.score == null ? 'not scored yet' : `${Math.round(d.quality.score)} / 100`}{#if d.quality.computed_at}<span class="text-[#666]" title={formatUtc(d.quality.computed_at)}>{' '}· scored {formatRelative(d.quality.computed_at, $clock)}</span>{/if}</dd>
-						<dt class="text-[#666]">Complete</dt><dd class="text-[#ccc]">{formatPercent(d.completeness, 2)}{#if d.gap_count}<span class="text-[#666]">{' '}· {plural(d.gap_count, 'gap')}, largest {plural(d.largest_gap_bars ?? 0, 'bar')}</span>{/if}</dd>
+						<dt class="text-sc-ink3">State</dt><dd title={STATE_HELP[d.sla.state]}><StateChip state={d.sla.state} /></dd>
+						<dt class="text-sc-ink3">Tier</dt><dd class="text-sc-ink" title={TIER_HELP[d.sla.tier]}>{TIER_LABEL[d.sla.tier]}</dd>
+						<dt class="text-sc-ink3">Last bar</dt><dd class="text-sc-ink">{d.sla.last_bar_ts ? `${formatUtc(d.sla.last_bar_ts)}` : 'none'}{#if d.sla.last_bar_ts}<span class="text-sc-ink3">{' '}· opened {formatRelative(d.sla.last_bar_ts, $clock)}</span>{/if}</dd>
+						<dt class="text-sc-ink3">Behind</dt><dd class="text-sc-ink">{formatDuration(d.sla.lag_seconds)} <span class="text-sc-ink3">of {formatDuration(d.sla.allowed_seconds)} allowed</span></dd>
+						{#if policy}<dt class="text-sc-ink3">Rule</dt><dd class="text-sc-ink2">{TIER_LABEL[d.sla.tier]} series may miss {policy.missed_bars} bar{policy.missed_bars === 1 ? '' : 's'}, at least {formatDuration(policy.floor_minutes * 60)}; <a href="/settings#data" class="underline hover:text-sc-ink">change</a></dd>{/if}
+						<dt class="text-sc-ink3">Quality</dt><dd class="text-sc-ink">{d.quality.score == null ? 'not scored yet' : `${Math.round(d.quality.score)} / 100`}{#if d.quality.computed_at}<span class="text-sc-ink3" title={formatUtc(d.quality.computed_at)}>{' '}· scored {formatRelative(d.quality.computed_at, $clock)}</span>{/if}</dd>
+						<dt class="text-sc-ink3">Complete</dt><dd class="text-sc-ink">{formatPercent(d.completeness, 2)}{#if d.gap_count}<span class="text-sc-ink3">{' '}· {plural(d.gap_count, 'gap')}, largest {plural(d.largest_gap_bars ?? 0, 'bar')}</span>{/if}</dd>
 					</dl>
 					{#if d.quality.issues.length}
-						<ul class="space-y-0.5 border-t border-[#141414] px-3 py-2 text-[11px] text-amber-400/90">
+						<ul class="space-y-0.5 border-t border-sc-line px-3 py-2 text-[11px] text-amber-400/90">
 							{#each d.quality.issues as issue}<li>· {issue}</li>{/each}
 						</ul>
 					{/if}
 				</section>
 
 				<!-- Consumers -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-consumers">
-					<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-consumers" class="text-[11px] font-bold uppercase tracking-wider text-white">Used by</h2></header>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-consumers">
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-consumers" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Used by</h2></header>
 					{#each d.consumers_detail as consumer (consumer.kind + consumer.id)}
-						<div class="border-b border-[#111] px-3 py-2 text-[11px] last:border-b-0">
+						<div class="border-b border-sc-line px-3 py-2 text-[11px] last:border-b-0">
 							<div class="flex items-center gap-2">
-								<span class="text-[9px] uppercase tracking-wider text-[#666]">{consumer.kind}</span>
+								<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{consumer.kind}</span>
 								{#if consumer.kind === 'strategy'}
-									<a href="/lab/strategy/{encodeURIComponent(consumer.id)}" class="font-mono text-white hover:underline">{consumer.id}</a>
-								{:else}<span class="font-mono text-white">{consumer.id}</span>{/if}
-								<span class="truncate text-[#aaa]">{consumer.name}</span>
-								{#if consumer.stage || consumer.status}<span class="ml-auto shrink-0 border border-[#333] px-1 text-[9px] uppercase tracking-wider text-[#aaa]">{consumer.stage ?? consumer.status}</span>{/if}
+									<a href="/lab/strategy/{encodeURIComponent(consumer.id)}" class="font-mono text-sc-ink hover:underline">{consumer.id}</a>
+								{:else}<span class="font-mono text-sc-ink">{consumer.id}</span>{/if}
+								<span class="truncate text-sc-ink2">{consumer.name}</span>
+								{#if consumer.stage || consumer.status}<span class="ml-auto shrink-0 border border-sc-line2 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{consumer.stage ?? consumer.status}</span>{/if}
 							</div>
 							{#if consumer.gate}
 								<div class="mt-0.5 text-[10px] {consumer.gate.ok ? 'text-emerald-400' : 'text-red-400'}">
@@ -475,63 +475,63 @@
 							{/if}
 						</div>
 					{:else}
-						<p class="px-3 py-3 text-[11px] text-[#666]">{isMarketWide(d) ? MARKET_WIDE_HELP : `Nothing reads this series${d.sla.tier === 'universe' ? '; it is kept for the research universe' : ''}.`}</p>
+						<p class="px-3 py-3 text-[11px] text-sc-ink3">{isMarketWide(d) ? MARKET_WIDE_HELP : `Nothing reads this series${d.sla.tier === 'universe' ? '; it is kept for the research universe' : ''}.`}</p>
 					{/each}
 				</section>
 
 				<!-- Streams -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-streams">
-					<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-streams" class="text-[11px] font-bold uppercase tracking-wider text-white">{d.stream === 'ohlcv' ? 'Streams for' : 'Other data for'} {d.display_symbol}</h2></header>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-streams">
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-streams" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{d.stream === 'ohlcv' ? 'Streams for' : 'Other data for'} {d.display_symbol}</h2></header>
 					{#each d.streams as s (streamKey(s))}
 						<a href={seriesHref({ symbol: s.symbol ?? d.symbol, timeframe: s.timeframe, stream: s.stream, venue: s.venue })}
-							class="flex items-center gap-2 border-b border-[#111] px-3 py-1.5 text-[11px] last:border-b-0 hover:bg-white/[0.02]" title={`Columns: ${s.columns.join(', ')}`}>
+							class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5 text-[11px] last:border-b-0 hover:bg-sc-ink/[0.02]" title={`Columns: ${s.columns.join(', ')}`}>
 							<div class="min-w-0 flex-1">
-								<div class="flex items-baseline gap-1.5"><span class="text-white">{streamLabel(s.stream)}</span>{#if s.symbol && s.symbol !== d.symbol}<span class="font-mono text-[10px] text-[#aaa]">{s.symbol}</span>{/if}{#if s.venue !== 'canonical'}<span class="text-[10px] text-[#666]">{s.venue}</span>{/if}<span class="font-mono text-[10px] text-[#777]">{s.timeframe}</span></div>
-								<div class="text-[10px] text-[#666]">{formatCount(s.rows)} rows · {historyLength(s.first_ts, s.last_ts)}</div>
+								<div class="flex items-baseline gap-1.5"><span class="text-sc-ink">{streamLabel(s.stream)}</span>{#if s.symbol && s.symbol !== d.symbol}<span class="font-mono text-[10px] text-sc-ink2">{s.symbol}</span>{/if}{#if s.venue !== 'canonical'}<span class="text-[10px] text-sc-ink3">{s.venue}</span>{/if}<span class="font-mono text-[10px] text-sc-ink3">{s.timeframe}</span></div>
+								<div class="text-[10px] text-sc-ink3">{formatCount(s.rows)} rows · {historyLength(s.first_ts, s.last_ts)}</div>
 							</div>
 							<MiniLine values={sparks[streamKey(s)] ?? []} label={`${streamLabel(s.stream)} trend`} />
 							<StateChip state={s.sla.state} sla={s.sla} />
 						</a>
 					{:else}
-						<p class="px-3 py-3 text-[11px] text-[#666]">No other streams are stored for this symbol.</p>
+						<p class="px-3 py-3 text-[11px] text-sc-ink3">No other streams are stored for this symbol.</p>
 					{/each}
 				</section>
 
 				<!-- Provenance -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-prov">
-					<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-prov" class="text-[11px] font-bold uppercase tracking-wider text-white">Provenance</h2></header>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-prov">
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-prov" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Provenance</h2></header>
 					<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11px]">
-						<dt class="text-[#666]">Source</dt><dd class="text-[#ccc]">{exchangeLabel(d.provenance.source)}{d.provenance.market ? ` · ${d.provenance.market}` : ''}</dd>
-						<dt class="text-[#666]">Series</dt><dd class="text-[#ccc]" title={VENUE_HELP}>{venueLabel(d.provenance.venue, d.provenance.source, d.provenance.market)}</dd>
-						<dt class="text-[#666]">Stamped as</dt><dd class="font-mono text-[10px] text-[#ccc]">{d.provenance.stamped_symbol ?? 'unstamped'}</dd>
-						{#if d.provenance.stamped_at}<dt class="text-[#666]">Stamped</dt><dd class="text-[#ccc]">{formatUtc(d.provenance.stamped_at)}</dd>{/if}
+						<dt class="text-sc-ink3">Source</dt><dd class="text-sc-ink">{exchangeLabel(d.provenance.source)}{d.provenance.market ? ` · ${d.provenance.market}` : ''}</dd>
+						<dt class="text-sc-ink3">Series</dt><dd class="text-sc-ink" title={VENUE_HELP}>{venueLabel(d.provenance.venue, d.provenance.source, d.provenance.market)}</dd>
+						<dt class="text-sc-ink3">Stamped as</dt><dd class="font-mono text-[10px] text-sc-ink">{d.provenance.stamped_symbol ?? 'unstamped'}</dd>
+						{#if d.provenance.stamped_at}<dt class="text-sc-ink3">Stamped</dt><dd class="text-sc-ink">{formatUtc(d.provenance.stamped_at)}</dd>{/if}
 					</dl>
 					{#if d.provenance.synthetic_ranges.length || d.provenance.patched_ranges.length || d.provenance.restatements.length}
-						<div class="space-y-1 border-t border-[#141414] px-3 py-2 text-[10px]">
-							{#each d.provenance.synthetic_ranges as [from, to]}<div class="text-[#aaa]"><span class="text-[#666]">Synthetic</span> {formatUtc(from, { suffix: false })} → {formatUtc(to)}</div>{/each}
-							{#each d.provenance.patched_ranges as [from, to]}<div class="text-sky-300"><span class="text-[#666]">CSV patch</span> {formatUtc(from, { suffix: false })} → {formatUtc(to)}</div>{/each}
+						<div class="space-y-1 border-t border-sc-line px-3 py-2 text-[10px]">
+							{#each d.provenance.synthetic_ranges as [from, to]}<div class="text-sc-ink2"><span class="text-sc-ink3">Synthetic</span> {formatUtc(from, { suffix: false })} → {formatUtc(to)}</div>{/each}
+							{#each d.provenance.patched_ranges as [from, to]}<div class="text-sky-300"><span class="text-sc-ink3">CSV patch</span> {formatUtc(from, { suffix: false })} → {formatUtc(to)}</div>{/each}
 							{#each showAllRestatements ? d.provenance.restatements : d.provenance.restatements.slice(0, RESTATEMENTS_SHOWN) as r}
-								<div class="text-amber-400/90"><span class="text-[#666]">Restated</span> {formatCount(r.rows)} rows {r.first_ts ? `${formatUtc(r.first_ts, { suffix: false })} → ${formatUtc(r.last_ts)}` : ''} <span class="text-[#666]">(seen {formatUtc(r.observed_at, { date: true })})</span></div>
+								<div class="text-amber-400/90"><span class="text-sc-ink3">Restated</span> {formatCount(r.rows)} rows {r.first_ts ? `${formatUtc(r.first_ts, { suffix: false })} → ${formatUtc(r.last_ts)}` : ''} <span class="text-sc-ink3">(seen {formatUtc(r.observed_at, { date: true })})</span></div>
 							{/each}
 							{#if d.provenance.restatements.length > RESTATEMENTS_SHOWN}
-								<button type="button" class="text-[10px] text-[#888] underline hover:text-white" on:click={() => (showAllRestatements = !showAllRestatements)}>
+								<button type="button" class="text-[12px] text-sc-ink2 underline hover:text-sc-ink" on:click={() => (showAllRestatements = !showAllRestatements)}>
 									{showAllRestatements ? 'Show fewer' : `Show all ${d.provenance.restatements.length} restatements`}
 								</button>
 							{/if}
 						</div>
 					{:else}
-						<p class="border-t border-[#141414] px-3 py-2 text-[10px] text-[#666]">No synthetic, patched or restated bars.</p>
+						<p class="border-t border-sc-line px-3 py-2 text-[10px] text-sc-ink3">No synthetic, patched or restated bars.</p>
 					{/if}
 				</section>
 
 				<!-- Recent jobs -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-series-jobs">
-					<header class="flex items-center border-b border-[#141414] px-3 py-1.5"><h2 id="dm-series-jobs" class="text-[11px] font-bold uppercase tracking-wider text-white">Recent jobs</h2>
-						<a href="{DM}/jobs" class="ml-auto text-[10px] text-[#888] hover:text-white">All →</a></header>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-series-jobs">
+					<header class="flex items-center border-b border-sc-line px-3 py-1.5"><h2 id="dm-series-jobs" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Recent jobs</h2>
+						<a href="{DM}/jobs" class="ml-auto text-[10px] text-sc-ink2 hover:text-sc-ink">All →</a></header>
 					{#each d.recent_jobs as job (job.id)}
 						<JobRow {job} on:changed={() => loadDetail(true)} />
 					{:else}
-						<p class="px-3 py-3 text-[11px] text-[#666]">No jobs have touched this series recently.</p>
+						<p class="px-3 py-3 text-[11px] text-sc-ink3">No jobs have touched this series recently.</p>
 					{/each}
 				</section>
 			</aside>

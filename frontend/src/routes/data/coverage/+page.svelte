@@ -128,33 +128,33 @@
 
 <div class="flex h-full min-h-0 flex-col gap-2 p-4 pb-3">
 	<div class="flex flex-wrap items-center gap-2">
-		<div class="inline-flex flex-wrap border border-[#2a2a2a]" role="group" aria-label="Stream">
+		<div class="inline-flex flex-wrap border border-sc-line2" role="group" aria-label="Stream">
 			{#each STREAMS as s (s)}
 				<button type="button" on:click={() => chooseStream(s)} aria-pressed={stream === s}
-					class="border-r border-[#2a2a2a] px-2.5 py-1 text-[10px] uppercase tracking-wider last:border-r-0 transition-colors {stream === s ? 'bg-white text-black' : 'text-[#777] hover:text-white'}">
-					{STREAM_LABEL[s]}{#if streamCounts[s] != null}<span class="ml-1 font-mono normal-case {stream === s ? 'text-[#444]' : 'text-[#555]'}">{formatCount(streamCounts[s])}</span>{/if}
+					class="border-r border-sc-line2 px-2.5 py-1 text-[12px] last:border-r-0 transition-colors {stream === s ? 'bg-sc-ink text-black' : 'text-sc-ink3 hover:text-sc-ink'}">
+					{STREAM_LABEL[s]}{#if streamCounts[s] != null}<span class="ml-1 font-mono normal-case {stream === s ? 'text-sc-ink4' : 'text-sc-ink3'}">{formatCount(streamCounts[s])}</span>{/if}
 				</button>
 			{/each}
 		</div>
 		{#if venues.length > 1}
-			<label class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#666]">Venue
-				<select bind:value={venue} class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[10px] normal-case text-[#ccc] outline-none focus:border-white">
+			<label class="flex items-center gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Venue
+				<select bind:value={venue} class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[10px] normal-case text-sc-ink outline-none focus:border-sc-ink">
 					{#each venues as v}<option value={v}>{v === 'canonical' ? 'Research series' : venueShort(v)}</option>{/each}
 				</select>
 			</label>
 		{/if}
 		<input bind:this={searchInput} bind:value={q} type="search" placeholder="Filter symbols" aria-label="Filter symbols" spellcheck="false"
-			class="w-40 border border-[#2a2a2a] bg-black px-2 py-1 font-mono text-[11px] text-white outline-none placeholder:text-[#555] focus:border-white" />
-		<label class="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[#777]">
+			class="rounded-md w-40 border border-sc-line2 bg-sc-bg px-2 py-1 font-mono text-[11px] text-sc-ink outline-none placeholder:text-sc-ink4 focus:border-sc-ink" />
+		<label class="flex items-center gap-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 			<input type="checkbox" bind:checked={showFrozen} class="accent-white" /> Show frozen
 		</label>
-		<div class="ml-auto inline-flex border border-[#2a2a2a]" role="group" aria-label="Colour by">
-			<button type="button" on:click={() => (mode = 'freshness')} aria-pressed={mode === 'freshness'} class="px-2.5 py-1 text-[10px] uppercase tracking-wider {mode === 'freshness' ? 'bg-white text-black' : 'text-[#777] hover:text-white'}">Freshness</button>
-			<button type="button" on:click={() => (mode = 'depth')} aria-pressed={mode === 'depth'} class="border-l border-[#2a2a2a] px-2.5 py-1 text-[10px] uppercase tracking-wider {mode === 'depth' ? 'bg-white text-black' : 'text-[#777] hover:text-white'}">History depth</button>
+		<div class="ml-auto inline-flex border border-sc-line2" role="group" aria-label="Colour by">
+			<button type="button" on:click={() => (mode = 'freshness')} aria-pressed={mode === 'freshness'} class="px-2.5 py-1 text-[12px] {mode === 'freshness' ? 'bg-sc-ink text-black' : 'text-sc-ink3 hover:text-sc-ink'}">Freshness</button>
+			<button type="button" on:click={() => (mode = 'depth')} aria-pressed={mode === 'depth'} class="border-l border-sc-line2 px-2.5 py-1 text-[12px] {mode === 'depth' ? 'bg-sc-ink text-black' : 'text-sc-ink3 hover:text-sc-ink'}">History depth</button>
 		</div>
 	</div>
 
-	<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#777]" aria-label="Legend">
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-sc-ink3" aria-label="Legend">
 		{#if mode === 'freshness'}
 			{#each LEGEND_STATES as state}
 				<span class="flex items-center gap-1" title={STATE_HELP[state]}><span class="h-2.5 w-3.5 {stateFillClass(state)}"></span>{STATE_LABEL[state]}{state === 'late' ? ' (!)' : state === 'breach' ? ' (‼)' : state === 'frozen' ? ' (*)' : ''}</span>
@@ -170,25 +170,25 @@
 	</div>
 
 	{#if selected.size}
-		<div class="flex flex-wrap items-center gap-2 border border-[#333] bg-[#0a0a0a] px-3 py-1.5" role="toolbar" aria-label="Actions on the selected cells">
-			<span class="text-[11px] text-white"><span class="font-mono">{formatCount(selected.size)}</span> cells: {formatCount(storedChosen.length)} stored · {formatCount(missingChosen.length)} not stored</span>
-			<button type="button" class="terminal-button text-[10px]" disabled={!storedChosen.length || refreshing} on:click={refreshSelected}>{refreshing ? 'Sending…' : `Refresh selected (${storedChosen.length})`}</button>
-			<button type="button" class="terminal-button text-[10px]" disabled={!missingChosen.length || stream !== 'ohlcv'} on:click={reviewDownload}
+		<div class="rounded-md flex flex-wrap items-center gap-2 border border-sc-line2 bg-sc-panel px-3 py-1.5" role="toolbar" aria-label="Actions on the selected cells">
+			<span class="text-[11px] text-sc-ink"><span class="font-mono">{formatCount(selected.size)}</span> cells: {formatCount(storedChosen.length)} stored · {formatCount(missingChosen.length)} not stored</span>
+			<button type="button" class="terminal-button text-[12px]" disabled={!storedChosen.length || refreshing} on:click={refreshSelected}>{refreshing ? 'Sending…' : `Refresh selected (${storedChosen.length})`}</button>
+			<button type="button" class="terminal-button text-[12px]" disabled={!missingChosen.length || stream !== 'ohlcv'} on:click={reviewDownload}
 				title={stream === 'ohlcv' ? 'Estimate, then download all history for the cells with nothing stored' : 'Streams are collected with their candles; download the candles instead'}>Download missing ({missingChosen.length})</button>
-			<button type="button" on:click={() => { selected = new Set(); estimate = null; }} class="ml-auto text-[10px] uppercase tracking-wider text-[#777] hover:text-white">Clear</button>
+			<button type="button" on:click={() => { selected = new Set(); estimate = null; }} class="ml-auto text-[12px] text-sc-ink3 hover:text-sc-ink">Clear</button>
 		</div>
 		{#if estimate}
-			<div class="border border-[#333] bg-[#050505] px-3 py-2 text-[11px]" aria-live="polite">
+			<div class="rounded-md border border-sc-line2 bg-sc-panel px-3 py-2 text-[11px]" aria-live="polite">
 				{#if estimate.status === 'loading'}
-					<span class="text-[#888]">Estimating {plural(downloadItems.length, 'download')}…</span>
+					<span class="text-sc-ink2">Estimating {plural(downloadItems.length, 'download')}…</span>
 				{:else if estimate.status === 'ready' && estimate.data}
 					{@const e = estimate.data}
 					{@const blocked = e.estimates.filter((x) => x.blocked)}
 					<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-						<span class="text-white">{plural(downloadItems.length - blocked.length, 'series', 'series')} · about {formatBytes(e.total_bytes)} · {formatDuration(e.total_seconds)}</span>
-						<span class="text-[#777]">{formatBytes(e.disk_free_bytes)} free on disk</span>
-						<button type="button" class="terminal-button-primary ml-auto text-[10px]" disabled={starting || downloadItems.length === blocked.length} on:click={startDownload}>{starting ? 'Starting…' : 'Start downloads'}</button>
-						<button type="button" class="terminal-button text-[10px]" on:click={() => (estimate = null)}>Cancel</button>
+						<span class="text-sc-ink">{plural(downloadItems.length - blocked.length, 'series', 'series')} · about {formatBytes(e.total_bytes)} · {formatDuration(e.total_seconds)}</span>
+						<span class="text-sc-ink3">{formatBytes(e.disk_free_bytes)} free on disk</span>
+						<button type="button" class="terminal-button-primary ml-auto text-[12px]" disabled={starting || downloadItems.length === blocked.length} on:click={startDownload}>{starting ? 'Starting…' : 'Start downloads'}</button>
+						<button type="button" class="terminal-button text-[12px]" on:click={() => (estimate = null)}>Cancel</button>
 					</div>
 					{#each [...e.warnings, ...e.estimates.flatMap((x) => x.warnings)] as warning}<div class="mt-1 text-amber-400">{warning}</div>{/each}
 					{#each blocked as b}<div class="mt-1 text-red-400">{b.item.symbol} {b.item.timeframe}: {b.blocked}</div>{/each}
@@ -201,18 +201,18 @@
 
 	{#if rows.status === 'ready'}
 		{#if !model.groups.length}
-			<div class="flex flex-1 flex-col items-center justify-center border border-dashed border-[#262626] px-6 py-12 text-center">
-				<p class="text-[13px] text-white">{q ? `No symbol matches “${q}”.` : `Nothing is stored for ${STREAM_LABEL[stream].toLowerCase()} yet.`}</p>
-				<p class="mt-1 text-[11px] text-[#777]">{q ? 'Clear the filter to see every symbol.' : 'Perp streams are collected alongside their candles. Get data adds them.'}</p>
+			<div class="flex flex-1 flex-col items-center justify-center border border-dashed border-sc-line px-6 py-12 text-center">
+				<p class="text-[13px] text-sc-ink">{q ? `No symbol matches “${q}”.` : `Nothing is stored for ${STREAM_LABEL[stream].toLowerCase()} yet.`}</p>
+				<p class="mt-1 text-[11px] text-sc-ink3">{q ? 'Clear the filter to see every symbol.' : 'Perp streams are collected alongside their candles. Get data adds them.'}</p>
 			</div>
 		{:else}
 			<CoverageGrid {model} {mode} {selected} on:open={open} on:select={(e) => (selected = new Set(e.detail))} />
 		{/if}
 		{#if plan.status === 'unavailable' && stream === 'ohlcv'}
-			<p class="text-[10px] text-[#555]">Planned-but-missing research cells need GET /api/data/universe/plan-diff, which this backend does not serve yet.</p>
+			<p class="text-[10px] text-sc-ink3">Planned-but-missing research cells need GET /api/data/universe/plan-diff, which this backend does not serve yet.</p>
 		{/if}
 	{:else}
-		<div class="border border-[#222] bg-[#050505]">
+		<div class="rounded-md border border-sc-line bg-sc-panel">
 			<SectionState state={rows} what="The coverage grid" endpoint="GET /api/data/catalog" rows={10} on:retry={() => load()} />
 		</div>
 	{/if}

@@ -51,7 +51,7 @@
 			case 'warn':
 				return 'text-yellow-400 border-yellow-900 bg-yellow-500/10';
 			default:
-				return 'text-[#888] border-[#333] bg-[#111]';
+				return 'text-sc-ink2 border-sc-line2 bg-sc-panel2';
 		}
 	}
 
@@ -63,7 +63,7 @@
 			case 'warn':
 				return 'bg-yellow-400';
 			default:
-				return 'bg-[#444]';
+				return 'bg-sc-line2';
 		}
 	}
 
@@ -182,26 +182,26 @@
 	];
 </script>
 
-<div class="border border-[#222] bg-[#050505]">
-	<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between gap-4">
+<div class="rounded-md border border-sc-line bg-sc-panel">
+	<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between gap-4">
 		<div class="flex items-center gap-4">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">Notifications</h2>
+			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">Notifications</h2>
 			<div class="flex items-center gap-1">
 				<button
-					class="text-[10px] uppercase tracking-wider px-2 py-1 border transition-colors {activeTab === 'inbox'
-						? 'border-white text-white bg-[#1a1a1a]'
-						: 'border-[#333] text-[#666] hover:text-white'}"
+					class="rounded-md text-[12px] px-2 py-1 border transition-colors {activeTab === 'inbox'
+						? 'border-sc-ink text-sc-ink bg-sc-raise'
+						: 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}"
 					on:click={() => switchTab('inbox')}
 				>
 					Inbox
 					{#if items.length > 0}
-						<span class="ml-1 text-[10px] font-bold px-1.5 {inboxSplit.fresh.length > 0 ? 'bg-red-500 text-white' : 'bg-[#333] text-[#888]'}">{items.length}</span>
+						<span class="ml-1 text-[10px] font-bold px-1.5 {inboxSplit.fresh.length > 0 ? 'bg-red-500 text-sc-ink' : 'bg-sc-line2 text-sc-ink2'}">{items.length}</span>
 					{/if}
 				</button>
 				<button
-					class="text-[10px] uppercase tracking-wider px-2 py-1 border transition-colors {activeTab === 'log'
-						? 'border-white text-white bg-[#1a1a1a]'
-						: 'border-[#333] text-[#666] hover:text-white'}"
+					class="rounded-md text-[12px] px-2 py-1 border transition-colors {activeTab === 'log'
+						? 'border-sc-ink text-sc-ink bg-sc-raise'
+						: 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}"
 					on:click={() => switchTab('log')}
 				>
 					Log
@@ -210,7 +210,7 @@
 		</div>
 		{#if activeTab === 'inbox' && items.length > 0}
 			<button
-				class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+				class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-60"
 				on:click={() => void handleAcknowledgeAll()}
 				disabled={ackAllInFlight}
 				title="Mark every listed notification as acknowledged"
@@ -222,26 +222,26 @@
 
 	{#if activeTab === 'inbox'}
 		{#if error}
-			<div class="px-4 py-3 text-xs text-red-400 border-b border-[#222]">{error}</div>
+			<div class="px-4 py-3 text-xs text-red-400 border-b border-sc-line">{error}</div>
 		{/if}
 
 		{#if loading}
-			<div class="px-4 py-6 text-center text-xs text-[#666]">Loading notifications…</div>
+			<div class="px-4 py-6 text-center text-xs text-sc-ink3">Loading notifications…</div>
 		{:else if items.length === 0}
-			<div class="px-4 py-6 text-center text-xs text-[#666]">
+			<div class="px-4 py-6 text-center text-xs text-sc-ink3">
 				No actionable notifications. New critical issues (risk, trade failures, system health) appear here.
 			</div>
 		{:else}
-			<div class="divide-y divide-[#1a1a1a]">
+			<div class="divide-y divide-sc-line">
 				{#each inboxEntries as entry, i (entry.item.id)}
 					{@const item = entry.item}
 					{@const isOpen = expanded.has(item.id)}
 					{#if i > 0 && !entry.isNew && inboxEntries[i - 1].isNew}
-						<div class="px-4 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#555] bg-[#0a0a0a]">
+						<div class="px-4 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 bg-sc-panel">
 							Seen on an earlier visit
 						</div>
 					{/if}
-					<div class="px-4 py-3 {entry.isNew ? 'border-l-2 border-l-white bg-white/[0.02]' : ''}">
+					<div class="px-4 py-3 {entry.isNew ? 'border-l-2 border-l-sc-ink bg-sc-ink/[0.02]' : ''}">
 						<div class="flex items-start justify-between gap-4">
 							<button
 								class="flex items-start gap-3 min-w-0 text-left flex-1"
@@ -250,26 +250,26 @@
 							>
 								<span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0 {severityDot(item.severity)}"></span>
 								<div class="min-w-0">
-									<div class="text-xs font-bold text-white truncate">
+									<div class="text-xs font-bold text-sc-ink truncate">
 										{#if entry.isNew}
-											<span class="text-[9px] font-bold uppercase tracking-wider text-white border border-[#555] px-1 py-px mr-1.5 align-middle">New</span>
+											<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink border border-sc-line2 px-1 py-px mr-1.5 align-middle">New</span>
 										{/if}
 										{item.title}
 									</div>
 									{#if item.summary}
-										<div class="text-[11px] text-[#888] mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
+										<div class="text-[11px] text-sc-ink2 mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
 									{/if}
-									<div class="text-[10px] text-[#555] mt-0.5">
+									<div class="text-[10px] text-sc-ink3 mt-0.5">
 										{item.source} · {item.event_type} · {formatTimestamp(item.created_at)}
 									</div>
 								</div>
 							</button>
 							<div class="flex items-center gap-2 shrink-0">
-								<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border {severityChip(item.severity)}">
+								<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] px-2 py-0.5 border {severityChip(item.severity)}">
 									{item.severity}
 								</span>
 								<button
-									class="text-xs border border-[#333] px-2 py-1 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+									class="rounded-md text-[12px] border border-sc-line2 px-2 py-1 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-60"
 									on:click={() => void handleAcknowledge(item)}
 									disabled={ackInFlight.has(item.id)}
 									title="Mark as acknowledged"
@@ -279,9 +279,9 @@
 							</div>
 						</div>
 						{#if isOpen && (item.body || item.delivery_error)}
-							<div class="mt-3 ml-5 border-l border-[#222] pl-4 space-y-2">
+							<div class="mt-3 ml-5 border-l border-sc-line pl-4 space-y-2">
 								{#if item.body}
-									<div class="text-[11px] text-[#888] whitespace-pre-wrap break-words">{item.body}</div>
+									<div class="text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{item.body}</div>
 								{/if}
 								{#if item.delivery_error}
 									<div class="text-[11px] text-red-400 break-all">delivery error: {item.delivery_error}</div>
@@ -294,15 +294,15 @@
 		{/if}
 	{:else}
 		{#if logError}
-			<div class="px-4 py-3 text-xs text-red-400 border-b border-[#222]">{logError}</div>
+			<div class="px-4 py-3 text-xs text-red-400 border-b border-sc-line">{logError}</div>
 		{/if}
 
 		{#if logLoading}
-			<div class="px-4 py-6 text-center text-xs text-[#666]">Loading log…</div>
+			<div class="px-4 py-6 text-center text-xs text-sc-ink3">Loading log…</div>
 		{:else if logItems.length === 0}
-			<div class="px-4 py-6 text-center text-xs text-[#666]">No notifications recorded yet.</div>
+			<div class="px-4 py-6 text-center text-xs text-sc-ink3">No notifications recorded yet.</div>
 		{:else}
-			<div class="divide-y divide-[#1a1a1a]">
+			<div class="divide-y divide-sc-line">
 				{#each logItems as item (item.id)}
 					{@const isOpen = expanded.has(item.id)}
 					{@const acked = Boolean(item.acknowledged_at)}
@@ -315,11 +315,11 @@
 							>
 								<span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0 {severityDot(item.severity)}"></span>
 								<div class="min-w-0">
-									<div class="text-xs font-bold text-white truncate">{item.title}</div>
+									<div class="text-xs font-bold text-sc-ink truncate">{item.title}</div>
 									{#if item.summary}
-										<div class="text-[11px] text-[#888] mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
+										<div class="text-[11px] text-sc-ink2 mt-0.5 {isOpen ? '' : 'truncate'}">{item.summary}</div>
 									{/if}
-									<div class="text-[10px] text-[#555] mt-0.5">
+									<div class="text-[10px] text-sc-ink3 mt-0.5">
 										{item.source} · {item.event_type} · {formatTimestamp(item.created_at)}
 										{#if acked}
 											· acked {formatTimestamp(item.acknowledged_at)}
@@ -327,14 +327,14 @@
 									</div>
 								</div>
 							</button>
-							<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border shrink-0 {severityChip(item.severity)}">
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] px-2 py-0.5 border shrink-0 {severityChip(item.severity)}">
 								{item.severity}
 							</span>
 						</div>
 						{#if isOpen && (item.body || item.delivery_error)}
-							<div class="mt-3 ml-5 border-l border-[#222] pl-4 space-y-2">
+							<div class="mt-3 ml-5 border-l border-sc-line pl-4 space-y-2">
 								{#if item.body}
-									<div class="text-[11px] text-[#888] whitespace-pre-wrap break-words">{item.body}</div>
+									<div class="text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{item.body}</div>
 								{/if}
 								{#if item.delivery_error}
 									<div class="text-[11px] text-red-400 break-all">delivery error: {item.delivery_error}</div>
@@ -345,9 +345,9 @@
 				{/each}
 			</div>
 			{#if logHasMore}
-				<div class="px-4 py-3 border-t border-[#222] text-center">
+				<div class="px-4 py-3 border-t border-sc-line text-center">
 					<button
-						class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+						class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-60"
 						on:click={() => void loadLog(false)}
 						disabled={logLoadingMore}
 					>

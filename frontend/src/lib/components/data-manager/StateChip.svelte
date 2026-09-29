@@ -13,9 +13,9 @@
 </script>
 
 <span class="inline-flex items-center gap-1.5 whitespace-nowrap" {title}>
-	<span class="inline-flex items-center gap-1 border px-1.5 py-px text-[9px] font-bold uppercase tracking-wider {stateChipClass(state)}">
+	<span class="inline-flex items-center gap-1 border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {stateChipClass(state)}">
 		<span class="h-1.5 w-1.5 shrink-0 {stateFillClass(state)}" aria-hidden="true"></span>
 		{STATE_LABEL[state]}
 	</span>
-	{#if caption && lag}<span class="font-mono text-[10px] tabular-nums text-[#888]">{lag}</span>{/if}
+	{#if caption && lag}<span class="font-mono text-[10px] tabular-nums text-sc-ink2">{lag}</span>{/if}
 </span>

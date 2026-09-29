@@ -24,13 +24,13 @@
 <div class="flex items-center gap-1 pb-2">
 	{#each FILTERS as [key, label]}
 		<button type="button" on:click={() => (filter = key)}
-			class="border px-2 py-0.5 text-[10px] uppercase tracking-wider {filter === key ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#777] hover:text-white'}">{label}</button>
+			class="rounded-md border px-2 py-0.5 text-[12px] {filter === key ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}">{label}</button>
 	{/each}
-	<span class="ml-auto text-[10px] text-[#555]">{shown.length} of {trades.length}</span>
+	<span class="ml-auto text-[10px] text-sc-ink3">{shown.length} of {trades.length}</span>
 </div>
-<div class="max-h-[300px] overflow-y-auto border border-[#161616]">
+<div class="max-h-[300px] overflow-y-auto border border-sc-line">
 	<table class="w-full text-left text-[11px]">
-		<thead class="sticky top-0 bg-[#080808] text-[9px] uppercase tracking-wider text-[#555]">
+		<thead class="sticky top-0 bg-sc-panel font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 			<tr>
 				<th class="px-2 py-1 font-normal">#</th>
 				<th class="px-2 py-1 font-normal">Side</th>
@@ -43,17 +43,17 @@
 		<tbody>
 			{#each shown as t (t.n)}
 				<tr on:click={() => dispatch('select', t.n)}
-					class="cursor-pointer border-t border-[#111] hover:bg-[#101010] {selected === t.n ? 'bg-[#151515]' : ''}">
-					<td class="px-2 py-1 font-mono text-[#666]">{t.n}{#if t.sample === 'out'}<span class="ml-1 text-[9px] text-[#888]" title="out-of-sample">OOS</span>{/if}</td>
+					class="cursor-pointer border-t border-sc-line hover:bg-sc-panel2 {selected === t.n ? 'bg-sc-raise' : ''}">
+					<td class="px-2 py-1 font-mono text-sc-ink3">{t.n}{#if t.sample === 'out'}<span class="ml-1 text-[9px] text-sc-ink2" title="out-of-sample">OOS</span>{/if}</td>
 					<td class="px-2 py-1 {t.direction === 'long' ? 'text-emerald-400' : 'text-orange-400'}">{t.direction}</td>
-					<td class="px-2 py-1 font-mono text-[#aaa]">{t.entry_time.slice(0, 16).replace('T', ' ')}</td>
-					<td class="px-2 py-1 text-[#888]">{REASONS[t.exit_reason] ?? t.exit_reason}</td>
-					<td class="px-2 py-1 text-right font-mono text-[#888]">{t.bars_held}</td>
+					<td class="px-2 py-1 font-mono text-sc-ink2">{t.entry_time.slice(0, 16).replace('T', ' ')}</td>
+					<td class="px-2 py-1 text-sc-ink2">{REASONS[t.exit_reason] ?? t.exit_reason}</td>
+					<td class="px-2 py-1 text-right font-mono text-sc-ink2">{t.bars_held}</td>
 					<td class="px-2 py-1 text-right font-mono {t.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}">{t.pnl_pct >= 0 ? '+' : ''}{(t.pnl_pct * 100).toFixed(2)}%</td>
 				</tr>
 			{/each}
 			{#if !shown.length}
-				<tr><td colspan="6" class="px-2 py-4 text-center text-[#555]">No trades{filter === 'all' ? '' : ' match this filter'}.</td></tr>
+				<tr><td colspan="6" class="px-2 py-4 text-center text-sc-ink3">No trades{filter === 'all' ? '' : ' match this filter'}.</td></tr>
 			{/if}
 		</tbody>
 	</table>

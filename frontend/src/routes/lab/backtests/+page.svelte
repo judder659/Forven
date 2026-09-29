@@ -104,7 +104,7 @@
 	}
 
 	function metricClass(kind: 'return' | 'sharpe' | 'drawdown' | 'win_rate' | 'profit_factor', value: number | null | undefined): string {
-		if (value === null || value === undefined || !Number.isFinite(value)) return 'text-[#555]';
+		if (value === null || value === undefined || !Number.isFinite(value)) return 'text-sc-ink3';
 		switch (kind) {
 			case 'return':
 				return value >= 0 ? 'text-emerald-400' : 'text-red-400';
@@ -139,7 +139,7 @@
 		if (normalized.includes('weak') || normalized.includes('failed') || normalized.includes('not robust')) {
 			return 'border-red-800 bg-red-950/20 text-red-300';
 		}
-		return 'border-[#333] bg-[#111] text-[#888]';
+		return 'border-sc-line2 bg-sc-panel2 text-sc-ink2';
 	}
 
 	function toggleSort(field: SortField): void {
@@ -214,19 +214,19 @@
 </svelte:head>
 
 <div class="h-full flex flex-col overflow-hidden">
-	<div class="px-4 py-3 bg-[#050505] border-b border-[#222] flex-shrink-0">
+	<div class="px-4 py-3 bg-sc-panel border-b border-sc-line flex-shrink-0">
 		<div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 			<div>
 				<div class="mb-1">
-					<a href="/lab" class="text-xs text-[#555] uppercase tracking-wider transition-colors hover:text-white">The Forge</a>
+					<a href="/lab" class="text-xs text-sc-ink3 uppercase tracking-wider transition-colors hover:text-sc-ink">The Forge</a>
 				</div>
-				<h1 class="text-xl font-bold uppercase tracking-widest text-white">All Backtests</h1>
-				<p class="mt-1 text-xs text-[#666]">{loadedSummary}</p>
+				<h1 class="text-xl font-bold uppercase tracking-widest text-sc-ink">All Backtests</h1>
+				<p class="mt-1 text-xs text-sc-ink3">{loadedSummary}</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">
 				<a
 					href="/lab"
-					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] transition-colors hover:border-white hover:text-white"
+					class="text-xs border border-sc-line2 px-3 py-1.5 text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink"
 				>
 					Back to Forge
 				</a>
@@ -234,7 +234,7 @@
 					type="button"
 					on:click={loadResults}
 					disabled={loading}
-					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] transition-colors hover:border-white hover:text-white disabled:opacity-40"
+					class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink disabled:opacity-40"
 				>
 					{loading ? 'Loading...' : 'Refresh'}
 				</button>
@@ -243,12 +243,12 @@
 	</div>
 
 	<section class="flex-1 flex flex-col overflow-hidden min-h-[500px]">
-		<div class="border-b border-[#222] px-4 py-2 flex items-center gap-2 flex-wrap bg-[#050505]">
+		<div class="border-b border-sc-line px-4 py-2 flex items-center gap-2 flex-wrap bg-sc-panel">
 			<input
 				type="text"
 				bind:value={search}
 				placeholder="Search strategy, result id, symbol..."
-				class="bg-black border border-[#333] px-3 py-1.5 text-xs w-full focus:outline-none focus:border-white sm:w-80"
+				class="rounded-md bg-sc-bg border border-sc-line2 px-3 py-1.5 text-xs w-full focus:outline-none focus:border-sc-ink sm:w-80"
 			/>
 			<select
 				aria-label="Filter by symbol"
@@ -268,17 +268,17 @@
 					<option value={type}>{type === 'all' ? 'All types' : type}</option>
 				{/each}
 			</select>
-			<span class="ml-auto text-[11px] text-[#555]">{sortedResults.length} rows</span>
+			<span class="ml-auto text-[11px] text-sc-ink3">{sortedResults.length} rows</span>
 		</div>
 
 		{#if error}
 			<div class="border-b border-red-900 bg-red-500/5 px-4 py-2 text-xs text-red-400">{error}</div>
 		{/if}
 
-		<div class="flex-1 overflow-auto bg-black">
+		<div class="flex-1 overflow-auto bg-sc-bg">
 			<table class="w-full min-w-[1280px] text-xs">
-				<thead class="sticky top-0 z-10 bg-[#0d0d0d]">
-					<tr class="border-b border-[#222] text-[#666]">
+				<thead class="sticky top-0 z-10 bg-sc-panel2">
+					<tr class="border-b border-sc-line text-sc-ink3">
 						<th class="py-2 px-2 text-left">Backtest</th>
 						<SortableTh field="strategy" label="Strategy" active={sortBy === 'strategy'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
 						<SortableTh field="symbol" label="Pair" active={sortBy === 'symbol'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
@@ -299,51 +299,51 @@
 				</thead>
 				<tbody>
 					{#if loading}
-						<tr><td colspan="16" class="py-8 text-center text-[#555]">Loading backtests...</td></tr>
+						<tr><td colspan="16" class="py-8 text-center text-sc-ink3">Loading backtests...</td></tr>
 					{:else if sortedResults.length === 0}
-						<tr><td colspan="16" class="py-8 text-center text-[#555]">No backtests match this view.</td></tr>
+						<tr><td colspan="16" class="py-8 text-center text-sc-ink3">No backtests match this view.</td></tr>
 					{:else}
 						{#each sortedResults as result (result.id)}
 							{@const strategyId = resultStrategyId(result)}
-							<tr class="border-t border-[#181818] hover:bg-[#0f0f0f]">
-								<td class="py-2 px-2 font-mono text-[#888]">
-									<div class="text-white">{result.id}</div>
-									<div class="mt-0.5 text-[10px] text-[#555]">{result.job_id}</div>
+							<tr class="border-t border-sc-line hover:bg-sc-panel2">
+								<td class="py-2 px-2 font-mono text-sc-ink2">
+									<div class="text-sc-ink">{result.id}</div>
+									<div class="mt-0.5 text-[10px] text-sc-ink3">{result.job_id}</div>
 								</td>
 								<td class="py-2 px-2 max-w-[360px]">
 									<StrategyLink
 										strategyId={strategyId}
 										label={result.strategy_name || strategyId || 'Unknown Strategy'}
 										returnTo="/lab/backtests"
-										className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
+										className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-sc-ink hover:text-emerald-400"
 										titlePrefix="Open strategy container"
 									/>
 									{#if strategyId}
-										<div class="mt-0.5 font-mono text-[10px] text-[#555]">{strategyId}</div>
+										<div class="mt-0.5 font-mono text-[10px] text-sc-ink3">{strategyId}</div>
 									{/if}
 								</td>
-								<td class="py-2 px-2 font-mono text-[#888]">{result.symbol || '-'}</td>
-								<td class="py-2 px-2 font-mono text-[#888]">{result.timeframe || '-'}</td>
+								<td class="py-2 px-2 font-mono text-sc-ink2">{result.symbol || '-'}</td>
+								<td class="py-2 px-2 font-mono text-sc-ink2">{result.timeframe || '-'}</td>
 								<td class="py-2 px-2">
-									<span class="border border-[#333] bg-[#111] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[#888]">{resultType(result)}</span>
+									<span class="rounded-md border border-sc-line2 bg-sc-panel2 px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{resultType(result)}</span>
 								</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('return', result.total_return)}`}>{formatPercent(result.total_return)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('return', result.annualized_return_pct)}`}>{formatPercent(result.annualized_return_pct)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('sharpe', result.sharpe_ratio)}`}>{formatNumber(result.sharpe_ratio)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('drawdown', result.max_drawdown)}`}>{formatPercent(result.max_drawdown)}</td>
 								<td class={`py-2 px-2 font-mono ${metricClass('win_rate', result.win_rate)}`}>{formatPercent(result.win_rate, 1)}</td>
-								<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(result.total_trades, 0)}</td>
+								<td class="py-2 px-2 font-mono text-sc-ink2">{formatNumber(result.total_trades, 0)}</td>
 								<td class={`py-2 px-2 font-mono ${result.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', result.profit_factor)}`}>
 									{result.profit_factor_is_infinite ? 'Inf' : formatNumber(result.profit_factor)}
 								</td>
-								<td class="py-2 px-2 font-mono text-[#888]">{formatMonths(result.backtest_months)}</td>
-								<td class="py-2 px-2 text-[#666]">{formatDate(result.start)} to {formatDate(result.end)}</td>
+								<td class="py-2 px-2 font-mono text-sc-ink2">{formatMonths(result.backtest_months)}</td>
+								<td class="py-2 px-2 text-sc-ink3">{formatDate(result.start)} to {formatDate(result.end)}</td>
 								<td class="py-2 px-2">
-									<span class={`border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] ${verdictClass(result.verdict)}`}>
+									<span class={`border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${verdictClass(result.verdict)}`}>
 										{result.verdict || '-'}
 									</span>
 								</td>
-								<td class="py-2 px-2 text-[#666]">{formatDateTime(result.created_at)}</td>
+								<td class="py-2 px-2 text-sc-ink3">{formatDateTime(result.created_at)}</td>
 							</tr>
 						{/each}
 					{/if}

@@ -115,9 +115,9 @@
 	}
 </script>
 
-<div class="flex flex-col gap-1 py-3 border-b border-[#1a1a1a]">
+<div class="flex flex-col gap-1 py-3 border-b border-sc-line">
 	<div class="flex items-center justify-between gap-3">
-		<label for={id} class="text-[10px] uppercase tracking-wider text-[#666] flex items-center gap-2">
+		<label for={id} class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 flex items-center gap-2">
 			{label}
 			{#if dirty}
 				<span
@@ -135,7 +135,7 @@
 					{id}
 					value={value as string}
 					on:change={handleSelect}
-					class="bg-gray-900 border border-gray-700 text-white px-2 py-1 rounded text-sm"
+					class="bg-sc-panel2 border border-sc-line2 text-sc-ink px-2 py-1 rounded text-sm"
 				>
 					{#each options as opt}
 						<option value={opt.value}>{opt.label}</option>
@@ -145,7 +145,7 @@
 				{#if showSavedBadge}
 					<span
 						data-testid="saved-badge-{id}"
-						class="text-[10px] uppercase tracking-wider text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5"
+						class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5"
 						aria-label="credential saved"
 					>✓ Saved</span>
 				{/if}
@@ -155,7 +155,7 @@
 					value={value as string}
 					placeholder={showSavedBadge ? '•••••••• (saved, type to replace)' : ''}
 					on:input={handleNumberOrTextInput}
-					class="bg-gray-900 border border-gray-700 text-white px-2 py-1 rounded text-sm w-48 placeholder:text-gray-500"
+					class="bg-sc-panel2 border border-sc-line2 text-sc-ink px-2 py-1 rounded text-sm w-48 placeholder:text-sc-ink4"
 				/>
 			{:else if type === 'number'}
 				<input
@@ -163,7 +163,7 @@
 					type="number"
 					value={value as number}
 					on:input={handleNumberOrTextInput}
-					class="bg-gray-900 border border-gray-700 text-white px-2 py-1 rounded text-sm w-32"
+					class="bg-sc-panel2 border border-sc-line2 text-sc-ink px-2 py-1 rounded text-sm w-32"
 				/>
 			{:else if type === 'csv'}
 				{#if options.length > 0}
@@ -171,7 +171,7 @@
 						{#each options as opt}
 							<label
 								for={`${id}-${opt.value}`}
-								class="inline-flex items-center gap-1 rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-200"
+								class="inline-flex items-center gap-1 rounded border border-sc-line2 bg-sc-panel2 px-2 py-1 text-xs text-sc-ink"
 							>
 								<input
 									id={`${id}-${opt.value}`}
@@ -201,10 +201,10 @@
 					class="terminal-input w-48"
 				/>
 			{/if}
-			{#if unit}<span class="text-xs text-gray-500">{unit}</span>{/if}
-			{#if yearHint}<span class="text-xs text-gray-500" data-testid="value-hint-{id}">{yearHint}</span>{/if}
+			{#if unit}<span class="text-xs text-sc-ink3">{unit}</span>{/if}
+			{#if yearHint}<span class="text-xs text-sc-ink3" data-testid="value-hint-{id}">{yearHint}</span>{/if}
 		</div>
 	</div>
-	<p class="text-xs text-gray-400">{description}</p>
-	<p class="text-[10px] text-gray-600">Default: {defaultValue} · Setting ID: {id}</p>
+	<p class="text-xs text-sc-ink2">{description}</p>
+	<p class="text-[10px] text-sc-ink3">Default: {defaultValue} · Setting ID: {id}</p>
 </div>

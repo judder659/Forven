@@ -37,14 +37,14 @@
 	}
 </script>
 
-<div class="border border-[#222] bg-[#050505]" data-testid="wallet-capacity">
-	<div class="flex items-center justify-between border-b border-[#222] px-3 py-2">
-		<h2 class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Wallet capacity &amp; exposure</h2>
-		<a href="/risk" class="text-[10px] uppercase tracking-wider text-gray-500 hover:text-white">Risk →</a>
+<div class="rounded-md border border-sc-line bg-sc-panel" data-testid="wallet-capacity">
+	<div class="flex items-center justify-between border-b border-sc-line px-3 py-2">
+		<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Wallet capacity &amp; exposure</h2>
+		<a href="/risk" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink">Risk →</a>
 	</div>
 	<div class="grid gap-x-6 gap-y-3 px-3 py-2 md:grid-cols-2">
 		<div class="space-y-2">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500" title="Margin tied up by open positions against each wallet's limit">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" title="Margin tied up by open positions against each wallet's limit">
 				Wallet margin
 				{#if capacity && capacity.capacity_scale < 1}
 					<span class="ml-1 normal-case tracking-normal text-amber-300" title="Every live strategy is sized down so each wallet can hold them all at once">
@@ -55,39 +55,39 @@
 			{#each wallets as wallet (wallet.label)}
 				<div>
 					<div class="flex justify-between text-[11px]">
-						<span class="text-gray-300">{wallet.label}</span>
-						<span class="font-mono text-gray-400">
+						<span class="text-sc-ink2">{wallet.label}</span>
+						<span class="font-mono text-sc-ink2">
 							{formatUsd(wallet.used)} / {formatUsd(wallet.limit)}
-							{#if wallet.fraction !== null}<span class="text-gray-500">({(wallet.fraction * 100).toFixed(0)}%)</span>{/if}
+							{#if wallet.fraction !== null}<span class="text-sc-ink3">({(wallet.fraction * 100).toFixed(0)}%)</span>{/if}
 						</span>
 					</div>
-					<div class="mt-1 h-1 bg-[#1a1a1a]">
+					<div class="mt-1 h-1 bg-sc-raise">
 						<div class="h-1 {meterTone(wallet.fraction)}" style="width: {width(wallet.fraction)}"></div>
 					</div>
 					{#if wallet.worstMargin !== null}
-						<div class="mt-0.5 text-[10px] {wallet.overCapacity ? 'text-amber-300' : 'text-gray-500'}" title="If every live strategy that can use this wallet entered at once">
+						<div class="mt-0.5 text-[10px] {wallet.overCapacity ? 'text-amber-300' : 'text-sc-ink3'}" title="If every live strategy that can use this wallet entered at once">
 							worst case {formatUsd(wallet.worstMargin)} of {formatUsd(wallet.limit)}{wallet.overCapacity ? ' — over the limit' : ''}
 						</div>
 					{/if}
 				</div>
 			{:else}
-				<div class="text-xs text-gray-500">No live wallets reported.</div>
+				<div class="text-xs text-sc-ink3">No live wallets reported.</div>
 			{/each}
 		</div>
 		<div class="space-y-2">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500" title="Net notional per asset against the per-asset limit">Assets</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" title="Net notional per asset against the per-asset limit">Assets</div>
 			{#each assets as exposure (exposure.asset)}
 				<div>
 					<div class="flex justify-between text-[11px]">
-						<span class="text-gray-300">{exposure.asset} <span class="text-gray-500">{exposure.net >= 0 ? 'net long' : 'net short'}</span></span>
-						<span class="font-mono text-gray-400">{formatUsd(Math.abs(exposure.net))} / {formatUsd(exposure.limit)}</span>
+						<span class="text-sc-ink2">{exposure.asset} <span class="text-sc-ink3">{exposure.net >= 0 ? 'net long' : 'net short'}</span></span>
+						<span class="font-mono text-sc-ink2">{formatUsd(Math.abs(exposure.net))} / {formatUsd(exposure.limit)}</span>
 					</div>
-					<div class="mt-1 h-1 bg-[#1a1a1a]">
+					<div class="mt-1 h-1 bg-sc-raise">
 						<div class="h-1 {meterTone(exposure.fraction)}" style="width: {width(exposure.fraction)}"></div>
 					</div>
 				</div>
 			{:else}
-				<div class="text-xs text-gray-500">No open live exposure.</div>
+				<div class="text-xs text-sc-ink3">No open live exposure.</div>
 			{/each}
 		</div>
 	</div>

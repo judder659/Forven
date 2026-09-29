@@ -46,7 +46,7 @@ function baseSwatchTone(key: string): string {
 	if (key === 'RANGE') return 'bg-sky-400';
 	if (key === 'HIGH_VOL') return 'bg-fuchsia-400';
 	if (key === 'TRANSITION') return 'bg-amber-400';
-	return 'bg-slate-400';
+	return 'bg-sc-ink4';
 }
 
 export function regimeSwatchClass(input: RegimeLike | string | null | undefined): string {
@@ -70,7 +70,7 @@ export function regimeBadgeClass(input: RegimeLike | string | null | undefined):
 						? 'border-fuchsia-700/70 bg-fuchsia-500/10 text-fuchsia-100'
 						: key === 'TRANSITION'
 							? 'border-amber-700/70 bg-amber-500/10 text-amber-100'
-							: 'border-slate-700 bg-slate-500/10 text-slate-100';
+							: 'border-sc-line2 bg-sc-ink4/10 text-sc-ink';
 	return uncertain ? `${base} shadow-[0_0_0_1px_rgba(251,191,36,0.25)]` : base;
 }
 

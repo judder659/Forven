@@ -55,7 +55,7 @@
 				return 'text-emerald-400 border-emerald-900 bg-emerald-500/10';
 			case 'done':
 			case 'reviewed':
-				return 'text-[#888] border-[#333]';
+				return 'text-sc-ink2 border-sc-line2';
 			case 'failed':
 				return 'text-red-400 border-red-900 bg-red-500/10';
 			case 'blocked':
@@ -63,7 +63,7 @@
 			case 'rejected':
 				return 'text-red-400 border-red-900 bg-red-500/10';
 			default:
-				return 'text-[#888] border-[#333]';
+				return 'text-sc-ink2 border-sc-line2';
 		}
 	}
 
@@ -272,18 +272,18 @@
 <div class="h-full flex flex-col overflow-hidden">
 	<!-- Header -->
 	<header
-		class="flex-shrink-0 border-b border-[#222] px-6 py-3 flex items-center justify-between"
+		class="flex-shrink-0 border-b border-sc-line px-6 py-3 flex items-center justify-between"
 	>
 		<div class="flex items-center gap-3">
 			<button
 				type="button"
 				on:click={goBack}
-				class="text-gray-400 hover:text-white transition-colors text-xs border border-[#333] px-2 py-1 hover:border-white"
+				class="rounded-md text-sc-ink2 hover:text-sc-ink transition-colors text-[12px] border border-sc-line2 px-2 py-1 hover:border-sc-ink"
 			>
 				&larr; Back
 			</button>
 			{#if task}
-				<h1 class="text-lg font-bold text-white tracking-tight font-mono">
+				<h1 class="text-lg font-bold text-sc-ink tracking-tight font-mono">
 					{task.display_id || `T${String(task.id ?? '').padStart(4, '0')}`}
 				</h1>
 				<span
@@ -292,13 +292,13 @@
 					{taskStatus(task)}
 				</span>
 			{:else}
-				<h1 class="text-lg font-bold text-white tracking-tight">Task Detail</h1>
+				<h1 class="text-lg font-bold text-sc-ink tracking-tight">Task Detail</h1>
 			{/if}
 		</div>
 		<button
 			type="button"
 			on:click={() => loadTask()}
-			class="text-xs border border-[#333] px-2 py-1 text-gray-400 hover:text-white hover:border-white transition-colors"
+			class="rounded-md text-[12px] border border-sc-line2 px-2 py-1 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 		>
 			Refresh
 		</button>
@@ -306,7 +306,7 @@
 
 	{#if loading}
 		<div class="flex-1 flex items-center justify-center">
-			<div class="text-gray-500 text-sm">Loading task details...</div>
+			<div class="text-sc-ink3 text-sm">Loading task details...</div>
 		</div>
 	{:else if error}
 		<div class="flex-1 flex items-center justify-center">
@@ -319,7 +319,7 @@
 				<button
 					type="button"
 					on:click={goBack}
-					class="mt-4 text-xs text-gray-400 hover:text-white"
+					class="mt-4 text-[12px] text-sc-ink2 hover:text-sc-ink"
 				>
 					&larr; Return to Task List
 				</button>
@@ -327,14 +327,14 @@
 		</div>
 	{:else if task}
 		<!-- Tab Bar -->
-		<div class="flex-shrink-0 border-b border-[#222] flex items-center px-6">
+		<div class="flex-shrink-0 border-b border-sc-line flex items-center px-6">
 			{#each TABS as tab}
 				<button
 					type="button"
 					class="px-4 py-2.5 text-xs font-medium transition-colors border-b-2 {activeTab ===
 					tab.id
-						? 'text-white border-cyan-400'
-						: 'text-gray-500 border-transparent hover:text-gray-300'}"
+						? 'text-sc-ink border-cyan-400'
+						: 'text-sc-ink3 border-transparent hover:text-sc-ink2'}"
 					on:click={() => (activeTab = tab.id)}
 				>
 					{tab.label}{tab.id === 'audit' ? ` (${auditLog.length})` : ''}{tab.id === 'tools' ? ` (${toolCalls.length})` : ''}
@@ -355,17 +355,17 @@
 						<span class="font-mono">{fmtUsd(task.cost_usd)}</span>
 					</span>
 					<span
-						class="inline-flex items-center gap-1.5 text-[11px] border border-[#333] bg-[#0c0c0c] text-[#aaa] px-2 py-1"
+						class="rounded-md inline-flex items-center gap-1.5 text-[11px] border border-sc-line2 bg-sc-panel2 text-sc-ink2 px-2 py-1"
 						title="Total tokens (input + output)"
 					>
-						<span class="text-[#666] uppercase tracking-wider text-[9px]">Tokens</span>
+						<span class="text-sc-ink3 uppercase tracking-wider text-[9px]">Tokens</span>
 						<span class="font-mono">{fmtTokens(task.total_tokens)}</span>
 					</span>
 					<span
-						class="inline-flex items-center gap-1.5 text-[11px] border border-[#333] bg-[#0c0c0c] text-[#aaa] px-2 py-1"
+						class="rounded-md inline-flex items-center gap-1.5 text-[11px] border border-sc-line2 bg-sc-panel2 text-sc-ink2 px-2 py-1"
 						title="Provider and model used"
 					>
-						<span class="text-gray-500 uppercase tracking-wider text-[9px]">Model</span>
+						<span class="text-sc-ink3 uppercase tracking-wider text-[9px]">Model</span>
 						<span class="font-mono">{modelDisplay(task)}</span>
 					</span>
 					{#if truncationCount(task) > 0}
@@ -382,40 +382,40 @@
 				<!-- Identity + Status Cards -->
 				<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
 					<!-- Identity -->
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-3"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-3"
 						>
 							Identity
 						</div>
 						<div class="space-y-2 text-xs">
 							<div>
-								<span class="text-gray-500">Display ID:</span>
-								<span class="text-[#aaa] font-mono ml-1"
+								<span class="text-sc-ink3">Display ID:</span>
+								<span class="text-sc-ink2 font-mono ml-1"
 									>{task.display_id || '--'}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Internal ID:</span>
-								<span class="text-gray-300 font-mono ml-1"
+								<span class="text-sc-ink3">Internal ID:</span>
+								<span class="text-sc-ink2 font-mono ml-1"
 									>{task.id ?? '--'}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Title:</span>
-								<span class="text-gray-200 ml-1"
+								<span class="text-sc-ink3">Title:</span>
+								<span class="text-sc-ink ml-1"
 									>{task.title || 'Untitled'}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Agent:</span>
-								<span class="text-gray-300 ml-1"
+								<span class="text-sc-ink3">Agent:</span>
+								<span class="text-sc-ink2 ml-1"
 									>{task.agent_id || '--'}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Priority:</span>
-								<span class="text-gray-300 font-mono ml-1"
+								<span class="text-sc-ink3">Priority:</span>
+								<span class="text-sc-ink2 font-mono ml-1"
 									>{Number(task.priority ?? 0)}</span
 								>
 							</div>
@@ -423,36 +423,36 @@
 					</div>
 
 					<!-- Strategy -->
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-3"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-3"
 						>
 							Strategy
 						</div>
 						<div class="space-y-2 text-xs">
 							<div>
-								<span class="text-gray-500">Strategy ID:</span>
+								<span class="text-sc-ink3">Strategy ID:</span>
 								{#if task.strategy_id || task.strategy_display_id}
 									<button
 										type="button"
-										class="text-[#aaa] hover:text-white font-mono ml-1"
+										class="text-sc-ink2 hover:text-sc-ink font-mono ml-1"
 										on:click={() => task && goToStrategy(task)}
 									>
 										{strategyLabel(task)}
 									</button>
 								{:else}
-									<span class="text-gray-600 ml-1">--</span>
+									<span class="text-sc-ink3 ml-1">--</span>
 								{/if}
 							</div>
 							<div>
-								<span class="text-gray-500">Strategy Name:</span>
-								<span class="text-gray-300 ml-1"
+								<span class="text-sc-ink3">Strategy Name:</span>
+								<span class="text-sc-ink2 ml-1"
 									>{task.strategy_name || '--'}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Stage:</span>
-								<span class="text-gray-300 ml-1"
+								<span class="text-sc-ink3">Stage:</span>
+								<span class="text-sc-ink2 ml-1"
 									>{task.strategy_stage || '--'}</span
 								>
 							</div>
@@ -460,42 +460,42 @@
 					</div>
 
 					<!-- Timing -->
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-3"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-3"
 						>
 							Timing
 						</div>
 						<div class="space-y-2 text-xs">
 							<div>
-								<span class="text-gray-500">Created:</span>
-								<span class="text-gray-300 ml-1"
+								<span class="text-sc-ink3">Created:</span>
+								<span class="text-sc-ink2 ml-1"
 									>{fmtDate(task.created_at)}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Started:</span>
-								<span class="text-gray-300 ml-1"
+								<span class="text-sc-ink3">Started:</span>
+								<span class="text-sc-ink2 ml-1"
 									>{fmtDate(task.started_at)}</span
 								>
 							</div>
 							<div>
-								<span class="text-gray-500">Completed:</span>
-								<span class="text-gray-300 ml-1"
+								<span class="text-sc-ink3">Completed:</span>
+								<span class="text-sc-ink2 ml-1"
 									>{fmtDate(task.completed_at)}</span
 								>
 							</div>
 							{#if task.retry_at}
 								<div>
-									<span class="text-gray-500">Retry At:</span>
+									<span class="text-sc-ink3">Retry At:</span>
 									<span class="text-yellow-300 ml-1"
 										>{fmtDate(task.retry_at)}</span
 									>
 								</div>
 							{/if}
 							<div>
-								<span class="text-gray-500">Elapsed:</span>
-								<span class="text-gray-300 font-mono ml-1"
+								<span class="text-sc-ink3">Elapsed:</span>
+								<span class="text-sc-ink2 font-mono ml-1"
 									>{elapsed(task, nowTick)}</span
 								>
 							</div>
@@ -509,7 +509,7 @@
 						class="mb-6 border border-red-800 rounded p-4 bg-red-950/20"
 					>
 						<div
-							class="text-[10px] uppercase tracking-wider text-red-400 mb-2"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400 mb-2"
 						>
 							Error
 						</div>
@@ -519,22 +519,22 @@
 				{/if}
 
 				<!-- Lifecycle Timeline -->
-				<div class="border border-[#222] rounded p-4 bg-[#0c0c0c] mb-6">
+				<div class="border border-sc-line rounded p-4 bg-sc-panel2 mb-6">
 					<div
-						class="text-[10px] uppercase tracking-wider text-gray-500 mb-3"
+						class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-3"
 					>
 						Lifecycle Timeline
 					</div>
-					<div class="relative pl-4 border-l border-[#333] space-y-4">
+					<div class="relative pl-4 border-l border-sc-line2 space-y-4">
 						{#if task.created_at}
 							<div class="relative">
 								<div
-									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-gray-600 border-2 border-[#0c0c0c]"
+									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-sc-line2 border-2 border-sc-line"
 								></div>
-								<div class="text-xs text-gray-300">
+								<div class="text-xs text-sc-ink2">
 									Container Created
 								</div>
-								<div class="text-[11px] text-gray-500">
+								<div class="text-[11px] text-sc-ink3">
 									{fmtDate(task.created_at)} &middot; Assigned
 									to {task.agent_id || '--'}
 								</div>
@@ -543,12 +543,12 @@
 						{#if task.started_at}
 							<div class="relative">
 								<div
-									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-white border-2 border-[#0c0c0c]"
+									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-sc-ink border-2 border-sc-line"
 								></div>
-								<div class="text-xs text-[#aaa]">
+								<div class="text-xs text-sc-ink2">
 									Execution Started
 								</div>
-								<div class="text-[11px] text-gray-500">
+								<div class="text-[11px] text-sc-ink3">
 									{fmtDate(task.started_at)}
 								</div>
 							</div>
@@ -556,12 +556,12 @@
 						{#if task.retry_at}
 							<div class="relative">
 								<div
-									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-yellow-500 border-2 border-[#0c0c0c]"
+									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-yellow-500 border-2 border-sc-line"
 								></div>
 								<div class="text-xs text-yellow-300">
 									Retry Scheduled
 								</div>
-								<div class="text-[11px] text-gray-500">
+								<div class="text-[11px] text-sc-ink3">
 									{fmtDate(task.retry_at)}
 								</div>
 							</div>
@@ -569,7 +569,7 @@
 						{#if task.completed_at}
 							<div class="relative">
 								<div
-									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full {taskStatus(task) === 'failed' ? 'bg-red-500' : 'bg-green-500'} border-2 border-[#0c0c0c]"
+									class="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full {taskStatus(task) === 'failed' ? 'bg-red-500' : 'bg-green-500'} border-2 border-sc-line"
 								></div>
 								<div
 									class="text-xs {taskStatus(task) === 'failed'
@@ -578,7 +578,7 @@
 								>
 									Execution Completed
 								</div>
-								<div class="text-[11px] text-gray-500">
+								<div class="text-[11px] text-sc-ink3">
 									{fmtDate(task.completed_at)} &middot; Status: {taskStatus(task)}
 								</div>
 							</div>
@@ -588,27 +588,27 @@
 
 				<!-- Quick Data Preview -->
 				{#if extraFields.length > 0}
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-3"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-3"
 						>
 							Additional Fields
 						</div>
 						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 							{#each extraFields as field}
 								<div
-									class="border border-[#1b1b1b] rounded p-2 bg-black/30"
+									class="border border-sc-line rounded p-2 bg-sc-bg/30"
 								>
 									<div
-										class="text-[10px] text-gray-500 uppercase tracking-wider"
+										class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 									>
 										{field.replace(/_/g, ' ')}
 									</div>
 									{#if typeof task[field] === 'object'}
 										<pre
-											class="mt-1 max-h-[100px] overflow-auto text-[11px] text-gray-300 whitespace-pre-wrap break-words">{formatValue(task[field])}</pre>
+											class="mt-1 max-h-[100px] overflow-auto text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(task[field])}</pre>
 									{:else}
-										<div class="mt-1 text-xs text-gray-300">
+										<div class="mt-1 text-xs text-sc-ink2">
 											{formatValue(task[field])}
 										</div>
 									{/if}
@@ -619,7 +619,7 @@
 				{/if}
 			{:else if activeTab === 'transcript'}
 				{#if transcript.length === 0}
-					<div class="text-sm text-gray-600">
+					<div class="text-sm text-sc-ink3">
 						No transcript recorded for this task. Per-round transcripts are
 						captured for runs executed after the agent-overhaul upgrade.
 					</div>
@@ -627,41 +627,41 @@
 					<div class="space-y-2">
 						{#each transcript as msg (msg.id)}
 							{#if msg.role === 'user'}
-								<div class="border border-[#222] rounded p-3 bg-[#0c0c0c]">
+								<div class="border border-sc-line rounded p-3 bg-sc-panel2">
 									<div class="flex items-center justify-between gap-4">
-										<div class="text-[10px] uppercase tracking-wider text-[#888]">
+										<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
 											Prompt
 										</div>
-										<div class="text-[11px] text-gray-600 whitespace-nowrap">
+										<div class="text-[11px] text-sc-ink3 whitespace-nowrap">
 											{fmtDate(msg.created_at)}
 										</div>
 									</div>
 									<pre
-										class="mt-1 max-h-[280px] overflow-auto text-xs text-gray-300 whitespace-pre-wrap break-words">{msg.content}</pre>
+										class="mt-1 max-h-[280px] overflow-auto text-xs text-sc-ink2 whitespace-pre-wrap break-words">{msg.content}</pre>
 								</div>
 							{:else if msg.role === 'assistant'}
-								<div class="border border-[#222] rounded p-3 bg-[#0c0c0c]">
+								<div class="border border-sc-line rounded p-3 bg-sc-panel2">
 									<div class="flex items-center justify-between gap-4">
-										<div class="text-[10px] uppercase tracking-wider text-[#888]">
+										<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
 											Assistant
 											{#if msg.tool_round != null}
-												<span class="text-gray-600 normal-case tracking-normal ml-1"
+												<span class="text-sc-ink3 normal-case tracking-normal ml-1"
 													>round {msg.tool_round + 1}</span
 												>
 											{/if}
 										</div>
-										<div class="text-[11px] text-gray-600 whitespace-nowrap">
+										<div class="text-[11px] text-sc-ink3 whitespace-nowrap">
 											{#if msg.input_tokens || msg.output_tokens}
 												<span class="font-mono"
 													>{fmtTokens(msg.input_tokens)} in / {fmtTokens(
 														msg.output_tokens,
 													)} out</span
 												>
-												<span class="mx-1 text-gray-800">·</span>
+												<span class="mx-1 text-sc-ink4">·</span>
 											{/if}
 											{#if msg.provider}
 												<span class="font-mono">{msg.provider}{msg.model_id ? `/${msg.model_id}` : ''}</span>
-												<span class="mx-1 text-gray-800">·</span>
+												<span class="mx-1 text-sc-ink4">·</span>
 											{/if}
 											{fmtDate(msg.created_at)}
 										</div>
@@ -669,60 +669,60 @@
 									{#if msg.reasoning}
 										<details class="mt-2" open>
 											<summary
-												class="cursor-pointer text-[10px] uppercase tracking-wider text-amber-500/90 select-none"
+												class="cursor-pointer font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-amber-500/90 select-none"
 											>
 												Reasoning
 											</summary>
 											<pre
-												class="mt-1 max-h-[280px] overflow-auto bg-black/40 border border-amber-900/30 rounded p-2 text-[11px] text-amber-100/70 whitespace-pre-wrap break-words">{msg.reasoning}</pre>
+												class="mt-1 max-h-[280px] overflow-auto bg-sc-bg/40 border border-amber-900/30 rounded p-2 text-[11px] text-amber-100/70 whitespace-pre-wrap break-words">{msg.reasoning}</pre>
 										</details>
 									{/if}
 									{#if msg.content}
 										<pre
-											class="mt-2 max-h-[320px] overflow-auto text-xs text-gray-200 whitespace-pre-wrap break-words">{msg.content}</pre>
+											class="mt-2 max-h-[320px] overflow-auto text-xs text-sc-ink whitespace-pre-wrap break-words">{msg.content}</pre>
 									{/if}
 								</div>
 							{:else if msg.role === 'tool'}
-								<div class="border border-[#222] rounded p-3 bg-[#0c0c0c] ml-5">
+								<div class="border border-sc-line rounded p-3 bg-sc-panel2 ml-5">
 									<div class="flex items-center justify-between gap-4">
 										<div class="text-sm">
-											<span class="text-[10px] uppercase tracking-wider text-purple-400"
+											<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-purple-400"
 												>Tool</span
 											>
-											<span class="font-mono text-gray-200 ml-2"
+											<span class="font-mono text-sc-ink ml-2"
 												>{msg.tool_name || 'tool'}</span
 											>
 										</div>
-										<div class="text-[11px] text-gray-600 whitespace-nowrap">
+										<div class="text-[11px] text-sc-ink3 whitespace-nowrap">
 											{fmtDate(msg.created_at)}
 										</div>
 									</div>
 									{#if msg.tool_args}
 										<details class="mt-2">
 											<summary
-												class="cursor-pointer text-[10px] uppercase tracking-wider text-gray-600 select-none"
+												class="cursor-pointer font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 select-none"
 											>
 												Arguments
 											</summary>
 											<pre
-												class="mt-1 max-h-[200px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-2 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{formatValue(msg.tool_args)}</pre>
+												class="mt-1 max-h-[200px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-2 text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(msg.tool_args)}</pre>
 										</details>
 									{/if}
 									{#if msg.tool_result}
 										<details class="mt-2">
 											<summary
-												class="cursor-pointer text-[10px] uppercase tracking-wider text-gray-600 select-none"
+												class="cursor-pointer font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 select-none"
 											>
 												Result
 											</summary>
 											<pre
-												class="mt-1 max-h-[280px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-2 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{formatValue(msg.tool_result)}</pre>
+												class="mt-1 max-h-[280px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-2 text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(msg.tool_result)}</pre>
 										</details>
 									{/if}
 								</div>
 							{:else}
 								<div
-									class="px-3 py-1.5 ml-5 text-[11px] text-gray-500 italic border-l-2 border-[#333]"
+									class="px-3 py-1.5 ml-5 text-[11px] text-sc-ink3 italic border-l-2 border-sc-line2"
 								>
 									{msg.content || msg.role}
 								</div>
@@ -732,21 +732,21 @@
 				{/if}
 			{:else if activeTab === 'audit'}
 				{#if auditLog.length === 0}
-					<div class="text-sm text-gray-600">
+					<div class="text-sm text-sc-ink3">
 						No audit events recorded for this task.
 					</div>
 				{:else}
 					<div class="space-y-2">
 						{#each auditLog as event, i}
 							<div
-								class="border border-[#222] rounded p-3 bg-[#0c0c0c]"
+								class="border border-sc-line rounded p-3 bg-sc-panel2"
 							>
 								<div
 									class="flex items-start justify-between gap-4"
 								>
 									<div class="min-w-0">
-										<div class="text-sm text-gray-200">
-											<span class="font-mono text-[#aaa]"
+										<div class="text-sm text-sc-ink">
+											<span class="font-mono text-sc-ink2"
 												>#{i + 1}</span
 											>
 											{String(
@@ -757,7 +757,7 @@
 										</div>
 										{#if event.from || event.to}
 											<div
-												class="mt-1 text-xs font-mono text-gray-400"
+												class="mt-1 text-xs font-mono text-sc-ink2"
 											>
 												{String(event.from || '--')} &rarr;
 												{String(event.to || '--')}
@@ -765,14 +765,14 @@
 										{/if}
 										{#if event.reason}
 											<div
-												class="mt-1 text-xs text-gray-500"
+												class="mt-1 text-xs text-sc-ink3"
 											>
 												{String(event.reason)}
 											</div>
 										{/if}
 									</div>
 									<div
-										class="text-[11px] text-gray-600 whitespace-nowrap"
+										class="text-[11px] text-sc-ink3 whitespace-nowrap"
 									>
 										{fmtDate(
 											event.timestamp ||
@@ -787,16 +787,16 @@
 									>
 										{#each auditExtras(event) as [key, val]}
 											<div
-												class="border border-[#1b1b1b] rounded px-2 py-1 bg-black/30"
+												class="border border-sc-line rounded px-2 py-1 bg-sc-bg/30"
 											>
 												<span
-													class="text-gray-600 uppercase"
+													class="text-sc-ink3 uppercase"
 													>{key.replace(
 														/_/g,
 														' ',
 													)}</span
 												>
-												<span class="text-gray-400 ml-1"
+												<span class="text-sc-ink2 ml-1"
 													>{typeof val === 'object'
 														? JSON.stringify(val)
 														: String(val)}</span
@@ -811,21 +811,21 @@
 				{/if}
 			{:else if activeTab === 'tools'}
 				{#if toolCalls.length === 0}
-					<div class="text-sm text-gray-600">
+					<div class="text-sm text-sc-ink3">
 						No tool calls recorded for this task.
 					</div>
 				{:else}
 					<div class="space-y-2">
 						{#each toolCalls as call, i}
 							<div
-								class="border border-[#222] rounded p-3 bg-[#0c0c0c]"
+								class="border border-sc-line rounded p-3 bg-sc-panel2"
 							>
 								<div
 									class="flex items-start justify-between gap-4"
 								>
 									<div class="min-w-0">
-										<div class="text-sm text-gray-200">
-											<span class="font-mono text-[#aaa]"
+										<div class="text-sm text-sc-ink">
+											<span class="font-mono text-sc-ink2"
 												>#{i + 1}</span
 											>
 											<span class="font-mono ml-1"
@@ -837,10 +837,10 @@
 											>
 										</div>
 										<div
-											class="mt-1 text-xs text-gray-500"
+											class="mt-1 text-xs text-sc-ink3"
 										>
 											Duration: <span
-												class="text-gray-300 font-mono"
+												class="text-sc-ink2 font-mono"
 												>{fmtMs(
 													call.duration_ms,
 												)}</span
@@ -848,7 +848,7 @@
 										</div>
 									</div>
 									<div
-										class="text-[11px] text-gray-600 whitespace-nowrap"
+										class="text-[11px] text-sc-ink3 whitespace-nowrap"
 									>
 										{fmtDate(
 											call.started_at ||
@@ -874,24 +874,24 @@
 								{#if call.input_json}
 									<div class="mt-2">
 										<div
-											class="text-[10px] text-gray-600 uppercase tracking-wider"
+											class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 										>
 											Input
 										</div>
 										<pre
-											class="mt-1 max-h-[200px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-2 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{formatValue(call.input_json)}</pre>
+											class="mt-1 max-h-[200px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-2 text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(call.input_json)}</pre>
 									</div>
 								{/if}
 
 								{#if call.output_summary}
 									<div class="mt-2">
 										<div
-											class="text-[10px] text-gray-600 uppercase tracking-wider"
+											class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 										>
 											Output
 										</div>
 										<pre
-											class="mt-1 max-h-[200px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-2 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{formatValue(call.output_summary)}</pre>
+											class="mt-1 max-h-[200px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-2 text-[11px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(call.output_summary)}</pre>
 									</div>
 								{/if}
 							</div>
@@ -900,84 +900,84 @@
 				{/if}
 			{:else if activeTab === 'data'}
 				<div class="space-y-4">
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-2"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2"
 						>
 							Description
 						</div>
 						<pre
-							class="max-h-[300px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-words">{formatValue(task.description)}</pre>
+							class="max-h-[300px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-3 text-xs text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(task.description)}</pre>
 					</div>
 
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-2"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2"
 						>
 							Input Data
 						</div>
 						<pre
-							class="max-h-[400px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-words">{formatValue(task.input_data)}</pre>
+							class="max-h-[400px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-3 text-xs text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(task.input_data)}</pre>
 					</div>
 
-					<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+					<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-2"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2"
 						>
 							Output Data
 						</div>
 						<pre
-							class="max-h-[400px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-words">{formatValue(task.output_data)}</pre>
+							class="max-h-[400px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-3 text-xs text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(task.output_data)}</pre>
 					</div>
 
 					<div
 						class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
 					>
 						<div
-							class="border border-[#222] rounded p-3 bg-[#0c0c0c]"
+							class="border border-sc-line rounded p-3 bg-sc-panel2"
 						>
 							<div
-								class="text-[10px] text-gray-500 uppercase tracking-wider"
+								class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 							>
 								Assigned By
 							</div>
-							<div class="mt-1 text-xs text-gray-300">
+							<div class="mt-1 text-xs text-sc-ink2">
 								{formatValue(task.assigned_by)}
 							</div>
 						</div>
 						<div
-							class="border border-[#222] rounded p-3 bg-[#0c0c0c]"
+							class="border border-sc-line rounded p-3 bg-sc-panel2"
 						>
 							<div
-								class="text-[10px] text-gray-500 uppercase tracking-wider"
+								class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 							>
 								Type
 							</div>
-							<div class="mt-1 text-xs text-gray-300">
+							<div class="mt-1 text-xs text-sc-ink2">
 								{formatValue(task.type)}
 							</div>
 						</div>
 						<div
-							class="border border-[#222] rounded p-3 bg-[#0c0c0c]"
+							class="border border-sc-line rounded p-3 bg-sc-panel2"
 						>
 							<div
-								class="text-[10px] text-gray-500 uppercase tracking-wider"
+								class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 							>
 								Decision
 							</div>
-							<div class="mt-1 text-xs text-gray-300">
+							<div class="mt-1 text-xs text-sc-ink2">
 								{formatValue(task.decision)}
 							</div>
 						</div>
 						<div
-							class="border border-[#222] rounded p-3 bg-[#0c0c0c]"
+							class="border border-sc-line rounded p-3 bg-sc-panel2"
 						>
 							<div
-								class="text-[10px] text-gray-500 uppercase tracking-wider"
+								class="text-[10px] text-sc-ink3 uppercase tracking-wider"
 							>
 								Feedback
 							</div>
-							<div class="mt-1 text-xs text-gray-300">
+							<div class="mt-1 text-xs text-sc-ink2">
 								{formatValue(task.feedback)}
 							</div>
 						</div>
@@ -988,7 +988,7 @@
 							class="border border-red-800 rounded p-4 bg-red-950/20"
 						>
 							<div
-								class="text-[10px] uppercase tracking-wider text-red-400 mb-2"
+								class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400 mb-2"
 							>
 								Error
 							</div>
@@ -998,41 +998,41 @@
 					{/if}
 				</div>
 			{:else if activeTab === 'raw'}
-				<div class="border border-[#222] rounded p-4 bg-[#0c0c0c]">
+				<div class="border border-sc-line rounded p-4 bg-sc-panel2">
 					<div
-						class="text-[10px] uppercase tracking-wider text-gray-500 mb-2"
+						class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2"
 					>
 						Full Task Container
 					</div>
 					<pre
-						class="max-h-[600px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-words">{formatValue(task)}</pre>
+						class="max-h-[600px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-3 text-xs text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(task)}</pre>
 				</div>
 
 				{#if auditLog.length > 0}
 					<div
-						class="border border-[#222] rounded p-4 bg-[#0c0c0c] mt-4"
+						class="border border-sc-line rounded p-4 bg-sc-panel2 mt-4"
 					>
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-2"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2"
 						>
 							Audit Log (Raw)
 						</div>
 						<pre
-							class="max-h-[400px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-words">{formatValue(auditLog)}</pre>
+							class="max-h-[400px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-3 text-xs text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(auditLog)}</pre>
 					</div>
 				{/if}
 
 				{#if toolCalls.length > 0}
 					<div
-						class="border border-[#222] rounded p-4 bg-[#0c0c0c] mt-4"
+						class="border border-sc-line rounded p-4 bg-sc-panel2 mt-4"
 					>
 						<div
-							class="text-[10px] uppercase tracking-wider text-gray-500 mb-2"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2"
 						>
 							Tool Calls (Raw)
 						</div>
 						<pre
-							class="max-h-[400px] overflow-auto bg-black/40 border border-[#1b1b1b] rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-words">{formatValue(toolCalls)}</pre>
+							class="max-h-[400px] overflow-auto bg-sc-bg/40 border border-sc-line rounded p-3 text-xs text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(toolCalls)}</pre>
 					</div>
 				{/if}
 			{/if}

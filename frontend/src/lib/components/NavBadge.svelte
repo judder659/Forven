@@ -12,32 +12,32 @@
 		danger: 'border border-red-900 bg-red-500/10 text-red-400',
 		warn: 'border border-yellow-900 bg-yellow-500/10 text-yellow-400',
 		success: 'border border-emerald-900 bg-emerald-500/10 text-emerald-400',
-		info: 'border border-[#555] text-white',
-		neutral: 'border border-[#333] text-[#888]',
+		info: 'border border-sc-line2 text-sc-ink',
+		neutral: 'border border-sc-line2 text-sc-ink2',
 	};
 
 	const COUNT_COLORS_SEEN: Record<string, string> = {
 		danger: 'border border-red-900 text-red-400',
 		warn: 'border border-yellow-900 text-yellow-500',
 		success: 'border border-emerald-900 text-emerald-500',
-		info: 'border border-[#333] text-[#999]',
-		neutral: 'border border-[#333] text-[#666]',
+		info: 'border border-sc-line2 text-sc-ink2',
+		neutral: 'border border-sc-line2 text-sc-ink3',
 	};
 
 	const PILL_COLORS: Record<string, string> = {
 		danger: 'border-red-900 bg-red-500/10 text-red-400',
 		warn: 'border-yellow-900 bg-yellow-500/10 text-yellow-400',
 		success: 'border-emerald-900 bg-emerald-500/10 text-emerald-400',
-		info: 'border-[#555] text-white',
-		neutral: 'border-[#333] text-[#888]',
+		info: 'border-sc-line2 text-sc-ink',
+		neutral: 'border-sc-line2 text-sc-ink2',
 	};
 
 	const DOT_COLORS: Record<string, string> = {
 		danger: 'bg-red-500',
 		warn: 'bg-yellow-400',
 		success: 'bg-emerald-400',
-		info: 'bg-white',
-		neutral: 'bg-[#666]',
+		info: 'bg-sc-ink',
+		neutral: 'bg-sc-ink3',
 	};
 
 	function countLabel(count: number): string {
@@ -74,7 +74,7 @@
 		</span>
 	{:else if metric.kind === 'status' && metric.label}
 		<span
-			class="shrink-0 border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider {PILL_COLORS[metric.severity] ?? PILL_COLORS.neutral} {metricDimmed ? 'opacity-50' : ''}"
+			class="shrink-0 border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {PILL_COLORS[metric.severity] ?? PILL_COLORS.neutral} {metricDimmed ? 'opacity-50' : ''}"
 			title={metric.summary}
 		>
 			{metric.label}

@@ -21,20 +21,20 @@
 		<Skeleton {rows} />
 	</div>
 {:else if state.status === 'unavailable'}
-	<div class="m-3 border border-dashed border-[#2a2a2a] px-3 py-2.5 text-[12px] text-[#888]" role="status">
-		<div class="text-[9px] font-bold uppercase tracking-wider text-[#555]">Not available yet</div>
+	<div class="m-3 border border-dashed border-sc-line2 px-3 py-2.5 text-[12px] text-sc-ink2" role="status">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Not available yet</div>
 		<p class="mt-1 leading-relaxed">
-			{what} needs {#if endpoint}<span class="font-mono text-[11px] text-[#aaa]">{endpoint}</span>{:else}a backend route{/if}, which this
+			{what} needs {#if endpoint}<span class="font-mono text-[11px] text-sc-ink2">{endpoint}</span>{:else}a backend route{/if}, which this
 			backend does not serve yet. It arrives with the Data Manager backend update.
 		</p>
 		<button type="button" on:click={() => dispatch('retry')}
-			class="mt-2 border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white">Check again</button>
+			class="rounded-md mt-2 border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink">Check again</button>
 	</div>
 {:else if state.status === 'error'}
 	<div class="m-3 flex flex-wrap items-center gap-2 border border-red-900 bg-red-500/5 px-3 py-2 text-[12px] text-red-400" role="alert">
 		<span class="min-w-0 flex-1">Could not load {what.charAt(0).toLowerCase() + what.slice(1)}: {state.error}</span>
 		<button type="button" on:click={() => dispatch('retry')}
-			class="border border-red-900 px-2 py-0.5 text-[10px] uppercase tracking-wider text-red-300 hover:border-red-400 hover:text-white">Retry</button>
+			class="rounded-md border border-red-900 px-2 py-0.5 text-[12px] text-red-300 hover:border-red-400 hover:text-sc-ink">Retry</button>
 	</div>
 {:else}
 	<slot />

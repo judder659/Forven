@@ -223,7 +223,7 @@
 		{ key: 'exitShort', label: 'Exit — Short', short: true, group: exitShort },
 	];
 
-	const inputCls = 'border border-[#333] bg-[#050505] px-2 py-1 text-[12px] text-white outline-none transition-colors focus:border-white disabled:opacity-40';
+	const inputCls = 'border border-sc-line2 bg-sc-panel px-2 py-1 text-[12px] text-sc-ink outline-none transition-colors focus:border-sc-ink disabled:opacity-40';
 </script>
 
 <!-- input/change bubble up from every control; bump() recomputes derived state -->
@@ -232,12 +232,12 @@
 	<!-- Indicators -->
 	<div>
 		<div class="flex items-center justify-between">
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Indicators</div>
-			<button type="button" on:click={addIndicator} {disabled} class="border border-[#333] bg-[#111] px-2 py-1 text-[11px] text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-40">+ Add indicator</button>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Indicators</div>
+			<button type="button" on:click={addIndicator} {disabled} class="rounded-md border border-sc-line2 bg-sc-panel2 px-2 py-1 text-[11px] text-sc-ink2 transition-colors hover:border-sc-line2 hover:text-sc-ink disabled:opacity-40">+ Add indicator</button>
 		</div>
 		<div class="mt-2 space-y-2">
 			{#each indicators as ind, i (ind._uid)}
-				<div class="flex flex-wrap items-center gap-2 border border-[#1a1a1a] bg-[#050505] p-2">
+				<div class="rounded-md flex flex-wrap items-center gap-2 border border-sc-line bg-sc-panel p-2">
 					<input class={`${inputCls} w-24`} bind:value={ind.id} on:input={() => onIndicatorRenamed(i)} {disabled} placeholder="id" aria-label="indicator id" />
 					<select class={inputCls} value={ind.kind} on:change={(e) => onKindChange(i, (e.currentTarget as HTMLSelectElement).value)} {disabled} aria-label="indicator kind">
 						{#each Object.entries(INDICATOR_DEFS) as [k, def]}
@@ -245,17 +245,17 @@
 						{/each}
 					</select>
 					{#each INDICATOR_DEFS[ind.kind]?.params ?? [] as sp}
-						<label class="flex items-center gap-1 text-[10px] text-[#666]">
+						<label class="flex items-center gap-1 text-[10px] text-sc-ink3">
 							{sp.key}
 							<input type="number" class={`${inputCls} w-16`} bind:value={ind.params[sp.key]} {disabled} step="any" />
 						</label>
 					{/each}
-					<span class="ml-auto font-mono text-[10px] text-[#555]">→ {indicatorOutputs(ind).join(', ')}</span>
-					<button type="button" on:click={() => removeIndicator(i)} {disabled} class="px-1.5 text-[12px] text-[#555] transition-colors hover:text-red-400" aria-label="remove indicator">✕</button>
+					<span class="ml-auto font-mono text-[10px] text-sc-ink3">→ {indicatorOutputs(ind).join(', ')}</span>
+					<button type="button" on:click={() => removeIndicator(i)} {disabled} class="px-1.5 text-[12px] text-sc-ink3 transition-colors hover:text-red-400" aria-label="remove indicator">✕</button>
 				</div>
 			{/each}
 			{#if indicators.length === 0}
-				<div class="border border-dashed border-[#333] px-3 py-2 text-[11px] text-[#666]">No indicators — you can still build conditions on raw price/volume.</div>
+				<div class="border border-dashed border-sc-line2 px-3 py-2 text-[11px] text-sc-ink3">No indicators — you can still build conditions on raw price/volume.</div>
 			{/if}
 		</div>
 	</div>
@@ -263,16 +263,16 @@
 	<!-- Parameters -->
 	<div>
 		<div class="flex items-center justify-between">
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Parameters <span class="normal-case tracking-normal text-[#555]">(editable knobs you can reference in conditions)</span></div>
-			<button type="button" on:click={addParam} {disabled} class="border border-[#333] bg-[#111] px-2 py-1 text-[11px] text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-40">+ Add parameter</button>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Parameters <span class="normal-case tracking-normal text-sc-ink3">(editable knobs you can reference in conditions)</span></div>
+			<button type="button" on:click={addParam} {disabled} class="rounded-md border border-sc-line2 bg-sc-panel2 px-2 py-1 text-[11px] text-sc-ink2 transition-colors hover:border-sc-line2 hover:text-sc-ink disabled:opacity-40">+ Add parameter</button>
 		</div>
 		<div class="mt-2 flex flex-wrap gap-2">
 			{#each params as p, i (p._uid)}
-				<div class="flex items-center gap-1.5 border border-[#1a1a1a] bg-[#050505] p-1.5">
+				<div class="rounded-md flex items-center gap-1.5 border border-sc-line bg-sc-panel p-1.5">
 					<input class={`${inputCls} w-28`} bind:value={p.name} on:input={() => onParamRenamed(i)} {disabled} placeholder="name" aria-label="parameter name" />
-					<span class="text-[#555]">=</span>
+					<span class="text-sc-ink3">=</span>
 					<input type="number" class={`${inputCls} w-20`} bind:value={p.value} {disabled} step="any" aria-label="parameter value" />
-					<button type="button" on:click={() => removeParam(i)} {disabled} class="px-1 text-[12px] text-[#555] transition-colors hover:text-red-400" aria-label="remove parameter">✕</button>
+					<button type="button" on:click={() => removeParam(i)} {disabled} class="px-1 text-[12px] text-sc-ink3 transition-colors hover:text-red-400" aria-label="remove parameter">✕</button>
 				</div>
 			{/each}
 		</div>
@@ -280,15 +280,15 @@
 
 	<!-- Condition groups -->
 	{#if !showShort}
-		<button type="button" on:click={() => (showShort = true)} {disabled} class="text-[11px] text-[#888] transition-colors hover:text-white">+ Add short side</button>
+		<button type="button" on:click={() => (showShort = true)} {disabled} class="text-[11px] text-sc-ink2 transition-colors hover:text-sc-ink">+ Add short side</button>
 	{:else}
-		<button type="button" on:click={removeShortSide} {disabled} class="text-[11px] text-[#666] transition-colors hover:text-red-400">− Remove short side</button>
+		<button type="button" on:click={removeShortSide} {disabled} class="text-[11px] text-sc-ink3 transition-colors hover:text-red-400">− Remove short side</button>
 	{/if}
 	{#each groupList.filter((g) => !g.short || showShort) as gm (gm.key)}
 		{@const group = gm.group}
-		<div class="border border-[#1a1a1a] bg-[#050505] p-3">
+		<div class="rounded-md border border-sc-line bg-sc-panel p-3">
 			<div class="flex items-center justify-between">
-				<div class="text-[10px] uppercase tracking-wider text-[#888]">{gm.label}</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{gm.label}</div>
 				<div class="flex items-center gap-2">
 					{#if group.conditions.length > 1}
 						<select class={inputCls} bind:value={group.logic} {disabled} aria-label="combine logic">
@@ -296,7 +296,7 @@
 							<option value="or">ANY (OR)</option>
 						</select>
 					{/if}
-					<button type="button" on:click={() => addCondition(group)} {disabled} class="border border-[#333] bg-[#111] px-2 py-1 text-[11px] text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-40">+ Condition</button>
+					<button type="button" on:click={() => addCondition(group)} {disabled} class="rounded-md border border-sc-line2 bg-sc-panel2 px-2 py-1 text-[11px] text-sc-ink2 transition-colors hover:border-sc-line2 hover:text-sc-ink disabled:opacity-40">+ Condition</button>
 				</div>
 			</div>
 			<div class="mt-2 space-y-2">
@@ -344,11 +344,11 @@
 						{:else}
 							<input type="number" class={`${inputCls} w-24`} bind:value={cond.right.value} {disabled} step="any" />
 						{/if}
-						<button type="button" on:click={() => removeCondition(group, ci)} {disabled} class="ml-auto px-1 text-[12px] text-[#555] transition-colors hover:text-red-400" aria-label="remove condition">✕</button>
+						<button type="button" on:click={() => removeCondition(group, ci)} {disabled} class="ml-auto px-1 text-[12px] text-sc-ink3 transition-colors hover:text-red-400" aria-label="remove condition">✕</button>
 					</div>
 				{/each}
 				{#if group.conditions.length === 0}
-					<div class="text-[11px] text-[#666]">No conditions{gm.short ? ' (short side optional)' : ''}.</div>
+					<div class="text-[11px] text-sc-ink3">No conditions{gm.short ? ' (short side optional)' : ''}.</div>
 				{/if}
 			</div>
 		</div>

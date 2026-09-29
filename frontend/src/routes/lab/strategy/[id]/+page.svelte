@@ -4856,7 +4856,7 @@
 							<button
 								type="button"
 								data-testid="header-run-backtest"
-								class="rounded-md border border-sc-ink bg-sc-ink px-3 py-1.5 text-[12px] font-medium text-[#0b0d10] transition hover:bg-white"
+								class="rounded-md border border-sc-ink bg-sc-ink px-3 py-1.5 text-[12px] font-medium text-[#0b0d10] transition hover:bg-sc-ink"
 								title="Open the backtest form on Runs"
 								on:click={() => void openNewBacktest()}
 							>Run backtest</button>
@@ -5516,7 +5516,7 @@
 															<button
 																type="button"
 																data-testid={`set-default-backtest-params-${item.result_id}`}
-																class={`rounded-md  border px-2.5 py-1 text-[12px] transition disabled:opacity-60 ${
+																class={`rounded-md border px-2.5 py-1 text-[12px] transition disabled:opacity-60 ${
 																	pinnedBacktestId && pinnedBacktestId === item.result_id
 																		? 'border-emerald-500 bg-emerald-600/30 text-emerald-100 cursor-default'
 																		: 'border-emerald-700 bg-emerald-950/30 text-emerald-200 hover:bg-emerald-900/40'
@@ -5543,7 +5543,7 @@
 															<button
 																type="button"
 																data-testid={`edit-backtest-params-${item.result_id}`}
-																class={`rounded-md  border px-2.5 py-1 text-[12px] transition ${
+																class={`rounded-md border px-2.5 py-1 text-[12px] transition ${
 																	expandedBacktestParamsId === item.result_id
 																		? 'border-sc-line2 bg-sc-panel2 text-sc-ink'
 																		: 'border-sc-line2 bg-sc-bg text-sc-ink2 hover:border-sc-ink4 hover:text-sc-ink'
@@ -5865,7 +5865,7 @@
 											{@const topResults = optimizationTopResults(item)}
 											<button
 												data-testid={`optimization-row-${item.result_id}`}
-												class={`rounded-md  border border-sc-line bg-sc-panel px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-sc-line2 shadow-[0_0_0_1px_rgba(96,165,250,0.08),0_18px_40px_rgba(59,130,246,0.08)]' : ''}`}
+												class={`rounded-md border border-sc-line bg-sc-panel px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-sc-line2 shadow-[0_0_0_1px_rgba(96,165,250,0.08),0_18px_40px_rgba(59,130,246,0.08)]' : ''}`}
 												on:click={() => void openResult(item)}
 											>
 												<div class="flex flex-wrap items-center gap-2 text-xs">
@@ -6089,7 +6089,7 @@
 									{:else}
 										<div class="mt-3 grid gap-3">
 											{#each walkForwardHistory as item}
-												<button class={`rounded-md  border border-sc-line bg-sc-panel px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-sc-line2 shadow-[0_0_0_1px_rgba(167,139,250,0.08),0_18px_40px_rgba(139,92,246,0.08)]' : ''}`} on:click={() => void openResult(item)}>
+												<button class={`rounded-md border border-sc-line bg-sc-panel px-4 py-3 text-left transition ${historyCardBorder(item.result_type)} ${selectedResultId === item.result_id ? 'border-sc-line2 shadow-[0_0_0_1px_rgba(167,139,250,0.08),0_18px_40px_rgba(139,92,246,0.08)]' : ''}`} on:click={() => void openResult(item)}>
 													<div class="flex items-center gap-2 text-xs">
 														<span class="font-mono text-sc-ink">{item.result_id}</span>
 														<span class={` border px-1 py-0.5 text-[10px] ${resultTypeBadge(item.result_type)}`}>{item.result_type}</span>
@@ -6131,7 +6131,7 @@
 				{#if activeTab === 'robustness' && toolRequest}
 					<div class="max-w-5xl space-y-3" data-testid="strategy-heatmap-tab">
 						<div>
-							<div class="text-xs uppercase tracking-widest text-sc-ink">Parameter heatmap</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Parameter heatmap</div>
 							<p class="mt-1 text-[11px] text-sc-ink3">
 								Does this strategy work across a range of its settings, or only at one exact point? A robust edge sits on a plateau of neighbouring settings that also work; a lone bright cell is usually fitted noise.
 							</p>
@@ -6143,7 +6143,7 @@
 				{#if activeTab === 'robustness' && toolRequest}
 					<div class="max-w-5xl space-y-3" data-testid="strategy-markets-tab">
 						<div>
-							<div class="text-xs uppercase tracking-widest text-sc-ink">Market grid</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Market grid</div>
 							<p class="mt-1 text-[11px] text-sc-ink3">
 								Does the edge carry beyond {backtestForm.symbol || 'this market'}? The same strategy and settings on other markets and timeframes: an edge that only shows up where it was built is often fitted to that market.
 							</p>

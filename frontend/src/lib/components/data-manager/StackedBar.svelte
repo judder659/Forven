@@ -10,7 +10,7 @@
 	$: segments = STATES.filter((state) => (counts[state] ?? 0) > 0).map((state) => ({ state, n: counts[state] ?? 0 }));
 </script>
 
-<div class="flex w-full gap-px overflow-hidden bg-[#111]" style="height: {height}px" role="img"
+<div class="flex w-full gap-px overflow-hidden bg-sc-panel2" style="height: {height}px" role="img"
 	aria-label={segments.length ? segments.map((s) => `${s.n} ${STATE_LABEL[s.state].toLowerCase()}`).join(', ') : 'no series'}>
 	{#each segments as segment (segment.state)}
 		<div class="h-full min-w-[2px] {stateFillClass(segment.state)}" style="width: {(segment.n / total) * 100}%"

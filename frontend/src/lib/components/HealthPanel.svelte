@@ -42,7 +42,7 @@
 			case 'green': return 'bg-emerald-400';
 			case 'amber': return 'bg-yellow-400';
 			case 'red': return 'bg-red-400';
-			default: return 'bg-[#555]';
+			default: return 'bg-sc-line2';
 		}
 	}
 
@@ -51,7 +51,7 @@
 			case 'green': return 'text-emerald-400';
 			case 'amber': return 'text-yellow-400';
 			case 'red': return 'text-red-400';
-			default: return 'text-[#888]';
+			default: return 'text-sc-ink2';
 		}
 	}
 
@@ -92,19 +92,19 @@
 </script>
 
 {#if healthData || error}
-<div class="mb-4 border border-[#222] bg-[#050505]">
+<div class="rounded-md mb-4 border border-sc-line bg-sc-panel">
 	<!-- Header bar — always visible -->
 	<button
 		type="button"
-		class="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#111] transition-colors"
+		class="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-sc-panel2 transition-colors"
 		on:click={toggleExpanded}
 	>
 		<span class={`inline-flex h-2.5 w-2.5 rounded-full ${stateColor(overall)} ${overall === 'red' ? 'animate-pulse' : ''}`}></span>
-		<span class="text-[11px] uppercase tracking-[0.15em] text-[#888] font-medium">System Health</span>
+		<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2 font-medium">System Health</span>
 		<span class={`text-[11px] font-semibold ${stateTextColor(overall)}`}>{overallLabel(overall)}</span>
 
 		{#if !monitorRunning && !error}
-			<span class="text-[10px] text-[#666] ml-1">(starting...)</span>
+			<span class="text-[10px] text-sc-ink3 ml-1">(starting...)</span>
 		{/if}
 
 		{#if failedChecks.length > 0}
@@ -113,38 +113,38 @@
 			</span>
 		{/if}
 
-		<svg class={`w-3.5 h-3.5 text-[#555] ml-auto transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+		<svg class={`w-3.5 h-3.5 text-sc-ink3 ml-auto transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 		</svg>
 	</button>
 
 	{#if expanded}
-	<div class="px-4 pb-3 border-t border-[#1a1a1a]">
+	<div class="px-4 pb-3 border-t border-sc-line">
 		{#if error}
-			<p class="text-xs text-[#666] py-2">{error}</p>
+			<p class="text-xs text-sc-ink3 py-2">{error}</p>
 		{:else}
 			<!-- Row 1: Service status pills -->
 			<div class="flex flex-wrap gap-2 py-3">
 				{#each components as comp (comp.name)}
 					<div
-						class="inline-flex items-center gap-1.5 px-2.5 py-1 border border-[#222] bg-[#111] text-[11px]"
+						class="rounded-md inline-flex items-center gap-1.5 px-2.5 py-1 border border-sc-line bg-sc-panel2 text-[11px]"
 						title="{comp.message}\nLast seen: {formatLastSeen(comp.last_seen)}"
 					>
 						<span class={`inline-flex h-1.5 w-1.5 rounded-full ${stateColor(comp.state)}`}></span>
-						<span class="text-[#888]">{friendlyName(comp.name)}</span>
-						<span class="text-[#666] text-[10px]">{formatLastSeen(comp.last_seen)}</span>
+						<span class="text-sc-ink2">{friendlyName(comp.name)}</span>
+						<span class="text-sc-ink3 text-[10px]">{formatLastSeen(comp.last_seen)}</span>
 					</div>
 				{/each}
 				{#if components.length === 0}
-					<span class="text-xs text-[#666]">No components registered yet</span>
+					<span class="text-xs text-sc-ink3">No components registered yet</span>
 				{/if}
 			</div>
 
 			<!-- Row 2: Data integrity summary -->
 			{#if dataChecks.length > 0}
-				<div class="flex flex-wrap gap-x-4 gap-y-1 py-2 border-t border-[#1a1a1a] text-[11px]">
+				<div class="flex flex-wrap gap-x-4 gap-y-1 py-2 border-t border-sc-line text-[11px]">
 					{#each dataChecks as check (check.name)}
-						<span class={check.passed ? 'text-[#666]' : check.severity === 'critical' ? 'text-red-400' : 'text-yellow-400'}>
+						<span class={check.passed ? 'text-sc-ink3' : check.severity === 'critical' ? 'text-red-400' : 'text-yellow-400'}>
 							{check.name.replace(/_/g, ' ')}: {check.detail}
 						</span>
 					{/each}

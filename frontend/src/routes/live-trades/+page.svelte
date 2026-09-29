@@ -13,8 +13,8 @@
 <div class="workspace-layout flex-col">
 	<div class="flex-shrink-0 px-2 pt-2">
 		<div class="flex items-center gap-1 mb-2">
-			<span class="text-[10px] uppercase tracking-wider text-red-400">Live strategies — REAL exchange orders</span>
-			<span class="text-[10px] text-[#666] ml-2">Loading deployed sessions can take a few seconds.</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">Live strategies — REAL exchange orders</span>
+			<span class="text-[10px] text-sc-ink3 ml-2">Loading deployed sessions can take a few seconds.</span>
 			<a
 				href="/all-trades"
 				data-sveltekit-preload-data="hover"

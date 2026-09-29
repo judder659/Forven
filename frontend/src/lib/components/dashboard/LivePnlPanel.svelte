@@ -83,9 +83,9 @@
 	});
 </script>
 
-<div class="border border-[#222] bg-[#050505]" data-testid="live-pnl">
-	<div class="flex items-center justify-between gap-2 border-b border-[#222] px-3 py-2">
-		<h2 class="text-[10px] font-bold uppercase tracking-wider text-gray-400" title="Closed live trades, net of recorded fees and funding">
+<div class="rounded-md border border-sc-line bg-sc-panel" data-testid="live-pnl">
+	<div class="flex items-center justify-between gap-2 border-b border-sc-line px-3 py-2">
+		<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title="Closed live trades, net of recorded fees and funding">
 			Realized P&amp;L
 			{#if hasTrades && total !== null}
 				<span class="ml-1 font-mono normal-case {pnlTone(total)}">{formatUsd(total, true)}</span>
@@ -95,9 +95,9 @@
 			{#each RANGES as option (option.key)}
 				<button
 					type="button"
-					class="border px-2 py-0.5 text-[10px] uppercase tracking-wider {range === option.key
-						? 'border-white bg-white text-black'
-						: 'border-[#333] text-gray-500 hover:text-white'}"
+					class="rounded-md border px-2 py-0.5 text-[12px] {range === option.key
+						? 'border-sc-ink bg-sc-ink text-black'
+						: 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}"
 					aria-pressed={range === option.key}
 					on:click={() => (range = option.key)}
 				>
@@ -109,7 +109,7 @@
 	<div class="relative px-1 py-1">
 		<div bind:this={container} class="h-[180px] w-full"></div>
 		{#if !hasTrades}
-			<div class="absolute inset-0 flex items-center justify-center bg-[#050505] text-xs text-gray-500">
+			<div class="absolute inset-0 flex items-center justify-center bg-sc-panel text-xs text-sc-ink3">
 				No closed live trades yet.
 			</div>
 		{/if}

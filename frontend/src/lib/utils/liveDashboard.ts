@@ -55,13 +55,13 @@ export function formatPct(fraction: number | null | undefined, digits = 1): stri
 }
 
 export function pnlTone(value: number | null | undefined): string {
-	if (value === null || value === undefined || !Number.isFinite(value) || value === 0) return 'text-gray-300';
+	if (value === null || value === undefined || !Number.isFinite(value) || value === 0) return 'text-sc-ink2';
 	return value > 0 ? 'text-emerald-400' : 'text-red-400';
 }
 
 /** Meter fill by how much of a limit is used: calm, then amber, then red. */
 export function meterTone(usedFraction: number | null): string {
-	if (usedFraction === null) return 'bg-[#333]';
+	if (usedFraction === null) return 'bg-sc-line2';
 	if (usedFraction >= 0.8) return 'bg-red-500';
 	if (usedFraction >= 0.5) return 'bg-amber-400';
 	return 'bg-emerald-500';

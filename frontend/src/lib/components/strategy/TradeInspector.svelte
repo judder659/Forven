@@ -50,45 +50,45 @@
 </script>
 
 {#if !trade}
-	<div class="px-1 py-6 text-center text-[12px] text-[#555]">
+	<div class="px-1 py-6 text-center text-[12px] text-sc-ink3">
 		Click a trade on the chart or in the Trades list to see why it opened and closed.
 	</div>
 {:else}
 	<div class="space-y-3">
 		<div class="flex flex-wrap items-center gap-2">
-			<span class="text-[12px] font-bold text-white">Trade #{trade.n}</span>
-			<span class="text-[11px] text-[#555]">of {total}</span>
-			<span class="border px-1.5 py-0.5 text-[9px] uppercase tracking-wider {trade.direction === 'long' ? 'border-emerald-800 text-emerald-400' : 'border-orange-800 text-orange-400'}">{trade.direction}</span>
-			<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-[#888]" title={trade.sample === 'out' ? 'Scored by Run Backtest' : 'Used to shape the rule; not scored'}>{trade.sample === 'out' ? 'out-of-sample' : 'in-sample'}</span>
+			<span class="text-[12px] font-bold text-sc-ink">Trade #{trade.n}</span>
+			<span class="text-[11px] text-sc-ink3">of {total}</span>
+			<span class="border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {trade.direction === 'long' ? 'border-emerald-800 text-emerald-400' : 'border-orange-800 text-orange-400'}">{trade.direction}</span>
+			<span class="border border-sc-line2 px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title={trade.sample === 'out' ? 'Scored by Run Backtest' : 'Used to shape the rule; not scored'}>{trade.sample === 'out' ? 'out-of-sample' : 'in-sample'}</span>
 			<span class="ml-auto flex items-center gap-1">
 				<button type="button" on:click={() => dispatch('step', -1)} disabled={trade.n <= 1} aria-label="previous trade"
-					class="border border-[#2a2a2a] px-2 py-0.5 text-[11px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">←</button>
+					class="rounded-md border border-sc-line2 px-2 py-0.5 text-[11px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30">←</button>
 				<button type="button" on:click={() => dispatch('step', 1)} disabled={trade.n >= total} aria-label="next trade"
-					class="border border-[#2a2a2a] px-2 py-0.5 text-[11px] text-[#aaa] hover:border-white hover:text-white disabled:opacity-30">→</button>
+					class="rounded-md border border-sc-line2 px-2 py-0.5 text-[11px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30">→</button>
 				<button type="button" on:click={() => dispatch('focus')}
-					class="border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white">Show on chart</button>
+					class="rounded-md border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink">Show on chart</button>
 			</span>
 		</div>
 
 		<div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] sm:grid-cols-4" data-testid="trade-facts">
-			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Entry</div><div class="font-mono text-[#ddd]">{stamp(trade.entry_time)}</div><div class="font-mono text-[11px] text-[#888]">@ {formatValue(trade.entry_price)}</div></div>
-			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Exit · {EXIT_REASONS[trade.exit_reason] ?? trade.exit_reason.replaceAll('_', ' ')}</div><div class="font-mono text-[#ddd]">{stamp(trade.exit_time)}</div><div class="font-mono text-[11px] text-[#888]">@ {formatValue(trade.exit_price)}</div></div>
-			<div title="Return on equity after fees and funding, as the backtest counts it"><div class="text-[9px] uppercase tracking-wider text-[#555]">Result</div><div class="font-mono text-[15px] {trade.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.pnl_pct)}</div><div class="text-[11px] text-[#888]">{trade.bars_held} bars held</div></div>
-			<div><div class="text-[9px] uppercase tracking-wider text-[#555]">Costs</div><div class="font-mono text-[11px] text-[#aaa]">fees {pct(-trade.cost_pct)}</div><div class="font-mono text-[11px] text-[#aaa]" title="Funding paid is negative, funding received positive">funding {pct(trade.funding_pct, 3)}</div><div class="font-mono text-[11px] text-[#666]">size {(trade.size_fraction * 100).toFixed(0)}% of equity</div></div>
+			<div><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Entry</div><div class="font-mono text-sc-ink">{stamp(trade.entry_time)}</div><div class="font-mono text-[11px] text-sc-ink2">@ {formatValue(trade.entry_price)}</div></div>
+			<div><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Exit · {EXIT_REASONS[trade.exit_reason] ?? trade.exit_reason.replaceAll('_', ' ')}</div><div class="font-mono text-sc-ink">{stamp(trade.exit_time)}</div><div class="font-mono text-[11px] text-sc-ink2">@ {formatValue(trade.exit_price)}</div></div>
+			<div title="Return on equity after fees and funding, as the backtest counts it"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Result</div><div class="font-mono text-[15px] {trade.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.pnl_pct)}</div><div class="text-[11px] text-sc-ink2">{trade.bars_held} bars held</div></div>
+			<div><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Costs</div><div class="font-mono text-[11px] text-sc-ink2">fees {pct(-trade.cost_pct)}</div><div class="font-mono text-[11px] text-sc-ink2" title="Funding paid is negative, funding received positive">funding {pct(trade.funding_pct, 3)}</div><div class="font-mono text-[11px] text-sc-ink3">size {(trade.size_fraction * 100).toFixed(0)}% of equity</div></div>
 		</div>
 
-		<div class="border-t border-[#161616] pt-2">
-			<div class="mb-1 text-[10px] uppercase tracking-wider text-[#666]">Why it entered{#if trade.entry_signal_time}<span class="normal-case tracking-normal text-[#555]"> · rule held on the {stamp(trade.entry_signal_time)} close, filled at the next open</span>{/if}</div>
+		<div class="border-t border-sc-line pt-2">
+			<div class="mb-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Why it entered{#if trade.entry_signal_time}<span class="normal-case tracking-normal text-sc-ink3"> · rule held on the {stamp(trade.entry_signal_time)} close, filled at the next open</span>{/if}</div>
 			{#if trade.entry_rule}
 				<RuleTraceView rule={trade.entry_rule} {labels} {knobs} />
 			{:else}
-				<div class="text-[11px] text-[#555]">The entry rule state is not available for this trade.</div>
+				<div class="text-[11px] text-sc-ink3">The entry rule state is not available for this trade.</div>
 			{/if}
 		</div>
 
-		<div class="border-t border-[#161616] pt-2">
-			<div class="mb-1 text-[10px] uppercase tracking-wider text-[#666]">Why it exited{#if trade.exit_signal_time}<span class="normal-case tracking-normal text-[#555]"> · rule held on the {stamp(trade.exit_signal_time)} close</span>{/if}</div>
-			<p class="text-[12px] text-[#aaa]">{exitStory(trade)}</p>
+		<div class="border-t border-sc-line pt-2">
+			<div class="mb-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Why it exited{#if trade.exit_signal_time}<span class="normal-case tracking-normal text-sc-ink3"> · rule held on the {stamp(trade.exit_signal_time)} close</span>{/if}</div>
+			<p class="text-[12px] text-sc-ink2">{exitStory(trade)}</p>
 			{#if trade.exit_rule}
 				<div class="mt-1"><RuleTraceView rule={trade.exit_rule} {labels} {knobs} /></div>
 			{/if}

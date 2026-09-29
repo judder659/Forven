@@ -43,10 +43,10 @@
 <div class="terminal-card p-4 space-y-3">
 	<div class="flex items-start justify-between gap-3">
 		<div class="min-w-0">
-			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Software updates</h3>
-			<p class="text-[11px] text-[#666] mt-0.5">
+			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Software updates</h3>
+			<p class="text-[11px] text-sc-ink3 mt-0.5">
 				Fast-forward Forven to the latest code on
-				<span class="text-[#888]">{status?.target_remote ?? 'origin'}/{status?.target_branch ?? 'main'}</span>.
+				<span class="text-sc-ink2">{status?.target_remote ?? 'origin'}/{status?.target_branch ?? 'main'}</span>.
 				Applying restarts the backend.
 			</p>
 		</div>
@@ -61,19 +61,19 @@
 	</div>
 
 	<dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-		<dt class="text-[#666]">Current version</dt>
-		<dd class="text-white font-mono">{status?.current_version ?? '—'}{#if status?.current_sha_short} ({status.current_sha_short}){/if}</dd>
-		<dt class="text-[#666]">Branch</dt>
-		<dd class="text-white font-mono">{status?.current_branch ?? '—'}</dd>
+		<dt class="text-sc-ink3">Current version</dt>
+		<dd class="text-sc-ink font-mono">{status?.current_version ?? '—'}{#if status?.current_sha_short} ({status.current_sha_short}){/if}</dd>
+		<dt class="text-sc-ink3">Branch</dt>
+		<dd class="text-sc-ink font-mono">{status?.current_branch ?? '—'}</dd>
 		{#if status?.checked_at}
-			<dt class="text-[#666]">Last checked</dt>
-			<dd class="text-[#888]">{new Date(status.checked_at).toLocaleString()}</dd>
+			<dt class="text-sc-ink3">Last checked</dt>
+			<dd class="text-sc-ink2">{new Date(status.checked_at).toLocaleString()}</dd>
 		{/if}
 	</dl>
 
 	<div class="flex items-center justify-between gap-3 pt-1">
 		<p
-			class="text-[11px] {status?.update_available ? 'text-emerald-400' : 'text-[#666]'}"
+			class="text-[11px] {status?.update_available ? 'text-emerald-400' : 'text-sc-ink3'}"
 			role="status"
 		>
 			{#if $updateRestarting}
@@ -100,7 +100,7 @@
 		<p class="text-[11px] text-yellow-400">{status.blocked_reason}</p>
 	{/if}
 	{#if status?.update_available && status?.latest_commit_subject}
-		<p class="text-[11px] text-[#666] truncate">Latest: {status.latest_commit_subject}</p>
+		<p class="text-[11px] text-sc-ink3 truncate">Latest: {status.latest_commit_subject}</p>
 	{/if}
 	{#if $updateError}
 		<p class="text-[11px] text-red-400" role="alert">{$updateError}</p>

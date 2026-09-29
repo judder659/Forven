@@ -118,7 +118,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <div
-	class="fixed inset-0 z-[110] flex justify-end bg-black/80"
+	class="fixed inset-0 z-[110] flex justify-end bg-sc-bg/80"
 	role="button"
 	tabindex="0"
 	aria-label="Close agent detail"
@@ -128,17 +128,17 @@
 	<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 	<!-- svelte-ignore a11y-click-events-have-key-events -->
 	<div
-		class="w-full max-w-xl h-full bg-[#050505] border-l border-[#222] overflow-y-auto"
+		class="w-full max-w-xl h-full bg-sc-panel border-l border-sc-line overflow-y-auto"
 		role="dialog"
 		aria-modal="true"
 		aria-label={`${agentName} details`}
 		tabindex="-1"
 		on:click|stopPropagation
 	>
-		<header class="sticky top-0 z-10 bg-[#050505] border-b border-[#222] px-5 py-3 flex items-center justify-between">
+		<header class="sticky top-0 z-10 bg-sc-panel border-b border-sc-line px-5 py-3 flex items-center justify-between">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-widest text-white">{agentName}</h2>
-				<p class="mt-0.5 text-[11px] font-mono text-[#666]">{agentId}</p>
+				<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">{agentName}</h2>
+				<p class="mt-0.5 text-[11px] font-mono text-sc-ink3">{agentId}</p>
 			</div>
 			<button
 				type="button"
@@ -156,7 +156,7 @@
 		<div class="p-5 space-y-6">
 			<!-- Role + instructions + discord -->
 			<section class="space-y-3">
-				<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+				<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					Role
 					<input
 						type="text"
@@ -164,7 +164,7 @@
 						class="terminal-input mt-1 w-full text-sm"
 					/>
 				</label>
-				<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+				<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					Instructions
 					<textarea
 						rows="6"
@@ -173,10 +173,10 @@
 						placeholder="Optional system-prompt guidance"
 					></textarea>
 				</label>
-				<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+				<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					Discord bot token
 					{#if hasDiscordToken}
-						<span class="text-[#555] normal-case tracking-normal">(saved — enter a new value to overwrite)</span>
+						<span class="text-sc-ink3 normal-case tracking-normal">(saved — enter a new value to overwrite)</span>
 					{/if}
 					<input
 						type="password"
@@ -190,7 +190,7 @@
 						type="button"
 						on:click={saveAgent}
 						disabled={savingAgent}
-						class="terminal-button-primary text-xs"
+						class="terminal-button-primary text-[12px]"
 					>
 						{savingAgent ? 'Saving…' : 'Save'}
 					</button>
@@ -198,7 +198,7 @@
 						type="button"
 						on:click={testDiscord}
 						disabled={discordTesting || !hasDiscordToken}
-						class="terminal-button text-xs"
+						class="terminal-button text-[12px]"
 					>
 						{discordTesting ? 'Sending…' : 'Send Discord test'}
 					</button>
@@ -208,8 +208,8 @@
 			<!-- Per-agent documents -->
 			<section class="terminal-card p-4 space-y-4">
 				<div>
-					<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Agent docs</h3>
-					<p class="text-xs text-[#666] mt-1">
+					<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Agent docs</h3>
+					<p class="text-xs text-sc-ink3 mt-1">
 						SOUL.md, AGENTS.md, and ROLE.md are saved per-agent. Restart background services if
 						behavior updates need to propagate.
 					</p>
@@ -218,18 +218,18 @@
 				{#each DOC_KINDS as doc (doc)}
 					<div class="space-y-2">
 						<div class="flex items-center justify-between">
-							<span class="block text-[10px] uppercase tracking-wider text-[#666]">{doc.toUpperCase()}.md</span>
+							<span class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{doc.toUpperCase()}.md</span>
 							<button
 								type="button"
 								on:click={() => saveDoc(doc)}
 								disabled={docSaving[doc] || docsLoading}
-								class="terminal-button text-[10px] px-2 py-1 disabled:opacity-60"
+								class="terminal-button text-[12px] px-2 py-1 disabled:opacity-60"
 							>
 								{docSaving[doc] ? 'Saving…' : 'Save'}
 							</button>
 						</div>
 						{#if docsLoading}
-							<p class="text-xs text-[#666]">Loading {doc.toUpperCase()}.md…</p>
+							<p class="text-xs text-sc-ink3">Loading {doc.toUpperCase()}.md…</p>
 						{:else}
 							<textarea
 								rows="8"

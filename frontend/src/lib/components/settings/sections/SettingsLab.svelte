@@ -303,19 +303,19 @@
 	>
 		<header class="flex flex-wrap items-start justify-between gap-2">
 			<div>
-				<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
+				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
 					System mode
 				</h2>
-				<p class="text-xs text-[#666] mt-0.5">
+				<p class="text-xs text-sc-ink3 mt-0.5">
 					Controls how much of the pipeline runs on its own. Changes apply immediately.
 				</p>
 			</div>
 			{#if systemModeLoading}
-				<span class="text-[10px] uppercase tracking-wider text-[#666]">Loading…</span>
+				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading…</span>
 			{:else}
 				<div class="text-right">
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">
-						Current: <span class="text-white">{systemMode}</span>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						Current: <span class="text-sc-ink">{systemMode}</span>
 					</div>
 					{#if systemMode === 'manual'}
 						<div class="mt-1 text-[10px] text-yellow-400">{pausedManualSummary(pausedManualCounts)}</div>
@@ -340,14 +340,14 @@
 				{@const saving = systemModeSaving === option.value}
 				<button
 					type="button"
-					class={`text-left border px-3 py-3 transition-colors ${
+					class={`rounded-md text-left border px-3 py-3 transition-colors ${
 						active
 							? option.value === 'auto'
 								? 'border-red-600 bg-red-500/10 text-red-400'
 								: option.value === 'semi_auto'
-									? 'border-[#555] bg-[#111] text-white'
+									? 'border-sc-line2 bg-sc-panel2 text-sc-ink'
 									: 'border-yellow-600 bg-yellow-500/10 text-yellow-400'
-							: 'border-[#222] bg-[#050505] text-[#888] hover:border-[#555] hover:bg-[#111]'
+							: 'border-sc-line bg-sc-panel text-sc-ink2 hover:border-sc-line2 hover:bg-sc-panel2'
 					} ${saving ? 'opacity-60 cursor-wait' : ''}`}
 					on:click={() => handleSystemModeChange(option.value)}
 					disabled={systemModeLoading || saving}
@@ -356,15 +356,15 @@
 					<div class="flex items-center justify-between mb-1">
 						<span class="font-bold uppercase tracking-wider text-[11px]">{option.label}</span>
 						{#if active}
-							<span class="text-[10px] uppercase tracking-wider">Active</span>
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Active</span>
 						{:else if saving}
-							<span class="text-[10px] uppercase tracking-wider">Saving…</span>
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Saving…</span>
 						{/if}
 					</div>
-					<div class="text-[11px] uppercase tracking-wider text-[#666] mb-1">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">
 						{option.short}
 					</div>
-					<p class="text-xs leading-relaxed text-[#888]">{option.description}</p>
+					<p class="text-xs leading-relaxed text-sc-ink2">{option.description}</p>
 				</button>
 			{/each}
 		</div>
@@ -398,7 +398,7 @@
 				/>
 			{:else if sub.id === 'lab-pipeline-preset' && presetEntry}
 				<div class="flex items-center justify-between gap-3 py-3">
-					<label for="pipeline-stance-select" class="text-sm text-[#888]">{presetEntry.label}</label>
+					<label for="pipeline-stance-select" class="text-sm text-sc-ink2">{presetEntry.label}</label>
 					<select
 						id="pipeline-stance-select"
 						value={presetSelectValue}
@@ -410,7 +410,7 @@
 						{/each}
 					</select>
 				</div>
-				<p class="text-xs text-[#666] pb-3">{presetEntry.description}</p>
+				<p class="text-xs text-sc-ink3 pb-3">{presetEntry.description}</p>
 			{:else}
 				{#each entries as entry (entry.id)}
 					<SettingsFieldRow

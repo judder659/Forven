@@ -26,31 +26,31 @@
 	$: regimeKey = (regime || '').trim().toUpperCase();
 	$: badgeClass = regimeKey
 		? regimeBadgeClass({ regime: regimeKey, uncertain })
-		: 'border-[#333] bg-[#111] text-[#888]';
+		: 'border-sc-line2 bg-sc-panel2 text-sc-ink2';
 </script>
 
-<div class="flex flex-wrap items-center justify-between gap-3 border border-[#222] bg-[#050505] px-4 py-3">
+<div class="rounded-md flex flex-wrap items-center justify-between gap-3 border border-sc-line bg-sc-panel px-4 py-3">
 	<div class="flex flex-wrap items-center gap-4">
 		<!-- Current regime -->
 		<div class="flex items-center gap-2">
-			<span class="text-[11px] uppercase tracking-[0.16em] text-[#666]">Regime</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Regime</span>
 			{#if regimeKey}
-				<span class={`inline-flex border px-2.5 py-0.5 text-[11px] uppercase tracking-[0.14em] font-medium ${badgeClass}`}>
+				<span class={`inline-flex border px-2.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] font-medium ${badgeClass}`}>
 					{formatRegimeLabel({ regime: regimeKey })}
 				</span>
 				{#if uncertain}
-					<span class="text-[10px] uppercase tracking-[0.14em] text-yellow-400">uncertain</span>
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400">uncertain</span>
 				{/if}
 			{:else}
-				<span class="text-sm text-[#666]">—</span>
+				<span class="text-sm text-sc-ink3">—</span>
 			{/if}
 		</div>
 
 		<!-- Confidence -->
 		{#if confidence > 0}
 			<div class="flex items-center gap-1.5">
-				<span class="text-[11px] uppercase tracking-[0.16em] text-[#666]">Conf</span>
-				<span class={`text-sm font-medium ${uncertain ? 'text-yellow-400' : 'text-white'}`}>
+				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Conf</span>
+				<span class={`text-sm font-medium ${uncertain ? 'text-yellow-400' : 'text-sc-ink'}`}>
 					{(confidence * 100).toFixed(0)}%
 				</span>
 			</div>
@@ -58,26 +58,26 @@
 
 		<!-- Champion -->
 		<div class="flex items-center gap-1.5">
-			<span class="text-[11px] uppercase tracking-[0.16em] text-[#666]">Champion</span>
-			<span class={`text-sm font-medium ${championId ? 'text-emerald-400' : 'text-[#666]'}`}>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Champion</span>
+			<span class={`text-sm font-medium ${championId ? 'text-emerald-400' : 'text-sc-ink3'}`}>
 				{championId || 'None'}
 			</span>
 		</div>
 
 		<!-- Last cycle -->
 		<div class="flex items-center gap-1.5">
-			<span class="text-[11px] uppercase tracking-[0.16em] text-[#666]">Last cycle</span>
-			<span class={`text-sm ${running ? 'text-emerald-400' : 'text-[#888]'}`}>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Last cycle</span>
+			<span class={`text-sm ${running ? 'text-emerald-400' : 'text-sc-ink2'}`}>
 				{running ? 'Running…' : formatRelative(lastCycleAt)}
 			</span>
 		</div>
 	</div>
 
 	<button
-		class="border px-4 py-2 text-sm font-medium transition-colors
+		class="rounded-md border px-4 py-2 text-sm font-medium transition-colors
 			{running
-				? 'cursor-not-allowed border-[#333] bg-[#111] text-[#555]'
-				: 'border-white text-white hover:bg-[#111]'}"
+				? 'cursor-not-allowed border-sc-line2 bg-sc-panel2 text-sc-ink3'
+				: 'border-sc-ink text-sc-ink hover:bg-sc-panel2'}"
 		disabled={running}
 		on:click={() => dispatch('run')}
 	>

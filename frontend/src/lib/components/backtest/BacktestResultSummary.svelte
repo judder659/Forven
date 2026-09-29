@@ -165,9 +165,9 @@
 	<!-- Metrics grid -->
 	<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
 		{#each tiles as tile}
-			<div class="border border-[#1a1a1a] bg-[#050505] px-3 py-2.5" title={tile.title}>
-				<div class="text-[9px] uppercase tracking-wider text-[#666]">{tile.label}</div>
-				<div class="mt-1 font-mono text-sm tabular-nums {tile.tone === 'pos' ? 'text-emerald-400' : tile.tone === 'neg' ? 'text-red-400' : 'text-white'}">
+			<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2.5" title={tile.title}>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{tile.label}</div>
+				<div class="mt-1 font-mono text-sm tabular-nums {tile.tone === 'pos' ? 'text-emerald-400' : tile.tone === 'neg' ? 'text-red-400' : 'text-sc-ink'}">
 					{tile.value}
 				</div>
 			</div>
@@ -176,13 +176,13 @@
 
 	<!-- Equity / drawdown / benchmark -->
 	{#if hasEquity}
-		<div class="border border-[#1a1a1a] bg-[#050505] p-4">
+		<div class="rounded-md border border-sc-line bg-sc-panel p-4">
 			<div class="mb-2 flex items-center justify-between">
-				<div class="text-[10px] uppercase tracking-widest text-[#666]">Equity & Drawdown</div>
-				<div class="flex items-center gap-3 text-[10px] text-[#666]">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Equity & Drawdown</div>
+				<div class="flex items-center gap-3 text-[10px] text-sc-ink3">
 					<span class="flex items-center gap-1"><span class="inline-block h-2 w-3 bg-cyan-400/80"></span> Strategy</span>
 					{#if result.benchmark_curve && result.benchmark_curve.length > 1}
-						<span class="flex items-center gap-1"><span class="inline-block h-2 w-3 bg-gray-500/80"></span> Buy &amp; Hold</span>
+						<span class="flex items-center gap-1"><span class="inline-block h-2 w-3 bg-sc-ink4/80"></span> Buy &amp; Hold</span>
 					{/if}
 				</div>
 			</div>
@@ -197,15 +197,15 @@
 
 	<!-- Trade table + summary -->
 	{#if trades.length > 0}
-		<div class="border border-[#1a1a1a] bg-[#050505] p-4">
+		<div class="rounded-md border border-sc-line bg-sc-panel p-4">
 			<div class="mb-3 flex items-center justify-between">
-				<div class="text-[10px] uppercase tracking-widest text-[#666]">
-					Trades <span class="ml-1 normal-case tracking-normal text-[#555]">(out-of-sample · showing {visibleTrades.length} of {trades.length})</span>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+					Trades <span class="ml-1 normal-case tracking-normal text-sc-ink3">(out-of-sample · showing {visibleTrades.length} of {trades.length})</span>
 				</div>
 				{#if trades.length > TRADE_PREVIEW_ROWS}
 					<button
 						type="button"
-						class="text-[10px] uppercase tracking-wider text-[#888] underline hover:text-white"
+						class="text-[12px] text-sc-ink2 underline hover:text-sc-ink"
 						on:click={() => (showAllTrades = !showAllTrades)}
 					>
 						{showAllTrades ? `Show first ${TRADE_PREVIEW_ROWS}` : `Show all ${trades.length}`}
@@ -215,20 +215,20 @@
 
 			{#if summary}
 				<div class="mb-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4 lg:grid-cols-7">
-					<div><span class="text-[#666]">W/L:</span> <span class="font-mono text-white">{summary.wins}/{summary.losses}</span></div>
-					<div><span class="text-[#666]">Avg Win:</span> <span class="font-mono text-emerald-400">{summary.avgWin.toFixed(2)}%</span></div>
-					<div><span class="text-[#666]">Avg Loss:</span> <span class="font-mono text-red-400">{summary.avgLoss.toFixed(2)}%</span></div>
-					<div><span class="text-[#666]">Payoff:</span> <span class="font-mono text-white">{summary.payoff !== null ? summary.payoff.toFixed(2) : '–'}</span></div>
-					<div><span class="text-[#666]">Best:</span> <span class="font-mono text-emerald-400">{summary.best.toFixed(2)}%</span></div>
-					<div><span class="text-[#666]">Worst:</span> <span class="font-mono text-red-400">{summary.worst.toFixed(2)}%</span></div>
-					<div><span class="text-[#666]">Streak W/L:</span> <span class="font-mono text-white">{summary.maxWinStreak}/{summary.maxLossStreak}</span></div>
+					<div><span class="text-sc-ink3">W/L:</span> <span class="font-mono text-sc-ink">{summary.wins}/{summary.losses}</span></div>
+					<div><span class="text-sc-ink3">Avg Win:</span> <span class="font-mono text-emerald-400">{summary.avgWin.toFixed(2)}%</span></div>
+					<div><span class="text-sc-ink3">Avg Loss:</span> <span class="font-mono text-red-400">{summary.avgLoss.toFixed(2)}%</span></div>
+					<div><span class="text-sc-ink3">Payoff:</span> <span class="font-mono text-sc-ink">{summary.payoff !== null ? summary.payoff.toFixed(2) : '–'}</span></div>
+					<div><span class="text-sc-ink3">Best:</span> <span class="font-mono text-emerald-400">{summary.best.toFixed(2)}%</span></div>
+					<div><span class="text-sc-ink3">Worst:</span> <span class="font-mono text-red-400">{summary.worst.toFixed(2)}%</span></div>
+					<div><span class="text-sc-ink3">Streak W/L:</span> <span class="font-mono text-sc-ink">{summary.maxWinStreak}/{summary.maxLossStreak}</span></div>
 				</div>
 			{/if}
 
-			<div class="max-h-72 overflow-auto border border-[#1a1a1a]">
+			<div class="max-h-72 overflow-auto border border-sc-line">
 				<table class="w-full text-[11px]">
-					<thead class="sticky top-0 bg-[#050505] text-[#666]">
-						<tr class="border-b border-[#1a1a1a]">
+					<thead class="sticky top-0 bg-sc-panel text-sc-ink3">
+						<tr class="border-b border-sc-line">
 							<th class="px-2 py-1.5 text-left font-medium">Dir</th>
 							<th class="px-2 py-1.5 text-left font-medium">Entry</th>
 							<th class="px-2 py-1.5 text-right font-medium">Entry px</th>
@@ -239,18 +239,18 @@
 							<th class="px-2 py-1.5 text-right font-medium">Bars</th>
 						</tr>
 					</thead>
-					<tbody class="font-mono text-[#888]">
+					<tbody class="font-mono text-sc-ink2">
 						{#each visibleTrades as t}
 							{@const pnl = tradePnlPct(t)}
-							<tr class="border-b border-[#111]">
+							<tr class="border-b border-sc-line">
 								<td class="px-2 py-1 {(t.direction ?? 'long') === 'short' ? 'text-red-400' : 'text-emerald-400'}">{(t.direction ?? 'long')}</td>
-								<td class="px-2 py-1 text-[#666]">{fmtTime(t.entry_time)}</td>
+								<td class="px-2 py-1 text-sc-ink3">{fmtTime(t.entry_time)}</td>
 								<td class="px-2 py-1 text-right">{fmtPrice(t.entry_price)}</td>
 								<td class="px-2 py-1 text-right">{fmtPrice(t.exit_price)}</td>
 								<td class="px-2 py-1 text-right {(pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pnl === null ? '–' : pnl.toFixed(2)}</td>
-								<td class="px-2 py-1 text-right text-[#666]">{sizeFrac(t) !== null ? `${(sizeFrac(t)! * 100).toFixed(0)}%` : '–'}</td>
-								<td class="px-2 py-1 text-left text-[#555]">{exitReason(t) || '–'}</td>
-								<td class="px-2 py-1 text-right text-[#666]">{num(row(t).bars_held) ?? '–'}</td>
+								<td class="px-2 py-1 text-right text-sc-ink3">{sizeFrac(t) !== null ? `${(sizeFrac(t)! * 100).toFixed(0)}%` : '–'}</td>
+								<td class="px-2 py-1 text-left text-sc-ink3">{exitReason(t) || '–'}</td>
+								<td class="px-2 py-1 text-right text-sc-ink3">{num(row(t).bars_held) ?? '–'}</td>
 							</tr>
 						{/each}
 					</tbody>

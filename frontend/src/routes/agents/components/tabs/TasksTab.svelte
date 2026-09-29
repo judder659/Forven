@@ -254,7 +254,7 @@
 	function statusClass(status: string): string {
 		switch (status) {
 			case 'running':
-				return 'text-white border-[#555] bg-[#111]';
+				return 'text-sc-ink border-sc-line2 bg-sc-panel2';
 			case 'paused_manual':
 				return 'text-yellow-400 border-yellow-900 bg-yellow-500/10';
 			case 'done':
@@ -265,9 +265,9 @@
 			case 'blocked':
 				return 'text-yellow-400 border-yellow-900 bg-yellow-500/10';
 			case 'rejected':
-				return 'text-[#888] border-[#333] bg-[#111]';
+				return 'text-sc-ink2 border-sc-line2 bg-sc-panel2';
 			default:
-				return 'text-[#888] border-[#333] bg-[#111]';
+				return 'text-sc-ink2 border-sc-line2 bg-sc-panel2';
 		}
 	}
 
@@ -390,7 +390,7 @@
 			case 'demotion':
 				return 'text-red-400 border-red-900 bg-red-500/10';
 			default:
-				return 'text-[#888] border-[#333] bg-[#111]';
+				return 'text-sc-ink2 border-sc-line2 bg-sc-panel2';
 		}
 	}
 
@@ -399,9 +399,9 @@
 			case 'live_trading':
 				return 'text-yellow-400 border-yellow-900 bg-yellow-500/10';
 			case 'pipeline':
-				return 'text-[#ccc] border-[#333] bg-[#111]';
+				return 'text-sc-ink border-sc-line2 bg-sc-panel2';
 			default:
-				return 'text-[#888] border-[#333] bg-[#111]';
+				return 'text-sc-ink2 border-sc-line2 bg-sc-panel2';
 		}
 	}
 
@@ -645,12 +645,12 @@
 </script>
 
 <div class="h-full flex overflow-hidden">
-	<aside class="w-64 flex-shrink-0 border-r border-[#222] bg-[#050505] p-3 overflow-y-auto">
-		<div class="text-[10px] uppercase tracking-wider text-[#666] mb-2">Status Buckets</div>
+	<aside class="w-64 flex-shrink-0 border-r border-sc-line bg-sc-panel p-3 overflow-y-auto">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Status Buckets</div>
 		{#each BUCKETS as item}
 			<button
 				type="button"
-				class="w-full text-left px-2 py-1.5 text-xs transition-colors {bucket === item.id ? 'bg-[#111] text-white' : 'text-[#888] hover:bg-[#111]'}"
+				class="w-full text-left px-2 py-1.5 text-[12px] transition-colors {bucket === item.id ? 'bg-sc-panel2 text-sc-ink' : 'text-sc-ink2 hover:bg-sc-panel2'}"
 				on:click={() => selectBucket(item.id)}
 			>
 				{item.label} ({bucketCount(item.id)})
@@ -658,27 +658,27 @@
 		{/each}
 
 		<div class="flex items-center justify-between mt-4 mb-2">
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Agent Filters</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agent Filters</div>
 			{#if availableAgents.length > 0 || hasUnassignedTasks}
 				<div class="flex items-center gap-1.5">
-					<button type="button" class="text-[10px] text-[#666] hover:text-white" on:click={() => setAllAgentFilters(true)}>All</button>
-					<span class="text-[10px] text-[#333]">/</span>
-					<button type="button" class="text-[10px] text-[#666] hover:text-white" on:click={() => setAllAgentFilters(false)}>None</button>
+					<button type="button" class="text-[12px] text-sc-ink3 hover:text-sc-ink" on:click={() => setAllAgentFilters(true)}>All</button>
+					<span class="text-[10px] text-sc-ink4">/</span>
+					<button type="button" class="text-[12px] text-sc-ink3 hover:text-sc-ink" on:click={() => setAllAgentFilters(false)}>None</button>
 				</div>
 			{/if}
 		</div>
 		{#if availableAgents.length === 0 && !hasUnassignedTasks}
-			<div class="text-xs text-[#555]">No agents found</div>
+			<div class="text-xs text-sc-ink3">No agents found</div>
 		{:else}
 			<div class="space-y-1 text-xs">
 				{#each availableAgents as agent}
-					<label class="flex items-center gap-2 text-[#888]">
+					<label class="flex items-center gap-2 text-sc-ink2">
 						<input type="checkbox" bind:checked={agentFilter[agent]} class="accent-white w-3 h-3" />
 						<span class="truncate">{agent}</span>
 					</label>
 				{/each}
 				{#if hasUnassignedTasks}
-					<label class="flex items-center gap-2 text-[#888]">
+					<label class="flex items-center gap-2 text-sc-ink2">
 						<input type="checkbox" bind:checked={agentFilter[MCP_FILTER_KEY]} class="accent-white w-3 h-3" />
 						<span class="truncate">mcp / unassigned</span>
 					</label>
@@ -688,36 +688,36 @@
 	</aside>
 
 	<section class="flex-1 min-w-0 overflow-hidden flex flex-col">
-		<div class="flex-shrink-0 border-b border-[#222] flex items-center">
+		<div class="flex-shrink-0 border-b border-sc-line flex items-center">
 			<button
 				type="button"
-				class="px-4 py-2.5 text-xs font-medium transition-colors border-b-2 {activeTab === 'tasks' ? 'text-white border-white' : 'text-[#888] border-transparent hover:text-white'}"
+				class="px-4 py-2.5 text-xs font-medium transition-colors border-b-2 {activeTab === 'tasks' ? 'text-sc-ink border-sc-ink' : 'text-sc-ink2 border-transparent hover:text-sc-ink'}"
 				on:click={() => selectTab('tasks')}
 			>
 				Task Log
-				<span class="ml-1 text-[10px] text-[#666]">({filteredTasks.length})</span>
+				<span class="ml-1 text-[10px] text-sc-ink3">({filteredTasks.length})</span>
 			</button>
 			<button
 				type="button"
-				class="px-4 py-2.5 text-xs font-medium transition-colors border-b-2 {activeTab === 'motion' ? 'text-white border-white' : 'text-[#888] border-transparent hover:text-white'}"
+				class="px-4 py-2.5 text-xs font-medium transition-colors border-b-2 {activeTab === 'motion' ? 'text-sc-ink border-sc-ink' : 'text-sc-ink2 border-transparent hover:text-sc-ink'}"
 				on:click={() => selectTab('motion')}
 			>
 				Pipeline Motion Log
-				<span class="ml-1 text-[10px] text-[#666]">({motionLog.length})</span>
+				<span class="ml-1 text-[10px] text-sc-ink3">({motionLog.length})</span>
 			</button>
 		</div>
 
 		{#if activeTab === 'motion'}
 			<div class="flex-1 flex flex-col overflow-hidden">
-				<div class="flex-shrink-0 p-3 border-b border-[#222]">
+				<div class="flex-shrink-0 p-3 border-b border-sc-line">
 					<div class="flex items-center justify-between gap-2">
-						<div class="text-xs text-[#888]">
+						<div class="text-xs text-sc-ink2">
 							{filteredMotionLog.length} visible of {motionLog.length} promotion/demotion decisions
 						</div>
 						<button
 							type="button"
 							on:click={refresh}
-							class="text-[11px] border border-[#333] px-2 py-1 text-[#888] hover:text-white hover:border-white transition-colors"
+							class="rounded-md text-[11px] border border-sc-line2 px-2 py-1 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 						>
 							Refresh
 						</button>
@@ -727,42 +727,42 @@
 						<button
 							type="button"
 							on:click={() => (motionScopeFilter = 'all')}
-							class={`text-[10px] px-2 py-1 border uppercase transition-colors ${motionScopeFilter === 'all' ? 'text-white border-white bg-white/10' : 'text-[#888] border-[#333] hover:border-[#555]'}`}
+							class={`rounded-md text-[12px] px-2 py-1 border transition-colors ${motionScopeFilter === 'all' ? 'text-sc-ink border-sc-ink bg-sc-ink/10' : 'text-sc-ink2 border-sc-line2 hover:border-sc-line2'}`}
 						>
 							All ({motionScopeCount('all')})
 						</button>
 						<button
 							type="button"
 							on:click={() => (motionScopeFilter = 'pipeline')}
-							class={`text-[10px] px-2 py-1 border uppercase transition-colors ${motionScopeFilter === 'pipeline' ? 'text-white border-[#555] bg-[#111]' : 'text-[#888] border-[#333] hover:border-[#555]'}`}
+							class={`rounded-md text-[12px] px-2 py-1 border transition-colors ${motionScopeFilter === 'pipeline' ? 'text-sc-ink border-sc-line2 bg-sc-panel2' : 'text-sc-ink2 border-sc-line2 hover:border-sc-line2'}`}
 						>
 							Pipeline ({motionScopeCount('pipeline')})
 						</button>
 						<button
 							type="button"
 							on:click={() => (motionScopeFilter = 'live_trading')}
-							class={`text-[10px] px-2 py-1 border uppercase transition-colors ${motionScopeFilter === 'live_trading' ? 'text-yellow-400 border-yellow-700 bg-yellow-500/10' : 'text-[#888] border-[#333] hover:border-[#555]'}`}
+							class={`rounded-md text-[12px] px-2 py-1 border transition-colors ${motionScopeFilter === 'live_trading' ? 'text-yellow-400 border-yellow-700 bg-yellow-500/10' : 'text-sc-ink2 border-sc-line2 hover:border-sc-line2'}`}
 						>
 							Live Trading ({motionScopeCount('live_trading')})
 						</button>
 						<button
 							type="button"
 							on:click={() => (motionTypeFilter = 'all')}
-							class={`text-[10px] px-2 py-1 border uppercase transition-colors ${motionTypeFilter === 'all' ? 'text-white border-white bg-white/10' : 'text-[#888] border-[#333] hover:border-[#555]'}`}
+							class={`rounded-md text-[12px] px-2 py-1 border transition-colors ${motionTypeFilter === 'all' ? 'text-sc-ink border-sc-ink bg-sc-ink/10' : 'text-sc-ink2 border-sc-line2 hover:border-sc-line2'}`}
 						>
 							All Types
 						</button>
 						<button
 							type="button"
 							on:click={() => (motionTypeFilter = 'promotion')}
-							class={`text-[10px] px-2 py-1 border uppercase transition-colors ${motionTypeFilter === 'promotion' ? 'text-emerald-400 border-emerald-700 bg-emerald-500/10' : 'text-[#888] border-[#333] hover:border-[#555]'}`}
+							class={`rounded-md text-[12px] px-2 py-1 border transition-colors ${motionTypeFilter === 'promotion' ? 'text-emerald-400 border-emerald-700 bg-emerald-500/10' : 'text-sc-ink2 border-sc-line2 hover:border-sc-line2'}`}
 						>
 							Promotions
 						</button>
 						<button
 							type="button"
 							on:click={() => (motionTypeFilter = 'demotion')}
-							class={`text-[10px] px-2 py-1 border uppercase transition-colors ${motionTypeFilter === 'demotion' ? 'text-red-400 border-red-700 bg-red-500/10' : 'text-[#888] border-[#333] hover:border-[#555]'}`}
+							class={`rounded-md text-[12px] px-2 py-1 border transition-colors ${motionTypeFilter === 'demotion' ? 'text-red-400 border-red-700 bg-red-500/10' : 'text-sc-ink2 border-sc-line2 hover:border-sc-line2'}`}
 						>
 							Demotions
 						</button>
@@ -770,7 +770,7 @@
 							type="text"
 							bind:value={motionSearch}
 							placeholder="Search motion decisions..."
-							class="bg-black border border-[#333] px-2 py-1 text-[11px] min-w-[220px] flex-1 focus:outline-none focus:border-white"
+							class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1 text-[11px] min-w-[220px] flex-1 focus:outline-none focus:border-sc-ink"
 						/>
 					</div>
 				</div>
@@ -779,19 +779,19 @@
 					{#if motionError}
 						<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{motionError}</div>
 					{:else if motionLoading}
-						<div class="text-xs text-[#666]">Loading motion decisions...</div>
+						<div class="text-xs text-sc-ink3">Loading motion decisions...</div>
 					{:else if motionLog.length === 0}
-						<div class="text-xs text-[#555]">No promotion/demotion decisions have been recorded yet.</div>
+						<div class="text-xs text-sc-ink3">No promotion/demotion decisions have been recorded yet.</div>
 					{:else if filteredMotionLog.length === 0}
-						<div class="text-xs text-[#555]">No motion decisions match the current filters ({motionLog.length} total hidden by filters).</div>
+						<div class="text-xs text-sc-ink3">No motion decisions match the current filters ({motionLog.length} total hidden by filters).</div>
 					{:else}
 						<div class="space-y-2">
 							{#each filteredMotionLog as entry}
-								<div class="border border-[#1a1a1a] p-2 bg-[#050505] text-[11px]">
+								<div class="rounded-md border border-sc-line p-2 bg-sc-panel text-[11px]">
 									<div class="flex items-start justify-between gap-2">
 										<div class="min-w-0">
-											<div class="text-white font-mono truncate">{motionStrategyLabel(entry)}</div>
-											<div class="text-[#666] truncate">{entry.strategy_name || '--'}</div>
+											<div class="text-sc-ink font-mono truncate">{motionStrategyLabel(entry)}</div>
+											<div class="text-sc-ink3 truncate">{entry.strategy_name || '--'}</div>
 										</div>
 										<div class="flex items-center gap-1 flex-wrap justify-end">
 											<span class={`px-1.5 py-0.5 border uppercase text-[10px] ${motionTypeClass(String(entry.motion_type || ''))}`}>
@@ -805,29 +805,29 @@
 										</div>
 									</div>
 
-									<div class="mt-1 text-[#ccc] font-mono">
+									<div class="mt-1 text-sc-ink font-mono">
 										{String(entry.from_state || '--')} → {String(entry.to_state || '--')}
 									</div>
-									<div class="mt-1 text-[#555]">
+									<div class="mt-1 text-sc-ink3">
 										{fmtDate(entry.timestamp)} | actor {entry.actor || '--'} | decision {entry.decision_mode || 'transition'}
 									</div>
 									{#if entry.layman_reason}
 										<div class="mt-1 text-yellow-400">{compact(entry.layman_reason, 260)}</div>
 									{/if}
 									{#if entry.reason}
-										<div class="mt-1 text-[#666]">raw: {compact(entry.reason, 220)}</div>
+										<div class="mt-1 text-sc-ink3">raw: {compact(entry.reason, 220)}</div>
 									{/if}
 									{#if motionMetricPreview(entry)}
-										<div class="mt-1 text-[#888]">{motionMetricPreview(entry)}</div>
+										<div class="mt-1 text-sc-ink2">{motionMetricPreview(entry)}</div>
 									{/if}
 
 									<div class="mt-1 flex items-center justify-between">
-										<div class="text-[10px] text-[#555]">
+										<div class="text-[10px] text-sc-ink3">
 											{Array.isArray(entry.related_activity) ? entry.related_activity.length : 0} related activity records
 										</div>
 										<button
 											type="button"
-											class="text-[10px] text-[#888] hover:text-white"
+											class="text-[12px] text-sc-ink2 hover:text-sc-ink"
 											on:click={() => toggleMotionExpanded(entry)}
 										>
 											{isMotionExpanded(entry) ? 'Hide Details' : 'Show Details'}
@@ -836,32 +836,32 @@
 
 									{#if isMotionExpanded(entry)}
 										<div class="mt-2 space-y-2">
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[10px] uppercase tracking-wider text-[#666]">Plain-English Why</div>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Plain-English Why</div>
 												<div class="text-yellow-400 mt-1">{entry.layman_reason || '--'}</div>
 											</div>
 
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[10px] uppercase tracking-wider text-[#666]">Decision Summary</div>
-												<div class="text-[#888] mt-1">{entry.decision_summary || '--'}</div>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Decision Summary</div>
+												<div class="text-sc-ink2 mt-1">{entry.decision_summary || '--'}</div>
 											</div>
 
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[10px] uppercase tracking-wider text-[#666]">Strategy Snapshot</div>
-												<pre class="mt-1 max-h-[120px] overflow-auto bg-black border border-[#1a1a1a] p-2 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(entry.strategy_snapshot)}</pre>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Strategy Snapshot</div>
+												<pre class="rounded-md mt-1 max-h-[120px] overflow-auto bg-sc-bg border border-sc-line p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(entry.strategy_snapshot)}</pre>
 											</div>
 
 											{#if Array.isArray(entry.related_activity) && entry.related_activity.length > 0}
-												<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-													<div class="text-[10px] uppercase tracking-wider text-[#666]">Related Activity</div>
+												<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+													<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Related Activity</div>
 													<div class="mt-1 space-y-1.5 max-h-[140px] overflow-auto">
 														{#each entry.related_activity as related}
-															<div class="border border-[#1a1a1a] px-2 py-1 bg-[#050505]">
-																<div class="text-[#ccc]">{String(related.message || '--')}</div>
-																<div class="text-[#555]">{fmtDate(related.timestamp)}</div>
-																<div class="text-[#666]">{String(related.source || '--')} / {String(related.level || '--')}</div>
+															<div class="rounded-md border border-sc-line px-2 py-1 bg-sc-panel">
+																<div class="text-sc-ink">{String(related.message || '--')}</div>
+																<div class="text-sc-ink3">{fmtDate(related.timestamp)}</div>
+																<div class="text-sc-ink3">{String(related.source || '--')} / {String(related.level || '--')}</div>
 																{#if related.data}
-																	<pre class="mt-1 max-h-[90px] overflow-auto bg-black border border-[#1a1a1a] p-1.5 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(related.data)}</pre>
+																	<pre class="rounded-md mt-1 max-h-[90px] overflow-auto bg-sc-bg border border-sc-line p-1.5 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(related.data)}</pre>
 																{/if}
 															</div>
 														{/each}
@@ -869,9 +869,9 @@
 												</div>
 											{/if}
 
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[10px] uppercase tracking-wider text-[#666]">Full Motion Record</div>
-												<pre class="mt-1 max-h-[160px] overflow-auto bg-black border border-[#1a1a1a] p-2 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(entry)}</pre>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Full Motion Record</div>
+												<pre class="rounded-md mt-1 max-h-[160px] overflow-auto bg-sc-bg border border-sc-line p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(entry)}</pre>
 											</div>
 										</div>
 									{/if}
@@ -882,30 +882,30 @@
 				</div>
 			</div>
 		{:else}
-			<div class="flex-shrink-0 p-3 border-b border-[#222] flex items-center gap-2">
+			<div class="flex-shrink-0 p-3 border-b border-sc-line flex items-center gap-2">
 				<input
 					type="text"
 					bind:value={search}
 					placeholder="Search task containers..."
-					class="bg-black border border-[#333] px-3 py-1.5 text-xs w-80 focus:outline-none focus:border-white"
+					class="rounded-md bg-sc-bg border border-sc-line2 px-3 py-1.5 text-xs w-80 focus:outline-none focus:border-sc-ink"
 				/>
 				{#if modelFilter}
 					<button
 						type="button"
-						class="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 border text-[#ccc] border-[#333] bg-[#111] hover:border-[#555]"
+						class="rounded-md inline-flex items-center gap-1 text-[12px] px-2 py-1 border text-sc-ink border-sc-line2 bg-sc-panel2 hover:border-sc-line2"
 						title="Clear model filter"
 						on:click={clearModelFilter}
 					>
 						model: {modelFilter}
-						<span class="text-[#888]">x</span>
+						<span class="text-sc-ink2">x</span>
 					</button>
 				{/if}
-				<span class="text-[10px] text-[#666]">{filteredTasks.length} items</span>
+				<span class="text-[10px] text-sc-ink3">{filteredTasks.length} items</span>
 				<div class="flex-1"></div>
 				<button
 					type="button"
 					on:click={refresh}
-					class="text-[11px] border border-[#333] px-2 py-1 text-[#888] hover:text-white hover:border-white transition-colors"
+					class="rounded-md text-[11px] border border-sc-line2 px-2 py-1 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 				>
 					Refresh
 				</button>
@@ -919,10 +919,10 @@
 			{/if}
 
 			<div class="flex-1 flex min-h-0">
-				<div class="flex-1 min-w-0 overflow-auto border-r border-[#222]">
+				<div class="flex-1 min-w-0 overflow-auto border-r border-sc-line">
 					<table class="w-full text-xs">
-						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-[#666] border-b border-[#222]">
+						<thead class="sticky top-0 bg-sc-panel2 z-10">
+							<tr class="text-sc-ink3 border-b border-sc-line">
 								<th class="py-2 px-2 text-left">T-ID</th>
 								<th class="py-2 px-2 text-left">Title</th>
 								<th class="py-2 px-2 text-left">Agent</th>
@@ -937,38 +937,38 @@
 						</thead>
 						<tbody>
 							{#if loading}
-								<tr><td colspan="10" class="py-8 text-center text-[#555]">Loading...</td></tr>
+								<tr><td colspan="10" class="py-8 text-center text-sc-ink3">Loading...</td></tr>
 							{:else if filteredTasks.length === 0}
-								<tr><td colspan="10" class="py-8 text-center text-[#555]">No task containers match this view.</td></tr>
+								<tr><td colspan="10" class="py-8 text-center text-sc-ink3">No task containers match this view.</td></tr>
 							{:else}
 								{#each filteredTasks as task}
-									<tr class="border-t border-[#181818] hover:bg-[#111] transition-colors">
+									<tr class="border-t border-sc-line hover:bg-sc-panel2 transition-colors">
 										<td class="py-2 px-2 font-mono">
 											{#if task.display_id}
-												<button type="button" class="text-white hover:underline" on:click={() => goto(`/tasks/${encodeURIComponent(String(task.display_id))}?returnTo=${encodeURIComponent(RETURN_TO)}`)}>
+												<button type="button" class="text-sc-ink hover:underline" on:click={() => goto(`/tasks/${encodeURIComponent(String(task.display_id))}?returnTo=${encodeURIComponent(RETURN_TO)}`)}>
 													{task.display_id}
 												</button>
 											{:else}
-												<span class="text-[#555]">--</span>
+												<span class="text-sc-ink3">--</span>
 											{/if}
 										</td>
-										<td class="py-2 px-2 text-[#ccc] max-w-[340px] truncate" title={taskTitleLabel(task) || String(task.title || '')}>{compact(taskTitleLabel(task), 76)}</td>
-										<td class="py-2 px-2 {isMcpTask(task) ? 'text-[#888]' : 'text-[#ccc]'}">{taskAgentLabel(task)}</td>
-										<td class="py-2 px-2 text-[#ccc] font-mono">{strategyLabel(task)}</td>
+										<td class="py-2 px-2 text-sc-ink max-w-[340px] truncate" title={taskTitleLabel(task) || String(task.title || '')}>{compact(taskTitleLabel(task), 76)}</td>
+										<td class="py-2 px-2 {isMcpTask(task) ? 'text-sc-ink2' : 'text-sc-ink'}">{taskAgentLabel(task)}</td>
+										<td class="py-2 px-2 text-sc-ink font-mono">{strategyLabel(task)}</td>
 										<td class="py-2 px-2">
 											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${statusClass(taskStatus(task))}`}>{taskStatusLabel(taskStatus(task))}</span>
 										</td>
-										<td class="py-2 px-2 text-right text-[#ccc] font-mono">{Number(task.priority ?? 0)}</td>
-										<td class="py-2 px-2 text-[#666]">{fmtDate(task.created_at)}</td>
-										<td class="py-2 px-2 text-[#666]">{fmtDate(task.completed_at)}</td>
-										<td class="py-2 px-2 text-right text-[#888] font-mono">{Array.isArray(task.audit_log) ? task.audit_log.length : 0}</td>
+										<td class="py-2 px-2 text-right text-sc-ink font-mono">{Number(task.priority ?? 0)}</td>
+										<td class="py-2 px-2 text-sc-ink3">{fmtDate(task.created_at)}</td>
+										<td class="py-2 px-2 text-sc-ink3">{fmtDate(task.completed_at)}</td>
+										<td class="py-2 px-2 text-right text-sc-ink2 font-mono">{Array.isArray(task.audit_log) ? task.audit_log.length : 0}</td>
 										<td class="py-2 px-2 text-right whitespace-nowrap">
 											<div class="inline-flex items-center gap-2 justify-end">
-												<button type="button" class="text-white hover:underline" on:click={() => void inspectTask(task)}>Inspect</button>
+												<button type="button" class="text-sc-ink hover:underline" on:click={() => void inspectTask(task)}>Inspect</button>
                                                 {#if taskStatus(task) === "blocked"}<button type="button" class="text-amber-400 disabled:opacity-40" disabled={Boolean(actionPending[task.id])} on:click={() => void resumeTask(task)}>Resume</button>{/if}
 												<button
 													type="button"
-													class="text-[#888] hover:text-white disabled:opacity-40"
+													class="text-sc-ink2 hover:text-sc-ink disabled:opacity-40"
 													disabled={Boolean(actionPending[task.id])}
 													on:click={() => void reassignTask(task)}
 												>Reassign</button>
@@ -987,32 +987,32 @@
 					</table>
 				</div>
 
-				<aside class="w-[400px] max-w-[45%] min-w-[320px] overflow-auto bg-[#050505]">
-				<div class="px-3 py-2 border-b border-[#222] text-xs uppercase tracking-wider text-[#666]">Task Inspector</div>
+				<aside class="w-[400px] max-w-[45%] min-w-[320px] overflow-auto bg-sc-panel">
+				<div class="px-3 py-2 border-b border-sc-line font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Task Inspector</div>
 				{#if !selectedTask}
-					<div class="p-4 text-xs text-[#555]">Select a task container to inspect audit and tool-call history.</div>
+					<div class="p-4 text-xs text-sc-ink3">Select a task container to inspect audit and tool-call history.</div>
 				{:else}
 					<div class="p-3 space-y-3">
-						<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-							<div class="text-[10px] uppercase tracking-wider text-[#666]">Container</div>
-							<div class="mt-1 text-sm text-white font-mono">{selectedTask.display_id || '--'}</div>
-							<div class="mt-2 text-xs text-[#ccc]">{taskTitleLabel(selectedTask) || selectedTask.title || 'Untitled Task'}</div>
+						<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Container</div>
+							<div class="mt-1 text-sm text-sc-ink font-mono">{selectedTask.display_id || '--'}</div>
+							<div class="mt-2 text-xs text-sc-ink">{taskTitleLabel(selectedTask) || selectedTask.title || 'Untitled Task'}</div>
 							<div class="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-								<div><span class="text-[#666]">Agent:</span> <span class="{isMcpTask(selectedTask) ? 'text-[#888]' : 'text-[#ccc]'}">{taskAgentLabel(selectedTask)}</span></div>
-								<div><span class="text-[#666]">Status:</span> <span class="text-[#ccc]">{taskStatusLabel(taskStatus(selectedTask))}</span></div>
-								<div><span class="text-[#666]">Strategy:</span> <span class="text-[#ccc] font-mono">{strategyLabel(selectedTask)}</span></div>
-								<div><span class="text-[#666]">Priority:</span> <span class="text-[#ccc]">{Number(selectedTask.priority ?? 0)}</span></div>
+								<div><span class="text-sc-ink3">Agent:</span> <span class="{isMcpTask(selectedTask) ? 'text-sc-ink2' : 'text-sc-ink'}">{taskAgentLabel(selectedTask)}</span></div>
+								<div><span class="text-sc-ink3">Status:</span> <span class="text-sc-ink">{taskStatusLabel(taskStatus(selectedTask))}</span></div>
+								<div><span class="text-sc-ink3">Strategy:</span> <span class="text-sc-ink font-mono">{strategyLabel(selectedTask)}</span></div>
+								<div><span class="text-sc-ink3">Priority:</span> <span class="text-sc-ink">{Number(selectedTask.priority ?? 0)}</span></div>
 							</div>
 							<div class="mt-3 flex items-center gap-2">
 								<button
 									type="button"
-									class="text-[11px] border border-[#333] px-2 py-1 text-[#888] hover:text-white hover:border-white transition-colors disabled:opacity-40"
+									class="rounded-md text-[11px] border border-sc-line2 px-2 py-1 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors disabled:opacity-40"
 									disabled={Boolean(actionPending[selectedTask.id])}
 									on:click={() => selectedTask && void reassignTask(selectedTask)}
 								>Reassign</button>
 								<button
 									type="button"
-									class="text-[11px] border border-red-900 px-2 py-1 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors disabled:opacity-40"
+									class="rounded-md text-[11px] border border-red-900 px-2 py-1 text-red-400 hover:text-red-300 hover:border-red-700 transition-colors disabled:opacity-40"
 									disabled={Boolean(actionPending[selectedTask.id])}
 									on:click={() => selectedTask && void dismissTask(selectedTask)}
 								>Dismiss</button>
@@ -1020,28 +1020,28 @@
 						</div>
 
 							{#if detailLoading}
-								<div class="text-xs text-[#666]">Loading details...</div>
+								<div class="text-xs text-sc-ink3">Loading details...</div>
 							{:else if detailError}
 								<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{detailError}</div>
 							{:else}
-								<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
+								<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
 									<div class="flex items-center justify-between">
-										<div class="text-[10px] uppercase tracking-wider text-[#666]">Container Log</div>
-										<div class="text-[10px] text-[#555]">{inspectorLog.length} events</div>
+										<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Container Log</div>
+										<div class="text-[10px] text-sc-ink3">{inspectorLog.length} events</div>
 									</div>
 									{#if inspectorLog.length === 0}
-										<div class="mt-2 text-xs text-[#555]">No lifecycle events recorded.</div>
+										<div class="mt-2 text-xs text-sc-ink3">No lifecycle events recorded.</div>
 									{:else}
 										<div class="mt-2 space-y-1.5 max-h-[260px] overflow-auto">
 											{#each inspectorLog as entry}
-												<div class="text-[11px] border border-[#1a1a1a] px-2 py-1 bg-[#050505]">
+												<div class="rounded-md text-[11px] border border-sc-line px-2 py-1 bg-sc-panel">
 													<div class="flex items-center justify-between gap-2">
-														<div class={entry.hasError ? 'text-red-400' : 'text-[#ccc]'}>{entry.title}</div>
-														<div class="text-[#555]">{fmtDate(entry.timestamp)}</div>
+														<div class={entry.hasError ? 'text-red-400' : 'text-sc-ink'}>{entry.title}</div>
+														<div class="text-sc-ink3">{fmtDate(entry.timestamp)}</div>
 													</div>
-													<div class="text-[#666] mt-0.5">{entry.summary}</div>
+													<div class="text-sc-ink3 mt-0.5">{entry.summary}</div>
 													{#if entry.detail}
-														<div class={entry.hasError ? 'text-red-400 mt-0.5' : 'text-[#666] mt-0.5'}>{entry.detail}</div>
+														<div class={entry.hasError ? 'text-red-400 mt-0.5' : 'text-sc-ink3 mt-0.5'}>{entry.detail}</div>
 													{/if}
 												</div>
 											{/each}
@@ -1049,37 +1049,37 @@
 									{/if}
 								</div>
 
-								<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-									<div class="text-[10px] uppercase tracking-wider text-[#666]">Task Data</div>
+								<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Task Data</div>
 									<div class="mt-2 space-y-2">
 										<div>
-											<div class="text-[10px] text-[#666] uppercase tracking-wider">Description</div>
-											<pre class="mt-1 max-h-[110px] overflow-auto bg-black border border-[#1a1a1a] p-2 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(selectedTask.description)}</pre>
+											<div class="text-[10px] text-sc-ink3 uppercase tracking-wider">Description</div>
+											<pre class="rounded-md mt-1 max-h-[110px] overflow-auto bg-sc-bg border border-sc-line p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(selectedTask.description)}</pre>
 										</div>
 										<div>
-											<div class="text-[10px] text-[#666] uppercase tracking-wider">Input Data</div>
-											<pre class="mt-1 max-h-[120px] overflow-auto bg-black border border-[#1a1a1a] p-2 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(selectedTask.input_data)}</pre>
+											<div class="text-[10px] text-sc-ink3 uppercase tracking-wider">Input Data</div>
+											<pre class="rounded-md mt-1 max-h-[120px] overflow-auto bg-sc-bg border border-sc-line p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(selectedTask.input_data)}</pre>
 										</div>
 										<div>
-											<div class="text-[10px] text-[#666] uppercase tracking-wider">Output Data</div>
-											<pre class="mt-1 max-h-[140px] overflow-auto bg-black border border-[#1a1a1a] p-2 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(selectedTask.output_data)}</pre>
+											<div class="text-[10px] text-sc-ink3 uppercase tracking-wider">Output Data</div>
+											<pre class="rounded-md mt-1 max-h-[140px] overflow-auto bg-sc-bg border border-sc-line p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(selectedTask.output_data)}</pre>
 										</div>
 										<div class="grid grid-cols-2 gap-2 text-[10px]">
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[#666] uppercase tracking-wider">Assigned By</div>
-												<div class="text-[#ccc] mt-1">{formatValue(selectedTask.assigned_by)}</div>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="text-sc-ink3 uppercase tracking-wider">Assigned By</div>
+												<div class="text-sc-ink mt-1">{formatValue(selectedTask.assigned_by)}</div>
 											</div>
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[#666] uppercase tracking-wider">Type</div>
-												<div class="text-[#ccc] mt-1">{formatValue(selectedTask.type)}</div>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="text-sc-ink3 uppercase tracking-wider">Type</div>
+												<div class="text-sc-ink mt-1">{formatValue(selectedTask.type)}</div>
 											</div>
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[#666] uppercase tracking-wider">Decision</div>
-												<div class="text-[#ccc] mt-1">{formatValue(selectedTask.decision)}</div>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="text-sc-ink3 uppercase tracking-wider">Decision</div>
+												<div class="text-sc-ink mt-1">{formatValue(selectedTask.decision)}</div>
 											</div>
-											<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-												<div class="text-[#666] uppercase tracking-wider">Feedback</div>
-												<div class="text-[#ccc] mt-1">{formatValue(selectedTask.feedback)}</div>
+											<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+												<div class="text-sc-ink3 uppercase tracking-wider">Feedback</div>
+												<div class="text-sc-ink mt-1">{formatValue(selectedTask.feedback)}</div>
 											</div>
 										</div>
 										{#if selectedTask.error}
@@ -1091,21 +1091,21 @@
 									</div>
 								</div>
 
-								<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
+								<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
 									<div class="flex items-center justify-between">
-										<div class="text-[10px] uppercase tracking-wider text-[#666]">Audit Log</div>
-										<div class="text-[10px] text-[#555]">{detailAuditLog.length} events</div>
+										<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Audit Log</div>
+										<div class="text-[10px] text-sc-ink3">{detailAuditLog.length} events</div>
 									</div>
 									{#if detailAuditLog.length === 0}
-										<div class="mt-2 text-xs text-[#555]">No audit events recorded.</div>
+										<div class="mt-2 text-xs text-sc-ink3">No audit events recorded.</div>
 									{:else}
 										<div class="mt-2 space-y-1.5 max-h-[220px] overflow-auto">
 											{#each detailAuditLog as event}
-												<div class="text-[11px] border border-[#1a1a1a] px-2 py-1 bg-[#050505]">
-													<div class="text-[#888]">{String(event.event || event.action || 'event')}</div>
-													<div class="text-[#555]">{fmtDate(event.timestamp || event.created_at)}</div>
+												<div class="rounded-md text-[11px] border border-sc-line px-2 py-1 bg-sc-panel">
+													<div class="text-sc-ink2">{String(event.event || event.action || 'event')}</div>
+													<div class="text-sc-ink3">{fmtDate(event.timestamp || event.created_at)}</div>
 													{#if event.reason}
-														<div class="text-[#666] mt-0.5">{compact(event.reason, 120)}</div>
+														<div class="text-sc-ink3 mt-0.5">{compact(event.reason, 120)}</div>
 													{/if}
 												</div>
 											{/each}
@@ -1113,20 +1113,20 @@
 									{/if}
 								</div>
 
-								<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
+								<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
 									<div class="flex items-center justify-between">
-										<div class="text-[10px] uppercase tracking-wider text-[#666]">Tool Calls</div>
-										<div class="text-[10px] text-[#555]">{detailToolCalls.length} calls</div>
+										<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Tool Calls</div>
+										<div class="text-[10px] text-sc-ink3">{detailToolCalls.length} calls</div>
 									</div>
 									{#if detailToolCalls.length === 0}
-										<div class="mt-2 text-xs text-[#555]">No tool calls recorded.</div>
+										<div class="mt-2 text-xs text-sc-ink3">No tool calls recorded.</div>
 									{:else}
 										<div class="mt-2 space-y-1.5 max-h-[260px] overflow-auto">
 											{#each detailToolCalls as call}
-												<div class="text-[11px] border border-[#1a1a1a] px-2 py-1 bg-[#050505]">
-													<div class="text-[#ccc]">{String(call.tool_name || call.tool || 'tool')}</div>
-													<div class="text-[#555]">{fmtDate(call.started_at || call.created_at)}</div>
-													<div class="text-[#666]">Duration: {fmtMs(call.duration_ms)}</div>
+												<div class="rounded-md text-[11px] border border-sc-line px-2 py-1 bg-sc-panel">
+													<div class="text-sc-ink">{String(call.tool_name || call.tool || 'tool')}</div>
+													<div class="text-sc-ink3">{fmtDate(call.started_at || call.created_at)}</div>
+													<div class="text-sc-ink3">Duration: {fmtMs(call.duration_ms)}</div>
 													{#if call.error}
 														<div class="text-red-400 mt-0.5">{compact(call.error, 120)}</div>
 													{/if}
@@ -1136,9 +1136,9 @@
 									{/if}
 								</div>
 
-								<div class="border border-[#1a1a1a] p-2 bg-[#050505]">
-									<div class="text-[10px] uppercase tracking-wider text-[#666]">Full Container Record</div>
-									<pre class="mt-2 max-h-[220px] overflow-auto bg-black border border-[#1a1a1a] p-2 text-[10px] text-[#888] whitespace-pre-wrap break-words">{formatValue(selectedTask)}</pre>
+								<div class="rounded-md border border-sc-line p-2 bg-sc-panel">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Full Container Record</div>
+									<pre class="rounded-md mt-2 max-h-[220px] overflow-auto bg-sc-bg border border-sc-line p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatValue(selectedTask)}</pre>
 								</div>
 							{/if}
 					</div>

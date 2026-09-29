@@ -684,15 +684,15 @@
 	}
 
 	function statusColor(status?: string | null): string {
-		if (!status) return 'border-[#333] text-[#666]';
+		if (!status) return 'border-sc-line2 text-sc-ink3';
 		const value = status.toLowerCase();
 		if (value === 'blocked' || value === 'incomplete') return 'border-amber-900 text-amber-400';
-		if (value === 'pending') return 'border-[#555] text-[#888]';
+		if (value === 'pending') return 'border-sc-line2 text-sc-ink2';
 		if (value === 'running') return 'border-emerald-500 text-emerald-400';
 		if (value === 'done' || value === 'completed' || value === 'reviewed') return 'border-emerald-900 text-emerald-400';
-		if (value === 'brain_invoke') return 'border-[#555] text-white';
+		if (value === 'brain_invoke') return 'border-sc-line2 text-sc-ink';
 		if (value === 'error' || value === 'failed') return 'border-red-900 text-red-400';
-		return 'border-[#333] text-[#666]';
+		return 'border-sc-line2 text-sc-ink3';
 	}
 
 	function parseAgentStatus(task: ForvenAgentTask | undefined | null): string {
@@ -755,9 +755,9 @@
 	// ---- Roster summary strip (replaces the removed KPI tiles) ------------ //
 	function liveStatusColor(status: string): string {
 		if (status === 'running') return 'border-emerald-500 text-emerald-400';
-		if (status === 'pending') return 'border-[#555] text-[#888]';
-		if (status === 'brain_invoke') return 'border-[#555] text-white';
-		return 'border-[#333] text-[#666]';
+		if (status === 'pending') return 'border-sc-line2 text-sc-ink2';
+		if (status === 'brain_invoke') return 'border-sc-line2 text-sc-ink';
+		return 'border-sc-line2 text-sc-ink3';
 	}
 
 	$: rosterAgentIds = displayedAgentDefs.map((card) => card.id);
@@ -1367,15 +1367,15 @@
 
 <div class={`h-full p-6 ${activeTab === 'tasks' ? 'flex flex-col overflow-hidden space-y-4' : 'overflow-y-auto space-y-6'}`}>
 	<div class="flex items-center gap-3 mb-2">
-		<svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+		<svg class="w-6 h-6 text-sc-ink" viewBox="0 0 24 24" fill="currentColor">
 			<path d="M12 2a7 7 0 00-7 7v2H3v4h2v2a7 7 0 0014 0v-2h2v-4h-2V9a7 7 0 00-7-7zm-3 9V9a3 3 0 116 0v2H9zm3 8a3 3 0 01-3-3v-1h6v1a3 3 0 01-3 3z" />
 		</svg>
 		<h1 class="text-2xl font-bold tracking-tight">Agent Hub</h1>
-		<span class="text-xs text-[#555]">({displayedAgentDefs.length} cards)</span>
+		<span class="text-xs text-sc-ink3">({displayedAgentDefs.length} cards)</span>
 		<div class="flex-1"></div>
 		<a
 			href="/settings"
-			class="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-[#888] hover:text-gray-200 underline decoration-dotted underline-offset-4 whitespace-nowrap transition-colors"
+			class="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-sc-ink2 hover:text-sc-ink underline decoration-dotted underline-offset-4 whitespace-nowrap transition-colors"
 			title="App-wide settings: trading, notifications, data (separate page)"
 			aria-label="Open app settings (trading, notifications, data)"
 		>
@@ -1401,7 +1401,7 @@
 	</div>
 
 	<!-- Tab bar (?tab= deep-linkable) -->
-	<div class="flex flex-wrap gap-1 border-b border-[#222]" role="tablist" aria-label="Agents control tabs">
+	<div class="flex flex-wrap gap-1 border-b border-sc-line" role="tablist" aria-label="Agents control tabs">
 		{#each TABS as tab (tab.id)}
 			<button
 				type="button"
@@ -1409,8 +1409,8 @@
 				aria-selected={activeTab === tab.id}
 				class={`px-4 py-2 text-xs font-bold tracking-wider uppercase transition-colors border-b-2 -mb-px ${
 					activeTab === tab.id
-						? 'text-white border-white'
-						: 'text-[#555] border-transparent hover:text-[#aaa]'
+						? 'text-sc-ink border-sc-ink'
+						: 'text-sc-ink3 border-transparent hover:text-sc-ink2'
 				}`}
 				on:click={() => selectTab(tab.id)}
 			>
@@ -1422,25 +1422,25 @@
 	{#if activeTab === 'roster'}
     <AgentOutcomes />
     {#if loading}
-      <p class="border border-[#333] bg-[#111] p-4 text-xs text-[#aaa]" role="status">Loading agent status…</p>
+      <p class="rounded-md border border-sc-line2 bg-sc-panel2 p-4 text-xs text-sc-ink2" role="status">Loading agent status…</p>
     {:else}
-    {#if refreshErrors.length}<div class="border border-amber-900 p-3 text-xs text-amber-400" role="status">Unable to refresh {refreshErrors.join(', ')}. {lastRefresh ? `Last complete refresh: ${lastRefresh}.` : ''}</div>{:else if lastRefresh}<p class="text-[11px] text-[#666]">Status checked {lastRefresh}. Showing registered agents only.</p>{/if}
+    {#if refreshErrors.length}<div class="border border-amber-900 p-3 text-xs text-amber-400" role="status">Unable to refresh {refreshErrors.join(', ')}. {lastRefresh ? `Last complete refresh: ${lastRefresh}.` : ''}</div>{:else if lastRefresh}<p class="text-[11px] text-sc-ink3">Status checked {lastRefresh}. Showing registered agents only.</p>{/if}
 	<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
 		{#each coreAgentCards as agent}
 			{@const lastTask = latestTaskForAgent(agent.id)}
 			{@const liveStatus = agentLiveStatus(agent.id)}
 			{@const outcome = agentOutcomeSummary(agent.id)}
 			<div
-				class={`bg-[#111] border border-[#333] border-l-2 relative overflow-visible ${liveStatusColor(liveStatus).split(' ')[0]}`}
+				class={`rounded-md bg-sc-panel2 border border-sc-line2 border-l-2 relative overflow-visible ${liveStatusColor(liveStatus).split(' ')[0]}`}
 			>
 				<button
 					type="button"
-					class={`w-full hover:bg-[#1a1a1a] transition-colors group text-left ${$agentHubSettings.compactCards ? 'p-2' : 'p-4'}`}
+					class={`w-full hover:bg-sc-raise transition-colors group text-left ${$agentHubSettings.compactCards ? 'p-2' : 'p-4'}`}
 					on:click={() => handleOpenAgent(agent.id)}
 					on:keydown={(event) => handleInteractiveKeydown(event, () => handleOpenAgent(agent.id))}
 				>
-					<div class="flex items-center gap-2 font-bold text-sm text-gray-200 mb-2">
-						<svg class="w-4 h-4 text-[#888] group-hover:text-white transition-colors" viewBox="0 0 24 24" fill="currentColor">
+					<div class="flex items-center gap-2 font-bold text-sm text-sc-ink mb-2">
+						<svg class="w-4 h-4 text-sc-ink2 group-hover:text-sc-ink transition-colors" viewBox="0 0 24 24" fill="currentColor">
 							<path d={agent.icon} />
 						</svg>
 						{agent.name}
@@ -1448,59 +1448,59 @@
 							{liveStatus}
 						</span>
 						{#if agent.visibility === 'internal'}
-							<span class="text-[9px] uppercase tracking-[0.2em] text-yellow-400">Internal</span>
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400">Internal</span>
 						{/if}
 					</div>
 					{#if lastTask}
-						<div class="text-[10px] text-[#555] uppercase tracking-widest mb-0.5">Last task</div>
-						<div class="text-xs text-[#aaa] truncate mb-1" title={lastTask.title || lastTask.type}>
+						<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-0.5">Last task</div>
+						<div class="text-xs text-sc-ink2 truncate mb-1" title={lastTask.title || lastTask.type}>
 							{lastTask.title || lastTask.type}
 						</div>
 						<div class="flex items-center gap-2 flex-wrap">
 							<span class={`text-[10px] px-1.5 py-0.5 border ${statusColor(lastTask.status ?? 'pending')} uppercase font-bold tracking-wider`}>
 								{lastTask.status ?? 'pending'}
 							</span>
-							<span class="text-[10px] text-[#555]">
+							<span class="text-[10px] text-sc-ink3">
 								{formatRelativeTime(lastTask.completed_at || lastTask.started_at || lastTask.created_at)}
 							</span>
 						</div>
 					{:else}
-						<div class="text-xs text-[#555] uppercase tracking-widest font-bold">No tasks yet</div>
+						<div class="text-xs text-sc-ink3 uppercase tracking-widest font-bold">No tasks yet</div>
 					{/if}
 					{#if outcome.completed + outcome.failed + outcome.pending > 0}
 						<div class="flex items-center gap-3 mt-2 text-[10px] font-mono">
 							<span class="text-green-500" title="Completed tasks">✓ {outcome.completed}</span>
 							<span class="text-red-500" title="Failed tasks">✕ {outcome.failed}</span>
 							{#if outcome.pending > 0}
-								<span class="text-[#888]" title="Pending / running tasks">· {outcome.pending} open</span>
+								<span class="text-sc-ink2" title="Pending / running tasks">· {outcome.pending} open</span>
 							{/if}
 						</div>
 					{/if}
 			</button>
 
-				<div class="px-4 pb-4 border-t border-[#222]">
+				<div class="px-4 pb-4 border-t border-sc-line">
 					<div class="pt-3 space-y-1">
-						<div class="text-[10px] text-[#555]">
-							<span class="text-[#888] font-mono">{agent.modelLabel}</span>
+						<div class="text-[10px] text-sc-ink3">
+							<span class="text-sc-ink2 font-mono">{agent.modelLabel}</span>
 							<a
 								href="/agents?tab=routing"
-								class="block text-[10px] text-[#555] hover:text-white transition-colors"
+								class="block text-[10px] text-sc-ink3 hover:text-sc-ink transition-colors"
 							>
 								set in Routing &amp; Fallbacks
 							</a>
 						</div>
 						{#if agentSpend[agent.id]?.tasks}
-							<div class="text-[10px] text-[#555]" title="Spend over the last 30 days">
+							<div class="text-[10px] text-sc-ink3" title="Spend over the last 30 days">
 								30d spend:
-								<span class="text-[#aaa] font-mono"
+								<span class="text-sc-ink2 font-mono"
 									>{fmtSpendUsd(agentSpend[agent.id].cost_usd)}</span
 								>
-								<span class="text-[#555]">· {agentSpend[agent.id].tasks} runs</span>
+								<span class="text-sc-ink3">· {agentSpend[agent.id].tasks} runs</span>
 							</div>
 						{/if}
 						<button
 							type="button"
-							class="mt-1 w-full text-left text-[10px] uppercase tracking-widest text-[#555] hover:text-white transition-colors"
+							class="mt-1 w-full text-left text-[12px] text-sc-ink3 hover:text-sc-ink transition-colors"
 							on:click={() => openAgentDetail(agent.id)}
 						>
 							Details / docs
@@ -1513,9 +1513,9 @@
 
 		<section class="space-y-3">
 			<div class="flex items-center gap-3">
-				<h2 class="text-sm font-bold tracking-widest uppercase text-[#aaa]">Strategy Developers</h2>
-				<span class="text-xs text-[#555]">({strategyDeveloperCards.length})</span>
-				<span class="text-[10px] text-[#555] hidden md:inline">
+				<h2 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Strategy Developers</h2>
+				<span class="text-xs text-sc-ink3">({strategyDeveloperCards.length})</span>
+				<span class="text-[10px] text-sc-ink3 hidden md:inline">
 					Each developer receives every research task — compare models side-by-side.
 				</span>
 			</div>
@@ -1527,15 +1527,15 @@
 					{@const canRemove = !protectedAgentIds.has(agent.id)}
 					{@const isEditing = editingAgentId === agent.id}
 					<div
-						class={`bg-[#111] border border-[#333] border-l-2 relative overflow-visible ${liveStatusColor(liveStatus).split(' ')[0]}`}
+						class={`rounded-md bg-sc-panel2 border border-sc-line2 border-l-2 relative overflow-visible ${liveStatusColor(liveStatus).split(' ')[0]}`}
 					>
 						<div class={`${$agentHubSettings.compactCards ? 'p-2' : 'p-4'}`}>
-							<div class="flex items-center gap-2 text-sm text-gray-200 mb-2">
-								<svg class="w-4 h-4 text-[#888]" viewBox="0 0 24 24" fill="currentColor">
+							<div class="flex items-center gap-2 text-sm text-sc-ink mb-2">
+								<svg class="w-4 h-4 text-sc-ink2" viewBox="0 0 24 24" fill="currentColor">
 									<path d={agent.icon} />
 								</svg>
 								<input
-									class="flex-1 min-w-0 bg-transparent border-b border-transparent focus:border-white focus:outline-none text-sm font-bold text-white px-1 py-0.5 disabled:opacity-60"
+									class="flex-1 min-w-0 bg-transparent border-b border-transparent focus:border-sc-ink focus:outline-none text-sm font-bold text-sc-ink px-1 py-0.5 disabled:opacity-60"
 									type="text"
 									value={getRenameDraft(agent)}
 									aria-label={`Rename ${agent.name}`}
@@ -1546,7 +1546,7 @@
 								/>
 								<button
 									type="button"
-									class="text-[#555] hover:text-white px-1 disabled:opacity-40"
+									class="text-sc-ink3 hover:text-sc-ink px-1 disabled:opacity-40"
 									aria-label={`Edit ${agent.name}`}
 									title={isEditing ? 'Close editor' : 'Edit developer'}
 									on:click={() => (isEditing ? cancelEditForm() : openEditForm(agent))}
@@ -1560,7 +1560,7 @@
 								{#if canRemove}
 									<button
 										type="button"
-										class="text-[#555] hover:text-red-400 px-1 disabled:opacity-40"
+										class="text-sc-ink3 hover:text-red-400 px-1 disabled:opacity-40"
 										aria-label={`Remove ${agent.name}`}
 										title="Remove developer"
 										on:click={() => handleRemoveDeveloper(agent)}
@@ -1577,7 +1577,7 @@
 										{/if}
 									</button>
 								{:else}
-									<span class="text-[9px] uppercase tracking-widest text-[#555]" title="Built-in developer">Core</span>
+									<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" title="Built-in developer">Core</span>
 								{/if}
 							</div>
 							{#if renameErrors[agent.id]}
@@ -1585,10 +1585,10 @@
 							{/if}
 							{#if isEditing}
 								<form
-									class="space-y-2 mb-3 border border-[#333] p-2 bg-[#0d0d0d]"
+									class="rounded-md space-y-2 mb-3 border border-sc-line2 p-2 bg-sc-panel2"
 									on:submit|preventDefault={() => handleEditCommit(agent)}
 								>
-									<label class="block text-[10px] text-[#555] uppercase tracking-wider">
+									<label class="block text-[10px] text-sc-ink3 uppercase tracking-wider">
 										Name
 										<input
 											type="text"
@@ -1598,7 +1598,7 @@
 											maxlength="60"
 										/>
 									</label>
-									<label class="block text-[10px] text-[#555] uppercase tracking-wider">
+									<label class="block text-[10px] text-sc-ink3 uppercase tracking-wider">
 										Instructions
 										<textarea
 											class="terminal-input mt-1 w-full text-xs font-mono"
@@ -1614,14 +1614,14 @@
 									<div class="flex gap-2">
 										<button
 											type="submit"
-											class="px-2 py-0.5 text-[10px] uppercase tracking-wider border border-[#333] text-white hover:bg-[#111] disabled:opacity-50"
+											class="rounded-md px-2 py-0.5 text-[12px] border border-sc-line2 text-sc-ink hover:bg-sc-panel2 disabled:opacity-50"
 											disabled={editSavingId === agent.id}
 										>
 											{editSavingId === agent.id ? 'Saving...' : 'Save'}
 										</button>
 										<button
 											type="button"
-											class="px-2 py-0.5 text-[10px] uppercase tracking-wider border border-[#333] text-[#888] hover:text-white"
+											class="rounded-md px-2 py-0.5 text-[12px] border border-sc-line2 text-sc-ink2 hover:text-sc-ink"
 											on:click={cancelEditForm}
 											disabled={editSavingId === agent.id}
 										>
@@ -1638,57 +1638,57 @@
 									<span class="text-[10px] font-mono text-green-500" title="Completed tasks">✓ {outcome.completed}</span>
 									<span class="text-[10px] font-mono text-red-500" title="Failed tasks">✕ {outcome.failed}</span>
 									{#if outcome.pending > 0}
-										<span class="text-[10px] font-mono text-[#888]" title="Pending / running tasks">· {outcome.pending} open</span>
+										<span class="text-[10px] font-mono text-sc-ink2" title="Pending / running tasks">· {outcome.pending} open</span>
 									{/if}
 								{/if}
 							</div>
 							{#if lastTask}
-								<div class="text-[10px] text-[#555] uppercase tracking-widest">Last task</div>
-								<div class="text-xs text-[#aaa] truncate" title={lastTask.title || lastTask.type}>
+								<div class="text-[10px] text-sc-ink3 uppercase tracking-widest">Last task</div>
+								<div class="text-xs text-sc-ink2 truncate" title={lastTask.title || lastTask.type}>
 									{lastTask.title || lastTask.type}
 								</div>
 								<div class="flex items-center gap-2 mt-1">
 									<span class={`text-[10px] px-1.5 py-0.5 border ${statusColor(lastTask.status ?? 'pending')} uppercase font-bold tracking-wider`}>
 										{lastTask.status ?? 'pending'}
 									</span>
-									<span class="text-[10px] text-[#555]">
+									<span class="text-[10px] text-sc-ink3">
 										{formatRelativeTime(lastTask.completed_at || lastTask.started_at || lastTask.created_at)}
 									</span>
 								</div>
 							{:else}
-								<div class="text-xs text-[#555] uppercase tracking-widest font-bold">No tasks yet</div>
+								<div class="text-xs text-sc-ink3 uppercase tracking-widest font-bold">No tasks yet</div>
 							{/if}
 							<button
 								type="button"
-								class="w-full text-left text-[10px] uppercase tracking-widest text-[#555] hover:text-[#aaa] mt-2"
+								class="w-full text-left text-[12px] text-sc-ink3 hover:text-sc-ink2 mt-2"
 								on:click={() => handleOpenAgent(agent.id)}
 							>
 								Open terminal
 							</button>
 							<button
 								type="button"
-								class="w-full text-left text-[10px] uppercase tracking-widest text-[#555] hover:text-white"
+								class="w-full text-left text-[12px] text-sc-ink3 hover:text-sc-ink"
 								on:click={() => openAgentDetail(agent.id)}
 							>
 								Details / docs
 							</button>
 						</div>
-						<div class="px-4 pb-4 border-t border-[#222]">
-							<div class="pt-3 text-[10px] text-[#555]">
-								<span class="text-[#888] font-mono">{agent.modelLabel}</span>
+						<div class="px-4 pb-4 border-t border-sc-line">
+							<div class="pt-3 text-[10px] text-sc-ink3">
+								<span class="text-sc-ink2 font-mono">{agent.modelLabel}</span>
 								<a
 									href="/agents?tab=routing"
-									class="block text-[10px] text-[#555] hover:text-white transition-colors"
+									class="block text-[10px] text-sc-ink3 hover:text-sc-ink transition-colors"
 								>
 									set in Routing &amp; Fallbacks
 								</a>
 								{#if agentSpend[agent.id]?.tasks}
 									<div class="mt-1" title="Spend over the last 30 days">
 										30d spend:
-										<span class="text-[#aaa] font-mono"
+										<span class="text-sc-ink2 font-mono"
 											>{fmtSpendUsd(agentSpend[agent.id].cost_usd)}</span
 										>
-										<span class="text-[#555]">· {agentSpend[agent.id].tasks} runs</span>
+										<span class="text-sc-ink3">· {agentSpend[agent.id].tasks} runs</span>
 									</div>
 								{/if}
 							</div>
@@ -1698,11 +1698,11 @@
 
 				{#if addingDeveloper}
 					<form
-						class="bg-[#0d0d0d] border border-dashed border-[#333] p-4 flex flex-col gap-3"
+						class="rounded-md bg-sc-panel2 border border-dashed border-sc-line2 p-4 flex flex-col gap-3"
 						on:submit|preventDefault={handleAddDeveloper}
 					>
-						<div class="text-[10px] uppercase tracking-widest text-white">New Developer</div>
-						<label class="block text-[10px] text-[#555] uppercase tracking-wider" for="new-dev-name">
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">New Developer</div>
+						<label class="block text-[10px] text-sc-ink3 uppercase tracking-wider" for="new-dev-name">
 							Name
 							<input
 								id="new-dev-name"
@@ -1714,9 +1714,9 @@
 								maxlength="60"
 							/>
 						</label>
-						<p class="text-[10px] text-[#555]">
+						<p class="text-[10px] text-sc-ink3">
 							Model defaults on creation — set it afterward in
-							<span class="text-white">Routing &amp; Fallbacks</span>.
+							<span class="text-sc-ink">Routing &amp; Fallbacks</span>.
 						</p>
 						{#if addDeveloperError}
 							<div class="text-[10px] text-red-400">{addDeveloperError}</div>
@@ -1724,14 +1724,14 @@
 						<div class="flex gap-2">
 							<button
 								type="submit"
-								class="px-3 py-1 text-xs uppercase tracking-wider border border-[#333] text-white hover:bg-[#111] disabled:opacity-50"
+								class="rounded-md px-3 py-1 text-[12px] border border-sc-line2 text-sc-ink hover:bg-sc-panel2 disabled:opacity-50"
 								disabled={submittingDeveloper}
 							>
 								{submittingDeveloper ? 'Adding...' : 'Add'}
 							</button>
 							<button
 								type="button"
-								class="px-3 py-1 text-xs uppercase tracking-wider border border-[#333] text-[#888] hover:text-white"
+								class="rounded-md px-3 py-1 text-[12px] border border-sc-line2 text-sc-ink2 hover:text-sc-ink"
 								on:click={cancelAddDeveloperForm}
 								disabled={submittingDeveloper}
 							>
@@ -1742,32 +1742,32 @@
 				{:else}
 					<button
 						type="button"
-						class="bg-[#0d0d0d] border border-dashed border-[#333] hover:border-[#555] hover:text-white text-[#555] p-4 flex flex-col items-center justify-center min-h-[160px] transition-colors"
+						class="rounded-md bg-sc-panel2 border border-dashed border-sc-line2 hover:border-sc-line2 hover:text-sc-ink text-sc-ink3 p-4 flex flex-col items-center justify-center min-h-[160px] transition-colors"
 						on:click={openAddDeveloperForm}
 					>
 						<svg class="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="12" y1="5" x2="12" y2="19" />
 							<line x1="5" y1="12" x2="19" y2="12" />
 						</svg>
-						<span class="text-xs uppercase tracking-widest">New Strategy Developer</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">New Strategy Developer</span>
 					</button>
 				{/if}
 			</div>
 		</section>
 
 		<!-- Compact roster summary (replaces the four removed KPI tiles). -->
-		<div class="flex flex-wrap items-center gap-x-5 gap-y-2 bg-[#111] border border-[#333] px-4 py-3 text-xs">
+		<div class="rounded-md flex flex-wrap items-center gap-x-5 gap-y-2 bg-sc-panel2 border border-sc-line2 px-4 py-3 text-xs">
 			<span class="flex items-center gap-1.5">
-				<span class="text-[#555] uppercase tracking-wider">Running</span>
+				<span class="text-sc-ink3 uppercase tracking-wider">Running</span>
 				<span class="font-bold text-yellow-400">{rosterRunningCount}</span>
 			</span>
 			<span class="flex items-center gap-1.5">
-				<span class="text-[#555] uppercase tracking-wider">Idle</span>
-				<span class="font-bold text-[#aaa]">{rosterIdleCount}</span>
+				<span class="text-sc-ink3 uppercase tracking-wider">Idle</span>
+				<span class="font-bold text-sc-ink2">{rosterIdleCount}</span>
 			</span>
 			<span class="flex items-center gap-1.5">
-				<span class="text-[#555] uppercase tracking-wider">Pending backlog</span>
-				<span class="font-bold text-white">{rosterPendingBacklog}</span>
+				<span class="text-sc-ink3 uppercase tracking-wider">Pending backlog</span>
+				<span class="font-bold text-sc-ink">{rosterPendingBacklog}</span>
 			</span>
 			<span class="flex items-center gap-1.5">
 				<a
@@ -1775,13 +1775,13 @@
 					class="group flex items-center gap-1.5"
 					title="Open the failed tasks in the Task Manager to inspect what happened"
 				>
-					<span class="text-[#555] uppercase tracking-wider underline decoration-dotted decoration-gray-700 group-hover:text-red-300 group-hover:decoration-red-400 transition-colors">Errors</span>
+					<span class="text-sc-ink3 uppercase tracking-wider underline decoration-dotted decoration-sc-line2 group-hover:text-red-300 group-hover:decoration-red-400 transition-colors">Errors</span>
 					<span class="font-bold text-red-500 group-hover:text-red-300 transition-colors">{rosterErrorCount}</span>
 				</a>
 				{#if rosterErrorCount > 0}
 					<button
 						type="button"
-						class="ml-1 text-[10px] text-red-300 hover:text-red-200 underline decoration-dotted disabled:opacity-50"
+						class="ml-1 text-[12px] text-red-300 hover:text-red-200 underline decoration-dotted disabled:opacity-50"
 						on:click={clearAllTaskAlerts}
 						disabled={clearingTaskErrors}
 					>
@@ -1798,7 +1798,7 @@
 		<!-- Full Task Manager (formerly the /tasks page); needs a bounded height for
 		     its internal scroll panes, so the page wrapper switches to a non-scrolling
 		     flex column while this tab is active. -->
-		<div class="flex-1 min-h-0 border border-[#222] overflow-hidden bg-[#0a0a0a]">
+		<div class="rounded-md flex-1 min-h-0 border border-sc-line overflow-hidden bg-sc-panel">
 			<TasksTab />
 		</div>
 	{:else if activeTab === 'providers'}
@@ -1829,7 +1829,7 @@
 
 {#if selectedAgent}
 	<div
-		class="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 md:p-8"
+		class="fixed inset-0 bg-sc-bg/80 z-[100] flex items-center justify-center p-4 md:p-8"
 		role="button"
 		tabindex="0"
 		aria-label="Close agent terminal"
@@ -1839,21 +1839,21 @@
 		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 		<!-- svelte-ignore a11y-click-events-have-key-events -->
 		<div
-			class="bg-[#111] border border-[#333] w-full max-w-4xl max-h-full flex flex-col overflow-hidden"
+			class="rounded-md bg-sc-panel2 border border-sc-line2 w-full max-w-4xl max-h-full flex flex-col overflow-hidden"
 			role="dialog"
 			aria-modal="true"
 			tabindex="-1"
 			on:click|stopPropagation
 		>
-			<div class="px-4 py-3 border-b border-[#333] flex items-center justify-between bg-[#1a1a1a]">
-				<div class="flex items-center gap-2 text-white font-bold">
+			<div class="px-4 py-3 border-b border-sc-line2 flex items-center justify-between bg-sc-raise">
+				<div class="flex items-center gap-2 text-sc-ink font-bold">
 					<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
 						<path d={iconMap[selectedAgent] || iconMap['quant-researcher']} />
 					</svg>
 					{agentDefs.find((agent) => agent.id === selectedAgent)?.name || selectedAgent} Terminal
 				</div>
 				<button
-					class="text-[#555] hover:text-white p-1 transition-colors"
+					class="text-sc-ink3 hover:text-sc-ink p-1 transition-colors"
 					aria-label="Close terminal"
 					title="Close terminal"
 					on:click={closeSelectedAgent}
@@ -1865,39 +1865,39 @@
 				</button>
 			</div>
 
-			<div class="flex border-b border-[#333] bg-[#0a0a0a]">
+			<div class="flex border-b border-sc-line2 bg-sc-panel">
 				<button
-					class={`px-6 py-2 text-sm font-bold tracking-wider uppercase transition-colors ${terminalTab === 'memory' ? 'text-green-400 border-b-2 border-green-400 bg-[#111]' : 'text-[#555] hover:text-[#aaa]'}`}
+					class={`px-6 py-2 text-sm font-bold tracking-wider uppercase transition-colors ${terminalTab === 'memory' ? 'text-green-400 border-b-2 border-green-400 bg-sc-panel2' : 'text-sc-ink3 hover:text-sc-ink2'}`}
 					on:click={() => (terminalTab = 'memory')}
 				>
 					Memory
 				</button>
 				<button
-					class={`px-6 py-2 text-sm font-bold tracking-wider uppercase transition-colors ${terminalTab === 'logs' ? 'text-green-400 border-b-2 border-green-400 bg-[#111]' : 'text-[#555] hover:text-[#aaa]'}`}
+					class={`px-6 py-2 text-sm font-bold tracking-wider uppercase transition-colors ${terminalTab === 'logs' ? 'text-green-400 border-b-2 border-green-400 bg-sc-panel2' : 'text-sc-ink3 hover:text-sc-ink2'}`}
 					on:click={() => (terminalTab = 'logs')}
 				>
 					Logs
 				</button>
 				<button
-					class={`px-6 py-2 text-sm font-bold tracking-wider uppercase transition-colors ${terminalTab === 'mcp' ? 'text-green-400 border-b-2 border-green-400 bg-[#111]' : 'text-[#555] hover:text-[#aaa]'}`}
+					class={`px-6 py-2 text-sm font-bold tracking-wider uppercase transition-colors ${terminalTab === 'mcp' ? 'text-green-400 border-b-2 border-green-400 bg-sc-panel2' : 'text-sc-ink3 hover:text-sc-ink2'}`}
 					on:click={() => (terminalTab = 'mcp')}
 				>
 					MCP
 				</button>
 			</div>
 
-			<div class="p-4 overflow-y-auto flex-1 min-h-[300px] max-h-[600px] font-mono text-xs leading-relaxed text-[#aaa] whitespace-pre-wrap break-words">
+			<div class="p-4 overflow-y-auto flex-1 min-h-[300px] max-h-[600px] font-mono text-xs leading-relaxed text-sc-ink2 whitespace-pre-wrap break-words">
 				{#if terminalTab === 'mcp'}
 					{@const grantedNames = new Set(mcpGrants.map((g) => g.server_name))}
 					{@const ungranted = mcpAllServers.filter((s) => !grantedNames.has(s.name))}
 					<div class="space-y-4 whitespace-normal">
 						<div class="flex items-center justify-between">
-							<h3 class="text-xs uppercase tracking-wider text-[#888]">
+							<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
 								Granted MCP servers ({mcpGrants.length})
 							</h3>
 							<button
 								type="button"
-								class="text-[11px] px-2 py-1 border border-[#333] text-[#aaa] hover:text-white hover:border-[#555] disabled:opacity-50"
+								class="rounded-md text-[11px] px-2 py-1 border border-sc-line2 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 disabled:opacity-50"
 								on:click={() => void loadMCPGrantsView()}
 								disabled={mcpLoading}
 							>
@@ -1908,26 +1908,26 @@
 							<p class="text-xs text-red-400">{mcpError}</p>
 						{/if}
 						{#if mcpLoading && mcpGrants.length === 0 && mcpAllServers.length === 0}
-							<p class="text-xs text-[#555]">Loading MCP servers…</p>
+							<p class="text-xs text-sc-ink3">Loading MCP servers…</p>
 						{:else if mcpGrants.length === 0}
-							<p class="text-xs text-[#555]">
+							<p class="text-xs text-sc-ink3">
 								No MCP servers granted. The agent can only call tools from servers explicitly granted below.
 							</p>
 						{:else}
 							<ul class="space-y-1.5">
 								{#each mcpGrants as grant (grant.server_name)}
-									<li class="flex items-center justify-between bg-[#0d0d0d] border border-[#222] px-3 py-2">
+									<li class="rounded-md flex items-center justify-between bg-sc-panel2 border border-sc-line px-3 py-2">
 										<div>
-											<div class="font-mono text-gray-200">{grant.server_name}</div>
+											<div class="font-mono text-sc-ink">{grant.server_name}</div>
 											{#if grant.granted_at}
-												<div class="text-[10px] text-[#555]">
+												<div class="text-[10px] text-sc-ink3">
 													granted {grant.granted_at}{grant.granted_by ? ` by ${grant.granted_by}` : ''}
 												</div>
 											{/if}
 										</div>
 										<button
 											type="button"
-											class="text-[11px] px-2 py-1 border border-red-900 text-red-300 hover:text-red-200 hover:bg-red-950/40 disabled:opacity-50"
+											class="rounded-md text-[11px] px-2 py-1 border border-red-900 text-red-300 hover:text-red-200 hover:bg-red-950/40 disabled:opacity-50"
 											on:click={() => void handleRevokeMCP(grant.server_name)}
 											disabled={mcpBusyServer === grant.server_name}
 										>
@@ -1938,32 +1938,32 @@
 							</ul>
 						{/if}
 
-						<div class="border-t border-[#222] pt-3">
-							<h3 class="text-xs uppercase tracking-wider text-[#888] mb-2">
+						<div class="border-t border-sc-line pt-3">
+							<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2 mb-2">
 								Available servers ({ungranted.length})
 							</h3>
 							{#if mcpAllServers.length === 0 && !mcpLoading}
-								<p class="text-xs text-[#555]">
-									No MCP servers configured. Add one at <a href="/integrations/mcp" class="text-white hover:underline">Integrations → MCP</a>.
+								<p class="text-xs text-sc-ink3">
+									No MCP servers configured. Add one at <a href="/integrations/mcp" class="text-sc-ink hover:underline">Integrations → MCP</a>.
 								</p>
 							{:else if ungranted.length === 0}
-								<p class="text-xs text-[#555]">
+								<p class="text-xs text-sc-ink3">
 									All configured servers are already granted to this agent.
 								</p>
 							{:else}
 								<ul class="space-y-1.5">
 									{#each ungranted as srv (srv.name)}
-										<li class="flex items-center justify-between bg-[#0d0d0d] border border-[#222] px-3 py-2">
+										<li class="rounded-md flex items-center justify-between bg-sc-panel2 border border-sc-line px-3 py-2">
 											<div>
-												<div class="font-mono text-gray-200">{srv.name}</div>
-												<div class="text-[10px] text-[#555]">
+												<div class="font-mono text-sc-ink">{srv.name}</div>
+												<div class="text-[10px] text-sc-ink3">
 													{srv.transport} · {srv.enabled ? 'enabled' : 'disabled'}
 													{#if !srv.enabled}<span class="text-yellow-400"> · grant will work but no tools register until enabled</span>{/if}
 												</div>
 											</div>
 											<button
 												type="button"
-												class="text-[11px] px-2 py-1 border border-[#333] text-white hover:text-white hover:bg-[#0c0c0c] disabled:opacity-50"
+												class="rounded-md text-[11px] px-2 py-1 border border-sc-line2 text-sc-ink hover:text-sc-ink hover:bg-sc-panel2 disabled:opacity-50"
 												on:click={() => void handleGrantMCP(srv.name)}
 												disabled={mcpBusyServer === srv.name}
 											>
@@ -1976,57 +1976,57 @@
 						</div>
 					</div>
 				{:else if loadingTerminal && !terminalMemory && agentLogs.length === 0}
-					<div class="text-[#555] animate-pulse">Loading...</div>
+					<div class="text-sc-ink3 animate-pulse">Loading...</div>
 				{:else if terminalTab === 'memory'}
 					{#if terminalMemory}
 						{terminalMemory}
 					{:else}
-						<div class="text-[#555]">No memory found for today.</div>
+						<div class="text-sc-ink3">No memory found for today.</div>
 					{/if}
 				{:else}
 					{#if agentCalls.length > 0}
-						<div class="mb-2 text-[11px] uppercase tracking-wider text-[#555]">Recent calls · request → response</div>
+						<div class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Recent calls · request → response</div>
 						{#each agentCalls as call}
 							{@const parsed = parseCallData(call)}
-							<details class="mb-1 border border-[#222]">
-								<summary class="cursor-pointer px-2 py-1 text-xs flex items-center justify-between hover:bg-[#1a1a1a] gap-2">
+							<details class="mb-1 border border-sc-line">
+								<summary class="cursor-pointer px-2 py-1 text-xs flex items-center justify-between hover:bg-sc-raise gap-2">
 									<span class="truncate">
-										<span class={call.status === 'failed' ? 'text-red-500' : (call.status === 'done' || call.status === 'reviewed') ? 'text-green-500' : 'text-[#888]'}>[{call.status}]</span>
-										<span class="text-[#aaa]"> {call.title || ('#' + call.id)}</span>
-										{#if call.provider}<span class="text-[#555]"> · {call.provider}{call.model_id ? ':' + call.model_id : ''}</span>{/if}
+										<span class={call.status === 'failed' ? 'text-red-500' : (call.status === 'done' || call.status === 'reviewed') ? 'text-green-500' : 'text-sc-ink2'}>[{call.status}]</span>
+										<span class="text-sc-ink2"> {call.title || ('#' + call.id)}</span>
+										{#if call.provider}<span class="text-sc-ink3"> · {call.provider}{call.model_id ? ':' + call.model_id : ''}</span>{/if}
 									</span>
-									<span class="text-[#555] whitespace-nowrap">{formatDateTime(call.created_at)}</span>
+									<span class="text-sc-ink3 whitespace-nowrap">{formatDateTime(call.created_at)}</span>
 								</summary>
-								<div class="px-2 py-2 space-y-2 text-xs border-t border-[#222]">
+								<div class="px-2 py-2 space-y-2 text-xs border-t border-sc-line">
 									{#if parsed.request}
-										<div><div class="text-[#555] mb-0.5">REQUEST</div><pre class="whitespace-pre-wrap break-words text-[#888] max-h-48 overflow-auto">{parsed.request}</pre></div>
+										<div><div class="text-sc-ink3 mb-0.5">REQUEST</div><pre class="whitespace-pre-wrap break-words text-sc-ink2 max-h-48 overflow-auto">{parsed.request}</pre></div>
 									{/if}
 									{#if parsed.trace.length > 0}
 										<div>
-											<div class="text-[#555] mb-0.5">PROVIDER ATTEMPTS</div>
+											<div class="text-sc-ink3 mb-0.5">PROVIDER ATTEMPTS</div>
 											{#each parsed.trace as att}
 												<div class={att.ok ? 'text-green-500' : 'text-red-400'}>{att.ok ? '✓' : '✗'} {att.provider}:{att.model}{att.error ? ' — ' + att.error : ''}</div>
 											{/each}
 										</div>
 									{/if}
 									{#if parsed.response}
-										<div><div class="text-[#555] mb-0.5">RESPONSE</div><pre class="whitespace-pre-wrap break-words text-[#aaa] max-h-64 overflow-auto">{parsed.response}</pre></div>
+										<div><div class="text-sc-ink3 mb-0.5">RESPONSE</div><pre class="whitespace-pre-wrap break-words text-sc-ink2 max-h-64 overflow-auto">{parsed.response}</pre></div>
 									{/if}
 									{#if call.error || parsed.errorDetail}
-										<div><div class="text-[#555] mb-0.5">ERROR</div><pre class="whitespace-pre-wrap break-words text-red-400 max-h-48 overflow-auto">{parsed.errorDetail || call.error}</pre></div>
+										<div><div class="text-sc-ink3 mb-0.5">ERROR</div><pre class="whitespace-pre-wrap break-words text-red-400 max-h-48 overflow-auto">{parsed.errorDetail || call.error}</pre></div>
 									{/if}
 								</div>
 							</details>
 						{/each}
-						<div class="mt-3 mb-2 text-[11px] uppercase tracking-wider text-[#555]">Activity</div>
+						<div class="mt-3 mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Activity</div>
 					{/if}
 					{#each agentLogs as log}
-						<div class="mb-1 hover:bg-[#222] -mx-2 px-2 py-0.5 transition-colors">
-							<span class="text-[#555]">[{formatDateTime(log.created_at)}]</span>
+						<div class="mb-1 hover:bg-sc-raise -mx-2 px-2 py-0.5 transition-colors">
+							<span class="text-sc-ink3">[{formatDateTime(log.created_at)}]</span>
 							<span class={log.level === 'error' ? 'text-red-500 font-bold' : ''}> {log.message}</span>
 						</div>
 					{:else}
-						<div class="text-[#555]">No recent logs.</div>
+						<div class="text-sc-ink3">No recent logs.</div>
 					{/each}
 				{/if}
 			</div>
@@ -2040,30 +2040,30 @@
 
 {#if leavePromptOpen}
 	<div
-		class="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4"
+		class="fixed inset-0 z-[110] flex items-center justify-center bg-sc-bg/70 p-4"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="agents-leave-title"
 	>
-		<div class="w-full max-w-md border border-[#333] bg-[#0a0a0a] p-5 space-y-4">
-			<h2 id="agents-leave-title" class="text-base font-semibold text-white">
+		<div class="rounded-md w-full max-w-md border border-sc-line2 bg-sc-panel p-5 space-y-4">
+			<h2 id="agents-leave-title" class="text-base font-semibold text-sc-ink">
 				Discard unsaved changes?
 			</h2>
-			<p class="text-sm text-[#888]">
+			<p class="text-sm text-sc-ink2">
 				You have unsaved changes on this tab. Leaving this page will discard them.
 			</p>
 			<div class="flex justify-end gap-2">
 				<button
 					type="button"
 					on:click={cancelLeave}
-					class="px-3 py-1.5 border border-[#333] text-sm text-[#aaa] hover:bg-[#161616] focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-500"
+					class="rounded-md px-3 py-1.5 border border-sc-line2 text-sm text-sc-ink2 hover:bg-sc-raise focus:outline-none focus-visible:ring-2 focus-visible:ring-sc-ink4"
 				>
 					Stay on page
 				</button>
 				<button
 					type="button"
 					on:click={confirmLeave}
-					class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+					class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-sc-ink text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
 				>
 					Discard &amp; leave
 				</button>

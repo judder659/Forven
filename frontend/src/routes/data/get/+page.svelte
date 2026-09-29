@@ -259,65 +259,65 @@
 	$: blocked = e?.estimates.filter((x) => x.blocked) ?? [];
 	$: warnings = e ? [...new Set([...e.warnings, ...e.estimates.flatMap((x) => x.warnings)])] : [];
 	$: canStart = !errors.length && !!e && blocked.length < items.length;
-	const stepClass = (on: boolean, done: boolean) => `flex items-center gap-1.5 ${on ? 'text-white' : done ? 'text-[#888]' : 'text-[#444]'}`;
+	const stepClass = (on: boolean, done: boolean) => `flex items-center gap-1.5 ${on ? 'text-sc-ink' : done ? 'text-sc-ink2' : 'text-sc-ink4'}`;
 </script>
 
 <svelte:head><title>Data · Get data | Forven</title></svelte:head>
 
 <div class="mx-auto max-w-5xl space-y-3 p-4 pb-24">
 	<div class="flex items-center justify-between gap-3">
-		<h1 class="text-[11px] font-bold uppercase tracking-[0.2em] text-white">Get data</h1>
-		<ol class="flex items-center gap-3 text-[10px] uppercase tracking-wider" aria-label="Steps">
+		<h1 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Get data</h1>
+		<ol class="flex items-center gap-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]" aria-label="Steps">
 			<li class={stepClass(step === 'what', step !== 'what')}><span class="font-mono">1</span> What</li>
-			<li aria-hidden="true" class="text-[#333]">→</li>
+			<li aria-hidden="true" class="text-sc-ink4">→</li>
 			<li class={stepClass(step === 'market' || step === 'universe', step === 'review' || step === 'started')}><span class="font-mono">2</span> Choose</li>
-			<li aria-hidden="true" class="text-[#333]">→</li>
+			<li aria-hidden="true" class="text-sc-ink4">→</li>
 			<li class={stepClass(step === 'review', step === 'started')}><span class="font-mono">3</span> Review</li>
 		</ol>
 	</div>
 
 	{#if step === 'what'}
 		<div class="grid gap-2 md:grid-cols-3">
-			<button type="button" on:click={goMarket} class="border border-[#222] bg-[#050505] p-4 text-left transition-colors hover:border-white">
-				<div class="text-[13px] font-bold text-white">A market</div>
-				<p class="mt-1 text-[11px] leading-relaxed text-[#888]">One symbol, the timeframes and history you need, plus funding, open interest and basis for perps. Shows the size and time before anything starts.</p>
+			<button type="button" on:click={goMarket} class="rounded-md border border-sc-line bg-sc-panel p-4 text-left transition-colors hover:border-sc-ink">
+				<div class="text-[13px] font-bold text-sc-ink">A market</div>
+				<p class="mt-1 text-[11px] leading-relaxed text-sc-ink2">One symbol, the timeframes and history you need, plus funding, open interest and basis for perps. Shows the size and time before anything starts.</p>
 			</button>
-			<button type="button" on:click={goUniverse} class="border border-[#222] bg-[#050505] p-4 text-left transition-colors hover:border-white">
-				<div class="text-[13px] font-bold text-white">A research universe</div>
-				<p class="mt-1 text-[11px] leading-relaxed text-[#888]">The most liquid perps, kept current for research. See what the plan includes, what is missing, and bring it up to plan.</p>
+			<button type="button" on:click={goUniverse} class="rounded-md border border-sc-line bg-sc-panel p-4 text-left transition-colors hover:border-sc-ink">
+				<div class="text-[13px] font-bold text-sc-ink">A research universe</div>
+				<p class="mt-1 text-[11px] leading-relaxed text-sc-ink2">The most liquid perps, kept current for research. See what the plan includes, what is missing, and bring it up to plan.</p>
 			</button>
-			<a href="{DM}/import" class="border border-[#222] bg-[#050505] p-4 text-left transition-colors hover:border-white">
-				<div class="text-[13px] font-bold text-white">A file</div>
-				<p class="mt-1 text-[11px] leading-relaxed text-[#888]">Import candles from a CSV. You check the columns, time zone and timeframe, and see how it overlaps what is stored, before anything is written.</p>
+			<a href="{DM}/import" class="rounded-md border border-sc-line bg-sc-panel p-4 text-left transition-colors hover:border-sc-ink">
+				<div class="text-[13px] font-bold text-sc-ink">A file</div>
+				<p class="mt-1 text-[11px] leading-relaxed text-sc-ink2">Import candles from a CSV. You check the columns, time zone and timeframe, and see how it overlaps what is stored, before anything is written.</p>
 			</a>
 		</div>
-		<p class="text-[11px] text-[#666]">New here? <a href="{DM}/setup" class="text-white underline">Start from a preset</a> with real size and time estimates.</p>
+		<p class="text-[11px] text-sc-ink3">New here? <a href="{DM}/setup" class="text-sc-ink underline">Start from a preset</a> with real size and time estimates.</p>
 	{:else if step === 'universe'}
-		<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-universe">
-			<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-				<h2 id="dm-universe" class="text-[11px] font-bold uppercase tracking-wider text-white">Research universe</h2>
-				<button type="button" on:click={reset} class="ml-auto text-[10px] uppercase tracking-wider text-[#777] hover:text-white">← Back</button>
+		<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-universe">
+			<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
+				<h2 id="dm-universe" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Research universe</h2>
+				<button type="button" on:click={reset} class="ml-auto text-[12px] text-sc-ink3 hover:text-sc-ink">← Back</button>
 			</header>
 			{#if plan}
 				<SectionState state={plan} what="The universe plan" endpoint="GET /api/data/universe/plan-diff" rows={4} on:retry={goUniverse}>
 					{#if plan.data}
 						{@const p = plan.data}
 						<div class="space-y-3 px-3 py-3 text-[12px]">
-							<p class="text-[#ccc]">
-								{#if p.enabled}The plan keeps the top <span class="text-white">{p.size}</span> perps ({p.asset_classes.join(', ')}) current:
-									<span class="font-mono text-white">{formatCount(p.present_series)}</span> of <span class="font-mono text-white">{formatCount(p.planned_series)}</span> planned series are stored.
+							<p class="text-sc-ink">
+								{#if p.enabled}The plan keeps the top <span class="text-sc-ink">{p.size}</span> perps ({p.asset_classes.join(', ')}) current:
+									<span class="font-mono text-sc-ink">{formatCount(p.present_series)}</span> of <span class="font-mono text-sc-ink">{formatCount(p.planned_series)}</span> planned series are stored.
 								{:else}The research universe is turned off.{/if}
-								<a href="/settings#data" class="ml-1 text-[#888] underline hover:text-white">Change it in Settings → Data</a>
+								<a href="/settings#data" class="ml-1 text-sc-ink2 underline hover:text-sc-ink">Change it in Settings → Data</a>
 							</p>
 							{#if p.seed_job}
-								<div class="border border-[#1a1a1a]"><JobRow job={p.seed_job} /></div>
+								<div class="border border-sc-line"><JobRow job={p.seed_job} /></div>
 							{/if}
 							{#if p.missing.length}
 								<div>
-									<div class="text-[9px] uppercase tracking-wider text-[#555]">Missing ({formatCount(p.planned_series - p.present_series)} series)</div>
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Missing ({formatCount(p.planned_series - p.present_series)} series)</div>
 									<div class="mt-1 flex flex-wrap gap-1">
 										{#each p.missing as m (m.symbol)}
-											<span class="border border-[#262626] px-1.5 py-0.5 font-mono text-[10px] text-[#bbb]" title="Rank {m.rank + 1} · {m.asset_class}">{m.symbol.replace('-', '/')} <span class="text-[#666]">{m.timeframes.join(' ')}</span></span>
+											<span class="border border-sc-line px-1.5 py-0.5 font-mono text-[10px] text-sc-ink2" title="Rank {m.rank + 1} · {m.asset_class}">{m.symbol.replace('-', '/')} <span class="text-sc-ink3">{m.timeframes.join(' ')}</span></span>
 										{/each}
 									</div>
 								</div>
@@ -325,12 +325,12 @@
 								<p class="text-emerald-400">Every planned series is stored.</p>
 							{/if}
 							{#if p.extra.length}
-								<p class="text-[11px] text-[#777]">{plural(p.extra.length, 'symbol')} fell out of the plan but are still stored: {p.extra.map((x) => x.symbol).join(', ')}. They stay until you delete them.</p>
+								<p class="text-[11px] text-sc-ink3">{plural(p.extra.length, 'symbol')} fell out of the plan but are still stored: {p.extra.map((x) => x.symbol).join(', ')}. They stay until you delete them.</p>
 							{/if}
 							<div class="flex items-center gap-2">
-								<button type="button" class="terminal-button-primary text-[10px]" disabled={seeding || !p.enabled || !p.missing.length} on:click={seed}>
+								<button type="button" class="terminal-button-primary text-[12px]" disabled={seeding || !p.enabled || !p.missing.length} on:click={seed}>
 									{seeding ? 'Starting…' : p.seed_job?.status === 'interrupted' || p.seed_job?.status === 'failed' ? 'Resume the seed' : 'Bring the universe up to plan'}</button>
-								<span class="text-[10px] text-[#666]">Runs as one job from Binance Vision archives; it resumes where it stopped.</span>
+								<span class="text-[10px] text-sc-ink3">Runs as one job from Binance Vision archives; it resumes where it stopped.</span>
 							</div>
 						</div>
 					{/if}
@@ -341,37 +341,37 @@
 		<div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
 			<div class="min-w-0 space-y-3">
 				<!-- 1 Market -->
-				<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-get-market">
-					<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-						<h2 id="dm-get-market" class="text-[11px] font-bold uppercase tracking-wider text-white">Market</h2>
-						<button type="button" on:click={reset} class="ml-auto text-[10px] uppercase tracking-wider text-[#777] hover:text-white">← Start over</button>
+				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-get-market">
+					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
+						<h2 id="dm-get-market" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Market</h2>
+						<button type="button" on:click={reset} class="ml-auto text-[12px] text-sc-ink3 hover:text-sc-ink">← Start over</button>
 					</header>
 					<div class="space-y-2 px-3 py-2.5">
 						<input bind:this={searchInput} bind:value={query} on:input={onQuery} disabled={step === 'review'} type="search" spellcheck="false"
 							placeholder="BTC, SOLUSDT, eth/usdt, XAU…" aria-label="Market" class="terminal-input font-mono text-[13px]" />
 						{#if candidates && step === 'market'}
 							{#if candidates.status === 'loading'}
-								<p class="text-[11px] text-[#666]">Looking up “{query.trim()}”…</p>
+								<p class="text-[11px] text-sc-ink3">Looking up “{query.trim()}”…</p>
 							{:else if candidates.status === 'ready'}
 								{#if candidates.data?.length}
 									<div class="grid gap-1 sm:grid-cols-2" role="radiogroup" aria-label="Matching markets">
 										{#each candidates.data as c (c.symbol)}
 											{@const on = candidate?.symbol === c.symbol}
 											<button type="button" role="radio" aria-checked={on} on:click={() => choose(c)}
-												class="border px-2.5 py-1.5 text-left transition-colors {on ? 'border-white bg-white/[0.06]' : 'border-[#222] hover:border-[#555]'}">
+												class="rounded-md border px-2.5 py-1.5 text-left transition-colors {on ? 'border-sc-ink bg-sc-ink/[0.06]' : 'border-sc-line hover:border-sc-line2'}">
 												<div class="flex items-baseline gap-2">
-													<span class="text-[12px] font-bold text-white">{c.display_symbol}</span>
-													{#if c.asset_class !== 'crypto'}<span class="text-[9px] uppercase tracking-wider text-[#777]">{c.asset_class}</span>{/if}
-													{#if c.delisted}<span class="text-[9px] uppercase tracking-wider text-slate-400">delisted</span>{/if}
+													<span class="text-[12px] font-bold text-sc-ink">{c.display_symbol}</span>
+													{#if c.asset_class !== 'crypto'}<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{c.asset_class}</span>{/if}
+													{#if c.delisted}<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">delisted</span>{/if}
 												</div>
-												<div class="truncate text-[10px] text-[#777]">
+												<div class="truncate text-[10px] text-sc-ink3">
 													{c.stored.length ? `stored: ${[...new Set(c.stored.map((s) => (s.stream === 'ohlcv' ? s.timeframe : streamLabel(s.stream).toLowerCase())))].join(', ')}` : 'nothing stored yet'}
 												</div>
 											</button>
 										{/each}
 									</div>
 								{:else}
-									<p class="text-[11px] text-[#777]">No market matches “{query.trim()}”. Try the base asset alone (e.g. “SOL”).</p>
+									<p class="text-[11px] text-sc-ink3">No market matches “{query.trim()}”. Try the base asset alone (e.g. “SOL”).</p>
 								{/if}
 							{:else}
 								<SectionState state={candidates} what="Symbol lookup" endpoint="GET /api/data/identity/resolve" rows={2} on:retry={() => search(false)} />
@@ -382,86 +382,86 @@
 
 				{#if candidate}
 					<!-- 2 Venue -->
-					<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-get-venue">
-						<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-get-venue" class="text-[11px] font-bold uppercase tracking-wider text-white">Where from</h2></header>
+					<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-get-venue">
+						<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-venue" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Where from</h2></header>
 						{#if targets?.status === 'loading'}
-							<p class="px-3 pt-2 text-[11px] text-[#777]">Checking which exchanges list {candidate?.display_symbol ?? 'it'}… the first check in an hour loads each exchange's market list and can take a few seconds.</p>
+							<p class="px-3 pt-2 text-[11px] text-sc-ink3">Checking which exchanges list {candidate?.display_symbol ?? 'it'}… the first check in an hour loads each exchange's market list and can take a few seconds.</p>
 						{/if}
 						{#if targets}
 							<SectionState state={targets} what="Download venues" endpoint="GET /api/data/acquire/targets" rows={3} on:retry={() => candidate && choose(candidate)}>
 								<div class="space-y-1 px-3 py-2" role="radiogroup" aria-label="Venue">
 									{#each targets.data ?? [] as t (t.venue)}
 										{@const on = venue === t.venue}
-										<label class="flex cursor-pointer items-start gap-2 border px-2.5 py-1.5 transition-colors {!t.listed ? 'cursor-not-allowed opacity-40' : on ? 'border-white bg-white/[0.04]' : 'border-[#1d1d1d] hover:border-[#444]'}">
+										<label class="flex cursor-pointer items-start gap-2 border px-2.5 py-1.5 transition-colors {!t.listed ? 'cursor-not-allowed opacity-40' : on ? 'border-sc-ink bg-sc-ink/[0.04]' : 'border-sc-line hover:border-sc-line2'}">
 											<input type="radio" name="dm-venue" value={t.venue} bind:group={venue} disabled={!t.listed || step === 'review'} class="mt-0.5 accent-white" />
 											<div class="min-w-0 flex-1">
 												<div class="flex flex-wrap items-baseline gap-2">
-													<span class="text-[12px] text-white">{exchangeLabel(t.exchange)} {t.market}</span>
-													<span class="border px-1 text-[9px] uppercase tracking-wider {t.destination === 'canonical' ? 'border-emerald-900 text-emerald-400' : 'border-sky-900 text-sky-300'}">{t.destination === 'canonical' ? 'research series' : 'separate venue series'}</span>
-													{#if !t.listed}<span class="text-[10px] text-[#888]">not listed there</span>{/if}
+													<span class="text-[12px] text-sc-ink">{exchangeLabel(t.exchange)} {t.market}</span>
+													<span class="border px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {t.destination === 'canonical' ? 'border-emerald-900 text-emerald-400' : 'border-sky-900 text-sky-300'}">{t.destination === 'canonical' ? 'research series' : 'separate venue series'}</span>
+													{#if !t.listed}<span class="text-[10px] text-sc-ink2">not listed there</span>{/if}
 												</div>
-												<p class="text-[10px] text-[#777]">{t.note}</p>
+												<p class="text-[10px] text-sc-ink3">{t.note}</p>
 											</div>
 										</label>
 									{/each}
-									<p class="pt-1 text-[10px] leading-relaxed text-[#666]">{VENUE_HELP}</p>
+									<p class="pt-1 text-[10px] leading-relaxed text-sc-ink3">{VENUE_HELP}</p>
 								</div>
 							</SectionState>
 						{/if}
 					</section>
 
 					<!-- 3 Timeframes, history, add-ons -->
-					<section class="border border-[#222] bg-[#050505]" aria-labelledby="dm-get-what">
-						<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-get-what" class="text-[11px] font-bold uppercase tracking-wider text-white">Timeframes & history</h2></header>
+					<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-get-what">
+						<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-what" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Timeframes & history</h2></header>
 						<div class="space-y-3 px-3 py-2.5">
 							<div>
-								<div class="text-[9px] uppercase tracking-wider text-[#555]">Timeframes</div>
+								<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Timeframes</div>
 								<div class="mt-1 flex flex-wrap gap-1" role="group" aria-label="Timeframes">
 									{#each TIMEFRAMES as tf}
 										{@const stored = storedFor(tf)}
 										<button type="button" on:click={() => toggleTf(tf)} aria-pressed={timeframes.includes(tf)} disabled={step === 'review'}
 											title={stored ? `${stored.rows.toLocaleString('en-US')} bars stored, last ${formatUtc(stored.last_ts)}` : 'Nothing stored yet'}
-											class="min-w-[52px] border px-2 py-1 text-center font-mono text-[11px] transition-colors {timeframes.includes(tf) ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#aaa] hover:border-[#666]'}">
-											{tf}{#if stored}<span class="block text-[8px] uppercase tracking-wider {timeframes.includes(tf) ? 'text-[#555]' : 'text-emerald-500/80'}">stored</span>{/if}
+											class="rounded-md min-w-[52px] border px-2 py-1 text-center font-mono text-[11px] transition-colors {timeframes.includes(tf) ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">
+											{tf}{#if stored}<span class="block text-[8px] uppercase tracking-wider {timeframes.includes(tf) ? 'text-sc-ink3' : 'text-emerald-500/80'}">stored</span>{/if}
 										</button>
 									{/each}
 								</div>
 							</div>
 							<fieldset>
-								<legend class="text-[9px] uppercase tracking-wider text-[#555]">History (UTC)</legend>
-								<div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-[#ccc]">
+								<legend class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">History (UTC)</legend>
+								<div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-sc-ink">
 									<label class="flex items-center gap-1.5"><input type="radio" bind:group={historyMode} value="all" disabled={step === 'review'} class="accent-white" /> All available</label>
 									<span class="flex items-center gap-1.5">
 										<label class="flex items-center gap-1.5"><input type="radio" bind:group={historyMode} value="recent" disabled={step === 'review'} class="accent-white" /> Last</label>
 										<input type="number" bind:value={recentAmount} min="1" step="1" on:focus={() => (historyMode = 'recent')} disabled={step === 'review'}
-											aria-label="How much recent history" class="w-16 border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[12px] text-white outline-none focus:border-white" />
+											aria-label="How much recent history" class="rounded-md w-16 border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-mono text-[12px] text-sc-ink outline-none focus:border-sc-ink" />
 										<select bind:value={recentUnit} on:focus={() => (historyMode = 'recent')} disabled={step === 'review'} aria-label="Unit"
-											class="border border-[#2a2a2a] bg-black px-1 py-0.5 text-[11px] text-[#ccc] outline-none focus:border-white">
+											class="rounded-md border border-sc-line2 bg-sc-bg px-1 py-0.5 text-[11px] text-sc-ink outline-none focus:border-sc-ink">
 											<option value="years">years</option><option value="days">days</option>
 										</select>
 									</span>
 									<label class="flex items-center gap-1.5"><input type="radio" bind:group={historyMode} value="range" disabled={step === 'review'} class="accent-white" /> From</label>
 									<input type="date" value={rangeStart.slice(0, 10)} on:input={(e) => (rangeStart = e.currentTarget.value)} on:focus={() => (historyMode = 'range')}
 										max={rangeEnd.slice(0, 10) || undefined} disabled={step === 'review'} aria-label="Start date (UTC)"
-										class="border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[11px] text-[#ccc] outline-none [color-scheme:dark] focus:border-white" />
-									<span class="-ml-2 text-[#555]">to</span>
+										class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-mono text-[11px] text-sc-ink outline-none [color-scheme:dark] focus:border-sc-ink" />
+									<span class="-ml-2 text-sc-ink3">to</span>
 									<input type="date" value={rangeEnd.slice(0, 10)} on:input={(e) => (rangeEnd = e.currentTarget.value)} on:focus={() => (historyMode = 'range')}
 										min={rangeStart.slice(0, 10) || undefined} disabled={step === 'review'} aria-label="End date (UTC)"
-										class="-ml-2 border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[11px] text-[#ccc] outline-none [color-scheme:dark] focus:border-white" />
+										class="rounded-md -ml-2 border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-mono text-[11px] text-sc-ink outline-none [color-scheme:dark] focus:border-sc-ink" />
 									{#if historyMode === 'range' && (rangeStart.length > 10 || rangeEnd.length > 10)}
-										<span class="text-[10px] text-[#666]">exactly {rangeStart} → {rangeEnd}</span>
+										<span class="text-[10px] text-sc-ink3">exactly {rangeStart} → {rangeEnd}</span>
 									{/if}
 								</div>
 							</fieldset>
 							{#if target?.market === 'perp'}
 								<div>
-									<div class="text-[9px] uppercase tracking-wider text-[#555]">Perp add-ons</div>
-									<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#ccc]">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Perp add-ons</div>
+									<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-sc-ink">
 										{#each addons as s}
 											<label class="flex items-center gap-1.5"><input type="checkbox" checked={streams.includes(s)} on:change={() => toggleAddon(s)} disabled={step === 'review'} class="accent-white" /> {streamLabel(s)}</label>
 										{/each}
 									</div>
-									<p class="mt-1 text-[10px] text-[#666]">Collected once alongside the {timeframes.includes('1h') ? '1h' : timeframes[0] ?? ''} candles; strategies see them as columns.</p>
+									<p class="mt-1 text-[10px] text-sc-ink3">Collected once alongside the {timeframes.includes('1h') ? '1h' : timeframes[0] ?? ''} candles; strategies see them as columns.</p>
 								</div>
 							{/if}
 						</div>
@@ -471,52 +471,52 @@
 
 			<!-- Estimate and review -->
 			<aside class="min-w-0 space-y-3">
-				<section class="border border-[#222] bg-[#050505] lg:sticky lg:top-3" aria-labelledby="dm-get-est">
-					<header class="border-b border-[#141414] px-3 py-1.5"><h2 id="dm-get-est" class="text-[11px] font-bold uppercase tracking-wider text-white">{step === 'review' ? 'Review' : 'Estimate'}</h2></header>
+				<section class="rounded-md border border-sc-line bg-sc-panel lg:sticky lg:top-3" aria-labelledby="dm-get-est">
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-est" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{step === 'review' ? 'Review' : 'Estimate'}</h2></header>
 					<div class="space-y-2 px-3 py-2.5 text-[11px]">
 						{#if errors.length}
-							<ul class="space-y-0.5 text-[#777]">{#each errors as error}<li>· {error}</li>{/each}</ul>
+							<ul class="space-y-0.5 text-sc-ink3">{#each errors as error}<li>· {error}</li>{/each}</ul>
 						{:else if !estimate}
-							<p class="text-[#666]">Estimating…</p>
+							<p class="text-sc-ink3">Estimating…</p>
 						{:else if estimate.status === 'ready' && e}
-							<p class="text-[#aaa]">{candidate?.display_symbol} · {historyText(history)}</p>
+							<p class="text-sc-ink2">{candidate?.display_symbol} · {historyText(history)}</p>
 							<table class="w-full text-[10px]">
-								<thead><tr class="text-[9px] uppercase tracking-wider text-[#555]"><th class="py-0.5 text-left font-normal">TF</th><th class="py-0.5 text-left font-normal">Stored</th><th class="py-0.5 text-right font-normal">New bars</th><th class="py-0.5 text-right font-normal">Size</th><th class="py-0.5 text-right font-normal">Time</th></tr></thead>
+								<thead><tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3"><th class="py-0.5 text-left font-normal">TF</th><th class="py-0.5 text-left font-normal">Stored</th><th class="py-0.5 text-right font-normal">New bars</th><th class="py-0.5 text-right font-normal">Size</th><th class="py-0.5 text-right font-normal">Time</th></tr></thead>
 								<tbody>
 									{#each e.estimates as x (x.item.timeframe)}
-										<tr class="border-t border-[#111] align-top">
-											<td class="py-1 font-mono text-white">{x.item.timeframe}</td>
-											<td class="py-1 text-[#888]" title={x.existing_first ? `${formatUtc(x.existing_first)} → ${formatUtc(x.existing_last)}` : ''}>{x.existing_rows ? `${formatCompact(x.existing_rows)} · ${historyLength(x.existing_first, x.existing_last)}` : '—'}</td>
-											<td class="py-1 text-right font-mono tabular-nums text-[#ddd]">{x.blocked ? '—' : formatCompact(x.new_bars_estimate)}</td>
-											<td class="py-1 text-right font-mono tabular-nums text-[#ddd]">{x.blocked ? '—' : formatBytes(x.bytes_estimate)}</td>
-											<td class="py-1 text-right font-mono tabular-nums text-[#ddd]">{x.blocked ? '—' : formatDuration(x.seconds_estimate)}</td>
+										<tr class="border-t border-sc-line align-top">
+											<td class="py-1 font-mono text-sc-ink">{x.item.timeframe}</td>
+											<td class="py-1 text-sc-ink2" title={x.existing_first ? `${formatUtc(x.existing_first)} → ${formatUtc(x.existing_last)}` : ''}>{x.existing_rows ? `${formatCompact(x.existing_rows)} · ${historyLength(x.existing_first, x.existing_last)}` : '—'}</td>
+											<td class="py-1 text-right font-mono tabular-nums text-sc-ink">{x.blocked ? '—' : formatCompact(x.new_bars_estimate)}</td>
+											<td class="py-1 text-right font-mono tabular-nums text-sc-ink">{x.blocked ? '—' : formatBytes(x.bytes_estimate)}</td>
+											<td class="py-1 text-right font-mono tabular-nums text-sc-ink">{x.blocked ? '—' : formatDuration(x.seconds_estimate)}</td>
 										</tr>
 										{#if x.blocked}<tr><td colspan="5" class="pb-1 text-red-400">{x.blocked}</td></tr>{/if}
 									{/each}
 								</tbody>
 							</table>
-							<div class="border-t border-[#1a1a1a] pt-1.5">
-								<div class="flex justify-between"><span class="text-[#888]">Total</span><span class="font-mono text-white">{formatBytes(e.total_bytes)} · about {formatDuration(e.total_seconds)}</span></div>
-								<div class="flex justify-between text-[10px]"><span class="text-[#666]">Disk free</span><span class="font-mono {e.total_bytes > e.disk_free_bytes * 0.5 ? 'text-amber-400' : 'text-[#888]'}">{formatBytes(e.disk_free_bytes)}</span></div>
+							<div class="border-t border-sc-line pt-1.5">
+								<div class="flex justify-between"><span class="text-sc-ink2">Total</span><span class="font-mono text-sc-ink">{formatBytes(e.total_bytes)} · about {formatDuration(e.total_seconds)}</span></div>
+								<div class="flex justify-between text-[10px]"><span class="text-sc-ink3">Disk free</span><span class="font-mono {e.total_bytes > e.disk_free_bytes * 0.5 ? 'text-amber-400' : 'text-sc-ink2'}">{formatBytes(e.disk_free_bytes)}</span></div>
 							</div>
 							{#each warnings as warning}<p class="text-amber-400">{warning}</p>{/each}
 							{#if target && target.destination === 'venue'}
 								<p class="text-[10px] text-sky-300/80">Stored as a separate {exchangeLabel(target.exchange)} series; the research series is not touched.</p>
 							{/if}
 						{:else if estimate.status === 'loading'}
-							<p class="text-[#666]">Estimating…</p>
+							<p class="text-sc-ink3">Estimating…</p>
 						{:else}
 							<SectionState state={estimate} what="The estimate" endpoint="POST /api/data/acquire/estimate" rows={2} on:retry={runEstimate} />
 						{/if}
 						{#if step === 'market'}
-							<button type="button" class="terminal-button-primary w-full text-[10px]" disabled={!canStart} on:click={() => (step = 'review')}>Review →</button>
+							<button type="button" class="terminal-button-primary w-full text-[12px]" disabled={!canStart} on:click={() => (step = 'review')}>Review →</button>
 						{:else}
 							<div class="flex gap-2">
-								<button type="button" class="terminal-button text-[10px]" on:click={() => (step = 'market')}>← Change</button>
-								<button type="button" class="terminal-button-primary flex-1 text-[10px]" disabled={!canStart || starting} on:click={start}>
+								<button type="button" class="terminal-button text-[12px]" on:click={() => (step = 'market')}>← Change</button>
+								<button type="button" class="terminal-button-primary flex-1 text-[12px]" disabled={!canStart || starting} on:click={start}>
 									{starting ? 'Starting…' : `Start ${plural(items.length - blocked.length, 'download')}`}</button>
 							</div>
-							<p class="text-[10px] text-[#666]">Downloads run in the background as jobs. You can leave this page; the Jobs drawer shows progress.</p>
+							<p class="text-[10px] text-sc-ink3">Downloads run in the background as jobs. You can leave this page; the Jobs drawer shows progress.</p>
 						{/if}
 					</div>
 				</section>
@@ -525,16 +525,16 @@
 	{:else if step === 'started'}
 		<section class="border border-emerald-900/70 bg-emerald-500/[0.03] px-4 py-3" aria-live="polite">
 			<h2 class="text-[14px] font-bold text-emerald-400">Started {plural(started.length, 'job')}</h2>
-			<p class="mt-1 text-[11px] text-[#888]">They run in the background: you can leave this page. Progress is in the Jobs drawer (top right) and on the Jobs tab.</p>
-			<div class="mt-2 border border-[#1a1a1a] bg-[#050505]">{#each started as job (job.id)}<JobRow {job} />{/each}</div>
+			<p class="mt-1 text-[11px] text-sc-ink2">They run in the background: you can leave this page. Progress is in the Jobs drawer (top right) and on the Jobs tab.</p>
+			<div class="rounded-md mt-2 border border-sc-line bg-sc-panel">{#each started as job (job.id)}<JobRow {job} />{/each}</div>
 			<div class="mt-3 flex flex-wrap gap-2">
-				<button type="button" class="terminal-button text-[10px]" on:click={reset}>Get more data</button>
+				<button type="button" class="terminal-button text-[12px]" on:click={reset}>Get more data</button>
 				<a href="{DM}/jobs" class="terminal-button text-[10px]">Open Jobs</a>
 				{#if candidate && started[0]?.series[0]?.timeframe}
 					<a href={seriesHref({ symbol: candidate.symbol, timeframe: started[0].series[0].timeframe, venue })} class="terminal-button text-[10px]">Open {candidate.display_symbol} {started[0].series[0].timeframe}</a>
 				{/if}
 				{#if started.some((j) => j.error)}<span class="text-[11px] text-red-400">{errorText(started.find((j) => j.error)?.error?.code)}</span>{/if}
-				<span class="self-center text-[10px] text-[#555]">{formatRelative(started[0]?.created_at, $clock)}</span>
+				<span class="self-center text-[10px] text-sc-ink3">{formatRelative(started[0]?.created_at, $clock)}</span>
 			</div>
 		</section>
 	{/if}

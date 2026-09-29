@@ -13,7 +13,7 @@
 	const LIMIT = 50;
 	const LEVELS: DataLogEntry['level'][] = ['info', 'warning', 'error'];
 	const LEVEL_CLASS: Record<DataLogEntry['level'], string> = {
-		info: 'border-[#333] text-[#999]',
+		info: 'border-sc-line2 text-sc-ink2',
 		warning: 'border-amber-900 text-amber-400',
 		error: 'border-red-900 text-red-400',
 	};
@@ -99,51 +99,51 @@
 	$: entries = log.data?.entries ?? [];
 	$: actions = [...new Set(entries.map((e) => e.action))].sort();
 	const tabClass = (on: boolean) =>
-		`-mb-px border-b-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${on ? 'border-white text-white' : 'border-transparent text-[#555] hover:text-[#aaa]'}`;
+		`-mb-px border-b-2 px-3 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${on ? 'border-sc-ink text-sc-ink' : 'border-transparent text-sc-ink3 hover:text-sc-ink2'}`;
 </script>
 
 <svelte:head><title>Data · Log | Forven</title></svelte:head>
 
 <div class="space-y-3 p-4 pb-24">
-	<div class="flex items-end border-b border-[#1a1a1a]" role="tablist" aria-label="Log">
+	<div class="flex items-end border-b border-sc-line" role="tablist" aria-label="Log">
 		<button type="button" role="tab" aria-selected={tab === 'mine'} class={tabClass(tab === 'mine')} on:click={() => (tab = 'mine')}>Your actions & incidents</button>
 		<button type="button" role="tab" aria-selected={tab === 'auto'} class={tabClass(tab === 'auto')} on:click={() => (tab = 'auto')}>Automatic</button>
 	</div>
 
 	<div class="flex flex-wrap items-center gap-2">
 		<input bind:this={searchInput} bind:value={q} on:input={typed} type="search" placeholder="Search messages" aria-label="Search the log" spellcheck="false"
-			class="w-56 border border-[#2a2a2a] bg-black px-2 py-1 text-[11px] text-white outline-none placeholder:text-[#555] focus:border-white" />
+			class="rounded-md w-56 border border-sc-line2 bg-sc-bg px-2 py-1 text-[11px] text-sc-ink outline-none placeholder:text-sc-ink4 focus:border-sc-ink" />
 		<div class="flex gap-1" role="group" aria-label="Level">
 			{#each LEVELS as level}
 				<button type="button" aria-pressed={levels.includes(level)} on:click={() => toggleLevel(level)}
-					class="border px-2 py-1 text-[10px] uppercase tracking-wider {levels.includes(level) ? 'border-white bg-white text-black' : `${LEVEL_CLASS[level]} hover:border-[#666]`}">{level === 'warning' ? 'Warn' : level}</button>
+					class="rounded-md border px-2 py-1 text-[12px] {levels.includes(level) ? 'border-sc-ink bg-sc-ink text-black' : `${LEVEL_CLASS[level]} hover:border-sc-line2`}">{level === 'warning' ? 'Warn' : level}</button>
 			{/each}
 		</div>
 		<input bind:value={symbol} on:input={typed} placeholder="Symbol" aria-label="Filter by symbol" spellcheck="false"
-			class="w-28 border border-[#2a2a2a] bg-black px-2 py-1 font-mono text-[11px] text-white outline-none placeholder:text-[#555] focus:border-white" />
-		<select bind:value={action} aria-label="Filter by action" class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[10px] text-[#ccc] outline-none focus:border-white">
+			class="rounded-md w-28 border border-sc-line2 bg-sc-bg px-2 py-1 font-mono text-[11px] text-sc-ink outline-none placeholder:text-sc-ink4 focus:border-sc-ink" />
+		<select bind:value={action} aria-label="Filter by action" class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[10px] text-sc-ink outline-none focus:border-sc-ink">
 			<option value="">All actions</option>
 			{#each actions as a}<option value={a}>{a.replaceAll('_', ' ')}</option>{/each}
 			{#if action && !actions.includes(action)}<option value={action}>{action.replaceAll('_', ' ')}</option>{/if}
 		</select>
-		<label class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#666]">From
-			<input type="date" bind:value={since} max={until || undefined} class="border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[11px] text-[#ccc] outline-none [color-scheme:dark] focus:border-white" /></label>
-		<label class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#666]">To
-			<input type="date" bind:value={until} min={since || undefined} class="border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[11px] text-[#ccc] outline-none [color-scheme:dark] focus:border-white" /></label>
-		<span class="text-[10px] text-[#555]">UTC</span>
-		<button type="button" on:click={exportCsv} disabled={exporting || log.status !== 'ready'} class="terminal-button ml-auto text-[10px]">{exporting ? 'Exporting…' : 'Export CSV'}</button>
+		<label class="flex items-center gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">From
+			<input type="date" bind:value={since} max={until || undefined} class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-mono text-[11px] text-sc-ink outline-none [color-scheme:dark] focus:border-sc-ink" /></label>
+		<label class="flex items-center gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">To
+			<input type="date" bind:value={until} min={since || undefined} class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-mono text-[11px] text-sc-ink outline-none [color-scheme:dark] focus:border-sc-ink" /></label>
+		<span class="text-[10px] text-sc-ink3">UTC</span>
+		<button type="button" on:click={exportCsv} disabled={exporting || log.status !== 'ready'} class="terminal-button ml-auto text-[12px]">{exporting ? 'Exporting…' : 'Export CSV'}</button>
 	</div>
 
-	<section class="border border-[#222] bg-[#050505]" aria-label="Log entries">
+	<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Log entries">
 		<SectionState state={log} what="The data log" endpoint="GET /api/data/log" rows={8} on:retry={load}>
 			{#if !entries.length}
-				<p class="px-4 py-8 text-center text-[12px] text-[#777]">
+				<p class="px-4 py-8 text-center text-[12px] text-sc-ink3">
 					{tab === 'mine' ? 'Nothing you started and no incidents match these filters.' : 'No automatic runs match these filters.'}
 				</p>
 			{:else}
 				<table class="w-full text-[11px]">
 					<thead>
-						<tr class="border-b border-[#141414] bg-[#0a0a0a] text-[9px] uppercase tracking-wider text-[#555]">
+						<tr class="border-b border-sc-line bg-sc-panel font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 							<th class="px-3 py-1.5 text-left font-normal">When (UTC)</th>
 							<th class="px-2 py-1.5 text-left font-normal">Level</th>
 							<th class="px-2 py-1.5 text-left font-normal">What happened</th>
@@ -153,32 +153,32 @@
 					</thead>
 					<tbody>
 						{#each entries as entry (entry.id)}
-							<tr class="border-b border-[#101010] align-top hover:bg-white/[0.02]">
+							<tr class="border-b border-sc-line align-top hover:bg-sc-ink/[0.02]">
 								<td class="whitespace-nowrap px-3 py-1.5">
-									<div class="font-mono text-[10px] text-[#bbb]">{formatUtc(entry.ts, { suffix: false })}</div>
-									<div class="text-[10px] text-[#555]">{formatRelative(entry.ts, $clock)}</div>
+									<div class="font-mono text-[10px] text-sc-ink2">{formatUtc(entry.ts, { suffix: false })}</div>
+									<div class="text-[10px] text-sc-ink3">{formatRelative(entry.ts, $clock)}</div>
 								</td>
-								<td class="px-2 py-1.5"><span class="border px-1 py-px text-[9px] font-bold uppercase tracking-wider {LEVEL_CLASS[entry.level]}">{entry.level === 'warning' ? 'warn' : entry.level}</span></td>
+								<td class="px-2 py-1.5"><span class="border px-1 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {LEVEL_CLASS[entry.level]}">{entry.level === 'warning' ? 'warn' : entry.level}</span></td>
 								<td class="px-2 py-1.5">
-									<div class="text-[#ddd]">{entry.message}</div>
-									<div class="text-[10px] text-[#555]">{entry.category} · {entry.action.replaceAll('_', ' ')}{entry.children ? ` · ${formatCount(entry.children)} series in this run` : ''}{entry.job_id ? ` · job ${entry.job_id}` : ''}</div>
+									<div class="text-sc-ink">{entry.message}</div>
+									<div class="text-[10px] text-sc-ink3">{entry.category} · {entry.action.replaceAll('_', ' ')}{entry.children ? ` · ${formatCount(entry.children)} series in this run` : ''}{entry.job_id ? ` · job ${entry.job_id}` : ''}</div>
 								</td>
 								<td class="whitespace-nowrap px-2 py-1.5">
 									{#if entry.symbol && entry.timeframe}
-										<a href={seriesHref({ symbol: entry.symbol, timeframe: entry.timeframe })} class="font-mono text-[10px] text-[#aaa] hover:text-white hover:underline">{entry.symbol} {entry.timeframe}</a>
+										<a href={seriesHref({ symbol: entry.symbol, timeframe: entry.timeframe })} class="font-mono text-[10px] text-sc-ink2 hover:text-sc-ink hover:underline">{entry.symbol} {entry.timeframe}</a>
 									{:else if entry.symbol}
-										<a href={catalogHref({ q: entry.symbol })} class="font-mono text-[10px] text-[#aaa] hover:text-white hover:underline">{entry.symbol}</a>
-									{:else}<span class="text-[#444]">—</span>{/if}
+										<a href={catalogHref({ q: entry.symbol })} class="font-mono text-[10px] text-sc-ink2 hover:text-sc-ink hover:underline">{entry.symbol}</a>
+									{:else}<span class="text-sc-ink4">—</span>{/if}
 								</td>
-								<td class="whitespace-nowrap px-3 py-1.5 text-[10px] text-[#888]">{originLabel(entry.origin)}</td>
+								<td class="whitespace-nowrap px-3 py-1.5 text-[10px] text-sc-ink2">{originLabel(entry.origin)}</td>
 							</tr>
 						{/each}
 					</tbody>
 				</table>
-				<div class="flex items-center gap-2 px-3 py-1.5 text-[10px] text-[#666]">
+				<div class="flex items-center gap-2 px-3 py-1.5 text-[10px] text-sc-ink3">
 					<span>{formatCount(offset + 1)}–{formatCount(offset + entries.length)} of {formatCount(log.data?.total ?? 0)}</span>
-					<button type="button" on:click={() => page(-1)} disabled={offset === 0} class="ml-auto border border-[#2a2a2a] px-2 py-0.5 text-[#aaa] hover:border-white hover:text-white disabled:opacity-30" aria-label="Newer entries">← Newer</button>
-					<button type="button" on:click={() => page(1)} disabled={offset + LIMIT >= (log.data?.total ?? 0)} class="border border-[#2a2a2a] px-2 py-0.5 text-[#aaa] hover:border-white hover:text-white disabled:opacity-30" aria-label="Older entries">Older →</button>
+					<button type="button" on:click={() => page(-1)} disabled={offset === 0} class="rounded-md ml-auto border border-sc-line2 px-2 py-0.5 text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30" aria-label="Newer entries">← Newer</button>
+					<button type="button" on:click={() => page(1)} disabled={offset + LIMIT >= (log.data?.total ?? 0)} class="rounded-md border border-sc-line2 px-2 py-0.5 text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30" aria-label="Older entries">Older →</button>
 				</div>
 			{/if}
 		</SectionState>

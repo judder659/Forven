@@ -660,24 +660,24 @@
 	$: closedSessions = sessions.filter((s) => s.status === 'closed');
 </script>
 
-<div class="h-full overflow-y-auto bg-black text-white font-mono">
+<div class="h-full overflow-y-auto bg-sc-bg text-sc-ink font-mono">
 	<!-- Header ─────────────────────────────────────────────────────────── -->
-	<div class="border-b border-[#222] px-4 py-3 sticky top-0 bg-black z-10">
+	<div class="border-b border-sc-line px-4 py-3 sticky top-0 bg-sc-bg z-10">
 		<div class="flex items-center justify-between gap-4 flex-wrap">
 			<div class="flex items-center gap-4">
 				<div>
-					<h1 class="text-sm tracking-widest uppercase text-gray-200">AI Drop Zone</h1>
-					<p class="text-[10px] text-gray-500 mt-0.5">MCP &amp; HTTP cockpit — watch any AI client drive the lab</p>
+					<h1 class="text-sm tracking-widest uppercase text-sc-ink">AI Drop Zone</h1>
+					<p class="text-[10px] text-sc-ink3 mt-0.5">MCP &amp; HTTP cockpit — watch any AI client drive the lab</p>
 				</div>
 				<div class="flex items-center gap-3 ml-4">
 					<div class="flex items-center gap-1.5">
 						<div class="w-1.5 h-1.5 rounded-full {backendOk ? 'bg-emerald-400' : 'bg-red-400'}"></div>
-						<span class="text-[10px] text-gray-500">Backend</span>
+						<span class="text-[10px] text-sc-ink3">Backend</span>
 						<span class="help-tip">?<span class="help-text">Forven HTTP API at /api. If this is red, MCP tool calls will also fail — MCP proxies through this API.</span></span>
 					</div>
-					<div class="text-[10px] text-gray-500">
-						<span class="text-gray-400">{openSessions.length}</span> open /
-						<span class="text-gray-400">{sessions.length}</span> total
+					<div class="text-[10px] text-sc-ink3">
+						<span class="text-sc-ink2">{openSessions.length}</span> open /
+						<span class="text-sc-ink2">{sessions.length}</span> total
 						<span class="help-tip">?<span class="help-text">Sessions auto-open when an MCP client starts work, tag everything it does, and close on disconnect — or after ~6h idle (server sweep). Open = genuinely in use.</span></span>
 					</div>
 				</div>
@@ -685,10 +685,10 @@
 
 			<!-- Session picker -->
 			<div class="flex items-center gap-2 flex-wrap">
-				<label for="adz-session-select" class="text-[10px] text-gray-500 uppercase tracking-widest">Session</label>
+				<label for="adz-session-select" class="text-[10px] text-sc-ink3 uppercase tracking-widest">Session</label>
 				<select
 					id="adz-session-select"
-					class="bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1 rounded min-w-[220px]"
+					class="bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1 rounded min-w-[220px]"
 					value={activeSessionId}
 					on:change={(e) => selectSession((e.currentTarget as HTMLSelectElement).value)}
 				>
@@ -709,12 +709,12 @@
 					{/if}
 				</select>
 				<button
-					class="text-[10px] uppercase tracking-widest px-2 py-1 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+					class="text-[12px] px-2 py-1 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 					on:click={() => (showNewSessionForm = !showNewSessionForm)}
 				>+ New</button>
 				{#if activeSessionId && activeDetail?.status !== 'closed'}
 					<button
-						class="text-[10px] uppercase tracking-widest px-2 py-1 border border-[#333] hover:border-red-500 hover:text-red-400 rounded"
+						class="text-[12px] px-2 py-1 border border-sc-line2 hover:border-red-500 hover:text-red-400 rounded"
 						on:click={closeActiveSession}
 						disabled={sessionBusy}
 					>Close</button>
@@ -725,22 +725,22 @@
 		{#if showNewSessionForm}
 			<div class="mt-2 flex items-center gap-2 flex-wrap">
 				<input
-					class="bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1 rounded flex-1 min-w-[200px]"
+					class="bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1 rounded flex-1 min-w-[200px]"
 					placeholder="Label (optional)"
 					bind:value={newSessionLabel}
 				/>
 				<input
-					class="bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1 rounded flex-1 min-w-[240px]"
+					class="bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1 rounded flex-1 min-w-[240px]"
 					placeholder="Objective (optional)"
 					bind:value={newSessionObjective}
 				/>
 				<button
-					class="text-[10px] uppercase tracking-widest px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded"
+					class="text-[12px] px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-black font-semibold rounded"
 					on:click={createSession}
 					disabled={sessionBusy}
 				>Create</button>
 				<button
-					class="text-[10px] uppercase tracking-widest px-2 py-1 border border-[#333] hover:border-gray-500 text-gray-400 rounded"
+					class="text-[12px] px-2 py-1 border border-sc-line2 hover:border-sc-ink4 text-sc-ink2 rounded"
 					on:click={() => (showNewSessionForm = false)}
 				>Cancel</button>
 			</div>
@@ -761,29 +761,29 @@
 	{/if}
 
 	{#if loading}
-		<div class="p-6 text-center text-gray-500 text-xs">Loading…</div>
+		<div class="p-6 text-center text-sc-ink3 text-xs">Loading…</div>
 	{:else}
 		<!-- MCP connect card ─────────────────────────────────────────── -->
-		<div class="mx-4 mt-4 border border-[#222] rounded bg-[#0a0a0a]">
+		<div class="mx-4 mt-4 border border-sc-line rounded bg-sc-panel">
 			<button
-				class="w-full px-4 py-3 flex items-center justify-between hover:bg-[#111]"
+				class="w-full px-4 py-3 flex items-center justify-between hover:bg-sc-panel2"
 				on:click={() => (showMcpConfig = !showMcpConfig)}
 			>
 				<div class="flex items-center gap-3">
-					<div class="w-1.5 h-1.5 rounded-full {backendOk ? 'bg-emerald-400' : 'bg-gray-600'}"></div>
-					<span class="text-xs uppercase tracking-widest text-gray-300">Connect an MCP client</span>
-					<span class="text-[10px] text-gray-600">{MCP_TOOL_COUNT} MCP tools · the full loop: register → backtest → optimize → robustness → promote</span>
+					<div class="w-1.5 h-1.5 rounded-full {backendOk ? 'bg-emerald-400' : 'bg-sc-line2'}"></div>
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Connect an MCP client</span>
+					<span class="text-[10px] text-sc-ink3">{MCP_TOOL_COUNT} MCP tools · the full loop: register → backtest → optimize → robustness → promote</span>
 				</div>
-				<span class="text-gray-600 text-xs">{showMcpConfig ? '▼' : '▶'}</span>
+				<span class="text-sc-ink3 text-xs">{showMcpConfig ? '▼' : '▶'}</span>
 			</button>
 			{#if showMcpConfig}
-				<div class="px-4 pb-4 border-t border-[#222] pt-3">
+				<div class="px-4 pb-4 border-t border-sc-line pt-3">
 					<!-- Client picker -->
 					<div class="flex items-center gap-2 flex-wrap mb-3">
-						<label for="adz-mcp-client" class="text-[10px] uppercase tracking-widest text-gray-500">Client</label>
+						<label for="adz-mcp-client" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Client</label>
 						<select
 							id="adz-mcp-client"
-							class="bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1 rounded min-w-[220px]"
+							class="bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1 rounded min-w-[220px]"
 							bind:value={selectedClientId}
 						>
 							{#each clientGroups as grp}
@@ -794,15 +794,15 @@
 								</optgroup>
 							{/each}
 						</select>
-						<span class="text-[10px] text-gray-600">
+						<span class="text-[10px] text-sc-ink3">
 							{#if selectedClient.format === 'mcp-servers-json'}
-								Standard <code class="bg-[#111] px-1 rounded">mcpServers</code> JSON.
+								Standard <code class="bg-sc-panel2 px-1 rounded">mcpServers</code> JSON.
 							{:else if selectedClient.format === 'vscode-servers-json'}
-								VS Code native MCP format (<code class="bg-[#111] px-1 rounded">servers</code>).
+								VS Code native MCP format (<code class="bg-sc-panel2 px-1 rounded">servers</code>).
 							{:else if selectedClient.format === 'zed-context-json'}
-								Zed <code class="bg-[#111] px-1 rounded">context_servers</code> format.
+								Zed <code class="bg-sc-panel2 px-1 rounded">context_servers</code> format.
 							{:else if selectedClient.format === 'continue-experimental-json'}
-								Continue.dev <code class="bg-[#111] px-1 rounded">experimental</code> format.
+								Continue.dev <code class="bg-sc-panel2 px-1 rounded">experimental</code> format.
 							{:else if selectedClient.format === 'codex-toml'}
 								Codex CLI TOML format.
 							{/if}
@@ -810,40 +810,40 @@
 					</div>
 
 					<!-- Per-client location hint -->
-					<div class="border border-[#1a1a1a] rounded bg-[#050505] px-3 py-2 mb-3">
-						<div class="text-[10px] uppercase tracking-widest text-gray-500 mb-1">Where to paste</div>
-						<ul class="text-[11px] text-gray-300 space-y-0.5">
+					<div class="border border-sc-line rounded bg-sc-panel px-3 py-2 mb-3">
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Where to paste</div>
+						<ul class="text-[11px] text-sc-ink2 space-y-0.5">
 							{#each selectedClient.paths as p}
-								<li><code class="bg-[#111] px-1.5 py-0.5 rounded text-gray-300">{p}</code></li>
+								<li><code class="bg-sc-panel2 px-1.5 py-0.5 rounded text-sc-ink2">{p}</code></li>
 							{/each}
 						</ul>
 						{#if selectedClient.note}
-							<div class="text-[10px] text-gray-500 mt-1.5">{selectedClient.note}</div>
+							<div class="text-[10px] text-sc-ink3 mt-1.5">{selectedClient.note}</div>
 						{/if}
 					</div>
 
 					<!-- Config snippet -->
-					<p class="text-[11px] text-gray-400 mb-1.5">
+					<p class="text-[11px] text-sc-ink2 mb-1.5">
 						Merge this into the target file. Replace the
-						<code class="bg-[#111] px-1.5 py-0.5 rounded text-gray-300">your-*-key</code>
+						<code class="bg-sc-panel2 px-1.5 py-0.5 rounded text-sc-ink2">your-*-key</code>
 						placeholders if your backend requires auth — remove those env keys if it doesn't.
 					</p>
-					<pre class="bg-[#050505] border border-[#222] rounded p-3 text-[11px] text-gray-300 overflow-x-auto">{buildMcpConfig()}</pre>
+					<pre class="bg-sc-panel border border-sc-line rounded p-3 text-[11px] text-sc-ink2 overflow-x-auto">{buildMcpConfig()}</pre>
 					<div class="flex items-center gap-2 mt-2 flex-wrap">
 						<button
-							class="text-[10px] uppercase tracking-widest px-3 py-1 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+							class="text-[12px] px-3 py-1 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 							on:click={copyConfig}
 						>Copy {configLanguageLabel}</button>
 						{#if selectedClientId === 'claude-code'}
 							<button
-								class="text-[10px] uppercase tracking-widest px-3 py-1 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+								class="text-[12px] px-3 py-1 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 								on:click={copyCli}
 								title={buildCliCommand()}
 							>Copy CLI command</button>
 						{/if}
 						<a
 							href="/docs/mcp-server.md"
-							class="text-[10px] uppercase tracking-widest px-3 py-1 border border-[#333] hover:border-gray-500 text-gray-400 rounded"
+							class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] px-3 py-1 border border-sc-line2 hover:border-sc-ink4 text-sc-ink2 rounded"
 						>Full guide</a>
 					</div>
 				</div>
@@ -851,38 +851,38 @@
 		</div>
 
 		<!-- HTTP harness connect card (no MCP) ──────────────────────── -->
-		<div class="mx-4 mt-4 border border-[#222] rounded bg-[#0a0a0a]">
+		<div class="mx-4 mt-4 border border-sc-line rounded bg-sc-panel">
 			<button
-				class="w-full px-4 py-3 flex items-center justify-between hover:bg-[#111]"
+				class="w-full px-4 py-3 flex items-center justify-between hover:bg-sc-panel2"
 				on:click={() => (showHttpConfig = !showHttpConfig)}
 			>
 				<div class="flex items-center gap-3">
-					<div class="w-1.5 h-1.5 rounded-full {backendOk ? 'bg-emerald-400' : 'bg-gray-600'}"></div>
-					<span class="text-xs uppercase tracking-widest text-gray-300">Connect over HTTP (no MCP)</span>
-					<span class="text-[10px] text-gray-600">Same tools via the REST API · for the Tauri app, Codex, sidecars &amp; CI</span>
+					<div class="w-1.5 h-1.5 rounded-full {backendOk ? 'bg-emerald-400' : 'bg-sc-line2'}"></div>
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Connect over HTTP (no MCP)</span>
+					<span class="text-[10px] text-sc-ink3">Same tools via the REST API · for the Tauri app, Codex, sidecars &amp; CI</span>
 				</div>
-				<span class="text-gray-600 text-xs">{showHttpConfig ? '▼' : '▶'}</span>
+				<span class="text-sc-ink3 text-xs">{showHttpConfig ? '▼' : '▶'}</span>
 			</button>
 			{#if showHttpConfig}
-				<div class="px-4 pb-4 border-t border-[#222] pt-3 space-y-3">
-					<p class="text-[11px] text-gray-400">
+				<div class="px-4 pb-4 border-t border-sc-line pt-3 space-y-3">
+					<p class="text-[11px] text-sc-ink2">
 						The MCP server is just a thin wrapper over this REST API — use HTTP directly when MCP
 						isn't available (the in-app/Tauri assistant, Codex, sidecars, CI). The
-						<code class="bg-[#111] px-1 rounded">forven.agent</code> client is stdlib-only (zero deps).
+						<code class="bg-sc-panel2 px-1 rounded">forven.agent</code> client is stdlib-only (zero deps).
 						Base URL:
-						<code class="bg-[#111] px-1.5 py-0.5 rounded text-gray-300">{backendUrl()}</code>
+						<code class="bg-sc-panel2 px-1.5 py-0.5 rounded text-sc-ink2">{backendUrl()}</code>
 						<button
-							class="ml-1 text-[10px] uppercase tracking-widest px-2 py-0.5 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+							class="ml-1 text-[12px] px-2 py-0.5 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 							on:click={() => copyText(backendUrl(), 'Base URL')}
 						>Copy</button>
 					</p>
 
 					<!-- CLI -->
 					<div>
-						<div class="text-[10px] uppercase tracking-widest text-gray-500 mb-1">CLI — Claude Code / Codex / any shell</div>
-						<pre class="bg-[#050505] border border-[#222] rounded p-3 text-[11px] text-gray-300 overflow-x-auto">{httpCliSnippet()}</pre>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">CLI — Claude Code / Codex / any shell</div>
+						<pre class="bg-sc-panel border border-sc-line rounded p-3 text-[11px] text-sc-ink2 overflow-x-auto">{httpCliSnippet()}</pre>
 						<button
-							class="mt-1.5 text-[10px] uppercase tracking-widest px-3 py-1 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+							class="mt-1.5 text-[12px] px-3 py-1 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 							on:click={() => copyText(httpCliSnippet(), 'CLI commands')}
 						>Copy CLI</button>
 					</div>
@@ -890,18 +890,18 @@
 					<!-- Python + TypeScript -->
 					<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
 						<div>
-							<div class="text-[10px] uppercase tracking-widest text-gray-500 mb-1">Python — sidecar / script</div>
-							<pre class="bg-[#050505] border border-[#222] rounded p-3 text-[11px] text-gray-300 overflow-x-auto">{httpPySnippet()}</pre>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Python — sidecar / script</div>
+							<pre class="bg-sc-panel border border-sc-line rounded p-3 text-[11px] text-sc-ink2 overflow-x-auto">{httpPySnippet()}</pre>
 							<button
-								class="mt-1.5 text-[10px] uppercase tracking-widest px-3 py-1 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+								class="mt-1.5 text-[12px] px-3 py-1 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 								on:click={() => copyText(httpPySnippet(), 'Python snippet')}
 							>Copy</button>
 						</div>
 						<div>
-							<div class="text-[10px] uppercase tracking-widest text-gray-500 mb-1">TypeScript — in-app / Tauri</div>
-							<pre class="bg-[#050505] border border-[#222] rounded p-3 text-[11px] text-gray-300 overflow-x-auto">{httpTsSnippet()}</pre>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">TypeScript — in-app / Tauri</div>
+							<pre class="bg-sc-panel border border-sc-line rounded p-3 text-[11px] text-sc-ink2 overflow-x-auto">{httpTsSnippet()}</pre>
 							<button
-								class="mt-1.5 text-[10px] uppercase tracking-widest px-3 py-1 border border-[#333] hover:border-emerald-500 hover:text-emerald-400 rounded"
+								class="mt-1.5 text-[12px] px-3 py-1 border border-sc-line2 hover:border-emerald-500 hover:text-emerald-400 rounded"
 								on:click={() => copyText(httpTsSnippet(), 'TypeScript snippet')}
 							>Copy</button>
 						</div>
@@ -909,25 +909,25 @@
 
 					<!-- Endpoint reference -->
 					<div>
-						<div class="text-[10px] uppercase tracking-widest text-gray-500 mb-1">Endpoints (any language)</div>
-						<div class="border border-[#1a1a1a] rounded bg-[#050505] overflow-hidden">
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Endpoints (any language)</div>
+						<div class="border border-sc-line rounded bg-sc-panel overflow-hidden">
 							{#each HTTP_ENDPOINTS as ep}
-								<div class="flex items-center gap-3 px-3 py-1.5 border-b border-[#141414] last:border-b-0 text-[11px]">
+								<div class="flex items-center gap-3 px-3 py-1.5 border-b border-sc-line last:border-b-0 text-[11px]">
 									<span class="w-12 shrink-0 font-semibold {ep.method === 'GET' ? 'text-emerald-400' : 'text-yellow-400'}">{ep.method}</span>
-									<code class="text-gray-300">{ep.path}</code>
-									<span class="ml-auto text-[10px] text-gray-600">{ep.purpose}</span>
+									<code class="text-sc-ink2">{ep.path}</code>
+									<span class="ml-auto text-[10px] text-sc-ink3">{ep.purpose}</span>
 								</div>
 							{/each}
 						</div>
 					</div>
 
-					<p class="text-[10px] text-gray-500">
+					<p class="text-[10px] text-sc-ink3">
 						Auth is only needed if the backend is exposed beyond localhost: send
-						<code class="bg-[#111] px-1 rounded">x-api-key</code> /
-						<code class="bg-[#111] px-1 rounded">x-operator-key</code> headers, or set
-						<code class="bg-[#111] px-1 rounded">FORVEN_API_KEY</code> /
-						<code class="bg-[#111] px-1 rounded">FORVEN_OPERATOR_KEY</code>. Full reference:
-						<code class="bg-[#111] px-1 rounded">forven/agent/README.md</code>.
+						<code class="bg-sc-panel2 px-1 rounded">x-api-key</code> /
+						<code class="bg-sc-panel2 px-1 rounded">x-operator-key</code> headers, or set
+						<code class="bg-sc-panel2 px-1 rounded">FORVEN_API_KEY</code> /
+						<code class="bg-sc-panel2 px-1 rounded">FORVEN_OPERATOR_KEY</code>. Full reference:
+						<code class="bg-sc-panel2 px-1 rounded">forven/agent/README.md</code>.
 					</p>
 				</div>
 			{/if}
@@ -936,50 +936,50 @@
 		<!-- Main grid ─────────────────────────────────────────────────── -->
 		<div class="mx-4 mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
 			<!-- Active session (2 cols) -->
-			<div class="lg:col-span-2 border border-[#222] rounded bg-[#0a0a0a]">
-				<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between">
+			<div class="lg:col-span-2 border border-sc-line rounded bg-sc-panel">
+				<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
 					<div>
-						<h2 class="text-xs uppercase tracking-widest text-gray-300">Active Session</h2>
+						<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Active Session</h2>
 						{#if activeDetail}
-							<p class="text-[10px] text-gray-500 mt-0.5">
+							<p class="text-[10px] text-sc-ink3 mt-0.5">
 								{activeDetail.id} · {activeDetail.label || 'unlabeled'} · {activeDetail.status}
-								{#if activeDetail.last_activity_at}· <span class="text-gray-600">last activity {fmtAgo(activeDetail.last_activity_at)}</span>{/if}
-								{#if activeDetail.objective}· <span class="text-gray-600">{activeDetail.objective}</span>{/if}
+								{#if activeDetail.last_activity_at}· <span class="text-sc-ink3">last activity {fmtAgo(activeDetail.last_activity_at)}</span>{/if}
+								{#if activeDetail.objective}· <span class="text-sc-ink3">{activeDetail.objective}</span>{/if}
 							</p>
 						{:else}
-							<p class="text-[10px] text-gray-500 mt-0.5">Pick a session above to watch it live</p>
+							<p class="text-[10px] text-sc-ink3 mt-0.5">Pick a session above to watch it live</p>
 						{/if}
 					</div>
 					{#if activeDetail}
-						<div class="text-[10px] text-gray-500 flex gap-3">
-							<span><span class="text-gray-300">{activeDetail.strategies.length}</span> strategies</span>
-							<span><span class="text-gray-300">{activeDetail.runs.length}</span> runs</span>
+						<div class="text-[10px] text-sc-ink3 flex gap-3">
+							<span><span class="text-sc-ink2">{activeDetail.strategies.length}</span> strategies</span>
+							<span><span class="text-sc-ink2">{activeDetail.runs.length}</span> runs</span>
 						</div>
 					{/if}
 				</div>
 
 				{#if !activeDetail}
-					<div class="p-6 text-center text-xs text-gray-600">
+					<div class="p-6 text-center text-xs text-sc-ink3">
 						No session selected. Sessions open automatically when an MCP client starts working —
-						pick one above, or tell your assistant: <em class="text-gray-400">"Open a Forven session for X"</em>
+						pick one above, or tell your assistant: <em class="text-sc-ink2">"Open a Forven session for X"</em>
 					</div>
 				{:else}
 					<!-- Strategies -->
 					<div class="px-4 py-3">
-						<div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Strategies tagged to this session</div>
+						<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-2">Strategies tagged to this session</div>
 						{#if activeDetail.strategies.length === 0}
-							<div class="text-[11px] text-gray-600 italic">None yet</div>
+							<div class="text-[11px] text-sc-ink3 italic">None yet</div>
 						{:else}
 							<div class="space-y-1 max-h-56 overflow-y-auto">
 								{#each activeDetail.strategies as s}
-									<div class="text-[11px] flex items-center justify-between gap-3 border border-[#1a1a1a] rounded px-2 py-1.5 hover:border-[#333]">
+									<div class="text-[11px] flex items-center justify-between gap-3 border border-sc-line rounded px-2 py-1.5 hover:border-sc-line2">
 										<div class="flex-1 min-w-0">
-											<a href="/lab/strategy/{s.id}" class="text-gray-200 hover:text-emerald-400 font-semibold">{s.id}</a>
-											<span class="text-gray-500 ml-2">{s.name || s.type}</span>
-											<span class="text-gray-600 ml-2">{s.symbol} · {s.timeframe}</span>
+											<a href="/lab/strategy/{s.id}" class="text-sc-ink hover:text-emerald-400 font-semibold">{s.id}</a>
+											<span class="text-sc-ink3 ml-2">{s.name || s.type}</span>
+											<span class="text-sc-ink3 ml-2">{s.symbol} · {s.timeframe}</span>
 										</div>
-										<div class="text-gray-600">{s.stage}</div>
-										<div class="text-gray-700 text-[10px] whitespace-nowrap">{fmtTime(s.created_at)}</div>
+										<div class="text-sc-ink3">{s.stage}</div>
+										<div class="text-sc-ink4 text-[10px] whitespace-nowrap">{fmtTime(s.created_at)}</div>
 									</div>
 								{/each}
 							</div>
@@ -987,20 +987,20 @@
 					</div>
 
 					<!-- Runs -->
-					<div class="px-4 py-3 border-t border-[#222]">
-						<div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Gauntlet runs in this session</div>
+					<div class="px-4 py-3 border-t border-sc-line">
+						<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-2">Gauntlet runs in this session</div>
 						{#if activeDetail.runs.length === 0}
-							<div class="text-[11px] text-gray-600 italic">None yet</div>
+							<div class="text-[11px] text-sc-ink3 italic">None yet</div>
 						{:else}
 							<div class="space-y-1 max-h-56 overflow-y-auto">
 								{#each activeDetail.runs as r}
-									<div class="text-[11px] flex items-center justify-between gap-3 border border-[#1a1a1a] rounded px-2 py-1.5 hover:border-[#333]">
+									<div class="text-[11px] flex items-center justify-between gap-3 border border-sc-line rounded px-2 py-1.5 hover:border-sc-line2">
 										<div class="flex-1 min-w-0">
-											<span class="text-gray-200 font-semibold">{r.result_id}</span>
-											<span class="text-gray-600 ml-2">{r.strategy_id}</span>
+											<span class="text-sc-ink font-semibold">{r.result_id}</span>
+											<span class="text-sc-ink3 ml-2">{r.strategy_id}</span>
 										</div>
-										<div class="text-gray-500">{r.symbol} · {r.timeframe}</div>
-										<div class="text-gray-700 text-[10px] whitespace-nowrap">{fmtTime(r.created_at)}</div>
+										<div class="text-sc-ink3">{r.symbol} · {r.timeframe}</div>
+										<div class="text-sc-ink4 text-[10px] whitespace-nowrap">{fmtTime(r.created_at)}</div>
 									</div>
 								{/each}
 							</div>
@@ -1010,39 +1010,39 @@
 			</div>
 
 			<!-- Activity feed -->
-			<div class="border border-[#222] rounded bg-[#0a0a0a]">
-				<div class="px-4 py-3 border-b border-[#222]">
-					<h2 class="text-xs uppercase tracking-widest text-gray-300">Recent Activity</h2>
-					<p class="text-[10px] text-gray-500 mt-0.5">Across all sessions · refreshes every {REFRESH_MS / 1000}s</p>
+			<div class="border border-sc-line rounded bg-sc-panel">
+				<div class="px-4 py-3 border-b border-sc-line">
+					<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Recent Activity</h2>
+					<p class="text-[10px] text-sc-ink3 mt-0.5">Across all sessions · refreshes every {REFRESH_MS / 1000}s</p>
 				</div>
 				<div class="px-4 py-3">
-					<div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Latest intake</div>
+					<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-2">Latest intake</div>
 					{#if !recentIntake || recentIntake.strategies.length === 0}
-						<div class="text-[11px] text-gray-600 italic">No recent intake</div>
+						<div class="text-[11px] text-sc-ink3 italic">No recent intake</div>
 					{:else}
 						<div class="space-y-1 max-h-48 overflow-y-auto">
 							{#each recentIntake.strategies.slice(0, 10) as s}
-								<div class="text-[11px] flex items-center justify-between gap-2 border border-[#1a1a1a] rounded px-2 py-1 hover:border-[#333]">
-									<a href="/lab/strategy/{s.id}" class="text-gray-300 hover:text-emerald-400 truncate">{s.id}</a>
-									<span class="text-gray-600 text-[10px]">{s.stage}</span>
+								<div class="text-[11px] flex items-center justify-between gap-2 border border-sc-line rounded px-2 py-1 hover:border-sc-line2">
+									<a href="/lab/strategy/{s.id}" class="text-sc-ink2 hover:text-emerald-400 truncate">{s.id}</a>
+									<span class="text-sc-ink3 text-[10px]">{s.stage}</span>
 								</div>
 							{/each}
 						</div>
 					{/if}
 				</div>
-				<div class="px-4 py-3 border-t border-[#222]">
-					<div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Latest runs</div>
+				<div class="px-4 py-3 border-t border-sc-line">
+					<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-2">Latest runs</div>
 					{#if recentRuns.length === 0}
-						<div class="text-[11px] text-gray-600 italic">No recent runs</div>
+						<div class="text-[11px] text-sc-ink3 italic">No recent runs</div>
 					{:else}
 						<div class="space-y-1 max-h-48 overflow-y-auto">
 							{#each recentRuns.slice(0, 10) as r}
-								<div class="text-[11px] border border-[#1a1a1a] rounded px-2 py-1 hover:border-[#333]">
+								<div class="text-[11px] border border-sc-line rounded px-2 py-1 hover:border-sc-line2">
 									<div class="flex items-center justify-between gap-2">
-										<span class="text-gray-300 truncate">{r.id || r.run_id}</span>
-										<span class="text-gray-600 text-[10px]">{fmtTime(r.created_at)}</span>
+										<span class="text-sc-ink2 truncate">{r.id || r.run_id}</span>
+										<span class="text-sc-ink3 text-[10px]">{fmtTime(r.created_at)}</span>
 									</div>
-									<div class="text-gray-600 text-[10px] truncate">{r.strategy_id} · {fmtMetric(r)}</div>
+									<div class="text-sc-ink3 text-[10px] truncate">{r.strategy_id} · {fmtMetric(r)}</div>
 								</div>
 							{/each}
 						</div>
@@ -1052,32 +1052,32 @@
 		</div>
 
 		<!-- Manual fallback ──────────────────────────────────────────── -->
-		<div class="mx-4 mt-4 mb-8 border border-[#222] rounded bg-[#0a0a0a]">
-			<div class="px-4 py-3 border-b border-[#222]">
-				<h2 class="text-xs uppercase tracking-widest text-gray-300">Manual Fallback</h2>
-				<p class="text-[10px] text-gray-500 mt-0.5">
+		<div class="mx-4 mt-4 mb-8 border border-sc-line rounded bg-sc-panel">
+			<div class="px-4 py-3 border-b border-sc-line">
+				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Manual Fallback</h2>
+				<p class="text-[10px] text-sc-ink3 mt-0.5">
 					For when you're not driving via MCP. Tags to the active session if one is selected.
 				</p>
 			</div>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-0">
 				<!-- Register file -->
-				<div class="px-4 py-3 border-b md:border-b-0 md:border-r border-[#222]">
-					<div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Register strategy file</div>
+				<div class="px-4 py-3 border-b md:border-b-0 md:border-r border-sc-line">
+					<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-2">Register strategy file</div>
 					<div class="flex gap-2 flex-wrap">
 						<input
-							class="flex-1 min-w-[220px] bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1.5 rounded font-mono"
+							class="flex-1 min-w-[220px] bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1.5 rounded font-mono"
 							placeholder="Absolute path e.g. C:\...\strategies\custom\foo.py"
 							bind:value={registerFilePath}
 							on:keydown={(e) => e.key === 'Enter' && (scanReport && scanClean && !scanStale ? submitRegister() : runScan())}
 						/>
 						<button
-							class="text-[10px] uppercase tracking-widest px-3 py-1.5 border border-[#333] hover:border-amber-500 hover:text-amber-300 text-gray-300 rounded disabled:opacity-40"
+							class="text-[12px] px-3 py-1.5 border border-sc-line2 hover:border-amber-500 hover:text-amber-300 text-sc-ink2 rounded disabled:opacity-40"
 							on:click={runScan}
 							disabled={scanBusy || !registerFilePath.trim()}
 							title="Static AST scan — checks for forbidden imports and dangerous calls"
 						>{scanBusy ? '…' : 'Scan'}</button>
 						<button
-							class="terminal-button text-[10px] tracking-widest disabled:opacity-40"
+							class="terminal-button text-[12px] disabled:opacity-40"
 							on:click={submitRegister}
 							disabled={registerBusy || !registerFilePath.trim() || !scanClean || scanStale}
 							title={!scanReport
@@ -1090,7 +1090,7 @@
 						>{registerBusy ? '…' : 'Register'}</button>
 					</div>
 					{#if context?.file_location}
-						<div class="text-[10px] text-gray-600 mt-1.5">Workspace: {context.file_location}</div>
+						<div class="text-[10px] text-sc-ink3 mt-1.5">Workspace: {context.file_location}</div>
 					{/if}
 
 					{#if scanError}
@@ -1109,14 +1109,14 @@
 							{#if !scanClean}
 								<ul class="mt-1 space-y-0.5">
 									{#each scanReport.findings.slice(0, 6) as f}
-										<li class="text-[10px] text-gray-300 font-mono">
+										<li class="text-[10px] text-sc-ink2 font-mono">
 											<span class="text-red-400">{f.kind}</span>
-											<span class="text-gray-500">L{f.lineno}:{f.col}</span>
-											<span class="text-gray-300">— {f.message}</span>
+											<span class="text-sc-ink3">L{f.lineno}:{f.col}</span>
+											<span class="text-sc-ink2">— {f.message}</span>
 										</li>
 									{/each}
 									{#if scanReport.findings.length > 6}
-										<li class="text-[10px] text-gray-500">… {scanReport.findings.length - 6} more</li>
+										<li class="text-[10px] text-sc-ink3">… {scanReport.findings.length - 6} more</li>
 									{/if}
 								</ul>
 							{/if}
@@ -1124,26 +1124,26 @@
 					{:else if scanStale}
 						<div class="mt-2 text-[10px] text-amber-400">Path changed since last scan — re-scan before registering.</div>
 					{:else}
-						<div class="mt-2 text-[10px] text-gray-500">Scan required: AI-generated strategies must pass the AST gate before registering.</div>
+						<div class="mt-2 text-[10px] text-sc-ink3">Scan required: AI-generated strategies must pass the AST gate before registering.</div>
 					{/if}
 				</div>
 
 				<!-- Run backtest -->
 				<div class="px-4 py-3">
-					<div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Run backtest</div>
+					<div class="text-[10px] text-sc-ink3 uppercase tracking-widest mb-2">Run backtest</div>
 					<div class="flex gap-2 flex-wrap">
 						<input
-							class="flex-1 min-w-[140px] bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1.5 rounded font-mono"
+							class="flex-1 min-w-[140px] bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1.5 rounded font-mono"
 							placeholder="strategy_id (e.g. S00584)"
 							bind:value={backtestStrategyId}
 						/>
 						<input
-							class="flex-1 min-w-[120px] bg-[#111] border border-[#333] text-gray-200 text-xs px-2 py-1.5 rounded font-mono"
+							class="flex-1 min-w-[120px] bg-sc-panel2 border border-sc-line2 text-sc-ink text-xs px-2 py-1.5 rounded font-mono"
 							placeholder="BTC/USDT-1h"
 							bind:value={backtestDatasetId}
 						/>
 						<button
-							class="terminal-button text-[10px] tracking-widest disabled:opacity-40"
+							class="terminal-button text-[12px] disabled:opacity-40"
 							on:click={submitBacktest}
 							disabled={backtestBusy || !backtestStrategyId.trim() || !backtestDatasetId.trim()}
 						>{backtestBusy ? '…' : 'Run'}</button>

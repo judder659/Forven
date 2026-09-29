@@ -48,31 +48,31 @@
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div
-	class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+	class="fixed inset-0 z-50 flex items-center justify-center bg-sc-bg/80 p-4"
 	data-testid="tradingview-export-dialog"
 	role="presentation"
 	on:click={(e) => { if (e.target === e.currentTarget) close(); }}
 	on:keydown={(e) => { if (e.key === 'Escape') close(); }}
 >
 	<div
-		class="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden border border-[#222] bg-[#050505]"
+		class="rounded-md flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden border border-sc-line bg-sc-panel"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="tv-export-title"
 	>
-		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#1a1a1a] px-4 py-3">
+		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-sc-line px-4 py-3">
 			<div>
-				<div id="tv-export-title" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">TradingView Pine Strategy</div>
-				<div class="mt-1 font-mono text-xs text-[#666]">{filename}</div>
+				<div id="tv-export-title" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">TradingView Pine Strategy</div>
+				<div class="mt-1 font-mono text-xs text-sc-ink3">{filename}</div>
 			</div>
 			<div class="flex items-center gap-2">
 				{#if copyStatus}
-					<span class="text-[11px] uppercase tracking-wide text-emerald-400">{copyStatus}</span>
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-400">{copyStatus}</span>
 				{/if}
 				<button
 					type="button"
 					data-testid="copy-tradingview-script"
-					class="border border-emerald-900 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/20"
+					class="rounded-md border border-emerald-900 bg-emerald-500/10 px-3 py-1.5 text-[12px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20"
 					on:click={() => void copy()}
 				>
 					Copy
@@ -80,7 +80,7 @@
 				<button
 					type="button"
 					data-testid="close-tradingview-export"
-					class="border border-[#333] bg-black px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-[#888] transition-colors hover:border-[#555] hover:text-white"
+					class="rounded-md border border-sc-line2 bg-sc-bg px-3 py-1.5 text-[12px] font-medium text-sc-ink2 transition-colors hover:border-sc-line2 hover:text-sc-ink"
 					use:autofocusClose
 					on:click={close}
 				>
@@ -95,7 +95,7 @@
 		{/if}
 		<textarea
 			data-testid="tradingview-export-script"
-			class="min-h-[520px] flex-1 resize-none overflow-auto bg-black p-4 font-mono text-xs leading-relaxed text-[#ccc] outline-none"
+			class="min-h-[520px] flex-1 resize-none overflow-auto bg-sc-bg p-4 font-mono text-xs leading-relaxed text-sc-ink outline-none"
 			readonly
 			spellcheck="false"
 			value={script}

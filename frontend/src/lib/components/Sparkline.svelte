@@ -32,5 +32,5 @@
 		<path d={buildPath(data, width, height)} fill="none" stroke={getColor(data)} stroke-width="1.5" />
 	</svg>
 {:else}
-	<span class="text-gray-700 text-[10px]">--</span>
+	<span class="text-sc-ink4 text-[10px]">--</span>
 {/if}

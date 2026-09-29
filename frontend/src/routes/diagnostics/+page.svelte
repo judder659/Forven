@@ -45,7 +45,7 @@
 			case 'fail':
 				return 'text-red-400 border-red-900 bg-red-500/10';
 			default:
-				return 'text-[#888] border-[#333] bg-[#111]';
+				return 'text-sc-ink2 border-sc-line2 bg-sc-panel2';
 		}
 	}
 
@@ -58,7 +58,7 @@
 			case 'fail':
 				return 'bg-red-500';
 			default:
-				return 'bg-[#444]';
+				return 'bg-sc-line2';
 		}
 	}
 
@@ -194,12 +194,12 @@
 <div class="h-full overflow-y-auto p-6 space-y-6">
 	<div class="flex items-center justify-between gap-4">
 		<div class="flex items-center gap-3">
-			<svg class="w-6 h-6 text-[#888]" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<svg class="w-6 h-6 text-sc-ink2" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 				<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
 			</svg>
 			<div>
-				<h1 class="text-lg font-bold uppercase tracking-widest text-white">Diagnostics</h1>
-				<div class="text-[11px] text-[#666] mt-0.5">
+				<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Diagnostics</h1>
+				<div class="text-[11px] text-sc-ink3 mt-0.5">
 					{#if snapshot}
 						Updated {formatTimestamp(snapshot.generated_at)} · auto-refresh 60s
 					{:else}
@@ -209,7 +209,7 @@
 			</div>
 		</div>
 		<button
-			class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+			class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-60"
 			on:click={() => void loadAll()}
 			disabled={loading}
 			title="Re-run all checks immediately"
@@ -243,45 +243,45 @@
 	{#if snapshot}
 		<div class="grid grid-cols-1 md:grid-cols-5 gap-4">
 			<div class="border p-4 col-span-1 md:col-span-2 {statusClasses(overall)}">
-				<div class="text-[10px] uppercase tracking-wider opacity-80">Overall</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] opacity-80">Overall</div>
 				<div class="text-2xl font-bold mt-1">{overallTitle(overall)}</div>
 				<div class="text-xs mt-2 opacity-90">
 					{checks.length} check(s) ran ·
 					{summary.pass} pass / {summary.warn} warn / {summary.fail} fail
 				</div>
 			</div>
-			<div class="border border-[#222] bg-[#050505] p-4">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">
+			<div class="rounded-md border border-sc-line bg-sc-panel p-4">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					Cost{#if cost}{` (${cost.window_hours}h)`}{/if}
 				</div>
 				{#if cost}
-					<div class="text-2xl font-bold mt-1 text-white">${cost.cost_usd.toFixed(4)}</div>
-					<div class="text-[11px] text-[#666] mt-1">
+					<div class="text-2xl font-bold mt-1 text-sc-ink">${cost.cost_usd.toFixed(4)}</div>
+					<div class="text-[11px] text-sc-ink3 mt-1">
 						{cost.task_count} task(s) · {cost.total_tokens.toLocaleString()} tokens
 					</div>
 				{:else}
-					<div class="text-sm font-bold mt-1 text-[#666]">—</div>
-					<div class="text-[11px] text-[#666] mt-1">no cost data</div>
+					<div class="text-sm font-bold mt-1 text-sc-ink3">—</div>
+					<div class="text-[11px] text-sc-ink3 mt-1">no cost data</div>
 				{/if}
 			</div>
-			<div class="border border-[#222] bg-[#050505] p-4">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Resumable Tasks</div>
-				<div class="text-2xl font-bold mt-1 text-white">{resumable.length}</div>
-				<div class="text-[11px] text-[#666] mt-1">interrupted &amp; recoverable</div>
+			<div class="rounded-md border border-sc-line bg-sc-panel p-4">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Resumable Tasks</div>
+				<div class="text-2xl font-bold mt-1 text-sc-ink">{resumable.length}</div>
+				<div class="text-[11px] text-sc-ink3 mt-1">interrupted &amp; recoverable</div>
 			</div>
-			<div class="border border-[#222] bg-[#050505] p-4">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Last Snapshot</div>
-				<div class="text-sm font-bold mt-1 text-white">{formatTimestamp(snapshot.generated_at)}</div>
-				<div class="text-[11px] text-[#666] mt-1">auto-refreshes every 60s</div>
+			<div class="rounded-md border border-sc-line bg-sc-panel p-4">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Last Snapshot</div>
+				<div class="text-sm font-bold mt-1 text-sc-ink">{formatTimestamp(snapshot.generated_at)}</div>
+				<div class="text-[11px] text-sc-ink3 mt-1">auto-refreshes every 60s</div>
 			</div>
 		</div>
 
-		<div class="border border-[#222] bg-[#050505]">
-			<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">Health Checks</h2>
-				<span class="text-[10px] text-[#666]">click a row for detail</span>
+		<div class="rounded-md border border-sc-line bg-sc-panel">
+			<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
+				<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">Health Checks</h2>
+				<span class="text-[10px] text-sc-ink3">click a row for detail</span>
 			</div>
-			<div class="divide-y divide-[#1a1a1a]">
+			<div class="divide-y divide-sc-line">
 				{#each checks as check (check.name)}
 					{@const isOpen = expanded.has(check.name)}
 					{@const details = detailEntries(check.detail ?? {})}
@@ -294,23 +294,23 @@
 							<div class="flex items-start gap-3 min-w-0">
 								<span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0 {statusDot(check.status)}"></span>
 								<div class="min-w-0">
-									<div class="text-xs font-bold text-white truncate">{check.name}</div>
-									<div class="text-[11px] text-[#888] mt-0.5">{check.summary}</div>
+									<div class="text-xs font-bold text-sc-ink truncate">{check.name}</div>
+									<div class="text-[11px] text-sc-ink2 mt-0.5">{check.summary}</div>
 									{#if check.checked_at}
-										<div class="text-[10px] text-[#555] mt-0.5">checked {formatTimestamp(check.checked_at)}</div>
+										<div class="text-[10px] text-sc-ink3 mt-0.5">checked {formatTimestamp(check.checked_at)}</div>
 									{/if}
 								</div>
 							</div>
-							<span class="text-[10px] uppercase tracking-wider px-2 py-0.5 border shrink-0 {statusClasses(check.status)}">
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] px-2 py-0.5 border shrink-0 {statusClasses(check.status)}">
 								{STATUS_LABEL[check.status] ?? check.status}
 							</span>
 						</button>
 						{#if isOpen && details.length > 0}
-							<div class="mt-3 ml-5 border-l border-[#222] pl-4 space-y-1">
+							<div class="mt-3 ml-5 border-l border-sc-line pl-4 space-y-1">
 								{#each details as [key, value]}
 									<div class="grid grid-cols-[140px_1fr] gap-2 text-[11px]">
-										<div class="text-[#666] truncate">{key}</div>
-										<div class="text-[#888] break-all">{value}</div>
+										<div class="text-sc-ink3 truncate">{key}</div>
+										<div class="text-sc-ink2 break-all">{value}</div>
 									</div>
 								{/each}
 							</div>
@@ -318,44 +318,44 @@
 					</div>
 				{/each}
 				{#if checks.length === 0}
-					<div class="px-4 py-6 text-center text-xs text-[#666]">No checks reported.</div>
+					<div class="px-4 py-6 text-center text-xs text-sc-ink3">No checks reported.</div>
 				{/if}
 			</div>
 		</div>
 
 		{#if mcpServers.length > 0}
-			<div class="border border-[#222] bg-[#050505]">
-				<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between">
-					<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">MCP Servers</h2>
-					<span class="text-[10px] text-[#666]">click a row to manage</span>
+			<div class="rounded-md border border-sc-line bg-sc-panel">
+				<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
+					<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">MCP Servers</h2>
+					<span class="text-[10px] text-sc-ink3">click a row to manage</span>
 				</div>
-				<div class="divide-y divide-[#1a1a1a]">
+				<div class="divide-y divide-sc-line">
 					{#each mcpServers as server (server.name)}
 						<a
 							href="/integrations/mcp/{server.name}"
-							class="px-4 py-3 flex items-start justify-between gap-4 hover:bg-[#111] transition-colors"
+							class="px-4 py-3 flex items-start justify-between gap-4 hover:bg-sc-panel2 transition-colors"
 						>
 							<div class="flex items-start gap-3 min-w-0">
 								<span
 									class="mt-1 inline-block w-2 h-2 rounded-full shrink-0 {!server.enabled
-										? 'bg-[#444]'
+										? 'bg-sc-line2'
 										: server.last_status === 'ok'
 											? 'bg-emerald-500'
 											: server.last_status === 'error'
 												? 'bg-red-500'
-												: 'bg-[#444]'}"
+												: 'bg-sc-line2'}"
 								></span>
 								<div class="min-w-0">
-									<div class="text-xs font-bold text-white truncate">
+									<div class="text-xs font-bold text-sc-ink truncate">
 										{server.name}
 										{#if server.transport}
-											<span class="text-[10px] font-normal text-[#666]">· {server.transport}</span>
+											<span class="text-[10px] font-normal text-sc-ink3">· {server.transport}</span>
 										{/if}
 										{#if !server.enabled}
-											<span class="text-[10px] font-normal text-[#555]">· disabled</span>
+											<span class="text-[10px] font-normal text-sc-ink3">· disabled</span>
 										{/if}
 									</div>
-									<div class="text-[11px] text-[#888] mt-0.5">
+									<div class="text-[11px] text-sc-ink2 mt-0.5">
 										{server.last_status ?? 'never checked'}
 										{#if server.last_status_at}
 											· {formatTimestamp(server.last_status_at)}
@@ -366,41 +366,41 @@
 									{/if}
 								</div>
 							</div>
-							<span class="text-[10px] text-[#666] shrink-0 mt-1">→</span>
+							<span class="text-[10px] text-sc-ink3 shrink-0 mt-1">→</span>
 						</a>
 					{/each}
 				</div>
 			</div>
 		{/if}
 
-		<div class="border border-[#222] bg-[#050505]">
-			<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-[#888]">Resumable Tasks</h2>
-				<span class="text-[10px] text-[#666]">{resumable.length} waiting</span>
+		<div class="rounded-md border border-sc-line bg-sc-panel">
+			<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
+				<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">Resumable Tasks</h2>
+				<span class="text-[10px] text-sc-ink3">{resumable.length} waiting</span>
 			</div>
 			{#if resumable.length === 0}
-				<div class="px-4 py-6 text-center text-xs text-[#666]">
+				<div class="px-4 py-6 text-center text-xs text-sc-ink3">
 					No interrupted tasks. Tasks left running when the app closes show up here.
 				</div>
 			{:else}
-				<div class="divide-y divide-[#1a1a1a]">
+				<div class="divide-y divide-sc-line">
 					{#each resumable as task (task.id)}
 						{@const external = isExternalMutating(task.type)}
 						<div class="px-4 py-3 flex items-center justify-between gap-4">
 							<div class="min-w-0">
-								<div class="text-xs font-bold text-white truncate flex items-center gap-2">
+								<div class="text-xs font-bold text-sc-ink truncate flex items-center gap-2">
 									<span class="truncate">{task.display_id ?? `#${task.id}`} · {task.title}</span>
 									{#if task.type}
 										<span
 											class="text-[10px] font-normal uppercase tracking-wider px-1.5 py-0.5 border shrink-0 {external
 												? 'text-yellow-400 border-yellow-900 bg-yellow-500/10'
-												: 'text-[#888] border-[#333] bg-[#111]'}"
+												: 'text-sc-ink2 border-sc-line2 bg-sc-panel2'}"
 										>
 											{task.type}
 										</span>
 									{/if}
 								</div>
-								<div class="text-[11px] text-[#666] mt-0.5">
+								<div class="text-[11px] text-sc-ink3 mt-0.5">
 									Agent {task.agent_id ?? 'unknown'} · interrupted {formatTimestamp(task.interrupted_at)}
 									{#if task.started_at}
 										· started {formatTimestamp(task.started_at)}
@@ -410,7 +410,7 @@
 									{/if}
 								</div>
 								{#if task.latest_checkpoint}
-									<div class="text-[11px] text-[#888] mt-1 truncate">
+									<div class="text-[11px] text-sc-ink2 mt-1 truncate">
 										latest: {task.latest_checkpoint.key} ({formatTimestamp(task.latest_checkpoint.updated_at)})
 									</div>
 								{/if}
@@ -422,9 +422,9 @@
 								{/if}
 							</div>
 							<button
-								class="text-xs border px-3 py-1.5 transition-colors disabled:opacity-60 {external
+								class="rounded-md text-[12px] border px-3 py-1.5 transition-colors disabled:opacity-60 {external
 									? 'border-yellow-800 text-yellow-300 hover:bg-yellow-500/10'
-									: 'border-[#333] text-[#888] hover:border-[#555] hover:text-white'}"
+									: 'border-sc-line2 text-sc-ink2 hover:border-sc-line2 hover:text-sc-ink'}"
 								on:click={() => handleResume(task)}
 								disabled={resumingId !== null}
 							>

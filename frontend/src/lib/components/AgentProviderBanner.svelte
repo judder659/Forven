@@ -80,14 +80,14 @@
 		<div class="flex items-center gap-2 shrink-0">
 			<button
 				type="button"
-				class="text-[11px] border border-yellow-900 text-yellow-400 px-2.5 py-1 hover:bg-yellow-500/10 transition-colors"
+				class="rounded-md text-[11px] border border-yellow-900 text-yellow-400 px-2.5 py-1 hover:bg-yellow-500/10 transition-colors"
 				on:click={openAgents}
 			>
 				Open Agents
 			</button>
 			<button
 				type="button"
-				class="text-[11px] text-[#666] hover:text-white px-2 transition-colors"
+				class="text-[11px] text-sc-ink3 hover:text-sc-ink px-2 transition-colors"
 				on:click={handleDismiss}
 				aria-label="Dismiss"
 			>

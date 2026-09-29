@@ -40,15 +40,15 @@
 	<button
 		type="button"
 		aria-label="Close settings drawer"
-		class="absolute inset-0 bg-black/80"
+		class="absolute inset-0 bg-sc-bg/80"
 		transition:fade
 		on:click={closeDrawer}
 	></button>
 	<div
-		class="absolute right-0 top-0 h-full w-full max-w-sm bg-[#050505] border-l border-[#222] flex flex-col text-sm text-[#aaa]"
+		class="absolute right-0 top-0 h-full w-full max-w-sm bg-sc-panel border-l border-sc-line flex flex-col text-sm text-sc-ink2"
 		transition:fly={{ x: 320 }}
 	>
-		<div class="px-4 py-3 border-b border-[#222] flex items-center justify-between sticky top-0 bg-[#0a0a0a]">
+		<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between sticky top-0 bg-sc-panel">
 			<h2 class="font-bold tracking-wider uppercase text-xs">Agent Hub Settings</h2>
 			<button class="terminal-button-icon" type="button" on:click={closeDrawer} aria-label="Close settings">
 				<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -59,9 +59,9 @@
 		</div>
 		<div class="p-4 space-y-6 overflow-y-auto flex-1 min-h-0">
 			<section class="space-y-2">
-				<h3 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Polling</h3>
+				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Polling</h3>
 				<div>
-					<label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1" for="hub-poll-interval">
+					<label class="block text-[10px] text-sc-ink3 uppercase tracking-wider mb-1" for="hub-poll-interval">
 						Poll Interval
 					</label>
 					<select
@@ -77,9 +77,9 @@
 			</section>
 
 			<section class="space-y-4">
-				<h3 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Display</h3>
+				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Display</h3>
 				<label class="flex items-center justify-between text-xs cursor-pointer">
-					<span class="uppercase tracking-wider text-[10px] text-gray-500">Compact Card Mode</span>
+					<span class="uppercase tracking-wider text-[10px] text-sc-ink3">Compact Card Mode</span>
 					<input
 						type="checkbox"
 						checked={current.compactCards}
@@ -87,7 +87,7 @@
 					/>
 				</label>
 				<label class="flex items-center justify-between text-xs cursor-pointer">
-					<span class="uppercase tracking-wider text-[10px] text-gray-500">Sound on Task Completion</span>
+					<span class="uppercase tracking-wider text-[10px] text-sc-ink3">Sound on Task Completion</span>
 					<input
 						type="checkbox"
 						checked={current.soundOnComplete}
@@ -95,7 +95,7 @@
 					/>
 				</label>
 				<label class="flex items-center justify-between text-xs cursor-pointer">
-					<span class="uppercase tracking-wider text-[10px] text-gray-500">Show Internal Workers</span>
+					<span class="uppercase tracking-wider text-[10px] text-sc-ink3">Show Internal Workers</span>
 					<input
 						type="checkbox"
 						checked={current.showInternalWorkers}
@@ -105,9 +105,9 @@
 			</section>
 
 			<section class="space-y-3">
-				<h3 class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Scheduler</h3>
+				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Scheduler</h3>
 				<label class="flex items-center justify-between text-xs cursor-pointer">
-					<span class="uppercase tracking-wider text-[10px] text-gray-500">Auto-expand errors</span>
+					<span class="uppercase tracking-wider text-[10px] text-sc-ink3">Auto-expand errors</span>
 					<input
 						type="checkbox"
 						checked={current.showSchedulerErrors}

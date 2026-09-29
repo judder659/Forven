@@ -171,10 +171,10 @@
 </script>
 
 {#if $wizardOpen}
-	<div class="fixed inset-0 z-[100] flex items-stretch justify-center bg-black/80 p-6"
+	<div class="fixed inset-0 z-[100] flex items-stretch justify-center bg-sc-bg/80 p-6"
 		on:click|self={closeWizard}
 		role="presentation">
-		<div class="flex w-full max-w-5xl h-full max-h-[90vh] bg-[#050505] border border-[#222] overflow-hidden">
+		<div class="rounded-md flex w-full max-w-5xl h-full max-h-[90vh] bg-sc-panel border border-sc-line overflow-hidden">
 			<WizardStepRail
 				steps={stepsForRail}
 				activeIndex={$wizardStep}
@@ -182,13 +182,13 @@
 				onSkipAll={skipAll}
 			/>
 			<section class="flex-1 min-w-0 flex flex-col">
-				<header class="flex items-start justify-between px-6 py-4 border-b border-[#222]">
+				<header class="flex items-start justify-between px-6 py-4 border-b border-sc-line">
 					<div>
-						<h2 class="text-lg font-bold uppercase tracking-widest text-white">{step.label}</h2>
-						<p class="text-xs text-[#666] mt-1">{step.description}</p>
+						<h2 class="text-lg font-bold uppercase tracking-widest text-sc-ink">{step.label}</h2>
+						<p class="text-xs text-sc-ink3 mt-1">{step.description}</p>
 					</div>
 					<button type="button"
-						class="text-[#666] hover:text-white focus:outline-none"
+						class="text-sc-ink3 hover:text-sc-ink focus:outline-none"
 						on:click={closeWizard}
 						aria-label="Close wizard">✕</button>
 				</header>
@@ -205,7 +205,7 @@
 
 				<div class="flex-1 min-h-0 overflow-y-auto px-6 py-4">
 					{#if step.id === 'welcome'}
-						<p class="text-sm text-[#888] leading-relaxed">
+						<p class="text-sm text-sc-ink2 leading-relaxed">
 							This wizard walks you through the minimum setup to run Forven.
 							You can skip anything and change it later in Settings.
 						</p>
@@ -235,7 +235,7 @@
 									{:else if isSatisfied(s)}
 										<span class="text-emerald-400" aria-hidden="true">✓</span>
 									{:else}
-										<span class="text-[#666]" aria-hidden="true">○</span>
+										<span class="text-sc-ink3" aria-hidden="true">○</span>
 									{/if}
 									<span>{s.label}</span>
 								</li>
@@ -244,22 +244,22 @@
 					{/if}
 				</div>
 
-				<footer class="flex items-center justify-between px-6 py-3 border-t border-[#222]">
+				<footer class="flex items-center justify-between px-6 py-3 border-t border-sc-line">
 					<button type="button"
-						class="terminal-button text-xs"
+						class="terminal-button text-[12px]"
 						disabled={$wizardStep === 0}
 						on:click={() => goTo($wizardStep - 1)}>
 						Back
 					</button>
 					{#if step.id === 'done'}
 						<button type="button"
-							class="terminal-button-primary text-xs"
+							class="terminal-button-primary text-[12px]"
 							on:click={finish}>
 							Finish
 						</button>
 					{:else}
 						<button type="button"
-							class="terminal-button-primary text-xs"
+							class="terminal-button-primary text-[12px]"
 							on:click={() => goTo($wizardStep + 1)}>
 							Next
 						</button>

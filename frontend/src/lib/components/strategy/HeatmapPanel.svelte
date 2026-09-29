@@ -150,95 +150,95 @@
 <div class="space-y-3">
 	<div class="flex flex-wrap items-end gap-x-3 gap-y-2 text-[11px]">
 		<label class="flex flex-col gap-1">
-			<span class="text-[9px] uppercase tracking-wider text-[#555]">Across (x)</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Across (x)</span>
 			<select bind:value={xKey} on:change={() => resetRange('x')} aria-label="heatmap x setting"
-				class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[12px] text-white outline-none focus:border-white">
+				class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[12px] text-sc-ink outline-none focus:border-sc-ink">
 				{#each knobs as knob (knob.key)}<option value={knob.key}>{knob.label}</option>{/each}
 			</select>
 		</label>
 		<label class="flex flex-col gap-1">
-			<span class="text-[9px] uppercase tracking-wider text-[#555]">From</span>
-			<input type="number" bind:value={xFrom} on:input={() => (xEdited = true)} step="any" aria-label="x from" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">From</span>
+			<input type="number" bind:value={xFrom} on:input={() => (xEdited = true)} step="any" aria-label="x from" class="rounded-md w-20 border border-sc-line2 bg-sc-bg px-1.5 py-1 font-mono text-[12px] text-sc-ink outline-none focus:border-sc-ink" />
 		</label>
 		<label class="flex flex-col gap-1">
-			<span class="text-[9px] uppercase tracking-wider text-[#555]">To</span>
-			<input type="number" bind:value={xTo} on:input={() => (xEdited = true)} step="any" aria-label="x to" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">To</span>
+			<input type="number" bind:value={xTo} on:input={() => (xEdited = true)} step="any" aria-label="x to" class="rounded-md w-20 border border-sc-line2 bg-sc-bg px-1.5 py-1 font-mono text-[12px] text-sc-ink outline-none focus:border-sc-ink" />
 		</label>
 		<label class="flex flex-col gap-1">
-			<span class="text-[9px] uppercase tracking-wider text-[#555]">Down (y)</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Down (y)</span>
 			<select bind:value={yKey} on:change={() => { yTouched = true; resetRange('y'); }} aria-label="heatmap y setting"
-				class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[12px] text-white outline-none focus:border-white">
+				class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[12px] text-sc-ink outline-none focus:border-sc-ink">
 				<option value="">— none —</option>
 				{#each knobs.filter((knob) => knob.key !== xKey) as knob (knob.key)}<option value={knob.key}>{knob.label}</option>{/each}
 			</select>
 		</label>
 		{#if yKnob}
 			<label class="flex flex-col gap-1">
-				<span class="text-[9px] uppercase tracking-wider text-[#555]">From</span>
-				<input type="number" bind:value={yFrom} on:input={() => (yEdited = true)} step="any" aria-label="y from" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">From</span>
+				<input type="number" bind:value={yFrom} on:input={() => (yEdited = true)} step="any" aria-label="y from" class="rounded-md w-20 border border-sc-line2 bg-sc-bg px-1.5 py-1 font-mono text-[12px] text-sc-ink outline-none focus:border-sc-ink" />
 			</label>
 			<label class="flex flex-col gap-1">
-				<span class="text-[9px] uppercase tracking-wider text-[#555]">To</span>
-				<input type="number" bind:value={yTo} on:input={() => (yEdited = true)} step="any" aria-label="y to" class="w-20 border border-[#2a2a2a] bg-black px-1.5 py-1 font-mono text-[12px] text-white outline-none focus:border-white" />
+				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">To</span>
+				<input type="number" bind:value={yTo} on:input={() => (yEdited = true)} step="any" aria-label="y to" class="rounded-md w-20 border border-sc-line2 bg-sc-bg px-1.5 py-1 font-mono text-[12px] text-sc-ink outline-none focus:border-sc-ink" />
 			</label>
 		{/if}
 		<label class="flex flex-col gap-1">
-			<span class="text-[9px] uppercase tracking-wider text-[#555]">Steps</span>
-			<select bind:value={steps} on:change={onSteps} aria-label="heatmap steps" class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[12px] text-white outline-none focus:border-white">
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Steps</span>
+			<select bind:value={steps} on:change={onSteps} aria-label="heatmap steps" class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[12px] text-sc-ink outline-none focus:border-sc-ink">
 				{#each [3, 5, 7, 9] as n}<option value={n}>{n}</option>{/each}
 			</select>
 		</label>
 		{#if view?.status === 'running'}
-			<button type="button" on:click={() => dispatch('cancel')} class="terminal-button text-[10px]">Cancel</button>
+			<button type="button" on:click={() => dispatch('cancel')} class="terminal-button text-[12px]">Cancel</button>
 		{:else}
 			<button type="button" on:click={run} disabled={!canRun || !xPlan.length}
-				class="terminal-button-primary text-[10px] disabled:opacity-40">{view ? 'Run again' : 'Run heatmap'}</button>
+				class="terminal-button-primary text-[12px] disabled:opacity-40">{view ? 'Run again' : 'Run heatmap'}</button>
 		{/if}
-		<span class="pb-1 text-[10px] text-[#555]">{cellCount} backtest{cellCount === 1 ? '' : 's'}</span>
+		<span class="pb-1 text-[10px] text-sc-ink3">{cellCount} backtest{cellCount === 1 ? '' : 's'}</span>
 	</div>
 
 	{#if !knobs.length}
-		<div class="border border-dashed border-[#262626] px-3 py-6 text-center text-[12px] text-[#555]">
+		<div class="border border-dashed border-sc-line px-3 py-6 text-center text-[12px] text-sc-ink3">
 			This rule has no numbers to sweep. Add a knob or an indicator.
 		</div>
 	{:else if !view}
-		<div class="border border-dashed border-[#262626] px-3 py-6 text-center text-[12px] text-[#555]">
+		<div class="border border-dashed border-sc-line px-3 py-6 text-center text-[12px] text-sc-ink3">
 			Sweep two settings to see whether the rule works across a range of them or only at one exact point.
 		</div>
 	{:else}
 		{#if stale}
-			<div class="border border-[#333] bg-[#111] px-3 py-1.5 text-[11px] text-[#999]" role="status">
+			<div class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[11px] text-sc-ink2" role="status">
 				The rules, market or settings changed since this heatmap. Run it again to check the current version.
 			</div>
 		{/if}
 		{#each view.warnings as warning}
 			<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{warning}</div>
 		{/each}
-		<div class="flex flex-wrap items-center gap-3 text-[10px] text-[#666]">
+		<div class="flex flex-wrap items-center gap-3 text-[10px] text-sc-ink3">
 			<div class="inline-flex" role="group" aria-label="heatmap metric">
 				{#each METRICS as [key, label]}
 					<button type="button" on:click={() => (metric = key)} aria-pressed={metric === key}
-						class="-ml-px border px-2 py-0.5 first:ml-0 {metric === key ? 'relative border-white bg-white text-black' : 'border-[#2a2a2a] text-[#777] hover:text-white'}">{label}</button>
+						class="rounded-md -ml-px border px-2 py-0.5 first:ml-0 {metric === key ? 'relative border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}">{label}</button>
 				{/each}
 			</div>
-			{#if view.status === 'running'}<span class="text-white">Running… {view.done} of {view.total}</span>{/if}
+			{#if view.status === 'running'}<span class="text-sc-ink">Running… {view.done} of {view.total}</span>{/if}
 			{#if view.status === 'cancelled'}<span>Stopped at {view.done} of {view.total}</span>{/if}
-			<span class="ml-auto">★ best out-of-sample · <span class="border border-white px-1 text-white">▢</span> current settings</span>
+			<span class="ml-auto">★ best out-of-sample · <span class="border border-sc-ink px-1 text-sc-ink">▢</span> current settings</span>
 		</div>
 
 		<div class="overflow-x-auto {stale ? 'opacity-60' : ''}" data-testid="heatmap-grid">
-			{#if view.y}<div class="pb-1 text-[9px] uppercase tracking-wider text-[#666]">{view.y.label} ↑</div>{/if}
+			{#if view.y}<div class="pb-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{view.y.label} ↑</div>{/if}
 			<div class="grid min-w-[360px] gap-px" style="grid-template-columns: auto repeat({xValues.length}, minmax(44px, 1fr))">
 				{#each displayRows as y}
-					<div class="flex items-center justify-end pr-2 font-mono text-[10px] text-[#888]">{view.y ? formatValue(y) : ''}</div>
+					<div class="flex items-center justify-end pr-2 font-mono text-[10px] text-sc-ink2">{view.y ? formatValue(y) : ''}</div>
 					{#each xValues as x}
 						{@const cell = view.cells[cellKey(x, y)]}
 						<button type="button" title={cellTitle(cell, x, y)} disabled={!cell || !!cell.error}
 							on:click={() => dispatch('adopt', { x, y })}
 							style={shade(cell)}
-							class="relative flex h-9 items-center justify-center font-mono text-[10px] transition-colors
-								{cell ? 'text-white hover:brightness-150' : 'animate-pulse bg-[#0d0d0d] text-[#333]'}
-								{cell?.error ? 'bg-[#111] text-[#555]' : ''}
+							class="relative flex h-9 items-center justify-center font-mono text-[12px] transition-colors
+								{cell ? 'text-sc-ink hover:brightness-150' : 'animate-pulse bg-sc-panel2 text-sc-ink4'}
+								{cell?.error ? 'bg-sc-panel2 text-sc-ink3' : ''}
 								{isCurrent(x, y) ? 'outline outline-2 -outline-offset-2 outline-white' : ''}">
 							{cellText(cell)}
 							{#if best && cell === best}<span class="absolute right-0.5 top-0 text-[9px] text-amber-300">★</span>{/if}
@@ -246,24 +246,24 @@
 					{/each}
 				{/each}
 				<div></div>
-				{#each xValues as x}<div class="pt-1 text-center font-mono text-[10px] text-[#888]">{formatValue(x)}</div>{/each}
+				{#each xValues as x}<div class="pt-1 text-center font-mono text-[10px] text-sc-ink2">{formatValue(x)}</div>{/each}
 			</div>
-			<div class="pt-1 text-center text-[9px] uppercase tracking-wider text-[#666]">{view.x.label} →</div>
+			<div class="pt-1 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{view.x.label} →</div>
 		</div>
 
 		{#if verdictLines.length}
 			<div class="space-y-1.5 text-[12px]" data-testid="heatmap-verdict">
 				{#each verdictLines as line (line.key)}
 					<div class="flex items-baseline gap-2" data-testid="heatmap-verdict-{line.key}">
-						{#if line.label}<span class="w-24 shrink-0 text-[9px] uppercase tracking-wider text-[#666]">{line.label}</span>{/if}
+						{#if line.label}<span class="w-24 shrink-0 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{line.label}</span>{/if}
 						{#if line.verdict.status !== 'off_grid'}
-							<span class="shrink-0 border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider {chipClass(line.verdict.status)}">{line.verdict.status.replace('_', ' ')}</span>
+							<span class="shrink-0 border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {chipClass(line.verdict.status)}">{line.verdict.status.replace('_', ' ')}</span>
 						{/if}
-						<span class={line.verdict.status === 'off_grid' ? 'text-[#777]' : 'text-[#ccc]'}>{line.verdict.text}</span>
+						<span class={line.verdict.status === 'off_grid' ? 'text-sc-ink3' : 'text-sc-ink'}>{line.verdict.text}</span>
 					</div>
 				{/each}
 			</div>
 		{/if}
-		<p class="text-[10px] text-[#555]">{note}</p>
+		<p class="text-[10px] text-sc-ink3">{note}</p>
 	{/if}
 </div>

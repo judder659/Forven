@@ -26,15 +26,15 @@
 
 <form on:submit|preventDefault={submit} class="space-y-2">
 	<slot />
-	<label class="block text-[11px] text-[#888]">
-		Type <span class="select-all font-mono text-white">{phrase}</span> to confirm
+	<label class="block text-[11px] text-sc-ink2">
+		Type <span class="select-all font-mono text-sc-ink">{phrase}</span> to confirm
 		<input bind:this={input} bind:value={typed} on:keydown={onKey} autocomplete="off" spellcheck="false" placeholder={phrase}
 			class="terminal-input mt-1 font-mono text-[12px]" aria-label={`Type ${phrase} to confirm`} />
 	</label>
 	<div class="flex justify-end gap-2">
-		<button type="button" class="terminal-button text-[10px]" on:click={() => dispatch('cancel')}>Cancel</button>
+		<button type="button" class="terminal-button text-[12px]" on:click={() => dispatch('cancel')}>Cancel</button>
 		<button type="submit" disabled={!ok || busy}
-			class="{danger ? 'terminal-button-danger' : 'terminal-button-primary'} text-[10px] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-red-500">
+			class="{danger ? 'terminal-button-danger' : 'terminal-button-primary'} text-[12px] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-red-500">
 			{busy ? 'Working…' : action}
 		</button>
 	</div>

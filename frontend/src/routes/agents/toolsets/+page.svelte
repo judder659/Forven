@@ -156,7 +156,7 @@
 
 	function effectiveClass(tool: ToolDefinition): string {
 		const eff = effectiveByName.get(tool.name);
-		if (!eff) return 'text-[#888]';
+		if (!eff) return 'text-sc-ink2';
 		return eff.enabled ? 'text-emerald-400' : 'text-red-400';
 	}
 
@@ -167,7 +167,7 @@
 			case 'disable':
 				return 'border-red-900 bg-red-500/10 text-red-400';
 			default:
-				return 'border-[#333] text-[#888]';
+				return 'border-sc-line2 text-sc-ink2';
 		}
 	}
 
@@ -226,29 +226,29 @@
 <svelte:head><title>Agent Toolsets | Forven</title></svelte:head>
 
 <div class="flex h-screen overflow-hidden">
-	<aside class="w-64 border-r border-[#222] bg-[#050505] overflow-y-auto">
-		<header class="px-4 py-4 border-b border-[#222]">
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Agents</div>
-			<h1 class="text-sm font-bold uppercase tracking-widest text-white mt-1">Toolset matrix</h1>
+	<aside class="w-64 border-r border-sc-line bg-sc-panel overflow-y-auto">
+		<header class="px-4 py-4 border-b border-sc-line">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agents</div>
+			<h1 class="text-sm font-bold uppercase tracking-widest text-sc-ink mt-1">Toolset matrix</h1>
 		</header>
 		{#if agentsLoading}
-			<div class="px-4 py-3 text-xs text-[#666]">Loading agents...</div>
+			<div class="px-4 py-3 text-xs text-sc-ink3">Loading agents...</div>
 		{:else if agentsError}
 			<div class="px-4 py-3 text-xs text-red-400">{agentsError}</div>
 		{:else if agents.length === 0}
-			<div class="px-4 py-3 text-xs text-[#666]">No agents.</div>
+			<div class="px-4 py-3 text-xs text-sc-ink3">No agents.</div>
 		{:else}
-			<ul class="divide-y divide-[#1a1a1a]">
+			<ul class="divide-y divide-sc-line">
 				{#each agents as agent}
 					<li>
 						<button
 							type="button"
 							disabled={loading || saving}
-							class="w-full text-left px-4 py-2 hover:bg-[#111] transition-colors disabled:opacity-50 disabled:cursor-not-allowed {selectedAgentId === agent.id ? 'bg-[#111] text-white border-l-2 border-l-white pl-[14px]' : 'text-[#888]'}"
+							class="w-full text-left px-4 py-2 hover:bg-sc-panel2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed {selectedAgentId === agent.id ? 'bg-sc-panel2 text-sc-ink border-l-2 border-l-sc-ink pl-[14px]' : 'text-sc-ink2'}"
 							on:click={() => void handleSelectAgent(String(agent.id))}
 						>
 							<div class="text-sm font-mono">{agent.id}</div>
-							<div class="text-[11px] text-[#666]">{agent.name || agent.role || ''}</div>
+							<div class="text-[11px] text-sc-ink3">{agent.name || agent.role || ''}</div>
 						</button>
 					</li>
 				{/each}
@@ -258,25 +258,25 @@
 
 	<section class="flex-1 overflow-y-auto p-6 space-y-4">
 		{#if !selectedAgentId}
-			<div class="text-[#666]">Select an agent to view its toolset.</div>
+			<div class="text-sc-ink3">Select an agent to view its toolset.</div>
 		{:else if loading}
-			<div class="text-[#666]">Loading toolset for {selectedAgentId}...</div>
+			<div class="text-sc-ink3">Loading toolset for {selectedAgentId}...</div>
 		{:else if error}
 			<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{error}</div>
 		{:else if !toolsets}
-			<div class="text-[#666]">No toolset data.</div>
+			<div class="text-sc-ink3">No toolset data.</div>
 		{:else}
 			<header class="space-y-2">
 				<div class="flex items-end justify-between gap-3">
 					<div>
-						<div class="text-[10px] uppercase tracking-wider text-[#666]">Agent</div>
-						<h2 class="text-lg font-bold uppercase tracking-widest text-white">{toolsets.agent_id}</h2>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agent</div>
+						<h2 class="text-lg font-bold uppercase tracking-widest text-sc-ink">{toolsets.agent_id}</h2>
 					</div>
 					<div class="flex items-center gap-2">
 						<button
 							type="button"
 							disabled={saving || !dirty}
-							class="terminal-button-primary text-xs disabled:opacity-40"
+							class="terminal-button-primary text-[12px] disabled:opacity-40"
 							on:click={() => void saveOverrides()}
 						>
 							{saving ? 'Saving...' : 'Save changes'}
@@ -284,14 +284,14 @@
 						<button
 							type="button"
 							disabled={saving || contextOverrideCount === 0}
-							class="terminal-button text-xs disabled:opacity-40"
+							class="terminal-button text-[12px] disabled:opacity-40"
 							on:click={() => void resetContext()}
 						>
 							Reset context
 						</button>
 					</div>
 				</div>
-				<p class="text-xs text-[#666] max-w-3xl">
+				<p class="text-xs text-sc-ink3 max-w-3xl">
 					Per-context overrides for this agent. Resolution order:
 					exact tool name &gt; <code>mcp:&lt;server&gt;</code> &gt; <code>mcp:*</code> &gt;
 					<code>category:&lt;cat&gt;</code> &gt; default-deny set. Click a row's chip to cycle
@@ -301,13 +301,13 @@
 
 			{#if actionMessage}<div class="border border-emerald-900 bg-emerald-500/5 text-emerald-400 text-xs px-3 py-2">{actionMessage}</div>{/if}
 
-			<nav class="flex flex-wrap items-center gap-2 border-b border-[#222] pb-2">
+			<nav class="flex flex-wrap items-center gap-2 border-b border-sc-line pb-2">
 				{#each contexts as ctx}
 					{@const ctxOverrides = contextOverrideCountFor(ctx)}
 					<button
 						type="button"
 						disabled={loading || saving}
-						class="flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-1.5 border transition-colors disabled:opacity-50 disabled:cursor-not-allowed {activeContext === ctx ? 'border-[#555] bg-[#111] text-white' : 'border-[#333] text-[#888] hover:text-white'}"
+						class="rounded-md flex items-center gap-1.5 text-[12px] px-3 py-1.5 border transition-colors disabled:opacity-50 disabled:cursor-not-allowed {activeContext === ctx ? 'border-sc-line2 bg-sc-panel2 text-sc-ink' : 'border-sc-line2 text-sc-ink2 hover:text-sc-ink'}"
 						on:click={() => void handleSelectContext(ctx)}
 					>
 						{ctx}
@@ -323,7 +323,7 @@
 						placeholder="Filter tools..."
 						class="terminal-input w-40 !py-1"
 					/>
-					<span class="text-[#666] uppercase tracking-wider">Category</span>
+					<span class="text-sc-ink3 uppercase tracking-wider">Category</span>
 					<select bind:value={categoryFilter} class="terminal-select !w-auto !py-1">
 						{#each categories as cat}
 							<option value={cat}>{cat}</option>
@@ -332,14 +332,14 @@
 				</div>
 			</nav>
 
-			<div class="flex items-center gap-3 text-[11px] text-[#666]">
+			<div class="flex items-center gap-3 text-[11px] text-sc-ink3">
 				<span>{filteredTools.length} tool(s)</span>
 				<span class="text-emerald-400">{filteredEnabledCount} enabled</span>
 				<span class="text-red-400">{filteredDisabledCount} disabled</span>
 			</div>
 
 			<table class="w-full text-xs">
-				<thead class="text-[10px] text-[#666] uppercase tracking-wider">
+				<thead class="text-[10px] text-sc-ink3 uppercase tracking-wider">
 					<tr>
 						<th class="text-left px-3 py-2">Tool</th>
 						<th class="text-left px-3 py-2">Category</th>
@@ -351,21 +351,21 @@
 					{#each filteredTools as tool}
 						{@const state = rowState(tool.name)}
 						{@const rowDirty = isRowDirty(tool.name)}
-						<tr class="border-t border-[#1a1a1a] hover:bg-[#111] transition-colors {rowDirty ? 'bg-yellow-500/5' : ''}">
-							<td class="px-3 py-1.5 font-mono text-[#ccc]" title={tool.description || ''}>
+						<tr class="border-t border-sc-line hover:bg-sc-panel2 transition-colors {rowDirty ? 'bg-yellow-500/5' : ''}">
+							<td class="px-3 py-1.5 font-mono text-sc-ink" title={tool.description || ''}>
 								<span class="inline-flex items-center gap-1.5">
 									{#if rowDirty}<span class="text-yellow-400" title="Unsaved change">●</span>{/if}
 									{tool.name}
-									{#if tool.description}<span class="text-[#555]" title={tool.description}>(?)</span>{/if}
+									{#if tool.description}<span class="text-sc-ink3" title={tool.description}>(?)</span>{/if}
 								</span>
 							</td>
-							<td class="px-3 py-1.5 text-[#666]">{tool.category}</td>
+							<td class="px-3 py-1.5 text-sc-ink3">{tool.category}</td>
 							<td class="px-3 py-1.5 {effectiveClass(tool)}">{effectiveLabel(tool)}</td>
 							<td class="px-3 py-1.5">
 								<button
 									type="button"
 									disabled={saving}
-									class="text-[10px] uppercase tracking-wider px-2 py-0.5 border disabled:opacity-50 {rowChipClass(state)}"
+									class="rounded-md text-[12px] px-2 py-0.5 border disabled:opacity-50 {rowChipClass(state)}"
 									on:click={() => cycleRow(tool.name)}
 								>
 									{rowChipLabel(state)}

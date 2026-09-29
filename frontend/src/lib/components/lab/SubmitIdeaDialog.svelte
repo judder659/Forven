@@ -100,25 +100,25 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-50 flex items-start justify-center bg-black/80 px-4 py-4 sm:py-6"
+		class="fixed inset-0 z-50 flex items-start justify-center bg-sc-bg/80 px-4 py-4 sm:py-6"
 		on:click={onBackdropClick}
 		on:keydown={(e) => e.key === 'Escape' && close()}
 		role="presentation"
 	>
 		<div
 			use:dialogFocus
-			class="flex max-h-[calc(100dvh-3rem)] w-full max-w-2xl flex-col border border-[#222] bg-[#050505] text-white"
+			class="rounded-md flex max-h-[calc(100dvh-3rem)] w-full max-w-2xl flex-col border border-sc-line bg-sc-panel text-sc-ink"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="submit-idea-title"
 		>
-			<header class="flex shrink-0 items-center justify-between border-b border-[#1a1a1a] px-4 py-2">
-				<h2 id="submit-idea-title" class="text-[10px] font-bold uppercase tracking-widest text-[#888]">
+			<header class="flex shrink-0 items-center justify-between border-b border-sc-line px-4 py-2">
+				<h2 id="submit-idea-title" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
 					Submit an idea
 				</h2>
 				<button
 					type="button"
-					class="text-[#666] hover:text-white"
+					class="text-sc-ink3 hover:text-sc-ink"
 					aria-label="Close"
 					disabled={submitting}
 					on:click={close}
@@ -128,14 +128,14 @@
 			</header>
 
 			{#if queuedTaskId !== undefined}
-				<div class="space-y-3 px-5 py-5 text-sm text-[#ccc]">
+				<div class="space-y-3 px-5 py-5 text-sm text-sc-ink">
 					<p>
 						Queued{queuedTaskId ? ` as task T${queuedTaskId}` : ''}. The strategy-developer will write the idea
 						up and build strategies from it; they appear in The Forge as they're registered.
 					</p>
 					<div class="flex justify-end gap-2">
-						<button type="button" class="terminal-button text-xs" on:click={reset}>Submit another</button>
-						<button type="button" class="terminal-button-primary text-xs" on:click={close}>Done</button>
+						<button type="button" class="terminal-button text-[12px]" on:click={reset}>Submit another</button>
+						<button type="button" class="terminal-button-primary text-[12px]" on:click={close}>Done</button>
 					</div>
 				</div>
 			{:else}
@@ -144,7 +144,7 @@
 						<div class="border border-red-900 bg-red-500/5 px-3 py-2 text-xs text-red-400">{errorMsg}</div>
 					{/if}
 
-					<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+					<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 						Idea
 						<textarea
 							bind:value={idea}
@@ -155,7 +155,7 @@
 					</label>
 
 					<div>
-						<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+						<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 							Source URL (optional)
 							<div class="mt-2 flex gap-2">
 								<input
@@ -166,7 +166,7 @@
 								/>
 								<button
 									type="button"
-									class="terminal-button shrink-0 text-xs"
+									class="terminal-button shrink-0 text-[12px]"
 									disabled={!url.trim() || previewing}
 									on:click={handlePreview}
 								>
@@ -176,8 +176,8 @@
 						</label>
 						{#if preview}
 							{#if preview.ok}
-								<div class="mt-2 border border-[#222] p-3 text-xs text-[#aaa]">
-									<div class="font-bold text-white">{preview.title || preview.url}</div>
+								<div class="mt-2 border border-sc-line p-3 text-xs text-sc-ink2">
+									<div class="font-bold text-sc-ink">{preview.title || preview.url}</div>
 									<p class="mt-1 line-clamp-4 whitespace-pre-line">{preview.content_preview}</p>
 								</div>
 							{:else}
@@ -193,7 +193,7 @@
 						{#each marketOptions as market}<option value={market}></option>{/each}
 					</datalist>
 					<div class="grid grid-cols-2 gap-3">
-						<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+						<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 							Markets (optional)
 							<input
 								bind:value={marketsRaw}
@@ -202,7 +202,7 @@
 								class="terminal-input mt-2 w-full"
 							/>
 						</label>
-						<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+						<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 							Timeframes (optional)
 							<input
 								bind:value={timeframesRaw}
@@ -213,7 +213,7 @@
 						</label>
 					</div>
 
-					<label class="block text-[10px] uppercase tracking-wider text-[#666]">
+					<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 						Notes (optional)
 						<textarea
 							bind:value={notes}
@@ -223,16 +223,16 @@
 						></textarea>
 					</label>
 
-					<p class="text-[11px] text-[#555]">
+					<p class="text-[11px] text-sc-ink3">
 						The strategy-developer writes the idea up (what it exploits, why, and what would prove it wrong) and
 						builds strategies from it. This runs in every system mode.
 					</p>
 				</div>
-				<div class="flex shrink-0 justify-end gap-2 border-t border-[#222] bg-[#050505] px-5 py-3">
-					<button type="button" class="terminal-button text-xs" disabled={submitting} on:click={close}>Cancel</button>
+				<div class="flex shrink-0 justify-end gap-2 border-t border-sc-line bg-sc-panel px-5 py-3">
+					<button type="button" class="terminal-button text-[12px]" disabled={submitting} on:click={close}>Cancel</button>
 					<button
 						type="button"
-						class="terminal-button-primary text-xs disabled:opacity-50"
+						class="terminal-button-primary text-[12px] disabled:opacity-50"
 						on:click={handleSubmit}
 						disabled={!canSubmit}
 					>

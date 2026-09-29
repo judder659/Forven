@@ -77,8 +77,8 @@
 		data-testid="strategy-export-trigger"
 		class={themed
 			? 'inline-flex items-center gap-1 rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition-colors hover:text-sc-ink disabled:opacity-50'
-			: `inline-flex items-center gap-1 border border-[#333] bg-black font-bold uppercase tracking-widest text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-50 ${
-					compact ? 'px-2 py-1 text-[9px]' : 'px-3 py-1.5 text-[10px]'
+			: `inline-flex items-center gap-1 border border-sc-line2 bg-sc-bg font-medium text-sc-ink2 transition-colors hover:border-sc-line2 hover:text-sc-ink disabled:opacity-50 ${
+					compact ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-[12px]'
 				}`}
 		disabled={busy}
 		aria-haspopup="menu"
@@ -100,13 +100,13 @@
 		<div
 			class={themed
 				? 'absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded-md border border-sc-line2 bg-sc-panel2 shadow-[0_8px_24px_rgba(0,0,0,0.45)]'
-				: 'absolute right-0 z-50 mt-1 w-44 overflow-hidden border border-[#222] bg-[#050505]'}
+				: 'absolute right-0 z-50 mt-1 w-44 overflow-hidden border border-sc-line bg-sc-panel'}
 			role="menu"
 		>
 			<button
 				type="button"
 				data-testid="strategy-export-download"
-				class="block w-full px-3 py-2 text-left text-[11px] text-[#888] transition-colors hover:bg-[#111] hover:text-white"
+				class="block w-full px-3 py-2 text-left text-[11px] text-sc-ink2 transition-colors hover:bg-sc-panel2 hover:text-sc-ink"
 				role="menuitem"
 				on:click|stopPropagation={() => void exportDownload()}
 			>
@@ -115,7 +115,7 @@
 			<button
 				type="button"
 				data-testid="strategy-export-clipboard"
-				class="block w-full border-t border-[#1a1a1a] px-3 py-2 text-left text-[11px] text-[#888] transition-colors hover:bg-[#111] hover:text-white"
+				class="block w-full border-t border-sc-line px-3 py-2 text-left text-[11px] text-sc-ink2 transition-colors hover:bg-sc-panel2 hover:text-sc-ink"
 				role="menuitem"
 				on:click|stopPropagation={() => void exportClipboard()}
 			>

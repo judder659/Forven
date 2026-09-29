@@ -18,11 +18,11 @@
 </script>
 
 <label class="block" for={id}>
-	<div class="text-[10px] uppercase tracking-[0.2em] text-[#666]">{label}</div>
+	<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{label}</div>
 	<select
 		id={id}
 		bind:value
-		class="mt-1.5 w-full border border-[#333] bg-[#050505] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-white"
+		class="rounded-md mt-1.5 w-full border border-sc-line2 bg-sc-panel px-3 py-2 text-sm text-sc-ink outline-none transition-colors focus:border-sc-ink"
 	>
 		<option value="">Select result…</option>
 		{#each items as item}
@@ -30,17 +30,17 @@
 		{/each}
 	</select>
 	{#if helpText}
-		<div class="mt-1 text-[11px] text-[#666]">{helpText}</div>
+		<div class="mt-1 text-[11px] text-sc-ink3">{helpText}</div>
 	{/if}
 
 	{#if selectedItem}
-		<div class="mt-2 border border-[#1a1a1a] bg-[#070707] px-3 py-2 text-[11px] text-[#888]">
+		<div class="rounded-md mt-2 border border-sc-line bg-sc-panel px-3 py-2 text-[11px] text-sc-ink2">
 			<div class="flex flex-wrap items-center gap-2">
-				<span class="border border-[#333] bg-black px-2 py-0.5 font-mono text-white">{selectedItem.result_id}</span>
+				<span class="rounded-md border border-sc-line2 bg-sc-bg px-2 py-0.5 font-mono text-sc-ink">{selectedItem.result_id}</span>
 				<span>{selectedItem.symbol || '--'}</span>
-				<span class="text-[#555]">/</span>
+				<span class="text-sc-ink3">/</span>
 				<span>{selectedItem.timeframe || '--'}</span>
-				<span class="text-[#555]">/</span>
+				<span class="text-sc-ink3">/</span>
 				<span>{fmtShortDate(selectedItem.start_date)} -> {fmtShortDate(selectedItem.end_date)}</span>
 			</div>
 		</div>

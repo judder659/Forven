@@ -82,19 +82,19 @@
 <li class="terminal-card p-4 space-y-3">
 	<div class="flex items-start justify-between gap-3">
 		<div>
-			<h3 class="text-sm font-semibold text-white">
+			<h3 class="text-sm font-semibold text-sc-ink">
 				{label}
 				{#if dirty}
-					<span class="ml-2 text-[9px] font-bold uppercase tracking-widest px-1.5 py-px border border-yellow-500/50 text-yellow-400">unsaved</span>
+					<span class="ml-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] px-1.5 py-px border border-yellow-500/50 text-yellow-400">unsaved</span>
 				{/if}
 			</h3>
 			{#if description}
-				<p class="text-xs text-[#666] mt-0.5">{description}</p>
+				<p class="text-xs text-sc-ink3 mt-0.5">{description}</p>
 			{/if}
 		</div>
 	</div>
 
-	<div class="block text-xs text-[#888]">
+	<div class="block text-xs text-sc-ink2">
 		<span class="block mb-1">Primary model</span>
 		<ModelPicker
 			{value}
@@ -106,31 +106,31 @@
 	</div>
 
 	<div class="space-y-2">
-		<div class="text-xs text-[#888] flex items-center justify-between">
+		<div class="text-xs text-sc-ink2 flex items-center justify-between">
 			<span>Fallback chain</span>
 			{#if fallbacks.length === 0}
-				<span class="text-[10px] uppercase tracking-wider text-yellow-400" title="With no fallback the call fails closed instead of silently switching providers.">no fallback · fail closed</span>
+				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400" title="With no fallback the call fails closed instead of silently switching providers.">no fallback · fail closed</span>
 			{/if}
 		</div>
 
 		{#if fallbacks.length > 0}
 			<ol class="space-y-1">
 				{#each fallbacks as fb, idx (idx)}
-					<li class="flex items-center gap-2 bg-[#050505] border border-[#1a1a1a] px-2 py-1.5">
-						<span class="text-[10px] text-[#666] w-5 text-center">{idx + 1}</span>
-						<span class="flex-1 font-mono text-xs {isStale(fb) ? 'text-yellow-400' : 'text-[#ccc]'}">
+					<li class="rounded-md flex items-center gap-2 bg-sc-panel border border-sc-line px-2 py-1.5">
+						<span class="text-[10px] text-sc-ink3 w-5 text-center">{idx + 1}</span>
+						<span class="flex-1 font-mono text-xs {isStale(fb) ? 'text-yellow-400' : 'text-sc-ink'}">
 							{labelForKey(fb)}{isStale(fb) ? ' (unavailable)' : ''}
 						</span>
 						<button
 							type="button"
-							class="text-[#666] hover:text-white disabled:opacity-30 px-1"
+							class="text-sc-ink3 hover:text-sc-ink disabled:opacity-30 px-1"
 							aria-label="Move up"
 							disabled={idx === 0}
 							on:click={() => moveFallback(idx, -1)}
 						>↑</button>
 						<button
 							type="button"
-							class="text-[#666] hover:text-white disabled:opacity-30 px-1"
+							class="text-sc-ink3 hover:text-sc-ink disabled:opacity-30 px-1"
 							aria-label="Move down"
 							disabled={idx === fallbacks.length - 1}
 							on:click={() => moveFallback(idx, 1)}
@@ -147,7 +147,7 @@
 		{/if}
 
 		<div class="flex items-end gap-2">
-			<label class="flex-1 block text-[10px] text-[#666] uppercase tracking-wider">
+			<label class="flex-1 block text-[10px] text-sc-ink3 uppercase tracking-wider">
 				Add fallback
 				<select
 					bind:value={addDraft}
@@ -163,7 +163,7 @@
 				type="button"
 				on:click={addFallback}
 				disabled={!addDraft}
-				class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
+				class="terminal-button text-[12px] px-3 py-1.5 disabled:opacity-50"
 			>
 				Add
 			</button>

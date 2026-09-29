@@ -14,7 +14,7 @@
 <div class="workspace-layout flex-col">
 	<div class="flex-shrink-0 px-2 pt-2">
 		<div class="flex items-center gap-1 mb-2">
-			<span class="text-[10px] uppercase tracking-wider text-[#666]">Paper sessions — simulated fills, no real orders</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Paper sessions — simulated fills, no real orders</span>
 			<a
 				href="/all-trades"
 				data-sveltekit-preload-data="hover"

@@ -50,7 +50,7 @@
 		</div>
 		<button
 			type="button"
-			class="text-[11px] border border-yellow-900 text-yellow-400 px-2.5 py-1 hover:bg-yellow-500/10 transition-colors shrink-0"
+			class="rounded-md text-[11px] border border-yellow-900 text-yellow-400 px-2.5 py-1 hover:bg-yellow-500/10 transition-colors shrink-0"
 			on:click={acknowledge}
 		>
 			Acknowledge

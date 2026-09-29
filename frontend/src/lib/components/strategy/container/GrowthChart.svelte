@@ -103,7 +103,7 @@
 	</div>
 
 	{#if strat.length < 2}
-		<div class="border border-sc-line bg-sc-panel2 px-4 py-6 text-[12px] text-sc-ink3">This run stored no equity curve.</div>
+		<div class="rounded-md border border-sc-line bg-sc-panel2 px-4 py-6 text-[12px] text-sc-ink3">This run stored no equity curve.</div>
 	{:else}
 		<!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
 		<div class="relative w-full outline-none focus-visible:ring-1 focus-visible:ring-[#8fb0ff]" use:trackWidth={(value) => (width = value || 640)} tabindex="0" role="img" aria-label="Growth and drawdown chart; left and right arrows move the readout" on:keydown={key} on:blur={() => (cursor = null)}>

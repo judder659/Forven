@@ -52,10 +52,10 @@
 	}
 
 	function chipClass(bucket: PnlBucket): string {
-		if (bucket.positions === 0 || bucket.priced === 0) return 'border-[#333] text-[#666]';
+		if (bucket.positions === 0 || bucket.priced === 0) return 'border-sc-line2 text-sc-ink3';
 		if (bucket.pnl > 0) return 'border-emerald-900 text-emerald-400';
 		if (bucket.pnl < 0) return 'border-red-900 text-red-400';
-		return 'border-[#333] text-[#888]';
+		return 'border-sc-line2 text-sc-ink2';
 	}
 
 	function chipTitle(bucket: PnlBucket, label: string): string {
@@ -70,7 +70,7 @@
 <a
 	href="/live-trades"
 	data-sveltekit-preload-data="hover"
-	class={`px-2 py-1 border whitespace-nowrap font-bold transition-colors hover:bg-[#111] ${chipClass(liveBucket)}`}
+	class={`px-2 py-1 border whitespace-nowrap font-bold transition-colors hover:bg-sc-panel2 ${chipClass(liveBucket)}`}
 	title={chipTitle(liveBucket, 'LIVE')}
 >
 	LIVE {chipLabel(liveBucket)}
@@ -78,7 +78,7 @@
 <a
 	href="/paper-trades"
 	data-sveltekit-preload-data="hover"
-	class={`px-2 py-1 border whitespace-nowrap transition-colors hover:bg-[#111] ${chipClass(paperBucket)}`}
+	class={`px-2 py-1 border whitespace-nowrap transition-colors hover:bg-sc-panel2 ${chipClass(paperBucket)}`}
 	title={chipTitle(paperBucket, 'paper')}
 >
 	SIM {chipLabel(paperBucket)}

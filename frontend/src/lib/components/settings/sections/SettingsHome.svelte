@@ -118,82 +118,82 @@
 		<button
 			type="button"
 			on:click={openWizard}
-			class="terminal-button text-xs"
+			class="terminal-button text-[12px]"
 		>
 			Open setup wizard
 		</button>
 	</div>
 
 	<!-- Daily-control tiles -->
-	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px border border-[#222] bg-[#222]">
+	<div class="rounded-md grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px border border-sc-line bg-sc-raise">
 		<button
 			type="button"
 			aria-label="Open system settings (status: {systemStatus ?? 'unknown'})"
 			on:click={() => jumpTo('system')}
-			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
+			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">System</div>
-			<div class="mt-1 text-lg font-bold text-white">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">System</div>
+			<div class="mt-1 text-lg font-bold text-sc-ink">
 				{systemStatus ?? (dashboard ? 'UNKNOWN' : 'Loading…')}
 			</div>
-			<div class="mt-1 text-xs text-[#666]">Overall runtime state.</div>
+			<div class="mt-1 text-xs text-sc-ink3">Overall runtime state.</div>
 		</button>
 
 		<button
 			type="button"
 			aria-label="Open trading mode settings (current: {tradingMode ?? 'unknown'})"
 			on:click={() => jumpTo('trading', 'trading-mode.trading_mode')}
-			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
+			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Mode</div>
-			<div class="mt-1 text-lg font-bold" class:text-red-400={tradingMode === 'live'} class:text-white={tradingMode !== 'live'}>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Mode</div>
+			<div class="mt-1 text-lg font-bold" class:text-red-400={tradingMode === 'live'} class:text-sc-ink={tradingMode !== 'live'}>
 				{tradingMode === 'live' ? 'Live' : 'Paper'}
 			</div>
-			<div class="mt-1 text-xs text-[#666]">Paper-trades vs. real orders.</div>
+			<div class="mt-1 text-xs text-sc-ink3">Paper-trades vs. real orders.</div>
 		</button>
 
 		<button
 			type="button"
 			aria-label="Open system settings — kill switch ({killSwitchActive ? 'active' : 'inactive'})"
 			on:click={() => jumpTo('system')}
-			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
+			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Kill Switch</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Kill Switch</div>
 			<div class="mt-1 text-lg font-bold" class:text-red-400={killSwitchActive} class:text-emerald-400={!killSwitchActive}>
 				{killSwitchActive ? 'TRIPPED' : 'Armed'}
 			</div>
-			<div class="mt-1 text-xs text-[#666]">Emergency halt state.</div>
+			<div class="mt-1 text-xs text-sc-ink3">Emergency halt state.</div>
 		</button>
 
 		<button
 			type="button"
 			aria-label="Open self-healing settings (current: {selfHealing ? 'enabled' : 'disabled'})"
 			on:click={() => jumpTo('system', 'bot-operations.self_healing_enabled')}
-			class="bg-[#050505] px-4 py-3 text-left hover:bg-[#111] transition-colors"
+			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Self-healing</div>
-			<div class="mt-1 text-lg font-bold text-white">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Self-healing</div>
+			<div class="mt-1 text-lg font-bold text-sc-ink">
 				{selfHealing ? 'Enabled' : 'Disabled'}
 			</div>
-			<div class="mt-1 text-xs text-[#666]">Auto-recover from known errors.</div>
+			<div class="mt-1 text-xs text-sc-ink3">Auto-recover from known errors.</div>
 		</button>
 	</div>
 
 	<!-- Search -->
 	<div class="terminal-card p-4">
-		<div class="text-[10px] uppercase tracking-wider text-[#666] mb-2">Jump to a setting</div>
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Jump to a setting</div>
 		<SettingsSearch />
 	</div>
 
 	<!-- Needs configuration -->
 	<div class="terminal-card">
-		<div class="flex items-baseline justify-between border-b border-[#1a1a1a] px-4 py-2">
-			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Needs configuration</h3>
-			<span class="text-xs text-[#666]">{needsConfig.length} issue{needsConfig.length === 1 ? '' : 's'}</span>
+		<div class="flex items-baseline justify-between border-b border-sc-line px-4 py-2">
+			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Needs configuration</h3>
+			<span class="text-xs text-sc-ink3">{needsConfig.length} issue{needsConfig.length === 1 ? '' : 's'}</span>
 		</div>
 		<div class="p-4">
 			{#if needsConfig.length === 0}
-				<p class="text-xs text-[#666]">Nothing to configure. You're good to go.</p>
+				<p class="text-xs text-sc-ink3">Nothing to configure. You're good to go.</p>
 			{:else}
 				<ul class="space-y-2">
 					{#each needsConfig as issue (issue.key)}
@@ -201,7 +201,7 @@
 							<button
 								type="button"
 								on:click={() => jumpTo(issue.area, issue.id)}
-								class="w-full text-left px-3 py-2 border border-yellow-900 bg-yellow-500/5 hover:border-yellow-700 text-xs text-yellow-400 transition-colors"
+								class="rounded-md w-full text-left px-3 py-2 border border-yellow-900 bg-yellow-500/5 hover:border-yellow-700 text-[12px] text-yellow-400 transition-colors"
 							>
 								{issue.label}
 							</button>
@@ -214,28 +214,28 @@
 
 	<!-- Recently changed -->
 	<div class="terminal-card">
-		<div class="flex items-baseline justify-between border-b border-[#1a1a1a] px-4 py-2">
-			<h3 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Recently changed</h3>
-			<span class="text-xs text-[#666]">last {auditLog.length} change{auditLog.length === 1 ? '' : 's'}</span>
+		<div class="flex items-baseline justify-between border-b border-sc-line px-4 py-2">
+			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Recently changed</h3>
+			<span class="text-xs text-sc-ink3">last {auditLog.length} change{auditLog.length === 1 ? '' : 's'}</span>
 		</div>
 		<div class="p-4">
 			{#if !auditLoaded}
-				<p class="text-xs text-[#666]">Loading…</p>
+				<p class="text-xs text-sc-ink3">Loading…</p>
 			{:else if auditLog.length === 0}
-				<p class="text-xs text-[#666]">No recent setting changes.</p>
+				<p class="text-xs text-sc-ink3">No recent setting changes.</p>
 			{:else}
-				<ul class="divide-y divide-[#1a1a1a]">
+				<ul class="divide-y divide-sc-line">
 					{#each auditLog as entry (entry.at + entry.id)}
 						<li class="py-2 text-sm">
 							<div class="flex flex-wrap items-baseline gap-x-2">
-								<span class="text-white">{entry.id}</span>
-								<span class="text-[#666] text-xs">{fmtWhen(entry.at)}</span>
-								<span class="text-[#666] text-xs">by {entry.actor}</span>
+								<span class="text-sc-ink">{entry.id}</span>
+								<span class="text-sc-ink3 text-xs">{fmtWhen(entry.at)}</span>
+								<span class="text-sc-ink3 text-xs">by {entry.actor}</span>
 							</div>
-							<div class="mt-0.5 text-xs text-[#888]">
-								<span class="text-[#666]">{str(entry.from)}</span>
-								<span class="mx-1 text-[#555]">→</span>
-								<span class="text-white">{str(entry.to)}</span>
+							<div class="mt-0.5 text-xs text-sc-ink2">
+								<span class="text-sc-ink3">{str(entry.from)}</span>
+								<span class="mx-1 text-sc-ink3">→</span>
+								<span class="text-sc-ink">{str(entry.to)}</span>
 							</div>
 						</li>
 					{/each}

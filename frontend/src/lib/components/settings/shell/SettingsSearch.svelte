@@ -74,10 +74,10 @@
     <ul
       id="settings-search-results"
       role="listbox"
-      class="absolute z-30 left-0 right-0 mt-1 bg-[#050505] border border-[#222] max-h-96 overflow-y-auto"
+      class="rounded-md absolute z-30 left-0 right-0 mt-1 bg-sc-panel border border-sc-line max-h-96 overflow-y-auto"
     >
       {#if results.length === 0}
-        <li class="px-3 py-2 text-xs text-[#666]">No matches</li>
+        <li class="px-3 py-2 text-xs text-sc-ink3">No matches</li>
       {:else}
         {#each results as entry, i (entry.id)}
           <li
@@ -88,13 +88,13 @@
             <button
               type="button"
               on:click={() => pick(entry)}
-              class="w-full text-left px-3 py-2 hover:bg-[#111] text-sm text-[#888] transition-colors"
-              class:bg-[#111]={i === highlightIndex}
+              class="w-full text-left px-3 py-2 hover:bg-sc-panel2 text-sm text-sc-ink2 transition-colors"
+              class:bg-sc-panel2={i === highlightIndex}
             >
-              <span class="text-[#555] text-[10px] uppercase tracking-wider"
+              <span class="text-sc-ink3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]"
                 >{entry.area} › {subMap.get(entry.subsection)?.label ?? entry.subsection}</span
               >
-              <span class="block text-white">{entry.label}</span>
+              <span class="block text-sc-ink">{entry.label}</span>
             </button>
           </li>
         {/each}

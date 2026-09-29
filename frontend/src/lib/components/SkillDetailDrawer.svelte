@@ -82,11 +82,11 @@
 	}
 
 	function diffLineClass(line: string): string {
-		if (line.startsWith('+++') || line.startsWith('---')) return 'text-[#555]';
-		if (line.startsWith('@@')) return 'text-[#888]';
+		if (line.startsWith('+++') || line.startsWith('---')) return 'text-sc-ink3';
+		if (line.startsWith('@@')) return 'text-sc-ink2';
 		if (line.startsWith('+')) return 'text-emerald-400';
 		if (line.startsWith('-')) return 'text-red-400';
-		return 'text-[#888]';
+		return 'text-sc-ink2';
 	}
 
 	function confidenceColor(c: number): string {
@@ -108,7 +108,7 @@
 </script>
 
 <div
-	class="fixed inset-0 z-[60] flex justify-end bg-black/80"
+	class="fixed inset-0 z-[60] flex justify-end bg-sc-bg/80"
 	role="dialog"
 	aria-label="Skill detail"
 >
@@ -119,30 +119,30 @@
 		on:click={close}
 	></button>
 	<aside
-		class="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-[#222] bg-[#050505]"
+		class="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-sc-line bg-sc-panel"
 	>
-		<header class="flex items-center justify-between border-b border-[#222] px-5 py-4">
+		<header class="flex items-center justify-between border-b border-sc-line px-5 py-4">
 			<div class="min-w-0">
-				<div class="text-[10px] font-semibold uppercase tracking-widest text-[#666]">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					Quant Skill
 				</div>
-				<div class="mt-1 truncate text-base font-semibold text-white">{name}</div>
+				<div class="mt-1 truncate text-base font-semibold text-sc-ink">{name}</div>
 			</div>
 			<button
 				type="button"
 				on:click={close}
-				class="terminal-button px-3 py-1.5 text-[10px]"
+				class="terminal-button px-3 py-1.5 text-[12px]"
 			>
 				Close
 			</button>
 		</header>
 
-		<nav class="flex border-b border-[#222] bg-[#050505] px-2">
+		<nav class="flex border-b border-sc-line bg-sc-panel px-2">
 			{#each tabs as tab}
 				<button
 					type="button"
 					on:click={() => (activeTab = tab.key)}
-					class="border-b-2 px-3 py-3 text-[11px] font-semibold uppercase tracking-widest transition-colors {activeTab === tab.key ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
+					class="border-b-2 px-3 py-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] transition-colors {activeTab === tab.key ? 'border-sc-ink text-sc-ink' : 'border-transparent text-sc-ink2 hover:text-sc-ink'}"
 				>
 					{tab.label}
 				</button>
@@ -151,51 +151,51 @@
 
 		<div class="flex-1 overflow-auto px-5 py-4">
 			{#if loading}
-				<div class="py-12 text-center text-sm text-[#666]">Loading…</div>
+				<div class="py-12 text-center text-sm text-sc-ink3">Loading…</div>
 			{:else if error}
 				<div class="border border-red-900 bg-red-500/5 p-4 text-sm text-red-400">
 					{error}
 				</div>
 			{:else if !detail}
-				<div class="py-12 text-center text-sm text-[#666]">Skill not found.</div>
+				<div class="py-12 text-center text-sm text-sc-ink3">Skill not found.</div>
 			{:else if activeTab === 'current'}
 				<div class="space-y-4">
 					<div class="grid grid-cols-2 gap-3 text-xs">
-						<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-							<div class="text-[10px] uppercase tracking-wider text-[#666]">Type</div>
-							<div class="mt-1 font-semibold text-white">{detail.skill_type}</div>
+						<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Type</div>
+							<div class="mt-1 font-semibold text-sc-ink">{detail.skill_type}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-							<div class="text-[10px] uppercase tracking-wider text-[#666]">Confidence</div>
+						<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Confidence</div>
 							<div class="mt-1 font-semibold {confidenceColor(detail.confidence)}">
 								{Math.round(detail.confidence * 100)}%
 							</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-							<div class="text-[10px] uppercase tracking-wider text-[#666]">Version</div>
-							<div class="mt-1 font-semibold text-white">v{detail.version}</div>
+						<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Version</div>
+							<div class="mt-1 font-semibold text-sc-ink">v{detail.version}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-							<div class="text-[10px] uppercase tracking-wider text-[#666]">Samples</div>
-							<div class="mt-1 font-semibold text-white">{detail.sample_size}</div>
+						<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Samples</div>
+							<div class="mt-1 font-semibold text-sc-ink">{detail.sample_size}</div>
 						</div>
 					</div>
 
 					<section>
-						<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[#666]">
+						<h3 class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 							Description
 						</h3>
-						<p class="whitespace-pre-wrap text-sm leading-6 text-[#888]">
+						<p class="whitespace-pre-wrap text-sm leading-6 text-sc-ink2">
 							{detail.description || '—'}
 						</p>
 					</section>
 
 					{#if detail.what_works?.length}
 						<section>
-							<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-emerald-400">
+							<h3 class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-400">
 								What works
 							</h3>
-							<ul class="list-disc space-y-1 pl-5 text-sm text-[#888]">
+							<ul class="list-disc space-y-1 pl-5 text-sm text-sc-ink2">
 								{#each detail.what_works as item}
 									<li>{item}</li>
 								{/each}
@@ -205,10 +205,10 @@
 
 					{#if detail.what_doesnt_work?.length}
 						<section>
-							<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-red-400">
+							<h3 class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">
 								What doesn't
 							</h3>
-							<ul class="list-disc space-y-1 pl-5 text-sm text-[#888]">
+							<ul class="list-disc space-y-1 pl-5 text-sm text-sc-ink2">
 								{#each detail.what_doesnt_work as item}
 									<li>{item}</li>
 								{/each}
@@ -219,17 +219,17 @@
 					{#if detail.regime || detail.last_validated}
 						<section class="grid grid-cols-2 gap-3 text-xs">
 							{#if detail.regime}
-								<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-									<div class="text-[10px] uppercase tracking-wider text-[#666]">Regime</div>
-									<div class="mt-1 font-semibold text-white">{detail.regime}</div>
+								<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Regime</div>
+									<div class="mt-1 font-semibold text-sc-ink">{detail.regime}</div>
 								</div>
 							{/if}
 							{#if detail.last_validated}
-								<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-									<div class="text-[10px] uppercase tracking-wider text-[#666]">
+								<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 										Last validated
 									</div>
-									<div class="mt-1 text-[#888]">{formatDate(detail.last_validated)}</div>
+									<div class="mt-1 text-sc-ink2">{formatDate(detail.last_validated)}</div>
 								</div>
 							{/if}
 						</section>
@@ -238,12 +238,12 @@
 			{:else if activeTab === 'history'}
 				<div class="space-y-3">
 					{#if history.length >= 2}
-						<div class="border border-[#1a1a1a] bg-[#050505] p-3">
-							<div class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[#666]">
+						<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+							<div class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 								Compare versions
 							</div>
 							<div class="flex flex-wrap items-center gap-2 text-xs">
-								<label class="flex items-center gap-1 text-[#888]">
+								<label class="flex items-center gap-1 text-sc-ink2">
 									From v
 									<select
 										bind:value={diffFromVersion}
@@ -254,7 +254,7 @@
 										{/each}
 									</select>
 								</label>
-								<label class="flex items-center gap-1 text-[#888]">
+								<label class="flex items-center gap-1 text-sc-ink2">
 									To v
 									<select
 										bind:value={diffToVersion}
@@ -269,14 +269,14 @@
 									type="button"
 									on:click={loadDiff}
 									disabled={diffLoading}
-									class="terminal-button px-3 py-1 text-[10px] disabled:opacity-50"
+									class="terminal-button px-3 py-1 text-[12px] disabled:opacity-50"
 								>
 									{diffLoading ? 'Loading…' : 'Show diff'}
 								</button>
 							</div>
 							{#if diffText !== null}
 								<pre
-									class="mt-3 max-h-72 overflow-auto border border-[#1a1a1a] bg-[#050505] p-3 font-mono text-[11px] leading-5"><code
+									class="rounded-md mt-3 max-h-72 overflow-auto border border-sc-line bg-sc-panel p-3 font-mono text-[11px] leading-5"><code
 										>{#each diffText.split('\n') as line}<span class={diffLineClass(line)}
 												>{line}</span
 											>{'\n'}{/each}</code
@@ -286,19 +286,19 @@
 					{/if}
 
 					{#if history.length === 0}
-						<div class="py-8 text-center text-sm text-[#666]">No history recorded yet.</div>
+						<div class="py-8 text-center text-sm text-sc-ink3">No history recorded yet.</div>
 					{:else}
 						<ul class="space-y-2">
 							{#each history as row}
-								<li class="border border-[#1a1a1a] bg-[#050505] p-3">
+								<li class="rounded-md border border-sc-line bg-sc-panel p-3">
 									<div class="flex items-center justify-between gap-2">
-										<span class="text-xs font-semibold text-white">v{row.version}</span>
-										<span class="text-[10px] text-[#666]">{formatDate(row.created_at)}</span>
+										<span class="text-xs font-semibold text-sc-ink">v{row.version}</span>
+										<span class="text-[10px] text-sc-ink3">{formatDate(row.created_at)}</span>
 									</div>
 									{#if row.change_summary}
-										<p class="mt-1 text-xs text-[#888]">{row.change_summary}</p>
+										<p class="mt-1 text-xs text-sc-ink2">{row.change_summary}</p>
 									{/if}
-									<div class="mt-1 text-[10px] text-[#555]">
+									<div class="mt-1 text-[10px] text-sc-ink3">
 										by {row.created_by ?? 'unknown'}
 										{#if row.parent_version}· from v{row.parent_version}{/if}
 										{#if row.evidence_task_id}· task #{row.evidence_task_id}{/if}
@@ -310,37 +310,37 @@
 				</div>
 			{:else if activeTab === 'outcomes'}
 				{#if outcomes.length === 0}
-					<div class="py-8 text-center text-sm text-[#666]">
+					<div class="py-8 text-center text-sm text-sc-ink3">
 						No closure events yet. Outcomes are recorded automatically when a strategy citing this
 						skill is archived or graduated.
 					</div>
 				{:else}
 					<ul class="space-y-2">
 						{#each outcomes as ev}
-							<li class="border border-[#1a1a1a] bg-[#050505] p-3">
+							<li class="rounded-md border border-sc-line bg-sc-panel p-3">
 								<div class="flex items-center justify-between gap-2">
 									<span
-										class="inline-flex border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest {ev.outcome ===
+										class="inline-flex border px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {ev.outcome ===
 										'positive'
 											? 'border-emerald-900 bg-emerald-500/10 text-emerald-400'
 											: 'border-red-900 bg-red-500/10 text-red-400'}"
 									>
 										{ev.outcome}
 									</span>
-									<span class="text-[10px] text-[#666]">{formatDate(ev.created_at)}</span>
+									<span class="text-[10px] text-sc-ink3">{formatDate(ev.created_at)}</span>
 								</div>
-								<div class="mt-1 text-xs text-[#ccc]">
+								<div class="mt-1 text-xs text-sc-ink">
 									{ev.strategy_id ?? '—'}
-									<span class="ml-2 text-[#666]">{ev.triggered_by ?? ''}</span>
+									<span class="ml-2 text-sc-ink3">{ev.triggered_by ?? ''}</span>
 								</div>
-								<div class="mt-1 text-[10px] text-[#666]">
+								<div class="mt-1 text-[10px] text-sc-ink3">
 									Δ confidence:
 									<span class={ev.confidence_delta >= 0 ? 'text-emerald-400' : 'text-red-400'}>
 										{ev.confidence_delta >= 0 ? '+' : ''}{ev.confidence_delta.toFixed(3)}
 									</span>
 								</div>
 								{#if ev.notes}
-									<p class="mt-1 text-xs text-[#888]">{ev.notes}</p>
+									<p class="mt-1 text-xs text-sc-ink2">{ev.notes}</p>
 								{/if}
 							</li>
 						{/each}
@@ -348,16 +348,16 @@
 				{/if}
 			{:else if activeTab === 'evidence'}
 				{#if !detail.evidence?.length}
-					<div class="py-8 text-center text-sm text-[#666]">No evidence rows recorded.</div>
+					<div class="py-8 text-center text-sm text-sc-ink3">No evidence rows recorded.</div>
 				{:else}
 					<ul class="space-y-2">
 						{#each detail.evidence as row, i}
-							<li class="border border-[#1a1a1a] bg-[#050505] p-3">
-								<div class="text-[10px] font-semibold uppercase tracking-wider text-[#666]">
+							<li class="rounded-md border border-sc-line bg-sc-panel p-3">
+								<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 									Evidence #{i + 1}
 								</div>
 								<pre
-									class="mt-2 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-[#888]">{JSON.stringify(
+									class="mt-2 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-sc-ink2">{JSON.stringify(
 										row,
 										null,
 										2,

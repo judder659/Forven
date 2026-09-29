@@ -223,7 +223,7 @@
 	}
 
 	function getSentimentClass(score: number | null): string {
-		if (score === null) return 'border-[#333] text-[#666]';
+		if (score === null) return 'border-sc-line2 text-sc-ink3';
 		if (score >= 60) return 'border-emerald-900 text-emerald-400';
 		if (score >= 40) return 'border-yellow-900 text-yellow-400';
 		return 'border-red-900 text-red-400';
@@ -250,20 +250,20 @@
 <svelte:window on:keydown={handleModalKeydown} />
 
 {#if systemMode === 'manual'}
-	<div class="bg-yellow-500/5 border-b border-yellow-900 px-4 py-1 text-[11px] uppercase tracking-wider text-yellow-400 font-bold flex flex-wrap items-center justify-between gap-2">
+	<div class="bg-yellow-500/5 border-b border-yellow-900 px-4 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400 font-bold flex flex-wrap items-center justify-between gap-2">
 		<span>{pausedManualBannerText(pausedManualCounts)}</span>
 		<button
-			class="px-2 py-0.5 border border-yellow-900 text-[10px] hover:bg-yellow-500/10 transition-colors"
+			class="rounded-md px-2 py-0.5 border border-yellow-900 text-[12px] hover:bg-yellow-500/10 transition-colors"
 			on:click={() => requestSystemMode('semi_auto')}
 		>
 			Switch to Semi
 		</button>
 	</div>
 {:else if systemMode === 'semi_auto'}
-	<div class="bg-white/5 border-b border-[#333] px-4 py-1 text-[11px] uppercase tracking-wider text-[#999] font-bold flex flex-wrap items-center justify-between gap-2">
+	<div class="bg-sc-ink/5 border-b border-sc-line2 px-4 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2 font-bold flex flex-wrap items-center justify-between gap-2">
 		<span>Semi mode - autonomous generation off; ideas you submit still run through the pipeline.</span>
 		<button
-			class="px-2 py-0.5 border border-[#555] text-[10px] hover:bg-white hover:text-black transition-colors"
+			class="rounded-md px-2 py-0.5 border border-sc-line2 text-[12px] hover:bg-sc-ink hover:text-black transition-colors"
 			on:click={() => requestSystemMode('auto')}
 		>
 			Switch to Auto
@@ -271,26 +271,26 @@
 	</div>
 {/if}
 {#if !wsConnected}
-	<div class="bg-red-500/5 border-b border-red-900 px-4 py-1 text-[11px] uppercase tracking-wider text-red-400 font-bold">
+	<div class="bg-red-500/5 border-b border-red-900 px-4 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400 font-bold">
 		Connection lost. Reconnecting to Forven websocket...
 	</div>
 {/if}
 {#if $simulationActive}
-	<div class="bg-white/5 border-b border-[#333] px-4 py-1 text-[11px] uppercase tracking-wider text-white font-bold flex flex-wrap items-center justify-between gap-2">
+	<div class="bg-sc-ink/5 border-b border-sc-line2 px-4 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink font-bold flex flex-wrap items-center justify-between gap-2">
 		<span class="flex items-center gap-2">
-			<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+			<span class="w-2 h-2 bg-sc-ink rounded-full animate-pulse"></span>
 			Simulation Active &mdash; Virtual Time: {simTimeFormatted} &mdash; {simPhase}
 		</span>
-		<a href="/lab" class="px-2 py-0.5 border border-[#555] text-[10px] hover:bg-white hover:text-black transition-colors">
+		<a href="/lab" class="px-2 py-0.5 border border-sc-line2 text-[10px] hover:bg-sc-ink hover:text-black transition-colors">
 			Open Strategies
 		</a>
 	</div>
 {/if}
-<header class="border-b border-[#222] bg-[#050505] px-4 py-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-wider">
+<header class="border-b border-sc-line bg-sc-panel px-4 py-2 flex flex-wrap items-center gap-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">
 	<div class="flex min-w-0 flex-wrap items-center gap-3 lg:gap-4">
 		<div class="flex items-center gap-2 whitespace-nowrap">
 			<span class={`w-2 h-2 rounded-full ${daemonStatus === 'OFFLINE' ? 'bg-red-500' : daemonStatus === 'SYNCING' ? 'bg-yellow-400' : 'bg-emerald-400'}`}></span>
-			<span class="text-[#888]">Daemon {daemonStatus}</span>
+			<span class="text-sc-ink2">Daemon {daemonStatus}</span>
 		</div>
 		<div class="flex items-center gap-2 whitespace-nowrap">
 			<span class={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400' : 'bg-red-500'}`}></span>
@@ -323,7 +323,7 @@
 			</a>
 		{:else}
 			<span
-				class={`px-2 py-1 border whitespace-nowrap ${executionMode === 'live' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-[#333] text-[#888]'}`}
+				class={`px-2 py-1 border whitespace-nowrap ${executionMode === 'live' ? 'border-red-900 text-red-400 bg-red-500/10' : 'border-sc-line2 text-sc-ink2'}`}
 				title={`Execution mode: ${executionMode.toUpperCase()} — no strategies or bots are trading real money`}
 			>
 				Mode: {executionMode.toUpperCase()}
@@ -354,21 +354,21 @@
 
 	<div class="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
 		<div
-			class="inline-flex items-stretch border border-[#333]"
+			class="inline-flex items-stretch border border-sc-line2"
 			role="group"
 			aria-label="System mode"
 			title="System mode - controls whether the system runs autonomously"
 		>
 			{#each SYSTEM_MODES as option (option.value)}
 				<button
-					class={`px-2.5 py-1 text-[11px] font-bold transition-colors border-r border-[#333] last:border-r-0 ${
+					class={`px-2.5 py-1 text-[11px] font-medium transition-colors border-r border-sc-line2 last:border-r-0 ${
 						systemMode === option.value
 							? option.value === 'auto'
 								? 'bg-red-500/10 text-red-400'
 								: option.value === 'semi_auto'
-									? 'bg-white/10 text-white'
+									? 'bg-sc-ink/10 text-sc-ink'
 									: 'bg-yellow-500/10 text-yellow-400'
-							: 'text-[#888] hover:bg-[#111] hover:text-white'
+							: 'text-sc-ink2 hover:bg-sc-panel2 hover:text-sc-ink'
 					}`}
 					on:click={() => requestSystemMode(option.value)}
 					aria-pressed={systemMode === option.value}
@@ -378,12 +378,12 @@
 			{/each}
 		</div>
 		{#if !tradingAllowed}
-			<button class="px-2 py-1 border border-[#333] text-[#888] hover:bg-[#111] hover:text-white whitespace-nowrap transition-colors" on:click={() => openModal('trading-reset')}>
+			<button class="rounded-md px-2 py-1 border border-sc-line2 text-sc-ink2 hover:bg-sc-panel2 hover:text-sc-ink whitespace-nowrap transition-colors" on:click={() => openModal('trading-reset')}>
 				Reset Halt
 			</button>
 		{/if}
 		<button
-			class="px-2 py-1 border border-red-900 text-red-400 hover:bg-red-500 hover:border-red-500 hover:text-white whitespace-nowrap transition-colors"
+			class="rounded-md px-2 py-1 border border-red-900 text-red-400 hover:bg-red-500 hover:border-red-500 hover:text-sc-ink whitespace-nowrap transition-colors"
 			on:click={() => openModal('emergency-halt')}
 		>
 			Emergency Halt
@@ -392,7 +392,7 @@
 </header>
 
 {#if !tradingAllowed}
-	<div class="border-b border-red-900 bg-red-500/5 px-4 py-1 text-[10px] uppercase tracking-wider text-red-400">
+	<div class="border-b border-red-900 bg-red-500/5 px-4 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">
 		Trading halted: {tradingReason}
 	</div>
 {/if}
@@ -407,30 +407,30 @@
 {#if modalOpen && modalAction}
 	<!-- svelte-ignore a11y-click-events-have-key-events -->
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="fixed inset-0 z-[10010] bg-black/80 flex items-center justify-center p-4" on:click={() => closeModal()}>
+	<div class="fixed inset-0 z-[10010] bg-sc-bg/80 flex items-center justify-center p-4" on:click={() => closeModal()}>
 		<div
-			class="w-full max-w-md border border-[#222] bg-[#050505] p-4 space-y-3"
+			class="rounded-md w-full max-w-md border border-sc-line bg-sc-panel p-4 space-y-3"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="global-control-modal-title"
 			tabindex="-1"
 			on:click|stopPropagation
 		>
-			<h3 id="global-control-modal-title" class={`text-sm font-bold uppercase tracking-wider ${modalDanger ? 'text-red-400' : 'text-white'}`}>{modalTitle}</h3>
-			<p class="text-xs text-[#888] leading-relaxed">{modalMessage}</p>
+			<h3 id="global-control-modal-title" class={`text-sm font-bold uppercase tracking-wider ${modalDanger ? 'text-red-400' : 'text-sc-ink'}`}>{modalTitle}</h3>
+			<p class="text-xs text-sc-ink2 leading-relaxed">{modalMessage}</p>
 			{#if actionError}
 				<div class="text-xs border border-red-900 bg-red-500/5 text-red-400 px-2 py-1">{actionError}</div>
 			{/if}
 			<div class="flex justify-end gap-2 pt-1">
 				<button
 					bind:this={cancelButton}
-					class="px-3 py-1.5 text-xs border border-[#333] text-[#888] hover:text-white hover:border-[#555] transition-colors"
+					class="rounded-md px-3 py-1.5 text-[12px] border border-sc-line2 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors"
 					on:click={() => closeModal()}
 				>
 					Cancel
 				</button>
 				<button
-					class={`px-3 py-1.5 text-xs border transition-colors ${modalDanger ? 'border-red-900 text-red-400 hover:bg-red-500 hover:border-red-500 hover:text-white' : 'border-white text-white hover:bg-white hover:text-black'}`}
+					class={`rounded-md px-3 py-1.5 text-[12px] border transition-colors ${modalDanger ? 'border-red-900 text-red-400 hover:bg-red-500 hover:border-red-500 hover:text-sc-ink' : 'border-sc-ink text-sc-ink hover:bg-sc-ink hover:text-black'}`}
 					on:click={confirmModal}
 					disabled={actionBusy}
 				>

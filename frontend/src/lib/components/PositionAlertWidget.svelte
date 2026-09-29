@@ -195,19 +195,19 @@
 {#if $snoozeUntil <= Date.now()}
 	{#each visibleAlerts as alert (alert.token)}
 		<div
-			class="pointer-events-auto bg-[#050505] border border-emerald-900 px-4 py-3 min-w-[280px] max-w-sm"
+			class="rounded-md pointer-events-auto bg-sc-panel border border-emerald-900 px-4 py-3 min-w-[280px] max-w-sm"
 			transition:fly={{ x: 300, duration: 250 }}
 		>
 			<div class="flex items-start justify-between gap-3">
 				<div class="min-w-0">
-					<div class="text-[10px] uppercase tracking-wider text-emerald-400 font-bold">Position Open</div>
-					<div class="text-xs text-white font-bold truncate">{alert.strategyName}</div>
-					<div class="text-[10px] text-[#888] mt-0.5">{alert.symbol} / {alert.timeframe}</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-400 font-bold">Position Open</div>
+					<div class="text-xs text-sc-ink font-bold truncate">{alert.strategyName}</div>
+					<div class="text-[10px] text-sc-ink2 mt-0.5">{alert.symbol} / {alert.timeframe}</div>
 				</div>
 				<div class="flex items-center gap-2">
 					<div class="relative" data-position-snooze-root>
 						<button
-							class="text-[10px] text-[#666] hover:text-white border border-[#333] hover:border-white px-2 py-0.5 flex items-center gap-1 transition-colors"
+							class="rounded-md text-[12px] text-sc-ink3 hover:text-sc-ink border border-sc-line2 hover:border-sc-ink px-2 py-0.5 flex items-center gap-1 transition-colors"
 							on:click|stopPropagation={() => openSnoozeToken = openSnoozeToken === alert.token ? null : alert.token}
 							title="Snooze notifications"
 						>
@@ -219,20 +219,20 @@
 
 						{#if openSnoozeToken === alert.token}
 							<div
-								class="absolute bottom-full right-0 mb-1 bg-[#050505] border border-[#333] py-1 min-w-[140px] z-[10002]"
+								class="rounded-md absolute bottom-full right-0 mb-1 bg-sc-panel border border-sc-line2 py-1 min-w-[140px] z-[10002]"
 								transition:fly={{ y: 10, duration: 150 }}
 							>
 								<button
-									class="w-full text-left px-3 py-1.5 text-[10px] text-emerald-400 hover:bg-[#111] flex items-center gap-2"
+									class="w-full text-left px-3 py-1.5 text-[12px] text-emerald-400 hover:bg-sc-panel2 flex items-center gap-2"
 									on:click|stopPropagation={() => handlePositionSnooze(24 * 60 * 60 * 1000)}
 								>
 									<input type="checkbox" class="accent-emerald-500 pointer-events-none" checked />
 									<span>Pause all alerts</span>
 								</button>
-								<div class="border-t border-[#222] my-1"></div>
+								<div class="border-t border-sc-line my-1"></div>
 								{#each snoozeOptions as option}
 									<button
-										class="w-full text-left px-3 py-1.5 text-[10px] text-[#888] hover:bg-[#111] hover:text-white transition-colors"
+										class="w-full text-left px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-panel2 hover:text-sc-ink transition-colors"
 										on:click|stopPropagation={() => handlePositionSnooze(option.ms)}
 									>
 										{option.label}
@@ -242,7 +242,7 @@
 						{/if}
 					</div>
 					<button
-						class="text-[10px] text-[#666] hover:text-white border border-[#333] hover:border-white px-2 py-0.5 transition-colors"
+						class="rounded-md text-[12px] text-sc-ink3 hover:text-sc-ink border border-sc-line2 hover:border-sc-ink px-2 py-0.5 transition-colors"
 						on:click={() => dismissPositionAlert(alert.token)}
 					>
 						Close
@@ -250,16 +250,16 @@
 				</div>
 			</div>
 			<div class="grid grid-cols-2 gap-x-3 gap-y-1 mt-3 text-[10px]">
-				<div class="text-[#666]">Entry</div>
-				<div class="text-[#999] text-right">{formatPrice(alert.entryPrice)}</div>
-				<div class="text-[#666]">Size</div>
-				<div class="text-[#999] text-right">{alert.positionSize.toLocaleString(undefined, { maximumFractionDigits: 6 })}</div>
-				<div class="text-[#666]">Opened</div>
-				<div class="text-[#999] text-right">{formatDateTime(alert.openedAt)}</div>
+				<div class="text-sc-ink3">Entry</div>
+				<div class="text-sc-ink2 text-right">{formatPrice(alert.entryPrice)}</div>
+				<div class="text-sc-ink3">Size</div>
+				<div class="text-sc-ink2 text-right">{alert.positionSize.toLocaleString(undefined, { maximumFractionDigits: 6 })}</div>
+				<div class="text-sc-ink3">Opened</div>
+				<div class="text-sc-ink2 text-right">{formatDateTime(alert.openedAt)}</div>
 			</div>
 			<a
 				href="/paper-trades"
-				class="mt-3 inline-block text-[10px] uppercase tracking-wider text-white border border-white px-2 py-1 hover:bg-white hover:text-black transition-colors"
+				class="mt-3 inline-block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink border border-sc-ink px-2 py-1 hover:bg-sc-ink hover:text-black transition-colors"
 				on:click={() => openSessionFromAlert(alert)}
 			>
 				Open Session
@@ -268,7 +268,7 @@
 	{/each}
 	{#if hiddenCount > 0 || stackExpanded}
 		<button
-			class="pointer-events-auto bg-[#050505] border border-emerald-900 px-4 py-2 min-w-[280px] max-w-sm text-[10px] uppercase tracking-wider text-emerald-400 font-bold text-left hover:bg-[#111] transition-colors flex items-center justify-between gap-2"
+			class="rounded-md pointer-events-auto bg-sc-panel border border-emerald-900 px-4 py-2 min-w-[280px] max-w-sm text-[12px] text-emerald-400 font-medium text-left hover:bg-sc-panel2 transition-colors flex items-center justify-between gap-2"
 			transition:fly={{ x: 300, duration: 250 }}
 			on:click={() => (stackExpanded = !stackExpanded)}
 		>

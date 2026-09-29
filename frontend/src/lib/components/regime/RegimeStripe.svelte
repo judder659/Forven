@@ -45,11 +45,11 @@
 	}
 </script>
 
-<div class="flex w-full items-center gap-2 bg-black px-2 py-1">
+<div class="flex w-full items-center gap-2 bg-sc-bg px-2 py-1">
 	{#if loading && segments.length === 0}
-		<div class="h-2 flex-1 animate-pulse bg-[#111]"></div>
+		<div class="h-2 flex-1 animate-pulse bg-sc-panel2"></div>
 	{:else if error}
-		<span class="text-[10px] text-[#555]">{error}</span>
+		<span class="text-[10px] text-sc-ink3">{error}</span>
 	{:else if segments.length > 0}
 		<div class="flex h-2 flex-1 overflow-hidden" role="img" aria-label="regime timeline">
 			{#each segments as segment, i (i)}
@@ -60,10 +60,10 @@
 				></div>
 			{/each}
 		</div>
-		<span class="text-[10px] text-[#666] whitespace-nowrap">
+		<span class="text-[10px] text-sc-ink3 whitespace-nowrap">
 			now: {formatRegimeLabel(segments[segments.length - 1]?.regime)}
 		</span>
 	{:else}
-		<span class="text-[10px] text-[#555]">no data</span>
+		<span class="text-[10px] text-sc-ink3">no data</span>
 	{/if}
 </div>

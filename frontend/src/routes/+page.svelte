@@ -137,14 +137,14 @@
 	/>
 </svelte:head>
 
-<div class="flex h-full min-h-0 flex-col overflow-hidden bg-black">
+<div class="flex h-full min-h-0 flex-col overflow-hidden bg-sc-bg">
 	<div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
 		<div class="mx-auto max-w-[1600px] space-y-3">
 			<CriticalAlertsBanner />
 
 			<div class="flex items-baseline justify-between">
-				<h1 class="text-lg font-bold uppercase tracking-widest text-white">Dashboard</h1>
-				<span class="text-[10px] uppercase tracking-wider text-gray-600">
+				<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Dashboard</h1>
+				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					{refreshedAt ? `updated ${formatAge(new Date(refreshedAt).toISOString(), now)} ago` : 'loading…'}
 				</span>
 			</div>
@@ -185,15 +185,15 @@
 				<WalletCapacity budget={risk?.portfolio_budget_live ?? null} capacity={fleet?.capacity ?? null} />
 			{:else}
 				<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-					<div class="border border-[#222] bg-[#050505] px-4 py-5 text-xs text-gray-400" data-testid="no-live">
-						<div class="text-sm font-bold text-gray-200">No strategies are trading real money.</div>
+					<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-5 text-xs text-sc-ink2" data-testid="no-live">
+						<div class="text-sm font-bold text-sc-ink">No strategies are trading real money.</div>
 						<p class="mt-2 max-w-prose">
 							A strategy trades real money once it is promoted from paper to live. Paper results and go-live
 							candidates are on the pages below.
 						</p>
-						<div class="mt-3 flex gap-3 text-[11px] uppercase tracking-wider">
-							<a href="/paper-trades" class="text-gray-300 hover:text-white">Paper trades →</a>
-							<a href="/approval" class="text-gray-300 hover:text-white">Approvals →</a>
+						<div class="mt-3 flex gap-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">
+							<a href="/paper-trades" class="text-sc-ink2 hover:text-sc-ink">Paper trades →</a>
+							<a href="/approval" class="text-sc-ink2 hover:text-sc-ink">Approvals →</a>
 						</div>
 					</div>
 					<AttentionPanel items={attention} />

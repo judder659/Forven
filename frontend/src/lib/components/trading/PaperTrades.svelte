@@ -126,12 +126,12 @@
 	let ceilingSaving = false;
 	let pendingConfirm: { label: string; detail: string; run: () => Promise<PaperTradingSession> } | null = null;
 	const MANUAL_INPUT_CLASS =
-		'bg-[#0a0a0a] border border-[#333] text-white px-1 py-0.5 text-[10px] focus:outline-none focus:border-gray-500';
+		'bg-sc-panel border border-sc-line2 text-sc-ink px-1 py-0.5 text-[10px] focus:outline-none focus:border-sc-ink4';
 	const MANUAL_BTN_CLASS =
-		'border border-[#333] text-gray-300 hover:text-white hover:border-gray-500 px-1.5 py-0.5 text-[10px] uppercase disabled:opacity-40 disabled:cursor-not-allowed';
+		'border border-sc-line2 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink4 px-1.5 py-0.5 text-[10px] uppercase disabled:opacity-40 disabled:cursor-not-allowed';
 	const MANUAL_BTN_ACCENT_CLASS =
 		'border border-emerald-700 text-emerald-400 hover:text-emerald-200 hover:border-emerald-500 px-2 py-0.5 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed';
-	const MANUAL_SEG_CLASS = 'px-2 py-0.5 text-[10px] uppercase text-gray-400';
+	const MANUAL_SEG_CLASS = 'px-2 py-0.5 text-[10px] uppercase text-sc-ink2';
 	let archivedDetailLoading = false;
 	let selectedArchivedStrategy: LifecycleStrategy | null = null;
 	let selectedArchivedEvents: LifecycleEvent[] = [];
@@ -1947,17 +1947,17 @@
 	}
 
 	function timeframeButtonClass(timeframe: string, activeTimeframe: string): string {
-		const base = 'rounded-sm border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-50';
+		const base = 'rounded-sm border px-2 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50';
 		return timeframe === activeTimeframe
 			? `${base} border-emerald-700 bg-emerald-950/40 text-emerald-200`
-			: `${base} border-[#232323] bg-[#080808] text-gray-400 hover:border-[#353535] hover:text-gray-200`;
+			: `${base} border-sc-line bg-sc-panel text-sc-ink2 hover:border-sc-line2 hover:text-sc-ink`;
 	}
 
 	function chartToolButtonClass(active = false): string {
-		const base = 'rounded-sm border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-50';
+		const base = 'rounded-sm border px-2 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50';
 		return active
 			? `${base} border-amber-600 bg-amber-950/40 text-amber-200`
-			: `${base} border-[#232323] bg-[#080808] text-gray-400 hover:border-[#353535] hover:text-gray-200`;
+			: `${base} border-sc-line bg-sc-panel text-sc-ink2 hover:border-sc-line2 hover:text-sc-ink`;
 	}
 
 	function clearChartDrawings(): void {
@@ -2069,10 +2069,10 @@
 	}
 
 	function getPnlTone(value: number | null | undefined): string {
-		if (typeof value !== 'number' || !Number.isFinite(value)) return 'text-gray-500';
+		if (typeof value !== 'number' || !Number.isFinite(value)) return 'text-sc-ink3';
 		if (value > 0) return 'text-green-400';
 		if (value < 0) return 'text-red-400';
-		return 'text-gray-400';
+		return 'text-sc-ink2';
 	}
 
 	function normalizeParamKey(key: string): string {
@@ -2274,9 +2274,9 @@
 			case 'blocked': return 'text-red-400';
 			case 'warming_up': return 'text-yellow-400';
 			case 'position_open': return 'text-green-400';
-			case 'replay_finished': return 'text-gray-400';
-			case 'stopped': return 'text-gray-400';
-			default: return 'text-gray-400';
+			case 'replay_finished': return 'text-sc-ink2';
+			case 'stopped': return 'text-sc-ink2';
+			default: return 'text-sc-ink2';
 		}
 	}
 
@@ -2290,7 +2290,7 @@
 		const normalized = getPositionSide(side);
 		if (normalized === 'short') return 'text-red-400';
 		if (normalized === 'long') return 'text-green-400';
-		return 'text-gray-400';
+		return 'text-sc-ink2';
 	}
 
 	function getSessionStatusLabel(session: PaperTradingSession): string {
@@ -2311,31 +2311,31 @@
 		switch (signalType) {
 			case 'entry': return 'text-green-400';
 			case 'exit': return 'text-red-400';
-			default: return 'text-gray-400';
+			default: return 'text-sc-ink2';
 		}
 	}
 
 </script>
 
 <!-- Top action bar -->
-<div class="h-10 flex items-center border-b border-[#222] bg-[#0a0a0a] px-4 flex-shrink-0">
+<div class="h-10 flex items-center border-b border-sc-line bg-sc-panel px-4 flex-shrink-0">
 	<div class="ml-auto flex items-center gap-3">
 		{#if error}
 			<span class="text-red-500 text-xs">{error}</span>
-			<button class="text-red-500 hover:text-red-300 text-xs" on:click={() => error = null}>dismiss</button>
+			<button class="text-red-500 hover:text-red-300 text-[12px]" on:click={() => error = null}>dismiss</button>
 		{/if}
 	</div>
 </div>
 
 <!-- New Session Modal -->
 {#if showNewSession}
-	<div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-		<div class="bg-[#050505] border border-[#222] p-6 w-full max-w-md">
-			<h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Create Paper Trading Session</h2>
+	<div class="fixed inset-0 bg-sc-bg/70 flex items-center justify-center z-50">
+		<div class="rounded-md bg-sc-panel border border-sc-line p-6 w-full max-w-md">
+			<h2 class="text-sm font-bold text-sc-ink uppercase tracking-wider mb-4">Create Paper Trading Session</h2>
 
 			<div class="space-y-4">
 				<div>
-					<label for="strategy" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Strategy</label>
+					<label for="strategy" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Strategy</label>
 					<select
 						id="strategy"
 						bind:value={newSessionStrategy}
@@ -2348,7 +2348,7 @@
 				</div>
 
 				<div>
-					<label for="symbol" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Symbol</label>
+					<label for="symbol" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Symbol</label>
 					<select
 						id="symbol"
 						bind:value={newSessionSymbol}
@@ -2366,7 +2366,7 @@
 				</div>
 
 				<div>
-					<label for="timeframe" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Timeframe</label>
+					<label for="timeframe" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Timeframe</label>
 					<select
 						id="timeframe"
 						bind:value={newSessionTimeframe}
@@ -2379,9 +2379,9 @@
 				</div>
 
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Trading Mode</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Trading Mode</div>
 					<div class="space-y-2">
-						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {newSessionMode === 'replay' ? 'border-white bg-[#111]' : 'border-[#222] hover:border-[#333]'}">
+						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {newSessionMode === 'replay' ? 'border-sc-ink bg-sc-panel2' : 'border-sc-line hover:border-sc-line2'}">
 							<input
 								type="radio"
 								bind:group={newSessionMode}
@@ -2389,11 +2389,11 @@
 								class="mt-1 accent-white"
 							/>
 							<div>
-								<span class="text-white text-sm font-bold">Historic Replay</span>
-								<p class="text-xs text-gray-500 mt-0.5">Scroll through stored data, test strategies on past price action</p>
+								<span class="text-sc-ink text-sm font-bold">Historic Replay</span>
+								<p class="text-xs text-sc-ink3 mt-0.5">Scroll through stored data, test strategies on past price action</p>
 							</div>
 						</label>
-						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {newSessionMode === 'live' ? 'border-white bg-[#111]' : 'border-[#222] hover:border-[#333]'}">
+						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {newSessionMode === 'live' ? 'border-sc-ink bg-sc-panel2' : 'border-sc-line hover:border-sc-line2'}">
 							<input
 								type="radio"
 								bind:group={newSessionMode}
@@ -2401,8 +2401,8 @@
 								class="mt-1 accent-white"
 							/>
 							<div>
-								<span class="text-white text-sm font-bold">Live Paper Trading</span>
-								<p class="text-xs text-gray-500 mt-0.5">Real-time prices, simulated order execution</p>
+								<span class="text-sc-ink text-sm font-bold">Live Paper Trading</span>
+								<p class="text-xs text-sc-ink3 mt-0.5">Real-time prices, simulated order execution</p>
 							</div>
 						</label>
 					</div>
@@ -2412,9 +2412,9 @@
 				</div>
 
 				{#if newSessionMode === 'live'}
-					<div class="border border-[#222] p-3 space-y-3">
+					<div class="border border-sc-line p-3 space-y-3">
 						<div>
-							<label for="new-live-feed" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Live Feed</label>
+							<label for="new-live-feed" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Live Feed</label>
 							<select id="new-live-feed" bind:value={newSessionLiveFeed} class="terminal-select">
 								<option value="default">Default (App Exchange)</option>
 								<option value="ibkr">IBKR (TWS / Gateway)</option>
@@ -2423,7 +2423,7 @@
 						{#if newSessionLiveFeed === 'ibkr'}
 							<div class="grid grid-cols-2 gap-3">
 								<div>
-									<label for="new-ibkr-sec-type" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Sec Type</label>
+									<label for="new-ibkr-sec-type" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Sec Type</label>
 									<select id="new-ibkr-sec-type" bind:value={newSessionIBKRSecType} class="terminal-select">
 										{#each ibkrSecTypes as secType}
 											<option value={secType}>{secType}</option>
@@ -2431,7 +2431,7 @@
 									</select>
 								</div>
 								<div>
-									<label for="new-ibkr-what" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Bars</label>
+									<label for="new-ibkr-what" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Bars</label>
 									<select id="new-ibkr-what" bind:value={newSessionIBKRWhatToShow} class="terminal-select">
 										{#each ibkrWhatToShowOptions as option}
 											<option value={option}>{option}</option>
@@ -2439,22 +2439,22 @@
 									</select>
 								</div>
 								<div>
-									<label for="new-ibkr-exchange" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Exchange</label>
+									<label for="new-ibkr-exchange" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Exchange</label>
 									<input id="new-ibkr-exchange" type="text" bind:value={newSessionIBKRExchange} class="terminal-input" />
 								</div>
 								<div>
-									<label for="new-ibkr-currency" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Currency</label>
+									<label for="new-ibkr-currency" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Currency</label>
 									<input id="new-ibkr-currency" type="text" bind:value={newSessionIBKRCurrency} class="terminal-input" />
 								</div>
 							</div>
-							<p class="text-[10px] text-gray-600">Typical US stock setup: STK + SMART + USD.</p>
+							<p class="text-[10px] text-sc-ink3">Typical US stock setup: STK + SMART + USD.</p>
 						{/if}
 					</div>
 				{/if}
 
 				{#if newSessionMode === 'replay'}
 					<div>
-						<label for="replay-start" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Replay Start (optional)</label>
+						<label for="replay-start" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Replay Start (optional)</label>
 						<input
 							id="replay-start"
 							type="datetime-local"
@@ -2464,7 +2464,7 @@
 					</div>
 
 					<div>
-						<label for="replay-end" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Replay End (optional)</label>
+						<label for="replay-end" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Replay End (optional)</label>
 						<input
 							id="replay-end"
 							type="datetime-local"
@@ -2474,7 +2474,7 @@
 					</div>
 
 					<div>
-						<label for="replay-speed" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Replay Speed (bars/sec)</label>
+						<label for="replay-speed" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Replay Speed (bars/sec)</label>
 						<input
 							id="replay-speed"
 							type="number"
@@ -2487,7 +2487,7 @@
 				{/if}
 
 				<div>
-					<label for="capital" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Initial Capital ($)</label>
+					<label for="capital" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Initial Capital ($)</label>
 					<input
 						id="capital"
 						type="number"
@@ -2520,13 +2520,13 @@
 
 <!-- Edit Session Modal -->
 {#if showEditSession}
-	<div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-		<div class="bg-[#050505] border border-[#222] p-6 w-full max-w-md">
-			<h2 class="text-sm font-bold text-white uppercase tracking-wider mb-4">Edit Paper Trading Session</h2>
+	<div class="fixed inset-0 bg-sc-bg/70 flex items-center justify-center z-50">
+		<div class="rounded-md bg-sc-panel border border-sc-line p-6 w-full max-w-md">
+			<h2 class="text-sm font-bold text-sc-ink uppercase tracking-wider mb-4">Edit Paper Trading Session</h2>
 
 			<div class="space-y-4">
 				<div>
-					<label for="edit-strategy" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Strategy</label>
+					<label for="edit-strategy" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Strategy</label>
 					<select
 						id="edit-strategy"
 						bind:value={editSessionStrategy}
@@ -2539,7 +2539,7 @@
 				</div>
 
 				<div>
-					<label for="edit-symbol" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Symbol</label>
+					<label for="edit-symbol" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Symbol</label>
 					<select
 						id="edit-symbol"
 						bind:value={editSessionSymbol}
@@ -2557,7 +2557,7 @@
 				</div>
 
 				<div>
-					<label for="edit-timeframe" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Timeframe</label>
+					<label for="edit-timeframe" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Timeframe</label>
 					<select
 						id="edit-timeframe"
 						bind:value={editSessionTimeframe}
@@ -2570,9 +2570,9 @@
 				</div>
 
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Trading Mode</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Trading Mode</div>
 					<div class="space-y-2">
-						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {editSessionMode === 'replay' ? 'border-white bg-[#111]' : 'border-[#222] hover:border-[#333]'}">
+						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {editSessionMode === 'replay' ? 'border-sc-ink bg-sc-panel2' : 'border-sc-line hover:border-sc-line2'}">
 							<input
 								type="radio"
 								bind:group={editSessionMode}
@@ -2580,11 +2580,11 @@
 								class="mt-1 accent-white"
 							/>
 							<div>
-								<span class="text-white text-sm font-bold">Historic Replay</span>
-								<p class="text-xs text-gray-500 mt-0.5">Replay stored market data for strategy tuning</p>
+								<span class="text-sc-ink text-sm font-bold">Historic Replay</span>
+								<p class="text-xs text-sc-ink3 mt-0.5">Replay stored market data for strategy tuning</p>
 							</div>
 						</label>
-						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {editSessionMode === 'live' ? 'border-white bg-[#111]' : 'border-[#222] hover:border-[#333]'}">
+						<label class="flex items-start gap-3 p-3 border cursor-pointer transition-colors {editSessionMode === 'live' ? 'border-sc-ink bg-sc-panel2' : 'border-sc-line hover:border-sc-line2'}">
 							<input
 								type="radio"
 								bind:group={editSessionMode}
@@ -2592,8 +2592,8 @@
 								class="mt-1 accent-white"
 							/>
 							<div>
-								<span class="text-white text-sm font-bold">Live Paper Trading</span>
-								<p class="text-xs text-gray-500 mt-0.5">Use real-time feed for paper execution</p>
+								<span class="text-sc-ink text-sm font-bold">Live Paper Trading</span>
+								<p class="text-xs text-sc-ink3 mt-0.5">Use real-time feed for paper execution</p>
 							</div>
 						</label>
 					</div>
@@ -2603,9 +2603,9 @@
 				</div>
 
 				{#if editSessionMode === 'live'}
-					<div class="border border-[#222] p-3 space-y-3">
+					<div class="border border-sc-line p-3 space-y-3">
 						<div>
-							<label for="edit-live-feed" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Live Feed</label>
+							<label for="edit-live-feed" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Live Feed</label>
 							<select id="edit-live-feed" bind:value={editSessionLiveFeed} class="terminal-select">
 								<option value="default">Default (App Exchange)</option>
 								<option value="ibkr">IBKR (TWS / Gateway)</option>
@@ -2614,7 +2614,7 @@
 						{#if editSessionLiveFeed === 'ibkr'}
 							<div class="grid grid-cols-2 gap-3">
 								<div>
-									<label for="edit-ibkr-sec-type" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Sec Type</label>
+									<label for="edit-ibkr-sec-type" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Sec Type</label>
 									<select id="edit-ibkr-sec-type" bind:value={editSessionIBKRSecType} class="terminal-select">
 										{#each ibkrSecTypes as secType}
 											<option value={secType}>{secType}</option>
@@ -2622,7 +2622,7 @@
 									</select>
 								</div>
 								<div>
-									<label for="edit-ibkr-what" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Bars</label>
+									<label for="edit-ibkr-what" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Bars</label>
 									<select id="edit-ibkr-what" bind:value={editSessionIBKRWhatToShow} class="terminal-select">
 										{#each ibkrWhatToShowOptions as option}
 											<option value={option}>{option}</option>
@@ -2630,22 +2630,22 @@
 									</select>
 								</div>
 								<div>
-									<label for="edit-ibkr-exchange" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Exchange</label>
+									<label for="edit-ibkr-exchange" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Exchange</label>
 									<input id="edit-ibkr-exchange" type="text" bind:value={editSessionIBKRExchange} class="terminal-input" />
 								</div>
 								<div>
-									<label for="edit-ibkr-currency" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Currency</label>
+									<label for="edit-ibkr-currency" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Currency</label>
 									<input id="edit-ibkr-currency" type="text" bind:value={editSessionIBKRCurrency} class="terminal-input" />
 								</div>
 							</div>
-							<p class="text-[10px] text-gray-600">Typical US stock setup: STK + SMART + USD.</p>
+							<p class="text-[10px] text-sc-ink3">Typical US stock setup: STK + SMART + USD.</p>
 						{/if}
 					</div>
 				{/if}
 
 				{#if editSessionMode === 'replay'}
 					<div>
-						<label for="edit-replay-start" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Replay Start (optional)</label>
+						<label for="edit-replay-start" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Replay Start (optional)</label>
 						<input
 							id="edit-replay-start"
 							type="datetime-local"
@@ -2655,7 +2655,7 @@
 					</div>
 
 					<div>
-						<label for="edit-replay-end" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Replay End (optional)</label>
+						<label for="edit-replay-end" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Replay End (optional)</label>
 						<input
 							id="edit-replay-end"
 							type="datetime-local"
@@ -2665,7 +2665,7 @@
 					</div>
 
 					<div>
-						<label for="edit-replay-speed" class="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Replay Speed (bars/sec)</label>
+						<label for="edit-replay-speed" class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Replay Speed (bars/sec)</label>
 						<input
 							id="edit-replay-speed"
 							type="number"
@@ -2680,16 +2680,16 @@
 
 			<!-- Strategy Parameters -->
 			{#if strategies.some((s) => s.name === editSessionStrategy && Object.keys(s.parameters).length > 0)}
-				<div class="border-t border-[#333] pt-4 mt-4">
-					<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-3">Strategy Parameters</div>
+				<div class="border-t border-sc-line2 pt-4 mt-4">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-3">Strategy Parameters</div>
 					<div class="space-y-3">
 						{#each Object.entries(strategies.find((s) => s.name === editSessionStrategy)?.parameters ?? {}) as [paramName, spec]}
 							{@const paramId = `edit_param_${paramName}`}
 							<div>
 								<div class="flex justify-between mb-1">
-									<label for={paramId} class="text-[10px] text-gray-400">{paramName}</label>
+									<label for={paramId} class="text-[10px] text-sc-ink2">{paramName}</label>
 									{#if spec.min !== undefined && spec.max !== undefined}
-										<span class="text-[10px] text-gray-600">[{spec.min}-{spec.max}]</span>
+										<span class="text-[10px] text-sc-ink3">[{spec.min}-{spec.max}]</span>
 									{/if}
 								</div>
 								{#if spec.type === 'bool'}
@@ -2701,7 +2701,7 @@
 											on:change={(e) => editSessionParams[paramName] = e.currentTarget.checked}
 											class="mr-2"
 										/>
-										<span class="text-xs text-white">{editSessionParams[paramName] ? 'True' : 'False'}</span>
+										<span class="text-xs text-sc-ink">{editSessionParams[paramName] ? 'True' : 'False'}</span>
 									</div>
 								{:else if spec.type === 'select' && spec.options}
 									<select
@@ -2754,7 +2754,7 @@
 <!-- Main Content Area -->
 	<div class="flex-1 flex overflow-hidden">
 		<!-- Left: Sessions Panel -->
-		<div class="w-72 border-r border-[#222] bg-[#050505] flex flex-col flex-shrink-0">
+		<div class="w-72 border-r border-sc-line bg-sc-panel flex flex-col flex-shrink-0">
 			<div class="panel-header">
 				<span>{sessionListTitle}</span>
 			</div>
@@ -2764,8 +2764,8 @@
 				{:else}
 					{#if sessions.length === 0}
 						<div class="px-3 py-8 text-center">
-							<p class="text-gray-500 text-xs">{emptySessionTitle}</p>
-							<p class="text-gray-600 text-xs mt-1">{emptySessionHint}</p>
+							<p class="text-sc-ink3 text-xs">{emptySessionTitle}</p>
+							<p class="text-sc-ink3 text-xs mt-1">{emptySessionHint}</p>
 						</div>
 					{:else}
 						{#each sortedSessions as session}
@@ -2774,7 +2774,7 @@
 								on:click={() => selectSession(session)}
 							>
 								<div class="flex justify-between items-center w-full">
-									<span class="text-white text-xs font-bold truncate flex items-center gap-1">
+									<span class="text-sc-ink text-xs font-bold truncate flex items-center gap-1">
 										{#if session.gated_by_regime}
 											<span class="text-yellow-500 cursor-help" title={session.gated_reason || "Strategy execution is currently gated by market regime"}>⚠️</span>
 										{/if}
@@ -2789,25 +2789,25 @@
 										{getSessionStatusLabel(session)}
 									</span>
 								</div>
-								<div class="text-[10px] text-gray-500 w-full truncate">
+								<div class="text-[10px] text-sc-ink3 w-full truncate">
 									{session.symbol} | {session.timeframe} | {session.mode}
 								</div>
 								<div class="text-[10px] w-full flex justify-between">
 									{#if isDeployedCompatSession(session)}
 										{#if balanceState(session) === 'real'}
-											<span class="text-gray-600" title="Real Hyperliquid balance">{formatPrice(displayCapital(session))}</span>
+											<span class="text-sc-ink3" title="Real Hyperliquid balance">{formatPrice(displayCapital(session))}</span>
 										{:else}
 											<span class="text-amber-500" title="Live balance not synced yet">— bal n/a</span>
 										{/if}
 									{:else}
-										<span class="text-gray-600">{formatPrice(session.capital)}</span>
+										<span class="text-sc-ink3">{formatPrice(session.capital)}</span>
 									{/if}
 									{#if session.position}
-										<span class="{session.position.unrealized_pnl > 0 ? 'text-green-400' : session.position.unrealized_pnl < 0 ? 'text-red-400' : 'text-gray-400'}">
+										<span class="{session.position.unrealized_pnl > 0 ? 'text-green-400' : session.position.unrealized_pnl < 0 ? 'text-red-400' : 'text-sc-ink2'}">
 											[{formatDollarPnl(session.position.unrealized_pnl)} {formatPercent(session.position.unrealized_pnl_pct)}]
 										</span>
 									{:else if session.total_trades > 0}
-										<span class="{session.total_pnl > 0 ? 'text-green-400' : session.total_pnl < 0 ? 'text-red-400' : 'text-gray-400'}">
+										<span class="{session.total_pnl > 0 ? 'text-green-400' : session.total_pnl < 0 ? 'text-red-400' : 'text-sc-ink2'}">
 											{formatDollarPnl(session.total_pnl)} ({session.winning_trades}/{session.total_trades})
 										</span>
 									{/if}
@@ -2817,12 +2817,12 @@
 					{/if}
 
 					{#if !isLiveView}
-						<div class="border-t border-[#222] mt-2">
-							<div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-gray-500">Archived History</div>
+						<div class="border-t border-sc-line mt-2">
+							<div class="px-3 pt-2 pb-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Archived History</div>
 							{#if archivedLoading}
 								<div class="px-3 pb-3"><Skeleton rows={3} /></div>
 							{:else if archivedStrategies.length === 0}
-								<div class="px-3 pb-3 text-[11px] text-gray-600">No archived strategies yet.</div>
+								<div class="px-3 pb-3 text-[11px] text-sc-ink3">No archived strategies yet.</div>
 							{:else}
 								{#each archivedStrategies as strategy}
 									<button
@@ -2832,7 +2832,7 @@
 										<div class="flex justify-between items-center w-full">
 											<a
 												href="/lab/strategy/{encodeURIComponent(strategy.id)}"
-												class="text-white text-xs font-bold truncate hover:text-yellow-400 hover:underline transition-colors"
+												class="text-sc-ink text-xs font-bold truncate hover:text-yellow-400 hover:underline transition-colors"
 												on:click|stopPropagation
 												title="Open strategy detail"
 											>{strategy.display_id || strategy.name || strategy.id}</a>
@@ -2840,10 +2840,10 @@
 												{prettyLifecycleState(strategy.state)}
 											</span>
 										</div>
-										<div class="text-[10px] text-gray-500 w-full truncate">
+										<div class="text-[10px] text-sc-ink3 w-full truncate">
 											{strategy.symbol || '--'} | {formatDateTime(strategy.updated_at)}
 										</div>
-										<div class="text-[10px] text-gray-600 w-full truncate" title={compactReason(strategy.blocked_reason)}>
+										<div class="text-[10px] text-sc-ink3 w-full truncate" title={compactReason(strategy.blocked_reason)}>
 											{compactReason(strategy.blocked_reason, 120)}
 										</div>
 									</button>
@@ -2855,10 +2855,10 @@
 			</div>
 		</div>
 	<!-- Right: Session Detail -->
-	<div class="flex-1 bg-black overflow-hidden flex flex-col min-w-0">
+	<div class="flex-1 bg-sc-bg overflow-hidden flex flex-col min-w-0">
 		{#if selectedSession}
 			<!-- Session Header Bar -->
-			<div class="border-b border-[#222] bg-[#0a0a0a] px-4 py-2 flex-shrink-0">
+			<div class="border-b border-sc-line bg-sc-panel px-4 py-2 flex-shrink-0">
 				<div class="flex justify-between items-center">
 						<div class="flex items-center gap-3 min-w-0">
 							{#if selectedSession.gated_by_regime}
@@ -2872,10 +2872,10 @@
 							{/if}
 							<a
 								href="/lab/strategy/{encodeURIComponent(selectedSession.strategy_name)}"
-								class="text-sm font-bold text-white truncate hover:text-yellow-400 hover:underline transition-colors"
+								class="text-sm font-bold text-sc-ink truncate hover:text-yellow-400 hover:underline transition-colors"
 								title="Open strategy detail"
 							>{selectedSession.strategy_name}</a>
-							<span class="text-xs text-gray-500 flex-shrink-0">{selectedSession.symbol} | {selectedSession.timeframe}</span>
+							<span class="text-xs text-sc-ink3 flex-shrink-0">{selectedSession.symbol} | {selectedSession.timeframe}</span>
 							<span class="text-[10px] uppercase font-bold flex-shrink-0 {getSessionStatusColor(selectedSession)}">
 								{getSessionStatusLabel(selectedSession)}
 							</span>
@@ -2884,24 +2884,24 @@
 							<div class="flex gap-2 flex-shrink-0">
 								{#if selectedSession.status === 'stopped' || selectedSession.status === 'replay_finished'}
 									<button
-										class="terminal-button text-green-400 hover:text-black text-xs py-0.5"
+										class="terminal-button text-green-400 hover:text-black text-[12px] py-0.5"
 										disabled={isCompatSession(selectedSession)}
 										on:click={() => selectedSession && handleStartSession(selectedSession)}
 									>Start</button>
 								{:else}
 									<button
-										class="terminal-button text-yellow-400 hover:text-black text-xs py-0.5"
+										class="terminal-button text-yellow-400 hover:text-black text-[12px] py-0.5"
 										disabled={isCompatSession(selectedSession)}
 										on:click={() => selectedSession && handleStopSession(selectedSession)}
 									>Stop</button>
 								{/if}
 								<button
-									class="terminal-button text-xs py-0.5"
+									class="terminal-button text-[12px] py-0.5"
 									disabled={(selectedSession.status !== 'stopped' && selectedSession.status !== 'replay_finished') || isCompatSession(selectedSession)}
 									on:click={() => selectedSession && openEditSession(selectedSession)}
 								>Edit</button>
 								<button
-									class="terminal-button-danger text-xs py-0.5"
+									class="terminal-button-danger text-[12px] py-0.5"
 									disabled={isCompatSession(selectedSession)}
 									on:click={() => selectedSession && handleDeleteSession(selectedSession)}
 								>Delete</button>
@@ -2916,91 +2916,91 @@
 					{:else}
 						<span class="text-[9px] font-bold text-green-500 mr-1">ALL GATES OK</span>
 					{/if}
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.system_paused ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.system_paused ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						System {gates.system_paused ? 'PAUSED' : '\u2713'}
 					</span>
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.kill_switch ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.kill_switch ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						Kill Switch {gates.kill_switch ? 'ACTIVE' : '\u2713'}
 					</span>
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.daily_loss_halt ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.daily_loss_halt ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						Daily Loss {gates.daily_loss_halt ? 'HALT' : '\u2713'}
 					</span>
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.recovery_active ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.recovery_active ? 'bg-red-900/60 text-red-300 border border-red-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						Recovery {gates.recovery_active ? 'ACTIVE' : '\u2713'}
 					</span>
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.hl_price === 'open' ? 'bg-red-900/60 text-red-300 border border-red-700' : gates.hl_price === 'half_open' ? 'bg-yellow-900/60 text-yellow-300 border border-yellow-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.hl_price === 'open' ? 'bg-red-900/60 text-red-300 border border-red-700' : gates.hl_price === 'half_open' ? 'bg-yellow-900/60 text-yellow-300 border border-yellow-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						Price API {gates.hl_price === 'closed' ? '\u2713' : gates.hl_price.toUpperCase()}
 					</span>
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.hl_trade === 'open' ? 'bg-red-900/60 text-red-300 border border-red-700' : gates.hl_trade === 'half_open' ? 'bg-yellow-900/60 text-yellow-300 border border-yellow-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.hl_trade === 'open' ? 'bg-red-900/60 text-red-300 border border-red-700' : gates.hl_trade === 'half_open' ? 'bg-yellow-900/60 text-yellow-300 border border-yellow-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						Trade API {gates.hl_trade === 'closed' ? '\u2713' : gates.hl_trade.toUpperCase()}
 					</span>
-					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.hl_account === 'open' ? 'bg-red-900/60 text-red-300 border border-red-700' : gates.hl_account === 'half_open' ? 'bg-yellow-900/60 text-yellow-300 border border-yellow-700' : 'bg-[#111] text-gray-500 border border-[#222]'}">
+					<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono {gates.hl_account === 'open' ? 'bg-red-900/60 text-red-300 border border-red-700' : gates.hl_account === 'half_open' ? 'bg-yellow-900/60 text-yellow-300 border border-yellow-700' : 'bg-sc-panel2 text-sc-ink3 border border-sc-line'}">
 						Account API {gates.hl_account === 'closed' ? '\u2713' : gates.hl_account.toUpperCase()}
 					</span>
 				</div>
 
 				<div class="flex items-center gap-4 mt-2 text-xs">
 					<span>
-						<span class="text-gray-500">Price</span>
-						<span class="text-white font-bold ml-1">{selectedSession.current_price > 0 ? formatPrice(selectedSession.current_price) : '--'}</span>
+						<span class="text-sc-ink3">Price</span>
+						<span class="text-sc-ink font-bold ml-1">{selectedSession.current_price > 0 ? formatPrice(selectedSession.current_price) : '--'}</span>
 					</span>
 					<span>
-						<span class="text-gray-500">Capital</span>
+						<span class="text-sc-ink3">Capital</span>
 						{#if isLiveSelected}
 							{#if balanceState(selectedSession) === 'real'}
-								<span class="text-white font-bold ml-1">{formatPrice(displayCapital(selectedSession))}</span>
+								<span class="text-sc-ink font-bold ml-1">{formatPrice(displayCapital(selectedSession))}</span>
 								<span
-									class="text-[9px] uppercase tracking-wider text-green-500 ml-1"
+									class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-green-500 ml-1"
 									title="Real Hyperliquid balance{selectedSession.account_synced_at ? ` (synced ${selectedSession.account_synced_at})` : ''}"
 								>real{selectedSession.account_network ? ` · ${selectedSession.account_network}` : ''}</span>
 							{:else}
 								<span class="text-amber-400 font-bold ml-1">—</span>
 								<span
-									class="text-[9px] uppercase tracking-wider text-amber-400 ml-1"
+									class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-amber-400 ml-1"
 									title="The live Hyperliquid balance has not synced yet (daemon/exchange). No fabricated value is shown."
 								>balance unavailable</span>
 							{/if}
 						{:else}
-							<span class="text-white font-bold ml-1">{formatPrice(selectedSession.capital)}</span>
+							<span class="text-sc-ink font-bold ml-1">{formatPrice(selectedSession.capital)}</span>
 						{/if}
 					</span>
 					<span>
-						<span class="text-gray-500">P&L</span>
-						<span class="font-bold ml-1 {selectedSession.total_pnl > 0 ? 'text-green-400' : selectedSession.total_pnl < 0 ? 'text-red-400' : 'text-gray-400'}">
+						<span class="text-sc-ink3">P&L</span>
+						<span class="font-bold ml-1 {selectedSession.total_pnl > 0 ? 'text-green-400' : selectedSession.total_pnl < 0 ? 'text-red-400' : 'text-sc-ink2'}">
 							{formatDollarPnl(selectedSession.total_pnl)} ({formatPercent(selectedSession.total_pnl_pct)})
 						</span>
 					</span>
 					<span>
-						<span class="text-gray-500">Win</span>
-						<span class="text-white font-bold ml-1">{formatPercent(selectedSession.performance?.win_rate_pct ?? selectedSession.win_rate_pct)}</span>
+						<span class="text-sc-ink3">Win</span>
+						<span class="text-sc-ink font-bold ml-1">{formatPercent(selectedSession.performance?.win_rate_pct ?? selectedSession.win_rate_pct)}</span>
 					</span>
 					<span>
-						<span class="text-gray-500">PF</span>
-						<span class="text-white font-bold ml-1">{formatRatio(selectedSession.performance?.profit_factor ?? selectedSession.profit_factor)}</span>
+						<span class="text-sc-ink3">PF</span>
+						<span class="text-sc-ink font-bold ml-1">{formatRatio(selectedSession.performance?.profit_factor ?? selectedSession.profit_factor)}</span>
 					</span>
 					<span>
-						<span class="text-gray-500">Avg</span>
+						<span class="text-sc-ink3">Avg</span>
 						<span class="font-bold ml-1 {getPnlTone(selectedSession.performance?.avg_pnl ?? selectedSession.avg_pnl)}">
 							{formatDollarPnl(selectedSession.performance?.avg_pnl ?? selectedSession.avg_pnl)}
 						</span>
 					</span>
 					<span>
-						<span class="text-gray-500">Expect</span>
+						<span class="text-sc-ink3">Expect</span>
 						<span class="font-bold ml-1 {getPnlTone(selectedSession.performance?.expectancy ?? selectedSession.expectancy)}">
 							{formatDollarPnl(selectedSession.performance?.expectancy ?? selectedSession.expectancy)}
 						</span>
 					</span>
 					<span>
-						<span class="text-gray-500">Leverage</span>
-						<span class="text-white font-bold ml-1">{selectedSession.leverage ?? 1}x</span>
+						<span class="text-sc-ink3">Leverage</span>
+						<span class="text-sc-ink font-bold ml-1">{selectedSession.leverage ?? 1}x</span>
 					</span>
 					<span>
-						<span class="text-gray-500">Default</span>
-						<span class="text-white font-bold ml-1">{humanizeLabel(selectedSession.trade_mode ?? 'long_only')}</span>
+						<span class="text-sc-ink3">Default</span>
+						<span class="text-sc-ink font-bold ml-1">{humanizeLabel(selectedSession.trade_mode ?? 'long_only')}</span>
 					</span>
 					{#if isLiveSelected}
 						<span class="inline-flex items-center" title="Go-live notional ceiling: the largest order notional (USD) this strategy may open live. Opens above the ceiling are refused, not downsized.">
-							<span class="text-gray-500">Ceiling</span>
+							<span class="text-sc-ink3">Ceiling</span>
 							{#if ceilingEditFor === selectedSession.strategy_id}
 								<input
 									class="{MANUAL_INPUT_CLASS} w-16 ml-1"
@@ -3017,11 +3017,11 @@
 								<button class="{MANUAL_BTN_CLASS} ml-1" disabled={ceilingSaving} on:click={handleSaveCeiling}>Save</button>
 								<button class="{MANUAL_BTN_CLASS} ml-1" disabled={ceilingSaving} on:click={() => (ceilingEditFor = null)}>Cancel</button>
 							{:else}
-								<span class="text-white font-bold ml-1">
+								<span class="text-sc-ink font-bold ml-1">
 									{selectedSession.live_notional_ceiling_usd != null ? formatPrice(selectedSession.live_notional_ceiling_usd) : 'none'}
 								</span>
 								<button
-									class="text-[#888] hover:text-white text-[10px] uppercase font-bold ml-1"
+									class="text-sc-ink2 hover:text-sc-ink text-[12px] font-medium ml-1"
 									on:click={startCeilingEdit}
 								>Edit</button>
 							{/if}
@@ -3030,57 +3030,57 @@
 					{#if blockedMarkers.length > 0}
 						{@const lastBlocked = latestBlockedMarker()}
 						<span title={lastBlocked?.reason ?? 'Blocked signal'}>
-							<span class="text-gray-500">Blocked</span>
+							<span class="text-sc-ink3">Blocked</span>
 							<span class="text-yellow-300 font-bold ml-1">{blockedMarkers.length}</span>
 						</span>
 					{/if}
 					{#if selectedSession.position}
-						<span class="border-l border-[#333] pl-4">
-							<span class="text-gray-500">Pos</span>
+						<span class="border-l border-sc-line2 pl-4">
+							<span class="text-sc-ink3">Pos</span>
 							<span class="{getPositionSideColor(selectedSession.position.side)} font-bold uppercase ml-1">{selectedSession.position.side}</span>
-							<span class="text-white font-bold ml-1">{formatPrice(selectedSession.position.entry_price)}</span>
-							<span class="font-bold ml-1 {selectedSession.position.unrealized_pnl > 0 ? 'text-green-400' : selectedSession.position.unrealized_pnl < 0 ? 'text-red-400' : 'text-gray-400'}">
+							<span class="text-sc-ink font-bold ml-1">{formatPrice(selectedSession.position.entry_price)}</span>
+							<span class="font-bold ml-1 {selectedSession.position.unrealized_pnl > 0 ? 'text-green-400' : selectedSession.position.unrealized_pnl < 0 ? 'text-red-400' : 'text-sc-ink2'}">
 								{formatDollarPnl(selectedSession.position.unrealized_pnl)} ({formatPercent(selectedSession.position.unrealized_pnl_pct)})
 							</span>
-							<span class="border-l border-[#333] pl-4">
-								<span class="text-gray-500">Size</span>
-								<span class="text-white font-bold ml-1">{formatQty(selectedSession.position.size)} {selectedSession.symbol.split('/')[0]}</span>
-								<span class="text-gray-400 ml-1">({formatPrice(selectedSession.position.size * (selectedSession.position.current_price || selectedSession.current_price))})</span>
+							<span class="border-l border-sc-line2 pl-4">
+								<span class="text-sc-ink3">Size</span>
+								<span class="text-sc-ink font-bold ml-1">{formatQty(selectedSession.position.size)} {selectedSession.symbol.split('/')[0]}</span>
+								<span class="text-sc-ink2 ml-1">({formatPrice(selectedSession.position.size * (selectedSession.position.current_price || selectedSession.current_price))})</span>
 							</span>
 								<span class="inline-flex items-center gap-2 ml-2">
 									<button
-										class="text-red-500 hover:text-red-300 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										class="text-red-500 hover:text-red-300 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
 										disabled={!supportsManualControl(selectedSession) || requestInFlight}
 										on:click={handleClosePosition}
 									>Close</button>
 									<button
-										class="text-amber-400 hover:text-amber-200 text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										class="text-amber-400 hover:text-amber-200 text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
 										disabled={!supportsManualControl(selectedSession) || requestInFlight}
 										on:click={handleFlipPosition}
 									>Flip</button>
 									<button
-										class="text-[#888] hover:text-white text-[10px] uppercase font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+										class="text-sc-ink2 hover:text-sc-ink text-[12px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
 										disabled={!supportsManualControl(selectedSession) || requestInFlight}
 										on:click={handleToggleAutoManagement}
 										title={selectedSession.position.manual_pause ? 'Resume scanner auto-management' : 'Pause scanner auto-management (you own this position)'}
 									>{selectedSession.position.manual_pause ? 'Resume' : 'Pause'}</button>
 									{#if selectedSession.position.manual_pause}
-										<span class="text-[9px] uppercase tracking-wider text-[#888] border border-[#333] px-1">Manual</span>
+										<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2 border border-sc-line2 px-1">Manual</span>
 									{/if}
 								</span>
 							</span>
 						{/if}
 						<span class="ml-auto flex items-center gap-2 flex-shrink-0">
 						<button
-							class="terminal-button text-[10px] py-0 px-2 {showParams ? 'bg-[#111] text-white border-white' : ''}"
+							class="terminal-button text-[12px] py-0 px-2 {showParams ? 'bg-sc-panel2 text-sc-ink border-sc-ink' : ''}"
 							on:click={() => showParams = !showParams}
 						>Params</button>
 							<button
-								class="terminal-button text-[10px] py-0 px-2 {showVisualReplay ? 'bg-[#111] text-white border-white' : ''}"
+								class="terminal-button text-[12px] py-0 px-2 {showVisualReplay ? 'bg-sc-panel2 text-sc-ink border-sc-ink' : ''}"
 								on:click={toggleVisualReplay}
 							>{showVisualReplay ? 'Hide Chart' : 'Chart'}</button>
 						{#if selectedSession.mode === 'replay' && selectedSession.replay_state}
-							<span class="text-[10px] text-gray-500">
+							<span class="text-[10px] text-sc-ink3">
 								{selectedSession.replay_state.cursor}/{selectedSession.replay_state.total_bars}
 							</span>
 						{/if}
@@ -3099,89 +3099,89 @@
 					{@const positionDetail = getPositionDetail(selectedSession)}
 					{@const stopPrice = positionDetail?.stopPrice ?? null}
 					{@const takePrice = positionDetail?.takePrice ?? null}
-					<div class="mt-2 pt-2 border-t border-[#222] grid grid-cols-2 lg:grid-cols-6 gap-2 text-[10px]">
-						<div class="bg-[#050505] border border-[#222] px-2 py-1.5">
-							<div class="text-gray-500 uppercase tracking-wider">Entry</div>
-							<div class="text-white font-bold">{formatPrice(selectedSession.position.entry_price)}</div>
-							<div class="text-gray-600">{getOpenDuration(selectedSession.position.entry_time)} open</div>
+					<div class="mt-2 pt-2 border-t border-sc-line grid grid-cols-2 lg:grid-cols-6 gap-2 text-[10px]">
+						<div class="rounded-md bg-sc-panel border border-sc-line px-2 py-1.5">
+							<div class="text-sc-ink3 uppercase tracking-wider">Entry</div>
+							<div class="text-sc-ink font-bold">{formatPrice(selectedSession.position.entry_price)}</div>
+							<div class="text-sc-ink3">{getOpenDuration(selectedSession.position.entry_time)} open</div>
 						</div>
-						<div class="bg-[#050505] border border-[#222] px-2 py-1.5">
-							<div class="text-gray-500 uppercase tracking-wider">Position Size</div>
-							<div class="text-white font-bold">{formatQty(selectedSession.position.size)} {selectedSession.symbol.split('/')[0]}</div>
-							<div class="text-gray-600">{positionDetail ? formatPrice(positionDetail.notional) : '\u2014'} notional</div>
+						<div class="rounded-md bg-sc-panel border border-sc-line px-2 py-1.5">
+							<div class="text-sc-ink3 uppercase tracking-wider">Position Size</div>
+							<div class="text-sc-ink font-bold">{formatQty(selectedSession.position.size)} {selectedSession.symbol.split('/')[0]}</div>
+							<div class="text-sc-ink3">{positionDetail ? formatPrice(positionDetail.notional) : '\u2014'} notional</div>
 						</div>
-						<div class="bg-[#050505] border border-[#222] px-2 py-1.5">
-							<div class="text-gray-500 uppercase tracking-wider">Stop Loss</div>
-							<div class="font-bold {stopPrice !== null ? 'text-red-400' : 'text-gray-500'}">
+						<div class="rounded-md bg-sc-panel border border-sc-line px-2 py-1.5">
+							<div class="text-sc-ink3 uppercase tracking-wider">Stop Loss</div>
+							<div class="font-bold {stopPrice !== null ? 'text-red-400' : 'text-sc-ink3'}">
 								{stopPrice !== null ? formatPrice(stopPrice) : '\u2014'}
 							</div>
-							<div class="text-gray-600">{positionDetail?.stopLabel ?? '\u2014'}</div>
+							<div class="text-sc-ink3">{positionDetail?.stopLabel ?? '\u2014'}</div>
 						</div>
-						<div class="bg-[#050505] border border-[#222] px-2 py-1.5">
-							<div class="text-gray-500 uppercase tracking-wider">Take Profit</div>
-							<div class="font-bold {takePrice !== null ? 'text-green-400' : 'text-gray-500'}">
+						<div class="rounded-md bg-sc-panel border border-sc-line px-2 py-1.5">
+							<div class="text-sc-ink3 uppercase tracking-wider">Take Profit</div>
+							<div class="font-bold {takePrice !== null ? 'text-green-400' : 'text-sc-ink3'}">
 								{takePrice !== null ? formatPrice(takePrice) : '\u2014'}
 							</div>
-							<div class="text-gray-600">{positionDetail?.takeLabel ?? '\u2014'}</div>
+							<div class="text-sc-ink3">{positionDetail?.takeLabel ?? '\u2014'}</div>
 						</div>
-						<div class="bg-[#050505] border border-[#222] px-2 py-1.5">
-							<div class="text-gray-500 uppercase tracking-wider">Unrealized</div>
-							<div class="font-bold {selectedSession.position.unrealized_pnl > 0 ? 'text-green-400' : selectedSession.position.unrealized_pnl < 0 ? 'text-red-400' : 'text-gray-400'}">
+						<div class="rounded-md bg-sc-panel border border-sc-line px-2 py-1.5">
+							<div class="text-sc-ink3 uppercase tracking-wider">Unrealized</div>
+							<div class="font-bold {selectedSession.position.unrealized_pnl > 0 ? 'text-green-400' : selectedSession.position.unrealized_pnl < 0 ? 'text-red-400' : 'text-sc-ink2'}">
 								{formatPrice(selectedSession.position.unrealized_pnl)}
 							</div>
-							<div class="text-gray-600">{formatPercent(selectedSession.position.unrealized_pnl_pct)}</div>
+							<div class="text-sc-ink3">{formatPercent(selectedSession.position.unrealized_pnl_pct)}</div>
 						</div>
-						<div class="bg-[#050505] border border-[#222] px-2 py-1.5">
-							<div class="text-gray-500 uppercase tracking-wider">Exit</div>
-							<div class="text-gray-300 truncate" title={positionDetail?.exitSummary}>{positionDetail?.exitSummary ?? 'Strategy exit'}</div>
-							<div class="text-gray-600">Current {formatPrice(selectedSession.current_price)}</div>
+						<div class="rounded-md bg-sc-panel border border-sc-line px-2 py-1.5">
+							<div class="text-sc-ink3 uppercase tracking-wider">Exit</div>
+							<div class="text-sc-ink2 truncate" title={positionDetail?.exitSummary}>{positionDetail?.exitSummary ?? 'Strategy exit'}</div>
+							<div class="text-sc-ink3">Current {formatPrice(selectedSession.current_price)}</div>
 						</div>
 					</div>
 
 					{#if supportsManualControl(selectedSession)}
-						<div class="mt-2 pt-2 border-t border-[#222] flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px]">
-							<span class="uppercase tracking-wider {isLiveSelected ? 'text-red-400 font-bold' : 'text-gray-500'}">{isLiveSelected ? 'Manual · LIVE' : 'Manual'}</span>
+						<div class="mt-2 pt-2 border-t border-sc-line flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px]">
+							<span class="uppercase tracking-wider {isLiveSelected ? 'text-red-400 font-bold' : 'text-sc-ink3'}">{isLiveSelected ? 'Manual · LIVE' : 'Manual'}</span>
 							<span class="inline-flex items-center gap-1">
-								<span class="text-gray-500">Partial</span>
+								<span class="text-sc-ink3">Partial</span>
 								<input class="{MANUAL_INPUT_CLASS} w-14" type="number" min="0" max="100" step="1" placeholder="%" bind:value={partialPctInput} disabled={requestInFlight} />
 								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={handlePartialClose}>Close %</button>
 							</span>
 							<span class="inline-flex items-center gap-1">
-								<span class="text-gray-500">SL</span>
+								<span class="text-sc-ink3">SL</span>
 								<input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder={stopPrice !== null ? formatPrice(stopPrice) : 'price'} bind:value={slInput} disabled={requestInFlight} />
 								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('sl')}>Set</button>
 								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('sl', true)}>Clear</button>
 							</span>
 							<span class="inline-flex items-center gap-1">
-								<span class="text-gray-500">TP</span>
+								<span class="text-sc-ink3">TP</span>
 								<input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder={takePrice !== null ? formatPrice(takePrice) : 'price'} bind:value={tpInput} disabled={requestInFlight} />
 								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('tp')}>Set</button>
 								<button class={MANUAL_BTN_CLASS} disabled={requestInFlight} on:click={() => handleAdjustLevel('tp', true)}>Clear</button>
 							</span>
-							{#if requestInFlight}<span class="text-gray-500">working…</span>{/if}
+							{#if requestInFlight}<span class="text-sc-ink3">working…</span>{/if}
 						</div>
 					{/if}
 				{/if}
 
 				{#if !selectedSession.position && supportsManualControl(selectedSession)}
-					<div class="mt-2 pt-2 border-t border-[#222] flex flex-wrap items-end gap-x-3 gap-y-2 text-[10px]">
-						<span class="uppercase tracking-wider self-center {isLiveSelected ? 'text-red-400 font-bold' : 'text-gray-500'}">{isLiveSelected ? 'Open LIVE' : 'Open manual'}</span>
-						<span class="inline-flex rounded overflow-hidden border border-[#333]">
-							<button class="{MANUAL_SEG_CLASS} {openDirection === 'long' ? 'bg-[#111] text-emerald-400' : ''}" on:click={() => (openDirection = 'long')}>Long</button>
-							<button class="{MANUAL_SEG_CLASS} {openDirection === 'short' ? 'bg-[#111] text-red-400' : ''}" on:click={() => (openDirection = 'short')}>Short</button>
+					<div class="mt-2 pt-2 border-t border-sc-line flex flex-wrap items-end gap-x-3 gap-y-2 text-[10px]">
+						<span class="uppercase tracking-wider self-center {isLiveSelected ? 'text-red-400 font-bold' : 'text-sc-ink3'}">{isLiveSelected ? 'Open LIVE' : 'Open manual'}</span>
+						<span class="inline-flex rounded overflow-hidden border border-sc-line2">
+							<button class="{MANUAL_SEG_CLASS} {openDirection === 'long' ? 'bg-sc-panel2 text-emerald-400' : ''}" on:click={() => (openDirection = 'long')}>Long</button>
+							<button class="{MANUAL_SEG_CLASS} {openDirection === 'short' ? 'bg-sc-panel2 text-red-400' : ''}" on:click={() => (openDirection = 'short')}>Short</button>
 						</span>
-						<span class="inline-flex rounded overflow-hidden border border-[#333]">
-							<button class="{MANUAL_SEG_CLASS} {openSizeMode === 'risk' ? 'bg-[#111] text-white' : ''}" on:click={() => (openSizeMode = 'risk')}>Risk %</button>
-							<button class="{MANUAL_SEG_CLASS} {openSizeMode === 'size' ? 'bg-[#111] text-white' : ''}" on:click={() => (openSizeMode = 'size')}>Size</button>
+						<span class="inline-flex rounded overflow-hidden border border-sc-line2">
+							<button class="{MANUAL_SEG_CLASS} {openSizeMode === 'risk' ? 'bg-sc-panel2 text-sc-ink' : ''}" on:click={() => (openSizeMode = 'risk')}>Risk %</button>
+							<button class="{MANUAL_SEG_CLASS} {openSizeMode === 'size' ? 'bg-sc-panel2 text-sc-ink' : ''}" on:click={() => (openSizeMode = 'size')}>Size</button>
 						</span>
 						{#if openSizeMode === 'risk'}
-							<label class="inline-flex items-center gap-1"><span class="text-gray-500">Risk %</span><input class="{MANUAL_INPUT_CLASS} w-14" type="number" min="0" max="100" step="0.1" bind:value={openRiskPctInput} /></label>
+							<label class="inline-flex items-center gap-1"><span class="text-sc-ink3">Risk %</span><input class="{MANUAL_INPUT_CLASS} w-14" type="number" min="0" max="100" step="0.1" bind:value={openRiskPctInput} /></label>
 						{:else}
-							<label class="inline-flex items-center gap-1"><span class="text-gray-500">Size</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" bind:value={openSizeInput} /></label>
+							<label class="inline-flex items-center gap-1"><span class="text-sc-ink3">Size</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" bind:value={openSizeInput} /></label>
 						{/if}
-						<label class="inline-flex items-center gap-1"><span class="text-gray-500">Lev</span><input class="{MANUAL_INPUT_CLASS} w-12" type="number" min="1" step="0.5" bind:value={openLeverageInput} /></label>
-						<label class="inline-flex items-center gap-1"><span class="text-gray-500">SL</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder="opt" bind:value={openSlInput} /></label>
-						<label class="inline-flex items-center gap-1"><span class="text-gray-500">TP</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder="opt" bind:value={openTpInput} /></label>
+						<label class="inline-flex items-center gap-1"><span class="text-sc-ink3">Lev</span><input class="{MANUAL_INPUT_CLASS} w-12" type="number" min="1" step="0.5" bind:value={openLeverageInput} /></label>
+						<label class="inline-flex items-center gap-1"><span class="text-sc-ink3">SL</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder="opt" bind:value={openSlInput} /></label>
+						<label class="inline-flex items-center gap-1"><span class="text-sc-ink3">TP</span><input class="{MANUAL_INPUT_CLASS} w-20" type="number" min="0" step="any" placeholder="opt" bind:value={openTpInput} /></label>
 						<button class={MANUAL_BTN_ACCENT_CLASS} disabled={requestInFlight} on:click={handleOpenManual}>Open</button>
 					</div>
 				{/if}
@@ -3189,25 +3189,25 @@
 
 			{#if pendingConfirm}
 				<div
-					class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center"
+					class="fixed inset-0 z-50 bg-sc-bg/60 flex items-center justify-center"
 					role="presentation"
 					on:click={(e) => { if (e.target === e.currentTarget) cancelConfirm(); }}
 				>
 					<div
-						class="bg-[#0a0a0a] border border-[#333] rounded p-4 max-w-sm w-full mx-4"
+						class="bg-sc-panel border border-sc-line2 rounded p-4 max-w-sm w-full mx-4"
 						role="dialog"
 						aria-modal="true"
 						tabindex="-1"
 					>
-						<div class="text-[11px] font-bold uppercase tracking-wider text-white mb-2">{pendingConfirm.label}</div>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink mb-2">{pendingConfirm.label}</div>
 						{#if isLiveSelected}
 							<div class="text-[11px] font-bold text-red-400 mb-2">⚠ LIVE — this places a REAL order on Hyperliquid with real money.</div>
 						{/if}
-						<div class="text-[11px] text-gray-300 mb-3">{pendingConfirm.detail}</div>
+						<div class="text-[11px] text-sc-ink2 mb-3">{pendingConfirm.detail}</div>
 						{#if isLiveSelected}
-							<div class="text-[10px] text-gray-500 mb-3">Routed to Hyperliquid on the configured network; fill price is the exchange's, not this estimate.</div>
+							<div class="text-[10px] text-sc-ink3 mb-3">Routed to Hyperliquid on the configured network; fill price is the exchange's, not this estimate.</div>
 						{:else}
-							<div class="text-[10px] text-gray-500 mb-3">Paper fill at the current mid — no slippage or fees modeled.</div>
+							<div class="text-[10px] text-sc-ink3 mb-3">Paper fill at the current mid — no slippage or fees modeled.</div>
 						{/if}
 						<div class="flex justify-end gap-2">
 							<button class={MANUAL_BTN_CLASS} on:click={cancelConfirm}>Cancel</button>
@@ -3220,66 +3220,66 @@
 			<!-- Strategy Parameters Panel -->
 			{#if showParams && selectedSession}
 				{@const decisionParams = getSessionDecisionParams(selectedSession)}
-				<div class="border-b border-[#222] bg-[#050505] px-4 py-3 flex-shrink-0 overflow-y-auto max-h-48">
+				<div class="border-b border-sc-line bg-sc-panel px-4 py-3 flex-shrink-0 overflow-y-auto max-h-48">
 					<div class="flex items-center justify-between mb-2">
-						<h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Strategy Decision Parameters</h4>
-						<button class="text-gray-600 hover:text-gray-300" aria-label="Close strategy parameters" title="Close strategy parameters" on:click={() => showParams = false}>
+						<h4 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider">Strategy Decision Parameters</h4>
+						<button class="text-sc-ink3 hover:text-sc-ink2" aria-label="Close strategy parameters" title="Close strategy parameters" on:click={() => showParams = false}>
 							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
 							</svg>
 						</button>
 					</div>
 					<div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-						<span class="text-gray-500">Strategy</span>
-						<span class="text-white font-bold">{selectedSession.strategy_name}</span>
-						<span class="text-gray-500">Version</span>
-						<span class="text-gray-300">{selectedSession.strategy_version || '\u2014'}</span>
-						<span class="text-gray-500">Symbol</span>
-						<span class="text-gray-300">{selectedSession.symbol}</span>
-						<span class="text-gray-500">Timeframe</span>
-						<span class="text-gray-300">{selectedSession.timeframe}</span>
-						<span class="text-gray-500">Runtime</span>
-						<span class="text-gray-300">{selectedSession.runtime_type ?? selectedSession.strategy_type ?? '\u2014'}</span>
-						<span class="text-gray-500">Source</span>
-						<span class="text-gray-300">{selectedSession.runtime_source ?? '\u2014'}</span>
-						<span class="text-gray-500">Mode</span>
-						<span class="text-gray-300 uppercase">{selectedSession.mode}</span>
+						<span class="text-sc-ink3">Strategy</span>
+						<span class="text-sc-ink font-bold">{selectedSession.strategy_name}</span>
+						<span class="text-sc-ink3">Version</span>
+						<span class="text-sc-ink2">{selectedSession.strategy_version || '\u2014'}</span>
+						<span class="text-sc-ink3">Symbol</span>
+						<span class="text-sc-ink2">{selectedSession.symbol}</span>
+						<span class="text-sc-ink3">Timeframe</span>
+						<span class="text-sc-ink2">{selectedSession.timeframe}</span>
+						<span class="text-sc-ink3">Runtime</span>
+						<span class="text-sc-ink2">{selectedSession.runtime_type ?? selectedSession.strategy_type ?? '\u2014'}</span>
+						<span class="text-sc-ink3">Source</span>
+						<span class="text-sc-ink2">{selectedSession.runtime_source ?? '\u2014'}</span>
+						<span class="text-sc-ink3">Mode</span>
+						<span class="text-sc-ink2 uppercase">{selectedSession.mode}</span>
 						{#if selectedSession.mode === 'live'}
-							<span class="text-gray-500">Live Feed</span>
-							<span class="text-gray-300 uppercase">{selectedSession.live_feed ?? 'default'}</span>
+							<span class="text-sc-ink3">Live Feed</span>
+							<span class="text-sc-ink2 uppercase">{selectedSession.live_feed ?? 'default'}</span>
 							{#if selectedSession.live_feed === 'ibkr'}
-								<span class="text-gray-500">IBKR Contract</span>
-								<span class="text-gray-300">{selectedSession.ibkr_sec_type}:{selectedSession.ibkr_exchange}:{selectedSession.ibkr_currency}</span>
-								<span class="text-gray-500">IBKR Bars</span>
-								<span class="text-gray-300">{selectedSession.ibkr_what_to_show}</span>
+								<span class="text-sc-ink3">IBKR Contract</span>
+								<span class="text-sc-ink2">{selectedSession.ibkr_sec_type}:{selectedSession.ibkr_exchange}:{selectedSession.ibkr_currency}</span>
+								<span class="text-sc-ink3">IBKR Bars</span>
+								<span class="text-sc-ink2">{selectedSession.ibkr_what_to_show}</span>
 							{/if}
 						{/if}
-						<span class="text-gray-500">Capital</span>
+						<span class="text-sc-ink3">Capital</span>
 						{#if isLiveSelected}
 							{#if balanceState(selectedSession) === 'real'}
-								<span class="text-gray-300">{formatPrice(displayCapital(selectedSession))}</span>
+								<span class="text-sc-ink2">{formatPrice(displayCapital(selectedSession))}</span>
 							{:else}
 								<span class="text-amber-400">balance unavailable</span>
 							{/if}
 						{:else}
-							<span class="text-gray-300">{formatPrice(selectedSession.initial_capital)}</span>
+							<span class="text-sc-ink2">{formatPrice(selectedSession.initial_capital)}</span>
 						{/if}
-						<span class="text-gray-500">Position Size</span>
-						<span class="text-gray-300">{selectedSession.position_size_pct}%</span>
+						<span class="text-sc-ink3">Position Size</span>
+						<span class="text-sc-ink2">{selectedSession.position_size_pct}%</span>
 						{#if selectedSession.mode === 'replay'}
-							<span class="text-gray-500">Replay Range</span>
-							<span class="text-gray-300">{selectedSession.replay_start ?? '\u2014'} -> {selectedSession.replay_end ?? '\u2014'}</span>
-							<span class="text-gray-500">Replay Speed</span>
-							<span class="text-gray-300">{selectedSession.replay_speed ?? 1}x</span>
+							<span class="text-sc-ink3">Replay Range</span>
+							<span class="text-sc-ink2">{selectedSession.replay_start ?? '\u2014'} -> {selectedSession.replay_end ?? '\u2014'}</span>
+							<span class="text-sc-ink3">Replay Speed</span>
+							<span class="text-sc-ink2">{selectedSession.replay_speed ?? 1}x</span>
 						{/if}
 					</div>
 					{#if Object.keys(decisionParams).length > 0}
-						<div class="mt-2 pt-2 border-t border-[#111]">
-							<h5 class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Runtime Rules</h5>
+						<div class="mt-2 pt-2 border-t border-sc-line">
+							<h5 class="text-[10px] text-sc-ink3 uppercase tracking-wider mb-1">Runtime Rules</h5>
 							<div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
 								{#each Object.entries(decisionParams) as [key, value]}
-									<span class="text-gray-500">{key}</span>
-									<span class="text-gray-300 font-mono">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+									<span class="text-sc-ink3">{key}</span>
+									<span class="text-sc-ink2 font-mono">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
 								{/each}
 							</div>
 						</div>
@@ -3294,30 +3294,30 @@
 			>
 				<!-- Row 1: Replay Controls -->
 				{#if supportsReplayControls && showVisualReplay && selectedSession.mode === 'replay'}
-					<div class="px-4 py-2 border-b border-[#111] bg-[#0a0a0a]">
+					<div class="px-4 py-2 border-b border-sc-line bg-sc-panel">
 						<div class="flex items-center gap-3 flex-wrap">
 							{#if selectedSession.replay_state?.is_playing}
 								<button
-									class="terminal-button text-yellow-400 hover:text-black text-xs py-0.5"
+									class="terminal-button text-yellow-400 hover:text-black text-[12px] py-0.5"
 									on:click={handleReplayPause}
 									title="Pause (Space)"
 								>Pause</button>
 							{:else}
 								<button
-									class="terminal-button text-green-400 hover:text-black text-xs py-0.5"
+									class="terminal-button text-green-400 hover:text-black text-[12px] py-0.5"
 									on:click={handleReplayPlay}
 									title="Play (Space)"
 								>Play</button>
 							{/if}
 
 							<div class="flex items-center gap-1">
-								<button class="terminal-button text-xs py-0.5 px-2" on:click={() => handleReplayStep(1)} title="Step +1 (Right)">+1</button>
-								<button class="terminal-button text-xs py-0.5 px-2" on:click={() => handleReplayStep(10)} title="Step +10 (Shift+Right)">+10</button>
-								<button class="terminal-button text-xs py-0.5 px-2" on:click={() => handleReplayStep(50)} title="Step +50">+50</button>
+								<button class="terminal-button text-[12px] py-0.5 px-2" on:click={() => handleReplayStep(1)} title="Step +1 (Right)">+1</button>
+								<button class="terminal-button text-[12px] py-0.5 px-2" on:click={() => handleReplayStep(10)} title="Step +10 (Shift+Right)">+10</button>
+								<button class="terminal-button text-[12px] py-0.5 px-2" on:click={() => handleReplayStep(50)} title="Step +50">+50</button>
 							</div>
 
 							<div class="flex items-center gap-1">
-								<span class="text-[10px] text-gray-500 uppercase">Spd</span>
+								<span class="text-[10px] text-sc-ink3 uppercase">Spd</span>
 								<select
 									class="terminal-select w-auto py-0 text-xs"
 									bind:value={replaySpeedInput}
@@ -3329,20 +3329,20 @@
 								</select>
 							</div>
 
-							<button class="terminal-button-danger text-xs py-0.5" on:click={handleReplayReset} title="Reset (R)">Reset</button>
+							<button class="terminal-button-danger text-[12px] py-0.5" on:click={handleReplayReset} title="Reset (R)">Reset</button>
 
-							<span class="text-[10px] text-gray-600">{chartBars.length} bars</span>
+							<span class="text-[10px] text-sc-ink3">{chartBars.length} bars</span>
 
-							<div class="ml-auto text-[10px] text-gray-600 hidden lg:flex items-center gap-2">
-								<kbd class="px-1 border border-[#333] text-gray-500">Space</kbd>
-								<kbd class="px-1 border border-[#333] text-gray-500">Arrows</kbd>
-								<kbd class="px-1 border border-[#333] text-gray-500">R</kbd>
+							<div class="ml-auto text-[10px] text-sc-ink3 hidden lg:flex items-center gap-2">
+								<kbd class="px-1 border border-sc-line2 text-sc-ink3">Space</kbd>
+								<kbd class="px-1 border border-sc-line2 text-sc-ink3">Arrows</kbd>
+								<kbd class="px-1 border border-sc-line2 text-sc-ink3">R</kbd>
 							</div>
 						</div>
 
 						{#if selectedSession.replay_state && selectedSession.replay_state.total_bars > 0}
 							<div class="mt-1.5 flex items-center gap-2">
-								<span class="text-[10px] text-gray-600 w-8 text-right">{selectedSession.replay_state.cursor}</span>
+								<span class="text-[10px] text-sc-ink3 w-8 text-right">{selectedSession.replay_state.cursor}</span>
 								<input
 									type="range"
 									min="0"
@@ -3352,7 +3352,7 @@
 									class="flex-1 h-1.5 cursor-pointer accent-white"
 									style="background: linear-gradient(to right, #555 {(selectedSession.replay_state.cursor / (selectedSession.replay_state.total_bars - 1)) * 100}%, #222 {(selectedSession.replay_state.cursor / (selectedSession.replay_state.total_bars - 1)) * 100}%);"
 								/>
-								<span class="text-[10px] text-gray-600 w-10">{selectedSession.replay_state.total_bars}</span>
+								<span class="text-[10px] text-sc-ink3 w-10">{selectedSession.replay_state.total_bars}</span>
 							</div>
 						{/if}
 					</div>
@@ -3364,11 +3364,11 @@
 				<div class="flex overflow-hidden min-h-0" style="min-height: 200px;">
 					<!-- Indicator Panel Sidebar -->
 					{#if showVisualReplay && showIndicatorPanel && Object.keys(indicatorConfig).length > 0}
-						<div class="w-52 border-r border-[#222] bg-[#050505] p-3 overflow-y-auto flex-shrink-0">
+						<div class="w-52 border-r border-sc-line bg-sc-panel p-3 overflow-y-auto flex-shrink-0">
 							<div class="flex justify-between items-center mb-3">
-								<h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Indicators</h4>
+								<h4 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider">Indicators</h4>
 								<button
-									class="text-gray-600 hover:text-gray-300"
+									class="text-sc-ink3 hover:text-sc-ink2"
 									aria-label="Close indicators panel"
 									title="Close indicators panel"
 									on:click={() => showIndicatorPanel = false}
@@ -3381,20 +3381,20 @@
 
 							{#if overlayIndicatorNames.length > 0}
 								<div class="mb-3">
-									<h5 class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Overlays</h5>
+									<h5 class="text-[10px] text-sc-ink3 uppercase tracking-wider mb-1">Overlays</h5>
 									{#each overlayIndicatorNames as name}
 										{@const config = indicatorConfig[name]}
 										{@const value = getCurrentIndicatorValue(name)}
-										<label class="flex items-center gap-2 py-1 border-b border-[#111] hover:bg-[#111] px-1 cursor-pointer">
+										<label class="flex items-center gap-2 py-1 border-b border-sc-line hover:bg-sc-panel2 px-1 cursor-pointer">
 											<input
 												type="checkbox"
 												checked={indicatorVisibility[name] ?? true}
 												on:change={() => toggleIndicatorVisibility(name)}
-												class="accent-white bg-transparent border-[#333]"
+												class="accent-white bg-transparent border-sc-line2"
 											/>
 											<span class="w-2 h-2 flex-shrink-0" style="background-color: {config?.color || getIndicatorColor(name)}"></span>
-											<span class="min-w-0 flex-1 truncate text-[11px] text-gray-400" title={name}>{name}</span>
-											<span class="text-[11px] font-mono text-white">{formatIndicatorValue(value, name)}</span>
+											<span class="min-w-0 flex-1 truncate text-[11px] text-sc-ink2" title={name}>{name}</span>
+											<span class="text-[11px] font-mono text-sc-ink">{formatIndicatorValue(value, name)}</span>
 										</label>
 									{/each}
 								</div>
@@ -3402,20 +3402,20 @@
 
 							{#if lowerPaneIndicatorNames.length > 0}
 								<div class="mb-3">
-									<h5 class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Lower Pane</h5>
+									<h5 class="text-[10px] text-sc-ink3 uppercase tracking-wider mb-1">Lower Pane</h5>
 									{#each lowerPaneIndicatorNames as name}
 										{@const config = indicatorConfig[name]}
 										{@const value = getCurrentIndicatorValue(name)}
-										<label class="flex items-center gap-2 py-1 border-b border-[#111] hover:bg-[#111] px-1 cursor-pointer">
+										<label class="flex items-center gap-2 py-1 border-b border-sc-line hover:bg-sc-panel2 px-1 cursor-pointer">
 											<input
 												type="checkbox"
 												checked={indicatorVisibility[name] ?? true}
 												on:change={() => toggleIndicatorVisibility(name)}
-												class="accent-white bg-transparent border-[#333]"
+												class="accent-white bg-transparent border-sc-line2"
 											/>
 											<span class="w-2 h-2 flex-shrink-0" style="background-color: {config?.color || getIndicatorColor(name)}"></span>
-											<span class="min-w-0 flex-1 truncate text-[11px] text-gray-400" title={name}>{name}</span>
-											<span class="text-[11px] font-mono text-white">{formatIndicatorValue(value, name)}</span>
+											<span class="min-w-0 flex-1 truncate text-[11px] text-sc-ink2" title={name}>{name}</span>
+											<span class="text-[11px] font-mono text-sc-ink">{formatIndicatorValue(value, name)}</span>
 										</label>
 									{/each}
 								</div>
@@ -3423,15 +3423,15 @@
 
 							{#if sidebarOnlyIndicatorNames.length > 0}
 								<div>
-									<h5 class="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Sidebar Only</h5>
+									<h5 class="text-[10px] text-sc-ink3 uppercase tracking-wider mb-1">Sidebar Only</h5>
 									{#each sidebarOnlyIndicatorNames as name}
 										{@const config = indicatorConfig[name]}
 										{@const value = getCurrentIndicatorValue(name)}
-										<div class="flex items-center gap-2 py-1 border-b border-[#111] px-1">
+										<div class="flex items-center gap-2 py-1 border-b border-sc-line px-1">
 											<span class="w-2 h-2 flex-shrink-0" style="background-color: {config?.color || getIndicatorColor(name)}"></span>
-											<span class="min-w-0 flex-1 truncate text-[11px] text-gray-400" title={name}>{name}</span>
-											<span class="text-[9px] uppercase tracking-wider text-gray-600">Sidebar</span>
-											<span class="text-[11px] font-mono text-white">{formatIndicatorValue(value, name)}</span>
+											<span class="min-w-0 flex-1 truncate text-[11px] text-sc-ink2" title={name}>{name}</span>
+											<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Sidebar</span>
+											<span class="text-[11px] font-mono text-sc-ink">{formatIndicatorValue(value, name)}</span>
 										</div>
 									{/each}
 								</div>
@@ -3442,15 +3442,15 @@
 					<!-- Chart or placeholder -->
 					<div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 						{#if showVisualReplay}
-							<div class="border-b border-[#171717] bg-[#050505] px-3 py-2">
+							<div class="border-b border-sc-line bg-sc-panel px-3 py-2">
 								<div class="flex flex-col gap-2 2xl:flex-row 2xl:items-center 2xl:justify-between">
 									<div class="min-w-0">
 										<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-											<span class="text-[10px] font-bold uppercase tracking-[0.24em] text-gray-500">Chart</span>
-											<span class="text-[11px] text-white">{selectedSession.symbol} / {activeVisualChartTimeframe}</span>
-											<span class="text-[10px] text-gray-600 uppercase">{selectedSession.mode}</span>
+											<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Chart</span>
+											<span class="text-[11px] text-sc-ink">{selectedSession.symbol} / {activeVisualChartTimeframe}</span>
+											<span class="text-[10px] text-sc-ink3 uppercase">{selectedSession.mode}</span>
 										</div>
-										<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500">
+										<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-sc-ink3">
 											<span>{selectedSession.strategy_name}</span>
 											<span>{chartToolHint()}</span>
 										</div>
@@ -3512,14 +3512,14 @@
 									</div>
 								</div>
 								<div class="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
-									<span class="rounded-sm border border-[#1e293b] bg-[#020617] px-2 py-1 text-slate-300">
+									<span class="rounded-sm border border-[#1e293b] bg-[#020617] px-2 py-1 text-sc-ink2">
 										{activeDrawingTool === 'cursor' ? 'Cursor' : activeDrawingTool === 'horizontalLine' ? 'Horizontal lines' : 'Trend lines'}
 									</span>
 									{#if pendingTrendLineStart}
-										<span class="text-white">Trend line anchor locked. Click a second point to finish.</span>
+										<span class="text-sc-ink">Trend line anchor locked. Click a second point to finish.</span>
 									{/if}
 									{#if chartDrawings.length > 0}
-										<span class="text-gray-600">{chartDrawings.length} drawing{chartDrawings.length === 1 ? '' : 's'} on chart</span>
+										<span class="text-sc-ink3">{chartDrawings.length} drawing{chartDrawings.length === 1 ? '' : 's'} on chart</span>
 									{/if}
 								</div>
 							</div>
@@ -3550,16 +3550,16 @@
 										/>
 									{/key}
 								{:else}
-									<div class="flex items-center justify-center h-full text-gray-600 text-xs">
+									<div class="flex items-center justify-center h-full text-sc-ink3 text-xs">
 										No chart data. Start the session or step forward.
 									</div>
 								{/if}
 							</div>
 							<!-- Regime timeline under the chart: same causal classifier as the
 							     backtest/trade stamps/entry gate. Off by default. -->
-							<div class="flex items-center border-t border-[#1a1a1a] bg-black">
+							<div class="flex items-center border-t border-sc-line bg-sc-bg">
 								<button
-									class="px-2 py-1 text-[9px] uppercase tracking-wider whitespace-nowrap {showRegimeStripe ? 'text-white' : 'text-[#555]'} hover:text-white"
+									class="px-2 py-1 text-[11px] whitespace-nowrap {showRegimeStripe ? 'text-sc-ink' : 'text-sc-ink3'} hover:text-sc-ink"
 									on:click={() => (showRegimeStripe = !showRegimeStripe)}
 									title="Toggle the regime timeline (causal classifier labels under the price action)"
 								>
@@ -3573,12 +3573,12 @@
 								{/if}
 							</div>
 						{:else}
-							<div class="flex items-center justify-center h-full text-gray-700">
+							<div class="flex items-center justify-center h-full text-sc-ink4">
 								<div class="text-center">
-									<p class="text-xs uppercase tracking-wider mb-1">
+									<p class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] mb-1">
 										Click "Chart" to view price action
 									</p>
-									<p class="text-[10px] text-gray-600">
+									<p class="text-[10px] text-sc-ink3">
 										{selectedSession.total_trades} trades | Win rate: {selectedSession.total_trades > 0 ? ((selectedSession.winning_trades / selectedSession.total_trades) * 100).toFixed(0) : '0'}%
 									</p>
 								</div>
@@ -3588,79 +3588,79 @@
 				</div>
 
 				<!-- Row 3: Bottom Panels — trades get the lion's share, signals stay compact -->
-				<div class="border-t border-[#222] grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,4.8fr)] overflow-hidden">
+				<div class="border-t border-sc-line grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,4.8fr)] overflow-hidden">
 					<!-- Live Indicators -->
-					<div class="border-r border-[#222] p-2 overflow-y-auto">
-						<h3 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Indicators</h3>
+					<div class="border-r border-sc-line p-2 overflow-y-auto">
+						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-1.5">Indicators</h3>
 						{#if bottomIndicatorNames.length > 0}
 							{#each bottomIndicatorNames as name}
 								{@const runtimeIndicator = selectedSession.indicators[name]}
 								{@const value = getCurrentIndicatorValue(name) ?? runtimeIndicator?.value ?? null}
 								{@const group = getIndicatorSidebarGroup(name, indicatorConfig[name])}
-								<div class="flex items-center gap-2 py-1 border-b border-[#111] hover:bg-[#111] px-1">
-									<span class="min-w-0 flex-1 truncate text-[11px] text-gray-400" title={name}>{name}</span>
-									<span class="text-[9px] uppercase tracking-wider {group === 'overlays' ? 'text-emerald-400' : group === 'lower' ? 'text-white' : 'text-[#555]'}">
+								<div class="flex items-center gap-2 py-1 border-b border-sc-line hover:bg-sc-panel2 px-1">
+									<span class="min-w-0 flex-1 truncate text-[11px] text-sc-ink2" title={name}>{name}</span>
+									<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {group === 'overlays' ? 'text-emerald-400' : group === 'lower' ? 'text-sc-ink' : 'text-sc-ink3'}">
 										{group === 'overlays' ? 'OVR' : group === 'lower' ? 'LOW' : 'SIDE'}
 									</span>
-									<span class="text-[11px] text-white font-mono">{formatIndicatorValue(value, name)}</span>
+									<span class="text-[11px] text-sc-ink font-mono">{formatIndicatorValue(value, name)}</span>
 								</div>
 							{/each}
 						{:else}
-							<p class="text-gray-600 text-[11px]">No indicator data yet</p>
+							<p class="text-sc-ink3 text-[11px]">No indicator data yet</p>
 						{/if}
 					</div>
 
 					<!-- Pending Signals -->
-					<div class="border-r border-[#222] p-2 overflow-y-auto">
-						<h3 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Signals</h3>
+					<div class="border-r border-sc-line p-2 overflow-y-auto">
+						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-1.5">Signals</h3>
 						{#if selectedSession.pending_signals.length > 0}
 							{#each selectedSession.pending_signals as signal}
-								<div class="py-1 border-b border-[#111]">
+								<div class="py-1 border-b border-sc-line">
 									<div class="flex items-center gap-1.5">
 										<span class="{getSignalIcon(signal.signal_type)} text-[11px]">
 											{signal.signal_type === 'entry' ? '>' : '<'}
 										</span>
-										<span class="text-[11px] text-gray-400">{signal.description}</span>
+										<span class="text-[11px] text-sc-ink2">{signal.description}</span>
 									</div>
-									<div class="text-[10px] text-gray-600 mt-0.5 pl-4">
+									<div class="text-[10px] text-sc-ink3 mt-0.5 pl-4">
 										{signal.indicator_name}: {signal.current_value.toFixed(2)} -> {signal.trigger_value.toFixed(2)}
 										({signal.distance_pct.toFixed(1)}%)
 									</div>
 								</div>
 							{/each}
 						{:else}
-							<p class="text-gray-600 text-[11px]">No signals approaching</p>
+							<p class="text-sc-ink3 text-[11px]">No signals approaching</p>
 						{/if}
 					</div>
 
 					<!-- Trade History -->
 					<div class="p-2 overflow-y-auto">
-						<h3 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Trades</h3>
+						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-1.5">Trades</h3>
 						{#if sessionTradeFills.length > 0}
 							<DataTable
 								columns={tradeFillColumns}
 								rows={sessionTradeFills}
 								rowKey={getTradeFillRowKey}
 								tableClass="w-full text-[11px]"
-								headerClass="text-gray-500 border-b border-[#222]"
-								rowClass="border-b border-[#111] hover:bg-[#111]"
+								headerClass="text-sc-ink3 border-b border-sc-line"
+								rowClass="border-b border-sc-line hover:bg-sc-panel2"
 								emptyText="No trades yet"
-								emptyClass="py-3 text-center text-gray-600 text-[11px]"
+								emptyClass="py-3 text-center text-sc-ink3 text-[11px]"
 							>
 								<svelte:fragment slot="cell" let:row let:column>
 									{@const fill = toTradeFill(row)}
 									{@const trade = fill.trade}
 									{#if column.key === 'time'}
-										<span class="text-gray-400 whitespace-nowrap">{formatFillTime(fill.time)}</span>
+										<span class="text-sc-ink2 whitespace-nowrap">{formatFillTime(fill.time)}</span>
 									{:else if column.key === 'market'}
-										<span class="font-bold text-gray-300">{fillMarket(fill)}</span>
+										<span class="font-bold text-sc-ink2">{fillMarket(fill)}</span>
 									{:else if column.key === 'direction'}
 										{@const closeBadge = fill.kind === 'close' ? getTradeCloseBadge(trade) : null}
 										<div class="flex items-center gap-1.5">
 											<span class="{fillDirectionTone(fill)}">{fillDirectionLabel(fill)}</span>
 											{#if closeBadge}
 												<span
-													class="inline-flex rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wider {closeBadge.tone}"
+													class="inline-flex rounded border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {closeBadge.tone}"
 													title={closeBadge.title}
 												>
 													{closeBadge.label}
@@ -3671,44 +3671,44 @@
 										{#if fill.kind === 'open' && trade.regime}
 											<RegimeChip mini regime={trade.regime} />
 										{:else}
-											<span class="text-[#444]">—</span>
+											<span class="text-sc-ink4">—</span>
 										{/if}
 									{:else if column.key === 'price'}
-										<span class="text-gray-400">{formatPrice(fill.price)}</span>
+										<span class="text-sc-ink2">{formatPrice(fill.price)}</span>
 									{:else if column.key === 'size'}
-										<span class="text-gray-400">{formatQty(trade.size)} {fillMarket(fill)}</span>
+										<span class="text-sc-ink2">{formatQty(trade.size)} {fillMarket(fill)}</span>
 									{:else if column.key === 'value'}
 										{@const value = fillTradeValue(fill)}
-										<span class="text-gray-400">{value === null ? '—' : formatFee(value)}</span>
+										<span class="text-sc-ink2">{value === null ? '—' : formatFee(value)}</span>
 									{:else if column.key === 'fee'}
-										<span class="text-gray-400">{formatFee(fill.fee)}</span>
+										<span class="text-sc-ink2">{formatFee(fill.fee)}</span>
 									{:else if column.key === 'closed_pnl'}
 										{#if fill.kind === 'close'}
 											<div class="relative group cursor-default">
 												<span class="font-bold {getPnlTone(fill.closedPnl)}">
 													{formatDollarPnl(fill.closedPnl)}
 												</span>
-												<div class="absolute right-0 top-full z-10 hidden group-hover:block bg-[#111] border border-[#333] p-2 text-[10px] min-w-[150px]">
+												<div class="rounded-md absolute right-0 top-full z-10 hidden group-hover:block bg-sc-panel2 border border-sc-line2 p-2 text-[10px] min-w-[150px]">
 													<div class="flex justify-between gap-4 mb-1">
-														<span class="text-gray-500">Gross:</span>
-														<span class="text-gray-300">{formatDollarPnl(trade.gross_pnl)}</span>
+														<span class="text-sc-ink3">Gross:</span>
+														<span class="text-sc-ink2">{formatDollarPnl(trade.gross_pnl)}</span>
 													</div>
 													<div class="flex justify-between gap-4 mb-1">
-														<span class="text-gray-500">Fees:</span>
+														<span class="text-sc-ink3">Fees:</span>
 														<span class="text-red-400">{formatDollarPnl((trade.fees_paid ?? 0) * -1)}</span>
 													</div>
 													{#if typeof trade.slippage_usd === 'number' && trade.slippage_usd > 0}
 														<div class="flex justify-between gap-4 mb-1">
-															<span class="text-gray-500">Slippage:</span>
+															<span class="text-sc-ink3">Slippage:</span>
 															<span class="text-red-400">{formatDollarPnl(trade.slippage_usd * -1)}</span>
 														</div>
 													{/if}
 													<div class="flex justify-between gap-4 mb-1">
-														<span class="text-gray-500">Funding:</span>
+														<span class="text-sc-ink3">Funding:</span>
 														<span class="{getPnlTone(trade.funding_pnl)}">{formatDollarPnl(trade.funding_pnl)}</span>
 													</div>
-													<div class="border-t border-[#333] pt-1 mt-1 flex justify-between gap-4 font-bold">
-														<span class="text-gray-400">Net:</span>
+													<div class="border-t border-sc-line2 pt-1 mt-1 flex justify-between gap-4 font-bold">
+														<span class="text-sc-ink2">Net:</span>
 														<span class="{getPnlTone(trade.net_pnl)}">{formatDollarPnl(trade.net_pnl)} ({formatPercent(trade.net_pnl_pct)})</span>
 													</div>
 												</div>
@@ -3720,27 +3720,27 @@
 								</svelte:fragment>
 							</DataTable>
 							{#if sessionTrades.length < selectedSession.total_trades}
-								<p class="text-[10px] text-gray-600 mt-1 text-center">Showing {sessionTrades.length} of {selectedSession.total_trades} trades</p>
+								<p class="text-[10px] text-sc-ink3 mt-1 text-center">Showing {sessionTrades.length} of {selectedSession.total_trades} trades</p>
 							{/if}
 						{:else}
-							<p class="text-gray-600 text-[11px] text-center py-3">No trades yet</p>
+							<p class="text-sc-ink3 text-[11px] text-center py-3">No trades yet</p>
 						{/if}
 					</div>
 				</div>
 			</div>
 			{:else if selectedArchivedStrategy}
-				<div class="border-b border-[#222] bg-[#0a0a0a] px-4 py-2 flex-shrink-0">
+				<div class="border-b border-sc-line bg-sc-panel px-4 py-2 flex-shrink-0">
 					<div class="flex items-center gap-3 min-w-0">
 						<a
 							href="/lab/strategy/{encodeURIComponent(selectedArchivedStrategy.id)}"
-							class="text-sm font-bold text-white truncate hover:text-yellow-400 hover:underline transition-colors"
+							class="text-sm font-bold text-sc-ink truncate hover:text-yellow-400 hover:underline transition-colors"
 							title="Open strategy detail"
 						>{selectedArchivedStrategy.display_id || selectedArchivedStrategy.name || selectedArchivedStrategy.id}</a>
 						<span class="text-[10px] uppercase font-bold text-red-400">
 							{prettyLifecycleState(selectedArchivedStrategy.state)}
 						</span>
 					</div>
-					<div class="mt-1 text-xs text-gray-500">
+					<div class="mt-1 text-xs text-sc-ink3">
 						{selectedArchivedStrategy.symbol || '--'} | Updated {formatDateTime(selectedArchivedStrategy.updated_at)}
 					</div>
 				</div>
@@ -3749,48 +3749,48 @@
 					{#if archivedDetailLoading}
 						<Skeleton rows={10} />
 					{:else}
-						<div class="bg-[#050505] border border-[#222] p-3">
-							<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">
+						<div class="rounded-md bg-sc-panel border border-sc-line p-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1.5">
 								Why It Was Demoted / Archived
 							</div>
-							<div class="text-sm text-gray-200 leading-relaxed">
+							<div class="text-sm text-sc-ink leading-relaxed">
 								{selectedArchivedReason.reason}
 							</div>
-							<div class="mt-2 text-[11px] text-gray-500">
+							<div class="mt-2 text-[11px] text-sc-ink3">
 								Transition: {prettyLifecycleState(selectedArchivedReason.fromState)} -> {prettyLifecycleState(selectedArchivedReason.toState)}
 								{#if selectedArchivedReason.actor}
 									| Actor: {selectedArchivedReason.actor}
 								{/if}
 							</div>
 							{#if selectedArchivedReason.timestamp}
-								<div class="text-[11px] text-gray-600 mt-1">
+								<div class="text-[11px] text-sc-ink3 mt-1">
 									{formatDateTime(selectedArchivedReason.timestamp)}
 								</div>
 							{/if}
 						</div>
 
-						<div class="bg-[#050505] border border-[#222] p-3">
-							<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">
+						<div class="rounded-md bg-sc-panel border border-sc-line p-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">
 								Lifecycle Timeline
 							</div>
 							{#if archivedTimelineEvents.length === 0}
-								<p class="text-[11px] text-gray-600">No lifecycle events recorded for this strategy.</p>
+								<p class="text-[11px] text-sc-ink3">No lifecycle events recorded for this strategy.</p>
 							{:else}
 								{#each archivedTimelineEvents as event}
-									<div class="py-2 border-b border-[#151515] last:border-b-0">
+									<div class="py-2 border-b border-sc-line last:border-b-0">
 										<div class="flex items-start justify-between gap-2">
-											<div class="text-[11px] text-white">
+											<div class="text-[11px] text-sc-ink">
 												{prettyLifecycleState(event.from_state)} -> {prettyLifecycleState(event.to_state)}
 											</div>
-											<div class="text-[10px] text-gray-600 flex-shrink-0">
+											<div class="text-[10px] text-sc-ink3 flex-shrink-0">
 												{formatDateTime(event.created_at)}
 											</div>
 										</div>
-										<div class="text-[10px] text-gray-500 mt-0.5">
+										<div class="text-[10px] text-sc-ink3 mt-0.5">
 											Actor: {event.actor || 'system'}
 										</div>
 										{#if event.reason}
-											<div class="text-[11px] text-gray-300 mt-1">
+											<div class="text-[11px] text-sc-ink2 mt-1">
 												{compactReason(event.reason, 420)}
 											</div>
 										{/if}
@@ -3802,12 +3802,12 @@
 				</div>
 			{:else}
 				<!-- Empty State -->
-				<div class="flex-1 flex flex-col items-center justify-center text-gray-800">
+				<div class="flex-1 flex flex-col items-center justify-center text-sc-ink4">
 					<svg class="w-20 h-20 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
 					</svg>
 					<h3 class="text-lg font-bold uppercase tracking-widest mb-1">{emptyStateTitle}</h3>
-					<p class="text-xs text-gray-600 max-w-sm text-center">
+					<p class="text-xs text-sc-ink3 max-w-sm text-center">
 						{#if isLiveView}
 							Select a deployed strategy to inspect live chart, signals, indicators, and trade history.
 						{:else}

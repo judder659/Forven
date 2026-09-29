@@ -37,15 +37,15 @@
 </script>
 
 {#if isIdle && lastCompletedAt}
-	<div class="flex items-center gap-2 border border-[#222] bg-[#050505] px-4 py-2 text-xs text-[#666]">
+	<div class="rounded-md flex items-center gap-2 border border-sc-line bg-sc-panel px-4 py-2 text-xs text-sc-ink3">
 		<svg class="h-3.5 w-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 		</svg>
 		Last cycle completed {formatRelative(lastCompletedAt)}
 	</div>
 {:else if !isIdle}
-	<div class="border border-[#222] bg-[#050505] px-4 py-3">
-		<p class="mb-3 text-[11px] uppercase tracking-[0.16em] text-[#666]">Cycle Progress</p>
+	<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-3">
+		<p class="mb-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Cycle Progress</p>
 		<div class="flex items-center gap-0">
 			{#each steps as step, i}
 				{@const state = stepClass(step.key)}
@@ -54,9 +54,9 @@
 					<div class="flex flex-col items-center gap-1">
 						<div class={`flex h-7 w-7 items-center justify-center border text-[11px] font-semibold transition-colors
 							${state === 'done' ? 'border-emerald-600 bg-emerald-500/10 text-emerald-400' :
-							  state === 'running' ? 'border-white bg-white/10 text-white' :
+							  state === 'running' ? 'border-sc-ink bg-sc-ink/10 text-sc-ink' :
 							  state === 'failed' ? 'border-red-600 bg-red-500/10 text-red-400' :
-							  'border-[#333] bg-[#050505] text-[#555]'}`}>
+							  'border-sc-line2 bg-sc-panel text-sc-ink3'}`}>
 							{#if state === 'done'}
 								<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
@@ -71,11 +71,11 @@
 								{step.key}
 							{/if}
 						</div>
-						<span class={`text-[10px] uppercase tracking-[0.12em] whitespace-nowrap
+						<span class={`font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] whitespace-nowrap
 							${state === 'done' ? 'text-emerald-400' :
-							  state === 'running' ? 'text-white' :
+							  state === 'running' ? 'text-sc-ink' :
 							  state === 'failed' ? 'text-red-400' :
-							  'text-[#555]'}`}>
+							  'text-sc-ink3'}`}>
 							{step.label}
 						</span>
 					</div>
@@ -83,7 +83,7 @@
 					<!-- Connector line -->
 					{#if i < steps.length - 1}
 						<div class={`mx-1 mb-4 h-[2px] w-10 transition-colors
-							${step.key < activeStep ? 'bg-emerald-600' : 'bg-[#222]'}`}></div>
+							${step.key < activeStep ? 'bg-emerald-600' : 'bg-sc-raise'}`}></div>
 					{/if}
 				</div>
 			{/each}

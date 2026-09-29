@@ -106,27 +106,27 @@
 		type="search" placeholder="Find a market…" autocomplete="off" spellcheck="false"
 		role="combobox" aria-label="Find a market" aria-expanded={open && !!q.trim()} aria-controls="dm-search-list"
 		aria-autocomplete="list" aria-activedescendant={open && options[activeIndex] ? options[activeIndex].id : undefined}
-		class="w-56 border border-[#2a2a2a] bg-black py-1 pl-2 pr-7 font-mono text-[12px] text-white outline-none placeholder:text-[#555] focus:border-white" />
-	<kbd class="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 border border-[#333] px-1 text-[9px] text-[#666]" aria-hidden="true">/</kbd>
+		class="rounded-md w-56 border border-sc-line2 bg-sc-bg py-1 pl-2 pr-7 font-mono text-[12px] text-sc-ink outline-none placeholder:text-sc-ink4 focus:border-sc-ink" />
+	<kbd class="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 border border-sc-line2 px-1 text-[9px] text-sc-ink3" aria-hidden="true">/</kbd>
 	{#if open && q.trim()}
 		<ul id="dm-search-list" role="listbox" aria-label="Markets"
-			class="absolute right-0 top-full z-50 mt-1 w-[380px] border border-[#333] bg-[#050505] py-1 shadow-[0_12px_32px_rgba(0,0,0,0.7)]">
+			class="rounded-md absolute right-0 top-full z-50 mt-1 w-[380px] border border-sc-line2 bg-sc-panel py-1 shadow-[0_12px_32px_rgba(0,0,0,0.7)]">
 			{#if status === 'loading' && !candidates.length}
-				<li class="px-3 py-2 text-[11px] text-[#666]" role="presentation">Looking up “{q.trim()}”…</li>
+				<li class="px-3 py-2 text-[11px] text-sc-ink3" role="presentation">Looking up “{q.trim()}”…</li>
 			{:else if status === 'unavailable'}
-				<li class="px-3 py-2 text-[11px] text-[#666]" role="presentation">Symbol lookup is not available on this backend yet. The catalog search below still works.</li>
+				<li class="px-3 py-2 text-[11px] text-sc-ink3" role="presentation">Symbol lookup is not available on this backend yet. The catalog search below still works.</li>
 			{:else if status === 'error'}
 				<li class="px-3 py-2 text-[11px] text-red-400" role="presentation">Lookup failed. Try the catalog search.</li>
 			{:else if status === 'ready' && !candidates.length}
-				<li class="px-3 py-2 text-[11px] text-[#666]" role="presentation">No market matches “{q.trim()}”.</li>
+				<li class="px-3 py-2 text-[11px] text-sc-ink3" role="presentation">No market matches “{q.trim()}”.</li>
 			{/if}
 			{#each options as option, i (option.id)}
 				<li id={option.id} role="option" aria-selected={i === activeIndex}>
 					<button type="button" tabindex="-1" on:mousedown|preventDefault={() => choose(option)} on:mouseenter={() => (activeIndex = i)}
-						class="flex w-full items-baseline gap-2 px-3 py-1.5 text-left {i === activeIndex ? 'bg-[#161616]' : ''}">
-						<span class="shrink-0 text-[12px] {option.detail ? 'font-bold text-white' : 'text-[#aaa]'}">{option.label}</span>
-						{#if option.tag}<span class="shrink-0 border border-[#333] px-1 text-[9px] uppercase tracking-wider text-[#888]">{option.tag}</span>{/if}
-						<span class="min-w-0 flex-1 truncate text-right text-[10px] text-[#666]">{option.detail}</span>
+						class="flex w-full items-baseline gap-2 px-3 py-1.5 text-left {i === activeIndex ? 'bg-sc-raise' : ''}">
+						<span class="shrink-0 text-[12px] {option.detail ? 'font-bold text-sc-ink' : 'text-sc-ink2'}">{option.label}</span>
+						{#if option.tag}<span class="shrink-0 border border-sc-line2 px-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{option.tag}</span>{/if}
+						<span class="min-w-0 flex-1 truncate text-right text-[10px] text-sc-ink3">{option.detail}</span>
 					</button>
 				</li>
 			{/each}

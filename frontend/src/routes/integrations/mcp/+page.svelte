@@ -163,7 +163,7 @@
 	function statusClass(s: MCPServer): string {
 		if (s.last_status === 'ok') return 'text-green-400';
 		if (s.last_status === 'error') return 'text-red-400';
-		return 'text-gray-400';
+		return 'text-sc-ink2';
 	}
 
 	onMount(load);
@@ -174,14 +174,14 @@
 </svelte:head>
 
 <IntegrationTabs active="tool-servers">
-<div class="p-4 text-gray-200">
+<div class="p-4 text-sc-ink">
 	<div class="flex items-center justify-between mb-4">
 		<div>
 			<h1 class="text-xl font-semibold">Agent Tool Servers</h1>
-			<p class="text-xs text-gray-500 mt-0.5 max-w-2xl">
-				The <span class="text-gray-300">outbound</span> direction: register an external MCP server
+			<p class="text-xs text-sc-ink3 mt-0.5 max-w-2xl">
+				The <span class="text-sc-ink2">outbound</span> direction: register an external MCP server
 				(a filesystem server, web search, a ticker API, …) and its tools become callable by
-				<span class="text-gray-300">Forven's own internal agents</span> — scoped per agent via
+				<span class="text-sc-ink2">Forven's own internal agents</span> — scoped per agent via
 				grants on each agent's page. Connecting an outside assistant <em>into</em> Forven is the
 				other tab (AI Clients); most setups never need anything here.
 			</p>
@@ -198,21 +198,21 @@
 	</div>
 
 	{#if showCreate}
-		<div class="bg-[#0d0d0d] border border-[#222] rounded p-4 mb-4">
+		<div class="bg-sc-panel2 border border-sc-line rounded p-4 mb-4">
 			<h2 class="text-sm font-semibold mb-3">New MCP Server</h2>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
 				<label class="flex flex-col gap-1">
-					<span class="text-gray-400">Name</span>
+					<span class="text-sc-ink2">Name</span>
 					<input
-						class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+						class="bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 						bind:value={createName}
 						placeholder="my-fs-server"
 					/>
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-gray-400">Transport</span>
+					<span class="text-sc-ink2">Transport</span>
 					<select
-						class="bg-black border border-[#333] px-2 py-1 rounded"
+						class="bg-sc-bg border border-sc-line2 px-2 py-1 rounded"
 						bind:value={createTransport}
 					>
 						<option value="stdio">stdio (subprocess)</option>
@@ -221,25 +221,25 @@
 				</label>
 				{#if createTransport === 'stdio'}
 					<label class="flex flex-col gap-1 md:col-span-2">
-						<span class="text-gray-400">Command</span>
+						<span class="text-sc-ink2">Command</span>
 						<input
-							class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+							class="bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 							bind:value={createCommand}
 							placeholder="npx"
 						/>
 					</label>
 					<div class="flex flex-col gap-1 md:col-span-2">
-						<span class="text-gray-400">Args (one per row — preserves spaces/quotes)</span>
+						<span class="text-sc-ink2">Args (one per row — preserves spaces/quotes)</span>
 						{#each createArgs as _, i}
 							<div class="flex gap-2">
 								<input
-									class="flex-1 bg-black border border-[#333] px-2 py-1 rounded font-mono"
+									class="flex-1 bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 									bind:value={createArgs[i]}
 									placeholder={i === 0 ? '-y' : i === 1 ? '@modelcontextprotocol/server-filesystem' : '/tmp/my dir'}
 								/>
 								<button
 									type="button"
-									class="px-2 text-gray-500 hover:text-red-300"
+									class="px-2 text-sc-ink3 hover:text-red-300"
 									on:click={() => (createArgs = createArgs.filter((_, j) => j !== i))}
 									title="Remove arg"
 								>
@@ -249,7 +249,7 @@
 						{/each}
 						<button
 							type="button"
-							class="self-start text-[11px] text-[#888] hover:text-white"
+							class="self-start text-[11px] text-sc-ink2 hover:text-sc-ink"
 							on:click={() => (createArgs = [...createArgs, ''])}
 						>
 							+ Add arg
@@ -257,30 +257,30 @@
 					</div>
 				{:else}
 					<label class="flex flex-col gap-1 md:col-span-2">
-						<span class="text-gray-400">URL</span>
+						<span class="text-sc-ink2">URL</span>
 						<input
-							class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+							class="bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 							bind:value={createUrl}
 							placeholder="https://mcp.example.com/rpc"
 						/>
 					</label>
 					<div class="flex flex-col gap-1 md:col-span-2">
-						<span class="text-gray-400">Headers</span>
+						<span class="text-sc-ink2">Headers</span>
 						{#each createHeaders as _, i}
 							<div class="flex gap-2">
 								<input
-									class="flex-1 bg-black border border-[#333] px-2 py-1 rounded font-mono"
+									class="flex-1 bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 									bind:value={createHeaders[i].key}
 									placeholder="Authorization"
 								/>
 								<input
-									class="flex-1 bg-black border border-[#333] px-2 py-1 rounded font-mono"
+									class="flex-1 bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 									bind:value={createHeaders[i].value}
 									placeholder="Bearer …"
 								/>
 								<button
 									type="button"
-									class="px-2 text-gray-500 hover:text-red-300"
+									class="px-2 text-sc-ink3 hover:text-red-300"
 									on:click={() => (createHeaders = createHeaders.filter((_, j) => j !== i))}
 									title="Remove header"
 								>
@@ -290,7 +290,7 @@
 						{/each}
 						<button
 							type="button"
-							class="self-start text-[11px] text-[#888] hover:text-white"
+							class="self-start text-[11px] text-sc-ink2 hover:text-sc-ink"
 							on:click={() => (createHeaders = [...createHeaders, { key: '', value: '' }])}
 						>
 							+ Add header
@@ -298,22 +298,22 @@
 					</div>
 				{/if}
 				<div class="flex flex-col gap-1 md:col-span-2">
-					<span class="text-gray-400">Environment variables</span>
+					<span class="text-sc-ink2">Environment variables</span>
 					{#each createEnv as _, i}
 						<div class="flex gap-2">
 							<input
-								class="flex-1 bg-black border border-[#333] px-2 py-1 rounded font-mono"
+								class="flex-1 bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 								bind:value={createEnv[i].key}
 								placeholder="API_KEY"
 							/>
 							<input
-								class="flex-1 bg-black border border-[#333] px-2 py-1 rounded font-mono"
+								class="flex-1 bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 								bind:value={createEnv[i].value}
 								placeholder="value"
 							/>
 							<button
 								type="button"
-								class="px-2 text-gray-500 hover:text-red-300"
+								class="px-2 text-sc-ink3 hover:text-red-300"
 								on:click={() => (createEnv = createEnv.filter((_, j) => j !== i))}
 								title="Remove env var"
 							>
@@ -323,31 +323,31 @@
 					{/each}
 					<button
 						type="button"
-						class="self-start text-[11px] text-[#888] hover:text-white"
+						class="self-start text-[11px] text-sc-ink2 hover:text-sc-ink"
 						on:click={() => (createEnv = [...createEnv, { key: '', value: '' }])}
 					>
 						+ Add env var
 					</button>
 				</div>
 				<label class="flex flex-col gap-1">
-					<span class="text-gray-400">Tools include (comma-separated, blank = all)</span>
+					<span class="text-sc-ink2">Tools include (comma-separated, blank = all)</span>
 					<input
-						class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+						class="bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 						bind:value={createToolsInclude}
 						placeholder="read_file, list_dir"
 					/>
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-gray-400">Tools exclude (comma-separated)</span>
+					<span class="text-sc-ink2">Tools exclude (comma-separated)</span>
 					<input
-						class="bg-black border border-[#333] px-2 py-1 rounded font-mono"
+						class="bg-sc-bg border border-sc-line2 px-2 py-1 rounded font-mono"
 						bind:value={createToolsExclude}
 						placeholder="write_file"
 					/>
 				</label>
 				<label class="flex items-center gap-2 md:col-span-2">
 					<input type="checkbox" bind:checked={createEnabled} />
-					<span class="text-gray-300">Enabled (register tools immediately)</span>
+					<span class="text-sc-ink2">Enabled (register tools immediately)</span>
 				</label>
 			</div>
 			{#if createError}
@@ -355,14 +355,14 @@
 			{/if}
 			<div class="mt-3 flex justify-end gap-2">
 				<button
-					class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200"
+					class="px-3 py-1.5 text-[12px] text-sc-ink2 hover:text-sc-ink"
 					on:click={() => (showCreate = false)}
 					disabled={creating}
 				>
 					Cancel
 				</button>
 				<button
-					class="terminal-button-primary text-xs disabled:opacity-50"
+					class="terminal-button-primary text-[12px] disabled:opacity-50"
 					on:click={handleCreate}
 					disabled={creating}
 				>
@@ -388,22 +388,22 @@
 	{/if}
 
 	{#if loading}
-		<div class="text-xs text-gray-500">Loading…</div>
+		<div class="text-xs text-sc-ink3">Loading…</div>
 	{:else if loadError}
 		<div class="text-xs text-red-400">{loadError}</div>
 	{:else if servers.length === 0}
-		<div class="bg-[#0d0d0d] border border-[#222] rounded p-6 text-center">
-			<p class="text-sm text-gray-400">No agent tool servers configured — that's the normal state.</p>
-			<p class="text-xs text-gray-500 mt-1">
+		<div class="bg-sc-panel2 border border-sc-line rounded p-6 text-center">
+			<p class="text-sm text-sc-ink2">No agent tool servers configured — that's the normal state.</p>
+			<p class="text-xs text-sc-ink3 mt-1">
 				Add one only when a Forven agent needs an external tool (e.g. web search during research).
 				To connect Claude/Cursor/Codex into Forven, use the AI Clients tab instead.
 			</p>
 		</div>
 	{:else}
-		<div class="bg-[#0d0d0d] border border-[#222] rounded overflow-hidden">
+		<div class="bg-sc-panel2 border border-sc-line rounded overflow-hidden">
 			<table class="w-full text-xs">
-				<thead class="bg-black border-b border-[#222]">
-					<tr class="text-left text-gray-500">
+				<thead class="bg-sc-bg border-b border-sc-line">
+					<tr class="text-left text-sc-ink3">
 						<th class="px-3 py-2 font-medium">Name</th>
 						<th class="px-3 py-2 font-medium">Transport</th>
 						<th class="px-3 py-2 font-medium">Enabled</th>
@@ -414,24 +414,24 @@
 				</thead>
 				<tbody>
 					{#each servers as s (s.name)}
-						<tr class="border-t border-[#1a1a1a] hover:bg-[#111]">
+						<tr class="border-t border-sc-line hover:bg-sc-panel2">
 							<td class="px-3 py-2 font-mono">
 								<a
 									href={`/integrations/mcp/${encodeURIComponent(s.name)}`}
-									class="text-white hover:underline"
+									class="text-sc-ink hover:underline"
 								>
 									{s.name}
 								</a>
 							</td>
-							<td class="px-3 py-2 text-gray-400">{s.transport}</td>
+							<td class="px-3 py-2 text-sc-ink2">{s.transport}</td>
 							<td class="px-3 py-2">
 								{#if s.enabled}
 									<span class="text-green-400">on</span>
 								{:else}
-									<span class="text-gray-500">off</span>
+									<span class="text-sc-ink3">off</span>
 								{/if}
 							</td>
-							<td class="px-3 py-2 text-gray-400">{s.registered_tool_count ?? 0}</td>
+							<td class="px-3 py-2 text-sc-ink2">{s.registered_tool_count ?? 0}</td>
 							<td class="px-3 py-2 {statusClass(s)}">
 								{formatStatus(s)}
 								{#if testResult[s.name]}
@@ -442,7 +442,7 @@
 							</td>
 							<td class="px-3 py-2 text-right">
 								<button
-									class="px-2 py-0.5 text-[11px] text-[#888] hover:text-white disabled:opacity-50"
+									class="px-2 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink disabled:opacity-50"
 									on:click={() => handleTest(s.name)}
 									disabled={busyName === s.name}
 								>
@@ -464,26 +464,26 @@
 	{/if}
 
 	{#if confirmDeleteName}
-		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-sc-bg/60 p-4">
 			<div
-				class="bg-[#0d0d0d] border border-[#222] rounded p-4 max-w-sm w-full mx-4"
+				class="bg-sc-panel2 border border-sc-line rounded p-4 max-w-sm w-full mx-4"
 				role="dialog"
 				aria-modal="true"
 			>
 				<h2 class="text-sm font-semibold mb-2">Delete MCP server</h2>
-				<p class="text-xs text-gray-400">
-					Delete <span class="font-mono text-gray-200">{confirmDeleteName}</span>? This
+				<p class="text-xs text-sc-ink2">
+					Delete <span class="font-mono text-sc-ink">{confirmDeleteName}</span>? This
 					revokes all agent grants for it and cannot be undone.
 				</p>
 				<div class="mt-4 flex justify-end gap-2">
 					<button
-						class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200"
+						class="px-3 py-1.5 text-[12px] text-sc-ink2 hover:text-sc-ink"
 						on:click={() => (confirmDeleteName = '')}
 					>
 						Cancel
 					</button>
 					<button
-						class="px-3 py-1.5 bg-red-800 hover:bg-red-700 text-white text-xs rounded"
+						class="px-3 py-1.5 bg-red-800 hover:bg-red-700 text-sc-ink text-[12px] rounded"
 						on:click={handleDelete}
 					>
 						Delete

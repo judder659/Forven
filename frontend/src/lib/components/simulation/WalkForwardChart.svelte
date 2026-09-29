@@ -88,7 +88,7 @@
 		<div class="legend">
 			<span class="legend-item"><span class="box train"></span> Train</span>
 			<span class="legend-item"><span class="box test"></span> Test</span>
-			<span class="legend-item text-[#555]">|</span>
+			<span class="legend-item text-sc-ink3">|</span>
 			<span class="legend-item"><span class="timeline-box train"></span> Train Period</span>
 			<span class="legend-item"><span class="timeline-box test"></span> Test Period</span>
 		</div>

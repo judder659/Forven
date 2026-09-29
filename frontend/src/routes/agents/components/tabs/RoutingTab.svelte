@@ -526,12 +526,12 @@
 
 <div class="space-y-6">
 	<section class="terminal-card p-6 space-y-4">
-		<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
+		<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-widest text-white">Routing &amp; Fallbacks</h2>
-				<p class="text-xs text-[#666] mt-1">
-					<span class="text-[#888]">Every agent's model — including the Brain's — is set
-					<span class="text-white">here</span>, not on the Roster (the Roster shows it
+				<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">Routing &amp; Fallbacks</h2>
+				<p class="text-xs text-sc-ink3 mt-1">
+					<span class="text-sc-ink2">Every agent's model — including the Brain's — is set
+					<span class="text-sc-ink">here</span>, not on the Roster (the Roster shows it
 					read-only).</span>
 					Set each agent's model and fallback chain below, plus the auxiliary Brain sub-task
 					models, the global backup, and per-slot fallback chains.
@@ -544,7 +544,7 @@
 				type="button"
 				on:click={load}
 				disabled={loading}
-				class="terminal-button text-xs px-2 py-1 disabled:opacity-60"
+				class="terminal-button text-[12px] px-2 py-1 disabled:opacity-60"
 			>
 				{loading ? 'Refreshing…' : 'Refresh'}
 			</button>
@@ -564,11 +564,11 @@
 
 	<!-- Agents — the single place every agent's model + fallback chain is set. -->
 	<section class="terminal-card p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Agents</h3>
-		<p class="text-xs text-[#666]">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Agents</h3>
+		<p class="text-xs text-sc-ink3">
 			Pick each agent's model and ordered fallback chain. This is the
-			<span class="text-white">single place</span> an agent's model is set — the Roster shows
-			it read-only. The <span class="text-[#ccc]">Brain's</span> selection also becomes the
+			<span class="text-sc-ink">single place</span> an agent's model is set — the Roster shows
+			it read-only. The <span class="text-sc-ink">Brain's</span> selection also becomes the
 			default model for any routing slot below with no explicit choice.
 		</p>
 		{#if agentRows.length > 0 && !noneSelectable}
@@ -590,7 +590,7 @@
 						type="button"
 						on:click={applyModelToAllAgents}
 						disabled={!bulkKey}
-						class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
+						class="terminal-button text-[12px] px-3 py-1.5 disabled:opacity-50"
 						title="Set this model (and fallback chain, if one is picked) for every agent below. An empty chain leaves existing chains as-is; nothing saves until you hit Save."
 					>
 						Apply to all {agentRows.length}
@@ -599,7 +599,7 @@
 			</div>
 		{/if}
 		{#if agentRows.length === 0}
-			<p class="text-xs text-[#555]">No agents found.</p>
+			<p class="text-xs text-sc-ink3">No agents found.</p>
 		{:else}
 			<ul class="space-y-3">
 				{#each agentRows as agent (agent.id)}
@@ -620,16 +620,16 @@
 
 	<!-- Default model (derived from the Brain's selection in Agents above) -->
 	<section class="terminal-card p-6 space-y-2">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Default model</h3>
-		<p class="text-xs text-[#666]">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Default model</h3>
+		<p class="text-xs text-sc-ink3">
 			The fallback model for any slot below with no explicit selection. This is
-			<span class="text-[#ccc]">not a separate setting</span> — it is derived from the
-			<span class="text-white">Brain's model in the Agents section above</span> and saved
+			<span class="text-sc-ink">not a separate setting</span> — it is derived from the
+			<span class="text-sc-ink">Brain's model in the Agents section above</span> and saved
 			automatically whenever you save here.
 		</p>
-		<div class="border border-[#1a1a1a] bg-[#050505] px-3 py-2 text-sm font-mono">
+		<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2 text-sm font-mono">
 			{#if brainModelLabel}
-				<span class="text-[#ccc]">{brainModelLabel}</span>
+				<span class="text-sc-ink">{brainModelLabel}</span>
 			{:else}
 				<span class="text-yellow-400">Brain model not set — pick it in the Agents section above.</span>
 			{/if}
@@ -638,8 +638,8 @@
 
 	<!-- Auxiliary -->
 	<section class="terminal-card p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Auxiliary task models</h3>
-		<p class="text-xs text-[#666]">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Auxiliary task models</h3>
+		<p class="text-xs text-sc-ink3">
 			Lightweight models for specific Brain sub-tasks. Each is independent of the default model.
 		</p>
 		{#if !noneSelectable}
@@ -661,7 +661,7 @@
 						type="button"
 						on:click={applyModelToAllAux}
 						disabled={!bulkAuxKey}
-						class="terminal-button text-xs px-3 py-1.5 disabled:opacity-50"
+						class="terminal-button text-[12px] px-3 py-1.5 disabled:opacity-50"
 						title="Set this model (and fallback chain, if one is picked) for every auxiliary task below. An empty chain leaves existing chains as-is; nothing saves until you hit Save."
 					>
 						Apply to all {AUX_KINDS.length}
@@ -689,8 +689,8 @@
 
 	<!-- Backup -->
 	<section class="terminal-card p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Backup provider</h3>
-		<p class="text-xs text-[#666]">
+		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Backup provider</h3>
+		<p class="text-xs text-sc-ink3">
 			When a slot's primary credentials become unusable, calls fall back to this model instead of
 			failing. Leave unset to disable backup — a credential problem then pauses the routine and alerts you.
 		</p>

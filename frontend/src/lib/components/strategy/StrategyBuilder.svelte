@@ -536,7 +536,7 @@
 	}
 
 	const inputCls =
-		'border border-[#2a2a2a] bg-black px-1.5 py-0.5 text-[12px] text-white outline-none transition-colors focus:border-white disabled:opacity-40';
+		'border border-sc-line2 bg-sc-bg px-1.5 py-0.5 text-[12px] text-sc-ink outline-none transition-colors focus:border-sc-ink disabled:opacity-40';
 
 	const SIDE_META: { key: RuleSideKey; label: string; title: string; short: boolean; dot: string; empty: string }[] = [
 		{ key: 'entry_long', label: 'Entry Long', title: 'Enter long', short: false, dot: 'bg-emerald-500',
@@ -553,7 +553,7 @@
 
 {#snippet condition(cond: Cond, connector: string, onRemove: () => void)}
 	<div class="group/cond flex min-h-[26px] flex-wrap items-center gap-1.5">
-		<span class="w-7 shrink-0 text-right text-[10px] uppercase tracking-wide text-[#555]">{connector}</span>
+		<span class="w-7 shrink-0 text-right font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{connector}</span>
 		<OperandChip type={cond.left.type} value={cond.left.value} label={operandLabel(cond.left, instances, params)}
 			missing={operandMissing(cond.left, availableSeries, paramNames)} {seriesGroups} knobs={knobList} {disabled} ariaLabel="left operand"
 			on:change={(e) => setOperand(cond.left, e.detail)}
@@ -566,7 +566,7 @@
 			on:addIndicator={() => openPalette(cond.right)}
 			on:newKnob={(e) => makeKnob(cond.right, cond.left, e.detail)} />
 		<button type="button" on:click={onRemove} {disabled} aria-label="remove condition"
-			class="ml-auto px-1 text-[11px] text-[#444] opacity-0 transition-opacity hover:text-red-400 focus:opacity-100 group-hover/cond:opacity-100">✕</button>
+			class="ml-auto px-1 text-[11px] text-sc-ink4 opacity-0 transition-opacity hover:text-red-400 focus:opacity-100 group-hover/cond:opacity-100">✕</button>
 	</div>
 {/snippet}
 
@@ -576,20 +576,20 @@
 	<!-- Rules, one card per side -->
 	{#each visibleSides as sm (sm.key)}
 		{@const side = sides[sm.key]}
-		<section class="border border-[#222] bg-[#050505]" aria-label={sm.title}>
-			<header class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[#141414] px-3 py-1.5">
+		<section class="rounded-md border border-sc-line bg-sc-panel" aria-label={sm.title}>
+			<header class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-sc-line px-3 py-1.5">
 				<span class="h-2 w-2 shrink-0 {sm.dot}"></span>
-				<h3 class="text-[11px] font-bold uppercase tracking-wider text-white">{sm.title}</h3>
-				<span class="text-[11px] text-[#666]">
+				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{sm.title}</h3>
+				<span class="text-[11px] text-sc-ink3">
 					when{#if side.rows.length > 1}
 						<button type="button" on:click={() => flipLogic(side)} {disabled} aria-label="combine logic"
 							title="Switch between all and any"
-							class="mx-1 border border-[#333] px-1 text-[10px] font-bold tracking-wider text-white hover:border-white">{side.logic === 'and' ? 'ALL' : 'ANY'}</button>of these hold{/if}
+							class="rounded-md mx-1 border border-sc-line2 px-1 text-[12px] font-medium text-sc-ink hover:border-sc-ink">{side.logic === 'and' ? 'ALL' : 'ANY'}</button>of these hold{/if}
 				</span>
-				<span class="ml-auto text-[10px] text-[#555]" data-testid={`signal-${sm.key}`}>{signalText(sm.key, signalBars, barCount)}</span>
+				<span class="ml-auto text-[10px] text-sc-ink3" data-testid={`signal-${sm.key}`}>{signalText(sm.key, signalBars, barCount)}</span>
 				<button type="button" on:click={() => (formulaOpen[sm.key] ? closeFormula(sm.key) : openFormula(sm.key))} {disabled}
 					aria-label="edit as formula" aria-pressed={!!formulaOpen[sm.key]} title="Edit this rule as a formula"
-					class="border px-1.5 font-mono text-[11px] italic transition-colors {formulaOpen[sm.key] ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#777] hover:border-[#666] hover:text-white'}">ƒx</button>
+					class="rounded-md border px-1.5 font-mono text-[11px] italic transition-colors {formulaOpen[sm.key] ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink'}">ƒx</button>
 			</header>
 
 			<div class="px-2 py-2">
@@ -597,14 +597,14 @@
 					<textarea bind:value={formulaText[sm.key]} rows="3" spellcheck="false" aria-label={`${sm.title} formula`}
 						on:keydown={(e) => onFormulaKey(e, sm.key)} on:input|stopPropagation
 						placeholder="rsi < $oversold and (close > ema200 or macd crosses above macd_signal)"
-						class="w-full resize-y border border-[#333] bg-black px-2 py-1.5 font-mono text-[12px] leading-5 text-white outline-none focus:border-white"></textarea>
+						class="rounded-md w-full resize-y border border-sc-line2 bg-sc-bg px-2 py-1.5 font-mono text-[12px] leading-5 text-sc-ink outline-none focus:border-sc-ink"></textarea>
 					{#if formulaError[sm.key]}
 						<div class="mt-1 border border-amber-900 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-400" role="alert">{formulaError[sm.key]}</div>
 					{/if}
 					<div class="mt-1.5 flex flex-wrap items-center gap-2">
-						<button type="button" on:click={() => applyFormula(sm.key)} class="terminal-button-primary px-2 py-0.5 text-[10px]">Apply</button>
-						<button type="button" on:click={() => closeFormula(sm.key)} class="terminal-button px-2 py-0.5 text-[10px]">Cancel</button>
-						<span class="text-[10px] text-[#555]">Series by id, knobs as <span class="font-mono text-[#888]">$name</span>, <span class="font-mono text-[#888]">&lt; &gt;= crosses above</span>, <span class="font-mono text-[#888]">and / or</span>, parentheses. Ctrl+Enter applies.</span>
+						<button type="button" on:click={() => applyFormula(sm.key)} class="terminal-button-primary px-2 py-0.5 text-[12px]">Apply</button>
+						<button type="button" on:click={() => closeFormula(sm.key)} class="terminal-button px-2 py-0.5 text-[12px]">Cancel</button>
+						<span class="text-[10px] text-sc-ink3">Series by id, knobs as <span class="font-mono text-sc-ink2">$name</span>, <span class="font-mono text-sc-ink2">&lt; &gt;= crosses above</span>, <span class="font-mono text-sc-ink2">and / or</span>, parentheses. Ctrl+Enter applies.</span>
 					</div>
 				{:else}
 					<div class="space-y-1">
@@ -612,20 +612,20 @@
 							{@const connector = ri === 0 ? 'if' : side.logic}
 							{#if row.kind === 'group'}
 								<div class="flex items-start gap-1.5">
-									<span class="w-7 shrink-0 pt-1 text-right text-[10px] uppercase tracking-wide text-[#555]">{connector}</span>
-									<div class="min-w-0 flex-1 border-l border-[#333] py-0.5 pl-1">
-										<div class="flex items-center gap-1.5 pb-0.5 text-[10px] text-[#666]">
+									<span class="w-7 shrink-0 pt-1 text-right font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{connector}</span>
+									<div class="min-w-0 flex-1 border-l border-sc-line2 py-0.5 pl-1">
+										<div class="flex items-center gap-1.5 pb-0.5 text-[10px] text-sc-ink3">
 											<button type="button" on:click={() => flipLogic(row)} {disabled} aria-label="group logic"
-												class="border border-[#333] px-1 font-bold tracking-wider text-white hover:border-white">{row.logic === 'and' ? 'ALL' : 'ANY'}</button>
+												class="rounded-md border border-sc-line2 px-1 font-medium text-sc-ink hover:border-sc-ink">{row.logic === 'and' ? 'ALL' : 'ANY'}</button>
 											of
 											<button type="button" on:click={() => removeRow(side, ri)} {disabled} aria-label="remove group"
-												class="ml-auto px-1 text-[#444] hover:text-red-400">✕ group</button>
+												class="ml-auto px-1 text-sc-ink4 hover:text-red-400">✕ group</button>
 										</div>
 										{#each row.conds as cond, ci (cond.uid)}
 											{@render condition(cond, ci === 0 ? '' : row.logic, () => removeGroupCond(row, ci))}
 										{/each}
 										<button type="button" on:click={() => addGroupCond(row)} {disabled}
-											class="ml-8 mt-0.5 text-[10px] text-[#666] hover:text-white">＋ condition in group</button>
+											class="ml-8 mt-0.5 text-[12px] text-sc-ink3 hover:text-sc-ink">＋ condition in group</button>
 									</div>
 								</div>
 							{:else}
@@ -633,12 +633,12 @@
 							{/if}
 						{/each}
 						{#if side.rows.length === 0}
-							<div class="px-1 py-1 text-[11px] text-[#555]">{sm.empty}</div>
+							<div class="px-1 py-1 text-[11px] text-sc-ink3">{sm.empty}</div>
 						{/if}
 					</div>
 					<div class="mt-1.5 flex items-center gap-3 pl-8">
-						<button type="button" on:click={() => addCond(side)} {disabled} class="text-[10px] text-[#777] hover:text-white">＋ Condition</button>
-						<button type="button" on:click={() => addGroup(side)} {disabled} class="text-[10px] text-[#777] hover:text-white">＋ Group</button>
+						<button type="button" on:click={() => addCond(side)} {disabled} class="text-[12px] text-sc-ink3 hover:text-sc-ink">＋ Condition</button>
+						<button type="button" on:click={() => addGroup(side)} {disabled} class="text-[12px] text-sc-ink3 hover:text-sc-ink">＋ Group</button>
 					</div>
 				{/if}
 			</div>
@@ -647,56 +647,56 @@
 
 	<div class="flex items-center gap-3 px-1">
 		{#if !showShort}
-			<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#888] hover:text-white">+ Add short side</button>
+			<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-sc-ink2 hover:text-sc-ink">+ Add short side</button>
 		{:else}
-			<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-[#666] hover:text-red-400">− Remove short side</button>
+			<button type="button" on:click={toggleShort} {disabled} class="text-[11px] text-sc-ink3 hover:text-red-400">− Remove short side</button>
 		{/if}
 	</div>
 
 	<!-- Indicators -->
-	<section class="border border-[#222] bg-[#050505]" aria-label="Indicators">
-		<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-			<h3 class="text-[11px] font-bold uppercase tracking-wider text-white">Indicators</h3>
-			<span class="text-[10px] text-[#555]">{instances.length}</span>
+	<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Indicators">
+		<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
+			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Indicators</h3>
+			<span class="text-[10px] text-sc-ink3">{instances.length}</span>
 			<button type="button" on:click={() => openPalette()} {disabled}
-				class="ml-auto border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white disabled:opacity-40">＋ Indicator</button>
+				class="rounded-md ml-auto border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-40">＋ Indicator</button>
 		</header>
-		<div class="divide-y divide-[#111]">
+		<div class="divide-y divide-sc-line">
 			{#each instances as inst, i (inst.uid)}
 				{@const meta = metaByKind[inst.kind]}
 				{@const uses = instanceUses(inst, usage)}
 				<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5">
-					<span class="w-32 truncate text-[12px] text-[#ddd]" title={meta?.description ?? inst.kind}>{meta?.label ?? inst.kind}</span>
+					<span class="w-32 truncate text-[12px] text-sc-ink" title={meta?.description ?? inst.kind}>{meta?.label ?? inst.kind}</span>
 					<input class={`${inputCls} w-24 font-mono`} bind:value={inst.id} {disabled} placeholder="id" aria-label="indicator id"
 						on:input={(e) => { inst.id = e.currentTarget.value; renameIndicator(inst); }} />
 					{#each meta?.params ?? [] as p}
-						<label class="flex items-center gap-1 text-[10px] text-[#666]">
+						<label class="flex items-center gap-1 text-[10px] text-sc-ink3">
 							{p.key}
 							<input type="number" class={`${inputCls} w-14`} bind:value={inst.params[p.key]}
 								min={p.min} max={p.max} step={p.step} {disabled} />
 						</label>
 					{/each}
-					<span class="ml-auto text-[10px] {uses ? 'text-[#555]' : 'text-amber-500/80'}"
+					<span class="ml-auto text-[10px] {uses ? 'text-sc-ink3' : 'text-amber-500/80'}"
 						title={uses ? `${uses} condition${uses === 1 ? '' : 's'} read this indicator` : 'No condition reads this indicator'}>{uses ? `used ×${uses}` : 'unused'}</span>
 					<button type="button" on:click={() => removeIndicator(i)} {disabled}
-						class="px-1 text-[11px] text-[#444] hover:text-red-400" aria-label="remove indicator">✕</button>
+						class="px-1 text-[11px] text-sc-ink4 hover:text-red-400" aria-label="remove indicator">✕</button>
 				</div>
 			{/each}
 			{#if instances.length === 0}
-				<div class="px-3 py-2 text-[11px] text-[#555]">No indicators yet. Add one, or write rules on price and market data.</div>
+				<div class="px-3 py-2 text-[11px] text-sc-ink3">No indicators yet. Add one, or write rules on price and market data.</div>
 			{/if}
 		</div>
 	</section>
 
 	<!-- Knobs: named numbers the rules read -->
-	<section class="border border-[#222] bg-[#050505]" aria-label="Knobs">
-		<header class="flex items-center gap-2 border-b border-[#141414] px-3 py-1.5">
-			<h3 class="text-[11px] font-bold uppercase tracking-wider text-white">Knobs</h3>
-			<span class="truncate text-[10px] text-[#555]">named numbers your rules read · drag to tune, stress-test to check</span>
+	<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Knobs">
+		<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
+			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Knobs</h3>
+			<span class="truncate text-[10px] text-sc-ink3">named numbers your rules read · drag to tune, stress-test to check</span>
 			<button type="button" on:click={addParam} {disabled}
-				class="ml-auto shrink-0 border border-[#2a2a2a] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#aaa] hover:border-white hover:text-white disabled:opacity-40">＋ Knob</button>
+				class="rounded-md ml-auto shrink-0 border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-40">＋ Knob</button>
 		</header>
-		<div class="divide-y divide-[#111]">
+		<div class="divide-y divide-sc-line">
 			{#each params as p, i (p.uid)}
 				{@const uses = paramUses(p, usage)}
 				<div class="flex items-center gap-2 px-3 py-1.5">
@@ -707,13 +707,13 @@
 					<input type="range" min={p.lo} max={p.hi} step={p.step} value={p.value} {disabled} aria-label={`tune ${p.name}`}
 						on:input={(e) => { p.value = Number(e.currentTarget.value); }}
 						class="min-w-0 flex-1 accent-sky-400" />
-					<span class="w-14 shrink-0 text-right text-[10px] {uses ? 'text-[#555]' : 'text-amber-500/80'}">{uses ? `used ×${uses}` : 'unused'}</span>
+					<span class="w-14 shrink-0 text-right text-[10px] {uses ? 'text-sc-ink3' : 'text-amber-500/80'}">{uses ? `used ×${uses}` : 'unused'}</span>
 					<button type="button" on:click={() => removeParam(i)} {disabled}
-						class="px-1 text-[11px] text-[#444] hover:text-red-400" aria-label="remove parameter">✕</button>
+						class="px-1 text-[11px] text-sc-ink4 hover:text-red-400" aria-label="remove parameter">✕</button>
 				</div>
 			{/each}
 			{#if params.length === 0}
-				<div class="px-3 py-2 text-[11px] text-[#555]">No knobs. Click a number in a rule and choose “Turn it into a knob” to tune it here.</div>
+				<div class="px-3 py-2 text-[11px] text-sc-ink3">No knobs. Click a number in a rule and choose “Turn it into a knob” to tune it here.</div>
 			{/if}
 		</div>
 	</section>
@@ -726,37 +726,37 @@
 </div>
 
 {#if paletteOpen}
-	<div class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[12vh]" role="presentation"
+	<div class="fixed inset-0 z-50 flex items-start justify-center bg-sc-bg/70 px-4 pt-[12vh]" role="presentation"
 		on:pointerdown={(e) => { if (e.target === e.currentTarget) closePalette(); }}>
 		<div role="dialog" aria-modal="true" aria-label="Add an indicator"
-			class="flex max-h-[70vh] w-full max-w-2xl flex-col border border-[#333] bg-[#070707] shadow-2xl shadow-black">
-			<div class="flex items-center gap-2 border-b border-[#1c1c1c] p-2">
+			class="rounded-md flex max-h-[70vh] w-full max-w-2xl flex-col border border-sc-line2 bg-sc-panel shadow-2xl shadow-black">
+			<div class="flex items-center gap-2 border-b border-sc-line p-2">
 				<input bind:this={paletteInput} bind:value={paletteSearch} on:keydown={onPaletteKey}
 					placeholder={`Search ${indicators.length || ''} indicators…`} aria-label="search indicators"
-					class="min-w-0 flex-1 border border-[#333] bg-black px-2 py-1.5 text-[13px] text-white outline-none focus:border-white" />
-				<button type="button" on:click={closePalette} class="px-2 text-[10px] uppercase tracking-wider text-[#666] hover:text-white">Esc</button>
+					class="rounded-md min-w-0 flex-1 border border-sc-line2 bg-sc-bg px-2 py-1.5 text-[13px] text-sc-ink outline-none focus:border-sc-ink" />
+				<button type="button" on:click={closePalette} class="px-2 text-[12px] text-sc-ink3 hover:text-sc-ink">Esc</button>
 			</div>
-			<div class="flex flex-wrap gap-1 border-b border-[#1c1c1c] px-2 py-1.5">
+			<div class="flex flex-wrap gap-1 border-b border-sc-line px-2 py-1.5">
 				{#each categories as cat}
 					<button type="button" on:click={() => { paletteCat = cat; paletteIndex = 0; paletteInput?.focus(); }}
-						class="border px-2 py-0.5 text-[10px] uppercase tracking-wide transition-colors {paletteCat === cat ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#666] hover:border-[#555] hover:text-white'}">{cat}</button>
+						class="rounded-md border px-2 py-0.5 text-[12px] transition-colors {paletteCat === cat ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink'}">{cat}</button>
 				{/each}
 			</div>
 			<div class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label="indicators">
 				{#each paletteResults as meta, i (meta.kind)}
 					<button type="button" role="option" aria-selected={i === paletteIndex} on:click={() => addIndicator(meta)}
 						on:mousemove={() => (paletteIndex = i)}
-						class="flex w-full items-baseline gap-3 px-3 py-1.5 text-left {i === paletteIndex ? 'bg-[#151515]' : ''}">
-						<span class="w-44 shrink-0 truncate text-[12px] text-white">{meta.label}</span>
-						<span class="min-w-0 flex-1 truncate text-[11px] text-[#666]">{meta.description}</span>
-						<span class="shrink-0 text-[9px] uppercase tracking-wider text-[#444]">{meta.category}</span>
+						class="flex w-full items-baseline gap-3 px-3 py-1.5 text-left {i === paletteIndex ? 'bg-sc-raise' : ''}">
+						<span class="w-44 shrink-0 truncate text-[12px] text-sc-ink">{meta.label}</span>
+						<span class="min-w-0 flex-1 truncate text-[11px] text-sc-ink3">{meta.description}</span>
+						<span class="shrink-0 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink4">{meta.category}</span>
 					</button>
 				{/each}
 				{#if paletteResults.length === 0}
-					<div class="px-3 py-3 text-[11px] text-[#555]">No indicators match “{paletteSearch}”.</div>
+					<div class="px-3 py-3 text-[11px] text-sc-ink3">No indicators match “{paletteSearch}”.</div>
 				{/if}
 			</div>
-			<div class="border-t border-[#1c1c1c] px-3 py-1.5 text-[10px] text-[#555]">
+			<div class="border-t border-sc-line px-3 py-1.5 text-[10px] text-sc-ink3">
 				↑↓ to move · Enter to add{#if pendingOperand} · the condition you came from will read the new indicator{/if}
 			</div>
 		</div>

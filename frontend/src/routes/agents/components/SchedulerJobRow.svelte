@@ -64,15 +64,15 @@
 	}
 
 	function statusClass(status?: string | null): string {
-		if (!status) return 'border-[#333] text-[#888]';
+		if (!status) return 'border-sc-line2 text-sc-ink2';
 		const value = status.toLowerCase();
-		if (value === 'pending') return 'border-[#333] text-[#888]';
+		if (value === 'pending') return 'border-sc-line2 text-sc-ink2';
 		if (value === 'running') return 'border-yellow-500/50 text-yellow-400';
 		if (value === 'done' || value === 'completed') return 'border-emerald-500/50 text-emerald-400';
-		if (value === 'reviewed') return 'border-[#333] text-[#ccc]';
+		if (value === 'reviewed') return 'border-sc-line2 text-sc-ink';
 		if (value === 'error') return 'border-red-900 text-red-400';
-		if (value === 'disabled') return 'border-[#333] text-[#555]';
-		return 'border-[#333] text-[#888]';
+		if (value === 'disabled') return 'border-sc-line2 text-sc-ink3';
+		return 'border-sc-line2 text-sc-ink2';
 	}
 
 	async function handleSave() {
@@ -139,14 +139,14 @@
 	}
 </script>
 
-<tr class="hover:bg-[#111] transition-colors {job.enabled === false ? 'opacity-60' : ''}">
-	<td class="px-4 py-2 text-[#ccc]">
+<tr class="hover:bg-sc-panel2 transition-colors {job.enabled === false ? 'opacity-60' : ''}">
+	<td class="px-4 py-2 text-sc-ink">
 		<div class="flex items-center gap-2">
 			<span class="font-bold">{job.name || '(unnamed)'}</span>
 			{#if !isEditing}
 				<button
 					type="button"
-					class="text-[#666] hover:text-white transition-colors"
+					class="text-sc-ink3 hover:text-sc-ink transition-colors"
 					aria-label={`Edit schedule for ${job.name || 'this job'}`}
 					on:click={startEdit}
 				>
@@ -160,7 +160,7 @@
 			<div class="text-[10px] text-red-400 mt-1">{errorMessage}</div>
 		{/if}
 	</td>
-	<td class="px-4 py-2 text-[#888]">
+	<td class="px-4 py-2 text-sc-ink2">
 		{#if isEditing}
 			<div class="flex items-center gap-2">
 				<select
@@ -193,7 +193,7 @@
 				<div class="flex items-center gap-1">
 					<button
 						type="button"
-						class="terminal-button text-xs px-2 py-1"
+						class="terminal-button text-[12px] px-2 py-1"
 						disabled={!canSave()}
 						on:click={handleSave}
 					>
@@ -201,7 +201,7 @@
 					</button>
 					<button
 						type="button"
-						class="terminal-button text-xs px-2 py-1"
+						class="terminal-button text-[12px] px-2 py-1"
 						disabled={saving}
 						on:click={handleCancel}
 					>
@@ -213,7 +213,7 @@
 			<div>{displaySchedule()}</div>
 		{/if}
 	</td>
-	<td class="px-4 py-2 text-[#888]">{parseNextRun(job.next_run_at ?? null)}</td>
+	<td class="px-4 py-2 text-sc-ink2">{parseNextRun(job.next_run_at ?? null)}</td>
 	<td class="px-4 py-2">
 		<span class="text-[10px] px-1.5 py-0.5 border {statusClass(job.last_status || 'pending')} uppercase font-bold tracking-wider">
 			{job.last_status || 'pending'}
@@ -227,7 +227,7 @@
 				checked={Boolean(job.enabled)}
 				on:change={handleEnabledToggle}
 			/>
-			<div class="w-10 h-5 bg-[#333] rounded-full peer-checked:bg-emerald-500 transition-colors relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-4 after:h-4 after:bg-[#111] after:border after:border-[#333] after:rounded-full after:transition-transform peer-checked:after:translate-x-[20px]"></div>
+			<div class="w-10 h-5 bg-sc-line2 rounded-full peer-checked:bg-emerald-500 transition-colors relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-4 after:h-4 after:bg-sc-panel2 after:border after:border-sc-line2 after:rounded-full after:transition-transform peer-checked:after:translate-x-[20px]"></div>
 		</label>
 	</td>
 </tr>
@@ -236,7 +236,7 @@
 		<td class="px-4 py-2" colspan="5">
 			<button
 				type="button"
-				class="text-[11px] uppercase tracking-wider text-red-400 hover:text-red-300"
+				class="text-[11px] text-red-400 hover:text-red-300"
 				on:click={() => (showError = !showError)}
 			>
 				{showError ? 'Hide error' : 'Show error'}

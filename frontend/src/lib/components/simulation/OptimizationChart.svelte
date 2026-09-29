@@ -144,7 +144,7 @@
 
 <div class="optimization-chart">
 	<div class="chart-header">
-		<span class="text-[10px] text-[#666] uppercase tracking-wider">Trial Performance ({objective})</span>
+		<span class="text-[10px] text-sc-ink3 uppercase tracking-wider">Trial Performance ({objective})</span>
 	</div>
 	<div class="chart-container" style="height: {height}px" bind:this={chartContainer}></div>
 	<div class="legend">

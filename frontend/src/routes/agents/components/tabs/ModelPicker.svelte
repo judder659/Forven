@@ -57,7 +57,7 @@
 </script>
 
 {#if label}
-	<span class="block text-[10px] text-[#666] uppercase tracking-wider mb-1">{label}</span>
+	<span class="block text-[10px] text-sc-ink3 uppercase tracking-wider mb-1">{label}</span>
 {/if}
 <select
 	{id}

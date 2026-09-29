@@ -92,8 +92,8 @@
 
 <div class="mx-auto max-w-5xl space-y-3 p-4 pb-24">
 	<div>
-		<h1 class="text-[11px] font-bold uppercase tracking-[0.2em] text-white">Set up data</h1>
-		<p class="mt-1 max-w-2xl text-[12px] leading-relaxed text-[#888]">
+		<h1 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Set up data</h1>
+		<p class="mt-1 max-w-2xl text-[12px] leading-relaxed text-sc-ink2">
 			Backtests, the gauntlet and paper trading read stored market data. Pick a preset: it downloads in the background, you can keep working,
 			and the collector keeps it current afterwards. {#if stored}You already have {formatCount(stored)} series; estimates count only bars that are not stored yet.{/if}
 		</p>
@@ -102,29 +102,29 @@
 	<div class="grid gap-2 lg:grid-cols-3">
 		{#each PRESETS as preset (preset.id)}
 			{@const est = estimates[preset.id]}
-			<section class="flex flex-col border border-[#222] bg-[#050505]" aria-labelledby="dm-preset-{preset.id}" data-testid="preset-{preset.id}">
-				<header class="border-b border-[#141414] px-3 py-2">
-					<h2 id="dm-preset-{preset.id}" class="text-[13px] font-bold text-white">{preset.name}</h2>
-					<p class="text-[11px] text-[#888]">{preset.summary}</p>
+			<section class="rounded-md flex flex-col border border-sc-line bg-sc-panel" aria-labelledby="dm-preset-{preset.id}" data-testid="preset-{preset.id}">
+				<header class="border-b border-sc-line px-3 py-2">
+					<h2 id="dm-preset-{preset.id}" class="text-[13px] font-bold text-sc-ink">{preset.name}</h2>
+					<p class="text-[11px] text-sc-ink2">{preset.summary}</p>
 				</header>
-				<ul class="space-y-0.5 px-3 py-2 text-[11px] text-[#ccc]">
+				<ul class="space-y-0.5 px-3 py-2 text-[11px] text-sc-ink">
 					{#each preset.lines as line}<li>· {line}</li>{/each}
 				</ul>
-				<p class="px-3 text-[10px] text-[#666]">{plural(preset.items.length, 'series', 'series')} of candles{#if streamsOf(preset).length}, plus {streamsOf(preset).map((s) => streamLabel(s).toLowerCase()).join(', ')}{/if}</p>
-				<div class="mt-auto border-t border-[#141414] px-3 py-2">
+				<p class="px-3 text-[10px] text-sc-ink3">{plural(preset.items.length, 'series', 'series')} of candles{#if streamsOf(preset).length}, plus {streamsOf(preset).map((s) => streamLabel(s).toLowerCase()).join(', ')}{/if}</p>
+				<div class="mt-auto border-t border-sc-line px-3 py-2">
 					{#if est.status === 'ready' && est.data}
 						{@const e = est.data}
 						{@const blocked = e.estimates.filter((x) => x.blocked).length}
 						{@const nothing = e.estimates.every((x) => x.blocked || x.new_bars_estimate === 0)}
 						<div class="flex items-baseline justify-between text-[11px]">
-							<span class="text-[#666]">Download</span>
-							<span class="font-mono tabular-nums text-white">{formatBytes(e.total_bytes)} · about {formatDuration(e.total_seconds)}</span>
+							<span class="text-sc-ink3">Download</span>
+							<span class="font-mono tabular-nums text-sc-ink">{formatBytes(e.total_bytes)} · about {formatDuration(e.total_seconds)}</span>
 						</div>
 						<div class="flex items-baseline justify-between text-[10px]">
-							<span class="text-[#666]">Disk free</span>
-							<span class="font-mono tabular-nums {e.total_bytes > e.disk_free_bytes * 0.5 ? 'text-amber-400' : 'text-[#888]'}">{formatBytes(e.disk_free_bytes)}</span>
+							<span class="text-sc-ink3">Disk free</span>
+							<span class="font-mono tabular-nums {e.total_bytes > e.disk_free_bytes * 0.5 ? 'text-amber-400' : 'text-sc-ink2'}">{formatBytes(e.disk_free_bytes)}</span>
 						</div>
-						{#if blocked}<p class="mt-1 text-[10px] text-[#888]">{plural(blocked, 'series', 'series')} cannot be downloaded (not listed) and will be skipped.</p>{/if}
+						{#if blocked}<p class="mt-1 text-[10px] text-sc-ink2">{plural(blocked, 'series', 'series')} cannot be downloaded (not listed) and will be skipped.</p>{/if}
 						{@const warnings = [...new Set([...e.warnings, ...e.estimates.flatMap((x) => x.warnings)])]}
 						{#each warnings.slice(0, 3) as warning}<p class="mt-1 text-[10px] text-amber-400">{warning}</p>{/each}
 						{#if warnings.length > 3}<p class="mt-1 text-[10px] text-amber-400/70">and {plural(warnings.length - 3, 'more warning')}</p>{/if}
@@ -133,11 +133,11 @@
 						{:else if nothing}
 							<p class="mt-2 text-[11px] text-emerald-400">Everything in this preset is already stored.</p>
 						{:else}
-							<button type="button" class="{preset.id === 'starter' ? 'terminal-button-primary' : 'terminal-button'} mt-2 w-full text-[10px]" disabled={!!starting} on:click={() => start(preset)}>
+							<button type="button" class="{preset.id === 'starter' ? 'terminal-button-primary' : 'terminal-button'} mt-2 w-full text-[12px]" disabled={!!starting} on:click={() => start(preset)}>
 								{starting === preset.id ? 'Queueing…' : `Set up ${preset.name}`}</button>
 						{/if}
 					{:else if est.status === 'loading'}
-						<p class="text-[11px] text-[#666]" aria-busy="true">Estimating size and time…</p>
+						<p class="text-[11px] text-sc-ink3" aria-busy="true">Estimating size and time…</p>
 					{:else}
 						<SectionState state={est} what="The estimate" endpoint="POST /api/data/acquire/estimate" rows={1} on:retry={() => estimate(preset)} />
 					{/if}
@@ -146,5 +146,5 @@
 		{/each}
 	</div>
 
-	<p class="text-[11px] text-[#666]">Want something specific? <a href="{DM}/get" class="text-white underline">Get exactly the markets you need</a>, or <a href="{DM}/import" class="text-white underline">import a file</a>.</p>
+	<p class="text-[11px] text-sc-ink3">Want something specific? <a href="{DM}/get" class="text-sc-ink underline">Get exactly the markets you need</a>, or <a href="{DM}/import" class="text-sc-ink underline">import a file</a>.</p>
 </div>
