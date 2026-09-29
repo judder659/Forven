@@ -2789,4 +2789,33 @@ describe('/lab/strategy/[id] backtest history', () => {
 		await waitForCondition(() => target.querySelector('[data-testid="backtest-parameter-panel"]') !== null);
 		expect((target.querySelector('[data-testid="backtest-parameter-panel"]') as HTMLDetailsElement | null)?.open).toBe(true);
 	});
+	it('keeps the archived banner and revive action in the Summary gate card', async () => {
+		const container = buildContainer(['B1001']);
+		(container.strategy as Record<string, unknown>).state = 'archived';
+		(container.events as Record<string, unknown>[]) = [
+			{
+				id: 'E1', strategy_id: 'S0001', from_state: 'quick_screen', to_state: 'gauntlet', actor: 'system',
+				reason: null, idempotency_key: null, created_at: '2026-03-02T00:00:00Z', owner_from: null, owner_to: null, details_json: null,
+			},
+			{
+				id: 'E2', strategy_id: 'S0001', from_state: 'gauntlet', to_state: 'archived', actor: 'gauntlet_sweep',
+				reason: 'Failed the gauntlet', idempotency_key: null, created_at: '2026-03-05T00:00:00Z', owner_from: null, owner_to: null, details_json: null,
+			},
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+		apiMocks.getResult.mockImplementation(async (resultId: string) => buildResult(resultId));
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="overview-revive-button"]') !== null);
+
+		const gate = target.querySelector('[data-testid="gate-card"]');
+		expect(gate?.contains(target.querySelector('[data-testid="overview-revive-button"]'))).toBe(true);
+		expect(gate?.textContent).toContain('Strategy archived');
+		expect(target.querySelector('[data-testid="rail-gate"]')?.textContent).toContain('Strategy archived');
+		expect(target.querySelector('[data-testid="rail-stage-quick_screen"]')?.getAttribute('data-state')).toBe('done');
+		expect(target.querySelector('[data-testid="rail-stage-gauntlet"]')?.getAttribute('data-state')).toBe('stopped');
+		expect(target.querySelector('[data-testid="rail-stage-gauntlet"]')?.textContent).toContain('Archived here');
+		// No promotion checklist for a strategy outside the pipeline.
+		expect(target.querySelector('[data-testid^="readiness-"]')).toBeNull();
+	});
 });

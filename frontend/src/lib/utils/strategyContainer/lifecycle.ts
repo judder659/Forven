@@ -17,7 +17,8 @@ export type RailStageKey = (typeof RAIL_STAGES)[number]['key'];
 export interface RailStage {
 	key: RailStageKey;
 	label: string;
-	state: 'done' | 'now' | 'next';
+	/** `stopped`: the stage an archived or rejected strategy left the pipeline from. */
+	state: 'done' | 'now' | 'next' | 'stopped';
 	meta: string;
 	/** 0-1 progress through the stage's time requirement, when one applies. */
 	progress: number | null;
@@ -58,12 +59,22 @@ export function buildRail(input: {
 	const entries = stageEntries(input.events);
 	const order = RAIL_STAGES.map((item) => item.key as string);
 	const terminal = stage === 'archived' || stage === 'rejected';
-	// For a terminal strategy, the furthest stage it reached is the last one entered.
+	// A terminal strategy stopped in the stage it left for the archive (its latest move
+	// into the terminal state); every stage before that one was passed. Without such an
+	// event, the furthest stage it entered stands in.
+	const exit = terminal
+		? ([...input.events]
+				.filter((event) => normalizeLifecycleStage(event.to_state) === stage)
+				.sort((a, b) => (parseTimestamp(b.created_at) ?? 0) - (parseTimestamp(a.created_at) ?? 0))[0] ?? null)
+		: null;
+	const stoppedAt = exit ? order.indexOf(normalizeLifecycleStage(exit.from_state)) : -1;
 	const reached = terminal
-		? order.reduce((best, key, index) => (entries[key] !== undefined ? index : best), 0)
+		? stoppedAt >= 0
+			? stoppedAt
+			: order.reduce((best, key, index) => (entries[key] !== undefined ? index : best), 0)
 		: order.indexOf(stage);
 	return RAIL_STAGES.map((item, index) => {
-		const state: RailStage['state'] = terminal ? (index <= reached && entries[item.key] !== undefined ? 'done' : 'next') : index < reached ? 'done' : index === reached ? 'now' : 'next';
+		const state: RailStage['state'] = index < reached ? 'done' : index === reached ? (terminal ? 'stopped' : 'now') : 'next';
 		const nextEntered = entries[order[index + 1]];
 		let meta = '';
 		let progress: number | null = null;
@@ -87,6 +98,10 @@ export function buildRail(input: {
 			}
 		} else {
 			meta = state === 'now' ? `${isNum(input.liveDays) ? `Day ${Math.floor(input.liveDays)}` : 'Live'} · real money` : 'Strict paper → live gate';
+		}
+		if (state === 'stopped') {
+			meta = `${stage === 'rejected' ? 'Rejected' : 'Archived'} here${exit ? ` · ${fmtDateUtc(exit.created_at)}` : ''}`;
+			progress = null;
 		}
 		return { key: item.key, label: item.label, state, meta, progress };
 	});

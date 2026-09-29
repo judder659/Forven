@@ -313,4 +313,16 @@ describe('strategy container lifecycle and verdict', () => {
 		expect(judge(60)?.body).toBe('At 2× fees and slippage the Sharpe drops 42.6% to 0.31; the test needs at least 0.30. The paper → live gate also allows at most 60% of the Sharpe lost.');
 		expect(judge(40)).toMatchObject({ tone: 'caution', title: 'Higher costs would stop it at the live gate.' });
 	});
+	it('marks where an archived strategy left the pipeline', () => {
+		const event = (id: string, from: string, to: string, at: string) =>
+			({ id, strategy_id: 'S1', from_state: from, to_state: to, actor: 'system', reason: null, idempotency_key: null, created_at: at, owner_from: null, owner_to: null, details_json: null }) as unknown as Parameters<typeof buildRail>[0]['events'][number];
+		const rail = buildRail({
+			stage: 'archived',
+			// No event enters quick screen (the strategy was created there).
+			events: [event('E1', 'quick_screen', 'gauntlet', '2026-03-02T00:00:00Z'), event('E2', 'gauntlet', 'archived', '2026-03-05T00:00:00Z')],
+			gauntletPassed: 2, gauntletTotal: 5, heldBackPassed: null, paper: null, liveDays: null,
+		});
+		expect(rail.map((stage) => stage.state)).toEqual(['done', 'stopped', 'next', 'next']);
+		expect(rail[1].meta).toBe('Archived here · Mar 5, 2026');
+	});
 });

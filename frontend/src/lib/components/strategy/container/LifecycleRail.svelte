@@ -18,11 +18,13 @@
 						? 'border-[#3cc48f] bg-[#3cc48f]'
 						: stage.state === 'now'
 							? 'border-white bg-white shadow-[0_0_0_3px_rgba(255,255,255,0.12)]'
-							: 'border-[#444] bg-[#090909]'
+							: stage.state === 'stopped'
+								? 'border-[#e5574f] bg-[#e5574f]'
+								: 'border-[#444] bg-[#090909]'
 				}`}
 			></span>
 			<div class={`text-[13px] font-semibold ${stage.state === 'next' ? 'text-[#888]' : 'text-white'}`}>{stage.label}</div>
-			<div class={`text-[11px] ${stage.state === 'now' ? 'text-[#aab1bc]' : 'text-[#666]'}`}>{stage.meta}</div>
+			<div class={`text-[11px] ${stage.state === 'stopped' ? 'text-[#f2956f]' : stage.state === 'now' ? 'text-[#aab1bc]' : 'text-[#666]'}`}>{stage.meta}</div>
 			{#if stage.progress !== null}
 				<div class="mt-1.5 h-[3px] bg-[#2a2f38]"><i class="block h-full bg-[#aab1bc]" style={`width:${(stage.progress * 100).toFixed(1)}%`}></i></div>
 			{/if}
