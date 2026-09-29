@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 const backtestingMocks = vi.hoisted(() => ({
+	getHoldoutSummary: vi.fn(),
 	getRobustnessResult: vi.fn(),
 	getStrategyOpenPosition: vi.fn(),
 	runCostStressRobustness: vi.fn(),
@@ -29,6 +30,7 @@ const backtestingMocks = vi.hoisted(() => ({
 }));
 
 const lifecycleMocks = vi.hoisted(() => ({
+	explainStrategy: vi.fn(),
 	getGauntletStatus: vi.fn(),
 	getPaperLiveReadiness: vi.fn(),
 	getPipelineConfig: vi.fn(),
@@ -482,14 +484,14 @@ function clickByTestId(target: HTMLDivElement, testId: string): void {
 }
 
 async function openBacktestHistory(target: HTMLDivElement): Promise<void> {
-	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-backtests"]') !== null);
-	clickByTestId(target, 'strategy-tab-backtests');
+	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
+	clickByTestId(target, 'strategy-tab-runs');
 	await waitForCondition(() => target.querySelector('[data-testid^="backtest-row-"]') !== null);
 }
 
 async function openOptimizationTab(target: HTMLDivElement): Promise<void> {
-	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-optimizations"]') !== null);
-	clickByTestId(target, 'strategy-tab-optimizations');
+	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
+	clickByTestId(target, 'strategy-tab-runs');
 	await waitForCondition(() => target.textContent?.includes('Run Optimization') ?? false);
 }
 
@@ -505,8 +507,8 @@ async function openOptimizationHistory(target: HTMLDivElement): Promise<void> {
 }
 
 async function openGauntletParamsPanel(target: HTMLDivElement): Promise<void> {
-	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-backtests"]') !== null);
-	clickByTestId(target, 'strategy-tab-backtests');
+	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
+	clickByTestId(target, 'strategy-tab-runs');
 	await waitForCondition(() => target.textContent?.includes('Gauntlet Parameters') ?? false);
 }
 
@@ -546,6 +548,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		backtestingMocks.runRegimeSplitRobustness.mockReset();
 		backtestingMocks.runWalkForwardRobustness.mockReset();
 		backtestingMocks.getRobustnessResult.mockReset();
+		backtestingMocks.getHoldoutSummary.mockReset();
+		backtestingMocks.getHoldoutSummary.mockResolvedValue(null);
 		backtestingMocks.getStrategyOpenPosition.mockReset();
 		backtestingMocks.submitWalkForwardRobustness.mockReset();
 		backtestingMocks.updateStrategyDefaultParams.mockReset();
@@ -555,6 +559,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 			positions: [],
 		});
 		lifecycleMocks.getGauntletStatus.mockReset();
+		lifecycleMocks.explainStrategy.mockReset();
+		lifecycleMocks.explainStrategy.mockResolvedValue({ strategy: null });
 		lifecycleMocks.getPaperLiveReadiness.mockReset();
 		lifecycleMocks.getPipelineConfig.mockReset();
 		lifecycleMocks.getPromotionReadiness.mockReset();
@@ -636,7 +642,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		return container;
 	}
 
-	it('puts Heatmap and Markets between Gauntlet and Optimization, and the heatmap runs the Gauntlet request', async () => {
+	it('puts the heatmap and market grid under Robustness, and the heatmap runs the Gauntlet request', async () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
 		// Every cell the same: settings the strategy never reads.
 		apiMocks.strategyParamHeatmap.mockImplementation(async (request: { x: { values: number[] }; y: { values: number[] } }) => ({
@@ -645,13 +651,14 @@ describe('/lab/strategy/[id] backtest history', () => {
 		}));
 
 		app = mount(StrategyDetailPage, { target });
-		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-heatmap"]') !== null);
-		const tabs = Array.from(target.querySelectorAll('[data-testid^="strategy-tab-"]'), (el) => el.getAttribute('data-testid'));
-		const at = (key: string) => tabs.indexOf(`strategy-tab-${key}`);
-		expect([at('heatmap'), at('markets'), at('optimizations')]).toEqual([at('backtests') + 1, at('backtests') + 2, at('backtests') + 3]);
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-robustness"]') !== null);
+		// Both sweeps answer "does it generalize", so they live with the robustness tests.
+		expect(target.querySelector('[data-testid="strategy-tab-heatmap"]')).toBeNull();
+		expect(target.querySelector('[data-testid="strategy-tab-markets"]')).toBeNull();
 
-		clickByTestId(target, 'strategy-tab-heatmap');
+		clickByTestId(target, 'strategy-tab-robustness');
 		await waitForCondition(() => target.querySelector('[data-testid="strategy-heatmap-tab"]') !== null);
+		expect(target.querySelector('[data-testid="strategy-markets-tab"]')).not.toBeNull();
 		clickButtonByText(target, 'Run heatmap');
 		await waitForCondition(() => apiMocks.strategyParamHeatmap.mock.calls.length > 0);
 		const [request, signal] = apiMocks.strategyParamHeatmap.mock.calls[0];
@@ -669,9 +676,9 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(verdict).toContain('no effect');
 		expect(verdict).toContain('every value of fast and slow gave identical trades and returns');
 
-		clickByTestId(target, 'strategy-tab-markets');
-		await waitForCondition(() => target.querySelector('[data-testid="strategy-markets-tab"]') !== null);
-		expect(target.querySelector('[data-testid="strategy-heatmap-tab"]')).toBeNull();
+		clickByTestId(target, 'strategy-tab-summary');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-heatmap-tab"]') === null);
+		expect(target.querySelector('[data-testid="strategy-markets-tab"]')).toBeNull();
 	});
 
 	it('syncs the backtest symbol, timeframe and window to the run when a gauntlet history row is clicked', async () => {
@@ -1390,8 +1397,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		app = mount(StrategyDetailPage, { target });
 		// Open the Gauntlet section (no history rows needed) and reach the params pane
 		// on its DEFAULT view — the exact state the user reported as stuck "Unsaved".
-		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-backtests"]') !== null);
-		clickByTestId(target, 'strategy-tab-backtests');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
+		clickByTestId(target, 'strategy-tab-runs');
 		await waitForCondition(() => target.querySelector('[data-testid="backtest-params-save"]') !== null);
 
 		const save = target.querySelector('[data-testid="backtest-params-save"]') as HTMLButtonElement | null;
@@ -2475,7 +2482,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(row).not.toContain('Dec 31, 2024');
 	});
 
-	it('opening an optimization run leaves the Gauntlet draft alone and shows its detail only on the Optimization tab', async () => {
+	it('opening an optimization run leaves the Gauntlet draft alone and shows its detail only under Runs', async () => {
 		const optimization = buildHistoryItem('OPT1', {
 			result_type: 'optimization',
 			symbol: 'ETH/USDT',
@@ -2495,11 +2502,19 @@ describe('/lab/strategy/[id] backtest history', () => {
 		clickByTestId(target, 'optimization-row-OPT1');
 		await waitForCondition(() => target.querySelector('[data-testid="selected-result-metrics-strip"]') !== null);
 
-		clickByTestId(target, 'strategy-tab-backtests');
-		await waitForCondition(() => target.querySelector('#container-backtest-symbol') !== null);
+		// The Gauntlet form on the same tab keeps the container's market and window.
 		expect((target.querySelector('#container-backtest-symbol') as HTMLInputElement | null)?.value).toBe('BTC/USDT');
 		expect((target.querySelector('#container-backtest-start') as HTMLInputElement | null)?.value).toBe('2025-03-11');
-		// The optimization's detail belongs to its own tab.
+		// The detail renders below the optimization list, after the optimization heading.
+		const heading = target.querySelector('[data-testid="runs-optimization-heading"]');
+		const strip = target.querySelector('[data-testid="selected-result-metrics-strip"]');
+		expect(heading && strip ? heading.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING : 0).toBeTruthy();
+
+		// It belongs to Runs only.
+		clickByTestId(target, 'strategy-tab-robustness');
+		await waitForCondition(() => target.querySelector('[data-testid="selected-result-metrics-strip"]') === null);
+		clickByTestId(target, 'strategy-tab-summary');
+		await tick();
 		expect(target.querySelector('[data-testid="selected-result-metrics-strip"]')).toBeNull();
 	});
 

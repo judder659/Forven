@@ -169,16 +169,17 @@
 		}
 	}
 
-	// TabKey identifiers predate the current UI labels. Mapping (code -> visible label):
-	//   'overview'       -> "Overview" (stage pipeline, readiness, gauntlet status, active run)
-	//   'backtests'      -> "Gauntlet" (params + run form + history; "Run the Gauntlet" submits a backtest)
-	//   'heatmap'        -> "Heatmap" (the Gauntlet backtest over a grid of two settings)
-	//   'markets'        -> "Markets" (the Gauntlet backtest on other markets and timeframes)
-	//   'optimizations'  -> "Optimization"
-	//   'robustness'     -> "Robustness" (the five validation runners)
-	// PromotionReadiness on:action maps: 'run_confirmation_backtest' -> 'backtests';
-	//   'run_optimization'/'apply_best_params' -> 'optimizations'; '*_validation_suite' -> 'robustness'.
-	type TabKey = 'overview' | 'backtests' | 'heatmap' | 'markets' | 'optimizations' | 'robustness' | 'execution';
+	// Tabs (code -> visible label):
+	//   'summary'     -> "Summary" (verdict, evidence, lifecycle, next gate)
+	//   'robustness'  -> "Robustness" (stress tests, runners, heatmap + market grid under Sensitivity)
+	//   'runs'        -> "Runs" (new backtest / optimization, history, compare, run detail)
+	//   'execution'   -> "Paper & live"
+	// PromotionReadiness on:action maps: 'run_confirmation_backtest', 'run_optimization' and
+	//   'apply_best_params' -> 'runs'; '*_validation_suite' -> 'robustness'.
+	type TabKey = 'summary' | 'robustness' | 'runs' | 'execution';
+	// Where an opened run's detail renders: under the run history, the optimization list, or
+	// the robustness runners.
+	type RunSection = 'backtests' | 'optimizations' | 'robustness';
 	// 'detached': the page stopped polling a job that is still running server-side.
 	type SubmitStatus = 'idle' | 'submitting' | 'running' | 'completed' | 'failed' | 'detached';
 	type RobustnessRunnerTestKey = 'walk_forward' | 'monte_carlo' | 'param_jitter' | 'cost_stress' | 'regime_split';
@@ -266,7 +267,7 @@
 
 	let strategyId = '';
 	let returnTo = '/lab';
-	let activeTab: TabKey = 'overview';
+	let activeTab: TabKey = 'summary';
 	let loading = true;
 	let error = '';
 	let lastLoadedId = '';
@@ -287,9 +288,9 @@
 	let selectedResult: BacktestResult | null = null;
 	let selectedResultId: string | null = null;
 	let selectedResultItem: StrategyContainerHistoryItem | null = null;
-	// The tab a selected result belongs to; the result viewer renders only there, so a
-	// Gauntlet run opened on the Gauntlet tab does not trail under Robustness.
-	let selectedResultHomeTab: TabKey | null = null;
+	// The section a selected result belongs to; its detail renders only there, so a
+	// Gauntlet run opened under Runs does not trail under Robustness.
+	let selectedResultSection: RunSection | null = null;
 	let selectedChartContext: ResultChartContext | null = null;
 	let chartContextError = '';
 	let chartLoading = false;
@@ -436,9 +437,10 @@
 			(left, right) => parseTimestamp(right.created_at) - parseTimestamp(left.created_at),
 		)[0] ??
 		null;
-	$: if (activeTab === 'overview' && activeRunItem && String(activeRunItem.result_id || '').trim() !== overviewResultId) {
+	$: if (activeTab === 'summary' && activeRunItem && String(activeRunItem.result_id || '').trim() !== overviewResultId) {
 		void loadOverviewResult(activeRunItem);
 	}
+	$: hasRunDetail = resultLoading || !!resultError || !!selectedResult;
 	$: optimizationHistory = container?.history.optimizations ?? [];
 	$: walkForwardHistory = container?.history.walk_forward ?? [];
 	$: validationHistory = container?.history.validation ?? [];
@@ -720,7 +722,7 @@
 	let growthTrades: Record<string, unknown>[] | null = null;
 	let growthTradesLoadedFor = '';
 
-	$: if (activeTab === 'overview' && container && strategyId && growthTradesLoadedFor !== strategyId) {
+	$: if (container && strategyId && growthTradesLoadedFor !== strategyId) {
 		growthTradesLoadedFor = strategyId;
 		void loadGrowthTrades(strategyId);
 	}
@@ -2987,7 +2989,7 @@
 		return 'text-[#888] border-[#333]';
 	}
 
-	function resultHomeTab(type: string | null | undefined): TabKey {
+	function resultSection(type: string | null | undefined): RunSection {
 		const normalized = String(type ?? '').trim().toLowerCase();
 		if (normalized === 'optimization' || normalized === 'grid_search') return 'optimizations';
 		if (['walk_forward', 'monte_carlo', 'param_jitter', 'cost_stress', 'regime_split'].includes(normalized)) return 'robustness';
@@ -3510,12 +3512,12 @@
 		if (!resultId) return;
 		selectedResultId = resultId;
 		selectedResultItem = item;
-		selectedResultHomeTab = resultHomeTab(item.result_type);
+		selectedResultSection = resultSection(item.result_type);
 		// Only a Gauntlet run seeds the Gauntlet draft (its params, execution, market and
 		// window reproduce the run). An optimization or walk-forward card is read-only
 		// here: loading its config silently replaced the draft — and the market/window
 		// the Heatmap and Markets tabs sweep — and a later Save persisted it as defaults.
-		if (selectedResultHomeTab === 'backtests') {
+		if (selectedResultSection === 'backtests') {
 			loadGauntletDraftFromHistory(item);
 		}
 		selectedResult = null;
@@ -3985,7 +3987,7 @@
 		selectedResult = null;
 		selectedResultId = null;
 		selectedResultItem = null;
-		selectedResultHomeTab = null;
+		selectedResultSection = null;
 		selectedChartContext = null;
 		resultError = '';
 		chartContextError = '';
@@ -4083,7 +4085,7 @@
 				});
 		}
 		if (nextSelectedBacktest) {
-			activeTab = 'backtests';
+			activeTab = 'runs';
 			await openResult(nextSelectedBacktest);
 		}
 	}
@@ -4454,7 +4456,7 @@
 				title={pinnedBacktestId
 					? `Gauntlet run ${pinnedBacktestId} is pinned — its params and metrics drive paper/live execution. Click to view.`
 					: 'No run is pinned — the manually-saved container defaults drive paper/live execution. Click to view the Gauntlet history.'}
-				on:click={() => (activeTab = 'backtests')}
+				on:click={() => (activeTab = 'runs')}
 			>
 				<span class={`h-1.5 w-1.5 rounded-full ${pinnedBacktestId ? 'bg-emerald-400' : 'bg-gray-500'}`}></span>
 				<span class="uppercase tracking-[0.12em]">Driver</span>
@@ -4515,13 +4517,10 @@
 		<div class="border-b border-[#222] bg-[#0a0a0a] px-4">
 			<div role="group" aria-label="Strategy detail sections" class="flex gap-6 text-xs uppercase tracking-wide">
 				{#each [
-					{ key: 'overview', label: 'Overview' },
-					{ key: 'backtests', label: 'Gauntlet' },
-					{ key: 'heatmap', label: 'Heatmap' },
-					{ key: 'markets', label: 'Markets' },
-					{ key: 'optimizations', label: 'Optimization' },
+					{ key: 'summary', label: 'Summary' },
 					{ key: 'robustness', label: 'Robustness' },
-					{ key: 'execution', label: 'Execution' },
+					{ key: 'runs', label: 'Runs' },
+					{ key: 'execution', label: 'Paper & live' },
 				] as tab (tab.key)}
 					<button
 						type="button"
@@ -4562,7 +4561,7 @@
 				</div>
 			{/if}
 
-			{#if activeTab === 'overview'}
+			{#if activeTab === 'summary'}
 				<!-- Identity strip — carries the strategy facts the removed Configuration tab used to show. -->
 				<div class="mb-3 flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="overview-identity-strip">
 					<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Strategy type">{String(container.configuration.type ?? '-')}</span>
@@ -4633,8 +4632,7 @@
 										quickScreenRows={quickScreenRows}
 										on:action={(e) => {
 											const action = e.detail?.action;
-											if (action === 'run_optimization' || action === 'apply_best_params') activeTab = 'optimizations';
-											else if (action === 'run_confirmation_backtest') activeTab = 'backtests';
+											if (action === 'run_optimization' || action === 'apply_best_params' || action === 'run_confirmation_backtest') activeTab = 'runs';
 											else if (action === 'run_validation_suite' || action === 're_run_validation_suite') activeTab = 'robustness';
 										}}
 									/>
@@ -4720,7 +4718,7 @@
 										type="button"
 										data-testid="overview-open-active-run"
 										class="border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase tracking-wide text-[#888] transition hover:text-white"
-										on:click={() => { activeTab = 'backtests'; if (activeRunItem) void openResult(activeRunItem); }}
+										on:click={() => { activeTab = 'runs'; if (activeRunItem) void openResult(activeRunItem); }}
 									>Open Run</button>
 								{/if}
 							</div>
@@ -4893,7 +4891,7 @@
 				</div>
 			{/if}
 
-			{#if activeTab === 'backtests'}
+			{#if activeTab === 'runs'}
 				<div>
 					<div>
 						<div class="mb-3 flex justify-end">
@@ -5388,34 +5386,13 @@
 				</div>
 				</div>
 			</div>
+				{#if selectedResultSection === 'backtests' && hasRunDetail}
+					{@render runDetail()}
+				{/if}
 			{/if}
 
-			{#if activeTab === 'heatmap' && toolRequest}
-				<div class="max-w-5xl space-y-3" data-testid="strategy-heatmap-tab">
-					<div>
-						<div class="text-xs uppercase tracking-widest text-white">Parameter heatmap</div>
-						<p class="mt-1 text-[11px] text-[#777]">
-							Does this strategy work across a range of its settings, or only at one exact point? A robust edge sits on a plateau of neighbouring settings that also work; a lone bright cell is usually fitted noise.
-						</p>
-					</div>
-					<ContainerHeatmap request={toolRequest} knobs={toolKnobs} on:adopt={(e) => adoptHeatmapSettings(e.detail)} />
-				</div>
-			{/if}
-
-			{#if activeTab === 'markets' && toolRequest}
-				<div class="max-w-5xl space-y-3" data-testid="strategy-markets-tab">
-					<div>
-						<div class="text-xs uppercase tracking-widest text-white">Market grid</div>
-						<p class="mt-1 text-[11px] text-[#777]">
-							Does the edge carry beyond {backtestForm.symbol || 'this market'}? The same strategy and settings on other markets and timeframes: an edge that only shows up where it was built is often fitted to that market.
-						</p>
-					</div>
-					<ContainerMarkets request={toolRequest} availability={toolAvailability} symbolOptions={toolSymbolOptions}
-						currentSymbol={backtestForm.symbol} currentTimeframe={backtestForm.timeframe} on:pick={(e) => useMarket(e.detail)} />
-				</div>
-			{/if}
-
-			{#if activeTab === 'optimizations'}
+			{#if activeTab === 'runs'}
+				<div class="mb-2 mt-6 text-[10px] uppercase tracking-[0.2em] text-[#555]" data-testid="runs-optimization-heading">Optimization</div>
 					<div class="mb-3 border border-[#1d1d1d] bg-[#090909] p-3">
 						<div class="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
 							<div class="grid gap-2 sm:grid-cols-2">
@@ -5737,6 +5714,9 @@
 							{/if}
 						</div>
 					</div>
+				{#if selectedResultSection === 'optimizations' && hasRunDetail}
+					{@render runDetail()}
+				{/if}
 			{/if}
 
 			{#if activeTab === 'robustness'}
@@ -5801,348 +5781,36 @@
 							</div>
 						{/if}
 					</div>
+				{#if selectedResultSection === 'robustness' && hasRunDetail}
+					{@render runDetail()}
+				{/if}
 				{/if}
 
+			{#if activeTab === 'robustness' && toolRequest}
+				<div class="mb-2 mt-6 text-[10px] uppercase tracking-[0.2em] text-[#555]" id="rb-sens">Sensitivity</div>
+			{/if}
+			{#if activeTab === 'robustness' && toolRequest}
+				<div class="max-w-5xl space-y-3" data-testid="strategy-heatmap-tab">
+					<div>
+						<div class="text-xs uppercase tracking-widest text-white">Parameter heatmap</div>
+						<p class="mt-1 text-[11px] text-[#777]">
+							Does this strategy work across a range of its settings, or only at one exact point? A robust edge sits on a plateau of neighbouring settings that also work; a lone bright cell is usually fitted noise.
+						</p>
+					</div>
+					<ContainerHeatmap request={toolRequest} knobs={toolKnobs} on:adopt={(e) => adoptHeatmapSettings(e.detail)} />
+				</div>
+			{/if}
 
-			{#if activeTab === selectedResultHomeTab && (resultLoading || !!resultError || !!selectedResult)}
-				<div class="mt-3 border border-[#1d1d1d] bg-[#090909] p-3">
-					{#if resultLoading}
-						<div class="py-4 text-center text-sm text-[#555]">Loading result details...</div>
-					{:else if resultError}
-						<div class="border border-red-900/50 bg-red-950/20 px-3 py-2 text-sm text-red-300">{resultError}</div>
-					{:else if selectedResult}
-						<div>
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<div class="flex flex-wrap items-center gap-2">
-									<span class="font-mono text-sm text-white">{selectedResultId}</span>
-									<span class={` border px-1.5 py-0.5 text-[10px] ${resultTypeBadge(selectedResult.result_type ?? '')}`}>{resultTypeLabel(selectedResult.result_type)}</span>
-									<span data-testid="selected-result-status-badge" class={` border px-1.5 py-0.5 text-[10px] ${statusBadgeClass(selectedResultStatus)}`}>{statusLabel(selectedResultStatus)}</span>
-									<span class="text-[11px] text-[#888]">{selectedResult.symbol || '--'} / {selectedResult.timeframe || '--'}</span>
-									{#if selectedResultWindow}
-										<span class="text-[11px] text-[#555]" data-testid="selected-result-window">{fmtShortDate(selectedResultWindow.start)} -> {fmtShortDate(selectedResultWindow.end)}</span>
-										<span class="text-[11px] text-[#555]">{fmtDuration(selectedResultWindow.start, selectedResultWindow.end)}</span>
-										{#if selectedResultWindow.requestedStart || selectedResultWindow.requestedEnd}
-											<span
-												class="border border-[#2b2b2b] px-1.5 py-0.5 text-[10px] text-[#888]"
-												data-testid="selected-result-requested-window"
-												title="The engine ran a different window than the one requested (the research holdout seal and data availability both move it). The dates on the left are what ran."
-											>requested {fmtShortDate(selectedResultWindow.requestedStart)} -> {fmtShortDate(selectedResultWindow.requestedEnd)}</span>
-										{/if}
-									{/if}
-								</div>
-								{#if isOptimizationResult()}
-									<div class="flex items-center gap-1.5">
-										<button type="button" class="border border-[#333] bg-[#0c0c0c] px-2 py-1 text-[10px] uppercase text-white hover:bg-[#111] disabled:opacity-40" on:click={backtestWithOptParams} disabled={isAnyRunInFlight}>{backtestingOptParams ? 'Running…' : 'Gauntlet With Params'}</button>
-										<button type="button" class="border border-emerald-700 bg-emerald-950/30 px-2 py-1 text-[10px] uppercase text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-40" on:click={setAsDefaultParams} disabled={settingDefaultParams || backtestingOptParams}>{settingDefaultParams ? 'Updating…' : 'Set As Default'}</button>
-									</div>
-								{/if}
-							</div>
-							{#if !selectedResultHasUsableMetrics}
-								<div data-testid="selected-result-status-banner" class={`mt-3 border px-3 py-2 text-sm ${statusBadgeClass(selectedResultStatus)}`}>
-									{#if selectedResultStatus === 'failed'}
-										This run failed before producing usable result artifacts.
-									{:else}
-										This run is still in progress. Refresh the strategy history after it finishes.
-									{/if}
-									{#if selectedResultErrorDetail}
-										<div data-testid="selected-result-error-detail" class="mt-2 font-mono text-xs opacity-90">{selectedResultErrorDetail}</div>
-									{/if}
-								</div>
-							{/if}
-							{#if selectedResultHasUsableMetrics}
-							<div class="mt-4 border border-[#1f1f1f] bg-[#070707] p-4">
-								<div class="flex flex-wrap items-center justify-between gap-3">
-									<div>
-										<div class="text-[10px] uppercase tracking-widest text-[#555]">Trade chart</div>
-										<div class="mt-1 text-sm text-[#888]">Candles, trades, decision indicators, and the exact params captured for this run.</div>
-										{#if selectedChartBars.length > 0}
-											<div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#555]">
-												<span class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1" data-testid="selected-chart-bar-count">
-													{fmtBarCount(selectedChartBars.length)}
-												</span>
-												<span class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1" data-testid="selected-chart-view-mode">
-													Full history
-												</span>
-												<span class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1" data-testid="selected-chart-range">
-													{fmtShortDate(selectedChartStart)} -> {fmtShortDate(selectedChartEnd)}
-												</span>
-											</div>
-										{/if}
-									</div>
-									{#if chartLoading}
-										<div class="rounded-full border border-[#333] bg-[#0c0c0c] px-2.5 py-1 text-[11px] text-white" data-testid="selected-chart-loading-chip">
-											Building chart...
-										</div>
-									{:else if selectedChartContext}
-										<div class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1 text-[11px] text-[#888]" data-testid="selected-chart-source">
-											{selectedChartContext.source === 'artifact' ? 'Stored snapshot' : 'Recomputed'}
-										</div>
-									{/if}
-								</div>
-								{#if chartContextError}
-									<div class="mt-3 flex items-center justify-between gap-3 border border-yellow-900 bg-yellow-500/5 px-3 py-3 text-sm text-yellow-400" data-testid="selected-result-chart-error">
-										<span>{chartContextError}</span>
-										{#if selectedResultItem}
-											<button
-												type="button"
-												class="shrink-0 border border-yellow-900 bg-yellow-500/10 px-2.5 py-1 text-xs text-yellow-400 transition hover:bg-yellow-500/10 disabled:opacity-40"
-												data-testid="selected-result-chart-retry"
-												disabled={chartLoading}
-												on:click={() => { if (selectedResultItem) void openResult(selectedResultItem); }}
-											>
-												Retry chart
-											</button>
-										{/if}
-									</div>
-								{/if}
-								{#if selectedChartWarnings.length > 0}
-									<div class="mt-3 space-y-2">
-										{#each selectedChartWarnings as warning}
-											<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-400">
-												{warning}
-											</div>
-										{/each}
-									</div>
-								{/if}
-								{#if chartLoading}
-									<div class="mt-3 border border-[#333] bg-[#0c0c0c] px-4 py-6 text-sm text-white" data-testid="selected-result-chart-loading">
-										Loading chart candles, trade markers, and decision overlays. Result details are ready below while this finishes.
-									</div>
-								{:else if selectedChartContext && selectedChartBars.length > 0}
-									<div class="mt-3 h-[420px] overflow-hidden border border-[#111] bg-black" data-testid="selected-result-chart">
-										<ChartWorkspace
-											data={selectedChartBars}
-											entryMarkers={selectedChartEntryMarkers}
-											exitMarkers={selectedChartExitMarkers}
-											mainIndicators={selectedChartMainIndicators}
-											subIndicators={selectedChartSubIndicators}
-											strategyName={selectedChartContext.strategy_name}
-											strategyMeta={selectedChartContext.strategy_meta}
-											strategyParams={selectedChartContext.strategy_params}
-											showStrategyInfo={true}
-											windowSize={0}
-											fitContentToken={chartFitContentToken}
-										/>
-									</div>
-								{:else if selectedChartContext && !chartContextError}
-									<div class="mt-3 border border-[#1f1f1f] bg-black px-4 py-6 text-sm text-[#555]">
-										No local OHLCV bars were available to render this run.
-									</div>
-								{/if}
-							</div>
-							{#if selectedResultHasEquityCurve}
-								<div class="mt-3 border border-[#1f1f1f] bg-black p-3" data-testid="selected-result-equity-curve">
-									<div class="flex flex-wrap items-center justify-between gap-2">
-										<div>
-											<div class="text-[10px] uppercase tracking-widest text-[#555]">Equity Curve</div>
-											<div class="mt-1 text-xs text-[#555]">
-												{#if selectedResultUsingFullCurve}
-													Entire backtest — in-sample shaded, out-of-sample bright (OOS divider marked); buy &amp; hold (amber dashed); drawdown subchart. Metrics are OOS-only.
-												{:else}
-													Strategy equity (cyan), buy &amp; hold benchmark (amber dashed), and the drawdown subchart.
-												{/if}
-											</div>
-										</div>
-										<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-[#555]">
-											{#if selectedResultUsingFullCurve}
-												<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400/45"></span>In-sample</span>
-											{/if}
-											<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>{selectedResultUsingFullCurve ? 'Out-of-sample' : 'Strategy'}</span>
-											{#if benchmarkCurveForChart && benchmarkCurveForChart.length > 0}
-												<span class="flex items-center gap-1.5"><span class="w-4 border-t border-dashed border-amber-500"></span>Buy &amp; Hold</span>
-											{/if}
-											<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-red-500/60"></span>Drawdown</span>
-										</div>
-									</div>
-									<div class="mt-3">
-										{#key selectedResultId}
-											<EquityChart
-												data={equityCurveForChart ?? []}
-												benchmarkData={benchmarkCurveForChart}
-												oosStartTimestamp={oosStartTimestampForChart}
-												showDrawdown={true}
-												height={320}
-											/>
-										{/key}
-									</div>
-								</div>
-							{/if}
-							<div class="mt-3 border border-[#1f1f1f] bg-black px-3 py-2" data-testid="selected-result-metrics-strip">
-								<div class="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-stretch">
-									<div class="border border-[#333] bg-[#0c0c0c] px-3 py-2">
-										<div class="text-[9px] font-semibold uppercase tracking-widest text-white">In-sample (IS)</div>
-										<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-											<div title={isResultCagrReliable(selectedResult) ? 'In-sample CAGR (annualized)' : 'Short window (<1 month) — annualized value may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">CAGR</span> <span data-testid="selected-result-in-sample-cagr" class={isResultCagrReliable(selectedResult) ? signedPercentClass(readResultInSampleCagr(selectedResult)) : 'text-[#555]'}>{formatResultInSampleCagr(selectedResult)}</span></div>
-											<div title={isResultSharpeReliable(selectedResult) ? 'In-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe</span> <span data-testid="selected-result-in-sample-sharpe" class={isResultSharpeReliable(selectedResult) ? 'text-[#aaa]' : 'text-[#555]'}>{formatResultInSampleSharpe(selectedResult)}</span></div>
-										</div>
-									</div>
-									<div class="border border-emerald-900/30 bg-emerald-950/10 px-3 py-2">
-										<div class="text-[9px] font-semibold uppercase tracking-widest text-emerald-500/80">Out-of-sample (OOS)</div>
-										<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-											<div title={isResultCagrReliable(selectedResult) ? 'Out-of-sample CAGR (annualized)' : 'Short OOS window (<1 month) — annualized value may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">CAGR</span> <span data-testid="selected-result-cagr" class={isResultCagrReliable(selectedResult) ? signedPercentClass(readResultOutOfSampleCagr(selectedResult)) : 'text-[#555]'}>{formatResultOutOfSampleCagr(selectedResult)}</span></div>
-											<div title={isResultSharpeReliable(selectedResult) ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe</span> <span data-testid="selected-result-sharpe" class={isResultSharpeReliable(selectedResult) ? 'text-[#aaa]' : 'text-[#555]'}>{formatResultOutOfSampleSharpe(selectedResult)}</span></div>
-											<div title="Cumulative out-of-sample return (not annualized)"><span class="text-[10px] uppercase text-[#555] mr-1">Return</span> <span data-testid="selected-result-total-return" class={readResultPercentMetric(selectedResult, 'total_return_pct', 'total_return') >= 0 ? 'text-emerald-400' : 'text-red-400'}>{pct(readResultPercentMetric(selectedResult, 'total_return_pct', 'total_return'))}</span></div>
-											<div><span class="text-[10px] uppercase text-[#555] mr-1">Max DD</span> <span data-testid="selected-result-max-drawdown" class="text-red-400">{pct(readResultDrawdownPercentMetric(selectedResult, 'max_drawdown_pct', 'max_drawdown'))}</span></div>
-											<div><span class="text-[10px] uppercase text-[#555] mr-1">Win%</span> <span data-testid="selected-result-win-rate" class="text-[#aaa]">{pct(readResultPercentMetric(selectedResult, 'win_rate', 'win_rate_pct'))}</span></div>
-											<div><span class="text-[10px] uppercase text-[#555] mr-1">Trades</span> <span data-testid="selected-result-trades" class="text-[#aaa]">{formatResultTradesCount(selectedResult)}</span></div>
-											<div title={readResultFlag(selectedResult, 'profit_factor_is_infinite') === true ? 'No losing trades — profit factor is mathematically infinite' : 'Gross profit / gross loss'}><span class="text-[10px] uppercase text-[#555] mr-1">PF</span> <span class="text-[#aaa]">{formatResultProfitFactor(selectedResult)}</span></div>
-										</div>
-									</div>
-									<div class="border border-[#222] bg-[#070707] px-3 py-2">
-										<div class="text-[9px] font-semibold uppercase tracking-widest text-[#555]">Retention</div>
-										<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-													<div title={OOS_RETENTION_TITLE}><span class="text-[10px] uppercase text-[#555] mr-1">OOS/IS</span> <span data-testid="selected-result-robustness" class="text-[#aaa]">{formatResultRobustness(selectedResult)}</span></div>
-										</div>
-									</div>
-									{#if readResultCoverage(selectedResult, 'funding_coverage_pct') !== null || readResultCoverage(selectedResult, 'open_interest_coverage_pct') !== null}
-										<div class="border border-[#222] bg-[#070707] px-3 py-2" data-testid="selected-result-data-coverage">
-											<div class="text-[9px] font-semibold uppercase tracking-widest text-[#555]">Data</div>
-											<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-												<div title="Share of the backtest window with funding-rate data. Low coverage means funding costs are under-measured."><span class="text-[10px] uppercase text-[#555] mr-1">Funding</span> <span class={coverageToneClass(readResultCoverage(selectedResult, 'funding_coverage_pct'))}>{formatCoveragePct(readResultCoverage(selectedResult, 'funding_coverage_pct'))}</span></div>
-												<div title="Share of the backtest window with open-interest data. OI accumulates forward from snapshots and cannot be backfilled."><span class="text-[10px] uppercase text-[#555] mr-1">OI</span> <span class={coverageToneClass(readResultCoverage(selectedResult, 'open_interest_coverage_pct'))}>{formatCoveragePct(readResultCoverage(selectedResult, 'open_interest_coverage_pct'))}</span></div>
-											</div>
-										</div>
-									{/if}
-								</div>
-							</div>
-							{#if readResultDataQualityFlags(selectedResult).length > 0}
-								<div class="mt-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2" role="alert" data-testid="selected-result-data-quality-banner">
-									<div class="text-[10px] font-semibold uppercase tracking-widest text-yellow-400">Data quality hold — metrics quarantined</div>
-									<ul class="mt-1 list-disc pl-5 text-xs text-yellow-400">
-										{#each readResultDataQualityFlags(selectedResult) as flag}
-											<li>{flag}</li>
-										{/each}
-									</ul>
-									<p class="mt-1 text-[11px] text-yellow-400">These numbers are implausible (engine/data bug signature) and are excluded from gate decisions. Re-run the backtest once data coverage has converged.</p>
-								</div>
-							{/if}
-							{#if selectedResultRiskMetrics.length > 0}
-								<div class="mt-3 border border-[#1f1f1f] bg-black px-3 py-3" data-testid="selected-result-risk-metrics">
-									<div class="text-[10px] uppercase tracking-widest text-[#555]">Risk-adjusted metrics</div>
-									<div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-										{#each selectedResultRiskMetrics as metric}
-											<div class="border border-[#1a1a1a] bg-[#070707] px-2.5 py-2" title={metric.title}>
-												<div class="text-[9px] uppercase tracking-wide text-[#555]">{metric.label}</div>
-												<div class={`mt-1 font-mono text-sm ${riskMetricToneClass(metric.tone)}`}>{metric.value}</div>
-											</div>
-										{/each}
-									</div>
-								</div>
-							{/if}
-							{#if selectedResultMonthlyHeatmap}
-								<div class="mt-3 overflow-x-auto border border-[#1f1f1f] bg-black px-3 py-3" data-testid="selected-result-monthly-heatmap">
-									<div class="text-[10px] uppercase tracking-widest text-[#555]">Monthly returns · out of sample</div>
-									<div class="mt-1 text-xs text-[#555]">Month-over-month change of the out-of-sample equity curve (the metrics' window, not the full chart above). Green = gain, red = loss.</div>
-									<div class="mt-2">
-										<HeatmapChart
-											data={selectedResultMonthlyHeatmap.data}
-											xLabels={selectedResultMonthlyHeatmap.xLabels}
-											yLabels={selectedResultMonthlyHeatmap.yLabels}
-											colorScale="diverging"
-											width={Math.max(560, selectedResultMonthlyHeatmap.xLabels.length * 46 + 80)}
-											height={Math.max(140, selectedResultMonthlyHeatmap.yLabels.length * 30 + 60)}
-											valueFormat={(v) => `${v.toFixed(1)}%`}
-										/>
-									</div>
-								</div>
-							{/if}
-							{#if selectedResultComparison}
-								<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 border border-[#1f1f1f] bg-[#070707] px-3 py-2 text-xs">
-									<div><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe Rank</span> <span class="font-mono text-white">#{selectedResultComparison.sharpeRank}/{selectedResultComparison.sampleSize}</span> <span class="text-[#555]">({selectedResultComparison.sharpePercentile}p)</span></div>
-									<div><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe vs Med</span> <span class={`font-mono ${comparisonDeltaClass(selectedResultComparison.sharpeDeltaVsMedian)}`}>{comparisonDeltaLabel(selectedResultComparison.sharpeDeltaVsMedian)}</span></div>
-									<div><span class="text-[10px] uppercase text-[#555] mr-1">Return vs Med</span> <span class={`font-mono ${comparisonDeltaClass(selectedResultComparison.returnDeltaVsMedian)}`}>{comparisonDeltaLabel(selectedResultComparison.returnDeltaVsMedian, { suffix: '%' })}</span></div>
-									<div><span class="text-[10px] uppercase text-[#555] mr-1">DD vs Med</span> <span class={`font-mono ${comparisonDeltaClass(selectedResultComparison.drawdownDeltaVsMedian, { inverse: true })}`}>{comparisonDeltaLabel(selectedResultComparison.drawdownDeltaVsMedian, { inverse: true, suffix: '%' })}</span></div>
-								</div>
-							{/if}
-								{#if isOptimizationResult()}
-								<div class="mt-2 border border-[#333] bg-[#0c0c0c] px-2 py-1.5 text-[11px] text-white">
-									{Object.keys(getOptBestParams() || {}).length} optimized parameters available
-								</div>
-							{/if}
-							{/if}
-							</div>
-					{/if}
-
-					{#if selectedResult?.trades?.length}
-						<div class="mt-4 border border-[#222] bg-[#090909]" data-testid="selected-result-trades">
-							<div class="flex flex-wrap items-center gap-2 border-b border-[#1a1a1a] px-3 py-2">
-								<span class="text-[10px] uppercase tracking-wide text-[#555]">Out-of-sample trades ({selectedResult.trades.length})</span>
-								<span class="rounded-full border border-emerald-900/40 bg-emerald-950/20 px-2 py-0.5 text-[9px] uppercase tracking-wide text-emerald-300/80" title="The trade list reflects out-of-sample execution only.">OOS</span>
-							</div>
-							<div class="max-h-[480px] overflow-auto">
-								<table class="w-full text-xs">
-									<thead class="sticky top-0 bg-[#0d0d0d] text-[#555]">
-										<tr>
-											<th class="px-2 py-2 text-right">#</th>
-											<th class="px-2 py-2 text-left">Dir</th>
-											<th class="px-2 py-2 text-left" title="Bar time, UTC">Entry (UTC)</th>
-											<th class="px-2 py-2 text-right">Entry</th>
-											<th class="px-2 py-2 text-left" title="Bar time, UTC">Exit (UTC)</th>
-											<th class="px-2 py-2 text-right">Exit</th>
-											{#if selectedTradesHaveExitReason}
-												<th class="px-2 py-2 text-left">Exit Reason</th>
-											{/if}
-											{#if selectedTradesHaveSizeFraction}
-												<th class="px-2 py-2 text-right">Size</th>
-											{/if}
-											<th class="px-2 py-2 text-right">PnL $</th>
-											<th class="px-2 py-2 text-right">PnL%</th>
-											{#if selectedTradesHaveExcursions}
-												<th class="px-2 py-2 text-right">MAE%</th>
-												<th class="px-2 py-2 text-right">MFE%</th>
-											{/if}
-											<th class="px-2 py-2 text-right">Bars</th>
-										</tr>
-									</thead>
-									<tbody>
-										{#each selectedResult.trades as trade, i}
-											<tr class="border-t border-[#111] hover:bg-[#111]">
-												<td class="px-2 py-1.5 text-right font-mono text-[#555]">{i + 1}</td>
-												<td class="px-2 py-1.5 {trade.direction === 'short' ? 'text-red-400' : 'text-emerald-400'}">{trade.direction ?? 'long'}</td>
-												<td class="px-2 py-1.5 font-mono text-[#888]">{fmtUtcDateTime(trade.entry_time)}</td>
-												<td class="px-2 py-1.5 text-right font-mono text-[#aaa]">{asNumber(trade.entry_price, 0).toFixed(2)}</td>
-												<td class="px-2 py-1.5 font-mono text-[#888]">{fmtUtcDateTime(trade.exit_time)}</td>
-												<td class="px-2 py-1.5 text-right font-mono text-[#aaa]">{asNumber(trade.exit_price, 0).toFixed(2)}</td>
-												{#if selectedTradesHaveExitReason}
-													<td class="px-2 py-1.5 text-left font-mono text-[#888]">{tradeExitReason(trade) ?? '-'}</td>
-												{/if}
-												{#if selectedTradesHaveSizeFraction}
-													<td class="px-2 py-1.5 text-right font-mono text-[#888]">{tradeSizeFraction(trade) != null ? `${(tradeSizeFraction(trade)! * 100).toFixed(1)}%` : '-'}</td>
-												{/if}
-												<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.pnl, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatSignedCurrency(asNumber(trade.pnl, 0))}</td>
-												<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.return_pct, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.return_pct)}</td>
-												{#if selectedTradesHaveExcursions}
-													<td class="px-2 py-1.5 text-right font-mono text-red-400/60">{trade.mae != null ? pct(trade.mae) : '-'}</td>
-													<td class="px-2 py-1.5 text-right font-mono text-emerald-400/60">{trade.mfe != null ? pct(trade.mfe) : '-'}</td>
-												{/if}
-												<td class="px-2 py-1.5 text-right font-mono text-[#888]">{trade.bars_held ?? '-'}</td>
-											</tr>
-										{/each}
-									</tbody>
-									{#if selectedResultTradeSummary}
-										<tfoot class="sticky bottom-0 border-t-2 border-[#222] bg-[#0d0d0d] text-[#888]">
-											<tr>
-												<td class="px-2 py-2 text-[10px] uppercase tracking-wide text-[#555]" colspan={selectedTradeColumnCount}>
-													<div class="flex flex-wrap gap-x-4 gap-y-1 font-mono normal-case" data-testid="selected-result-trade-summary">
-														<span><span class="text-[#555]">Wins</span> <span class="text-emerald-400">{selectedResultTradeSummary.wins}</span> / <span class="text-[#555]">Losses</span> <span class="text-red-400">{selectedResultTradeSummary.losses}</span>{#if selectedResultTradeSummary.breakeven > 0} / <span class="text-[#555]">BE</span> <span class="text-[#888]">{selectedResultTradeSummary.breakeven}</span>{/if}</span>
-														<span><span class="text-[#555]">Win%</span> <span class="text-[#aaa]">{selectedResultTradeSummary.winRatePct.toFixed(1)}%</span></span>
-														<span><span class="text-[#555]">Avg win</span> <span class="text-emerald-400">{formatSignedCurrency(selectedResultTradeSummary.avgWin)}</span></span>
-														<span><span class="text-[#555]">Avg loss</span> <span class="text-red-400">{formatSignedCurrency(-selectedResultTradeSummary.avgLoss)}</span></span>
-														<span><span class="text-[#555]">Payoff</span> <span class="text-[#aaa]">{selectedResultTradeSummary.payoffRatio != null ? selectedResultTradeSummary.payoffRatio.toFixed(2) : '∞'}</span></span>
-														<span><span class="text-[#555]">Largest win</span> <span class="text-emerald-400">{formatSignedCurrency(selectedResultTradeSummary.largestWin)}</span></span>
-														<span><span class="text-[#555]">Largest loss</span> <span class="text-red-400">{formatSignedCurrency(selectedResultTradeSummary.largestLoss)}</span></span>
-														<span><span class="text-[#555]">Expectancy</span> <span class={selectedResultTradeSummary.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(selectedResultTradeSummary.expectancy)}</span></span>
-														<span><span class="text-[#555]">Win streak</span> <span class="text-emerald-400">{selectedResultTradeSummary.longestWinStreak}</span></span>
-														<span><span class="text-[#555]">Loss streak</span> <span class="text-red-400">{selectedResultTradeSummary.longestLossStreak}</span></span>
-													</div>
-												</td>
-											</tr>
-										</tfoot>
-									{/if}
-								</table>
-							</div>
-						</div>
-					{/if}
+			{#if activeTab === 'robustness' && toolRequest}
+				<div class="max-w-5xl space-y-3" data-testid="strategy-markets-tab">
+					<div>
+						<div class="text-xs uppercase tracking-widest text-white">Market grid</div>
+						<p class="mt-1 text-[11px] text-[#777]">
+							Does the edge carry beyond {backtestForm.symbol || 'this market'}? The same strategy and settings on other markets and timeframes: an edge that only shows up where it was built is often fitted to that market.
+						</p>
+					</div>
+					<ContainerMarkets request={toolRequest} availability={toolAvailability} symbolOptions={toolSymbolOptions}
+						currentSymbol={backtestForm.symbol} currentTimeframe={backtestForm.timeframe} on:pick={(e) => useMarket(e.detail)} />
 				</div>
 			{/if}
 
@@ -6327,6 +5995,348 @@
 		</div>
 	{/if}
 </div>
+
+{#snippet runDetail()}
+		<div class="mt-3 border border-[#1d1d1d] bg-[#090909] p-3">
+			{#if resultLoading}
+				<div class="py-4 text-center text-sm text-[#555]">Loading result details...</div>
+			{:else if resultError}
+				<div class="border border-red-900/50 bg-red-950/20 px-3 py-2 text-sm text-red-300">{resultError}</div>
+			{:else if selectedResult}
+				<div>
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<div class="flex flex-wrap items-center gap-2">
+							<span class="font-mono text-sm text-white">{selectedResultId}</span>
+							<span class={` border px-1.5 py-0.5 text-[10px] ${resultTypeBadge(selectedResult.result_type ?? '')}`}>{resultTypeLabel(selectedResult.result_type)}</span>
+							<span data-testid="selected-result-status-badge" class={` border px-1.5 py-0.5 text-[10px] ${statusBadgeClass(selectedResultStatus)}`}>{statusLabel(selectedResultStatus)}</span>
+							<span class="text-[11px] text-[#888]">{selectedResult.symbol || '--'} / {selectedResult.timeframe || '--'}</span>
+							{#if selectedResultWindow}
+								<span class="text-[11px] text-[#555]" data-testid="selected-result-window">{fmtShortDate(selectedResultWindow.start)} -> {fmtShortDate(selectedResultWindow.end)}</span>
+								<span class="text-[11px] text-[#555]">{fmtDuration(selectedResultWindow.start, selectedResultWindow.end)}</span>
+								{#if selectedResultWindow.requestedStart || selectedResultWindow.requestedEnd}
+									<span
+										class="border border-[#2b2b2b] px-1.5 py-0.5 text-[10px] text-[#888]"
+										data-testid="selected-result-requested-window"
+										title="The engine ran a different window than the one requested (the research holdout seal and data availability both move it). The dates on the left are what ran."
+									>requested {fmtShortDate(selectedResultWindow.requestedStart)} -> {fmtShortDate(selectedResultWindow.requestedEnd)}</span>
+								{/if}
+							{/if}
+						</div>
+						{#if isOptimizationResult()}
+							<div class="flex items-center gap-1.5">
+								<button type="button" class="border border-[#333] bg-[#0c0c0c] px-2 py-1 text-[10px] uppercase text-white hover:bg-[#111] disabled:opacity-40" on:click={backtestWithOptParams} disabled={isAnyRunInFlight}>{backtestingOptParams ? 'Running…' : 'Gauntlet With Params'}</button>
+								<button type="button" class="border border-emerald-700 bg-emerald-950/30 px-2 py-1 text-[10px] uppercase text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-40" on:click={setAsDefaultParams} disabled={settingDefaultParams || backtestingOptParams}>{settingDefaultParams ? 'Updating…' : 'Set As Default'}</button>
+							</div>
+						{/if}
+					</div>
+					{#if !selectedResultHasUsableMetrics}
+						<div data-testid="selected-result-status-banner" class={`mt-3 border px-3 py-2 text-sm ${statusBadgeClass(selectedResultStatus)}`}>
+							{#if selectedResultStatus === 'failed'}
+								This run failed before producing usable result artifacts.
+							{:else}
+								This run is still in progress. Refresh the strategy history after it finishes.
+							{/if}
+							{#if selectedResultErrorDetail}
+								<div data-testid="selected-result-error-detail" class="mt-2 font-mono text-xs opacity-90">{selectedResultErrorDetail}</div>
+							{/if}
+						</div>
+					{/if}
+					{#if selectedResultHasUsableMetrics}
+					<div class="mt-4 border border-[#1f1f1f] bg-[#070707] p-4">
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div>
+								<div class="text-[10px] uppercase tracking-widest text-[#555]">Trade chart</div>
+								<div class="mt-1 text-sm text-[#888]">Candles, trades, decision indicators, and the exact params captured for this run.</div>
+								{#if selectedChartBars.length > 0}
+									<div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#555]">
+										<span class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1" data-testid="selected-chart-bar-count">
+											{fmtBarCount(selectedChartBars.length)}
+										</span>
+										<span class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1" data-testid="selected-chart-view-mode">
+											Full history
+										</span>
+										<span class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1" data-testid="selected-chart-range">
+											{fmtShortDate(selectedChartStart)} -> {fmtShortDate(selectedChartEnd)}
+										</span>
+									</div>
+								{/if}
+							</div>
+							{#if chartLoading}
+								<div class="rounded-full border border-[#333] bg-[#0c0c0c] px-2.5 py-1 text-[11px] text-white" data-testid="selected-chart-loading-chip">
+									Building chart...
+								</div>
+							{:else if selectedChartContext}
+								<div class="rounded-full border border-[#2b2b2b] bg-black px-2.5 py-1 text-[11px] text-[#888]" data-testid="selected-chart-source">
+									{selectedChartContext.source === 'artifact' ? 'Stored snapshot' : 'Recomputed'}
+								</div>
+							{/if}
+						</div>
+						{#if chartContextError}
+							<div class="mt-3 flex items-center justify-between gap-3 border border-yellow-900 bg-yellow-500/5 px-3 py-3 text-sm text-yellow-400" data-testid="selected-result-chart-error">
+								<span>{chartContextError}</span>
+								{#if selectedResultItem}
+									<button
+										type="button"
+										class="shrink-0 border border-yellow-900 bg-yellow-500/10 px-2.5 py-1 text-xs text-yellow-400 transition hover:bg-yellow-500/10 disabled:opacity-40"
+										data-testid="selected-result-chart-retry"
+										disabled={chartLoading}
+										on:click={() => { if (selectedResultItem) void openResult(selectedResultItem); }}
+									>
+										Retry chart
+									</button>
+								{/if}
+							</div>
+						{/if}
+						{#if selectedChartWarnings.length > 0}
+							<div class="mt-3 space-y-2">
+								{#each selectedChartWarnings as warning}
+									<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-400">
+										{warning}
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{#if chartLoading}
+							<div class="mt-3 border border-[#333] bg-[#0c0c0c] px-4 py-6 text-sm text-white" data-testid="selected-result-chart-loading">
+								Loading chart candles, trade markers, and decision overlays. Result details are ready below while this finishes.
+							</div>
+						{:else if selectedChartContext && selectedChartBars.length > 0}
+							<div class="mt-3 h-[420px] overflow-hidden border border-[#111] bg-black" data-testid="selected-result-chart">
+								<ChartWorkspace
+									data={selectedChartBars}
+									entryMarkers={selectedChartEntryMarkers}
+									exitMarkers={selectedChartExitMarkers}
+									mainIndicators={selectedChartMainIndicators}
+									subIndicators={selectedChartSubIndicators}
+									strategyName={selectedChartContext.strategy_name}
+									strategyMeta={selectedChartContext.strategy_meta}
+									strategyParams={selectedChartContext.strategy_params}
+									showStrategyInfo={true}
+									windowSize={0}
+									fitContentToken={chartFitContentToken}
+								/>
+							</div>
+						{:else if selectedChartContext && !chartContextError}
+							<div class="mt-3 border border-[#1f1f1f] bg-black px-4 py-6 text-sm text-[#555]">
+								No local OHLCV bars were available to render this run.
+							</div>
+						{/if}
+					</div>
+					{#if selectedResultHasEquityCurve}
+						<div class="mt-3 border border-[#1f1f1f] bg-black p-3" data-testid="selected-result-equity-curve">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div>
+									<div class="text-[10px] uppercase tracking-widest text-[#555]">Equity Curve</div>
+									<div class="mt-1 text-xs text-[#555]">
+										{#if selectedResultUsingFullCurve}
+											Entire backtest — in-sample shaded, out-of-sample bright (OOS divider marked); buy &amp; hold (amber dashed); drawdown subchart. Metrics are OOS-only.
+										{:else}
+											Strategy equity (cyan), buy &amp; hold benchmark (amber dashed), and the drawdown subchart.
+										{/if}
+									</div>
+								</div>
+								<div class="flex items-center gap-3 text-[10px] uppercase tracking-wide text-[#555]">
+									{#if selectedResultUsingFullCurve}
+										<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400/45"></span>In-sample</span>
+									{/if}
+									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-cyan-400"></span>{selectedResultUsingFullCurve ? 'Out-of-sample' : 'Strategy'}</span>
+									{#if benchmarkCurveForChart && benchmarkCurveForChart.length > 0}
+										<span class="flex items-center gap-1.5"><span class="w-4 border-t border-dashed border-amber-500"></span>Buy &amp; Hold</span>
+									{/if}
+									<span class="flex items-center gap-1.5"><span class="h-0.5 w-4 rounded-full bg-red-500/60"></span>Drawdown</span>
+								</div>
+							</div>
+							<div class="mt-3">
+								{#key selectedResultId}
+									<EquityChart
+										data={equityCurveForChart ?? []}
+										benchmarkData={benchmarkCurveForChart}
+										oosStartTimestamp={oosStartTimestampForChart}
+										showDrawdown={true}
+										height={320}
+									/>
+								{/key}
+							</div>
+						</div>
+					{/if}
+					<div class="mt-3 border border-[#1f1f1f] bg-black px-3 py-2" data-testid="selected-result-metrics-strip">
+						<div class="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-stretch">
+							<div class="border border-[#333] bg-[#0c0c0c] px-3 py-2">
+								<div class="text-[9px] font-semibold uppercase tracking-widest text-white">In-sample (IS)</div>
+								<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
+									<div title={isResultCagrReliable(selectedResult) ? 'In-sample CAGR (annualized)' : 'Short window (<1 month) — annualized value may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">CAGR</span> <span data-testid="selected-result-in-sample-cagr" class={isResultCagrReliable(selectedResult) ? signedPercentClass(readResultInSampleCagr(selectedResult)) : 'text-[#555]'}>{formatResultInSampleCagr(selectedResult)}</span></div>
+									<div title={isResultSharpeReliable(selectedResult) ? 'In-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe</span> <span data-testid="selected-result-in-sample-sharpe" class={isResultSharpeReliable(selectedResult) ? 'text-[#aaa]' : 'text-[#555]'}>{formatResultInSampleSharpe(selectedResult)}</span></div>
+								</div>
+							</div>
+							<div class="border border-emerald-900/30 bg-emerald-950/10 px-3 py-2">
+								<div class="text-[9px] font-semibold uppercase tracking-widest text-emerald-500/80">Out-of-sample (OOS)</div>
+								<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
+									<div title={isResultCagrReliable(selectedResult) ? 'Out-of-sample CAGR (annualized)' : 'Short OOS window (<1 month) — annualized value may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">CAGR</span> <span data-testid="selected-result-cagr" class={isResultCagrReliable(selectedResult) ? signedPercentClass(readResultOutOfSampleCagr(selectedResult)) : 'text-[#555]'}>{formatResultOutOfSampleCagr(selectedResult)}</span></div>
+									<div title={isResultSharpeReliable(selectedResult) ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe</span> <span data-testid="selected-result-sharpe" class={isResultSharpeReliable(selectedResult) ? 'text-[#aaa]' : 'text-[#555]'}>{formatResultOutOfSampleSharpe(selectedResult)}</span></div>
+									<div title="Cumulative out-of-sample return (not annualized)"><span class="text-[10px] uppercase text-[#555] mr-1">Return</span> <span data-testid="selected-result-total-return" class={readResultPercentMetric(selectedResult, 'total_return_pct', 'total_return') >= 0 ? 'text-emerald-400' : 'text-red-400'}>{pct(readResultPercentMetric(selectedResult, 'total_return_pct', 'total_return'))}</span></div>
+									<div><span class="text-[10px] uppercase text-[#555] mr-1">Max DD</span> <span data-testid="selected-result-max-drawdown" class="text-red-400">{pct(readResultDrawdownPercentMetric(selectedResult, 'max_drawdown_pct', 'max_drawdown'))}</span></div>
+									<div><span class="text-[10px] uppercase text-[#555] mr-1">Win%</span> <span data-testid="selected-result-win-rate" class="text-[#aaa]">{pct(readResultPercentMetric(selectedResult, 'win_rate', 'win_rate_pct'))}</span></div>
+									<div><span class="text-[10px] uppercase text-[#555] mr-1">Trades</span> <span data-testid="selected-result-trades" class="text-[#aaa]">{formatResultTradesCount(selectedResult)}</span></div>
+									<div title={readResultFlag(selectedResult, 'profit_factor_is_infinite') === true ? 'No losing trades — profit factor is mathematically infinite' : 'Gross profit / gross loss'}><span class="text-[10px] uppercase text-[#555] mr-1">PF</span> <span class="text-[#aaa]">{formatResultProfitFactor(selectedResult)}</span></div>
+								</div>
+							</div>
+							<div class="border border-[#222] bg-[#070707] px-3 py-2">
+								<div class="text-[9px] font-semibold uppercase tracking-widest text-[#555]">Retention</div>
+								<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
+											<div title={OOS_RETENTION_TITLE}><span class="text-[10px] uppercase text-[#555] mr-1">OOS/IS</span> <span data-testid="selected-result-robustness" class="text-[#aaa]">{formatResultRobustness(selectedResult)}</span></div>
+								</div>
+							</div>
+							{#if readResultCoverage(selectedResult, 'funding_coverage_pct') !== null || readResultCoverage(selectedResult, 'open_interest_coverage_pct') !== null}
+								<div class="border border-[#222] bg-[#070707] px-3 py-2" data-testid="selected-result-data-coverage">
+									<div class="text-[9px] font-semibold uppercase tracking-widest text-[#555]">Data</div>
+									<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
+										<div title="Share of the backtest window with funding-rate data. Low coverage means funding costs are under-measured."><span class="text-[10px] uppercase text-[#555] mr-1">Funding</span> <span class={coverageToneClass(readResultCoverage(selectedResult, 'funding_coverage_pct'))}>{formatCoveragePct(readResultCoverage(selectedResult, 'funding_coverage_pct'))}</span></div>
+										<div title="Share of the backtest window with open-interest data. OI accumulates forward from snapshots and cannot be backfilled."><span class="text-[10px] uppercase text-[#555] mr-1">OI</span> <span class={coverageToneClass(readResultCoverage(selectedResult, 'open_interest_coverage_pct'))}>{formatCoveragePct(readResultCoverage(selectedResult, 'open_interest_coverage_pct'))}</span></div>
+									</div>
+								</div>
+							{/if}
+						</div>
+					</div>
+					{#if readResultDataQualityFlags(selectedResult).length > 0}
+						<div class="mt-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2" role="alert" data-testid="selected-result-data-quality-banner">
+							<div class="text-[10px] font-semibold uppercase tracking-widest text-yellow-400">Data quality hold — metrics quarantined</div>
+							<ul class="mt-1 list-disc pl-5 text-xs text-yellow-400">
+								{#each readResultDataQualityFlags(selectedResult) as flag}
+									<li>{flag}</li>
+								{/each}
+							</ul>
+							<p class="mt-1 text-[11px] text-yellow-400">These numbers are implausible (engine/data bug signature) and are excluded from gate decisions. Re-run the backtest once data coverage has converged.</p>
+						</div>
+					{/if}
+					{#if selectedResultRiskMetrics.length > 0}
+						<div class="mt-3 border border-[#1f1f1f] bg-black px-3 py-3" data-testid="selected-result-risk-metrics">
+							<div class="text-[10px] uppercase tracking-widest text-[#555]">Risk-adjusted metrics</div>
+							<div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+								{#each selectedResultRiskMetrics as metric}
+									<div class="border border-[#1a1a1a] bg-[#070707] px-2.5 py-2" title={metric.title}>
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">{metric.label}</div>
+										<div class={`mt-1 font-mono text-sm ${riskMetricToneClass(metric.tone)}`}>{metric.value}</div>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
+					{#if selectedResultMonthlyHeatmap}
+						<div class="mt-3 overflow-x-auto border border-[#1f1f1f] bg-black px-3 py-3" data-testid="selected-result-monthly-heatmap">
+							<div class="text-[10px] uppercase tracking-widest text-[#555]">Monthly returns · out of sample</div>
+							<div class="mt-1 text-xs text-[#555]">Month-over-month change of the out-of-sample equity curve (the metrics' window, not the full chart above). Green = gain, red = loss.</div>
+							<div class="mt-2">
+								<HeatmapChart
+									data={selectedResultMonthlyHeatmap.data}
+									xLabels={selectedResultMonthlyHeatmap.xLabels}
+									yLabels={selectedResultMonthlyHeatmap.yLabels}
+									colorScale="diverging"
+									width={Math.max(560, selectedResultMonthlyHeatmap.xLabels.length * 46 + 80)}
+									height={Math.max(140, selectedResultMonthlyHeatmap.yLabels.length * 30 + 60)}
+									valueFormat={(v) => `${v.toFixed(1)}%`}
+								/>
+							</div>
+						</div>
+					{/if}
+					{#if selectedResultComparison}
+						<div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 border border-[#1f1f1f] bg-[#070707] px-3 py-2 text-xs">
+							<div><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe Rank</span> <span class="font-mono text-white">#{selectedResultComparison.sharpeRank}/{selectedResultComparison.sampleSize}</span> <span class="text-[#555]">({selectedResultComparison.sharpePercentile}p)</span></div>
+							<div><span class="text-[10px] uppercase text-[#555] mr-1">Sharpe vs Med</span> <span class={`font-mono ${comparisonDeltaClass(selectedResultComparison.sharpeDeltaVsMedian)}`}>{comparisonDeltaLabel(selectedResultComparison.sharpeDeltaVsMedian)}</span></div>
+							<div><span class="text-[10px] uppercase text-[#555] mr-1">Return vs Med</span> <span class={`font-mono ${comparisonDeltaClass(selectedResultComparison.returnDeltaVsMedian)}`}>{comparisonDeltaLabel(selectedResultComparison.returnDeltaVsMedian, { suffix: '%' })}</span></div>
+							<div><span class="text-[10px] uppercase text-[#555] mr-1">DD vs Med</span> <span class={`font-mono ${comparisonDeltaClass(selectedResultComparison.drawdownDeltaVsMedian, { inverse: true })}`}>{comparisonDeltaLabel(selectedResultComparison.drawdownDeltaVsMedian, { inverse: true, suffix: '%' })}</span></div>
+						</div>
+					{/if}
+						{#if isOptimizationResult()}
+						<div class="mt-2 border border-[#333] bg-[#0c0c0c] px-2 py-1.5 text-[11px] text-white">
+							{Object.keys(getOptBestParams() || {}).length} optimized parameters available
+						</div>
+					{/if}
+					{/if}
+					</div>
+			{/if}
+
+			{#if selectedResult?.trades?.length}
+				<div class="mt-4 border border-[#222] bg-[#090909]" data-testid="selected-result-trades">
+					<div class="flex flex-wrap items-center gap-2 border-b border-[#1a1a1a] px-3 py-2">
+						<span class="text-[10px] uppercase tracking-wide text-[#555]">Out-of-sample trades ({selectedResult.trades.length})</span>
+						<span class="rounded-full border border-emerald-900/40 bg-emerald-950/20 px-2 py-0.5 text-[9px] uppercase tracking-wide text-emerald-300/80" title="The trade list reflects out-of-sample execution only.">OOS</span>
+					</div>
+					<div class="max-h-[480px] overflow-auto">
+						<table class="w-full text-xs">
+							<thead class="sticky top-0 bg-[#0d0d0d] text-[#555]">
+								<tr>
+									<th class="px-2 py-2 text-right">#</th>
+									<th class="px-2 py-2 text-left">Dir</th>
+									<th class="px-2 py-2 text-left" title="Bar time, UTC">Entry (UTC)</th>
+									<th class="px-2 py-2 text-right">Entry</th>
+									<th class="px-2 py-2 text-left" title="Bar time, UTC">Exit (UTC)</th>
+									<th class="px-2 py-2 text-right">Exit</th>
+									{#if selectedTradesHaveExitReason}
+										<th class="px-2 py-2 text-left">Exit Reason</th>
+									{/if}
+									{#if selectedTradesHaveSizeFraction}
+										<th class="px-2 py-2 text-right">Size</th>
+									{/if}
+									<th class="px-2 py-2 text-right">PnL $</th>
+									<th class="px-2 py-2 text-right">PnL%</th>
+									{#if selectedTradesHaveExcursions}
+										<th class="px-2 py-2 text-right">MAE%</th>
+										<th class="px-2 py-2 text-right">MFE%</th>
+									{/if}
+									<th class="px-2 py-2 text-right">Bars</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each selectedResult.trades as trade, i}
+									<tr class="border-t border-[#111] hover:bg-[#111]">
+										<td class="px-2 py-1.5 text-right font-mono text-[#555]">{i + 1}</td>
+										<td class="px-2 py-1.5 {trade.direction === 'short' ? 'text-red-400' : 'text-emerald-400'}">{trade.direction ?? 'long'}</td>
+										<td class="px-2 py-1.5 font-mono text-[#888]">{fmtUtcDateTime(trade.entry_time)}</td>
+										<td class="px-2 py-1.5 text-right font-mono text-[#aaa]">{asNumber(trade.entry_price, 0).toFixed(2)}</td>
+										<td class="px-2 py-1.5 font-mono text-[#888]">{fmtUtcDateTime(trade.exit_time)}</td>
+										<td class="px-2 py-1.5 text-right font-mono text-[#aaa]">{asNumber(trade.exit_price, 0).toFixed(2)}</td>
+										{#if selectedTradesHaveExitReason}
+											<td class="px-2 py-1.5 text-left font-mono text-[#888]">{tradeExitReason(trade) ?? '-'}</td>
+										{/if}
+										{#if selectedTradesHaveSizeFraction}
+											<td class="px-2 py-1.5 text-right font-mono text-[#888]">{tradeSizeFraction(trade) != null ? `${(tradeSizeFraction(trade)! * 100).toFixed(1)}%` : '-'}</td>
+										{/if}
+										<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.pnl, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatSignedCurrency(asNumber(trade.pnl, 0))}</td>
+										<td class="px-2 py-1.5 text-right font-mono {asNumber(trade.return_pct, 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{pct(trade.return_pct)}</td>
+										{#if selectedTradesHaveExcursions}
+											<td class="px-2 py-1.5 text-right font-mono text-red-400/60">{trade.mae != null ? pct(trade.mae) : '-'}</td>
+											<td class="px-2 py-1.5 text-right font-mono text-emerald-400/60">{trade.mfe != null ? pct(trade.mfe) : '-'}</td>
+										{/if}
+										<td class="px-2 py-1.5 text-right font-mono text-[#888]">{trade.bars_held ?? '-'}</td>
+									</tr>
+								{/each}
+							</tbody>
+							{#if selectedResultTradeSummary}
+								<tfoot class="sticky bottom-0 border-t-2 border-[#222] bg-[#0d0d0d] text-[#888]">
+									<tr>
+										<td class="px-2 py-2 text-[10px] uppercase tracking-wide text-[#555]" colspan={selectedTradeColumnCount}>
+											<div class="flex flex-wrap gap-x-4 gap-y-1 font-mono normal-case" data-testid="selected-result-trade-summary">
+												<span><span class="text-[#555]">Wins</span> <span class="text-emerald-400">{selectedResultTradeSummary.wins}</span> / <span class="text-[#555]">Losses</span> <span class="text-red-400">{selectedResultTradeSummary.losses}</span>{#if selectedResultTradeSummary.breakeven > 0} / <span class="text-[#555]">BE</span> <span class="text-[#888]">{selectedResultTradeSummary.breakeven}</span>{/if}</span>
+												<span><span class="text-[#555]">Win%</span> <span class="text-[#aaa]">{selectedResultTradeSummary.winRatePct.toFixed(1)}%</span></span>
+												<span><span class="text-[#555]">Avg win</span> <span class="text-emerald-400">{formatSignedCurrency(selectedResultTradeSummary.avgWin)}</span></span>
+												<span><span class="text-[#555]">Avg loss</span> <span class="text-red-400">{formatSignedCurrency(-selectedResultTradeSummary.avgLoss)}</span></span>
+												<span><span class="text-[#555]">Payoff</span> <span class="text-[#aaa]">{selectedResultTradeSummary.payoffRatio != null ? selectedResultTradeSummary.payoffRatio.toFixed(2) : '∞'}</span></span>
+												<span><span class="text-[#555]">Largest win</span> <span class="text-emerald-400">{formatSignedCurrency(selectedResultTradeSummary.largestWin)}</span></span>
+												<span><span class="text-[#555]">Largest loss</span> <span class="text-red-400">{formatSignedCurrency(selectedResultTradeSummary.largestLoss)}</span></span>
+												<span><span class="text-[#555]">Expectancy</span> <span class={selectedResultTradeSummary.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatSignedCurrency(selectedResultTradeSummary.expectancy)}</span></span>
+												<span><span class="text-[#555]">Win streak</span> <span class="text-emerald-400">{selectedResultTradeSummary.longestWinStreak}</span></span>
+												<span><span class="text-[#555]">Loss streak</span> <span class="text-red-400">{selectedResultTradeSummary.longestLossStreak}</span></span>
+											</div>
+										</td>
+									</tr>
+								</tfoot>
+							{/if}
+						</table>
+					</div>
+				</div>
+			{/if}
+		</div>
+{/snippet}
 
 {#if tradingViewExportScript}
 	<TradingViewExportModal
