@@ -138,14 +138,6 @@
 	import { buildRail, fmtEtaWindow, paperGateEta, stageEntries } from '$lib/utils/strategyContainer/lifecycle';
 	import { buildFindings, summarizeVerdict } from '$lib/utils/strategyContainer/verdict';
 	import { fmtDateUtc, fmtNum, fmtUsd, humanizeStrategyType, toNumber } from '$lib/utils/strategyContainer/format';
-	// The container's theme type: IBM Plex, bundled so the page renders the same offline.
-	import '@fontsource/ibm-plex-sans/latin-400.css';
-	import '@fontsource/ibm-plex-sans/latin-500.css';
-	import '@fontsource/ibm-plex-sans/latin-600.css';
-	import '@fontsource/ibm-plex-sans-condensed/latin-500.css';
-	import '@fontsource/ibm-plex-sans-condensed/latin-600.css';
-	import '@fontsource/ibm-plex-mono/latin-400.css';
-	import '@fontsource/ibm-plex-mono/latin-500.css';
 
 	let showImportDialog = false;
 
@@ -6862,11 +6854,8 @@
 {/if}
 
 <style>
-	/* Legacy markup inside the page asks for Tailwind's font-mono; give it the theme's mono. */
+	/* Anchored cards land below the pinned tab bar. */
 	.sc-theme :global([id]) {
 		scroll-margin-top: 56px;
-	}
-	.sc-theme :global(.font-mono) {
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 </style>

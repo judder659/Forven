@@ -2,54 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The app theme: blue-black panels, soft ink levels, IBM Plex (bundled; imported in the
+   root layout). The sc-* Tailwind colours carry the same values. */
 :root {
-	--bg-primary: #000000;
-	--bg-secondary: #0a0a0a;
-	--bg-panel: #111111;
-	--border-color: #222222;
-	--text-primary: #ffffff;
-	--text-secondary: #888888;
-	--accent: #ffffff;
+	color-scheme: dark;
+	--bg-primary: #07080a;
+	--bg-secondary: #0c0e11;
+	--bg-panel: #11141a;
+	--border-color: #1c2026;
+	--text-primary: #eef1f5;
+	--text-secondary: #aab1bc;
+	--accent: #eef1f5;
 	--success: #22c55e;
 	--warning: #eab308;
 	--error: #ef4444;
 }
 
 body {
-	font-family: 'JetBrains Mono', 'Geist Mono', 'Fira Code', 'Consolas', monospace;
+	font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 	background-color: var(--bg-primary);
 	color: var(--text-primary);
-	font-size: 14px;
-	line-height: 1.4;
+	font-size: 13px;
+	line-height: 1.5;
     overflow: hidden; /* Prevent body scroll, workspaces handle it */
 }
 
 /* Ensure all select options have dark background */
 select option {
-    background-color: #000;
-    color: #fff;
+    background-color: #0c0e11;
+    color: #eef1f5;
 }
 
 /* Scrollbar styling for Webkit */
 ::-webkit-scrollbar {
-	width: 6px;
-	height: 6px;
+	width: 8px;
+	height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-	background: #000000;
+	background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-	background: #333;
-	border-radius: 0;
+	background: #2a2f38;
+	border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-	background: #555;
+	background: #4b525c;
 }
 
-/* High Density Terminal Theme Utilities */
+/* Shared layout and control classes */
 
 @layer components {
     /* Layouts */
@@ -57,16 +60,16 @@ select option {
         @apply flex h-full w-full overflow-hidden;
     }
     .panel-l {
-        @apply w-64 border-r border-[#222] bg-[#050505] flex flex-col;
+        @apply w-64 border-r border-sc-line bg-sc-panel flex flex-col;
     }
     .panel-r {
-        @apply w-72 border-l border-[#222] bg-[#050505] flex flex-col;
+        @apply w-72 border-l border-sc-line bg-sc-panel flex flex-col;
     }
     .panel-center {
-        @apply flex-1 flex flex-col bg-black relative min-w-0;
+        @apply flex-1 flex flex-col bg-sc-bg relative min-w-0;
     }
     .panel-header {
-        @apply h-10 border-b border-[#222] flex items-center px-4 justify-between bg-[#0a0a0a] text-sm font-bold tracking-wider text-[#888] uppercase select-none;
+        @apply h-10 border-b border-sc-line flex items-center px-4 justify-between bg-sc-panel font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 select-none;
     }
     .panel-content {
         @apply flex-1 overflow-y-auto p-0;
@@ -74,47 +77,47 @@ select option {
 
     /* Controls */
     .terminal-input {
-        @apply bg-transparent border border-[#333] text-white px-2 py-1.5 text-sm focus:outline-none focus:border-white focus:ring-0 rounded-none w-full placeholder-[#444] transition-colors;
+        @apply bg-sc-panel2 border border-sc-line2 text-sc-ink px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-sc-ink3 focus:ring-0 rounded-md w-full placeholder:text-sc-ink4 transition-colors;
     }
-    
+
     .terminal-select {
-        @apply bg-transparent border border-[#333] text-white px-2 py-1.5 text-sm focus:outline-none focus:border-white focus:ring-0 rounded-none w-full appearance-none cursor-pointer hover:border-[#555];
-        background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+        @apply bg-sc-panel2 border border-sc-line2 text-sc-ink pl-2.5 pr-8 py-1.5 text-[13px] focus:outline-none focus:border-sc-ink3 focus:ring-0 rounded-md w-full appearance-none cursor-pointer hover:border-sc-ink4;
+        background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23747c88' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
         background-position: right 0.5rem center;
         background-repeat: no-repeat;
         background-size: 1.5em 1.5em;
     }
 
     .terminal-select option {
-        @apply bg-black text-white;
+        @apply bg-sc-panel text-sc-ink;
     }
 
     .terminal-button {
-        @apply bg-transparent border border-[#333] text-white px-3 py-1.5 text-sm hover:bg-white hover:text-black hover:border-white transition-all duration-150 uppercase font-bold tracking-wide rounded-none disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white disabled:hover:border-[#333];
+        @apply bg-sc-panel2 border border-sc-line2 text-sc-ink px-3 py-1.5 text-[12px] font-medium rounded-md hover:border-sc-ink4 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-sc-line2;
     }
 
     .terminal-button-primary {
-        @apply bg-white text-black border border-white px-3 py-1.5 text-sm hover:bg-[#ccc] hover:border-[#ccc] transition-all duration-150 uppercase font-bold tracking-wide rounded-none;
+        @apply bg-sc-ink text-[#0b0d10] border border-sc-ink px-3 py-1.5 text-[12px] font-medium rounded-md hover:bg-white hover:border-white transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
     }
 
     .terminal-button-danger {
-        @apply bg-transparent border border-red-900 text-red-500 px-3 py-1.5 text-sm hover:bg-red-500 hover:text-white hover:border-red-500 transition-all duration-150 uppercase font-bold tracking-wide rounded-none;
+        @apply bg-transparent border border-red-900 text-red-400 px-3 py-1.5 text-[12px] font-medium rounded-md hover:bg-red-500/10 hover:border-red-500 hover:text-red-300 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
     }
 
     .terminal-button-icon {
-        @apply w-8 h-8 flex items-center justify-center text-gray-500 hover:text-white hover:bg-[#222] transition-colors rounded-none;
+        @apply w-8 h-8 flex items-center justify-center text-sc-ink3 hover:text-sc-ink hover:bg-sc-raise transition-colors rounded-md;
     }
 
     /* Cards & Containers */
     .terminal-card {
-        @apply border border-[#222] bg-[#050505] p-0;
+        @apply rounded-md border border-sc-line bg-sc-panel p-0;
     }
 
     /* Lists */
     .terminal-list-item {
-        @apply px-3 py-2 border-b border-[#111] text-sm text-gray-400 hover:text-white hover:bg-[#111] cursor-pointer flex items-center justify-between transition-colors;
+        @apply px-3 py-2 border-b border-sc-line text-[13px] text-sc-ink2 hover:text-sc-ink hover:bg-sc-hover cursor-pointer flex items-center justify-between transition-colors;
     }
     .terminal-list-item.active {
-        @apply bg-[#111] text-white border-l-2 border-l-white pl-[10px]; 
+        @apply bg-sc-raise text-sc-ink border-l-2 border-l-sc-ink pl-[10px];
     }
 }
