@@ -24,7 +24,7 @@
 		{ id: 'welcome', label: 'Welcome', critical: false, description: 'Get Forven set up.' },
 		{ id: 'trading', label: 'Trading basics', critical: true, description: 'Pick an exchange and paste API credentials.' },
 		{ id: 'ai', label: 'AI providers', critical: true, description: 'Connect at least one provider so agents can run.' },
-		{ id: 'notifications', label: 'Notifications', critical: false, description: 'Discord alerts (optional).' },
+		{ id: 'notifications', label: 'Notifications', critical: false, description: 'Which events pop up in the app, and Discord alerts (optional).' },
 		{ id: 'done', label: 'Done', critical: false, description: 'Review and finish.' },
 	];
 
