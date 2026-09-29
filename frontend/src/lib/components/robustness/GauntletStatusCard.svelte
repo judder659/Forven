@@ -139,7 +139,7 @@
 	}
 
 	function scoreTone(score: number | null | undefined, min: number | null | undefined): string {
-		if (score == null) return 'border-[#333] bg-[#050505] text-[#888]';
+		if (score == null) return 'border-sc-line2 bg-sc-panel2 text-sc-ink2';
 		const v = Number(score);
 		const floor = min == null ? 50 : Number(min);
 		if (v >= floor + 20) return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
@@ -199,7 +199,7 @@
 		if (s === 'running' || s === 'submitted' || s === 'queued' || s === 'pending') {
 			return 'border-yellow-900 bg-yellow-500/10 text-yellow-400 animate-pulse';
 		}
-		return 'border-[#333] text-[#888]';
+		return 'border-sc-line2 text-sc-ink2';
 	}
 
 	function pillLabel(entry: GauntletTestEntry | null | undefined): string {
@@ -245,9 +245,9 @@
 
 	function tileTone(key: GauntletTestKey): string {
 		if (selectedTestKey === key) {
-			return 'border-[#555] bg-[#111] text-white';
+			return 'border-sc-line2 bg-sc-raise text-sc-ink';
 		}
-		return 'border-[#1a1a1a] bg-[#050505] text-[#888] hover:border-[#333] hover:text-[#aaa]';
+		return 'border-sc-line bg-sc-panel2 text-sc-ink2 hover:border-sc-ink4 hover:text-sc-ink2';
 	}
 </script>
 
@@ -257,9 +257,9 @@
 >
 	<div class="flex items-center justify-between gap-3">
 		<div class="flex items-center gap-2">
-			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Gauntlet Status</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Gauntlet Status</span>
 			{#if hasInFlight}
-				<span class="border border-yellow-900 bg-yellow-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-yellow-400 animate-pulse">Live</span>
+				<span class="border border-yellow-900 bg-yellow-500/10 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400 animate-pulse">Live</span>
 			{/if}
 		</div>
 		<button
@@ -267,7 +267,7 @@
 			data-testid="gauntlet-status-refresh"
 			on:click={() => void load()}
 			disabled={loading}
-			class="terminal-button px-2 py-0.5 text-[10px]"
+			class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 px-2 py-0.5 text-[12px]"
 		>
 			{loading ? 'Loading...' : 'Refresh'}
 		</button>
@@ -278,7 +278,7 @@
 			{error}
 		</div>
 	{:else if !status && loading}
-		<div class="py-2 text-center text-[11px] text-[#555]">Loading gauntlet status...</div>
+		<div class="py-2 text-center text-[11px] text-sc-ink3">Loading gauntlet status...</div>
 	{:else if status && !status.ok}
 		<div class="border border-yellow-900 bg-yellow-500/5 px-2.5 py-2 text-[11px] text-yellow-400">
 			{status.error ?? 'Gauntlet status unavailable'}
@@ -290,9 +290,9 @@
 				class={`border px-3 py-2 ${scoreTone(status.composite_robustness_score, status.min_robustness_score)}`}
 				title={status.min_robustness_score != null ? `Gauntlet threshold: ${status.min_robustness_score}` : ''}
 			>
-				<div class="text-[9px] font-bold uppercase tracking-widest opacity-80">Composite</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] opacity-80">Composite</div>
 				<div class="text-lg font-bold leading-tight">{formatScore(status.composite_robustness_score)}</div>
-				<div class="text-[9px] uppercase tracking-wider opacity-70">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] opacity-70">
 					/ 100{status.min_robustness_score != null ? ` · floor ${status.min_robustness_score}` : ''}
 				</div>
 			</div>
@@ -303,19 +303,19 @@
 					class={`border px-3 py-2 ${dsrTone(Number(dsrInfo.dsr))}`}
 					title={dsrTitle(dsrInfo)}
 				>
-					<div class="text-[9px] font-bold uppercase tracking-widest opacity-80">Deflated Sharpe</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] opacity-80">Deflated Sharpe</div>
 					<div class="text-lg font-bold leading-tight">{Number(dsrInfo.dsr).toFixed(2)}</div>
-					<div class="text-[9px] uppercase tracking-wider opacity-70">{dsrTrialsLine(dsrInfo)}</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] opacity-70">{dsrTrialsLine(dsrInfo)}</div>
 				</div>
 			{/if}
 			<div class="flex flex-col gap-0.5 text-[11px]">
-				<div class="text-[#888]">
-					<span class="text-white font-medium">{displayTestsPassed}</span> / {status.tests_total} passed
-					<span class="text-[#555]">·</span>
-					<span class="text-white font-medium">{displayTestsCompleted}</span> / {status.tests_total} completed
+				<div class="text-sc-ink2">
+					<span class="text-sc-ink font-medium">{displayTestsPassed}</span> / {status.tests_total} passed
+					<span class="text-sc-ink3">·</span>
+					<span class="text-sc-ink font-medium">{displayTestsCompleted}</span> / {status.tests_total} completed
 				</div>
 				{#if status.required_tests.length}
-					<div class="text-[10px] text-[#666]">
+					<div class="text-[10px] text-sc-ink3">
 						Required:
 						{#each status.required_tests as rt, i}
 							{@const reqMissing = displayMissingRequired.includes(rt)}
@@ -341,7 +341,7 @@
 					data-testid={`gauntlet-test-${key}`}
 					aria-pressed={selectedTestKey === key}
 					on:click={() => dispatch('selectTest', { key })}
-					class={`border px-2 py-1.5 text-left transition-colors focus:outline-none focus:border-[#888] ${tileTone(key)}`}
+					class={`rounded-md border px-2 py-1.5 text-left transition-colors focus:outline-none focus:border-sc-ink3 ${tileTone(key)}`}
 					title={entry?.stale
 						? `${TEST_LABELS[key]}: strategy params changed AFTER this test ran — its verdict no longer describes the current strategy. Re-run to revalidate.`
 						: entry?.rescued_by_fold_pass_rate
@@ -350,18 +350,18 @@
 								? `${TEST_LABELS[key]}: ${entry.error}`
 								: TEST_LABELS[key]}
 				>
-					<div class="truncate text-[10px] uppercase tracking-wider text-current opacity-70">{TEST_LABELS[key]}</div>
+					<div class="truncate font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-current opacity-70">{TEST_LABELS[key]}</div>
 					<div class="mt-0.5 flex items-center gap-1">
 						<span
 							data-testid={`gauntlet-test-verdict-${key}`}
-							class={`inline-block border px-1.5 py-px text-[9px] font-bold uppercase tracking-widest ${pillTone(entry)}`}
+							class={`inline-block border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${pillTone(entry)}`}
 						>
 							{pillLabel(entry)}
 						</span>
 						{#if entry?.stale}
 							<span
 								data-testid={`gauntlet-test-stale-${key}`}
-								class="inline-block border border-yellow-900 bg-yellow-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-yellow-400"
+								class="inline-block border border-yellow-900 bg-yellow-500/10 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400"
 							>
 								Stale
 							</span>
@@ -386,12 +386,12 @@
 		{#if pendingApprovalId != null}
 			<div
 				data-testid="gauntlet-approval-pending"
-				class="flex items-center justify-between gap-2 border border-[#333] bg-[#0a0a0a] px-2.5 py-2 text-[11px] text-[#888]"
+				class="rounded-md flex items-center justify-between gap-2 border border-sc-line2 bg-sc-panel px-2.5 py-2 text-[11px] text-sc-ink2"
 			>
 				<span>Operator approval pending (#{pendingApprovalId}) — promotion is queued for review.</span>
 				<a
 					href={`/approval?approval_id=${pendingApprovalId}`}
-					class="terminal-button px-2 py-0.5 text-[10px]"
+					class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 px-2 py-0.5 text-[10px]"
 				>
 					Review
 				</a>
@@ -405,7 +405,7 @@
 				<button
 					type="button"
 					on:click={() => status && dispatch('promote', { status })}
-					class="border border-emerald-900 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-emerald-400 transition-colors hover:bg-emerald-500/20"
+					class="rounded-md border border-emerald-900 bg-emerald-500/10 px-2 py-0.5 text-[12px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20"
 				>
 					Promote
 				</button>
