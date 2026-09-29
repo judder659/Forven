@@ -377,3 +377,43 @@ def test_chart_context_fetches_remote_ohlcv_when_local_dataset_is_unreadable(for
 	assert context["source"] == "recomputed"
 	assert len(context["bars"]) > 0
 	assert any("fetched remote ohlcv" in warning.lower() for warning in context["warnings"])
+
+
+def test_local_chart_frame_reports_only_the_chosen_series_warnings(monkeypatch, tmp_path):
+	"""Every candidate symbol is sliced; only the picked series may warn.
+
+	A run on ETH/USDT used to show "Only 0 warmup bars were available for ETH/USD
+	1h" for the thinner ETH/USD and ETH/USDC files the loader looked at and dropped.
+	"""
+	import pandas as pd
+
+	import forven.data as data_module
+	import forven.strategies.backtest as bt
+
+	def frame(start: str, periods: int) -> pd.DataFrame:
+		index = pd.date_range(start, periods=periods, freq="1h", tz="UTC")
+		return pd.DataFrame(
+			{"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
+			index=index,
+		)
+
+	frames = {
+		"ETH/USD": frame("2025-01-01", 48),  # starts at the window: no warmup at all
+		"ETH/USDT": frame("2024-12-01", 24 * 60),  # a month of warmup before the window
+	}
+	monkeypatch.setattr(bt, "_dataset_symbol_candidates", lambda _asset: list(frames))
+	monkeypatch.setattr(data_module, "parquet_path", lambda _symbol, _tf: tmp_path)  # exists()
+	monkeypatch.setattr(data_module, "load_parquet", lambda symbol, _tf: frames[symbol])
+
+	loaded, warnings = bt._load_local_chart_frame(
+		asset="ETH",
+		timeframe="1h",
+		start_date="2025-01-01T00:00:00+00:00",
+		end_date="2025-01-02T00:00:00+00:00",
+		warmup_bars=210,
+		allow_remote_fallback=False,
+	)
+
+	assert not loaded.empty
+	assert loaded.index[0] < pd.Timestamp("2025-01-01", tz="UTC")
+	assert not any("ETH/USD " in message for message in warnings), warnings

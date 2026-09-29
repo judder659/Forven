@@ -159,7 +159,9 @@ def _summarize_metric_window(metrics: dict) -> dict:
 def _compact_metric_payload(metrics: dict) -> dict:
     compact: dict[str, object] = {}
     for key, value in metrics.items():
-        if key in {"in_sample", "out_of_sample"} and isinstance(value, dict):
+        # aggregate_oos is a walk-forward row's pooled out-of-sample slice; the
+        # strategy page's walk-forward cards read its trade count.
+        if key in {"in_sample", "out_of_sample", "aggregate_oos"} and isinstance(value, dict):
             compact[key] = _summarize_metric_window(value)
             continue
         if isinstance(value, (dict, list, tuple)):
@@ -1432,6 +1434,23 @@ def get_strategy_container(
             """,
             (resolved_strategy_id, max(int(result_limit), 1)),
         ).fetchall()
+        # The limit counts every result type, so a busy strategy (robustness reruns,
+        # sweeps) can push its pinned run — the one driving paper/live — out of the
+        # window, and the page then shows the newest run as the driver. Always include it.
+        pinned_result_id = str(dict(strategy_row).get("pinned_backtest_id") or "").strip()
+        if pinned_result_id and all(str(row["result_id"]) != pinned_result_id for row in results_rows):
+            pinned_row = conn.execute(
+                """
+                SELECT result_id, strategy_id, result_type, symbol, timeframe, start_date, end_date,
+                       metrics_json, config_json, created_at, deleted_at
+                FROM backtest_results
+                WHERE result_id = ? AND strategy_id = ?
+                  AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+                """,
+                (pinned_result_id, resolved_strategy_id),
+            ).fetchone()
+            if pinned_row is not None:
+                results_rows = [*results_rows, pinned_row]
         trades_rows = conn.execute(
             """
             SELECT *

@@ -686,6 +686,60 @@ def test_strategy_container_history_caps_legacy_overflow_drawdown(forven_db):
     assert float(metrics.get("max_drawdown_pct", 0.0)) == pytest.approx(1.0)
 
 
+def _insert_result(conn, result_id: str, strategy_id: str, result_type: str, created_at: str, metrics: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO backtest_results
+        (result_id, strategy_id, result_type, symbol, timeframe, start_date, end_date, metrics_json, config_json, created_at)
+        VALUES (?, ?, ?, 'BTC', '1h', '2025-01-01T00:00:00+00:00', '2025-12-31T00:00:00+00:00', ?, '{}', ?)
+        """,
+        (result_id, strategy_id, result_type, json.dumps(metrics), created_at),
+    )
+
+
+def test_strategy_container_includes_the_pinned_run_beyond_the_result_limit(forven_db):
+    strategy_id = _seed_strategy()
+    metrics = {"sharpe": 0.9, "total_return_pct": 0.2, "max_drawdown_pct": 0.1, "win_rate": 0.5, "total_trades": 40}
+    with get_db() as conn:
+        _insert_result(conn, "B-PINNED-OLD", strategy_id, "backtest", "2026-01-01T00:00:00+00:00", metrics)
+        for index in range(3):
+            _insert_result(
+                conn, f"RS-NEWER-{index}", strategy_id, "monte_carlo", f"2026-02-0{index + 1}T00:00:00+00:00", {"verdict": "PASS"}
+            )
+        conn.execute("UPDATE strategies SET pinned_backtest_id = ? WHERE id = ?", ("B-PINNED-OLD", strategy_id))
+
+    payload = get_strategy_container(strategy_id, result_limit=2)
+
+    assert [item["result_id"] for item in payload["history"]["backtests"]] == ["B-PINNED-OLD"]
+    assert len(payload["history"]["validation"]) == 2
+
+
+def test_strategy_container_history_keeps_the_walk_forward_oos_trade_count(forven_db):
+    strategy_id = _seed_strategy()
+    with get_db() as conn:
+        _insert_result(
+            conn,
+            "WF-1",
+            strategy_id,
+            "walk_forward",
+            "2026-02-01T00:00:00+00:00",
+            {
+                "avg_is_sharpe": 1.1,
+                "avg_oos_sharpe": 1.86,
+                "aggregate_oos": {"total_trades": 50, "sharpe": 2.25, "equity_curve": [{"equity": 1.0}]},
+                "splits": [{"split": 1}],
+            },
+        )
+
+    payload = get_strategy_container(strategy_id)
+
+    aggregate = payload["history"]["walk_forward"][0]["metrics"]["aggregate_oos"]
+    assert aggregate["total_trades"] == 50
+    # Only the scalars travel; curves and lists stay out of the list payload.
+    assert "equity_curve" not in aggregate
+    assert "splits" not in payload["history"]["walk_forward"][0]["metrics"]
+
+
 def test_submit_backtest_requires_existing_strategy_id(forven_db):
     with pytest.raises(HTTPException) as exc:
         post_backtest_submit(BacktestSubmitBody(strategy_name="legacy-name-only"))
