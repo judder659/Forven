@@ -1090,10 +1090,11 @@ Crypto exchanges typically charge 0.1% (10 bps) per trade, meaning a round-trip 
 	},
 	webhook_url: {
 		id: 'webhook_url',
-		term: 'Webhook URL',
-		shortDescription: 'Destination endpoint for notifications.',
+		term: 'Discord Webhook URL',
+		shortDescription: 'Posts notifications to one Discord channel when no bot token is set.',
 		category: 'data',
-		fullDescription: 'Forven posts event messages to this endpoint. Keep it private to avoid alert spoofing.'
+		fullDescription:
+			'Create it in Discord under Channel settings → Integrations → Webhooks. Without a bot token, every notification switched on for Discord is posted to that channel, labelled with the channel it was meant for ("Forven · alerts"). Only discord.com webhook URLs are accepted. The URL contains a secret: anyone holding it can post to the channel, so keep it private.'
 	},
 	notification_level: {
 		id: 'notification_level',
@@ -1239,10 +1240,11 @@ Crypto exchanges typically charge 0.1% (10 bps) per trade, meaning a round-trip 
 		term: 'Discord Notifications',
 		shortDescription: 'Outbound alerting channel for trade and system events.',
 		category: 'data',
-		fullDescription: 'Controls webhook alerts for entries, exits, summaries, health reports, and errors.',
+		fullDescription:
+			'Connect a Discord bot (each kind of event goes to its own channel) or a single channel webhook (everything goes to that channel). Settings → Notifications has a Discord switch per kind of event and a master switch.',
 		proTips: [
-			'Recommended level: all in paper mode, alerts in live mode',
-			'Always keep error notifications enabled in production'
+			'Paper-trade events can go to Discord while their in-app pop-ups stay off',
+			'Use "Send a test" in Settings → Notifications to check the connection'
 		]
 	},
 	continuous_testing_settings: {

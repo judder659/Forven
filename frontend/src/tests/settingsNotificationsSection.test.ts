@@ -122,6 +122,20 @@ describe('SettingsNotifications section', () => {
 		expect(target.textContent).toContain("Discord isn't connected");
 	});
 
+	it('counts a webhook as connected and says where its posts land', async () => {
+		render({ discord_bot_token_configured: false, discord_webhook_configured: true });
+		await flush();
+		expect(target.textContent).not.toContain("Discord isn't connected");
+		expect(target.querySelector('[data-testid="webhook-hint"]')?.textContent).toContain('Forven · alerts');
+
+		unmount(instance);
+		target.remove();
+		render({ discord_bot_token_configured: true, discord_webhook_configured: true });
+		await flush();
+		// With a bot token the bot routes each kind to its own channel: no webhook note.
+		expect(target.querySelector('[data-testid="webhook-hint"]')).toBeNull();
+	});
+
 	it('sends a test notification', async () => {
 		render({ discord_bot_token_configured: true });
 		await flush();

@@ -2462,7 +2462,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     subsection: 'notif-discord',
     backendSection: 'notifications',
     backendPath: 'discord_bot_token',
-    description: 'Main Discord bot token used by the brain to post notifications.',
+    description: 'Discord bot token. With a bot, each kind of notification goes to its own channel (#alerts, #ops, #paper-trades, …) and the brain can reply in Discord.',
     usedBy: ['forven.api_core', 'forven.bot'],
   },
   {
@@ -2474,8 +2474,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     subsection: 'notif-discord',
     backendSection: 'notifications',
     backendPath: 'discord_webhook_url',
-    description: 'Webhook URL that receives notifications when no bot is connected.',
-    usedBy: ['forven.api_core', 'forven.bot'],
+    description: 'A Discord channel webhook (https://discord.com/api/webhooks/…), used when no bot token is set: every notification is posted to that one channel, labelled with the channel it was meant for.',
+    usedBy: ['forven.api_core', 'forven.discord_webhook'],
   },
   {
     id: 'notifications.notification_level',
