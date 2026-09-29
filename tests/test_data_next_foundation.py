@@ -224,8 +224,11 @@ def test_consumer_index_survives_failing_sources(forven_db, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("registry down")
 
+    import forven.data_manager as dm
+
     monkeypatch.setattr(universe, "plan_research_universe", boom)
     monkeypatch.setattr(universe, "delisted_symbols", boom)
+    monkeypatch.setattr(dm, "get_data_manager", boom)  # the keep-alive source fails too
     index = consumers.build_consumer_index()
     assert index.for_series("BTC-USDT", "1h").tier == "idle"
 

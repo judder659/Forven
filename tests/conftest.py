@@ -37,7 +37,13 @@ def _restore_event_loop_policy():
 def _clear_data_manager_caches() -> None:
     """Drop the Data Manager's short process-wide caches (consumer index, SLA
     policy, collector snapshot, readiness reports, fingerprints, storage
-    inventory). Only modules a test already imported are touched."""
+    inventory) and hand the next test a fresh DataManager singleton. Only
+    modules a test already imported are touched.
+
+    The singleton leaks between tests otherwise: its 60 s active-symbol cache
+    answers the next test, and monkeypatching it through the ``data_manager``
+    proxy leaves the original bound method behind as an instance attribute on
+    undo, which shadows every later class-level patch."""
     import sys
 
     for module_name, clear in (
@@ -51,6 +57,10 @@ def _clear_data_manager_caches() -> None:
         module = sys.modules.get(module_name)
         if module is not None and hasattr(module, clear):
             getattr(module, clear)()
+    manager_module = sys.modules.get("forven.data_manager")
+    get_manager = getattr(manager_module, "get_data_manager", None)
+    if hasattr(get_manager, "cache_clear"):
+        get_manager.cache_clear()
 
 
 @pytest.fixture(autouse=True)
