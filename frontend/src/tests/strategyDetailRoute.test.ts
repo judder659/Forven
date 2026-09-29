@@ -2594,4 +2594,73 @@ describe('/lab/strategy/[id] backtest history', () => {
 		const [, saved] = backtestingMocks.updateStrategyDefaultParams.mock.calls[0];
 		expect(saved).toMatchObject({ fast: 14, _asset: 'BTC', _timeframe: '1h', _parameter_space: { fast: [8, 12, 16] } });
 	});
+	it('reports the reference run on Performance and switches runs from the picker and the Runs list', async () => {
+		const container = buildContainer(['B1001', 'B1002']);
+		// B1002 is older, so the newest run (B1001) is the reference.
+		((container.history as Record<string, Record<string, unknown>[]>).backtests[1]).created_at = '2026-01-01T00:00:00Z';
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+		const curve = (start: string, values: number[]) =>
+			values.map((equity, index) => ({ timestamp: new Date(Date.parse(start) + index * 20 * 86_400_000).toISOString(), equity }));
+		apiMocks.getResult.mockImplementation(async (resultId: string) =>
+			buildResult(resultId, {
+				metrics: {
+					total_return: 0.21,
+					in_sample: { total_trades: 30, win_rate: 0.41, sharpe: resultId === 'B1001' ? 1.52 : 0.9, total_return_pct: 0.12, max_drawdown_pct: 0.08, backtest_months: 12 },
+					out_of_sample: { total_trades: 2, win_rate: 0.5, sharpe: resultId === 'B1001' ? 2.7 : 1.1, total_return_pct: 0.09, max_drawdown_pct: 0.05, backtest_months: 6 },
+				},
+				equity_curve: curve('2025-09-01T00:00:00Z', [10000, 10400, 10250, 10900]),
+				equity_curve_full: curve('2025-03-01T00:00:00Z', [10000, 10600, 10500, 11200, 11100, 11800, 11700, 12100, 12400, 12200]),
+				trades: [
+					{ entry_time: '2025-09-02 10:00:00+00:00', exit_time: '2025-09-03 10:00:00+00:00', pnl: 400, return_pct: 4, direction: 'long', bars_held: 24, exit_reason: 'signal' },
+					{ entry_time: '2025-10-02 10:00:00+00:00', exit_time: '2025-10-03 10:00:00+00:00', pnl: -150, return_pct: -1.44, direction: 'short', bars_held: 24, exit_reason: 'stop_loss' },
+				],
+			}),
+		);
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-performance"]') !== null);
+		clickByTestId(target, 'strategy-tab-performance');
+		await waitForCondition(() => target.querySelector('[data-testid="run-stats"]') !== null);
+
+		expect(target.querySelector('[data-testid="run-facts-id"]')?.textContent).toBe('B1001');
+		const stats = target.querySelector('[data-testid="run-stats"]')?.textContent ?? '';
+		expect(stats).toContain('1.52');
+		expect(stats).toContain('2.70');
+		expect(target.querySelector('[data-testid="trade-table-summary"]')?.textContent).toContain('2 of 2 trades');
+		expect(target.querySelector('[data-testid="monthly-heatmap"]')).not.toBeNull();
+		expect(target.querySelector('[data-testid="growth-chart"]')).not.toBeNull();
+
+		const picker = target.querySelector<HTMLSelectElement>('[data-testid="run-facts-select"]');
+		expect(picker).not.toBeNull();
+		picker!.value = 'B1002';
+		picker!.dispatchEvent(new Event('change', { bubbles: true }));
+		await waitForCondition(() => target.querySelector('[data-testid="run-facts-id"]')?.textContent === 'B1002');
+		await waitForCondition(() => (target.querySelector('[data-testid="run-stats"]')?.textContent ?? '').includes('1.10'));
+		expect(apiMocks.getResult).toHaveBeenCalledWith('B1002');
+
+		// Back to the reference from the Runs list.
+		await openBacktestHistory(target);
+		clickByTestId(target, 'open-report-B1001');
+		await waitForCondition(() => target.querySelector('[data-testid="run-facts-id"]')?.textContent === 'B1001');
+		expect(target.querySelector('[data-testid="strategy-tab-performance"]')?.getAttribute('aria-pressed')).toBe('true');
+	});
+
+	it('keeps the lifecycle history on Activity', async () => {
+		const container = buildContainer(['B1001']);
+		(container.events as Record<string, unknown>[]) = [
+			{
+				id: 'E1', strategy_id: 'S0001', from_state: 'gauntlet', to_state: 'paper', actor: 'brain',
+				reason: 'Every gate passed', idempotency_key: null, created_at: '2026-03-03T12:00:00Z',
+				owner_from: null, owner_to: null, details_json: null,
+			},
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+		apiMocks.getResult.mockImplementation(async (resultId: string) => buildResult(resultId));
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-activity"]') !== null);
+		clickByTestId(target, 'strategy-tab-activity');
+		await waitForCondition(() => target.querySelector('[data-testid="activity-lifecycle-feed"]') !== null);
+		expect(target.querySelector('[data-testid="activity-lifecycle-feed"]')?.textContent).toContain('Every gate passed');
+	});
 });

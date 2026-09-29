@@ -88,6 +88,22 @@
 	import { getForgeNavPosition, type ForgeNavEntry } from '$lib/stores/forgeNav';
 	import type { StrategyImportResult } from '$lib/api';
 	import { openDeepdive } from '$lib/stores/deepdiveStore';
+	import RunFacts from '$lib/components/strategy/container/RunFacts.svelte';
+	import GrowthChart from '$lib/components/strategy/container/GrowthChart.svelte';
+	import RunStatsTable from '$lib/components/strategy/container/RunStatsTable.svelte';
+	import TradeHistogram from '$lib/components/strategy/container/TradeHistogram.svelte';
+	import DrawdownTable from '$lib/components/strategy/container/DrawdownTable.svelte';
+	import MonthlyHeatmap from '$lib/components/strategy/container/MonthlyHeatmap.svelte';
+	import TradeTable from '$lib/components/strategy/container/TradeTable.svelte';
+	import {
+		curvePoints,
+		drawdownPeriods,
+		monthlyReturns,
+		runSlices,
+		tradeRows,
+		tradeStats,
+	} from '$lib/utils/strategyContainer/metrics';
+	import { fmtUsd } from '$lib/utils/strategyContainer/format';
 
 	let showImportDialog = false;
 
@@ -171,12 +187,14 @@
 
 	// Tabs (code -> visible label):
 	//   'summary'     -> "Summary" (verdict, evidence, lifecycle, next gate)
+	//   'performance' -> "Performance" (the full report of one run: the reference run unless picked)
 	//   'robustness'  -> "Robustness" (stress tests, runners, heatmap + market grid under Sensitivity)
 	//   'runs'        -> "Runs" (new backtest / optimization, history, compare, run detail)
 	//   'execution'   -> "Paper & live"
+	//   'activity'    -> "Activity" (lifecycle events and Brain decisions)
 	// PromotionReadiness on:action maps: 'run_confirmation_backtest', 'run_optimization' and
 	//   'apply_best_params' -> 'runs'; '*_validation_suite' -> 'robustness'.
-	type TabKey = 'summary' | 'robustness' | 'runs' | 'execution';
+	type TabKey = 'summary' | 'performance' | 'robustness' | 'runs' | 'execution' | 'activity';
 	// Where an opened run's detail renders: under the run history, the optimization list, or
 	// the robustness runners.
 	type RunSection = 'backtests' | 'optimizations' | 'robustness';
@@ -383,6 +401,57 @@
 			: null;
 	$: overviewHasEquity = Array.isArray(overviewEquityForChart) && overviewEquityForChart.length > 1;
 
+	// ── Performance: one run's full report ─────────────────────────────────────────
+	// The reference run (pinned, else newest — the Summary's run) unless the operator
+	// picks another; the reference reuses the Summary's fetch.
+	let performanceRunId = '';
+	let pickedResult: BacktestResult | null = null;
+	let pickedResultId = '';
+	let pickedLoading = false;
+	let pickedError = '';
+	$: referenceRunId = String(activeRunItem?.result_id ?? '').trim();
+	$: performanceTargetId = performanceRunId || referenceRunId;
+	$: usingReferenceRun = !performanceRunId || performanceRunId === referenceRunId;
+	$: performanceResult = usingReferenceRun ? overviewResult : pickedResultId === performanceRunId ? pickedResult : null;
+	$: performanceLoading = usingReferenceRun ? overviewResultLoading : pickedLoading;
+	$: performanceError = usingReferenceRun ? overviewResultError : pickedError;
+	$: performanceItem = backtestHistoryRaw.find((item) => item.result_id === performanceTargetId) ?? null;
+	$: perfFullCurve = curvePoints(performanceResult?.equity_curve_full);
+	$: perfOosCurve = curvePoints(performanceResult?.equity_curve);
+	$: perfUsesFull = perfFullCurve.length > 1;
+	$: perfCurve = perfUsesFull ? perfFullCurve : perfOosCurve;
+	$: perfBenchmark = curvePoints(perfUsesFull ? performanceResult?.benchmark_curve_full : performanceResult?.benchmark_curve);
+	$: perfOosStart = perfUsesFull && perfOosCurve.length ? perfOosCurve[0].t : null;
+	$: perfSlices = runSlices(performanceResult);
+	$: perfTrades = tradeRows(performanceResult?.trades);
+	$: perfTradeStats = tradeStats(perfTrades);
+	$: perfDrawdowns = drawdownPeriods(perfOosCurve);
+	$: perfMonths = monthlyReturns(perfCurve);
+	$: perfCapital = Number(performanceResult?.config?.initial_capital) > 0 ? Number(performanceResult?.config?.initial_capital) : 10000;
+
+	async function selectPerformanceRun(resultId: string): Promise<void> {
+		const id = String(resultId || '').trim();
+		performanceRunId = id === referenceRunId ? '' : id;
+		if (!performanceRunId) return;
+		pickedResultId = id;
+		pickedResult = null;
+		pickedError = '';
+		pickedLoading = true;
+		try {
+			const response = await getResult(id);
+			if (pickedResultId === id) pickedResult = response;
+		} catch (err) {
+			if (pickedResultId === id) pickedError = err instanceof Error ? err.message : 'Failed to load the run';
+		} finally {
+			if (pickedResultId === id) pickedLoading = false;
+		}
+	}
+
+	function openPerformanceReport(item: StrategyContainerHistoryItem): void {
+		void selectPerformanceRun(item.result_id);
+		activeTab = 'performance';
+	}
+
 	type HistorySortField =
 		| 'created'
 		| 'symbol'
@@ -437,7 +506,7 @@
 			(left, right) => parseTimestamp(right.created_at) - parseTimestamp(left.created_at),
 		)[0] ??
 		null;
-	$: if (activeTab === 'summary' && activeRunItem && String(activeRunItem.result_id || '').trim() !== overviewResultId) {
+	$: if ((activeTab === 'summary' || activeTab === 'performance') && activeRunItem && String(activeRunItem.result_id || '').trim() !== overviewResultId) {
 		void loadOverviewResult(activeRunItem);
 	}
 	$: hasRunDetail = resultLoading || !!resultError || !!selectedResult;
@@ -4509,18 +4578,15 @@
 			<div class="border border-red-900 bg-red-950/20 px-4 py-3 text-sm text-red-300">{error}</div>
 		</div>
 	{:else if container}
-		{#if container.strategy.id}
-			<div class="border-b border-[#222] bg-[#070707] px-4 py-2">
-				<BrainStrategyDecisionsCard strategyId={container.strategy.id} />
-			</div>
-		{/if}
 		<div class="border-b border-[#222] bg-[#0a0a0a] px-4">
 			<div role="group" aria-label="Strategy detail sections" class="flex gap-6 text-xs uppercase tracking-wide">
 				{#each [
 					{ key: 'summary', label: 'Summary' },
+					{ key: 'performance', label: 'Performance' },
 					{ key: 'robustness', label: 'Robustness' },
 					{ key: 'runs', label: 'Runs' },
 					{ key: 'execution', label: 'Paper & live' },
+					{ key: 'activity', label: 'Activity' },
 				] as tab (tab.key)}
 					<button
 						type="button"
@@ -4862,31 +4928,6 @@
 							{/if}
 						</div>
 
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3">
-							<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Lifecycle Feed</div>
-							{#if orderedRecentEvents.length === 0}
-								<div class="mt-2 text-xs text-[#555]">No events recorded.</div>
-							{:else}
-								<div class="mt-2 max-h-[320px] overflow-auto space-y-1.5">
-									{#each orderedRecentEvents as event}
-										<div class="border border-[#1f1f1f] bg-[#070707] px-2.5 py-2">
-											<div class="flex items-center justify-between gap-2 text-[11px]">
-												<div class="flex items-center gap-1.5">
-													<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-[#aaa]">{lifecycleStageLabel(event.from_state)}</span>
-													<span class="text-[#555]">-></span>
-													<span class="border border-[#333] bg-[#0c0c0c] px-1.5 py-0.5 font-mono text-white">{lifecycleStageLabel(event.to_state)}</span>
-													<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#555]">{lifecycleActorLabel(event.actor)}</span>
-												</div>
-												<span class="shrink-0 text-[#555]">{fmtDate(event.created_at)}</span>
-											</div>
-											{#if event.reason && event.reason.trim()}
-												<div class="mt-1 text-xs text-[#888]">{event.reason.trim()}</div>
-											{/if}
-										</div>
-									{/each}
-								</div>
-							{/if}
-						</div>
 					</div>
 				</div>
 			{/if}
@@ -5285,6 +5326,15 @@
 																: pinnedBacktestId && pinnedBacktestId === item.result_id
 																	? 'Active'
 																	: 'Set Default'}
+														</button>
+														<button
+															type="button"
+															data-testid={`open-report-${item.result_id}`}
+															class="border border-[#2b2b2b] bg-black px-2.5 py-1 text-[10px] uppercase tracking-widest text-[#888] transition hover:border-white/20 hover:text-white"
+															title="Open this run's full report on Performance"
+															on:click|stopPropagation={() => openPerformanceReport(item)}
+														>
+															Report
 														</button>
 														<button
 															type="button"
@@ -5719,6 +5769,59 @@
 				{/if}
 			{/if}
 
+			{#if activeTab === 'performance'}
+				<div class="grid gap-3" data-testid="performance-tab">
+					<RunFacts
+						result={performanceResult}
+						runs={backtestHistory}
+						selectedId={performanceTargetId}
+						pinnedId={pinnedBacktestId}
+						referenceId={referenceRunId}
+						on:select={(event) => void selectPerformanceRun(event.detail.resultId)}
+					/>
+					{#if !performanceTargetId}
+						<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No runs yet — start one from Runs to see the full report.</div>
+					{:else if performanceLoading && !performanceResult}
+						<div class="border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading the run…</div>
+					{:else if performanceError}
+						<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{performanceError}</div>
+					{:else if performanceResult}
+						<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="performance-growth">
+							<div class="flex flex-wrap items-baseline justify-between gap-2">
+								<div>
+									<h2 class="m-0 text-[13px] font-semibold text-white">Growth of {fmtUsd(perfCapital, 0, false)}</h2>
+									<div class="text-[11px] text-[#666]">{perfUsesFull ? 'Whole run, closed-trade equity; the shaded span is in-sample.' : 'Out-of-sample equity (this run stored no full-window curve).'} Log scale keeps early and late moves comparable.</div>
+								</div>
+								{#if performanceItem}
+									<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="performance-open-detail" on:click={() => { activeTab = 'runs'; if (performanceItem) void openResult(performanceItem); }}>Candles &amp; trade chart →</button>
+								{/if}
+							</div>
+							<GrowthChart strategy={perfCurve} benchmark={perfBenchmark} oosStart={perfOosStart} />
+						</article>
+						<div class="grid gap-3 xl:grid-cols-2">
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Statistics</h2><span class="text-[11px] text-[#666]">In-sample against out-of-sample of this run</span></div>
+								<RunStatsTable inSample={perfSlices.inSample} outOfSample={perfSlices.outOfSample} stats={perfTradeStats} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Trade returns</h2><span class="text-[11px] text-[#666]">Out-of-sample, % of equity per trade</span></div>
+								<TradeHistogram rows={perfTrades} />
+								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Drawdown periods</h2><span class="text-[11px] text-[#666]">Out-of-sample, deepest first</span></div>
+								<DrawdownTable periods={perfDrawdowns} />
+							</article>
+						</div>
+						<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+							<div><h2 class="m-0 text-[13px] font-semibold text-white">Monthly returns</h2><div class="text-[11px] text-[#666]">{perfUsesFull ? 'Whole run, closed-trade equity.' : 'Out-of-sample equity.'} A dash means no trade closed that month.</div></div>
+							<MonthlyHeatmap months={perfMonths} oosStart={perfOosStart} />
+						</article>
+						<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+							<div><h2 class="m-0 text-[13px] font-semibold text-white">Trades</h2><div class="text-[11px] text-[#666]">This run's stored trades (out-of-sample; the engine does not keep in-sample trades).</div></div>
+							<TradeTable rows={perfTrades} />
+						</article>
+					{/if}
+				</div>
+			{/if}
+
 			{#if activeTab === 'robustness'}
 					<div class="space-y-3">
 						<GauntletStatusCard
@@ -5983,6 +6086,38 @@
 					</details>
 				</div>
 			{/if}
+
+			{#if activeTab === 'activity'}
+				<div class="grid gap-3" data-testid="activity-tab">
+					<BrainStrategyDecisionsCard strategyId={container.strategy.id} />
+					<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="activity-lifecycle-feed">
+						<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Lifecycle</div>
+						{#if orderedRecentEvents.length === 0}
+							<div class="mt-2 text-xs text-[#555]">No events recorded.</div>
+						{:else}
+							<div class="mt-2 space-y-1.5">
+								{#each orderedRecentEvents as event}
+									<div class="border border-[#1f1f1f] bg-[#070707] px-2.5 py-2">
+										<div class="flex items-center justify-between gap-2 text-[11px]">
+											<div class="flex items-center gap-1.5">
+												<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-[#aaa]">{lifecycleStageLabel(event.from_state)}</span>
+												<span class="text-[#555]">-></span>
+												<span class="border border-[#333] bg-[#0c0c0c] px-1.5 py-0.5 font-mono text-white">{lifecycleStageLabel(event.to_state)}</span>
+												<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#555]">{lifecycleActorLabel(event.actor)}</span>
+											</div>
+											<span class="shrink-0 text-[#555]">{fmtDate(event.created_at)}</span>
+										</div>
+										{#if event.reason && event.reason.trim()}
+											<div class="mt-1 text-xs text-[#888]">{event.reason.trim()}</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				</div>
+			{/if}
+
 		</div>
 	{:else}
 		<!-- Defensive: container is null but not loading/errored (e.g. a future early-return
