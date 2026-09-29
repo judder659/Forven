@@ -24,15 +24,15 @@
 
 {#if spans.length}
 	<div class="grid gap-1.5" data-testid="evidence-timeline">
-		<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Evidence timeline{folds.length ? ' · walk-forward test folds below' : ''}</div>
-		<div class="relative h-[34px] overflow-hidden bg-[#0d0d0d]" role="img" aria-label="Evidence timeline">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Evidence timeline{folds.length ? ' · walk-forward test folds below' : ''}</div>
+		<div class="relative h-[34px] overflow-hidden bg-sc-panel2" role="img" aria-label="Evidence timeline">
 			{#each spans as span, index (span.label)}
 				{@const left = pos(span.a)}
 				{@const width = Math.max(0.6, pos(span.b) - left)}
-				<div class="absolute inset-y-0 overflow-hidden border-r-2 border-[#090909] px-1.5 py-0.5" style={`left:${left}%;width:${width}%;background:${SHADES[index % SHADES.length]}`} title={`${span.label}: ${fmtDateUtc(span.a)} – ${fmtDateUtc(span.b)}${isNum(span.totalReturn) ? ` · ${fmtFraction(span.totalReturn)}` : ''}`}>
+				<div class="absolute inset-y-0 overflow-hidden border-r-2 border-sc-panel px-1.5 py-0.5" style={`left:${left}%;width:${width}%;background:${SHADES[index % SHADES.length]}`} title={`${span.label}: ${fmtDateUtc(span.a)} – ${fmtDateUtc(span.b)}${isNum(span.totalReturn) ? ` · ${fmtFraction(span.totalReturn)}` : ''}`}>
 					{#if width > 8}
-						<div class="whitespace-nowrap text-[11px] text-[#aab1bc]">{span.label}</div>
-						<div class={`whitespace-nowrap text-[11px] tabular-nums ${signClass(span.totalReturn)}`}>{isNum(span.totalReturn) ? fmtFraction(span.totalReturn) : ''}</div>
+						<div class="whitespace-nowrap text-[11px] text-sc-ink2">{span.label}</div>
+						<div class={`whitespace-nowrap text-[11px] font-plex-mono tabular-nums ${signClass(span.totalReturn)}`}>{isNum(span.totalReturn) ? fmtFraction(span.totalReturn) : ''}</div>
 					{/if}
 				</div>
 			{/each}
@@ -43,12 +43,12 @@
 					{@const a = parseTimestamp(fold.testStart)}
 					{@const b = parseTimestamp(fold.testEnd)}
 					{#if a !== null && b !== null}
-						<i class="absolute top-[3px] h-1.5 rounded-full bg-[#4b525c]" style={`left:${pos(a)}%;width:${Math.max(0.4, pos(b) - pos(a))}%`} title={`Fold ${fold.fold}: ${fmtDateUtc(a)} – ${fmtDateUtc(b)}`}></i>
+						<i class="absolute top-[3px] h-1.5 rounded-full bg-sc-ink4" style={`left:${pos(a)}%;width:${Math.max(0.4, pos(b) - pos(a))}%`} title={`Fold ${fold.fold}: ${fmtDateUtc(a)} – ${fmtDateUtc(b)}`}></i>
 					{/if}
 				{/each}
 			</div>
 		{/if}
-		<div class="flex justify-between text-[10.5px] tabular-nums text-[#666]">
+		<div class="flex justify-between text-[10.5px] font-plex-mono tabular-nums text-sc-ink3">
 			<span>{fmtMonthYear(t0)}</span>
 			{#each years as year (year)}<span>{year}</span>{/each}
 			<span>today</span>

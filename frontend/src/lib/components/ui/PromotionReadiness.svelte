@@ -147,7 +147,7 @@
 			if (usage >= 75) return 'bg-yellow-400';
 			return 'bg-emerald-500';
 		}
-		return status === 'passed' ? 'bg-emerald-500' : 'bg-white';
+		return status === 'passed' ? 'bg-emerald-500' : 'bg-sc-ink';
 	}
 
 	function progressValueLabel(info: ProgressExtra): string {
@@ -181,7 +181,7 @@
 			case 'warning':
 				return 'border-yellow-800/40 bg-yellow-950/15';
 			case 'skipped':
-				return 'border-[#222] bg-[#111]';
+				return 'border-sc-line bg-sc-raise';
 			default:
 				return 'border-red-800/40 bg-red-950/15';
 		}
@@ -194,7 +194,7 @@
 			case 'warning':
 				return 'border border-yellow-700/50 bg-yellow-950/40 text-yellow-200';
 			case 'skipped':
-				return 'border border-[#333] bg-[#111] text-[#888]';
+				return 'border border-sc-line2 bg-sc-raise text-sc-ink2';
 			default:
 				return 'border border-red-700/50 bg-red-950/40 text-red-200';
 		}
@@ -234,16 +234,16 @@
 	}
 </script>
 
-<div class="space-y-2 border border-[#1a1a1a] bg-[#0a0a0a] p-2.5">
+<div class="rounded-md space-y-2 border border-sc-line bg-sc-panel p-2.5">
 	<div class="flex items-center justify-between">
-		<h3 class="text-[10px] font-semibold uppercase tracking-wide text-[#888]">
+		<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
 			{stageTitle[stage] || 'Promotion Requirements'}
 		</h3>
 		{#if hasChecklist && !isQuickScreen}
 			<button
 				on:click={loadReadiness}
 				disabled={loading}
-				class="text-[10px] text-[#666] transition-colors hover:text-white"
+				class="text-[12px] text-sc-ink3 transition-colors hover:text-sc-ink"
 			>
 				{loading ? 'Loading...' : 'Refresh'}
 			</button>
@@ -259,19 +259,19 @@
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div class="min-w-0 flex-1 space-y-1">
-							<div class="text-[11px] font-medium uppercase tracking-[0.12em] text-white">
+							<div class="text-[11px] font-medium uppercase tracking-[0.12em] text-sc-ink">
 								{step.label}
 							</div>
 							<div
 								data-testid={`readiness-detail-qs-${step.key}`}
-								class="text-[11px] leading-relaxed text-[#888]"
+								class="text-[11px] leading-relaxed text-sc-ink2"
 							>
 								{step.detail}
 							</div>
 						</div>
 						<span
 							data-testid={`readiness-status-qs-${step.key}`}
-							class={`shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${statusBadgeClass(step.status)}`}
+							class={`shrink-0 px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${statusBadgeClass(step.status)}`}
 						>
 							{statusLabel(step.status)}
 						</span>
@@ -282,11 +282,11 @@
 	{:else if isLiveGraduated}
 		<div class="space-y-1">
 			{#each liveGraduatedInfo as info}
-				<div class="flex items-center gap-2 border border-[#1a1a1a] bg-black/30 px-2 py-1.5">
-					<span class="text-xs text-[#666]">-</span>
+				<div class="flex items-center gap-2 border border-sc-line bg-sc-bg/30 px-2 py-1.5">
+					<span class="text-xs text-sc-ink3">-</span>
 					<div class="min-w-0 flex-1">
-						<div class="text-xs font-medium text-white">{info.name}</div>
-						<div class="text-[11px] text-[#666]">{info.desc}</div>
+						<div class="text-xs font-medium text-sc-ink">{info.name}</div>
+						<div class="text-[11px] text-sc-ink3">{info.desc}</div>
 					</div>
 				</div>
 			{/each}
@@ -318,24 +318,24 @@
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div class="min-w-0 flex-1 space-y-1">
-							<div class="text-[11px] font-medium uppercase tracking-[0.12em] text-white">
+							<div class="text-[11px] font-medium uppercase tracking-[0.12em] text-sc-ink">
 								{compactStepLabels[step.name] || stepLabels[step.name] || step.name}
 							</div>
 							<div
 								data-testid={`readiness-detail-${step.name}`}
-								class="text-[11px] leading-relaxed text-[#888]"
+								class="text-[11px] leading-relaxed text-sc-ink2"
 							>
 								{step.detail}
 							</div>
 							{#if progress}
 								<div data-testid={`readiness-progress-${step.name}`}>
-									<div class="h-1.5 w-full bg-[#222]">
+									<div class="h-1.5 w-full bg-sc-raise">
 										<div
 											class={`h-1.5 transition-all ${progressTone(progress, step.status)}`}
 											style={`width: ${progressPct(progress)}%`}
 										></div>
 									</div>
-									<div class="mt-0.5 flex justify-between text-[10px] text-[#666]">
+									<div class="mt-0.5 flex justify-between text-[10px] text-sc-ink3">
 										<span>{progressValueLabel(progress)}</span>
 										<span>{progressTargetLabel(progress)}</span>
 									</div>
@@ -346,7 +346,7 @@
 						<div class="flex shrink-0 items-center gap-2">
 							<span
 								data-testid={`readiness-status-${step.name}`}
-								class={`px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${statusBadgeClass(step.status)}`}
+								class={`px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${statusBadgeClass(step.status)}`}
 							>
 								{statusLabel(step.status)}
 							</span>
@@ -356,7 +356,7 @@
 									data-testid={`readiness-action-${step.name}`}
 									on:click={() => handleAction(step)}
 									disabled={Boolean(actionRunning)}
-									class="shrink-0 border border-[#333] bg-[#111] px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:border-white disabled:cursor-not-allowed disabled:opacity-50"
+									class="rounded-md shrink-0 border border-sc-line2 bg-sc-raise px-2 py-0.5 text-[12px] font-medium text-sc-ink transition-colors hover:border-sc-ink4 disabled:cursor-not-allowed disabled:opacity-50"
 								>
 									{actionRunning === step.actionable
 										? 'Running...'
@@ -369,6 +369,6 @@
 			{/each}
 		</div>
 	{:else if loading}
-		<div class="py-2 text-center text-xs text-[#666]">Loading readiness checks...</div>
+		<div class="py-2 text-center text-xs text-sc-ink3">Loading readiness checks...</div>
 	{/if}
 </div>

@@ -41,7 +41,7 @@
 
 {#if returns.length > 1}
 	<div class="relative" use:trackWidth={(value) => (width = value || 420)} data-testid="trade-histogram">
-		<svg viewBox={`0 0 ${Math.max(160, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label={`Histogram of ${returns.length} trade returns${mean === null ? '' : `, mean ${fmtPct(mean, 2)}`}`}>
+		<svg viewBox={`0 0 ${Math.max(160, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label={`Histogram of ${returns.length} trade returns${mean === null ? '' : `, mean ${fmtPct(mean, 2)}`}`}>
 			{#each yTicks as tick (tick)}
 				<line x1={M.l} x2={M.l + w} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? CHART.axis : CHART.grid} shape-rendering="crispEdges" />
 				<text x={M.l - 6} y={y(tick) + 3.5} text-anchor="end" fill={CHART.ink3}>{tick}</text>
@@ -72,12 +72,12 @@
 			{/if}
 		</svg>
 		{#if hovered && hover !== null}
-			<div class="pointer-events-none absolute top-0 z-10 border border-[#2a2f38] bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(x(hovered.a) + 8, Math.max(0, width - 150))}px`}>
-				<div class="text-[#777]">{fmtPct(hovered.a, 1)} to {fmtPct(hovered.b, 1)}</div>
-				<div class="flex justify-between gap-3"><span class="text-[#777]">Trades</span><span class="text-white">{hovered.n}</span></div>
+			<div class="pointer-events-none absolute top-0 z-10 rounded-md border border-sc-line2 bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(x(hovered.a) + 8, Math.max(0, width - 150))}px`}>
+				<div class="text-sc-ink3">{fmtPct(hovered.a, 1)} to {fmtPct(hovered.b, 1)}</div>
+				<div class="flex justify-between gap-3"><span class="text-sc-ink3">Trades</span><span class="text-sc-ink">{hovered.n}</span></div>
 			</div>
 		{/if}
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Too few trades for a distribution.</div>
+	<div class="text-[12px] text-sc-ink3">Too few trades for a distribution.</div>
 {/if}

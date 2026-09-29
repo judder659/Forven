@@ -15,6 +15,8 @@
 	export let name: string = '';
 	/** Compact rendering for table rows / dense toolbars. */
 	export let compact = false;
+	/** The strategy container's theme (rounded, IBM Plex); other pages keep the terminal look. */
+	export let themed = false;
 
 	let open = false;
 	let busy = false;
@@ -73,9 +75,11 @@
 	<button
 		type="button"
 		data-testid="strategy-export-trigger"
-		class={`inline-flex items-center gap-1 border border-[#333] bg-black font-bold uppercase tracking-widest text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-50 ${
-			compact ? 'px-2 py-1 text-[9px]' : 'px-3 py-1.5 text-[10px]'
-		}`}
+		class={themed
+			? 'inline-flex items-center gap-1 rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition-colors hover:text-sc-ink disabled:opacity-50'
+			: `inline-flex items-center gap-1 border border-[#333] bg-black font-bold uppercase tracking-widest text-[#888] transition-colors hover:border-[#555] hover:text-white disabled:opacity-50 ${
+					compact ? 'px-2 py-1 text-[9px]' : 'px-3 py-1.5 text-[10px]'
+				}`}
 		disabled={busy}
 		aria-haspopup="menu"
 		aria-expanded={open}
@@ -94,7 +98,9 @@
 			on:click|stopPropagation={close}
 		></button>
 		<div
-			class="absolute right-0 z-50 mt-1 w-44 overflow-hidden border border-[#222] bg-[#050505]"
+			class={themed
+				? 'absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded-md border border-sc-line2 bg-sc-panel2 shadow-[0_8px_24px_rgba(0,0,0,0.45)]'
+				: 'absolute right-0 z-50 mt-1 w-44 overflow-hidden border border-[#222] bg-[#050505]'}
 			role="menu"
 		>
 			<button

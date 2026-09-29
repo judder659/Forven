@@ -44,7 +44,7 @@
 {#if bins.length > 1 && counts.length === bins.length}
 	<div class="grid gap-3" data-testid="monte-carlo-outcome">
 		<div class="relative" use:trackWidth={(value) => (width = value || 420)}>
-			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label={`Final return of ${sims ?? ''} resampled trade sequences`}>
+			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label={`Final return of ${sims ?? ''} resampled trade sequences`}>
 				{#each niceTicks(0, maxN, 4).filter((tick) => Number.isInteger(tick)) as tick (tick)}
 					<line x1={M.l} x2={M.l + w} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? CHART.axis : CHART.grid} shape-rendering="crispEdges" />
 					<text x={M.l - 6} y={y(tick) + 3.5} text-anchor="end" fill={CHART.ink3}>{tick}</text>
@@ -75,17 +75,17 @@
 				{/each}
 			</svg>
 			{#if hover !== null}
-				<div class="pointer-events-none absolute top-0 z-10 border border-[#2a2f38] bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(x(bins[hover]) + 8, Math.max(0, width - 160))}px`}>
-					<div class="text-[#777]">{fmtPct(bins[hover], 1)} to {fmtPct(bins[hover] + step, 1)}</div>
-					<div class="flex justify-between gap-3"><span class="text-[#777]">Resamples</span><span class="text-white">{counts[hover]}</span></div>
+				<div class="pointer-events-none absolute top-0 z-10 rounded-md border border-sc-line2 bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(x(bins[hover]) + 8, Math.max(0, width - 160))}px`}>
+					<div class="text-sc-ink3">{fmtPct(bins[hover], 1)} to {fmtPct(bins[hover] + step, 1)}</div>
+					<div class="flex justify-between gap-3"><span class="text-sc-ink3">Resamples</span><span class="text-sc-ink">{counts[hover]}</span></div>
 				</div>
 			{/if}
 		</div>
 		<StatGrid items={stats} testid="monte-carlo-stats" />
-		<p class="m-0 text-[11px] leading-relaxed text-[#777]">
+		<p class="m-0 text-[12px] leading-relaxed text-sc-ink3">
 			{sims?.toLocaleString('en-US') ?? '—'} resamples of the {tradesN ?? '—'} walk-forward trades, drawn with replacement. This bounds luck in the order and mix of trades; it does not test whether the edge itself is real — walk-forward, the held-back test and the regime split do that.
 		</p>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Monte Carlo has not run.</div>
+	<div class="text-[12px] text-sc-ink3">Monte Carlo has not run.</div>
 {/if}

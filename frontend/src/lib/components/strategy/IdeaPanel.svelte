@@ -34,7 +34,7 @@
 <span class="relative inline-block">
 	<button
 		type="button"
-		class="text-[11px] uppercase tracking-widest text-[#888] transition-colors hover:text-white"
+		class="text-[11px] text-sc-ink2 transition-colors hover:text-sc-ink"
 		aria-expanded={open}
 		on:click={toggle}
 	>
@@ -42,28 +42,28 @@
 	</button>
 	{#if open}
 		<div
-			class="absolute left-0 top-full z-40 mt-2 w-[min(32rem,90vw)] space-y-2 border border-[#222] bg-[#050505] p-4 text-left text-xs normal-case tracking-normal text-[#ccc] shadow-xl"
+			class="rounded-md absolute left-0 top-full z-40 mt-2 w-[min(32rem,90vw)] space-y-2 border border-sc-line bg-sc-panel2 p-4 text-left text-xs normal-case tracking-normal text-sc-ink2 shadow-xl"
 		>
 			{#if loading}
-				<p class="text-[#666]">Loading…</p>
+				<p class="text-sc-ink3">Loading…</p>
 			{:else if errorMsg}
 				<p class="text-red-400">{errorMsg}</p>
 			{:else if idea}
-				<div class="text-sm font-bold text-white">{idea.title}</div>
+				<div class="text-sm font-bold text-sc-ink">{idea.title}</div>
 				{#if idea.market_thesis}
-					<div><span class="text-[10px] uppercase tracking-wider text-[#666]">Thesis</span><p>{idea.market_thesis}</p></div>
+					<div><span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Thesis</span><p>{idea.market_thesis}</p></div>
 				{/if}
 				{#if idea.mechanism}
-					<div><span class="text-[10px] uppercase tracking-wider text-[#666]">Mechanism</span><p>{idea.mechanism}</p></div>
+					<div><span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Mechanism</span><p>{idea.mechanism}</p></div>
 				{/if}
 				{#if idea.disproof}
 					<div>
-						<span class="text-[10px] uppercase tracking-wider text-[#666]">What would disprove it</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">What would disprove it</span>
 						<p>{idea.disproof}</p>
 					</div>
 				{/if}
 				{#if (idea.target_assets ?? []).length || (idea.target_timeframes ?? []).length}
-					<p class="text-[#888]">
+					<p class="text-sc-ink2">
 						{(idea.target_assets ?? []).join(', ')}{(idea.target_timeframes ?? []).length ? ` · ${(idea.target_timeframes ?? []).join(', ')}` : ''}
 					</p>
 				{/if}
@@ -73,7 +73,7 @@
 							href={safeHref(artifact.source_ref)}
 							target="_blank"
 							rel="noopener noreferrer"
-							class="block truncate text-[#888] underline hover:text-white"
+							class="block truncate text-sc-ink2 underline hover:text-sc-ink"
 						>
 							Source: {artifact.source_title || artifact.source_ref}
 						</a>
@@ -81,14 +81,14 @@
 				{/each}
 				{#if siblings.length}
 					<div>
-						<span class="text-[10px] uppercase tracking-wider text-[#666]">Other strategies from this idea</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Other strategies from this idea</span>
 						<ul class="mt-1 space-y-0.5">
 							{#each siblings as row (row.id)}
 								<li>
-									<a href={`/lab/strategy/${encodeURIComponent(row.id)}`} class="font-mono text-[#aaa] hover:text-white">
+									<a href={`/lab/strategy/${encodeURIComponent(row.id)}`} class="font-mono text-sc-ink2 hover:text-sc-ink">
 										{row.display_id || row.id}
 									</a>
-									<span class="text-[#666]">· {row.symbol ?? ''} {row.timeframe ?? ''} · {row.stage ?? ''}</span>
+									<span class="text-sc-ink3">· {row.symbol ?? ''} {row.timeframe ?? ''} · {row.stage ?? ''}</span>
 								</li>
 							{/each}
 						</ul>

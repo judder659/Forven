@@ -524,7 +524,7 @@
 	}
 
 	function verdictBadge(verdict: string | null): string {
-		if (!verdict) return 'border-[#333] text-[#888]';
+		if (!verdict) return 'border-sc-line2 text-sc-ink2';
 		return verdict === 'PASS'
 			? 'border-emerald-900 bg-emerald-500/10 text-emerald-400'
 			: 'border-red-900 bg-red-500/10 text-red-400';
@@ -538,7 +538,7 @@
 	function hurdleBadge(status: string | undefined): string {
 		if (status === 'pass') return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
 		if (status === 'fail') return 'border-red-900 bg-red-500/10 text-red-400';
-		return 'border-[#333] text-[#888]';
+		return 'border-sc-line2 text-sc-ink2';
 	}
 
 	function hurdleLabel(status: string | undefined): string {
@@ -1334,13 +1334,13 @@
 	// (CostStressComparisonChart / RegimePnlChart) matching the MonteCarloChart pattern.
 </script>
 
-<div class="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#222] pb-4">
+<div class="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-sc-line pb-4">
 	<div>
-		<div class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Robustness Runners</div>
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Robustness Runners</div>
 	</div>
 	<button
 		type="button"
-		class="terminal-button-primary shrink-0 text-xs"
+		class="rounded-md border border-sc-ink bg-sc-ink font-medium text-[#0b0d10] transition hover:bg-white shrink-0 text-[12px]"
 		on:click={runFullSuite}
 		disabled={anyLoading || suiteRunning}
 	>
@@ -1358,19 +1358,19 @@
 <!-- ──── Walk-Forward Analysis ──── -->
 <div class="mb-3 terminal-card overflow-hidden">
 	<button
-		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#111]"
+		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-sc-raise"
 		on:click={() => toggleSection('walk_forward')}
 	>
 		<div class="flex items-center gap-3">
-			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Walk-Forward Analysis</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Walk-Forward Analysis</span>
 			<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(scorecardVerdicts['walk_forward'])}`}>{verdictLabel(scorecardVerdicts['walk_forward'])}</span>
 			{#if loading.walk_forward}<span class="animate-pulse text-[10px] text-yellow-400">running...</span>{/if}
 		</div>
-		<span class="text-[#555] text-sm">{expandedSections.walk_forward ? '−' : '+'}</span>
+		<span class="text-sc-ink3 text-sm">{expandedSections.walk_forward ? '−' : '+'}</span>
 	</button>
 
 	{#if expandedSections.walk_forward}
-		<div class="border-t border-[#1a1a1a] px-4 py-4" data-testid="runner-body-walk_forward">
+		<div class="border-t border-sc-line px-4 py-4" data-testid="runner-body-walk_forward">
 			<div class="grid gap-4 lg:grid-cols-2">
 				<SymbolInput id="wf-symbol" label="Symbol" bind:value={walkForwardForm.symbol} suggestions={symbolSuggestions} />
 				<TimeframeSelect id="wf-timeframe" label="Timeframe" bind:value={walkForwardForm.timeframe} />
@@ -1406,7 +1406,7 @@
 				<div class="flex items-end">
 					<button
 						type="button"
-						class="terminal-button w-full text-xs"
+						class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 w-full text-[12px]"
 						on:click={handleWalkForwardClick}
 						disabled={loading.walk_forward}
 					>
@@ -1420,71 +1420,71 @@
 			{/if}
 
 			{#if walkForwardResult}
-				<div class="mt-4 border border-[#222] bg-[#050505] p-3">
+				<div class="rounded-md mt-4 border border-sc-line bg-sc-panel2 p-3">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-[10px] uppercase tracking-wide text-[#666]">Results</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Results</span>
 						<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(String(walkForwardResult.verdict))}`}>{walkForwardResult.verdict}</span>
 					</div>
 					{#if walkForwardResult.verdict_reasons?.length}
 						<div class="mb-3 border border-red-900 bg-red-500/5 px-2.5 py-2 text-[11px] text-red-400" data-testid="wf-verdict-reasons">
-							<div class="text-[10px] font-semibold uppercase tracking-wide">Why it failed</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Why it failed</div>
 							<ul class="mt-1 list-disc space-y-0.5 pl-4">
 								{#each walkForwardResult.verdict_reasons as reason}<li>{reason}</li>{/each}
 							</ul>
 						</div>
 					{/if}
 					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Avg IS Sharpe</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{Number(walkForwardResult.avg_is_sharpe || 0).toFixed(3)}</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Avg IS Sharpe</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(walkForwardResult.avg_is_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Avg OOS Sharpe</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{Number(walkForwardResult.avg_oos_sharpe || 0).toFixed(3)}</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Avg OOS Sharpe</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(walkForwardResult.avg_oos_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Degradation</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Degradation</div>
 							<div class="mt-1 font-mono text-sm {Number(walkForwardResult.degradation || 0) > 0.5 ? 'text-red-400' : 'text-emerald-400'}">{(Number(walkForwardResult.degradation || 0) * 100).toFixed(1)}%</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">OOS Trades</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{walkForwardResult.aggregate_oos?.total_trades ?? walkForwardResult.aggregate_oos?.trades ?? '-'}</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">OOS Trades</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{walkForwardResult.aggregate_oos?.total_trades ?? walkForwardResult.aggregate_oos?.trades ?? '-'}</div>
 						</div>
 					</div>
 					{#if walkForwardResult.baseline_hurdle}
 						{@const hurdle = walkForwardResult.baseline_hurdle}
-						<div class="mt-3 border border-[#1a1a1a] bg-black px-3 py-2" data-testid="wf-baseline-hurdle">
+						<div class="rounded-md mt-3 border border-sc-line bg-sc-bg px-3 py-2" data-testid="wf-baseline-hurdle">
 							<div class="flex flex-wrap items-center gap-2">
-								<span class="text-[10px] uppercase tracking-wide text-[#666]">Out-of-sample vs buy-and-hold + trend rule</span>
+								<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Out-of-sample vs buy-and-hold + trend rule</span>
 								<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${hurdleBadge(hurdle.status)}`}>{hurdleLabel(hurdle.status)}</span>
-								<span class="text-[10px] text-[#555]">{hurdleEnforcement(hurdle)}</span>
+								<span class="text-[10px] text-sc-ink3">{hurdleEnforcement(hurdle)}</span>
 							</div>
 							{#if hurdle.alpha_pct != null}
 								<div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
 									<div>
-										<div class="text-[10px] text-[#666]">Alpha / yr (t)</div>
+										<div class="text-[10px] text-sc-ink3">Alpha / yr (t)</div>
 										<div class="mt-1 font-mono text-sm {Number(hurdle.alpha_pct) > 0 ? 'text-emerald-400' : 'text-red-400'}">
 											{signedPct(hurdle.alpha_pct)} ({Number(hurdle.alpha_t ?? 0).toFixed(2)})
 										</div>
 									</div>
 									<div>
-										<div class="text-[10px] text-[#666]">Sharpe: strategy</div>
-										<div class="mt-1 font-mono text-sm text-[#888]">{Number(hurdle.sharpe?.strategy ?? 0).toFixed(2)}</div>
+										<div class="text-[10px] text-sc-ink3">Sharpe: strategy</div>
+										<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(hurdle.sharpe?.strategy ?? 0).toFixed(2)}</div>
 									</div>
 									<div>
-										<div class="text-[10px] text-[#666]">Sharpe: buy-and-hold</div>
-										<div class="mt-1 font-mono text-sm text-[#888]">{Number(hurdle.sharpe?.buy_hold ?? 0).toFixed(2)}</div>
+										<div class="text-[10px] text-sc-ink3">Sharpe: buy-and-hold</div>
+										<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(hurdle.sharpe?.buy_hold ?? 0).toFixed(2)}</div>
 									</div>
 									<div>
-										<div class="text-[10px] text-[#666]">Sharpe: trend rule</div>
-										<div class="mt-1 font-mono text-sm text-[#888]">{Number(hurdle.sharpe?.trend ?? 0).toFixed(2)}</div>
+										<div class="text-[10px] text-sc-ink3">Sharpe: trend rule</div>
+										<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(hurdle.sharpe?.trend ?? 0).toFixed(2)}</div>
 									</div>
 								</div>
-								<div class="mt-2 text-[10px] text-[#555]">
+								<div class="mt-2 text-[10px] text-sc-ink3">
 									{hurdle.n_days ?? 0} OOS days · market beta {Number(hurdle.beta_market ?? 0).toFixed(2)} · trend beta {Number(hurdle.beta_trend ?? 0).toFixed(2)}
 								</div>
 							{:else}
-								<div class="mt-1 text-[11px] text-[#888]">{hurdle.insufficient_reason ?? hurdle.error ?? 'Not measured on this run.'}</div>
+								<div class="mt-1 text-[11px] text-sc-ink2">{hurdle.insufficient_reason ?? hurdle.error ?? 'Not measured on this run.'}</div>
 							{/if}
 							{#if hurdle.reasons?.length}
 								<ul class="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-red-400">
@@ -1495,7 +1495,7 @@
 					{/if}
 					{#if walkForwardResult.splits?.length > 0}
 						<table class="mt-3 w-full text-xs">
-							<thead class="bg-[#050505] text-[#666]">
+							<thead class="bg-sc-panel2 text-sc-ink3">
 								<tr>
 									<th class="px-2 py-1 text-left">Split</th>
 									<th class="px-2 py-1 text-right">Bars</th>
@@ -1507,13 +1507,13 @@
 							</thead>
 							<tbody>
 								{#each walkForwardResult.splits as split}
-									<tr class="border-t border-[#111]">
-										<td class="px-2 py-1 font-mono text-[#888]">{split.split}</td>
-										<td class="px-2 py-1 text-right font-mono text-[#888]">{split.bars}</td>
-										<td class="px-2 py-1 text-right font-mono text-[#888]">{split.in_sample?.trades ?? 0}</td>
-										<td class="px-2 py-1 text-right font-mono text-[#888]">{Number(split.in_sample?.sharpe ?? 0).toFixed(2)}</td>
-										<td class="px-2 py-1 text-right font-mono text-[#888]">{split.out_of_sample?.trades ?? 0}</td>
-										<td class="px-2 py-1 text-right font-mono text-[#888]">{Number(split.out_of_sample?.sharpe ?? 0).toFixed(2)}</td>
+									<tr class="border-t border-sc-line">
+										<td class="px-2 py-1 font-mono text-sc-ink2">{split.split}</td>
+										<td class="px-2 py-1 text-right font-mono text-sc-ink2">{split.bars}</td>
+										<td class="px-2 py-1 text-right font-mono text-sc-ink2">{split.in_sample?.trades ?? 0}</td>
+										<td class="px-2 py-1 text-right font-mono text-sc-ink2">{Number(split.in_sample?.sharpe ?? 0).toFixed(2)}</td>
+										<td class="px-2 py-1 text-right font-mono text-sc-ink2">{split.out_of_sample?.trades ?? 0}</td>
+										<td class="px-2 py-1 text-right font-mono text-sc-ink2">{Number(split.out_of_sample?.sharpe ?? 0).toFixed(2)}</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -1528,19 +1528,19 @@
 <!-- ──── Monte Carlo ──── -->
 <div class="mb-3 terminal-card overflow-hidden">
 	<button
-		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#111]"
+		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-sc-raise"
 		on:click={() => toggleSection('monte_carlo')}
 	>
 		<div class="flex items-center gap-3">
-			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]" title={MC_SCOPE_NOTE}>Monte Carlo Simulation</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title={MC_SCOPE_NOTE}>Monte Carlo Simulation</span>
 			<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(scorecardVerdicts['monte_carlo'])}`}>{verdictLabel(scorecardVerdicts['monte_carlo'])}</span>
 			{#if loading.monte_carlo}<span class="animate-pulse text-[10px] text-yellow-400">running...</span>{/if}
 		</div>
-		<span class="text-[#555] text-sm">{expandedSections.monte_carlo ? '−' : '+'}</span>
+		<span class="text-sc-ink3 text-sm">{expandedSections.monte_carlo ? '−' : '+'}</span>
 	</button>
 
 	{#if expandedSections.monte_carlo}
-		<div class="border-t border-[#1a1a1a] px-4 py-4" data-testid="runner-body-monte_carlo">
+		<div class="border-t border-sc-line px-4 py-4" data-testid="runner-body-monte_carlo">
 			<div class="grid gap-4 lg:grid-cols-3">
 				<ResultPicker id="mc-result" label="Gauntlet result" bind:value={monteCarloForm.result_id} items={backtestHistory} helpText="Source Gauntlet run for trade bootstrap." />
 				<NumericInputField id="mc-sims" label="Simulations" bind:value={monteCarloForm.n_simulations} min="100" max="10000" helpText="Number of equity path simulations." />
@@ -1549,7 +1549,7 @@
 			<div class="mt-3 flex justify-end">
 				<button
 					type="button"
-					class="terminal-button text-xs"
+					class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 text-[12px]"
 					on:click={handleMonteCarloClick}
 					disabled={loading.monte_carlo || !monteCarloForm.result_id}
 				>
@@ -1562,21 +1562,21 @@
 			{/if}
 
 			{#if monteCarloResult}
-				<div class="mt-4 border border-[#222] bg-[#050505] p-3">
+				<div class="rounded-md mt-4 border border-sc-line bg-sc-panel2 p-3">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-[10px] uppercase tracking-wide text-[#666]">Results</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Results</span>
 						<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(String(monteCarloResult.verdict))}`}>{monteCarloResult.verdict}</span>
 						{#if monteCarloResult.method}
-							<span class="border border-[#333] bg-black px-1.5 py-0.5 text-[10px] text-[#888]">{methodLabel(monteCarloResult.method)}</span>
+							<span class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 text-[10px] text-sc-ink2">{methodLabel(monteCarloResult.method)}</span>
 						{/if}
-						<span class="text-[10px] text-[#555]">{monteCarloResult.n_simulations} sims / {monteCarloResult.n_trades} trades</span>
+						<span class="text-[10px] text-sc-ink3">{monteCarloResult.n_simulations} sims / {monteCarloResult.n_trades} trades</span>
 					</div>
-					<div class="mb-3 border border-[#1a1a1a] bg-black px-2.5 py-1.5 text-[11px] text-[#666]" data-testid="mc-scope-note">
+					<div class="rounded-md mb-3 border border-sc-line bg-sc-bg px-2.5 py-1.5 text-[11px] text-sc-ink3" data-testid="mc-scope-note">
 						{monteCarloResult.scope_note ?? MC_SCOPE_NOTE}
 					</div>
 					{#if monteCarloResult.verdict_reasons?.length}
 						<div class="mb-3 border border-red-900 bg-red-500/5 px-2.5 py-2 text-[11px] text-red-400" data-testid="mc-verdict-reasons">
-							<div class="text-[10px] font-semibold uppercase tracking-wide">Why it failed</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Why it failed</div>
 							<ul class="mt-1 list-disc space-y-0.5 pl-4">
 								{#each monteCarloResult.verdict_reasons as reason}<li>{reason}</li>{/each}
 							</ul>
@@ -1585,31 +1585,31 @@
 					<!-- Verdict-relevant stats lead: PASS requires prob_profitable above the policy
 					     floor AND the P95 bootstrapped drawdown under the cap. -->
 					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2" title={`Share of bootstrapped paths ending profitable. Verdict requires ≥ ${monteCarloResult.verdict_thresholds?.min_prob_profitable ?? '—'}%.`}>
-							<div class="text-[10px] text-[#666]">Prob Profitable</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2" title={`Share of bootstrapped paths ending profitable. Verdict requires ≥ ${monteCarloResult.verdict_thresholds?.min_prob_profitable ?? '—'}%.`}>
+							<div class="text-[10px] text-sc-ink3">Prob Profitable</div>
 							<div class="mt-1 font-mono text-sm text-emerald-400">{monteCarloResult.prob_profitable}%</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2" title={`95th-percentile max drawdown across simulations. Verdict requires ≤ ${monteCarloResult.verdict_thresholds?.max_dd_p95 ?? '—'}%.`}>
-							<div class="text-[10px] text-[#666]">P95 Max DD</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2" title={`95th-percentile max drawdown across simulations. Verdict requires ≤ ${monteCarloResult.verdict_thresholds?.max_dd_p95 ?? '—'}%.`}>
+							<div class="text-[10px] text-sc-ink3">P95 Max DD</div>
 							<div class="mt-1 font-mono text-sm text-red-400">{monteCarloResult.drawdown_distribution?.p95 ?? '--'}%</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Prob Loss &gt;10%</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Prob Loss &gt;10%</div>
 							<div class="mt-1 font-mono text-sm text-red-400">{monteCarloResult.prob_loss_gt_10}%</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Original Return</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{monteCarloResult.original_return}%</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Original Return</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{monteCarloResult.original_return}%</div>
 						</div>
 					</div>
 
 					{#if monteCarloResult.equity_paths?.length > 0}
-						<div class="mt-3 bg-[#111] p-2">
-							<div class="mb-1 text-[10px] text-[#666] uppercase">Simulated Equity Curves</div>
+						<div class="mt-3 bg-sc-raise p-2">
+							<div class="mb-1 text-[10px] text-sc-ink3 uppercase">Simulated Equity Curves</div>
 							<MonteCarloChart equityPaths={monteCarloResult.equity_paths} height={220} />
 						</div>
 					{:else}
-						<div class="mt-3 border border-[#333] bg-[#050505] px-2.5 py-2 text-[11px] text-[#666]">
+						<div class="rounded-md mt-3 border border-sc-line2 bg-sc-panel2 px-2.5 py-2 text-[11px] text-sc-ink3">
 							Simulated equity curves are unavailable for this stored result (the full simulation
 							artifact was pruned). Re-run Monte Carlo to regenerate them.
 						</div>
@@ -1618,17 +1618,17 @@
 					{#if monteCarloResult.return_histogram || monteCarloResult.drawdown_histogram || monteCarloResult.sharpe_histogram}
 						<div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
 							{#if monteCarloResult.return_histogram}
-								<div class="bg-[#111] p-2 flex justify-center">
+								<div class="bg-sc-raise p-2 flex justify-center">
 									<DistributionChart bins={monteCarloResult.return_histogram.bins} counts={monteCarloResult.return_histogram.counts} title="Return Dist (%)" xLabel="Return %" width={320} height={200} stats={{ mean: monteCarloResult.original_return }} />
 								</div>
 							{/if}
 							{#if monteCarloResult.drawdown_histogram}
-								<div class="bg-[#111] p-2 flex justify-center">
+								<div class="bg-sc-raise p-2 flex justify-center">
 									<DistributionChart bins={monteCarloResult.drawdown_histogram.bins} counts={monteCarloResult.drawdown_histogram.counts} title="Max DD Dist (%)" xLabel="Max DD %" width={320} height={200} colorBySign={false} />
 								</div>
 							{/if}
 							{#if monteCarloResult.sharpe_histogram}
-								<div class="bg-[#111] p-2 flex justify-center">
+								<div class="bg-sc-raise p-2 flex justify-center">
 									<DistributionChart bins={monteCarloResult.sharpe_histogram.bins} counts={monteCarloResult.sharpe_histogram.counts} title="Sharpe Dist" xLabel="Sharpe" width={320} height={200} stats={{ mean: monteCarloResult.original_sharpe }} />
 								</div>
 							{/if}
@@ -1637,31 +1637,31 @@
 
 					<div class="mt-3 grid grid-cols-1 gap-3 text-xs md:grid-cols-3">
 						{#if monteCarloResult.return_distribution}
-							<div class="bg-[#111] p-2">
-								<div class="mb-1 text-[10px] text-[#666] uppercase">Return Percentiles</div>
-								<div class="space-y-0.5 font-mono text-[#888]">
+							<div class="bg-sc-raise p-2">
+								<div class="mb-1 text-[10px] text-sc-ink3 uppercase">Return Percentiles</div>
+								<div class="space-y-0.5 font-mono text-sc-ink2">
 									{#each [['P5', monteCarloResult.return_distribution.p5], ['P25', monteCarloResult.return_distribution.p25], ['P50', monteCarloResult.return_distribution.p50], ['P75', monteCarloResult.return_distribution.p75], ['P95', monteCarloResult.return_distribution.p95]] as [label, val]}
-										<div class="flex justify-between {label === 'P50' ? 'text-white' : ''}"><span>{label}</span><span>{val}%</span></div>
+										<div class="flex justify-between {label === 'P50' ? 'text-sc-ink' : ''}"><span>{label}</span><span>{val}%</span></div>
 									{/each}
 								</div>
 							</div>
 						{/if}
 						{#if monteCarloResult.drawdown_distribution}
-							<div class="bg-[#111] p-2">
-								<div class="mb-1 text-[10px] text-[#666] uppercase">Drawdown Percentiles</div>
-								<div class="space-y-0.5 font-mono text-[#888]">
+							<div class="bg-sc-raise p-2">
+								<div class="mb-1 text-[10px] text-sc-ink3 uppercase">Drawdown Percentiles</div>
+								<div class="space-y-0.5 font-mono text-sc-ink2">
 									{#each [['P5', monteCarloResult.drawdown_distribution.p5], ['P25', monteCarloResult.drawdown_distribution.p25], ['P50', monteCarloResult.drawdown_distribution.p50], ['P75', monteCarloResult.drawdown_distribution.p75], ['P95', monteCarloResult.drawdown_distribution.p95]] as [label, val]}
-										<div class="flex justify-between {label === 'P50' ? 'text-white' : ''}"><span>{label}</span><span>{val}%</span></div>
+										<div class="flex justify-between {label === 'P50' ? 'text-sc-ink' : ''}"><span>{label}</span><span>{val}%</span></div>
 									{/each}
 								</div>
 							</div>
 						{/if}
 						{#if monteCarloResult.sharpe_distribution}
-							<div class="bg-[#111] p-2">
-								<div class="mb-1 text-[10px] text-[#666] uppercase">Sharpe Percentiles</div>
-								<div class="space-y-0.5 font-mono text-[#888]">
+							<div class="bg-sc-raise p-2">
+								<div class="mb-1 text-[10px] text-sc-ink3 uppercase">Sharpe Percentiles</div>
+								<div class="space-y-0.5 font-mono text-sc-ink2">
 									{#each [['P5', monteCarloResult.sharpe_distribution.p5], ['P25', monteCarloResult.sharpe_distribution.p25], ['P50', monteCarloResult.sharpe_distribution.p50], ['P75', monteCarloResult.sharpe_distribution.p75], ['P95', monteCarloResult.sharpe_distribution.p95]] as [label, val]}
-										<div class="flex justify-between {label === 'P50' ? 'text-white' : ''}"><span>{label}</span><span>{val}</span></div>
+										<div class="flex justify-between {label === 'P50' ? 'text-sc-ink' : ''}"><span>{label}</span><span>{val}</span></div>
 									{/each}
 								</div>
 							</div>
@@ -1676,19 +1676,19 @@
 <!-- ──── Param Jitter ──── -->
 <div class="mb-3 terminal-card overflow-hidden">
 	<button
-		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#111]"
+		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-sc-raise"
 		on:click={() => toggleSection('param_jitter')}
 	>
 		<div class="flex items-center gap-3">
-			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Parameter Jitter</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Parameter Jitter</span>
 			<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(scorecardVerdicts['param_jitter'])}`}>{verdictLabel(scorecardVerdicts['param_jitter'])}</span>
 			{#if loading.param_jitter}<span class="animate-pulse text-[10px] text-yellow-400">running...</span>{/if}
 		</div>
-		<span class="text-[#555] text-sm">{expandedSections.param_jitter ? '−' : '+'}</span>
+		<span class="text-sc-ink3 text-sm">{expandedSections.param_jitter ? '−' : '+'}</span>
 	</button>
 
 	{#if expandedSections.param_jitter}
-		<div class="border-t border-[#1a1a1a] px-4 py-4" data-testid="runner-body-param_jitter">
+		<div class="border-t border-sc-line px-4 py-4" data-testid="runner-body-param_jitter">
 			<div class="grid gap-4 lg:grid-cols-3">
 				<ResultPicker id="pj-result" label="Gauntlet result" bind:value={paramJitterForm.result_id} items={backtestHistory} helpText="Baseline for parameter perturbation." />
 				<NumericInputField id="pj-pct" label="Jitter %" bind:value={paramJitterForm.jitter_pct} min="1" max="50" helpText="How much to perturb each parameter." />
@@ -1697,7 +1697,7 @@
 			<div class="mt-3 flex justify-end">
 				<button
 					type="button"
-					class="terminal-button text-xs"
+					class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 text-[12px]"
 					on:click={handleParamJitterClick}
 					disabled={loading.param_jitter || !paramJitterForm.result_id}
 				>
@@ -1710,43 +1710,43 @@
 			{/if}
 
 			{#if paramJitterResult}
-				<div class="mt-4 border border-[#222] bg-[#050505] p-3">
+				<div class="rounded-md mt-4 border border-sc-line bg-sc-panel2 p-3">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-[10px] uppercase tracking-wide text-[#666]">Results</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Results</span>
 						<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(String(paramJitterResult.verdict))}`}>{paramJitterResult.verdict}</span>
 						{#if paramJitterResult.method}
-							<span class="border border-[#333] bg-black px-1.5 py-0.5 text-[10px] text-[#888]">{methodLabel(paramJitterResult.method)}</span>
+							<span class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 text-[10px] text-sc-ink2">{methodLabel(paramJitterResult.method)}</span>
 						{/if}
-						<span class="text-[10px] text-[#555]">{paramJitterResult.n_iterations} iterations @ {paramJitterResult.jitter_pct}% jitter</span>
+						<span class="text-[10px] text-sc-ink3">{paramJitterResult.n_iterations} iterations @ {paramJitterResult.jitter_pct}% jitter</span>
 					</div>
 					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Original Sharpe</div>
-							<div class="mt-1 font-mono text-sm text-white">{Number(paramJitterResult.original_sharpe || 0).toFixed(3)}</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Original Sharpe</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink">{Number(paramJitterResult.original_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Mean Sharpe</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{Number(paramJitterResult.mean_sharpe || 0).toFixed(3)}</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Mean Sharpe</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(paramJitterResult.mean_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Std Dev</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{Number(paramJitterResult.std_sharpe || 0).toFixed(3)}</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Std Dev</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{Number(paramJitterResult.std_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Min Sharpe</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Min Sharpe</div>
 							<div class="mt-1 font-mono text-sm text-red-400">{Number(paramJitterResult.min_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">Max Sharpe</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">Max Sharpe</div>
 							<div class="mt-1 font-mono text-sm text-emerald-400">{Number(paramJitterResult.max_sharpe || 0).toFixed(3)}</div>
 						</div>
-						<div class="border border-[#1a1a1a] bg-black px-3 py-2">
-							<div class="text-[10px] text-[#666]">% Positive</div>
-							<div class="mt-1 font-mono text-sm text-[#888]">{paramJitterResult.pct_positive_sharpe}%</div>
+						<div class="rounded-md border border-sc-line bg-sc-bg px-3 py-2">
+							<div class="text-[10px] text-sc-ink3">% Positive</div>
+							<div class="mt-1 font-mono text-sm text-sc-ink2">{paramJitterResult.pct_positive_sharpe}%</div>
 						</div>
 					</div>
 					{#if paramJitterResult.sharpe_histogram}
-						<div class="mt-3 bg-[#111] p-2 flex justify-center">
+						<div class="mt-3 bg-sc-raise p-2 flex justify-center">
 							<DistributionChart
 								bins={paramJitterResult.sharpe_histogram.bins}
 								counts={paramJitterResult.sharpe_histogram.counts}
@@ -1757,7 +1757,7 @@
 							/>
 						</div>
 					{:else}
-						<div class="mt-3 border border-[#333] bg-[#050505] px-2.5 py-2 text-[11px] text-[#666]">
+						<div class="rounded-md mt-3 border border-sc-line2 bg-sc-panel2 px-2.5 py-2 text-[11px] text-sc-ink3">
 							The Sharpe distribution chart is unavailable for this stored result (the full
 							iteration artifact was pruned). Re-run the jitter test to regenerate it.
 						</div>
@@ -1771,19 +1771,19 @@
 <!-- ──── Cost Stress ──── -->
 <div class="mb-3 terminal-card overflow-hidden">
 	<button
-		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#111]"
+		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-sc-raise"
 		on:click={() => toggleSection('cost_stress')}
 	>
 		<div class="flex items-center gap-3">
-			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Cost Stress Test</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Cost Stress Test</span>
 			<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(scorecardVerdicts['cost_stress'])}`}>{verdictLabel(scorecardVerdicts['cost_stress'])}</span>
 			{#if loading.cost_stress}<span class="animate-pulse text-[10px] text-yellow-400">running...</span>{/if}
 		</div>
-		<span class="text-[#555] text-sm">{expandedSections.cost_stress ? '−' : '+'}</span>
+		<span class="text-sc-ink3 text-sm">{expandedSections.cost_stress ? '−' : '+'}</span>
 	</button>
 
 	{#if expandedSections.cost_stress}
-		<div class="border-t border-[#1a1a1a] px-4 py-4" data-testid="runner-body-cost_stress">
+		<div class="border-t border-sc-line px-4 py-4" data-testid="runner-body-cost_stress">
 			<div class="grid gap-4 lg:grid-cols-2">
 				<SymbolInput id="cs-symbol" label="Symbol" bind:value={costStressForm.symbol} suggestions={symbolSuggestions} />
 				<TimeframeSelect id="cs-timeframe" label="Timeframe" bind:value={costStressForm.timeframe} />
@@ -1804,7 +1804,7 @@
 				<div class="flex items-end">
 					<button
 						type="button"
-						class="terminal-button w-full text-xs"
+						class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 w-full text-[12px]"
 						on:click={handleCostStressClick}
 						disabled={loading.cost_stress}
 					>
@@ -1818,46 +1818,46 @@
 			{/if}
 
 			{#if costStressResult}
-				<div class="mt-4 border border-[#222] bg-[#050505] p-3">
+				<div class="rounded-md mt-4 border border-sc-line bg-sc-panel2 p-3">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-[10px] uppercase tracking-wide text-[#666]">Results</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Results</span>
 						<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(String(costStressResult.verdict))}`}>{costStressResult.verdict}</span>
 						{#if costStressResult.method}
-							<span class="border border-[#333] bg-black px-1.5 py-0.5 text-[10px] text-[#888]">{methodLabel(costStressResult.method)}</span>
+							<span class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 text-[10px] text-sc-ink2">{methodLabel(costStressResult.method)}</span>
 						{/if}
-						<span class="text-[10px] text-[#555]">Fees {costStressResult.fee_multiplier}x / Slippage {costStressResult.slippage_multiplier}x</span>
+						<span class="text-[10px] text-sc-ink3">Fees {costStressResult.fee_multiplier}x / Slippage {costStressResult.slippage_multiplier}x</span>
 					</div>
 					<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-						<div class="bg-[#111] p-3">
-							<div class="mb-2 text-[10px] text-[#666] uppercase">Original</div>
+						<div class="bg-sc-raise p-3">
+							<div class="mb-2 text-[10px] text-sc-ink3 uppercase">Original</div>
 							{#if costStressResult.original}
 								<div class="space-y-1 font-mono text-xs">
-									<div class="flex justify-between"><span class="text-[#666]">Sharpe</span><span class="text-[#888]">{costStressResult.original.sharpe}</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Return</span><span class="text-emerald-400">{(Number(costStressResult.original.total_return || 0) * 100).toFixed(2)}%</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Max DD</span><span class="text-red-400">{(Number(costStressResult.original.max_drawdown || 0) * 100).toFixed(2)}%</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Win Rate</span><span class="text-[#888]">{(Number(costStressResult.original.win_rate || 0) * 100).toFixed(1)}%</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Trades</span><span class="text-[#888]">{costStressResult.original.total_trades}</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Sharpe</span><span class="text-sc-ink2">{costStressResult.original.sharpe}</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Return</span><span class="text-emerald-400">{(Number(costStressResult.original.total_return || 0) * 100).toFixed(2)}%</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Max DD</span><span class="text-red-400">{(Number(costStressResult.original.max_drawdown || 0) * 100).toFixed(2)}%</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Win Rate</span><span class="text-sc-ink2">{(Number(costStressResult.original.win_rate || 0) * 100).toFixed(1)}%</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Trades</span><span class="text-sc-ink2">{costStressResult.original.total_trades}</span></div>
 								</div>
 							{/if}
 						</div>
-						<div class="bg-[#111] p-3">
-							<div class="mb-2 text-[10px] text-[#666] uppercase">Stressed</div>
+						<div class="bg-sc-raise p-3">
+							<div class="mb-2 text-[10px] text-sc-ink3 uppercase">Stressed</div>
 							{#if costStressResult.stressed}
 								<div class="space-y-1 font-mono text-xs">
-									<div class="flex justify-between"><span class="text-[#666]">Sharpe</span><span class="{Number(costStressResult.stressed.sharpe) < Number(costStressResult.original?.sharpe || 0) ? 'text-red-400' : 'text-[#888]'}">{costStressResult.stressed.sharpe}</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Return</span><span class="text-[#888]">{(Number(costStressResult.stressed.total_return || 0) * 100).toFixed(2)}%</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Max DD</span><span class="text-red-400">{(Number(costStressResult.stressed.max_drawdown || 0) * 100).toFixed(2)}%</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Win Rate</span><span class="text-[#888]">{(Number(costStressResult.stressed.win_rate || 0) * 100).toFixed(1)}%</span></div>
-									<div class="flex justify-between"><span class="text-[#666]">Trades</span><span class="text-[#888]">{costStressResult.stressed.total_trades}</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Sharpe</span><span class="{Number(costStressResult.stressed.sharpe) < Number(costStressResult.original?.sharpe || 0) ? 'text-red-400' : 'text-sc-ink2'}">{costStressResult.stressed.sharpe}</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Return</span><span class="text-sc-ink2">{(Number(costStressResult.stressed.total_return || 0) * 100).toFixed(2)}%</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Max DD</span><span class="text-red-400">{(Number(costStressResult.stressed.max_drawdown || 0) * 100).toFixed(2)}%</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Win Rate</span><span class="text-sc-ink2">{(Number(costStressResult.stressed.win_rate || 0) * 100).toFixed(1)}%</span></div>
+									<div class="flex justify-between"><span class="text-sc-ink3">Trades</span><span class="text-sc-ink2">{costStressResult.stressed.total_trades}</span></div>
 								</div>
 							{/if}
 						</div>
 					</div>
-					<div class="mt-2 text-center text-xs font-mono {Number(costStressResult.degradation_pct || 0) > 50 ? 'text-red-400' : 'text-[#888]'}">
+					<div class="mt-2 text-center text-xs font-mono {Number(costStressResult.degradation_pct || 0) > 50 ? 'text-red-400' : 'text-sc-ink2'}">
 						Sharpe Degradation: {costStressResult.degradation_pct}%
 					</div>
 					{#if costStressResult.original && costStressResult.stressed}
-						<div class="mt-3 bg-[#111] p-2 flex justify-center">
+						<div class="mt-3 bg-sc-raise p-2 flex justify-center">
 							<CostStressComparisonChart original={costStressResult.original} stressed={costStressResult.stressed} width={500} height={220} />
 						</div>
 					{/if}
@@ -1870,25 +1870,25 @@
 <!-- ──── Regime Split ──── -->
 <div class="mb-3 terminal-card overflow-hidden">
 	<button
-		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#111]"
+		class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-sc-raise"
 		on:click={() => toggleSection('regime_split')}
 	>
 		<div class="flex items-center gap-3">
-			<span class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Regime Split</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Regime Split</span>
 			<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(scorecardVerdicts['regime_split'])}`}>{verdictLabel(scorecardVerdicts['regime_split'])}</span>
 			{#if loading.regime_split}<span class="animate-pulse text-[10px] text-yellow-400">running...</span>{/if}
 		</div>
-		<span class="text-[#555] text-sm">{expandedSections.regime_split ? '−' : '+'}</span>
+		<span class="text-sc-ink3 text-sm">{expandedSections.regime_split ? '−' : '+'}</span>
 	</button>
 
 	{#if expandedSections.regime_split}
-		<div class="border-t border-[#1a1a1a] px-4 py-4" data-testid="runner-body-regime_split">
+		<div class="border-t border-sc-line px-4 py-4" data-testid="runner-body-regime_split">
 			<div class="grid gap-4 lg:grid-cols-[1fr_auto]">
 				<ResultPicker id="rs-result" label="Gauntlet result" bind:value={regimeSplitForm.result_id} items={backtestHistory} helpText="Which run to split by market regime." />
 				<div class="flex items-end">
 					<button
 						type="button"
-						class="terminal-button text-xs"
+						class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 text-[12px]"
 						on:click={handleRegimeSplitClick}
 						disabled={loading.regime_split || !regimeSplitForm.result_id}
 					>
@@ -1902,20 +1902,20 @@
 			{/if}
 
 			{#if regimeSplitResult}
-				<div class="mt-4 border border-[#222] bg-[#050505] p-3">
+				<div class="rounded-md mt-4 border border-sc-line bg-sc-panel2 p-3">
 					<div class="mb-3 flex items-center gap-2">
-						<span class="text-[10px] uppercase tracking-wide text-[#666]">Results</span>
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Results</span>
 						<span class={`border px-1.5 py-0.5 text-[10px] font-bold ${verdictBadge(String(regimeSplitResult.verdict))}`}>{regimeSplitResult.verdict}</span>
 						{#if regimeSplitResult.method}
-							<span class="border border-[#333] bg-black px-1.5 py-0.5 text-[10px] text-[#888]">{methodLabel(regimeSplitResult.method)}</span>
+							<span class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-0.5 text-[10px] text-sc-ink2">{methodLabel(regimeSplitResult.method)}</span>
 						{/if}
-						<span class="text-[10px] text-[#555]">
+						<span class="text-[10px] text-sc-ink3">
 							{regimeSplitResult.n_trades} trades · {regimeSplitResult.n_regimes} qualifying regime{regimeSplitResult.n_regimes === 1 ? '' : 's'}{regimeSplitResult.n_regimes_observed != null && regimeSplitResult.n_regimes_observed !== regimeSplitResult.n_regimes ? ` of ${regimeSplitResult.n_regimes_observed} observed` : ''}
 						</span>
 					</div>
 					{#if regimeSplitResult.verdict_reasons?.length}
 						<div class="mb-3 border border-red-900 bg-red-500/5 px-2.5 py-2 text-[11px] text-red-400" data-testid="regime-verdict-reasons">
-							<div class="text-[10px] font-semibold uppercase tracking-wide">Why it failed</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Why it failed</div>
 							<ul class="mt-1 list-disc space-y-0.5 pl-4">
 								{#each regimeSplitResult.verdict_reasons as reason}<li>{reason}</li>{/each}
 							</ul>
@@ -1923,7 +1923,7 @@
 					{/if}
 					{#if regimeSplitResult.regimes?.length > 0}
 						{@const regimesHaveReturns = regimeSplitResult.regimes.some((regime) => regime.total_return_pct != null)}
-						<div class="mb-3 bg-[#111] p-2 flex justify-center">
+						<div class="mb-3 bg-sc-raise p-2 flex justify-center">
 							<RegimePnlChart regimes={regimeSplitResult.regimes} width={600} height={220} />
 						</div>
 						<!-- The verdict is decided in RETURN space (position-size-invariant); dollar
@@ -1931,7 +1931,7 @@
 						     return columns whenever the payload carries them; only legacy persisted
 						     results fall back to the $ view. -->
 						<table class="w-full text-xs">
-							<thead class="bg-[#050505] text-[#666]">
+							<thead class="bg-sc-panel2 text-sc-ink3">
 								<tr>
 									<th class="px-2 py-1 text-left">Regime</th>
 									<th class="px-2 py-1 text-right">Trades</th>
@@ -1952,9 +1952,9 @@
 							<tbody>
 								{#each regimeSplitResult.regimes as regime}
 									{@const underMinTrades = regimeSplitResult.regime_min_trades != null && regime.trade_count < regimeSplitResult.regime_min_trades}
-									<tr class={`border-t border-[#111] ${underMinTrades ? 'opacity-50' : ''}`} title={underMinTrades ? `Fewer than ${regimeSplitResult.regime_min_trades} trades — shown for context but not counted toward the verdict` : undefined}>
-										<td class="px-2 py-1 font-mono text-[#888]">{regime.name}{underMinTrades ? ' *' : ''}</td>
-										<td class="px-2 py-1 text-right font-mono text-[#888]">{regime.trade_count}</td>
+									<tr class={`border-t border-sc-line ${underMinTrades ? 'opacity-50' : ''}`} title={underMinTrades ? `Fewer than ${regimeSplitResult.regime_min_trades} trades — shown for context but not counted toward the verdict` : undefined}>
+										<td class="px-2 py-1 font-mono text-sc-ink2">{regime.name}{underMinTrades ? ' *' : ''}</td>
+										<td class="px-2 py-1 text-right font-mono text-sc-ink2">{regime.trade_count}</td>
 										<td class="px-2 py-1 text-right font-mono {Number(regime.win_rate) >= 50 ? 'text-emerald-400' : 'text-red-400'}">{regime.win_rate}%</td>
 										{#if regimesHaveReturns}
 											<td class="px-2 py-1 text-right font-mono {Number(regime.avg_return_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">{Number(regime.avg_return_pct ?? 0).toFixed(2)}%</td>
@@ -1972,7 +1972,7 @@
 							</tbody>
 						</table>
 						{#if regimeSplitResult.profitable_regime_share != null}
-							<div class="mt-2 text-center font-mono text-xs text-[#888]">
+							<div class="mt-2 text-center font-mono text-xs text-sc-ink2">
 								Profitable regime share: {(Number(regimeSplitResult.profitable_regime_share) * 100).toFixed(0)}% of qualifying regimes
 							</div>
 						{/if}

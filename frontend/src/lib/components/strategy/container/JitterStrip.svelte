@@ -35,7 +35,7 @@
 {#if values.length || isNum(reference)}
 	<div class="grid gap-3" data-testid="jitter-strip">
 		<div use:trackWidth={(value) => (width = value || 420)}>
-			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label={`Rerun Sharpes ${values.map((v) => fmtNum(v)).join(', ')} against a pass line of ${fmtNum(floor)}`}>
+			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label={`Rerun Sharpes ${values.map((v) => fmtNum(v)).join(', ')} against a pass line of ${fmtNum(floor)}`}>
 				<line x1={M.l} x2={M.l + w} y1={cy} y2={cy} stroke={CHART.axis} />
 				{#if floor !== null}
 					<rect x={x(floor)} y={cy - 10} width={Math.max(0, x(hi) - x(floor))} height="20" fill="rgba(60,196,143,0.08)" />
@@ -56,19 +56,19 @@
 		</div>
 		{#if isNum(planned)}
 			<div class="grid gap-1.5">
-				<div class={`text-[10px] uppercase tracking-[0.2em] ${thin ? 'text-[#e7b24a]' : 'text-[#555]'}`}>Reruns · {completed} of {planned} finished{payload?.deadline_hit === true ? ' before the time limit' : ''}</div>
+				<div class={`font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${thin ? 'text-[#e7b24a]' : 'text-sc-ink4'}`}>Reruns · {completed} of {planned} finished{payload?.deadline_hit === true ? ' before the time limit' : ''}</div>
 				<div class="flex flex-wrap gap-1" role="img" aria-label={`${completed} of ${planned} reruns finished`} data-testid="jitter-slots">
 					{#each Array.from({ length: planned }, (_, index) => index) as slot (slot)}
-						<i class={`block h-2.5 w-4 ${slot < completed ? 'bg-[#aab1bc]' : 'border border-[#2a2f38]'}`}></i>
+						<i class={`block h-2.5 w-4 ${slot < completed ? 'bg-sc-ink2' : 'border border-sc-line2'}`}></i>
 					{/each}
 				</div>
 			</div>
 		{/if}
-		<p class="m-0 text-[11px] leading-relaxed text-[#777]">
+		<p class="m-0 text-[12px] leading-relaxed text-sc-ink3">
 			Every parameter nudged {isNum(jitterPct) ? `±${jitterPct}%` : 'slightly'} and rerun. {isNum(passRate) ? `${Math.round(passRate * 100)}% of finished reruns kept at least ${isNum(allowed) ? `${Math.round((1 - allowed) * 100)}%` : 'half'} of the baseline Sharpe` : ''}{isNum(threshold) ? ` (gate ≥ ${Math.round(threshold * 100)}%).` : '.'}
 			{#if thin}<span class="text-[#e7b24a]"> {completed} rerun{completed === 1 ? '' : 's'} is too few to trust; rerun the test before relying on it.</span>{/if}
 		</p>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Parameter jitter has not run.</div>
+	<div class="text-[12px] text-sc-ink3">Parameter jitter has not run.</div>
 {/if}

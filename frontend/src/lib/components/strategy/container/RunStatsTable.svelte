@@ -10,8 +10,8 @@
 
 	type Cell = { text: string; cls?: string };
 	type Row = { label: string; is: Cell; oos: Cell } | { group: string };
-	const none: Cell = { text: '—', cls: 'text-[#444]' };
-	const notStored: Cell = { text: 'not stored', cls: 'text-[#555]' };
+	const none: Cell = { text: '—', cls: 'text-sc-ink4' };
+	const notStored: Cell = { text: 'not stored', cls: 'text-sc-ink4' };
 	const frac = (value: number | null | undefined, digits = 1, signed = true): Cell =>
 		isNum(value) ? { text: fmtFraction(value, digits, signed), cls: signed ? signClass(value) : '' } : none;
 	const num = (value: number | null | undefined, digits = 2): Cell => (isNum(value) ? { text: fmtNum(value, digits) } : none);
@@ -43,9 +43,9 @@
 </script>
 
 <div class="overflow-x-auto" data-testid="run-stats">
-	<table class="w-full border-collapse text-[12px] tabular-nums">
+	<table class="w-full border-collapse text-[12px] font-plex-mono tabular-nums">
 		<thead>
-			<tr class="text-[10px] uppercase tracking-[0.12em] text-[#555]">
+			<tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] text-sc-ink3">
 				<th class="px-2.5 py-1.5 text-left font-normal">Metric</th>
 				<th class="px-2.5 py-1.5 text-right font-normal">In-sample</th>
 				<th class="px-2.5 py-1.5 text-right font-normal">Out-of-sample</th>
@@ -54,16 +54,16 @@
 		<tbody>
 			{#each rows as row, index (index)}
 				{#if 'group' in row}
-					<tr><td colspan="3" class="border-t border-[#1d1d1d] px-2.5 pb-1 pt-3 text-left text-[10px] uppercase tracking-[0.2em] text-[#555]">{row.group}</td></tr>
+					<tr><td colspan="3" class="border-t border-sc-line px-2.5 pb-1 pt-3 text-left font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{row.group}</td></tr>
 				{:else}
-					<tr class="border-t border-[#161616]">
-						<td class="px-2.5 py-1.5 text-left text-[#aab1bc]">{row.label}</td>
-						<td class={`px-2.5 py-1.5 text-right ${row.is.cls ?? 'text-[#ddd]'}`}>{row.is.text}</td>
-						<td class={`px-2.5 py-1.5 text-right ${row.oos.cls ?? 'text-[#ddd]'}`}>{row.oos.text}</td>
+					<tr class="border-t border-sc-line">
+						<td class="px-2.5 py-1.5 text-left font-plex text-[13px] text-sc-ink2">{row.label}</td>
+						<td class={`px-2.5 py-1.5 text-right ${row.is.cls ?? 'text-sc-ink'}`}>{row.is.text}</td>
+						<td class={`px-2.5 py-1.5 text-right ${row.oos.cls ?? 'text-sc-ink'}`}>{row.oos.text}</td>
 					</tr>
 				{/if}
 			{/each}
 		</tbody>
 	</table>
-	<p class="m-0 mt-2 text-[11px] text-[#666]">Trade-level rows use this run's stored trades, which are out-of-sample only; the engine does not keep in-sample trades.</p>
+	<p class="m-0 mt-2 text-[12px] text-sc-ink3">Trade-level rows use this run's stored trades, which are out-of-sample only; the engine does not keep in-sample trades.</p>
 </div>

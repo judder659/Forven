@@ -66,27 +66,27 @@
 			case 'live_graduated':
 				return 'border-emerald-900 bg-emerald-500/10 text-emerald-400 hover:border-emerald-700';
 			case 'paper':
-				return 'border-[#333] bg-black text-white hover:border-[#555]';
+				return 'border-sc-line2 bg-sc-bg text-sc-ink hover:border-sc-ink4';
 			case 'gauntlet':
-				return 'border-[#333] bg-black text-[#888] hover:border-[#555]';
+				return 'border-sc-line2 bg-sc-bg text-sc-ink2 hover:border-sc-ink4';
 			case 'archived':
 			case 'rejected':
 				return 'border-red-900 bg-red-500/10 text-red-400 hover:border-red-700';
 			default:
-				return 'border-[#333] bg-black text-[#888] hover:border-[#555]';
+				return 'border-sc-line2 bg-sc-bg text-sc-ink2 hover:border-sc-ink4';
 		}
 	}
 
 	function optionTone(kind: StageOption['kind']): string {
 		switch (kind) {
 			case 'forward':
-				return 'text-white hover:bg-[#111]';
+				return 'text-sc-ink hover:bg-sc-raise';
 			case 'backward':
-				return 'text-yellow-400 hover:bg-[#111]';
+				return 'text-yellow-400 hover:bg-sc-raise';
 			case 'terminal':
-				return 'text-red-400 hover:bg-[#111]';
+				return 'text-red-400 hover:bg-sc-raise';
 			case 'revive':
-				return 'text-emerald-400 hover:bg-[#111]';
+				return 'text-emerald-400 hover:bg-sc-raise';
 		}
 	}
 
@@ -159,7 +159,7 @@
 	<button
 		type="button"
 		data-testid="stage-control-toggle"
-		class={`flex items-center gap-1.5 border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest transition-colors ${stageTone(currentStage)}`}
+		class={`rounded-md flex items-center gap-1.5 border px-2 py-0.5 text-[12px] font-medium transition-colors ${stageTone(currentStage)}`}
 		title="Change lifecycle stage"
 		aria-expanded={open}
 		on:click={toggleOpen}
@@ -173,20 +173,20 @@
 	{#if open}
 		<div
 			data-testid="stage-control-panel"
-			class="absolute left-0 top-full z-30 mt-1.5 w-72 border border-[#222] bg-[#050505] p-2"
+			class="rounded-md absolute left-0 top-full z-30 mt-1.5 w-72 border border-sc-line bg-sc-panel2 p-2"
 		>
 			{#if !targetStage}
-				<div class="px-1 pb-1.5 text-[10px] uppercase tracking-wider text-[#666]">Move to stage</div>
+				<div class="px-1 pb-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Move to stage</div>
 				<div class="space-y-0.5">
 					{#each stageOptions as option (option.key)}
 						<button
 							type="button"
 							data-testid={`stage-option-${option.key}`}
-							class={`flex w-full items-center justify-between px-2 py-1.5 text-left text-xs transition-colors ${optionTone(option.kind)}`}
+							class={`flex w-full items-center justify-between px-2 py-1.5 text-left text-[12px] transition-colors ${optionTone(option.kind)}`}
 							on:click={() => selectTarget(option.key)}
 						>
 							<span>{option.label}</span>
-							<span class="text-[9px] uppercase tracking-[0.14em] opacity-60">
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] opacity-60">
 								{option.kind === 'forward' ? 'Promote' : option.kind === 'backward' ? 'Demote' : option.kind === 'revive' ? 'Revive' : 'Archive'}
 							</span>
 						</button>
@@ -194,8 +194,8 @@
 				</div>
 			{:else}
 				<div class="space-y-2 p-1">
-					<div class="text-xs text-[#ccc]">
-						Move <span class="font-mono text-white">{strategyId}</span> to
+					<div class="text-xs text-sc-ink2">
+						Move <span class="font-mono text-sc-ink">{strategyId}</span> to
 						<span class="font-semibold">{targetOption?.label ?? lifecycleStageLabel(targetStage)}</span>?
 					</div>
 					{#if targetStage === 'archived'}
@@ -218,14 +218,14 @@
 								bind:value={goLiveCeilingUsd}
 								data-testid="stage-control-live-ceiling"
 								placeholder="Notional ceiling (USD), e.g. 1000"
-								class="w-full rounded border border-[#2b2b2b] bg-black px-2 py-1 text-xs text-gray-200 placeholder:text-gray-600 focus:border-emerald-700 focus:outline-none"
+								class="w-full rounded border border-sc-line2 bg-sc-bg px-2 py-1 text-xs text-sc-ink placeholder:text-sc-ink4 focus:border-emerald-700 focus:outline-none"
 							/>
 							<input
 								type="text"
 								bind:value={goLiveConfirmText}
 								data-testid="stage-control-go-live-confirm"
 								placeholder={`Type ${GO_LIVE_PHRASE} to confirm`}
-								class="w-full rounded border border-[#2b2b2b] bg-black px-2 py-1 text-xs text-gray-200 placeholder:text-gray-600 focus:border-emerald-700 focus:outline-none"
+								class="w-full rounded border border-sc-line2 bg-sc-bg px-2 py-1 text-xs text-sc-ink placeholder:text-sc-ink4 focus:border-emerald-700 focus:outline-none"
 							/>
 						</div>
 					{/if}
@@ -234,7 +234,7 @@
 						data-testid="stage-control-reason"
 						placeholder="Reason (optional)"
 						rows="2"
-						class="w-full border border-[#333] bg-black px-2 py-1 text-xs text-[#aaa] placeholder:text-[#555] focus:border-white focus:outline-none"
+						class="rounded-md w-full border border-sc-line2 bg-sc-bg px-2 py-1 text-xs text-sc-ink2 placeholder:text-sc-ink4 focus:border-sc-ink3 focus:outline-none"
 					></textarea>
 					{#if blockReason}
 						<div class="rounded border border-amber-700/50 bg-amber-950/30 p-2 text-[11px]" data-testid="stage-control-block-reason">
@@ -249,7 +249,7 @@
 								type="button"
 								data-testid="stage-control-override"
 								disabled={submitting || !goLiveArmed}
-								class="rounded bg-amber-600 px-3 py-1 text-xs text-white transition hover:bg-amber-500 disabled:opacity-50"
+								class="rounded bg-amber-600 px-3 py-1 text-[12px] text-sc-ink transition hover:bg-amber-500 disabled:opacity-50"
 								on:click={() => void confirm(true)}
 							>{submitting ? 'Overriding…' : 'Override gate & promote'}</button>
 						{:else}
@@ -257,18 +257,18 @@
 								type="button"
 								data-testid="stage-control-confirm"
 								disabled={submitting || !goLiveArmed}
-								class="terminal-button-primary px-3 py-1 text-xs disabled:opacity-50"
+								class="rounded-md border border-sc-ink bg-sc-ink font-medium text-[#0b0d10] transition hover:bg-white px-3 py-1 text-[12px] disabled:opacity-50"
 								on:click={() => void confirm(false)}
 							>{submitting ? 'Moving…' : 'Confirm'}</button>
 						{/if}
 						<button
 							type="button"
-							class="rounded border border-[#2b2b2b] bg-black px-3 py-1 text-xs text-gray-400 transition hover:text-gray-200"
+							class="rounded border border-sc-line2 bg-sc-bg px-3 py-1 text-[12px] text-sc-ink2 transition hover:text-sc-ink"
 							on:click={resetSelection}
 						>Back</button>
 						<button
 							type="button"
-							class="ml-auto rounded border border-[#2b2b2b] bg-black px-3 py-1 text-xs text-gray-400 transition hover:text-gray-200"
+							class="ml-auto rounded border border-sc-line2 bg-sc-bg px-3 py-1 text-[12px] text-sc-ink2 transition hover:text-sc-ink"
 							on:click={toggleOpen}
 						>Cancel</button>
 					</div>

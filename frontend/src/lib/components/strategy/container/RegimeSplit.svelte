@@ -29,12 +29,12 @@
 {#if rows.length}
 	<div class="grid gap-3" data-testid="regime-split">
 		<SignedBars {rows} format={(value) => `${fmtPct(value, 2)}/trade`} />
-		<p class="m-0 text-[11px] leading-relaxed text-[#777]">
+		<p class="m-0 text-[12px] leading-relaxed text-sc-ink3">
 			{#if isNum(share)}Profitable in {fmtPct(share * 100, 0, false)} of scored regimes{isNum(threshold) ? ` (gate ≥ ${fmtPct(threshold * 100, 0, false)})` : ''}.{/if}
 			{#if weakest} Weakest: {(REGIME_LABELS[weakest] ?? weakest).toLowerCase()}.{/if}
 			{#if dropped.size} Regimes with fewer than {minTrades ?? 5} trades are shown but not scored.{/if}
 		</p>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Regime split has not run.</div>
+	<div class="text-[12px] text-sc-ink3">Regime split has not run.</div>
 {/if}

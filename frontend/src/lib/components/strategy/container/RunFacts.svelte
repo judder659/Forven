@@ -38,20 +38,20 @@
 	$: tag = selectedId && selectedId === pinnedId ? 'pinned · drives paper and live' : selectedId && selectedId === referenceId ? 'newest · defaults drive execution' : 'not the driver';
 </script>
 
-<article class="grid gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="run-facts">
+<article class="grid gap-3 rounded-md border border-sc-line bg-sc-panel px-4 py-3.5" data-testid="run-facts">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="grid gap-1">
-			<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Run</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Run</div>
 			<div class="flex flex-wrap items-center gap-2">
-				<span class="font-mono text-[12px] text-white" data-testid="run-facts-id">{selectedId || '—'}</span>
-				<span class={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${selectedId && selectedId === pinnedId ? 'border-emerald-700/60 text-emerald-300' : 'border-[#2a2f38] text-[#888]'}`}>{tag}</span>
+				<span class="font-plex-mono text-[12px] text-sc-ink" data-testid="run-facts-id">{selectedId || '—'}</span>
+				<span class={`rounded-full border px-2 py-0.5 font-plex-cond text-[10.5px] uppercase tracking-[0.06em] ${selectedId && selectedId === pinnedId ? 'border-emerald-700/60 text-emerald-300' : 'border-sc-line2 text-sc-ink3'}`}>{tag}</span>
 			</div>
 		</div>
 		{#if runs.length > 1}
-			<label class="grid gap-1 text-[10px] uppercase tracking-[0.2em] text-[#555]">
+			<label class="grid gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 				Switch run
 				<select
-					class="border border-[#2a2f38] bg-black px-2 py-1 font-mono text-[11px] normal-case tracking-normal text-white"
+					class="rounded-md border border-sc-line2 bg-sc-panel2 px-2 py-1 font-plex-mono text-[11px] normal-case tracking-normal text-sc-ink"
 					value={selectedId}
 					data-testid="run-facts-select"
 					on:change={(event) => dispatch('select', { resultId: event.currentTarget.value })}
@@ -64,15 +64,15 @@
 		{/if}
 	</div>
 	{#if result}
-		<div class="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[#777]">
-			<span><b class="font-medium text-[#ddd]">{result.symbol || '—'} · {result.timeframe || '—'}</b></span>
-			<span title="Bars the run actually used, including the warm-up before the requested start"><b class="font-medium text-[#ddd]">{fmtDateUtc(ranStart)} – {fmtDateUtc(ranEnd)}</b> ran</span>
+		<div class="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-sc-ink3">
+			<span><b class="font-medium text-sc-ink">{result.symbol || '—'} · {result.timeframe || '—'}</b></span>
+			<span title="Bars the run actually used, including the warm-up before the requested start"><b class="font-medium text-sc-ink">{fmtDateUtc(ranStart)} – {fmtDateUtc(ranEnd)}</b> ran</span>
 			{#if moved}
 				<span class="text-yellow-400" data-testid="run-facts-moved" title="The research seal or data coverage moved the window">requested {fmtDateUtc(askedStart)} – {fmtDateUtc(askedEnd)}</span>
 			{/if}
-			<span><b class="font-medium text-[#ddd]">{isNum(fee) ? fee : '—'} / {isNum(slip) ? slip : '—'} bps</b> fee / slippage a side</span>
-			<span><b class="font-medium text-[#ddd]">{isNum(leverage) ? `${leverage}×` : '—'}</b> {String(config.sizing_mode ?? '—')} sizing</span>
-			<span><b class="font-medium text-[#ddd]">{String(config.trade_mode ?? '—')}</b>{config.position_model ? ` · ${String(config.position_model)}` : ''}</span>
+			<span><b class="font-medium text-sc-ink">{isNum(fee) ? fee : '—'} / {isNum(slip) ? slip : '—'} bps</b> fee / slippage a side</span>
+			<span><b class="font-medium text-sc-ink">{isNum(leverage) ? `${leverage}×` : '—'}</b> {String(config.sizing_mode ?? '—')} sizing</span>
+			<span><b class="font-medium text-sc-ink">{String(config.trade_mode ?? '—')}</b>{config.position_model ? ` · ${String(config.position_model)}` : ''}</span>
 			{#if isNum(toNumber(config.engine_version))}<span>engine v{toNumber(config.engine_version)}</span>{/if}
 		</div>
 		{#each warnings as warning (warning)}

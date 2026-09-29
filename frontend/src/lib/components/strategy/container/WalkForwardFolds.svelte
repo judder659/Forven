@@ -34,12 +34,12 @@
 
 {#if folds.length}
 	<div class="grid gap-2" data-testid="walk-forward-folds">
-		<div class="flex gap-3.5 text-[11px] text-[#aab1bc]">
+		<div class="flex gap-3.5 text-[11px] text-sc-ink2">
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5" style={`background:${CHART.context}`}></i>In-sample</span>
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5" style={`background:${CHART.ink}`}></i>Out-of-sample</span>
 		</div>
 		<div class="relative" use:trackWidth={(value) => (width = value || 420)}>
-			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label={`Sharpe per walk-forward fold, out-of-sample ${oosValues.map((v) => fmtNum(v)).join(', ')}`}>
+			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label={`Sharpe per walk-forward fold, out-of-sample ${oosValues.map((v) => fmtNum(v)).join(', ')}`}>
 				{#each ticks as tick (tick)}
 					<line x1={M.l} x2={M.l + w} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? CHART.axis : CHART.grid} shape-rendering="crispEdges" />
 					<text x={M.l - 6} y={y(tick) + 3.5} text-anchor="end" fill={CHART.ink3}>{fmtNum(tick, Math.abs(hi - lo) < 3 ? 1 : 0)}</text>
@@ -58,20 +58,20 @@
 				{/each}
 			</svg>
 			{#if hovered && hover}
-				<div class="pointer-events-none absolute top-0 z-10 min-w-[170px] border border-[#2a2f38] bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(M.l + band * (hover.fold + 0.5) + 16, Math.max(0, width - 190))}px`}>
-					<div class="text-[#777]">Fold {hovered.fold} · {hover.oos ? 'out-of-sample' : 'in-sample'}</div>
-					<div class="flex justify-between gap-3"><span class="text-[#777]">Sharpe</span><span class="text-white">{fmtNum(hover.oos ? hovered.oosSharpe : hovered.isSharpe)}</span></div>
-					<div class="flex justify-between gap-3"><span class="text-[#777]">Trades</span><span class="text-white">{(hover.oos ? hovered.oosTrades : hovered.isTrades) ?? '—'}</span></div>
-					<div class="flex justify-between gap-3"><span class="text-[#777]">Test window</span><span class="text-white">{fmtDateUtc(hovered.testStart)} – {fmtDateUtc(hovered.testEnd)}</span></div>
+				<div class="pointer-events-none absolute top-0 z-10 min-w-[170px] rounded-md border border-sc-line2 bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(M.l + band * (hover.fold + 0.5) + 16, Math.max(0, width - 190))}px`}>
+					<div class="text-sc-ink3">Fold {hovered.fold} · {hover.oos ? 'out-of-sample' : 'in-sample'}</div>
+					<div class="flex justify-between gap-3"><span class="text-sc-ink3">Sharpe</span><span class="text-sc-ink">{fmtNum(hover.oos ? hovered.oosSharpe : hovered.isSharpe)}</span></div>
+					<div class="flex justify-between gap-3"><span class="text-sc-ink3">Trades</span><span class="text-sc-ink">{(hover.oos ? hovered.oosTrades : hovered.isTrades) ?? '—'}</span></div>
+					<div class="flex justify-between gap-3"><span class="text-sc-ink3">Test window</span><span class="text-sc-ink">{fmtDateUtc(hovered.testStart)} – {fmtDateUtc(hovered.testEnd)}</span></div>
 				</div>
 			{/if}
 		</div>
-		<p class="m-0 text-[11px] leading-relaxed text-[#777]">
+		<p class="m-0 text-[12px] leading-relaxed text-sc-ink3">
 			Average out-of-sample Sharpe {fmtNum(wf?.avgOosSharpe)} against {fmtNum(wf?.avgIsSharpe)} in-sample.
 			{#if oosValues.length > 1}Folds range from {fmtNum(Math.min(...oosValues))} to {fmtNum(Math.max(...oosValues))}{trades.length ? ` on ${Math.min(...trades)}–${Math.max(...trades)} trades each` : ''}.{/if}
 			{#if thin}<span class="text-[#e7b24a]"> Every fold has fewer than {THIN_FOLD_TRADES} trades, so one or two trades move a fold's Sharpe a lot.</span>{/if}
 		</p>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Walk-forward has not run.</div>
+	<div class="text-[12px] text-sc-ink3">Walk-forward has not run.</div>
 {/if}
