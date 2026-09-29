@@ -14,8 +14,13 @@
 	export let liveBotsArmed = 0;
 	export let now = Date.now();
 
-	const STATE_ORDER: Record<LiveStrategyState, number> = { stale: 0, blocked: 1, in_position: 2, watching: 3 };
+	const STATE_ORDER: Record<LiveStrategyState, number> = { stale: 0, exit_blocked: 1, blocked: 2, in_position: 3, watching: 4 };
 	const STATE_CHIP: Record<LiveStrategyState, { label: string; tone: string; hint: string }> = {
+		exit_blocked: {
+			label: 'Exit refused',
+			tone: 'border-red-800 bg-red-500/10 text-red-300',
+			hint: 'Holding a live position whose exit signal was refused.',
+		},
 		in_position: {
 			label: 'In position',
 			tone: 'border-emerald-900 bg-emerald-500/10 text-emerald-400',
