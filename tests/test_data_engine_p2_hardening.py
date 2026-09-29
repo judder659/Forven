@@ -7,9 +7,8 @@ FIX 1 — Phantom liquidation values via ASOF carry-forward on event-less hours.
   ZERO rows for closed hours with no events, so the enrichment ASOF join reads a
   real zero instead of carrying the previous bucket's stale aggregates forward.
 
-FIX 2 — Catch-up planner starves symbols not yet in the catalog. plan() now emits
-  bootstrap fetch tasks for active (symbol, timeframe) pairs with no catalog row,
-  appended AFTER the gap-fill tasks so they can't starve existing series.
+FIX 2 — (moved) bootstrap of active-but-uncollected series is the SLA
+  collector's job now: tests/test_data_next_freshness.py.
 
 FIX 3 — Liquidation WS daemon reconnect jitter + partial-bucket durability:
   ±20% backoff jitter and a checkpoint sidecar that round-trips the in-progress
@@ -23,7 +22,6 @@ FIX 4 — DataHub -> legacy fallback silent divergence. A present-but-unreadable
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -191,107 +189,6 @@ class TestLiquidationZeroFill:
         )
         vals = dict(zip(out["timestamp"].dt.strftime("%H"), out["long_liq_usd"]))
         assert vals["02"] == 100.0  # stale carry-forward = the bug
-
-
-# ---------------------------------------------------------------------------
-# FIX 2 — bootstrap tasks for active-but-uncatalogued symbols
-# ---------------------------------------------------------------------------
-
-
-class TestCatchupBootstrap:
-    def _catalog_with(self, tmp_path, rows: list[tuple[str, str]]):
-        from forven.dataeng.catalog import Catalog, CoverageRow
-
-        catalog = Catalog(tmp_path / "catalog.duckdb")
-        for symbol, timeframe in rows:
-            catalog.upsert_series_coverage(
-                CoverageRow(
-                    source="binance", market="spot", symbol=symbol, timeframe=timeframe,
-                    stream="candles",
-                    path=str(tmp_path / symbol / f"{timeframe}.parquet"),
-                    start_ts="2026-06-01T00:00:00Z", end_ts="2026-06-01T00:00:00Z",
-                    row_count=1,
-                )
-            )
-        return catalog
-
-    def _patch_universe(self, monkeypatch, symbols, timeframes):
-        import forven.data_manager as dm_mod
-
-        class _DM:
-            def get_active_symbols(self, *, include_recent_backtests=True):
-                return set(symbols)
-
-            def get_active_timeframes(self, symbol):
-                return set()
-
-        monkeypatch.setattr(dm_mod, "get_data_manager", lambda: _DM())
-        monkeypatch.setattr(
-            "forven.dataeng.coverage._scan_universe",
-            lambda: (list(symbols), list(timeframes)),
-        )
-
-    def test_new_active_symbol_appears_as_bootstrap(self, monkeypatch, tmp_path):
-        from forven.dataeng.catchup import CatchUpPlanner
-
-        # BTC is covered; ETH is active but has no catalog row.
-        catalog = self._catalog_with(tmp_path, [("BTC-USDT", "1h")])
-        self._patch_universe(monkeypatch, ["BTC/USDT", "ETH/USDT"], ["1h"])
-
-        now = datetime(2026, 6, 1, 0, 30, tzinfo=timezone.utc)  # BTC still current
-        tasks = CatchUpPlanner(catalog).plan(now=now)
-
-        bootstraps = [t for t in tasks if t.reason == "bootstrap"]
-        assert len(bootstraps) == 1
-        assert bootstraps[0].symbol == "ETH-USDT"
-        assert bootstraps[0].timeframe == "1h"
-        assert bootstraps[0].stream == "candles"
-        assert bootstraps[0].source == "binance"
-
-    def test_covered_symbol_is_not_bootstrapped(self, monkeypatch, tmp_path):
-        from forven.dataeng.catchup import CatchUpPlanner
-
-        catalog = self._catalog_with(tmp_path, [("BTC-USDT", "1h")])
-        # Active universe uses slash form; catalog uses dash form — must compare equal.
-        self._patch_universe(monkeypatch, ["BTC/USDT"], ["1h"])
-
-        now = datetime(2026, 6, 1, 0, 30, tzinfo=timezone.utc)
-        tasks = CatchUpPlanner(catalog).plan(now=now)
-        assert [t for t in tasks if t.reason == "bootstrap"] == []
-
-    def test_bootstraps_are_ordered_after_gap_fill_tasks(self, monkeypatch, tmp_path):
-        from forven.dataeng.catchup import CatchUpPlanner
-
-        # BTC is STALE (end far behind now) -> a gap-fill task; ETH is a bootstrap.
-        catalog = self._catalog_with(tmp_path, [("BTC-USDT", "1h")])
-        self._patch_universe(monkeypatch, ["BTC/USDT", "ETH/USDT"], ["1h"])
-
-        now = datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc)  # ~2 days after BTC end
-        tasks = CatchUpPlanner(catalog).plan(now=now)
-
-        reasons = [t.reason for t in tasks]
-        assert "stale" in reasons and "bootstrap" in reasons
-        # every non-bootstrap task precedes every bootstrap task
-        last_non_bootstrap = max(i for i, r in enumerate(reasons) if r != "bootstrap")
-        first_bootstrap = min(i for i, r in enumerate(reasons) if r == "bootstrap")
-        assert last_non_bootstrap < first_bootstrap
-
-    def test_universe_discovery_failure_is_soft(self, monkeypatch, tmp_path):
-        """A universe-resolution error must not break the gap-fill plan."""
-        import forven.data_manager as dm_mod
-        from forven.dataeng.catchup import CatchUpPlanner
-
-        catalog = self._catalog_with(tmp_path, [("BTC-USDT", "1h")])
-
-        def _boom():
-            raise RuntimeError("universe unavailable")
-
-        monkeypatch.setattr(dm_mod, "get_data_manager", _boom)
-
-        now = datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc)
-        tasks = CatchUpPlanner(catalog).plan(now=now)  # must not raise
-        assert [t for t in tasks if t.reason == "bootstrap"] == []
-        assert any(t.reason == "stale" for t in tasks)  # gap-fill still planned
 
 
 # ---------------------------------------------------------------------------

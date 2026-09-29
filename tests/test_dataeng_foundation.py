@@ -161,26 +161,25 @@ def test_data_engine_settings_defaults_and_roundtrip(forven_db):
     from forven.dataeng.settings import load_data_engine_settings
 
     defaults = load_data_engine_settings()
-    assert defaults.enabled is False
-    assert defaults.enabled_exchanges == ["binance"]
-    assert defaults.auto_catchup_batch == 12
+    assert defaults.enabled is True  # the DataHub is the default read path
+    assert not hasattr(defaults, "enabled_exchanges")
+    assert not hasattr(defaults, "auto_catchup_batch")  # replaced by the SLA collector
 
     api_core.put_settings_section(
         "data-engine",
         {
-            "enabled": True,
-            "enabled_exchanges": ["binance", "okx"],
-            "auto_catchup_batch": 21,
-            "source_priority": {"candles": ["okx", "binance"]},
+            "enabled": False,
+            "enabled_exchanges": ["binance", "okx"],  # a stored legacy key is ignored
+            "sla_tiers": {"live": {"missed_bars": 2}},
         },
     )
 
     loaded = load_data_engine_settings()
-    assert loaded.enabled is True
-    assert loaded.enabled_exchanges == ["binance", "okx"]
-    assert loaded.auto_catchup_batch == 21
-    assert loaded.source_priority["candles"] == ["okx", "binance"]
-    assert loaded.source_priority["funding"] == ["binance"]
+    assert loaded.enabled is False
+    assert not hasattr(loaded, "enabled_exchanges")
+    assert loaded.sla_tiers["live"]["missed_bars"] == 2
+    assert loaded.sla_tiers["live"]["floor_minutes"] == 20
+    assert loaded.sla_tiers["pipeline"] == {"missed_bars": 3, "floor_minutes": 120}
 
 
 def test_datahub_candles_matches_legacy_load_parquet_with_flag(forven_db, monkeypatch, tmp_path):
@@ -200,6 +199,7 @@ def test_datahub_candles_matches_legacy_load_parquet_with_flag(forven_db, monkey
     )
     data_mod.save_parquet(frame, "BTC-USDT", "1h", source="binance")
 
+    api_core.put_settings_section("data-engine", {"enabled": False})
     legacy = data_mod.load_parquet("BTC-USDT", "1h")
     api_core.put_settings_section("data-engine", {"enabled": True})
     via_hub = data_mod.load_parquet("BTC-USDT", "1h")
@@ -316,6 +316,7 @@ def test_datahub_enrich_matches_legacy_data_manager(forven_db, tmp_path, monkeyp
     )
 
     dm = DataManager()
+    api_core.put_settings_section("data-engine", {"enabled": False})
     legacy = dm.enrich(base, "BTC-USDT", "1h")
     api_core.put_settings_section("data-engine", {"enabled": True})
     via_hub = dm.enrich(base, "BTC-USDT", "1h")
@@ -365,9 +366,12 @@ def test_available_specs_resolves_bare_asset_to_perp_pair_dir(forven_db, tmp_pat
     assert not _funding_surfaced("DOGE")
 
 
-def test_datahub_quality_matches_legacy_compute_data_quality(forven_db, monkeypatch, tmp_path):
+def test_compute_data_quality_uses_the_one_rubric(forven_db, monkeypatch, tmp_path):
+    """compute_data_quality (the old /data/quality payload) is scored by the
+    catalog's rubric, whichever read engine is on."""
     from forven import api_core
     from forven import data as data_mod
+    from forven.dataeng import quality
 
     monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path)
     frame = pd.DataFrame(
@@ -389,25 +393,17 @@ def test_datahub_quality_matches_legacy_compute_data_quality(forven_db, monkeypa
     )
     data_mod.save_parquet(frame, "BTC-USDT", "1h", source="binance")
 
+    api_core.put_settings_section("data-engine", {"enabled": False})
     legacy = data_mod.compute_data_quality("BTC-USDT", "1h")
     api_core.put_settings_section("data-engine", {"enabled": True})
     via_hub = data_mod.compute_data_quality("BTC-USDT", "1h")
 
-    for key in (
-        "symbol",
-        "timeframe",
-        "row_count",
-        "start",
-        "end",
-        "duration_days",
-        "gaps",
-        "gap_details",
-        "null_values",
-        "price_range",
-        "volume_stats",
-        "outliers",
-        "integrity",
-    ):
-        assert via_hub[key] == legacy[key]
-    assert via_hub["freshness"]["last_update"] == legacy["freshness"]["last_update"]
-    assert via_hub["freshness"]["is_stale"] == legacy["freshness"]["is_stale"]
+    assert via_hub == {**legacy, "freshness": via_hub["freshness"]}
+    assert via_hub["row_count"] == 4
+    assert via_hub["gaps"] == 1  # one missing bar (02:00)
+    assert via_hub["gap_details"] == [{"timestamp": "2026-05-10T02:00:00Z", "gap_size": "1 bars"}]
+    assert via_hub["integrity"] == {"invalid_high_low": 0, "invalid_close_range": 0}
+    paths = [data_mod.parquet_path("BTC-USDT", "1h")]
+    expected_score, expected_issues = quality.score(quality.compute_stats(paths, 3_600_000))
+    assert via_hub["quality_score"] == expected_score
+    assert via_hub["quality_issues"] == expected_issues

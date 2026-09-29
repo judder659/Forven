@@ -1,12 +1,9 @@
 """Venue repair uses genuine candles and verifies the persisted result."""
-from types import SimpleNamespace
-
 import pandas as pd
 import pytest
 
 from forven import data
 from forven.dataeng import venue
-from forven.dataeng.catchup import CatchUpPlanner, CatchUpTask, execute_candle_catchup
 
 
 @pytest.fixture
@@ -98,31 +95,18 @@ def test_fetch_failure_preserves_stored_history(lake, monkeypatch):
     pd.testing.assert_frame_equal(before, load())
 
 
-def test_gap_task_routes_to_persisted_venue_repair(lake, monkeypatch):
+def test_collector_gap_task_repairs_the_venue_series_and_memoizes_the_rest(lake, monkeypatch):
+    """The SLA collector routes a Hyperliquid gap task to the genuine venue
+    repair; whatever one snapshot could not fill is remembered as unfillable."""
+    from forven.dataeng import collector, sla
+
     save(bars(lake, [4, 2]))
     monkeypatch.setattr("forven.market_data.fetch_hyperliquid_candles", lambda *a, **k: bars(lake, [3]).set_index("timestamp"))
-    task = CatchUpTask("hyperliquid", "perp", "BTC-USDT", "1h", "candles", "", "", reason="gaps")
-    result = execute_candle_catchup(task)
-    assert result["target_reached"]
+    monkeypatch.setattr(collector, "record_unfillable", lambda *a, **k: 0)
+    row = collector.SeriesRow(
+        stream="ohlcv", venue="hyperliquid:perp", symbol="BTC-USDT", timeframe="1h", tier="live",
+        sla=sla.assess(None, "1h", "live"), refresher="hl_ohlcv",
+    )
+    outcome = collector.execute_task(collector.Task(row, "gaps"), now_ms=int(lake.timestamp() * 1000))
+    assert outcome.ok and outcome.bars == 1
     assert len(load()) == 3
-
-
-def test_stale_task_also_repairs_interior_gaps(lake, monkeypatch):
-    save(bars(lake, [4, 2]))
-    monkeypatch.setattr(venue, "collect_hl_series", lambda *a: save(bars(lake, [1])))
-    monkeypatch.setattr("forven.market_data.fetch_hyperliquid_candles", lambda *a, **k: bars(lake, [3]).set_index("timestamp"))
-    task = CatchUpTask("hyperliquid", "perp", "BTC-USDT", "1h", "candles", "", (lake - pd.Timedelta(hours=1)).isoformat())
-    result = execute_candle_catchup(task)
-    assert result["target_reached"]
-    assert result["bars_added"] == 2
-    assert len(load()) == 4
-
-
-def test_planner_repairs_even_one_missing_venue_bar(lake, monkeypatch):
-    row = dict(source="hyperliquid", market="perp", symbol="BTC-USDT", timeframe="1h", stream="candles",
-               start_ts=(lake - pd.Timedelta(hours=1000)).isoformat(), end_ts=(lake - pd.Timedelta(hours=1)).isoformat(), row_count=999)
-    planner = CatchUpPlanner(catalog=SimpleNamespace(list_coverage=lambda: [row]))
-    monkeypatch.setattr(planner, "_active_universe_pairs", lambda: [])
-    tasks = planner.plan(now=lake.to_pydatetime())
-    assert len(tasks) == 1
-    assert tasks[0].reason == "gaps"

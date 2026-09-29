@@ -23,27 +23,40 @@
     "cooldown_after_loss_hours": 0,
     "cost_stress_duration_days": 0,
     "daemon_candle_cache_refresh_seconds": 90,
-    "data_engine_settings.auto_catchup_batch": 12,
-    "data_engine_settings.auto_catchup_enabled": true,
-    "data_engine_settings.enabled": false,
-    "data_engine_settings.enabled_exchanges": [
-      "binance"
-    ],
-    "data_engine_settings.onchain_provider": "",
+    "data_engine_settings.collector.enabled": true,
+    "data_engine_settings.collector.max_requests_per_minute": 120,
+    "data_engine_settings.collector.max_tick_seconds": 90,
+    "data_engine_settings.collector.strike_out_after": 3,
+    "data_engine_settings.collector.tick_seconds": 120,
+    "data_engine_settings.enabled": true,
     "data_engine_settings.point_in_time_as_of": "",
     "data_engine_settings.point_in_time_mode": "latest",
-    "data_engine_settings.source_priority.candles": [
-      "binance"
+    "data_engine_settings.research_universe.asset_classes": [
+      "crypto",
+      "tradfi"
     ],
-    "data_engine_settings.source_priority.funding": [
-      "binance"
-    ],
-    "data_engine_settings.source_priority.oi": [
-      "binance"
-    ],
+    "data_engine_settings.research_universe.enabled": true,
+    "data_engine_settings.research_universe.intraday_top": 20,
+    "data_engine_settings.research_universe.metrics_days": 365,
+    "data_engine_settings.research_universe.minute_top": 10,
+    "data_engine_settings.research_universe.size": 50,
+    "data_engine_settings.sla_breach_multiplier": 3.0,
+    "data_engine_settings.sla_tiers.idle.floor_minutes": 1440,
+    "data_engine_settings.sla_tiers.idle.missed_bars": 24,
+    "data_engine_settings.sla_tiers.live.floor_minutes": 20,
+    "data_engine_settings.sla_tiers.live.missed_bars": 1,
+    "data_engine_settings.sla_tiers.paper.floor_minutes": 45,
+    "data_engine_settings.sla_tiers.paper.missed_bars": 2,
+    "data_engine_settings.sla_tiers.pipeline.floor_minutes": 120,
+    "data_engine_settings.sla_tiers.pipeline.missed_bars": 3,
+    "data_engine_settings.sla_tiers.universe.floor_minutes": 360,
+    "data_engine_settings.sla_tiers.universe.missed_bars": 6,
     "data_engine_settings.source_reconciliation.block_when_missing": true,
     "data_engine_settings.source_reconciliation.enabled": true,
     "data_engine_settings.source_reconciliation.max_divergence_pct": 2.0,
+    "data_engine_settings.storage.min_free_disk_gb": 5.0,
+    "data_engine_settings.storage.revision_keep_days": 180,
+    "data_engine_settings.storage.trash_retention_days": 7,
     "dethrone.paper_max_soak_days": 14,
     "dethrone.paper_min_closed_trades": 5,
     "dethrone.paper_min_soak_days": 7,

@@ -27,6 +27,11 @@ This module makes that failure LOUD and PRE-EMPTIVE:
 The guard fails closed when it cannot establish availability. Running a
 strategy against silently incomplete data is a correctness failure, so callers
 receive a retryable-looking block with the probe error instead of an ``ok``.
+
+Detection (which feeds a strategy reads: :func:`detect_feed_needs`) and the
+feed vocabulary (:data:`FEEDS`) are shared with the Data Manager's strategy
+data contract (``forven.dataeng.contracts``), so the readiness report and this
+precheck can never disagree about what a strategy needs or what is present.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,44 +56,44 @@ log = logging.getLogger("forven.strategies.data_availability")
 # hub._available_enrichment_specs). Columns that are stored but never joined
 # (long_pct, buy_vol, liq_count, ...) are intentionally NOT listed: referencing
 # them is a strategy bug the enricher can't satisfy no matter what data exists.
-_COLUMN_STREAM: dict[str, str] = {
-    "funding_rate": "funding",
-    "open_interest": "oi",
-    "ls_ratio": "long_short_ratio",
-    "taker_buy_sell_ratio": "taker_volume",
-    "long_liq_usd": "liquidations",
-    "short_liq_usd": "liquidations",
-    "liq_imbalance": "liquidations",
-    "basis": "basis",
-    "iv_btc": "iv",
-    "iv_eth": "iv",
-}
 
-# How to backfill each stream. ``None`` => genuinely not available / not
-# downloadable with existing code (liquidation history). The tuple values are
-# ``DataManager.backfill(streams=...)`` selectors; "iv" is a market-wide Deribit
-# collector handled specially.
-_STREAM_FETCH: dict[str, tuple[str, ...] | str | None] = {
-    "funding": ("funding",),
-    "oi": ("metrics",),
-    "long_short_ratio": ("metrics",),
-    "taker_volume": ("metrics",),
-    "basis": ("basis",),
-    "iv": "iv",
-    "liquidations": None,
-}
 
-# Human-facing stream labels for error/warning messages.
-_STREAM_LABEL: dict[str, str] = {
-    "funding": "funding rate",
-    "oi": "open interest",
-    "long_short_ratio": "long/short ratio",
-    "taker_volume": "taker buy/sell volume",
-    "liquidations": "liquidations",
-    "basis": "basis",
-    "iv": "implied volatility",
-}
+@dataclass(frozen=True)
+class Feed:
+    """One enrichment feed a strategy can read."""
 
+    # Enricher stream key (hub._EnrichmentSpec.stream).
+    name: str
+    # Data Manager stream (the wire ``DataStream`` and the lake's stream name).
+    stream: str
+    columns: tuple[str, ...]
+    # Human-facing label for messages.
+    label: str
+    # How to backfill it: ``DataManager.backfill(streams=...)`` selectors; "iv"
+    # is the market-wide Deribit collector; ``None`` => not downloadable with
+    # existing code (liquidation history: captured forward-only).
+    fetch: tuple[str, ...] | str | None
+
+    @property
+    def fetchable(self) -> bool:
+        return self.fetch is not None
+
+
+FEEDS: tuple[Feed, ...] = (
+    Feed("funding", "funding", ("funding_rate",), "funding rate", ("funding",)),
+    Feed("oi", "oi", ("open_interest",), "open interest", ("metrics",)),
+    Feed("long_short_ratio", "ls_ratio", ("ls_ratio",), "long/short ratio", ("metrics",)),
+    Feed("taker_volume", "taker", ("taker_buy_sell_ratio",), "taker buy/sell volume", ("metrics",)),
+    Feed("liquidations", "liquidations", ("long_liq_usd", "short_liq_usd", "liq_imbalance"), "liquidations", None),
+    Feed("basis", "basis", ("basis",), "basis", ("basis",)),
+    Feed("iv", "iv", ("iv_btc", "iv_eth"), "implied volatility", "iv"),
+)
+FEED_BY_COLUMN: dict[str, Feed] = {column: feed for feed in FEEDS for column in feed.columns}
+FEED_BY_STREAM: dict[str, Feed] = {feed.stream: feed for feed in FEEDS}
+
+_COLUMN_STREAM: dict[str, str] = {column: feed.name for column, feed in FEED_BY_COLUMN.items()}
+_STREAM_FETCH: dict[str, tuple[str, ...] | str | None] = {feed.name: feed.fetch for feed in FEEDS}
+_STREAM_LABEL: dict[str, str] = {feed.name: feed.label for feed in FEEDS}
 _KNOWN_COLUMNS: frozenset[str] = frozenset(_COLUMN_STREAM)
 
 # --- Cross-asset detection (XASSET-1) ---------------------------------------
@@ -302,12 +308,103 @@ def infer_required_columns(strategy_cls, asset: str, params: dict | None = None)
     return result
 
 
+@dataclass(frozen=True)
+class FeedNeeds:
+    """What a strategy reads beyond OHLCV.
+
+    ``basis`` says how it was decided: ``class`` (the strategy class was
+    inspected), ``source`` (its source text was scanned — never executed),
+    ``sandbox`` (a sandbox-only runtime whose class loads only in the worker;
+    its feeds were certified at registration) or ``unresolved`` (nothing to
+    inspect).
+    """
+
+    columns: frozenset[str] = frozenset()
+    cross_asset: frozenset[str] = frozenset()
+    basis: str = "class"
+
+    def feeds(self) -> list[Feed]:
+        """The feeds behind ``columns``, in vocabulary order."""
+        return [feed for feed in FEEDS if any(column in self.columns for column in feed.columns)]
+
+
+def detect_feed_needs(
+    strategy_type: str | None,
+    symbol: str,
+    *,
+    strategy_cls: type | None = None,
+    params: dict | None = None,
+    source: str | None = None,
+) -> FeedNeeds:
+    """The feeds a strategy reads — the one detection shared by the backtest
+    precheck (:func:`evaluate_data_availability`) and the data contract.
+
+    A resolvable class is inspected (declared ``data_requirements()`` columns
+    ∪ source scan; cross-asset designs first). Otherwise ``source`` text, when
+    given, is scanned for the same column literals. Errors propagate: callers
+    decide whether to fail closed (the precheck) or report them.
+    """
+    cls = strategy_cls
+    if cls is None and strategy_type:
+        from forven.strategies.backtest import _resolve_strategy_class
+
+        cls = _resolve_strategy_class(strategy_type)
+    if cls is not None:
+        cross = infer_cross_asset_columns(cls, symbol)
+        if cross:
+            return FeedNeeds(cross_asset=cross)
+        return FeedNeeds(columns=frozenset(infer_required_columns(cls, symbol, params)))
+    if source is not None:
+        cross = frozenset(_cross_asset_columns_in_source(source))
+        columns = frozenset() if cross else frozenset(_columns_in_source(source))
+        return FeedNeeds(columns=columns, cross_asset=cross, basis="source")
+    from forven.strategies.sandbox_proxy import is_sandbox_only_type
+
+    if is_sandbox_only_type(strategy_type):
+        return FeedNeeds(basis="sandbox")
+    return FeedNeeds(basis="unresolved")
+
+
 # --- Availability resolution ----------------------------------------------
 _AVAIL_TTL_SECONDS = 60.0
-_AVAIL_CACHE: dict[tuple[str, str], tuple[float, frozenset[str]]] = {}
+_AVAIL_CACHE: dict[tuple[str, str], tuple[float, dict[str, Path]]] = {}
 _AVAIL_LOCK = threading.Lock()
 _FETCH_ATTEMPTED: set[tuple[str, str]] = set()
 _FETCH_LOCK = threading.Lock()
+
+
+def _probe_feed_files(symbol: str, timeframe: str) -> dict[str, Path]:
+    """``{column: file}`` for every enrichment column a backtest frame of
+    (symbol, timeframe) would carry — the enricher's own file-presence logic
+    (``hub._available_enrichment_specs``). Raises ``RuntimeError`` when the
+    feeds cannot be inspected."""
+    files: dict[str, Path] = {}
+    try:
+        from forven.dataeng.hub import _available_enrichment_specs
+
+        for spec in _available_enrichment_specs(symbol, timeframe, include_macro=False, exclude_streams=set()):
+            for column in spec.output_columns:
+                files[column] = Path(spec.path)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.debug("enrichment-spec probe failed for %s/%s: %s", symbol, timeframe, exc)
+        raise RuntimeError(
+            f"could not inspect enrichment feeds for {symbol} {timeframe}: {exc}"
+        ) from exc
+    return files
+
+
+def feed_files(symbol: str, timeframe: str) -> dict[str, Path]:
+    """:func:`_probe_feed_files`, cached for 60 s (the precheck's view)."""
+    key = (symbol, timeframe)
+    now = time.time()
+    with _AVAIL_LOCK:
+        hit = _AVAIL_CACHE.get(key)
+        if hit is not None and (now - hit[0]) < _AVAIL_TTL_SECONDS:
+            return dict(hit[1])
+    files = _probe_feed_files(symbol, timeframe)
+    with _AVAIL_LOCK:
+        _AVAIL_CACHE[key] = (now, files)
+    return dict(files)
 
 
 def _present_columns(symbol: str, timeframe: str) -> frozenset[str]:
@@ -316,28 +413,7 @@ def _present_columns(symbol: str, timeframe: str) -> frozenset[str]:
     Delegates to the same file-presence logic the enricher uses, so this can
     never disagree with what a real backtest frame will contain.
     """
-    key = (symbol, timeframe)
-    now = time.time()
-    with _AVAIL_LOCK:
-        hit = _AVAIL_CACHE.get(key)
-        if hit is not None and (now - hit[0]) < _AVAIL_TTL_SECONDS:
-            return hit[1]
-    present: set[str] = set()
-    try:
-        from forven.dataeng.hub import _available_enrichment_specs
-
-        specs = _available_enrichment_specs(symbol, timeframe, include_macro=False, exclude_streams=set())
-        for spec in specs:
-            present.update(spec.output_columns)
-    except Exception as exc:  # pragma: no cover - defensive
-        log.debug("enrichment-spec probe failed for %s/%s: %s", symbol, timeframe, exc)
-        raise RuntimeError(
-            f"could not inspect enrichment feeds for {symbol} {timeframe}: {exc}"
-        ) from exc
-    result = frozenset(present)
-    with _AVAIL_LOCK:
-        _AVAIL_CACHE[key] = (now, result)
-    return result
+    return frozenset(feed_files(symbol, timeframe))
 
 
 def _first_parquet_timestamp(path) -> pd.Timestamp | None:
@@ -375,15 +451,13 @@ def feed_history_start(symbol: str, timeframe: str) -> dict:
     liquidations start 2026-07-06, so a liquidation gate is silent for most of
     the quick screen's two years).
     """
-    from forven.dataeng.hub import _available_enrichment_specs
-
     starts: dict = {}
-    for spec in _available_enrichment_specs(symbol, timeframe, include_macro=False, exclude_streams=set()):
-        first = _first_parquet_timestamp(spec.path)
-        if first is None:
-            continue
-        for column in spec.output_columns:
-            starts[column] = first
+    firsts: dict[Path, object] = {}
+    for column, path in _probe_feed_files(symbol, timeframe).items():
+        if path not in firsts:
+            firsts[path] = _first_parquet_timestamp(path)
+        if firsts[path] is not None:
+            starts[column] = firsts[path]
     return starts
 
 
@@ -496,33 +570,27 @@ def evaluate_data_availability(
     """
     result = DataAvailabilityResult()
     try:
-        cls = strategy_cls
-        if cls is None:
-            from forven.strategies.backtest import _resolve_strategy_class
-
-            cls = _resolve_strategy_class(strategy_type)
-        if cls is None:
-            from forven.strategies.sandbox_proxy import is_sandbox_only_type
-
-            if is_sandbox_only_type(strategy_type):
-                # A sandbox-only (imported/dropzone) class is NEVER resolvable in
-                # the trusted parent — by design its code loads only in the
-                # worker. Its availability was already certified WITH the real
-                # class at registration (intake passes strategy_cls; a blocked
-                # verdict archives the strategy as untestable at birth), so a
-                # sandbox strategy that reached the active funnel has passed
-                # this probe. Hard-blocking here re-blocked every certified
-                # dropzone strategy at quick_screen ("Cannot verify data
-                # availability ... could not be resolved", the S06890/S06895
-                # chain, 2026-07-11). The backtest itself still fails loudly on
-                # genuinely missing data.
-                who = strategy_id or strategy_type or "strategy"
-                result.ok = True
-                result.warnings.append(
-                    f"{who}: sandbox-only runtime — data availability certified at "
-                    "registration; parent-side class introspection skipped."
-                )
-                return result
+        needs = detect_feed_needs(strategy_type, symbol, strategy_cls=strategy_cls, params=params)
+        if needs.basis == "sandbox":
+            # A sandbox-only (imported/dropzone) class is NEVER resolvable in
+            # the trusted parent — by design its code loads only in the
+            # worker. Its availability was already certified WITH the real
+            # class at registration (intake passes strategy_cls; a blocked
+            # verdict archives the strategy as untestable at birth), so a
+            # sandbox strategy that reached the active funnel has passed
+            # this probe. Hard-blocking here re-blocked every certified
+            # dropzone strategy at quick_screen ("Cannot verify data
+            # availability ... could not be resolved", the S06890/S06895
+            # chain, 2026-07-11). The backtest itself still fails loudly on
+            # genuinely missing data.
+            who = strategy_id or strategy_type or "strategy"
+            result.ok = True
+            result.warnings.append(
+                f"{who}: sandbox-only runtime — data availability certified at "
+                "registration; parent-side class introspection skipped."
+            )
+            return result
+        if needs.basis == "unresolved":
             who = strategy_id or strategy_type or "strategy"
             return DataAvailabilityResult(
                 ok=False,
@@ -538,7 +606,7 @@ def evaluate_data_availability(
         # Reported through missing_unfetchable so every existing caller
         # (create-route untestable gate, intake data_block_reason, backtest
         # precheck) handles it without changes.
-        cross_cols = infer_cross_asset_columns(cls, symbol)
+        cross_cols = needs.cross_asset
         if cross_cols:
             who = strategy_id or strategy_type or "strategy"
             result.required = sorted(cross_cols)
@@ -555,7 +623,7 @@ def evaluate_data_availability(
             )
             return result
 
-        required = infer_required_columns(cls, symbol, params)
+        required = needs.columns
         result.required = sorted(required)
         if not required:
             return result  # fast path: OHLCV-only strategy

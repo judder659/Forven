@@ -41,10 +41,30 @@ def _utc_iso_from_ms(ms: object) -> str | None:
         return None
 
 
+ASSET_CLASSES = ("crypto", "tradfi")
+# Binance USD-M underlying types of crypto perps; every other type (EQUITY,
+# HK/KR/CN_EQUITY, COMMODITY, FX, PREMARKET) is a TradFi perp.
+_CRYPTO_UNDERLYINGS = ("", "COIN", "INDEX")
+
+
+def market_asset_class(info: dict[str, Any] | None) -> str:
+    """crypto / tradfi from a Binance USD-M market's raw ``info``: TradFi perps
+    carry ``contractType`` TRADIFI_PERPETUAL, a non-crypto ``underlyingType``
+    and the "TradFi" ``underlyingSubType`` tag."""
+    info = info or {}
+    contract = str(info.get("contractType") or "").upper()
+    underlying = str(info.get("underlyingType") or "").upper()
+    tags = {str(tag).lower() for tag in (info.get("underlyingSubType") or []) if tag}
+    if contract.startswith("TRADIFI") or "tradfi" in tags or underlying not in _CRYPTO_UNDERLYINGS:
+        return "tradfi"
+    return "crypto"
+
+
 def refresh_symbol_registry(catalog: Catalog | None = None) -> dict[str, int]:
     """Sync the registry with the venue: active USD-M perps upserted with
-    onboard dates + 24h quote volume; lake symbols with no active market
-    marked delisted (delist_ts = their last stored bar). Returns counts."""
+    onboard dates, 24h quote volume and asset class (crypto / tradfi); lake
+    symbols with no active market marked delisted (delist_ts = their last
+    stored bar). Returns counts."""
     from forven.data import DATA_DIR, dataset_last_timestamp_ms, get_exchange
 
     catalog = catalog or Catalog()
@@ -87,6 +107,7 @@ def refresh_symbol_registry(catalog: Catalog | None = None) -> dict[str, int]:
                 inception_ts=inception,
                 delist_ts=None,
                 quote_volume_24h=quote_volume,
+                asset_class=market_asset_class(info),
             )
             upserts += 1
 
@@ -121,6 +142,7 @@ def refresh_symbol_registry(catalog: Catalog | None = None) -> dict[str, int]:
                     inception_ts=(already or {}).get("inception_ts"),
                     delist_ts=_utc_iso_from_ms(last_ms),
                     quote_volume_24h=None,
+                    asset_class=(already or {}).get("asset_class"),
                 )
                 delisted += 1
 
@@ -181,12 +203,21 @@ def _research_config() -> dict[str, Any]:
         return {}
 
 
-def plan_research_universe(catalog: Catalog | None = None) -> list[dict[str, Any]]:
-    """Rank active perps by 24h quote volume and assign the timeframe ladder.
+def research_asset_classes(cfg: dict[str, Any] | None = None) -> list[str]:
+    """The asset classes the research universe may pick (``asset_classes``)."""
+    raw = (cfg if cfg is not None else _research_config()).get("asset_classes")
+    chosen = [str(value).lower() for value in raw if str(value).lower() in ASSET_CLASSES] if isinstance(raw, list) else []
+    return chosen or list(ASSET_CLASSES)
 
-    Returns [{symbol, rank, timeframes}] for the configured universe size.
-    Every symbol gets base_timeframes; the top ``intraday_top`` also get
-    intraday_timeframes; the top ``minute_top`` also get 1m.
+
+def plan_research_universe(catalog: Catalog | None = None) -> list[dict[str, Any]]:
+    """Rank active perps of the configured asset classes by 24h quote volume
+    and assign the timeframe ladder.
+
+    Returns [{symbol, rank, timeframes, asset_class}] for the configured
+    universe size. Every symbol gets base_timeframes; the top ``intraday_top``
+    also get intraday_timeframes; the top ``minute_top`` also get 1m. Registry
+    rows not classified yet count as crypto.
     """
     cfg = _research_config()
     if not cfg.get("enabled", True):
@@ -196,8 +227,13 @@ def plan_research_universe(catalog: Catalog | None = None) -> list[dict[str, Any
     intraday_tfs = list(cfg.get("intraday_timeframes") or ["15m", "5m"])
     intraday_top = int(cfg.get("intraday_top", 20))
     minute_top = int(cfg.get("minute_top", 10))
+    classes = set(research_asset_classes(cfg))
 
-    rows = [row for row in get_symbol_registry(catalog) if row.get("status") == "active"]
+    rows = [
+        row
+        for row in get_symbol_registry(catalog)
+        if row.get("status") == "active" and (row.get("asset_class") or "crypto") in classes
+    ]
     rows.sort(key=lambda row: float(row.get("quote_volume_24h") or 0.0), reverse=True)
 
     plan: list[dict[str, Any]] = []
@@ -207,8 +243,60 @@ def plan_research_universe(catalog: Catalog | None = None) -> list[dict[str, Any
             timeframes.extend(tf for tf in intraday_tfs if tf not in timeframes)
         if rank < minute_top and "1m" not in timeframes:
             timeframes.append("1m")
-        plan.append({"symbol": row["symbol"], "rank": rank, "timeframes": timeframes})
+        plan.append(
+            {"symbol": row["symbol"], "rank": rank, "timeframes": timeframes, "asset_class": row.get("asset_class") or "crypto"}
+        )
     return plan
+
+
+def plan_diff() -> dict[str, Any]:
+    """``UniversePlanDiff``: the research-universe plan against the canonical
+    OHLCV series the lake holds. ``extra`` lists stored series outside the plan
+    that nothing else reads (no strategy, bot, workflow or keep-alive)."""
+    from forven.dataeng import catalog_index
+
+    cfg = _research_config()
+    snapshot = catalog_index.get_snapshot()
+    plan = plan_research_universe(catalog_index.catalog_for(snapshot.root))
+    stored = {
+        (item.symbol, item.timeframe)
+        for item in snapshot.files.values()
+        if item.stream == "ohlcv" and item.venue == catalog_index.CANONICAL_VENUE and item.rows > 0
+    }
+    planned = {(entry["symbol"], tf) for entry in plan for tf in entry["timeframes"]}
+    missing = []
+    for entry in plan:
+        absent = [tf for tf in entry["timeframes"] if (entry["symbol"], tf) not in stored]
+        if absent:
+            missing.append({"symbol": entry["symbol"], "rank": entry["rank"], "timeframes": absent, "asset_class": entry["asset_class"]})
+    extra: dict[str, list[str]] = {}
+    for item in snapshot.files.values():
+        key = (item.symbol, item.timeframe)
+        if item.stream != "ohlcv" or item.venue != catalog_index.CANONICAL_VENUE or key in planned:
+            continue
+        if (snapshot.by_id.get(item.id) or {}).get("sla", {}).get("tier") == "idle":
+            extra.setdefault(item.symbol, []).append(item.timeframe)
+    seed_job = None
+    try:
+        from forven.dataeng.jobs import list_jobs
+
+        jobs = list_jobs(kinds=["universe_seed"], limit=1)["jobs"]
+        seed_job = jobs[0] if jobs else None
+    except Exception as exc:
+        log.debug("plan diff: jobs unavailable: %s", exc)
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "size": int(cfg.get("size", 50) or 0),
+        "asset_classes": research_asset_classes(cfg),
+        "planned_series": len(planned),
+        "present_series": len(planned & stored),
+        "missing": missing,
+        "extra": [
+            {"symbol": symbol, "timeframes": sorted(timeframes, key=lambda tf: catalog_index.timeframe_ms(tf) or 0)}
+            for symbol, timeframes in sorted(extra.items())
+        ],
+        "seed_job": seed_job,
+    }
 
 
 def seed_research_universe(

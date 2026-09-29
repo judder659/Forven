@@ -54,59 +54,6 @@ def test_stream_manager_buffer_is_bounded():
     assert manager.status()[0].buffered_rows == 2
 
 
-def test_catchup_planner_enqueues_missing_closed_window(tmp_path):
-    from forven.dataeng.catalog import Catalog, CoverageRow
-    from forven.dataeng.catchup import CatchUpPlanner
-
-    catalog = Catalog(tmp_path / "catalog.duckdb")
-    catalog.upsert_series_coverage(
-        CoverageRow(
-            source="binance",
-            market="spot",
-            symbol="BTC-USDT",
-            timeframe="1h",
-            stream="candles",
-            path=str(tmp_path / "BTC-USDT" / "1h.parquet"),
-            start_ts="2026-06-01T00:00:00Z",
-            end_ts="2026-06-01T00:00:00Z",
-            row_count=1,
-        )
-    )
-
-    tasks = CatchUpPlanner(catalog).plan(now=pd.Timestamp("2026-06-01T03:00:00Z").to_pydatetime())
-
-    assert len(tasks) == 1
-    assert tasks[0].symbol == "BTC-USDT"
-    assert tasks[0].start_ts == "2026-06-01T01:00:00Z"
-    assert tasks[0].end_ts == "2026-06-01T02:00:00Z"
-    assert tasks[0].permanent is False
-
-
-def test_catchup_planner_snaps_end_to_closed_candle_boundary(tmp_path):
-    from forven.dataeng.catalog import Catalog, CoverageRow
-    from forven.dataeng.catchup import CatchUpPlanner
-
-    catalog = Catalog(tmp_path / "catalog.duckdb")
-    catalog.upsert_series_coverage(
-        CoverageRow(
-            source="binance",
-            market="spot",
-            symbol="AAVE-USDT",
-            timeframe="4h",
-            stream="candles",
-            path=str(tmp_path / "AAVE-USDT" / "4h.parquet"),
-            start_ts="2026-05-28T00:00:00Z",
-            end_ts="2026-05-28T00:00:00Z",
-            row_count=1,
-        )
-    )
-
-    tasks = CatchUpPlanner(catalog).plan(now=pd.Timestamp("2026-06-01T11:01:39.757493Z").to_pydatetime())
-
-    assert tasks[0].start_ts == "2026-05-28T04:00:00Z"
-    assert tasks[0].end_ts == "2026-06-01T04:00:00Z"
-
-
 def test_datahub_status_includes_stream_state(monkeypatch):
     from forven.dataeng.hub import DataHub
     from forven.dataeng.stream import StreamManager

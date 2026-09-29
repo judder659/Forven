@@ -139,3 +139,27 @@ def to_fs(symbol: str | SymbolRef, **kwargs: object) -> str:
 
 def to_ccxt(symbol: str | SymbolRef, **kwargs: object) -> str:
     return to_ref(symbol, **kwargs).to_ccxt()
+
+
+# ---------------------------------------------------------------- spellings
+#
+# One instrument can be spelled many ways (BTC, BTCUSDT, BTC/USDT, BTC-USDT,
+# BTC/USDT:USDT); ``split_pair`` reads any of them. Resolving a spelling to
+# stored series and auditing the lake live in ``identity_audit``: this module
+# is the low-level parser everything imports, so it must not import the catalog.
+
+# Quote suffixes a bare spelling (BTCUSDT) is split on. Fiat codes such as TRY
+# are left out: "RETRY" is not RE/TRY.
+_SPLIT_QUOTES = ("FDUSD", "USDT", "USDC", "BUSD", "USD", "BTC", "ETH", "BNB")
+
+
+def split_pair(text: str) -> tuple[str, str | None]:
+    """(base, quote) of any spelling; quote None for a bare base."""
+    symbol, _ = _split_symbol(str(text or ""), split_bare=False)
+    if "-" in symbol:
+        base, quote = symbol.split("-", 1)
+        return base, quote or None
+    for quote in _SPLIT_QUOTES:
+        if symbol.endswith(quote) and len(symbol) > len(quote):
+            return symbol[: -len(quote)], quote
+    return symbol, None

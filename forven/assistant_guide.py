@@ -42,12 +42,12 @@ PAGES: list[dict] = [
         "route": "/data",
         "name": "Data Manager",
         "kind": "data_engine",
-        "summary": "Historical market data: download feeds, inspect coverage, backfill gaps, upload CSVs, manage the perp research universe.",
+        "summary": "Market data health and operations: what is late for live and paper strategies, every stored series, downloads and CSV imports, background jobs, storage and the trash.",
         "actions": [
-            "Fetch a new symbol/timeframe feed",
-            "View coverage and ingestion runs; backfill gaps",
-            "Seed or refresh the perp research universe",
-            "Upload CSV datasets",
+            "Health: see which series live and paper strategies read are late; refresh one or fix all",
+            "Catalog: open a series for its chart, month-by-month coverage, gaps, stored rows and who reads it",
+            "Get data: download a market with size and time estimates; Import file: CSV with a preview first",
+            "Jobs, Storage, Log: follow or cancel background work, reclaim space (restorable from the trash)",
         ],
     },
     {
@@ -355,10 +355,10 @@ HOWTOS: dict[str, dict] = {
     "add-data": {
         "title": "Add or fix market data",
         "steps": [
-            "Data Manager (/data): fetch a new symbol/timeframe feed, or backfill gaps in an existing one.",
-            "Upload CSVs for data the fetchers don't cover.",
-            "Seed/refresh the perp research universe to widen discovery.",
-            "Coverage is also self-healing: backtests demand-backfill what they need, and a scheduled job keeps series current.",
+            "Data Manager (/data) → Get data: pick a market, timeframes and history; it shows the size and time before anything starts.",
+            "Import file: drop a CSV, check the columns, time zone and timeframe, then import.",
+            "A series page (/data/series/<symbol>/<timeframe>) refreshes it, repairs gaps or extends its history.",
+            "Coverage is also self-healing: backtests demand-backfill what they need, and the collector keeps every series current, most overdue first.",
         ],
         "routes": ["/data"],
     },

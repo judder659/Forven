@@ -34,6 +34,44 @@ def _restore_event_loop_policy():
     asyncio.set_event_loop_policy(_DEFAULT_EVENT_LOOP_POLICY)
 
 
+def _clear_data_manager_caches() -> None:
+    """Drop the Data Manager's short process-wide caches (consumer index, SLA
+    policy, collector snapshot, readiness reports, fingerprints, storage
+    inventory) and hand the next test a fresh DataManager singleton. Only
+    modules a test already imported are touched.
+
+    The singleton leaks between tests otherwise: its 60 s active-symbol cache
+    answers the next test, and monkeypatching it through the ``data_manager``
+    proxy leaves the original bound method behind as an instance attribute on
+    undo, which shadows every later class-level patch."""
+    import sys
+
+    for module_name, clear in (
+        ("forven.dataeng.consumers", "clear_consumer_cache"),
+        ("forven.dataeng.sla", "clear_policy_cache"),
+        ("forven.dataeng.collector", "invalidate_snapshot"),
+        ("forven.dataeng.contracts", "clear_caches"),
+        ("forven.dataeng.fingerprint", "clear_cache"),
+        ("forven.dataeng.storage", "invalidate_inventory"),
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, clear):
+            getattr(module, clear)()
+    manager_module = sys.modules.get("forven.data_manager")
+    get_manager = getattr(manager_module, "get_data_manager", None)
+    if hasattr(get_manager, "cache_clear"):
+        get_manager.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_data_manager_caches():
+    """xdist runs many tests in one worker process: a consumer index or SLA
+    snapshot built by one test (60 s / 15 s TTL) must never answer the next."""
+    _clear_data_manager_caches()
+    yield
+    _clear_data_manager_caches()
+
+
 @pytest.fixture(autouse=True)
 def _preserve_native_duckdb_modules():
     """Re-seed duckdb's native ``sys.modules`` entries after each test.

@@ -157,12 +157,19 @@ class SourceRegistry:
         self._last_failure[normalized] = _now_iso()
         self._messages[normalized] = str(message or "")
 
+    def source_ids(self) -> list[str]:
+        """Every source with a registered adapter or a circuit breaker (a source
+        that recorded a success or failure without registering)."""
+        return sorted(set(self._sources) | set(self._breakers))
+
     def health(self, source_id: str) -> SourceHealth:
         normalized = str(source_id or "").strip().lower()
-        source = self.get(normalized)
+        if normalized not in self._sources and normalized not in self._breakers:
+            raise KeyError(f"unknown source: {source_id}")
+        source = self._sources.get(normalized)
         breaker = self._breakers.setdefault(normalized, CircuitBreaker())
         return SourceHealth(
-            source=source.id,
+            source=source.id if source is not None else normalized,
             status=breaker.status,
             consecutive_failures=breaker.consecutive_failures,
             last_success_at=self._last_success.get(normalized),
