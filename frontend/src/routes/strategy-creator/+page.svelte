@@ -7,6 +7,9 @@
 		getIndicators,
 		previewStrategyChart,
 		stressTestStrategy,
+		heatmapStrategy,
+		compareMarkets,
+		getDatasets,
 		nlToSpec,
 		nlEditSpec,
 		listStrategyLibrary,
@@ -28,6 +31,7 @@
 		type LibraryStrategy,
 		type BacktestResult,
 		type SensitivityResult,
+		type HeatmapAxisRequest,
 		type Strategy,
 	} from '$lib/api';
 	import { DATE_RANGE_PRESETS, inferDateRangePreset, resolveDateRangePreset, estimateBarCount } from '$lib/utils/dateRange';
@@ -36,6 +40,18 @@
 	import { builderIncompatibility } from '$lib/utils/ruleSpec';
 	import { specSeriesLabels, specThresholds } from '$lib/utils/ruleLabels';
 	import { diffSpecs, type SpecChange } from '$lib/utils/specDiff';
+	import {
+		chunk,
+		hashSpec,
+		hasLocalData,
+		knobValue,
+		marketAvailability,
+		resultKey,
+		runPool,
+		specKnobs,
+		withKnobs,
+		withoutKnobs,
+	} from '$lib/utils/creatorGrids';
 	import type { ExecutionRequestFields } from '$lib/api';
 	import ParameterEditor from '$lib/components/ui/ParameterEditor.svelte';
 	import BacktestResultSummary from '$lib/components/backtest/BacktestResultSummary.svelte';
@@ -46,6 +62,8 @@
 	import TradesTable from '$lib/components/strategy/TradesTable.svelte';
 	import VitalsPanel from '$lib/components/strategy/VitalsPanel.svelte';
 	import StressTestPanel from '$lib/components/strategy/StressTestPanel.svelte';
+	import HeatmapPanel, { cellKey, type HeatmapView } from '$lib/components/strategy/HeatmapPanel.svelte';
+	import MarketGridPanel, { marketKey, type MarketView } from '$lib/components/strategy/MarketGridPanel.svelte';
 	import VariantHistory, { type Variant } from '$lib/components/strategy/VariantHistory.svelte';
 	import StrategyImportDialog from '$lib/components/strategy/StrategyImportDialog.svelte';
 	import type { StrategyImportResult } from '$lib/api';
@@ -90,13 +108,6 @@
 		return 'long_only';
 	}
 	$: effectiveTradeMode = mode === 'visual' ? deriveTradeMode(liveSpec) : tradeMode;
-
-	function hashSpec(spec: unknown): string {
-		const s = JSON.stringify(spec ?? {});
-		let h = 5381;
-		for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-		return h.toString(36);
-	}
 
 	function clone<T>(v: T): T {
 		return JSON.parse(JSON.stringify(v));
@@ -176,13 +187,20 @@
 	}
 
 	// A different strategy starts a fresh line of research: its own undo history
-	// and its own count of variants tried.
+	// and its own count of results seen.
 	function resetSession() {
 		resetHistory();
 		variants = [];
-		seenVariants = new Set();
+		versionCount = 0;
+		seenResults = new Set();
 		stressResult = null;
 		stressError = '';
+		heatmapController?.abort();
+		heatmapController = null;
+		heatmapView = null;
+		marketController?.abort();
+		marketController = null;
+		marketView = null;
 		selectedTrade = null;
 		pendingEdit = null;
 	}
@@ -554,13 +572,27 @@ TYPE_NAME = "my_strategy"
 	$: previewKnobs = ((previewSpec?.params ?? {}) as Record<string, number>);
 	$: paneCount = new Set((previewCtx?.sub_indicators ?? []).map((line) => String(line.group ?? line.name))).size;
 
-	// Versions of the rules previewed this session; their count is the number of
-	// trials the deflated Sharpe charges for.
+	// Versions of the rules previewed this session, for the Versions tab.
 	const MAX_VARIANTS = 60;
 	let variants: Variant[] = [];
-	let seenVariants = new Set<string>();
-	$: trials = Math.max(1, seenVariants.size);
+	let versionCount = 0;
 	$: currentVariantKey = liveSpec ? hashSpec(liveSpec) : '';
+
+	// Every result the author has looked at this session: each version of the
+	// rules on each market, and every stress-test, heatmap and market-grid cell.
+	// Their count is the number of trials the deflated Sharpe charges for.
+	let seenResults = new Set<string>();
+	$: trials = Math.max(1, seenResults.size);
+	let lastPreviewTrials = 0;
+	function markSeen(keys: string[]) {
+		const before = seenResults.size;
+		for (const key of keys) seenResults.add(key);
+		if (seenResults.size !== before) seenResults = seenResults;
+	}
+	/** After a batch of results, refresh the preview so its deflated Sharpe counts them. */
+	function recountTrials() {
+		if (Math.max(1, seenResults.size) !== lastPreviewTrials) schedulePreview();
+	}
 
 	function recordVariant(spec: Record<string, unknown>, ctx: PreviewChartContext) {
 		const key = hashSpec(spec);
@@ -574,9 +606,8 @@ TYPE_NAME = "my_strategy"
 			Object.assign(existing, stats, { at: Date.now() });
 			variants = variants;
 		} else {
-			seenVariants.add(key);
-			seenVariants = seenVariants;
-			variants = [...variants, { key, n: seenVariants.size, spec: clone(spec) as unknown as RuleSpec, at: Date.now(), ...stats }].slice(-MAX_VARIANTS);
+			versionCount += 1;
+			variants = [...variants, { key, n: versionCount, spec: clone(spec) as unknown as RuleSpec, at: Date.now(), ...stats }].slice(-MAX_VARIANTS);
 		}
 	}
 	function restoreVariant(key: string) {
@@ -609,15 +640,18 @@ TYPE_NAME = "my_strategy"
 		// Only the latest request may land; an older, slower one would show a stale draft.
 		const seq = ++previewSeq;
 		const spec = liveSpec;
-		const key = hashSpec(spec);
+		const seen = resultKey(spec, symbol, timeframe);
+		const trialsSent = Math.max(1, seenResults.size + (seenResults.has(seen) ? 0 : 1));
 		previewLoading = true;
 		previewError = '';
 		try {
-			const ctx = await previewStrategyChart(previewRequest(spec, seenVariants.size + (seenVariants.has(key) ? 0 : 1)));
+			const ctx = await previewStrategyChart(previewRequest(spec, trialsSent));
 			if (seq !== previewSeq) return;
 			const keepEntry = previewTrades.find((t) => t.n === selectedTrade)?.entry_time;
 			previewCtx = ctx;
 			previewSpec = spec;
+			markSeen([seen]);
+			lastPreviewTrials = trialsSent;
 			recordVariant(spec, ctx);
 			// Keep the inspected trade when it still exists; otherwise show the latest.
 			const trades = ctx.trades ?? [];
@@ -648,7 +682,7 @@ TYPE_NAME = "my_strategy"
 	}
 
 	// ---- Inspecting trades -----------------------------------------------------------
-	type Tab = 'trade' | 'trades' | 'stress' | 'variants' | 'result';
+	type Tab = 'trade' | 'trades' | 'stress' | 'heatmap' | 'markets' | 'variants' | 'result';
 	let tab: Tab = 'trade';
 	let selectedTrade: number | null = null;
 	let focusToken = 0;
@@ -674,16 +708,177 @@ TYPE_NAME = "my_strategy"
 	async function runStressTest() {
 		if (mode !== 'visual' || !liveValid || !liveSpec || stressLoading) return;
 		const key = previewKey;
+		const spec = liveSpec;
+		const market = [symbol, timeframe] as const;
 		stressLoading = true;
 		stressError = '';
 		try {
-			stressResult = await stressTestStrategy(previewRequest(liveSpec, trials));
+			stressResult = await stressTestStrategy(previewRequest(spec, trials));
 			stressKey = key;
+			markSeen(stressResult.knobs.flatMap((knob) => knob.variants.map((variant) =>
+				resultKey(withKnobs(spec, [[{ target: knob.target, name: knob.name, indicator: knob.indicator ?? null }, variant.value]]), ...market))));
+			recountTrials();
 		} catch (err) {
 			stressError = err instanceof Error ? err.message : 'Stress test failed';
 		} finally {
 			stressLoading = false;
 		}
+	}
+
+	/** What a heatmap or market grid was computed for, apart from what it varies. */
+	function toolContext(spec: unknown, market: [string, string] | null, start: string, end: string, tradeMode: string, execution: unknown): string {
+		return JSON.stringify({ s: spec, m: market && [market[0].trim().toUpperCase(), market[1]], w: [start, end], tm: tradeMode, x: execution });
+	}
+
+	// ---- Parameter heatmap: rows (or, with one axis, values) in three requests ------------
+	let heatmapView: HeatmapView | null = null;
+	let heatmapContext = '';
+	let heatmapController: AbortController | null = null;
+	$: knobOptions = specKnobs(liveSpec, metaByKind);
+	$: heatmapAxes = heatmapView ? [heatmapView.x, ...(heatmapView.y ? [heatmapView.y] : [])].map(knobRef) : [];
+	$: heatmapStale = !!heatmapView && heatmapContext !== toolContext(withoutKnobs(liveSpec, heatmapAxes), [symbol, timeframe],
+		startDate, endDate, effectiveTradeMode, previewExecution);
+	$: heatmapCurrent = heatmapView
+		? { x: knobValue(liveSpec, knobRef(heatmapView.x)), y: heatmapView.y ? knobValue(liveSpec, knobRef(heatmapView.y)) : null }
+		: { x: null, y: null };
+	// A change the grid does not cover makes the rest of the run moot.
+	$: if (heatmapStale && heatmapView?.status === 'running') heatmapController?.abort();
+
+	function knobRef(axis: HeatmapAxisRequest) {
+		return { target: axis.target, name: axis.name, indicator: axis.indicator ?? null };
+	}
+	async function runHeatmap(axes: { x: HeatmapAxisRequest; y: HeatmapAxisRequest | null }) {
+		if (mode !== 'visual' || !liveValid || !liveSpec) return;
+		heatmapController?.abort();
+		const controller = new AbortController();
+		heatmapController = controller;
+		const spec = liveSpec;
+		const market: [string, string] = [symbol, timeframe];
+		const base = previewRequest(spec, trials);
+		const meta = (axis: HeatmapAxisRequest) => {
+			const knob = knobOptions.find((k) => k.target === axis.target && k.name === axis.name && k.indicator === (axis.indicator ?? null));
+			return { ...axis, label: knob?.label ?? axis.name, integer: knob?.integer ?? false, min: knob?.min ?? null };
+		};
+		const units = axes.y
+			? chunk(axes.y.values, 3).map((ys) => ({ xs: axes.x.values, ys }))
+			: chunk(axes.x.values, 3).map((xs) => ({ xs, ys: null as number[] | null }));
+		heatmapView = {
+			x: meta(axes.x), y: axes.y ? meta(axes.y) : null, cells: {}, done: 0,
+			total: axes.x.values.length * (axes.y ? axes.y.values.length : 1), status: 'running', warnings: [],
+		};
+		heatmapContext = toolContext(withoutKnobs(spec, [axes.x, ...(axes.y ? [axes.y] : [])].map(knobRef)), market,
+			startDate, endDate, effectiveTradeMode, previewExecution);
+		await runPool(units, 3, async ({ xs, ys }) => {
+			const size = xs.length * (ys ? ys.length : 1);
+			try {
+				const result = await heatmapStrategy({
+					...base, x: { ...axes.x, values: xs }, y: axes.y && ys ? { ...axes.y, values: ys } : null,
+				}, controller.signal);
+				if (heatmapController !== controller || !heatmapView) return;
+				for (const cell of result.cells) heatmapView.cells[cellKey(cell.x, cell.y)] = cell;
+				heatmapView.done += size;
+				heatmapView.warnings = [...new Set([...heatmapView.warnings, ...result.warnings])];
+				heatmapView = heatmapView;
+				markSeen(result.cells.filter((cell) => !cell.error).map((cell) => {
+					const changes: Array<[ReturnType<typeof knobRef>, number | null]> = [[knobRef(axes.x), cell.x]];
+					if (axes.y) changes.push([knobRef(axes.y), cell.y]);
+					return resultKey(withKnobs(spec, changes), ...market);
+				}));
+			} catch (err) {
+				if (controller.signal.aborted || heatmapController !== controller || !heatmapView) return;
+				heatmapView.done += size;
+				heatmapView.warnings = [...new Set([...heatmapView.warnings, err instanceof Error ? err.message : 'A heatmap row failed.'])];
+				heatmapView = heatmapView;
+			}
+		}, controller.signal);
+		if (heatmapController !== controller || !heatmapView) return;
+		heatmapView.status = controller.signal.aborted ? 'cancelled' : 'done';
+		heatmapView = heatmapView;
+		heatmapController = null;
+		recountTrials();
+	}
+	function adoptHeatmapCell({ x, y }: { x: number; y: number | null }) {
+		if (!heatmapView || !liveSpec) return;
+		const changes: Array<[ReturnType<typeof knobRef>, number | null]> = [[knobRef(heatmapView.x), x]];
+		if (heatmapView.y) changes.push([knobRef(heatmapView.y), y]);
+		currentSpec = clone(withKnobs(liveSpec, changes)) as unknown as RuleSpec;
+	}
+
+	// ---- Market grid: the markets in three requests -------------------------------------
+	let marketView: MarketView | null = null;
+	let marketContext = '';
+	let marketController: AbortController | null = null;
+	let availability: Map<string, Set<string>> | null = null;
+	let marketSymbolOptions: string[] = [];
+	let datasetsRequested = false;
+	$: marketStale = !!marketView && marketContext !== toolContext(liveSpec, null, startDate, endDate, effectiveTradeMode, previewExecution);
+	$: if (marketStale && marketView?.status === 'running') marketController?.abort();
+	$: if (tab === 'markets') void loadAvailability();
+
+	async function loadAvailability() {
+		if (datasetsRequested) return;
+		datasetsRequested = true;
+		try {
+			const datasets = await getDatasets();
+			availability = marketAvailability(datasets);
+			marketSymbolOptions = [...new Set(datasets.map((d) => String(d.symbol).toUpperCase())
+				.filter((s) => ['USDT', 'USD', 'USDC'].includes(s.split('/')[1] ?? '')))].sort();
+		} catch {
+			availability = new Map();
+		}
+	}
+	async function runMarkets({ symbols, timeframes }: { symbols: string[]; timeframes: string[] }) {
+		if (mode !== 'visual' || !liveValid || !liveSpec) return;
+		marketController?.abort();
+		const controller = new AbortController();
+		marketController = controller;
+		const spec = liveSpec;
+		const base = previewRequest(spec, trials);
+		const cells = symbols.flatMap((s) => timeframes.map((t) => ({ symbol: s, timeframe: t })));
+		marketView = { symbols, timeframes, rows: {}, done: 0, total: cells.length, status: 'running', warnings: [] };
+		marketContext = toolContext(spec, null, startDate, endDate, effectiveTradeMode, previewExecution);
+		// Markets without local data are reported at once and never requested (a request would download them).
+		const runnable = cells.filter((cell) => {
+			if (!availability || hasLocalData(availability, cell.symbol, cell.timeframe)) return true;
+			marketView!.rows[marketKey(cell.symbol, cell.timeframe)] = { ...cell, status: 'no_data',
+				message: `No local ${cell.timeframe} data for ${cell.symbol}. Collect it on the Data page.` };
+			marketView!.done += 1;
+			return false;
+		});
+		marketView = marketView;
+		await runPool(chunk(runnable, 3), 3, async (group) => {
+			try {
+				const result = await compareMarkets({ ...base, markets: group }, controller.signal);
+				if (marketController !== controller || !marketView) return;
+				const seen: string[] = [];
+				group.forEach((cell, i) => {
+					const row = result.rows[i] ?? { ...cell, status: 'error' as const, message: result.warnings[0] ?? 'No result.' };
+					marketView!.rows[marketKey(cell.symbol, cell.timeframe)] = row;
+					if (row.status === 'ok') seen.push(resultKey(spec, cell.symbol, cell.timeframe));
+				});
+				marketView.done += group.length;
+				marketView.warnings = [...new Set([...marketView.warnings, ...result.warnings])];
+				marketView = marketView;
+				markSeen(seen);
+			} catch (err) {
+				if (controller.signal.aborted || marketController !== controller || !marketView) return;
+				for (const cell of group) {
+					marketView.rows[marketKey(cell.symbol, cell.timeframe)] = { ...cell, status: 'error',
+						message: err instanceof Error ? err.message : 'These markets failed.' };
+				}
+				marketView.done += group.length;
+				marketView = marketView;
+			}
+		}, controller.signal);
+		if (marketController !== controller || !marketView) return;
+		marketView.status = controller.signal.aborted ? 'cancelled' : 'done';
+		marketView = marketView;
+		marketController = null;
+		recountTrials();
+	}
+	function pickMarket({ symbol: next, timeframe: nextTimeframe }: { symbol: string; timeframe: string }) {
+		symbol = next;
+		timeframe = nextTimeframe;
 	}
 
 	// Import (creates a new lifecycle container from an export envelope)
@@ -1058,6 +1253,8 @@ TYPE_NAME = "my_strategy"
 		{ key: 'trade' as Tab, label: selected ? `Why · #${selected.n}` : 'Why' },
 		{ key: 'trades' as Tab, label: `Trades${previewTrades.length ? ` (${previewTrades.length})` : ''}` },
 		{ key: 'stress' as Tab, label: 'Stress test' },
+		{ key: 'heatmap' as Tab, label: 'Heatmap' },
+		{ key: 'markets' as Tab, label: 'Markets' },
 		{ key: 'variants' as Tab, label: `Versions (${variants.length})` },
 		{ key: 'result' as Tab, label: 'Backtest' },
 	];
@@ -1216,8 +1413,8 @@ TYPE_NAME = "my_strategy"
 		<button type="button" on:click={showExecution} title="Execution settings"
 			class="ml-auto max-w-full truncate border border-[#222] px-2 py-0.5 text-[10px] text-[#888] hover:border-[#555] hover:text-white">{executionSummary}</button>
 		{#if mode === 'visual'}
-			<span class="text-[10px] text-[#555]" title="Versions of the rules previewed this session. The deflated Sharpe charges for each.">
-				{trials} version{trials === 1 ? '' : 's'} tried
+			<span class="text-[10px] text-[#555]" title="Results seen this session: each version of the rules on each market, and every stress-test, heatmap and market-grid cell. The deflated Sharpe charges for each.">
+				{trials} result{trials === 1 ? '' : 's'} seen
 			</span>
 		{/if}
 	</div>
@@ -1475,8 +1672,15 @@ TYPE_NAME = "my_strategy"
 						{:else if tab === 'stress'}
 							<StressTestPanel result={stressResult} loading={stressLoading} error={stressError} stale={stressStale}
 								canRun={liveValid} on:run={runStressTest} />
+						{:else if tab === 'heatmap'}
+							<HeatmapPanel knobs={knobOptions} view={heatmapView} stale={heatmapStale} canRun={liveValid} current={heatmapCurrent}
+								on:run={(e) => runHeatmap(e.detail)} on:cancel={() => heatmapController?.abort()} on:adopt={(e) => adoptHeatmapCell(e.detail)} />
+						{:else if tab === 'markets'}
+							<MarketGridPanel view={marketView} {availability} symbolOptions={marketSymbolOptions} currentSymbol={symbol}
+								currentTimeframe={timeframe} stale={marketStale} canRun={liveValid}
+								on:run={(e) => runMarkets(e.detail)} on:cancel={() => marketController?.abort()} on:pick={(e) => pickMarket(e.detail)} />
 						{:else if tab === 'variants'}
-							<VariantHistory {variants} currentKey={currentVariantKey} current={liveSpec as RuleSpec | null} on:restore={(e) => restoreVariant(e.detail)} />
+							<VariantHistory {variants} resultsSeen={trials} currentKey={currentVariantKey} current={liveSpec as RuleSpec | null} on:restore={(e) => restoreVariant(e.detail)} />
 						{:else}
 							{@render resultBlock()}
 						{/if}

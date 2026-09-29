@@ -134,12 +134,14 @@ from forven.api_models import (  # noqa: F401
     BrainChatBody,
     BrainChatHistoryEntry,
     ForceCloseTradeBody,
+    HeatmapAxis,
     LegacyAgentCreateBody,
     LegacyAgentDocumentBody,
     LegacyAgentModelBody,
     LegacyAgentUpdateBody,
     ManualStrategyBody,
     MarkTradeFailedBody,
+    MarketRef,
     ModelPolicyUpdateBody,
     NlEditSpecBody,
     NlToSpecBody,
@@ -151,6 +153,8 @@ from forven.api_models import (  # noqa: F401
     PaperPartialCloseBody,
     PipelineSettingsUpdateBody,
     PreviewChartBody,
+    PreviewHeatmapBody,
+    PreviewMarketsBody,
     SendToForgeBody,
     SettingsApiKeyBody,
     SettingsTestRemoteEngineBody,
@@ -6942,6 +6946,57 @@ def post_backtest_preview_sensitivity(body: PreviewChartBody) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — report it on the panel, never break the page
         return {"base": None, "knobs": [], "verdict": None, "warnings": [f"Stress test failed: {exc}"]}
+
+
+def post_backtest_preview_heatmap(body: PreviewHeatmapBody) -> dict:
+    """Parameter heatmap for a no-code rule_engine spec: one backtest walk per
+    pair of values of two settings, with the preview's candles and settings."""
+    from forven.strategies.backtest import build_strategy_heatmap
+
+    try:
+        return json_safe_payload(build_strategy_heatmap(
+            asset=_extract_base_asset_symbol(body.symbol),
+            timeframe=str(body.timeframe or "1h").strip() or "1h",
+            start_date=(str(body.start).strip() or None) if body.start else None,
+            end_date=(str(body.end).strip() or None) if body.end else None,
+            spec=body.spec if isinstance(body.spec, dict) else {},
+            x_axis=body.x.model_dump(),
+            y_axis=body.y.model_dump() if body.y else None,
+            trade_mode=str(body.trade_mode or "long_only").strip() or "long_only",
+            leverage=body.leverage,
+            fee_bps=body.fee_bps,
+            slippage_bps=body.slippage_bps,
+            initial_capital=body.initial_capital,
+            execution_controls=_collect_honored_backtest_execution_controls(body) or None,
+        ))
+    except Exception as exc:  # noqa: BLE001 — report it on the panel, never break the page
+        return {"x": None, "y": None, "cells": [], "warnings": [f"Heatmap failed: {exc}"]}
+
+
+def post_backtest_preview_markets(body: PreviewMarketsBody) -> dict:
+    """A no-code rule_engine spec backtested on several markets with the same settings."""
+    from forven.strategies.backtest import build_strategy_market_grid
+
+    markets = [
+        {"symbol": market.symbol.strip(), "asset": _extract_base_asset_symbol(market.symbol),
+         "timeframe": market.timeframe.strip()}
+        for market in body.markets
+    ]
+    try:
+        return json_safe_payload(build_strategy_market_grid(
+            markets=markets,
+            start_date=(str(body.start).strip() or None) if body.start else None,
+            end_date=(str(body.end).strip() or None) if body.end else None,
+            spec=body.spec if isinstance(body.spec, dict) else {},
+            trade_mode=str(body.trade_mode or "long_only").strip() or "long_only",
+            leverage=body.leverage,
+            fee_bps=body.fee_bps,
+            slippage_bps=body.slippage_bps,
+            initial_capital=body.initial_capital,
+            execution_controls=_collect_honored_backtest_execution_controls(body) or None,
+        ))
+    except Exception as exc:  # noqa: BLE001 — report it on the panel, never break the page
+        return {"rows": [], "warnings": [f"Market comparison failed: {exc}"]}
 
 
 async def post_nl_edit_spec(body: NlEditSpecBody) -> dict:

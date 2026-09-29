@@ -3,7 +3,8 @@ import { mount, unmount, tick } from 'svelte';
 import { fireEvent } from '@testing-library/svelte';
 
 const api = vi.hoisted(() => Object.fromEntries([
-	'getIndicators', 'previewStrategyChart', 'stressTestStrategy', 'nlToSpec', 'nlEditSpec', 'listStrategyLibrary', 'createLibraryStrategy',
+	'getIndicators', 'previewStrategyChart', 'stressTestStrategy', 'heatmapStrategy', 'compareMarkets', 'getDatasets',
+	'nlToSpec', 'nlEditSpec', 'listStrategyLibrary', 'createLibraryStrategy',
 	'updateLibraryStrategy', 'deleteLibraryStrategy', 'duplicateLibraryStrategy', 'sendLibraryStrategyToForge',
 	'getSystemStrategyDetail', 'getPrebuiltStrategies', 'getStrategies', 'submitBacktest', 'registerCustomStrategy', 'getResult', 'getSymbols',
 ].map((name) => [name, vi.fn()])));
@@ -60,6 +61,7 @@ beforeEach(async () => {
 	api.getPrebuiltStrategies.mockResolvedValue({ strategies: [] });
 	api.listStrategyLibrary.mockResolvedValue([]);
 	api.previewStrategyChart.mockResolvedValue(preview(3));
+	api.getDatasets.mockResolvedValue([]);
 	target = document.createElement('div');
 	document.body.appendChild(target);
 	app = mount(Creator, { target });
@@ -93,7 +95,7 @@ it('previews with the execution settings a backtest would use', async () => {
 	expect(text()).toContain('Trades: 3');
 });
 
-it('charges the deflated Sharpe for each distinct version of the rules previewed', async () => {
+it('charges the deflated Sharpe for each distinct result seen', async () => {
 	await vi.advanceTimersByTimeAsync(600); await settle();
 	expect(api.previewStrategyChart.mock.calls.at(-1)![0].trials).toBe(1);
 	await fireEvent.input(knob('oversold'), { target: { value: '25' } }); await settle();
@@ -102,7 +104,7 @@ it('charges the deflated Sharpe for each distinct version of the rules previewed
 	await fireEvent.input(knob('oversold'), { target: { value: '30' } }); await settle();
 	await vi.advanceTimersByTimeAsync(600); await settle();
 	expect(api.previewStrategyChart.mock.calls.at(-1)![0].trials).toBe(2); // v1 again, not a new trial
-	expect(text()).toContain('2 versions tried');
+	expect(text()).toContain('2 results seen');
 });
 
 it('undoes and redoes rule edits, one step per number tuned', async () => {
@@ -229,4 +231,62 @@ it('refuses an AI draft the builder cannot show instead of rewriting it', async 
 	expect(text()).toContain('more than one level deep');
 	expect(button('Generate strategy')).toBeTruthy(); // the prompt stays, the draft is untouched
 	expect(knob('oversold').value).toBe('30');
+});
+
+it('runs a heatmap a row per request, counts every cell, and a cell sets both knobs', async () => {
+	await vi.advanceTimersByTimeAsync(600); await settle();
+	expect(api.previewStrategyChart.mock.calls.at(-1)![0].trials).toBe(1);
+	api.heatmapStrategy.mockImplementation(async (request: any) => ({
+		x: null, y: null, warnings: [],
+		cells: request.x.values.map((x: number) => ({ x, y: request.y.values[0], trades: 10, oos_trades: 6,
+			oos_return: x === 30 ? 0.05 : 0.04, in_return: 0.02, net_return: 0.06 })),
+	}));
+	await fireEvent.click(button('Heatmap')); await settle();
+	await fireEvent.change(target.querySelector('select[aria-label="heatmap steps"]')!, { target: { value: '3' } }); await settle();
+	await fireEvent.click(button('Run heatmap')); await settle();
+
+	const requests = api.heatmapStrategy.mock.calls.map((call: any[]) => call[0]);
+	// Round steps centred on the current values (oversold 30, exit_level 55).
+	expect(requests.map((r: any) => [r.x.name, r.x.values, r.y.name, r.y.values])).toEqual([
+		['oversold', [10, 30, 50], 'exit_level', [30]],
+		['oversold', [10, 30, 50], 'exit_level', [55]],
+		['oversold', [10, 30, 50], 'exit_level', [80]],
+	]);
+	expect(target.querySelectorAll('[data-testid="heatmap-grid"] button').length).toBe(9);
+	expect(target.querySelector('[data-testid="heatmap-verdict"]')?.textContent).toContain('Plateau');
+
+	// Nine settings seen, one of them the preview's own: the next preview charges for 9.
+	await vi.advanceTimersByTimeAsync(600); await settle();
+	expect(api.previewStrategyChart.mock.calls.at(-1)![0].trials).toBe(9);
+	expect(text()).toContain('9 results seen');
+
+	await fireEvent.click(target.querySelector('[data-testid="heatmap-grid"] button[title^="oversold 10 · exit_level 80"]')!); await settle();
+	expect([knob('oversold').value, knob('exit_level').value]).toEqual(['10', '80']);
+});
+
+it('compares markets with local data only, and a cell switches the preview there', async () => {
+	api.getDatasets.mockResolvedValue([
+		{ symbol: 'BTC/USDT', timeframe: '1h' }, { symbol: 'ETH/USDT', timeframe: '1h' }, { symbol: 'ETH/USDT', timeframe: '4h' },
+		{ symbol: 'ADA/BTC', timeframe: '1h' },
+	]);
+	const stats = (net: number) => ({ trades: 12, net_return: net, win_rate: 0.5, max_drawdown: 0.1 });
+	api.compareMarkets.mockImplementation(async (request: any) => ({
+		warnings: [],
+		rows: request.markets.map((m: any) => ({ ...m, status: 'ok', bars: 1000, trades: 30,
+			in_sample: stats(0.02), out_of_sample: stats(m.symbol === 'ETH/USDT' ? 0.03 : -0.01) })),
+	}));
+	await fireEvent.click(button('Markets')); await settle();
+	await fireEvent.click(button('Compare markets')); await settle();
+
+	const requested = api.compareMarkets.mock.calls.map((call: any[]) => call[0].markets[0]);
+	expect(requested).toEqual([
+		{ symbol: 'BTC/USDT', timeframe: '1h' }, { symbol: 'ETH/USDT', timeframe: '1h' }, { symbol: 'ETH/USDT', timeframe: '4h' },
+	]);
+	const grid = target.querySelector('[data-testid="market-grid"]')!;
+	expect(grid.textContent?.match(/no data/g)?.length).toBe(3);
+	expect(target.querySelector('[data-testid="market-verdict"]')?.textContent).toContain('2 of 3 markets');
+
+	await fireEvent.click(grid.querySelector('button[title^="ETH/USDT 4h"]')!); await settle();
+	expect((target.querySelector('input[aria-label="symbol"]') as HTMLInputElement).value).toBe('ETH/USDT');
+	expect((target.querySelector('select[aria-label="timeframe"]') as HTMLSelectElement).value).toBe('4h');
 });
