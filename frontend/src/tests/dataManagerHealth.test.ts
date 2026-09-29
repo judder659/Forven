@@ -10,7 +10,7 @@ import {
 	seriesName,
 	whyText,
 } from '../lib/components/data-manager/health';
-import { navRouteMetrics, setNavIndicators } from '../lib/stores/navMetrics';
+import { navBadges, setNavIndicators } from '../lib/stores/navMetrics';
 
 function withCounts(census: SlaCensus, tier: SlaTier, counts: Partial<Record<SlaState, number>>): SlaCensus {
 	return { ...census, by_tier: { ...census.by_tier, [tier]: { fresh: 0, late: 0, breach: 0, frozen: 0, missing: 0, ...counts } } };
@@ -113,10 +113,10 @@ describe('/data nav indicator', () => {
 		expect(indicator.count).toBe(1);
 		expect(indicator.summary).toBe('1 paper series is late');
 		// The census ranks `worst` across tiers, so the paper row may not be in it:
-		// the key still changes with the live/paper counts.
-		expect(indicator.seen_key).toMatch(/^data-sla:0\.0\.0\.1/);
+		// a counts stand-in still changes with the live/paper counts.
+		expect(indicator.item_ids).toEqual(['counts:0.0.0.1']);
 		const withRow = buildDataNavIndicator({ ...census, worst: [row({ tier: 'paper', state: 'late', symbol: 'SOL-USDT', timeframe: '15m' })] });
-		expect(withRow.seen_key).toBe('data-sla:0.0.0.1:ohlcv:canonical:SOL-USDT:15m');
+		expect(withRow.item_ids).toEqual(['ohlcv:canonical:SOL-USDT:15m:late']);
 	});
 
 	it('a live breach is a standing STALE pill', () => {
@@ -128,11 +128,9 @@ describe('/data nav indicator', () => {
 		expect(buildDataNavIndicator(withCounts(census, 'paper', { fresh: 4 })).kind).toBe('none');
 	});
 
-	it('passes the sidebar badge allowlist', () => {
+	it('becomes the /data sidebar badge', () => {
 		setNavIndicators({ '/data': buildDataNavIndicator(census) });
-		const metric = get(navRouteMetrics)['/data'];
-		expect(metric.kind).toBe('count');
-		expect(metric.count).toBe(1);
-		expect(metric.seen).toBe(false);
+		const badge = get(navBadges)['/data'];
+		expect(badge).toMatchObject({ kind: 'count', count: 1 });
 	});
 });

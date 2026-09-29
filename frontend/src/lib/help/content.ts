@@ -1097,14 +1097,13 @@ Crypto exchanges typically charge 0.1% (10 bps) per trade, meaning a round-trip 
 	},
 	notification_level: {
 		id: 'notification_level',
-		term: 'Notification Level',
-		shortDescription: 'Controls which events generate alerts.',
+		term: 'Discord Delivery',
+		shortDescription: 'Master switch for sending notifications to Discord.',
 		category: 'strategy',
-		fullDescription: 'Choose between full trade stream, summaries, alerts-only, or silent mode to balance noise vs. visibility.',
+		fullDescription: 'Off stops everything going to Discord, whatever the per-event switches say. In-app pop-ups and sidebar badges are not affected.',
 		interpretations: [
-			{ range: 'all', label: 'Recommended (Paper)', color: 'green', description: 'Best for debugging and validating execution flow.' },
-			{ range: 'alerts', label: 'Recommended (Live)', color: 'green', description: 'Keeps signal high while preserving critical alerts.' },
-			{ range: 'none', label: 'Minimal', color: 'yellow', description: 'Low noise but low observability.' }
+			{ range: 'all', label: 'On', color: 'green', description: 'Each event goes to Discord if its Discord switch is on (Settings → Notifications).' },
+			{ range: 'none', label: 'Off', color: 'yellow', description: 'Nothing reaches Discord; everything stays in the app.' }
 		]
 	},
 	data_refresh_interval: {
@@ -1559,59 +1558,16 @@ Crypto exchanges typically charge 0.1% (10 bps) per trade, meaning a round-trip 
 			'Restart or reload background workers after major instruction updates'
 		]
 	},
-	notify_on_entry: {
-		id: 'notify_on_entry',
-		term: 'Notify on Trade Entry',
-		shortDescription: 'Send a message whenever a new position is opened.',
+	notification_channels: {
+		id: 'notification_channels',
+		term: 'Notification Switches',
+		shortDescription: 'Where each kind of event reaches you: a pop-up, Discord, or neither.',
 		category: 'data',
-		fullDescription: 'Useful for real-time visibility into strategy behavior and execution timing.',
+		fullDescription:
+			'Settings → Notifications lists every kind of event (live and paper trades, approvals, risk, jobs, system, agents) with a Pop-up switch and a Discord switch, plus a switch per sidebar badge. Kill switch / loss halts and live order failures always pop up. Any pop-up can be muted from its own Mute button, and all pop-ups can be paused for up to a day.',
 		interpretations: [
-			{ range: 'enabled', label: 'Recommended', color: 'green', description: 'Keep enabled for paper and early live rollout.' },
-			{ range: 'disabled', label: 'Low Noise', color: 'yellow', description: 'Reduces message volume but lowers observability.' }
-		]
-	},
-	notify_on_exit: {
-		id: 'notify_on_exit',
-		term: 'Notify on Trade Exit',
-		shortDescription: 'Send a message whenever a position is closed.',
-		category: 'data',
-		fullDescription: 'Critical for monitoring realized PnL and validating stop/target execution.',
-		interpretations: [
-			{ range: 'enabled', label: 'Recommended', color: 'green', description: 'Keep enabled in both paper and live modes.' },
-			{ range: 'disabled', label: 'Low Noise', color: 'yellow', description: 'Less noise, but you may miss important outcomes.' }
-		]
-	},
-	notify_daily_summary: {
-		id: 'notify_daily_summary',
-		term: 'Daily P&L Summary',
-		shortDescription: 'Send a once-per-day summary of performance.',
-		category: 'data',
-		fullDescription: 'Provides a low-noise operating view when you do not need per-trade notifications.',
-		interpretations: [
-			{ range: 'enabled', label: 'Recommended', color: 'green', description: 'Good baseline observability for ongoing ops.' },
-			{ range: 'disabled', label: 'Optional', color: 'yellow', description: 'Disable only if another reporting pipeline exists.' }
-		]
-	},
-	notify_health_reports: {
-		id: 'notify_health_reports',
-		term: 'Strategy Health Reports',
-		shortDescription: 'Send alerts from rolling backtests and validation checks.',
-		category: 'risk',
-		fullDescription: 'Helps catch degradation and regime drift before losses escalate.',
-		interpretations: [
-			{ range: 'enabled', label: 'Recommended', color: 'green', description: 'Strongly recommended in live mode.' },
-			{ range: 'disabled', label: 'Risky', color: 'red', description: 'Degradation can go unnoticed longer.' }
-		]
-	},
-	notify_errors: {
-		id: 'notify_errors',
-		term: 'Errors and Warnings',
-		shortDescription: 'Send operational failure and warning notifications.',
-		category: 'risk',
-		fullDescription: 'This is your early-warning channel for runtime issues, queue stalls, and failed jobs.',
-		interpretations: [
-			{ range: 'enabled', label: 'Recommended', color: 'green', description: 'Keep always enabled in production.' },
-			{ range: 'disabled', label: 'Not Recommended', color: 'red', description: 'Operational failures become harder to detect quickly.' }
+			{ range: 'live trades', label: 'Recommended on', color: 'green', description: 'Real-money fills and closes pop up by default.' },
+			{ range: 'paper trades', label: 'Off by default', color: 'yellow', description: 'Simulated fills stay on the Paper Trades page unless you switch their pop-ups on.' }
 		]
 	},
 	operations_settings: {

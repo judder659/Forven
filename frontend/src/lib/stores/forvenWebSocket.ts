@@ -136,6 +136,7 @@ function handlePayload(data: Record<string, unknown>) {
 		case 'approval_resolved':
 		case 'certification_change':
 		case 'mcp_session_opened':
+		case 'notification':
 		case 'risk_alert': {
 			forvenRealtimeEvents.update((current) => {
 				const merged = [data, ...current];

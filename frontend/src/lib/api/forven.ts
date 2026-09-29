@@ -806,22 +806,15 @@ export interface NotificationFeedStats {
 	counts: Record<string, number>;
 }
 
+/**
+ * Notification switches: `*_to_discord`, `popup_<category>` and
+ * `badge_<page>` booleans (the full set is named by the notification catalog,
+ * $lib/notifications/catalog), plus the Discord routing mode.
+ */
 export interface NotificationPreferences {
 	discord_mode: 'legacy' | 'shadow' | 'policy' | string;
 	response_channels: string[];
-	approval_required_to_discord: boolean;
-	approval_resolved_to_discord: boolean;
-	trade_opened_to_discord: boolean;
-	trade_closed_to_discord: boolean;
-	trade_failed_to_discord: boolean;
-	agent_completion_to_discord: boolean;
-	agent_failure_to_discord: boolean;
-	pipeline_transition_to_discord: boolean;
-	system_degraded_to_discord: boolean;
-	system_recovered_to_discord: boolean;
-	risk_critical_to_discord: boolean;
-	brain_response_to_discord: boolean;
-	digests_to_discord: boolean;
+	[key: string]: boolean | string | string[];
 }
 
 export interface NotificationDeliveryAttempt {
@@ -1331,8 +1324,9 @@ export async function getNotificationPreferences(): Promise<NotificationPreferen
 	return fetchApi('/notifications/preferences');
 }
 
+/** A partial update: switches left out keep their stored values. */
 export async function updateNotificationPreferences(
-	updates: Partial<NotificationPreferences>
+	updates: Record<string, boolean | string | string[]>
 ): Promise<NotificationPreferences> {
 	return fetchApi('/notifications/preferences', {
 		method: 'PUT',
@@ -2441,16 +2435,20 @@ export async function testApiKey(source: string): Promise<{ status: string; sour
 
 // ============== System Heartbeat ==============
 
-export type NavIndicatorKind = 'none' | 'count' | 'status' | 'activity';
+export type NavIndicatorKind = 'none' | 'count' | 'status';
 export type NavIndicatorSeverity = 'neutral' | 'info' | 'success' | 'warn' | 'danger';
 
+/** A sidebar badge's facts: how many items, and which (so new can be told from seen). */
 export interface SystemNavIndicator {
 	kind: NavIndicatorKind;
 	severity: NavIndicatorSeverity;
 	label: string;
 	summary: string;
 	count?: number;
-	seen_key: string;
+	/** Ids of the counted items (capped at 200). */
+	item_ids?: string[];
+	/** The subset of item_ids at fail/critical severity (Diagnostics only). */
+	danger_ids?: string[];
 }
 
 export interface SystemHeartbeatResponse {

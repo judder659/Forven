@@ -15,19 +15,19 @@ vi.mock('$app/stores', () => ({
 }));
 
 vi.mock('$lib/stores/navMetrics', () => ({
-	navRouteMetrics: {
+	navBadges: {
 		subscribe(callback: (value: Record<string, unknown>) => void) {
 			callback({});
 			return () => {};
 		},
 	},
-	navEventPulses: {
+	navIndicators: {
 		subscribe(callback: (value: Record<string, unknown>) => void) {
 			callback({});
 			return () => {};
 		},
 	},
-	markNavIndicatorSeen: vi.fn(),
+	markNavSeen: vi.fn(),
 }));
 
 import Sidebar from '../lib/components/Sidebar.svelte';

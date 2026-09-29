@@ -1,195 +1,155 @@
-import { get, writable } from 'svelte/store';
-import type { NavIndicatorKind, NavIndicatorSeverity, SystemNavIndicator } from '$lib/api';
+/**
+ * Sidebar badges.
+ *
+ * The facts come from the heartbeat: per page, how many items and which ones
+ * (nav_indicators; the /data badge is built client-side from the SLA census).
+ * Which pages carry a badge, and how it counts, comes from the notification
+ * catalog; whether it shows at all is the operator's switch in
+ * Settings → Notifications.
+ *
+ * Two kinds of badge:
+ *  - 'total' (Approvals, Live Trades, Data, Bot Factory, Paper Trades): the real
+ *    number of open items, shown until they are resolved. It is bright while it
+ *    holds an item you have not seen on that page yet, and dims once you have.
+ *  - 'unread' (Diagnostics): only issues raised since you last opened the page.
+ *
+ * "Seen" is kept per item id (localStorage), so a badge never re-lights because
+ * an unrelated item changed, and never stays quiet about one you have not seen.
+ * The first time a page's facts arrive they become the baseline: nothing that
+ * already existed is announced as new.
+ */
+import { derived, get, writable } from 'svelte/store';
+import type { NavIndicatorSeverity, SystemNavIndicator } from '$lib/api';
+import { NAV_BADGES, getNavBadge } from '$lib/notifications/catalog';
+import { badgeEnabled, notificationPrefs } from '$lib/stores/notificationPrefs';
 
-export interface NavMetric {
-	kind: NavIndicatorKind;
-	severity: NavIndicatorSeverity;
-	label: string;
-	summary: string;
+const SEEN_STORAGE_KEY = 'forven.nav.seen_v2';
+const LEGACY_SEEN_STORAGE_KEY = 'forven.nav.seen_v1';
+
+export interface NavBadgeView {
+	kind: 'count' | 'status';
+	/** The number to show (unseen items only, for an 'unread' badge). */
 	count: number;
-	seenKey: string;
-	seen: boolean;
+	/** Status pill text (e.g. STALE). */
+	label: string;
+	severity: NavIndicatorSeverity;
+	summary: string;
+	/** Holds items not seen yet: drawn bright rather than dimmed. */
+	fresh: boolean;
 }
 
-type NavMetricMap = Record<string, NavMetric>;
+type SeenIds = Record<string, string[]>;
 
-const STORAGE_KEY = 'forven.nav.seen_v1';
-// Every sidebar route. Backend nav_indicators (control_plane/status.py) and the
-// heartbeat fallback only cover a subset; the rest still get event pulses.
-export const NAV_HREFS = [
-	'/',
-	'/data',
-	'/strategy-creator',
-	'/backtest/new',
-	'/lab',
-	'/risk',
-	'/paper-trades',
-	'/live-trades',
-	'/bot-factory',
-	'/agents',
-	'/brain',
-	'/tasks',
-	'/approval',
-	'/diagnostics',
-	'/pipeline',
-	'/routines',
-	'/integrations',
-	'/settings',
-];
-
-// Deliberate allowlist (operator decision 2026-07-06): nav badges exist ONLY
-// for these routes. Everything else was ambient numerology (data ingestion
-// counts, running agents, task queues…) that trained the eye to ignore ALL
-// badges. Enforced here — the single choke point for both state indicators
-// and event pulses — so neither an older backend nor a stray pulse() call can
-// resurrect a badge elsewhere. Safety states still surface via toasts and the
-// Risk page banner.
-// '/data' (Data Manager rebuild, 2026-09-28): lights only when a series a live
-// or paper strategy trades on is past its freshness allowance (heartbeat.ts,
-// from /api/data/sla), never for research or idle data.
-export const NAV_BADGE_HREFS = [
-	'/data',
-	'/approval',
-	'/diagnostics',
-	'/integrations',
-	'/live-trades',
-	'/paper-trades',
-	'/bot-factory',
-];
-
-function createEmptyMetric(): NavMetric {
-	return {
-		kind: 'none',
-		severity: 'neutral',
-		label: '',
-		summary: '',
-		count: 0,
-		seenKey: '',
-		seen: true,
-	};
-}
-
-function createDefaultMetrics(): NavMetricMap {
-	return Object.fromEntries(NAV_HREFS.map((href) => [href, createEmptyMetric()]));
-}
-
-function loadSeenKeys(): Record<string, string> {
+function loadSeen(): SeenIds {
 	if (typeof window === 'undefined') return {};
 	try {
-		const stored = window.localStorage.getItem(STORAGE_KEY);
-		return stored ? JSON.parse(stored) : {};
+		window.localStorage.removeItem(LEGACY_SEEN_STORAGE_KEY);
+		const stored = window.localStorage.getItem(SEEN_STORAGE_KEY);
+		const parsed = stored ? JSON.parse(stored) : {};
+		return parsed && typeof parsed === 'object' ? (parsed as SeenIds) : {};
 	} catch {
 		return {};
 	}
 }
 
-function saveSeenKeys(seenKeys: Record<string, string>) {
+function saveSeen(seen: SeenIds): void {
 	if (typeof window === 'undefined') return;
 	try {
-		window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seenKeys));
+		window.localStorage.setItem(SEEN_STORAGE_KEY, JSON.stringify(seen));
 	} catch {
-		// Ignore storage errors.
+		// Storage full or blocked: seen state still holds for this session.
 	}
 }
 
-function isKind(value: unknown): value is NavIndicatorKind {
-	return value === 'none' || value === 'count' || value === 'status' || value === 'activity';
+function idsOf(indicator: SystemNavIndicator | undefined): string[] {
+	return Array.isArray(indicator?.item_ids) ? indicator.item_ids.map(String) : [];
 }
 
-function isSeverity(value: unknown): value is NavIndicatorSeverity {
-	return value === 'neutral' || value === 'info' || value === 'success' || value === 'warn' || value === 'danger';
-}
+/** The latest facts per page (only pages the catalog has a badge for). */
+export const navIndicators = writable<Record<string, SystemNavIndicator>>({});
 
-export const navRouteMetrics = writable<NavMetricMap>(createDefaultMetrics());
+/** Item ids already seen per page. */
+export const navSeenIds = writable<SeenIds>(loadSeen());
 
 export function setNavIndicators(indicators: Record<string, SystemNavIndicator> | undefined): void {
-	const seenKeys = loadSeenKeys();
-	const next = createDefaultMetrics();
-
+	const next: Record<string, SystemNavIndicator> = {};
 	if (indicators && typeof indicators === 'object') {
-		for (const [href, indicator] of Object.entries(indicators)) {
-			if (!(href in next) || !indicator || typeof indicator !== 'object') continue;
-			if (!NAV_BADGE_HREFS.includes(href)) continue;
-			const kind = isKind(indicator.kind) ? indicator.kind : 'none';
-			const severity = isSeverity(indicator.severity) ? indicator.severity : 'neutral';
-			const seenKey = String(indicator.seen_key ?? '').trim();
-
-			next[href] = {
-				kind,
-				severity,
-				label: String(indicator.label ?? ''),
-				summary: String(indicator.summary ?? ''),
-				count: Number(indicator.count ?? 0) || 0,
-				seenKey,
-				seen: kind === 'none' || !seenKey || seenKeys[href] === seenKey,
-			};
+		for (const badge of NAV_BADGES) {
+			const indicator = indicators[badge.href];
+			if (indicator && typeof indicator === 'object') next[badge.href] = indicator;
 		}
 	}
 
-	navRouteMetrics.set(next);
+	// First sight of a page's facts is the baseline, not news.
+	const seen = get(navSeenIds);
+	const missing = Object.keys(next).filter((href) => !Array.isArray(seen[href]));
+	if (missing.length > 0) {
+		const baselined = { ...seen };
+		for (const href of missing) baselined[href] = idsOf(next[href]);
+		navSeenIds.set(baselined);
+		saveSeen(baselined);
+	}
+
+	navIndicators.set(next);
 }
 
-export function markNavIndicatorSeen(href: string): void {
-	clearNavPulse(href);
-
-	const current = get(navRouteMetrics);
-	const metric = current[href];
-	// No-op when already seen: callers invoke this reactively (Sidebar re-marks
-	// the active route on every metric refresh), so an unconditional set would
-	// self-trigger forever.
-	if (!metric || metric.seen) return;
-
-	navRouteMetrics.set({
-		...current,
-		[href]: {
-			...metric,
-			seen: true,
-		},
-	});
-
-	if (!metric.seenKey) return;
-	const seenKeys = loadSeenKeys();
-	seenKeys[href] = metric.seenKey;
-	saveSeenKeys(seenKeys);
+/** The operator is looking at this page: everything on it now counts as seen. */
+export function markNavSeen(href: string): void {
+	if (!getNavBadge(href)) return;
+	const indicator = get(navIndicators)[href];
+	if (!indicator) return;
+	const ids = idsOf(indicator);
+	const seen = get(navSeenIds);
+	const current = seen[href];
+	// No-op when nothing changed: the sidebar calls this reactively on every
+	// refresh while the page is open, and an unconditional set would loop.
+	if (Array.isArray(current) && current.length === ids.length && ids.every((id) => current.includes(id))) return;
+	const next = { ...seen, [href]: ids };
+	navSeenIds.set(next);
+	saveSeen(next);
 }
 
-// ---------------------------------------------------------------------------
-// Event pulses — transient "this happened since you last looked" badges,
-// layered over the heartbeat state indicators above. Pushed by the
-// notification router on realtime events (trade open/close, approvals, risk)
-// and cleared when the route is visited. In-memory only: after a reload the
-// persistent state indicators still carry the standing facts.
-// ---------------------------------------------------------------------------
+function toView(
+	mode: 'total' | 'unread',
+	indicator: SystemNavIndicator | undefined,
+	seenIds: string[] | undefined,
+): NavBadgeView | null {
+	if (!indicator || indicator.kind === 'none') return null;
+	const seen = new Set(seenIds ?? []);
+	const unseen = idsOf(indicator).filter((id) => !seen.has(id));
+	const summary = String(indicator.summary ?? '');
 
-export interface NavPulse {
-	count: number;
-	/** Severity of the most recent event — decides the badge color. */
-	severity: NavIndicatorSeverity;
-	summary: string;
-}
-
-export const navEventPulses = writable<Record<string, NavPulse>>({});
-
-export function addNavPulse(href: string, severity: NavIndicatorSeverity, summary: string): void {
-	if (!NAV_BADGE_HREFS.includes(href)) return;
-	navEventPulses.update((current) => {
-		const existing = current[href];
+	if (mode === 'unread') {
+		if (unseen.length === 0) return null;
+		const danger = new Set((indicator.danger_ids ?? []).map(String));
 		return {
-			...current,
-			[href]: {
-				count: (existing?.count ?? 0) + 1,
-				severity,
-				summary,
-			},
+			kind: 'count',
+			count: unseen.length,
+			label: '',
+			severity: unseen.some((id) => danger.has(id)) ? 'danger' : 'warn',
+			summary: `${unseen.length} new ${unseen.length === 1 ? 'issue' : 'issues'} since you last looked`,
+			fresh: true,
 		};
-	});
+	}
+
+	const count = Math.max(0, Number(indicator.count ?? 0) || 0);
+	if (indicator.kind === 'status') {
+		return { kind: 'status', count, label: String(indicator.label ?? ''), severity: indicator.severity, summary, fresh: unseen.length > 0 };
+	}
+	if (count <= 0) return null;
+	return { kind: 'count', count, label: '', severity: indicator.severity, summary, fresh: unseen.length > 0 };
 }
 
-export function clearNavPulse(href: string): void {
-	navEventPulses.update((current) => {
-		if (!(href in current)) return current;
-		const next = { ...current };
-		delete next[href];
-		return next;
-	});
-}
+/** What each sidebar link shows, or null for no badge. */
+export const navBadges = derived(
+	[navIndicators, navSeenIds, notificationPrefs],
+	([$indicators, $seen, $prefs]) => {
+		const views: Record<string, NavBadgeView | null> = {};
+		for (const badge of NAV_BADGES) {
+			views[badge.href] = badgeEnabled($prefs, badge.href)
+				? toView(badge.mode, $indicators[badge.href], $seen[badge.href])
+				: null;
+		}
+		return views;
+	},
+);

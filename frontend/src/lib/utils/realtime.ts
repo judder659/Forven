@@ -6,6 +6,8 @@ export interface RealtimeRefreshOptions {
 	fallbackMs: number;
 	wsDebounceMs?: number;
 	wsEvents?: string[];
+	/** Further narrows the matching events (e.g. only actionable notifications). */
+	wsFilter?: (detail: Record<string, unknown>) => boolean;
 	onReconnect?: boolean;
 	/** Run interval polling only while websocket is offline (default true). */
 	pollWhenWsOfflineOnly?: boolean;
@@ -84,7 +86,7 @@ export function createRealtimeRefresh(
 	function handleWsEvent(event: Event): void {
 		const detail = (event as CustomEvent<Record<string, unknown>>).detail ?? {};
 		const eventType = String(detail?.event ?? detail?.type ?? '').toLowerCase();
-		if (eventNames.has(eventType)) {
+		if (eventNames.has(eventType) && (!options.wsFilter || options.wsFilter(detail))) {
 			scheduleRefresh();
 		}
 	}

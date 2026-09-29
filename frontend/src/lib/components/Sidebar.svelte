@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { markNavIndicatorSeen, navRouteMetrics, navEventPulses } from '$lib/stores/navMetrics';
+	import { markNavSeen, navBadges, navIndicators } from '$lib/stores/navMetrics';
 	import NavBadge from '$lib/components/NavBadge.svelte';
 
 	export let connectionStatus: 'checking' | 'connected' | 'disconnected' | string = 'checking';
@@ -140,19 +140,18 @@
 		);
 	}
 
-	// Depends on the metric/pulse stores too (not just navigation): while a
-	// route is active its indicators are seen by definition, so a heartbeat
-	// refresh must not resurrect a badge for the page the operator is already
-	// reading. markNavIndicatorSeen no-ops when already seen/clear.
+	// Depends on the facts store too (not just navigation): items that arrive
+	// while the operator is on the page are seen as they arrive, so leaving it
+	// never leaves a stale "new" behind. markNavSeen no-ops when nothing changed.
 	function markActiveRouteSeen(currentPath: string, ..._deps: unknown[]): void {
 		allNavHrefs.forEach((href) => {
 			if (isRouteActive(href, currentPath)) {
-				markNavIndicatorSeen(href);
+				markNavSeen(href);
 			}
 		});
 	}
 
-	$: markActiveRouteSeen($page.url.pathname, $navRouteMetrics, $navEventPulses);
+	$: markActiveRouteSeen($page.url.pathname, $navIndicators);
 </script>
 
 <!-- No z-index: page overlays inside <main> must paint over the sidebar (see +layout.svelte). -->
@@ -168,7 +167,7 @@
 				{@const isActive = isRouteActive(link.href, $page.url.pathname)}
 				<a
 					href={link.href}
-					on:click={() => markNavIndicatorSeen(link.href)}
+					on:click={() => markNavSeen(link.href)}
 					data-sveltekit-preload-data="hover"
 					aria-label={link.label}
 					aria-current={isActive ? 'page' : undefined}
@@ -181,7 +180,7 @@
 					<div class="min-w-0 flex-1">
 						<div class="truncate text-[11px] font-medium tracking-wide">{link.label}</div>
 					</div>
-					<NavBadge metric={$navRouteMetrics[link.href]} pulse={$navEventPulses[link.href]} active={isActive} />
+					<NavBadge badge={$navBadges[link.href]} />
 				</a>
 			{/each}
 		</div>
@@ -193,7 +192,7 @@
 					{@const isActive = isRouteActive(link.href, $page.url.pathname)}
 					<a
 						href={link.href}
-						on:click={() => markNavIndicatorSeen(link.href)}
+						on:click={() => markNavSeen(link.href)}
 						data-sveltekit-preload-data="hover"
 						aria-label={link.label}
 						aria-current={isActive ? 'page' : undefined}
@@ -206,7 +205,7 @@
 						<div class="min-w-0 flex-1">
 							<div class="truncate text-[11px] font-medium tracking-wide">{link.label}</div>
 						</div>
-						<NavBadge metric={$navRouteMetrics[link.href]} pulse={$navEventPulses[link.href]} active={isActive} />
+						<NavBadge badge={$navBadges[link.href]} />
 					</a>
 				{/each}
 			</div>
@@ -216,7 +215,6 @@
 	<div class="px-2 pb-3 border-t border-sc-line">
 		<a
 			href={settingsLink.href}
-			on:click={() => markNavIndicatorSeen(settingsLink.href)}
 			data-sveltekit-preload-data="hover"
 			aria-label={settingsLink.label}
 			aria-current={isRouteActive(settingsLink.href, $page.url.pathname) ? 'page' : undefined}
@@ -229,11 +227,6 @@
 			<div class="min-w-0 flex-1">
 				<div class="truncate text-[11px] font-medium tracking-wide">{settingsLink.label}</div>
 			</div>
-			<NavBadge
-				metric={$navRouteMetrics[settingsLink.href]}
-				pulse={$navEventPulses[settingsLink.href]}
-				active={isRouteActive(settingsLink.href, $page.url.pathname)}
-			/>
 		</a>
 	</div>
 

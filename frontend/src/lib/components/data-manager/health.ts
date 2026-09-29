@@ -139,12 +139,13 @@ export function whyText(row: Pick<SlaSeriesRow, 'sla' | 'consumers'>): string {
 // ---------------------------------------------------------------- the /data nav indicator
 
 function emptyIndicator(): SystemNavIndicator {
-	return { kind: 'none', severity: 'neutral', label: '', summary: '', count: 0, seen_key: '' };
+	return { kind: 'none', severity: 'neutral', label: '', summary: '', count: 0, item_ids: [] };
 }
 
 /** Live and paper problems only: the sidebar never shows research counts.
  * A live series past the breach limit (or missing) is a standing hazard and
- * shows as a status pill; anything else is a count that clears once seen. */
+ * shows as a status pill; anything else is the number of late series. Both
+ * stay while the problem does (item_ids let the sidebar mark new ones). */
 export function buildDataNavIndicator(census: SlaCensus): SystemNavIndicator {
 	const live = tierProblems(census, 'live');
 	const paper = tierProblems(census, 'paper');
@@ -152,16 +153,17 @@ export function buildDataNavIndicator(census: SlaCensus): SystemNavIndicator {
 	if (!total) return emptyIndicator();
 	const ids = census.worst
 		.filter((row) => (row.sla.tier === 'live' || row.sla.tier === 'paper') && isProblem(row.sla.state))
-		.map((row) => `${row.stream}:${row.venue}:${row.symbol}:${row.timeframe}`)
-		.sort()
-		.slice(0, 8);
-	const seenKey = `data-sla:${[live.bad, live.late, paper.bad, paper.late].join('.')}${ids.length ? `:${ids.join('|')}` : ''}`;
+		.map((row) => `${row.stream}:${row.venue}:${row.symbol}:${row.timeframe}:${row.sla.state}`)
+		.sort();
+	// `worst` is ranked across tiers, so it may not hold every live/paper row:
+	// stand in for the rest with the counts, so a change there still reads as new.
+	if (ids.length < total) ids.push(`counts:${[live.bad, live.late, paper.bad, paper.late].join('.')}`);
 	const parts = [live.total ? `${plural(live.total, 'live series', 'live series')}` : '', paper.total ? `${plural(paper.total, 'paper series', 'paper series')}` : '']
 		.filter(Boolean)
 		.join(' and ');
 	const summary = `${parts} ${total === 1 ? 'is' : 'are'} late`;
 	if (live.bad) {
-		return { kind: 'status', severity: 'danger', label: 'STALE', summary, count: total, seen_key: seenKey };
+		return { kind: 'status', severity: 'danger', label: 'STALE', summary, count: total, item_ids: ids };
 	}
 	return {
 		kind: 'count',
@@ -169,6 +171,6 @@ export function buildDataNavIndicator(census: SlaCensus): SystemNavIndicator {
 		label: String(total),
 		summary,
 		count: total,
-		seen_key: seenKey,
+		item_ids: ids,
 	};
 }

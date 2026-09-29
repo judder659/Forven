@@ -140,24 +140,24 @@ describe('SettingsHome', () => {
 		expect(text.toLowerCase()).toContain('hyperliquid');
 	});
 
-	it('renders a needs-config callout when notifications are on but no transport is configured', async () => {
+	it('does not flag an unconnected Discord as a setup gap — notifications still reach the app', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
 		instance = mount(SettingsHome, {
 			target,
 			props: {
 				settings: {
-					notify_on_entry: true,
-					discord_webhook_url: '',
-					discord_bot_token: '',
+					notification_level: 'all',
+					discord_bot_token_configured: false,
+					discord_webhook_configured: false,
 				},
 				dashboard: { execution_mode: 'paper' },
 			},
 		});
 		await flush();
 
-		const text = target.textContent || '';
-		expect(text.toLowerCase()).toContain('notification');
+		const text = (target.textContent || '').toLowerCase();
+		expect(text).not.toContain('no discord transport');
 	});
 
 	it('exposes a working settings search input', async () => {
