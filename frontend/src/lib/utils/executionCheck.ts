@@ -49,6 +49,12 @@ export function explainCheck(check: ExecutionCheck): CheckExplanation {
 			return { title, body: 'The backtest engine changed since the settings were validated.', fix: live ? 'Run a fresh backtest of the current settings and accept it here.' : 'Move it back to Gauntlet so it re-validates on the current engine.' };
 		case 'source_changed':
 			return { title, body: "The strategy's code changed since it was validated.", fix: live ? 'Run a fresh backtest of the current code and accept it here.' : 'Move it back to Gauntlet so it re-validates on the current code.' };
+		case 'source_unavailable':
+			return {
+				title,
+				body: "The strategy's code could not be loaded for this check. Right after a restart the strategies take a moment to load, so this usually clears on its own.",
+				fix: 'If it lasts more than a few minutes, the strategy file may be missing or failing to import.',
+			};
 		case 'config_changed':
 			return { title, body: 'Its market or timeframe changed since it was validated.', fix: 'Restore the validated market and timeframe, or validate the new ones.' };
 		case 'unavailable':

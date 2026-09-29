@@ -16,6 +16,8 @@ export type ExecutionCheckKind =
 	| 'params_changed'
 	| 'engine_changed'
 	| 'source_changed'
+	/** The strategy code is not loaded yet (e.g. just after a restart). */
+	| 'source_unavailable'
 	| 'config_changed'
 	| 'unavailable'
 	| 'other';

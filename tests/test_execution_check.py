@@ -141,6 +141,22 @@ def test_restore_refuses_when_parameters_are_not_the_problem(forven_db: object, 
         restore_validated_params(row["id"], reason="Try anyway")
 
 
+def test_restore_is_not_offered_when_no_parameter_differs(forven_db: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    from forven.strategies import identity
+    from forven.strategies.execution_check import execution_check
+
+    row, _ = _accepted_live()
+    # Right after a restart the strategy code may not be loaded yet: identity is empty.
+    monkeypatch.setattr(identity, "source_identity", lambda *a, **k: {})
+    check = execution_check(row["id"])
+    assert check["executable"] is False and check["kind"] == "source_unavailable"
+    assert check["changes"] == [] and check["actions"]["restore"] is False
+    # A real code change (a different identity) keeps its own kind, still with nothing to restore.
+    monkeypatch.setattr(identity, "source_identity", lambda *a, **k: {"source_sha256": "changed"})
+    changed = execution_check(row["id"])
+    assert changed["kind"] == "source_changed" and changed["actions"]["restore"] is False
+
+
 def test_paper_without_verified_evidence_points_to_the_gauntlet(forven_db: object) -> None:
     from forven.strategies.execution_check import accept_backtest, execution_check
 
