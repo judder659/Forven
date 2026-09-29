@@ -34,7 +34,7 @@
 			<div class="text-[12px] text-[#f2956f]">{terminalNote}</div>
 		{/if}
 		{#if gateHeadline}
-			<div class="text-[12px] text-white"><b class="font-semibold">{gateHeadline}</b>{#if gateDetail}<span class="text-[#aab1bc]"> {gateDetail}</span>{/if}</div>
+			<div class="text-[12px] text-white"><b class="font-semibold">{gateHeadline}</b>{#if gateDetail}{' '}<span class="text-[#aab1bc]">{gateDetail}</span>{/if}</div>
 		{/if}
 		<slot />
 	</div>

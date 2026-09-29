@@ -234,4 +234,46 @@ describe('strategy container lifecycle and verdict', () => {
 		});
 		expect(summarizeVerdict(findings)).toMatchObject({ tone: 'fail', label: 'Not viable', headline: 'It loses money out of sample.' });
 	});
+	it('judges forward books separately and says when there are too few trades', () => {
+		const base = {
+			inSample: null, outOfSample: readSlice(OOS_BLOCK), heldBack: null, walkForward: null,
+			stressRows: [], dsr: null, concentration: null, exits: [], tradeCount: 105, stage: 'live_graduated', gate: null, paperNeed: { days: null, trades: null },
+		};
+		const early = buildFindings({
+			...base,
+			live: { book: 'live', count: 8, wins: 1, winRate: 0.125, pnl: -7.37, profitFactor: 0.11, totalReturn: null, maxDrawdown: null, firstOpened: null },
+			paper: { book: 'paper', count: 2, wins: 1, winRate: 0.5, pnl: 26.28, profitFactor: 1.25, totalReturn: 0.0026, maxDrawdown: 0.001, firstOpened: null },
+		});
+		expect(early.map((f) => [f.key, f.tone])).toEqual([
+			['unseen', 'ok'],
+			['forward-live', 'info'],
+			['forward-paper', 'info'],
+		]);
+		expect(early[1].title).toBe('Live: too few trades to judge yet.');
+		expect(early[1].body).toBe('8 closed trades, −$7.37 realized, 1 win, profit factor 0.11. About 20 are needed before the sign means much.');
+
+		const losing = buildFindings({
+			...base,
+			live: { book: 'live', count: 24, wins: 6, winRate: 0.25, pnl: -310.5, profitFactor: 0.62, totalReturn: null, maxDrawdown: null, firstOpened: null },
+		});
+		expect(losing.find((f) => f.key === 'forward-live')).toMatchObject({ tone: 'caution', title: 'Live trading is losing money.' });
+		expect(summarizeVerdict(losing).headline).toBe('Profitable out of sample, but live trading is losing money.');
+	});
+
+	it('states stale parameters once and keeps the thin-evidence detail', () => {
+		const rows = buildStressRows(evidenceFixture({ stale: true }));
+		// The fixture marks the jitter run stale.
+		const jitter = rows.find((row) => row.key === 'parameter_jitter');
+		expect(jitter?.evidence.startsWith('Stale: parameters changed after this ran.')).toBe(true);
+		expect(jitter?.basis).toBe('4 of 15 reruns finished (time limit)');
+		const findings = buildFindings({
+			inSample: null, outOfSample: readSlice(OOS_BLOCK), heldBack: null, walkForward: null,
+			stressRows: rows, dsr: null, concentration: null, exits: [], tradeCount: 105, stage: 'gauntlet', gate: null, paperNeed: { days: null, trades: null },
+		});
+		const thin = findings.find((f) => f.key === 'thin');
+		expect(thin?.title).toBe('Some robustness verdicts rest on little or stale evidence.');
+		expect(thin?.body.match(/Parameters changed/g)?.length).toBe(1);
+		expect(thin?.body).toContain('Parameters changed after parameter jitter ran, so that verdict describes an older version');
+		expect(thin?.body).toContain('Walk-forward: 2 folds · 8–14 trades each');
+	});
 });

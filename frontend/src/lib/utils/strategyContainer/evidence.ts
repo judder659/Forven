@@ -213,6 +213,8 @@ export interface StressRow {
 	verdict: string;
 	tone: EvidenceTone;
 	evidence: string;
+	/** The evidence without the stale note, for sentences that state staleness once. */
+	basis: string;
 	/** Passed on thin evidence, or advisory and below the usual bar. */
 	weak: boolean;
 	stale: boolean;
@@ -251,14 +253,16 @@ function entryVerdict(entry: GauntletTestEntry | null | undefined, payloadVerdic
 	return 'NOT RUN';
 }
 
+const STALE_NOTE = 'Stale: parameters changed after this ran. ';
+
 function withStale(evidence: string, stale: boolean): string {
-	return stale ? `Stale: parameters changed after this ran. ${evidence}` : evidence;
+	return stale ? `${STALE_NOTE}${evidence}` : evidence;
 }
 
 export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 	const tests = evidence.gauntlet?.tests ?? ({} as Record<GauntletTestKey, GauntletTestEntry | null>);
 	const payload = (key: GauntletTestKey) => asBag(evidence.payloads[key]?.payload);
-	const rows: StressRow[] = [];
+	const rows: Array<Omit<StressRow, 'basis'>> = [];
 
 	// Walk-forward: OOS Sharpe as a share of IS Sharpe (walk-forward efficiency).
 	{
@@ -482,7 +486,7 @@ export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 		});
 	}
 
-	return rows;
+	return rows.map((row) => ({ ...row, basis: row.evidence.startsWith(STALE_NOTE) ? row.evidence.slice(STALE_NOTE.length) : row.evidence }));
 }
 
 /** The short verdict label a stress row shows. */

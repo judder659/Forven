@@ -48,6 +48,8 @@ export function buildRail(input: {
 	events: LifecycleEvent[];
 	gauntletPassed: number | null;
 	gauntletTotal: number | null;
+	/** Tests whose verdict predates the current parameters. */
+	gauntletStale?: number | null;
 	heldBackPassed: boolean | null;
 	paper: PaperProgress | null;
 	liveDays: number | null;
@@ -68,7 +70,9 @@ export function buildRail(input: {
 		if (item.key === 'quick_screen') {
 			meta = state === 'done' ? `Passed ${fmtDateUtc(nextEntered ?? null)}` : state === 'now' ? 'Entry gate on its own backtest' : 'Entry gate';
 		} else if (item.key === 'gauntlet') {
-			const tests = isNum(input.gauntletPassed) && isNum(input.gauntletTotal) ? `${input.gauntletPassed}/${input.gauntletTotal} tests` : null;
+			const tests = isNum(input.gauntletPassed) && isNum(input.gauntletTotal)
+				? `${input.gauntletPassed}/${input.gauntletTotal} tests${isNum(input.gauntletStale) && input.gauntletStale > 0 ? ` · ${input.gauntletStale} stale` : ''}`
+				: null;
 			const held = input.heldBackPassed === true ? 'held-back pass' : input.heldBackPassed === false ? 'held-back fail' : null;
 			const when = state === 'done' && nextEntered !== undefined ? fmtDateUtc(nextEntered) : null;
 			meta = [tests, held, when].filter(Boolean).join(' · ') || 'Robustness suite';

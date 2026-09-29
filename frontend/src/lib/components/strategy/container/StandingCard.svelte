@@ -8,6 +8,7 @@
 	export let floor: number | null = null;
 	export let testsPassed: number | null = null;
 	export let testsTotal: number | null = null;
+	export let testsStale: number | null = null;
 	export let heldBack: HeldBack | null = null;
 	export let dsr: number | null = null;
 	export let dsrTrials: number | null = null;
@@ -28,7 +29,7 @@
 		<span class="text-[12px] text-[#aab1bc]">Gauntlet composite</span>
 		<span class="text-[15px] font-medium tabular-nums text-white">{isNum(composite) ? `${composite.toFixed(1)} / 100` : '—'}</span>
 		<span class="col-span-2 text-[11px] text-[#666]">
-			{isNum(floor) ? `Floor ${floor.toFixed(0)}` : 'No floor set'}{isNum(testsPassed) && isNum(testsTotal) ? ` · ${testsPassed} of ${testsTotal} tests passed` : ''}
+			{isNum(floor) ? `Floor ${floor.toFixed(0)}` : 'No floor set'}{isNum(testsPassed) && isNum(testsTotal) ? ` · ${testsPassed} of ${testsTotal} tests passed` : ''}{isNum(testsStale) && testsStale > 0 ? ` · ${testsStale} stale` : ''}
 		</span>
 		<div class="relative col-span-2 mt-1 h-1.5 bg-[#2a2f38]">
 			<i class="absolute inset-y-0 left-0 bg-[#aab1bc]" style={`width:${meter(composite, 100)}%`}></i>

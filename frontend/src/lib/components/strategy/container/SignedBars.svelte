@@ -14,7 +14,7 @@
 <div class="grid gap-2" data-testid={testid || undefined}>
 	{#each rows as row (row.label)}
 		{@const value = typeof row.value === 'number' && Number.isFinite(row.value) ? row.value : null}
-		<div class="grid grid-cols-[minmax(0,8em)_minmax(0,1fr)_auto] items-center gap-2.5" title={row.title ?? ''}>
+		<div class="grid grid-cols-[minmax(0,12em)_minmax(0,1fr)_auto] items-center gap-2.5" title={row.title ?? ''}>
 			<span class="min-w-0 text-[12px] text-[#aab1bc]">
 				{row.label}
 				{#if row.sub}<small class="block text-[11px] text-[#666]">{row.sub}</small>{/if}

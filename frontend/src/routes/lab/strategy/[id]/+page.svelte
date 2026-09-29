@@ -512,8 +512,12 @@
 	$: dsrTrials = toNumber(evidence.gauntlet?.deflated_sharpe?.n_trials);
 	$: gauntletComposite = toNumber(evidence.gauntlet?.composite_robustness_score);
 	$: gauntletFloor = toNumber(evidence.gauntlet?.min_robustness_score) ?? toNumber(gauntletMinScore);
-	$: gauntletPassed = evidence.gauntlet ? evidence.gauntlet.tests_passed : null;
-	$: gauntletTotal = evidence.gauntlet ? evidence.gauntlet.tests_total : null;
+	// Counted from the stored verdicts: the status rollup counts stale passes as not
+	// passed, which read "0 of 5" next to a full composite.
+	$: testStressRows = stressRows.filter((row) => row.testKey !== null);
+	$: gauntletPassed = evidence.gauntlet ? testStressRows.filter((row) => row.verdict.startsWith('PASS')).length : null;
+	$: gauntletTotal = evidence.gauntlet ? testStressRows.length : null;
+	$: gauntletStale = evidence.gauntlet ? testStressRows.filter((row) => row.stale).length : null;
 
 	// The reference run (pinned, else newest), shared with Performance's default.
 	$: refSlices = runSlices(overviewResult);
@@ -600,13 +604,19 @@
 		stage: currentLifecycleStage,
 		gate: gateEta,
 		paperNeed: { days: paperNeedDays, trades: paperNeedTrades },
+		paper: paperBook,
+		live: liveBook,
 	});
 	$: verdictSummary = summarizeVerdict(findings);
+	// Until the run and the robustness evidence arrive, a verdict from half the evidence
+	// would flash the wrong call.
+	$: evidencePending = (evidenceLoading && !evidence.gauntlet && !evidence.holdout) || (overviewResultLoading && !overviewResult);
 	$: railStages = buildRail({
 		stage: currentLifecycleStage,
 		events: container?.events ?? [],
 		gauntletPassed,
 		gauntletTotal,
+		gauntletStale,
 		heldBackPassed: heldBack?.verdict === 'PASS' ? true : heldBack?.verdict === 'FAIL' ? false : null,
 		paper: paperProgress,
 		liveDays: liveRampInfo ? liveRampInfo.daysLive : null,
@@ -618,7 +628,7 @@
 		if (stage === 'gauntlet') {
 			return {
 				label: 'Next gate · gauntlet → paper',
-				headline: gauntletPassed !== null && gauntletTotal !== null ? `${gauntletPassed} of ${gauntletTotal} robustness tests passed.` : 'Robustness suite.',
+				headline: gauntletPassed !== null && gauntletTotal !== null ? `${gauntletPassed} of ${gauntletTotal} robustness tests passed${gauntletStale ? ` (${gauntletStale} stale)` : ''}.` : 'Robustness suite.',
 				detail: heldBack?.verdict === 'PASS' ? 'Held-back test passed.' : heldBack?.verdict === 'FAIL' ? 'Held-back test failed.' : 'The held-back test runs last.',
 				terminal: '',
 			};
@@ -712,10 +722,12 @@
 			['Sizing', d.sizing_mode],
 			['Trade mode', String(drivingParams.trade_mode ?? '—')],
 		];
-		if (d.risk_per_trade) rows.push(['Risk per trade', d.risk_per_trade]);
-		if (d.fixed_size) rows.push(['Fixed size', d.fixed_size]);
-		if (d.atr_stop_multiplier) rows.push(['ATR stop multiplier', d.atr_stop_multiplier]);
-		if (d.kelly_multiplier) rows.push(['Kelly multiplier', d.kelly_multiplier]);
+		// Only the active sizing mode's inputs; the draft keeps seeds for every mode.
+		if ((d.sizing_mode === 'fraction' || d.sizing_mode === 'atr') && d.risk_per_trade) rows.push(['Risk per trade', d.risk_per_trade]);
+		if (d.sizing_mode === 'fixed' && d.fixed_size) rows.push(['Fixed size', fmtUsd(Number(d.fixed_size), 0, false)]);
+		if (d.sizing_mode === 'atr' && d.atr_stop_multiplier) rows.push(['ATR stop multiplier', d.atr_stop_multiplier]);
+		if (d.sizing_mode === 'kelly' && d.kelly_multiplier) rows.push(['Kelly multiplier', d.kelly_multiplier]);
+		if (d.sizing_mode === 'kelly' && d.kelly_lookback) rows.push(['Kelly lookback', `${d.kelly_lookback} trades`]);
 		if (d.stop_loss_pct) rows.push(['Stop loss', `${d.stop_loss_pct}%`]);
 		if (d.take_profit_pct) rows.push(['Take profit', `${d.take_profit_pct}%`]);
 		if (d.trailing_stop_pct) rows.push(['Trailing stop', `${d.trailing_stop_pct}%`]);
@@ -4933,12 +4945,18 @@
 					</div>
 					<LifecycleRail stages={railStages} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
 					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
-						<VerdictCard verdict={verdictSummary} {findings} loading={evidenceLoading || overviewResultLoading} on:navigate={(event) => void navigateTo(event.detail.tab, event.detail.anchor)} />
+						<VerdictCard
+							verdict={evidencePending ? { tone: 'idle', label: 'Reading the evidence', headline: 'Loading the run, the robustness results and the held-back test…' } : verdictSummary}
+							findings={evidencePending ? [] : findings}
+							loading={evidencePending}
+							on:navigate={(event) => void navigateTo(event.detail.tab, event.detail.anchor)}
+						/>
 						<StandingCard
 							composite={gauntletComposite}
 							floor={gauntletFloor}
 							testsPassed={gauntletPassed}
 							testsTotal={gauntletTotal}
+							testsStale={gauntletStale}
 							{heldBack}
 							dsr={dsrValue}
 							{dsrTrials}
@@ -5956,7 +5974,7 @@
 							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
 								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Trade returns</h2><span class="text-[11px] text-[#666]">Out-of-sample, % of equity per trade</span></div>
 								<TradeHistogram rows={perfTrades} />
-								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Drawdown periods</h2><span class="text-[11px] text-[#666]">Out-of-sample, deepest first</span></div>
+								<div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="m-0 text-[13px] font-semibold text-white">Drawdown periods</h2><span class="text-[11px] text-[#666]">Out-of-sample, deepest first · from the stored (sampled) curve, so depths can read slightly shallower than the engine's max drawdown</span></div>
 								<DrawdownTable periods={perfDrawdowns} />
 							</article>
 						</div>
@@ -6123,7 +6141,7 @@
 									{/if}
 									{#if executionGrowth.otherBookTrades > 0}
 										<span class="text-[#777]">
-											{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (see the Execution tab).
+											{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (both books are summarized below).
 										</span>
 									{/if}
 								</div>

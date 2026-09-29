@@ -3,6 +3,7 @@
 
 import type { Baseline, HeldBack, StressRow, WalkForwardEvidence } from './evidence';
 import { ALPHA_T_BAR, DSR_BAR } from './evidence';
+import type { BookStats } from './ladder';
 import type { GateEta } from './lifecycle';
 import type { Concentration, ExitGroup, Slice } from './metrics';
 import { fmtDateUtc, fmtFraction, fmtMonthYear, fmtNum, fmtPct, fmtUsd, isNum, toNumber } from './format';
@@ -35,12 +36,17 @@ export interface FindingsInput {
 	stage: string;
 	gate: GateEta | null;
 	paperNeed: { days: number | null; trades: number | null };
+	/** Closed trades by book (never summed). */
+	paper?: BookStats | null;
+	live?: BookStats | null;
 }
 
 /** A held-back Sharpe below this share of the OOS Sharpe reads as decay. */
 export const DECAY_RATIO = 0.6;
 /** Top-5 trades making more than this share of net profit reads as concentrated. */
 export const CONCENTRATION_SHARE = 50;
+/** Closed forward trades before a book's sign says much. */
+export const FORWARD_MIN_TRADES = 20;
 
 export function buildFindings(input: FindingsInput): Finding[] {
 	const out: Finding[] = [];
@@ -78,7 +84,25 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		}
 	}
 
-	// 2. Statistical confidence.
+	// 2. Forward evidence: what paper and live have actually done, live first.
+	for (const book of [input.live ?? null, input.paper ?? null]) {
+		if (!book || book.count === 0) continue;
+		const name = book.book === 'live' ? 'Live' : 'Paper';
+		const enough = book.count >= FORWARD_MIN_TRADES;
+		const losing = book.pnl < 0;
+		const result = book.book === 'live' ? `${fmtUsd(book.pnl)} realized` : `${fmtFraction(book.totalReturn)} on the $10k book`;
+		out.push({
+			key: `forward-${book.book}`,
+			tone: !enough ? 'info' : losing ? 'caution' : 'ok',
+			title: !enough ? `${name}: too few trades to judge yet.` : losing ? `${name} trading is losing money.` : `${name} trading is profitable.`,
+			body: `${book.count} closed trade${book.count === 1 ? '' : 's'}, ${result}, ${book.wins} win${book.wins === 1 ? '' : 's'}${book.profitFactor === null ? '' : `, profit factor ${fmtNum(book.profitFactor)}`}.${enough ? '' : ` About ${FORWARD_MIN_TRADES} are needed before the sign means much.`}`,
+			short: !enough ? '' : losing ? `${name.toLowerCase()} trading is losing money` : `${name.toLowerCase()} trading is profitable`,
+			rule: `${FORWARD_MIN_TRADES}+ closed ${book.book} trades; the sign of realized PnL`,
+			target: { tab: 'execution' },
+		});
+	}
+
+	// 3. Statistical confidence.
 	const wfT = wfBaseline?.alphaT ?? null;
 	const heldT = heldBaseline?.alphaT ?? null;
 	if ((isNum(input.dsr) && input.dsr < DSR_BAR) || (isNum(wfT) && wfT < ALPHA_T_BAR)) {
@@ -93,7 +117,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 3. Decay from the best window to the held-back data.
+	// 4. Decay from the best window to the held-back data.
 	if (oos && isNum(oos.sharpe) && oos.sharpe > 0 && isNum(heldSharpe) && heldSharpe < DECAY_RATIO * oos.sharpe) {
 		const is = input.inSample;
 		out.push({
@@ -104,7 +128,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 4. Profit concentration.
+	// 5. Profit concentration.
 	if (input.concentration && input.concentration.share > CONCENTRATION_SHARE) {
 		const c = input.concentration;
 		const stops = input.exits.find((group) => group.reason === 'stop_loss');
@@ -116,18 +140,26 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 5. Evidence quality behind passing verdicts.
-	const thin = input.stressRows.filter((row) => (row.weak || row.stale) && row.key !== 'deflated_sharpe' && row.key !== 'baseline' && row.verdict !== 'FAIL');
-	if (thin.length) {
+	// 6. Evidence quality behind passing verdicts: stated once for stale tests, then per thin test.
+	const questioned = input.stressRows.filter((row) => (row.weak || row.stale) && row.key !== 'deflated_sharpe' && row.key !== 'baseline' && row.verdict !== 'FAIL');
+	if (questioned.length) {
+		const stale = questioned.filter((row) => row.stale);
+		const weak = questioned.filter((row) => row.weak);
+		const name = (row: StressRow) => (row.label === 'Monte Carlo' ? row.label : row.label.toLowerCase());
+		const parts = [
+			stale.length ? `Parameters changed after ${joinClauses(stale.map(name))} ran, so ${stale.length === 1 ? 'that verdict describes' : 'those verdicts describe'} an older version of the strategy.` : null,
+			...weak.map((row) => `${row.label}: ${row.basis}.`),
+		].filter(Boolean);
 		out.push({
-			key: 'thin', tone: 'caution', title: 'Some robustness verdicts rest on little evidence.',
-			body: thin.map((row) => `${row.label}: ${row.evidence}.`).join(' '),
-			short: 'some robustness verdicts rest on little evidence',
+			key: 'thin', tone: 'caution',
+			title: stale.length && weak.length ? 'Some robustness verdicts rest on little or stale evidence.' : stale.length ? 'Some robustness verdicts are stale.' : 'Some robustness verdicts rest on little evidence.',
+			body: parts.join(' '),
+			short: stale.length && !weak.length ? 'some robustness verdicts are stale' : 'some robustness verdicts rest on little evidence',
 			rule: 'passed on < 10 jitter reruns, folds under 20 trades, a fold rescue, or stale parameters', target: { tab: 'robustness', anchor: 'stress-matrix' },
 		});
 	}
 
-	// 6. Failed gates (anything the gate itself rejected).
+	// 7. Failed gates (anything the gate itself rejected).
 	for (const row of input.stressRows.filter((item) => item.tone === 'fail' && item.key !== 'held_back')) {
 		out.push({
 			key: `fail-${row.key}`, tone: 'fail', title: `${row.label} failed.`,
@@ -136,7 +168,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 7. Costs survived.
+	// 8. Costs survived.
 	const cost = input.stressRows.find((row) => row.key === 'cost_stress');
 	if (cost && cost.tone === 'ok') {
 		const d = cost.detail ?? {};
@@ -148,7 +180,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 8. Forward evidence: how far the paper → live gate is.
+	// 9. How far the paper → live gate is.
 	if (input.stage === 'paper' && input.gate) {
 		out.push({
 			key: 'gate', tone: 'info', title: 'Paper → live is months away.',
