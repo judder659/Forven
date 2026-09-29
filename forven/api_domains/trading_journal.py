@@ -231,6 +231,85 @@ def _regime_events(conn: Any, mode: str, since: datetime, strategy_id: str | Non
     ]
 
 
+def build_fills(mode: str = "live", *, limit: int = 1000) -> dict[str, Any]:
+    """Compact trade rows for the desk's fills, performance and expectation views.
+
+    Live covers every live trade (the whole real account). Paper is scoped to the
+    strategies currently in paper, like the paper scorecard, so long-archived
+    paper history does not swamp the book on screen.
+    """
+    mode = _check_mode(mode)
+    limit = max(1, min(int(limit or 1000), 5000))
+    pnl = net_pnl_sql()
+    with get_db() as conn:
+        params: list[Any] = [mode]
+        scope = ""
+        if mode == "paper":
+            ids = [str(row["id"]) for row in fleet_strategy_rows(conn, mode)]
+            if not ids:
+                return {"mode": mode, "fills": [], "truncated": False}
+            scope = f" AND COALESCE(strategy_id, strategy) IN ({','.join('?' for _ in ids)})"
+            params.extend(ids)
+        params.append(limit + 1)
+        rows = conn.execute(
+            f"""
+            SELECT id, COALESCE(strategy_id, strategy) AS sid, asset, direction, status, size, leverage,
+              entry_price, exit_price, signal_entry_price, signal_exit_price,
+              entry_slippage_bps, exit_slippage_bps, opened_at, closed_at, failure_reason, book,
+              regime, pnl_usd, signal_data,
+              CASE WHEN UPPER(COALESCE(status, '')) = 'CLOSED' THEN ({pnl}) END AS net_pnl_usd
+            FROM trades
+            WHERE LOWER(COALESCE(execution_type, '')) = ?{scope}
+            ORDER BY datetime(COALESCE(opened_at, created_at)) DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    fills: list[dict[str, Any]] = []
+    for row in rows[:limit]:
+        data = _signal_data(row["signal_data"])
+        stop = _num(data.get("exchange_stop_price"))
+        if stop is None:
+            stop = _num(data.get("stop_loss_price") or data.get("stop_loss"))
+        slice_blob = data.get("live_capital_slice")
+        slice_usd = _num(slice_blob.get("slice_usd")) if isinstance(slice_blob, dict) else None
+        if slice_usd is None:
+            slice_usd = _num(data.get("kernel_equity_at_entry"))
+        gross = _num(row["pnl_usd"])
+        net = _num(row["net_pnl_usd"])
+        fills.append({
+            "id": row["id"],
+            "strategy_id": row["sid"],
+            "asset": row["asset"],
+            "direction": row["direction"],
+            "status": str(row["status"] or "").upper(),
+            "size": _num(row["size"]),
+            "leverage": _num(row["leverage"]),
+            "entry_price": _num(row["entry_price"]),
+            "exit_price": _num(row["exit_price"]),
+            "signal_entry_price": _num(row["signal_entry_price"]),
+            "signal_exit_price": _num(row["signal_exit_price"]),
+            "entry_slippage_bps": _num(row["entry_slippage_bps"]),
+            "exit_slippage_bps": _num(row["exit_slippage_bps"]),
+            "opened_at": row["opened_at"],
+            "closed_at": row["closed_at"],
+            "gross_pnl_usd": gross,
+            "net_pnl_usd": round(net, 4) if net is not None else None,
+            "costs_usd": round(gross - net, 4) if gross is not None and net is not None else None,
+            "close_reason": data.get("close_reason"),
+            "exit_recovered_from": data.get("exit_recovered_from"),
+            "stop_price": stop,
+            "take_profit_price": _num(data.get("take_profit_price") or data.get("take_profit")),
+            "risk_usd": _num(data.get("sizing_loss_at_stop_usd")),
+            "slice_usd": slice_usd,
+            "book": row["book"],
+            "regime": row["regime"],
+            "source": data.get("source"),
+            "failure_reason": row["failure_reason"],
+        })
+    return {"mode": mode, "fills": fills, "truncated": len(rows) > limit}
+
+
 def build_journal(
     mode: str = "live",
     *,

@@ -159,3 +159,31 @@ def test_window_and_limit_are_bounded(forven_db):
 
     with pytest.raises(ValueError):
         build_journal("replay", now=NOW)
+
+
+def test_fills_carry_net_costs_stop_and_slice(forven_db):
+    from forven.api_domains.trading_journal import build_fills
+
+    _strategy("S1")
+    _strategy("P1", stage="paper")
+    _strategy("A1", stage="archived")
+    _trade("E1", "S1", opened=_ago(hours=12), closed=_ago(hours=8), pnl_usd=-1.68,
+           signal_data={"exchange_stop_price": 2734.8, "stop_loss_price": 2733.84,
+                        "sizing_loss_at_stop_usd": 1.665, "live_capital_slice": {"slice_usd": 168.71},
+                        "close_reason": "reconcile_missing_on_exchange"})
+    _trade("E2", "S1", status="OPEN", opened=_ago(hours=1), signal_data={"kernel_equity_at_entry": 170.0})
+    _trade("P1T", "P1", execution_type="paper", opened=_ago(hours=5), closed=_ago(hours=4), pnl_usd=12.0)
+    _trade("A1T", "A1", execution_type="paper", opened=_ago(hours=5), closed=_ago(hours=4), pnl_usd=-99.0)
+
+    live = build_fills("live")["fills"]
+    paper = build_fills("paper")["fills"]
+
+    assert [row["id"] for row in live] == ["E2", "E1"]
+    closed = live[1]
+    assert closed["stop_price"] == 2734.8
+    assert closed["risk_usd"] == 1.665 and closed["slice_usd"] == 168.71
+    assert closed["close_reason"] == "reconcile_missing_on_exchange"
+    assert closed["net_pnl_usd"] == pytest.approx(-1.68)
+    assert live[0]["status"] == "OPEN" and live[0]["net_pnl_usd"] is None
+    assert live[0]["slice_usd"] == 170.0
+    assert [row["id"] for row in paper] == ["P1T"]  # archived paper history stays out

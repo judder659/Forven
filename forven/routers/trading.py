@@ -21,6 +21,15 @@ def read_trading_journal(
     return trading_journal_domain.build_journal(mode, strategy_id=strategy_id, days=days, limit=limit)
 
 
+@router.get("/api/trading/fills")
+def read_trading_fills(
+    mode: str = Query(default="live", pattern="^(live|paper)$"),
+    limit: int = Query(default=1000, ge=1, le=5000),
+):
+    """Compact trade rows with net P&L, costs, slippage, stop and capital slice."""
+    return trading_journal_domain.build_fills(mode, limit=limit)
+
+
 @router.get("/api/trading/market-context")
 def read_market_context(
     assets: str = Query(default="BTC,ETH,SOL", max_length=200),
