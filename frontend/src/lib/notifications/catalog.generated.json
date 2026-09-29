@@ -1,0 +1,432 @@
+{
+  "__generated__": "python -m forven.notification_catalog \u2014 do not edit by hand",
+  "groups": [
+    {
+      "id": "trading",
+      "label": "Trading"
+    },
+    {
+      "id": "approvals_risk",
+      "label": "Approvals & risk"
+    },
+    {
+      "id": "strategies_jobs",
+      "label": "Strategies & jobs"
+    },
+    {
+      "id": "system",
+      "label": "System & agents"
+    }
+  ],
+  "categories": [
+    {
+      "id": "live_trade_opened",
+      "group": "trading",
+      "label": "Live trade opened",
+      "description": "A strategy opened a real-money position.",
+      "popup": {
+        "key": "popup_live_trade_opened",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "trade_opened_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "live_trade_closed",
+      "group": "trading",
+      "label": "Live trade closed",
+      "description": "A real-money position closed, with its P&L.",
+      "popup": {
+        "key": "popup_live_trade_closed",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "trade_closed_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "live_order_failure",
+      "group": "trading",
+      "label": "Live order failed",
+      "description": "A live order failed, or a filled position was left without its stop.",
+      "popup": {
+        "key": null,
+        "default": true,
+        "locked": true
+      },
+      "discord": {
+        "keys": [
+          "trade_failed_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "live_entry_blocked",
+      "group": "trading",
+      "label": "Live entry blocked",
+      "description": "A risk gate refused a live entry. At most one alert per strategy and cause each hour.",
+      "popup": {
+        "key": "popup_live_entry_blocked",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "trade_blocked_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "paper_trade_opened",
+      "group": "trading",
+      "label": "Paper trade opened",
+      "description": "A paper strategy opened a simulated position.",
+      "popup": {
+        "key": "popup_paper_trade_opened",
+        "default": false,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "paper_trade_opened_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "paper_trade_closed",
+      "group": "trading",
+      "label": "Paper trade closed",
+      "description": "A simulated position closed, with its P&L.",
+      "popup": {
+        "key": "popup_paper_trade_closed",
+        "default": false,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "paper_trade_closed_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "bot_trades",
+      "group": "trading",
+      "label": "Bot Factory trades",
+      "description": "A Bot Factory bot opened or closed a position.",
+      "popup": {
+        "key": "popup_bot_trades",
+        "default": true,
+        "locked": false
+      },
+      "discord": null
+    },
+    {
+      "id": "approval_required",
+      "group": "approvals_risk",
+      "label": "Approval needed",
+      "description": "A promotion or agent action is waiting for your decision.",
+      "popup": {
+        "key": "popup_approval_required",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "approval_required_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "approval_resolved",
+      "group": "approvals_risk",
+      "label": "Approval resolved",
+      "description": "A pending approval was approved, denied or expired.",
+      "popup": null,
+      "discord": {
+        "keys": [
+          "approval_resolved_to_discord"
+        ],
+        "default": false,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "risk_halt",
+      "group": "approvals_risk",
+      "label": "Kill switch & loss halts",
+      "description": "Trading was halted or resumed by the kill switch or the daily loss limit.",
+      "popup": {
+        "key": null,
+        "default": true,
+        "locked": true
+      },
+      "discord": null
+    },
+    {
+      "id": "risk_alerts",
+      "group": "approvals_risk",
+      "label": "Risk alerts",
+      "description": "Liquidation distance, drawdown, the decay kill switch and equity anomalies.",
+      "popup": {
+        "key": "popup_risk_alerts",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "risk_critical_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "pipeline_transition",
+      "group": "strategies_jobs",
+      "label": "Strategy stage changes",
+      "description": "A strategy moved between pipeline stages.",
+      "popup": {
+        "key": "popup_pipeline_transition",
+        "default": false,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "pipeline_transition_to_discord"
+        ],
+        "default": false,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "background_jobs",
+      "group": "strategies_jobs",
+      "label": "Background jobs",
+      "description": "A job or scan you started finished or failed.",
+      "popup": {
+        "key": "popup_background_jobs",
+        "default": true,
+        "locked": false
+      },
+      "discord": null
+    },
+    {
+      "id": "system_critical",
+      "group": "system",
+      "label": "Critical system alerts",
+      "description": "A core service is down, a circuit breaker tripped, or data integrity failed.",
+      "popup": {
+        "key": "popup_system_critical",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [],
+        "default": true,
+        "locked": true,
+        "note": "Always sent while Discord is connected."
+      }
+    },
+    {
+      "id": "system_warning",
+      "group": "system",
+      "label": "System warnings",
+      "description": "Degraded services, execution-quality drift and other warnings. Paper-only warnings stay in the app.",
+      "popup": {
+        "key": "popup_system_warning",
+        "default": false,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "system_degraded_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "system_recovered",
+      "group": "system",
+      "label": "System recovered",
+      "description": "A service that was degraded is healthy again.",
+      "popup": {
+        "key": "popup_system_recovered",
+        "default": false,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "system_recovered_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "agent_failure",
+      "group": "system",
+      "label": "Agent failures",
+      "description": "An agent task failed or an agent raised an alert.",
+      "popup": {
+        "key": "popup_agent_failure",
+        "default": false,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "agent_failure_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "agent_completion",
+      "group": "system",
+      "label": "Agent task finished",
+      "description": "An agent completed a task.",
+      "popup": null,
+      "discord": {
+        "keys": [
+          "agent_completion_to_discord"
+        ],
+        "default": false,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "bug_report",
+      "group": "system",
+      "label": "Agent bug reports",
+      "description": "An agent filed a bug report about the system.",
+      "popup": null,
+      "discord": {
+        "keys": [
+          "bug_report_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "mcp_session",
+      "group": "system",
+      "label": "AI client connected",
+      "description": "An AI client such as Claude Code or Codex connected to Forven over MCP.",
+      "popup": {
+        "key": "popup_mcp_session",
+        "default": false,
+        "locked": false
+      },
+      "discord": null
+    },
+    {
+      "id": "digests",
+      "group": "system",
+      "label": "Daily summaries",
+      "description": "The morning brief and evening summary.",
+      "popup": null,
+      "discord": {
+        "keys": [
+          "digests_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
+    }
+  ],
+  "badges": [
+    {
+      "id": "approvals",
+      "href": "/approval",
+      "label": "Approvals",
+      "description": "Approvals waiting for your decision.",
+      "key": "badge_approvals",
+      "default": true,
+      "mode": "total"
+    },
+    {
+      "id": "diagnostics",
+      "href": "/diagnostics",
+      "label": "Diagnostics",
+      "description": "System issues raised since you last opened Diagnostics.",
+      "key": "badge_diagnostics",
+      "default": true,
+      "mode": "unread"
+    },
+    {
+      "id": "data",
+      "href": "/data",
+      "label": "Data",
+      "description": "Market data behind a live or paper strategy that is running late.",
+      "key": "badge_data",
+      "default": true,
+      "mode": "total"
+    },
+    {
+      "id": "live_trades",
+      "href": "/live-trades",
+      "label": "Live Trades",
+      "description": "Open live positions.",
+      "key": "badge_live_trades",
+      "default": true,
+      "mode": "total"
+    },
+    {
+      "id": "paper_trades",
+      "href": "/paper-trades",
+      "label": "Paper Trades",
+      "description": "Open paper positions.",
+      "key": "badge_paper_trades",
+      "default": false,
+      "mode": "total"
+    },
+    {
+      "id": "bot_factory",
+      "href": "/bot-factory",
+      "label": "Bot Factory",
+      "description": "Bots that are running.",
+      "key": "badge_bot_factory",
+      "default": true,
+      "mode": "total"
+    }
+  ]
+}

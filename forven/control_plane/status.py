@@ -271,6 +271,12 @@ def _pluralize(value: int, singular: str, plural: str | None = None) -> str:
     return f"{value} {plural or f'{singular}s'}"
 
 
+# Sidebar badges carry the ids of the items they count, so the frontend can tell
+# new items from ones the operator has already seen (and never has to guess from
+# a truncated key). Capped: past this many a badge reads "99+" anyway.
+_NAV_ITEM_ID_LIMIT = 200
+
+
 def _empty_nav_indicator() -> dict[str, object]:
     return {
         "kind": "none",
@@ -278,13 +284,19 @@ def _empty_nav_indicator() -> dict[str, object]:
         "label": "",
         "summary": "",
         "count": 0,
-        "seen_key": "",
+        "item_ids": [],
     }
 
 
-def _build_seen_key(prefix: str, raw_tokens: list[object]) -> str:
-    tokens = [str(token).strip() for token in raw_tokens if str(token).strip()]
-    return f"{prefix}:{'|'.join(tokens)}" if tokens else f"{prefix}:0"
+def _nav_item_ids(raw_ids: list[object]) -> list[str]:
+    ids: list[str] = []
+    for raw in raw_ids:
+        token = str(raw if raw is not None else "").strip()
+        if token:
+            ids.append(token)
+        if len(ids) >= _NAV_ITEM_ID_LIMIT:
+            break
+    return ids
 
 
 def _build_nav_indicator(
@@ -292,23 +304,22 @@ def _build_nav_indicator(
     severity: str,
     label: str,
     summary: str,
-    seen_key: str,
     *,
-    count: int = 0,
+    count: int,
+    item_ids: list[object],
+    danger_ids: list[object] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "kind": kind,
         "severity": severity,
         "label": label,
         "summary": summary,
         "count": int(max(0, count)),
-        "seen_key": seen_key,
+        "item_ids": _nav_item_ids(item_ids),
     }
-
-
-
-
-
+    if danger_ids is not None:
+        payload["danger_ids"] = _nav_item_ids(danger_ids)
+    return payload
 
 
 def _is_live_open_trade(trade: dict[str, Any]) -> bool:
@@ -329,38 +340,45 @@ def _is_live_open_trade(trade: dict[str, Any]) -> bool:
     return str(trade.get("source") or "").strip().lower() == "exchange"
 
 
+def _trade_id(trade: dict[str, Any]) -> object:
+    return trade.get("id") or trade.get("trade_id")
+
+
 def _build_live_trades_nav_indicator(open_trades: list[dict[str, Any]]) -> dict[str, object]:
     live_trades = [trade for trade in open_trades if _is_live_open_trade(trade)]
-    live_trade_count = len(live_trades)
-    if live_trade_count > 0:
-        return _build_nav_indicator(
-            "count",
-            "info",
-            str(live_trade_count),
-            f"{_pluralize(live_trade_count, 'live trade')} open",
-            _build_seen_key("trades-live", [trade.get("id") or trade.get("trade_id") for trade in live_trades[:8]]),
-            count=live_trade_count,
-        )
-    return _empty_nav_indicator()
+    if not live_trades:
+        return _empty_nav_indicator()
+    return _build_nav_indicator(
+        "count",
+        "info",
+        str(len(live_trades)),
+        f"{_pluralize(len(live_trades), 'live position')} open",
+        count=len(live_trades),
+        item_ids=[_trade_id(trade) for trade in live_trades],
+    )
 
 
-def _build_paper_trades_nav_indicator(paper_sessions: list[dict[str, Any]]) -> dict[str, object]:
-    active_statuses = {"position_open", "warming_up", "watching"}
-    active_paper_sessions = [
-        session
-        for session in paper_sessions
-        if _normalize_status(session.get("status")) in active_statuses
+def _build_paper_trades_nav_indicator(open_trades: list[dict[str, Any]]) -> dict[str, object]:
+    """Open PAPER positions — the same rows the Paper Trades page lists as open.
+
+    (It used to count "active sessions", watching ones included, which matched
+    nothing on the page and re-lit on every session state change.)
+    """
+    paper_trades = [
+        trade
+        for trade in open_trades
+        if str(trade.get("execution_type") or "").strip().lower() in {"paper", "replay"}
     ]
-    if active_paper_sessions:
-        return _build_nav_indicator(
-            "activity",
-            "success",
-            "SIM",
-            f"{_pluralize(len(active_paper_sessions), 'paper session')} active",
-            _build_seen_key("trades-paper", [session.get("id") for session in active_paper_sessions[:8]]),
-            count=len(active_paper_sessions),
-        )
-    return _empty_nav_indicator()
+    if not paper_trades:
+        return _empty_nav_indicator()
+    return _build_nav_indicator(
+        "count",
+        "info",
+        str(len(paper_trades)),
+        f"{_pluralize(len(paper_trades), 'paper position')} open",
+        count=len(paper_trades),
+        item_ids=[_trade_id(trade) for trade in paper_trades],
+    )
 
 
 def _build_approvals_nav_indicator(approvals: list[dict[str, Any]]) -> dict[str, object]:
@@ -371,17 +389,16 @@ def _build_approvals_nav_indicator(approvals: list[dict[str, Any]]) -> dict[str,
         "warn",
         str(len(approvals)),
         f"{_pluralize(len(approvals), 'approval')} waiting",
-        _build_seen_key(
-            "approvals",
-            [item.get("id") or item.get("approval_id") or item.get("strategy_id") for item in approvals[:8]],
-        ),
         count=len(approvals),
+        item_ids=[item.get("id") or item.get("approval_id") or item.get("strategy_id") for item in approvals],
     )
 
 
 def _build_ops_nav_indicator(notification_summary: dict[str, Any]) -> dict[str, object]:
-    count = int(notification_summary.get("count") or 0)
-    if count <= 0:
+    """Recent unacknowledged issues. The frontend shows only the ones the
+    operator has not seen since last opening Diagnostics."""
+    notification_ids = list(notification_summary.get("notification_ids") or [])
+    if not notification_ids:
         return _empty_nav_indicator()
 
     highest_severity = _normalize_status(notification_summary.get("highest_severity"))
@@ -391,21 +408,16 @@ def _build_ops_nav_indicator(notification_summary: dict[str, Any]) -> dict[str, 
         "warn": "warn",
     }.get(highest_severity, "info")
 
-    severity_label = {
-        "critical": "critical",
-        "fail": "high-priority",
-        "warn": "warning",
-    }.get(highest_severity, "operator")
-
+    count = len(notification_ids)
     return _build_nav_indicator(
         "count",
         severity,
         str(count),
-        f"{_pluralize(count, f'{severity_label} issue')} waiting",
-        _build_seen_key("ops", notification_summary.get("notification_ids") or []),
+        f"{_pluralize(count, 'issue')} raised in the last {int(notification_summary.get('window_days') or 7)} days",
         count=count,
+        item_ids=notification_ids,
+        danger_ids=list(notification_summary.get("danger_ids") or []),
     )
-
 
 
 def _build_bot_factory_nav_indicator() -> dict[str, object]:
@@ -426,29 +438,23 @@ def _build_bot_factory_nav_indicator() -> dict[str, object]:
         "info",
         str(len(bot_ids)),
         f"{_pluralize(len(bot_ids), 'bot')} running",
-        _build_seen_key("bot-factory", bot_ids[:8]),
         count=len(bot_ids),
+        item_ids=bot_ids,
     )
 
 
 def _build_nav_indicators(
     *,
     open_trades: list[dict[str, Any]],
-    paper_sessions: list[dict[str, Any]],
     approvals: list[dict[str, Any]],
     notification_summary: dict[str, Any],
 ) -> dict[str, object]:
-    # Keys MUST match the frontend nav hrefs (navMetrics.NAV_HREFS) — the client
-    # drops indicators for routes it doesn't know about.
-    #
-    # Deliberate allowlist (operator decision 2026-07-06): badges exist ONLY for
-    # approvals, diagnostics, integrations (event pulse), live/paper trades, and
-    # the Bot Factory. Everything else (data ingestion, agents, tasks, lab churn,
-    # settings auth) was ambient noise — those facts live on their own pages, and
-    # safety-critical states (kill switch, halts) surface via toasts + the risk
-    # page banner, not nav numerology.
+    # Keys MUST match the sidebar badge hrefs in the notification catalog
+    # (forven/notification_catalog.py NAV_BADGES; the /data badge is computed
+    # client-side from the SLA census). Each badge can be switched off in
+    # Settings → Notifications; nothing else in the sidebar carries a number.
     return {
-        "/paper-trades": _build_paper_trades_nav_indicator(paper_sessions),
+        "/paper-trades": _build_paper_trades_nav_indicator(open_trades),
         "/live-trades": _build_live_trades_nav_indicator(open_trades),
         "/bot-factory": _build_bot_factory_nav_indicator(),
         "/approval": _build_approvals_nav_indicator(approvals),
@@ -519,7 +525,7 @@ def get_system_heartbeat() -> dict[str, object]:
     approvals = get_approvals_list(status="pending_approval")
 
     try:
-        notification_summary = get_actionable_notification_summary(limit=50)
+        notification_summary = get_actionable_notification_summary()
     except Exception:
         notification_summary = {"count": 0, "highest_severity": "info", "notification_ids": []}
 
@@ -540,8 +546,7 @@ def get_system_heartbeat() -> dict[str, object]:
         "strategies": strategies,
         "approvals": approvals,
         "nav_indicators": _build_nav_indicators(
-            open_trades=open_trades if isinstance(open_trades, list) else [],
-            paper_sessions=[item for item in paper_sessions if isinstance(item, dict)] if isinstance(paper_sessions, list) else [],
+            open_trades=[item for item in open_trades if isinstance(item, dict)] if isinstance(open_trades, list) else [],
             approvals=[item for item in approvals if isinstance(item, dict)] if isinstance(approvals, list) else [],
             notification_summary=notification_summary if isinstance(notification_summary, dict) else {},
         ),
