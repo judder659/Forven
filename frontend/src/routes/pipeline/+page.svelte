@@ -200,7 +200,7 @@
 	<div class="flex justify-between items-center">
 		<div class="flex items-center gap-4">
 			<div>
-				<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Pipeline</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Pipeline</h1>
 				<p class="text-xs text-sc-ink3 mt-1">Strategy funnel, background processes, scheduler jobs, and autopilot status.</p>
 			</div>
 			<div class="rounded-md flex bg-sc-panel2 border border-sc-line p-0.5 ml-4">
@@ -264,7 +264,7 @@
 	<!-- Active Processes — full width -->
 	<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden">
 		<div class="px-4 py-3 border-b border-sc-line flex justify-between items-center">
-			<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Active Processes</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink3">Active Processes</h2>
 			<span class="text-[11px] text-sc-ink3">{totalActive} running</span>
 		</div>
 		{#if totalActive === 0}
@@ -338,7 +338,7 @@
 		<!-- Autopilot Status -->
 		<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden">
 			<div class="px-4 py-3 border-b border-sc-line">
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Autopilot</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink3">Autopilot</h2>
 			</div>
 			{#if overview?.autopilot}
 				{@const ap = overview.autopilot}
@@ -393,7 +393,7 @@
 		<!-- Recent Completions -->
 		<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden">
 			<div class="px-4 py-3 border-b border-sc-line">
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Recent Completions</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink3">Recent Completions</h2>
 			</div>
 			{#if recentJobs.length === 0}
 				<div class="px-4 py-8 text-center text-sc-ink3 text-xs">
@@ -427,7 +427,7 @@
 		<!-- Scheduler — spans full width -->
 		<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden lg:col-span-2">
 			<div class="px-4 py-3 border-b border-sc-line flex justify-between items-center">
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Scheduler</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink3">Scheduler</h2>
 				<span class="text-[11px] text-sc-ink3">{schedulerJobs.length} jobs</span>
 			</div>
 			<div class="px-4 py-2 border-b border-sc-line text-[10px] text-sc-ink3">

@@ -143,7 +143,7 @@
 			<CriticalAlertsBanner />
 
 			<div class="flex items-baseline justify-between">
-				<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Dashboard</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Dashboard</h1>
 				<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					{refreshedAt ? `updated ${formatAge(new Date(refreshedAt).toISOString(), now)} ago` : 'loading…'}
 				</span>

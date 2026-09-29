@@ -174,7 +174,7 @@
 	<header class="flex items-center justify-between border-b border-sc-line pb-4">
 		<div>
 			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Settings</div>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Approval Modes</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Approval Modes</h1>
 			<p class="mt-1 text-xs text-sc-ink3 max-w-2xl">
 				Configure per-category approval behavior. <strong>manual</strong> requires operator review,
 				<strong>smart</strong> classifies via the auxiliary LLM and auto-approves only when
@@ -206,7 +206,7 @@
 		<div class="py-20 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading...</div>
 	{:else}
 		<section class="terminal-card">
-			<h2 class="border-b border-sc-line px-4 py-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Defaults</h2>
+			<h2 class="text-[14px] font-semibold border-b border-sc-line px-4 py-2 text-sc-ink2">Defaults</h2>
 			<div class="grid sm:grid-cols-3 gap-4 p-4">
 				<label class="block text-xs">
 					<span class="text-[10px] text-sc-ink3 uppercase tracking-wider">Default mode</span>
@@ -240,7 +240,7 @@
 
 		<section class="terminal-card overflow-hidden">
 			<header class="px-4 py-2 flex items-center justify-between border-b border-sc-line">
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Per-category overrides</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink2">Per-category overrides</h2>
 				<div class="flex items-center gap-2">
 					<input
 						type="text"
@@ -320,7 +320,7 @@
 		</section>
 
 		<section class="terminal-card">
-			<h2 class="border-b border-sc-line px-4 py-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Off allowlist (server-enforced)</h2>
+			<h2 class="text-[14px] font-semibold border-b border-sc-line px-4 py-2 text-sc-ink2">Off allowlist (server-enforced)</h2>
 			<div class="p-4">
 				<p class="text-[11px] text-sc-ink3 mb-3">
 					Setting a category to <code>off</code> auto-approves it immediately, so eligibility is

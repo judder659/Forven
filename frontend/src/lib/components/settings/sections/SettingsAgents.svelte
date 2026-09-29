@@ -549,7 +549,7 @@
 	>
 		<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 id="agents-providers-heading" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+				<h2 id="agents-providers-heading" class="text-[14px] font-semibold text-sc-ink2">
 					AI providers
 				</h2>
 				<p class="text-xs text-sc-ink3 mt-1">
@@ -877,7 +877,7 @@
 	>
 		<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 id="agents-model-policy-heading" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+				<h2 id="agents-model-policy-heading" class="text-[14px] font-semibold text-sc-ink2">
 					Model policy
 				</h2>
 				<p class="text-xs text-sc-ink3 mt-1">
@@ -918,7 +918,7 @@
 			<div class="space-y-4">
 				{#each Object.entries(grouped) as [provider, opts] (provider)}
 					<div>
-						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink3 mb-2">
 							{provider} <span class="text-sc-ink3 font-normal">({opts.length})</span>
 						</h3>
 						<div class="grid gap-1 md:grid-cols-2 lg:grid-cols-3">
@@ -953,7 +953,7 @@
 		class="terminal-card p-6 space-y-4"
 	>
 		<header class="border-b border-sc-line pb-2">
-			<h2 id="agents-personas-heading" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+			<h2 id="agents-personas-heading" class="text-[14px] font-semibold text-sc-ink2">
 				Agent personas
 			</h2>
 			<p class="text-xs text-sc-ink3 mt-1">
@@ -1153,7 +1153,7 @@
 		class="terminal-card p-6 space-y-4"
 	>
 		<header class="border-b border-sc-line pb-2">
-			<h2 id="agents-scheduler-heading" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+			<h2 id="agents-scheduler-heading" class="text-[14px] font-semibold text-sc-ink2">
 				Scheduler jobs
 			</h2>
 			<p class="text-xs text-sc-ink3 mt-1">

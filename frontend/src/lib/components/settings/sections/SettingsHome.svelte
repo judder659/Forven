@@ -188,7 +188,7 @@
 	<!-- Needs configuration -->
 	<div class="terminal-card">
 		<div class="flex items-baseline justify-between border-b border-sc-line px-4 py-2">
-			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Needs configuration</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2">Needs configuration</h3>
 			<span class="text-xs text-sc-ink3">{needsConfig.length} issue{needsConfig.length === 1 ? '' : 's'}</span>
 		</div>
 		<div class="p-4">
@@ -215,7 +215,7 @@
 	<!-- Recently changed -->
 	<div class="terminal-card">
 		<div class="flex items-baseline justify-between border-b border-sc-line px-4 py-2">
-			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Recently changed</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2">Recently changed</h3>
 			<span class="text-xs text-sc-ink3">last {auditLog.length} change{auditLog.length === 1 ? '' : 's'}</span>
 		</div>
 		<div class="p-4">

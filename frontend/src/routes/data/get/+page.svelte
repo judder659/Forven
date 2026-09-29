@@ -266,7 +266,7 @@
 
 <div class="mx-auto max-w-5xl space-y-3 p-4 pb-24">
 	<div class="flex items-center justify-between gap-3">
-		<h1 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Get data</h1>
+		<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Get data</h1>
 		<ol class="flex items-center gap-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]" aria-label="Steps">
 			<li class={stepClass(step === 'what', step !== 'what')}><span class="font-mono">1</span> What</li>
 			<li aria-hidden="true" class="text-sc-ink4">→</li>
@@ -295,7 +295,7 @@
 	{:else if step === 'universe'}
 		<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-universe">
 			<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-				<h2 id="dm-universe" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Research universe</h2>
+				<h2 id="dm-universe" class="text-[14px] font-semibold text-sc-ink">Research universe</h2>
 				<button type="button" on:click={reset} class="ml-auto text-[12px] text-sc-ink3 hover:text-sc-ink">← Back</button>
 			</header>
 			{#if plan}
@@ -343,7 +343,7 @@
 				<!-- 1 Market -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-get-market">
 					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-						<h2 id="dm-get-market" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Market</h2>
+						<h2 id="dm-get-market" class="text-[14px] font-semibold text-sc-ink">Market</h2>
 						<button type="button" on:click={reset} class="ml-auto text-[12px] text-sc-ink3 hover:text-sc-ink">← Start over</button>
 					</header>
 					<div class="space-y-2 px-3 py-2.5">
@@ -383,7 +383,7 @@
 				{#if candidate}
 					<!-- 2 Venue -->
 					<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-get-venue">
-						<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-venue" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Where from</h2></header>
+						<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-venue" class="text-[14px] font-semibold text-sc-ink">Where from</h2></header>
 						{#if targets?.status === 'loading'}
 							<p class="px-3 pt-2 text-[11px] text-sc-ink3">Checking which exchanges list {candidate?.display_symbol ?? 'it'}… the first check in an hour loads each exchange's market list and can take a few seconds.</p>
 						{/if}
@@ -412,7 +412,7 @@
 
 					<!-- 3 Timeframes, history, add-ons -->
 					<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-get-what">
-						<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-what" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Timeframes & history</h2></header>
+						<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-what" class="text-[14px] font-semibold text-sc-ink">Timeframes & history</h2></header>
 						<div class="space-y-3 px-3 py-2.5">
 							<div>
 								<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Timeframes</div>
@@ -472,7 +472,7 @@
 			<!-- Estimate and review -->
 			<aside class="min-w-0 space-y-3">
 				<section class="rounded-md border border-sc-line bg-sc-panel lg:sticky lg:top-3" aria-labelledby="dm-get-est">
-					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-est" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{step === 'review' ? 'Review' : 'Estimate'}</h2></header>
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-get-est" class="text-[14px] font-semibold text-sc-ink">{step === 'review' ? 'Review' : 'Estimate'}</h2></header>
 					<div class="space-y-2 px-3 py-2.5 text-[11px]">
 						{#if errors.length}
 							<ul class="space-y-0.5 text-sc-ink3">{#each errors as error}<li>· {error}</li>{/each}</ul>

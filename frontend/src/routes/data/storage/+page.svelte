@@ -138,7 +138,7 @@
 	{#if s}
 		<div class="grid gap-3 xl:grid-cols-2">
 			<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-by-stream">
-				<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-by-stream" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Size by stream</h2></header>
+				<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-by-stream" class="text-[14px] font-semibold text-sc-ink">Size by stream</h2></header>
 				<div class="space-y-1 px-3 py-2">
 					{#each s.by_stream as b (b.stream)}
 						<div class="grid grid-cols-[110px_1fr_76px_70px] items-center gap-2 text-[11px]">
@@ -152,7 +152,7 @@
 				</div>
 			</section>
 			<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-top-series">
-				<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-top-series" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Largest series</h2></header>
+				<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-top-series" class="text-[14px] font-semibold text-sc-ink">Largest series</h2></header>
 				<table class="w-full text-[11px]">
 					<tbody>
 						{#each s.top_series as t (t.stream + t.venue + t.symbol + t.timeframe)}
@@ -169,7 +169,7 @@
 
 		<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-reclaim">
 			<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-				<h2 id="dm-reclaim" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Reclaimable space</h2>
+				<h2 id="dm-reclaim" class="text-[14px] font-semibold text-sc-ink">Reclaimable space</h2>
 				<span class="text-[10px] text-sc-ink3">moves to the trash first; nothing is deleted until the trash is emptied</span>
 			</header>
 			{#each s.reclaimable as group (group.kind)}
@@ -233,7 +233,7 @@
 
 	<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-trash">
 		<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-			<h2 id="dm-trash" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Trash</h2>
+			<h2 id="dm-trash" class="text-[14px] font-semibold text-sc-ink">Trash</h2>
 			{#if trash.data}<span class="text-[10px] text-sc-ink3">{formatBytes(trash.data.bytes)} · purged automatically after {trash.data.retention_days} days</span>{/if}
 			{#if trash.data?.items.length}
 				<button type="button" on:click={() => (confirmPurge = true)} class="rounded-md ml-auto border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-red-500 hover:text-red-400">Empty now</button>
@@ -265,7 +265,7 @@
 
 	<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-audit">
 		<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-			<h2 id="dm-audit" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Identity audit</h2>
+			<h2 id="dm-audit" class="text-[14px] font-semibold text-sc-ink">Identity audit</h2>
 			<span class="text-[10px] text-sc-ink3">a report: suggestions only, nothing is moved</span>
 		</header>
 		<SectionState state={audit} what="The identity audit" endpoint="GET /api/data/identity/audit" rows={3} on:retry={loadAudit}>

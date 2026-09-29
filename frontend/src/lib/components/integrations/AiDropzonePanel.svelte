@@ -939,7 +939,7 @@
 			<div class="lg:col-span-2 border border-sc-line rounded bg-sc-panel">
 				<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
 					<div>
-						<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Active Session</h2>
+						<h2 class="text-[14px] font-semibold text-sc-ink2">Active Session</h2>
 						{#if activeDetail}
 							<p class="text-[10px] text-sc-ink3 mt-0.5">
 								{activeDetail.id} · {activeDetail.label || 'unlabeled'} · {activeDetail.status}
@@ -1012,7 +1012,7 @@
 			<!-- Activity feed -->
 			<div class="border border-sc-line rounded bg-sc-panel">
 				<div class="px-4 py-3 border-b border-sc-line">
-					<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Recent Activity</h2>
+					<h2 class="text-[14px] font-semibold text-sc-ink2">Recent Activity</h2>
 					<p class="text-[10px] text-sc-ink3 mt-0.5">Across all sessions · refreshes every {REFRESH_MS / 1000}s</p>
 				</div>
 				<div class="px-4 py-3">
@@ -1054,7 +1054,7 @@
 		<!-- Manual fallback ──────────────────────────────────────────── -->
 		<div class="mx-4 mt-4 mb-8 border border-sc-line rounded bg-sc-panel">
 			<div class="px-4 py-3 border-b border-sc-line">
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Manual Fallback</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink2">Manual Fallback</h2>
 				<p class="text-[10px] text-sc-ink3 mt-0.5">
 					For when you're not driving via MCP. Tags to the active session if one is selected.
 				</p>

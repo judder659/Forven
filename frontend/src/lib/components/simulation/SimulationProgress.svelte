@@ -192,7 +192,7 @@
 	{:else if status === 'failed'}
 		<div class="flex-1 p-6 flex flex-col items-center justify-center">
 			<div class="border border-red-900 bg-red-500/5 p-6 max-w-lg text-center">
-				<h3 class="text-red-400 font-bold uppercase tracking-widest mb-2">SIMULATION FAILED</h3>
+				<h3 class="text-[13px] font-semibold text-red-400 mb-2">SIMULATION FAILED</h3>
 				<div class="text-red-400 space-y-1">
 					{#each logs.slice(-3) as log}
 						<div>{log}</div>
@@ -214,7 +214,7 @@
 				{#if robustness}
 					<!-- Monte Carlo -->
 					<div class="terminal-card p-4">
-						<h3 class="text-sm font-bold text-sc-ink uppercase tracking-wider mb-4">Monte Carlo Simulation</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-4">Monte Carlo Simulation</h3>
 						{#if robustness.monte_carlo}
 							<div class="grid grid-cols-3 gap-4 mb-4">
 								<div class="terminal-card p-4">
@@ -259,7 +259,7 @@
 					<!-- Regimes -->
 					{#if robustness.regimes}
 						<div class="terminal-card p-4">
-							<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider mb-4">Regimes</h3>
+							<h3 class="text-[13px] font-semibold text-sc-ink mb-4">Regimes</h3>
 							<div class="text-sm text-sc-ink2">
 								Current: <span class="text-sc-ink">{robustness.regimes.current_regime ?? 'unknown'}</span>
 							</div>
@@ -296,7 +296,7 @@
 						</div>
 					{:else if robustness.regime_error}
 						<div class="terminal-card p-4">
-							<h3 class="text-sm font-bold text-sc-ink uppercase tracking-wider mb-2">Regimes</h3>
+							<h3 class="text-[13px] font-semibold text-sc-ink mb-2">Regimes</h3>
 							<div class="text-red-400">{robustness.regime_error}</div>
 						</div>
 					{/if}
@@ -313,7 +313,7 @@
 			{@const m = result.metrics}
 			<div class="terminal-card p-4">
 				<div class="flex justify-between items-center mb-4">
-					<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider">Optimization</h3>
+					<h3 class="text-[13px] font-semibold text-sc-ink">Optimization</h3>
 					{#if m.best_params}
 						<button 
 							class="terminal-button-primary text-sm"
@@ -370,7 +370,7 @@
 			{@const folds = getFolds(result)}
 				<div class="terminal-card p-4">
 					<div class="flex justify-between items-center mb-4">
-						<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider">Walk-Forward</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink">Walk-Forward</h3>
 						{#if m.most_robust_params}
 							<button 
 								class="terminal-button-primary text-sm"
@@ -459,7 +459,7 @@
 				<!-- Warnings -->
 				{#if result.config?.warnings && result.config.warnings.length > 0}
 					<div class="border-l-2 border-yellow-900 bg-yellow-500/5 p-4 mb-4">
-						<h3 class="text-[10px] font-bold text-yellow-400 uppercase tracking-widest mb-2">Warnings</h3>
+						<h3 class="text-[13px] font-semibold text-yellow-400 mb-2">Warnings</h3>
 						<ul class="list-disc list-inside text-xs text-yellow-400 space-y-1">
 							{#each result.config.warnings as warning}
 								<li>{warning}</li>
@@ -499,7 +499,7 @@
 				<!-- Equity Curve -->
 				<div class="terminal-card p-4">
 					<div class="flex justify-between items-center mb-4">
-						<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider">Equity Curve</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink">Equity Curve</h3>
 						<div class="flex items-center gap-4 text-xs">
 							<span class="flex items-center gap-1"><span class="w-4 h-0.5 bg-cyan-400"></span> Strategy</span>
 							<span class="flex items-center gap-1"><span class="w-4 h-0.5 bg-amber-400 opacity-70" style="border-top: 1px dashed"></span> Buy &amp; Hold</span>
@@ -529,7 +529,7 @@
 				<!-- Parameters -->
 				{#if result.config?.params && Object.keys(result.config.params).length > 0}
 					<div class="terminal-card p-4">
-						<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider mb-4">Parameters</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-4">Parameters</h3>
 						<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
 							{#each Object.entries(result.config.params) as [k, v]}
 								<div class="rounded-md flex justify-between items-center bg-sc-panel border border-sc-line px-3 py-2">
@@ -565,7 +565,7 @@
 
 				<!-- Detailed Stats -->
 				<div class="terminal-card p-4">
-					<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider mb-4">Statistics</h3>
+					<h3 class="text-[13px] font-semibold text-sc-ink mb-4">Statistics</h3>
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-8">
 						<div>
 							<div class="text-xs text-sc-ink3 uppercase">Trades</div>
@@ -609,7 +609,7 @@
 					{@const tradesShown = showAllTrades ? allTradesReversed : allTradesReversed.slice(0, 50)}
 					<div class="terminal-card">
 						<div class="p-3 border-b border-sc-line flex justify-between items-center">
-							<h3 class="text-base font-bold text-sc-ink uppercase tracking-wider">Trades</h3>
+							<h3 class="text-[13px] font-semibold text-sc-ink">Trades</h3>
 							<div class="flex items-center gap-3">
 								<span class="text-xs text-sc-ink3">{result.trades.length} total</span>
 								{#if result.trades.length > 50}

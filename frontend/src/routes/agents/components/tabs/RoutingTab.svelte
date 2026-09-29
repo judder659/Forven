@@ -528,7 +528,7 @@
 	<section class="terminal-card p-6 space-y-4">
 		<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">Routing &amp; Fallbacks</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink">Routing &amp; Fallbacks</h2>
 				<p class="text-xs text-sc-ink3 mt-1">
 					<span class="text-sc-ink2">Every agent's model — including the Brain's — is set
 					<span class="text-sc-ink">here</span>, not on the Roster (the Roster shows it
@@ -564,7 +564,7 @@
 
 	<!-- Agents — the single place every agent's model + fallback chain is set. -->
 	<section class="terminal-card p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Agents</h3>
+		<h3 class="text-[13px] font-semibold text-sc-ink2">Agents</h3>
 		<p class="text-xs text-sc-ink3">
 			Pick each agent's model and ordered fallback chain. This is the
 			<span class="text-sc-ink">single place</span> an agent's model is set — the Roster shows
@@ -620,7 +620,7 @@
 
 	<!-- Default model (derived from the Brain's selection in Agents above) -->
 	<section class="terminal-card p-6 space-y-2">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Default model</h3>
+		<h3 class="text-[13px] font-semibold text-sc-ink2">Default model</h3>
 		<p class="text-xs text-sc-ink3">
 			The fallback model for any slot below with no explicit selection. This is
 			<span class="text-sc-ink">not a separate setting</span> — it is derived from the
@@ -638,7 +638,7 @@
 
 	<!-- Auxiliary -->
 	<section class="terminal-card p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Auxiliary task models</h3>
+		<h3 class="text-[13px] font-semibold text-sc-ink2">Auxiliary task models</h3>
 		<p class="text-xs text-sc-ink3">
 			Lightweight models for specific Brain sub-tasks. Each is independent of the default model.
 		</p>
@@ -689,7 +689,7 @@
 
 	<!-- Backup -->
 	<section class="terminal-card p-6 space-y-3">
-		<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Backup provider</h3>
+		<h3 class="text-[13px] font-semibold text-sc-ink2">Backup provider</h3>
 		<p class="text-xs text-sc-ink3">
 			When a slot's primary credentials become unusable, calls fall back to this model instead of
 			failing. Leave unset to disable backup — a credential problem then pauses the routine and alerts you.

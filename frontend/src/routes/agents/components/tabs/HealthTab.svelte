@@ -121,7 +121,7 @@
 	<section class="terminal-card p-6 space-y-4">
 		<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">Provider health</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink">Provider health</h2>
 				<p class="text-xs text-sc-ink3 mt-1">
 					Live per-provider state as observed during agent and Brain calls. Polls every {POLL_MS / 1000}s.
 				</p>
@@ -204,7 +204,7 @@
 
 	<section class="terminal-card p-6 space-y-3">
 		<header class="border-b border-sc-line pb-2">
-			<h3 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Pinned-credential warnings</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2">Pinned-credential warnings</h3>
 			<p class="text-xs text-sc-ink3 mt-1">
 				Agents pinned to a provider that has no credentials. Connect the provider or repoint the agent.
 			</p>

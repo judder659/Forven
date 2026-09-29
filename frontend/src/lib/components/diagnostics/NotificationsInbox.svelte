@@ -185,7 +185,7 @@
 <div class="rounded-md border border-sc-line bg-sc-panel">
 	<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between gap-4">
 		<div class="flex items-center gap-4">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">Notifications</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink2">Notifications</h2>
 			<div class="flex items-center gap-1">
 				<button
 					class="rounded-md text-[12px] px-2 py-1 border transition-colors {activeTab === 'inbox'

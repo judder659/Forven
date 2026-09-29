@@ -182,7 +182,7 @@
 					</div>
 
 					<section>
-						<h3 class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						<h3 class="text-[13px] font-semibold mb-2 text-sc-ink3">
 							Description
 						</h3>
 						<p class="whitespace-pre-wrap text-sm leading-6 text-sc-ink2">
@@ -192,7 +192,7 @@
 
 					{#if detail.what_works?.length}
 						<section>
-							<h3 class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-400">
+							<h3 class="text-[13px] font-semibold mb-2 text-emerald-400">
 								What works
 							</h3>
 							<ul class="list-disc space-y-1 pl-5 text-sm text-sc-ink2">
@@ -205,7 +205,7 @@
 
 					{#if detail.what_doesnt_work?.length}
 						<section>
-							<h3 class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">
+							<h3 class="text-[13px] font-semibold mb-2 text-red-400">
 								What doesn't
 							</h3>
 							<ul class="list-disc space-y-1 pl-5 text-sm text-sc-ink2">

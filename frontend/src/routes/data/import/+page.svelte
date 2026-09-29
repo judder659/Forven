@@ -123,7 +123,7 @@
 
 <div class="mx-auto max-w-5xl space-y-3 p-4 pb-24">
 	<div class="flex items-center justify-between gap-3">
-		<h1 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Import a file</h1>
+		<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Import a file</h1>
 		<a href="{DM}/get" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink">Download from a venue instead →</a>
 	</div>
 
@@ -163,7 +163,7 @@
 							<!-- 2 Columns and time -->
 							<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-imp-cols">
 								<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-									<h2 id="dm-imp-cols" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">How the file is read</h2>
+									<h2 id="dm-imp-cols" class="text-[14px] font-semibold text-sc-ink">How the file is read</h2>
 									<span class="text-[10px] text-sc-ink3">{formatCount(p.rows)} rows · {p.columns.length} columns</span>
 									{#if checking}<span class="ml-auto text-[10px] text-sc-ink2">checking…</span>{/if}
 								</header>
@@ -192,7 +192,7 @@
 
 							<!-- What the file holds -->
 							<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-imp-parsed">
-								<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-imp-parsed" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">What it holds</h2></header>
+								<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-imp-parsed" class="text-[14px] font-semibold text-sc-ink">What it holds</h2></header>
 								<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11px]">
 									<dt class="text-sc-ink3">Span</dt><dd class="text-sc-ink">{p.first_ts ? `${formatUtc(p.first_ts)} → ${formatUtc(p.last_ts)}` : '—'}</dd>
 									<dt class="text-sc-ink3">Bars look</dt>
@@ -235,7 +235,7 @@
 						<!-- 3 Target and 4 Import -->
 						<aside class="min-w-0">
 							<section class="rounded-md border border-sc-line bg-sc-panel lg:sticky lg:top-3" aria-labelledby="dm-imp-target">
-								<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-imp-target" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Where it goes</h2></header>
+								<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-imp-target" class="text-[14px] font-semibold text-sc-ink">Where it goes</h2></header>
 								<div class="space-y-2.5 px-3 py-2.5 text-[11px]">
 									<label class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Symbol
 										<input value={draft.symbol} on:input={(e) => (draft = { ...draft, symbol: e.currentTarget.value })} placeholder="e.g. XAU-USD" spellcheck="false"

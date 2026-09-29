@@ -91,7 +91,7 @@
 			<div class="flex items-start justify-between p-4 border-b border-sc-line">
 				<div>
 					<div class="flex items-center gap-3 mb-2">
-						<h2 class="text-lg font-bold uppercase tracking-widest text-sc-ink">{content.term}</h2>
+						<h2 class="text-[14px] font-semibold text-sc-ink">{content.term}</h2>
 						<span class="border px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {getCategoryColor(content.category)}">
 							{getCategoryLabel(content.category)}
 						</span>
@@ -114,7 +114,7 @@
 			<div class="flex-1 overflow-y-auto p-4 space-y-6">
 				<!-- Full Description -->
 				<section>
-					<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+					<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 						<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 						</svg>
@@ -128,7 +128,7 @@
 				<!-- Formula -->
 				{#if content.formula}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
 							</svg>
@@ -152,7 +152,7 @@
 				<!-- Interpretations -->
 				{#if content.interpretations && content.interpretations.length > 0}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
 							</svg>
@@ -179,7 +179,7 @@
 				<!-- Examples -->
 				{#if content.examples && content.examples.length > 0}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
 							</svg>
@@ -216,7 +216,7 @@
 				<!-- Limitations -->
 				{#if content.limitations && content.limitations.length > 0}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
 							</svg>
@@ -238,7 +238,7 @@
 				<!-- Pro Tips -->
 				{#if content.proTips && content.proTips.length > 0}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
 							</svg>
@@ -260,7 +260,7 @@
 				<!-- References -->
 				{#if content.references && content.references.length > 0}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
 							</svg>
@@ -277,7 +277,7 @@
 				<!-- Related Terms -->
 				{#if content.relatedTerms && content.relatedTerms.length > 0}
 					<section>
-						<h3 class="text-sm font-bold uppercase tracking-wider text-sc-ink mb-3 flex items-center gap-2">
+						<h3 class="text-[13px] font-semibold text-sc-ink mb-3 flex items-center gap-2">
 							<svg class="w-4 h-4 text-sc-ink3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
 							</svg>

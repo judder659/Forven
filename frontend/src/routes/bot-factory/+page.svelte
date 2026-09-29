@@ -193,7 +193,7 @@
 	<!-- Header -->
 	<div class="mb-4 flex items-end justify-between border-b border-sc-line pb-4">
 		<div>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Bot Factory</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Bot Factory</h1>
 			<p class="mt-1 text-xs text-sc-ink3">Autonomous LLM trading bots — paper by default, live behind GO LIVE</p>
 		</div>
 		<div class="flex gap-2">
@@ -255,7 +255,7 @@
 	{:else if bots.length === 0}
 		<!-- Empty state: template gallery -->
 		<div class="py-10 text-center">
-			<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">Deploy your first bot</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Deploy your first bot</h2>
 			<p class="mb-8 mt-1 text-xs text-sc-ink3">Start from a template or build from scratch</p>
 
 			<div class="mx-auto grid max-w-4xl grid-cols-1 gap-3 text-left sm:grid-cols-2">

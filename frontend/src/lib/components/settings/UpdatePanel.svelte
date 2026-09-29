@@ -43,7 +43,7 @@
 <div class="terminal-card p-4 space-y-3">
 	<div class="flex items-start justify-between gap-3">
 		<div class="min-w-0">
-			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Software updates</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2">Software updates</h3>
 			<p class="text-[11px] text-sc-ink3 mt-0.5">
 				Fast-forward Forven to the latest code on
 				<span class="text-sc-ink2">{status?.target_remote ?? 'origin'}/{status?.target_branch ?? 'main'}</span>.

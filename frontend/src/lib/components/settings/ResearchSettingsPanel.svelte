@@ -129,7 +129,7 @@
 
 <div class="terminal-card p-6 space-y-6 lg:col-span-2">
 	<div class="border-b border-sc-line pb-3">
-		<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Research Orchestration</h2>
+		<h2 class="text-[14px] font-semibold text-sc-ink2">Research Orchestration</h2>
 		<p class="mt-2 text-sm text-sc-ink2">
 			Control which sources agents may read for ideas, how new candidates are screened, and the held-back data test.
 		</p>

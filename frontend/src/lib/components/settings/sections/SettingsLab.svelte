@@ -303,7 +303,7 @@
 	>
 		<header class="flex flex-wrap items-start justify-between gap-2">
 			<div>
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+				<h2 class="text-[14px] font-semibold text-sc-ink2">
 					System mode
 				</h2>
 				<p class="text-xs text-sc-ink3 mt-0.5">

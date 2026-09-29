@@ -70,7 +70,7 @@
 
 <div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3" data-testid="regime-gate-panel">
 	<div class="flex flex-wrap items-center justify-between gap-2">
-		<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">
+		<h2 class="text-[14px] font-semibold text-sc-ink2">
 			Regime Gate
 			<span class="ml-2 border px-1.5 py-0.5 text-[9px] font-normal tracking-wider {scope === 'live' ? 'border-red-900 text-red-400' : 'border-sc-line2 text-sc-ink2'}" title="Ledger and outcomes filtered to this scope; the gate itself guards both lanes">{scope.toUpperCase()} LEDGER</span>
 		</h2>

@@ -2331,7 +2331,7 @@
 {#if showNewSession}
 	<div class="fixed inset-0 bg-sc-bg/70 flex items-center justify-center z-50">
 		<div class="rounded-md bg-sc-panel border border-sc-line p-6 w-full max-w-md">
-			<h2 class="text-sm font-bold text-sc-ink uppercase tracking-wider mb-4">Create Paper Trading Session</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink mb-4">Create Paper Trading Session</h2>
 
 			<div class="space-y-4">
 				<div>
@@ -2522,7 +2522,7 @@
 {#if showEditSession}
 	<div class="fixed inset-0 bg-sc-bg/70 flex items-center justify-center z-50">
 		<div class="rounded-md bg-sc-panel border border-sc-line p-6 w-full max-w-md">
-			<h2 class="text-sm font-bold text-sc-ink uppercase tracking-wider mb-4">Edit Paper Trading Session</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink mb-4">Edit Paper Trading Session</h2>
 
 			<div class="space-y-4">
 				<div>
@@ -3591,7 +3591,7 @@
 				<div class="border-t border-sc-line grid grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,4.8fr)] overflow-hidden">
 					<!-- Live Indicators -->
 					<div class="border-r border-sc-line p-2 overflow-y-auto">
-						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-1.5">Indicators</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink3 mb-1.5">Indicators</h3>
 						{#if bottomIndicatorNames.length > 0}
 							{#each bottomIndicatorNames as name}
 								{@const runtimeIndicator = selectedSession.indicators[name]}
@@ -3612,7 +3612,7 @@
 
 					<!-- Pending Signals -->
 					<div class="border-r border-sc-line p-2 overflow-y-auto">
-						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-1.5">Signals</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink3 mb-1.5">Signals</h3>
 						{#if selectedSession.pending_signals.length > 0}
 							{#each selectedSession.pending_signals as signal}
 								<div class="py-1 border-b border-sc-line">
@@ -3635,7 +3635,7 @@
 
 					<!-- Trade History -->
 					<div class="p-2 overflow-y-auto">
-						<h3 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider mb-1.5">Trades</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink3 mb-1.5">Trades</h3>
 						{#if sessionTradeFills.length > 0}
 							<DataTable
 								columns={tradeFillColumns}
@@ -3806,7 +3806,7 @@
 					<svg class="w-20 h-20 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
 					</svg>
-					<h3 class="text-lg font-bold uppercase tracking-widest mb-1">{emptyStateTitle}</h3>
+					<h3 class="text-[13px] font-semibold mb-1">{emptyStateTitle}</h3>
 					<p class="text-xs text-sc-ink3 max-w-sm text-center">
 						{#if isLiveView}
 							Select a deployed strategy to inspect live chart, signals, indicators, and trade history.

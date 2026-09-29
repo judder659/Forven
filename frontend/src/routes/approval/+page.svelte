@@ -695,7 +695,7 @@
 <div class="p-4 space-y-4 text-sm">
 	<header class="flex items-center justify-between gap-4">
 		<div class="flex items-center gap-4">
-			<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Approvals</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Approvals</h1>
 			<div class="rounded-md flex bg-sc-panel2 border border-sc-line p-0.5">
 				<button class="px-3 py-1 text-[12px] {viewMode === 'pending' ? 'bg-sc-line2 text-sc-ink' : 'text-sc-ink2'}" on:click={() => switchView('pending')}>Pending</button>
 				<button class="px-3 py-1 text-[12px] {viewMode === 'history' ? 'bg-sc-line2 text-sc-ink' : 'text-sc-ink2'}" on:click={() => switchView('history')}>History</button>

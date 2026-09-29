@@ -21,7 +21,7 @@
 	<div class="border-b border-sc-line bg-sc-bg px-4 py-3">
 		<div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
 			<div>
-				<h1 class="text-sm font-semibold uppercase tracking-[0.22em] text-sc-ink">Integrations</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Integrations</h1>
 				<p class="mt-1 max-w-3xl text-[11px] leading-5 text-sc-ink3">
 					One MCP control room: AI clients connect into Forven, while agent tool servers let
 					Forven agents connect out to external tools.

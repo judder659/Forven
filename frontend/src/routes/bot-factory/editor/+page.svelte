@@ -362,7 +362,7 @@
 	<div class="mb-6 flex items-end justify-between border-b border-sc-line pb-4">
 		<div>
 			<button on:click={() => goto('/bot-factory')} class="mb-1 text-[11px] text-sc-ink3 hover:text-sc-ink">&larr; Bot Factory</button>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">{editId ? 'Edit Bot' : 'New Bot'}</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">{editId ? 'Edit Bot' : 'New Bot'}</h1>
 		</div>
 		<div class="flex items-center gap-2">
 			<button

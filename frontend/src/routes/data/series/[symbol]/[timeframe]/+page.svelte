@@ -340,7 +340,7 @@
 				<!-- Chart -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Chart">
 					<header class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-sc-line px-3 py-1.5 text-[10px] text-sc-ink3">
-						<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{d.stream === 'ohlcv' ? 'Price' : streamLabel(d.stream)}</h2>
+						<h2 class="text-[14px] font-semibold text-sc-ink">{d.stream === 'ohlcv' ? 'Price' : streamLabel(d.stream)}</h2>
 						<span>{viewText}{chartView.loading ? ' · loading…' : ''}</span>
 						{#if d.stream === 'ohlcv' && d.gaps_total}<span><span class="text-amber-400">▼</span> gap</span>{/if}
 						<span class="ml-auto">scroll to zoom · drag to pan</span>
@@ -362,7 +362,7 @@
 				<!-- Coverage timeline -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-months">
 					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-						<h2 id="dm-months" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Coverage by month</h2>
+						<h2 id="dm-months" class="text-[14px] font-semibold text-sc-ink">Coverage by month</h2>
 						<span class="text-[10px] text-sc-ink3">
 							{#if d.completeness != null}{formatPercent(d.completeness, 2)} of {formatCount(d.expected_rows)} expected bars stored{/if}
 							{#if d.synthetic_bars} · {formatCount(d.synthetic_bars)} synthetic{/if}
@@ -375,7 +375,7 @@
 				<!-- Gaps -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-gaps">
 					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-						<h2 id="dm-gaps" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Gaps</h2>
+						<h2 id="dm-gaps" class="text-[14px] font-semibold text-sc-ink">Gaps</h2>
 						<span class="text-[10px] text-sc-ink3">{d.gaps_total ? `${formatCount(d.gaps_total)} gap${d.gaps_total === 1 ? '' : 's'}, largest first` : 'none'}</span>
 					</header>
 					{#if !completeGaps.length}
@@ -406,7 +406,7 @@
 				<!-- Rows -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-rows">
 					<header class="flex flex-wrap items-center gap-2 border-b border-sc-line px-3 py-1.5">
-						<h2 id="dm-rows" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Stored rows</h2>
+						<h2 id="dm-rows" class="text-[14px] font-semibold text-sc-ink">Stored rows</h2>
 						<span class="text-[10px] text-sc-ink3">{rowsWindow ? `month ${rowsWindow.label}` : 'latest bars, newest first'} · UTC{rows.data ? ` · ${formatCount(rows.data.total)} in the window` : ''}</span>
 						<div class="ml-auto flex items-center gap-1">
 							<button type="button" on:click={() => pageRows(-1)} disabled={earlierDisabled} aria-label="Earlier page" class="rounded-md border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-30">←</button>
@@ -438,7 +438,7 @@
 			<aside class="min-w-0 space-y-3">
 				<!-- Freshness and quality -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-fresh">
-					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-fresh" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Freshness & quality</h2></header>
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-fresh" class="text-[14px] font-semibold text-sc-ink">Freshness & quality</h2></header>
 					<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11px]">
 						<dt class="text-sc-ink3">State</dt><dd title={STATE_HELP[d.sla.state]}><StateChip state={d.sla.state} /></dd>
 						<dt class="text-sc-ink3">Tier</dt><dd class="text-sc-ink" title={TIER_HELP[d.sla.tier]}>{TIER_LABEL[d.sla.tier]}</dd>
@@ -457,7 +457,7 @@
 
 				<!-- Consumers -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-consumers">
-					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-consumers" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Used by</h2></header>
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-consumers" class="text-[14px] font-semibold text-sc-ink">Used by</h2></header>
 					{#each d.consumers_detail as consumer (consumer.kind + consumer.id)}
 						<div class="border-b border-sc-line px-3 py-2 text-[11px] last:border-b-0">
 							<div class="flex items-center gap-2">
@@ -481,7 +481,7 @@
 
 				<!-- Streams -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-streams">
-					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-streams" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{d.stream === 'ohlcv' ? 'Streams for' : 'Other data for'} {d.display_symbol}</h2></header>
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-streams" class="text-[14px] font-semibold text-sc-ink">{d.stream === 'ohlcv' ? 'Streams for' : 'Other data for'} {d.display_symbol}</h2></header>
 					{#each d.streams as s (streamKey(s))}
 						<a href={seriesHref({ symbol: s.symbol ?? d.symbol, timeframe: s.timeframe, stream: s.stream, venue: s.venue })}
 							class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5 text-[11px] last:border-b-0 hover:bg-sc-ink/[0.02]" title={`Columns: ${s.columns.join(', ')}`}>
@@ -499,7 +499,7 @@
 
 				<!-- Provenance -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-prov">
-					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-prov" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Provenance</h2></header>
+					<header class="border-b border-sc-line px-3 py-1.5"><h2 id="dm-prov" class="text-[14px] font-semibold text-sc-ink">Provenance</h2></header>
 					<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 py-2 text-[11px]">
 						<dt class="text-sc-ink3">Source</dt><dd class="text-sc-ink">{exchangeLabel(d.provenance.source)}{d.provenance.market ? ` · ${d.provenance.market}` : ''}</dd>
 						<dt class="text-sc-ink3">Series</dt><dd class="text-sc-ink" title={VENUE_HELP}>{venueLabel(d.provenance.venue, d.provenance.source, d.provenance.market)}</dd>
@@ -526,7 +526,7 @@
 
 				<!-- Recent jobs -->
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-series-jobs">
-					<header class="flex items-center border-b border-sc-line px-3 py-1.5"><h2 id="dm-series-jobs" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Recent jobs</h2>
+					<header class="flex items-center border-b border-sc-line px-3 py-1.5"><h2 id="dm-series-jobs" class="text-[14px] font-semibold text-sc-ink">Recent jobs</h2>
 						<a href="{DM}/jobs" class="ml-auto text-[10px] text-sc-ink2 hover:text-sc-ink">All →</a></header>
 					{#each d.recent_jobs as job (job.id)}
 						<JobRow {job} on:changed={() => loadDetail(true)} />

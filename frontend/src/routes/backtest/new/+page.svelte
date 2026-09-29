@@ -688,7 +688,7 @@
 	<div class="mb-4 border-b border-sc-line pb-4">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div>
-				<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Manual Backtest</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Manual Backtest</h1>
 				<p class="mt-1 text-xs text-sc-ink3">
 					Backtest a built-in template or one of your strategies on any market. Anything you leave blank runs the way the strategy itself does.
 				</p>
@@ -1063,7 +1063,7 @@
 				<div id="bt-result-detail" class="mt-4 scroll-mt-6 border-b border-sc-line pb-4">
 					<div class="flex flex-wrap items-start justify-between gap-3">
 						<div class="min-w-0">
-							<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">Result</h2>
+							<h2 class="text-[14px] font-semibold text-sc-ink">Result</h2>
 							<p class="mt-1 text-xs text-sc-ink2">
 								<span class="font-mono text-sc-ink2">{viewedRun.label}</span> on <span class="font-mono text-sc-ink2">{viewedRun.market}</span>
 							</p>

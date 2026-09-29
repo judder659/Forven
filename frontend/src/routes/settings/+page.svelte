@@ -155,7 +155,7 @@
 
 <div class="min-h-screen bg-sc-bg text-sc-ink p-6 space-y-6">
 	<header class="flex items-baseline justify-between gap-4 border-b border-sc-line pb-4">
-		<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Settings</h1>
+		<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Settings</h1>
 		<div class="w-full max-w-md"><SettingsSearch /></div>
 	</header>
 
@@ -222,7 +222,7 @@
 			aria-labelledby="settings-leave-title"
 		>
 			<div class="rounded-md w-full max-w-md border border-sc-line bg-sc-panel p-5 space-y-4">
-				<h2 id="settings-leave-title" class="text-sm font-bold uppercase tracking-widest text-sc-ink">
+				<h2 id="settings-leave-title" class="text-[14px] font-semibold text-sc-ink">
 					Discard unsaved changes?
 				</h2>
 				<p class="text-xs text-sc-ink2">

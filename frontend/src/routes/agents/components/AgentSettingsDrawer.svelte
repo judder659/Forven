@@ -49,7 +49,7 @@
 		transition:fly={{ x: 320 }}
 	>
 		<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between sticky top-0 bg-sc-panel">
-			<h2 class="font-bold tracking-wider uppercase text-xs">Agent Hub Settings</h2>
+			<h2 class="text-[14px] font-semibold">Agent Hub Settings</h2>
 			<button class="terminal-button-icon" type="button" on:click={closeDrawer} aria-label="Close settings">
 				<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<line x1="18" y1="6" x2="6" y2="18"></line>
@@ -59,7 +59,7 @@
 		</div>
 		<div class="p-4 space-y-6 overflow-y-auto flex-1 min-h-0">
 			<section class="space-y-2">
-				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Polling</h3>
+				<h3 class="text-[13px] font-semibold text-sc-ink3 mb-2">Polling</h3>
 				<div>
 					<label class="block text-[10px] text-sc-ink3 uppercase tracking-wider mb-1" for="hub-poll-interval">
 						Poll Interval
@@ -77,7 +77,7 @@
 			</section>
 
 			<section class="space-y-4">
-				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Display</h3>
+				<h3 class="text-[13px] font-semibold text-sc-ink3 mb-2">Display</h3>
 				<label class="flex items-center justify-between text-xs cursor-pointer">
 					<span class="uppercase tracking-wider text-[10px] text-sc-ink3">Compact Card Mode</span>
 					<input
@@ -105,7 +105,7 @@
 			</section>
 
 			<section class="space-y-3">
-				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-2">Scheduler</h3>
+				<h3 class="text-[13px] font-semibold text-sc-ink3 mb-2">Scheduler</h3>
 				<label class="flex items-center justify-between text-xs cursor-pointer">
 					<span class="uppercase tracking-wider text-[10px] text-sc-ink3">Auto-expand errors</span>
 					<input

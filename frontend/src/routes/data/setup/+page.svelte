@@ -92,7 +92,7 @@
 
 <div class="mx-auto max-w-5xl space-y-3 p-4 pb-24">
 	<div>
-		<h1 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Set up data</h1>
+		<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Set up data</h1>
 		<p class="mt-1 max-w-2xl text-[12px] leading-relaxed text-sc-ink2">
 			Backtests, the gauntlet and paper trading read stored market data. Pick a preset: it downloads in the background, you can keep working,
 			and the collector keeps it current afterwards. {#if stored}You already have {formatCount(stored)} series; estimates count only bars that are not stored yet.{/if}

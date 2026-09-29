@@ -867,7 +867,7 @@
 	<div class="px-4 py-3 bg-sc-panel border-b border-sc-line flex-shrink-0">
 		<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-bold uppercase tracking-widest text-sc-ink">The Forge</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">The Forge</h1>
 				<p class="text-xs text-sc-ink3 mt-1">
 					{rowsInView.length} in view · Pipeline {pipelineActiveCount}
 				</p>

@@ -27,6 +27,11 @@ body {
     overflow: hidden; /* Prevent body scroll, workspaces handle it */
 }
 
+/* Figures line up in every table, whatever the cell's font. */
+td {
+	font-variant-numeric: tabular-nums;
+}
+
 /* Ensure all select options have dark background */
 select option {
     background-color: #0c0e11;

@@ -144,7 +144,7 @@
 
 			<!-- Verdict Text -->
 			<div class="flex-1 min-w-0">
-				<h2 class="text-xl font-bold uppercase tracking-widest text-sc-ink">Strategy Analysis</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink">Strategy Analysis</h2>
 				<p class="text-sc-ink2 text-sm mt-0.5">
 					{scorecard.strategy_name || 'Unknown Strategy'}
 					{#if scorecard.symbol}
@@ -177,7 +177,7 @@
 	<!-- Executive Summary -->
 	{#if writeup.executive_summary}
 		<div class="terminal-card p-5">
-			<h3 class="text-[10px] font-bold text-sc-ink2 uppercase tracking-widest mb-3">Executive Summary</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2 mb-3">Executive Summary</h3>
 			<p class="text-sm text-sc-ink2 leading-relaxed">{writeup.executive_summary}</p>
 		</div>
 	{/if}
@@ -191,7 +191,7 @@
 			<div class="terminal-card p-5">
 				<!-- Section Header with progress bar -->
 				<div class="flex items-center justify-between mb-3">
-					<h3 class="text-[10px] font-bold text-sc-ink uppercase tracking-widest">{meta.label}</h3>
+					<h3 class="text-[13px] font-semibold text-sc-ink">{meta.label}</h3>
 					{#if cat}
 						<div class="flex items-center gap-3">
 							<!-- Mini progress bar -->
@@ -222,7 +222,7 @@
 	<!-- Bottom Line -->
 	{#if writeup.bottom_line}
 		<div class="terminal-card p-5">
-			<h3 class="text-[10px] font-bold text-sc-ink2 uppercase tracking-widest mb-3">Bottom Line</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2 mb-3">Bottom Line</h3>
 			<p class="text-sm text-sc-ink2 leading-relaxed">{writeup.bottom_line}</p>
 		</div>
 	{/if}
@@ -234,7 +234,7 @@
 				<svg class="w-5 h-5 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
 					<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
 				</svg>
-				<h3 class="text-[10px] font-bold text-red-400 uppercase tracking-widest">
+				<h3 class="text-[13px] font-semibold text-red-400">
 					{scorecard.red_flags.length} Red Flag{scorecard.red_flags.length > 1 ? 's' : ''}
 				</h3>
 			</div>

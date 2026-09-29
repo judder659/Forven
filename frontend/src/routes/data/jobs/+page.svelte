@@ -118,7 +118,7 @@
 				</div>
 			{:else}
 				{#each groups as group (group.key)}
-					<h2 class="border-b border-sc-line bg-sc-panel px-3 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{group.label} <span class="font-normal text-sc-ink3">· {group.jobs.length}</span></h2>
+					<h2 class="text-[14px] font-semibold border-b border-sc-line bg-sc-panel px-3 py-1.5 text-sc-ink3">{group.label} <span class="font-normal text-sc-ink3">· {group.jobs.length}</span></h2>
 					{#each group.jobs as job (job.id)}<JobRow {job} on:changed={load} />{/each}
 				{/each}
 				{#if jobs.data && jobs.data.total > list.length}

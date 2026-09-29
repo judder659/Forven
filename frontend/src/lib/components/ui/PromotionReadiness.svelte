@@ -236,7 +236,7 @@
 
 <div class="rounded-md space-y-2 border border-sc-line bg-sc-panel p-2.5">
 	<div class="flex items-center justify-between">
-		<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+		<h3 class="text-[13px] font-semibold text-sc-ink2">
 			{stageTitle[stage] || 'Promotion Requirements'}
 		</h3>
 		{#if hasChecklist && !isQuickScreen}

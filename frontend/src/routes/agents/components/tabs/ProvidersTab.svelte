@@ -302,7 +302,7 @@
 >
 	<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 		<div>
-			<h2 id="agents-providers-heading" class="text-sm font-bold uppercase tracking-widest text-sc-ink">
+			<h2 id="agents-providers-heading" class="text-[14px] font-semibold text-sc-ink">
 				Providers &amp; Keys
 			</h2>
 			<p class="text-xs text-sc-ink3 mt-1">

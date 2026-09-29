@@ -249,7 +249,7 @@
 		<!-- Needs attention -->
 		<section class="rounded-md min-w-0 border border-sc-line bg-sc-panel" aria-labelledby="dm-attention">
 			<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-				<h2 id="dm-attention" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Needs attention</h2>
+				<h2 id="dm-attention" class="text-[14px] font-semibold text-sc-ink">Needs attention</h2>
 				<span class="text-[10px] text-sc-ink3">most important first · live, then paper, pipeline, research</span>
 				<a href={catalogHref({ state: ['late', 'breach', 'missing'] })} class="ml-auto text-[10px] text-sc-ink2 hover:text-sc-ink">All problems →</a>
 			</header>
@@ -309,7 +309,7 @@
 			<!-- Sources -->
 			<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-sources">
 				<header class="flex items-center border-b border-sc-line px-3 py-1.5">
-					<h2 id="dm-sources" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Sources</h2>
+					<h2 id="dm-sources" class="text-[14px] font-semibold text-sc-ink">Sources</h2>
 				</header>
 				<SectionState state={venues} what="Source health" endpoint="GET /api/data/venues" on:retry={loadVenues}>
 					{#each venues.data ?? [] as venue (venue.venue)}
@@ -337,7 +337,7 @@
 			<!-- Collection -->
 			<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-collector">
 				<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-					<h2 id="dm-collector" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Collection</h2>
+					<h2 id="dm-collector" class="text-[14px] font-semibold text-sc-ink">Collection</h2>
 					{#if collector.data}
 						<span class="ml-auto font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {collector.data.enabled ? 'text-emerald-400' : 'text-amber-400'}">{collector.data.enabled ? 'On' : 'Off'}</span>
 					{/if}
@@ -402,7 +402,7 @@
 			<!-- Storage glance -->
 			<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-storage">
 				<header class="flex items-center border-b border-sc-line px-3 py-1.5">
-					<h2 id="dm-storage" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Storage</h2>
+					<h2 id="dm-storage" class="text-[14px] font-semibold text-sc-ink">Storage</h2>
 					<a href="{DM}/storage" class="ml-auto text-[10px] text-sc-ink2 hover:text-sc-ink">Open →</a>
 				</header>
 				<SectionState state={storage} what="The storage inventory" endpoint="GET /api/data/storage" rows={2} on:retry={loadStorage}>
@@ -428,7 +428,7 @@
 			<!-- Incidents -->
 			<section class="rounded-md border border-sc-line bg-sc-panel" aria-labelledby="dm-incidents">
 				<header class="flex items-center border-b border-sc-line px-3 py-1.5">
-					<h2 id="dm-incidents" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Incidents · 24 h</h2>
+					<h2 id="dm-incidents" class="text-[14px] font-semibold text-sc-ink">Incidents · 24 h</h2>
 					<a href="{DM}/log" class="ml-auto text-[10px] text-sc-ink2 hover:text-sc-ink">Log →</a>
 				</header>
 				<SectionState state={incidents} what="Recent incidents" endpoint="GET /api/data/log" rows={2} on:retry={loadIncidents}>

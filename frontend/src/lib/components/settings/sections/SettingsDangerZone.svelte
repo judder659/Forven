@@ -92,7 +92,7 @@
 <div class="space-y-6">
 	<div class="border border-red-900 bg-red-500/5 p-5 space-y-4">
 		<div>
-			<h2 class="text-sm font-bold uppercase tracking-widest text-red-400">Factory reset</h2>
+			<h2 class="text-[14px] font-semibold text-red-400">Factory reset</h2>
 			<p class="text-xs text-red-400/80 mt-1">
 				Permanently wipes the selected data categories and restores a clean slate. This cannot be
 				undone. Choose which categories to <strong>keep</strong> — everything else is erased.
@@ -157,7 +157,7 @@
 		aria-labelledby="factory-reset-title"
 	>
 		<div class="rounded-md w-full max-w-md border border-red-900 bg-sc-panel p-5 space-y-4">
-			<h2 id="factory-reset-title" class="text-sm font-bold uppercase tracking-widest text-red-400">
+			<h2 id="factory-reset-title" class="text-[14px] font-semibold text-red-400">
 				Confirm factory reset
 			</h2>
 			<p class="text-xs text-sc-ink2">

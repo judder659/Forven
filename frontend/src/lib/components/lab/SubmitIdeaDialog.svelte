@@ -113,7 +113,7 @@
 			aria-labelledby="submit-idea-title"
 		>
 			<header class="flex shrink-0 items-center justify-between border-b border-sc-line px-4 py-2">
-				<h2 id="submit-idea-title" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+				<h2 id="submit-idea-title" class="text-[14px] font-semibold text-sc-ink2">
 					Submit an idea
 				</h2>
 				<button

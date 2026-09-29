@@ -257,7 +257,7 @@
 	<header class="flex items-center justify-between">
 		<div>
 			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Brain</div>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Routines</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Routines</h1>
 			<p class="mt-1 text-xs text-sc-ink3 max-w-2xl">
 				Scheduled instructions the Brain runs autonomously — optionally posting the result to a
 				Discord channel. Operator-authored routines are live immediately; Brain-proposed routines

@@ -391,7 +391,7 @@
 			<svg class="w-6 h-6 text-red-400" viewBox="0 0 24 24" fill="currentColor">
 				<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 11H5V6.3l7-3.11v8.8h7c-.53 4.12-3.28 7.79-7 8.94V12z" />
 			</svg>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Risk Command</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Risk Command</h1>
 			<div class="inline-flex border border-sc-line2" role="group" aria-label="risk scope">
 				<button
 					class="border-r border-sc-line2 px-3 py-1 text-[12px] {scope === 'live'
@@ -540,7 +540,7 @@
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 			<div class="flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">
+				<h2 class="text-[14px] font-semibold text-sc-ink">
 					Trading Status
 					<span class="ml-2 border border-sc-line2 px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-sc-ink3" title="Kill switch, daily-loss halt, and equity anchors are driven by live account equity but halt PAPER trading too">GLOBAL</span>
 				</h2>
@@ -572,7 +572,7 @@
 		</div>
 
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">
+			<h2 class="text-[14px] font-semibold text-sc-ink">
 				Risk Limits
 				<span class="ml-2 border border-sc-line2 px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-sc-ink3" title="These bars always grade the LIVE book against live risk policy — paper sandboxes have no shared budget to grade">LIVE POLICY</span>
 			</h2>
@@ -605,7 +605,7 @@
 	{#if scope === 'live' && liveBudget}
 	<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Live Portfolio Budget</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Live Portfolio Budget</h2>
 			<div class="flex items-center gap-2">
 				<span class={`text-xs px-2 py-1 border ${liveBudget.enabled ? 'text-emerald-400 border-emerald-800' : 'text-yellow-400 border-yellow-800'}`}>
 					{liveBudget.enabled ? 'Enforcing' : 'Disabled'}
@@ -832,7 +832,7 @@
 	{#if scope === 'live' && liquidityGuard}
 	<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Liquidity Guard</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Liquidity Guard</h2>
 			<div class="flex items-center gap-2">
 				<span class={`text-xs px-2 py-1 border ${liquidityGuard.enabled ? 'text-emerald-400 border-emerald-800' : 'text-yellow-400 border-yellow-800'}`}>
 					{liquidityGuard.enabled ? 'Enforcing' : liquidityGuard.enabled === false ? 'Disabled' : 'Unavailable'}
@@ -902,7 +902,7 @@
 
 	<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">
+			<h2 class="text-[14px] font-semibold text-sc-ink">
 				Correlation Groups
 				<span class="ml-2 border px-1.5 py-0.5 text-[9px] font-normal tracking-wider {scope === 'live' ? 'border-red-900 text-red-400' : 'border-sc-line2 text-sc-ink2'}">{scope.toUpperCase()}</span>
 			</h2>

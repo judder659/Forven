@@ -184,7 +184,7 @@
 			<section class="flex-1 min-w-0 flex flex-col">
 				<header class="flex items-start justify-between px-6 py-4 border-b border-sc-line">
 					<div>
-						<h2 class="text-lg font-bold uppercase tracking-widest text-sc-ink">{step.label}</h2>
+						<h2 class="text-[14px] font-semibold text-sc-ink">{step.label}</h2>
 						<p class="text-xs text-sc-ink3 mt-1">{step.description}</p>
 					</div>
 					<button type="button"

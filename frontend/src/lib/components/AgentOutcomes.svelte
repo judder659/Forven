@@ -18,7 +18,7 @@
 
 <section class="rounded-md border border-sc-line bg-sc-panel p-4" aria-label="Agent research outcomes">
     <div class="flex items-center justify-between gap-3">
-        <h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Research output · last 7 days</h2>
+        <h2 class="text-[14px] font-semibold text-sc-ink">Research output · last 7 days</h2>
         <a href="/agents?tab=tasks&status=blocked" class="text-xs text-amber-400">Needs attention {data ? `(${data.tasks.blocked || 0})` : ''}</a>
     </div>
     {#if error}<p class="mt-3 text-xs text-amber-400" role="status">{error}</p>

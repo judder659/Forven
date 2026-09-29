@@ -579,7 +579,7 @@
 		<section class="rounded-md border border-sc-line bg-sc-panel" aria-label={sm.title}>
 			<header class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-sc-line px-3 py-1.5">
 				<span class="h-2 w-2 shrink-0 {sm.dot}"></span>
-				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">{sm.title}</h3>
+				<h3 class="text-[13px] font-semibold text-sc-ink">{sm.title}</h3>
 				<span class="text-[11px] text-sc-ink3">
 					when{#if side.rows.length > 1}
 						<button type="button" on:click={() => flipLogic(side)} {disabled} aria-label="combine logic"
@@ -656,7 +656,7 @@
 	<!-- Indicators -->
 	<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Indicators">
 		<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Indicators</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink">Indicators</h3>
 			<span class="text-[10px] text-sc-ink3">{instances.length}</span>
 			<button type="button" on:click={() => openPalette()} {disabled}
 				class="rounded-md ml-auto border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-40">＋ Indicator</button>
@@ -691,7 +691,7 @@
 	<!-- Knobs: named numbers the rules read -->
 	<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Knobs">
 		<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Knobs</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink">Knobs</h3>
 			<span class="truncate text-[10px] text-sc-ink3">named numbers your rules read · drag to tune, stress-test to check</span>
 			<button type="button" on:click={addParam} {disabled}
 				class="rounded-md ml-auto shrink-0 border border-sc-line2 px-2 py-0.5 text-[12px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-40">＋ Knob</button>

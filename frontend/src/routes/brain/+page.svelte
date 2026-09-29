@@ -105,11 +105,10 @@
 	}
 
 	.brain-header h1 {
-		font-size: 1.125rem;
-		font-weight: 700;
+		font-size: 22px;
+		font-weight: 600;
 		margin: 0;
-		text-transform: uppercase;
-		letter-spacing: 0.15em;
+		letter-spacing: -0.01em;
 	}
 
 	.subtitle {

@@ -123,7 +123,7 @@
 				{@const items = grouped[stage] ?? []}
 				<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden" data-testid="explain-column-{stage}">
 					<div class="px-3 py-2.5 border-b border-sc-line flex justify-between items-center">
-						<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{STAGE_TITLES[stage]}</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink3">{STAGE_TITLES[stage]}</h3>
 						<span class="text-[11px] text-sc-ink3 tabular-nums">{items.length}</span>
 					</div>
 					{#if items.length === 0}

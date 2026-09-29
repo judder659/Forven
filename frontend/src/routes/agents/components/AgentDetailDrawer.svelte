@@ -137,7 +137,7 @@
 	>
 		<header class="sticky top-0 z-10 bg-sc-panel border-b border-sc-line px-5 py-3 flex items-center justify-between">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-widest text-sc-ink">{agentName}</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink">{agentName}</h2>
 				<p class="mt-0.5 text-[11px] font-mono text-sc-ink3">{agentId}</p>
 			</div>
 			<button
@@ -208,7 +208,7 @@
 			<!-- Per-agent documents -->
 			<section class="terminal-card p-4 space-y-4">
 				<div>
-					<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Agent docs</h3>
+					<h3 class="text-[13px] font-semibold text-sc-ink2">Agent docs</h3>
 					<p class="text-xs text-sc-ink3 mt-1">
 						SOUL.md, AGENTS.md, and ROLE.md are saved per-agent. Restart background services if
 						behavior updates need to propagate.

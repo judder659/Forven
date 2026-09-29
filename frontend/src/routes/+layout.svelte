@@ -268,7 +268,7 @@
      the page pushes over and stays usable next to the chat (no dimming overlay).
      min(440px, 92vw) mirrors the panel's w-[440px] max-w-[92vw]. -->
 <div
-	class="flex h-screen bg-sc-bg text-sc-ink font-mono overflow-hidden selection:bg-sc-ink selection:text-black"
+	class="flex h-screen bg-sc-bg text-sc-ink font-sans overflow-hidden selection:bg-sc-ink selection:text-black"
 	style="transition: padding-right 250ms ease;"
 	style:padding-right={$assistantUI.open ? 'min(440px, 92vw)' : '0px'}
 >

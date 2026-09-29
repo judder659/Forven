@@ -171,7 +171,7 @@
 <section class="rounded-md border border-sc-line bg-sc-panel">
 	<header class="flex items-center justify-between border-b border-sc-line px-4 py-3">
 		<div>
-			<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Wallets &amp; sub-accounts</h3>
+			<h3 class="text-[13px] font-semibold text-sc-ink2">Wallets &amp; sub-accounts</h3>
 			<p class="mt-0.5 text-xs text-sc-ink3">
 				Master balances, named sub-account wallets (Bot Factory isolation), funding, and spot ⇄ perp moves.
 			</p>

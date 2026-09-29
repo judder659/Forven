@@ -360,7 +360,7 @@
 <div class="space-y-4 p-4">
 	<div class="flex items-center justify-between">
 		<div>
-			<h1 class="text-lg font-bold uppercase tracking-wider text-sc-ink">Propr</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Propr</h1>
 			<p class="text-[11px] text-sc-ink3">
 				On-chain prop firm on Hyperliquid: a purchased challenge account trades real HL markets
 				through Propr's API. This page manages the connection, the challenge account, and manual
@@ -415,7 +415,7 @@
 		<!-- ─────────────────────── connection ─────────────────────── -->
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 			<div class="flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Connection</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink">Connection</h2>
 				<span class="text-[10px] text-sc-ink3">{status?.base_url}</span>
 			</div>
 			{#if status?.connected && status?.account_error}
@@ -497,7 +497,7 @@
 
 		<!-- ─────────────────────── challenge account ─────────────────────── -->
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Challenge account</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Challenge account</h2>
 			{#if sectionErrors.attempts}
 				<div class="text-[11px] text-yellow-500">{sectionErrors.attempts}</div>
 			{/if}
@@ -602,7 +602,7 @@
 			<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-4">
 				<div class="flex items-center justify-between">
 					<div>
-						<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Challenge rules</h2>
+						<h2 class="text-[14px] font-semibold text-sc-ink">Challenge rules</h2>
 						<p class="text-[11px] text-sc-ink3">
 							The venue's kill conditions, read from the challenge itself
 							({halt.rules_source === 'challenge' ? "Propr's own phase rules" : 'conservative fallback defaults'}),
@@ -733,7 +733,7 @@
 		>
 			<div class="flex items-center justify-between">
 				<div>
-					<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Strategy mirror</h2>
+					<h2 class="text-[14px] font-semibold text-sc-ink">Strategy mirror</h2>
 					<p class="text-[11px] text-sc-ink3">
 						Pick the strategies whose trades get copied onto the Propr account. Live and paper
 						trading are completely untouched — the mirror only observes their trades and places
@@ -919,7 +919,7 @@
 
 		<!-- ─────────────────────── positions ─────────────────────── -->
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-2">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Positions</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Positions</h2>
 			{#if sectionErrors.positions}
 				<div class="text-[11px] text-yellow-500">{sectionErrors.positions}</div>
 			{:else if positions.length === 0}
@@ -980,7 +980,7 @@
 
 		<!-- ─────────────────────── open orders ─────────────────────── -->
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-2">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Open orders</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Open orders</h2>
 			{#if sectionErrors.orders}
 				<div class="text-[11px] text-yellow-500">{sectionErrors.orders}</div>
 			{:else if openOrders.length === 0}
@@ -1030,7 +1030,7 @@
 
 		<!-- ─────────────────────── recent trades ─────────────────────── -->
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-2">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink">Recent trades</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Recent trades</h2>
 			{#if sectionErrors.trades}
 				<div class="text-[11px] text-yellow-500">{sectionErrors.trades}</div>
 			{:else if trades.length === 0}

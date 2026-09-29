@@ -39,7 +39,7 @@
 
 <div class="rounded-md border border-sc-line bg-sc-panel" data-testid="wallet-capacity">
 	<div class="flex items-center justify-between border-b border-sc-line px-3 py-2">
-		<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Wallet capacity &amp; exposure</h2>
+		<h2 class="text-[14px] font-semibold text-sc-ink2">Wallet capacity &amp; exposure</h2>
 		<a href="/risk" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink">Risk →</a>
 	</div>
 	<div class="grid gap-x-6 gap-y-3 px-3 py-2 md:grid-cols-2">

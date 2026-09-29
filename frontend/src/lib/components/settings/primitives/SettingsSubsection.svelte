@@ -8,7 +8,7 @@
 
 <section class="terminal-card">
   <header class="flex flex-wrap items-center justify-between gap-2 border-b border-sc-line px-4 py-2">
-    <h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{label}</h2>
+    <h2 class="text-[14px] font-semibold text-sc-ink2">{label}</h2>
     {#if deepLinkTo}
       <a href={deepLinkTo} class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink">→ {deepLinkTo}</a>
     {/if}

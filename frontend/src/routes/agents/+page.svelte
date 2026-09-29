@@ -1513,7 +1513,7 @@
 
 		<section class="space-y-3">
 			<div class="flex items-center gap-3">
-				<h2 class="text-sm font-bold tracking-widest uppercase text-sc-ink2">Strategy Developers</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink2">Strategy Developers</h2>
 				<span class="text-xs text-sc-ink3">({strategyDeveloperCards.length})</span>
 				<span class="text-[10px] text-sc-ink3 hidden md:inline">
 					Each developer receives every research task — compare models side-by-side.
@@ -1892,7 +1892,7 @@
 					{@const ungranted = mcpAllServers.filter((s) => !grantedNames.has(s.name))}
 					<div class="space-y-4 whitespace-normal">
 						<div class="flex items-center justify-between">
-							<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+							<h3 class="text-[13px] font-semibold text-sc-ink2">
 								Granted MCP servers ({mcpGrants.length})
 							</h3>
 							<button
@@ -1939,7 +1939,7 @@
 						{/if}
 
 						<div class="border-t border-sc-line pt-3">
-							<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2 mb-2">
+							<h3 class="text-[13px] font-semibold text-sc-ink2 mb-2">
 								Available servers ({ungranted.length})
 							</h3>
 							{#if mcpAllServers.length === 0 && !mcpLoading}

@@ -58,7 +58,7 @@
 	class="fixed right-0 top-0 z-[60] flex h-full w-[420px] max-w-[92vw] flex-col border-l border-sc-line2 bg-sc-panel font-mono text-sc-ink shadow-[-16px_0_40px_rgba(0,0,0,0.7)]">
 	<header class="flex items-start gap-3 border-b border-sc-line px-4 py-3">
 		<div class="min-w-0 flex-1">
-			<h2 id="dm-jobs-title" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Jobs</h2>
+			<h2 id="dm-jobs-title" class="text-[14px] font-semibold text-sc-ink">Jobs</h2>
 			<p class="mt-1 text-[11px] text-sc-ink2">
 				{#if summary}
 					{formatCount(summary.running)} running · {formatCount(summary.queued)} queued{#if summary.failed_24h} · <span class="text-red-400">{formatCount(summary.failed_24h)} failed in 24 h</span>{/if}
@@ -75,7 +75,7 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		<section aria-labelledby="dm-jobs-active">
-			<h3 id="dm-jobs-active" class="border-b border-sc-line bg-sc-panel px-4 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Running and queued</h3>
+			<h3 id="dm-jobs-active" class="text-[13px] font-semibold border-b border-sc-line bg-sc-panel px-4 py-1.5 text-sc-ink3">Running and queued</h3>
 			<SectionState state={active} what="The job list" endpoint="GET /api/data/jobs" rows={3} on:retry={load}>
 				{#if active.data?.length}
 					{#each active.data as job (job.id)}<JobRow {job} on:changed={load} />{/each}
@@ -87,7 +87,7 @@
 			</SectionState>
 		</section>
 		<section aria-labelledby="dm-jobs-recent">
-			<h3 id="dm-jobs-recent" class="border-y border-sc-line bg-sc-panel px-4 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Recently finished</h3>
+			<h3 id="dm-jobs-recent" class="text-[13px] font-semibold border-y border-sc-line bg-sc-panel px-4 py-1.5 text-sc-ink3">Recently finished</h3>
 			<SectionState state={recent} what="The job list" endpoint="GET /api/data/jobs" rows={3} on:retry={load}>
 				{#if recent.data?.length}
 					{#each recent.data as job (job.id)}<JobRow {job} on:changed={load} />{/each}

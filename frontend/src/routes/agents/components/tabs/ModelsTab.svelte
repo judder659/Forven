@@ -92,7 +92,7 @@
 >
 	<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 		<div>
-			<h2 id="agents-models-heading" class="text-sm font-bold uppercase tracking-widest text-sc-ink">Models</h2>
+			<h2 id="agents-models-heading" class="text-[14px] font-semibold text-sc-ink">Models</h2>
 			<p class="text-xs text-sc-ink3 mt-1">
 				Enable the models that should be selectable for agents and routing.
 				<span class="text-sc-ink2" title="Enabling a model makes it selectable everywhere on this page (agent dropdowns + routing pickers). Models from a provider you haven't connected can be enabled but still won't be usable until that provider is connected.">Enabling a model makes it selectable for agents/routing.</span>
@@ -135,7 +135,7 @@
 			{#each Object.entries(grouped) as [provider, opts] (provider)}
 				{@const providerConnected = $connectedProviderIds.has(provider)}
 				<div>
-					<h3 class="text-xs font-semibold text-sc-ink2 uppercase tracking-wider mb-2 flex items-center gap-2">
+					<h3 class="text-[13px] font-semibold text-sc-ink2 mb-2 flex items-center gap-2">
 						{provider} <span class="text-sc-ink3 font-normal">({opts.length})</span>
 						{#if !providerConnected}
 							<span class="text-[10px] normal-case tracking-normal text-yellow-400" title="Provider not connected — enabled models here stay unusable until you connect it under Providers & Keys.">not connected</span>

@@ -21,7 +21,7 @@
 
 <section class="terminal-card">
 	<header class="border-b border-sc-line px-4 py-3">
-		<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Schedules</h2>
+		<h2 class="text-[14px] font-semibold text-sc-ink2">Schedules</h2>
 		<p class="text-xs text-sc-ink3 mt-1">
 			Cron / interval schedules for continuous learning and trading processes. Each job has its own cadence.
 		</p>

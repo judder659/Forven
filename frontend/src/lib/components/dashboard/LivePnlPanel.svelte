@@ -86,7 +86,7 @@
 
 <div class="rounded-md border border-sc-line bg-sc-panel" data-testid="live-pnl">
 	<div class="flex items-center justify-between gap-2 border-b border-sc-line px-3 py-2">
-		<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title="Closed live trades, net of recorded fees and funding">
+		<h2 class="text-[14px] font-semibold text-sc-ink2" title="Closed live trades, net of recorded fees and funding">
 			Realized P&amp;L
 			{#if hasTrades && total !== null}
 				<span class="ml-1 font-mono normal-case {pnlTone(total)}">{formatUsd(total, true)}</span>

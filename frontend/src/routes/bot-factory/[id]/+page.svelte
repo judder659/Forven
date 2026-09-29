@@ -458,7 +458,7 @@
 			<div class="flex items-start justify-between">
 				<div>
 					<div class="flex items-center gap-2.5">
-						<h1 class="text-xl font-bold uppercase tracking-widest text-sc-ink">{bot.name}</h1>
+						<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">{bot.name}</h1>
 						{#if isLiveMode}
 							<span class="border border-red-900 bg-red-500/10 px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">Live</span>
 							{#if bot.live_wallet}
@@ -518,7 +518,7 @@
 
 		{#if goLiveOpen && !isRunning && !isLiveMode}
 			<div class="mb-6 border border-red-900 bg-red-500/5 p-4">
-				<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">Arm live execution</h3>
+				<h3 class="text-[13px] font-semibold text-red-400">Arm live execution</h3>
 				<p class="mt-2 text-xs leading-relaxed text-sc-ink2">
 					This bot will place <span class="font-bold text-red-400">real Hyperliquid orders</span> sized off its
 					allocated capital, admission-checked against the account's live risk budget (portfolio caps, correlation

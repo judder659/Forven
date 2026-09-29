@@ -229,7 +229,7 @@
 	<aside class="w-64 border-r border-sc-line bg-sc-panel overflow-y-auto">
 		<header class="px-4 py-4 border-b border-sc-line">
 			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agents</div>
-			<h1 class="text-sm font-bold uppercase tracking-widest text-sc-ink mt-1">Toolset matrix</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink mt-1">Toolset matrix</h1>
 		</header>
 		{#if agentsLoading}
 			<div class="px-4 py-3 text-xs text-sc-ink3">Loading agents...</div>
@@ -270,7 +270,7 @@
 				<div class="flex items-end justify-between gap-3">
 					<div>
 						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agent</div>
-						<h2 class="text-lg font-bold uppercase tracking-widest text-sc-ink">{toolsets.agent_id}</h2>
+						<h2 class="text-[14px] font-semibold text-sc-ink">{toolsets.agent_id}</h2>
 					</div>
 					<div class="flex items-center gap-2">
 						<button

@@ -220,7 +220,7 @@
 				<div class="mb-1">
 					<a href="/lab" class="text-xs text-sc-ink3 uppercase tracking-wider transition-colors hover:text-sc-ink">The Forge</a>
 				</div>
-				<h1 class="text-xl font-bold uppercase tracking-widest text-sc-ink">All Backtests</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">All Backtests</h1>
 				<p class="mt-1 text-xs text-sc-ink3">{loadedSummary}</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">

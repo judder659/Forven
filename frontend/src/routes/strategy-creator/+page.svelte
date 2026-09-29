@@ -1326,7 +1326,7 @@ TYPE_NAME = "my_strategy"
 			<div class="p-8 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading result…</div>
 		{:else if inlineResult}
 			<div class="flex items-center justify-between">
-				<h2 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Backtest result</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink">Backtest result</h2>
 				<button type="button" on:click={openFullReport} disabled={!lastStrategyId}
 					class="terminal-button-primary text-[12px] disabled:opacity-40">Full report →</button>
 			</div>
@@ -1441,7 +1441,7 @@ TYPE_NAME = "my_strategy"
 			{#if aiOpen}
 				<section class="rounded-md border border-sc-line2 bg-sc-panel" aria-label="AI assist">
 					<header class="flex items-center gap-2 border-b border-sc-line px-3 py-1.5">
-						<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">AI assist</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink">AI assist</h3>
 						<span class="truncate text-[10px] text-sc-ink3">describe a new strategy, or a change to this one</span>
 						<button type="button" on:click={() => (aiOpen = false)} aria-label="Close AI assist" class="ml-auto px-1 text-sc-ink3 hover:text-sc-ink">✕</button>
 					</header>
@@ -1610,7 +1610,7 @@ TYPE_NAME = "my_strategy"
 			{#if mode === 'visual'}
 				<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Preview">
 					<header class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-sc-line px-3 py-1.5 text-[10px] text-sc-ink3">
-						<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">Preview</h3>
+						<h3 class="text-[13px] font-semibold text-sc-ink">Preview</h3>
 						<span title="Entries fill at the open after the signal bar"><span class="text-emerald-500">▲</span> long <span class="text-orange-500">▼</span> short <span class="text-sc-ink2">●</span> exit</span>
 						<span title="Run Backtest scores only this part">░ out-of-sample</span>
 						<label class="inline-flex items-center gap-1" title="Shade the bars where the entry rule held">
@@ -1719,7 +1719,7 @@ TYPE_NAME = "my_strategy"
 {#if savePromptOpen}
 	<button type="button" class="fixed inset-0 z-40 bg-sc-bg/50" on:click={() => (savePromptOpen = false)} aria-label="Cancel save"></button>
 	<div class="rounded-md fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-sc-line2 bg-sc-panel p-5">
-		<h3 class="border-b border-sc-line pb-3 text-sm font-bold uppercase tracking-widest text-sc-ink">Save strategy</h3>
+		<h3 class="text-[13px] font-semibold border-b border-sc-line pb-3 text-sc-ink">Save strategy</h3>
 		{#if currentLibraryId}
 			<p class="mt-3 text-[12px] text-sc-ink3">
 				You're editing <span class="text-sc-ink">{strategyName}</span>. Overwrite it, or save your changes as a new strategy?

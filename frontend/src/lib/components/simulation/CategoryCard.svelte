@@ -52,7 +52,7 @@
 <div class="terminal-card">
 	<!-- Category Header -->
 	<div class="flex items-center justify-between border-b border-sc-line px-4 py-2">
-		<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{category.name}</h3>
+		<h3 class="text-[13px] font-semibold text-sc-ink2">{category.name}</h3>
 		<div class="flex items-center gap-2">
 			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {ratingColors[category.rating]}">
 				{category.rating}

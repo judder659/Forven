@@ -198,7 +198,7 @@
 				<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
 			</svg>
 			<div>
-				<h1 class="text-lg font-bold uppercase tracking-widest text-sc-ink">Diagnostics</h1>
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Diagnostics</h1>
 				<div class="text-[11px] text-sc-ink3 mt-0.5">
 					{#if snapshot}
 						Updated {formatTimestamp(snapshot.generated_at)} · auto-refresh 60s
@@ -278,7 +278,7 @@
 
 		<div class="rounded-md border border-sc-line bg-sc-panel">
 			<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">Health Checks</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink2">Health Checks</h2>
 				<span class="text-[10px] text-sc-ink3">click a row for detail</span>
 			</div>
 			<div class="divide-y divide-sc-line">
@@ -326,7 +326,7 @@
 		{#if mcpServers.length > 0}
 			<div class="rounded-md border border-sc-line bg-sc-panel">
 				<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
-					<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">MCP Servers</h2>
+					<h2 class="text-[14px] font-semibold text-sc-ink2">MCP Servers</h2>
 					<span class="text-[10px] text-sc-ink3">click a row to manage</span>
 				</div>
 				<div class="divide-y divide-sc-line">
@@ -375,7 +375,7 @@
 
 		<div class="rounded-md border border-sc-line bg-sc-panel">
 			<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-sc-ink2">Resumable Tasks</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink2">Resumable Tasks</h2>
 				<span class="text-[10px] text-sc-ink3">{resumable.length} waiting</span>
 			</div>
 			{#if resumable.length === 0}

@@ -74,7 +74,7 @@
 
 <section class="border border-red-900/70 bg-[#070303]" aria-labelledby="dm-delete-title" data-testid="delete-review">
 	<header class="flex items-center gap-2 border-b border-red-950 px-3 py-1.5">
-		<h3 id="dm-delete-title" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-300">Delete {plural(series.length, 'series', 'series')}</h3>
+		<h3 id="dm-delete-title" class="text-[13px] font-semibold text-red-300">Delete {plural(series.length, 'series', 'series')}</h3>
 		<span class="text-[10px] text-sc-ink2">
 			moves {series.length === 1 ? 'it' : 'them'} to the trash{retention ? ` for ${retention} days` : ''}; restore from Storage until then
 		</span>
