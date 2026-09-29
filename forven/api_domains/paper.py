@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from forven import api_core as core
 from forven.api_domains import trading as trading_domain
+from forven.api_domains.live_fleet import NOT_BLOCKS
 from forven.db import _now, get_db, kv_get, kv_set, live_equity_baseline_kv_key
 from forven.market_data import fetch_market_candles
 from forven.scheduler import enable_job
@@ -1596,16 +1597,19 @@ def _load_persisted_signal_markers(session: dict, *, limit: int = 500) -> tuple[
 
     try:
         with get_db() as conn:
+            # Newest `cap` rows, replayed oldest-first below. An ascending LIMIT
+            # returned the strategy's OLDEST history once it passed `cap` rows.
             rows = conn.execute(
                 """
                 SELECT id, ts, signal_type, matched, executed, price, match_reason, block_reason, metrics_json
                 FROM scanner_signal_results
                 WHERE strategy_id = ?
-                ORDER BY ts ASC, id ASC
+                ORDER BY ts DESC, id DESC
                 LIMIT ?
                 """,
                 (strategy_id, cap),
             ).fetchall()
+            rows = list(reversed(rows))
     except Exception:
         return [], [], [], False
 
@@ -1648,7 +1652,10 @@ def _load_persisted_signal_markers(session: dict, *, limit: int = 500) -> tuple[
             continue
 
         active_keys = set()
-        if not matched and price is not None:
+        # A plain evaluation ("no_signal") or a pre-outcome placeholder is not a
+        # refusal; only rows that name a real block reason become blocked markers.
+        block_reason = str(row["block_reason"] or "").strip()
+        if not matched and price is not None and block_reason not in NOT_BLOCKS:
             blocked.append(
                 {
                     "timestamp": timestamp,
@@ -1657,7 +1664,7 @@ def _load_persisted_signal_markers(session: dict, *, limit: int = 500) -> tuple[
                     "is_open": False,
                     "direction": direction,
                     "marker_kind": "blocked",
-                    "reason": str(row["block_reason"] or "no_signal"),
+                    "reason": block_reason,
                     "executed": executed,
                 }
             )

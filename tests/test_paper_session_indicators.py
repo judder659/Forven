@@ -340,3 +340,46 @@ def test_session_markers_coalesce_repeated_persisted_signals(forven_db, monkeypa
     assert [marker["timestamp"] for marker in result["entries"]] == [
         "2026-03-11T22:04:00+00:00",
     ]
+
+
+def test_session_markers_skip_plain_evaluations_and_read_the_newest_rows(forven_db, monkeypatch):
+    session = {
+        "id": "compat:strategy:S-MARKER-RECENT",
+        "strategy_id": "S-MARKER-RECENT",
+        "strategy_type": "ema_cross",
+        "runtime_type": "ema_cross",
+        "symbol": "BTC/USDT",
+        "timeframe": "1m",
+        "params": {},
+        "trades": [],
+        "positions": [],
+    }
+    rows = [
+        # Oldest history, beyond the marker limit once newer rows exist.
+        ("2026-03-11T20:00:00+00:00", "entry", 1, 0, 90.0, "ema_cross", None),
+        ("2026-03-11T22:00:00+00:00", "evaluate", 0, 0, 101.0, None, "no_signal"),
+        ("2026-03-11T22:01:00+00:00", "evaluate", 0, 0, 101.5, None, "evaluation_only"),
+        ("2026-03-11T22:02:00+00:00", "evaluate", 0, 0, 102.0, None, "regime blocked"),
+    ]
+    with get_db() as conn:
+        for ts, signal_type, matched, executed, price, match_reason, block_reason in rows:
+            conn.execute(
+                """
+                INSERT INTO scanner_signal_results
+                (ts, strategy_id, symbol, signal_type, matched, executed, price, match_reason, block_reason)
+                VALUES (?, 'S-MARKER-RECENT', 'BTC', ?, ?, ?, ?, ?, ?)
+                """,
+                (ts, signal_type, matched, executed, price, match_reason, block_reason),
+            )
+
+    monkeypatch.setattr(paper_domain, "_find_compat_paper_session", lambda session_id, include_deployed=True: session)
+    monkeypatch.setattr(
+        paper_domain,
+        "_load_session_bars",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not recompute markers")),
+    )
+
+    result = paper_domain.get_paper_session_markers("compat:strategy:S-MARKER-RECENT", limit=3)
+
+    assert result["entries"] == []  # the oldest row fell outside the newest three
+    assert [marker["reason"] for marker in result["blocked"]] == ["regime blocked"]

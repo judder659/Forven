@@ -1,10 +1,33 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from forven import api_core as core
+from forven.api_domains import market_context as market_context_domain
 from forven.api_domains import trading as trading_domain
+from forven.api_domains import trading_journal as trading_journal_domain
 from forven.api_security import require_operator_access
 
 router = APIRouter(tags=["trading"])
+
+
+# Trading desk reads. Sync `def` so the DB reads run in the threadpool.
+@router.get("/api/trading/journal")
+def read_trading_journal(
+    mode: str = Query(default="live", pattern="^(live|paper)$"),
+    strategy_id: str | None = None,
+    days: int = Query(default=30, ge=1, le=90),
+    limit: int = Query(default=400, ge=1, le=1000),
+):
+    """Fills, collapsed refusals and regime flags for one mode, newest first."""
+    return trading_journal_domain.build_journal(mode, strategy_id=strategy_id, days=days, limit=limit)
+
+
+@router.get("/api/trading/market-context")
+def read_market_context(
+    assets: str = Query(default="BTC,ETH,SOL", max_length=200),
+    hours: int = Query(default=72, ge=1, le=336),
+):
+    """Latest funding rate and open interest per asset, with recent history."""
+    return market_context_domain.build_market_context(assets, hours=hours)
 
 
 @router.get("/api/trades/open")
