@@ -74,12 +74,18 @@ def param_changes(runtime_type: str, validated: dict[str, Any], current: dict[st
     return changes
 
 
-def _kind(error: str | None, accepted_verified: bool) -> str:
+def _kind(error: str | None, accepted_verified: bool, runtime_type: str = "") -> str:
     if error is None:
         return "ok"
     text = error.lower()
     if not accepted_verified or "unverified" in text:
         return "unverified"
+    if "source identity" in text and runtime_type:
+        # An empty identity means the code is not loaded (right after a restart the
+        # registry is still importing strategies), not that it changed.
+        identity = importlib.import_module("forven.strategies.identity")
+        if not identity.source_identity(runtime_type):
+            return "source_unavailable"
     for needle, kind in (
         ("parameters changed", "params_changed"),
         ("engine changed", "engine_changed"),
@@ -195,12 +201,13 @@ def execution_check(strategy_id: str) -> dict[str, Any]:
     contract = _object(accepted.get("contract"))
     verified = bool(accepted.get("verified"))
     changes = param_changes(runtime, _object(contract.get("params")), _object(row.get("params"))) if verified and contract else []
-    restorable = error is not None and _restore_target(row, accepted) is not None
+    # Restoring only helps when a parameter actually differs from the validated set.
+    restorable = error is not None and bool(changes) and _restore_target(row, accepted) is not None
     return {
         **base,
         "executing": True,
         "executable": error is None,
-        "kind": _kind(error, verified),
+        "kind": _kind(error, verified, runtime),
         "reason": error,
         "accepted": {
             "verified": verified,

@@ -42,6 +42,8 @@ describe('execution check wording', () => {
 		expect(paper.title).toBe('New paper entries are blocked');
 		expect(paper.fix).toContain('Move it back to Gauntlet');
 		expect(paper.fix).toContain('A Forge backtest alone does not verify paper');
+		const loading = explainCheck(check({ kind: 'source_unavailable', changes: [], actions: { accept_backtest: false, restore: false, gauntlet: false } }));
+		expect(loading.body).toContain('usually clears on its own');
 	});
 
 	it('lists what a save changes and warns only for trading strategies', () => {
