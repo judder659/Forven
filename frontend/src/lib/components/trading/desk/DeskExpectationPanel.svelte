@@ -60,7 +60,7 @@
 		</table>
 		<p class="text-[12px] text-sc-ink3">
 			{mode === 'live' ? 'Live capital per trade is the strategy’s slice of the account' : 'Paper trades size off the strategy’s own book'}, so "% of capital" compares like with like. Win rate is the steadiest comparison at small samples; profit factor swings on a single trade.{stats.failed ? ` ${stats.failed} failed entr${stats.failed === 1 ? 'y is' : 'ies are'} left out.` : ''}
-			{#if stats.avgHoldHours !== null} Average hold {dur(stats.avgHoldHours * 3_600_000)}.{/if}
+			{#if stats.avgHoldHours !== null}{` Average hold ${dur(stats.avgHoldHours * 3_600_000)}.`}{/if}
 		</p>
 		<p class="font-plex-mono text-[10.5px] text-sc-ink4">Backtest window {bt.start_date?.slice(0, 10) ?? '—'} → {bt.end_date?.slice(0, 10) ?? '—'}</p>
 	</div>

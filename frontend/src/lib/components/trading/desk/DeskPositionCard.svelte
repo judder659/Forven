@@ -65,7 +65,7 @@
 	</div>
 	<div class={`font-plex-mono text-[24px] font-medium ${toneClass(math.pnl)}`}>
 		{fmtUsd(math.pnl, { signed: true })}
-		<small class="ml-1.5 font-sans text-[12px] font-normal text-sc-ink3">{fmtPct(math.pnlPctOfMargin)} of margin{#if math.r !== null} · {math.r >= 0 ? '+' : MINUS}{Math.abs(math.r).toFixed(2)}R{/if}</small>
+		<small class="ml-1.5 font-sans text-[12px] font-normal text-sc-ink3">{fmtPct(math.pnlPctOfMargin)} of margin{#if math.r !== null}{` · ${math.r >= 0 ? '+' : MINUS}${Math.abs(math.r).toFixed(2)}R`}{/if}</small>
 	</div>
 
 	<div class="relative mx-1.5 mt-1 h-14" aria-label="Stop, entry, mark and target on one scale">

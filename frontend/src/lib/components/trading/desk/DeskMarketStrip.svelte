@@ -46,7 +46,7 @@
 					<b class="font-plex-mono text-[14px] font-medium text-sc-ink">{fmtRateHourly(funding.rate_hourly)}</b>
 					<span class="text-[12px] text-sc-ink3">{fmtPct(funding.annualized_pct, 1)} a year</span>
 				</span>
-				<span class="text-[12px] text-sc-ink2">{fundingDirection(funding.rate_hourly)}{#if nextFunding !== null} · next print in <b class="font-plex-mono font-medium text-sc-ink">{dur(nextFunding - now)}</b>{/if}</span>
+				<span class="text-[12px] text-sc-ink2">{fundingDirection(funding.rate_hourly)}{#if nextFunding !== null}{' · next print in '}<b class="font-plex-mono font-medium text-sc-ink">{dur(nextFunding - now)}</b>{/if}</span>
 				<span class="text-[11.5px] text-sc-ink3">
 					24h avg {funding.avg_24h_hourly !== null ? fmtRateHourly(funding.avg_24h_hourly) : '—'} · 7d avg {funding.avg_7d_hourly !== null ? fmtRateHourly(funding.avg_7d_hourly) : '—'}
 					{#if funding.stale}<span class="text-[#e7b24a]"> · last update {ago(funding.as_of, now)}</span>{/if}

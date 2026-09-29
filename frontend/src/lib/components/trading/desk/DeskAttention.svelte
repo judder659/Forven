@@ -27,7 +27,7 @@
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-sc-line px-3 py-2">
 			<h2 class="text-[13px] font-semibold text-sc-ink">Needs attention</h2>
 			<span class="text-[12px] text-sc-ink3">
-				{#if counts.fail}{counts.fail} critical · {/if}{counts.caution} warning{counts.caution === 1 ? '' : 's'} · {counts.info} note{counts.info === 1 ? '' : 's'}
+				{#if counts.fail}{`${counts.fail} critical · `}{/if}{counts.caution} warning{counts.caution === 1 ? '' : 's'} · {counts.info} note{counts.info === 1 ? '' : 's'}
 			</span>
 		</div>
 		<ul class="grid lg:grid-cols-2">

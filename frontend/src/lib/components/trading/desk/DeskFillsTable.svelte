@@ -71,7 +71,7 @@
 		{#if summary.entryCount || summary.exitCount}
 			Strategy execution: the median entry filled {summary.entryMedian !== null ? `${fmtBps(summary.entryMedian)} bps (${word(summary.entryMedian)}) across ${summary.entryCount} fills` : '—'}, the median exit {summary.exitMedian !== null ? `${fmtBps(summary.exitMedian)} bps (${word(summary.exitMedian)}) across ${summary.exitCount}` : '—'}.{summary.worstEntry !== null ? ` Worst entry ${fmtBps(summary.worstEntry)} bps.` : ''} The backtests assume 2 bps against you each way.
 		{/if}
-		{#if anyInferred} * Stop fill inferred: the close was recorded by reconcile and its exit matches the resting stop.{/if}
-		{#if rows.length > shown.length} Showing the newest {shown.length} of {rows.length} fills.{/if}
+		{#if anyInferred}{' * Stop fill inferred: the close was recorded by reconcile and its exit matches the resting stop.'}{/if}
+		{#if rows.length > shown.length}{` Showing the newest ${shown.length} of ${rows.length} fills.`}{/if}
 	</p>
 {/if}
