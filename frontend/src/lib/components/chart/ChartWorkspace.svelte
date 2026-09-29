@@ -35,6 +35,8 @@
 	export let triggerMarkers: SignalMarker[] = [];
 	// Active position levels (stop / take-profit / trailing) drawn as horizontal lines.
 	export let priceLines: Array<{ id: string; price: number; color?: string; title?: string; dashed?: boolean }> = [];
+	// Refused entry/exit episodes (trading desk journal): amber squares with a short label.
+	export let refusedMarkers: Array<{ timestamp: string; label?: string; position?: 'aboveBar' | 'belowBar' }> = [];
 
 	const dispatch = createEventDispatcher<{
 		drawingPoint: ChartDrawingPoint;
@@ -249,7 +251,7 @@
 
 	// React to changes
 	$: if (chart && data) updateData();
-	$: if (chart && (entryMarkers || exitMarkers || triggerMarkers)) updateMarkers();
+	$: if (chart && (entryMarkers || exitMarkers || triggerMarkers || refusedMarkers)) updateMarkers();
 	$: if (chart && (mainIndicators || subIndicators)) updateIndicators();
 	$: if (chart && drawings) updateDrawings();
 	$: if (chart && priceLines) updatePositionLines();
@@ -432,6 +434,14 @@
 			if (m.color) color = m.color;
 			if (m.shape === 'arrowUp' || m.shape === 'arrowDown') shape = m.shape;
 			markers.push({ time: t, position, color, shape, size: 0.7 });
+		}
+
+		for (const m of refusedMarkers) {
+			const raw = parseTimestamp(m.timestamp);
+			if (isNaN(raw)) continue;
+			const t = snapToBar(raw);
+			if (t === null) continue;
+			markers.push({ time: t, position: m.position ?? 'belowBar', color: '#e7b24a', shape: 'square', ...(m.label ? { text: m.label } : {}) });
 		}
 
 		// Lightweight charts requires markers to be sorted by time
