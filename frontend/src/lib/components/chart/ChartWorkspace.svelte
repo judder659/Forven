@@ -674,7 +674,7 @@
 		max-height: 45%;
 		overflow: auto;
 		background: rgba(0, 0, 0, 0.82);
-		border: 1px solid #222;
+		border: 1px solid #1c2026;
 		padding: 8px;
 		pointer-events: none;
 		z-index: 10;
@@ -685,12 +685,12 @@
 		align-items: baseline;
 		gap: 8px;
 		margin-bottom: 6px;
-		border-bottom: 1px solid #1a1a1a;
+		border-bottom: 1px solid #1c2026;
 		padding-bottom: 4px;
 	}
 
 	.strategy-overlay-title {
-		color: #fff;
+		color: #eef1f5;
 		font-size: 11px;
 		font-weight: 700;
 		letter-spacing: 0.04em;
@@ -698,9 +698,9 @@
 	}
 
 	.strategy-overlay-meta {
-		color: #666;
+		color: #747c88;
 		font-size: 10px;
-		font-family: 'JetBrains Mono', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.strategy-overlay-grid {
@@ -710,7 +710,7 @@
 	}
 
 	.strategy-overlay-key {
-		color: #666;
+		color: #747c88;
 		font-size: 10px;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
@@ -720,14 +720,14 @@
 	.strategy-overlay-value {
 		color: #e5e7eb;
 		font-size: 10px;
-		font-family: 'JetBrains Mono', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.strategy-overlay-empty {
-		color: #666;
+		color: #747c88;
 		font-size: 10px;
 		font-style: italic;
 	}

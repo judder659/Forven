@@ -344,7 +344,7 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.15em;
-		color: #fff;
+		color: #eef1f5;
 	}
 	h2 {
 		margin: 0 0 12px;
@@ -352,14 +352,14 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.15em;
-		color: #888;
+		color: #aab1bc;
 	}
 	.muted {
-		color: #666;
+		color: #747c88;
 	}
 	.card {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		padding: 16px;
 		margin: 16px 0;
 	}
@@ -380,7 +380,7 @@
 		font-size: 13px;
 	}
 	label span {
-		color: #666;
+		color: #747c88;
 		font-size: 10px;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -389,9 +389,9 @@
 	input[type='number'],
 	select,
 	textarea {
-		background: #000;
-		border: 1px solid #333;
-		color: #fff;
+		background: #07080a;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 8px;
 		font-family: inherit;
 		font-size: 14px;
@@ -401,7 +401,7 @@
 	select:focus,
 	textarea:focus {
 		outline: none;
-		border-color: #555;
+		border-color: #2a2f38;
 	}
 	textarea {
 		width: 100%;
@@ -410,7 +410,7 @@
 	.note {
 		margin: 0 0 12px;
 		font-size: 12px;
-		color: #666;
+		color: #747c88;
 	}
 	.row-between {
 		display: flex;
@@ -439,8 +439,8 @@
 	}
 	.btn-primary {
 		background: #fff;
-		color: #000;
-		border: 1px solid #fff;
+		color: #4b525c;
+		border: 1px solid #eef1f5;
 		padding: 8px 16px;
 		cursor: pointer;
 		font-size: 12px;
@@ -457,8 +457,8 @@
 	}
 	.btn-secondary {
 		background: transparent;
-		color: #888;
-		border: 1px solid #333;
+		color: #aab1bc;
+		border: 1px solid #2a2f38;
 		padding: 6px 12px;
 		cursor: pointer;
 		font-size: 12px;
@@ -466,27 +466,27 @@
 		letter-spacing: 0.05em;
 	}
 	.btn-secondary:hover {
-		border-color: #555;
-		color: #fff;
+		border-color: #2a2f38;
+		color: #eef1f5;
 	}
 	.btn-link {
 		background: none;
 		border: none;
-		color: #888;
+		color: #aab1bc;
 		cursor: pointer;
 		padding: 0;
 		font-size: 13px;
 	}
 	.btn-link:hover {
-		color: #fff;
+		color: #eef1f5;
 	}
 	.info {
 		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid #333;
+		border: 1px solid #2a2f38;
 		padding: 12px;
 		margin: 16px 0;
 		font-size: 13px;
-		color: #888;
+		color: #aab1bc;
 	}
 	.warning {
 		background: rgba(234, 179, 8, 0.05);
@@ -502,8 +502,8 @@
 		color: #34d399;
 	}
 	.preview {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		padding: 12px;
 		white-space: pre-wrap;
 		font-size: 12px;

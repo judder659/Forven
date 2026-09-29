@@ -668,15 +668,15 @@
 		font-size: 10px;
 	}
 	.filter-input {
-		background: #0a0a0a;
-		border: 1px solid #333;
+		background: #0c0e11;
+		border: 1px solid #2a2f38;
 		color: #d1d5db;
 		padding: 0.2rem 0.4rem;
 		font-size: 11px;
 	}
 	.filter-input:focus {
 		outline: none;
-		border-color: #555;
+		border-color: #2a2f38;
 	}
 	.detail {
 		display: flex;

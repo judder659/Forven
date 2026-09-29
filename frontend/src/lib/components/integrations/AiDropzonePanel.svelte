@@ -1163,9 +1163,9 @@
 		width: 14px;
 		height: 14px;
 		border-radius: 9999px;
-		border: 1px solid #333;
-		background: #111;
-		color: #666;
+		border: 1px solid #2a2f38;
+		background: #11141a;
+		color: #747c88;
 		font-size: 9px;
 		font-weight: 600;
 		cursor: help;
@@ -1175,9 +1175,9 @@
 		line-height: 1;
 	}
 	.help-tip:hover {
-		border-color: #555;
-		color: #999;
-		background: #1a1a1a;
+		border-color: #2a2f38;
+		color: #aab1bc;
+		background: #181c23;
 	}
 	.help-tip .help-text {
 		display: none;
@@ -1185,9 +1185,9 @@
 		bottom: calc(100% + 6px);
 		left: 50%;
 		transform: translateX(-50%);
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #ccc;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		font-size: 10px;
 		font-weight: 400;
 		padding: 6px 8px;
@@ -1208,7 +1208,7 @@
 		left: 50%;
 		transform: translateX(-50%);
 		border: 4px solid transparent;
-		border-top-color: #333;
+		border-top-color: #2a2f38;
 	}
 	.help-tip:hover .help-text {
 		display: block;

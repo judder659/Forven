@@ -237,8 +237,8 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		padding: 0.75rem;
-		border: 1px solid #1f1f1f;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.card-header {
@@ -253,14 +253,14 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.card-title {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: #fff;
+		color: #eef1f5;
 		margin-top: 0.125rem;
 		display: inline-block;
 	}
@@ -273,7 +273,7 @@
 	.market {
 		margin-left: 0.5rem;
 		font-size: 0.7rem;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.stage-flow {
@@ -283,7 +283,7 @@
 	}
 
 	.arrow {
-		color: #666;
+		color: #747c88;
 		font-size: 0.8rem;
 	}
 
@@ -292,13 +292,13 @@
 		text-transform: uppercase;
 		letter-spacing: 0.14em;
 		padding: 0.2rem 0.55rem;
-		border: 1px solid #333;
-		color: #ccc;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 	}
 
 	.chip--current {
-		border-color: #333;
-		color: #ccc;
+		border-color: #2a2f38;
+		color: #eef1f5;
 	}
 
 	.chip--up {
@@ -328,16 +328,16 @@
 	}
 
 	.trigger-actor {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.7rem;
 		padding: 0.1rem 0.4rem;
-		border: 1px solid #2a2a2a;
-		color: #888;
+		border: 1px solid #2a2f38;
+		color: #aab1bc;
 		white-space: nowrap;
 	}
 
 	.trigger-reason {
-		color: #ccc;
+		color: #eef1f5;
 		min-width: 0;
 	}
 
@@ -352,7 +352,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 		font-weight: 600;
 	}
 
@@ -368,7 +368,7 @@
 
 	.metric {
 		padding: 0.45rem 0.55rem;
-		border: 1px solid #1f1f1f;
+		border: 1px solid #1c2026;
 		background: rgba(0, 0, 0, 0.3);
 	}
 
@@ -381,14 +381,14 @@
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.14em;
-		color: #666;
+		color: #747c88;
 	}
 
 	.metric-value {
 		margin-top: 0.15rem;
 		font-size: 0.9rem;
 		font-weight: 600;
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.metric-value--bad {
@@ -400,20 +400,20 @@
 	}
 
 	.metric-value--mono {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.75rem;
 	}
 
 	.metric-value--small {
 		font-size: 0.7rem;
 		font-weight: 400;
-		color: #ccc;
+		color: #eef1f5;
 	}
 
 	.fine-print {
 		margin: 0;
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		line-height: 1.4;
 	}
 
@@ -428,21 +428,21 @@
 		font-size: 0.6875rem;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
-		color: #888;
+		color: #aab1bc;
 		background: transparent;
-		border: 1px solid #2a2a2a;
+		border: 1px solid #2a2f38;
 		padding: 0.25rem 0.6rem;
 		cursor: pointer;
 	}
 
 	.history-toggle:hover {
-		color: #fff;
-		border-color: #555;
+		color: #eef1f5;
+		border-color: #2a2f38;
 	}
 
 	.raw summary {
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		cursor: pointer;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -452,17 +452,17 @@
 		margin-top: 0.4rem;
 		max-height: 200px;
 		overflow: auto;
-		border: 1px solid #1f1f1f;
-		background: #000;
+		border: 1px solid #1c2026;
+		background: #07080a;
 		padding: 0.5rem;
 		font-size: 0.6875rem;
-		color: #888;
+		color: #aab1bc;
 		white-space: pre-wrap;
 		word-break: break-word;
 	}
 
 	.history {
-		border-top: 1px solid #1a1a1a;
+		border-top: 1px solid #1c2026;
 		padding-top: 0.6rem;
 	}
 </style>

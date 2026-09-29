@@ -470,13 +470,13 @@
 	.chat-markdown :global(p) { margin: 0.25em 0; }
 	.chat-markdown :global(ul), .chat-markdown :global(ol) { margin: 0.25em 0; padding-left: 1.25em; }
 	.chat-markdown :global(li) { margin: 0.1em 0; }
-	.chat-markdown :global(code) { background: #1a1a1a; padding: 0.1em 0.3em; border-radius: 0; font-size: 0.9em; }
-	.chat-markdown :global(pre) { background: #1a1a1a; padding: 0.5em; border-radius: 0; overflow-x: auto; margin: 0.4em 0; }
+	.chat-markdown :global(code) { background: #181c23; padding: 0.1em 0.3em; border-radius: 0; font-size: 0.9em; }
+	.chat-markdown :global(pre) { background: #181c23; padding: 0.5em; border-radius: 0; overflow-x: auto; margin: 0.4em 0; }
 	.chat-markdown :global(pre code) { background: none; padding: 0; }
 	.chat-markdown :global(h1), .chat-markdown :global(h2), .chat-markdown :global(h3) { font-size: 1em; font-weight: 600; margin: 0.4em 0 0.2em; }
-	.chat-markdown :global(a) { color: #fff; text-decoration: underline; }
-	.chat-markdown :global(blockquote) { border-left: 2px solid #333; padding-left: 0.5em; margin: 0.3em 0; color: #999; }
+	.chat-markdown :global(a) { color: #eef1f5; text-decoration: underline; }
+	.chat-markdown :global(blockquote) { border-left: 2px solid #2a2f38; padding-left: 0.5em; margin: 0.3em 0; color: #aab1bc; }
 	.chat-markdown :global(table) { border-collapse: collapse; margin: 0.3em 0; font-size: 0.9em; }
-	.chat-markdown :global(th), .chat-markdown :global(td) { border: 1px solid #333; padding: 0.2em 0.5em; }
-	.chat-markdown :global(hr) { border-color: #333; margin: 0.5em 0; }
+	.chat-markdown :global(th), .chat-markdown :global(td) { border: 1px solid #2a2f38; padding: 0.2em 0.5em; }
+	.chat-markdown :global(hr) { border-color: #2a2f38; margin: 0.5em 0; }
 </style>

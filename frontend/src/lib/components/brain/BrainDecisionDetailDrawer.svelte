@@ -217,8 +217,8 @@
 		right: 0;
 		width: min(640px, 100%);
 		height: 100vh;
-		background: #0a0a0a;
-		border-left: 1px solid #222;
+		background: #0c0e11;
+		border-left: 1px solid #1c2026;
 		display: flex;
 		flex-direction: column;
 		z-index: 1001;
@@ -230,7 +230,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 1rem 1.25rem;
-		border-bottom: 1px solid #222;
+		border-bottom: 1px solid #1c2026;
 	}
 
 	.kicker {
@@ -238,7 +238,7 @@
 		font-size: 0.75rem;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	header h2 {
@@ -254,9 +254,9 @@
 	}
 
 	.copy-link {
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #888;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #aab1bc;
 		font-size: 0.8125rem;
 		cursor: pointer;
 		padding: 0.35rem 0.7rem;
@@ -265,14 +265,14 @@
 	}
 
 	.copy-link:hover {
-		background: #222;
-		color: #fff;
+		background: #181c23;
+		color: #eef1f5;
 	}
 
 	.close {
 		background: transparent;
 		border: none;
-		color: #aaa;
+		color: #aab1bc;
 		font-size: 1.5rem;
 		line-height: 1;
 		cursor: pointer;
@@ -281,8 +281,8 @@
 	}
 
 	.close:hover {
-		background: #1a1a1a;
-		color: #fff;
+		background: #181c23;
+		color: #eef1f5;
 	}
 
 	.body {
@@ -296,7 +296,7 @@
 
 	.loading,
 	.empty {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.875rem;
 	}
 
@@ -318,7 +318,7 @@
 	}
 
 	dt {
-		color: #888;
+		color: #aab1bc;
 		text-transform: uppercase;
 		font-size: 0.75rem;
 		letter-spacing: 0.04em;
@@ -326,11 +326,11 @@
 
 	dd {
 		margin: 0;
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	dd.mono {
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.8125rem;
 		word-break: break-all;
 	}
@@ -338,13 +338,13 @@
 	section h3 {
 		margin: 0 0 0.5rem;
 		font-size: 0.9375rem;
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	.collapse {
 		background: transparent;
 		border: none;
-		color: #ddd;
+		color: #eef1f5;
 		cursor: pointer;
 		padding: 0;
 		font-size: inherit;
@@ -352,17 +352,17 @@
 	}
 
 	.collapse:hover {
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.block {
-		background: #050505;
-		border: 1px solid #1a1a1a;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.625rem;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.8125rem;
-		color: #ccc;
+		color: #eef1f5;
 		white-space: pre-wrap;
 		word-wrap: break-word;
 		max-height: 360px;
@@ -379,8 +379,8 @@
 	}
 
 	.tasks li {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.5rem 0.75rem;
 	}
@@ -394,9 +394,9 @@
 	}
 
 	.task-head a {
-		color: #888;
+		color: #aab1bc;
 		text-decoration: none;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.task-head a:hover {
@@ -414,9 +414,9 @@
 		font-size: 0.7rem;
 		font-weight: 600;
 		text-transform: uppercase;
-		background: #1a1a1a;
-		color: #aaa;
-		border: 1px solid #222;
+		background: #181c23;
+		color: #aab1bc;
+		border: 1px solid #1c2026;
 	}
 
 	.task-meta {
@@ -424,6 +424,6 @@
 		gap: 1rem;
 		flex-wrap: wrap;
 		font-size: 0.75rem;
-		color: #888;
+		color: #aab1bc;
 	}
 </style>

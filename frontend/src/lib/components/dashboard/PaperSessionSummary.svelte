@@ -184,8 +184,8 @@
 	.summary {
 		display: flex;
 		flex-direction: column;
-		border: 1px solid #222;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.strip {
@@ -200,7 +200,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 		font-weight: 600;
 	}
 
@@ -214,14 +214,14 @@
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #777;
+		color: #747c88;
 	}
 
 	.stat-value {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.75rem;
 		font-weight: 700;
-		color: #fff;
+		color: #eef1f5;
 		font-variant-numeric: tabular-nums;
 	}
 
@@ -242,16 +242,16 @@
 
 	.reason-chip {
 		font-size: 0.625rem;
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		padding: 0.1rem 0.4rem;
-		border: 1px solid #333;
-		background: #050505;
-		color: #888;
+		border: 1px solid #2a2f38;
+		background: #0c0e11;
+		color: #aab1bc;
 		white-space: nowrap;
 	}
 
 	.reason-chip b {
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.reason-chip--warn {
@@ -269,7 +269,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #888;
+		color: #aab1bc;
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -277,11 +277,11 @@
 	}
 
 	.toggle:hover {
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.table-wrap {
-		border-top: 1px solid #1a1a1a;
+		border-top: 1px solid #1c2026;
 		max-height: 200px;
 		overflow-y: auto;
 	}
@@ -295,40 +295,40 @@
 	th {
 		position: sticky;
 		top: 0;
-		background: #050505;
+		background: #0c0e11;
 		text-align: left;
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #666;
+		color: #747c88;
 		font-weight: 600;
 		padding: 0.3rem 0.5rem;
-		border-bottom: 1px solid #1a1a1a;
+		border-bottom: 1px solid #1c2026;
 	}
 
 	td {
 		padding: 0.25rem 0.5rem;
-		border-bottom: 1px solid #141414;
-		color: #888;
+		border-bottom: 1px solid #1c2026;
+		color: #aab1bc;
 		white-space: nowrap;
 	}
 
 	.num {
 		text-align: right;
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-variant-numeric: tabular-nums;
 	}
 
 	.mono {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		max-width: 22ch;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
 	.reason-cell {
-		font-family: ui-monospace, monospace;
-		color: #888;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		color: #aab1bc;
 		max-width: 28ch;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -340,7 +340,7 @@
 
 	.empty {
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		padding: 0.4rem 0.75rem;
 	}
 

@@ -175,7 +175,7 @@
 		gap: 1.5rem;
 		margin-top: 0.5rem;
 		font-size: 10px;
-		color: #888888;
+		color: #aab1bc;
 	}
 	.legend-item {
 		display: flex;

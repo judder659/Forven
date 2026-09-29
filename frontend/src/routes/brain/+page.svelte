@@ -92,7 +92,7 @@
 <style>
 	.brain-page {
 		padding: 1.5rem 2rem 3rem;
-		color: #e5e5e5;
+		color: #eef1f5;
 		max-width: 1280px;
 		margin: 0 auto;
 	}
@@ -113,7 +113,7 @@
 	}
 
 	.subtitle {
-		color: #888;
+		color: #aab1bc;
 		margin: 0.25rem 0 0;
 		font-size: 0.875rem;
 	}
@@ -121,14 +121,14 @@
 	.tabs {
 		display: flex;
 		gap: 0;
-		border-bottom: 1px solid #222;
+		border-bottom: 1px solid #1c2026;
 		margin-bottom: 1.5rem;
 	}
 
 	.tabs button {
 		background: transparent;
 		border: none;
-		color: #888;
+		color: #aab1bc;
 		padding: 0.625rem 1.25rem;
 		font-size: 0.875rem;
 		cursor: pointer;
@@ -137,12 +137,12 @@
 	}
 
 	.tabs button:hover {
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	.tabs button.active {
-		color: #fff;
-		border-bottom-color: #fff;
+		color: #eef1f5;
+		border-bottom-color: #eef1f5;
 	}
 
 	.tab-content {
