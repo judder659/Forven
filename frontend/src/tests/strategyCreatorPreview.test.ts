@@ -239,7 +239,8 @@ it('runs a heatmap a row per request, counts every cell, and a cell sets both kn
 	api.heatmapStrategy.mockImplementation(async (request: any) => ({
 		x: null, y: null, warnings: [],
 		cells: request.x.values.map((x: number) => ({ x, y: request.y.values[0], trades: 10, oos_trades: 6,
-			oos_return: x === 30 ? 0.05 : 0.04, in_return: 0.02, net_return: 0.06 })),
+			// Both settings move the result, so the verdict judges the grid.
+			oos_return: (x === 30 ? 0.05 : 0.04) + (request.y.values[0] === 55 ? 0.005 : 0), in_return: 0.02, net_return: 0.06 })),
 	}));
 	await fireEvent.click(button('Heatmap')); await settle();
 	await fireEvent.change(target.querySelector('select[aria-label="heatmap steps"]')!, { target: { value: '3' } }); await settle();

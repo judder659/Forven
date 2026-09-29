@@ -190,7 +190,11 @@ export function withContainerKnobs(params: Record<string, unknown>, changes: Arr
 export interface HeatmapCellLike {
 	x: number;
 	y: number | null;
+	trades?: number;
+	oos_trades?: number;
 	oos_return?: number;
+	in_return?: number;
+	net_return?: number;
 	error?: string;
 }
 
@@ -199,8 +203,40 @@ export interface Verdict {
 	text: string;
 }
 
-/** Whether the best cell sits on a plateau (neighbours keep most of its result) or a lone spike. */
-export function heatmapVerdict(cells: HeatmapCellLike[], xValues: number[], yValues: Array<number | null>): Verdict | null {
+/** Every count and return a cell reports, as one comparable key. */
+function cellResultKey(cell: HeatmapCellLike): string {
+	return [cell.trades, cell.oos_trades, cell.oos_return, cell.in_return, cell.net_return]
+		.map((value) => (typeof value === 'number' ? Math.round(value * 1e10) : '-'))
+		.join('|');
+}
+
+/** Whether moving along one axis never changed a result: every row (for x) or column
+ * (for y) of two or more cells is identical, and some of those cells traded. Identical
+ * cells that never trade say nothing about the setting. */
+function axisHasNoEffect(scored: HeatmapCellLike[], along: 'x' | 'y'): boolean {
+	const lines = new Map<string, HeatmapCellLike[]>();
+	for (const cell of scored) {
+		const line = String(along === 'x' ? cell.y : cell.x);
+		lines.set(line, [...(lines.get(line) ?? []), cell]);
+	}
+	let traded = false;
+	for (const line of lines.values()) {
+		if (line.length < 2) continue;
+		if (new Set(line.map(cellResultKey)).size > 1) return false;
+		traded ||= line.some((cell) => (cell.trades ?? 0) > 0);
+	}
+	return traded;
+}
+
+/** Whether the best cell sits on a plateau (neighbours keep most of its result) or a lone
+ * spike. A setting that changes nothing is reported first: its flat grid would otherwise
+ * read as a plateau. */
+export function heatmapVerdict(
+	cells: HeatmapCellLike[],
+	xValues: number[],
+	yValues: Array<number | null>,
+	labels: { x: string; y: string | null } = { x: 'the across setting', y: 'the down setting' },
+): Verdict | null {
 	const at = new Map(cells.filter((c) => c.oos_return !== undefined && !c.error).map((c) => [`${c.x}|${c.y}`, c]));
 	if (!at.size) return null;
 	const scored = [...at.values()];
@@ -208,6 +244,15 @@ export function heatmapVerdict(cells: HeatmapCellLike[], xValues: number[], yVal
 	const bestReturn = best.oos_return ?? 0;
 	const profitable = scored.filter((c) => (c.oos_return ?? 0) > 0).length;
 	const share = `${profitable} of ${scored.length} setting${scored.length === 1 ? '' : 's'} ${profitable === 1 ? 'makes' : 'make'} money out-of-sample.`;
+	const deadX = axisHasNoEffect(scored, 'x');
+	const deadY = yValues.some((y) => y !== null) && axisHasNoEffect(scored, 'y');
+	if (deadX || deadY) {
+		const both = deadX && deadY;
+		const named = both ? `${labels.x} and ${labels.y}` : deadX ? labels.x : (labels.y ?? 'the down setting');
+		return { status: 'no_effect', text: `No effect: every value of ${named} gave identical trades and returns, `
+			+ `so a flat grid here says nothing about robustness. The strategy may not read ${both ? 'these settings' : 'this setting'} `
+			+ `at all, or not in this range. ${share}` };
+	}
 	if (bestReturn <= 0) return { status: 'losing', text: `No setting in this grid makes money out-of-sample.` };
 	const xi = xValues.indexOf(best.x);
 	const yi = yValues.indexOf(best.y);

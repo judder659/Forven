@@ -96,6 +96,30 @@ describe('heatmap verdict', () => {
 		const line = [1, 2, 3].map((x) => ({ x, y: null, oos_return: x === 2 ? 0.1 : 0.09 }));
 		expect(heatmapVerdict(line, [1, 2, 3], [null])?.text).toContain('2 of 2 neighbours');
 	});
+	it('says a setting that changes nothing has no effect instead of calling it a plateau', () => {
+		const same = { trades: 62, oos_trades: 20, oos_return: 0.082, in_return: -0.002 };
+		const line = [0.005, 0.01, 0.015].map((x) => ({ x, y: null, ...same }));
+		const verdict = heatmapVerdict(line, [0.005, 0.01, 0.015], [null], { x: 'entry_threshold', y: null });
+		expect(verdict?.status).toBe('no_effect');
+		expect(verdict?.text).toContain('every value of entry_threshold gave identical trades and returns');
+		expect(verdict?.text).toContain('3 of 3 settings make money');
+		const flat = [1, 2].flatMap((y) => [1, 2].map((x) => ({ x, y, ...same })));
+		expect(heatmapVerdict(flat, [1, 2], [1, 2], { x: 'a', y: 'b' })?.text).toContain('every value of a and b gave identical');
+	});
+	it('names only the setting that changes nothing when the other one works', () => {
+		// Results change down the grid (y) but never across it (x).
+		const cells = [1, 2, 3].flatMap((y) => [1, 2, 3].map((x) => ({ x, y, trades: 10 + y, oos_return: 0.02 * y })));
+		const verdict = heatmapVerdict(cells, [1, 2, 3], [1, 2, 3], { x: 'exit_threshold', y: 'kc_period' });
+		expect(verdict?.status).toBe('no_effect');
+		expect(verdict?.text).toContain('every value of exit_threshold gave');
+		expect(verdict?.text).not.toContain('kc_period');
+	});
+	it('does not blame the setting when no cell trades, and still finds plateaus', () => {
+		const idle = [1, 2, 3].map((x) => ({ x, y: null, trades: 0, oos_return: 0 }));
+		expect(heatmapVerdict(idle, [1, 2, 3], [null])?.status).toBe('losing');
+		const working = [1, 2, 3].flatMap((y) => [1, 2, 3].map((x) => ({ x, y, trades: 10 + x + y, oos_return: x === 2 && y === 2 ? 0.1 : 0.08 })));
+		expect(heatmapVerdict(working, [1, 2, 3], [1, 2, 3])?.status).toBe('plateau');
+	});
 });
 
 describe('market grid', () => {

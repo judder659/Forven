@@ -103,7 +103,9 @@
 	$: scale = Math.max(metric === 'oos_trades' ? 1 : 0.01, ...values.map((v) => Math.abs(v)));
 	$: best = cells.reduce<HeatmapCell | null>((top, cell) =>
 		typeof cell.oos_return === 'number' && !cell.error && (!top || cell.oos_return > (top.oos_return ?? -Infinity)) ? cell : top, null);
-	$: verdict = view && view.status !== 'running' ? heatmapVerdict(cells, xValues, yValues) : null;
+	$: verdict = view && view.status !== 'running'
+		? heatmapVerdict(cells, xValues, yValues, { x: view.x.label, y: view.y?.label ?? null })
+		: null;
 
 	const pct = (v: number) => `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
 	function shade(cell: HeatmapCell | undefined): string {
@@ -236,7 +238,7 @@
 		{#if verdict}
 			<div class="flex items-baseline gap-2 text-[12px]" data-testid="heatmap-verdict">
 				<span class="border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider
-					{verdict.status === 'plateau' ? 'border-emerald-700 text-emerald-400' : verdict.status === 'spike' || verdict.status === 'losing' ? 'border-red-800 text-red-400' : 'border-amber-700 text-amber-400'}">{verdict.status}</span>
+					{verdict.status === 'plateau' ? 'border-emerald-700 text-emerald-400' : verdict.status === 'spike' || verdict.status === 'losing' ? 'border-red-800 text-red-400' : 'border-amber-700 text-amber-400'}">{verdict.status.replace('_', ' ')}</span>
 				<span class="text-[#ccc]">{verdict.text}</span>
 			</div>
 		{/if}
