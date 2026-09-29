@@ -15,19 +15,19 @@
 	{#each rows as row (row.label)}
 		{@const value = typeof row.value === 'number' && Number.isFinite(row.value) ? row.value : null}
 		<div class="grid grid-cols-[minmax(0,12em)_minmax(0,1fr)_auto] items-center gap-2.5" title={row.title ?? ''}>
-			<span class="min-w-0 text-[12px] text-[#aab1bc]">
+			<span class="min-w-0 text-[12px] text-sc-ink2">
 				{row.label}
-				{#if row.sub}<small class="block text-[11px] text-[#666]">{row.sub}</small>{/if}
+				{#if row.sub}<small class="block text-[12px] text-sc-ink3">{row.sub}</small>{/if}
 			</span>
 			<span class="relative h-4">
-				<span class="absolute -top-0.5 -bottom-0.5 w-px bg-[#2a2f38]" style={`left:${zero}%`}></span>
+				<span class="absolute -top-0.5 -bottom-0.5 w-px bg-sc-line2" style={`left:${zero}%`}></span>
 				{#if value !== null && value >= 0}
 					<i class="absolute top-[3px] h-2.5 bg-[#139a9f]" style={`left:${zero}%;width:${(value / maxAbs) * (100 - zero)}%`}></i>
 				{:else if value !== null}
 					<i class="absolute top-[3px] h-2.5 bg-[#e0663f]" style={`left:${zero - (Math.abs(value) / maxAbs) * zero}%;width:${(Math.abs(value) / maxAbs) * zero}%`}></i>
 				{/if}
 			</span>
-			<span class={`min-w-[5.5em] text-right text-[12px] tabular-nums ${signClass(value)}`}>{value === null ? '—' : format(value)}</span>
+			<span class={`min-w-[5.5em] text-right text-[12px] font-plex-mono tabular-nums ${signClass(value)}`}>{value === null ? '—' : format(value)}</span>
 		</div>
 	{/each}
 </div>

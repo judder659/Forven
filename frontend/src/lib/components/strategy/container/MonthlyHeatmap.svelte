@@ -36,16 +36,16 @@
 
 {#if months.length}
 	<div class="grid gap-2" data-testid="monthly-heatmap">
-		<div class="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11px] text-[#aab1bc]">
+		<div class="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11px] text-sc-ink2">
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5" style={`background:${CHART.loss}`}></i>−{maxAbs.toFixed(0)}%</span>
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5" style={`background:${NEUTRAL}`}></i>0</span>
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5" style={`background:${CHART.gain}`}></i>+{maxAbs.toFixed(0)}%</span>
-			{#if oosStart !== null}<span class="text-[#666]">Dimmed: in-sample</span>{/if}
+			{#if oosStart !== null}<span class="text-sc-ink3">Dimmed: in-sample</span>{/if}
 		</div>
 		<div class="overflow-x-auto">
-			<table class="w-full min-w-[760px] border-separate border-spacing-[2px] text-[11px] tabular-nums">
+			<table class="w-full min-w-[760px] border-separate border-spacing-[2px] text-[11px] font-plex-mono tabular-nums">
 				<thead>
-					<tr class="text-[10px] uppercase tracking-[0.12em] text-[#555]">
+					<tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] text-sc-ink3">
 						<th class="w-12 px-1 py-1 text-left font-normal"></th>
 						{#each Array.from({ length: 12 }, (_, index) => index) as month (month)}<th class="px-1 py-1 text-center font-normal">{monthLabel(month)}</th>{/each}
 						<th class="px-1 py-1 text-right font-normal">Year</th>
@@ -55,18 +55,18 @@
 					{#each years as year (year)}
 						{@const total = yearTotal(year)}
 						<tr>
-							<th class="px-1 py-1 text-left font-normal text-[#aab1bc]">{year}</th>
+							<th class="px-1 py-1 text-left font-normal text-sc-ink2">{year}</th>
 							{#each Array.from({ length: 12 }, (_, index) => index) as month (month)}
 								{@const cell = byKey.get(`${year}-${month}`)}
 								{@const dim = isInSample(year, month)}
 								{#if !cell}
 									<td class="px-1 py-1"></td>
 								{:else if flat(cell.returnPct)}
-									<td class={`px-1 py-1 text-center text-[#666] ${dim ? 'opacity-45' : ''}`} style={`background:${NEUTRAL}`} title={`${monthLabel(month)} ${year}: no trade closed`}>–</td>
+									<td class={`h-[30px] rounded-[3px] px-1 py-1 text-center text-sc-ink3 ${dim ? 'opacity-60' : ''}`} style={`background:${NEUTRAL}`} title={`${monthLabel(month)} ${year}: no trade closed`}>–</td>
 								{:else}
 									{@const value = cell.returnPct ?? 0}
 									<td
-										class={`px-1 py-1 text-center ${dim ? 'opacity-45' : ''}`}
+										class={`h-[30px] rounded-[3px] px-1 py-1 text-center ${dim ? 'opacity-60' : ''}`}
 										style={`background:${color(value)};color:${Math.abs(value) / maxAbs > 0.55 ? '#fff' : CHART.ink}`}
 										title={`${monthLabel(month)} ${year}${dim ? ' (in-sample)' : ''}: ${fmtPct(value)}`}
 									>{fmtPct(value, 1)}</td>
@@ -80,5 +80,5 @@
 		</div>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">This run stored no equity curve.</div>
+	<div class="text-[12px] text-sc-ink3">This run stored no equity curve.</div>
 {/if}

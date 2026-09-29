@@ -34,12 +34,12 @@
 
 {#if rows.length}
 	<div class="grid gap-2" data-testid="cost-stress-dumbbell">
-		<div class="flex gap-3.5 text-[11px] text-[#aab1bc]">
+		<div class="flex gap-3.5 text-[11px] text-sc-ink2">
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5 rounded-full" style={`background:${CHART.ink}`}></i>Baseline costs</span>
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5 rounded-full" style={`background:${CHART.loss}`}></i>{isNum(multiplier) ? `${multiplier}×` : 'Higher'} costs</span>
 		</div>
 		<div use:trackWidth={(value) => (width = value || 420)}>
-			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label="Metrics at baseline and stressed costs">
+			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label="Metrics at baseline and stressed costs">
 				{#each rows as row, index (row.name)}
 					{@const cy = M.t + band * (index + 0.5)}
 					{@const x = linearScale(Math.min(0, row.a, row.b), Math.max(row.a, row.b) * 1.15 || 1, M.l, M.l + w)}
@@ -53,12 +53,12 @@
 				{/each}
 			</svg>
 		</div>
-		<p class="m-0 text-[11px] leading-relaxed text-[#777]">
+		<p class="m-0 text-[12px] leading-relaxed text-sc-ink3">
 			{#if isNum(degradation)}Sharpe falls {fmtPct(degradation, 1, false)}{isNum(stressedSharpe) ? ` to ${fmtNum(stressedSharpe)}` : ''} under {isNum(multiplier) ? `${multiplier}×` : 'higher'} fees and slippage.{/if}
 			{#if isNum(minSharpe)} The test needs a stressed Sharpe of at least {fmtNum(minSharpe)}{isNum(maxDegradationPct) ? `; the paper → live gate also caps the loss at ${fmtPct(maxDegradationPct, 0, false)}${isNum(degradation) && degradation > maxDegradationPct ? ', which this exceeds' : ''}` : ''}.{/if}
 			{#if isNum(tradesA) && isNum(tradesB)}{tradesA === tradesB ? ` Trade count is unchanged (${tradesB}), so costs trim each trade rather than removing marginal ones.` : ` Trades fall from ${tradesA} to ${tradesB}.`}{/if}
 		</p>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Cost stress has not run.</div>
+	<div class="text-[12px] text-sc-ink3">Cost stress has not run.</div>
 {/if}

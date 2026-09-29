@@ -31,31 +31,31 @@
 	}));
 </script>
 
-<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="attribution" data-testid="attribution-card">
+<article class="grid content-start gap-3 rounded-md border border-sc-line bg-sc-panel px-4 py-3.5" id="attribution" data-testid="attribution-card">
 	<div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-		<h2 class="m-0 text-[13px] font-semibold text-white">Where the return comes from</h2>
-		<span class="text-[11px] text-[#666]">Out-of-sample trades of the run above{start && end ? ` (${fmtMonthYear(start)} – ${fmtMonthYear(end)})` : ''}.</span>
+		<h2 class="m-0 text-[14px] font-semibold text-sc-ink">Where the return comes from</h2>
+		<span class="text-[12px] text-sc-ink3">Out-of-sample trades of the run above{start && end ? ` (${fmtMonthYear(start)} – ${fmtMonthYear(end)})` : ''}.</span>
 	</div>
 	{#if trades.length === 0 && sides.length === 0}
-		<div class="text-[12px] text-[#666]">This run stored no out-of-sample trades.</div>
+		<div class="text-[12px] text-sc-ink3">This run stored no out-of-sample trades.</div>
 	{:else}
 		<div class="grid gap-5 md:grid-cols-2 2xl:grid-cols-4">
 			<div class="grid content-start gap-2.5">
-				<div><div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Long vs short</div><div class="text-[11px] text-[#666]">Return contributed by each side</div></div>
-				{#if sideRows.length}<SignedBars rows={sideRows} format={(value) => fmtPct(value)} testid="attribution-sides" />{:else}<div class="text-[12px] text-[#666]">Not stored for this run.</div>{/if}
+				<div><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Long vs short</div><div class="text-[12px] text-sc-ink3">Return contributed by each side</div></div>
+				{#if sideRows.length}<SignedBars rows={sideRows} format={(value) => fmtPct(value)} testid="attribution-sides" />{:else}<div class="text-[12px] text-sc-ink3">Not stored for this run.</div>{/if}
 			</div>
 			<div class="grid content-start gap-2.5">
-				<div><div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">By regime at entry</div><div class="text-[11px] text-[#666]">Return by market regime</div></div>
-				{#if regimeRows.length}<SignedBars rows={regimeRows} format={(value) => fmtPct(value)} testid="attribution-regimes" />{:else}<div class="text-[12px] text-[#666]">Not stored for this run.</div>{/if}
+				<div><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">By regime at entry</div><div class="text-[12px] text-sc-ink3">Return by market regime</div></div>
+				{#if regimeRows.length}<SignedBars rows={regimeRows} format={(value) => fmtPct(value)} testid="attribution-regimes" />{:else}<div class="text-[12px] text-sc-ink3">Not stored for this run.</div>{/if}
 			</div>
 			<div class="grid content-start gap-2.5">
-				<div><div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">By exit</div><div class="text-[11px] text-[#666]">Net PnL by how trades closed</div></div>
-				{#if exitRows.length}<SignedBars rows={exitRows} format={(value) => fmtUsd(value, 0)} testid="attribution-exits" />{:else}<div class="text-[12px] text-[#666]">Trades not stored for this run.</div>{/if}
+				<div><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">By exit</div><div class="text-[12px] text-sc-ink3">Net PnL by how trades closed</div></div>
+				{#if exitRows.length}<SignedBars rows={exitRows} format={(value) => fmtUsd(value, 0)} testid="attribution-exits" />{:else}<div class="text-[12px] text-sc-ink3">Trades not stored for this run.</div>{/if}
 			</div>
 			<div class="grid content-start gap-2.5">
 				<div>
-					<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Concentration</div>
-					<div class="text-[11px] text-[#666]" data-testid="attribution-concentration">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Concentration</div>
+					<div class="text-[12px] text-sc-ink3" data-testid="attribution-concentration">
 						{concentration ? `Top ${concentration.top} trades = ${fmtPct(concentration.share, 0, false)} of net profit` : trades.length ? 'Net profit is not positive; nothing to concentrate' : 'Trades not stored for this run'}
 					</div>
 				</div>
@@ -63,7 +63,7 @@
 			</div>
 		</div>
 		{#if sides.length === 0 && trades.length > 0}
-			<p class="m-0 text-[11px] text-[#666]">Side and regime splits are stored with newer runs; the exit mix and concentration come from this run's {trades.length} trades.</p>
+			<p class="m-0 text-[12px] text-sc-ink3">Side and regime splits are stored with newer runs; the exit mix and concentration come from this run's {trades.length} trades.</p>
 		{/if}
 	{/if}
 </article>

@@ -40,7 +40,7 @@
 
 {#if sorted.length > 1}
 	<div class="relative" use:trackWidth={(value) => (width = value || 320)} data-testid="concentration-chart">
-		<svg viewBox={`0 0 ${Math.max(120, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label={`Trades sorted by profit; the best ${top} made ${fmtUsd(topSum, 0, false)} of ${fmtUsd(net, 0, false)} net`}>
+		<svg viewBox={`0 0 ${Math.max(120, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label={`Trades sorted by profit; the best ${top} made ${fmtUsd(topSum, 0, false)} of ${fmtUsd(net, 0, false)} net`}>
 			<line x1={M.l} x2={M.l + w} y1={y(0)} y2={y(0)} stroke={CHART.axis} shape-rendering="crispEdges" />
 			{#each sorted as row, index (row.index)}
 				<rect
@@ -61,13 +61,13 @@
 			<rect x={M.l} y={M.t} width={w} height={h} fill="transparent" role="presentation" on:pointermove={move} on:pointerleave={() => (hover = null)} />
 		</svg>
 		{#if hovered && hover !== null}
-			<div class="pointer-events-none absolute top-0 z-10 min-w-[150px] border border-[#2a2f38] bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(M.l + hover * band + 10, Math.max(0, width - 170))}px`}>
-				<div class="text-[#777]">Trade #{hovered.index} · {hovered.side} · closed {fmtUtcStamp(hovered.exit)}</div>
-				<div class="flex justify-between gap-3"><span class="text-[#777]">PnL</span><span class="text-white">{fmtUsd(hovered.pnl, 0)}</span></div>
-				<div class="flex justify-between gap-3"><span class="text-[#777]">Running total</span><span class="text-white">{fmtUsd(cumulative[hover], 0)}</span></div>
+			<div class="pointer-events-none absolute top-0 z-10 min-w-[150px] rounded-md border border-sc-line2 bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(M.l + hover * band + 10, Math.max(0, width - 170))}px`}>
+				<div class="text-sc-ink3">Trade #{hovered.index} · {hovered.side} · closed {fmtUtcStamp(hovered.exit)}</div>
+				<div class="flex justify-between gap-3"><span class="text-sc-ink3">PnL</span><span class="text-sc-ink">{fmtUsd(hovered.pnl, 0)}</span></div>
+				<div class="flex justify-between gap-3"><span class="text-sc-ink3">Running total</span><span class="text-sc-ink">{fmtUsd(cumulative[hover], 0)}</span></div>
 			</div>
 		{/if}
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]">Too few trades to rank.</div>
+	<div class="text-[12px] text-sc-ink3">Too few trades to rank.</div>
 {/if}

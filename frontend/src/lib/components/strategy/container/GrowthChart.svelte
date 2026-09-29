@@ -88,26 +88,26 @@
 </script>
 
 <div class="grid gap-2" data-testid="growth-chart">
-	<div class="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11px] text-[#aab1bc]">
-		<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-[#eef1f5]"></i>Strategy</span>
+	<div class="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11px] text-sc-ink2">
+		<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-sc-ink"></i>Strategy</span>
 		{#if showBench}<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-[#6c7480]"></i>Buy &amp; hold</span>{/if}
 		<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-[#e0663f]"></i>Drawdown</span>
-		<span class="ml-auto inline-flex overflow-hidden rounded-full border border-[#2a2f38]" role="group" aria-label="Scale">
-			<button type="button" class={`px-2.5 py-0.5 ${log ? 'bg-[#1a1d22] text-white' : 'text-[#777]'}`} aria-pressed={log} on:click={() => (log = true)}>Log</button>
-			<button type="button" class={`px-2.5 py-0.5 ${!log ? 'bg-[#1a1d22] text-white' : 'text-[#777]'}`} aria-pressed={!log} on:click={() => (log = false)}>Linear</button>
+		<span class="ml-auto inline-flex overflow-hidden rounded-full border border-sc-line2" role="group" aria-label="Scale">
+			<button type="button" class={`px-2.5 py-0.5 ${log ? 'bg-sc-raise text-sc-ink' : 'text-sc-ink3'}`} aria-pressed={log} on:click={() => (log = true)}>Log</button>
+			<button type="button" class={`px-2.5 py-0.5 ${!log ? 'bg-sc-raise text-sc-ink' : 'text-sc-ink3'}`} aria-pressed={!log} on:click={() => (log = false)}>Linear</button>
 		</span>
 		{#if benchmark.length}
-			<button type="button" class={`rounded-full border border-[#2a2f38] px-2.5 py-0.5 ${showBench ? 'bg-[#1a1d22] text-white' : 'text-[#777]'}`} aria-pressed={showBench} on:click={() => (showBench = !showBench)}>Buy &amp; hold</button>
+			<button type="button" class={`rounded-full border border-sc-line2 px-2.5 py-0.5 ${showBench ? 'bg-sc-raise text-sc-ink' : 'text-sc-ink3'}`} aria-pressed={showBench} on:click={() => (showBench = !showBench)}>Buy &amp; hold</button>
 		{/if}
-		<button type="button" class={`rounded-full border border-[#2a2f38] px-2.5 py-0.5 ${showTable ? 'bg-[#1a1d22] text-white' : 'text-[#777]'}`} aria-pressed={showTable} on:click={() => (showTable = !showTable)}>Table</button>
+		<button type="button" class={`rounded-full border border-sc-line2 px-2.5 py-0.5 ${showTable ? 'bg-sc-raise text-sc-ink' : 'text-sc-ink3'}`} aria-pressed={showTable} on:click={() => (showTable = !showTable)}>Table</button>
 	</div>
 
 	{#if strat.length < 2}
-		<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-[12px] text-[#666]">This run stored no equity curve.</div>
+		<div class="border border-sc-line bg-sc-panel2 px-4 py-6 text-[12px] text-sc-ink3">This run stored no equity curve.</div>
 	{:else}
 		<!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
 		<div class="relative w-full outline-none focus-visible:ring-1 focus-visible:ring-[#8fb0ff]" use:trackWidth={(value) => (width = value || 640)} tabindex="0" role="img" aria-label="Growth and drawdown chart; left and right arrows move the readout" on:keydown={key} on:blur={() => (cursor = null)}>
-			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]">
+			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]">
 				{#if oosX !== null}
 					<rect x={M.l} y={M.t} width={oosX - M.l} height={topH} fill="rgba(255,255,255,0.028)" />
 					<line x1={oosX} x2={oosX} y1={M.t - 14} y2={M.t + h} stroke={CHART.axis} />
@@ -148,22 +148,22 @@
 				<rect x={M.l} y={M.t} width={w} height={h} fill="transparent" role="presentation" on:pointermove={move} on:pointerleave={() => (cursor = null)} />
 			</svg>
 			{#if readout}
-				<div class="pointer-events-none absolute top-5 z-10 min-w-[170px] border border-[#2a2f38] bg-[#0b0d11] px-2.5 py-2 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(readout.x + 14, Math.max(0, width - 190))}px`} data-testid="growth-readout">
-					<div class="mb-1 text-[#777]">{fmtDateUtc(readout.t)} · {readout.inSample ? 'in-sample' : 'out-of-sample'}</div>
-					<div class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5"><i class="h-0.5 w-3 bg-[#eef1f5]"></i><span class="text-[#777]">Strategy</span><span class="text-right text-white">{growthText(readout.strat)} · {fmtUsd(readout.strat * base, 0, false)}</span></div>
-					{#if showBench && readout.bench !== null}<div class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5"><i class="h-0.5 w-3 bg-[#6c7480]"></i><span class="text-[#777]">Buy &amp; hold</span><span class="text-right text-white">{growthText(readout.bench)}</span></div>{/if}
-					<div class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5"><i class="h-0.5 w-3 bg-[#e0663f]"></i><span class="text-[#777]">Drawdown</span><span class="text-right text-white">{fmtPct(readout.dd, 1, false)}</span></div>
+				<div class="pointer-events-none absolute top-5 z-10 min-w-[170px] rounded-md border border-sc-line2 bg-[#0b0d11] px-2.5 py-2 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(readout.x + 14, Math.max(0, width - 190))}px`} data-testid="growth-readout">
+					<div class="mb-1 text-sc-ink3">{fmtDateUtc(readout.t)} · {readout.inSample ? 'in-sample' : 'out-of-sample'}</div>
+					<div class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5"><i class="h-0.5 w-3 bg-sc-ink"></i><span class="text-sc-ink3">Strategy</span><span class="text-right text-sc-ink">{growthText(readout.strat)} · {fmtUsd(readout.strat * base, 0, false)}</span></div>
+					{#if showBench && readout.bench !== null}<div class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5"><i class="h-0.5 w-3 bg-[#6c7480]"></i><span class="text-sc-ink3">Buy &amp; hold</span><span class="text-right text-sc-ink">{growthText(readout.bench)}</span></div>{/if}
+					<div class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5"><i class="h-0.5 w-3 bg-[#e0663f]"></i><span class="text-sc-ink3">Drawdown</span><span class="text-right text-sc-ink">{fmtPct(readout.dd, 1, false)}</span></div>
 				</div>
 			{/if}
 		</div>
 		{#if showTable}
 			<div class="overflow-x-auto" data-testid="growth-table">
-				<table class="w-full border-collapse text-[12px] tabular-nums">
-					<thead><tr class="text-[10px] uppercase tracking-[0.12em] text-[#555]"><th class="px-2 py-1 text-left font-normal">Date</th><th class="px-2 py-1 text-right font-normal">Strategy</th><th class="px-2 py-1 text-right font-normal">Buy &amp; hold</th><th class="px-2 py-1 text-right font-normal">Drawdown</th></tr></thead>
+				<table class="w-full border-collapse text-[12px] font-plex-mono tabular-nums">
+					<thead><tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] text-sc-ink3"><th class="px-2 py-1 text-left font-normal">Date</th><th class="px-2 py-1 text-right font-normal">Strategy</th><th class="px-2 py-1 text-right font-normal">Buy &amp; hold</th><th class="px-2 py-1 text-right font-normal">Drawdown</th></tr></thead>
 					<tbody>
 						{#each tableRows as row (row.t)}
 							{@const b = bench.length ? bench[stepIndex(bench.map((p) => p.t), row.t)] : null}
-							<tr class="border-t border-[#1d1d1d]"><td class="px-2 py-1 text-left text-[#aab1bc]">{fmtDateUtc(row.t)}</td><td class="px-2 py-1 text-right">{growthText(row.m)}</td><td class="px-2 py-1 text-right">{b ? growthText(b.m) : '—'}</td><td class="px-2 py-1 text-right">{fmtPct(dd[stepIndex(times, row.t)]?.v ?? 0, 1, false)}</td></tr>
+							<tr class="border-t border-sc-line"><td class="px-2 py-1 text-left text-sc-ink2">{fmtDateUtc(row.t)}</td><td class="px-2 py-1 text-right">{growthText(row.m)}</td><td class="px-2 py-1 text-right">{b ? growthText(b.m) : '—'}</td><td class="px-2 py-1 text-right">{fmtPct(dd[stepIndex(times, row.t)]?.v ?? 0, 1, false)}</td></tr>
 						{/each}
 					</tbody>
 				</table>

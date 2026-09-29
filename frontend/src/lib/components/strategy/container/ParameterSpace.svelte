@@ -28,24 +28,24 @@
 
 <div class="grid" data-testid="parameter-space">
 	{#each rows as row (row.key)}
-		<div class="grid grid-cols-[minmax(0,11em)_minmax(0,1fr)] items-start gap-3 border-b border-[#161616] py-2 last:border-b-0" data-testid={`parameter-space-${row.key}`}>
-			<span class="break-all font-mono text-[12px] text-[#aab1bc]">{row.key}</span>
+		<div class="grid grid-cols-[minmax(0,11em)_minmax(0,1fr)] items-start gap-3 border-b border-sc-line py-2 last:border-b-0" data-testid={`parameter-space-${row.key}`}>
+			<span class="break-all font-plex-mono text-[12px] text-sc-ink2">{row.key}</span>
 			<div class="grid gap-1">
 				<div class="flex flex-wrap gap-1">
 					{#if row.options}
 						{#each row.options as option, index (index)}
-							<span class={`border px-1.5 py-0.5 font-mono text-[11px] ${index === row.at ? 'border-white bg-white text-black' : 'border-[#2a2f38] text-[#777]'}`}>{show(option)}</span>
+							<span class={`rounded border px-2 py-px font-plex-mono text-[12px] ${index === row.at ? 'border-sc-ink bg-sc-ink font-medium text-[#0b0d10]' : 'border-sc-line2 text-sc-ink3'}`}>{show(option)}</span>
 						{/each}
-						{#if row.at === -1}<span class="border border-[#e7b24a] px-1.5 py-0.5 font-mono text-[11px] text-[#e7b24a]">{show(row.value)}</span>{/if}
+						{#if row.at === -1}<span class="rounded border border-[#e7b24a] px-2 py-px font-plex-mono text-[12px] text-[#e7b24a]">{show(row.value)}</span>{/if}
 					{:else}
-						<span class="border border-[#1d1d1d] px-1.5 py-0.5 font-mono text-[11px] text-white">{show(row.value)}</span>
+						<span class="rounded border border-sc-line2 px-2 py-px font-plex-mono text-[12px] text-sc-ink">{show(row.value)}</span>
 					{/if}
 				</div>
-				<span class={`text-[11px] ${row.edge || (row.at === -1 && row.options) ? 'text-[#e7b24a]' : 'text-[#666]'}`}>{row.note}</span>
+				<span class={`text-[11px] ${row.edge || (row.at === -1 && row.options) ? 'text-[#e7b24a]' : 'text-sc-ink3'}`}>{row.note}</span>
 			</div>
 		</div>
 	{/each}
 	{#if rows.length === 0}
-		<div class="text-[12px] text-[#666]">No tunable parameters.</div>
+		<div class="text-[12px] text-sc-ink3">No tunable parameters.</div>
 	{/if}
 </div>

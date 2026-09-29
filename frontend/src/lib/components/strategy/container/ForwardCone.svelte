@@ -50,14 +50,14 @@
 
 {#if fan.length > 1}
 	<div class="grid gap-2" data-testid="forward-cone">
-		<div class="flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-[#aab1bc]">
+		<div class="flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-sc-ink2">
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5 bg-[rgba(238,241,245,0.12)]"></i>Middle 50%</span>
 			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-2.5 w-2.5 bg-[rgba(238,241,245,0.07)]"></i>Middle 90%</span>
-			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-[#aab1bc]"></i>Median</span>
-			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-[#eef1f5]"></i>Paper</span>
+			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-sc-ink2"></i>Median</span>
+			<span class="inline-flex items-center gap-1.5"><i class="inline-block h-0.5 w-4 bg-sc-ink"></i>Paper</span>
 		</div>
 		<div class="relative" use:trackWidth={(value) => (width = value || 560)}>
-			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible text-[10.5px]" role="img" aria-label={`Resampled paths for the next ${steps} trades; paper has closed ${closed}`}>
+			<svg viewBox={`0 0 ${Math.max(200, width)} ${height}`} {height} class="block w-full overflow-visible font-plex-mono text-[10.5px]" role="img" aria-label={`Resampled paths for the next ${steps} trades; paper has closed ${closed}`}>
 				{#each yTicks as tick (tick)}
 					<line x1={M.l} x2={M.l + w} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? CHART.axis : CHART.grid} shape-rendering="crispEdges" />
 					<text x={M.l - 8} y={y(tick) + 3.5} text-anchor="end" fill={CHART.ink3}>{fmtPct(tick, 0)}</text>
@@ -82,18 +82,18 @@
 				<rect x={M.l} y={M.t} width={w} height={h} fill="transparent" role="presentation" on:pointermove={move} on:pointerleave={() => (cursor = null)} />
 			</svg>
 			{#if row && cursor !== null}
-				<div class="pointer-events-none absolute top-2 z-10 min-w-[150px] border border-[#2a2f38] bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(x(cursor) + 12, Math.max(0, width - 170))}px`} data-testid="forward-cone-readout">
-					<div class="mb-0.5 text-[#777]">after {cursor} trade{cursor === 1 ? '' : 's'}</div>
+				<div class="pointer-events-none absolute top-2 z-10 min-w-[150px] rounded-md border border-sc-line2 bg-[#0b0d11] px-2.5 py-1.5 text-[11px] shadow-[0_8px_24px_rgba(0,0,0,0.45)]" style={`left:${Math.min(x(cursor) + 12, Math.max(0, width - 170))}px`} data-testid="forward-cone-readout">
+					<div class="mb-0.5 text-sc-ink3">after {cursor} trade{cursor === 1 ? '' : 's'}</div>
 					{#each [['95th pct', 5], ['75th pct', 4], ['Median', 3], ['25th pct', 2], ['5th pct', 1]] as [name, index] (name)}
-						<div class="flex justify-between gap-3"><span class="text-[#777]">{name}</span><span class="tabular-nums text-white">{fmtPct(pct(row[Number(index)]))}</span></div>
+						<div class="flex justify-between gap-3"><span class="text-sc-ink3">{name}</span><span class="font-plex-mono tabular-nums text-sc-ink">{fmtPct(pct(row[Number(index)]))}</span></div>
 					{/each}
 					{#if cursor <= closed && paperPct[cursor] !== undefined}
-						<div class="flex justify-between gap-3 border-t border-[#2a2f38] pt-0.5"><span class="text-[#777]">Paper</span><span class="tabular-nums text-white">{fmtPct(paperPct[cursor])}</span></div>
+						<div class="flex justify-between gap-3 border-t border-sc-line2 pt-0.5"><span class="text-sc-ink3">Paper</span><span class="font-plex-mono tabular-nums text-sc-ink">{fmtPct(paperPct[cursor])}</span></div>
 					{/if}
 				</div>
 			{/if}
 		</div>
 	</div>
 {:else}
-	<div class="text-[12px] text-[#666]" data-testid="forward-cone-empty">{emptyText}</div>
+	<div class="text-[12px] text-sc-ink3" data-testid="forward-cone-empty">{emptyText}</div>
 {/if}
