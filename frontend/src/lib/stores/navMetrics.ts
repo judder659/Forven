@@ -44,7 +44,11 @@ export const NAV_HREFS = [
 // and event pulses — so neither an older backend nor a stray pulse() call can
 // resurrect a badge elsewhere. Safety states still surface via toasts and the
 // Risk page banner.
+// '/data' (Data Manager rebuild, 2026-09-28): lights only when a series a live
+// or paper strategy trades on is past its freshness allowance (heartbeat.ts,
+// from /api/data/sla), never for research or idle data.
 export const NAV_BADGE_HREFS = [
+	'/data',
 	'/approval',
 	'/diagnostics',
 	'/integrations',

@@ -9,15 +9,15 @@ rejections and starves the gauntlet.
 
 This module closes that gap. Before a stage screens a strategy, ``ensure_coverage``
 checks — cheaply, from the parquet footer — whether enough history exists and, if
-not, triggers an ASYNC backfill via the existing ``data.submit_ingestion`` worker.
+not, triggers an ASYNC backfill: a ``download`` job via ``data.submit_ingestion``.
 The caller defers (``blocked_data``) and retries; by a later tick the data has
 landed and the screen runs on the intended window.
 
 Design guardrails (why this is safe to run in the hot pipeline path):
-  * Non-blocking — never downloads inline; ``submit_ingestion`` runs on the data
-    thread pool, so the gauntlet drain thread is never held on the network.
-  * Deduplicated — an in-flight ingestion for the same (symbol, timeframe) is
-    reused instead of spawning a second download.
+  * Non-blocking — never downloads inline; the download job runs on the job
+    store's venue lane, so the gauntlet drain thread is never held on the network.
+  * Deduplicated — an in-flight download for the same (symbol, timeframe) is
+    reused instead of spawning a second one.
   * Bounded — requests only the target window (``since_ms``), not all of history.
   * Truly-unavailable aware — once a backfill COMPLETES without reaching the target
     (e.g. a new listing with no older history), we proceed on what exists instead of
@@ -455,7 +455,9 @@ def ensure_coverage(
 
     since_ms = int(time.time() * 1000) - need * _DAY_MS
     try:
-        run = submit_ingestion(symbol=canon, timeframe=timeframe, exchange=exchange, since_ms=since_ms)
+        run = submit_ingestion(
+            symbol=canon, timeframe=timeframe, exchange=exchange, since_ms=since_ms, origin="system"
+        )
     except Exception as exc:  # noqa: BLE001 - a submit hiccup must not wedge the pipeline
         log.warning("ensure_coverage: backfill submit failed for %s %s: %s", canon, timeframe, exc)
         return {"status": "ready", "coverage_days": cov, "symbol": canon, "backfill_error": str(exc)}

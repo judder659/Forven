@@ -235,10 +235,12 @@ def test_enrich_backtest_frame_missing_data_returns_unchanged(tmp_path):
     assert isinstance(out.index, pd.DatetimeIndex)
 
 
-def test_enrich_stream_failure_logged_at_warning(tmp_path, caplog):
-    """A stream-level failure must surface at WARNING, not silent DEBUG."""
+def test_enrich_stream_failure_logged_at_warning(tmp_path, caplog, monkeypatch):
+    """A stream-level failure must surface at WARNING, not silent DEBUG (the
+    legacy per-stream joins, the DataHub's fallback)."""
     import logging
 
+    monkeypatch.setattr("forven.data._data_engine_read_enabled", lambda: False)
     dm = DataManager()
     frame = _backtest_frame()
 

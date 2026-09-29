@@ -1759,6 +1759,115 @@ def _resolve_point_in_time_as_of() -> object | None:
     return None
 
 
+class DataVenueError(ValueError):
+    """A backtest's ``data_venue`` cannot be served: a malformed venue key, or
+    no stored series on that venue. Never answered with another venue's data."""
+
+
+def data_venue_key(data_venue: str | None) -> tuple[str, str] | None:
+    """(source, market) of a ``data_venue`` such as "okx:spot"; None for the
+    canonical research lake ("canonical" or empty)."""
+    text = str(data_venue or "").strip().lower()
+    if text in ("", "canonical"):
+        return None
+    source, separator, market = text.partition(":")
+    if not separator or not source or not market or ":" in market:
+        raise DataVenueError(f"data_venue must be 'canonical' or '<source>:<market>' (e.g. 'okx:spot'), got {data_venue!r}")
+    return source, market
+
+
+# Warm-up is positional (N bars before the window start), so a hole inside it
+# stretches it in time: windowed reads take this many times the warm-up span
+# and fall back to the whole series when that still is not enough.
+_WINDOW_READ_SLACK = 3
+
+
+def _epoch_ms(value: object) -> int | None:
+    try:
+        ts = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(ts):
+        return None
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    return int(ts.timestamp() * 1000)
+
+
+def _load_dataset_frame(
+    symbol: str,
+    timeframe: str,
+    *,
+    venue: tuple[str, str] | None,
+    start_date: str | None,
+    end_date: str | None,
+    warmup_bars: int,
+    required_bars: int,
+    as_of: object | None,
+    holdout_cutoff: object | None,
+) -> pd.DataFrame:
+    """A stored series for a backtest, normalized and sealed at the research
+    holdout, reading only what the window (or the most recent ``required_bars``)
+    needs. The windowed read is kept only when it provably equals the whole
+    series for the slicing that follows: enough warm-up bars before the start
+    (or enough recent bars) are present. Otherwise — no footer bounds, a window
+    reaching the series' first bar, a hole wider than the slack — the whole
+    series is read, exactly as before."""
+    from forven.data import (
+        _footer_bounds,
+        _stored_series_bounds,
+        _timeframe_to_ms,
+        load_parquet,
+        load_venue_frame,
+        venue_parquet_path,
+    )
+    from forven.research_holdout import seal_frame
+
+    if venue is None:
+        first_ms, last_ms = _stored_series_bounds(symbol, timeframe)
+
+        def read(start: object, end: object) -> pd.DataFrame | None:
+            window = {key: value for key, value in (("start", start), ("end", end)) if value is not None}
+            return load_parquet(symbol, timeframe, as_of=as_of, **window)
+    else:
+        path = venue_parquet_path(venue[0], venue[1], symbol, timeframe)
+        first_ms, last_ms = _footer_bounds(path)[1:] if path.exists() else (None, None)
+
+        def read(start: object, end: object) -> pd.DataFrame | None:
+            return load_venue_frame(venue[0], venue[1], symbol, timeframe, start=start, end=end, as_of=as_of)
+
+    def sealed(start: object, end: object) -> pd.DataFrame:
+        frame = _normalize_backtest_frame(read(start, end))
+        return seal_frame(frame, holdout_cutoff) if holdout_cutoff is not None else frame
+
+    tf_ms = int(_timeframe_to_ms(timeframe))
+    start_ts = _coerce_backtest_timestamp(start_date)
+    end_ts = _coerce_backtest_timestamp(end_date)
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        start_ts, end_ts = end_ts, start_ts
+    if first_ms is None or last_ms is None:
+        # No footer bounds (absent, or empty): the read itself decides, as before.
+        return sealed(None, None)
+    if start_ts is not None:
+        read_start_ms = int(start_ts.timestamp() * 1000) - (max(int(warmup_bars), 0) + 1) * tf_ms * _WINDOW_READ_SLACK
+
+        def enough(frame: pd.DataFrame) -> bool:
+            return int((frame.index < start_ts).sum()) >= max(int(warmup_bars), 0)
+    elif end_ts is None:
+        anchor = min(value for value in (last_ms, _epoch_ms(as_of), _epoch_ms(holdout_cutoff)) if value is not None)
+        read_start_ms = anchor - (max(int(required_bars), 1) + 1) * tf_ms * _WINDOW_READ_SLACK
+
+        def enough(frame: pd.DataFrame) -> bool:
+            return len(frame) >= max(int(required_bars), 1)
+    else:
+        return sealed(None, None)
+    if read_start_ms <= first_ms:
+        return sealed(None, None)
+    frame = sealed(pd.Timestamp(read_start_ms, unit="ms", tz="UTC"), end_ts)
+    if not frame.empty and enough(frame):
+        return frame
+    return sealed(None, None)
+
+
 def load_backtest_candles(
     asset: str,
     bars: int = 720,
@@ -1769,13 +1878,25 @@ def load_backtest_candles(
     warmup_bars: int = 210,
     enrich_market_data: bool = True,
     as_of: object | None = None,
+    data_venue: str | None = None,
 ) -> pd.DataFrame:
     """Load candles for backtesting, preferring local parquet datasets.
 
     With ``as_of`` set (explicitly, or via the data-engine point_in_time pin) the
     stored series is reconstructed to the values in force at that time (T1.6
-    reproducibility); otherwise the latest values are read, unchanged."""
+    reproducibility); otherwise the latest values are read, unchanged. A failed
+    reconstruction raises ``AsOfReconstructionError`` — never the latest data.
 
+    ``data_venue`` ("canonical" by default, or a venue key such as "okx:spot")
+    selects which stored candles to test on; enrichment streams (funding, OI,
+    order flow) always come from the canonical lake. A venue with no stored
+    series raises ``DataVenueError`` instead of falling back to another source.
+    Only the part of the series the window needs is read (see
+    ``_load_dataset_frame``)."""
+
+    from forven.data import AsOfReconstructionError
+
+    venue = data_venue_key(data_venue)
     if as_of is None:
         as_of = _resolve_point_in_time_as_of()
 
@@ -1806,13 +1927,19 @@ def load_backtest_candles(
 
     try:
 
-        from forven.data import load_parquet
-
         for symbol in _dataset_symbol_candidates(asset):
 
-            frame = _normalize_backtest_frame(load_parquet(symbol, resolved_timeframe, as_of=as_of))
-            if holdout_cutoff is not None:
-                frame = seal_frame(frame, holdout_cutoff)
+            frame = _load_dataset_frame(
+                symbol,
+                resolved_timeframe,
+                venue=venue,
+                start_date=start_date,
+                end_date=end_date,
+                warmup_bars=warmup_bars,
+                required_bars=required_bars,
+                as_of=as_of,
+                holdout_cutoff=holdout_cutoff,
+            )
 
             if frame.empty:
 
@@ -1832,7 +1959,8 @@ def load_backtest_candles(
                 frame = frame.tail(required_bars)
 
             log.info(
-                "Backtest candles source=dataset symbol=%s timeframe=%s bars=%d requested=%d",
+                "Backtest candles source=dataset venue=%s symbol=%s timeframe=%s bars=%d requested=%d",
+                "canonical" if venue is None else ":".join(venue),
                 symbol,
                 resolved_timeframe,
                 len(frame),
@@ -1857,8 +1985,20 @@ def load_backtest_candles(
                 log.warning("DataManager enrich skipped for %s/%s: %s", symbol, resolved_timeframe, _enrich_exc)
             return frame
 
+        if venue is not None:
+            raise DataVenueError(f"No stored {':'.join(venue)} candles for {asset} {resolved_timeframe}")
+
+    except (AsOfReconstructionError, DataVenueError):
+        # A pinned read that cannot be reconstructed, or an explicit venue that
+        # cannot be served, must fail the run — the scanner fallback below
+        # would silently score live-venue, latest data instead.
+        raise
     except Exception as exc:
 
+        if venue is not None:
+            raise DataVenueError(
+                f"{':'.join(venue)} candles for {asset} {resolved_timeframe} could not be read: {exc}"
+            ) from exc
         log.warning(
             "Dataset candle load failed (falling back to scanner) for %s %s: %s",
             asset,
@@ -5943,6 +6083,7 @@ def backtest_strategy(
     initial_capital: float | None = None,
     execution_controls: dict | None = None,
     as_of: str | None = None,
+    data_venue: str | None = None,
 ) -> dict:
     """Run a backtest for a single strategy over historical candles.
 
@@ -6002,6 +6143,11 @@ def backtest_strategy(
         raise ValueError(f"backtest_strategy: strategy_type must be a non-empty string, got {strategy_type!r}")
     if not isinstance(params, dict):
         raise TypeError(f"backtest_strategy: params must be dict, got {type(params).__name__}")
+    # data_venue: "canonical" (default) or a stored venue series ("okx:spot").
+    try:
+        venue = data_venue_key(data_venue)
+    except DataVenueError as exc:
+        return {"error": str(exc), "trades": [], "metrics": {}}
     # Resolve leverage from the strategy's OWN declared param when the caller passes no
     # explicit value, instead of assuming a fixed 3x. Backtest drawdown/returns must
     # reflect the leverage the strategy actually declares (e.g. 1.0). Falls back to 3.0
@@ -6164,7 +6310,8 @@ def backtest_strategy(
 
     # Check settings for remote engine delegation
 
-    if settings.get("remote_engine_enabled") and settings.get("remote_engine_url"):
+    # A venue series lives in this lake only, so venue runs never delegate.
+    if settings.get("remote_engine_enabled") and settings.get("remote_engine_url") and venue is None:
 
         log.info("Delegating backtest %s to remote compute engine", strategy_id)
 
@@ -6319,15 +6466,24 @@ def backtest_strategy(
         # indicators are valid from the first in-window bar. Without start/end it
         # falls back to the most-recent ``bars`` (legacy/autonomous behaviour).
         # ``as_of`` pins point-in-time reconstruction (gauntlet candidates pin
-        # their creation time so every stage scores identical data).
-        df = load_backtest_candles(
-            asset=asset,
-            bars=bars,
-            timeframe=resolved_timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            as_of=as_of,
-        )
+        # their creation time so every stage scores identical data); a pin
+        # that cannot be reconstructed, or a venue with no stored series, is
+        # this run's error — never latest or other-venue data.
+        from forven.data import AsOfReconstructionError
+
+        try:
+            df = load_backtest_candles(
+                asset=asset,
+                bars=bars,
+                timeframe=resolved_timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                as_of=as_of,
+                data_venue=data_venue,
+            )
+        except (AsOfReconstructionError, DataVenueError) as exc:
+            log.warning("Backtest %s data load refused: %s", strategy_id, exc)
+            return {"error": str(exc), "trades": [], "metrics": {}}
 
     if len(df) < 210:
 
@@ -7958,15 +8114,21 @@ def walk_forward(
         resolved_timeframe,
     )
 
-    df = load_backtest_candles(
-        asset=asset,
-        bars=resolved_total_bars,
-        timeframe=resolved_timeframe,
-        start_date=start_date,
-        end_date=end_date,
-        warmup_bars=210,
-        as_of=as_of,
-    )
+    from forven.data import AsOfReconstructionError
+
+    try:
+        df = load_backtest_candles(
+            asset=asset,
+            bars=resolved_total_bars,
+            timeframe=resolved_timeframe,
+            start_date=start_date,
+            end_date=end_date,
+            warmup_bars=210,
+            as_of=as_of,
+        )
+    except AsOfReconstructionError as exc:
+        log.warning("Walk-forward %s data load refused: %s", strategy_id, exc)
+        return {"error": str(exc)}
 
     # Apply bar cap after loading — when date ranges produce too many bars,
     # keep the most recent data so the analysis stays relevant.

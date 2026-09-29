@@ -845,6 +845,50 @@ def _m_2026_09_retire_crucibles(conn: sqlite3.Connection) -> None:
     log.info("Retired crucibles: cancelled %d queued crucible task(s)", int(cursor.rowcount or 0))
 
 
+def _m_2026_09_data_jobs(conn: sqlite3.Connection) -> None:
+    """One job store for every Data Manager job (downloads, history extension,
+    universe seeding, CSV imports, gap repair, reclaim, collector ticks).
+
+    Replaces the separate in-memory/KV state of ingestion runs, Binance Vision
+    backfill and the universe seed (forven/dataeng/jobs.py). ``routine`` rows
+    are automatic background work, rolled up in the Activity view.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS data_jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            origin TEXT NOT NULL DEFAULT 'user',
+            status TEXT NOT NULL DEFAULT 'queued',
+            lane TEXT NOT NULL DEFAULT 'local',
+            routine INTEGER NOT NULL DEFAULT 0,
+            dedupe_key TEXT,
+            params_json TEXT NOT NULL DEFAULT '{}',
+            series_json TEXT NOT NULL DEFAULT '[]',
+            progress_done REAL NOT NULL DEFAULT 0,
+            progress_total REAL,
+            progress_unit TEXT,
+            message TEXT,
+            result_json TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            parent_id TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_jobs_status ON data_jobs (status, created_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_jobs_kind ON data_jobs (kind, created_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_jobs_dedupe ON data_jobs (dedupe_key, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_jobs_routine ON data_jobs (routine, created_at DESC)")
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -908,6 +952,7 @@ MIGRATIONS: list[Migration] = [
     Migration(name="2026_09_agent_calls", up=_m_2026_09_agent_calls),
     Migration(name="2026_09_retire_research_only", up=_m_2026_09_retire_research_only),
     Migration(name="2026_09_retire_crucibles", up=_m_2026_09_retire_crucibles),
+    Migration(name="2026_09_data_jobs", up=_m_2026_09_data_jobs),
 ]
 
 

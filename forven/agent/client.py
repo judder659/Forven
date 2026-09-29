@@ -13,6 +13,8 @@ Endpoint map mirrors forven/mcp_server/server.py (the proven set):
   GET  /api/strategies                         (?status=)
   GET  /api/strategies/{id}/container
   GET  /api/lifecycle/strategies/{id}/readiness
+  GET  /api/data/readiness/strategy/{id}
+  POST /api/data/readiness
   GET  /api/backtesting/runs                    (?limit=)
   GET  /api/results/{id}                        (and ?strategy=&limit=)
   POST /api/strategies/intake/register-file
@@ -150,6 +152,10 @@ class ForvenAgentClient:
     def get_result(self, result_id: str) -> Any:
         return self.get(f"/api/results/{result_id}")
 
+    def data_census(self, stream: str | None = None, limit_worst: int = 50) -> Any:
+        """Freshness SLA census of every stored series (GET /api/data/sla)."""
+        return self.get("/api/data/sla", params={"stream": stream, "limit_worst": limit_worst})
+
     def get_gate_report(self, strategy_id: str) -> dict:
         """Composite read: container + lifecycle readiness + latest result.
 
@@ -173,6 +179,29 @@ class ForvenAgentClient:
         except ForvenAPIError:
             pass
         return report
+
+    def get_data_readiness(self, strategy_id: str | None = None, *, symbol: str | None = None,
+                           timeframe: str | None = None, streams: Iterable[str] | None = None,
+                           history_days: int | None = None, strategy_type: str | None = None,
+                           code: str | None = None) -> Any:
+        """The data contract: verdict ready / needs_data / blocked plus one row
+        per requirement (candles, history, freshness, every feed) with a fix.
+
+        Pass ``strategy_id`` for a registered strategy, or ``symbol`` +
+        ``timeframe`` (+ ``streams`` like ``["funding", "oi"]``, ``code`` to scan
+        a draft's source) for an idea. Check it before writing a strategy that
+        reads anything beyond candles.
+        """
+        if strategy_id:
+            return self.get(f"/api/data/readiness/strategy/{urllib.parse.quote(str(strategy_id), safe='')}")
+        if not symbol or not timeframe:
+            raise ValueError("pass strategy_id, or symbol and timeframe")
+        body: dict[str, Any] = {"symbol": symbol, "timeframe": timeframe}
+        for key, value in (("streams", list(streams) if streams else None), ("history_days", history_days),
+                           ("strategy_type", strategy_type), ("code", code)):
+            if value:
+                body[key] = value
+        return self.post("/api/data/readiness", body)
 
     def get_status(self, strategy_id: str) -> dict:
         """Lightweight {id, stage, status} for a strategy (for polling).

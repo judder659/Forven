@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +13,6 @@ from forven.data_manager import (
     DataManager,
     FundingCollector,
     OICollector,
-    OHLCVCollector,
     _load_stream_parquet,
     _save_stream_parquet,
     data_manager,
@@ -24,6 +22,14 @@ from forven.data_manager import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+@pytest.fixture
+def legacy_data_engine(monkeypatch):
+    """Pin the legacy (non-DataHub) read/collect path. The DataHub is the
+    default; these tests cover the legacy exchange collectors and _enrich_*
+    joins, which stay as its fallback."""
+    monkeypatch.setattr("forven.data._data_engine_read_enabled", lambda: False)
+
 
 def _make_ohlcv(n: int = 10) -> pd.DataFrame:
     ts = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC")
@@ -120,67 +126,6 @@ def test_import_fails_loudly_when_pyarrow_missing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# OHLCVCollector
-# ---------------------------------------------------------------------------
-
-def test_ohlcv_collector_returns_zero_on_empty_fetch():
-    collector = OHLCVCollector()
-    with patch("forven.data.fetch_ohlcv_chunked", return_value=pd.DataFrame()):
-        with patch("forven.data.load_parquet", return_value=None):
-            with patch("forven.data._get_dataset_lock", return_value=threading.Lock()):
-                result = collector.collect("BTC-USDT", "1h")
-    assert result == 0
-
-
-def test_ohlcv_collector_does_not_hold_dataset_lock_during_fetch():
-    collector = OHLCVCollector()
-    dataset_lock = threading.Lock()
-    captured: dict[str, object] = {}
-
-    def _fake_fetch(symbol: str, timeframe: str, since_ms: int | None = None, **_kwargs):
-        acquired = dataset_lock.acquire(timeout=0.05)
-        try:
-            assert acquired, "collector held the dataset lock while fetch_ohlcv_chunked tried to save"
-            captured["symbol"] = symbol
-            captured["timeframe"] = timeframe
-            captured["since_ms"] = since_ms
-            return {"bars_new": 3}
-        finally:
-            if acquired:
-                dataset_lock.release()
-
-    # Last stored bar opens at 2024-01-01T01:00Z, read from the parquet footer
-    # (no full load). It is far in the past, so a new closed bar is due and the
-    # fetch path runs (the cheap "is a bar due?" gate does not short-circuit).
-    last_ms = int(pd.Timestamp("2024-01-01T01:00:00Z").timestamp() * 1000)
-    with patch("forven.data.fetch_ohlcv_chunked", side_effect=_fake_fetch):
-        with patch("forven.data.dataset_last_timestamp_ms", return_value=last_ms):
-            with patch("forven.data._get_dataset_lock", return_value=dataset_lock):
-                result = collector.collect("BTC-USDT", "1h")
-
-    assert result == 3
-    assert captured["symbol"] == "BTC-USDT"
-    assert captured["timeframe"] == "1h"
-    assert captured["since_ms"] == int(pd.Timestamp("2024-01-01T02:00:00Z").timestamp() * 1000)
-
-
-def test_ohlcv_collector_raises_on_failure():
-    """Collectors must re-raise (B-19): swallowing made an all-fail run look
-    like a quiet green bar. Orchestrators catch per symbol and tally."""
-    collector = OHLCVCollector()
-    # First-time collection (no stored file) -> the corrupt-file guard is skipped
-    # and the fetch path runs; a fetch/IO failure must propagate, not be swallowed
-    # into a quiet 0. parquet_path is patched to a non-existent path so the guard
-    # (which raises only when the lake file is present-but-unreadable) doesn't fire.
-    from pathlib import Path as _NoFile
-    with patch("forven.data.dataset_last_timestamp_ms", return_value=None):
-        with patch("forven.data.parquet_path", return_value=_NoFile("first-time-no-file.parquet")):
-            with patch("forven.data.fetch_ohlcv_chunked", side_effect=RuntimeError("db error")):
-                with pytest.raises(RuntimeError, match="db error"):
-                    collector.collect("BTC-USDT", "1h")
-
-
-# ---------------------------------------------------------------------------
 # FundingCollector
 # ---------------------------------------------------------------------------
 
@@ -204,6 +149,7 @@ def test_funding_collector_creates_file(tmp_path):
     assert path.exists()
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_funding_collector_incremental(tmp_path):
     """Second collect should only add new rows."""
     collector = FundingCollector()
@@ -245,6 +191,7 @@ def test_funding_collector_idempotent(tmp_path):
     assert len(loaded) == 3
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_funding_collector_raises_on_failure():
     collector = FundingCollector()
     with patch("forven.data_manager._get_futures_exchange", side_effect=RuntimeError("no exchange")):
@@ -270,6 +217,7 @@ def _mock_oi_rows(n: int = 3):
     ]
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_oi_collector_creates_file(tmp_path):
     collector = OICollector()
     with patch("forven.data_manager.OI_DIR", tmp_path / "oi"):
@@ -282,6 +230,7 @@ def test_oi_collector_creates_file(tmp_path):
     assert path.exists()
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_oi_collector_raises_on_failure():
     collector = OICollector()
     with patch("forven.data_manager._get_futures_exchange", side_effect=RuntimeError("no exchange")):
@@ -435,6 +384,7 @@ def test_enrich_empty_df_returns_unchanged():
     assert result.empty
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_enrich_exception_returns_original(tmp_path):
     """Any exception in enrich should return the original df unchanged."""
     dm = DataManager()
@@ -561,26 +511,6 @@ def test_fetch_active_timeframes_matches_slash_dash_and_bare(forven_db):
     # both the slash-stored and bare-stored active rows.
     tfs = dm._fetch_active_timeframes("BTC-USDT")
     assert tfs == {"5m", "15m"}, tfs
-
-
-def test_collect_ohlcv_processes_staleness_selected_pairs(forven_db, monkeypatch):
-    # collect_ohlcv now delegates selection to _select_keepalive_pairs
-    # (staleness-ranked; ranking itself is unit-tested in test_keepalive_staleness).
-    # This asserts the integration: exactly the selected pairs are collected.
-    dm = DataManager()
-    collected: list[tuple[str, str]] = []
-
-    monkeypatch.setattr(dm, "get_active_symbols", lambda **_kwargs: {"BTC-USDT", "ETH-USDT"})
-    monkeypatch.setattr(dm, "get_active_timeframes", lambda _symbol: {"1h", "4h"})
-    monkeypatch.setattr(dm._ohlcv, "collect", lambda symbol, timeframe: collected.append((symbol, timeframe)) or 1)
-    monkeypatch.setattr(
-        dm, "_select_keepalive_pairs",
-        lambda pairs, cap: [("ETH-USDT", "4h"), ("BTC-USDT", "1h")],
-    )
-
-    result = dm.collect_ohlcv(max_pairs_per_run=2)
-    assert collected == [("ETH-USDT", "4h"), ("BTC-USDT", "1h")]
-    assert result == {"ETH-USDT": {"4h": 1}, "BTC-USDT": {"1h": 1}}
 
 
 # ---------------------------------------------------------------------------
@@ -1094,6 +1024,7 @@ def test_data_manager_is_lazy():
 # T19 — Collector validation (drop future-ts / negative rows)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_funding_collector_drops_future_rows(monkeypatch, tmp_path):
     from forven.data_manager import FundingCollector
     future = int((pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=30)).timestamp() * 1000)
@@ -1118,6 +1049,7 @@ def test_funding_collector_drops_future_rows(monkeypatch, tmp_path):
     assert added == 1
 
 
+@pytest.mark.usefixtures("legacy_data_engine")
 def test_oi_collector_drops_negative_open_interest(monkeypatch, tmp_path):
     from forven.data_manager import OICollector
     base_ms = int(pd.Timestamp("2026-01-01", tz="UTC").timestamp() * 1000)
@@ -1243,14 +1175,26 @@ def _reset_data_manager_stats():
 def test_data_manager_stats_tracks_last_success(monkeypatch, tmp_path):
     from forven.data_manager import data_manager_stats
     _reset_data_manager_stats()
-    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: set())
-    data_manager.collect_funding()  # no-op but records "ran"
+    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: {"NEWCOIN-USDT"})
+    monkeypatch.setattr(data_manager._funding, "collect", lambda symbol: 3)
+    data_manager.collect_funding()  # discovers the symbol's funding file
     stats = data_manager_stats()
     assert "funding" in stats
     assert "last_run_ts" in stats["funding"]
     assert stats["funding"]["last_success_ts"] is not None
     assert stats["funding"]["total_calls"] == 1
     assert stats["funding"]["total_errors"] == 0
+
+
+def test_discovery_run_with_nothing_new_records_nothing(monkeypatch):
+    """A discovery run that finds no new symbol must not write telemetry: it
+    would reset the failure streak the SLA collector reports under the same
+    stream name."""
+    from forven.data_manager import data_manager_stats
+    _reset_data_manager_stats()
+    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: set())
+    data_manager.collect_funding()
+    assert "funding" not in data_manager_stats()
 
 
 def test_data_manager_stats_tracks_errors(monkeypatch):
@@ -1328,30 +1272,6 @@ def test_collect_funding_partial_failure_is_visible_but_not_fatal(monkeypatch):
         "rows": 4, "ts": s["per_symbol"]["BTC-USDT"]["ts"], "ok": True,
     }
     assert s["per_symbol"]["ETH-USDT"]["ok"] is False
-
-
-def test_collect_ohlcv_all_pairs_failing_records_failure(monkeypatch):
-    """The OHLCV keep-alive sweep records failure when every pair fails."""
-    from forven.data_manager import DataManager, data_manager_stats
-    _reset_data_manager_stats()
-    dm = DataManager()
-
-    monkeypatch.setattr(dm, "get_active_symbols", lambda **_k: {"BTC-USDT"})
-    monkeypatch.setattr(dm, "get_active_timeframes", lambda _s: {"1h", "4h"})
-
-    def boom(symbol, timeframe):
-        raise RuntimeError("HTTP 503")
-
-    monkeypatch.setattr(dm._ohlcv, "collect", boom)
-
-    result = dm.collect_ohlcv()
-    assert result == {"BTC-USDT": {"1h": 0, "4h": 0}}
-
-    s = data_manager_stats()["ohlcv"]
-    assert s["consecutive_failures"] == 1
-    assert s["last_success_ts"] is None
-    assert s["last_attempted"] == 2
-    assert s["last_failed"] == 2
 
 
 def test_active_timeframes_include_deployed_and_legacy_paper(forven_db):

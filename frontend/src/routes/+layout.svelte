@@ -78,7 +78,7 @@
 
 	const DESCRIPTION_OVERRIDES: Record<string, string> = {
 		'/': 'Live trading command center with telemetry, strategy health, and portfolio signals.',
-		'/data': 'Inspect datasets and data-quality health for supported markets.',
+		'/data': 'Market data health, every stored series, downloads, jobs and storage.',
 		'/all-trades': 'Full trade ledger across all statuses (open, closed, failed) with filtering and manual cleanup of phantom trades.',
 		'/paper-trades': 'Monitor paper trading sessions with manual controls, chart overlays, signals, and execution history — simulated fills only.',
 		'/live-trades': 'Manage live positions of deployed strategies with manual controls — actions here drive REAL exchange orders.',

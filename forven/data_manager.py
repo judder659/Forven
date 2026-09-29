@@ -1,32 +1,29 @@
-"""DataManager — unified continuous data collection layer.
+"""DataManager — per-stream collectors and read-time enrichment.
 
-Orchestrates nine stream collectors:
-- OHLCVCollector: proactive OHLCV keep-alive for active symbols
+Stream collectors (each fetches incrementally since the last stored record):
 - FundingCollector: Binance Futures funding rate history → data/funding/
 - OICollector: Binance Futures open interest history → data/oi/
 - LongShortRatioCollector: Binance long/short account ratio → data/derivatives/
 - TakerVolumeCollector: Binance taker buy/sell volume → data/derivatives/
-- LiquidationCollector: Binance liquidation events → data/derivatives/
-- FearGreedCollector: Crypto Fear & Greed Index → data/macro/
-- MacroCollector: VIX, DXY, Treasury, SPY, sector ETFs → data/macro/
-- BtcDominanceCollector: BTC market cap dominance → data/macro/
+- BasisCollector / ImpliedVolCollector: premium-index basis → data/basis/, Deribit DVOL → data/volatility/
+- LiquidationCollector: legacy Binance REST liquidations (env-gated; the OKX WebSocket owns the stream)
+- FearGreedCollector, MacroCollector, BtcDominanceCollector → data/macro/
+
+Who calls them:
+- the SLA collector (forven/dataeng/collector.py) keeps every STORED OHLCV,
+  funding, OI, basis, long-short, taker and IV series inside its freshness SLA;
+- the fixed-cadence ``collect_funding/oi/lsr/taker_volume/basis`` jobs only
+  DISCOVER: they create the stream file for a newly active symbol (active
+  strategies, recent backtests, research OI targets) and leave stored files to
+  the SLA collector;
+- ``collect_liquidations/fear_greed/macro/btc_dominance`` run on their own
+  cadence (streams outside the SLA collector).
 
 Usage:
     from forven.data_manager import data_manager
 
-    # Collect all streams for active symbols
-    data_manager.collect_ohlcv()
-    data_manager.collect_oi()
-    data_manager.collect_funding()
-    data_manager.collect_lsr()
-    data_manager.collect_taker_volume()
-    data_manager.collect_liquidations()
-    data_manager.collect_fear_greed()
-    data_manager.collect_macro()
-    data_manager.collect_btc_dominance()
-
-    # Enrich a DataFrame with all available data at read time
-    df = data_manager.enrich(df, "BTC-USDT", "1h")
+    data_manager.collect_funding()      # first collection for new active symbols
+    df = data_manager.enrich(df, "BTC-USDT", "1h")   # join the streams at read time
 """
 
 from __future__ import annotations
@@ -328,6 +325,29 @@ class _PerSymbolTally:
             failed=self.failed,
             per_symbol=self.per_symbol,
         )
+
+    def record_discovery(self, stream: str, total_rows: int, candidates: int) -> None:
+        """Telemetry for a discovery run. Nothing new to collect records
+        nothing: an empty run must not reset the failure streak of the SLA
+        collector's refreshes, which report under the same stream name."""
+        if not self.attempted:
+            return
+        log.info(
+            "%s discovery: %d new of %d active, %d rows added, %d failed",
+            stream, self.attempted, candidates, total_rows, self.failed,
+        )
+        self.record(stream, total_rows)
+
+
+def _stream_file_collected(directory: Path, symbol: str, filename: str) -> bool:
+    """Whether a stream file already exists for the symbol (the SLA collector
+    then owns it and the discovery jobs leave it alone)."""
+    from forven.data import symbol_to_fs
+
+    try:
+        return (Path(directory) / symbol_to_fs(symbol) / filename).exists()
+    except Exception:
+        return False
 
 
 def data_manager_stats() -> dict[str, Any]:
@@ -653,73 +673,6 @@ def _get_stream_lock(key: str) -> threading.Lock:
         lock = threading.Lock()
         _stream_locks[key] = lock
         return lock
-
-
-# ---------------------------------------------------------------------------
-# OHLCVCollector
-# ---------------------------------------------------------------------------
-
-class OHLCVCollector:
-    """Proactively keeps OHLCV parquet files fresh for active symbols."""
-
-    def collect(self, symbol: str, timeframe: str) -> int:
-        """Fetch gap since last stored bar and append. Returns rows added."""
-        try:
-            from forven.data import (
-                fetch_ohlcv_chunked,
-                symbol_to_fs,
-                dataset_last_timestamp_ms,
-                parquet_path,
-                _timeframe_to_ms,
-            )
-
-            tf_ms = _timeframe_to_ms(timeframe)
-            # Last stored bar's open time, read from the parquet FOOTER only (no
-            # full column load — see dataset_last_timestamp_ms). This replaces a
-            # full load_parquet that was used solely to derive the fetch cursor.
-            last_ms = dataset_last_timestamp_ms(symbol, timeframe)
-
-            # A present-but-unreadable lake file must NOT be treated as first-time:
-            # dataset_last_timestamp_ms returns None for BOTH a missing series and a
-            # corrupt/unreadable one, and a None cursor refetches from scratch and
-            # overwrites the file with a short window — silently dropping history.
-            # The old load_parquet path raised on a corrupt file; preserve that.
-            if last_ms is None and parquet_path(symbol, timeframe).exists():
-                raise RuntimeError(
-                    f"OHLCV lake file for {symbol}/{timeframe} exists but yielded no "
-                    f"readable last timestamp (corrupt?); refusing to refetch over it"
-                )
-
-            # Cheap "is a new CLOSED bar even due?" gate. The last stored bar covers
-            # [last_ms, last_ms+tf); the NEXT bar only closes at last_ms+2*tf. Until
-            # then the keep-alive would fetch nothing yet still pay a full read + a
-            # whole-file rewrite. For a 15-min keep-alive on 1h/4h/1d series that
-            # repeated rewrite is the dominant cost (and the single-worker WS
-            # starvation). Skip when provably nothing new can exist yet.
-            if last_ms is not None and tf_ms > 0:
-                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-                if now_ms < last_ms + 2 * tf_ms:
-                    return 0
-
-            # One bar-width gap so we don't re-fetch the last (closed) bar.
-            since_ms = (last_ms + tf_ms) if last_ms is not None else None
-
-            result = fetch_ohlcv_chunked(
-                symbol=symbol_to_fs(symbol),
-                timeframe=timeframe,
-                since_ms=since_ms,
-            )
-            if isinstance(result, dict):
-                return max(0, int(result.get("bars_new") or 0))
-            if result is None or getattr(result, "empty", False):
-                return 0
-            return max(0, int(len(result)))
-        except Exception as exc:
-            # Re-raise so orchestrators can count per-symbol failures —
-            # swallowing here made an all-fail run indistinguishable from a
-            # quiet bar and kept collection telemetry green during outages.
-            log.warning("OHLCVCollector failed for %s/%s: %s", symbol, timeframe, exc)
-            raise
 
 
 # Binance serves openInterestHist, globalLongShortAccountRatio and
@@ -1435,15 +1388,6 @@ class DataManager:
     """Orchestrates continuous collection across all data streams."""
 
     def __init__(self) -> None:
-        self._ohlcv = OHLCVCollector()
-        # Round-robin freshness tracking for the OHLCV keep-alive. The selector
-        # ranks pairs by last-CHECKED time (updated on every collect, below), NOT
-        # by parquet mtime: the keep-alive gate skips a collect (returns 0 without
-        # rewriting) when no new closed bar is due, so a not-due pair keeps its
-        # stale mtime and — ranked by mtime — would re-occupy a slot every run,
-        # starving pairs that DO have a bar to fetch. Last-checked rotates every
-        # serviced pair to the back, preserving the no-pair-starves invariant.
-        self._keepalive_last_checked: dict[tuple[str, str], float] = {}
         self._funding = FundingCollector()
         self._oi = OICollector()
         self._lsr = LongShortRatioCollector()
@@ -1694,88 +1638,9 @@ class DataManager:
     # Collection orchestration
     # ------------------------------------------------------------------
 
-    def _select_keepalive_pairs(
-        self, pairs: list[tuple[str, str]], max_pairs_per_run: int | None
-    ) -> list[tuple[str, str]]:
-        """Pick which (symbol, timeframe) pairs to refresh this run.
-
-        Ranks by LAST-CHECKED time (round-robin), with parquet mtime as the
-        tiebreak for pairs not yet checked this process. Ranking on parquet mtime
-        ALONE is wrong now that the keep-alive gate skips a collect (returns 0
-        without rewriting) when no new closed bar is due: a not-due pair keeps its
-        stale mtime and gets re-selected as a no-op every run, hogging slots and
-        starving pairs that DO have a closed bar to fetch. Tracking last-checked
-        (updated on every collect in ``collect_ohlcv``, due or not) rotates each
-        serviced pair to the back, so no pair starves and freshness is bounded by
-        throughput, not universe size. On a fresh process last-checked is empty, so
-        the mtime tiebreak makes the first runs fetch the genuinely-stalest pairs.
-        """
-        if not (max_pairs_per_run and max_pairs_per_run > 0) or len(pairs) <= max_pairs_per_run:
-            return list(pairs)
-        from forven.data import parquet_path, tail_path
-
-        def _last_refresh(pair: tuple[str, str]) -> float:
-            symbol, timeframe = pair
-            # Appends land in the tail sidecar, so freshness is the NEWEST of
-            # cold/tail mtime — cold alone would rank freshly-appended pairs
-            # as stale forever.
-            newest = 0.0
-            for candidate in (parquet_path(symbol, timeframe), tail_path(symbol, timeframe)):
-                try:
-                    newest = max(newest, candidate.stat().st_mtime)
-                except OSError:
-                    continue
-            return newest  # 0.0 = never written -> treat as most stale
-
-        def _rank(pair: tuple[str, str]) -> tuple[float, float]:
-            return (self._keepalive_last_checked.get(pair, 0.0), _last_refresh(pair))
-
-        return sorted(pairs, key=_rank)[:max_pairs_per_run]
-
-    def collect_ohlcv(self, max_pairs_per_run: int | None = None) -> dict[str, Any]:
-        """Collect OHLCV keep-alive for active symbols.
-
-        When ``max_pairs_per_run`` is set, the collector rotates through the
-        symbol/timeframe pairs across successive runs so the scheduler can keep
-        data warm without sweeping the entire research universe in one slot.
-        """
-        try:
-            with self._cycle_cache():
-                symbols = sorted(self.get_active_symbols(include_recent_backtests=False))
-                pairs = [
-                    (symbol, timeframe)
-                    for symbol in symbols
-                    for timeframe in sorted(self.get_active_timeframes(symbol))
-                ]
-
-                selected_pairs = self._select_keepalive_pairs(pairs, max_pairs_per_run)
-
-                summary: dict[str, Any] = {}
-                tally = _PerSymbolTally()
-                _checked_at = datetime.now(timezone.utc).timestamp()
-                for symbol, tf in selected_pairs:
-                    summary.setdefault(symbol, {})
-                    added = tally.run(f"{symbol}:{tf}", lambda s=symbol, t=tf: self._ohlcv.collect(s, t))
-                    summary[symbol][tf] = added
-                    # Rotate this pair to the back of the staleness queue whether or
-                    # not the gate actually fetched, so not-due pairs can't hog slots.
-                    self._keepalive_last_checked[(symbol, tf)] = _checked_at
-                total = sum(v for sym in summary.values() for v in sym.values())
-                log.info(
-                    "OHLCV keep-alive: %d/%d pairs processed (stalest first), %d rows added, %d failed",
-                    len(selected_pairs),
-                    len(pairs),
-                    total,
-                    tally.failed,
-                )
-                tally.record("ohlcv", total)
-                return summary
-        except Exception:
-            _record_collection("ohlcv", None, 0, False)
-            raise
-
     def collect_funding(self) -> dict[str, Any]:
-        """Collect funding rate history for all active symbols. Returns summary.
+        """Discovery: first funding collection for active symbols that have no
+        funding file yet (stored files are kept current by the SLA collector).
 
         Falls back to all USDT/USDC perpetual pairs when no active strategies are configured.
         """
@@ -1796,20 +1661,20 @@ class DataManager:
                 summary: dict[str, int] = {}
                 tally = _PerSymbolTally()
                 for symbol in symbols:
+                    if _stream_file_collected(FUNDING_DIR, symbol, "history.parquet"):
+                        continue
                     summary[symbol] = tally.run(symbol, lambda s=symbol: self._funding.collect(s))
                 total = sum(summary.values())
-                log.info(
-                    "Funding collect: %d symbols, %d rows added, %d failed",
-                    len(symbols), total, tally.failed,
-                )
-                tally.record("funding", total)
+                tally.record_discovery("funding", total, len(symbols))
                 return {"symbols": summary, "total_rows": total}
         except Exception:
             _record_collection("funding", None, 0, False)
             raise
 
     def collect_oi(self) -> dict[str, Any]:
-        """Collect open interest history for all active symbols. Returns summary.
+        """Discovery: first open-interest collection for active symbols' (and
+        research OI targets') timeframes that have no file yet (stored files
+        are kept current by the SLA collector).
 
         Falls back to all USDT/USDC perpetual pairs when no active strategies are configured.
         """
@@ -1832,16 +1697,13 @@ class DataManager:
                 tally = _PerSymbolTally()
                 for symbol in symbols:
                     timeframes = set(self.get_active_timeframes(symbol)) | research_targets.get(symbol, set())
-                    summary[symbol] = {}
                     for tf in timeframes:
+                        if _stream_file_collected(OI_DIR, symbol, f"{tf}.parquet"):
+                            continue
                         added = tally.run(f"{symbol}:{tf}", lambda s=symbol, t=tf: self._oi.collect(s, t))
-                        summary[symbol][tf] = added
+                        summary.setdefault(symbol, {})[tf] = added
                 total = sum(v for sym in summary.values() for v in sym.values())
-                log.info(
-                    "OI collect: %d symbols, %d rows added, %d failed",
-                    len(symbols), total, tally.failed,
-                )
-                tally.record("oi", total)
+                tally.record_discovery("oi", total, len(symbols))
                 return summary
         except Exception:
             _record_collection("oi", None, 0, False)
@@ -1882,40 +1744,38 @@ class DataManager:
         return targets
 
     def collect_lsr(self) -> dict[str, Any]:
-        """Collect long/short ratio for active crypto symbols."""
+        """Discovery: first long/short ratio collection for active crypto symbols that
+        have no file yet (stored files are kept current by the SLA collector)."""
         try:
             with self._cycle_cache():
                 symbols = self.get_active_symbols()
                 summary: dict[str, int] = {}
                 tally = _PerSymbolTally()
                 for symbol in symbols:
+                    if _stream_file_collected(DERIVATIVES_DIR, symbol, LongShortRatioCollector._PATH_SUFFIX):
+                        continue
                     summary[symbol] = tally.run(symbol, lambda s=symbol: self._lsr.collect(s))
                 total = sum(summary.values())
-                log.info(
-                    "LSR collect: %d symbols, %d rows added, %d failed",
-                    len(symbols), total, tally.failed,
-                )
-                tally.record("long_short_ratio", total)
+                tally.record_discovery("long_short_ratio", total, len(symbols))
                 return {"symbols": summary, "total_rows": total}
         except Exception:
             _record_collection("long_short_ratio", None, 0, False)
             raise
 
     def collect_taker_volume(self) -> dict[str, Any]:
-        """Collect taker buy/sell volume for active crypto symbols."""
+        """Discovery: first taker buy/sell volume collection for active crypto symbols that
+        have no file yet (stored files are kept current by the SLA collector)."""
         try:
             with self._cycle_cache():
                 symbols = self.get_active_symbols()
                 summary: dict[str, int] = {}
                 tally = _PerSymbolTally()
                 for symbol in symbols:
+                    if _stream_file_collected(DERIVATIVES_DIR, symbol, TakerVolumeCollector._PATH_SUFFIX):
+                        continue
                     summary[symbol] = tally.run(symbol, lambda s=symbol: self._taker.collect(s))
                 total = sum(summary.values())
-                log.info(
-                    "Taker volume collect: %d symbols, %d rows added, %d failed",
-                    len(symbols), total, tally.failed,
-                )
-                tally.record("taker_volume", total)
+                tally.record_discovery("taker_volume", total, len(symbols))
                 return {"symbols": summary, "total_rows": total}
         except Exception:
             _record_collection("taker_volume", None, 0, False)
@@ -1946,20 +1806,19 @@ class DataManager:
             raise
 
     def collect_basis(self) -> dict[str, Any]:
-        """Collect the premium-index basis series for active crypto symbols."""
+        """Discovery: first premium-index basis collection for active crypto symbols that
+        have no file yet (stored files are kept current by the SLA collector)."""
         try:
             with self._cycle_cache():
                 symbols = self.get_active_symbols()
                 summary: dict[str, int] = {}
                 tally = _PerSymbolTally()
                 for symbol in symbols:
+                    if _stream_file_collected(BASIS_DIR, symbol, "1h.parquet"):
+                        continue
                     summary[symbol] = tally.run(symbol, lambda s=symbol: self._basis.collect(s))
                 total = sum(summary.values())
-                log.info(
-                    "Basis collect: %d symbols, %d rows added, %d failed",
-                    len(symbols), total, tally.failed,
-                )
-                tally.record("basis", total)
+                tally.record_discovery("basis", total, len(symbols))
                 return {"symbols": summary, "total_rows": total}
         except Exception:
             _record_collection("basis", None, 0, False)
@@ -2041,12 +1900,16 @@ class DataManager:
         gap_days = (oldest_ts.to_pydatetime().replace(tzinfo=timezone.utc) - bv_start_dt).days
         return gap_days > 30
 
-    def _backfill_ohlcv(self, fs_sym: str, bv_symbol: str) -> dict:
+    def _backfill_ohlcv(self, fs_sym: str, bv_symbol: str, *, timeframes=None) -> dict:
+        """``timeframes`` limits the stored series extended (None = all)."""
         from forven.data import DATA_DIR, load_parquet, save_parquet, _get_dataset_lock
         out: dict = {}
         sym_dir = Path(DATA_DIR) / fs_sym
-        timeframes = [p.stem for p in sym_dir.glob("*.parquet")] if sym_dir.exists() else []
-        for tf in timeframes:
+        stored = [p.stem for p in sym_dir.glob("*.parquet")] if sym_dir.exists() else []
+        wanted = None if timeframes is None else {str(tf) for tf in timeframes}
+        for tf in stored:
+            if wanted is not None and tf not in wanted:
+                continue
             try:
                 existing = load_parquet(fs_sym, tf)
                 oldest = pd.to_datetime(existing["timestamp"].iloc[0], utc=True) if existing is not None and not existing.empty else None
@@ -2168,33 +2031,46 @@ class DataManager:
                 out[f"oi:{tf}_error"] = str(exc)
         return out
 
+    def backfill_symbols(self) -> list[str]:
+        """Stored canonical symbols Binance Vision can extend: BASE-QUOTE folders
+        under data/ohlcv holding at least one series. Venue partitions
+        (``source=hyperliquid``), stray folders (``RETRY``, ``BTCUSD``) and
+        dot-directories are not symbols."""
+        from forven.data import DATA_DIR
+        from forven.dataeng.storage import is_symbol_dir_name
+
+        data_dir = Path(DATA_DIR)
+        if not data_dir.is_dir():
+            return []
+        return sorted(
+            d.name
+            for d in data_dir.iterdir()
+            if d.is_dir() and is_symbol_dir_name(d.name) and any(d.glob("*.parquet"))
+        )
+
     def backfill(
         self,
         symbol: str | None = None,
         streams: tuple = ("ohlcv", "funding", "oi"),
         *,
+        timeframes=None,
         progress_cb=None,
         cancel_event=None,
     ) -> dict:
         """Bulk-backfill historical data from Binance Vision.
 
-        If symbol is None, backfills all symbols discovered from the data/ohlcv/ directory.
-        streams controls which stream types are backfilled.
+        If symbol is None, backfills every stored symbol (:meth:`backfill_symbols`).
+        streams controls which stream types are backfilled; ``timeframes``
+        limits which stored OHLCV series are extended (None = all of them).
         ``progress_cb(done, total, current_symbol)`` is invoked before each
         symbol; ``cancel_event`` (threading.Event) is checked between symbols
         for a cooperative stop. Returns a summary dict (with ``cancelled``
-        set when stopped early).
+        set when stopped early). The Data Manager runs this as a
+        ``history_extend`` job (forven/api_domains/data_ops.py).
         """
-        from forven.data import DATA_DIR, symbol_to_fs
+        from forven.data import symbol_to_fs
 
-        if symbol is not None:
-            fs_symbols = [symbol_to_fs(symbol)]
-        else:
-            data_dir = Path(DATA_DIR)
-            fs_symbols = sorted(
-                d.name for d in data_dir.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
-            )
+        fs_symbols = [symbol_to_fs(symbol)] if symbol is not None else self.backfill_symbols()
 
         summary: dict = {}
         total = len(fs_symbols)
@@ -2211,7 +2087,7 @@ class DataManager:
             bv_symbol = bv_client.fs_to_bv(fs_sym)
             summary[fs_sym] = {}
             if "ohlcv" in streams:
-                summary[fs_sym].update(self._backfill_ohlcv(fs_sym, bv_symbol))
+                summary[fs_sym].update(self._backfill_ohlcv(fs_sym, bv_symbol, timeframes=timeframes))
             if "funding" in streams:
                 summary[fs_sym].update(self._backfill_funding(fs_sym, bv_symbol))
             if "oi" in streams or "metrics" in streams:

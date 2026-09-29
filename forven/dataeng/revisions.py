@@ -205,6 +205,188 @@ def capture_restatements(symbol: str, timeframe: str, new_frame: pd.DataFrame, *
     return append_revision(symbol, timeframe, restated, observed_at or _now_iso())
 
 
+def revision_prune_mask(
+    timestamps: pd.Series,
+    observed_at: pd.Series,
+    *,
+    cutoff: pd.Timestamp,
+    protected: "list[tuple[int, int]] | tuple[tuple[int, int], ...]" = (),
+) -> np.ndarray:
+    """True for revision rows a prune may drop: superseded before ``cutoff``
+    AND whose bar lies outside every protected ``[start_ms, end_ms]`` window.
+
+    Rows with an unparseable ``observed_at`` or bar timestamp are always kept.
+    A protected window is a persisted verdict's scoring window: an ``as_of``
+    re-run of that verdict (and any drift explanation for it) needs the values
+    superseded inside it, whether the restatement happened before or after the
+    verdict was scored — so the window protects rows regardless of order.
+    """
+    observed = pd.to_datetime(observed_at, utc=True, errors="coerce", format="ISO8601")
+    # NaT compares False (kept); copy: pandas may hand back a read-only view.
+    prunable = np.array(observed < cutoff, dtype=bool)
+    if not prunable.any():
+        return prunable
+    bars = pd.to_datetime(timestamps, utc=True, errors="coerce").to_numpy(dtype="datetime64[ms]")
+    prunable &= ~np.isnat(bars)
+    if protected:
+        bar_ms = bars.astype("int64")
+        for start_ms, end_ms in protected:
+            prunable &= ~((bar_ms >= int(start_ms)) & (bar_ms <= int(end_ms)))
+    return prunable
+
+
+def prune_revisions(
+    symbol: str,
+    timeframe: str,
+    *,
+    cutoff: pd.Timestamp,
+    protected: "list[tuple[int, int]] | tuple[tuple[int, int], ...]" = (),
+    dry_run: bool = False,
+) -> dict[str, int | bool]:
+    """Drop a series' superseded values older than ``cutoff`` that no protected
+    window covers (see :func:`revision_prune_mask`). Permanent — the pruned
+    rows are not kept anywhere. ``dry_run`` reads only the two columns the
+    decision needs and changes nothing.
+
+    Returns ``{"rows", "pruned", "bytes_before", "bytes_after", "removed"}``;
+    ``bytes_after`` is estimated (proportional) on a dry run.
+    """
+    path = revision_path(symbol, timeframe)
+    empty = {"rows": 0, "pruned": 0, "bytes_before": 0, "bytes_after": 0, "removed": False}
+    if not path.exists():
+        return empty
+    bytes_before = int(path.stat().st_size)
+    if dry_run:
+        import pyarrow.parquet as pq
+
+        frame = pq.read_table(path, columns=["timestamp", "observed_at"]).to_pandas()
+        mask = revision_prune_mask(frame["timestamp"], frame["observed_at"], cutoff=cutoff, protected=protected)
+        rows, pruned = int(len(frame)), int(mask.sum())
+        kept_bytes = bytes_before - (bytes_before * pruned // rows if rows else 0)
+        return {"rows": rows, "pruned": pruned, "bytes_before": bytes_before, "bytes_after": kept_bytes, "removed": rows > 0 and pruned == rows}
+    with _get_revision_lock(symbol, timeframe):
+        frame = _read_parquet_frame(path)
+        if frame is None or not {"timestamp", "observed_at"}.issubset(frame.columns):
+            raise ValueError(f"revision log {path} is unreadable; not pruning it")
+        mask = revision_prune_mask(frame["timestamp"], frame["observed_at"], cutoff=cutoff, protected=protected)
+        rows, pruned = int(len(frame)), int(mask.sum())
+        if pruned == 0:
+            return {"rows": rows, "pruned": 0, "bytes_before": bytes_before, "bytes_after": bytes_before, "removed": False}
+        kept = frame.loc[~mask].reset_index(drop=True)
+        if kept.empty:
+            path.unlink()
+            return {"rows": rows, "pruned": pruned, "bytes_before": bytes_before, "bytes_after": 0, "removed": True}
+        _write_parquet_frame(path, kept)
+    return {"rows": rows, "pruned": pruned, "bytes_before": bytes_before, "bytes_after": int(path.stat().st_size), "removed": False}
+
+
+def revision_events(path: Path | None, *, limit: int = 200) -> list[dict]:
+    """Restatement events in a revision log, newest first: one per
+    ``observed_at`` with the number of bars it restated and their span.
+    Empty when the series keeps no log."""
+    if path is None or not Path(path).exists():
+        return []
+    from forven.dataeng.catalog_index import iso_ms
+    from forven.dataeng.quality import connect
+
+    with connect() as con:
+        records = con.execute(
+            "SELECT observed_at, count(*), epoch_ms(min(timestamp)), epoch_ms(max(timestamp)) "
+            "FROM read_parquet(?) GROUP BY observed_at ORDER BY observed_at DESC LIMIT ?",
+            [str(path), max(1, int(limit))],
+        ).fetchall()
+    return [
+        {"observed_at": _iso_text(observed), "rows": int(count), "first_ts": iso_ms(first), "last_ts": iso_ms(last)}
+        for observed, count, first, last in records
+    ]
+
+
+def latest_restatements(
+    root: Path,
+    *,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Newest restatement events across every revision log under ``root``
+    (optionally one symbol / timeframe), in one DuckDB scan that reads only
+    the ``observed_at`` and ``timestamp`` columns."""
+    base = Path(root)
+    files = sorted(
+        path
+        for path in base.glob("*/*.parquet")
+        if (symbol is None or path.parent.name == symbol) and (timeframe is None or path.stem == timeframe)
+    )
+    if not files:
+        return []
+    from forven.dataeng.catalog_index import iso_ms
+    from forven.dataeng.quality import connect
+
+    with connect() as con:
+        records = con.execute(
+            "SELECT filename, observed_at, count(*), epoch_ms(min(timestamp)), epoch_ms(max(timestamp)) "
+            "FROM read_parquet(?, filename=true, union_by_name=true) "
+            "GROUP BY filename, observed_at ORDER BY observed_at DESC LIMIT ?",
+            [[str(path) for path in files], max(1, int(limit))],
+        ).fetchall()
+    events = []
+    for filename, observed, count, first, last in records:
+        path = Path(filename)
+        events.append(
+            {
+                "symbol": path.parent.name,
+                "timeframe": path.stem,
+                "observed_at": _iso_text(observed),
+                "rows": int(count),
+                "first_ts": iso_ms(first),
+                "last_ts": iso_ms(last),
+            }
+        )
+    return events
+
+
+_restated_cache: dict[str, tuple[tuple[int, int], dict[str, int]]] = {}
+
+
+def restated_by_month(path: Path | None) -> dict[str, int]:
+    """Distinct restated bars per UTC month ("YYYY-MM") in a revision log,
+    memoized per file (size, mtime): logs only change on a restatement."""
+    if path is None:
+        return {}
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return {}
+    key = (int(st.st_size), int(st.st_mtime_ns))
+    hit = _restated_cache.get(str(path))
+    if hit is not None and hit[0] == key:
+        return dict(hit[1])
+    from forven.dataeng.quality import connect
+
+    with connect() as con:
+        counts = {
+            pd.Timestamp(int(month_ms), unit="ms", tz="UTC").strftime("%Y-%m"): int(count)
+            for month_ms, count in con.execute(
+                "SELECT epoch_ms(date_trunc('month', CAST(timestamp AS TIMESTAMP))), count(DISTINCT timestamp) "
+                "FROM read_parquet(?) GROUP BY 1",
+                [str(path)],
+            ).fetchall()
+        }
+    _restated_cache[str(path)] = (key, counts)
+    return dict(counts)
+
+
+def _iso_text(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        ts = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return str(value)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    return ts.isoformat().replace("+00:00", "Z")
+
+
 def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_of: object) -> pd.DataFrame:
     """Overlay the revision log onto ``main_frame`` to reconstruct values as-of ``as_of``.
 
@@ -220,8 +402,27 @@ def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_
       are converted to UTC.
     - Boundary: ``observed_at == as_of`` is treated as already-superseded (strict
       ``>``), so ``as_of(T)`` returns the value in force during ``[start, T)``.
+
+    Raises ``AsOfReconstructionError`` when the values cannot be reconstructed
+    (an unparseable ``as_of``, a revision log that exists but cannot be read):
+    returning the latest values instead would silently break the pin (plan F4).
     """
+    from forven.data import AsOfReconstructionError
+
+    try:
+        return _reconstruct_as_of(main_frame, symbol, timeframe, as_of)
+    except AsOfReconstructionError:
+        raise
+    except Exception as exc:
+        raise AsOfReconstructionError(f"cannot reconstruct {symbol} {timeframe} as of {as_of!r}: {exc}") from exc
+
+
+def _reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_of: object) -> pd.DataFrame:
+    from forven.data import AsOfReconstructionError
+
     as_of_ts = pd.Timestamp(as_of)
+    if pd.isna(as_of_ts):
+        raise AsOfReconstructionError(f"as_of is not a timestamp: {as_of!r}")
     as_of_ts = as_of_ts.tz_localize("UTC") if as_of_ts.tzinfo is None else as_of_ts.tz_convert("UTC")
 
     if main_frame is None or main_frame.empty:
@@ -239,6 +440,10 @@ def reconstruct_as_of(main_frame: pd.DataFrame, symbol: str, timeframe: str, as_
 
     revisions = read_revisions(symbol, timeframe)
     if revisions is None or revisions.empty:
+        log_path = revision_path(symbol, timeframe)
+        if log_path.exists():
+            # Present but unreadable or malformed: "no restatements" would be a lie.
+            raise AsOfReconstructionError(f"revision log unreadable: {log_path}")
         return result
 
     revs = revisions.copy()

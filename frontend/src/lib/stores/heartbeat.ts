@@ -9,6 +9,8 @@ import {
 	forvenScannerState,
 } from '$lib/stores/forven';
 import { setNavIndicators } from '$lib/stores/navMetrics';
+import { loadSlaCensus } from '$lib/stores/dataManager';
+import { buildDataNavIndicator } from '$lib/components/data-manager/health';
 import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
 
 let controller: RealtimeRefreshController | null = null;
@@ -195,9 +197,20 @@ function buildFallbackNavIndicators(heartbeat: SystemHeartbeatResponse): Record<
 	return routes;
 }
 
+/** The /data badge: live and paper series past their freshness allowance, from
+ * the SLA census (cached for a minute; null until the census endpoint exists). */
+async function dataNavIndicator(): Promise<SystemNavIndicator | null> {
+	try {
+		const census = await loadSlaCensus({ maxAgeMs: 60_000 });
+		return census ? buildDataNavIndicator(census) : null;
+	} catch {
+		return null;
+	}
+}
+
 async function refreshHeartbeat(): Promise<void> {
 	try {
-		const heartbeat = await getSystemHeartbeat();
+		const [heartbeat, dataIndicator] = await Promise.all([getSystemHeartbeat(), dataNavIndicator()]);
 
 		if (heartbeat.dashboard) forvenDashboard.set(heartbeat.dashboard);
 		if (heartbeat.risk) forvenRisk.set(heartbeat.risk);
@@ -205,11 +218,11 @@ async function refreshHeartbeat(): Promise<void> {
 		if (heartbeat.regime) forvenRegime.set(heartbeat.regime);
 		if (Array.isArray(heartbeat.open_trades)) forvenOpenTrades.set(heartbeat.open_trades);
 		if (heartbeat.scanner_state) forvenScannerState.set(heartbeat.scanner_state);
-		setNavIndicators(
+		const indicators =
 			heartbeat.nav_indicators && Object.keys(heartbeat.nav_indicators).length > 0
 				? heartbeat.nav_indicators
-				: buildFallbackNavIndicators(heartbeat),
-		);
+				: buildFallbackNavIndicators(heartbeat);
+		setNavIndicators(dataIndicator ? { ...indicators, '/data': dataIndicator } : indicators);
 	} catch (error) {
 		console.error('[Heartbeat] refresh error:', error);
 	}

@@ -56,8 +56,8 @@ from forven.db import (
 from forven.scheduler import (
     get_jobs,
     ensure_monitoring_jobs,
-    migrate_data_engine_catchup_cadence,
     migrate_data_manager_jobs,
+    migrate_data_sla_collector,
     migrate_legacy_scanner_cadence,
     reconcile_forven_jobs,
     seed_forven_jobs,
@@ -404,7 +404,7 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                 added_monitoring = ensure_monitoring_jobs()
                 migrated_scanner = migrate_legacy_scanner_cadence()
                 migrated_data_jobs = migrate_data_manager_jobs()
-                migrated_catchup = migrate_data_engine_catchup_cadence()
+                migrated_collector = migrate_data_sla_collector()
                 if reconciliation["removed"] or reconciliation["added"] or added_monitoring or migrated_data_jobs:
                     log.info(
                         "Scheduler reconciliation from API bootstrap: removed=%d added=%d monitoring_added=%d data_jobs_migrated=%d",
@@ -413,10 +413,10 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                         added_monitoring,
                         migrated_data_jobs,
                     )
-                elif migrated_scanner or migrated_catchup:
+                elif migrated_scanner or migrated_collector:
                     log.info(
-                        "Applied scheduler legacy migration: scanner=%s catchup_cadence=%s",
-                        migrated_scanner, migrated_catchup,
+                        "Applied scheduler legacy migration: scanner=%s sla_collector=%s",
+                        migrated_scanner, migrated_collector,
                     )
         except Exception as e:
             log.error("API scheduler bootstrap failed: %s", e)
@@ -534,6 +534,17 @@ async def _on_startup():
         seed_default_research_settings()
     except Exception as exc:
         log.warning("Research settings seeding failed: %s", exc)
+    try:
+        # Data Manager jobs: rows a previous process left queued/running become
+        # "interrupted" (retryable), old rows are pruned, expired trash purged.
+        # API process only, before anything can submit a new data job.
+        from forven.api_domains.data_ops import run_startup_maintenance
+
+        data_jobs = run_startup_maintenance()
+        if data_jobs.get("interrupted"):
+            log.info("Marked %d data job(s) interrupted at API startup.", data_jobs["interrupted"])
+    except Exception as exc:
+        log.warning("Data job startup maintenance failed: %s", exc)
     try:
         # Orphaned-job sweep belongs HERE, once per API boot — never at module
         # import, which spawn-context pool workers re-execute against the live
@@ -6608,6 +6619,7 @@ def _persist_completed_backtest_run(
     lifecycle_id: str | None = None,
     session_id: str | None = None,
     as_of: str | None = None,
+    data_venue: str | None = None,
 ) -> dict[str, object]:
     metrics = run.get("metrics")
     if not isinstance(metrics, dict):
@@ -6686,15 +6698,27 @@ def _persist_completed_backtest_run(
         "leverage": leverage,
         "job_id": job_id,
         "dropzone_session_id": (str(session_id).strip() or None) if session_id else None,
+        "data_venue": data_venue,
     }
     # Verdict auditability (edge-data-expansion Run 2): record the identity of
     # the data this result was scored on (checksum/rows/span/market/as_of).
     # Drift — rebuilds, venue changes, restatements — becomes DETECTABLE by
-    # comparing fingerprints instead of remembered by operators.
+    # comparing identities instead of remembered by operators. Its own key:
+    # "data_fingerprint" is the DATA-PROV-1 semantic hash (data_provenance).
     try:
         from forven.dataeng.quality_gate import dataset_fingerprint
 
-        config_payload["data_fingerprint"] = dataset_fingerprint(asset, timeframe, as_of=as_of)
+        identity = dataset_fingerprint(asset, timeframe, as_of=as_of)
+        try:
+            # Per-month hashes of the bar VALUES in the scored window, so a
+            # later restatement or rebuild of those months is detectable
+            # (forven/dataeng/fingerprint.py; layout changes do not move them).
+            from forven.dataeng.fingerprint import month_identity
+
+            identity.update(month_identity(identity.get("symbol") or asset, timeframe, submit_start, submit_end))
+        except Exception:
+            pass
+        config_payload["data_identity"] = identity
     except Exception:
         pass
     compact_config = {k: v for k, v in config_payload.items() if v is not None}
@@ -7900,7 +7924,16 @@ def post_backtest_submit(
         manual_execution_controls=manual_execution_controls,
         settings=settings,
     )
-    what_if = _is_what_if_backtest_submit(
+    data_venue = (str(body.data_venue).strip().lower() or None) if body.data_venue else None
+    if data_venue == "canonical":
+        data_venue = None
+    if data_venue is not None:
+        # Scored on a non-canonical venue: never refreshes the strategy's
+        # stored metrics or promotes it.
+        sync_strategy_state = False
+    # Another venue's data is a what-if too: its rows never choose the stored
+    # strategy's market (the gates read the canonical series).
+    what_if = data_venue is not None or _is_what_if_backtest_submit(
         body,
         strategy_row=strategy_row,
         strategy_type=strategy_type,
@@ -7932,6 +7965,7 @@ def post_backtest_submit(
             initial_capital=body.initial_capital,
             execution_controls=manual_execution_controls or None,
             as_of=(str(body.as_of).strip() or None) if body.as_of else None,
+            data_venue=data_venue,
         )
     except HTTPException:
         raise
@@ -8016,6 +8050,7 @@ def post_backtest_submit(
         "job_id": job_id,
         "preserve_result": bool(body.preserve_result),
         "as_of": (str(body.as_of).strip() or None) if body.as_of else None,
+        "data_venue": data_venue,
         # Read by policy.resolve_best_symbol_timeframe: a variant's rows never
         # choose the stored strategy's market.
         "what_if": True if what_if else None,
@@ -8024,11 +8059,12 @@ def post_backtest_submit(
         # Keep the job running until trades and chart artifacts are saved too.
         config_payload.update(status="running", background_submit=True, heartbeat_at=_now())
     # Verdict auditability (edge-data-expansion Run 2): stamp the identity of
-    # the data this result was scored on so drift is detectable, not remembered.
+    # the data this result was scored on so drift is detectable, not remembered
+    # (its own key; "data_fingerprint" is the DATA-PROV-1 semantic hash).
     try:
         from forven.dataeng.quality_gate import dataset_fingerprint
 
-        config_payload["data_fingerprint"] = dataset_fingerprint(asset, timeframe, as_of=body.as_of)
+        config_payload["data_identity"] = dataset_fingerprint(asset, timeframe, as_of=body.as_of)
     except Exception:
         pass
     compact_config = {k: v for k, v in config_payload.items() if v is not None}
@@ -8908,6 +8944,10 @@ def post_backtesting_run(body: dict):
                 _nw_error: Exception | None = None
                 result = None
                 _bars_override = body.get("bars")
+                # "canonical" (default) or a stored venue series ("okx:spot").
+                _data_venue = str(body.get("data_venue") or "").strip().lower() or None
+                if _data_venue == "canonical":
+                    _data_venue = None
                 if _bars_override is None and (body.get("start") or body.get("end")):
                     _bars_override = _estimate_backtest_bars(
                         body.get("start"), body.get("end"), timeframe
@@ -8931,6 +8971,7 @@ def post_backtesting_run(body: dict):
                         start_date=body.get("start") or body.get("start_date"),
                         end_date=body.get("end") or body.get("end_date"),
                         as_of=body.get("as_of"),
+                        data_venue=_data_venue,
                         sync_strategy_state=False,
                     )
                     if isinstance(result, dict) and not result.get("error"):
@@ -8964,6 +9005,7 @@ def post_backtesting_run(body: dict):
                             lifecycle_id=body.get("lifecycle_id"),
                             session_id=body.get("session_id"),
                             as_of=body.get("as_of"),
+                            data_venue=_data_venue,
                         )
                         result.setdefault("job_id", str(persisted.get("job_id") or ""))
                         result.setdefault("result_id", str(persisted.get("result_id") or ""))

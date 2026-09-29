@@ -11,6 +11,8 @@ Examples:
     python -m forven.agent health
     python -m forven.agent context --out .tmp/ctx.json      # context is large
     python -m forven.agent list --status paper
+    python -m forven.agent readiness --symbol BTC/USDT --timeframe 1h --streams funding,oi
+    python -m forven.agent readiness --strategy S02545
     python -m forven.agent register --file /abs/path/strat.py --session ADZ-0001
     python -m forven.agent backtest --strategy S02545 --dataset BTC/USDT-1h --compact
     python -m forven.agent backtest --strategy S02545 --dataset ADA/USDT-1h \
@@ -18,6 +20,7 @@ Examples:
     python -m forven.agent enqueue --file /abs/path/strat.py --dataset BTC/USDT-1h
     python -m forven.agent promote --strategy S02550 --to gauntlet --from quick_screen
     python -m forven.agent wait-paper --strategies S02545,S02604 --timeout 1800
+    python -m forven.agent data-census --stream ohlcv --limit-worst 20
 """
 
 from __future__ import annotations
@@ -60,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("list"); c.add_argument("--status", help="quick_screen|gauntlet|paper|archived|...")
     c = sub.add_parser("strategy"); c.add_argument("id")
     c = sub.add_parser("gate-report"); c.add_argument("id")
+    c = sub.add_parser("readiness", help="data contract: is the data this strategy/idea needs stored, fit and current?")
+    c.add_argument("--strategy"); c.add_argument("--symbol"); c.add_argument("--timeframe")
+    c.add_argument("--streams", help="comma list: funding,oi,basis,iv,ls_ratio,taker,liquidations")
+    c.add_argument("--history-days", type=int); c.add_argument("--strategy-type")
+    c.add_argument("--code-file", help="draft strategy .py to scan for the feeds it reads (never executed)")
     c = sub.add_parser("status"); c.add_argument("ids", help="comma-separated strategy ids")
     c = sub.add_parser("runs"); c.add_argument("--limit", type=int, default=20)
     c = sub.add_parser("result"); c.add_argument("id")
@@ -76,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("enqueue"); c.add_argument("--file", required=True); c.add_argument("--dataset", required=True)
     c.add_argument("--session"); c.add_argument("--trade-mode"); c.add_argument("--params")
     c = sub.add_parser("wait-paper"); c.add_argument("--strategies", required=True); c.add_argument("--timeout", type=float, default=3600.0); c.add_argument("--interval", type=float, default=90.0)
+    c = sub.add_parser("data-census", help="freshness SLA census of every stored series (GET /api/data/sla)")
+    c.add_argument("--stream", help="ohlcv|funding|oi|basis|iv|ls_ratio|taker|liquidations"); c.add_argument("--limit-worst", type=int, default=50)
     return p
 
 
@@ -111,6 +121,16 @@ def main(argv=None) -> int:
             _emit(fc.get_strategy(args.id))
         elif cmd == "gate-report":
             _emit(fc.get_gate_report(args.id))
+        elif cmd == "readiness":
+            if not args.strategy and not (args.symbol and args.timeframe):
+                raise SystemExit("readiness needs --strategy, or --symbol and --timeframe")
+            code = None
+            if args.code_file:
+                with open(args.code_file, encoding="utf-8") as f:
+                    code = f.read()
+            streams = [s.strip() for s in args.streams.split(",") if s.strip()] if args.streams else None
+            _emit(fc.get_data_readiness(args.strategy, symbol=args.symbol, timeframe=args.timeframe, streams=streams,
+                                        history_days=args.history_days, strategy_type=args.strategy_type, code=code))
         elif cmd == "status":
             _emit([fc.get_status(s.strip()) for s in args.ids.split(",") if s.strip()])
         elif cmd == "runs":
@@ -135,6 +155,8 @@ def main(argv=None) -> int:
         elif cmd == "enqueue":
             _emit(fc.enqueue_candidate(args.file, args.dataset, session_id=args.session,
                                        trade_mode=args.trade_mode, parameters=_params(args.params)))
+        elif cmd == "data-census":
+            _emit(fc.data_census(stream=args.stream, limit_worst=args.limit_worst))
         elif cmd == "wait-paper":
             ids = [s.strip() for s in args.strategies.split(",") if s.strip()]
             _emit(fc.wait_for_paper(ids, timeout=args.timeout, interval=args.interval))

@@ -60,6 +60,8 @@
 	import TradeInspector from '$lib/components/strategy/TradeInspector.svelte';
 	import TradesTable from '$lib/components/strategy/TradesTable.svelte';
 	import VitalsPanel from '$lib/components/strategy/VitalsPanel.svelte';
+	import ReadinessChip from '$lib/components/data-readiness/ReadinessChip.svelte';
+	import { specStreams, type ReadinessQuery } from '$lib/api/dataReadiness';
 	import StressTestPanel from '$lib/components/strategy/StressTestPanel.svelte';
 	import HeatmapPanel, { cellKey, type HeatmapView } from '$lib/components/strategy/HeatmapPanel.svelte';
 	import MarketGridPanel, { marketKey, type MarketView } from '$lib/components/strategy/MarketGridPanel.svelte';
@@ -548,6 +550,17 @@ TYPE_NAME = "my_strategy"
 	function applyWindow(id: (typeof WINDOW_PRESETS)[number]['id']) {
 		({ startDate, endDate } = resolveDateRangePreset(id));
 	}
+
+	// Data readiness: the market, the window back to its start, and the feeds
+	// the rules (or the Python source) read.
+	$: readinessDays = Math.ceil((Date.now() - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
+	let readinessQuery: ReadinessQuery;
+	$: readinessQuery = {
+		symbol,
+		timeframe,
+		...(readinessDays > 0 ? { history_days: readinessDays } : {}),
+		...(mode === 'visual' ? { streams: specStreams(liveSpec) } : { code: customCode }),
+	};
 
 	// ---- Live preview --------------------------------------------------------------
 	let previewCtx: PreviewChartContext | null = null;
@@ -1399,6 +1412,7 @@ TYPE_NAME = "my_strategy"
 		<input type="date" bind:value={endDate} min={startDate} disabled={busy} aria-label="end date"
 			class="border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[11px] text-[#ccc] outline-none focus:border-white [color-scheme:dark]" />
 		{#if estimatedBars != null}<span class="text-[10px] {estimatedBars > BAR_CAP ? 'text-amber-400' : 'text-[#555]'}">~{estimatedBars.toLocaleString()} bars</span>{/if}
+		<ReadinessChip query={readinessQuery} />
 		<button type="button" on:click={showExecution} title="Execution settings"
 			class="ml-auto max-w-full truncate border border-[#222] px-2 py-0.5 text-[10px] text-[#888] hover:border-[#555] hover:text-white">{executionSummary}</button>
 		{#if mode === 'visual'}

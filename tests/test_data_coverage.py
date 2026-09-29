@@ -188,10 +188,9 @@ def test_coverage_entry_invalidates_on_file_change(tmp_path):
     assert fd.coverage_entry(path)["rows"] == 9
 
 
-def test_get_coverage_prunes_deleted_series_from_cache(tmp_path):
-    """A removed parquet's cache entry is evicted on the next coverage sweep."""
-    import forven.data as fd
-
+def test_get_coverage_drops_deleted_series(tmp_path):
+    """Coverage is read from the lake's footer index on every call, so a
+    removed parquet disappears from the next sweep (no stale cached entry)."""
     sym_dir = tmp_path / "ohlcv" / "BTC-USDT"
     sym_dir.mkdir(parents=True)
     keep = sym_dir / "1h.parquet"
@@ -199,19 +198,15 @@ def test_get_coverage_prunes_deleted_series_from_cache(tmp_path):
     _make_ohlcv(5).to_parquet(keep)
     _make_ohlcv(5).to_parquet(drop)
 
-    _reset_coverage_cache()
     with patch("forven.data.DATA_DIR", tmp_path / "ohlcv"):
-        with patch("forven.data_manager.FUNDING_DIR", tmp_path / "funding"):
-            with patch("forven.data_manager.OI_DIR", tmp_path / "oi"):
-                get_coverage()
-                assert str(drop) in fd._coverage_cache
+        first = get_coverage()
+        assert "ohlcv/5m" in first["BTC-USDT"]
 
-                drop.unlink()  # series removed (delete / delisting / re-upload)
-                result = get_coverage()
+        drop.unlink()  # series removed (delete / delisting / re-upload)
+        result = get_coverage()
 
     assert "ohlcv/5m" not in result["BTC-USDT"]
-    assert str(drop) not in fd._coverage_cache  # leaked entry evicted
-    assert str(keep) in fd._coverage_cache  # surviving series retained
+    assert "ohlcv/1h" in result["BTC-USDT"]
 
 
 def test_coverage_entry_falls_back_without_statistics(tmp_path):
@@ -256,8 +251,9 @@ def test_data_health_endpoint_returns_per_stream_freshness(client):
 def test_data_health_reflects_recent_collection(client, monkeypatch):
     from forven.data_manager import data_manager
     _reset_data_manager_stats()
-    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: set())
-    data_manager.collect_funding()
+    monkeypatch.setattr(data_manager, "get_active_symbols", lambda: {"NEWCOIN-USDT"})
+    monkeypatch.setattr(data_manager._funding, "collect", lambda symbol: 2)
+    data_manager.collect_funding()  # discovery of a new symbol records a run
     resp = client.get("/api/data/health")
     assert resp.status_code == 200
     body = resp.json()

@@ -10,53 +10,59 @@ from forven.db import get_db, log_activity
 
 
 def test_execute_data_engine_backfill(monkeypatch):
-    """Executing the catch-up plan runs the real gap/tail backfill for candle tasks
-    only, bounded by max_tasks, and counts a stalled (no_recent_data) task as failed
-    rather than a green success."""
-    from forven import data as ddata
+    """The old page's "Execute plan" runs the head of the SLA collector's candle
+    queue as one user job, bounded by max_tasks, and counts a series that
+    fetched nothing newer as failed rather than a green success."""
+    from types import SimpleNamespace
+
     from forven.api_domains import data as dd
-    from forven.dataeng import catchup
+    from forven.dataeng import collector
 
-    T = catchup.CatchUpTask
-    tasks = [
-        T(source="binance", market="perp", symbol="BTC-USDT", timeframe="1h", stream="candles", start_ts="a", end_ts="b"),
-        T(source="binance", market="perp", symbol="ETH-USDT", timeframe="4h", stream="candles", start_ts="a", end_ts="b"),
-        T(source="binance", market="perp", symbol="SOL-USDT", timeframe="1h", stream="candles", start_ts="a", end_ts="b"),
-        T(source="binance", market="perp", symbol="BTC-USDT", timeframe="1m", stream="trades", start_ts="a", end_ts="b", permanent=True),
+    def row(symbol, timeframe):
+        return SimpleNamespace(id=f"ohlcv:canonical:{symbol}:{timeframe}", stream="ohlcv")
+
+    queue = [
+        SimpleNamespace(row=row("BTC-USDT", "1h")),
+        SimpleNamespace(row=row("ETH-USDT", "4h")),
+        SimpleNamespace(row=row("SOL-USDT", "1h")),
+        SimpleNamespace(row=SimpleNamespace(id="funding:canonical:BTC-USDT:8h", stream="funding")),
     ]
+    submitted: list[list[str]] = []
+    finished = {
+        "id": "dj-1",
+        "status": "succeeded",
+        "result": {
+            "bars_added": 10,
+            "results": [
+                {"symbol": "BTC-USDT", "timeframe": "1h", "action": "refresh", "bars_added": 5},
+                {"symbol": "ETH-USDT", "timeframe": "4h", "action": "refresh", "bars_added": 5},
+                # behind but nothing newer to fetch -> failed, not success
+                {"symbol": "SOL-USDT", "timeframe": "1h", "action": "refresh", "bars_added": 0},
+            ],
+        },
+    }
+    monkeypatch.setattr(collector, "get_snapshot", lambda **_k: SimpleNamespace(now=None))
+    monkeypatch.setattr(collector, "build_queue", lambda snapshot, **_k: queue)
 
-    class _Planner:
-        def __init__(self, *a, **k):
-            pass
+    def submit(*, series, mode, title):
+        submitted.append(list(series))
+        assert mode == "queue"
+        return {"id": "dj-1"}
 
-        def plan(self):
-            return tasks
-
-    monkeypatch.setattr(catchup, "CatchUpPlanner", _Planner)
-
-    calls: list = []
-
-    def fake_backfill(sym, tf, **kw):
-        calls.append((sym, tf))
-        if sym == "SOL-USDT":  # behind but can't fetch newer data -> failed, not success
-            return {"bars_added": 0, "no_recent_data": True}
-        return {"bars_added": 5, "no_recent_data": False}
-
-    monkeypatch.setattr(ddata, "backfill_ohlcv_gaps", fake_backfill)
+    monkeypatch.setattr(collector, "submit_refresh", submit)
+    monkeypatch.setattr("forven.dataeng.jobs.wait_for", lambda job_id, timeout=0: finished)
 
     out = dd.post_execute_data_engine_backfill(max_tasks=10)
     assert out["planned_total"] == 4
-    assert out["candle_total"] == 3  # the trades task is excluded
+    assert out["candle_total"] == 3  # the funding series is not a candle task
     assert out["executed"] == 3
-    assert out["rows_added"] == 10  # 5 + 5 + 0
-    assert out["failed"] == 1  # SOL stalled (no_recent_data) is NOT a green success
-    assert "succeeded" not in out and "remaining" not in out
-    assert calls == [("BTC-USDT", "1h"), ("ETH-USDT", "4h"), ("SOL-USDT", "1h")]
+    assert out["rows_added"] == 10
+    assert out["failed"] == 1  # SOL stalled is NOT a green success
+    assert submitted == [["ohlcv:canonical:BTC-USDT:1h", "ohlcv:canonical:ETH-USDT:4h", "ohlcv:canonical:SOL-USDT:1h"]]
 
-    # bounded batch
-    calls.clear()
-    out = dd.post_execute_data_engine_backfill(max_tasks=1)
-    assert out["executed"] == 1 and calls == [("BTC-USDT", "1h")]
+    submitted.clear()
+    dd.post_execute_data_engine_backfill(max_tasks=1)  # bounded batch
+    assert submitted == [["ohlcv:canonical:BTC-USDT:1h"]]
 
 
 def test_get_stream_rows_funding(monkeypatch):
@@ -106,27 +112,30 @@ def test_get_stream_rows_rejects_ohlcv():
 
 
 def test_collect_ohlcv_reports_real_row_count(monkeypatch):
-    """post_collect_stream used to hardcode rows_added=0 for ohlcv; it must now sum
-    the real per-timeframe counts so the Collect button can report what it did."""
+    """post_collect_stream used to hardcode rows_added=0 for ohlcv; it sums the
+    real per-timeframe counts of the SLA collector's tail refresh."""
     from forven import data_manager as dmmod
     from forven.api_domains import data as dd
+    from forven.dataeng import collector
 
     dd._collect_debounce.clear()  # avoid a 429 from a prior call in this process
 
-    class _Ohlcv:
-        def collect(self, symbol, tf):
-            return {"1h": 5, "4h": 7}[tf]
-
     class _DM:
-        _ohlcv = _Ohlcv()
-
         def get_active_timeframes(self, symbol):
             return ["1h", "4h"]
 
+    refreshed: list[str] = []
+
+    def refresh_now(sid, *, mode="refresh"):
+        refreshed.append(sid)
+        return {"bars_added": {"1h": 5, "4h": 7}[sid.rsplit(":", 1)[1]]}
+
     monkeypatch.setattr(dmmod, "data_manager", _DM())
+    monkeypatch.setattr(collector, "refresh_now", refresh_now)
     out = dd.post_collect_stream("BTC/USDT", "ohlcv")
     assert out["status"] == "ok"
     assert out["rows_added"] == 12  # 5 + 7, not the old hardcoded 0
+    assert refreshed == ["ohlcv:canonical:BTC-USDT:1h", "ohlcv:canonical:BTC-USDT:4h"]
 
 
 def _clear_activity() -> None:
@@ -206,9 +215,17 @@ def test_dataset_delete_logs(forven_db, monkeypatch, tmp_path):
     assert deleted[0]["level"] == "warning"
 
 
+def _binance_lists_btc(monkeypatch):
+    # A new file series for a Binance-listed pair lands in the csv:unknown
+    # venue series, never the canonical one (plan F2).
+    listed = {"binanceusdm": {"BTC/USDT:USDT": {}}, "binance": {"BTC/USDT": {}}}
+    monkeypatch.setattr(d, "_cached_markets", lambda ex: dict(listed.get(ex, {})))
+
+
 def test_csv_upload_logs(forven_db, monkeypatch, tmp_path):
     _clear_activity()
     monkeypatch.setattr(d, "DATA_DIR", tmp_path / "ohlcv")
+    _binance_lists_btc(monkeypatch)
     csv = (
         "timestamp,open,high,low,close,volume\n"
         "2026-01-01T00:00:00Z,1,2,0.5,1.5,10\n"
@@ -232,6 +249,7 @@ def test_csv_upload_drops_unclosed_current_bar(forven_db, monkeypatch, tmp_path)
 
         pytest.skip("pyarrow required")
     monkeypatch.setattr(d, "DATA_DIR", tmp_path / "ohlcv")
+    _binance_lists_btc(monkeypatch)
     tf_ms = 3_600_000
     now_ms = int(time.time() * 1000)
     cur_open = now_ms - (now_ms % tf_ms)  # current interval — still forming, not closed
@@ -247,7 +265,7 @@ def test_csv_upload_drops_unclosed_current_bar(forven_db, monkeypatch, tmp_path)
     )
     result = d.process_csv_upload(csv.encode(), "forming.csv", "BTC-USDT", "1h")
     assert result["row_count"] == 1  # only the closed bar persisted
-    stored = d.load_parquet("BTC-USDT", "1h")
+    stored = d.load_venue_frame("csv", "unknown", "BTC-USDT", "1h")
     last_ms = int(stored["timestamp"].max().value // 1_000_000)
     assert last_ms == closed_open  # the forming bar was dropped
 

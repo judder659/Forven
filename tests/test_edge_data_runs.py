@@ -506,7 +506,9 @@ class TestSchedulerWiring:
     def test_new_job_kinds_registered(self):
         from forven.scheduler import _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS, _DATA_MANAGER_TIMEOUT_DEFAULTS
 
-        for kind in ("data_manager_collect_basis", "data_manager_collect_iv", "hl_venue_collect"):
+        # IV collection moved into the SLA collector (forven-data-sla-collector).
+        for kind in ("data_manager_collect_basis", "hl_venue_collect", "data_sla_collect"):
             assert kind in _DATA_MANAGER_TIMEOUT_DEFAULTS
-        for job_id in ("forven-data-basis-collect", "forven-data-iv-collect", "forven-data-hl-venue-collect"):
+        for job_id in ("forven-data-basis-collect", "forven-data-hl-venue-collect", "forven-data-sla-collector"):
             assert job_id in _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS
+        assert "forven-data-iv-collect" not in _DATA_MANAGER_JOB_PAYLOAD_DEFAULTS

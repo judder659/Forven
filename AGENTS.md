@@ -191,6 +191,7 @@ python -m forven.agent health
 python -m forven.agent context --out .tmp/ctx.json     # datasets, template, param families (large)
 python -m forven.agent list --status paper
 python -m forven.agent gate-report S02545              # why a strategy is/isn't promotable
+python -m forven.agent readiness --symbol BTC/USDT --timeframe 1h --streams funding,oi   # is the data there?
 # write a strategy .py to forven/strategies/custom/, then one-shot the genuine pipeline:
 python -m forven.agent enqueue --file /abs/path/strat.py --dataset BTC/USDT-1h
 python -m forven.agent wait-paper --strategies S02545,S02604 --timeout 1800

@@ -47,6 +47,8 @@ def test_macro_skipped_on_default_strategy_path(monkeypatch):
 def test_macro_included_only_when_opted_in(monkeypatch):
     from forven.data_manager import get_data_manager
 
+    # These are the legacy _enrich_* joins; the DataHub is the default read path.
+    monkeypatch.setattr("forven.data._data_engine_read_enabled", lambda: False)
     dm = get_data_manager()
     calls: list[str] = []
     _stub_crypto_native(monkeypatch, dm)

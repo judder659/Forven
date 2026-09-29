@@ -167,7 +167,6 @@ jobs:
             tests/test_data_engine_p2_hardening.py \
             tests/test_orderflow_lookahead.py \
             tests/test_binance_vision.py \
-            tests/test_keepalive_staleness.py \
             tests/test_ohlcv_keepalive_gate.py \
             tests/test_data_root_unified.py
 
