@@ -630,7 +630,11 @@ describe('/lab/strategy/[id] backtest history', () => {
 
 	it('puts Heatmap and Markets between Gauntlet and Optimization, and the heatmap runs the Gauntlet request', async () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
-		apiMocks.strategyParamHeatmap.mockResolvedValue({ x: null, y: null, cells: [], warnings: [] });
+		// Every cell the same: settings the strategy never reads.
+		apiMocks.strategyParamHeatmap.mockImplementation(async (request: { x: { values: number[] }; y: { values: number[] } }) => ({
+			x: null, y: null, warnings: [],
+			cells: request.x.values.flatMap((x) => request.y.values.map((y) => ({ x, y, trades: 12, oos_trades: 4, oos_return: 0.03, in_return: 0.01 }))),
+		}));
 
 		app = mount(StrategyDetailPage, { target });
 		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-heatmap"]') !== null);
@@ -652,6 +656,10 @@ describe('/lab/strategy/[id] backtest history', () => {
 			y: { target: 'param', name: 'slow' },
 		});
 		expect(signal).toBeInstanceOf(AbortSignal);
+		await waitForCondition(() => target.querySelector('[data-testid="heatmap-verdict"]') !== null);
+		const verdict = target.querySelector('[data-testid="heatmap-verdict"]')?.textContent ?? '';
+		expect(verdict).toContain('no effect');
+		expect(verdict).toContain('every value of fast and slow gave identical trades and returns');
 
 		clickByTestId(target, 'strategy-tab-markets');
 		await waitForCondition(() => target.querySelector('[data-testid="strategy-markets-tab"]') !== null);

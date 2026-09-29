@@ -73,5 +73,5 @@
 </script>
 
 <HeatmapPanel {knobs} {view} {stale} {current} canRun={!!request.strategy_id} defaultSteps={5}
-	note="Each cell is this strategy's Gauntlet backtest (the parameters, market, window and execution settings on the Gauntlet tab) with those two settings changed. Every cell runs in its own worker, as optimizer runs do, so a 5×5 grid takes about a minute. Nothing is saved: click a cell to copy its settings into the Gauntlet tab's draft."
+	note="Each cell is this strategy's Gauntlet backtest (the parameters, market, window and execution settings on the Gauntlet tab) with those two settings changed. Cells run a few at a time in their own workers, sharing the backtest slots with the pipeline, so a 5×5 grid takes several times as long as one Gauntlet run: under a minute on a short window, several minutes on years of data. Nothing is saved: click a cell to copy its settings into the Gauntlet tab's draft."
 	on:run={(e) => run(e.detail)} on:cancel={() => controller?.abort()} on:adopt={(e) => adopt(e.detail)} />
