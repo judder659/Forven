@@ -27,6 +27,10 @@ DEFAULT_MAX_IN_FLIGHT = 2
 _DAILY_BUDGET_RANGE = (0, 500)
 _MAX_IN_FLIGHT_RANGE = (1, 20)
 
+# The last idle reason logged, so a check every 15 minutes logs a stop once
+# instead of every cycle (or never, which made a spent budget look like a stall).
+_last_idle_logged: str | None = None
+
 # Operator-supplied source text travels in the task description; keep it
 # large enough to carry an article or transcript and small enough for a prompt.
 _SOURCE_CONTENT_CHARS = 20_000
@@ -118,6 +122,13 @@ def creation_task_counts() -> dict[str, int]:
     return {"created_today": int(created_today or 0), "in_flight": int(in_flight or 0)}
 
 
+def _log_idle(message: str) -> None:
+    global _last_idle_logged
+    if message != _last_idle_logged:
+        _last_idle_logged = message
+        log.info("strategy creation idle: %s", message)
+
+
 def run_creation_cycle() -> dict[str, Any]:
     """Fill the free in-flight slots with autonomous creation tasks, within today's budget.
 
@@ -129,16 +140,24 @@ def run_creation_cycle() -> dict[str, Any]:
 
     system_mode = get_system_mode()
     if not autonomous_hypothesis_generation_allowed(system_mode):
+        _log_idle(f"autonomous generation is off in {system_mode} mode")
         return {"status": "skipped", "reason": f"autonomous generation is off in {system_mode} mode"}
     settings = creation_settings()
     counts = creation_task_counts()
     if counts["created_today"] >= settings["daily_budget"]:
+        _log_idle(
+            f"daily budget spent ({counts['created_today']}/{settings['daily_budget']} "
+            f"on {datetime.now(timezone.utc).date().isoformat()}); resumes at 00:00 UTC"
+        )
         return {"status": "skipped", "reason": "daily budget spent", **counts, **settings}
+    # A full in-flight cap is routine between checks, so it is not an idle state.
     if counts["in_flight"] >= settings["max_in_flight"]:
         return {"status": "skipped", "reason": "creation tasks already in flight", **counts, **settings}
 
     from forven.brain import assign_task
 
+    global _last_idle_logged
+    _last_idle_logged = None
     room = min(
         settings["max_in_flight"] - counts["in_flight"],
         settings["daily_budget"] - counts["created_today"],
