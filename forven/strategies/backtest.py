@@ -2926,19 +2926,21 @@ _creator_frame_locks: dict[tuple, threading.Lock] = {}
 _creator_frames_guard = threading.Lock()
 
 
-def _creator_candles(asset: str, timeframe: str, start_date: str | None, end_date: str | None) -> pd.DataFrame:
+def _creator_candles(asset: str, timeframe: str, start_date: str | None, end_date: str | None,
+                     *, bars: int = 720) -> pd.DataFrame:
     """Enriched ``load_backtest_candles`` for the Strategy Creator, cached for a
     couple of minutes, one load per window in flight. Tests bypass the cache:
-    their fixtures swap the data under the same window."""
+    their fixtures swap the data under the same window. ``bars`` only matters
+    without a window: the most recent ``bars`` candles, as the loader reads them."""
     def load() -> pd.DataFrame:
-        return load_backtest_candles(asset, timeframe=timeframe, start_date=start_date, end_date=end_date,
-                                     enrich_market_data=True)
+        return load_backtest_candles(asset, bars=bars, timeframe=timeframe, start_date=start_date,
+                                     end_date=end_date, enrich_market_data=True)
 
     if "PYTEST_CURRENT_TEST" in os.environ:
         return load()
     from forven.research_contract import research_read_cutoff
 
-    key = (asset, timeframe, start_date, end_date, str(research_read_cutoff()), str(_resolve_point_in_time_as_of()))
+    key = (asset, timeframe, start_date, end_date, bars, str(research_read_cutoff()), str(_resolve_point_in_time_as_of()))
     with _creator_frames_guard:
         lock = _creator_frame_locks.setdefault(key, threading.Lock())
     with lock:
@@ -3385,11 +3387,15 @@ def _strategy_variant(params: dict, axis: dict, value) -> dict:
     return variant
 
 
-def _strategy_tool_candles(asset: str, timeframe: str, start_date: str | None, end_date: str | None,
-                           as_of: str | None) -> pd.DataFrame:
+def _strategy_tool_candles(asset: str, timeframe: str, bars: int | None, start_date: str | None,
+                           end_date: str | None, as_of: str | None) -> pd.DataFrame:
+    """The candles ``backtest_strategy`` would load for this run: the window, or
+    without one the most recent ``bars``."""
+    bars = int(bars) if bars else 720
     if as_of:
-        return load_backtest_candles(asset, timeframe=timeframe, start_date=start_date, end_date=end_date, as_of=as_of)
-    return _creator_candles(asset, timeframe, start_date, end_date)
+        return load_backtest_candles(asset, bars=bars, timeframe=timeframe, start_date=start_date,
+                                     end_date=end_date, as_of=as_of)
+    return _creator_candles(asset, timeframe, start_date, end_date, bars=bars)
 
 
 def _strategy_tool_backtest(run: dict, params: dict, *, asset: str, timeframe: str, bars: int | None,
@@ -3454,7 +3460,8 @@ def build_strategy_param_heatmap(*, run: dict, x_axis: dict, y_axis: dict | None
     if not _has_local_market(_local_market_index(), asset, timeframe):
         return {"x": x, "y": y, "cells": [],
                 "warnings": [f"No local {timeframe} data for {asset}. Collect it on the Data page."]}
-    candles = _strategy_tool_candles(asset, timeframe, run.get("start_date"), run.get("end_date"), run.get("as_of"))
+    candles = _strategy_tool_candles(asset, timeframe, run.get("bars"), run.get("start_date"), run.get("end_date"),
+                                     run.get("as_of"))
     if candles is None or len(candles) < 210:
         return {"x": x, "y": y, "cells": [], "warnings": [f"Not enough candles for {asset} {timeframe} in this window."]}
     pairs = [(x_value, y_value) for y_value in (y["values"] if y else [None]) for x_value in x["values"]]
@@ -3506,7 +3513,8 @@ def build_strategy_markets(*, run: dict, markets: list[dict]) -> dict:
     def evaluate(job: tuple) -> tuple[int, dict]:
         at, row, asset, timeframe, bars = job
         try:
-            candles = _strategy_tool_candles(asset, timeframe, run.get("start_date"), run.get("end_date"), run.get("as_of"))
+            candles = _strategy_tool_candles(asset, timeframe, bars, run.get("start_date"), run.get("end_date"),
+                                             run.get("as_of"))
             if candles is None or len(candles) < 210:
                 return at, {**row, "status": "skipped", "message": f"Not enough candles for {asset} {timeframe} in this window."}
             params = dict(run["params"])

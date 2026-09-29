@@ -4,6 +4,8 @@ on several markets. Nothing is persisted and a missing market is never downloade
 """
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import pytest
 
@@ -29,7 +31,9 @@ def lake(_isolate_forven_home, monkeypatch):
 
     def save(symbol: str, timeframe: str = "1h") -> None:
         stamps = pd.date_range("2024-12-01T00:00:00+00:00", periods=1500, freq="h", tz="UTC")
-        wave = [100 + 5 * ((i % 48) / 48) for i in range(len(stamps))]
+        # A rising wave: MACD crosses up at each dip while price holds above its
+        # regime EMA, so the strategy really trades and the parity checks bite.
+        wave = [100 + 0.1 * i + 3 * math.sin(2 * math.pi * i / 48) for i in range(len(stamps))]
         data_mod.save_parquet(pd.DataFrame({
             "timestamp": stamps, "open": wave, "high": [w + 1 for w in wave], "low": [w - 1 for w in wave],
             "close": [w + 0.2 for w in wave], "volume": 1000.0,
@@ -161,5 +165,27 @@ def test_a_heatmap_cell_matches_the_strategy_backtest_it_stands_for(forven_db, l
             timeframe="1h", persist_legacy_run=False, regime_gate=False, sync_strategy_state=False,
             start_date=START, end_date=END,
         )
+        assert cell["trades"] > 0  # the fixture trades, so equal numbers are a real match
         assert cell["oos_trades"] == direct["metrics"]["out_of_sample"]["total_trades"]
         assert cell["oos_return"] == pytest.approx(direct["metrics"]["out_of_sample"]["total_return_pct"])
+
+
+def test_without_a_window_a_cell_backtests_the_same_recent_bars(forven_db, lake):
+    lake("BTC")
+    strategy_id = _seed("macd", {"fast": 12, "slow": 26, "signal": 9})
+    result = core.post_strategy_param_heatmap(core.StrategyHeatmapBody(
+        strategy_id=strategy_id, duration_days=50, x={"target": "param", "name": "fast", "values": [12]},
+    ))
+    assert result["warnings"] == [] and len(result["cells"]) == 1
+    resolved = core._resolve_backtest_submit(core.BacktestSubmitBody(strategy_id=strategy_id, duration_days=50), backfill=False)
+    assert resolved["bars"] > 720  # more than the loader's default, so a short load would show
+    direct = bt.backtest_strategy(
+        strategy_id=f"{strategy_id}-direct", asset="BTC", strategy_type=resolved["strategy_type"],
+        params=resolved["execution_params"], bars=resolved["bars"], leverage=resolved["leverage"],
+        timeframe="1h", persist_legacy_run=False, regime_gate=False, sync_strategy_state=False,
+    )
+    metrics, cell = direct["metrics"], result["cells"][0]
+    assert cell["trades"] > 0
+    assert cell["trades"] == metrics["in_sample"]["total_trades"] + metrics["out_of_sample"]["total_trades"]
+    assert cell["in_return"] == pytest.approx(metrics["in_sample"]["total_return_pct"])
+    assert cell["oos_return"] == pytest.approx(metrics["out_of_sample"]["total_return_pct"])
