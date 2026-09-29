@@ -158,6 +158,9 @@ from forven.api_models import (  # noqa: F401
     SendToForgeBody,
     SettingsApiKeyBody,
     SettingsTestRemoteEngineBody,
+    StrategyHeatmapAxis,
+    StrategyHeatmapBody,
+    StrategyMarketsBody,
 )
 
 # ARCH-06 step 3 (partial): the DECLARATIVE half of the settings subsystem —
@@ -7697,11 +7700,12 @@ def _is_what_if_backtest_submit(
     return False
 
 
-def post_backtest_submit(
-    body: BacktestSubmitBody, *, skip_auto_trash: bool = False,
-    job_id: str | None = None, result_id: str | None = None,
-) -> dict:
-    background_job = job_id is not None and result_id is not None
+def _resolve_backtest_submit(body: BacktestSubmitBody, *, backfill: bool = True) -> dict:
+    """What a manual backtest resolves before it runs: the stored strategy, its
+    merged and certified params, the executable type, leverage, market, window
+    length and the manual execution controls. Raises ``HTTPException`` as the
+    submit endpoint does. ``backfill`` also records an inferred strategy type on
+    the strategy row, which read-only callers skip."""
     requested_strategy_id = str(body.strategy_id or body.lifecycle_id or "").strip()
     if not requested_strategy_id:
         raise HTTPException(status_code=400, detail="strategy_id is required")
@@ -7759,15 +7763,16 @@ def post_backtest_submit(
     if execution_param_error:
         raise HTTPException(status_code=400, detail=execution_param_error)
 
-    try:
-        _backfill_strategy_type_from_context(
-            strategy_id=strategy_id,
-            strategy_row=strategy_row,
-            inferred_type=strategy_type,
-            inferred_params=inferred_params_for_backfill,
-        )
-    except Exception:
-        pass
+    if backfill:
+        try:
+            _backfill_strategy_type_from_context(
+                strategy_id=strategy_id,
+                strategy_row=strategy_row,
+                inferred_type=strategy_type,
+                inferred_params=inferred_params_for_backfill,
+            )
+        except Exception:
+            pass
 
     leverage_value = _coerce_legacy_metadata_float(body.leverage, None)
     if leverage_value is None:
@@ -7788,8 +7793,6 @@ def post_backtest_submit(
     # doing so was the audited bug that warned about controls that actually work.
     risk_parity_warning = _validate_local_backtest_risk_controls(execution_params)
 
-    from forven.strategies.backtest import backtest_strategy
-
     # Manual execution controls — the engine honours these (stops, sizing). Only
     # non-None values are forwarded; an all-None dict normalises back to the
     # legacy full-notional path inside the simulator.
@@ -7806,6 +7809,107 @@ def post_backtest_submit(
         "time_stop_bars": body.time_stop_bars,
     }
     manual_execution_controls = {k: v for k, v in manual_execution_controls.items() if v is not None}
+
+    return {
+        "strategy_row": strategy_row,
+        "strategy_id": strategy_id,
+        "strategy_name": strategy_name,
+        "base_params": base_params,
+        "merged_params": merged_params,
+        "strategy_definition_json": strategy_definition_json,
+        "strategy_type": strategy_type,
+        "execution_params": execution_params,
+        "leverage": leverage_value,
+        "settings": settings,
+        "asset": asset,
+        "timeframe": timeframe,
+        "bars": bars,
+        "risk_parity_warning": risk_parity_warning,
+        "manual_execution_controls": manual_execution_controls,
+    }
+
+
+def _strategy_tool_run(body: BacktestSubmitBody, resolved: dict) -> dict:
+    """What the strategy page's Heatmap and Markets tabs run: the manual backtest
+    ``body`` describes, as ``_resolve_backtest_submit`` resolved it."""
+    return {
+        "strategy_id": resolved["strategy_id"],
+        "strategy_type": resolved["strategy_type"],
+        "params": resolved["execution_params"],
+        "leverage": resolved["leverage"],
+        "asset": resolved["asset"],
+        "timeframe": resolved["timeframe"],
+        "bars": resolved["bars"],
+        "trade_mode": body.trade_mode,
+        "allow_shorting": body.allow_shorting,
+        "start_date": (str(body.start).strip() or None) if body.start else None,
+        "end_date": (str(body.end).strip() or None) if body.end else None,
+        "fee_bps": body.fee_bps,
+        "slippage_bps": body.slippage_bps,
+        "initial_capital": body.initial_capital,
+        "execution_controls": resolved["manual_execution_controls"] or None,
+        "as_of": (str(body.as_of).strip() or None) if body.as_of else None,
+    }
+
+
+def post_strategy_param_heatmap(body: StrategyHeatmapBody) -> dict:
+    """Parameter heatmap for a saved strategy: its manual backtest, as the Gauntlet
+    tab runs it, repeated over a grid of two of its settings. Nothing is saved."""
+    from forven.strategies.backtest import build_strategy_param_heatmap
+
+    run = _strategy_tool_run(body, _resolve_backtest_submit(body, backfill=False))
+    try:
+        return json_safe_payload(build_strategy_param_heatmap(
+            run=run, x_axis=body.x.model_dump(), y_axis=body.y.model_dump() if body.y else None,
+        ))
+    except Exception as exc:  # noqa: BLE001 — report it on the tab, never break the page
+        return {"x": None, "y": None, "cells": [], "warnings": [f"Heatmap failed: {exc}"]}
+
+
+def post_strategy_markets(body: StrategyMarketsBody) -> dict:
+    """A saved strategy's manual backtest on several markets. Nothing is saved."""
+    from forven.strategies.backtest import build_strategy_markets
+
+    run = _strategy_tool_run(body, _resolve_backtest_submit(body, backfill=False))
+    markets = [
+        {
+            "symbol": market.symbol.strip(),
+            "asset": _extract_base_asset_symbol(market.symbol),
+            "timeframe": market.timeframe.strip(),
+            "bars": _estimate_backtest_bars(body.start, body.end, market.timeframe.strip(),
+                                            duration_days_override=body.duration_days),
+        }
+        for market in body.markets
+    ]
+    try:
+        return json_safe_payload(build_strategy_markets(run=run, markets=markets))
+    except Exception as exc:  # noqa: BLE001 — report it on the tab, never break the page
+        return {"rows": [], "warnings": [f"Market comparison failed: {exc}"]}
+
+
+def post_backtest_submit(
+    body: BacktestSubmitBody, *, skip_auto_trash: bool = False,
+    job_id: str | None = None, result_id: str | None = None,
+) -> dict:
+    background_job = job_id is not None and result_id is not None
+    resolved = _resolve_backtest_submit(body)
+    strategy_row = resolved["strategy_row"]
+    strategy_id = resolved["strategy_id"]
+    strategy_name = resolved["strategy_name"]
+    base_params = resolved["base_params"]
+    merged_params = resolved["merged_params"]
+    strategy_definition_json = resolved["strategy_definition_json"]
+    strategy_type = resolved["strategy_type"]
+    execution_params = resolved["execution_params"]
+    leverage_value = resolved["leverage"]
+    settings = resolved["settings"]
+    asset = resolved["asset"]
+    timeframe = resolved["timeframe"]
+    bars = resolved["bars"]
+    risk_parity_warning = resolved["risk_parity_warning"]
+    manual_execution_controls = resolved["manual_execution_controls"]
+
+    from forven.strategies.backtest import backtest_strategy
 
     # B-6: only canonical reruns (the strategy's own params/symbol/timeframe on
     # ~the default window) may refresh stored strategy metrics or auto-promote.

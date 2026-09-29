@@ -685,6 +685,18 @@ def post_backtest_preview_markets(body: core.PreviewMarketsBody):
     return core.post_backtest_preview_markets(body)
 
 
+@router.post("/api/backtests/strategy-heatmap")
+def post_strategy_param_heatmap(body: core.StrategyHeatmapBody):
+    """A saved strategy's backtest over a grid of two of its settings (strategy page)."""
+    return core.post_strategy_param_heatmap(body)
+
+
+@router.post("/api/backtests/strategy-markets")
+def post_strategy_markets(body: core.StrategyMarketsBody):
+    """A saved strategy's backtest on several markets (strategy page)."""
+    return core.post_strategy_markets(body)
+
+
 @router.post("/api/backtests/nl-to-spec")
 async def post_nl_to_spec(body: core.NlToSpecBody):
     """Generate a rule_engine spec from a natural-language strategy description."""

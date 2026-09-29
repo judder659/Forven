@@ -41,6 +41,10 @@
 	import GauntletStatusCard from '$lib/components/robustness/GauntletStatusCard.svelte';
 	import RegimePerfStrip from '$lib/components/regime/RegimePerfStrip.svelte';
 	import ExecutionSettingsFields from '$lib/components/lab/ExecutionSettingsFields.svelte';
+	import ContainerHeatmap from '$lib/components/strategy/ContainerHeatmap.svelte';
+	import ContainerMarkets from '$lib/components/strategy/ContainerMarkets.svelte';
+	import { containerKnobs, marketAvailability, withContainerKnobs, type KnobRef } from '$lib/utils/creatorGrids';
+	import type { StrategyToolRequest } from '$lib/api';
 	import type { SizingMode, ExecutionProfileDraft } from '$lib/types/executionProfile';
 	import {
 		getPipelineConfig,
@@ -168,11 +172,13 @@
 	// TabKey identifiers predate the current UI labels. Mapping (code -> visible label):
 	//   'overview'       -> "Overview" (stage pipeline, readiness, gauntlet status, active run)
 	//   'backtests'      -> "Gauntlet" (params + run form + history; "Run the Gauntlet" submits a backtest)
+	//   'heatmap'        -> "Heatmap" (the Gauntlet backtest over a grid of two settings)
+	//   'markets'        -> "Markets" (the Gauntlet backtest on other markets and timeframes)
 	//   'optimizations'  -> "Optimization"
 	//   'robustness'     -> "Robustness" (the five validation runners)
 	// PromotionReadiness on:action maps: 'run_confirmation_backtest' -> 'backtests';
 	//   'run_optimization'/'apply_best_params' -> 'optimizations'; '*_validation_suite' -> 'robustness'.
-	type TabKey = 'overview' | 'backtests' | 'optimizations' | 'robustness' | 'execution';
+	type TabKey = 'overview' | 'backtests' | 'heatmap' | 'markets' | 'optimizations' | 'robustness' | 'execution';
 	type SubmitStatus = 'idle' | 'submitting' | 'running' | 'completed' | 'failed';
 	type RobustnessRunnerTestKey = 'walk_forward' | 'monte_carlo' | 'param_jitter' | 'cost_stress' | 'regime_split';
 	type RobustnessRunnerCompleteEvent = {
@@ -3942,6 +3948,35 @@
 		}
 	}
 
+	// ---- Heatmap and Markets tabs: the request the Gauntlet tab would submit ------------
+	$: toolRequest = container
+		? ({
+			strategy_id: container.strategy.id,
+			strategy_name: container.strategy.name,
+			symbol: backtestForm.symbol,
+			timeframe: backtestForm.timeframe,
+			start: toIsoDate(backtestForm.start_date),
+			end: toIsoDate(backtestForm.end_date),
+			params: paramsDraft,
+			definition_json: getContainerDefinitionJson(),
+			...executionDraftToPayload(executionDraft),
+		} as StrategyToolRequest)
+		: null;
+	$: toolKnobs = containerKnobs(paramsDraft, availableParamSpecs, EXECUTION_PARAM_KEYS);
+	$: toolAvailability = marketAvailability(availableDatasets);
+	$: toolSymbolOptions = [...new Set(availableDatasets.map((d) => String(d.symbol).toUpperCase())
+		.filter((s) => ['USDT', 'USD', 'USDC'].includes(s.split('/')[1] ?? '')))].sort();
+
+	function adoptHeatmapSettings(changes: Array<[KnobRef, number | null]>) {
+		paramsDraft = withContainerKnobs(paramsDraft, changes);
+		const summary = changes.map(([knob, value]) => `${knob.indicator ? `${knob.indicator} ` : ''}${knob.name} ${value}`).join(', ');
+		addToast(`Set ${summary} in the Gauntlet draft. Run or save it there.`, 'info');
+	}
+	function useMarket({ symbol, timeframe }: { symbol: string; timeframe: string }) {
+		backtestForm = { ...backtestForm, symbol, timeframe };
+		addToast(`The Gauntlet tab now runs on ${symbol} ${timeframe}.`, 'info');
+	}
+
 	async function submitContainerBacktest() {
 		if (!container) return;
 		if (paramsHasErrors) {
@@ -4268,6 +4303,8 @@
 				{#each [
 					{ key: 'overview', label: 'Overview' },
 					{ key: 'backtests', label: 'Gauntlet' },
+					{ key: 'heatmap', label: 'Heatmap' },
+					{ key: 'markets', label: 'Markets' },
 					{ key: 'optimizations', label: 'Optimization' },
 					{ key: 'robustness', label: 'Robustness' },
 					{ key: 'execution', label: 'Execution' },
@@ -5116,6 +5153,31 @@
 				</div>
 				</div>
 			</div>
+			{/if}
+
+			{#if activeTab === 'heatmap' && toolRequest}
+				<div class="max-w-5xl space-y-3" data-testid="strategy-heatmap-tab">
+					<div>
+						<div class="text-xs uppercase tracking-widest text-white">Parameter heatmap</div>
+						<p class="mt-1 text-[11px] text-[#777]">
+							Does this strategy work across a range of its settings, or only at one exact point? A robust edge sits on a plateau of neighbouring settings that also work; a lone bright cell is usually fitted noise.
+						</p>
+					</div>
+					<ContainerHeatmap request={toolRequest} knobs={toolKnobs} on:adopt={(e) => adoptHeatmapSettings(e.detail)} />
+				</div>
+			{/if}
+
+			{#if activeTab === 'markets' && toolRequest}
+				<div class="max-w-5xl space-y-3" data-testid="strategy-markets-tab">
+					<div>
+						<div class="text-xs uppercase tracking-widest text-white">Market grid</div>
+						<p class="mt-1 text-[11px] text-[#777]">
+							Does the edge carry beyond {backtestForm.symbol || 'this market'}? The same strategy and settings on other markets and timeframes: an edge that only shows up where it was built is often fitted to that market.
+						</p>
+					</div>
+					<ContainerMarkets request={toolRequest} availability={toolAvailability} symbolOptions={toolSymbolOptions}
+						currentSymbol={backtestForm.symbol} currentTimeframe={backtestForm.timeframe} on:pick={(e) => useMarket(e.detail)} />
+				</div>
 			{/if}
 
 			{#if activeTab === 'optimizations'}

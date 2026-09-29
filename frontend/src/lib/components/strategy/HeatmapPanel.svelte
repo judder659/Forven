@@ -30,6 +30,10 @@
 	export let canRun = true;
 	/** The current values of the swept settings, to mark where the rule is now. */
 	export let current: { x: number | null; y: number | null } = { x: null, y: null };
+	/** Values per axis to start with (each cell is a backtest). */
+	export let defaultSteps = 7;
+	/** The footnote under the grid. */
+	export let note = 'Each cell is a full backtest of those settings with your execution settings. Every cell counts toward the deflated Sharpe: picking the best cell is itself a selection.';
 
 	const dispatch = createEventDispatcher<{
 		run: { x: HeatmapAxisRequest; y: HeatmapAxisRequest | null };
@@ -40,7 +44,7 @@
 	type Metric = 'oos_return' | 'in_return' | 'oos_trades';
 	const METRICS: [Metric, string][] = [['oos_return', 'Out-of-sample return'], ['in_return', 'In-sample return'], ['oos_trades', 'Out-of-sample trades']];
 	let metric: Metric = 'oos_return';
-	let steps = 7;
+	let steps = defaultSteps;
 	let xKey = '';
 	let yKey = '';
 	let xFrom = 0;
@@ -236,8 +240,6 @@
 				<span class="text-[#ccc]">{verdict.text}</span>
 			</div>
 		{/if}
-		<p class="text-[10px] text-[#555]">
-			Each cell is a full backtest of those settings with your execution settings. All {view.total} count toward the deflated Sharpe: picking the best cell is itself a selection.
-		</p>
+		<p class="text-[10px] text-[#555]">{note}</p>
 	{/if}
 </div>

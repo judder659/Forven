@@ -10,6 +10,8 @@ const apiMocks = vi.hoisted(() => ({
 	getResultChartContext: vi.fn(),
 	getPrebuiltStrategies: vi.fn(),
 	getStrategyContainer: vi.fn(),
+	strategyMarkets: vi.fn(),
+	strategyParamHeatmap: vi.fn(),
 	submitBacktest: vi.fn(),
 	submitOptimization: vi.fn(),
 }));
@@ -625,6 +627,36 @@ describe('/lab/strategy/[id] backtest history', () => {
 		];
 		return container;
 	}
+
+	it('puts Heatmap and Markets between Gauntlet and Optimization, and the heatmap runs the Gauntlet request', async () => {
+		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
+		apiMocks.strategyParamHeatmap.mockResolvedValue({ x: null, y: null, cells: [], warnings: [] });
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-heatmap"]') !== null);
+		const tabs = Array.from(target.querySelectorAll('[data-testid^="strategy-tab-"]'), (el) => el.getAttribute('data-testid'));
+		const at = (key: string) => tabs.indexOf(`strategy-tab-${key}`);
+		expect([at('heatmap'), at('markets'), at('optimizations')]).toEqual([at('backtests') + 1, at('backtests') + 2, at('backtests') + 3]);
+
+		clickByTestId(target, 'strategy-tab-heatmap');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-heatmap-tab"]') !== null);
+		clickButtonByText(target, 'Run heatmap');
+		await waitForCondition(() => apiMocks.strategyParamHeatmap.mock.calls.length > 0);
+		const [request, signal] = apiMocks.strategyParamHeatmap.mock.calls[0];
+		expect(request).toMatchObject({
+			strategy_id: 'S0001',
+			symbol: 'BTC/USDT',
+			timeframe: '1h',
+			params: { fast: 12, slow: 26, signal: 9 },
+			x: { target: 'param', name: 'fast' },
+			y: { target: 'param', name: 'slow' },
+		});
+		expect(signal).toBeInstanceOf(AbortSignal);
+
+		clickByTestId(target, 'strategy-tab-markets');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-markets-tab"]') !== null);
+		expect(target.querySelector('[data-testid="strategy-heatmap-tab"]')).toBeNull();
+	});
 
 	it('syncs the backtest symbol, timeframe and window to the run when a gauntlet history row is clicked', async () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildTwoRunContainer());

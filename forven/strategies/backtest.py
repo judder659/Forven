@@ -3066,19 +3066,21 @@ _creator_frame_locks: dict[tuple, threading.Lock] = {}
 _creator_frames_guard = threading.Lock()
 
 
-def _creator_candles(asset: str, timeframe: str, start_date: str | None, end_date: str | None) -> pd.DataFrame:
+def _creator_candles(asset: str, timeframe: str, start_date: str | None, end_date: str | None,
+                     *, bars: int = 720) -> pd.DataFrame:
     """Enriched ``load_backtest_candles`` for the Strategy Creator, cached for a
     couple of minutes, one load per window in flight. Tests bypass the cache:
-    their fixtures swap the data under the same window."""
+    their fixtures swap the data under the same window. ``bars`` only matters
+    without a window: the most recent ``bars`` candles, as the loader reads them."""
     def load() -> pd.DataFrame:
-        return load_backtest_candles(asset, timeframe=timeframe, start_date=start_date, end_date=end_date,
-                                     enrich_market_data=True)
+        return load_backtest_candles(asset, bars=bars, timeframe=timeframe, start_date=start_date,
+                                     end_date=end_date, enrich_market_data=True)
 
     if "PYTEST_CURRENT_TEST" in os.environ:
         return load()
     from forven.research_contract import research_read_cutoff
 
-    key = (asset, timeframe, start_date, end_date, str(research_read_cutoff()), str(_resolve_point_in_time_as_of()))
+    key = (asset, timeframe, start_date, end_date, bars, str(research_read_cutoff()), str(_resolve_point_in_time_as_of()))
     with _creator_frames_guard:
         lock = _creator_frame_locks.setdefault(key, threading.Lock())
     with lock:
@@ -3288,22 +3290,29 @@ def _heatmap_axis(spec: dict, axis: dict) -> tuple[dict | None, str | None]:
                     "integer": bool(param.integer), "min": param.min}
     else:
         return None, "A heatmap axis must be a knob or an indicator setting."
-    values: list[float] = []
-    for raw in axis.get("values") or []:
+    values = _axis_values(axis.get("values"), integer=resolved["integer"], minimum=resolved["min"])
+    if not values:
+        return None, f"No usable values for {resolved['label']}."
+    return {**resolved, "values": values}, None
+
+
+def _axis_values(raw: object, *, integer: bool, minimum: float | None) -> list:
+    """Finite values, whole numbers for whole-number settings, at or above the
+    setting's minimum, without repeats, at most nine."""
+    values: list = []
+    for item in raw if isinstance(raw, (list, tuple)) else []:
         try:
-            value = float(raw)
+            value = float(item)
         except (TypeError, ValueError):
             continue
         if not math.isfinite(value):
             continue
-        value = int(round(value)) if resolved["integer"] else round(value, 6)
-        if resolved["min"] is not None and value < resolved["min"]:
+        value = int(round(value)) if integer else round(value, 6)
+        if minimum is not None and value < minimum:
             continue
         if value not in values:
             values.append(value)
-    if not values:
-        return None, f"No usable values for {resolved['label']}."
-    return {**resolved, "values": values[:_HEATMAP_MAX_VALUES]}, None
+    return values[:_HEATMAP_MAX_VALUES]
 
 
 def _heatmap_worker(frame: pd.DataFrame, spec: dict, asset: str, x_axis: dict, y_axis: dict | None, walk: dict) -> list[dict]:
@@ -3472,6 +3481,204 @@ def build_strategy_market_grid(
             rows[at] = ({**rows[at], "status": "error", "message": result["error"]} if "error" in result
                         else {**rows[at], "status": "ok", **result})
     return {"rows": rows, "warnings": []}
+
+
+# ---- Heatmap and market grid for a saved strategy ------------------------------------
+# The strategy page runs these on any strategy type, so each cell or market is a
+# full ``backtest_strategy`` run exactly as its manual backtest runs it: its own
+# isolated worker (a fresh process per backtest, as the optimizer's grid does),
+# never persisted and never touching the strategy's stored state.
+_STRATEGY_TOOL_WORKERS = 4
+
+
+def _strategy_axis(params: dict, axis: dict) -> tuple[dict | None, str | None]:
+    """A heatmap axis over a strategy's settings: one of its numeric params
+    ("param") or, for a visual strategy, a knob ("spec_param") or indicator
+    setting ("spec_indicator") inside its rule spec."""
+    target = str(axis.get("target") or "")
+    if target in ("spec_param", "spec_indicator"):
+        spec = params.get("spec")
+        if not isinstance(spec, dict):
+            return None, "This strategy has no rule spec to sweep."
+        inner, error = _heatmap_axis(spec, {**axis, "target": "param" if target == "spec_param" else "indicator"})
+        return ({**inner, "target": target} if inner else None), error
+    if target != "param":
+        return None, "A heatmap axis must be one of the strategy's settings."
+    name = str(axis.get("name") or "")
+    current = params.get(name)
+    if isinstance(current, bool) or not isinstance(current, (int, float)):
+        return None, f'The strategy has no numeric parameter "{name}".'
+    integer = isinstance(current, int)
+    values = _axis_values(axis.get("values"), integer=integer, minimum=None)
+    if not values:
+        return None, f"No usable values for {name}."
+    return {"target": "param", "name": name, "indicator": None, "label": name, "integer": integer,
+            "min": None, "values": values}, None
+
+
+def _strategy_variant(params: dict, axis: dict, value) -> dict:
+    """A copy of the strategy's params with one axis setting changed."""
+    variant = json.loads(json.dumps(params))
+    if axis["target"] == "param":
+        variant[axis["name"]] = value
+    else:
+        knob = {**axis, "target": "param" if axis["target"] == "spec_param" else "indicator"}
+        variant["spec"] = _nudge_spec(variant["spec"], knob, value)
+    return variant
+
+
+def _strategy_tool_candles(asset: str, timeframe: str, bars: int | None, start_date: str | None,
+                           end_date: str | None, as_of: str | None) -> pd.DataFrame:
+    """The candles ``backtest_strategy`` would load for this run: the window, or
+    without one the most recent ``bars``."""
+    bars = int(bars) if bars else 720
+    if as_of:
+        return load_backtest_candles(asset, bars=bars, timeframe=timeframe, start_date=start_date,
+                                     end_date=end_date, as_of=as_of)
+    return _creator_candles(asset, timeframe, start_date, end_date, bars=bars)
+
+
+def _strategy_tool_backtest(run: dict, params: dict, *, asset: str, timeframe: str, bars: int | None,
+                            candles: pd.DataFrame, tag: str) -> dict:
+    """One backtest of the strategy as its manual backtest runs it (``run`` is what
+    ``api_core._resolve_backtest_submit`` resolved), on pre-loaded candles."""
+    return backtest_strategy(
+        strategy_id=f"{run['strategy_id']}~{tag}",
+        asset=asset,
+        strategy_type=run["strategy_type"],
+        params=params,
+        bars=bars,
+        leverage=run["leverage"],
+        timeframe=timeframe,
+        persist_legacy_run=False,
+        regime_gate=False,
+        sync_strategy_state=False,
+        trade_mode=run.get("trade_mode"),
+        allow_shorting=run.get("allow_shorting"),
+        start_date=run.get("start_date"),
+        end_date=run.get("end_date"),
+        fee_bps=run.get("fee_bps"),
+        slippage_bps=run.get("slippage_bps"),
+        initial_capital=run.get("initial_capital"),
+        execution_controls=run.get("execution_controls") or None,
+        as_of=run.get("as_of"),
+        candles_df=candles,
+    )
+
+
+def _sample_summary(metrics: dict) -> dict:
+    """A backtest part's metrics in the Strategy Creator's sample-stats shape."""
+    profit_factor = float(metrics.get("profit_factor") or 0.0)
+    return {
+        "trades": int(metrics.get("total_trades") or 0),
+        "net_return": float(metrics.get("total_return_pct") or 0.0),
+        "win_rate": float(metrics.get("win_rate") or 0.0),
+        "profit_factor": profit_factor if math.isfinite(profit_factor) else None,
+        "profit_factor_is_infinite": math.isinf(profit_factor),
+        "max_drawdown": float(metrics.get("max_drawdown_pct") or 0.0),
+        "avg_trade": float(metrics.get("avg_trade_pct") or 0.0),
+    }
+
+
+def build_strategy_param_heatmap(*, run: dict, x_axis: dict, y_axis: dict | None = None) -> dict:
+    """Parameter heatmap for a saved strategy: its manual backtest repeated for each
+    pair of values of two of its settings (or each value of one), in-sample and
+    out-of-sample as the backtest splits them. Returns the checked axes and a
+    row-major list of cells, each with trade counts and returns or an ``error``."""
+    empty = {"x": None, "y": None, "cells": []}
+    params = run["params"]
+    x, x_error = _strategy_axis(params, x_axis or {})
+    y, y_error = _strategy_axis(params, y_axis) if y_axis else (None, None)
+    if x_error or y_error:
+        return {**empty, "warnings": [x_error or y_error]}
+    if y is not None and (x["target"], x["indicator"], x["name"]) == (y["target"], y["indicator"], y["name"]):
+        return {**empty, "warnings": ["Pick two different settings for the two axes."]}
+    warnings = [f"Some {resolved['label']} values were repeats or out of range and were skipped."
+                for requested, resolved in ((x_axis or {}, x), (y_axis or {}, y))
+                if resolved is not None and len(resolved["values"]) < len(requested.get("values") or [])]
+    asset, timeframe = run["asset"], run["timeframe"]
+    if not _has_local_market(_local_market_index(), asset, timeframe):
+        return {"x": x, "y": y, "cells": [],
+                "warnings": [f"No local {timeframe} data for {asset}. Collect it on the Data page."]}
+    candles = _strategy_tool_candles(asset, timeframe, run.get("bars"), run.get("start_date"), run.get("end_date"),
+                                     run.get("as_of"))
+    if candles is None or len(candles) < 210:
+        return {"x": x, "y": y, "cells": [], "warnings": [f"Not enough candles for {asset} {timeframe} in this window."]}
+    pairs = [(x_value, y_value) for y_value in (y["values"] if y else [None]) for x_value in x["values"]]
+
+    def evaluate(item: tuple[int, tuple]) -> dict:
+        index, (x_value, y_value) = item
+        variant = _strategy_variant(params, x, x_value)
+        if y is not None:
+            variant = _strategy_variant(variant, y, y_value)
+        try:
+            result = _strategy_tool_backtest(run, variant, asset=asset, timeframe=timeframe, bars=run.get("bars"),
+                                             candles=candles, tag=f"heatmap-{index}")
+        except Exception as exc:  # noqa: BLE001 — one unusable setting must not sink the grid
+            return {"x": x_value, "y": y_value, "error": str(exc)[:200]}
+        if result.get("error"):
+            return {"x": x_value, "y": y_value, "error": str(result["error"])[:200]}
+        metrics = result.get("metrics") or {}
+        ins = _sample_summary(metrics.get("in_sample") or {})
+        out = _sample_summary(metrics.get("out_of_sample") or {})
+        return {"x": x_value, "y": y_value, "trades": ins["trades"] + out["trades"], "oos_trades": out["trades"],
+                "oos_return": out["net_return"], "in_return": ins["net_return"]}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(_STRATEGY_TOOL_WORKERS, len(pairs)),
+                                               thread_name_prefix="heatmap") as pool:
+        cells = list(pool.map(evaluate, enumerate(pairs)))
+    return {"x": x, "y": y, "cells": cells, "warnings": warnings}
+
+
+def build_strategy_markets(*, run: dict, markets: list[dict]) -> dict:
+    """A saved strategy's manual backtest on several markets, each split in-sample /
+    out-of-sample. ``markets`` holds ``symbol``, ``asset`` (the base asset read),
+    ``timeframe`` and that timeframe's ``bars``. A market without a local dataset
+    is reported and never downloaded; one the strategy refuses (a declared
+    timeframe, a missing feed) is reported as skipped with its reason."""
+    markets = markets[:_MARKETS_MAX]
+    index = _local_market_index()
+    rows: list[dict | None] = [None] * len(markets)
+    jobs = []
+    for at, market in enumerate(markets):
+        asset = str(market.get("asset") or "").strip().upper()
+        timeframe = str(market.get("timeframe") or "").strip()
+        row = {"symbol": str(market.get("symbol") or asset), "timeframe": timeframe}
+        if not _has_local_market(index, asset, timeframe):
+            rows[at] = {**row, "status": "no_data",
+                        "message": f"No local {timeframe} data for {asset}. Collect it on the Data page."}
+            continue
+        jobs.append((at, row, asset, timeframe, market.get("bars")))
+
+    def evaluate(job: tuple) -> tuple[int, dict]:
+        at, row, asset, timeframe, bars = job
+        try:
+            candles = _strategy_tool_candles(asset, timeframe, bars, run.get("start_date"), run.get("end_date"),
+                                             run.get("as_of"))
+            if candles is None or len(candles) < 210:
+                return at, {**row, "status": "skipped", "message": f"Not enough candles for {asset} {timeframe} in this window."}
+            params = dict(run["params"])
+            # A visual strategy reads its feeds for the asset it is told it trades.
+            if "_asset" in params or run["strategy_type"] == "rule_engine":
+                params["_asset"] = asset
+            result = _strategy_tool_backtest(run, params, asset=asset, timeframe=timeframe, bars=bars,
+                                             candles=candles, tag=f"markets-{at}")
+        except Exception as exc:  # noqa: BLE001 — one market must not sink the grid
+            return at, {**row, "status": "error", "message": str(exc)[:200]}
+        if result.get("error"):
+            return at, {**row, "status": "skipped", "message": str(result["error"])[:200]}
+        metrics = result.get("metrics") or {}
+        ins = _sample_summary(metrics.get("in_sample") or {})
+        out = _sample_summary(metrics.get("out_of_sample") or {})
+        return at, {**row, "status": "ok", "bars": len(candles), "trades": ins["trades"] + out["trades"],
+                    "in_sample": ins, "out_of_sample": out}
+
+    if jobs:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(_STRATEGY_TOOL_WORKERS, len(jobs)),
+                                                   thread_name_prefix="markets") as pool:
+            for at, row in pool.map(evaluate, jobs):
+                rows[at] = row
+    return {"rows": [row for row in rows if row is not None], "warnings": []}
 
 
 def build_strategy_preview_chart_context(
