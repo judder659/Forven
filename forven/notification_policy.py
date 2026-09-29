@@ -5,6 +5,16 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Mapping
 
+from forven.notification_catalog import (
+    TEST_CATEGORY,
+    badge_preference_defaults,
+    category_for_event,
+    execution_scope,
+    get_category,
+    normalize_severity,
+    popup_preference_defaults,
+)
+
 DEFAULT_RESPONSE_CHANNEL_ALIASES = ("chat",)
 
 DEFAULT_NOTIFICATION_PREFERENCES: dict[str, Any] = {
@@ -12,8 +22,12 @@ DEFAULT_NOTIFICATION_PREFERENCES: dict[str, Any] = {
     "response_channels": list(DEFAULT_RESPONSE_CHANNEL_ALIASES),
     "approval_required_to_discord": True,
     "approval_resolved_to_discord": False,
+    # trade_opened/closed_to_discord govern LIVE trades; paper trades have their
+    # own switches (below) since the notification catalog split them.
     "trade_opened_to_discord": True,
     "trade_closed_to_discord": True,
+    "paper_trade_opened_to_discord": True,
+    "paper_trade_closed_to_discord": True,
     "trade_failed_to_discord": True,
     "trade_blocked_to_discord": True,
     "agent_completion_to_discord": False,
@@ -22,8 +36,20 @@ DEFAULT_NOTIFICATION_PREFERENCES: dict[str, Any] = {
     "system_degraded_to_discord": True,
     "system_recovered_to_discord": True,
     "risk_critical_to_discord": True,
+    "bug_report_to_discord": True,
     "brain_response_to_discord": True,
     "digests_to_discord": True,
+    # In-app channels (popup_<category>, badge_<page>), one per catalog entry.
+    **popup_preference_defaults(),
+    **badge_preference_defaults(),
+}
+
+# Keys added by the catalog split that inherit a stored value from the switch
+# that used to cover them, so an operator who had silenced trade entries in
+# Discord does not start receiving paper entries after the upgrade.
+_INHERITED_PREFERENCE_KEYS: dict[str, str] = {
+    "paper_trade_opened_to_discord": "trade_opened_to_discord",
+    "paper_trade_closed_to_discord": "trade_closed_to_discord",
 }
 
 
@@ -39,9 +65,13 @@ def merge_notification_preferences(raw: Mapping[str, Any] | None) -> dict[str, A
         return merged
 
     for key, default in DEFAULT_NOTIFICATION_PREFERENCES.items():
+        source_key = key
         if key not in raw:
-            continue
-        value = raw.get(key)
+            inherited = _INHERITED_PREFERENCE_KEYS.get(key)
+            if inherited is None or inherited not in raw:
+                continue
+            source_key = inherited
+        value = raw.get(source_key)
         if isinstance(default, bool):
             merged[key] = _coerce_bool(value, default)
         elif isinstance(default, list):
@@ -60,6 +90,14 @@ def merge_notification_preferences(raw: Mapping[str, Any] | None) -> dict[str, A
     return merged
 
 
+def _category_discord_enabled(category_id: str | None, prefs: Mapping[str, Any]) -> bool:
+    """Whether the catalog category's Discord switch is on (True when it has none)."""
+    category = get_category(category_id)
+    if category is None or category.discord_locked or not category.discord_keys:
+        return True
+    return all(bool(prefs.get(key, True)) for key in category.discord_keys)
+
+
 def resolve_notification_policy(
     event: Mapping[str, Any],
     preferences: Mapping[str, Any] | None = None,
@@ -67,14 +105,14 @@ def resolve_notification_policy(
     """Resolve routing for a notification event."""
     prefs = merge_notification_preferences(preferences)
     event_type = str(event.get("event_type") or "info").strip().lower()
-    severity = str(event.get("severity") or "info").strip().lower()
+    severity = normalize_severity(event.get("severity"))
     metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
     channel_name = str(event.get("channel_name") or metadata.get("channel_name") or "").strip() or None
     channel_id = str(event.get("channel_id") or metadata.get("channel_id") or "").strip() or None
 
-    execution_mode = str(metadata.get("execution_mode") or metadata.get("execution_type") or "").strip().lower()
-    is_live_trade = execution_mode in {"live", "mainnet"} or execution_mode.startswith("live")
+    is_live_trade = execution_scope(metadata) == "live"
     trade_channel = "autopilot" if is_live_trade else "paper-trades"
+    category = category_for_event(event_type, severity, metadata)
 
     policy: dict[str, Any] = {
         "delivery_mode": "app_only",
@@ -101,7 +139,7 @@ def resolve_notification_policy(
         if policy["send_to_discord"]:
             policy["delivery_mode"] = "discord_immediate"
     elif event_type in {"trade_opened", "trade_closed"}:
-        pref_key = f"{event_type}_to_discord"
+        pref_key = f"{event_type}_to_discord" if is_live_trade else f"paper_{event_type}_to_discord"
         policy.update(
             delivery_mode="discord_immediate",
             channel_name=channel_name or trade_channel,
@@ -235,13 +273,29 @@ def resolve_notification_policy(
             send_to_discord=bool(prefs.get("digests_to_discord", True)),
             cooldown_seconds=0,
         )
-    elif severity in {"warn", "fail", "critical"}:
+    elif category == TEST_CATEGORY:
+        # "Send a test notification" proves the Discord route end to end, so it
+        # ignores the per-event switches (the master switch below still applies).
         policy.update(
             delivery_mode="discord_immediate",
             channel_name=channel_name or "alerts",
             send_to_discord=True,
+            cooldown_seconds=0,
+        )
+    elif severity in {"warn", "fail", "critical"}:
+        # Everything else at warning level or above: its catalog category's
+        # Discord switch decides (critical system alerts are always sent).
+        # Paper-only warnings (e.g. paper execution skew) stay in the app —
+        # only critical ones still reach Discord.
+        paper_only = execution_scope(metadata) == "paper" and severity != "critical"
+        policy.update(
+            delivery_mode="discord_immediate",
+            channel_name=channel_name or "alerts",
+            send_to_discord=(not paper_only) and _category_discord_enabled(category, prefs),
             cooldown_seconds=300,
         )
+        if not policy["send_to_discord"]:
+            policy["delivery_mode"] = "app_only"
 
     if str(prefs.get("discord_mode") or "policy").strip().lower() == "shadow":
         policy["delivery_mode"] = "app_only"

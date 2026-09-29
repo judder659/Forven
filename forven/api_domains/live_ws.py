@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -8,6 +9,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 from forven import api_core as core
 from forven.async_utils import spawn
 from forven.db import get_open_trades
+from forven.notification_catalog import category_for_event, normalize_severity
+from forven.notifications import is_actionable_notification
 
 
 class ConnectionManager:
@@ -36,6 +39,10 @@ class ConnectionManager:
 
 
 ws_manager = ConnectionManager()
+# Notification rows that never reach the operator (dedupe hits) are not pushed.
+_UNPUSHED_NOTIFICATION_STATUSES = {"suppressed", "dropped"}
+# Metadata the pop-up router needs; the rest stays in the Diagnostics inbox.
+_PUSHED_NOTIFICATION_METADATA = ("execution_type", "execution_mode", "strategy_id", "trade_id", "asset", "test_notification")
 WS_TICK_SECONDS = 1.0
 WS_PING_INTERVAL_SECONDS = 3.0
 WS_SEND_TIMEOUT_SECONDS = 2.5
@@ -98,6 +105,42 @@ async def websocket_endpoint(ws: WebSocket):
                 "FROM approvals WHERE status = 'pending_approval' ORDER BY id"
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def _read_max_notification_id() -> int:
+        with core.get_db() as conn:
+            row = conn.execute("SELECT MAX(id) as max_id FROM notifications").fetchone()
+            return int((row["max_id"] or 0) if row else 0)
+
+    def _read_new_notifications(since_id: int) -> list[dict]:
+        with core.get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, event_type, severity, source, title, summary, status, metadata, created_at "
+                "FROM notifications WHERE id > ? ORDER BY id LIMIT 25",
+                (since_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _notification_event(row: dict) -> dict:
+        try:
+            metadata = json.loads(row.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        severity = normalize_severity(row.get("severity"))
+        return {
+            "id": int(row["id"]),
+            "event_type": str(row.get("event_type") or ""),
+            "category": category_for_event(row.get("event_type"), severity, metadata),
+            "severity": severity,
+            "source": row.get("source"),
+            "title": row.get("title"),
+            "summary": row.get("summary"),
+            "status": row.get("status"),
+            "created_at": row.get("created_at"),
+            "actionable": is_actionable_notification({**row, "severity": severity}),
+            "metadata": {key: metadata[key] for key in _PUSHED_NOTIFICATION_METADATA if key in metadata},
+        }
 
     def _trade_summary(trade: dict) -> dict:
         return {
@@ -185,6 +228,11 @@ async def websocket_endpoint(ws: WebSocket):
 
     receiver_task = spawn(_drain_client_messages(), name="ws-client-receiver")
     last_log_id = await _safe_to_thread(_read_max_log_id, default=0, timeout_seconds=2.5)
+    # New-notification baseline (None until read: never replay history on
+    # connect, and a failed read must not fake a burst of "new" rows).
+    last_notification_id: int | None = await _safe_to_thread(
+        _read_max_notification_id, default=None, timeout_seconds=2.5
+    )
 
     last_prices = daemon.get("last_prices", {})
     last_scan_count = daemon.get("scan_count", 0)
@@ -367,6 +415,28 @@ async def websocket_endpoint(ws: WebSocket):
                     if not await _send_messages(approval_messages):
                         break
                 last_pending_approval_ids = set(current_pending)
+
+            # Push-on-change notification events: every stored notification the
+            # operator would see (dedupe hits excluded), tagged with its catalog
+            # category. The frontend pops up the categories the operator has
+            # switched on and refreshes the Diagnostics badge on actionable ones.
+            if last_notification_id is None:
+                last_notification_id = await _safe_to_thread(
+                    _read_max_notification_id, default=None, timeout_seconds=2.5
+                )
+            else:
+                new_notifications = await _safe_to_thread(
+                    _read_new_notifications, int(last_notification_id), default=None, timeout_seconds=2.5
+                )
+                if new_notifications:
+                    last_notification_id = int(new_notifications[-1]["id"])
+                    notification_messages = [
+                        {"type": "notification", "data": _notification_event(row)}
+                        for row in new_notifications
+                        if str(row.get("status") or "").strip().lower() not in _UNPUSHED_NOTIFICATION_STATUSES
+                    ]
+                    if notification_messages and not await _send_messages(notification_messages):
+                        break
 
             entries = await _safe_to_thread(_read_new_logs, int(last_log_id or 0), default=[], timeout_seconds=2.5) or []
             if entries:

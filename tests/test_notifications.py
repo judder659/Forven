@@ -547,3 +547,217 @@ def test_non_actionable_notification_cannot_create_repair_task(monkeypatch):
         assert "not actionable" in str(exc)
     else:
         raise AssertionError("Expected non-actionable notification to reject repair task creation")
+
+
+# ------------------------------------------------------ notification catalog
+# Routing is keyed by the notification catalog (forven/notification_catalog.py):
+# every event belongs to one category, and each category's switches decide its
+# pop-up and Discord delivery.
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def test_emit_normalizes_severity_aliases(monkeypatch):
+    init_db()
+    monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: True)
+
+    item = emit_notification(
+        "execution_quality",
+        severity="warning",
+        source="watchdog",
+        title="Execution skew over cost budget: S1 (live)",
+        metadata={"bucket": "live"},
+    )
+
+    # Stored as 'warn', so the inbox, the badge and the severity rank see it.
+    assert item["severity"] == "warn"
+    assert item["category"] == "system_warning"
+    with get_db() as conn:
+        raw = conn.execute("SELECT severity FROM notifications WHERE id = ?", (item["id"],)).fetchone()
+    assert raw["severity"] == "warn"
+
+
+def test_legacy_warning_rows_read_back_as_warn_and_count_as_actionable():
+    from forven.notifications import get_actionable_notification_summary
+
+    init_db()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO notifications (event_type, severity, source, title, status, delivery_mode, metadata, created_at) "
+            "VALUES ('propr_mirror_failure', 'warning', 'propr_mirror', 'legacy row', 'stored', 'app_only', '{}', ?)",
+            (_utc_now_iso(),),
+        )
+    items = list_notifications(limit=5, severity="warn")
+    assert [item["title"] for item in items] == ["legacy row"]
+    assert items[0]["severity"] == "warn"
+    summary = get_actionable_notification_summary()
+    assert summary["count"] == 1
+
+
+def test_actionable_summary_is_not_starved_by_routine_traffic(monkeypatch):
+    """Regression: the Diagnostics badge counted actionable rows among the
+    newest 50 notifications, so ~250 routine info rows a day pushed real
+    issues out of its window and the number drifted at random."""
+    from forven.notifications import get_actionable_notification_summary
+
+    init_db()
+    monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: True)
+
+    issue = emit_notification(
+        "health_critical",
+        severity="critical",
+        source="health_monitor",
+        title="CRITICAL: scanner_execution",
+    )
+    for index in range(60):
+        emit_notification(
+            "agent_task_completed",
+            source="agent:strategy-developer",
+            title=f"finished review {index}",
+            metadata={"task_id": f"T{index:05d}"},
+        )
+
+    summary = get_actionable_notification_summary()
+    assert summary["notification_ids"] == [int(issue["id"])]
+    assert summary["danger_ids"] == [int(issue["id"])]
+    assert summary["highest_severity"] == "critical"
+    # The inbox query is the same predicate: the newest actionable rows, not the
+    # actionable subset of the newest rows.
+    inbox = list_notifications(limit=50, actionable=True)
+    assert [int(item["id"]) for item in inbox] == [int(issue["id"])]
+
+
+def test_actionable_summary_ignores_issues_outside_the_window():
+    from forven.notifications import get_actionable_notification_summary
+
+    init_db()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO notifications (event_type, severity, source, title, status, delivery_mode, metadata, created_at) "
+            "VALUES ('system_degraded', 'warn', 'daemon', 'old issue', 'stored', 'app_only', '{}', '2020-01-01T00:00:00+00:00')"
+        )
+    assert get_actionable_notification_summary()["count"] == 0
+
+
+def test_sql_and_python_actionable_filters_agree(monkeypatch):
+    from forven.notifications import filter_actionable_notifications
+
+    init_db()
+    monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: True)
+    samples = [
+        ("health_recovery", "info"),
+        ("health_warning", "warn"),
+        ("trade_failed", "info"),
+        ("bug_report", "fail"),
+        ("agent_task_completed", "info"),
+        ("execution_quality", "warning"),
+        ("risk_critical", "critical"),
+    ]
+    for index, (event_type, severity) in enumerate(samples):
+        emit_notification(event_type, severity=severity, source="test", title=f"sample {index}")
+    oldest_actionable = list_notifications(limit=50, actionable=True)[-1]
+    acknowledge_notification(int(oldest_actionable["id"]))
+
+    everything = list_notifications(limit=50)
+    python_ids = [item["id"] for item in filter_actionable_notifications(everything)]
+    sql_ids = [item["id"] for item in list_notifications(limit=50, actionable=True)]
+    assert sql_ids == python_ids
+    assert len(sql_ids) == 4
+
+
+def test_paper_trades_use_their_own_discord_switch(monkeypatch):
+    init_db()
+    sent = []
+    monkeypatch.setattr(
+        "forven.bot.send_sync", lambda channel, message, channel_id=None: sent.append(channel) or True
+    )
+    update_notification_preferences({"paper_trade_opened_to_discord": False})
+
+    paper = emit_notification(
+        "trade_opened",
+        source="scanner",
+        title="PAPER signal S1",
+        metadata={"trade_id": "E1", "execution_type": "paper"},
+    )
+    live = emit_notification(
+        "trade_opened",
+        source="scanner",
+        title="LIVE signal S2",
+        metadata={"trade_id": "E2", "execution_type": "live"},
+    )
+
+    assert paper["status"] == "stored"
+    assert paper["category"] == "paper_trade_opened"
+    assert live["status"] == "delivered"
+    assert live["category"] == "live_trade_opened"
+    assert sent == ["autopilot"]
+
+
+def test_silenced_trade_entries_stay_silenced_for_paper_after_the_split():
+    # An operator who switched trade entries off before paper got its own switch
+    # must not start receiving paper entries after the upgrade.
+    from forven.db import kv_set
+
+    init_db()
+    kv_set("forven:notification_preferences", {"trade_opened_to_discord": False})
+    prefs = get_notification_preferences()
+    assert prefs["trade_opened_to_discord"] is False
+    assert prefs["paper_trade_opened_to_discord"] is False
+    assert prefs["paper_trade_closed_to_discord"] is True
+
+
+def test_bug_reports_follow_their_discord_switch(monkeypatch):
+    init_db()
+    sent = []
+    monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: sent.append(args) or True)
+    update_notification_preferences({"bug_report_to_discord": False})
+
+    item = emit_notification("bug_report", severity="fail", source="brain", title="[BUG] something broke")
+
+    assert item["status"] == "stored"
+    assert sent == []
+
+
+def test_paper_only_warnings_stay_in_the_app(monkeypatch):
+    init_db()
+    sent = []
+    monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: sent.append(args) or True)
+
+    paper = emit_notification(
+        "execution_quality",
+        severity="warning",
+        source="watchdog",
+        title="Execution skew over cost budget: S1 (paper)",
+        metadata={"bucket": "paper"},
+    )
+    live = emit_notification(
+        "execution_quality",
+        severity="warning",
+        source="watchdog",
+        title="Execution skew over cost budget: S2 (live)",
+        metadata={"bucket": "live"},
+    )
+
+    assert paper["delivery_mode"] == "app_only"
+    assert live["status"] == "delivered"
+    assert len(sent) == 1
+
+
+def test_notification_test_reaches_discord_whatever_the_switches(monkeypatch):
+    init_db()
+    sent = []
+    monkeypatch.setattr(
+        "forven.bot.send_sync", lambda channel, message, channel_id=None: sent.append(channel) or True
+    )
+    update_notification_preferences({"system_degraded_to_discord": False, "trade_opened_to_discord": False})
+
+    item = send_test_notification("notification_test")
+
+    assert item["event_type"] == "notification_test"
+    assert item["category"] == "test"
+    assert item["status"] == "delivered"
+    assert sent == ["alerts"]

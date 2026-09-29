@@ -8,6 +8,7 @@
 	import SettingsSubsection from '$lib/components/settings/primitives/SettingsSubsection.svelte';
 	import SettingsFieldRow from '$lib/components/settings/primitives/SettingsFieldRow.svelte';
 	import SettingsAdvancedHeader from '$lib/components/settings/primitives/SettingsAdvancedHeader.svelte';
+	import NotificationChannelsCard from '$lib/components/settings/NotificationChannelsCard.svelte';
 	import { originalValues, pendingValues } from '$lib/settings/dirty';
 
 	export let settings: Record<string, unknown>;
@@ -79,6 +80,10 @@
 </script>
 
 <div class="space-y-6">
+	<!-- Per-event pop-up / Discord switches and the sidebar badges (saved as they
+	     are flipped); the Discord transport and master switch follow below. -->
+	<NotificationChannelsCard {settings} />
+
 	{#each subs as sub (sub.id)}
 		{@const entries = entriesBySub[sub.id] ?? []}
 		{@const usedBy = [...new Set(entries.flatMap((e) => e.usedBy))]}

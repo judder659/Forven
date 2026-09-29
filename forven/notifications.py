@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from forven.db import create_task_container, get_db, kv_get, kv_set, log_activity
+from forven.notification_catalog import category_for_event, normalize_severity
 from forven.notification_policy import merge_notification_preferences, resolve_notification_policy
 from forven.notification_renderers import render_discord_message, render_discord_thread
 
@@ -65,15 +66,38 @@ _NOTIFICATION_SELECT_FIELDS = (
     "acknowledged_at",
     "delivery_error",
 )
+# Legacy rows carry 'warning'/'error' (emitters wrote them before severities were
+# normalized at emit), so every severity-aware SQL spells out the aliases too.
 _SQL_NOTIFICATION_SEVERITY_RANK = """
 CASE LOWER(COALESCE({column}, 'info'))
     WHEN 'critical' THEN 4
+    WHEN 'fatal' THEN 4
     WHEN 'fail' THEN 3
+    WHEN 'error' THEN 3
     WHEN 'warn' THEN 2
+    WHEN 'warning' THEN 2
     WHEN 'info' THEN 1
     ELSE 0
 END
 """
+_SEVERITY_SQL_VALUES = {
+    "critical": ("critical", "fatal", "crit"),
+    "fail": ("fail", "error", "err", "failed", "failure"),
+    "warn": ("warn", "warning"),
+    "info": ("info",),
+}
+# Event types that are actionable whatever their severity.
+_ACTIONABLE_EVENT_TYPES = ("system_degraded", "risk_critical", "agent_task_failed", "trade_failed")
+_ACTIONABLE_SEVERITY_VALUES = (
+    *_SEVERITY_SQL_VALUES["warn"],
+    *_SEVERITY_SQL_VALUES["fail"],
+    *_SEVERITY_SQL_VALUES["critical"],
+)
+# How far back the Diagnostics badge looks for new issues, and how many ids it
+# carries. The badge counts issues the operator has not seen yet, so the window
+# only bounds the first visit and the payload.
+_ACTIONABLE_SUMMARY_WINDOW_DAYS = 7
+_ACTIONABLE_SUMMARY_LIMIT = 200
 _SQL_NOTIFICATION_GROUP_KEY = """
 COALESCE(
     NULLIF(TRIM(COALESCE({column_prefix}dedupe_key, '')), ''),
@@ -157,7 +181,7 @@ def emit_notification(
     """Store and optionally deliver a notification."""
     event = {
         "event_type": str(event_type or "info").strip().lower(),
-        "severity": str(severity or "info").strip().lower(),
+        "severity": normalize_severity(severity),
         "source": str(source or "system").strip() or "system",
         "title": str(title or "Forven update").strip() or "Forven update",
         "summary": str(summary or "").strip() or None,
@@ -317,8 +341,14 @@ def list_notifications(
     event_type: str | None = None,
     group_key: str | None = None,
     before_id: int | None = None,
+    actionable: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return recent notifications with parsed metadata."""
+    """Return recent notifications with parsed metadata.
+
+    ``actionable=True`` filters in SQL, so a page holds the newest ``limit``
+    actionable rows rather than the actionable subset of the newest ``limit``
+    rows (which routine info traffic could empty).
+    """
     limit = max(1, min(int(limit), 500))
     where_clause, params = _notification_where_clause(
         status=status,
@@ -327,6 +357,7 @@ def list_notifications(
         event_type=event_type,
         group_key=group_key,
         before_id=before_id,
+        actionable=actionable,
     )
     with get_db() as conn:
         rows = conn.execute(
@@ -651,35 +682,74 @@ def get_notification_stats(hours: int = 24) -> dict[str, Any]:
 def filter_actionable_notifications(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Unacknowledged notifications an operator should act on.
 
-    Single source of truth shared by the nav-badge summary and the Diagnostics
-    inbox, so the badge count and the list it links to can never disagree.
+    Python twin of ``_actionable_sql_clause`` for items already in hand; the
+    two are pinned to agree by tests/test_notifications.py.
     """
-    return [
-        item
-        for item in items
-        if str(item.get("status") or "").strip().lower() != "acknowledged"
-        and _notification_is_actionable(item)
-    ]
+    return [item for item in items if is_actionable_notification(item)]
 
 
-def get_actionable_notification_summary(*, limit: int = 50) -> dict[str, Any]:
-    """Return compact counts for unacknowledged actionable operator issues."""
-    items = list_notifications(limit=max(1, min(int(limit), 200)))
-    actionable = filter_actionable_notifications(items)
+def is_actionable_notification(notification: Mapping[str, Any]) -> bool:
+    """An unacknowledged notification an operator should act on."""
+    return str(notification.get("status") or "").strip().lower() != "acknowledged" and _notification_is_actionable(
+        notification
+    )
+
+
+def _actionable_sql_clause(*, alias: str = "") -> tuple[str, list[Any]]:
+    """SQL predicate for 'unacknowledged and worth an operator's attention'."""
+    prefix = f"{alias}." if alias else ""
+    event_marks = ", ".join("?" for _ in _ACTIONABLE_EVENT_TYPES)
+    severity_marks = ", ".join("?" for _ in _ACTIONABLE_SEVERITY_VALUES)
+    clause = (
+        f"LOWER(COALESCE({prefix}status, '')) NOT IN ('acknowledged', 'suppressed') "
+        f"AND (LOWER(COALESCE({prefix}event_type, '')) IN ({event_marks}) "
+        f"OR LOWER(COALESCE({prefix}severity, '')) IN ({severity_marks}))"
+    )
+    return clause, [*_ACTIONABLE_EVENT_TYPES, *_ACTIONABLE_SEVERITY_VALUES]
+
+
+def get_actionable_notification_summary(
+    *,
+    window_days: int = _ACTIONABLE_SUMMARY_WINDOW_DAYS,
+    limit: int = _ACTIONABLE_SUMMARY_LIMIT,
+) -> dict[str, Any]:
+    """Unacknowledged actionable issues from the recent window, newest first.
+
+    Feeds the Diagnostics sidebar badge, which counts the ids the operator has
+    not seen yet — so ``notification_ids`` must hold every recent issue, not
+    the actionable subset of a fixed page of all traffic (an earlier version
+    counted actionable rows among the newest 50, and ~250 routine info rows a
+    day pushed real issues out of that window).
+    """
+    window_days = max(1, min(int(window_days), 90))
+    limit = max(1, min(int(limit), 500))
+    since = (_utc_now() - timedelta(days=window_days)).isoformat()
+    clause, params = _actionable_sql_clause()
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, severity, status
+            FROM notifications
+            WHERE created_at >= ? AND {clause}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (since, *params, limit),
+        ).fetchall()
 
     severity_counts = {"warn": 0, "fail": 0, "critical": 0}
     statuses: dict[str, int] = {}
     notification_ids: list[int] = []
-    for item in actionable:
-        severity = str(item.get("severity") or "").strip().lower()
+    danger_ids: list[int] = []
+    for row in rows:
+        severity = normalize_severity(row["severity"])
         if severity in severity_counts:
             severity_counts[severity] += 1
-        status = str(item.get("status") or "unknown").strip().lower() or "unknown"
+        status = str(row["status"] or "unknown").strip().lower() or "unknown"
         statuses[status] = int(statuses.get(status, 0)) + 1
-        try:
-            notification_ids.append(int(item["id"]))
-        except Exception:
-            continue
+        notification_ids.append(int(row["id"]))
+        if severity in {"fail", "critical"}:
+            danger_ids.append(int(row["id"]))
 
     highest_severity = "info"
     for candidate in ("critical", "fail", "warn"):
@@ -688,11 +758,13 @@ def get_actionable_notification_summary(*, limit: int = 50) -> dict[str, Any]:
             break
 
     return {
-        "count": len(actionable),
+        "count": len(notification_ids),
         "highest_severity": highest_severity,
         "severity_counts": severity_counts,
         "status_counts": statuses,
         "notification_ids": notification_ids,
+        "danger_ids": danger_ids,
+        "window_days": window_days,
     }
 
 
@@ -810,6 +882,19 @@ def resend_notification(notification_id: int) -> dict[str, Any]:
 def send_test_notification(event_type: str = "system_degraded") -> dict[str, Any]:
     """Emit a manual operator test notification."""
     normalized_event_type = str(event_type or "system_degraded").strip().lower() or "system_degraded"
+    if normalized_event_type == "notification_test":
+        # Settings → Notifications "Send a test": pops up in the app and goes
+        # to Discord when connected, whatever the per-event switches say.
+        return emit_notification(
+            "notification_test",
+            severity="info",
+            source="settings",
+            title="Test notification",
+            summary="Notifications reach you here.",
+            body="This test was sent from Settings → Notifications to check pop-ups and Discord delivery.",
+            metadata={"test_notification": True},
+            dedupe_key=f"notification-test:{_now()}",
+        )
     if normalized_event_type == "system_degraded":
         return emit_notification(
             "system_degraded",
@@ -1050,6 +1135,9 @@ def _row_to_notification(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
     payload["metadata"] = _parse_json(payload.get("metadata"))
     payload["group_key"] = str(payload.get("group_key") or "").strip() or _notification_group_key(payload)
+    payload["severity"] = normalize_severity(payload.get("severity"))
+    metadata = payload["metadata"] if isinstance(payload["metadata"], Mapping) else None
+    payload["category"] = category_for_event(payload.get("event_type"), payload["severity"], metadata)
     return payload
 
 
@@ -1071,6 +1159,7 @@ def _notification_where_clause(
     event_type: str | None = None,
     group_key: str | None = None,
     before_id: int | None = None,
+    actionable: bool = False,
     alias: str = "",
 ) -> tuple[str, list[Any]]:
     conditions = []
@@ -1080,8 +1169,10 @@ def _notification_where_clause(
         conditions.append(f"{prefix}status = ?")
         params.append(str(status).strip().lower())
     if severity:
-        conditions.append(f"{prefix}severity = ?")
-        params.append(str(severity).strip().lower())
+        canonical = normalize_severity(severity)
+        values = _SEVERITY_SQL_VALUES.get(canonical, (canonical,))
+        conditions.append(f"LOWER({prefix}severity) IN ({', '.join('?' for _ in values)})")
+        params.extend(values)
     if source:
         conditions.append(f"{prefix}source = ?")
         params.append(str(source).strip())
@@ -1095,6 +1186,10 @@ def _notification_where_clause(
     if before_id is not None:
         conditions.append(f"{prefix}id < ?")
         params.append(int(before_id))
+    if actionable:
+        clause, clause_params = _actionable_sql_clause(alias=alias)
+        conditions.append(f"({clause})")
+        params.extend(clause_params)
     return (f"WHERE {' AND '.join(conditions)}" if conditions else "", params)
 
 
@@ -1303,10 +1398,10 @@ def _repair_agent_exists(agent_id: str) -> bool:
 def _notification_is_actionable(notification: Mapping[str, Any]) -> bool:
     event_type = str(notification.get("event_type") or "").strip().lower()
     status = str(notification.get("status") or "").strip().lower()
-    severity = str(notification.get("severity") or "").strip().lower()
+    severity = normalize_severity(notification.get("severity"))
     if status == "suppressed":
         return False
-    if event_type in {"system_degraded", "risk_critical", "agent_task_failed", "trade_failed"}:
+    if event_type in _ACTIONABLE_EVENT_TYPES:
         return True
     # Actionability is about the CONTENT (key event types, warn+ severity), not
     # the delivery. Failed/dropped Discord pushes used to count too — a flaky

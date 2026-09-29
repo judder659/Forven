@@ -262,3 +262,77 @@ def test_live_websocket_pushes_enriched_trade_open_and_close(monkeypatch):
             assert closed["status"] == "CLOSED"
     finally:
         anchor.close()
+
+
+NOTIFICATIONS_DDL = """
+    CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT,
+        severity TEXT,
+        source TEXT,
+        title TEXT,
+        summary TEXT,
+        status TEXT,
+        metadata TEXT,
+        created_at TEXT
+    )
+"""
+
+
+def test_live_websocket_pushes_new_notifications_with_their_category(monkeypatch):
+    monkeypatch.setattr(live_ws, "WS_TICK_SECONDS", 0.01)
+    monkeypatch.setattr(live_ws, "WS_PING_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setattr(api_core, "kv_get", lambda key, default=None: {})
+    monkeypatch.setattr(api_core, "_now", lambda: "2026-03-14T00:00:00Z")
+    monkeypatch.setattr(api_core, "_classify_activity_log_event", lambda entry: None)
+    monkeypatch.setattr(live_ws, "get_open_trades", lambda: [])
+
+    anchor = _shared_memory_db(
+        monkeypatch,
+        "file:live_ws_notifications_test?mode=memory&cache=shared",
+        [ACTIVITY_LOG_DDL, APPROVALS_DDL, NOTIFICATIONS_DDL],
+    )
+    # History from before the connection is never replayed.
+    anchor.execute(
+        "INSERT INTO notifications (event_type, severity, source, title, status, metadata, created_at) "
+        "VALUES ('health_critical', 'critical', 'health_monitor', 'old outage', 'delivered', '{}', '2026-03-13T00:00:00Z')"
+    )
+    anchor.commit()
+
+    app = FastAPI()
+    app.include_router(websockets_router)
+    client = TestClient(app)
+
+    try:
+        with client.websocket_connect("/api/ws/live") as websocket:
+            assert websocket.receive_json()["type"] == "init"
+            _drain_two_pings(websocket)
+
+            anchor.executemany(
+                "INSERT INTO notifications (event_type, severity, source, title, status, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, '2026-03-14T00:00:00Z')",
+                [
+                    # A dedupe hit never reached the operator: not pushed.
+                    ("health_critical", "critical", "health_monitor", "suppressed repeat", "suppressed", "{}"),
+                    (
+                        "trade_blocked",
+                        "warning",
+                        "scanner",
+                        "Live open blocked (BTC)",
+                        "stored",
+                        '{"strategy_id": "S1", "execution_mode": "live", "reason_class": "cap"}',
+                    ),
+                ],
+            )
+            anchor.commit()
+
+            payload = _await_message(websocket, lambda m: m.get("type") == "notification")
+            data = payload["data"]
+            assert data["title"] == "Live open blocked (BTC)"
+            assert data["category"] == "live_entry_blocked"
+            assert data["severity"] == "warn"
+            assert data["actionable"] is True
+            # Only the fields the pop-up router needs ride along.
+            assert data["metadata"] == {"strategy_id": "S1", "execution_mode": "live"}
+    finally:
+        anchor.close()

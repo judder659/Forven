@@ -80,7 +80,7 @@ export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'trading', label: 'Trading', description: 'Mode, capital, risk, regime gating.', deepLinks: [] },
   { id: 'portfolio', label: 'Portfolio', description: 'The book above the strategies: measured-risk allocation and basket products. Everything here proves itself on paper before touching live sizing.', deepLinks: [] },
   { id: 'hyperliquid', label: 'HyperLiquid', description: 'Credentials, wallets & sub-accounts, spot/perp balances, direction books — all Hyperliquid setup in one place.', deepLinks: [{ label: 'Bot Factory', href: '/bot-factory' }] },
-  { id: 'notifications', label: 'Notifications', description: 'Discord transport, event subscriptions, delivery level.', deepLinks: [] },
+  { id: 'notifications', label: 'Notifications', description: 'Which events pop up in the app or go to Discord, sidebar badges, and the Discord connection.', deepLinks: [] },
   { id: 'system', label: 'System', description: 'API keys, remote engine, bot operations, health & telemetry.', deepLinks: [] },
   { id: 'danger', label: 'Danger Zone', description: 'Factory reset, credential purge.', deepLinks: [], danger: true },
 ];
@@ -125,10 +125,11 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   // models, backup provider) live as tabs on /agents and have no manifest
   // entries here.
 
-  // Notifications
+  // Notifications — the per-event pop-up / Discord switches and the sidebar
+  // badges are notification preferences (NotificationChannelsCard, rendered
+  // above these), not settings-blob fields, so they have no manifest entries.
   { id: 'notif-discord', area: 'notifications', label: 'Discord transport', description: 'Bot token and webhook credentials for Discord.' },
-  { id: 'notif-subscriptions', area: 'notifications', label: 'Event subscriptions', description: 'Which events are pushed to Discord.' },
-  { id: 'notif-delivery', area: 'notifications', label: 'Delivery policy', description: 'Overall notification level and noise control.' },
+  { id: 'notif-delivery', area: 'notifications', label: 'Delivery policy', description: 'Master switch for Discord delivery. In-app pop-ups and badges are not affected.' },
 
   // System
   { id: 'system-experimental', area: 'system', label: 'Experimental features', description: 'Dark-shipped features that are off by default. Enabling one reveals its pages, settings, and jobs.' },
@@ -2478,79 +2479,19 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   },
   {
     id: 'notifications.notification_level',
-    label: 'Notification level',
+    label: 'Discord delivery',
     default: 'all',
     type: 'select',
     options: [
-      { value: 'all', label: 'All' },
+      { value: 'all', label: 'On' },
       { value: 'none', label: 'Off' },
     ],
     area: 'notifications',
     subsection: 'notif-delivery',
     backendSection: 'notifications',
     backendPath: 'notification_level',
-    description: 'Coarse delivery policy that suppresses or enables channels of notifications.',
-    usedBy: ['forven.api_core', 'forven.bot'],
-  },
-  {
-    id: 'notifications.notify_on_entry',
-    label: 'Notify on trade entry',
-    default: true,
-    type: 'toggle',
-    area: 'notifications',
-    subsection: 'notif-subscriptions',
-    backendSection: 'notifications',
-    backendPath: 'notify_on_entry',
-    description: 'Send a notification when a new position opens.',
-    usedBy: ['forven.api_core', 'forven.bot'],
-  },
-  {
-    id: 'notifications.notify_on_exit',
-    label: 'Notify on trade exit',
-    default: true,
-    type: 'toggle',
-    area: 'notifications',
-    subsection: 'notif-subscriptions',
-    backendSection: 'notifications',
-    backendPath: 'notify_on_exit',
-    description: 'Send a notification when a position closes.',
-    usedBy: ['forven.api_core', 'forven.bot'],
-  },
-  {
-    id: 'notifications.notify_daily_summary',
-    label: 'Daily P&L summary',
-    default: true,
-    type: 'toggle',
-    area: 'notifications',
-    subsection: 'notif-subscriptions',
-    backendSection: 'notifications',
-    backendPath: 'notify_daily_summary',
-    description: 'Send a once-per-day P&L and activity digest.',
-    usedBy: ['forven.api_core', 'forven.bot'],
-  },
-  {
-    id: 'notifications.notify_health_reports',
-    label: 'Health reports',
-    default: true,
-    type: 'toggle',
-    area: 'notifications',
-    subsection: 'notif-subscriptions',
-    backendSection: 'notifications',
-    backendPath: 'notify_health_reports',
-    description: 'Send strategy health and degradation reports.',
-    usedBy: ['forven.api_core', 'forven.health_monitor'],
-  },
-  {
-    id: 'notifications.notify_errors',
-    label: 'Errors & warnings',
-    default: true,
-    type: 'toggle',
-    area: 'notifications',
-    subsection: 'notif-subscriptions',
-    backendSection: 'notifications',
-    backendPath: 'notify_errors',
-    description: 'Forward runtime errors and warnings to the notification channel.',
-    usedBy: ['forven.api_core', 'forven.bot'],
+    description: 'Off stops everything going to Discord, whatever the per-event switches above say. Pop-ups and sidebar badges in the app are not affected.',
+    usedBy: ['forven.api_core', 'forven.notifications'],
   },
 
   // -------------------- SYSTEM: BOT OPERATIONS --------------------

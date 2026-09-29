@@ -100,6 +100,21 @@ def test_put_notifications_preferences_round_trips(forven_db):
     assert control_plane_notifications.get_notifications_preferences()["response_channels"] == ["chat"]
 
 
+def test_put_notifications_preferences_is_a_partial_update(forven_db):
+    # The Settings matrix saves one switch at a time; every other stored switch
+    # must survive (the endpoint used to merge the body onto the DEFAULTS).
+    control_plane_notifications.put_notifications_preferences(
+        NotificationPreferencesBody(updates={"popup_paper_trade_opened": True, "trade_closed_to_discord": False})
+    )
+    updated = control_plane_notifications.put_notifications_preferences(
+        NotificationPreferencesBody(updates={"badge_paper_trades": True})
+    )
+
+    assert updated["badge_paper_trades"] is True
+    assert updated["popup_paper_trade_opened"] is True
+    assert updated["trade_closed_to_discord"] is False
+
+
 def test_get_notifications_list_actionable_matches_badge_summary(forven_db, monkeypatch):
     monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: True)
 
@@ -131,7 +146,7 @@ def test_get_notifications_list_actionable_matches_badge_summary(forven_db, monk
     inbox_ids = [int(item["id"]) for item in payload["items"]]
 
     assert inbox_ids == [int(critical["id"])]
-    # The inbox must show exactly what the nav badge counted.
+    # The inbox lists the same issues the Diagnostics badge counts from.
     summary = get_actionable_notification_summary(limit=50)
     assert sorted(inbox_ids) == sorted(summary["notification_ids"])
     assert summary["count"] == len(inbox_ids)

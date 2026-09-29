@@ -22,6 +22,7 @@ import {
 	trackedProcesses,
 	untrackProcess,
 } from '../lib/stores/processTracker';
+import { notify } from '../lib/stores/toasts';
 // NOT mocked on purpose — API-10 is a request-BODY contract, and a mocked
 // performFactoryReset is exactly what let the 422 ship unnoticed.
 import { FACTORY_RESET_CONFIRM_PHRASE, performFactoryReset } from '../lib/api/forven';
@@ -42,12 +43,15 @@ afterEach(() => {
 });
 
 // --------------------------------------------------------------------------
-// FE-02: snoozing must never swallow an error
+// FE-02: snoozing must never swallow an error. Since the notification revamp a
+// snooze pauses EVENT notifications only (notify(): fills, completions,
+// alerts); the answer to something the operator just did — addToast(), errors
+// above all — always shows.
 // --------------------------------------------------------------------------
 
-describe('FE-02 snooze exempts errors', () => {
-	it('keeps existing error toasts when a snooze starts', () => {
-		addToast('backtest completed', 'success');
+describe('FE-02 snooze never hides errors or action feedback', () => {
+	it('keeps error and feedback toasts on screen when a snooze starts, clearing event chatter', () => {
+		notify({ category: 'background_jobs', message: 'backtest completed', type: 'success' });
 		addToast('GO LIVE promotion refused', 'error');
 
 		snoozeNotifications(60_000);
@@ -55,10 +59,10 @@ describe('FE-02 snooze exempts errors', () => {
 		expect(get(toasts).map((t) => t.message)).toEqual(['GO LIVE promotion refused']);
 	});
 
-	it('still admits NEW error toasts while snoozed', () => {
+	it('still admits NEW errors and feedback while snoozed, but not routine events', () => {
 		snoozeNotifications(60_000);
 
-		expect(addToast('routine job finished', 'info')).toBeNull();
+		expect(notify({ category: 'background_jobs', message: 'routine job finished' })).toBeNull();
 		expect(addToast('order rejected by the venue', 'error')).not.toBeNull();
 		expect(get(toasts).map((t) => t.message)).toEqual(['order rejected by the venue']);
 	});

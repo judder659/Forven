@@ -86,23 +86,10 @@
 			}
 		}
 
-		const anyNotifyOn = Boolean(
-			settings.notify_on_entry ||
-				settings.notify_on_exit ||
-				settings.notify_daily_summary ||
-				settings.notify_health_reports ||
-				settings.notify_errors,
-		);
-		const webhook = (settings.discord_webhook_url as string | undefined) ?? '';
-		const botToken = (settings.discord_bot_token as string | undefined) ?? '';
-		if (anyNotifyOn && !webhook && !botToken) {
-			issues.push({
-				key: 'notify-no-transport',
-				label: 'Notifications are enabled but no Discord transport is configured.',
-				area: 'notifications',
-				id: 'notifications.discord_webhook_url',
-			});
-		}
+		// No "Discord not configured" rule: notifications reach the app without
+		// Discord (pop-ups, badges, the Diagnostics inbox), so an unconnected
+		// Discord is a normal state, not a setup gap. The Notifications section
+		// says so where the Discord switches are.
 
 		// Note: "unconfigured OAuth provider" rule intentionally omitted. The
 		// settings manifest doesn't expose a stable "enabled but not connected"

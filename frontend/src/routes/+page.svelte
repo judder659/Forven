@@ -32,7 +32,7 @@
 	} from '$lib/api/dashboard';
 	import { forvenDashboard, forvenOpenTrades, forvenRisk } from '$lib/stores/forven';
 	import { forvenLivePrices } from '$lib/stores/forvenWebSocket';
-	import { navRouteMetrics } from '$lib/stores/navMetrics';
+	import { navIndicators } from '$lib/stores/navMetrics';
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
 	import { buildAttentionItems, formatAge, isLiveTrade } from '$lib/utils/liveDashboard';
 	import CriticalAlertsBanner from '$lib/components/dashboard/CriticalAlertsBanner.svelte';
@@ -106,7 +106,7 @@
 		risk,
 		fleet,
 		schedulerJobs,
-		pendingApprovals: $navRouteMetrics['/approval']?.count ?? 0,
+		pendingApprovals: $navIndicators['/approval']?.count ?? 0,
 		now,
 	});
 
