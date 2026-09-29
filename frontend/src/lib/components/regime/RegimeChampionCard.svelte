@@ -62,19 +62,19 @@
 	}
 </script>
 
-<article class="flex flex-col border border-[#222] bg-[#050505] overflow-hidden">
+<article class="rounded-md flex flex-col border border-sc-line bg-sc-panel overflow-hidden">
 	<!-- Regime header -->
-	<div class={`flex items-center gap-2 px-4 py-3 border-b border-[#1a1a1a]`}>
+	<div class={`flex items-center gap-2 px-4 py-3 border-b border-sc-line`}>
 		<span class={`h-2 w-2 rounded-full ${swatchClass}`}></span>
-		<span class={`inline-flex border px-2.5 py-0.5 text-[11px] uppercase tracking-[0.14em] font-medium ${badgeClass}`}>
+		<span class={`inline-flex border px-2.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] font-medium ${badgeClass}`}>
 			{formatRegimeLabel({ regime })}
 		</span>
 		{#if !workerActive && workerLastUpdated}
-			<span class="ml-auto text-[10px] uppercase tracking-[0.14em] text-yellow-400" title="Worker unavailable">
+			<span class="ml-auto font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400" title="Worker unavailable">
 				Last updated {workerLastUpdated}
 			</span>
 		{:else if championId}
-			<span class="ml-auto text-[10px] uppercase tracking-[0.14em] text-yellow-400">Champion set</span>
+			<span class="ml-auto font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400">Champion set</span>
 		{/if}
 	</div>
 
@@ -90,44 +90,44 @@
 	{:else if !container}
 		<div class="flex flex-1 items-center justify-center px-4 py-8">
 			<div class="flex items-center gap-2">
-				<svg class="h-3 w-3 animate-spin text-[#555]" viewBox="0 0 24 24" fill="none">
+				<svg class="h-3 w-3 animate-spin text-sc-ink3" viewBox="0 0 24 24" fill="none">
 					<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" class="opacity-25" />
 					<path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="3" stroke-linecap="round" class="opacity-75" />
 				</svg>
-				<p class="text-xs text-[#666]">Running first cycle...</p>
+				<p class="text-xs text-sc-ink3">Running first cycle...</p>
 			</div>
 		</div>
 	{:else if members.length === 0}
 		<div class="flex flex-1 items-center justify-center px-4 py-8">
-			<p class="text-center text-xs text-[#555]">No strategies admitted yet</p>
+			<p class="text-center text-xs text-sc-ink3">No strategies admitted yet</p>
 		</div>
 	{:else}
 		<!-- Pending approval banner -->
 		{#if approvalChange}
 			<div class="border-b border-yellow-900 bg-yellow-500/5 px-4 py-2.5">
 				<div class="flex items-center gap-2 text-xs">
-					<span class="shrink-0 border border-yellow-900 bg-yellow-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-yellow-400">
+					<span class="shrink-0 border border-yellow-900 bg-yellow-500/10 px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400">
 						Pending
 					</span>
-					<span class="text-[#888]">
+					<span class="text-sc-ink2">
 						{approvalChange.old_champion_strategy_id ?? '(none)'}
-						<span class="text-[#666] mx-1">&rarr;</span>
+						<span class="text-sc-ink3 mx-1">&rarr;</span>
 						<span class="text-yellow-400">{approvalChange.new_champion_strategy_id}</span>
 					</span>
-					<span class="text-[#666] text-[10px]">score {fmt(approvalChange.new_champion_score)}</span>
+					<span class="text-sc-ink3 text-[10px]">score {fmt(approvalChange.new_champion_score)}</span>
 				</div>
 				<div class="mt-2 flex gap-2">
 					<button
 						on:click={handleApprove}
 						disabled={approving || denying}
-						class="border border-emerald-700 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50"
+						class="rounded-md border border-emerald-700 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50"
 					>
 						{approving ? 'Approving...' : 'Approve'}
 					</button>
 					<button
 						on:click={handleDeny}
 						disabled={approving || denying}
-						class="border border-red-900 bg-red-500/10 px-3 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+						class="rounded-md border border-red-900 bg-red-500/10 px-3 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
 					>
 						{denying ? 'Denying...' : 'Reject'}
 					</button>
@@ -136,7 +136,7 @@
 		{/if}
 
 		<!-- Strategy list -->
-		<div class="divide-y divide-[#1a1a1a]">
+		<div class="divide-y divide-sc-line">
 			{#each members as member, i}
 				{@const isChampion = member.strategy_id === championId}
 				{@const sharpe = metricFrom(member, 'sharpe')}
@@ -149,20 +149,20 @@
 						<span class={`flex h-5 w-5 shrink-0 items-center justify-center text-[10px] font-semibold
 							${isChampion
 								? 'border border-yellow-700 bg-yellow-500/10 text-yellow-400'
-								: 'border border-[#333] bg-[#111] text-[#666]'}`}>
+								: 'border border-sc-line2 bg-sc-panel2 text-sc-ink3'}`}>
 							{i + 1}
 						</span>
 
 						<!-- Strategy ID -->
-						<span class={`flex-1 truncate text-xs font-medium ${isChampion ? 'text-yellow-300' : 'text-white'}`}>
+						<span class={`flex-1 truncate text-xs font-medium ${isChampion ? 'text-yellow-300' : 'text-sc-ink'}`}>
 							{member.strategy_id}
 							{#if isChampion}
-								<span class="ml-1.5 text-[9px] uppercase tracking-[0.14em] text-yellow-400">Champion</span>
+								<span class="ml-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400">Champion</span>
 							{/if}
 						</span>
 
 						<!-- Metrics -->
-						<div class="flex shrink-0 items-center gap-2 text-[11px] text-[#888]">
+						<div class="flex shrink-0 items-center gap-2 text-[11px] text-sc-ink2">
 							{#if sharpe != null}
 								<span title="Sharpe">S {fmt(sharpe)}</span>
 							{/if}
@@ -173,9 +173,9 @@
 					</div>
 
 					<!-- Score bar -->
-					<div class="mt-1.5 h-1 overflow-hidden bg-[#222]">
+					<div class="mt-1.5 h-1 overflow-hidden bg-sc-raise">
 						<div
-							class={`h-full ${isChampion ? 'bg-yellow-400' : 'bg-[#555]'}`}
+							class={`h-full ${isChampion ? 'bg-yellow-400' : 'bg-sc-line2'}`}
 							style={`width: ${scoreWidth}`}
 						></div>
 					</div>

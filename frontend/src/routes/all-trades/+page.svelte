@@ -344,15 +344,15 @@
 	}
 
 	function pnlClass(value: number | null): string {
-		if (value === null || value === 0) return 'text-[#777]';
+		if (value === null || value === 0) return 'text-sc-ink3';
 		return value > 0 ? 'text-emerald-400' : 'text-red-400';
 	}
 	function statusClass(status: unknown): string {
 		const t = String(status ?? '').toUpperCase();
-		if (t === 'OPEN') return 'text-white';
+		if (t === 'OPEN') return 'text-sc-ink';
 		if (t === 'FAILED') return 'text-red-400';
-		if (t === 'CLOSED') return 'text-[#888]';
-		return 'text-[#555]';
+		if (t === 'CLOSED') return 'text-sc-ink2';
+		return 'text-sc-ink3';
 	}
 
 	$: showingFrom = total === 0 ? 0 : offset + 1;
@@ -367,13 +367,13 @@
 <div class="flex flex-col h-full">
 	<div class="panel-header">
 		<span>All Trades</span>
-		<button class="terminal-button text-xs" on:click={() => applyFilters()} disabled={loading}>
+		<button class="terminal-button text-[12px]" on:click={() => applyFilters()} disabled={loading}>
 			{loading ? 'Loading…' : 'Refresh'}
 		</button>
 	</div>
 
 	<!-- Stat bar -->
-	<div class="flex flex-wrap items-stretch gap-x-5 gap-y-1 px-4 py-2 border-b border-[#222] text-xs">
+	<div class="flex flex-wrap items-stretch gap-x-5 gap-y-1 px-4 py-2 border-b border-sc-line text-xs">
 		{#if stats}
 			<div class="stat">
 				<span class="stat-label">Trades</span>
@@ -398,7 +398,7 @@
 				<span class="stat-label">Avg win / loss</span>
 				<span class="stat-value">
 					<span class="text-emerald-400">{fmtUsd(stats.avg_win)}</span>
-					<span class="text-[#555]"> / </span>
+					<span class="text-sc-ink3"> / </span>
 					<span class="text-red-400">{fmtUsd(stats.avg_loss)}</span>
 				</span>
 				<span class="stat-sub">expectancy {fmtUsd(stats.expectancy)}</span>
@@ -407,7 +407,7 @@
 				<span class="stat-label">Best / worst</span>
 				<span class="stat-value">
 					<span class="text-emerald-400">{fmtUsd(stats.best)}</span>
-					<span class="text-[#555]"> / </span>
+					<span class="text-sc-ink3"> / </span>
 					<span class="text-red-400">{fmtUsd(stats.worst)}</span>
 				</span>
 			</div>
@@ -417,24 +417,24 @@
 				<span class="stat-sub">{stats.open_count} position(s)</span>
 			</div>
 		{:else}
-			<span class="text-[#555]">No stats</span>
+			<span class="text-sc-ink3">No stats</span>
 		{/if}
 	</div>
 
 	<!-- Filters -->
-	<div class="flex flex-col gap-2 px-4 py-2 border-b border-[#222] text-xs">
+	<div class="flex flex-col gap-2 px-4 py-2 border-b border-sc-line text-xs">
 		<div class="flex items-center gap-2">
 			{#each STATUSES as s}
 				<button
-					class="px-3 py-1 border uppercase tracking-wide {statusFilter === s
-						? 'border-white text-white'
-						: 'border-[#333] text-[#666] hover:text-[#888]'}"
+					class="rounded-md px-3 py-1 border {statusFilter === s
+						? 'border-sc-ink text-sc-ink'
+						: 'border-sc-line2 text-sc-ink3 hover:text-sc-ink2'}"
 					on:click={() => setStatus(s)}
 				>
 					{s}
 				</button>
 			{/each}
-			<span class="ml-auto text-[#666]">{showingFrom}–{showingTo} of {total}</span>
+			<span class="ml-auto text-sc-ink3">{showingFrom}–{showingTo} of {total}</span>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
 			<input
@@ -463,10 +463,10 @@
 				<option value="paper">Paper</option>
 				<option value="live">Live</option>
 			</select>
-			<label class="flex items-center gap-1 text-[#666]">
+			<label class="flex items-center gap-1 text-sc-ink3">
 				from <input class="filter-input" type="date" bind:value={fromDate} on:change={() => applyFilters()} />
 			</label>
-			<label class="flex items-center gap-1 text-[#666]">
+			<label class="flex items-center gap-1 text-sc-ink3">
 				to <input class="filter-input" type="date" bind:value={toDate} on:change={() => applyFilters()} />
 			</label>
 			<input
@@ -475,7 +475,7 @@
 				bind:value={search}
 				on:input={onSearchInput}
 			/>
-			<button class="terminal-button text-xs" on:click={clearFilters}>Clear</button>
+			<button class="terminal-button text-[12px]" on:click={clearFilters}>Clear</button>
 		</div>
 	</div>
 
@@ -489,16 +489,16 @@
 	<!-- Blotter -->
 	<div class="flex-1 overflow-auto">
 		<table class="w-full text-[11px]">
-			<thead class="text-[#666] border-b border-[#222] bg-[#0a0a0a] sticky top-0 z-10">
+			<thead class="text-sc-ink3 border-b border-sc-line bg-sc-panel sticky top-0 z-10">
 				<tr>
 					{#each COLUMNS as col}
 						<th
 							class="px-2 py-2 {col.align === 'right' ? 'text-right' : 'text-left'} {col.sortKey
-								? 'cursor-pointer select-none hover:text-white'
+								? 'cursor-pointer select-none hover:text-sc-ink'
 								: ''}"
 							on:click={() => toggleSort(col)}
 						>
-							{col.label}{#if col.sortKey && sort === col.sortKey}<span class="text-white"
+							{col.label}{#if col.sortKey && sort === col.sortKey}<span class="text-sc-ink"
 									>{sortDir === 'asc' ? ' ▲' : ' ▼'}</span
 								>{/if}
 						</th>
@@ -512,29 +512,29 @@
 						{@const usd = effectiveUsd(trade, $forvenLivePrices)}
 						{@const pct = effectivePct(trade, $forvenLivePrices)}
 						{@const rowOpen = isOpen(trade)}
-						<tr class="border-b border-[#111] hover:bg-[#111]">
+						<tr class="border-b border-sc-line hover:bg-sc-panel2">
 							<td class="px-2 py-1.5 text-center">
 								<button
-									class="text-[#555] hover:text-white"
+									class="text-sc-ink3 hover:text-sc-ink"
 									on:click={() => toggleExpand(trade.id)}
 									aria-label="Toggle detail"
 								>
 									{expandedId === trade.id ? '▾' : '▸'}
 								</button>
 							</td>
-							<td class="px-2 py-1.5 text-[#888] whitespace-nowrap">{fmtTs(trade.opened_at)}</td>
+							<td class="px-2 py-1.5 text-sc-ink2 whitespace-nowrap">{fmtTs(trade.opened_at)}</td>
 							<td class="px-2 py-1.5 font-mono">
 								{#if strategyId(trade)}
 									<a
-										class="text-white hover:underline"
+										class="text-sc-ink hover:underline"
 										href={tradeHref(trade)}
 										title="Hop into {strategyId(trade)}'s trade on the {String(trade.execution_type ?? '').toLowerCase() === 'live' ? 'Live' : 'Paper'} Trades page"
 									>{strategyId(trade)}</a>
 								{:else}
-									<span class="text-[#666]">—</span>
+									<span class="text-sc-ink3">—</span>
 								{/if}
 							</td>
-							<td class="px-2 py-1.5 text-white font-bold">{String(trade.asset ?? '—').toUpperCase()}</td>
+							<td class="px-2 py-1.5 text-sc-ink font-bold">{String(trade.asset ?? '—').toUpperCase()}</td>
 							<td class="px-2 py-1.5 font-bold {String(trade.direction ?? '').toLowerCase() === 'short' ? 'text-red-400' : 'text-emerald-400'}">
 								{String(trade.direction ?? '—').toUpperCase()}
 							</td>
@@ -542,7 +542,7 @@
 								<span
 									class="px-1.5 py-0.5 border text-[10px] uppercase {String(trade.execution_type ?? '').toLowerCase() === 'live'
 										? 'border-red-900 text-red-400'
-										: 'border-[#333] text-[#888]'}"
+										: 'border-sc-line2 text-sc-ink2'}"
 									title={String(trade.execution_type ?? '—')}
 								>
 									{execTypeLabel(trade.execution_type)}
@@ -552,34 +552,34 @@
 								{#if trade.regime}
 									<RegimeChip mini regime={trade.regime} />
 								{:else}
-									<span class="text-[#444]">—</span>
+									<span class="text-sc-ink4">—</span>
 								{/if}
 							</td>
 							<td class="px-2 py-1.5 font-bold {statusClass(trade.status)}">{String(trade.status ?? '—').toUpperCase()}</td>
-							<td class="px-2 py-1.5 text-right text-[#888]">{fmtPrice(toNumber(trade.fill_entry_price) ?? toNumber(trade.entry_price))}</td>
-							<td class="px-2 py-1.5 text-right text-[#888]">{fmtPrice(toNumber(trade.fill_exit_price) ?? toNumber(trade.exit_price))}</td>
-							<td class="px-2 py-1.5 text-right text-[#888]">{fmtUsd(notional(trade), false)}</td>
+							<td class="px-2 py-1.5 text-right text-sc-ink2">{fmtPrice(toNumber(trade.fill_entry_price) ?? toNumber(trade.entry_price))}</td>
+							<td class="px-2 py-1.5 text-right text-sc-ink2">{fmtPrice(toNumber(trade.fill_exit_price) ?? toNumber(trade.exit_price))}</td>
+							<td class="px-2 py-1.5 text-right text-sc-ink2">{fmtUsd(notional(trade), false)}</td>
 							<td class="px-2 py-1.5 text-right font-bold {pnlClass(usd)}">
-								{fmtUsd(usd)}{#if rowOpen && usd !== null}<span class="text-[#555] text-[9px] ml-0.5">●</span>{/if}
+								{fmtUsd(usd)}{#if rowOpen && usd !== null}<span class="text-sc-ink3 text-[9px] ml-0.5">●</span>{/if}
 							</td>
 							<td class="px-2 py-1.5 text-right font-bold {pnlClass(pct)}">{fmtPct(pct)}</td>
-							<td class="px-2 py-1.5 text-right text-[#888] whitespace-nowrap">{fmtDuration(durationMs(trade))}</td>
+							<td class="px-2 py-1.5 text-right text-sc-ink2 whitespace-nowrap">{fmtDuration(durationMs(trade))}</td>
 							<td class="px-2 py-1.5 text-right">
 								{#if rowOpen}
 									<button
-										class="terminal-button-danger text-xs py-0.5"
+										class="terminal-button-danger text-[12px] py-0.5"
 										on:click={() => handleMarkFailed(trade)}
 										disabled={busyTradeId === trade.id}
 									>
 										{busyTradeId === trade.id ? '…' : 'Mark Failed'}
 									</button>
 								{:else}
-									<span class="text-[#444]">—</span>
+									<span class="text-sc-ink4">—</span>
 								{/if}
 							</td>
 						</tr>
 						{#if expandedId === trade.id}
-							<tr class="bg-[#0a0a0a] border-b border-[#111]">
+							<tr class="bg-sc-panel border-b border-sc-line">
 								<td colspan={COLUMNS.length} class="px-6 py-3">
 									<div class="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-1.5 text-[11px]">
 										<div class="detail"><span class="detail-k">Trade ID</span><span class="detail-v font-mono">{trade.id ?? '—'}</span></div>
@@ -613,7 +613,7 @@
 					{/each}
 				{:else}
 					<tr>
-						<td colspan={COLUMNS.length} class="py-8 text-center text-[#555] text-xs">
+						<td colspan={COLUMNS.length} class="py-8 text-center text-sc-ink3 text-xs">
 							{loading ? 'Loading…' : 'No trades match these filters'}
 						</td>
 					</tr>
@@ -623,19 +623,19 @@
 	</div>
 
 	<!-- Pagination -->
-	<div class="flex items-center justify-between gap-2 px-4 py-2 border-t border-[#222] text-xs">
+	<div class="flex items-center justify-between gap-2 px-4 py-2 border-t border-sc-line text-xs">
 		<div class="flex items-center gap-2">
-			<button class="terminal-button text-xs" on:click={prevPage} disabled={offset === 0 || loading}>Prev</button>
+			<button class="terminal-button text-[12px]" on:click={prevPage} disabled={offset === 0 || loading}>Prev</button>
 			<button
-				class="terminal-button text-xs"
+				class="terminal-button text-[12px]"
 				on:click={nextPage}
 				disabled={offset + pageSize >= total || loading}
 			>
 				Next
 			</button>
 		</div>
-		<span class="text-[#666]">{showingFrom}–{showingTo} of {total}</span>
-		<label class="flex items-center gap-1 text-[#666]">
+		<span class="text-sc-ink3">{showingFrom}–{showingTo} of {total}</span>
+		<label class="flex items-center gap-1 text-sc-ink3">
 			rows
 			<select class="filter-input" value={pageSize} on:change={changePageSize}>
 				<option value={50}>50</option>
@@ -668,15 +668,15 @@
 		font-size: 10px;
 	}
 	.filter-input {
-		background: #0a0a0a;
-		border: 1px solid #333;
+		background: #0c0e11;
+		border: 1px solid #2a2f38;
 		color: #d1d5db;
 		padding: 0.2rem 0.4rem;
 		font-size: 11px;
 	}
 	.filter-input:focus {
 		outline: none;
-		border-color: #555;
+		border-color: #2a2f38;
 	}
 	.detail {
 		display: flex;

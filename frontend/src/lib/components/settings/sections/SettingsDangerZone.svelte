@@ -92,7 +92,7 @@
 <div class="space-y-6">
 	<div class="border border-red-900 bg-red-500/5 p-5 space-y-4">
 		<div>
-			<h2 class="text-sm font-bold uppercase tracking-widest text-red-400">Factory reset</h2>
+			<h2 class="text-[14px] font-semibold text-red-400">Factory reset</h2>
 			<p class="text-xs text-red-400/80 mt-1">
 				Permanently wipes the selected data categories and restores a clean slate. This cannot be
 				undone. Choose which categories to <strong>keep</strong> — everything else is erased.
@@ -100,7 +100,7 @@
 		</div>
 
 		{#if loading}
-			<p class="text-xs text-[#666]">Loading reset categories…</p>
+			<p class="text-xs text-sc-ink3">Loading reset categories…</p>
 		{:else if loadError}
 			<p class="text-xs text-red-400">Could not load categories: {loadError}</p>
 		{:else}
@@ -114,9 +114,9 @@
 							on:change={(e) => toggleKeep(cat.id, e.currentTarget.checked)}
 							class="mt-1 accent-red-500"
 						/>
-						<label for={`keep-${cat.id}`} class="text-xs text-[#888] leading-tight">
-							<span class="font-bold text-white">Keep {cat.label}</span>
-							{#if cat.description}<span class="block text-[#666]">{cat.description}</span>{/if}
+						<label for={`keep-${cat.id}`} class="text-xs text-sc-ink2 leading-tight">
+							<span class="font-bold text-sc-ink">Keep {cat.label}</span>
+							{#if cat.description}<span class="block text-sc-ink3">{cat.description}</span>{/if}
 						</label>
 					</li>
 				{/each}
@@ -134,7 +134,7 @@
 				type="button"
 				on:click={openConfirm}
 				disabled={categories.length === 0}
-				class="terminal-button-danger text-xs"
+				class="terminal-button-danger text-[12px]"
 			>
 				Wipe &amp; factory reset…
 			</button>
@@ -151,21 +151,21 @@
 
 {#if confirmOpen}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-sc-bg/80 p-4"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="factory-reset-title"
 	>
-		<div class="w-full max-w-md border border-red-900 bg-[#050505] p-5 space-y-4">
-			<h2 id="factory-reset-title" class="text-sm font-bold uppercase tracking-widest text-red-400">
+		<div class="rounded-md w-full max-w-md border border-red-900 bg-sc-panel p-5 space-y-4">
+			<h2 id="factory-reset-title" class="text-[14px] font-semibold text-red-400">
 				Confirm factory reset
 			</h2>
-			<p class="text-xs text-[#888]">
+			<p class="text-xs text-sc-ink2">
 				This will permanently wipe:
 				<strong class="text-red-400">{wipeLabels.join(', ') || 'nothing'}</strong>. This action
 				cannot be undone.
 			</p>
-			<label class="block text-xs text-[#666]">
+			<label class="block text-xs text-sc-ink3">
 				Type <span class="text-red-400">{FACTORY_RESET_PHRASE}</span> to confirm:
 				<input
 					type="text"
@@ -178,7 +178,7 @@
 				<button
 					type="button"
 					on:click={cancelConfirm}
-					class="terminal-button text-xs"
+					class="terminal-button text-[12px]"
 				>
 					Cancel
 				</button>
@@ -186,7 +186,7 @@
 					type="button"
 					on:click={doReset}
 					disabled={!confirmArmed || resetting}
-					class="terminal-button-danger text-xs"
+					class="terminal-button-danger text-[12px]"
 				>
 					{resetting ? 'Resetting…' : 'Wipe everything'}
 				</button>

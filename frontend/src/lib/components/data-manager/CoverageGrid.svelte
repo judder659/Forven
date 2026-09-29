@@ -18,8 +18,8 @@
 		fresh: 'bg-emerald-500/[0.16] text-emerald-200',
 		late: 'bg-amber-400/[0.22] text-amber-100',
 		breach: 'bg-red-500/[0.26] text-red-100',
-		frozen: 'text-slate-400 bg-[repeating-linear-gradient(135deg,rgba(148,163,184,0.22)_0_2px,transparent_2px_5px)]',
-		missing: 'border border-dashed border-[#555] text-[#888]',
+		frozen: 'text-sc-ink2 bg-[repeating-linear-gradient(135deg,rgba(148,163,184,0.22)_0_2px,transparent_2px_5px)]',
+		missing: 'border border-dashed border-sc-line2 text-sc-ink2',
 	};
 	const MARK: Partial<Record<SlaState, string>> = { late: '!', breach: '‼', frozen: '*', missing: '∅' };
 
@@ -118,37 +118,37 @@
 
 	function cellClass(cell: CoverageCell): string {
 		if (cell.row && cell.row.rows > 0) {
-			if (mode === 'depth') return 'text-white';
+			if (mode === 'depth') return 'text-sc-ink';
 			return CELL[cell.row.sla.state] ?? '';
 		}
 		if (cell.row) return CELL.missing;
 		if (cell.planned) return 'border border-dashed border-sky-800 text-sky-300/80';
-		return 'text-[#2f2f2f]';
+		return 'text-sc-ink4';
 	}
 	$: template = `minmax(128px, 168px) repeat(${model.timeframes.length}, minmax(50px, 60px))`;
 </script>
 
 <div bind:this={root} role="grid" tabindex="0" aria-label="Coverage: symbols by timeframe" aria-rowcount={rowsFlat.length + 1} aria-colcount={model.timeframes.length + 1}
 	aria-activedescendant={activeKey ? cellId(activeKey) : undefined} on:keydown={onKey} data-testid="coverage-grid"
-	class="relative min-h-0 flex-1 select-none overflow-auto border border-[#222] bg-[#050505] outline-none focus-visible:border-[#666]">
+	class="rounded-md relative min-h-0 flex-1 select-none overflow-auto border border-sc-line bg-sc-panel outline-none focus-visible:border-sc-line2">
 	<div class="grid w-max min-w-full" style="grid-template-columns: {template}">
 		<div role="row" aria-rowindex={1} class="contents">
-			<div role="columnheader" class="sticky left-0 top-0 z-30 border-b border-r border-[#1a1a1a] bg-[#0a0a0a] px-3 py-1.5 text-[9px] uppercase tracking-wider text-[#555]">Symbol</div>
+			<div role="columnheader" class="sticky left-0 top-0 z-30 border-b border-r border-sc-line bg-sc-panel px-3 py-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Symbol</div>
 			{#each model.timeframes as tf (tf)}
-				<div role="columnheader" class="sticky top-0 z-20 border-b border-[#1a1a1a] bg-[#0a0a0a] py-1.5 text-center font-mono text-[10px] text-[#888]">{tf}</div>
+				<div role="columnheader" class="sticky top-0 z-20 border-b border-sc-line bg-sc-panel py-1.5 text-center font-mono text-[10px] text-sc-ink2">{tf}</div>
 			{/each}
 		</div>
 		{#each model.groups as group (group.tier)}
 			<div role="row" class="contents">
 				<div role="rowheader" title={TIER_HELP[group.tier]}
-					class="sticky left-0 top-[27px] z-10 col-span-full border-y border-[#1a1a1a] bg-[#0c0c0c] px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-[#aaa]" style="grid-column: 1 / -1">
-					{TIER_LABEL[group.tier]} <span class="font-normal text-[#555]">· {group.symbols.length} symbol{group.symbols.length === 1 ? '' : 's'}</span>
+					class="sticky left-0 top-[27px] z-10 col-span-full border-y border-sc-line bg-sc-panel2 px-3 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" style="grid-column: 1 / -1">
+					{TIER_LABEL[group.tier]} <span class="font-normal text-sc-ink3">· {group.symbols.length} symbol{group.symbols.length === 1 ? '' : 's'}</span>
 				</div>
 			</div>
 			{#each group.symbols as sym (sym.symbol)}
 				{@const r = rowIndex.get(sym.symbol) ?? 0}
 				<div role="row" aria-rowindex={r + 2} class="contents">
-					<div role="rowheader" class="sticky left-0 z-[5] truncate border-b border-r border-[#111] bg-[#050505] px-3 py-[3px] text-[11px] text-white" title={sym.symbol}>{sym.display}</div>
+					<div role="rowheader" class="sticky left-0 z-[5] truncate border-b border-r border-sc-line bg-sc-panel px-3 py-[3px] text-[11px] text-sc-ink" title={sym.symbol}>{sym.display}</div>
 					{#each sym.cells as cell, c (cell.key)}
 						{@const isSel = selected.has(cell.key)}
 						{@const isActive = active[0] === r && active[1] === c}

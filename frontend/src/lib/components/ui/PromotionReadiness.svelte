@@ -236,7 +236,7 @@
 
 <div class="rounded-md space-y-2 border border-sc-line bg-sc-panel p-2.5">
 	<div class="flex items-center justify-between">
-		<h3 class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">
+		<h3 class="text-[13px] font-semibold text-sc-ink2">
 			{stageTitle[stage] || 'Promotion Requirements'}
 		</h3>
 		{#if hasChecklist && !isQuickScreen}
@@ -259,7 +259,7 @@
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div class="min-w-0 flex-1 space-y-1">
-							<div class="text-[11px] font-medium uppercase tracking-[0.12em] text-sc-ink">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">
 								{step.label}
 							</div>
 							<div
@@ -282,7 +282,7 @@
 	{:else if isLiveGraduated}
 		<div class="space-y-1">
 			{#each liveGraduatedInfo as info}
-				<div class="flex items-center gap-2 border border-sc-line bg-sc-bg/30 px-2 py-1.5">
+				<div class="rounded-md flex items-center gap-2 border border-sc-line bg-sc-bg/30 px-2 py-1.5">
 					<span class="text-xs text-sc-ink3">-</span>
 					<div class="min-w-0 flex-1">
 						<div class="text-xs font-medium text-sc-ink">{info.name}</div>
@@ -318,7 +318,7 @@
 				>
 					<div class="flex items-start justify-between gap-3">
 						<div class="min-w-0 flex-1 space-y-1">
-							<div class="text-[11px] font-medium uppercase tracking-[0.12em] text-sc-ink">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">
 								{compactStepLabels[step.name] || stepLabels[step.name] || step.name}
 							</div>
 							<div

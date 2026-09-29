@@ -71,8 +71,8 @@
 		flex-direction: column;
 		gap: 0.6rem;
 		padding: 0.75rem;
-		border: 1px solid #1f1f1f;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.row {
@@ -86,13 +86,13 @@
 		font-size: 0.625rem;
 		letter-spacing: 0.08em;
 		padding: 0.2rem 0.5rem;
-		border: 1px solid #2a2a2a;
-		color: #ccc;
-		font-family: ui-monospace, monospace;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.chip--muted {
-		color: #666;
+		color: #747c88;
 	}
 
 	.changes {
@@ -104,9 +104,9 @@
 	.changes th {
 		text-align: left;
 		font-weight: 600;
-		color: #888;
+		color: #aab1bc;
 		padding: 0.3rem 0.5rem;
-		border-bottom: 1px solid #1f1f1f;
+		border-bottom: 1px solid #1c2026;
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.14em;
@@ -114,21 +114,21 @@
 
 	.changes td {
 		padding: 0.35rem 0.5rem;
-		border-bottom: 1px solid #141414;
-		font-family: ui-monospace, monospace;
+		border-bottom: 1px solid #1c2026;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.regime {
-		color: #fff;
+		color: #eef1f5;
 		font-weight: 600;
 	}
 
 	.old {
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.arrow {
-		color: #666;
+		color: #747c88;
 	}
 
 	.new a {
@@ -140,18 +140,18 @@
 	}
 
 	.score {
-		color: #ccc;
+		color: #eef1f5;
 	}
 
 	.fine-print {
 		margin: 0;
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 	}
 
 	.raw summary {
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		cursor: pointer;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -161,11 +161,11 @@
 		margin-top: 0.4rem;
 		max-height: 200px;
 		overflow: auto;
-		border: 1px solid #1f1f1f;
-		background: #000;
+		border: 1px solid #1c2026;
+		background: #07080a;
 		padding: 0.5rem;
 		font-size: 0.6875rem;
-		color: #888;
+		color: #aab1bc;
 		white-space: pre-wrap;
 		word-break: break-word;
 	}

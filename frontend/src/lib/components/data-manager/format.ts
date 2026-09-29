@@ -193,8 +193,8 @@ const STATE_CHIP: Record<SlaState, string> = {
 	fresh: 'border-emerald-900 bg-emerald-500/5 text-emerald-400',
 	late: 'border-amber-900 bg-amber-500/5 text-amber-400',
 	breach: 'border-red-900 bg-red-500/10 text-red-400',
-	frozen: 'border-slate-700 text-slate-400 bg-[repeating-linear-gradient(135deg,rgba(148,163,184,0.16)_0_2px,transparent_2px_5px)]',
-	missing: 'border-dashed border-[#444] text-[#888]',
+	frozen: 'border-sc-line2 text-sc-ink2 bg-[repeating-linear-gradient(135deg,rgba(148,163,184,0.16)_0_2px,transparent_2px_5px)]',
+	missing: 'border-dashed border-sc-line2 text-sc-ink2',
 };
 export const stateChipClass = (state: SlaState) => STATE_CHIP[state] ?? STATE_CHIP.missing;
 
@@ -203,7 +203,7 @@ const STATE_FILL: Record<SlaState, string> = {
 	late: 'bg-amber-400/80',
 	breach: 'bg-red-500/80',
 	frozen: 'bg-[repeating-linear-gradient(135deg,rgba(148,163,184,0.55)_0_2px,rgba(71,85,105,0.35)_2px_5px)]',
-	missing: 'border border-dashed border-[#555] bg-transparent',
+	missing: 'border border-dashed border-sc-line2 bg-transparent',
 };
 export const stateFillClass = (state: SlaState) => STATE_FILL[state] ?? STATE_FILL.missing;
 
@@ -211,10 +211,10 @@ const STATE_TEXT: Record<SlaState, string> = {
 	fresh: 'text-emerald-400',
 	late: 'text-amber-400',
 	breach: 'text-red-400',
-	frozen: 'text-slate-400',
-	missing: 'text-[#888]',
+	frozen: 'text-sc-ink2',
+	missing: 'text-sc-ink2',
 };
-export const stateTextClass = (state: SlaState) => STATE_TEXT[state] ?? 'text-[#888]';
+export const stateTextClass = (state: SlaState) => STATE_TEXT[state] ?? 'text-sc-ink2';
 
 export const STREAM_LABEL: Record<DataStream, string> = {
 	ohlcv: 'Candles',
@@ -303,14 +303,14 @@ export const JOB_STATUS_LABEL: Record<DataJobStatus, string> = {
 };
 
 const JOB_STATUS_CLASS: Record<DataJobStatus, string> = {
-	queued: 'border-[#333] text-[#aaa]',
+	queued: 'border-sc-line2 text-sc-ink2',
 	running: 'border-sky-900 text-sky-300',
 	succeeded: 'border-emerald-900 text-emerald-400',
 	failed: 'border-red-900 text-red-400',
-	cancelled: 'border-[#333] text-[#777]',
+	cancelled: 'border-sc-line2 text-sc-ink3',
 	interrupted: 'border-amber-900 text-amber-400',
 };
-export const jobStatusClass = (status: DataJobStatus) => JOB_STATUS_CLASS[status] ?? 'border-[#333] text-[#888]';
+export const jobStatusClass = (status: DataJobStatus) => JOB_STATUS_CLASS[status] ?? 'border-sc-line2 text-sc-ink2';
 
 const ERROR_TEXT: Record<string, string> = {
 	rate_limited: 'The venue rate-limited the download',

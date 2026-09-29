@@ -10,7 +10,7 @@
 </script>
 
 <label class="block" for={id}>
-	<div class="text-[10px] uppercase tracking-wider text-[#666]">{label}</div>
+	<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{label}</div>
 	<input
 		id={id}
 		type="number"
@@ -22,6 +22,6 @@
 		class="terminal-input mt-1.5"
 	/>
 	{#if helpText}
-		<div class="mt-1 text-[11px] text-[#555]">{helpText}</div>
+		<div class="mt-1 text-[11px] text-sc-ink3">{helpText}</div>
 	{/if}
 </label>

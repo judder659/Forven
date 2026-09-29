@@ -153,14 +153,14 @@
 		if (s === 'running') return 'text-emerald-400';
 		if (s === 'error') return 'text-red-500';
 		if (s === 'paused') return 'text-yellow-400';
-		return 'text-gray-600';
+		return 'text-sc-ink3';
 	}
 
 	function statusDot(s: string): string {
 		if (s === 'running') return 'bg-emerald-400 animate-pulse';
 		if (s === 'error') return 'bg-red-500';
 		if (s === 'paused') return 'bg-yellow-400';
-		return 'bg-gray-700';
+		return 'bg-sc-line2';
 	}
 
 	function fmtUsd(v: number): string {
@@ -191,48 +191,48 @@
 
 <div class="mx-auto max-w-7xl px-4 py-6">
 	<!-- Header -->
-	<div class="mb-4 flex items-end justify-between border-b border-[#222] pb-4">
+	<div class="mb-4 flex items-end justify-between border-b border-sc-line pb-4">
 		<div>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Bot Factory</h1>
-			<p class="mt-1 text-xs text-[#666]">Autonomous LLM trading bots — paper by default, live behind GO LIVE</p>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Bot Factory</h1>
+			<p class="mt-1 text-xs text-sc-ink3">Autonomous LLM trading bots — paper by default, live behind GO LIVE</p>
 		</div>
 		<div class="flex gap-2">
 			{#if hasRunningBots}
 				{#if confirmKillAll}
-					<button on:click={handleKillAll} disabled={killAllBusy} aria-busy={killAllBusy} class="terminal-button-danger text-xs">
+					<button on:click={handleKillAll} disabled={killAllBusy} aria-busy={killAllBusy} class="terminal-button-danger text-[12px]">
 						{killAllBusy ? 'Stopping…' : 'Confirm kill all'}
 					</button>
-					<button on:click={() => (confirmKillAll = false)} disabled={killAllBusy} class="terminal-button text-xs">Cancel</button>
+					<button on:click={() => (confirmKillAll = false)} disabled={killAllBusy} class="terminal-button text-[12px]">Cancel</button>
 				{:else}
-					<button on:click={() => (confirmKillAll = true)} disabled={killAllBusy} class="terminal-button-danger text-xs">Kill All</button>
+					<button on:click={() => (confirmKillAll = true)} disabled={killAllBusy} class="terminal-button-danger text-[12px]">Kill All</button>
 				{/if}
 			{/if}
-			<button on:click={() => goto('/bot-factory/editor')} class="terminal-button-primary text-xs">+ New Bot</button>
+			<button on:click={() => goto('/bot-factory/editor')} class="terminal-button-primary text-[12px]">+ New Bot</button>
 		</div>
 	</div>
 
 	<!-- Fleet summary strip -->
 	{#if !loading && bots.length > 0}
-		<div class="mb-6 grid grid-cols-2 gap-px border border-[#222] bg-[#222] sm:grid-cols-5">
-			<div class="bg-[#050505] px-4 py-3">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Bots</div>
-				<div class="mt-1 text-lg font-bold text-white">{bots.length}</div>
+		<div class="rounded-md mb-6 grid grid-cols-2 gap-px border border-sc-line bg-sc-raise sm:grid-cols-5">
+			<div class="bg-sc-panel px-4 py-3">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Bots</div>
+				<div class="mt-1 text-lg font-bold text-sc-ink">{bots.length}</div>
 			</div>
-			<div class="bg-[#050505] px-4 py-3">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Running</div>
-				<div class="mt-1 text-lg font-bold {runningCount > 0 ? 'text-emerald-400' : 'text-white'}">{runningCount}</div>
+			<div class="bg-sc-panel px-4 py-3">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Running</div>
+				<div class="mt-1 text-lg font-bold {runningCount > 0 ? 'text-emerald-400' : 'text-sc-ink'}">{runningCount}</div>
 			</div>
-			<div class="bg-[#050505] px-4 py-3">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Live-armed</div>
-				<div class="mt-1 text-lg font-bold {liveCount > 0 ? 'text-red-400' : 'text-white'}">{liveCount}</div>
+			<div class="bg-sc-panel px-4 py-3">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Live-armed</div>
+				<div class="mt-1 text-lg font-bold {liveCount > 0 ? 'text-red-400' : 'text-sc-ink'}">{liveCount}</div>
 			</div>
-			<div class="bg-[#050505] px-4 py-3">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Open positions</div>
-				<div class="mt-1 text-lg font-bold text-white">{openPositions}</div>
+			<div class="bg-sc-panel px-4 py-3">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Open positions</div>
+				<div class="mt-1 text-lg font-bold text-sc-ink">{openPositions}</div>
 			</div>
-			<div class="bg-[#050505] px-4 py-3">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Fleet P&L</div>
-				<div class="mt-1 text-lg font-bold {fleetPnl > 0 ? 'text-emerald-400' : fleetPnl < 0 ? 'text-red-400' : 'text-white'}">
+			<div class="bg-sc-panel px-4 py-3">
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Fleet P&L</div>
+				<div class="mt-1 text-lg font-bold {fleetPnl > 0 ? 'text-emerald-400' : fleetPnl < 0 ? 'text-red-400' : 'text-sc-ink'}">
 					{fleetPnl >= 0 ? '+' : ''}{fmtUsd(fleetPnl)}
 				</div>
 			</div>
@@ -241,33 +241,33 @@
 
 	<!-- Wallet management lives in Settings › HyperLiquid; live bots pick their
 	     wallet in the GO LIVE drawer on the bot detail page. -->
-	<div class="mb-6 flex items-center justify-between border border-[#222] bg-[#050505] px-4 py-2.5">
-		<span class="text-[11px] text-[#666]">
+	<div class="rounded-md mb-6 flex items-center justify-between border border-sc-line bg-sc-panel px-4 py-2.5">
+		<span class="text-[11px] text-sc-ink3">
 			Live bots can route orders to an isolated Hyperliquid sub-account — create and fund wallets in Settings.
 		</span>
 		<a href="/settings#hyperliquid" class="terminal-button px-2.5 py-1 text-[10px]">Manage Wallets</a>
 	</div>
 
 	{#if loading}
-		<div class="py-20 text-center text-xs uppercase tracking-widest text-[#555]">Loading…</div>
+		<div class="py-20 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading…</div>
 	{:else if error}
 		<div class="py-20 text-center text-sm text-red-400">{error}</div>
 	{:else if bots.length === 0}
 		<!-- Empty state: template gallery -->
 		<div class="py-10 text-center">
-			<h2 class="text-sm font-bold uppercase tracking-widest text-white">Deploy your first bot</h2>
-			<p class="mb-8 mt-1 text-xs text-[#666]">Start from a template or build from scratch</p>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Deploy your first bot</h2>
+			<p class="mb-8 mt-1 text-xs text-sc-ink3">Start from a template or build from scratch</p>
 
 			<div class="mx-auto grid max-w-4xl grid-cols-1 gap-3 text-left sm:grid-cols-2">
 				{#each templates as template}
-					<button on:click={() => createFromTemplate(template.id)} class="terminal-card group p-4 text-left transition-colors hover:border-[#555]">
-						<div class="text-sm font-bold text-white group-hover:text-white">{template.name}</div>
-						<div class="mt-1 text-xs leading-relaxed text-[#777]">{template.description}</div>
+					<button on:click={() => createFromTemplate(template.id)} class="terminal-card group p-4 text-left transition-colors hover:border-sc-line2">
+						<div class="text-sm font-bold text-sc-ink group-hover:text-sc-ink">{template.name}</div>
+						<div class="mt-1 text-xs leading-relaxed text-sc-ink3">{template.description}</div>
 					</button>
 				{/each}
-				<button on:click={() => goto('/bot-factory/editor')} class="border border-dashed border-[#333] p-4 text-left transition-colors hover:border-[#666]">
-					<div class="text-sm font-bold text-[#999]">Blank bot</div>
-					<div class="mt-1 text-xs text-[#666]">Start from an empty configuration</div>
+				<button on:click={() => goto('/bot-factory/editor')} class="rounded-md border border-dashed border-sc-line2 p-4 text-left transition-colors hover:border-sc-line2">
+					<div class="text-sm font-bold text-sc-ink2">Blank bot</div>
+					<div class="mt-1 text-xs text-sc-ink3">Start from an empty configuration</div>
 				</button>
 			</div>
 		</div>
@@ -283,58 +283,58 @@
 				{@const equity = isLive ? (walletEquity ?? 0) : (bot.capital_allocation || 0) + pnl}
 				<div class="terminal-card flex flex-col">
 					<!-- Card header -->
-					<div class="flex items-start justify-between border-b border-[#1a1a1a] px-4 py-3">
+					<div class="flex items-start justify-between border-b border-sc-line px-4 py-3">
 						<div class="min-w-0">
 							<div class="flex items-center gap-2">
-								<a href="/bot-factory/{bot.id}" class="truncate text-sm font-bold text-white hover:underline">{bot.name}</a>
+								<a href="/bot-factory/{bot.id}" class="truncate text-sm font-bold text-sc-ink hover:underline">{bot.name}</a>
 								{#if bot.execution_mode === 'live'}
-									<span class="border border-red-900 bg-red-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-red-400">Live</span>
+									<span class="border border-red-900 bg-red-500/10 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">Live</span>
 								{:else}
-									<span class="border border-[#333] px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-[#888]">Paper</span>
+									<span class="border border-sc-line2 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Paper</span>
 								{/if}
 							</div>
-							<div class="mt-1 flex items-center gap-2 text-[11px] text-[#666]">
+							<div class="mt-1 flex items-center gap-2 text-[11px] text-sc-ink3">
 								<span class="truncate">{bot.model}</span>
-								<span class="h-0.5 w-0.5 rounded-full bg-[#444]"></span>
+								<span class="h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
 								<span class="truncate">{bot.asset_mode === 'locked' ? (bot.locked_pairs || []).join(', ') : 'Free roam'}</span>
 								{#if bot.live_wallet}
-									<span class="h-0.5 w-0.5 rounded-full bg-[#444]"></span>
-									<span class="truncate text-[#888]" title="Live orders route to this sub-account">⌂ {bot.live_wallet}</span>
+									<span class="h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
+									<span class="truncate text-sc-ink2" title="Live orders route to this sub-account">⌂ {bot.live_wallet}</span>
 								{/if}
 							</div>
 						</div>
 						<div class="flex shrink-0 items-center gap-1.5 pl-3">
 							<span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(status)}"></span>
-							<span class="text-[10px] uppercase tracking-wider {statusColor(status)}">{status}</span>
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {statusColor(status)}">{status}</span>
 						</div>
 					</div>
 
 					<!-- Performance row -->
-					<div class="grid grid-cols-3 gap-px bg-[#1a1a1a]">
-						<div class="bg-[#050505] px-4 py-2.5">
-							<div class="text-[9px] uppercase tracking-wider text-[#555]">{isLive ? 'Wallet' : 'Equity'}</div>
+					<div class="grid grid-cols-3 gap-px bg-sc-raise">
+						<div class="bg-sc-panel px-4 py-2.5">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{isLive ? 'Wallet' : 'Equity'}</div>
 							{#if isLive && walletEquity == null}
-								<div class="mt-0.5 text-sm font-bold text-[#666]" title="Live wallet balance unavailable — daemon snapshot pending or wallet unfunded">—</div>
+								<div class="mt-0.5 text-sm font-bold text-sc-ink3" title="Live wallet balance unavailable — daemon snapshot pending or wallet unfunded">—</div>
 							{:else}
-								<div class="mt-0.5 text-sm font-bold text-white">{fmtUsd(equity)}</div>
+								<div class="mt-0.5 text-sm font-bold text-sc-ink">{fmtUsd(equity)}</div>
 							{/if}
 						</div>
-						<div class="bg-[#050505] px-4 py-2.5">
-							<div class="text-[9px] uppercase tracking-wider text-[#555]">P&L</div>
-							<div class="mt-0.5 text-sm font-bold {pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-[#777]'}">
+						<div class="bg-sc-panel px-4 py-2.5">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">P&L</div>
+							<div class="mt-0.5 text-sm font-bold {pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-sc-ink3'}">
 								{pnl >= 0 ? '+' : ''}{fmtUsd(pnl)}
 							</div>
 						</div>
-						<div class="bg-[#050505] px-4 py-2.5">
-							<div class="text-[9px] uppercase tracking-wider text-[#555]">Positions</div>
-							<div class="mt-0.5 text-sm font-bold text-white">
-								{bot.open_positions ?? 0}<span class="text-[#555]"> open</span>
+						<div class="bg-sc-panel px-4 py-2.5">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Positions</div>
+							<div class="mt-0.5 text-sm font-bold text-sc-ink">
+								{bot.open_positions ?? 0}<span class="text-sc-ink3"> open</span>
 							</div>
 						</div>
 					</div>
 
 					<!-- Meta row -->
-					<div class="flex items-center justify-between border-t border-[#1a1a1a] px-4 py-2 text-[10px] text-[#555]">
+					<div class="flex items-center justify-between border-t border-sc-line px-4 py-2 text-[10px] text-sc-ink3">
 						<span>{bot.closed_trades ?? 0} closed trades</span>
 						<span>LLM {bot.llm_calls_today ?? 0}/{bot.max_llm_calls_per_day}</span>
 					</div>
@@ -346,28 +346,28 @@
 					{/if}
 
 					<!-- Actions -->
-					<div class="mt-auto flex gap-1.5 border-t border-[#1a1a1a] px-4 py-2.5 text-[10px]">
+					<div class="mt-auto flex gap-1.5 border-t border-sc-line px-4 py-2.5 text-[10px]">
 						{#if status === 'running'}
 							{#if confirmStop === bot.id}
 								{@const closesLive = isLive && (bot.open_positions ?? 0) > 0}
-								<button on:click={() => handleStop(bot.id)} disabled={isBusy} aria-busy={isBusy} title={closesLive ? `Closes ${bot.open_positions} live position(s) on Hyperliquid` : ''} class="terminal-button-danger px-2 py-1 text-[10px]">{isBusy ? 'Stopping…' : closesLive ? `Confirm + Close ${bot.open_positions}` : 'Confirm'}</button>
-								<button on:click={() => (confirmStop = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[10px]">Cancel</button>
+								<button on:click={() => handleStop(bot.id)} disabled={isBusy} aria-busy={isBusy} title={closesLive ? `Closes ${bot.open_positions} live position(s) on Hyperliquid` : ''} class="terminal-button-danger px-2 py-1 text-[12px]">{isBusy ? 'Stopping…' : closesLive ? `Confirm + Close ${bot.open_positions}` : 'Confirm'}</button>
+								<button on:click={() => (confirmStop = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[12px]">Cancel</button>
 							{:else}
-								<button on:click={() => (confirmStop = bot.id)} disabled={isBusy} class="terminal-button-danger px-2 py-1 text-[10px]">Stop</button>
+								<button on:click={() => (confirmStop = bot.id)} disabled={isBusy} class="terminal-button-danger px-2 py-1 text-[12px]">Stop</button>
 							{/if}
 						{:else}
-							<button on:click={() => handleStart(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[10px] hover:border-emerald-500 hover:bg-emerald-500 hover:text-black">{isBusy ? 'Starting…' : 'Start'}</button>
+							<button on:click={() => handleStart(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[12px] hover:border-emerald-500 hover:bg-emerald-500 hover:text-black">{isBusy ? 'Starting…' : 'Start'}</button>
 						{/if}
-						<button on:click={() => goto(`/bot-factory/editor?id=${bot.id}`)} class="terminal-button px-2 py-1 text-[10px]">Edit</button>
-						<button on:click={() => handleClone(bot.id, bot.name)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[10px]">{isBusy ? '…' : 'Clone'}</button>
+						<button on:click={() => goto(`/bot-factory/editor?id=${bot.id}`)} class="terminal-button px-2 py-1 text-[12px]">Edit</button>
+						<button on:click={() => handleClone(bot.id, bot.name)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[12px]">{isBusy ? '…' : 'Clone'}</button>
 						<span class="ml-auto"></span>
 						{#if confirmDelete === bot.id}
-							<button on:click={() => handleDelete(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button-danger px-2 py-1 text-[10px]">{isBusy ? 'Deleting…' : 'Confirm'}</button>
-							<button on:click={() => (confirmDelete = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[10px]">Cancel</button>
+							<button on:click={() => handleDelete(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button-danger px-2 py-1 text-[12px]">{isBusy ? 'Deleting…' : 'Confirm'}</button>
+							<button on:click={() => (confirmDelete = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[12px]">Cancel</button>
 						{:else}
 							<button
 								on:click={() => (confirmDelete = bot.id)}
-								class="px-2 py-1 text-[10px] uppercase tracking-wide text-[#555] transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+								class="px-2 py-1 text-[12px] text-sc-ink3 transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
 								disabled={status === 'running' || isBusy}
 							>Delete</button>
 						{/if}

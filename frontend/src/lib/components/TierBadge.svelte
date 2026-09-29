@@ -3,7 +3,7 @@
 
 	function getConfig(t: string): { label: string; bg: string; text: string; border: string } {
 		if (t === 'elite') return { label: 'E', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-900' };
-		if (t === 'strong') return { label: 'S', bg: 'bg-transparent', text: 'text-white', border: 'border-[#555]' };
+		if (t === 'strong') return { label: 'S', bg: 'bg-transparent', text: 'text-sc-ink', border: 'border-sc-line2' };
 		if (t === 'marginal') return { label: 'M', bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-900' };
 		return { label: 'W', bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-900' };
 	}

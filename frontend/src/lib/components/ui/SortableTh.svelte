@@ -29,7 +29,7 @@
 <th class={`py-2 px-2 text-left ${thClass}`} aria-sort={ariaSort} {title}>
 	<button
 		type="button"
-		class="flex w-full items-center text-left text-[10px] uppercase tracking-wider text-[#666] transition-colors hover:text-white focus:outline-none focus-visible:text-white"
+		class="flex w-full items-center text-left text-[12px] text-sc-ink3 transition-colors hover:text-sc-ink focus:outline-none focus-visible:text-sc-ink"
 		on:click={() => dispatch('sort', field)}
 	>
 		<span>{label}</span>

@@ -24,7 +24,7 @@
 </script>
 
 <label class="block" for={inputId}>
-	<div class="text-[10px] uppercase tracking-wider text-[#666]">{label}</div>
+	<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{label}</div>
 	<input
 		id={inputId}
 		list={uniqueSuggestions.length > 0 ? datalistId : undefined}
@@ -42,6 +42,6 @@
 		</datalist>
 	{/if}
 	{#if helpText}
-		<div class="mt-1 text-[11px] text-[#555]">{helpText}</div>
+		<div class="mt-1 text-[11px] text-sc-ink3">{helpText}</div>
 	{/if}
 </label>

@@ -131,8 +131,8 @@
 
 <style>
 	.card {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.875rem;
 		display: flex;
@@ -147,7 +147,7 @@
 	}
 
 	.card.loading {
-		color: #888;
+		color: #aab1bc;
 	}
 
 	header {
@@ -160,7 +160,7 @@
 	header h3 {
 		margin: 0;
 		font-size: 0.9375rem;
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	.count {
@@ -169,15 +169,15 @@
 		margin-left: 0.375rem;
 		padding: 0 0.5rem;
 		border-radius: 0;
-		background: #1a1a1a;
-		color: #888;
+		background: #181c23;
+		color: #aab1bc;
 		font-size: 0.6875rem;
 		font-weight: 600;
 		text-align: center;
 	}
 
 	.deep-link {
-		color: #888;
+		color: #aab1bc;
 		text-decoration: none;
 		font-size: 0.8125rem;
 	}
@@ -196,8 +196,8 @@
 	}
 
 	li {
-		background: #050505;
-		border: 1px solid #1a1a1a;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.5rem 0.625rem;
 		display: flex;
@@ -214,8 +214,8 @@
 	}
 
 	.cycle {
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
-		color: #aaa;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		color: #aab1bc;
 	}
 
 	.outcome {
@@ -242,20 +242,20 @@
 	}
 
 	.outcome-pending {
-		background: #1f1f1f;
-		color: #888;
+		background: #181c23;
+		color: #aab1bc;
 	}
 
 	.when {
 		margin-left: auto;
-		color: #666;
+		color: #747c88;
 	}
 
 	.preview {
 		margin: 0;
 		font-size: 0.8125rem;
-		color: #888;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		color: #aab1bc;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		line-height: 1.45;
 		white-space: pre-wrap;
 		word-wrap: break-word;

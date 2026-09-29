@@ -52,14 +52,14 @@
 </script>
 
 {#if !months.length}
-	<p class="px-3 py-4 text-[11px] text-[#666]">No monthly coverage to show.</p>
+	<p class="px-3 py-4 text-[11px] text-sc-ink3">No monthly coverage to show.</p>
 {:else}
 	<div class="overflow-x-auto px-3 py-2">
 		<div role="grid" aria-label="Bars stored per month" class="inline-grid grid-cols-[34px_repeat(12,minmax(22px,1fr))] gap-[3px] text-[9px]">
 			<div role="presentation"></div>
-			{#each NAMES as name}<div role="columnheader" class="text-center uppercase tracking-wider text-[#555]">{name.slice(0, 1)}<span class="sr-only">{name.slice(1)}</span></div>{/each}
+			{#each NAMES as name}<div role="columnheader" class="text-center uppercase tracking-wider text-sc-ink3">{name.slice(0, 1)}<span class="sr-only">{name.slice(1)}</span></div>{/each}
 			{#each years as year (year)}
-				<div role="rowheader" class="self-center pr-1 text-right font-mono text-[10px] text-[#777]">{year}</div>
+				<div role="rowheader" class="self-center pr-1 text-right font-mono text-[10px] text-sc-ink3">{year}</div>
 				{#each NAMES as _, m}
 					{@const cell = byMonth.get(key(year, m))}
 					{#if cell}
@@ -67,19 +67,19 @@
 						<button type="button" id="dm-month-{cell.month}" role="gridcell" tabindex={active === cell.month ? 0 : -1}
 							aria-label={describe(cell)} title={describe(cell)} aria-selected={selected === cell.month}
 							on:click={() => dispatch('select', cell)} on:keydown={(e) => onKey(e, cell)} on:focus={() => (active = cell.month)}
-							class="relative h-4 border outline-none focus-visible:ring-1 focus-visible:ring-white {selected === cell.month ? 'border-white' : s < 1 ? 'border-amber-900/80' : 'border-transparent'}"
+							class="rounded-md relative h-4 border outline-none focus-visible:ring-1 focus-visible:ring-sc-ink {selected === cell.month ? 'border-sc-ink' : s < 1 ? 'border-amber-900/80' : 'border-transparent'}"
 							style="background: rgba(209, 213, 219, {cell.expected ? 0.1 + 0.75 * s : 0});">
 							{#if cell.synthetic}<span class="absolute inset-0 bg-[repeating-linear-gradient(135deg,rgba(0,0,0,0.55)_0_2px,transparent_2px_4px)]" aria-hidden="true"></span>{/if}
 							{#if cell.patched}<span class="absolute right-0.5 top-0.5 h-1 w-1 rounded-full bg-sky-400" aria-hidden="true"></span>{/if}
 							{#if cell.restated}<span class="absolute left-0 top-0 h-0 w-0 border-l-[5px] border-t-[5px] border-l-transparent border-t-amber-400" aria-hidden="true"></span>{/if}
 						</button>
 					{:else}
-						<div role="gridcell" aria-label="{key(year, m)}: outside the series" class="h-4 border border-dashed border-[#151515]"></div>
+						<div role="gridcell" aria-label="{key(year, m)}: outside the series" class="h-4 border border-dashed border-sc-line"></div>
 					{/if}
 				{/each}
 			{/each}
 		</div>
-		<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-[#666]">
+		<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-sc-ink3">
 			<span class="flex items-center gap-1"><span class="h-2 w-6 bg-gradient-to-r from-[rgba(209,213,219,0.1)] to-[rgba(209,213,219,0.85)]"></span> share of bars stored</span>
 			<span class="flex items-center gap-1"><span class="h-2 w-2 border border-amber-900/80"></span> incomplete month</span>
 			<span class="flex items-center gap-1"><span class="h-2 w-2 bg-[repeating-linear-gradient(135deg,#777_0_2px,transparent_2px_4px)]"></span> synthetic</span>

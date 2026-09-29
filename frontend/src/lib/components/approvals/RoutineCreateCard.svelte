@@ -66,8 +66,8 @@
 		flex-direction: column;
 		gap: 0.6rem;
 		padding: 0.75rem;
-		border: 1px solid #1f1f1f;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.card-header {
@@ -81,13 +81,13 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.card-title {
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: #fff;
+		color: #eef1f5;
 		margin-top: 0.125rem;
 	}
 
@@ -96,8 +96,8 @@
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
 		padding: 0.2rem 0.5rem;
-		border: 1px solid #2a2a2a;
-		color: #888;
+		border: 1px solid #2a2f38;
+		color: #aab1bc;
 		white-space: nowrap;
 	}
 
@@ -109,7 +109,7 @@
 
 	.fact {
 		padding: 0.45rem 0.55rem;
-		border: 1px solid #1f1f1f;
+		border: 1px solid #1c2026;
 		background: rgba(0, 0, 0, 0.3);
 	}
 
@@ -117,18 +117,18 @@
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.14em;
-		color: #666;
+		color: #747c88;
 	}
 
 	.fact-value {
 		margin-top: 0.15rem;
 		font-size: 0.8rem;
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.cron {
-		color: #666;
-		font-family: ui-monospace, monospace;
+		color: #747c88;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.7rem;
 	}
 
@@ -143,21 +143,21 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 		font-weight: 600;
 	}
 
 	.text {
 		margin: 0;
 		font-size: 0.8rem;
-		color: #ccc;
+		color: #eef1f5;
 		white-space: pre-wrap;
 	}
 
 	.prompt summary,
 	.raw summary {
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		cursor: pointer;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -168,11 +168,11 @@
 		margin-top: 0.4rem;
 		max-height: 200px;
 		overflow: auto;
-		border: 1px solid #1f1f1f;
-		background: #000;
+		border: 1px solid #1c2026;
+		background: #07080a;
 		padding: 0.5rem;
 		font-size: 0.6875rem;
-		color: #888;
+		color: #aab1bc;
 		white-space: pre-wrap;
 		word-break: break-word;
 	}

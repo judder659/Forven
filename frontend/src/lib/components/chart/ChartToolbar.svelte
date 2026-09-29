@@ -166,8 +166,8 @@
 		align-items: center;
 		gap: 1rem;
 		padding: 0.75rem 1rem;
-		background: #050505;
-		border-bottom: 1px solid #222;
+		background: #0c0e11;
+		border-bottom: 1px solid #1c2026;
 	}
 
 	.toolbar-group {
@@ -179,15 +179,15 @@
 	.toolbar-label {
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: #666;
+		color: #747c88;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.toolbar-select {
-		background: #111;
-		border: 1px solid #333;
-		color: #fff;
+		background: #11141a;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 0.375rem 0.75rem;
 		font-size: 0.875rem;
 		font-family: inherit;
@@ -196,12 +196,12 @@
 	}
 
 	.toolbar-select:hover:not(:disabled) {
-		border-color: #555;
+		border-color: #2a2f38;
 	}
 
 	.toolbar-select:focus {
 		outline: none;
-		border-color: #555;
+		border-color: #2a2f38;
 	}
 
 	.toolbar-select:disabled {
@@ -226,9 +226,9 @@
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.375rem 0.75rem;
-		background: #111;
-		border: 1px solid #333;
-		color: #888;
+		background: #11141a;
+		border: 1px solid #2a2f38;
+		color: #aab1bc;
 		font-size: 0.75rem;
 		font-family: inherit;
 		cursor: pointer;
@@ -236,14 +236,14 @@
 	}
 
 	.toolbar-btn:hover:not(:disabled) {
-		background: #222;
-		color: #fff;
+		background: #181c23;
+		color: #eef1f5;
 	}
 
 	.toolbar-btn.active {
-		background: #111;
-		border-color: #fff;
-		color: #fff;
+		background: #11141a;
+		border-color: #eef1f5;
+		color: #eef1f5;
 	}
 
 	.toolbar-btn:disabled {
@@ -275,11 +275,11 @@
 		align-items: center;
 		gap: 0.25rem;
 		padding: 0.25rem 0.5rem;
-		background: #111;
-		border: 1px solid #333;
+		background: #11141a;
+		border: 1px solid #2a2f38;
 		font-size: 0.75rem;
-		font-family: 'JetBrains Mono', monospace;
-		color: #888;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		color: #aab1bc;
 	}
 
 	.entry-count {

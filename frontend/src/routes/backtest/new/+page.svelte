@@ -674,7 +674,7 @@
 		return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 	}
 	function toneFor(v: number | null | undefined): string {
-		if (v === null || v === undefined || !Number.isFinite(v)) return 'text-[#888]';
+		if (v === null || v === undefined || !Number.isFinite(v)) return 'text-sc-ink2';
 		return v >= 0 ? 'text-emerald-400' : 'text-red-400';
 	}
 </script>
@@ -685,11 +685,11 @@
 
 <div class="mx-auto max-w-7xl px-4 py-6">
 	<!-- Header -->
-	<div class="mb-4 border-b border-[#222] pb-4">
+	<div class="mb-4 border-b border-sc-line pb-4">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div>
-				<h1 class="text-lg font-bold uppercase tracking-widest text-white">Manual Backtest</h1>
-				<p class="mt-1 text-xs text-[#666]">
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Manual Backtest</h1>
+				<p class="mt-1 text-xs text-sc-ink3">
 					Backtest a built-in template or one of your strategies on any market. Anything you leave blank runs the way the strategy itself does.
 				</p>
 			</div>
@@ -701,11 +701,11 @@
 		<!-- Strategy -->
 		<section class="terminal-card p-4" aria-labelledby="bt-strategy-label">
 			<div class="flex flex-wrap items-center justify-between gap-3">
-				<label id="bt-strategy-label" for="bt-strategy" class="text-[10px] uppercase tracking-wider text-[#666]">Strategy</label>
-				<div class="inline-flex border border-[#333]" role="group" aria-label="Strategy source">
+				<label id="bt-strategy-label" for="bt-strategy" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Strategy</label>
+				<div class="inline-flex border border-sc-line2" role="group" aria-label="Strategy source">
 					<button
 						type="button"
-						class="px-3 py-1 text-[10px] uppercase tracking-wide {source === 'builtin' ? 'bg-white text-black' : 'text-[#888] hover:text-white'}"
+						class="px-3 py-1 text-[12px] {source === 'builtin' ? 'bg-sc-ink text-black' : 'text-sc-ink2 hover:text-sc-ink'}"
 						aria-pressed={source === 'builtin'}
 						on:click={() => setSource('builtin')}
 					>
@@ -713,7 +713,7 @@
 					</button>
 					<button
 						type="button"
-						class="border-l border-[#333] px-3 py-1 text-[10px] uppercase tracking-wide {source === 'mine' ? 'bg-white text-black' : 'text-[#888] hover:text-white'}"
+						class="border-l border-sc-line2 px-3 py-1 text-[12px] {source === 'mine' ? 'bg-sc-ink text-black' : 'text-sc-ink2 hover:text-sc-ink'}"
 						aria-pressed={source === 'mine'}
 						on:click={() => setSource('mine')}
 					>
@@ -724,14 +724,14 @@
 
 			<div class="mt-3">
 				{#if source === 'builtin' && builtinsLoading}
-					<div class="text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading strategies…</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" role="status" aria-live="polite">Loading strategies…</div>
 				{:else if source === 'builtin' && builtinsError}
 					<div class="flex flex-wrap items-center gap-3" role="alert">
 						<span class="text-sm text-red-400">{builtinsError}</span>
-						<button type="button" on:click={loadBuiltins} class="terminal-button text-[10px]">Retry</button>
+						<button type="button" on:click={loadBuiltins} class="terminal-button text-[12px]">Retry</button>
 					</div>
 				{:else if source === 'mine' && mineLoading}
-					<div class="text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading your live, paper and Forge strategies…</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" role="status" aria-live="polite">Loading your live, paper and Forge strategies…</div>
 				{:else}
 					<select id="bt-strategy" class="terminal-select" on:change={onStrategySelect} value={selectedKey}>
 						<option value="" disabled>Select a strategy…</option>
@@ -752,32 +752,32 @@
 					{#if source === 'mine' && mineError}
 						<div class="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-amber-400" role="alert">
 							{mineError}
-							<button type="button" on:click={loadMine} class="terminal-button text-[10px]">Retry</button>
+							<button type="button" on:click={loadMine} class="terminal-button text-[12px]">Retry</button>
 						</div>
 					{:else if source === 'mine' && mineLoaded && mineCount === 0}
-						<p class="mt-2 text-[11px] text-[#666]">No live, paper or Forge strategies yet. Archived strategies are not listed.</p>
+						<p class="mt-2 text-[11px] text-sc-ink3">No live, paper or Forge strategies yet. Archived strategies are not listed.</p>
 					{/if}
 				{/if}
 
 				{#if selected}
-					<div class="mt-3 border border-[#1a1a1a] bg-[#050505] p-3 text-[11px]">
+					<div class="rounded-md mt-3 border border-sc-line bg-sc-panel p-3 text-[11px]">
 						<div class="flex flex-wrap items-center gap-2">
-							<span class="font-mono text-white">{strategyOptionLabel(selected)}</span>
+							<span class="font-mono text-sc-ink">{strategyOptionLabel(selected)}</span>
 							{#if selected.stage && !builtinSelected}
-								<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-[#888]">{selected.stage.replace(/_/g, ' ')}</span>
+								<span class="border border-sc-line2 px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{selected.stage.replace(/_/g, ' ')}</span>
 							{/if}
 							{#if builtinSelected}
-								<span class="border border-[#333] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-[#888]">built-in</span>
+								<span class="border border-sc-line2 px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">built-in</span>
 							{/if}
 						</div>
 						<!-- A stored strategy's "description" is its notes column: an audit trail, not a summary. -->
 						{#if selected.description && builtinSelected}
-							<p class="mt-1.5 text-[#777]">{selected.description}</p>
+							<p class="mt-1.5 text-sc-ink3">{selected.description}</p>
 						{/if}
 						{#if native?.symbol || native?.timeframe}
-							<p class="mt-1.5 text-[#666]">
+							<p class="mt-1.5 text-sc-ink3">
 								{builtinSelected ? 'Written for' : 'Runs on'}
-								<span class="font-mono text-[#aaa]">{marketLabel(native.symbol, native.timeframe)}</span>
+								<span class="font-mono text-sc-ink2">{marketLabel(native.symbol, native.timeframe)}</span>
 							</p>
 						{/if}
 					</div>
@@ -788,7 +788,7 @@
 		<!-- Market -->
 		<section class="terminal-card mt-4 p-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Market</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Market</div>
 				<ReadinessChip query={readinessQuery} align="right" />
 			</div>
 			<div class="mt-3 grid gap-4 md:grid-cols-2">
@@ -804,7 +804,7 @@
 							{selected.display_id || 'This strategy'} trades {marketLabel(native.symbol, native.timeframe)}. A run on another market describes a variant, not the strategy as it trades.
 						{/if}
 					</span>
-					<button type="button" class="terminal-button text-[10px]" on:click={() => selected && useStrategyMarket(selected)}>
+					<button type="button" class="terminal-button text-[12px]" on:click={() => selected && useStrategyMarket(selected)}>
 						Use {marketLabel(native.symbol, native.timeframe)}
 					</button>
 				</div>
@@ -813,8 +813,8 @@
 				<DateRangeFieldset idPrefix="bt-date" bind:startDate bind:endDate {timeframe} maxDate={holdoutDay} />
 			</div>
 			{#if holdoutCutoff}
-				<p class="mt-2 text-[11px] text-[#666]">
-					Research holdout: data from <span class="text-[#aaa]">{fmtDay(holdoutCutoff)}</span> on is held back for each new
+				<p class="mt-2 text-[11px] text-sc-ink3">
+					Research holdout: data from <span class="text-sc-ink2">{fmtDay(holdoutCutoff)}</span> on is held back for each new
 					strategy's one-shot test, so backtests end there. A window that reaches past it is shifted back to end at the cutoff.
 				</p>
 			{/if}
@@ -824,13 +824,13 @@
 		{#if selected}
 			<section class="terminal-card mt-4 p-4">
 				<div class="flex flex-wrap items-center justify-between gap-3">
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 						Strategy parameters
 						{#if editedParamCount}
-							<span class="ml-2 border border-[#555] px-1.5 py-0.5 text-[9px] text-white">{editedParamCount} changed</span>
+							<span class="ml-2 border border-sc-line2 px-1.5 py-0.5 text-[9px] text-sc-ink">{editedParamCount} changed</span>
 						{/if}
 					</div>
-					<button type="button" class="terminal-button text-[10px]" on:click={resetParams} disabled={!editedParamCount}>
+					<button type="button" class="terminal-button text-[12px]" on:click={resetParams} disabled={!editedParamCount}>
 						Reset to {builtinSelected ? 'template defaults' : 'stored values'}
 					</button>
 				</div>
@@ -840,7 +840,7 @@
 					{/key}
 				</div>
 				{#if hiddenParamCount > 0}
-					<p class="mt-2 text-[11px] text-[#555]">
+					<p class="mt-2 text-[11px] text-sc-ink3">
 						{hiddenParamCount === 1 ? '1 more field is' : `${hiddenParamCount} more fields are`} not listed here: market, leverage,
 						trade mode and execution profile are set in Market and Execution, and internal data-contract fields are fixed.
 					</p>
@@ -852,28 +852,28 @@
 		<section class="terminal-card mt-4 p-4">
 			<button type="button" class="flex w-full items-start justify-between gap-3 text-left" on:click={() => (showExecution = !showExecution)} aria-expanded={showExecution}>
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">Execution</div>
-					<div class="mt-1 text-[11px] text-[#999]">{sizingSummary}</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Execution</div>
+					<div class="mt-1 text-[11px] text-sc-ink2">{sizingSummary}</div>
 				</div>
-				<span class="text-sm text-[#555]">{showExecution ? '−' : '+'}</span>
+				<span class="text-sm text-sc-ink3">{showExecution ? '−' : '+'}</span>
 			</button>
 			{#if showExecution}
-				<div class="mt-4 border-t border-[#222] pt-4">
-					<p class="text-[11px] text-[#666]">Leave a field blank to use the strategy's own setting or the engine default shown in it.</p>
+				<div class="mt-4 border-t border-sc-line pt-4">
+					<p class="text-[11px] text-sc-ink3">Leave a field blank to use the strategy's own setting or the engine default shown in it.</p>
 					<div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Initial capital</div>
+						<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Initial capital</div>
 							<input type="number" value={initialCapital ?? ''} on:input={(e) => (initialCapital = numberOrNull(e.currentTarget.value))} step="1000" min="1"
 								placeholder={(defaults?.initial_capital ?? 10000).toLocaleString()} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Fees (bps)</div>
+						<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Fees (bps)</div>
 							<input type="number" value={feeBps ?? ''} on:input={(e) => (feeBps = numberOrNull(e.currentTarget.value))} step="0.5" min="0"
 								placeholder={defaults ? `${defaults.fee_bps} (default)` : 'Default'} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Slippage (bps)</div>
+						<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Slippage (bps)</div>
 							<input type="number" value={slippageBps ?? ''} on:input={(e) => (slippageBps = numberOrNull(e.currentTarget.value))} step="0.5" min="0"
 								placeholder={defaults ? `${defaults.slippage_bps} (default)` : 'Default'} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Leverage</div>
+						<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Leverage</div>
 							<input type="number" value={leverage ?? ''} on:input={(e) => (leverage = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="125"
 								placeholder={strategyLeverage !== null ? `${strategyLeverage}× (strategy)` : `${defaults?.leverage ?? 1}× (default)`} class="terminal-input mt-1.5" /></label>
-						<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trade direction</div>
+						<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Trade direction</div>
 							<select bind:value={tradeMode} class="terminal-select mt-1.5">
 								<option value="">Strategy default ({TRADE_MODE_LABELS[defaultTradeMode].toLowerCase()})</option>
 								{#each allowedTradeModes as mode}
@@ -882,24 +882,24 @@
 							</select></label>
 					</div>
 					{#if builtinSelected && selected?.trade_modes?.length}
-						<p class="mt-1 text-[11px] text-[#555]">This template can trade: {selected.trade_modes.map((m) => TRADE_MODE_LABELS[m as TradeMode] ?? m).join(', ').toLowerCase()}.</p>
+						<p class="mt-1 text-[11px] text-sc-ink3">This template can trade: {selected.trade_modes.map((m) => TRADE_MODE_LABELS[m as TradeMode] ?? m).join(', ').toLowerCase()}.</p>
 					{:else if selected && tradeMode && tradeMode !== defaultTradeMode}
-						<p class="mt-1 text-[11px] text-[#555]">The run fails if the strategy can't trade that side.</p>
+						<p class="mt-1 text-[11px] text-sc-ink3">The run fails if the strategy can't trade that side.</p>
 					{/if}
 
 					<div class="mt-5 flex flex-wrap items-center justify-between gap-3">
-						<label class="flex cursor-pointer items-center gap-2 text-[11px] text-[#aaa]">
+						<label class="flex cursor-pointer items-center gap-2 text-[11px] text-sc-ink2">
 							<input type="checkbox" checked={overrideProfile} on:change={toggleProfileOverride} class="h-3.5 w-3.5 accent-white" />
 							Override the execution profile (sizing and exits)
 						</label>
-						<button type="button" class="terminal-button text-[10px]" on:click={resetExecution}>Reset execution</button>
+						<button type="button" class="terminal-button text-[12px]" on:click={resetExecution}>Reset execution</button>
 					</div>
 					{#if overrideProfile}
-						<p class="mt-2 text-[11px] text-[#666]">
+						<p class="mt-2 text-[11px] text-sc-ink3">
 							An override replaces the strategy's own profile for this run; it is not merged with it.
 						</p>
 						<div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Sizing</div>
+							<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Sizing</div>
 								<select bind:value={profileDraft.sizingMode} class="terminal-select mt-1.5">
 									<option value="atr">ATR risk (risk % against an ATR stop)</option>
 									<option value="fraction">Risk % against your stop</option>
@@ -908,26 +908,26 @@
 									<option value="kelly" disabled>Kelly (opens no trades in a backtest)</option>
 								</select></label>
 							{#if profileDraft.sizingMode === 'fraction' || profileDraft.sizingMode === 'atr'}
-								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Risk per trade (%)</div>
+								<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Risk per trade (%)</div>
 									<input type="number" value={profileDraft.riskPct ?? ''} on:input={(e) => (profileDraft.riskPct = numberOrNull(e.currentTarget.value))} step="0.25" min="0.01" max="100" class="terminal-input mt-1.5" /></label>
 							{/if}
 							{#if profileDraft.sizingMode === 'fixed'}
-								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Position size (quote)</div>
+								<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Position size (quote)</div>
 									<input type="number" value={profileDraft.fixedSize ?? ''} on:input={(e) => (profileDraft.fixedSize = numberOrNull(e.currentTarget.value))} step="100" min="1" class="terminal-input mt-1.5" /></label>
 							{/if}
 							{#if profileDraft.sizingMode === 'atr'}
-								<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">ATR stop (× ATR)</div>
+								<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">ATR stop (× ATR)</div>
 									<input type="number" value={profileDraft.atrMultiplier ?? ''} on:input={(e) => (profileDraft.atrMultiplier = numberOrNull(e.currentTarget.value))} step="0.1" min="0.1" max="50" class="terminal-input mt-1.5" /></label>
 							{/if}
 						</div>
 						<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Stop loss %</div>
+							<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Stop loss %</div>
 								<input type="number" value={profileDraft.stopLossPct ?? ''} on:input={(e) => (profileDraft.stopLossPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="100" placeholder="None" class="terminal-input mt-1.5" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Take profit %</div>
+							<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Take profit %</div>
 								<input type="number" value={profileDraft.takeProfitPct ?? ''} on:input={(e) => (profileDraft.takeProfitPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="1000" placeholder="None" class="terminal-input mt-1.5" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Trailing stop %</div>
+							<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Trailing stop %</div>
 								<input type="number" value={profileDraft.trailingStopPct ?? ''} on:input={(e) => (profileDraft.trailingStopPct = numberOrNull(e.currentTarget.value))} step="0.5" min="0.1" max="100" placeholder="None" class="terminal-input mt-1.5" /></label>
-							<label class="block"><div class="text-[10px] uppercase tracking-wider text-[#666]">Time stop (bars)</div>
+							<label class="block"><div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Time stop (bars)</div>
 								<input type="number" value={profileDraft.timeStopBars ?? ''} on:input={(e) => (profileDraft.timeStopBars = numberOrNull(e.currentTarget.value))} step="1" min="1" placeholder="None" class="terminal-input mt-1.5" /></label>
 						</div>
 					{/if}
@@ -939,10 +939,10 @@
 		<section class="terminal-card mt-4 p-4">
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">Signal preview</div>
-					<p class="mt-1 text-[11px] text-[#555]">Counts entry and exit signals over the window, before any sizing or stops. Nothing is saved.</p>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Signal preview</div>
+					<p class="mt-1 text-[11px] text-sc-ink3">Counts entry and exit signals over the window, before any sizing or stops. Nothing is saved.</p>
 				</div>
-				<button type="button" on:click={handlePreview} disabled={previewLoading || !selected} class="terminal-button text-[10px]">
+				<button type="button" on:click={handlePreview} disabled={previewLoading || !selected} class="terminal-button text-[12px]">
 					{previewLoading ? 'Previewing…' : preview && !previewStale ? 'Refresh preview' : 'Preview signals'}
 				</button>
 			</div>
@@ -953,17 +953,17 @@
 					<p class="mt-3 text-[11px] text-amber-400">The settings changed since this preview. Refresh it to match.</p>
 				{/if}
 				<div class="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-5 {previewStale ? 'opacity-50' : ''}">
-					<div><span class="text-[#555]">Bars:</span> <span class="font-mono text-[#aaa]">{preview.total_bars.toLocaleString()}</span></div>
-					<div><span class="text-[#555]">Entries:</span> <span class="font-mono text-white">{preview.entry_count}</span></div>
-					<div><span class="text-[#555]">Exits:</span> <span class="font-mono text-[#aaa]">{preview.exit_count}</span></div>
-					<div><span class="text-[#555]">Bars between entries:</span> <span class="font-mono text-[#aaa]">{preview.avg_bars_between_entries == null ? '–' : Math.round(preview.avg_bars_between_entries).toLocaleString()}</span></div>
-					<div><span class="text-[#555]">Density:</span>
-						<span class="font-mono {preview.signal_density === 'dense' ? 'text-emerald-400' : preview.signal_density === 'moderate' ? 'text-amber-400' : 'text-[#888]'}">{preview.signal_density}</span></div>
+					<div><span class="text-sc-ink3">Bars:</span> <span class="font-mono text-sc-ink2">{preview.total_bars.toLocaleString()}</span></div>
+					<div><span class="text-sc-ink3">Entries:</span> <span class="font-mono text-sc-ink">{preview.entry_count}</span></div>
+					<div><span class="text-sc-ink3">Exits:</span> <span class="font-mono text-sc-ink2">{preview.exit_count}</span></div>
+					<div><span class="text-sc-ink3">Bars between entries:</span> <span class="font-mono text-sc-ink2">{preview.avg_bars_between_entries == null ? '–' : Math.round(preview.avg_bars_between_entries).toLocaleString()}</span></div>
+					<div><span class="text-sc-ink3">Density:</span>
+						<span class="font-mono {preview.signal_density === 'dense' ? 'text-emerald-400' : preview.signal_density === 'moderate' ? 'text-amber-400' : 'text-sc-ink2'}">{preview.signal_density}</span></div>
 				</div>
 				{#if preview.sample_entries?.length}
-					<div class="mt-2 text-[11px] text-[#555]">
+					<div class="mt-2 text-[11px] text-sc-ink3">
 						First entries:
-						<span class="font-mono text-[#888]">{preview.sample_entries.slice(0, 5).map((e) => String(e.timestamp).slice(0, 16).replace('T', ' ')).join(' · ')}</span>
+						<span class="font-mono text-sc-ink2">{preview.sample_entries.slice(0, 5).map((e) => String(e.timestamp).slice(0, 16).replace('T', ' ')).join(' · ')}</span>
 					</div>
 				{/if}
 				{#if preview.warnings?.length}
@@ -980,9 +980,9 @@
 				<div class="mb-3 border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{submitError}</div>
 			{/if}
 			<div class="flex flex-wrap items-center justify-between gap-3">
-				<div class="min-w-0 text-[11px] text-[#777]">
+				<div class="min-w-0 text-[11px] text-sc-ink3">
 					{#if selected}
-						<span class="font-mono text-[#bbb]">{marketLabel(symbol, timeframe)}</span>
+						<span class="font-mono text-sc-ink2">{marketLabel(symbol, timeframe)}</span>
 						· {fmtDay(startDate)} → {fmtDay(endDate)} · {formatBarEstimate(estimatedBars)}
 						· {runOverrides.length ? runOverrides.join(' · ') : "strategy's own settings"}
 						{#if validationError}
@@ -993,7 +993,7 @@
 					{/if}
 				</div>
 				<button type="submit" disabled={submitting || Boolean(activeRun) || Boolean(validationError)} aria-busy={submitting || Boolean(activeRun)}
-					class="terminal-button-primary text-xs disabled:cursor-not-allowed disabled:opacity-40">
+					class="terminal-button-primary text-[12px] disabled:cursor-not-allowed disabled:opacity-40">
 					{#if submitting}
 						Submitting…
 					{:else if activeRun}
@@ -1012,13 +1012,13 @@
 			{#if runs.length}
 				<div class="terminal-card p-4">
 					<div class="flex items-center justify-between gap-3">
-						<div class="text-[10px] uppercase tracking-wider text-[#666]">Runs this session</div>
-						<button type="button" class="text-[10px] uppercase tracking-wider text-[#666] underline hover:text-white" on:click={clearHistory}>Clear</button>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Runs this session</div>
+						<button type="button" class="text-[12px] text-sc-ink3 underline hover:text-sc-ink" on:click={clearHistory}>Clear</button>
 					</div>
 					<div class="mt-2 overflow-x-auto">
 						<table class="w-full text-[11px]">
-							<thead class="text-[#555]">
-								<tr class="border-b border-[#1a1a1a]">
+							<thead class="text-sc-ink3">
+								<tr class="border-b border-sc-line">
 									<th class="px-2 py-1.5 text-left font-medium">Strategy</th>
 									<th class="px-2 py-1.5 text-left font-medium">Market</th>
 									<th class="px-2 py-1.5 text-left font-medium">Window</th>
@@ -1029,16 +1029,16 @@
 									<th class="px-2 py-1.5 text-right font-medium">Trades</th>
 								</tr>
 							</thead>
-							<tbody class="font-mono text-[#888]">
+							<tbody class="font-mono text-sc-ink2">
 								{#each runs as run (run.resultId)}
-									<tr class="border-b border-[#111] {run.resultId === viewedId ? 'bg-white/5 text-white' : ''}">
+									<tr class="border-b border-sc-line {run.resultId === viewedId ? 'bg-sc-ink/5 text-sc-ink' : ''}">
 										<td class="max-w-[16rem] truncate px-2 py-1.5" title={run.label}>
-											<button type="button" class="max-w-full truncate text-left hover:text-white hover:underline" on:click={() => showRun(run)}
+											<button type="button" class="max-w-full truncate text-left hover:text-sc-ink hover:underline" on:click={() => showRun(run)}
 												aria-current={run.resultId === viewedId ? 'true' : undefined}>{run.label}</button>
 										</td>
 										<td class="px-2 py-1.5">{run.market}</td>
-										<td class="whitespace-nowrap px-2 py-1.5 text-[#666]">{run.requestedStart} → {run.requestedEnd}</td>
-										<td class="max-w-[14rem] truncate px-2 py-1.5 text-[#666]" title={run.overrides.join(' · ')}>{run.overrides.length ? run.overrides.join(' · ') : '—'}</td>
+										<td class="whitespace-nowrap px-2 py-1.5 text-sc-ink3">{run.requestedStart} → {run.requestedEnd}</td>
+										<td class="max-w-[14rem] truncate px-2 py-1.5 text-sc-ink3" title={run.overrides.join(' · ')}>{run.overrides.length ? run.overrides.join(' · ') : '—'}</td>
 										{#if run.status === 'succeeded' && run.summary}
 											<td class="px-2 py-1.5 text-right {toneFor(run.summary.returnPct)}">{fmtPct(run.summary.returnPct)}</td>
 											<td class="px-2 py-1.5 text-right">{fmtNum(run.summary.sharpe)}</td>
@@ -1047,7 +1047,7 @@
 										{:else if run.status === 'failed'}
 											<td class="px-2 py-1.5 text-right text-red-400" colspan="4">failed</td>
 										{:else if run.status === 'succeeded'}
-											<td class="px-2 py-1.5 text-right text-[#666]" colspan="4">done</td>
+											<td class="px-2 py-1.5 text-right text-sc-ink3" colspan="4">done</td>
 										{:else}
 											<td class="px-2 py-1.5 text-right text-amber-400" colspan="4">{run.status}… {fmtElapsed(now - run.submittedAt)}</td>
 										{/if}
@@ -1060,15 +1060,15 @@
 			{/if}
 
 			{#if viewedRun}
-				<div id="bt-result-detail" class="mt-4 scroll-mt-6 border-b border-[#222] pb-4">
+				<div id="bt-result-detail" class="mt-4 scroll-mt-6 border-b border-sc-line pb-4">
 					<div class="flex flex-wrap items-start justify-between gap-3">
 						<div class="min-w-0">
-							<h2 class="text-sm font-bold uppercase tracking-widest text-white">Result</h2>
-							<p class="mt-1 text-xs text-[#888]">
-								<span class="font-mono text-[#bbb]">{viewedRun.label}</span> on <span class="font-mono text-[#bbb]">{viewedRun.market}</span>
+							<h2 class="text-[14px] font-semibold text-sc-ink">Result</h2>
+							<p class="mt-1 text-xs text-sc-ink2">
+								<span class="font-mono text-sc-ink2">{viewedRun.label}</span> on <span class="font-mono text-sc-ink2">{viewedRun.market}</span>
 							</p>
 							{#if window_}
-								<p class="mt-1 text-[11px] text-[#666]">
+								<p class="mt-1 text-[11px] text-sc-ink3">
 									Tested {fmtDay(window_.start)} → {fmtDay(window_.end)}.
 									Metrics and trades below are out-of-sample only: {fmtDay(window_.outOfSampleStart)} → {fmtDay(window_.outOfSampleEnd)}, the last 30% of the window.
 								</p>
@@ -1076,27 +1076,27 @@
 						</div>
 						<div class="flex items-center gap-2">
 							<button type="button" on:click={() => scrollToId('bt-config')}
-								class="terminal-button text-[10px]">Adjust &amp; re-run</button>
+								class="terminal-button text-[12px]">Adjust &amp; re-run</button>
 							<button type="button" on:click={openFullReport} disabled={!viewedResult}
-								class="terminal-button-primary text-[10px] disabled:opacity-40">Open full report →</button>
+								class="terminal-button-primary text-[12px] disabled:opacity-40">Open full report →</button>
 						</div>
 					</div>
 				</div>
 
 				<div class="mt-4 space-y-4">
 					{#if viewedRun.status === 'queued' || viewedRun.status === 'running'}
-						<div class="terminal-card p-6 text-center text-xs text-[#888]" role="status" aria-live="polite">
-							<div class="uppercase tracking-widest text-[#aaa]">{viewedRun.status === 'queued' ? 'Queued' : 'Running'} · {fmtElapsed(now - viewedRun.submittedAt)}</div>
-							{#if viewedRun.progress}<div class="mt-1 text-[#666]">{viewedRun.progress}</div>{/if}
-							<div class="mt-2 text-[11px] text-[#555]">You can keep editing or leave the page; the run keeps going and is saved to the strategy.</div>
+						<div class="terminal-card p-6 text-center text-xs text-sc-ink2" role="status" aria-live="polite">
+							<div class="uppercase tracking-widest text-sc-ink2">{viewedRun.status === 'queued' ? 'Queued' : 'Running'} · {fmtElapsed(now - viewedRun.submittedAt)}</div>
+							{#if viewedRun.progress}<div class="mt-1 text-sc-ink3">{viewedRun.progress}</div>{/if}
+							<div class="mt-2 text-[11px] text-sc-ink3">You can keep editing or leave the page; the run keeps going and is saved to the strategy.</div>
 							{#if now - viewedRun.submittedAt > 60_000}
-								<button type="button" class="terminal-button mt-3 text-[10px]" on:click={() => viewedRun && stopWaiting(viewedRun)}>Stop waiting</button>
+								<button type="button" class="terminal-button mt-3 text-[12px]" on:click={() => viewedRun && stopWaiting(viewedRun)}>Stop waiting</button>
 							{/if}
 						</div>
 					{:else if viewedError}
 						<div class="border border-red-900 bg-red-500/5 px-4 py-3 text-sm text-red-400" role="alert">{viewedError}</div>
 					{:else if viewedLoading}
-						<div class="terminal-card p-8 text-center text-xs uppercase tracking-widest text-[#555]" role="status" aria-live="polite">Loading result…</div>
+						<div class="terminal-card p-8 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" role="status" aria-live="polite">Loading result…</div>
 					{:else if viewedResult}
 						{#if holdoutShifted}
 							<div class="border border-amber-900 bg-amber-500/5 px-4 py-3 text-[11px] text-amber-400" role="status">
@@ -1118,12 +1118,12 @@
 						{/if}
 
 						{#if split}
-							<div class="border border-[#1a1a1a] bg-[#050505] p-4">
-								<div class="text-[10px] uppercase tracking-widest text-[#666]">In-sample vs out-of-sample</div>
+							<div class="rounded-md border border-sc-line bg-sc-panel p-4">
+								<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">In-sample vs out-of-sample</div>
 								<div class="mt-2 overflow-x-auto">
 									<table class="w-full text-[11px]">
-										<thead class="text-[#555]">
-											<tr class="border-b border-[#1a1a1a]">
+										<thead class="text-sc-ink3">
+											<tr class="border-b border-sc-line">
 												<th class="px-2 py-1 text-left font-medium">Period</th>
 												<th class="px-2 py-1 text-right font-medium">Return</th>
 												<th class="px-2 py-1 text-right font-medium">Sharpe</th>
@@ -1132,13 +1132,13 @@
 												<th class="px-2 py-1 text-right font-medium">Trades</th>
 											</tr>
 										</thead>
-										<tbody class="font-mono text-[#aaa]">
+										<tbody class="font-mono text-sc-ink2">
 											{#each [
 												{ name: 'In-sample', dates: window_ ? `${fmtDay(window_.inSampleStart)} → ${fmtDay(window_.inSampleEnd)}` : '', stats: split.inSample },
 												{ name: 'Out-of-sample', dates: window_ ? `${fmtDay(window_.outOfSampleStart)} → ${fmtDay(window_.outOfSampleEnd)}` : '', stats: split.outOfSample },
 											] as row}
-												<tr class="border-b border-[#111]">
-													<td class="px-2 py-1.5 text-left">{row.name}<span class="ml-2 text-[10px] text-[#555]">{row.dates}</span></td>
+												<tr class="border-b border-sc-line">
+													<td class="px-2 py-1.5 text-left">{row.name}<span class="ml-2 text-[10px] text-sc-ink3">{row.dates}</span></td>
 													<td class="px-2 py-1.5 text-right {toneFor(row.stats.totalReturnPct)}">{fmtPct(row.stats.totalReturnPct)}</td>
 													<td class="px-2 py-1.5 text-right">{fmtNum(row.stats.sharpe)}</td>
 													<td class="px-2 py-1.5 text-right">{row.stats.maxDrawdownPct === null ? '–' : `${row.stats.maxDrawdownPct.toFixed(1)}%`}</td>
@@ -1153,10 +1153,10 @@
 									<p class="mt-2 text-[11px] text-amber-400">{decay}</p>
 								{/if}
 								{#if bySide.length > 1}
-									<p class="mt-2 text-[11px] text-[#666]">
+									<p class="mt-2 text-[11px] text-sc-ink3">
 										Out-of-sample by side:
 										{#each bySide as s, i}
-											{i ? ' · ' : ''}<span class="font-mono text-[#aaa]">{s.side} {s.trades} trades, {s.winRate.toFixed(0)}% wins, <span class={toneFor(s.returnPct)}>{fmtPct(s.returnPct)}</span></span>
+											{i ? ' · ' : ''}<span class="font-mono text-sc-ink2">{s.side} {s.trades} trades, {s.winRate.toFixed(0)}% wins, <span class={toneFor(s.returnPct)}>{fmtPct(s.returnPct)}</span></span>
 										{/each}
 									</p>
 								{/if}
@@ -1165,9 +1165,9 @@
 
 						<BacktestResultSummary result={viewedResult} />
 					{:else if viewedRun.status === 'succeeded'}
-						<div class="terminal-card p-6 text-sm text-[#888]">
+						<div class="terminal-card p-6 text-sm text-sc-ink2">
 							Result saved (<span class="font-mono">{viewedRun.resultId}</span>) but could not be loaded here.
-							<button type="button" on:click={() => viewedRun && loadResult(viewedRun.resultId)} class="ml-1 text-white underline">Try again</button>
+							<button type="button" on:click={() => viewedRun && loadResult(viewedRun.resultId)} class="ml-1 text-sc-ink underline">Try again</button>
 						</div>
 					{/if}
 				</div>

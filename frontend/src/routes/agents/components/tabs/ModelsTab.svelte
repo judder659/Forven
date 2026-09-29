@@ -90,30 +90,30 @@
 	aria-labelledby="agents-models-heading"
 	class="terminal-card p-6 space-y-4"
 >
-	<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
+	<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 		<div>
-			<h2 id="agents-models-heading" class="text-sm font-bold uppercase tracking-widest text-white">Models</h2>
-			<p class="text-xs text-[#666] mt-1">
+			<h2 id="agents-models-heading" class="text-[14px] font-semibold text-sc-ink">Models</h2>
+			<p class="text-xs text-sc-ink3 mt-1">
 				Enable the models that should be selectable for agents and routing.
-				<span class="text-[#888]" title="Enabling a model makes it selectable everywhere on this page (agent dropdowns + routing pickers). Models from a provider you haven't connected can be enabled but still won't be usable until that provider is connected.">Enabling a model makes it selectable for agents/routing.</span>
+				<span class="text-sc-ink2" title="Enabling a model makes it selectable everywhere on this page (agent dropdowns + routing pickers). Models from a provider you haven't connected can be enabled but still won't be usable until that provider is connected.">Enabling a model makes it selectable for agents/routing.</span>
 			</p>
 		</div>
 		<button
 			type="button"
 			on:click={refresh}
 			disabled={refreshing || loading}
-			class="terminal-button text-xs px-2 py-1 disabled:opacity-60"
+			class="terminal-button text-[12px] px-2 py-1 disabled:opacity-60"
 		>
 			{refreshing ? 'Refreshing…' : 'Refresh from providers'}
 		</button>
 	</header>
-	<label class="block text-xs text-[#888]">
+	<label class="block text-xs text-sc-ink2">
 		Search models
 		<input
 			type="search"
 			bind:value={modelSearch}
 			placeholder="GPT-6, Fable, Gemini, provider…"
-			class="mt-1 w-full rounded border border-[#333] bg-[#111] px-3 py-2 text-sm text-white"
+			class="mt-1 w-full rounded border border-sc-line2 bg-sc-panel2 px-3 py-2 text-sm text-sc-ink"
 		/>
 	</label>
 
@@ -122,21 +122,21 @@
 	{/if}
 
 	{#if loading && modelOptions.length === 0}
-		<p class="text-sm text-[#666]">Loading available models…</p>
+		<p class="text-sm text-sc-ink3">Loading available models…</p>
 	{:else if modelOptions.length === 0}
-		<p class="text-sm text-[#666]">
+		<p class="text-sm text-sc-ink3">
 			No models discovered. Connect a provider under the Providers &amp; Keys tab.
 		</p>
 	{:else}
 		{#if filteredModels.length === 0}
-			<p class="text-sm text-[#888]">No models match your search.</p>
+			<p class="text-sm text-sc-ink2">No models match your search.</p>
 		{/if}
 		<div class="space-y-4">
 			{#each Object.entries(grouped) as [provider, opts] (provider)}
 				{@const providerConnected = $connectedProviderIds.has(provider)}
 				<div>
-					<h3 class="text-xs font-semibold text-[#888] uppercase tracking-wider mb-2 flex items-center gap-2">
-						{provider} <span class="text-[#555] font-normal">({opts.length})</span>
+					<h3 class="text-[13px] font-semibold text-sc-ink2 mb-2 flex items-center gap-2">
+						{provider} <span class="text-sc-ink3 font-normal">({opts.length})</span>
 						{#if !providerConnected}
 							<span class="text-[10px] normal-case tracking-normal text-yellow-400" title="Provider not connected — enabled models here stay unusable until you connect it under Providers & Keys.">not connected</span>
 						{/if}
@@ -144,7 +144,7 @@
 					<div class="grid gap-1 md:grid-cols-2 lg:grid-cols-3">
 						{#each opts as opt (opt.key)}
 							<label
-								class="flex items-center gap-2 px-2 py-1.5 text-sm text-[#ccc] hover:bg-[#111] cursor-pointer"
+								class="flex items-center gap-2 px-2 py-1.5 text-sm text-sc-ink hover:bg-sc-panel2 cursor-pointer"
 							>
 								<input
 									type="checkbox"

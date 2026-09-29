@@ -194,8 +194,8 @@
 
 <div class="trade-scatter-chart">
 	<div class="chart-header">
-		<span class="text-[10px] text-[#666] uppercase tracking-wider">Trade Quality (MAE vs MFE)</span>
-		<span class="text-[9px] text-[#555]">Points above diagonal = good edge ratio</span>
+		<span class="text-[10px] text-sc-ink3 uppercase tracking-wider">Trade Quality (MAE vs MFE)</span>
+		<span class="text-[9px] text-sc-ink3">Points above diagonal = good edge ratio</span>
 	</div>
 	<canvas bind:this={canvas} style="height: {height}px"></canvas>
 </div>

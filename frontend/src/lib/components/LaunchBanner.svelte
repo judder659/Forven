@@ -98,7 +98,7 @@
 				<div class="text-xs font-bold truncate">
 					{countLabel} from a previous session
 				</div>
-				<div class="text-[11px] text-[#888] truncate">
+				<div class="text-[11px] text-sc-ink2 truncate">
 					Tasks left running when the app closed are recoverable. Resume to re-queue them.
 				</div>
 			</div>
@@ -106,7 +106,7 @@
 		<div class="flex items-center gap-2 shrink-0">
 			<button
 				type="button"
-				class="text-[11px] border border-yellow-900 text-yellow-400 px-2.5 py-1 hover:bg-yellow-500/10 transition-colors disabled:opacity-60"
+				class="rounded-md text-[11px] border border-yellow-900 text-yellow-400 px-2.5 py-1 hover:bg-yellow-500/10 transition-colors disabled:opacity-60"
 				on:click={handleResumeAll}
 				disabled={resumingAll || loading}
 			>
@@ -114,14 +114,14 @@
 			</button>
 			<button
 				type="button"
-				class="text-[11px] border border-[#333] text-[#888] px-2.5 py-1 hover:bg-[#111] hover:text-white transition-colors"
+				class="rounded-md text-[11px] border border-sc-line2 text-sc-ink2 px-2.5 py-1 hover:bg-sc-panel2 hover:text-sc-ink transition-colors"
 				on:click={openDiagnostics}
 			>
 				Review
 			</button>
 			<button
 				type="button"
-				class="text-[11px] text-[#666] hover:text-white px-2 transition-colors"
+				class="text-[11px] text-sc-ink3 hover:text-sc-ink px-2 transition-colors"
 				on:click={handleDismiss}
 				aria-label="Dismiss"
 			>

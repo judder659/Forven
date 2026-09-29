@@ -128,32 +128,32 @@
 </script>
 
 <div class="terminal-card p-6 space-y-6 lg:col-span-2">
-	<div class="border-b border-[#1a1a1a] pb-3">
-		<h2 class="text-[10px] font-bold uppercase tracking-widest text-[#888]">Research Orchestration</h2>
-		<p class="mt-2 text-sm text-[#888]">
+	<div class="border-b border-sc-line pb-3">
+		<h2 class="text-[14px] font-semibold text-sc-ink2">Research Orchestration</h2>
+		<p class="mt-2 text-sm text-sc-ink2">
 			Control which sources agents may read for ideas, how new candidates are screened, and the held-back data test.
 		</p>
 	</div>
 
 	<div class="grid gap-4 lg:grid-cols-2">
-		<label class="border border-[#222] bg-[#050505] px-4 py-3 text-sm text-[#888]">
+		<label class="rounded-md border border-sc-line bg-sc-panel px-4 py-3 text-sm text-sc-ink2">
 			<div class="flex items-center justify-between gap-3">
 				<div>
-					<div class="font-medium text-white">External Benchmarking</div>
-					<div class="mt-1 text-xs text-[#666]">Allow benchmarking cycles to browse public sources like books, blogs, and videos.</div>
+					<div class="font-medium text-sc-ink">External Benchmarking</div>
+					<div class="mt-1 text-xs text-sc-ink3">Allow benchmarking cycles to browse public sources like books, blogs, and videos.</div>
 				</div>
 				<input
 					data-testid="research-external-benchmarking"
 					type="checkbox"
 					bind:checked={draft.external_benchmarking_enabled}
-					class="border-[#333] bg-black"
+					class="border-sc-line2 bg-sc-bg"
 				/>
 			</div>
 		</label>
 
-		<label class="border border-[#222] bg-[#050505] px-4 py-3 text-sm text-[#888]">
-			<div class="font-medium text-white">Min candidate feed coverage (%)</div>
-			<div class="mt-1 text-xs text-[#666]">
+		<label class="rounded-md border border-sc-line bg-sc-panel px-4 py-3 text-sm text-sc-ink2">
+			<div class="font-medium text-sc-ink">Min candidate feed coverage (%)</div>
+			<div class="mt-1 text-xs text-sc-ink3">
 				A new candidate whose input feeds cover less of the quick-screen window is archived as untestable at
 				registration (0 = off).
 			</div>
@@ -168,11 +168,11 @@
 			/>
 		</label>
 
-		<div class="border border-[#222] bg-[#050505] px-4 py-3 text-sm text-[#888] lg:col-span-2" data-testid="research-holdout">
+		<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-3 text-sm text-sc-ink2 lg:col-span-2" data-testid="research-holdout">
 			<div class="flex items-center justify-between gap-3">
 				<div>
-					<div class="font-medium text-white">Held-back data (research holdout)</div>
-					<div class="mt-1 text-xs text-[#666]">
+					<div class="font-medium text-sc-ink">Held-back data (research holdout)</div>
+					<div class="mt-1 text-xs text-sc-ink3">
 						Research — agents, backtests, the optimizer and walk-forward — only sees data before the cutoff.
 						Each new strategy then gets one test on the held-back period before paper, and that verdict is
 						never re-run for the same parameters. Strategies created before this was switched on have seen the
@@ -184,17 +184,17 @@
 					type="checkbox"
 					checked={researchHoldout.enabled}
 					on:change={(e) => setResearchHoldout('enabled', (e.currentTarget as HTMLInputElement).checked)}
-					class="border-[#333] bg-black"
+					class="border-sc-line2 bg-sc-bg"
 				/>
 			</div>
-			<div class="mt-3 text-xs text-[#aaa]" data-testid="research-holdout-cutoff">
-				Research data currently ends: <span class="font-mono text-white">{holdoutCutoffPreview(researchHoldout)}</span>
+			<div class="mt-3 text-xs text-sc-ink2" data-testid="research-holdout-cutoff">
+				Research data currently ends: <span class="font-mono text-sc-ink">{holdoutCutoffPreview(researchHoldout)}</span>
 				{#if researchHoldout.established_at}
-					<span class="text-[#555]"> · established {researchHoldout.established_at.slice(0, 10)}</span>
+					<span class="text-sc-ink3"> · established {researchHoldout.established_at.slice(0, 10)}</span>
 				{/if}
 			</div>
 			<div class="mt-3 grid gap-3 sm:grid-cols-3">
-				<label class="block text-xs text-[#888]">
+				<label class="block text-xs text-sc-ink2">
 					Cutoff
 					<select
 						data-testid="research-holdout-roll"
@@ -207,7 +207,7 @@
 					</select>
 				</label>
 				{#if researchHoldout.roll === 'manual'}
-					<label class="block text-xs text-[#888]">
+					<label class="block text-xs text-sc-ink2">
 						Cutoff date
 						<input
 							type="date"
@@ -217,7 +217,7 @@
 						/>
 					</label>
 				{:else}
-					<label class="block text-xs text-[#888]">
+					<label class="block text-xs text-sc-ink2">
 						Quarters held back (6–9 months at 2)
 						<input
 							type="number"
@@ -229,7 +229,7 @@
 						/>
 					</label>
 				{/if}
-				<label class="block text-xs text-[#888]">
+				<label class="block text-xs text-sc-ink2">
 					At the paper gate
 					<select
 						data-testid="research-holdout-mode"
@@ -242,7 +242,7 @@
 						<option value="off">Off — don't run the test</option>
 					</select>
 				</label>
-				<label class="block text-xs text-[#888]">
+				<label class="block text-xs text-sc-ink2">
 					Min trades in the held-back period
 					<input
 						type="number"
@@ -252,7 +252,7 @@
 						class="terminal-input mt-1 w-full"
 					/>
 				</label>
-				<label class="block text-xs text-[#888]">
+				<label class="block text-xs text-sc-ink2">
 					Tests per strategy family per quarter (0 = no cap)
 					<input
 						type="number"
@@ -265,19 +265,19 @@
 			</div>
 		</div>
 
-		<div class="border border-[#222] bg-[#050505] px-4 py-3">
-			<div class="text-sm font-medium text-white">Allowed External Sources</div>
-			<p class="mt-1 text-xs text-[#666]">Source types agents may read when researching ideas.</p>
+		<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-3">
+			<div class="text-sm font-medium text-sc-ink">Allowed External Sources</div>
+			<p class="mt-1 text-xs text-sc-ink3">Source types agents may read when researching ideas.</p>
 			<div class="mt-3 grid gap-2 sm:grid-cols-2">
 				{#each SOURCE_TYPE_OPTIONS as sourceType}
-					<label class="flex items-center justify-between gap-3 border border-[#222] bg-black px-3 py-2 text-xs text-[#888]">
+					<label class="rounded-md flex items-center justify-between gap-3 border border-sc-line bg-sc-bg px-3 py-2 text-xs text-sc-ink2">
 						<span class="uppercase tracking-[0.18em]">{sourceType}</span>
 						<input
 							data-testid={`research-source-${sourceType}`}
 							type="checkbox"
 							checked={draft.allowed_external_source_types.includes(sourceType)}
 							on:change={(event) => toggleSourceType(sourceType, (event.currentTarget as HTMLInputElement).checked)}
-							class="border-[#333] bg-black"
+							class="border-sc-line2 bg-sc-bg"
 						/>
 					</label>
 				{/each}
@@ -287,7 +287,7 @@
 					<div class="font-bold uppercase tracking-[0.18em] text-yellow-400">Additional Enabled Sources</div>
 					<div class="mt-2 flex flex-wrap gap-2">
 						{#each customSourceTypes as sourceType}
-							<span class="border border-yellow-900 bg-black px-2.5 py-1 uppercase tracking-[0.18em]">{sourceType}</span>
+							<span class="rounded-md border border-yellow-900 bg-sc-bg px-2.5 py-1 uppercase tracking-[0.18em]">{sourceType}</span>
 						{/each}
 					</div>
 				</div>
@@ -295,13 +295,13 @@
 		</div>
 	</div>
 
-	<div class="border border-[#222] bg-[#050505] p-4">
-		<div class="mb-1 text-sm font-medium text-white">Reddit Source</div>
-		<p class="mb-3 text-xs text-[#666]">
+	<div class="rounded-md border border-sc-line bg-sc-panel p-4">
+		<div class="mb-1 text-sm font-medium text-sc-ink">Reddit Source</div>
+		<p class="mb-3 text-xs text-sc-ink3">
 			Reddit often blocks anonymous JSON requests. Add app credentials to let URL ingest use OAuth for pasted threads.
 		</p>
 		<div class="grid gap-3 md:grid-cols-2">
-			<label class="text-xs text-[#888]">
+			<label class="text-xs text-sc-ink2">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Client ID</span>
 				<input
 					type="text"
@@ -311,7 +311,7 @@
 					autocomplete="off"
 				/>
 			</label>
-			<label class="text-xs text-[#888]">
+			<label class="text-xs text-sc-ink2">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Client Secret</span>
 				<input
 					type="password"
@@ -321,7 +321,7 @@
 					autocomplete="new-password"
 				/>
 			</label>
-			<label class="text-xs text-[#888] md:col-span-2">
+			<label class="text-xs text-sc-ink2 md:col-span-2">
 				<span class="mb-1 block uppercase tracking-[0.18em]">Subreddits</span>
 				<input
 					type="text"
@@ -329,7 +329,7 @@
 					on:input={(event) => setRedditSubs((event.currentTarget as HTMLInputElement).value)}
 					class="terminal-input w-full"
 				/>
-				<span class="mt-1 block text-[11px] text-[#666]">Comma-separated, used for Reddit discovery searches.</span>
+				<span class="mt-1 block text-[11px] text-sc-ink3">Comma-separated, used for Reddit discovery searches.</span>
 			</label>
 		</div>
 	</div>
@@ -340,7 +340,7 @@
 			type="button"
 			on:click={emitSave}
 			disabled={saving}
-			class="terminal-button-primary text-xs"
+			class="terminal-button-primary text-[12px]"
 		>
 			{saving ? 'Saving...' : 'Save Research Settings'}
 		</button>

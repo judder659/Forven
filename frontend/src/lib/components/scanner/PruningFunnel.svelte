@@ -48,13 +48,13 @@
 
 {#if total > 0}
 	<div class="space-y-1">
-		<div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-[#666]">
+		<div class="flex items-center gap-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 			<span>{total.toLocaleString()} tested</span>
-			<span class="text-[#444]">&rarr;</span>
+			<span class="text-sc-ink4">&rarr;</span>
 			<span class="text-emerald-400 font-medium">{passedCount.toLocaleString()} passed</span>
-			<span class="text-[#444]">({total > 0 ? ((passedCount / total) * 100).toFixed(1) : 0}%)</span>
+			<span class="text-sc-ink4">({total > 0 ? ((passedCount / total) * 100).toFixed(1) : 0}%)</span>
 		</div>
-		<div class="flex h-3 overflow-hidden bg-[#222] border border-[#222]">
+		<div class="rounded-md flex h-3 overflow-hidden bg-sc-raise border border-sc-line">
 			{#each sorted as s (s.stage)}
 				{@const pct = total > 0 ? (s.count / total) * 100 : 0}
 				{#if pct > 0.5}
@@ -71,8 +71,8 @@
 				{#if s.count > 0}
 					<span class="flex items-center gap-1">
 						<span class="w-2 h-2 inline-block" style="background-color: {getColor(s.stage)};"></span>
-						<span class="text-[#666]">{getLabel(s.stage)}</span>
-						<span class="text-[#888]">{s.count.toLocaleString()}</span>
+						<span class="text-sc-ink3">{getLabel(s.stage)}</span>
+						<span class="text-sc-ink2">{s.count.toLocaleString()}</span>
 					</span>
 				{/if}
 			{/each}

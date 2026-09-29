@@ -308,18 +308,18 @@
 		<div class="relative">
 			<input bind:this={searchInput} bind:value={searchText} on:input={onSearch} on:keydown={onSearchKey} type="search"
 				placeholder="Symbol or alias (BTC, btcusdt, BTC/USDT)" aria-label="Search the catalog" spellcheck="false"
-				class="w-72 border border-[#2a2a2a] bg-black py-1 pl-2 pr-7 font-mono text-[12px] text-white outline-none placeholder:text-[#555] focus:border-white" />
-			<kbd class="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 border border-[#333] px-1 text-[9px] text-[#666]" aria-hidden="true">/</kbd>
+				class="rounded-md w-72 border border-sc-line2 bg-sc-bg py-1 pl-2 pr-7 font-mono text-[12px] text-sc-ink outline-none placeholder:text-sc-ink4 focus:border-sc-ink" />
+			<kbd class="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 border border-sc-line2 px-1 text-[9px] text-sc-ink3" aria-hidden="true">/</kbd>
 		</div>
 		<div class="flex flex-wrap items-center gap-1" role="group" aria-label="Saved views">
 			{#each views as view (view.id)}
 				{@const on = viewMatches(view, filters)}
 				<span class="group relative inline-flex">
 					<button type="button" on:click={() => chooseView(view)} aria-pressed={on}
-						class="border px-2 py-1 text-[10px] uppercase tracking-wider transition-colors {on ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#888] hover:border-[#555] hover:text-white'}">{view.name}</button>
+						class="rounded-md border px-2 py-1 text-[12px] transition-colors {on ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2 hover:text-sc-ink'}">{view.name}</button>
 					{#if !view.builtin}
 						<button type="button" on:click={() => removeView(view)} aria-label={`Delete view ${view.name}`}
-							class="-ml-px border border-[#2a2a2a] px-1 text-[10px] text-[#555] hover:text-red-400">✕</button>
+							class="rounded-md -ml-px border border-sc-line2 px-1 text-[12px] text-sc-ink3 hover:text-red-400">✕</button>
 					{/if}
 				</span>
 			{/each}
@@ -327,23 +327,23 @@
 				<form on:submit|preventDefault={saveView} class="inline-flex">
 					<input id="dm-view-name" bind:value={viewName} placeholder="View name" aria-label="View name"
 						on:keydown={(e) => e.key === 'Escape' && (savingView = false)}
-						class="w-32 border border-white bg-black px-2 py-0.5 text-[11px] text-white outline-none" />
-					<button type="submit" disabled={!viewName.trim()} class="-ml-px border border-white bg-white px-2 text-[10px] uppercase text-black disabled:opacity-40">Save</button>
+						class="rounded-md w-32 border border-sc-ink bg-sc-bg px-2 py-0.5 text-[11px] text-sc-ink outline-none" />
+					<button type="submit" disabled={!viewName.trim()} class="rounded-md -ml-px border border-sc-ink bg-sc-ink px-2 text-[12px] text-black disabled:opacity-40">Save</button>
 				</form>
 			{:else}
 				<button type="button" on:click={startSaveView} title="Save the current filters, search and sort as a view"
-					class="border border-dashed border-[#333] px-2 py-1 text-[10px] uppercase tracking-wider text-[#666] hover:border-[#666] hover:text-white">+ Save view</button>
+					class="rounded-md border border-dashed border-sc-line2 px-2 py-1 text-[12px] text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink">+ Save view</button>
 			{/if}
 		</div>
 		<div class="ml-auto flex items-center gap-1.5">
 			<label class="sr-only" for="dm-sort">Sort by</label>
 			<select id="dm-sort" value={filters.sort} on:change={(e) => setFilters({ ...filters, sort: e.currentTarget.value as SortKey, order: defaultOrder(e.currentTarget.value as SortKey) })}
-				class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[10px] uppercase tracking-wider text-[#ccc] outline-none focus:border-white">
+				class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink outline-none focus:border-sc-ink">
 				{#each SORTS as sort}<option value={sort}>{SORT_LABEL[sort]}</option>{/each}
 			</select>
 			<button type="button" on:click={() => setFilters({ ...filters, order: filters.order === 'asc' ? 'desc' : 'asc' })}
 				aria-label={filters.order === 'asc' ? 'Ascending; switch to descending' : 'Descending; switch to ascending'}
-				class="border border-[#2a2a2a] px-2 py-1 text-[11px] text-[#aaa] hover:border-white hover:text-white">{filters.order === 'asc' ? '↑' : '↓'}</button>
+				class="rounded-md border border-sc-line2 px-2 py-1 text-[11px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink">{filters.order === 'asc' ? '↑' : '↓'}</button>
 			<ChoiceMenu label="Columns" clearable={false} summary=""
 				items={COLUMNS.map((c) => ({ value: c.key, label: c.label, title: c.title }))} selected={columns}
 				on:change={(e) => setColumns(e.detail)} />
@@ -359,11 +359,11 @@
 		{/each}
 		{#if filterCount}
 			<button type="button" on:click={() => { searchText = ''; setFilters({ ...EMPTY_FILTERS, sort: filters.sort, order: filters.order }); }}
-				class="px-1.5 text-[10px] uppercase tracking-wider text-[#777] hover:text-white">Clear filters</button>
+				class="px-1.5 text-[12px] text-sc-ink3 hover:text-sc-ink">Clear filters</button>
 		{/if}
-		<span class="ml-auto text-[10px] text-[#666]" aria-live="polite">
+		<span class="ml-auto text-[10px] text-sc-ink3" aria-live="polite">
 			{#if state.status === 'ready'}
-				<span class="font-mono tabular-nums text-[#aaa]">{formatCount(fullTotal)}</span> {fullTotal === 1 ? 'series' : 'series'}
+				<span class="font-mono tabular-nums text-sc-ink2">{formatCount(fullTotal)}</span> {fullTotal === 1 ? 'series' : 'series'}
 				{#if loadingMore}· loading {formatCount(rows.length)} of {formatCount(total)}…{/if}
 				{#if fullTotal > MAX_ROWS}· showing the first {formatCount(MAX_ROWS)}; narrow the filters{/if}
 				{#if generatedAt}· as of {formatRelative(generatedAt, $clock)}{/if}
@@ -373,22 +373,22 @@
 
 	<!-- Bulk actions -->
 	{#if selected.size}
-		<div class="flex shrink-0 flex-wrap items-center gap-1.5 border border-[#333] bg-[#0a0a0a] px-3 py-1.5" role="toolbar" aria-label="Actions on the selected series" data-testid="bulk-bar">
-			<span class="mr-1 text-[11px] text-white"><span class="font-mono tabular-nums">{formatCount(selected.size)}</span> selected{#if hiddenSelected}<span class="text-[#777]">{' '}({hiddenSelected} hidden by the filters)</span>{/if}</span>
-			<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => bulkRefresh('refresh')} title="Bring them current now">{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
-			<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => bulkRefresh('repair')} title="Re-fetch the missing bars inside their history">{busy === 'repair' ? 'Sending…' : 'Repair gaps'}</button>
-			<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !extendable.length} on:click={bulkExtend}
+		<div class="rounded-md flex shrink-0 flex-wrap items-center gap-1.5 border border-sc-line2 bg-sc-panel px-3 py-1.5" role="toolbar" aria-label="Actions on the selected series" data-testid="bulk-bar">
+			<span class="mr-1 text-[11px] text-sc-ink"><span class="font-mono tabular-nums">{formatCount(selected.size)}</span> selected{#if hiddenSelected}<span class="text-sc-ink3">{' '}({hiddenSelected} hidden by the filters)</span>{/if}</span>
+			<button type="button" class="terminal-button text-[12px]" disabled={!!busy} on:click={() => bulkRefresh('refresh')} title="Bring them current now">{busy === 'refresh' ? 'Sending…' : 'Refresh'}</button>
+			<button type="button" class="terminal-button text-[12px]" disabled={!!busy} on:click={() => bulkRefresh('repair')} title="Re-fetch the missing bars inside their history">{busy === 'repair' ? 'Sending…' : 'Repair gaps'}</button>
+			<button type="button" class="terminal-button text-[12px]" disabled={!!busy || !extendable.length} on:click={bulkExtend}
 				title={extendable.length ? `Download older history from Binance Vision for ${extendable.length} of them` : 'Deep history covers research candles, funding, OI and basis only'}>{busy === 'extend' ? 'Sending…' : 'Extend history'}</button>
-			<button type="button" class="terminal-button text-[10px]" disabled={!!busy || !exportable.length} on:click={bulkExport}
+			<button type="button" class="terminal-button text-[12px]" disabled={!!busy || !exportable.length} on:click={bulkExport}
 				title={exportable.length ? `CSV of ${Math.min(10, exportable.length)} research candle series${exportable.length > 10 ? ' (first 10)' : ''}` : 'CSV export covers research candle series'}>{busy === 'export' ? 'Exporting…' : 'Export CSV'}</button>
 			{#if chosen.some((r) => !r.frozen)}
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => bulkFreeze(true)} title="Stop collecting them (history is kept)">Freeze</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy} on:click={() => bulkFreeze(true)} title="Stop collecting them (history is kept)">Freeze</button>
 			{/if}
 			{#if chosen.some((r) => r.frozen)}
-				<button type="button" class="terminal-button text-[10px]" disabled={!!busy} on:click={() => bulkFreeze(false)} title="Collect them again">Unfreeze</button>
+				<button type="button" class="terminal-button text-[12px]" disabled={!!busy} on:click={() => bulkFreeze(false)} title="Collect them again">Unfreeze</button>
 			{/if}
-			<button type="button" class="terminal-button-danger text-[10px]" disabled={!!busy} on:click={() => (deleting = true)}>Delete…</button>
-			<button type="button" on:click={clearSelection} class="ml-auto text-[10px] uppercase tracking-wider text-[#777] hover:text-white">Clear selection</button>
+			<button type="button" class="terminal-button-danger text-[12px]" disabled={!!busy} on:click={() => (deleting = true)}>Delete…</button>
+			<button type="button" on:click={clearSelection} class="ml-auto text-[12px] text-sc-ink3 hover:text-sc-ink">Clear selection</button>
 		</div>
 		{#if deleting}
 			<div class="shrink-0"><DeleteReview series={chosen} on:cancel={() => (deleting = false)} on:done={onDeleted} /></div>
@@ -396,14 +396,14 @@
 	{/if}
 
 	{#if state.status === 'ready' && total === 0}
-		<div class="flex flex-1 flex-col items-center justify-center border border-dashed border-[#262626] px-6 py-12 text-center">
+		<div class="flex flex-1 flex-col items-center justify-center border border-dashed border-sc-line px-6 py-12 text-center">
 			{#if filterCount}
-				<p class="text-[13px] text-white">No series match these filters.</p>
-				<p class="mt-1 text-[11px] text-[#777]">Try another view, or clear the filters to see everything that is stored.</p>
-				<button type="button" on:click={() => { searchText = ''; setFilters({ ...EMPTY_FILTERS }); }} class="terminal-button mt-3 text-[10px]">Clear filters</button>
+				<p class="text-[13px] text-sc-ink">No series match these filters.</p>
+				<p class="mt-1 text-[11px] text-sc-ink3">Try another view, or clear the filters to see everything that is stored.</p>
+				<button type="button" on:click={() => { searchText = ''; setFilters({ ...EMPTY_FILTERS }); }} class="terminal-button mt-3 text-[12px]">Clear filters</button>
 			{:else}
-				<p class="text-[13px] text-white">No market data is stored yet.</p>
-				<p class="mt-1 max-w-md text-[11px] leading-relaxed text-[#777]">Every backtest, the gauntlet and paper trading read stored series. Start with a preset, or pick exactly the markets you want.</p>
+				<p class="text-[13px] text-sc-ink">No market data is stored yet.</p>
+				<p class="mt-1 max-w-md text-[11px] leading-relaxed text-sc-ink3">Every backtest, the gauntlet and paper trading read stored series. Start with a preset, or pick exactly the markets you want.</p>
 				<div class="mt-3 flex gap-2">
 					<a href="{DM}/setup" class="terminal-button-primary text-[10px]">Set up data</a>
 					<a href="{DM}/get" class="terminal-button text-[10px]">Get data</a>
@@ -413,12 +413,12 @@
 	{:else if state.status === 'ready'}
 		<CatalogTable {rows} {total} {columns} selected={selectedIds} sort={filters.sort} order={filters.order} {resetToken}
 			on:open={openRow} on:toggle={toggle} on:sort={(e) => setSort(e.detail)} on:selectAll={selectAll} on:clearSelection={clearSelection} />
-		<p class="shrink-0 text-[10px] text-[#555]">
+		<p class="shrink-0 text-[10px] text-sc-ink3">
 			↑↓ move · Enter opens · Space selects · Shift-click selects a range · Ctrl+A selects all loaded · Esc clears · / search. Dates are UTC.
 		</p>
 		{#if state.error}<p class="text-[10px] text-amber-500/80" role="status">Refresh failed ({state.error}); showing the last results.</p>{/if}
 	{:else}
-		<div class="border border-[#222] bg-[#050505]">
+		<div class="rounded-md border border-sc-line bg-sc-panel">
 			<SectionState {state} what="The catalog" endpoint="GET /api/data/catalog" rows={10} on:retry={() => load()} />
 		</div>
 	{/if}

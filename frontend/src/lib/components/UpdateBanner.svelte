@@ -68,23 +68,23 @@
 
 {#if visible}
 	<div
-		class="border-b border-[#222] bg-[#050505] text-[#888] px-4 py-2 flex items-center justify-between gap-3"
+		class="border-b border-sc-line bg-sc-panel text-sc-ink2 px-4 py-2 flex items-center justify-between gap-3"
 		role="status"
 	>
 		<div class="flex items-center gap-3 min-w-0">
-			<svg class="w-4 h-4 text-[#888] shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<svg class="w-4 h-4 text-sc-ink2 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 				<path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5v6l5 3-.75 1.23L11 14V7h2z" />
 			</svg>
 			<div class="text-[11px] leading-snug min-w-0">
 				{#if $updateRestarting}
-					<span class="font-bold text-white">Restarting…</span> applying update and waiting for the backend to come back.
+					<span class="font-bold text-sc-ink">Restarting…</span> applying update and waiting for the backend to come back.
 				{:else if $updateApplying}
-					<span class="font-bold text-white">Updating…</span> pulling the latest code.
+					<span class="font-bold text-sc-ink">Updating…</span> pulling the latest code.
 				{:else}
-					<span class="font-bold text-white"
+					<span class="font-bold text-sc-ink"
 						>Update available{#if behind > 0} — {behind} commit{behind === 1 ? '' : 's'} behind{/if}</span
 					>{#if status?.latest_commit_subject}: <span class="truncate">{status.latest_commit_subject}</span
-						>{/if}{#if status?.blocked_reason}<span class="block text-[#666] mt-0.5"
+						>{/if}{#if status?.blocked_reason}<span class="block text-sc-ink3 mt-0.5"
 							>{status.blocked_reason}</span
 						>{/if}
 				{/if}
@@ -109,11 +109,11 @@
 				</button>
 			{/if}
 			{#if busy}
-				<span class="w-3.5 h-3.5 border-2 border-[#333] border-t-white rounded-full animate-spin" aria-hidden="true"></span>
+				<span class="w-3.5 h-3.5 border-2 border-sc-line2 border-t-sc-ink rounded-full animate-spin" aria-hidden="true"></span>
 			{:else}
 				<button
 					type="button"
-					class="text-[11px] text-[#555] hover:text-white px-2 transition-colors"
+					class="text-[11px] text-sc-ink3 hover:text-sc-ink px-2 transition-colors"
 					on:click={handleDismiss}
 					aria-label="Dismiss"
 				>

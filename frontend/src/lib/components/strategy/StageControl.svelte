@@ -257,7 +257,7 @@
 								type="button"
 								data-testid="stage-control-confirm"
 								disabled={submitting || !goLiveArmed}
-								class="rounded-md border border-sc-ink bg-sc-ink font-medium text-[#0b0d10] transition hover:bg-white px-3 py-1 text-[12px] disabled:opacity-50"
+								class="rounded-md border border-sc-ink bg-sc-ink font-medium text-[#0b0d10] transition hover:bg-sc-ink px-3 py-1 text-[12px] disabled:opacity-50"
 								on:click={() => void confirm(false)}
 							>{submitting ? 'Moving…' : 'Confirm'}</button>
 						{/if}

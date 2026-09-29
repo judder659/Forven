@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	import { onMount, onDestroy } from 'svelte';
 	import { createChart, type IChartApi, type ISeriesApi, ColorType, type UTCTimestamp } from 'lightweight-charts';
 
@@ -19,20 +20,21 @@
 
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: '#0a0a0a' },
-				textColor: '#9ca3af',
+				background: { type: ColorType.Solid, color: CHART_THEME.background },
+				textColor: CHART_THEME.text,
+				fontFamily: CHART_THEME.fontFamily,
 			},
 			grid: {
-				vertLines: { color: '#1c1c1c' },
-				horzLines: { color: '#1c1c1c' },
+				vertLines: { color: CHART_THEME.grid },
+				horzLines: { color: CHART_THEME.grid },
 			},
 			width: chartContainer.clientWidth,
 			height: height,
 			rightPriceScale: {
-				borderColor: '#222222',
+				borderColor: CHART_THEME.border,
 			},
 			timeScale: {
-				borderColor: '#222222',
+				borderColor: CHART_THEME.border,
 				timeVisible: true,
 			},
 			crosshair: {

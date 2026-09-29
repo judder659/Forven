@@ -55,11 +55,11 @@
 </script>
 
 <div in:fly={{ x: 420, duration: 180 }} role="dialog" tabindex="-1" aria-modal="false" aria-labelledby="dm-jobs-title" on:keydown={onKey}
-	class="fixed right-0 top-0 z-[60] flex h-full w-[420px] max-w-[92vw] flex-col border-l border-[#333] bg-[#050505] font-mono text-white shadow-[-16px_0_40px_rgba(0,0,0,0.7)]">
-	<header class="flex items-start gap-3 border-b border-[#1a1a1a] px-4 py-3">
+	class="fixed right-0 top-0 z-[60] flex h-full w-[420px] max-w-[92vw] flex-col border-l border-sc-line2 bg-sc-panel font-mono text-sc-ink shadow-[-16px_0_40px_rgba(0,0,0,0.7)]">
+	<header class="flex items-start gap-3 border-b border-sc-line px-4 py-3">
 		<div class="min-w-0 flex-1">
-			<h2 id="dm-jobs-title" class="text-[11px] font-bold uppercase tracking-[0.2em] text-white">Jobs</h2>
-			<p class="mt-1 text-[11px] text-[#888]">
+			<h2 id="dm-jobs-title" class="text-[14px] font-semibold text-sc-ink">Jobs</h2>
+			<p class="mt-1 text-[11px] text-sc-ink2">
 				{#if summary}
 					{formatCount(summary.running)} running · {formatCount(summary.queued)} queued{#if summary.failed_24h} · <span class="text-red-400">{formatCount(summary.failed_24h)} failed in 24 h</span>{/if}
 				{:else if $jobsSummary.status === 'unavailable'}
@@ -70,40 +70,40 @@
 			</p>
 		</div>
 		<button bind:this={closeButton} type="button" on:click={() => dispatch('close')} aria-label="Close jobs"
-			class="px-1.5 text-[14px] leading-none text-[#666] hover:text-white">✕</button>
+			class="px-1.5 text-[14px] leading-none text-sc-ink3 hover:text-sc-ink">✕</button>
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		<section aria-labelledby="dm-jobs-active">
-			<h3 id="dm-jobs-active" class="border-b border-[#141414] bg-[#0a0a0a] px-4 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[#555]">Running and queued</h3>
+			<h3 id="dm-jobs-active" class="text-[13px] font-semibold border-b border-sc-line bg-sc-panel px-4 py-1.5 text-sc-ink3">Running and queued</h3>
 			<SectionState state={active} what="The job list" endpoint="GET /api/data/jobs" rows={3} on:retry={load}>
 				{#if active.data?.length}
 					{#each active.data as job (job.id)}<JobRow {job} on:changed={load} />{/each}
 				{:else}
-					<p class="px-4 py-4 text-[12px] leading-relaxed text-[#666]">
+					<p class="px-4 py-4 text-[12px] leading-relaxed text-sc-ink3">
 						Nothing is running. Downloads you start show their progress here, and you can leave the page while they run.
 					</p>
 				{/if}
 			</SectionState>
 		</section>
 		<section aria-labelledby="dm-jobs-recent">
-			<h3 id="dm-jobs-recent" class="border-y border-[#141414] bg-[#0a0a0a] px-4 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[#555]">Recently finished</h3>
+			<h3 id="dm-jobs-recent" class="text-[13px] font-semibold border-y border-sc-line bg-sc-panel px-4 py-1.5 text-sc-ink3">Recently finished</h3>
 			<SectionState state={recent} what="The job list" endpoint="GET /api/data/jobs" rows={3} on:retry={load}>
 				{#if recent.data?.length}
 					{#each recent.data as job (job.id)}<JobRow {job} on:changed={load} />{/each}
 				{:else}
-					<p class="px-4 py-4 text-[12px] text-[#666]">No finished jobs yet.</p>
+					<p class="px-4 py-4 text-[12px] text-sc-ink3">No finished jobs yet.</p>
 				{/if}
 			</SectionState>
 		</section>
 	</div>
 
-	<footer class="border-t border-[#1a1a1a] px-4 py-2.5 text-[10px] text-[#666]">
+	<footer class="border-t border-sc-line px-4 py-2.5 text-[10px] text-sc-ink3">
 		{#if routine}
 			<div title={formatUtc(routine.finished_at ?? routine.created_at, { seconds: true })}>
 				Automatic collection ran {formatRelative(routine.finished_at ?? routine.created_at, $clock)}{#if routineResult} · refreshed {formatCount(routineResult.refreshed)} series{/if}
 			</div>
 		{/if}
-		<a href="{DM}/jobs" on:click={() => dispatch('close')} class="mt-1 inline-block text-[#aaa] underline-offset-2 hover:text-white hover:underline">All jobs and filters →</a>
+		<a href="{DM}/jobs" on:click={() => dispatch('close')} class="mt-1 inline-block text-sc-ink2 underline-offset-2 hover:text-sc-ink hover:underline">All jobs and filters →</a>
 	</footer>
 </div>

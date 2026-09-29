@@ -156,10 +156,10 @@
 </script>
 
 <!-- No z-index: page overlays inside <main> must paint over the sidebar (see +layout.svelte). -->
-<aside class="relative w-60 flex-shrink-0 border-r border-[#222] bg-black flex flex-col">
-	<div class="px-3 py-4 border-b border-[#222] flex items-center justify-center gap-2">
-		<div class="w-2 h-2 bg-white shrink-0" title="forven"></div>
-		<div class="text-sm font-mono lowercase tracking-wide text-white">forven</div>
+<aside class="relative w-60 flex-shrink-0 border-r border-sc-line bg-sc-bg flex flex-col">
+	<div class="px-3 py-4 border-b border-sc-line flex items-center justify-center gap-2">
+		<div class="w-2 h-2 bg-sc-ink shrink-0" title="forven"></div>
+		<div class="text-sm font-mono lowercase tracking-wide text-sc-ink">forven</div>
 	</div>
 
 	<nav aria-label="Primary navigation" class="flex-1 overflow-y-auto px-2 py-4 flex flex-col gap-4">
@@ -173,7 +173,7 @@
 					aria-label={link.label}
 					aria-current={isActive ? 'page' : undefined}
 					title={link.label}
-					class="group flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isActive ? 'border-l-white text-white bg-[#111]' : 'border-l-transparent text-[#888] hover:text-white hover:bg-[#111]'}"
+					class="group flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isActive ? 'border-l-sc-ink text-sc-ink bg-sc-panel2' : 'border-l-transparent text-sc-ink2 hover:text-sc-ink hover:bg-sc-panel2'}"
 				>
 					<svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 						<path d={link.icon} />
@@ -186,8 +186,8 @@
 			{/each}
 		</div>
 
-		<section class="mt-auto border-t border-[#222] pt-3">
-			<div class="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#666]">Management</div>
+		<section class="mt-auto border-t border-sc-line pt-3">
+			<div class="px-2 pb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Management</div>
 			<div class="space-y-1">
 				{#each managementLinks as link}
 					{@const isActive = isRouteActive(link.href, $page.url.pathname)}
@@ -198,7 +198,7 @@
 						aria-label={link.label}
 						aria-current={isActive ? 'page' : undefined}
 						title={link.label}
-						class="group flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isActive ? 'border-l-white text-white bg-[#111]' : 'border-l-transparent text-[#888] hover:text-white hover:bg-[#111]'}"
+						class="group flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isActive ? 'border-l-sc-ink text-sc-ink bg-sc-panel2' : 'border-l-transparent text-sc-ink2 hover:text-sc-ink hover:bg-sc-panel2'}"
 					>
 						<svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 							<path d={link.icon} />
@@ -213,7 +213,7 @@
 		</section>
 	</nav>
 
-	<div class="px-2 pb-3 border-t border-[#222]">
+	<div class="px-2 pb-3 border-t border-sc-line">
 		<a
 			href={settingsLink.href}
 			on:click={() => markNavIndicatorSeen(settingsLink.href)}
@@ -221,7 +221,7 @@
 			aria-label={settingsLink.label}
 			aria-current={isRouteActive(settingsLink.href, $page.url.pathname) ? 'page' : undefined}
 			title={settingsLink.label}
-			class="group my-2 flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isRouteActive(settingsLink.href, $page.url.pathname) ? 'border-l-white text-white bg-[#111]' : 'border-l-transparent text-[#888] hover:text-white hover:bg-[#111]'}"
+			class="group my-2 flex min-h-[48px] w-full items-center justify-start gap-3 border-l-2 px-3 py-2 transition-colors {isRouteActive(settingsLink.href, $page.url.pathname) ? 'border-l-sc-ink text-sc-ink bg-sc-panel2' : 'border-l-transparent text-sc-ink2 hover:text-sc-ink hover:bg-sc-panel2'}"
 		>
 			<svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 				<path d={settingsLink.icon} />
@@ -242,12 +242,12 @@
 			href="https://github.com/judder659/Forven"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="text-[10px] text-[#555] hover:text-[#888] transition-colors"
+			class="text-[10px] text-sc-ink3 hover:text-sc-ink2 transition-colors"
 			title="Forven source code (AGPL-3.0)"
 		>Source · AGPL-3.0</a>
 	</div>
 
-	<div class="px-2 py-3 border-t border-[#222] flex items-center justify-center">
+	<div class="px-2 py-3 border-t border-sc-line flex items-center justify-center">
 		<div class="flex items-center">
 			<div
 				class="w-2 h-2 rounded-full"

@@ -270,8 +270,8 @@
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 0.75rem;
 		align-items: end;
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.875rem;
 	}
@@ -281,17 +281,17 @@
 		flex-direction: column;
 		gap: 0.25rem;
 		font-size: 0.75rem;
-		color: #888;
+		color: #aab1bc;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.filters input,
 	.filters select {
-		background: #050505;
-		border: 1px solid #333;
+		background: #0c0e11;
+		border: 1px solid #2a2f38;
 		border-radius: 0;
-		color: #e5e5e5;
+		color: #eef1f5;
 		padding: 0.4rem 0.5rem;
 		font-size: 0.875rem;
 	}
@@ -299,7 +299,7 @@
 	.filters input:focus,
 	.filters select:focus {
 		outline: none;
-		border-color: #fff;
+		border-color: #eef1f5;
 	}
 
 	.filter-actions {
@@ -308,9 +308,9 @@
 	}
 
 	.filter-actions button {
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #ddd;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 0.5rem 1rem;
 		border-radius: 0;
 		cursor: pointer;
@@ -319,8 +319,8 @@
 
 	.filter-actions .primary {
 		background: #fff;
-		border-color: #fff;
-		color: #000;
+		border-color: #eef1f5;
+		color: #4b525c;
 	}
 
 	.filter-actions .primary:hover:not(:disabled) {
@@ -353,16 +353,16 @@
 
 	.loading,
 	.empty {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.875rem;
 		padding: 1rem;
 		text-align: center;
-		border: 1px dashed #222;
+		border: 1px dashed #1c2026;
 		border-radius: 0;
 	}
 
 	.meta {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.8125rem;
 	}
 
@@ -378,11 +378,11 @@
 	.row {
 		width: 100%;
 		text-align: left;
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.75rem 0.875rem;
-		color: #e5e5e5;
+		color: #eef1f5;
 		cursor: pointer;
 		transition: border-color 120ms ease, background 120ms ease;
 		display: flex;
@@ -391,8 +391,8 @@
 	}
 
 	.row:hover {
-		border-color: #555;
-		background: #111;
+		border-color: #2a2f38;
+		background: #11141a;
 	}
 
 	.row-head {
@@ -404,8 +404,8 @@
 	}
 
 	.cycle {
-		color: #ccc;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		color: #eef1f5;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.chip {
@@ -414,9 +414,9 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		text-transform: uppercase;
-		background: #1a1a1a;
-		color: #aaa;
-		border: 1px solid #222;
+		background: #181c23;
+		color: #aab1bc;
+		border: 1px solid #1c2026;
 	}
 
 	.chip-success {
@@ -438,25 +438,25 @@
 	}
 
 	.chip-pending {
-		background: #1a1a1a;
-		color: #888;
-		border-color: #222;
+		background: #181c23;
+		color: #aab1bc;
+		border-color: #1c2026;
 	}
 
 	.action {
-		background: #1a1a1a;
-		color: #888;
-		border-color: #1a1a1a;
+		background: #181c23;
+		color: #aab1bc;
+		border-color: #1c2026;
 	}
 
 	.when {
-		color: #666;
+		color: #747c88;
 		margin-left: auto;
 		font-size: 0.75rem;
 	}
 
 	.row-summary {
-		color: #ccc;
+		color: #eef1f5;
 		font-size: 0.875rem;
 		line-height: 1.4;
 	}
@@ -468,9 +468,9 @@
 	}
 
 	.load-more button {
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #ddd;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 0.5rem 1.25rem;
 		border-radius: 0;
 		cursor: pointer;
@@ -478,7 +478,7 @@
 	}
 
 	.load-more button:hover:not(:disabled) {
-		background: #222;
+		background: #181c23;
 	}
 
 	.load-more button:disabled {

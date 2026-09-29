@@ -52,8 +52,8 @@
 		flex-direction: column;
 		gap: 0.5rem;
 		padding: 0.75rem;
-		border: 1px solid #1f1f1f;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.row {
@@ -64,10 +64,10 @@
 	}
 
 	.task-link {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.85rem;
 		font-weight: 600;
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.task-link:hover {
@@ -76,7 +76,7 @@
 	}
 
 	.task-link--dead {
-		color: #666;
+		color: #747c88;
 	}
 
 	.tag {
@@ -84,16 +84,16 @@
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
 		padding: 0.15rem 0.45rem;
-		border: 1px solid #2a2a2a;
-		color: #aaa;
+		border: 1px solid #2a2f38;
+		color: #aab1bc;
 	}
 
 	.tag--muted {
-		color: #666;
+		color: #747c88;
 	}
 
 	.tag--strategy {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		text-transform: none;
 		letter-spacing: 0;
 		color: #7dd3fc;
@@ -107,12 +107,12 @@
 	.task-title {
 		margin: 0;
 		font-size: 0.8rem;
-		color: #ccc;
+		color: #eef1f5;
 	}
 
 	.raw summary {
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		cursor: pointer;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -122,11 +122,11 @@
 		margin-top: 0.4rem;
 		max-height: 200px;
 		overflow: auto;
-		border: 1px solid #1f1f1f;
-		background: #000;
+		border: 1px solid #1c2026;
+		background: #07080a;
 		padding: 0.5rem;
 		font-size: 0.6875rem;
-		color: #888;
+		color: #aab1bc;
 		white-space: pre-wrap;
 		word-break: break-word;
 	}

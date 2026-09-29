@@ -89,13 +89,13 @@
 		if (state === 'down') return 'border-red-900 bg-red-500/5';
 		if (state === 'degraded') return 'border-yellow-900 bg-yellow-500/5';
 		if (state === 'ok') return 'border-emerald-900 bg-emerald-500/5';
-		return 'border-[#222] bg-[#050505]';
+		return 'border-sc-line bg-sc-panel';
 	}
 	function dotColor(state: string): string {
 		if (state === 'down') return 'bg-red-500';
 		if (state === 'degraded') return 'bg-yellow-400';
 		if (state === 'ok') return 'bg-emerald-400';
-		return 'bg-[#555]';
+		return 'bg-sc-line2';
 	}
 	function stateLabel(state: string): string {
 		if (state === 'down') return 'Down';
@@ -119,10 +119,10 @@
 
 <div class="space-y-6">
 	<section class="terminal-card p-6 space-y-4">
-		<header class="border-b border-[#1a1a1a] pb-2 flex items-start justify-between gap-3">
+		<header class="border-b border-sc-line pb-2 flex items-start justify-between gap-3">
 			<div>
-				<h2 class="text-sm font-bold uppercase tracking-widest text-white">Provider health</h2>
-				<p class="text-xs text-[#666] mt-1">
+				<h2 class="text-[14px] font-semibold text-sc-ink">Provider health</h2>
+				<p class="text-xs text-sc-ink3 mt-1">
 					Live per-provider state as observed during agent and Brain calls. Polls every {POLL_MS / 1000}s.
 				</p>
 			</div>
@@ -131,7 +131,7 @@
 					type="button"
 					on:click={refresh}
 					disabled={loading}
-					class="terminal-button text-xs px-2 py-1 disabled:opacity-60"
+					class="terminal-button text-[12px] px-2 py-1 disabled:opacity-60"
 				>
 					{loading ? 'Refreshing…' : 'Refresh'}
 				</button>
@@ -139,7 +139,7 @@
 					type="button"
 					on:click={reconcile}
 					disabled={reconciling}
-					class="terminal-button-primary text-xs px-3 py-1 disabled:opacity-60"
+					class="terminal-button-primary text-[12px] px-3 py-1 disabled:opacity-60"
 					title="Re-point agents pinned to a credential-less provider onto a connected one."
 				>
 					{reconciling ? 'Reconciling…' : 'Reconcile providers'}
@@ -152,9 +152,9 @@
 		{/if}
 
 		{#if loading && runtime.length === 0}
-			<p class="text-sm text-[#666]">Loading provider health…</p>
+			<p class="text-sm text-sc-ink3">Loading provider health…</p>
 		{:else if runtime.length === 0}
-			<p class="text-sm text-[#666]">
+			<p class="text-sm text-sc-ink3">
 				No runtime health reported. Providers report state here once they're exercised by agent/Brain calls.
 			</p>
 		{:else}
@@ -162,23 +162,23 @@
 				{#each runtime as r (r.provider)}
 					<div class="border p-4 space-y-2 {stateColor(r.state)}">
 						<div class="flex items-center justify-between gap-2">
-							<span class="font-mono text-sm text-white uppercase">{r.provider}</span>
-							<span class="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[#ccc]">
+							<span class="font-mono text-sm text-sc-ink uppercase">{r.provider}</span>
+							<span class="flex items-center gap-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">
 								<span class="w-1.5 h-1.5 rounded-full {dotColor(r.state)}"></span>
 								{stateLabel(r.state)}
 							</span>
 						</div>
 						{#if r.kind}
-							<div class="text-[10px] uppercase tracking-wider text-[#888]">{r.kind}</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{r.kind}</div>
 						{/if}
 						{#if r.message}
-							<p class="text-xs text-[#888]">{r.message}</p>
+							<p class="text-xs text-sc-ink2">{r.message}</p>
 						{/if}
 						{#if r.fallback_to}
 							<p class="text-xs text-yellow-400">Falling back to <span class="font-mono">{r.fallback_to}</span></p>
 						{/if}
 						<div class="flex items-end justify-between gap-2">
-							<div class="text-[10px] text-[#555] space-y-0.5">
+							<div class="text-[10px] text-sc-ink3 space-y-0.5">
 								{#if r.since && formatSince(r.since)}
 									<p>since {formatSince(r.since)}</p>
 								{/if}
@@ -190,7 +190,7 @@
 								type="button"
 								on:click={() => dismiss(r.provider)}
 								disabled={dismissing === r.provider}
-								class="terminal-button text-[10px] px-2 py-0.5 disabled:opacity-60"
+								class="terminal-button text-[12px] px-2 py-0.5 disabled:opacity-60"
 								title="Remove this entry. A new call event re-creates it — dismissing never hides an active failure for long."
 							>
 								{dismissing === r.provider ? '…' : 'Dismiss'}
@@ -203,23 +203,23 @@
 	</section>
 
 	<section class="terminal-card p-6 space-y-3">
-		<header class="border-b border-[#1a1a1a] pb-2">
-			<h3 class="text-sm font-bold tracking-widest uppercase text-[#888]">Pinned-credential warnings</h3>
-			<p class="text-xs text-[#666] mt-1">
+		<header class="border-b border-sc-line pb-2">
+			<h3 class="text-[13px] font-semibold text-sc-ink2">Pinned-credential warnings</h3>
+			<p class="text-xs text-sc-ink3 mt-1">
 				Agents pinned to a provider that has no credentials. Connect the provider or repoint the agent.
 			</p>
 		</header>
 		{#if warnings.length === 0}
-			<p class="text-sm text-[#666]">No agents are pinned to a credential-less provider.</p>
+			<p class="text-sm text-sc-ink3">No agents are pinned to a credential-less provider.</p>
 		{:else}
 			<ul class="space-y-1.5">
 				{#each warnings as w (w.agent_id + ':' + w.provider)}
 					<li class="flex items-center justify-between gap-2 bg-yellow-500/5 border border-yellow-900 px-3 py-2 text-xs">
-						<span class="text-[#ccc]">
+						<span class="text-sc-ink">
 							<span class="font-mono">{w.agent_id}</span> → provider <span class="font-mono text-yellow-400">{w.provider}</span>
 						</span>
 						{#if w.fallback}
-							<span class="text-[#888]">falls back to <span class="font-mono text-[#ccc]">{w.fallback}</span></span>
+							<span class="text-sc-ink2">falls back to <span class="font-mono text-sc-ink">{w.fallback}</span></span>
 						{:else}
 							<span class="text-yellow-400">no fallback</span>
 						{/if}

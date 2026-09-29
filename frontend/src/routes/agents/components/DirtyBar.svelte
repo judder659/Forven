@@ -16,15 +16,15 @@
 
 {#if dirty}
 	<div
-		class="sticky bottom-0 z-10 flex items-center justify-between gap-3 border border-[#333] bg-[#050505] px-4 py-3"
+		class="rounded-md sticky bottom-0 z-10 flex items-center justify-between gap-3 border border-sc-line2 bg-sc-panel px-4 py-3"
 	>
-		<span class="text-xs uppercase tracking-wider text-[#aaa]">{message}</span>
+		<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{message}</span>
 		<div class="flex gap-2">
 			<button
 				type="button"
 				on:click={onDiscard}
 				disabled={saving}
-				class="terminal-button text-xs"
+				class="terminal-button text-[12px]"
 			>
 				Discard
 			</button>
@@ -32,7 +32,7 @@
 				type="button"
 				on:click={onSave}
 				disabled={saving}
-				class="terminal-button-primary text-xs"
+				class="terminal-button-primary text-[12px]"
 			>
 				{saving ? 'Saving…' : saveLabel}
 			</button>

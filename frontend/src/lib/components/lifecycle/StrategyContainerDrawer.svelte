@@ -185,7 +185,7 @@
 </script>
 
 <div
-	class="fixed inset-0 bg-black/80 z-[1000]"
+	class="fixed inset-0 bg-sc-bg/80 z-[1000]"
 	role="button"
 	tabindex="0"
 	aria-label="Close detail drawer"
@@ -198,13 +198,13 @@
 	}}
 ></div>
 
-<aside class="fixed top-0 right-0 h-full w-full max-w-[520px] bg-[#050505] border-l border-[#222] z-[1001] overflow-y-auto p-5 space-y-4">
+<aside class="fixed top-0 right-0 h-full w-full max-w-[520px] bg-sc-panel border-l border-sc-line z-[1001] overflow-y-auto p-5 space-y-4">
 	<div class="flex items-start justify-between gap-3">
 		<div>
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Strategy container</div>
-			<div class="text-2xl font-bold uppercase tracking-widest text-white">{displayId}</div>
-			<div class="text-sm text-gray-300 mt-1">{strategyName}</div>
-			<div class="text-[11px] text-gray-500 mt-1">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Strategy container</div>
+			<div class="text-2xl font-bold uppercase tracking-widest text-sc-ink">{displayId}</div>
+			<div class="text-sm text-sc-ink2 mt-1">{strategyName}</div>
+			<div class="text-[11px] text-sc-ink3 mt-1">
 				{STAGE_ICONS[stage] || '📦'} {STAGE_LABELS[stage] || stage}
 			</div>
 		</div>
@@ -212,7 +212,7 @@
 			<StrategyExportMenu strategyId={strategyId} displayId={displayId} name={strategyName} compact />
 			<button
 				type="button"
-				class="terminal-button px-2 py-1 text-[10px]"
+				class="terminal-button px-2 py-1 text-[12px]"
 				on:click={closeDrawer}
 			>
 				Close
@@ -221,13 +221,13 @@
 	</div>
 
 	{#if showTransitions}
-		<div class="border border-[#262626] bg-[#111] rounded p-3">
-			<div class="text-[10px] uppercase tracking-wider text-gray-500">Manual Transition</div>
+		<div class="border border-sc-line bg-sc-panel2 rounded p-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Manual Transition</div>
 			<div class="mt-2 flex flex-wrap gap-2">
 				{#each (VALID_TRANSITIONS[stage] || []) as target}
 					<button
 						type="button"
-						class="text-[10px] uppercase tracking-wide border border-[#333] text-[#888] px-2 py-1 hover:border-[#555] hover:text-white transition-colors"
+						class="rounded-md text-[12px] border border-sc-line2 text-sc-ink2 px-2 py-1 hover:border-sc-line2 hover:text-sc-ink transition-colors"
 						on:click={() => handleTransition(target)}
 					>
 						{STAGE_LABELS[target] || target}
@@ -237,44 +237,44 @@
 		</div>
 	{/if}
 
-	<div class="border border-[#262626] bg-[#111] rounded p-3">
-		<div class="text-[10px] uppercase tracking-wider text-gray-500">Metrics</div>
+	<div class="border border-sc-line bg-sc-panel2 rounded p-3">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Metrics</div>
 		<div class="mt-2 grid grid-cols-2 gap-y-1 text-xs">
-			<div class="text-gray-500">Sharpe</div>
-			<div class="text-right text-gray-200">{formatMetric(metrics.sharpe)}</div>
-			<div class="text-gray-500">Win Rate</div>
-			<div class="text-right text-gray-200">{formatPercent(metrics.winRate)}</div>
-			<div class="text-gray-500">Profit Factor</div>
-			<div class="text-right text-gray-200">{formatMetric(metrics.profitFactor)}</div>
-			<div class="text-gray-500">Market Pot</div>
-			<div class="text-right text-gray-200">{marketPot || '--'}</div>
+			<div class="text-sc-ink3">Sharpe</div>
+			<div class="text-right text-sc-ink">{formatMetric(metrics.sharpe)}</div>
+			<div class="text-sc-ink3">Win Rate</div>
+			<div class="text-right text-sc-ink">{formatPercent(metrics.winRate)}</div>
+			<div class="text-sc-ink3">Profit Factor</div>
+			<div class="text-right text-sc-ink">{formatMetric(metrics.profitFactor)}</div>
+			<div class="text-sc-ink3">Market Pot</div>
+			<div class="text-right text-sc-ink">{marketPot || '--'}</div>
 		</div>
 	</div>
 
-	<div class="border border-[#262626] bg-[#111] rounded p-3">
-		<div class="text-[10px] uppercase tracking-wider text-gray-500">Task Containers</div>
+	<div class="border border-sc-line bg-sc-panel2 rounded p-3">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Task Containers</div>
 		{#if drawerLoading}
-			<div class="mt-2 text-xs text-gray-500 animate-pulse">Loading task links...</div>
+			<div class="mt-2 text-xs text-sc-ink3 animate-pulse">Loading task links...</div>
 		{:else if selectedTasks.length === 0}
-			<div class="mt-2 text-xs text-gray-500">No linked tasks.</div>
+			<div class="mt-2 text-xs text-sc-ink3">No linked tasks.</div>
 		{:else}
 			<div class="mt-2 space-y-2">
 				{#each selectedTasks as task}
 					<button
 						type="button"
-						class={`w-full text-left border p-2 transition-colors ${
+						class={`rounded-md w-full text-left border p-2 transition-colors ${
 							selectedTaskDetail && getTaskDisplayId(selectedTaskDetail) === getTaskDisplayId(task)
-								? 'border-[#555] bg-[#111]'
-								: 'border-[#222] hover:border-[#555] hover:bg-[#111]'
+								? 'border-sc-line2 bg-sc-panel2'
+								: 'border-sc-line hover:border-sc-line2 hover:bg-sc-panel2'
 						}`}
 						on:click={() => openTaskContainerDetail(task)}
 					>
 						<div class="flex items-center justify-between gap-2">
 							<span class="text-xs font-bold text-yellow-300">{getTaskDisplayId(task)}</span>
-							<span class="text-[10px] text-gray-500">{task.status}</span>
+							<span class="text-[10px] text-sc-ink3">{task.status}</span>
 						</div>
-						<div class="text-[11px] text-gray-300 mt-1">{task.title}</div>
-						<div class="text-[10px] text-gray-500 mt-1">{task.agent_id}</div>
+						<div class="text-[11px] text-sc-ink2 mt-1">{task.title}</div>
+						<div class="text-[10px] text-sc-ink3 mt-1">{task.agent_id}</div>
 					</button>
 				{/each}
 			</div>
@@ -282,43 +282,43 @@
 	</div>
 
 	{#if selectedTaskDetail}
-		<div class="border border-[#262626] bg-[#111] rounded p-3 space-y-3">
+		<div class="border border-sc-line bg-sc-panel2 rounded p-3 space-y-3">
 			<div class="flex items-center justify-between gap-2">
-				<div class="text-[10px] uppercase tracking-wider text-gray-500">Task Container Detail</div>
-				<div class="text-[10px] text-[#aaa] font-bold">{getTaskDisplayId(selectedTaskDetail)}</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Task Container Detail</div>
+				<div class="text-[10px] text-sc-ink2 font-bold">{getTaskDisplayId(selectedTaskDetail)}</div>
 			</div>
 
 			<div class="grid grid-cols-2 gap-y-1 text-xs">
-				<div class="text-gray-500">Status</div>
-				<div class="text-right text-gray-200">{String(selectedTaskDetail.status || '--')}</div>
-				<div class="text-gray-500">Agent</div>
-				<div class="text-right text-gray-200">{String(selectedTaskDetail.agent_id || '--')}</div>
-				<div class="text-gray-500">Strategy</div>
-				<div class="text-right text-gray-200">{String(selectedTaskDetail.strategy_id || '--')}</div>
-				<div class="text-gray-500">Created</div>
-				<div class="text-right text-gray-200">{formatTimestamp(selectedTaskDetail.created_at)}</div>
-				<div class="text-gray-500">Started</div>
-				<div class="text-right text-gray-200">{formatTimestamp(selectedTaskDetail.started_at)}</div>
-				<div class="text-gray-500">Completed</div>
-				<div class="text-right text-gray-200">{formatTimestamp(selectedTaskDetail.completed_at)}</div>
+				<div class="text-sc-ink3">Status</div>
+				<div class="text-right text-sc-ink">{String(selectedTaskDetail.status || '--')}</div>
+				<div class="text-sc-ink3">Agent</div>
+				<div class="text-right text-sc-ink">{String(selectedTaskDetail.agent_id || '--')}</div>
+				<div class="text-sc-ink3">Strategy</div>
+				<div class="text-right text-sc-ink">{String(selectedTaskDetail.strategy_id || '--')}</div>
+				<div class="text-sc-ink3">Created</div>
+				<div class="text-right text-sc-ink">{formatTimestamp(selectedTaskDetail.created_at)}</div>
+				<div class="text-sc-ink3">Started</div>
+				<div class="text-right text-sc-ink">{formatTimestamp(selectedTaskDetail.started_at)}</div>
+				<div class="text-sc-ink3">Completed</div>
+				<div class="text-right text-sc-ink">{formatTimestamp(selectedTaskDetail.completed_at)}</div>
 			</div>
 
 			{#if selectedTaskDetail.title}
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Title</div>
-					<div class="text-xs text-gray-200 mt-1">{String(selectedTaskDetail.title)}</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Title</div>
+					<div class="text-xs text-sc-ink mt-1">{String(selectedTaskDetail.title)}</div>
 				</div>
 			{/if}
 
 			{#if selectedTaskDetail.description}
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Description</div>
-					<div class="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{String(selectedTaskDetail.description)}</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Description</div>
+					<div class="text-xs text-sc-ink2 mt-1 whitespace-pre-wrap">{String(selectedTaskDetail.description)}</div>
 				</div>
 			{/if}
 
 			{#if taskDetailLoading}
-				<div class="text-xs text-gray-500 animate-pulse">Loading full task details...</div>
+				<div class="text-xs text-sc-ink3 animate-pulse">Loading full task details...</div>
 			{:else}
 				{#if taskDetailError}
 					<div class="text-xs text-red-400">{taskDetailError}</div>
@@ -326,19 +326,19 @@
 
 				<div>
 					<div class="flex items-center justify-between">
-						<div class="text-[10px] uppercase tracking-wider text-gray-500">Audit Log</div>
-						<div class="text-[10px] text-gray-600">{selectedTaskAuditLog.length}</div>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Audit Log</div>
+						<div class="text-[10px] text-sc-ink3">{selectedTaskAuditLog.length}</div>
 					</div>
 					{#if selectedTaskAuditLog.length === 0}
-						<div class="mt-1 text-xs text-gray-500">No task audit events.</div>
+						<div class="mt-1 text-xs text-sc-ink3">No task audit events.</div>
 					{:else}
 						<div class="mt-2 space-y-1.5 max-h-[170px] overflow-y-auto">
 							{#each selectedTaskAuditLog as auditItem}
-								<div class="border border-[#2b2b2b] rounded p-2">
-									<div class="text-[10px] text-gray-500">{String(auditItem.event || auditItem.action || '--')}</div>
-									<div class="text-[10px] text-gray-600 mt-0.5">{formatTimestamp(auditItem.timestamp || auditItem.created_at)}</div>
+								<div class="border border-sc-line2 rounded p-2">
+									<div class="text-[10px] text-sc-ink3">{String(auditItem.event || auditItem.action || '--')}</div>
+									<div class="text-[10px] text-sc-ink3 mt-0.5">{formatTimestamp(auditItem.timestamp || auditItem.created_at)}</div>
 									{#if auditItem.reason}
-										<div class="text-[10px] text-gray-400 mt-1">{String(auditItem.reason)}</div>
+										<div class="text-[10px] text-sc-ink2 mt-1">{String(auditItem.reason)}</div>
 									{/if}
 								</div>
 							{/each}
@@ -348,18 +348,18 @@
 
 				<div>
 					<div class="flex items-center justify-between">
-						<div class="text-[10px] uppercase tracking-wider text-gray-500">Tool Calls</div>
-						<div class="text-[10px] text-gray-600">{selectedTaskToolCalls.length}</div>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Tool Calls</div>
+						<div class="text-[10px] text-sc-ink3">{selectedTaskToolCalls.length}</div>
 					</div>
 					{#if selectedTaskToolCalls.length === 0}
-						<div class="mt-1 text-xs text-gray-500">No tool calls recorded.</div>
+						<div class="mt-1 text-xs text-sc-ink3">No tool calls recorded.</div>
 					{:else}
 						<div class="mt-2 space-y-1.5 max-h-[170px] overflow-y-auto">
 							{#each selectedTaskToolCalls as toolCall}
-								<div class="border border-[#2b2b2b] rounded p-2">
-									<div class="text-xs text-gray-200">{String(toolCall.tool_name || toolCall.tool || '--')}</div>
-									<div class="text-[10px] text-gray-600 mt-0.5">{formatTimestamp(toolCall.started_at || toolCall.created_at)}</div>
-									<div class="text-[10px] text-gray-500 mt-0.5">Duration: {String(toolCall.duration_ms ?? '--')} ms</div>
+								<div class="border border-sc-line2 rounded p-2">
+									<div class="text-xs text-sc-ink">{String(toolCall.tool_name || toolCall.tool || '--')}</div>
+									<div class="text-[10px] text-sc-ink3 mt-0.5">{formatTimestamp(toolCall.started_at || toolCall.created_at)}</div>
+									<div class="text-[10px] text-sc-ink3 mt-0.5">Duration: {String(toolCall.duration_ms ?? '--')} ms</div>
 									{#if toolCall.error}
 										<div class="text-[10px] text-red-400 mt-1">{String(toolCall.error)}</div>
 									{/if}
@@ -370,32 +370,32 @@
 				</div>
 
 				<div>
-					<div class="text-[10px] uppercase tracking-wider text-gray-500">Raw Task Payload</div>
-					<pre class="mt-1 max-h-[200px] overflow-auto bg-black/40 border border-[#2b2b2b] rounded p-2 text-[10px] text-gray-300 whitespace-pre-wrap break-words">{formatTaskValue(selectedTaskDetail)}</pre>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Raw Task Payload</div>
+					<pre class="mt-1 max-h-[200px] overflow-auto bg-sc-bg/40 border border-sc-line2 rounded p-2 text-[10px] text-sc-ink2 whitespace-pre-wrap break-words">{formatTaskValue(selectedTaskDetail)}</pre>
 				</div>
 			{/if}
 		</div>
 	{/if}
 
-	<div class="border border-[#262626] bg-[#111] rounded p-3">
-		<div class="text-[10px] uppercase tracking-wider text-gray-500">Audit Timeline</div>
+	<div class="border border-sc-line bg-sc-panel2 rounded p-3">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Audit Timeline</div>
 		{#if drawerLoading}
-			<div class="mt-2 text-xs text-gray-500 animate-pulse">Loading audit trail...</div>
+			<div class="mt-2 text-xs text-sc-ink3 animate-pulse">Loading audit trail...</div>
 		{:else if selectedAudit.merged.length === 0}
-			<div class="mt-2 text-xs text-gray-500">No audit events yet.</div>
+			<div class="mt-2 text-xs text-sc-ink3">No audit events yet.</div>
 		{:else}
 			<div class="mt-2 space-y-2 max-h-[320px] overflow-y-auto">
 				{#each selectedAudit.merged as item}
-					<div class="border border-[#2b2b2b] rounded p-2">
-						<div class="text-[10px] text-gray-500">
+					<div class="border border-sc-line2 rounded p-2">
+						<div class="text-[10px] text-sc-ink3">
 							{String(item.timestamp || item.created_at || '--')}
 						</div>
-						<div class="text-xs text-gray-200 mt-0.5">
+						<div class="text-xs text-sc-ink mt-0.5">
 							{String(item.event || 'transition')}:
 							{String(item.from || item.from_state || '--')} → {String(item.to || item.to_state || '--')}
 						</div>
 						{#if item.reason}
-							<div class="text-[10px] text-gray-500 mt-1">{String(item.reason)}</div>
+							<div class="text-[10px] text-sc-ink3 mt-1">{String(item.reason)}</div>
 						{/if}
 					</div>
 				{/each}

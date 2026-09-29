@@ -65,7 +65,7 @@
 	>
 		<div class="flex items-center gap-2 px-4 py-1.5">
 			<span
-				class="border border-red-900 bg-red-500/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-widest text-red-400"
+				class="border border-red-900 bg-red-500/10 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400"
 			>
 				Critical
 			</span>
@@ -82,7 +82,7 @@
 			{#if restCount > 0}
 				<button
 					type="button"
-					class="ml-auto px-2 py-0.5 border border-red-900 text-red-400 hover:bg-red-500/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 whitespace-nowrap"
+					class="rounded-md ml-auto px-2 py-0.5 border border-red-900 text-red-400 hover:bg-red-500/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 whitespace-nowrap"
 					on:click={() => (expanded = !expanded)}
 					aria-expanded={expanded}
 					data-testid="critical-alerts-toggle"

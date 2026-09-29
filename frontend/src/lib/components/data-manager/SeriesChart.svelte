@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	// The series chart: the full history, downsampled by the server, that loads
 	// finer bars as you zoom in and more bars as you pan, down to the raw bars.
 	// Gaps are marked on the bar before them. Streams draw their first column
@@ -160,11 +161,11 @@
 		chart = createChart(el, {
 			width: el.clientWidth,
 			height: el.clientHeight,
-			layout: { background: { color: '#000000' }, textColor: '#666', fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: 10 },
-			grid: { vertLines: { color: '#0d0d0d' }, horzLines: { color: '#0d0d0d' } },
+			layout: { background: { color: CHART_THEME.background }, textColor: CHART_THEME.text, fontFamily: CHART_THEME.fontFamily, fontSize: 10 },
+			grid: { vertLines: { color: CHART_THEME.grid }, horzLines: { color: CHART_THEME.grid } },
 			crosshair: { mode: CrosshairMode.Normal },
-			rightPriceScale: { borderColor: '#1a1a1a' },
-			timeScale: { borderColor: '#1a1a1a', timeVisible: true, secondsVisible: false },
+			rightPriceScale: { borderColor: CHART_THEME.border },
+			timeScale: { borderColor: CHART_THEME.border, timeVisible: true, secondsVisible: false },
 			localization: { timeFormatter: (t: Time) => iso(Number(t)).slice(0, 16).replace('T', ' ') },
 			handleScroll: { vertTouchDrag: false },
 		});
@@ -214,11 +215,11 @@
 
 <div class="relative h-full w-full">
 	<div bind:this={el} class="h-full w-full" data-testid="series-chart"></div>
-	{#if legend}<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate font-mono text-[10px] text-[#8a8a8a]">{legend}</div>{/if}
-	{#if status.loading}<div class="pointer-events-none absolute right-16 top-1.5 z-10 text-[10px] uppercase tracking-wider text-[#666]">Loading…</div>{/if}
+	{#if legend}<div class="pointer-events-none absolute left-2 top-1.5 z-10 truncate font-mono text-[10px] text-sc-ink2">{legend}</div>{/if}
+	{#if status.loading}<div class="pointer-events-none absolute right-16 top-1.5 z-10 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Loading…</div>{/if}
 	{#if status.error && !times.length}
 		<div class="absolute inset-0 flex items-center justify-center text-[12px] text-red-400">Could not load the chart: {status.error}</div>
 	{:else if !status.loading && !times.length}
-		<div class="absolute inset-0 flex items-center justify-center text-[12px] text-[#555]">No bars in this range.</div>
+		<div class="absolute inset-0 flex items-center justify-center text-[12px] text-sc-ink3">No bars in this range.</div>
 	{/if}
 </div>

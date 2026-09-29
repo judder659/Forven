@@ -74,17 +74,17 @@
 
 <section class="border border-red-900/70 bg-[#070303]" aria-labelledby="dm-delete-title" data-testid="delete-review">
 	<header class="flex items-center gap-2 border-b border-red-950 px-3 py-1.5">
-		<h3 id="dm-delete-title" class="text-[11px] font-bold uppercase tracking-wider text-red-300">Delete {plural(series.length, 'series', 'series')}</h3>
-		<span class="text-[10px] text-[#888]">
+		<h3 id="dm-delete-title" class="text-[13px] font-semibold text-red-300">Delete {plural(series.length, 'series', 'series')}</h3>
+		<span class="text-[10px] text-sc-ink2">
 			moves {series.length === 1 ? 'it' : 'them'} to the trash{retention ? ` for ${retention} days` : ''}; restore from Storage until then
 		</span>
-		<button type="button" on:click={() => dispatch('cancel')} aria-label="Close delete review" class="ml-auto px-1 text-[#666] hover:text-white">✕</button>
+		<button type="button" on:click={() => dispatch('cancel')} aria-label="Close delete review" class="ml-auto px-1 text-sc-ink3 hover:text-sc-ink">✕</button>
 	</header>
 	<div class="space-y-2 p-3">
 		{#if status === 'loading'}
-			<p class="text-[11px] text-[#888]" aria-busy="true">Checking what reads {series.length === 1 ? 'this series' : 'these series'}…</p>
+			<p class="text-[11px] text-sc-ink2" aria-busy="true">Checking what reads {series.length === 1 ? 'this series' : 'these series'}…</p>
 		{:else if status === 'unavailable'}
-			<p class="text-[12px] text-[#aaa]" role="status">
+			<p class="text-[12px] text-sc-ink2" role="status">
 				Safe delete is not available on this backend yet (<span class="font-mono text-[11px]">GET /api/data/delete/check</span>). Nothing was deleted.
 			</p>
 		{:else if status === 'error'}
@@ -92,25 +92,25 @@
 		{:else}
 			<div class="max-h-56 space-y-1 overflow-y-auto pr-1">
 				{#each checks as item (item.name)}
-					<div class="border-l-2 py-0.5 pl-2 text-[11px] {item.check?.blocking ? 'border-red-500' : 'border-[#333]'}">
+					<div class="border-l-2 py-0.5 pl-2 text-[11px] {item.check?.blocking ? 'border-red-500' : 'border-sc-line2'}">
 						<div class="flex flex-wrap items-baseline gap-x-2">
-							<span class="font-bold text-white">{item.name}</span>
+							<span class="font-bold text-sc-ink">{item.name}</span>
 							{#if item.check}
-								<span class="font-mono text-[10px] text-[#888]">{formatCount(item.check.rows)} rows · {formatBytes(item.check.bytes)}</span>
-								{#if item.check.blocking}<span class="text-[9px] font-bold uppercase tracking-wider text-red-400">in use</span>{/if}
-								{#if !item.check.exists}<span class="text-[10px] text-[#888]">nothing stored</span>{/if}
+								<span class="font-mono text-[10px] text-sc-ink2">{formatCount(item.check.rows)} rows · {formatBytes(item.check.bytes)}</span>
+								{#if item.check.blocking}<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">in use</span>{/if}
+								{#if !item.check.exists}<span class="text-[10px] text-sc-ink2">nothing stored</span>{/if}
 							{:else}
 								<span class="text-[10px] text-red-400">check failed: {item.error}</span>
 							{/if}
 						</div>
 						{#if item.check?.consumers.length}
-							<div class="text-[10px] text-[#aaa]">Read by {item.check.consumers.map((c) => `${c.id} ${c.name}${c.stage ? ` (${c.stage})` : c.status ? ` (${c.status})` : ''}`).join(', ')}</div>
+							<div class="text-[10px] text-sc-ink2">Read by {item.check.consumers.map((c) => `${c.id} ${c.name}${c.stage ? ` (${c.stage})` : c.status ? ` (${c.status})` : ''}`).join(', ')}</div>
 						{/if}
 						{#each item.check?.warnings ?? [] as warning}<div class="text-[10px] text-amber-400">{warning}</div>{/each}
 					</div>
 				{/each}
 			</div>
-			<p class="text-[11px] text-[#aaa]">
+			<p class="text-[11px] text-sc-ink2">
 				Total: {formatCount(rows)} rows, {formatBytes(bytes)}.
 				{#if comingBack.length && !ready.some((c) => c.check?.warnings.length)}<span class="text-amber-400">{comingBack.length === series.length ? (series.length === 1 ? 'It' : 'All of them') : plural(comingBack.length, 'series', 'series')} will be downloaded again by the collector, because a strategy or the research universe needs {comingBack.length === 1 ? 'it' : 'them'}.</span>{/if}
 			</p>
@@ -129,7 +129,7 @@
 		{/if}
 		{#if status !== 'ready' || (blocking.length && !override)}
 			<div class="flex justify-end">
-				<button type="button" class="terminal-button text-[10px]" on:click={() => dispatch('cancel')}>Cancel</button>
+				<button type="button" class="terminal-button text-[12px]" on:click={() => dispatch('cancel')}>Cancel</button>
 			</div>
 		{/if}
 	</div>

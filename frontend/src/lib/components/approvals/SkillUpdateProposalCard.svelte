@@ -161,8 +161,8 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		padding: 0.75rem;
-		border: 1px solid #1f1f1f;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.card-header {
@@ -176,14 +176,14 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.card-title {
-		font-family: ui-monospace, monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: #fff;
+		color: #eef1f5;
 		margin-top: 0.125rem;
 	}
 
@@ -192,14 +192,14 @@
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
 		padding: 0.2rem 0.55rem;
-		border: 1px solid #333;
+		border: 1px solid #2a2f38;
 		background: transparent;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.version-pill--loading {
-		color: #888;
-		border-color: #2a2a2a;
+		color: #aab1bc;
+		border-color: #2a2f38;
 		background: transparent;
 	}
 
@@ -222,7 +222,7 @@
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #888;
+		color: #aab1bc;
 		font-weight: 600;
 	}
 
@@ -234,10 +234,10 @@
 
 	.diff-cell {
 		padding: 0.5rem;
-		border: 1px solid #1f1f1f;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 		font-size: 0.8rem;
-		color: #ccc;
+		color: #eef1f5;
 	}
 
 	.diff-cell p {
@@ -249,7 +249,7 @@
 		font-size: 0.5625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.18em;
-		color: #666;
+		color: #747c88;
 		margin-bottom: 0.25rem;
 	}
 
@@ -298,9 +298,9 @@
 	.meta-table th {
 		text-align: left;
 		font-weight: 600;
-		color: #888;
+		color: #aab1bc;
 		padding: 0.3rem 0.5rem;
-		border-bottom: 1px solid #1f1f1f;
+		border-bottom: 1px solid #1c2026;
 		font-size: 0.625rem;
 		text-transform: uppercase;
 		letter-spacing: 0.14em;
@@ -308,17 +308,17 @@
 
 	.meta-table td {
 		padding: 0.3rem 0.5rem;
-		border-bottom: 1px solid #141414;
-		color: #ccc;
+		border-bottom: 1px solid #1c2026;
+		color: #eef1f5;
 	}
 
 	.meta-key {
-		font-family: ui-monospace, monospace;
-		color: #fff;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		color: #eef1f5;
 	}
 
 	.meta-old {
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.meta-new {
@@ -327,7 +327,7 @@
 
 	.hint {
 		font-size: 0.6875rem;
-		color: #666;
+		color: #747c88;
 		margin: 0.25rem 0 0;
 		line-height: 1.4;
 	}

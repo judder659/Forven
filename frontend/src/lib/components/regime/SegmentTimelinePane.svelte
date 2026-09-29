@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	import { onDestroy, onMount } from 'svelte';
 	import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 	import type { LabRegimeTimelinePricePoint, LabRegimeTimelineSegment } from '$lib/api';
@@ -13,7 +14,7 @@
 	let resizeObserver: ResizeObserver | null = null;
 
 	function segmentColor(regime: string): string {
-		return regimeSwatchClass(regime) || 'bg-[#555]';
+		return regimeSwatchClass(regime) || 'bg-sc-line2';
 	}
 
 	function parseTimestamp(timestamp: string): UTCTimestamp | null {
@@ -45,13 +46,13 @@
 		const { createChart, ColorType, CrosshairMode } = await import('lightweight-charts');
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: 'transparent' },
-				textColor: '#888888',
-				fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+				background: { type: ColorType.Solid, color: CHART_THEME.background },
+				textColor: CHART_THEME.text,
+				fontFamily: CHART_THEME.fontFamily,
 			},
 			grid: {
 				vertLines: { visible: false },
-				horzLines: { color: 'rgba(34, 34, 34, 0.9)' },
+				horzLines: { color: CHART_THEME.grid },
 			},
 			width: chartContainer.clientWidth,
 			height: chartContainer.clientHeight,
@@ -116,8 +117,8 @@
 	});
 </script>
 
-<div class="mt-3 border border-[#222] bg-[#050505] p-2">
-	<div class="relative h-28 overflow-hidden border border-[#1a1a1a] bg-black">
+<div class="rounded-md mt-3 border border-sc-line bg-sc-panel p-2">
+	<div class="rounded-md relative h-28 overflow-hidden border border-sc-line bg-sc-bg">
 		<div class="pointer-events-none absolute inset-0 flex overflow-hidden">
 			{#each segments as segment}
 				<div
@@ -127,9 +128,9 @@
 				></div>
 			{/each}
 		</div>
-		<div class="pointer-events-none absolute inset-x-0 top-1/2 border-t border-dashed border-[#333]"></div>
+		<div class="pointer-events-none absolute inset-x-0 top-1/2 border-t border-dashed border-sc-line2"></div>
 		<div class="absolute inset-x-0 top-0 bottom-4" bind:this={chartContainer}></div>
-		<div class="pointer-events-none absolute inset-x-0 bottom-0 flex h-4 overflow-hidden border-t border-[#1a1a1a]">
+		<div class="pointer-events-none absolute inset-x-0 bottom-0 flex h-4 overflow-hidden border-t border-sc-line">
 			{#each segments as segment}
 				<div
 					class={`h-full ${segmentColor(segment.display_regime || segment.regime)} ${Number(segment.uncertain_share ?? 0) > 0 ? 'opacity-95' : 'opacity-90'}`}
@@ -138,18 +139,18 @@
 			{/each}
 		</div>
 		{#if pricePoints.length === 0}
-			<div class="absolute inset-0 flex items-center justify-center bg-black/55 text-xs text-[#666]">
+			<div class="absolute inset-0 flex items-center justify-center bg-sc-bg/55 text-xs text-sc-ink3">
 				Price overlay unavailable for this snapshot.
 			</div>
 		{/if}
 	</div>
-	<div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#666]">
+	<div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-sc-ink3">
 		<div class="flex items-center gap-2">
-			<span class="h-[2px] w-6 bg-white"></span>
+			<span class="h-[2px] w-6 bg-sc-ink"></span>
 			<span>Close</span>
 		</div>
 		<div class="flex items-center gap-2">
-			<span class="h-2 w-2 bg-[#888]"></span>
+			<span class="h-2 w-2 bg-sc-ink3"></span>
 			<span>Classifier segment background</span>
 		</div>
 	</div>

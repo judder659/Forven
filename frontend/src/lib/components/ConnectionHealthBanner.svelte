@@ -119,7 +119,7 @@
 		<div class="flex items-center gap-2 shrink-0">
 			<button
 				type="button"
-				class="text-[11px] border px-2.5 py-1 transition-colors {showCritical
+				class="rounded-md text-[11px] border px-2.5 py-1 transition-colors {showCritical
 					? 'border-red-900 text-red-400 hover:bg-red-500/10'
 					: 'border-yellow-900 text-yellow-400 hover:bg-yellow-500/10'}"
 				on:click={openHealth}
@@ -129,7 +129,7 @@
 			{#if showWarning}
 				<button
 					type="button"
-					class="text-[11px] text-[#666] hover:text-white px-2 transition-colors"
+					class="text-[11px] text-sc-ink3 hover:text-sc-ink px-2 transition-colors"
 					on:click={handleDismiss}
 					aria-label="Dismiss"
 				>

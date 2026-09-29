@@ -293,7 +293,7 @@
 
 	.loading,
 	.empty {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.875rem;
 	}
 
@@ -324,21 +324,21 @@
 		display: flex;
 		gap: 1.5rem;
 		flex-wrap: wrap;
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.8125rem;
 	}
 
 	.meta strong {
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	textarea {
 		width: 100%;
-		background: #050505;
-		border: 1px solid #333;
+		background: #0c0e11;
+		border: 1px solid #2a2f38;
 		border-radius: 0;
-		color: #e5e5e5;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		color: #eef1f5;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.875rem;
 		padding: 0.75rem;
 		resize: vertical;
@@ -346,7 +346,7 @@
 
 	textarea:focus {
 		outline: none;
-		border-color: #fff;
+		border-color: #eef1f5;
 	}
 
 	.bar-row {
@@ -358,7 +358,7 @@
 	.bar-track {
 		flex: 1;
 		height: 6px;
-		background: #1a1a1a;
+		background: #181c23;
 		border-radius: 0;
 		overflow: hidden;
 	}
@@ -382,7 +382,7 @@
 
 	.counter {
 		font-size: 0.8125rem;
-		color: #888;
+		color: #aab1bc;
 		min-width: 80px;
 		text-align: right;
 	}
@@ -399,9 +399,9 @@
 	}
 
 	.actions button {
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #ddd;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 0.5rem 1rem;
 		border-radius: 0;
 		cursor: pointer;
@@ -409,7 +409,7 @@
 	}
 
 	.actions button:hover:not(:disabled) {
-		background: #222;
+		background: #181c23;
 	}
 
 	.actions button:disabled {
@@ -419,8 +419,8 @@
 
 	.actions .primary {
 		background: #fff;
-		border-color: #fff;
-		color: #000;
+		border-color: #eef1f5;
+		color: #4b525c;
 	}
 
 	.actions .primary:hover:not(:disabled) {
@@ -428,22 +428,22 @@
 	}
 
 	.viewer pre {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.875rem;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.875rem;
 		white-space: pre-wrap;
 		word-wrap: break-word;
-		color: #e5e5e5;
+		color: #eef1f5;
 	}
 
 	.history h2 {
 		font-size: 1rem;
 		font-weight: 600;
 		margin: 0 0 0.5rem;
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	.history ul {
@@ -456,8 +456,8 @@
 	}
 
 	.history li {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.625rem 0.75rem;
 	}
@@ -467,7 +467,7 @@
 		gap: 0.75rem;
 		align-items: center;
 		font-size: 0.8125rem;
-		color: #888;
+		color: #aab1bc;
 		margin-bottom: 0.5rem;
 	}
 
@@ -480,8 +480,8 @@
 	}
 
 	.mutation-replace {
-		background: #1a1a1a;
-		color: #888;
+		background: #181c23;
+		color: #aab1bc;
 	}
 
 	.mutation-add {
@@ -495,7 +495,7 @@
 	}
 
 	.who {
-		color: #ccc;
+		color: #eef1f5;
 	}
 
 	.diff {
@@ -505,8 +505,8 @@
 	}
 
 	.excerpt {
-		background: #050505;
-		border: 1px solid #1a1a1a;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.375rem;
 	}
@@ -516,15 +516,15 @@
 		font-size: 0.6875rem;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: #666;
+		color: #747c88;
 		margin-bottom: 0.25rem;
 	}
 
 	.excerpt pre {
 		margin: 0;
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 0.75rem;
-		color: #ccc;
+		color: #eef1f5;
 		white-space: pre-wrap;
 		word-wrap: break-word;
 	}
@@ -544,8 +544,8 @@
 		top: 50%;
 		left: 50%;
 		transform: translate(-50%, -50%);
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 1.25rem;
 		max-width: 420px;
@@ -556,7 +556,7 @@
 
 	.confirm-dialog p {
 		margin: 0 0 1rem;
-		color: #e5e5e5;
+		color: #eef1f5;
 		font-size: 0.9375rem;
 		line-height: 1.5;
 	}
@@ -568,9 +568,9 @@
 	}
 
 	.confirm-actions button {
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #ddd;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 0.5rem 1rem;
 		border-radius: 0;
 		cursor: pointer;
@@ -578,13 +578,13 @@
 	}
 
 	.confirm-actions button:hover {
-		background: #222;
+		background: #181c23;
 	}
 
 	.confirm-actions .primary {
 		background: #fff;
-		border-color: #fff;
-		color: #000;
+		border-color: #eef1f5;
+		color: #4b525c;
 	}
 
 	.confirm-actions .primary:hover {
@@ -595,9 +595,9 @@
 		position: fixed;
 		bottom: 1.5rem;
 		right: 1.5rem;
-		background: #050505;
-		border: 1px solid #222;
-		color: #e5e5e5;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
+		color: #eef1f5;
 		padding: 0.75rem 1rem;
 		border-radius: 0;
 		font-size: 0.875rem;

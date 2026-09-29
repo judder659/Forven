@@ -100,81 +100,81 @@
 
 <div class="space-y-3">
 	<div class="flex flex-wrap items-center gap-2 text-[11px]">
-		<span class="text-[9px] uppercase tracking-wider text-[#555]">Markets</span>
+		<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Markets</span>
 		{#each symbols as symbol (symbol)}
-			<span class="inline-flex items-center gap-1 border border-[#2a2a2a] px-1.5 py-0.5 font-mono text-[11px] text-[#ddd]">
+			<span class="inline-flex items-center gap-1 border border-sc-line2 px-1.5 py-0.5 font-mono text-[11px] text-sc-ink">
 				{symbol}
-				<button type="button" on:click={() => (symbols = symbols.filter((s) => s !== symbol))} aria-label={`remove ${symbol}`} class="text-[#555] hover:text-red-400">×</button>
+				<button type="button" on:click={() => (symbols = symbols.filter((s) => s !== symbol))} aria-label={`remove ${symbol}`} class="text-sc-ink3 hover:text-red-400">×</button>
 			</span>
 		{/each}
 		<form class="inline-flex" on:submit|preventDefault={addSymbol}>
 			<input bind:value={adding} list="market-grid-symbols" placeholder="add…" aria-label="add market"
-				class="w-24 border border-[#2a2a2a] bg-black px-1.5 py-0.5 font-mono text-[11px] text-white outline-none focus:border-white" />
+				class="rounded-md w-24 border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-mono text-[11px] text-sc-ink outline-none focus:border-sc-ink" />
 			<datalist id="market-grid-symbols">{#each symbolOptions as option}<option value={option}></option>{/each}</datalist>
 		</form>
 	</div>
 	<div class="flex flex-wrap items-center gap-2 text-[11px]">
-		<span class="text-[9px] uppercase tracking-wider text-[#555]">Timeframes</span>
+		<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Timeframes</span>
 		<div class="inline-flex" role="group" aria-label="grid timeframes">
 			{#each TIMEFRAMES as tf}
 				<button type="button" on:click={() => toggleTimeframe(tf)} aria-pressed={timeframes.includes(tf)}
-					class="-ml-px border px-2 py-0.5 font-mono text-[11px] first:ml-0 {timeframes.includes(tf) ? 'relative border-white bg-white text-black' : 'border-[#2a2a2a] text-[#777] hover:text-white'}">{tf}</button>
+					class="rounded-md -ml-px border px-2 py-0.5 font-mono text-[11px] first:ml-0 {timeframes.includes(tf) ? 'relative border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}">{tf}</button>
 			{/each}
 		</div>
 		{#if view?.status === 'running'}
-			<button type="button" on:click={() => dispatch('cancel')} class="terminal-button text-[10px]">Cancel</button>
+			<button type="button" on:click={() => dispatch('cancel')} class="terminal-button text-[12px]">Cancel</button>
 		{:else}
 			<button type="button" on:click={() => dispatch('run', { symbols, timeframes })} disabled={!canRun || !count || count > MAX_MARKETS || !availability}
-				class="terminal-button-primary text-[10px] disabled:opacity-40">{view ? 'Compare again' : 'Compare markets'}</button>
+				class="terminal-button-primary text-[12px] disabled:opacity-40">{view ? 'Compare again' : 'Compare markets'}</button>
 		{/if}
-		<span class="text-[10px] {count > MAX_MARKETS ? 'text-amber-400' : 'text-[#555]'}">
+		<span class="text-[10px] {count > MAX_MARKETS ? 'text-amber-400' : 'text-sc-ink3'}">
 			{count} market{count === 1 ? '' : 's'}{count > MAX_MARKETS ? ` (at most ${MAX_MARKETS})` : ''}{missing ? ` · ${missing} without local data` : ''}
 		</span>
 	</div>
 
 	{#if !availability}
-		<div class="px-1 py-4 text-center text-[12px] text-[#555]">Reading which markets have local data…</div>
+		<div class="px-1 py-4 text-center text-[12px] text-sc-ink3">Reading which markets have local data…</div>
 	{:else if !view}
-		<div class="border border-dashed border-[#262626] px-3 py-6 text-center text-[12px] text-[#555]">
+		<div class="border border-dashed border-sc-line px-3 py-6 text-center text-[12px] text-sc-ink3">
 			Run the same rules on other markets and timeframes. An edge that only works where it was built is often fitted to that market.
 		</div>
 	{:else}
 		{#if stale}
-			<div class="border border-[#333] bg-[#111] px-3 py-1.5 text-[11px] text-[#999]" role="status">
+			<div class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[11px] text-sc-ink2" role="status">
 				The rules or settings changed since this comparison. Run it again to check the current version.
 			</div>
 		{/if}
 		{#each view.warnings as warning}
 			<div class="border border-amber-900 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400">{warning}</div>
 		{/each}
-		<div class="flex flex-wrap items-center gap-3 text-[10px] text-[#666]">
+		<div class="flex flex-wrap items-center gap-3 text-[10px] text-sc-ink3">
 			<div class="inline-flex" role="group" aria-label="market metric">
 				{#each METRICS as [key, label]}
 					<button type="button" on:click={() => (metric = key)} aria-pressed={metric === key}
-						class="-ml-px border px-2 py-0.5 first:ml-0 {metric === key ? 'relative border-white bg-white text-black' : 'border-[#2a2a2a] text-[#777] hover:text-white'}">{label}</button>
+						class="rounded-md -ml-px border px-2 py-0.5 first:ml-0 {metric === key ? 'relative border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}">{label}</button>
 				{/each}
 			</div>
-			{#if view.status === 'running'}<span class="text-white">Running… {view.done} of {view.total}</span>{/if}
+			{#if view.status === 'running'}<span class="text-sc-ink">Running… {view.done} of {view.total}</span>{/if}
 			{#if view.status === 'cancelled'}<span>Stopped at {view.done} of {view.total}</span>{/if}
-			<span class="ml-auto"><span class="border border-white px-1 text-white">▢</span> the preview's market</span>
+			<span class="ml-auto"><span class="border border-sc-ink px-1 text-sc-ink">▢</span> the preview's market</span>
 		</div>
 		<div class="overflow-x-auto {stale ? 'opacity-60' : ''}" data-testid="market-grid">
 			<div class="grid min-w-[320px] gap-px" style="grid-template-columns: auto repeat({view.timeframes.length}, minmax(64px, 1fr))">
 				<div></div>
-				{#each view.timeframes as tf}<div class="pb-1 text-center font-mono text-[10px] text-[#888]">{tf}</div>{/each}
+				{#each view.timeframes as tf}<div class="pb-1 text-center font-mono text-[10px] text-sc-ink2">{tf}</div>{/each}
 				{#each view.symbols as symbol}
-					<div class="flex items-center justify-end pr-2 font-mono text-[11px] text-[#aaa]">{symbol}</div>
+					<div class="flex items-center justify-end pr-2 font-mono text-[11px] text-sc-ink2">{symbol}</div>
 					{#each view.timeframes as tf}
 						{@const row = view.rows[marketKey(symbol, tf)]}
 						<button type="button" title={title(row, symbol, tf)} disabled={!row || row.status === 'no_data'}
 							on:click={() => dispatch('pick', { symbol, timeframe: tf })}
 							style={shade(row)}
 							class="flex h-11 flex-col items-center justify-center font-mono text-[11px] transition-colors
-								{!row ? 'animate-pulse bg-[#0d0d0d]' : row.status === 'ok' ? 'text-white hover:brightness-150' : 'bg-[#0b0b0b] text-[#555]'}
+								{!row ? 'animate-pulse bg-sc-panel2' : row.status === 'ok' ? 'text-sc-ink hover:brightness-150' : 'bg-sc-panel text-sc-ink3'}
 								{isCurrent(symbol, tf) ? 'outline outline-2 -outline-offset-2 outline-white' : ''}">
 							{#if row?.status === 'ok'}
 								<span>{metric === 'trades' ? row.out_of_sample?.trades ?? 0 : pct(metricOf(row) ?? 0)}</span>
-								{#if metric !== 'trades'}<span class="text-[9px] text-white/60">{row.out_of_sample?.trades ?? 0} tr</span>{/if}
+								{#if metric !== 'trades'}<span class="text-[9px] text-sc-ink/60">{row.out_of_sample?.trades ?? 0} tr</span>{/if}
 							{:else if row?.status === 'no_data'}
 								<span class="text-[10px]">no data</span>
 							{:else if row}
@@ -187,11 +187,11 @@
 		</div>
 		{#if verdict}
 			<div class="flex items-baseline gap-2 text-[12px]" data-testid="market-verdict">
-				<span class="border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider
-					{verdict.status === 'broad' ? 'border-emerald-700 text-emerald-400' : verdict.status === 'narrow' ? 'border-amber-700 text-amber-400' : verdict.status === 'none' ? 'border-red-800 text-red-400' : 'border-[#333] text-[#888]'}">{verdict.status}</span>
-				<span class="text-[#ccc]">{verdict.text}</span>
+				<span class="border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]
+					{verdict.status === 'broad' ? 'border-emerald-700 text-emerald-400' : verdict.status === 'narrow' ? 'border-amber-700 text-amber-400' : verdict.status === 'none' ? 'border-red-800 text-red-400' : 'border-sc-line2 text-sc-ink2'}">{verdict.status}</span>
+				<span class="text-sc-ink">{verdict.text}</span>
 			</div>
 		{/if}
-		<p class="text-[10px] text-[#555]">{note}</p>
+		<p class="text-[10px] text-sc-ink3">{note}</p>
 	{/if}
 </div>

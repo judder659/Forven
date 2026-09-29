@@ -24,7 +24,7 @@
 		good: 'bg-emerald-400',
 		fair: 'bg-yellow-400',
 		poor: 'bg-red-400',
-		unknown: 'bg-[#444]'
+		unknown: 'bg-sc-line2'
 	};
 
 	const ratingTextColors: Record<string, string> = {
@@ -32,7 +32,7 @@
 		good: 'text-emerald-400',
 		fair: 'text-yellow-400',
 		poor: 'text-red-400',
-		unknown: 'text-[#666]'
+		unknown: 'text-sc-ink3'
 	};
 
 	const deploymentColors: Record<string, { bg: string; border: string; text: string }> = {
@@ -144,30 +144,30 @@
 
 			<!-- Verdict Text -->
 			<div class="flex-1 min-w-0">
-				<h2 class="text-xl font-bold uppercase tracking-widest text-white">Strategy Analysis</h2>
-				<p class="text-[#888] text-sm mt-0.5">
+				<h2 class="text-[14px] font-semibold text-sc-ink">Strategy Analysis</h2>
+				<p class="text-sc-ink2 text-sm mt-0.5">
 					{scorecard.strategy_name || 'Unknown Strategy'}
 					{#if scorecard.symbol}
-						<span class="text-[#666]">on {scorecard.symbol}</span>
+						<span class="text-sc-ink3">on {scorecard.symbol}</span>
 					{/if}
 					{#if scorecard.timeframe}
-						<span class="text-[#666]">({scorecard.timeframe})</span>
+						<span class="text-sc-ink3">({scorecard.timeframe})</span>
 					{/if}
 				</p>
 				<p class="text-sm mt-1">
 					<span class="{gradeColors[scorecard.grade]} font-semibold">{scorecard.verdict}</span>
-					<span class="text-[#666] ml-1">— {scorecard.total_score}/{scorecard.max_score} pts</span>
+					<span class="text-sc-ink3 ml-1">— {scorecard.total_score}/{scorecard.max_score} pts</span>
 				</p>
 			</div>
 
 			<!-- Deployment Badge -->
 			<div class="flex-shrink-0">
 				<div class="px-3 py-1.5 border {deploymentStyle.bg} {deploymentStyle.border}">
-					<span class="text-xs font-bold uppercase tracking-widest {deploymentStyle.text}">
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {deploymentStyle.text}">
 						{deploymentLabels[scorecard.deployment_verdict]}
 					</span>
 				</div>
-				<div class="text-[10px] text-[#666] mt-1 text-right">
+				<div class="text-[10px] text-sc-ink3 mt-1 text-right">
 					Tests: {scorecard.tests_included.join(', ')}
 				</div>
 			</div>
@@ -177,8 +177,8 @@
 	<!-- Executive Summary -->
 	{#if writeup.executive_summary}
 		<div class="terminal-card p-5">
-			<h3 class="text-[10px] font-bold text-[#888] uppercase tracking-widest mb-3">Executive Summary</h3>
-			<p class="text-sm text-[#888] leading-relaxed">{writeup.executive_summary}</p>
+			<h3 class="text-[13px] font-semibold text-sc-ink2 mb-3">Executive Summary</h3>
+			<p class="text-sm text-sc-ink2 leading-relaxed">{writeup.executive_summary}</p>
 		</div>
 	{/if}
 
@@ -191,11 +191,11 @@
 			<div class="terminal-card p-5">
 				<!-- Section Header with progress bar -->
 				<div class="flex items-center justify-between mb-3">
-					<h3 class="text-[10px] font-bold text-white uppercase tracking-widest">{meta.label}</h3>
+					<h3 class="text-[13px] font-semibold text-sc-ink">{meta.label}</h3>
 					{#if cat}
 						<div class="flex items-center gap-3">
 							<!-- Mini progress bar -->
-								<div class="w-24 h-1.5 bg-[#1a1a1a] overflow-hidden">
+								<div class="w-24 h-1.5 bg-sc-raise overflow-hidden">
 									<div
 										class="h-full {ratingBarColors[cat.rating]}"
 										style="width: {cat.max_score > 0 ? Math.round((cat.score / cat.max_score) * 100) : 0}%"
@@ -204,16 +204,16 @@
 							<span class="text-xs {ratingTextColors[cat.rating]} capitalize font-medium">
 								{cat.rating}
 							</span>
-							<span class="text-xs text-[#666]">{cat.score}/{cat.max_score}</span>
+							<span class="text-xs text-sc-ink3">{cat.score}/{cat.max_score}</span>
 						</div>
 					{/if}
 				</div>
 
 				<!-- Analysis paragraph -->
 				{#if text}
-					<p class="text-sm text-[#888] leading-relaxed">{text}</p>
+					<p class="text-sm text-sc-ink2 leading-relaxed">{text}</p>
 				{:else}
-					<p class="text-sm text-[#666] italic">No analysis data available for this category.</p>
+					<p class="text-sm text-sc-ink3 italic">No analysis data available for this category.</p>
 				{/if}
 			</div>
 		{/if}
@@ -222,8 +222,8 @@
 	<!-- Bottom Line -->
 	{#if writeup.bottom_line}
 		<div class="terminal-card p-5">
-			<h3 class="text-[10px] font-bold text-[#888] uppercase tracking-widest mb-3">Bottom Line</h3>
-			<p class="text-sm text-[#888] leading-relaxed">{writeup.bottom_line}</p>
+			<h3 class="text-[13px] font-semibold text-sc-ink2 mb-3">Bottom Line</h3>
+			<p class="text-sm text-sc-ink2 leading-relaxed">{writeup.bottom_line}</p>
 		</div>
 	{/if}
 
@@ -234,7 +234,7 @@
 				<svg class="w-5 h-5 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
 					<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
 				</svg>
-				<h3 class="text-[10px] font-bold text-red-400 uppercase tracking-widest">
+				<h3 class="text-[13px] font-semibold text-red-400">
 					{scorecard.red_flags.length} Red Flag{scorecard.red_flags.length > 1 ? 's' : ''}
 				</h3>
 			</div>
@@ -249,12 +249,12 @@
 	<!-- Collapsible Metrics Reference -->
 	<div class="terminal-card">
 		<button
-			class="w-full flex items-center justify-between p-4 text-left hover:bg-[#111] transition-colors"
+			class="w-full flex items-center justify-between p-4 text-left hover:bg-sc-panel2 transition-colors"
 			on:click={() => (metricsExpanded = !metricsExpanded)}
 		>
-			<span class="text-[10px] uppercase tracking-widest text-[#888] font-bold">Key Metrics Reference</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2 font-bold">Key Metrics Reference</span>
 			<svg
-				class="w-4 h-4 text-[#666] transition-transform {metricsExpanded ? 'rotate-180' : ''}"
+				class="w-4 h-4 text-sc-ink3 transition-transform {metricsExpanded ? 'rotate-180' : ''}"
 				fill="none" stroke="currentColor" viewBox="0 0 24 24"
 			>
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -266,21 +266,21 @@
 				{#each scorecard.categories as category}
 					<div>
 						<div class="flex items-center justify-between mb-2">
-							<h4 class="text-[10px] font-bold text-[#666] uppercase tracking-wider">{category.name}</h4>
-							<span class="text-xs text-[#666]">{category.score}/{category.max_score}</span>
+							<h4 class="text-[10px] font-bold text-sc-ink3 uppercase tracking-wider">{category.name}</h4>
+							<span class="text-xs text-sc-ink3">{category.score}/{category.max_score}</span>
 						</div>
 						<div class="space-y-1">
 							{#each category.metrics as metric}
 								<div class="flex items-center justify-between text-xs">
 									<div class="flex items-center gap-2">
 										<div class="w-1.5 h-1.5 rounded-full {ratingBarColors[metric.rating]}"></div>
-										<span class="text-[#888]">{metric.name}</span>
+										<span class="text-sc-ink2">{metric.name}</span>
 									</div>
 									<div class="flex items-center gap-2">
 										<span class="{ratingTextColors[metric.rating]} font-mono">
 											{formatMetricValue(metric.value, metric.name)}
 										</span>
-										<span class="text-[#555] w-6 text-right">{metric.score}/{metric.max_score}</span>
+										<span class="text-sc-ink3 w-6 text-right">{metric.score}/{metric.max_score}</span>
 									</div>
 								</div>
 							{/each}

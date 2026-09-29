@@ -90,9 +90,9 @@
 
 {#if !hidden}
 	<div
-		class="fixed bottom-0 inset-x-0 z-40 bg-[#050505] border-t border-[#222] py-3 px-6 flex items-center justify-between"
+		class="fixed bottom-0 inset-x-0 z-40 bg-sc-panel border-t border-sc-line py-3 px-6 flex items-center justify-between"
 	>
-		<span class="text-xs uppercase tracking-wider text-yellow-400"
+		<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400"
 			>{count} unsaved change{count === 1 ? '' : 's'}</span
 		>
 		<div class="flex items-center gap-2">
@@ -101,7 +101,7 @@
 				type="button"
 				on:click={revertAll}
 				disabled={saving}
-				class="terminal-button text-xs"
+				class="terminal-button text-[12px]"
 			>
 				Revert all
 			</button>
@@ -109,7 +109,7 @@
 				type="button"
 				on:click={saveAll}
 				disabled={saving}
-				class="terminal-button-primary text-xs"
+				class="terminal-button-primary text-[12px]"
 			>
 				{saving ? 'Saving…' : 'Save all'}
 			</button>

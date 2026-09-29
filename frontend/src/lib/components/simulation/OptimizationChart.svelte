@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	import { onMount, onDestroy } from 'svelte';
 	import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 
@@ -29,20 +30,21 @@
 
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: '#050505' },
-				textColor: '#888888',
+				background: { type: ColorType.Solid, color: CHART_THEME.background },
+				textColor: CHART_THEME.text,
+				fontFamily: CHART_THEME.fontFamily,
 			},
 			grid: {
-				vertLines: { color: '#1a1a1a' },
-				horzLines: { color: '#1a1a1a' },
+				vertLines: { color: CHART_THEME.grid },
+				horzLines: { color: CHART_THEME.grid },
 			},
 			width: chartContainer.clientWidth,
 			height: height,
 			rightPriceScale: {
-				borderColor: '#222222',
+				borderColor: CHART_THEME.border,
 			},
 			timeScale: {
-				borderColor: '#222222',
+				borderColor: CHART_THEME.border,
 				visible: true,
 				tickMarkFormatter: (time: number) => `#${time}`,
 			},
@@ -144,7 +146,7 @@
 
 <div class="optimization-chart">
 	<div class="chart-header">
-		<span class="text-[10px] text-[#666] uppercase tracking-wider">Trial Performance ({objective})</span>
+		<span class="text-[10px] text-sc-ink3 uppercase tracking-wider">Trial Performance ({objective})</span>
 	</div>
 	<div class="chart-container" style="height: {height}px" bind:this={chartContainer}></div>
 	<div class="legend">
@@ -170,7 +172,7 @@
 		gap: 1.5rem;
 		margin-top: 0.5rem;
 		font-size: 10px;
-		color: #888888;
+		color: #aab1bc;
 	}
 	.legend-item {
 		display: flex;

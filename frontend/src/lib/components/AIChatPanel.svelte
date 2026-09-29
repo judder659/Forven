@@ -319,21 +319,21 @@
 	<!-- Panel: no backdrop — the layout pushes the page content over (padding-right
 	     in +layout.svelte) so the app stays fully usable alongside the chat. -->
 	<div
-		class="fixed top-0 right-0 h-full w-[440px] max-w-[92vw] bg-[#050505] border-l border-[#222] z-[9999] flex flex-col"
+		class="fixed top-0 right-0 h-full w-[440px] max-w-[92vw] bg-sc-panel border-l border-sc-line z-[9999] flex flex-col"
 		transition:fly={{ x: 440, duration: 250 }}
 	>
 		<!-- Header -->
-		<div class="flex items-center justify-between px-4 py-3 border-b border-[#222]">
+		<div class="flex items-center justify-between px-4 py-3 border-b border-sc-line">
 			<div class="flex items-center gap-2 min-w-0">
 				<div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-				<span class="text-sm font-bold text-white uppercase tracking-wider">Forven</span>
+				<span class="text-sm font-bold text-sc-ink uppercase tracking-wider">Forven</span>
 				{#if contextLabel}
-					<span class="text-[10px] text-[#666] uppercase tracking-wider truncate">· {contextLabel}</span>
+					<span class="text-[10px] text-sc-ink3 uppercase tracking-wider truncate">· {contextLabel}</span>
 				{/if}
 			</div>
 			<div class="flex items-center gap-2">
 				<button
-					class="text-[10px] text-[#888] hover:text-white border border-[#333] hover:border-[#555] px-2 py-0.5 transition-colors disabled:opacity-40 uppercase tracking-wider"
+					class="rounded-md text-[12px] text-sc-ink2 hover:text-sc-ink border border-sc-line2 hover:border-sc-line2 px-2 py-0.5 transition-colors disabled:opacity-40"
 					on:click={newThread}
 					disabled={sending}
 					title="Archive this conversation and start fresh"
@@ -341,7 +341,7 @@
 					New
 				</button>
 				<button
-					class="text-[#555] hover:text-white transition-colors"
+					class="text-sc-ink3 hover:text-sc-ink transition-colors"
 					aria-label="Close assistant"
 					title="Close assistant"
 					on:click={closeAssistant}
@@ -356,16 +356,16 @@
 		<!-- Messages -->
 		<div class="flex-1 overflow-y-auto px-4 py-3 space-y-3" bind:this={messagesEl}>
 			{#if loadingHistory && messages.length === 0}
-				<div class="text-center text-[#555] text-xs uppercase tracking-widest mt-8">Opening…</div>
+				<div class="text-center text-sc-ink3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] mt-8">Opening…</div>
 			{:else if messages.length === 0}
-				<div class="text-center text-[#666] text-xs mt-8">
-					<div class="text-lg font-bold uppercase tracking-widest mb-2 text-white">Forven</div>
+				<div class="text-center text-sc-ink3 text-xs mt-8">
+					<div class="text-lg font-bold uppercase tracking-widest mb-2 text-sc-ink">Forven</div>
 					<div>Ask anything, or tell me what to do — I can see {contextLabel || 'this page'}.</div>
 					<div class="mt-4 flex flex-wrap justify-center gap-2">
 						{#each suggestions as suggestion}
 							<button
 								type="button"
-								class="px-2.5 py-1 text-[11px] border border-[#333] bg-[#111] text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-40"
+								class="rounded-md px-2.5 py-1 text-[11px] border border-sc-line2 bg-sc-panel2 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-40"
 								on:click={() => sendChip(suggestion)}
 								disabled={sending}
 							>
@@ -379,13 +379,13 @@
 			{#each messages as msg, idx}
 				<div class="flex flex-col {msg.kind === 'user' ? 'items-end' : 'items-start'}">
 					{#if msg.kind === 'tool'}
-						<div class="max-w-[94%] border border-[#222] bg-[#111] px-3 py-2 font-mono text-[11px] text-[#888] whitespace-pre-wrap">
-							<div class="text-[9px] font-semibold uppercase tracking-[0.18em] text-[#666] mb-0.5">{msg.toolName ?? 'tool'}</div>
+						<div class="rounded-md max-w-[94%] border border-sc-line bg-sc-panel2 px-3 py-2 font-mono text-[11px] text-sc-ink2 whitespace-pre-wrap">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-0.5">{msg.toolName ?? 'tool'}</div>
 							{msg.content && msg.content.length > 700 ? msg.content.slice(0, 700) + '\n…' : msg.content}
 						</div>
 					{:else if msg.kind === 'action'}
-						<div class="max-w-[94%] w-full border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-[#ccc]">
-							<div class="text-[9px] font-semibold uppercase tracking-[0.18em] text-yellow-400 mb-1">Confirm action</div>
+						<div class="max-w-[94%] w-full border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-sc-ink">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-yellow-400 mb-1">Confirm action</div>
 							<div class="mb-2 whitespace-pre-wrap">{msg.summary || msg.content}</div>
 							{#if msg.actionStatus === 'pending'}
 								<div class="flex items-center gap-2">
@@ -403,16 +403,16 @@
 									</button>
 								</div>
 							{:else}
-								<div class="text-[11px] {msg.actionStatus === 'failed' ? 'text-red-400' : msg.actionStatus === 'rejected' ? 'text-[#888]' : 'text-emerald-400'}">
+								<div class="text-[11px] {msg.actionStatus === 'failed' ? 'text-red-400' : msg.actionStatus === 'rejected' ? 'text-sc-ink2' : 'text-emerald-400'}">
 									{actionStatusLabel(msg.actionStatus)}
 								</div>
 							{/if}
 						</div>
 					{:else}
-						<div class="max-w-[88%] px-3 py-2 text-xs {msg.kind === 'user' ? 'bg-white text-black' : msg.kind === 'error' ? 'bg-red-500/5 border border-red-900 text-red-400' : 'bg-[#111] border border-[#222] text-[#888]'}">
+						<div class="max-w-[88%] px-3 py-2 text-xs {msg.kind === 'user' ? 'bg-sc-ink text-black' : msg.kind === 'error' ? 'bg-red-500/5 border border-red-900 text-red-400' : 'bg-sc-panel2 border border-sc-line text-sc-ink2'}">
 							{#if msg.kind === 'assistant' && !msg.content && sending}
-								<div class="flex items-center gap-2 text-[#666]">
-									<div class="w-3 h-3 border border-[#555] border-t-transparent rounded-full animate-spin"></div>
+								<div class="flex items-center gap-2 text-sc-ink3">
+									<div class="w-3 h-3 border border-sc-line2 border-t-transparent rounded-full animate-spin"></div>
 									<span>Thinking…</span>
 								</div>
 							{:else if msg.kind === 'user' || msg.kind === 'error'}
@@ -422,14 +422,14 @@
 							{/if}
 						</div>
 					{/if}
-					<div class="text-[9px] text-[#555] mt-0.5 px-1">{fmtTime(msg.ts)}</div>
+					<div class="text-[9px] text-sc-ink3 mt-0.5 px-1">{fmtTime(msg.ts)}</div>
 				</div>
 			{/each}
 
 			{#if sending && liveAssistantIdx === null}
 				<div class="flex items-start">
-					<div class="px-3 py-2 text-xs bg-[#111] border border-[#222] text-[#666] flex items-center gap-2">
-						<div class="w-3 h-3 border border-[#555] border-t-transparent rounded-full animate-spin"></div>
+					<div class="rounded-md px-3 py-2 text-xs bg-sc-panel2 border border-sc-line text-sc-ink3 flex items-center gap-2">
+						<div class="w-3 h-3 border border-sc-line2 border-t-transparent rounded-full animate-spin"></div>
 						<span>Working…</span>
 					</div>
 				</div>
@@ -437,13 +437,13 @@
 		</div>
 
 		<!-- Input -->
-		<div class="border-t border-[#222] px-4 py-3">
+		<div class="border-t border-sc-line px-4 py-3">
 			<div class="flex items-center justify-between mb-2">
-				<label class="flex items-center gap-1.5 text-[10px] text-[#666] cursor-pointer select-none" title="When off, the assistant answers and advises but takes no actions.">
+				<label class="flex items-center gap-1.5 text-[10px] text-sc-ink3 cursor-pointer select-none" title="When off, the assistant answers and advises but takes no actions.">
 					<input type="checkbox" bind:checked={allowActions} class="accent-emerald-500 h-3 w-3" />
 					Allow actions
 				</label>
-				<span class="text-[9px] text-[#555]">Create + backtest run directly · promotions ask first</span>
+				<span class="text-[9px] text-sc-ink3">Create + backtest run directly · promotions ask first</span>
 			</div>
 			<div class="flex items-center gap-2">
 				<input
@@ -455,7 +455,7 @@
 					disabled={sending}
 				/>
 				<button
-					class="terminal-button-primary px-3 py-2 text-xs disabled:opacity-30"
+					class="terminal-button-primary px-3 py-2 text-[12px] disabled:opacity-30"
 					on:click={() => send()}
 					disabled={!input.trim() || sending}
 				>
@@ -470,13 +470,13 @@
 	.chat-markdown :global(p) { margin: 0.25em 0; }
 	.chat-markdown :global(ul), .chat-markdown :global(ol) { margin: 0.25em 0; padding-left: 1.25em; }
 	.chat-markdown :global(li) { margin: 0.1em 0; }
-	.chat-markdown :global(code) { background: #1a1a1a; padding: 0.1em 0.3em; border-radius: 0; font-size: 0.9em; }
-	.chat-markdown :global(pre) { background: #1a1a1a; padding: 0.5em; border-radius: 0; overflow-x: auto; margin: 0.4em 0; }
+	.chat-markdown :global(code) { background: #181c23; padding: 0.1em 0.3em; border-radius: 0; font-size: 0.9em; }
+	.chat-markdown :global(pre) { background: #181c23; padding: 0.5em; border-radius: 0; overflow-x: auto; margin: 0.4em 0; }
 	.chat-markdown :global(pre code) { background: none; padding: 0; }
 	.chat-markdown :global(h1), .chat-markdown :global(h2), .chat-markdown :global(h3) { font-size: 1em; font-weight: 600; margin: 0.4em 0 0.2em; }
-	.chat-markdown :global(a) { color: #fff; text-decoration: underline; }
-	.chat-markdown :global(blockquote) { border-left: 2px solid #333; padding-left: 0.5em; margin: 0.3em 0; color: #999; }
+	.chat-markdown :global(a) { color: #eef1f5; text-decoration: underline; }
+	.chat-markdown :global(blockquote) { border-left: 2px solid #2a2f38; padding-left: 0.5em; margin: 0.3em 0; color: #aab1bc; }
 	.chat-markdown :global(table) { border-collapse: collapse; margin: 0.3em 0; font-size: 0.9em; }
-	.chat-markdown :global(th), .chat-markdown :global(td) { border: 1px solid #333; padding: 0.2em 0.5em; }
-	.chat-markdown :global(hr) { border-color: #333; margin: 0.5em 0; }
+	.chat-markdown :global(th), .chat-markdown :global(td) { border: 1px solid #2a2f38; padding: 0.2em 0.5em; }
+	.chat-markdown :global(hr) { border-color: #2a2f38; margin: 0.5em 0; }
 </style>

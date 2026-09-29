@@ -174,10 +174,10 @@
 			{#if sub.id === 'system-throughput'}
 				<div
 					data-testid="throughput-preset-dial"
-					class="border border-[#222] bg-[#0d0d0d] p-3 mb-3 space-y-2"
+					class="rounded-md border border-sc-line bg-sc-panel2 p-3 mb-3 space-y-2"
 				>
 					<div class="flex items-center justify-between gap-3">
-						<label for="throughput-preset-select" class="text-sm text-[#888]"
+						<label for="throughput-preset-select" class="text-sm text-sc-ink2"
 							>Throughput preset</label
 						>
 						<select
@@ -192,7 +192,7 @@
 							<option value="custom" disabled>Custom</option>
 						</select>
 					</div>
-					<p class="text-xs text-[#666]">
+					<p class="text-xs text-sc-ink3">
 						{activeThroughputMeta
 							? activeThroughputMeta.blurb
 							: 'Custom — hand-tuned values. Picking a preset fills every throughput knob and the resource-tuning workers; nothing is saved until you hit Save.'}
@@ -203,7 +203,7 @@
 							running jobs.
 						</p>
 					{/if}
-					<p class="text-[10px] text-[#555]">
+					<p class="text-[10px] text-sc-ink3">
 						Also sets the resource-tuning workers below. Does not change headless agent
 						concurrency (env FORVEN_HEADLESS_AGENT_CONCURRENCY, applies on restart).
 					</p>

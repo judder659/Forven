@@ -256,14 +256,14 @@
 	function dsrClass(value: number | null): string {
 		// Same informational thresholds as the Gauntlet Status card: ~0.95 is the
 		// conventional significance bar for the Deflated Sharpe probability.
-		if (value === null || !Number.isFinite(value)) return 'text-[#555]';
+		if (value === null || !Number.isFinite(value)) return 'text-sc-ink3';
 		if (value >= 0.95) return 'text-emerald-400';
 		if (value >= 0.8) return 'text-yellow-400';
 		return 'text-red-400';
 	}
 
 	function metricClass(kind: 'return' | 'sharpe' | 'robustness' | 'drawdown' | 'win_rate' | 'profit_factor', value: number | null): string {
-		if (value === null || !Number.isFinite(value)) return 'text-[#555]';
+		if (value === null || !Number.isFinite(value)) return 'text-sc-ink3';
 		switch (kind) {
 			case 'return':
 				return value >= 0 ? 'text-emerald-400' : 'text-red-400';
@@ -292,7 +292,7 @@
 	}
 
 	function badgeClass(kind: 'source' | 'untested' | 'untestable'): string {
-		if (kind === 'source') return 'text-white border-[#444] bg-[#111]';
+		if (kind === 'source') return 'text-sc-ink border-sc-line2 bg-sc-panel2';
 		if (kind === 'untestable') return 'text-amber-300 border-amber-800 bg-amber-950/30';
 		return 'text-yellow-400 border-yellow-800 bg-yellow-950/20';
 	}
@@ -411,7 +411,7 @@
 			case 'green': return 'bg-emerald-400';
 			case 'amber': return 'bg-yellow-400';
 			case 'red': return 'bg-red-400';
-			default: return 'bg-[#555]';
+			default: return 'bg-sc-line2';
 		}
 	}
 
@@ -420,7 +420,7 @@
 			case 'green': return 'text-emerald-400';
 			case 'amber': return 'text-yellow-300';
 			case 'red': return 'text-red-400';
-			default: return 'text-[#888]';
+			default: return 'text-sc-ink2';
 		}
 	}
 
@@ -864,18 +864,18 @@
 </svelte:head>
 
 <div class="h-full flex flex-col overflow-hidden">
-	<div class="px-4 py-3 bg-[#050505] border-b border-[#222] flex-shrink-0">
+	<div class="px-4 py-3 bg-sc-panel border-b border-sc-line flex-shrink-0">
 		<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
 			<div>
-				<h1 class="text-xl font-bold uppercase tracking-widest text-white">The Forge</h1>
-				<p class="text-xs text-[#666] mt-1">
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">The Forge</h1>
+				<p class="text-xs text-sc-ink3 mt-1">
 					{rowsInView.length} in view · Pipeline {pipelineActiveCount}
 				</p>
 			</div>
 			<div class="flex items-center gap-2 self-start md:self-auto">
 				<a
 					href="/lab/backtests"
-					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
+					class="text-xs border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 				>
 					View All Backtests
 				</a>
@@ -883,7 +883,7 @@
 					type="button"
 					data-testid="forge-submit-idea"
 					on:click={() => (showIdeaDialog = true)}
-					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
+					class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 				>
 					+ Submit idea
 				</button>
@@ -891,14 +891,14 @@
 					type="button"
 					data-testid="forge-import-strategy"
 					on:click={() => (showImportDialog = true)}
-					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
+					class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 				>
 					⤒ Import
 				</button>
 				<button
 					type="button"
 					on:click={refreshAll}
-					class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-white transition-colors"
+					class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink transition-colors"
 				>
 					Refresh
 				</button>
@@ -909,12 +909,12 @@
 	<!-- Main Manager UI -->
 	<section class="flex-1 flex flex-col overflow-hidden min-h-[500px]">
 		<!-- Toolbar: search, filters, status, pagination -->
-		<div data-testid="forge-manager-toolbar" class="border-b border-[#222] px-4 py-2 flex items-center gap-2 flex-wrap bg-[#050505]">
+		<div data-testid="forge-manager-toolbar" class="border-b border-sc-line px-4 py-2 flex items-center gap-2 flex-wrap bg-sc-panel">
 			<input
 				type="text"
 				bind:value={search}
 				placeholder={bucket === 'active' ? 'Search container, symbol, timeframe, id…' : 'Search graveyard…'}
-				class="bg-black border border-[#333] px-3 py-1.5 text-xs w-full focus:outline-none focus:border-white sm:w-72"
+				class="rounded-md bg-sc-bg border border-sc-line2 px-3 py-1.5 text-xs w-full focus:outline-none focus:border-sc-ink sm:w-72"
 			/>
 			{#if bucket === 'active'}
 				<select
@@ -949,7 +949,7 @@
 			{/if}
 			<details
 				data-testid="forge-health-chip"
-				class="relative w-full text-xs border border-[#333] bg-[#0a0a0a] text-[#888] open:border-[#555] xl:w-auto"
+				class="rounded-md relative w-full text-xs border border-sc-line2 bg-sc-panel text-sc-ink2 open:border-sc-line2 xl:w-auto"
 			>
 				<summary class="list-none cursor-pointer px-2.5 py-1.5 inline-flex w-full items-center gap-2 xl:w-auto">
 					<span class={`inline-flex h-2 w-2 rounded-full ${healthSummaryDot}`}></span>
@@ -959,32 +959,32 @@
 						<span class="text-[10px] text-red-400">{failedHealthChecks.length} issue{failedHealthChecks.length !== 1 ? 's' : ''}</span>
 					{/if}
 				</summary>
-				<div class="absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border border-[#222] bg-[#080808] p-2 text-[11px] xl:w-80 xl:max-w-[420px]">
+				<div class="rounded-md absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border border-sc-line bg-sc-panel p-2 text-[11px] xl:w-80 xl:max-w-[420px]">
 					{#if healthError}
 						<div class="text-red-400 flex items-center gap-2">
 							<span>{healthError}</span>
 							<button type="button" class="underline" on:click={loadHealth}>retry</button>
 						</div>
 					{:else if !healthLoaded}
-						<div class="text-[#666]">Loading…</div>
+						<div class="text-sc-ink3">Loading…</div>
 					{:else}
 						<div class="space-y-1">
 							{#each healthData?.components ?? [] as comp (comp.name)}
 								<div class="flex items-center gap-2">
 									<span class={`inline-flex h-1.5 w-1.5 rounded-full ${healthDotClass(comp.state)}`}></span>
-									<span class="text-[#888]">{friendlyHealthName(comp.name)}</span>
+									<span class="text-sc-ink2">{friendlyHealthName(comp.name)}</span>
 									<span class={healthTextClass(comp.state)}>{healthStateLabel(comp.state)}</span>
-									<span class="text-[#555] truncate">{comp.message}</span>
+									<span class="text-sc-ink3 truncate">{comp.message}</span>
 								</div>
 							{/each}
 							{#if (healthData?.components ?? []).length === 0}
-								<div class="text-[#555]">No components registered.</div>
+								<div class="text-sc-ink3">No components registered.</div>
 							{/if}
 						</div>
 						{#if (healthData?.data_checks ?? []).length > 0}
-							<div class="mt-2 border-t border-[#1a1a1a] pt-2 space-y-1">
+							<div class="mt-2 border-t border-sc-line pt-2 space-y-1">
 								{#each healthData?.data_checks ?? [] as check (check.name)}
-									<div class={check.passed ? 'text-[#666]' : check.severity === 'critical' ? 'text-red-400' : 'text-yellow-300'}>
+									<div class={check.passed ? 'text-sc-ink3' : check.severity === 'critical' ? 'text-red-400' : 'text-yellow-300'}>
 										{friendlyHealthName(check.name)}: {check.detail}
 									</div>
 								{/each}
@@ -995,23 +995,23 @@
 			</details>
 			<details
 				data-testid="forge-now-working-chip"
-				class="relative w-full text-xs border border-[#333] bg-[#0a0a0a] text-[#888] open:border-[#555] xl:w-auto"
+				class="rounded-md relative w-full text-xs border border-sc-line2 bg-sc-panel text-sc-ink2 open:border-sc-line2 xl:w-auto"
 			>
 				<summary class="list-none cursor-pointer px-2.5 py-1.5 inline-flex w-full items-center gap-2 xl:w-auto">
-					<span class={`inline-flex h-2 w-2 rounded-full ${nowWorkingError ? 'bg-red-400' : nowWorkingLoaded && nowWorkingRows.length > 0 ? 'bg-emerald-400' : 'bg-[#555]'}`}></span>
+					<span class={`inline-flex h-2 w-2 rounded-full ${nowWorkingError ? 'bg-red-400' : nowWorkingLoaded && nowWorkingRows.length > 0 ? 'bg-emerald-400' : 'bg-sc-line2'}`}></span>
 					<span class="uppercase tracking-[0.14em] text-[10px]">Now Working</span>
 					<span class={nowWorkingError ? 'text-red-400 font-medium' : 'text-emerald-400 font-medium'}>{nowWorkingSummaryLabel}</span>
 				</summary>
-				<div class="absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border border-[#222] bg-[#080808] p-2 text-[11px] xl:w-[32rem] xl:max-w-[520px]">
+				<div class="rounded-md absolute left-0 top-full z-30 mt-1 max-h-[min(24rem,calc(100vh-12rem))] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto border border-sc-line bg-sc-panel p-2 text-[11px] xl:w-[32rem] xl:max-w-[520px]">
 					{#if nowWorkingError}
 						<div class="text-red-400 flex items-center gap-2">
 							<span>Failed to load active work</span>
 							<button type="button" class="underline" on:click={loadNowWorking}>retry</button>
 						</div>
 					{:else if !nowWorkingLoaded}
-						<div class="text-[#666]">Loading…</div>
+						<div class="text-sc-ink3">Loading…</div>
 					{:else if nowWorkingRows.length === 0}
-						<div class="text-[#666]">Engine idle.</div>
+						<div class="text-sc-ink3">Engine idle.</div>
 					{:else}
 						<ul class="space-y-1">
 							{#each nowWorkingRows as row (`${row.strategy_id}:${row.current_task.type}`)}
@@ -1020,14 +1020,14 @@
 									{#if hasStrategy}
 										<button
 											type="button"
-											class="w-full text-left hover:bg-[#111] px-2 py-1 flex items-center gap-3"
+											class="w-full text-left hover:bg-sc-panel2 px-2 py-1 flex items-center gap-3"
 											on:click={() => goto(`/lab/strategy/${encodeURIComponent(row.strategy_id)}?returnTo=${encodeURIComponent('/lab')}`)}
 										>
-											<span class="font-mono text-[#888] truncate flex-1">{row.name}</span>
+											<span class="font-mono text-sc-ink2 truncate flex-1">{row.name}</span>
 											{#if row.stage}
 												<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 											{/if}
-											<span class="text-[#666]">{row.current_task.type}</span>
+											<span class="text-sc-ink3">{row.current_task.type}</span>
 											<span class="uppercase {row.current_task.status === 'running' ? 'text-emerald-400' : 'text-yellow-400'}">
 												{row.current_task.status}
 											</span>
@@ -1037,8 +1037,8 @@
 										</button>
 									{:else}
 										<div class="w-full text-left px-2 py-1 flex items-center gap-3">
-											<span class="font-mono text-[#888] truncate flex-1">{row.name}</span>
-											<span class="text-[#666]">{row.current_task.type}</span>
+											<span class="font-mono text-sc-ink2 truncate flex-1">{row.name}</span>
+											<span class="text-sc-ink3">{row.current_task.type}</span>
 											<span class="uppercase {row.current_task.status === 'running' ? 'text-emerald-400' : 'text-yellow-400'}">
 												{row.current_task.status}
 											</span>
@@ -1053,13 +1053,13 @@
 					{/if}
 				</div>
 			</details>
-			<span class="text-[10px] text-[#666] ml-1">
+			<span class="text-[10px] text-sc-ink3 ml-1">
 				{rowsInView.length} items
 				{#if rowsInView.length > (bucket === 'active' ? activePageRows.length : trashPageRows.length)}
 					(showing {bucket === 'active' ? activePageRows.length : trashPageRows.length})
 				{/if}
 			</span>
-			<div class="ml-auto flex items-center gap-2 text-[10px] text-[#666]">
+			<div class="ml-auto flex items-center gap-2 text-[10px] text-sc-ink3">
 				<label for="manager-page-size">Rows</label>
 				<select
 					id="manager-page-size"
@@ -1077,7 +1077,7 @@
 				</select>
 				<button
 					type="button"
-					class="px-2 py-1 border border-[#333] text-[#888] hover:text-white hover:border-white disabled:opacity-40 disabled:cursor-not-allowed"
+					class="rounded-md px-2 py-1 border border-sc-line2 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink disabled:opacity-40 disabled:cursor-not-allowed"
 					on:click={goPrevPage}
 					disabled={currentPage <= 1}
 				>
@@ -1086,7 +1086,7 @@
 				<span>{currentPage}/{pageCount}</span>
 				<button
 					type="button"
-					class="px-2 py-1 border border-[#333] text-[#888] hover:text-white hover:border-white disabled:opacity-40 disabled:cursor-not-allowed"
+					class="rounded-md px-2 py-1 border border-sc-line2 text-sc-ink2 hover:text-sc-ink hover:border-sc-ink disabled:opacity-40 disabled:cursor-not-allowed"
 					on:click={goNextPage}
 					disabled={currentPage >= pageCount}
 				>
@@ -1097,24 +1097,24 @@
 
 		<!-- Bucket filter buttons (aria-pressed toggle semantics rather than a full
 		     APG tablist, since there is no arrow-key tab navigation). -->
-		<div role="group" aria-label="Strategy buckets" class="border-b border-[#222] bg-[#070707] px-4 flex items-end gap-1 flex-wrap">
+		<div role="group" aria-label="Strategy buckets" class="border-b border-sc-line bg-sc-panel px-4 flex items-end gap-1 flex-wrap">
 			<button
 				type="button"
 				aria-pressed={bucket === 'active'}
 				on:click={() => { bucket = 'active'; clearSelection(); }}
-				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'active' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
+				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'active' ? 'border-sc-ink text-sc-ink' : 'border-transparent text-sc-ink2 hover:text-sc-ink'}"
 			>
-				Open <span class="ml-1 text-[#666]">({activeResults.length})</span>
+				Open <span class="ml-1 text-sc-ink3">({activeResults.length})</span>
 			</button>
 			<button
 				type="button"
 				aria-pressed={bucket === 'trash'}
 				on:click={() => { bucket = 'trash'; clearSelection(); }}
-				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'trash' ? 'border-white text-white' : 'border-transparent text-[#888] hover:text-white'}"
+				class="relative px-4 py-2 text-xs font-medium transition-colors border-b-2 {bucket === 'trash' ? 'border-sc-ink text-sc-ink' : 'border-transparent text-sc-ink2 hover:text-sc-ink'}"
 			>
-				Graveyard <span class="ml-1 text-[#666]">({trashResults.length})</span>
+				Graveyard <span class="ml-1 text-sc-ink3">({trashResults.length})</span>
 				{#if graveyardLoading}
-					<span class="ml-1 text-[#555]">loading</span>
+					<span class="ml-1 text-sc-ink3">loading</span>
 				{/if}
 			</button>
 			{#if bucket === 'trash' && graveyardCapped}
@@ -1123,7 +1123,7 @@
 				</span>
 				<button
 					type="button"
-					class="ml-2 pb-2 text-[10px] underline text-yellow-400 hover:text-yellow-300 disabled:opacity-50"
+					class="ml-2 pb-2 text-[12px] underline text-yellow-400 hover:text-yellow-300 disabled:opacity-50"
 					on:click={loadAllGraveyard}
 					disabled={graveyardLoading}
 				>
@@ -1147,18 +1147,18 @@
 
 		<!-- Bulk-action bar: only visible when rows are selected -->
 		{#if selectedInView > 0}
-			<div class="border-b border-[#222] bg-[#0c0c0c] px-4 py-2 flex items-center gap-3 text-xs">
-				<span class="text-white font-medium">{selectedInView} selected</span>
+			<div class="border-b border-sc-line bg-sc-panel2 px-4 py-2 flex items-center gap-3 text-xs">
+				<span class="text-sc-ink font-medium">{selectedInView} selected</span>
 				<button
 					type="button"
-					class="text-[#888] hover:text-white transition-colors"
+					class="text-sc-ink2 hover:text-sc-ink transition-colors"
 					on:click={selectFiltered}
 				>
 					Select all {rowsInView.length} matching
 				</button>
 				<button
 					type="button"
-					class="text-[#888] hover:text-white transition-colors"
+					class="text-sc-ink2 hover:text-sc-ink transition-colors"
 					on:click={clearSelection}
 				>
 					Clear selection
@@ -1167,7 +1167,7 @@
 					{#if bucket === 'active'}
 						<select
 							aria-label="Move selected strategies to stage"
-							class="px-2 py-1 border border-[#333] bg-[#111] text-[#888] text-xs outline-none cursor-pointer"
+							class="rounded-md px-2 py-1 border border-sc-line2 bg-sc-panel2 text-sc-ink2 text-xs outline-none cursor-pointer"
 							on:change={(e) => moveBatchToStage(e.currentTarget.value, e.currentTarget)}
 						>
 							<option value="" disabled selected>Move stage…</option>
@@ -1178,22 +1178,22 @@
 							<option value="deployed">Deployed</option>
 							<option value="rejected">Rejected</option>
 						</select>
-						<button type="button" class="px-2 py-1 border border-[#333] text-[#888] hover:border-[#555] hover:bg-[#111]" on:click={() => runBatchAction('archive')}>Archive</button>
-						<button type="button" class="px-2 py-1 border border-yellow-800 text-yellow-400 hover:bg-yellow-950/20" on:click={() => runBatchAction('trash')}>Graveyard</button>
-						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete</button>
+						<button type="button" class="rounded-md px-2 py-1 border border-sc-line2 text-sc-ink2 hover:border-sc-line2 hover:bg-sc-panel2" on:click={() => runBatchAction('archive')}>Archive</button>
+						<button type="button" class="rounded-md px-2 py-1 border border-yellow-800 text-yellow-400 hover:bg-yellow-950/20" on:click={() => runBatchAction('trash')}>Graveyard</button>
+						<button type="button" class="rounded-md px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete</button>
 					{:else if bucket === 'trash'}
-						<button type="button" class="px-2 py-1 border border-emerald-800 text-emerald-400 hover:bg-emerald-950/20" on:click={() => runBatchAction('recover')}>Recover</button>
-						<button type="button" class="px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete permanently</button>
+						<button type="button" class="rounded-md px-2 py-1 border border-emerald-800 text-emerald-400 hover:bg-emerald-950/20" on:click={() => runBatchAction('recover')}>Recover</button>
+						<button type="button" class="rounded-md px-2 py-1 border border-red-800 text-red-400 hover:bg-red-950/20" on:click={() => runBatchAction('delete')}>Delete permanently</button>
 					{/if}
 				</div>
 			</div>
 		{/if}
 
-		<div class="flex-1 overflow-auto bg-black">
+		<div class="flex-1 overflow-auto bg-sc-bg">
 				<table class="w-full min-w-[1100px] text-xs">
 					{#if bucket === 'active'}
-						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-[#666] border-b border-[#222]">
+						<thead class="sticky top-0 bg-sc-panel2 z-10">
+							<tr class="text-sc-ink3 border-b border-sc-line">
 								<th class="py-2 px-2 text-left w-8">
 									<input
 										type="checkbox"
@@ -1215,7 +1215,7 @@
 								<SortableTh field="profit_factor" label="PF" active={sortBy === 'profit_factor'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window profit factor = combined gross profit / combined gross loss. ≥1.5 good, ≥1.0 marginal. ∞ if no losing trades." />
 								<SortableTh field="robustness" label="Rob%" active={sortBy === 'robustness'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Gauntlet ranking score. Promotion uses the backend gate and persisted per-test verdicts under current Settings." />
 								<SortableTh field="dsr" label="DSR" active={sortBy === 'dsr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Deflated Sharpe (0-1): probability the edge survives optimizer selection bias. ≥0.95 significant, ≥0.80 marginal. Shows the last computed value; '-' means it has not been computed yet." />
-								<SortableTh field="out_of_sample_cagr" label="OOS CAGR" active={sortBy === 'out_of_sample_cagr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} thClass="border-l border-[#222] pl-3" title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling." />
+								<SortableTh field="out_of_sample_cagr" label="OOS CAGR" active={sortBy === 'out_of_sample_cagr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} thClass="border-l border-sc-line pl-3" title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling." />
 								<SortableTh field="out_of_sample_sharpe" label="OOS Sharpe" active={sortBy === 'out_of_sample_sharpe'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Out-of-sample annualized Sharpe. Low-trade samples are shown with muted styling." />
 								<SortableTh field="created" label="Created" active={sortBy === 'created'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
 								<th class="py-2 px-2 text-right">Actions</th>
@@ -1223,30 +1223,30 @@
 						</thead>
 						<tbody>
 							{#if loading}
-								<tr><td colspan="16" class="py-8 text-center text-[#555]">Loading containers...</td></tr>
+								<tr><td colspan="16" class="py-8 text-center text-sc-ink3">Loading containers...</td></tr>
 							{:else if activeFiltered.length === 0}
-								<tr><td colspan="16" class="py-8 text-center text-[#555]">No active containers match this view.</td></tr>
+								<tr><td colspan="16" class="py-8 text-center text-sc-ink3">No active containers match this view.</td></tr>
 							{:else}
 								{#each activePageRows as row (row.id)}
 									{@const recovery = recoveryBadge(row)}
 									<tr
 										data-strategy-id={row.id}
-										class="border-t border-[#181818] hover:bg-[#0f0f0f]"
+										class="border-t border-sc-line hover:bg-sc-panel2"
 										class:strategy-row-highlight={row.id === highlightedId}
 									>
 										<td class="py-2 px-2">
 											<input type="checkbox" class="accent-white w-3 h-3" checked={selectedIds.has(row.id)} on:change={() => toggleSelect(row.id)} />
 										</td>
-										<td class="py-2 px-2 text-white font-medium max-w-[360px]">
+										<td class="py-2 px-2 text-sc-ink font-medium max-w-[360px]">
 											<StrategyLink
 												strategyId={row.id}
 												label={row.display_name || row.name}
 												returnTo="/lab"
-												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
+												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-sc-ink hover:text-emerald-400"
 											/>
-											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
+											<div class="text-[10px] text-sc-ink3 font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<span class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888]" title="The idea this strategy tests (shown on its page)">
+												<span class="rounded-md mt-1 inline-flex items-center gap-1 border border-sc-line2 bg-sc-bg/60 px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title="The idea this strategy tests (shown on its page)">
 													Idea {row.hypothesis_display_id || row.hypothesis_id}
 												</span>
 											{/if}
@@ -1264,26 +1264,26 @@
 												</div>
 											{/if}
 										</td>
-										<td class="py-2 px-2 text-[#888] font-mono">{row.symbol} / {row.timeframe}</td>
+										<td class="py-2 px-2 text-sc-ink2 font-mono">{row.symbol} / {row.timeframe}</td>
 										<td class="py-2 px-2">
 											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 										</td>
-										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
+										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-sc-ink3 italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-sc-ink3'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 2)}{row.max_drawdown_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('win_rate', row.win_rate)}`}>{formatPercent(row.win_rate, 1)}</td>
-										<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(row.total_trades, 0)}</td>
+										<td class="py-2 px-2 font-mono text-sc-ink2">{formatNumber(row.total_trades, 0)}</td>
 										<td class={`py-2 px-2 font-mono ${row.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', row.profit_factor)}`} title={row.profit_factor_is_infinite ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('robustness', row.robustness_score)}`}>{formatPercent(row.robustness_score, 1)}</td>
 										<td class={`py-2 px-2 font-mono ${dsrClass(row.deflated_sharpe)}`} title="Deflated Sharpe (last computed value)">{formatNumber(row.deflated_sharpe, 2)}</td>
-										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
-										<td class="py-2 px-2 text-[#666]">{formatDateTime(row.created_at)}</td>
+										<td class={`py-2 px-2 font-mono border-l border-sc-line pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-sc-ink3 italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-sc-ink3'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
+										<td class="py-2 px-2 text-sc-ink3">{formatDateTime(row.created_at)}</td>
 										<td class="py-2 px-2 text-right">
 											<div class="inline-flex flex-wrap justify-end items-center gap-2">
 												<select
 													aria-label="Move strategy to stage"
-													class="text-xs bg-transparent text-[#888] hover:text-white outline-none cursor-pointer border border-[#333] hover:border-[#555] px-1 py-0.5"
+													class="text-xs bg-transparent text-sc-ink2 hover:text-sc-ink outline-none cursor-pointer border border-sc-line2 hover:border-sc-line2 px-1 py-0.5"
 													on:change={(e) => moveOneToStage(row.id, e.currentTarget.value, e.currentTarget)}
 													title="Move to another stage"
 												>
@@ -1296,7 +1296,7 @@
 													<option value="rejected">Rejected</option>
 												</select>
 												<StrategyExportMenu strategyId={row.id} displayId={row.id} name={row.name} compact />
-												<button type="button" class="text-white hover:text-[#888]" on:click={() => openContainer(row)}>Details</button>
+												<button type="button" class="text-sc-ink hover:text-sc-ink2" on:click={() => openContainer(row)}>Details</button>
 												<button type="button" class="text-yellow-400 hover:text-yellow-300" on:click={() => trashOne(row.id)}>Graveyard</button>
 												<button type="button" class="text-red-400 hover:text-red-300" on:click={() => deleteOne(row.id)}>Delete</button>
 											</div>
@@ -1306,8 +1306,8 @@
 							{/if}
 						</tbody>
 					{:else}
-						<thead class="sticky top-0 bg-[#0d0d0d] z-10">
-							<tr class="text-[#666] border-b border-[#222]">
+						<thead class="sticky top-0 bg-sc-panel2 z-10">
+							<tr class="text-sc-ink3 border-b border-sc-line">
 								<th class="py-2 px-2 text-left w-8">
 									<input
 										type="checkbox"
@@ -1329,7 +1329,7 @@
 								<SortableTh field="profit_factor" label="PF" active={sortBy === 'profit_factor'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Full-window profit factor = combined gross profit / combined gross loss. ≥1.5 good, ≥1.0 marginal. ∞ if no losing trades." />
 								<SortableTh field="robustness" label="Rob%" active={sortBy === 'robustness'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Gauntlet ranking score. Promotion uses the backend gate and persisted per-test verdicts under current Settings." />
 								<SortableTh field="dsr" label="DSR" active={sortBy === 'dsr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Deflated Sharpe (0-1): probability the edge survives optimizer selection bias. ≥0.95 significant, ≥0.80 marginal. Shows the last computed value; '-' means it has not been computed yet." />
-								<SortableTh field="out_of_sample_cagr" label="OOS CAGR" active={sortBy === 'out_of_sample_cagr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} thClass="border-l border-[#222] pl-3" title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling." />
+								<SortableTh field="out_of_sample_cagr" label="OOS CAGR" active={sortBy === 'out_of_sample_cagr'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} thClass="border-l border-sc-line pl-3" title="Out-of-sample CAGR (annualized). Short windows are shown with muted styling." />
 								<SortableTh field="out_of_sample_sharpe" label="OOS Sharpe" active={sortBy === 'out_of_sample_sharpe'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} title="Out-of-sample annualized Sharpe. Low-trade samples are shown with muted styling." />
 								<SortableTh field="created" label="Created" active={sortBy === 'created'} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)} />
 								<th class="py-2 px-2 text-right">Actions</th>
@@ -1337,25 +1337,25 @@
 						</thead>
 						<tbody>
 							{#if loading || graveyardLoading}
-								<tr><td colspan="16" class="py-8 text-center text-[#555]">Loading graveyard...</td></tr>
+								<tr><td colspan="16" class="py-8 text-center text-sc-ink3">Loading graveyard...</td></tr>
 							{:else if trashFiltered.length === 0}
-								<tr><td colspan="16" class="py-8 text-center text-[#555]">Graveyard is empty.</td></tr>
+								<tr><td colspan="16" class="py-8 text-center text-sc-ink3">Graveyard is empty.</td></tr>
 							{:else}
 								{#each trashPageRows as row (row.id)}
-									<tr class="border-t border-[#181818] hover:bg-[#0f0f0f]">
+									<tr class="border-t border-sc-line hover:bg-sc-panel2">
 										<td class="py-2 px-2">
 											<input type="checkbox" class="accent-white w-3 h-3" checked={selectedIds.has(row.id)} on:change={() => toggleSelect(row.id)} />
 										</td>
-										<td class="py-2 px-2 text-white font-medium max-w-[420px]">
+										<td class="py-2 px-2 text-sc-ink font-medium max-w-[420px]">
 											<StrategyLink
 												strategyId={row.id}
 												label={row.display_name || row.name}
 												returnTo="/lab"
-												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-white hover:text-emerald-400"
+												className="max-w-full truncate bg-transparent border-0 px-0 py-0 text-left text-sc-ink hover:text-emerald-400"
 											/>
-											<div class="text-[10px] text-[#555] font-mono mt-0.5">{row.id}</div>
+											<div class="text-[10px] text-sc-ink3 font-mono mt-0.5">{row.id}</div>
 											{#if row.hypothesis_id}
-												<span class="mt-1 inline-flex items-center gap-1 border border-[#333] bg-black/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[#888]" title="The idea this strategy tests (shown on its page)">
+												<span class="rounded-md mt-1 inline-flex items-center gap-1 border border-sc-line2 bg-sc-bg/60 px-2 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2" title="The idea this strategy tests (shown on its page)">
 													Idea {row.hypothesis_display_id || row.hypothesis_id}
 												</span>
 											{/if}
@@ -1381,26 +1381,26 @@
 												</div>
 											{/if}
 										</td>
-										<td class="py-2 px-2 text-[#888] font-mono">{row.symbol} / {row.timeframe}</td>
+										<td class="py-2 px-2 text-sc-ink2 font-mono">{row.symbol} / {row.timeframe}</td>
 										<td class="py-2 px-2">
 											<span class={`text-[10px] px-1.5 py-0.5 border uppercase ${stageClass(row.stage)}`}>{row.stage}</span>
 										</td>
-										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
+										<td class={`py-2 px-2 font-mono ${row.cagr_is_reliable ? metricClass('return', row.annualized_return) : 'text-sc-ink3 italic'}`} title={row.cagr_is_reliable ? 'Full-window CAGR (annualized over IS + OOS)' : 'Window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.annualized_return, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.sharpe_ratio) : 'text-sc-ink3'}`} title={row.sharpe_is_reliable ? 'Full-window Sharpe (approximate: month-weighted average of IS and OOS)' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.sharpe_ratio, 2)}{row.sharpe_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 2)}{row.max_drawdown_is_approximation ? ' ~' : ''}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('win_rate', row.win_rate)}`}>{formatPercent(row.win_rate, 1)}</td>
-										<td class="py-2 px-2 font-mono text-[#888]">{formatNumber(row.total_trades, 0)}</td>
+										<td class="py-2 px-2 font-mono text-sc-ink2">{formatNumber(row.total_trades, 0)}</td>
 										<td class={`py-2 px-2 font-mono ${row.profit_factor_is_infinite ? 'text-emerald-400' : metricClass('profit_factor', row.profit_factor)}`} title={row.profit_factor_is_infinite ? 'No losing trades — profit factor is mathematically infinite' : 'Full-window profit factor'}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</td>
 										<td class={`py-2 px-2 font-mono ${metricClass('robustness', row.robustness_score)}`}>{formatPercent(row.robustness_score, 1)}</td>
 										<td class={`py-2 px-2 font-mono ${dsrClass(row.deflated_sharpe)}`} title="Deflated Sharpe (last computed value)">{formatNumber(row.deflated_sharpe, 2)}</td>
-										<td class={`py-2 px-2 font-mono border-l border-[#222] pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-[#666] italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
-										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-[#666]'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
-										<td class="py-2 px-2 text-[#666]">
+										<td class={`py-2 px-2 font-mono border-l border-sc-line pl-3 ${row.cagr_is_reliable ? metricClass('return', row.out_of_sample_cagr) : 'text-sc-ink3 italic'}`} title={row.cagr_is_reliable ? 'Out-of-sample CAGR (annualized)' : 'OOS window too short (<1 month) — annualized value may be unreliable'}>{formatPercent(row.out_of_sample_cagr, 2)}</td>
+										<td class={`py-2 px-2 font-mono ${row.sharpe_is_reliable ? metricClass('sharpe', row.out_of_sample_sharpe) : 'text-sc-ink3'}`} title={row.sharpe_is_reliable ? 'Out-of-sample annualized Sharpe' : 'Low trade count (<20) — Sharpe may be noisy'}>{formatNumber(row.out_of_sample_sharpe, 2)}</td>
+										<td class="py-2 px-2 text-sc-ink3">
 											<div>{formatDateTime(row.created_at)}</div>
-											<div class="text-[10px] text-[#555]">Archived {formatDateTime(row.deleted_at || row.created_at)}</div>
+											<div class="text-[10px] text-sc-ink3">Archived {formatDateTime(row.deleted_at || row.created_at)}</div>
 										</td>
 										<td class="py-2 px-2 text-right space-x-2 whitespace-nowrap">
-											<button type="button" class="text-white hover:text-[#888]" on:click={() => openContainer(row)}>Details</button>
+											<button type="button" class="text-sc-ink hover:text-sc-ink2" on:click={() => openContainer(row)}>Details</button>
 											<button type="button" class="text-emerald-400 hover:text-emerald-300" on:click={() => restoreOne(row.id)}>Recover</button>
 											<button type="button" class="text-red-400 hover:text-red-300" on:click={() => deleteOne(row.id)}>Delete</button>
 										</td>

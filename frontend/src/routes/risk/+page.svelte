@@ -391,40 +391,40 @@
 			<svg class="w-6 h-6 text-red-400" viewBox="0 0 24 24" fill="currentColor">
 				<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 11H5V6.3l7-3.11v8.8h7c-.53 4.12-3.28 7.79-7 8.94V12z" />
 			</svg>
-			<h1 class="text-lg font-bold uppercase tracking-widest text-white">Risk Command</h1>
-			<div class="inline-flex border border-[#333]" role="group" aria-label="risk scope">
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Risk Command</h1>
+			<div class="inline-flex border border-sc-line2" role="group" aria-label="risk scope">
 				<button
-					class="border-r border-[#333] px-3 py-1 text-[10px] uppercase tracking-wider {scope === 'live'
-						? 'bg-red-950/60 font-bold text-red-300'
-						: 'text-[#888] hover:text-white'}"
+					class="border-r border-sc-line2 px-3 py-1 text-[12px] {scope === 'live'
+						? 'bg-red-950/60 font-medium text-red-300'
+						: 'text-sc-ink2 hover:text-sc-ink'}"
 					on:click={() => setScope('live')}
 				>
 					Live
 				</button>
 				<button
-					class="px-3 py-1 text-[10px] uppercase tracking-wider {scope === 'paper'
-						? 'bg-white font-bold text-black'
-						: 'text-[#888] hover:text-white'}"
+					class="px-3 py-1 text-[12px] {scope === 'paper'
+						? 'bg-sc-ink font-medium text-black'
+						: 'text-sc-ink2 hover:text-sc-ink'}"
 					on:click={() => setScope('paper')}
 				>
 					Paper
 				</button>
 			</div>
-			<span class="text-[10px] text-[#555]">
+			<span class="text-[10px] text-sc-ink3">
 				{scope === 'live' ? 'real-wallet exposure' : 'paper sandboxes · $10k each, no shared budget'}
 			</span>
 		</div>
 		<div class="flex items-center gap-2">
 			<button
 				type="button"
-				class="text-xs border border-red-800 bg-red-950/30 px-3 py-1.5 font-bold uppercase tracking-wider text-red-300 hover:bg-red-900/50 hover:text-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+				class="rounded-md text-[12px] border border-red-800 bg-red-950/30 px-3 py-1.5 font-medium text-red-300 hover:bg-red-900/50 hover:text-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 				on:click={handleEmergencyHalt}
 				disabled={haltBusy}
 				title="Immediately close all open positions and halt trading"
 			>
 				{haltBusy ? 'Halting...' : 'Emergency Halt'}
 			</button>
-			<a href="/settings" class="text-xs border border-[#333] px-3 py-1.5 text-[#888] hover:text-white hover:border-[#555] transition-colors">
+			<a href="/settings" class="text-xs border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors">
 				Open Settings
 			</a>
 		</div>
@@ -444,7 +444,7 @@
 				</div>
 			</div>
 			<button
-				class="px-3 py-1.5 text-xs border border-[#333] text-[#888] hover:text-white hover:border-[#555] transition-colors disabled:opacity-60"
+				class="rounded-md px-3 py-1.5 text-[12px] border border-sc-line2 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-60"
 				on:click={handleTradingReset}
 				disabled={resetBusy}
 			>
@@ -460,7 +460,7 @@
 					Position Recovery {recoveryRequiresOperator ? '— Operator Intervention Required' : 'In Progress'}
 				</span>
 				{#if recovery?.status}
-					<span class="text-[10px] uppercase tracking-wider border px-2 py-0.5 {recoveryRequiresOperator ? 'text-red-200 border-red-800' : 'text-yellow-200 border-yellow-800'}">
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] border px-2 py-0.5 {recoveryRequiresOperator ? 'text-red-200 border-red-800' : 'text-yellow-200 border-yellow-800'}">
 						{recovery.status}
 					</span>
 				{/if}
@@ -470,12 +470,12 @@
 					{recoverySummary}
 				</div>
 			{/if}
-			<div class="mt-2 flex flex-wrap gap-4 text-[11px] text-[#888]">
-				<span>Positions: <span class="text-white">{recovery?.position_count ?? 0}</span></span>
-				<span>Discrepancies: <span class="text-white">{recovery?.discrepancy_count ?? 0}</span></span>
-				<span>Open orders: <span class="text-white">{recovery?.open_order_count ?? 0}</span></span>
+			<div class="mt-2 flex flex-wrap gap-4 text-[11px] text-sc-ink2">
+				<span>Positions: <span class="text-sc-ink">{recovery?.position_count ?? 0}</span></span>
+				<span>Discrepancies: <span class="text-sc-ink">{recovery?.discrepancy_count ?? 0}</span></span>
+				<span>Open orders: <span class="text-sc-ink">{recovery?.open_order_count ?? 0}</span></span>
 				{#if recovery?.last_checked_at}
-					<span>Checked: <span class="text-white">{new Date(recovery.last_checked_at).toLocaleString()}</span></span>
+					<span>Checked: <span class="text-sc-ink">{new Date(recovery.last_checked_at).toLocaleString()}</span></span>
 				{/if}
 			</div>
 		</div>
@@ -490,9 +490,9 @@
 	<!-- FE-01/FE-03: staleness strip + explicit "as of" stamp. A risk page that
 	     silently stops updating is worse than one that admits it. -->
 	<div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-		<span class="text-[#666]">
+		<span class="text-sc-ink3">
 			Telemetry as of
-			<span class="text-[#888]">{lastTelemetryAt ? lastTelemetryAt.toLocaleTimeString() : '—'}</span>
+			<span class="text-sc-ink2">{lastTelemetryAt ? lastTelemetryAt.toLocaleTimeString() : '—'}</span>
 		</span>
 		{#if telemetryStale}
 			<span class="border border-[#3a2f1a] bg-[#161208] px-2 py-1 text-yellow-200">
@@ -504,7 +504,7 @@
 
 	{#if circuitBreakers.length > 0}
 		<div class="flex flex-wrap items-center gap-2">
-			<span class="text-[10px] uppercase tracking-wider text-[#666]">Circuit Breakers</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Circuit Breakers</span>
 			{#each circuitBreakers as cb}
 				<span class={`text-[11px] px-2 py-1 border ${breakerColor(cb.state)}`}>
 					{cb.label}: {cb.state}
@@ -518,19 +518,19 @@
 		{#each gauges as gauge}
 			{@const ratio = gaugeRatio(gauge.value, gauge.max)}
 			{@const color = gaugeColor(gauge.value, gauge.max)}
-			<div class="border border-[#222] bg-[#050505] p-4">
+			<div class="rounded-md border border-sc-line bg-sc-panel p-4">
 				<div class="flex items-center gap-4">
 					<div class="relative w-20 h-20 rounded-full" style={`background: conic-gradient(${color} ${ratio * 3.6}deg, #222 0deg);`}>
-						<div class="absolute inset-2 rounded-full bg-[#050505] flex items-center justify-center text-[11px] font-bold text-[#888]">
+						<div class="absolute inset-2 rounded-full bg-sc-panel flex items-center justify-center text-[11px] font-bold text-sc-ink2">
 							{formatPct(gauge.value)}
 						</div>
 					</div>
 					<div class="min-w-0">
-						<div class="text-[11px] uppercase tracking-wider text-[#666]">{gauge.label}</div>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{gauge.label}</div>
 						<div class={`text-lg font-bold ${ratio >= 100 ? 'text-red-400' : ratio >= 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>
 							{formatPct(gauge.value)}
 						</div>
-						<div class="text-[10px] text-[#666]">Limit: {formatPct(gauge.max)}</div>
+						<div class="text-[10px] text-sc-ink3">Limit: {formatPct(gauge.max)}</div>
 					</div>
 				</div>
 			</div>
@@ -538,53 +538,53 @@
 	</div>
 
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-		<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
+		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 			<div class="flex items-center justify-between">
-				<h2 class="text-sm font-bold uppercase tracking-wider text-white">
+				<h2 class="text-[14px] font-semibold text-sc-ink">
 					Trading Status
-					<span class="ml-2 border border-[#333] px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-[#666]" title="Kill switch, daily-loss halt, and equity anchors are driven by live account equity but halt PAPER trading too">GLOBAL</span>
+					<span class="ml-2 border border-sc-line2 px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-sc-ink3" title="Kill switch, daily-loss halt, and equity anchors are driven by live account equity but halt PAPER trading too">GLOBAL</span>
 				</h2>
 				<span class={`text-xs px-2 py-1 border ${tradingAllowed ? 'text-emerald-400 border-emerald-800' : 'text-red-400 border-red-800'}`}>
 					{tradingAllowed ? 'Allowed' : 'Halted'}
 				</span>
 			</div>
-			<div class="text-xs text-[#888]">{tradingReason}</div>
+			<div class="text-xs text-sc-ink2">{tradingReason}</div>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-				<div class="border border-[#222] bg-[#050505] p-3">
-					<div class="text-[10px] uppercase tracking-wider text-[#666] mb-1">Daily PnL</div>
+				<div class="rounded-md border border-sc-line bg-sc-panel p-3">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Daily PnL</div>
 					<div class={`text-base font-bold ${dailyPnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatUsd(dailyPnlUsd)}</div>
 				</div>
-				<div class="border border-[#222] bg-[#050505] p-3">
+				<div class="rounded-md border border-sc-line bg-sc-panel p-3">
 					<div class="flex items-center justify-between mb-1">
-						<div class="text-[10px] uppercase tracking-wider text-[#666]">Equity Anchors</div>
+						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Equity Anchors</div>
 						<button
 							type="button"
 							disabled={rebaselineBusy}
-							class="border border-[#2b2b2b] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#666] transition hover:text-white disabled:opacity-50"
+							class="rounded-md border border-sc-line2 px-1.5 py-0.5 text-[12px] text-sc-ink3 transition hover:text-sc-ink disabled:opacity-50"
 							title="Re-anchor HWM / daily start to a fresh live wallet reading"
 							on:click={() => void handleRebaseline()}
 						>{rebaselineBusy ? 'Re-baselining…' : 'Re-baseline'}</button>
 					</div>
-					<div class="text-xs text-[#888]">HWM: ${highWaterMark.toFixed(2)}</div>
-					<div class="text-xs text-[#888]">Daily Start: ${dailyStartEquity.toFixed(2)}</div>
+					<div class="text-xs text-sc-ink2">HWM: ${highWaterMark.toFixed(2)}</div>
+					<div class="text-xs text-sc-ink2">Daily Start: ${dailyStartEquity.toFixed(2)}</div>
 				</div>
 			</div>
 		</div>
 
-		<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-white">
+		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
+			<h2 class="text-[14px] font-semibold text-sc-ink">
 				Risk Limits
-				<span class="ml-2 border border-[#333] px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-[#666]" title="These bars always grade the LIVE book against live risk policy — paper sandboxes have no shared budget to grade">LIVE POLICY</span>
+				<span class="ml-2 border border-sc-line2 px-1.5 py-0.5 text-[9px] font-normal tracking-wider text-sc-ink3" title="These bars always grade the LIVE book against live risk policy — paper sandboxes have no shared budget to grade">LIVE POLICY</span>
 			</h2>
 			{#each limitBars as bar}
 				<div class="space-y-1">
 					<div class="flex items-center justify-between text-[11px]">
-						<span class="text-[#888]">{bar.label}</span>
-						<span class={bar.current > bar.max ? 'text-red-400' : 'text-[#888]'}>
+						<span class="text-sc-ink2">{bar.label}</span>
+						<span class={bar.current > bar.max ? 'text-red-400' : 'text-sc-ink2'}>
 							{formatPct(bar.current)} / {formatPct(bar.max)}
 						</span>
 					</div>
-					<div class="h-2 bg-[#1a1a1a] overflow-hidden">
+					<div class="h-2 bg-sc-raise overflow-hidden">
 						<div
 							class={`h-full ${bar.current > bar.max ? 'bg-red-500' : 'bg-emerald-500'}`}
 							style={`width: ${clampPercent(bar.max > 0 ? (bar.current / bar.max) * 100 : 0)}%;`}
@@ -603,17 +603,17 @@
 	{/if}
 
 	{#if scope === 'live' && liveBudget}
-	<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
+	<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-white">Live Portfolio Budget</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Live Portfolio Budget</h2>
 			<div class="flex items-center gap-2">
 				<span class={`text-xs px-2 py-1 border ${liveBudget.enabled ? 'text-emerald-400 border-emerald-800' : 'text-yellow-400 border-yellow-800'}`}>
 					{liveBudget.enabled ? 'Enforcing' : 'Disabled'}
 				</span>
-				<a href="/settings#trading/risk.live_max_total_open_risk_pct" class="text-[10px] uppercase tracking-wider text-[#666] hover:text-[#888] transition-colors">Edit caps</a>
+				<a href="/settings#trading/risk.live_max_total_open_risk_pct" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink2 transition-colors">Edit caps</a>
 			</div>
 		</div>
-		<p class="text-[11px] text-[#666]">
+		<p class="text-[11px] text-sc-ink3">
 			Account-level admission gate for new LIVE positions — total dollars at risk to stops, plus net
 			exposure per asset and per correlated group, all against real account equity. Paper strategies
 			keep their own isolated $10k sandboxes and are not counted here.
@@ -641,7 +641,7 @@
 					{#each ceilingsMissing as sid}
 						<button
 							type="button"
-							class="border border-yellow-700 bg-yellow-950/40 px-2 py-0.5 text-[11px] text-yellow-100 transition hover:bg-yellow-900/40"
+							class="rounded-md border border-yellow-700 bg-yellow-950/40 px-2 py-0.5 text-[11px] text-yellow-100 transition hover:bg-yellow-900/40"
 							on:click={() => void editCeiling(sid)}
 						>Set ceiling for {sid}</button>
 					{/each}
@@ -651,11 +651,11 @@
 		{#if strategySizing.length > 0}
 			<div class="pt-1">
 				<div class="flex items-baseline justify-between mb-1">
-					<div class="text-[10px] uppercase tracking-wider text-[#666]">Position sizing</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Position sizing</div>
 					{#if capitalSlice?.slice_usd}
-						<div class="text-[10px] text-[#666]">
+						<div class="text-[10px] text-sc-ink3">
 							account split {capitalSlice.cohort_size} ways &middot;
-							<span class="text-[#888]">{formatBudgetUsd(Number(capitalSlice.slice_usd))}</span> each
+							<span class="text-sc-ink2">{formatBudgetUsd(Number(capitalSlice.slice_usd))}</span> each
 						</div>
 					{/if}
 				</div>
@@ -663,19 +663,19 @@
 					{#each strategySizing as row}
 						{@const stage = String(row.stage ?? '')}
 						{@const isManual = row.mode === 'manual'}
-						<div class="border border-[#222] bg-[#050505] px-3 py-2 text-[11px]">
+						<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2 text-[11px]">
 							<div class="flex items-center justify-between gap-2">
 								<span class="flex items-center gap-2 min-w-0">
 									<a
 										href={`/lab/strategy/${row.strategy_id}`}
-										class="font-mono text-white hover:text-[#888]">{row.strategy_id}</a
+										class="font-mono text-sc-ink hover:text-sc-ink2">{row.strategy_id}</a
 									>
 									{#if stage}
 										<span
-											class="border px-1 py-0.5 text-[9px] uppercase tracking-wider {stage ===
+											class="border px-1 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {stage ===
 											'live_graduated'
 												? 'border-red-900 text-red-400'
-												: 'border-[#333] text-[#666]'}"
+												: 'border-sc-line2 text-sc-ink3'}"
 											title={stage === 'live_graduated'
 												? 'Live strategy'
 												: `Armed for live while at ${stage} stage`}
@@ -685,7 +685,7 @@
 									{/if}
 								</span>
 								<span
-									class="border px-1 py-0.5 text-[9px] uppercase tracking-wider {isManual
+									class="border px-1 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {isManual
 										? 'border-[#3a3a1a] text-yellow-500'
 										: 'border-[#1a3a2a] text-emerald-500'}"
 									title={isManual
@@ -696,12 +696,12 @@
 								</span>
 							</div>
 							<div class="mt-1.5 flex items-center justify-between gap-2">
-								<span class="text-[#888]">
+								<span class="text-sc-ink2">
 									{#if row.effective_usd}
-										<span class="text-white">{formatBudgetUsd(Number(row.effective_usd))}</span>
+										<span class="text-sc-ink">{formatBudgetUsd(Number(row.effective_usd))}</span>
 										max position
 										{#if isManual && row.slice_usd}
-											<span class="text-[#555]">
+											<span class="text-sc-ink3">
 												&middot; system would give {formatBudgetUsd(Number(row.slice_usd))}
 											</span>
 										{/if}
@@ -713,14 +713,14 @@
 									{#if isManual}
 										<button
 											type="button"
-											class="border border-[#2b2b2b] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#666] transition hover:text-white"
+											class="rounded-md border border-sc-line2 px-1.5 py-0.5 text-[12px] text-sc-ink3 transition hover:text-sc-ink"
 											on:click={() => void useSystemSizing(row.strategy_id)}
 											title="Remove the manual cap and use this strategy's equal share of the account"
 										>Use system</button>
 									{/if}
 									<button
 										type="button"
-										class="border border-[#2b2b2b] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#666] transition hover:text-white"
+										class="rounded-md border border-sc-line2 px-1.5 py-0.5 text-[12px] text-sc-ink3 transition hover:text-sc-ink"
 										on:click={() =>
 											void editCeiling(row.strategy_id, Number(row.manual_usd ?? 0))}
 									>{isManual ? 'Edit' : 'Set my own'}</button>
@@ -729,7 +729,7 @@
 						</div>
 					{/each}
 				</div>
-				<div class="mt-1.5 text-[10px] text-[#555]">
+				<div class="mt-1.5 text-[10px] text-sc-ink3">
 					System sizing gives each live strategy an equal share of the account, re-divided as the
 					balance moves or strategies are added. A manual cap only ever makes a position smaller —
 					the lower of the two wins. Either way the figure is POSITION SIZE, not the amount at risk:
@@ -740,15 +740,15 @@
 
 		<div class="space-y-1">
 			<div class="flex items-center justify-between text-[11px]">
-				<span class="text-[#888]">Total open risk (to stops)</span>
-				<span class={liveBudgetRiskLimit > 0 && liveBudgetRiskUsed > liveBudgetRiskLimit ? 'text-red-400' : 'text-[#888]'}>
+				<span class="text-sc-ink2">Total open risk (to stops)</span>
+				<span class={liveBudgetRiskLimit > 0 && liveBudgetRiskUsed > liveBudgetRiskLimit ? 'text-red-400' : 'text-sc-ink2'}>
 					{formatBudgetUsd(liveBudgetRiskUsed)} / {liveBudgetRiskLimit > 0 ? formatBudgetUsd(liveBudgetRiskLimit) : '—'}
 					{#if liveBudget.limits_pct?.live_max_total_open_risk_pct}
-						<span class="text-[#666]">({liveBudget.limits_pct.live_max_total_open_risk_pct}% of equity)</span>
+						<span class="text-sc-ink3">({liveBudget.limits_pct.live_max_total_open_risk_pct}% of equity)</span>
 					{/if}
 				</span>
 			</div>
-			<div class="h-2 bg-[#1a1a1a] overflow-hidden">
+			<div class="h-2 bg-sc-raise overflow-hidden">
 				<div
 					class={`h-full ${liveBudgetRiskLimit > 0 && liveBudgetRiskUsed / liveBudgetRiskLimit >= 1 ? 'bg-red-500' : liveBudgetRiskLimit > 0 && liveBudgetRiskUsed / liveBudgetRiskLimit >= 0.75 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
 					style={`width: ${clampPercent(liveBudgetRiskLimit > 0 ? (liveBudgetRiskUsed / liveBudgetRiskLimit) * 100 : 0)}%;`}
@@ -758,21 +758,21 @@
 
 		{#if liveBudgetBooks.length > 0}
 			<div class="space-y-2 pt-1">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Per-wallet capacity (direction books)</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Per-wallet capacity (direction books)</div>
 				{#each liveBudgetBooks as [bookName, b]}
 					{@const used = Number(b.margin_usd ?? 0)}
 					{@const bookCap = Number(b.limit_usd ?? 0)}
 					{@const bookEq = Number(b.equity_usd ?? 0)}
 					<div class="space-y-1">
 						<div class="flex items-center justify-between text-[11px]">
-							<span class="text-[#888] capitalize">{bookName} wallet
-								{#if bookEq > 0}<span class="text-[#555]">(${bookEq.toLocaleString(undefined, { maximumFractionDigits: 0 })} equity, {b.positions ?? 0} pos)</span>{/if}
+							<span class="text-sc-ink2 capitalize">{bookName} wallet
+								{#if bookEq > 0}<span class="text-sc-ink3">(${bookEq.toLocaleString(undefined, { maximumFractionDigits: 0 })} equity, {b.positions ?? 0} pos)</span>{/if}
 							</span>
-							<span class={bookCap > 0 && used > bookCap ? 'text-red-400' : 'text-[#888]'}>
+							<span class={bookCap > 0 && used > bookCap ? 'text-red-400' : 'text-sc-ink2'}>
 								{formatBudgetUsd(used)} / {bookCap > 0 ? formatBudgetUsd(bookCap) : '—'} margin
 							</span>
 						</div>
-						<div class="h-1.5 bg-[#1a1a1a] overflow-hidden">
+						<div class="h-1.5 bg-sc-raise overflow-hidden">
 							<div
 								class={`h-full ${bookCap > 0 && used / bookCap >= 1 ? 'bg-red-500' : bookCap > 0 && used / bookCap >= 0.75 ? 'bg-yellow-500' : 'bg-emerald-600'}`}
 								style={`width: ${clampPercent(bookCap > 0 ? (used / bookCap) * 100 : 0)}%;`}
@@ -785,18 +785,18 @@
 
 		{#if liveBudgetGroups.length > 0}
 			<div class="space-y-2 pt-1">
-				<div class="text-[10px] uppercase tracking-wider text-[#666]">Correlated-group net exposure</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Correlated-group net exposure</div>
 				{#each liveBudgetGroups as [name, g]}
 					{@const net = Number(g.net_notional_usd ?? 0)}
 					{@const cap = Number(g.limit_usd ?? 0)}
 					<div class="space-y-1">
 						<div class="flex items-center justify-between text-[11px]">
-							<span class="text-[#888]">{name} <span class="text-[#555]">({g.positions} pos)</span></span>
+							<span class="text-sc-ink2">{name} <span class="text-sc-ink3">({g.positions} pos)</span></span>
 							<span class={cap > 0 && Math.abs(net) > cap ? 'text-red-400' : net >= 0 ? 'text-emerald-400' : 'text-red-300'}>
 								{net >= 0 ? 'net long' : 'net short'} {formatBudgetUsd(net)} / {cap > 0 ? formatBudgetUsd(cap) : '—'}
 							</span>
 						</div>
-						<div class="h-1.5 bg-[#1a1a1a] overflow-hidden">
+						<div class="h-1.5 bg-sc-raise overflow-hidden">
 							<div
 								class={`h-full ${cap > 0 && Math.abs(net) / cap >= 1 ? 'bg-red-500' : net >= 0 ? 'bg-emerald-600' : 'bg-red-600'}`}
 								style={`width: ${clampPercent(cap > 0 ? (Math.abs(net) / cap) * 100 : 0)}%;`}
@@ -809,90 +809,90 @@
 
 		{#if liveBudgetAssets.length > 0}
 			<div class="pt-1">
-				<div class="text-[10px] uppercase tracking-wider text-[#666] mb-1">Per-asset</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Per-asset</div>
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
 					{#each liveBudgetAssets as [assetName, a]}
 						{@const anet = Number(a.net_notional_usd ?? 0)}
-						<div class="border border-[#222] bg-[#050505] px-3 py-2 flex items-center justify-between text-[11px]">
-							<span class="font-bold text-[#888]">{assetName} <span class="font-normal text-[#555]">({a.positions})</span></span>
-							<span class="text-[#888]">
+						<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2 flex items-center justify-between text-[11px]">
+							<span class="font-bold text-sc-ink2">{assetName} <span class="font-normal text-sc-ink3">({a.positions})</span></span>
+							<span class="text-sc-ink2">
 								<span class={anet >= 0 ? 'text-emerald-400' : 'text-red-300'}>{anet >= 0 ? '+' : '−'}{formatBudgetUsd(anet)}</span>
-								<span class="text-[#555]"> · risk {formatBudgetUsd(Number(a.risk_usd ?? 0))}</span>
+								<span class="text-sc-ink3"> · risk {formatBudgetUsd(Number(a.risk_usd ?? 0))}</span>
 							</span>
 						</div>
 					{/each}
 				</div>
 			</div>
 		{:else}
-			<div class="text-xs text-[#666]">No open live positions — full budget available.</div>
+			<div class="text-xs text-sc-ink3">No open live positions — full budget available.</div>
 		{/if}
 	</div>
 	{/if}
 
 	{#if scope === 'live' && liquidityGuard}
-	<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
+	<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-white">Liquidity Guard</h2>
+			<h2 class="text-[14px] font-semibold text-sc-ink">Liquidity Guard</h2>
 			<div class="flex items-center gap-2">
 				<span class={`text-xs px-2 py-1 border ${liquidityGuard.enabled ? 'text-emerald-400 border-emerald-800' : 'text-yellow-400 border-yellow-800'}`}>
 					{liquidityGuard.enabled ? 'Enforcing' : liquidityGuard.enabled === false ? 'Disabled' : 'Unavailable'}
 				</span>
-				<a href="/settings#trading/risk.live_liquidity_guard_enabled" class="text-[10px] uppercase tracking-wider text-[#666] hover:text-[#888] transition-colors">Edit limits</a>
+				<a href="/settings#trading/risk.live_liquidity_guard_enabled" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink2 transition-colors">Edit limits</a>
 			</div>
 		</div>
-		<p class="text-[11px] text-[#666]">
+		<p class="text-[11px] text-sc-ink3">
 			Pre-trade microstructure checks on every live OPEN order — 24h volume floor, max spread, max share
 			of near-mid book depth, and max estimated price impact, measured against the mainnet book. Fails
 			closed when market data is unavailable; closes are never blocked.
 		</p>
 		{#if liquidityGuard.limits}
 			<div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-[11px]">
-				<div class="border border-[#222] bg-[#050505] px-3 py-2">
-					<div class="text-[#666]">Min 24h volume</div>
-					<div class="text-[#888]">{formatBudgetUsd(Number(liquidityGuard.limits.live_min_daily_volume_usd ?? 0))}</div>
+				<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2">
+					<div class="text-sc-ink3">Min 24h volume</div>
+					<div class="text-sc-ink2">{formatBudgetUsd(Number(liquidityGuard.limits.live_min_daily_volume_usd ?? 0))}</div>
 				</div>
-				<div class="border border-[#222] bg-[#050505] px-3 py-2">
-					<div class="text-[#666]">Max spread</div>
-					<div class="text-[#888]">{Number(liquidityGuard.limits.live_max_spread_bps ?? 0)} bps</div>
+				<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2">
+					<div class="text-sc-ink3">Max spread</div>
+					<div class="text-sc-ink2">{Number(liquidityGuard.limits.live_max_spread_bps ?? 0)} bps</div>
 				</div>
-				<div class="border border-[#222] bg-[#050505] px-3 py-2">
-					<div class="text-[#666]">Depth window</div>
-					<div class="text-[#888]">{Number(liquidityGuard.limits.live_book_depth_window_bps ?? 0)} bps</div>
+				<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2">
+					<div class="text-sc-ink3">Depth window</div>
+					<div class="text-sc-ink2">{Number(liquidityGuard.limits.live_book_depth_window_bps ?? 0)} bps</div>
 				</div>
-				<div class="border border-[#222] bg-[#050505] px-3 py-2">
-					<div class="text-[#666]">Max depth share</div>
-					<div class="text-[#888]">{Number(liquidityGuard.limits.live_max_book_participation_pct ?? 0)}%</div>
+				<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2">
+					<div class="text-sc-ink3">Max depth share</div>
+					<div class="text-sc-ink2">{Number(liquidityGuard.limits.live_max_book_participation_pct ?? 0)}%</div>
 				</div>
-				<div class="border border-[#222] bg-[#050505] px-3 py-2">
-					<div class="text-[#666]">Max price impact</div>
-					<div class="text-[#888]">{Number(liquidityGuard.limits.live_max_price_impact_bps ?? 0)} bps</div>
+				<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-2">
+					<div class="text-sc-ink3">Max price impact</div>
+					<div class="text-sc-ink2">{Number(liquidityGuard.limits.live_max_price_impact_bps ?? 0)} bps</div>
 				</div>
 			</div>
 		{/if}
 		{#if liquidityDecisions.length > 0}
 			<div class="pt-1">
-				<div class="text-[10px] uppercase tracking-wider text-[#666] mb-1">Recent order checks</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 mb-1">Recent order checks</div>
 				<div class="space-y-1">
 					{#each liquidityDecisions.slice(0, 8) as decision}
-						<div class="border border-[#222] bg-[#050505] px-3 py-1.5 flex items-center gap-2 text-[11px]">
+						<div class="rounded-md border border-sc-line bg-sc-panel px-3 py-1.5 flex items-center gap-2 text-[11px]">
 							<span class={`px-1.5 py-0.5 border text-[10px] uppercase ${decision.allowed ? 'text-emerald-400 border-emerald-800' : 'text-red-400 border-red-800'}`}>
 								{decision.allowed ? 'Pass' : 'Block'}
 							</span>
-							<span class="font-bold text-[#888]">{decision.asset}</span>
-							<span class="text-[#666] uppercase text-[10px]">{decision.side}</span>
-							<span class="text-[#666] truncate" title={decision.reason}>{decision.reason}</span>
+							<span class="font-bold text-sc-ink2">{decision.asset}</span>
+							<span class="text-sc-ink3 uppercase text-[10px]">{decision.side}</span>
+							<span class="text-sc-ink3 truncate" title={decision.reason}>{decision.reason}</span>
 						</div>
 					{/each}
 				</div>
 			</div>
 		{:else}
-			<div class="text-xs text-[#666]">No live orders checked since the backend started.</div>
+			<div class="text-xs text-sc-ink3">No live orders checked since the backend started.</div>
 		{/if}
 	</div>
 	{/if}
 
 	{#if scope === 'paper'}
-		<div class="border border-[#1d1d1d] bg-[#0a0a0a] px-4 py-2 text-[11px] text-[#666]">
+		<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-2 text-[11px] text-sc-ink3">
 			Live-only guards (Portfolio Budget, Liquidity Guard) are hidden in PAPER scope —
 			paper sessions are isolated $10k sandboxes and never share a budget.
 		</div>
@@ -900,23 +900,23 @@
 
 	<RegimeGatePanel gate={risk?.regime_gate} {scope} on:changed={() => loadRiskData()} />
 
-	<div class="border border-[#222] bg-[#050505] p-4 space-y-3">
+	<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-bold uppercase tracking-wider text-white">
+			<h2 class="text-[14px] font-semibold text-sc-ink">
 				Correlation Groups
-				<span class="ml-2 border px-1.5 py-0.5 text-[9px] font-normal tracking-wider {scope === 'live' ? 'border-red-900 text-red-400' : 'border-[#333] text-[#888]'}">{scope.toUpperCase()}</span>
+				<span class="ml-2 border px-1.5 py-0.5 text-[9px] font-normal tracking-wider {scope === 'live' ? 'border-red-900 text-red-400' : 'border-sc-line2 text-sc-ink2'}">{scope.toUpperCase()}</span>
 			</h2>
-			<span class="text-[11px] text-[#666]">{scopedOpenPositions} open position{scopedOpenPositions === 1 ? '' : 's'}</span>
+			<span class="text-[11px] text-sc-ink3">{scopedOpenPositions} open position{scopedOpenPositions === 1 ? '' : 's'}</span>
 		</div>
 		{#if scope === 'paper'}
-			<p class="text-[10px] text-[#555]">
+			<p class="text-[10px] text-sc-ink3">
 				Informational — values are risk fractions of each strategy's own $10k sandbox and are
 				never graded against the live budget. Paper net {formatPct(paperNetRisk)} · largest
 				single paper position {formatPct(paperPerTradeRisk)}.
 			</p>
 		{/if}
 		{#if Object.entries(groups).length === 0}
-			<div class="text-xs text-[#666]">No active position groups.</div>
+			<div class="text-xs text-sc-ink3">No active position groups.</div>
 		{:else}
 			<div class="space-y-3">
 				{#each Object.entries(groups) as [name, group]}
@@ -924,18 +924,18 @@
 					{@const longValue = Number(group.gross_long ?? 0)}
 					{@const shortValue = Number(group.gross_short ?? 0)}
 					{@const netValue = Number(group.net ?? 0)}
-					<div class="border border-[#222] bg-[#050505] p-3">
+					<div class="rounded-md border border-sc-line bg-sc-panel p-3">
 						<div class="flex items-center justify-between text-xs mb-2">
-							<span class="font-bold text-[#888]">{name}</span>
+							<span class="font-bold text-sc-ink2">{name}</span>
 							<span class={netValue >= 0 ? 'text-emerald-400' : 'text-red-400'}>
 								Net {formatPct(netValue)}
 							</span>
 						</div>
-						<div class="h-2 bg-[#141414] overflow-hidden flex">
+						<div class="h-2 bg-sc-raise overflow-hidden flex">
 							<div class="bg-emerald-600" style={`width: ${getExposureWidth(longValue, budget)}%;`}></div>
 							<div class="bg-red-600" style={`width: ${getExposureWidth(shortValue, budget)}%;`}></div>
 						</div>
-						<div class="mt-2 text-[10px] text-[#666] flex gap-4">
+						<div class="mt-2 text-[10px] text-sc-ink3 flex gap-4">
 							<span>Long {formatPct(longValue)}</span>
 							<span>Short {formatPct(shortValue)}</span>
 						</div>

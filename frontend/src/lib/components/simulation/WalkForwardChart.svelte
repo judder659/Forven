@@ -88,7 +88,7 @@
 		<div class="legend">
 			<span class="legend-item"><span class="box train"></span> Train</span>
 			<span class="legend-item"><span class="box test"></span> Test</span>
-			<span class="legend-item text-[#555]">|</span>
+			<span class="legend-item text-sc-ink3">|</span>
 			<span class="legend-item"><span class="timeline-box train"></span> Train Period</span>
 			<span class="legend-item"><span class="timeline-box test"></span> Test Period</span>
 		</div>
@@ -106,7 +106,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: #666666;
+		color: #747c88;
 		font-size: 12px;
 	}
 	.chart-area {
@@ -156,18 +156,18 @@
 		left: 50%;
 		transform: translateX(-50%);
 		font-size: 9px;
-		color: #888888;
+		color: #aab1bc;
 		white-space: nowrap;
 	}
 	.fold-label {
 		font-size: 9px;
-		color: #666666;
+		color: #747c88;
 		text-transform: uppercase;
 	}
 	.degradation {
 		font-size: 10px;
 		font-weight: 600;
-		font-family: monospace;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 	.degradation.positive { color: #22c55e; }
 	.degradation.negative { color: #ef4444; }
@@ -176,7 +176,7 @@
 		display: flex;
 		height: 12px;
 		overflow: hidden;
-		background: #111111;
+		background: #11141a;
 	}
 	.timeline-segment {
 		flex: 1;
@@ -197,7 +197,7 @@
 		gap: 1rem;
 		margin-top: 0.5rem;
 		font-size: 10px;
-		color: #888888;
+		color: #aab1bc;
 	}
 	.legend-item {
 		display: flex;

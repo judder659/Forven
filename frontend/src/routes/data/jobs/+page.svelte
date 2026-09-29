@@ -77,7 +77,7 @@
 	$: list = jobs.data?.jobs ?? [];
 	$: groups = GROUPS.map((g) => ({ ...g, jobs: list.filter((j) => g.statuses.includes(j.status)) })).filter((g) => g.jobs.length);
 	const chip = (on: boolean) =>
-		`border px-2.5 py-1 text-[10px] uppercase tracking-wider transition-colors ${on ? 'border-white bg-white text-black' : 'border-[#2a2a2a] text-[#888] hover:border-[#555] hover:text-white'}`;
+		`border px-2.5 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] transition-colors ${on ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2 hover:text-sc-ink'}`;
 </script>
 
 <svelte:head><title>Data · Jobs | Forven</title></svelte:head>
@@ -89,41 +89,41 @@
 				<button type="button" class={chip(status === key)} aria-pressed={status === key} on:click={() => (status = key as StatusFilter)}>{s.label}</button>
 			{/each}
 		</div>
-		<label class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#666]">Started by
-			<select bind:value={origin} class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[10px] normal-case text-[#ccc] outline-none focus:border-white">
+		<label class="flex items-center gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Started by
+			<select bind:value={origin} class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[10px] normal-case text-sc-ink outline-none focus:border-sc-ink">
 				{#each ORIGINS as o}<option value={o.value}>{o.label}</option>{/each}
 			</select>
 		</label>
-		<label class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-[#666]">Kind
-			<select bind:value={kind} class="border border-[#2a2a2a] bg-black px-1.5 py-1 text-[10px] normal-case text-[#ccc] outline-none focus:border-white">
+		<label class="flex items-center gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Kind
+			<select bind:value={kind} class="rounded-md border border-sc-line2 bg-sc-bg px-1.5 py-1 text-[10px] normal-case text-sc-ink outline-none focus:border-sc-ink">
 				<option value="">All kinds</option>
 				{#each Object.entries(JOB_KIND_LABEL) as [value, label]}<option {value}>{label}</option>{/each}
 			</select>
 		</label>
-		<label class="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[#777]" title="Automatic collection runs every minute; each run is one row">
+		<label class="flex items-center gap-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" title="Automatic collection runs every minute; each run is one row">
 			<input type="checkbox" bind:checked={showRoutine} class="accent-white" /> Show collection ticks
 		</label>
-		{#if jobs.data}<span class="ml-auto text-[10px] text-[#666]"><span class="font-mono text-[#aaa]">{formatCount(jobs.data.total)}</span> jobs</span>{/if}
+		{#if jobs.data}<span class="ml-auto text-[10px] text-sc-ink3"><span class="font-mono text-sc-ink2">{formatCount(jobs.data.total)}</span> jobs</span>{/if}
 	</div>
 
-	<section class="border border-[#222] bg-[#050505]" aria-label="Jobs">
+	<section class="rounded-md border border-sc-line bg-sc-panel" aria-label="Jobs">
 		<SectionState state={jobs} what="The job list" endpoint="GET /api/data/jobs" rows={6} on:retry={load}>
 			{#if !groups.length}
 				<div class="px-4 py-8 text-center">
-					<p class="text-[13px] text-white">No jobs match.</p>
-					<p class="mt-1 text-[11px] text-[#777]">
+					<p class="text-[13px] text-sc-ink">No jobs match.</p>
+					<p class="mt-1 text-[11px] text-sc-ink3">
 						Downloads, history extensions, imports and repairs you start appear here, and so does automatic collection work.
-						<a href="{DM}/get" class="text-white underline">Get data</a> to start one.
+						<a href="{DM}/get" class="text-sc-ink underline">Get data</a> to start one.
 					</p>
 				</div>
 			{:else}
 				{#each groups as group (group.key)}
-					<h2 class="border-b border-[#141414] bg-[#0a0a0a] px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[#666]">{group.label} <span class="font-normal text-[#555]">· {group.jobs.length}</span></h2>
+					<h2 class="text-[14px] font-semibold border-b border-sc-line bg-sc-panel px-3 py-1.5 text-sc-ink3">{group.label} <span class="font-normal text-sc-ink3">· {group.jobs.length}</span></h2>
 					{#each group.jobs as job (job.id)}<JobRow {job} on:changed={load} />{/each}
 				{/each}
 				{#if jobs.data && jobs.data.total > list.length}
 					<button type="button" on:click={() => { limit += LIMIT; void load(); }}
-						class="w-full border-t border-[#141414] px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[#888] hover:text-white">
+						class="w-full border-t border-sc-line px-3 py-2 text-left text-[12px] text-sc-ink2 hover:text-sc-ink">
 						Show more ({formatCount(jobs.data.total - list.length)} older)</button>
 				{/if}
 			{/if}

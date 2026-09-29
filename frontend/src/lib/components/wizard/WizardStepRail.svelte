@@ -16,7 +16,7 @@
 	}
 </script>
 
-<nav class="flex flex-col h-full border-r border-[#222] bg-[#050505] w-[200px] p-3">
+<nav class="flex flex-col h-full border-r border-sc-line bg-sc-panel w-[200px] p-3">
 	<ol class="flex-1 space-y-px">
 		{#each steps as step, i (step.id)}
 			<li>
@@ -24,8 +24,8 @@
 					type="button"
 					aria-current={i === activeIndex ? 'step' : undefined}
 					aria-label={step.label + statusSuffix(step)}
-					class="w-full flex items-center gap-2 text-left px-2 py-2 text-xs uppercase tracking-wider border-l-2 transition-colors focus:outline-none
-					       {i === activeIndex ? 'border-white bg-[#111] text-white' : 'border-transparent text-[#888] hover:bg-[#111] hover:text-white'}"
+					class="w-full flex items-center gap-2 text-left px-2 py-2 text-[12px] border-l-2 transition-colors focus:outline-none
+					       {i === activeIndex ? 'border-sc-ink bg-sc-panel2 text-sc-ink' : 'border-transparent text-sc-ink2 hover:bg-sc-panel2 hover:text-sc-ink'}"
 					on:click={() => onSelect(i)}
 				>
 					<span class="w-4 flex-shrink-0 text-xs" aria-hidden="true">
@@ -34,7 +34,7 @@
 						{:else if step.satisfied}
 							<span class="text-emerald-400">✓</span>
 						{:else}
-							<span class="text-[#555]">○</span>
+							<span class="text-sc-ink3">○</span>
 						{/if}
 					</span>
 					<span class="flex-1 truncate">{step.label}</span>
@@ -44,7 +44,7 @@
 	</ol>
 	<button
 		type="button"
-		class="mt-4 text-[10px] uppercase tracking-wider text-[#666] hover:text-white text-left px-2 py-1 focus:outline-none"
+		class="mt-4 text-[12px] text-sc-ink3 hover:text-sc-ink text-left px-2 py-1 focus:outline-none"
 		on:click={onSkipAll}
 	>
 		Skip all — I'll configure later

@@ -273,14 +273,14 @@
 		justify-content: space-between;
 		gap: 1rem;
 		padding: 1rem;
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 	}
 
 	.kicker {
 		margin: 0 0 0.25rem;
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.75rem;
 		font-weight: 600;
 		text-transform: uppercase;
@@ -291,26 +291,26 @@
 		margin: 0;
 		font-size: 1.125rem;
 		font-weight: 600;
-		color: #fff;
+		color: #eef1f5;
 	}
 
 	.meta {
 		margin: 0.35rem 0 0;
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.8125rem;
 	}
 
 	button,
 	.panel a,
 	.stat {
-		color: #888;
+		color: #aab1bc;
 		text-decoration: none;
 	}
 
 	button {
-		background: #1a1a1a;
-		border: 1px solid #333;
-		color: #ddd;
+		background: #181c23;
+		border: 1px solid #2a2f38;
+		color: #eef1f5;
 		padding: 0.5rem 0.875rem;
 		border-radius: 0;
 		cursor: pointer;
@@ -318,8 +318,8 @@
 	}
 
 	button:hover:not(:disabled) {
-		background: #222;
-		color: #fff;
+		background: #181c23;
+		color: #eef1f5;
 	}
 
 	button:disabled {
@@ -338,25 +338,25 @@
 		flex-direction: column;
 		gap: 0.35rem;
 		padding: 0.875rem;
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 	}
 
 	.stat:hover {
-		border-color: #555;
-		background: #111;
+		border-color: #2a2f38;
+		background: #11141a;
 	}
 
 	.stat span {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.75rem;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.stat strong {
-		color: #fff;
+		color: #eef1f5;
 		font-size: 1.35rem;
 		font-weight: 600;
 	}
@@ -368,8 +368,8 @@
 	}
 
 	.panel {
-		background: #050505;
-		border: 1px solid #222;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 		padding: 0.875rem;
 	}
@@ -386,30 +386,30 @@
 		margin: 0;
 		font-size: 0.9375rem;
 		font-weight: 600;
-		color: #ddd;
+		color: #eef1f5;
 	}
 
 	.panel header span,
 	.panel header a {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.75rem;
 	}
 
 	.panel header a:hover {
-		color: #888;
+		color: #aab1bc;
 		text-decoration: underline;
 	}
 
 	.empty,
 	.empty-inline {
-		color: #888;
+		color: #aab1bc;
 		font-size: 0.875rem;
 	}
 
 	.empty {
 		padding: 1rem;
 		text-align: center;
-		border: 1px dashed #222;
+		border: 1px dashed #1c2026;
 		border-radius: 0;
 	}
 
@@ -452,8 +452,8 @@
 		gap: 0.75rem;
 		padding: 0.625rem 0.75rem;
 		border-radius: 0;
-		border: 1px solid #222;
-		background: #050505;
+		border: 1px solid #1c2026;
+		background: #0c0e11;
 	}
 
 	.attention.critical {
@@ -467,25 +467,25 @@
 	}
 
 	.attention.info {
-		border-color: #1a1a1a;
-		background: #050505;
+		border-color: #1c2026;
+		background: #0c0e11;
 	}
 
 	.attention strong {
 		display: block;
-		color: #f5f5f5;
+		color: #eef1f5;
 		font-size: 0.875rem;
 	}
 
 	.attention p {
 		margin: 0.25rem 0 0;
-		color: #aaa;
+		color: #aab1bc;
 		font-size: 0.8125rem;
 		line-height: 1.4;
 	}
 
 	.attention > span {
-		color: #777;
+		color: #747c88;
 		font-size: 0.75rem;
 		text-transform: uppercase;
 		white-space: nowrap;
@@ -498,7 +498,7 @@
 	}
 
 	.memory-lines li {
-		color: #ccc;
+		color: #eef1f5;
 		font-size: 0.875rem;
 		line-height: 1.45;
 		word-break: break-word;
@@ -507,8 +507,8 @@
 	.task-list li,
 	.activity-list li {
 		padding: 0.625rem 0.75rem;
-		background: #050505;
-		border: 1px solid #1a1a1a;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 	}
 
@@ -520,12 +520,12 @@
 		gap: 0.5rem;
 		flex-wrap: wrap;
 		font-size: 0.75rem;
-		color: #888;
+		color: #aab1bc;
 	}
 
 	.task-head a {
-		font-family: 'JetBrains Mono', 'Consolas', monospace;
-		color: #888;
+		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		color: #aab1bc;
 	}
 
 	.status,
@@ -533,8 +533,8 @@
 	.level {
 		padding: 0.0625rem 0.4rem;
 		border-radius: 0;
-		background: #1f1f1f;
-		color: #aaa;
+		background: #181c23;
+		color: #aab1bc;
 		text-transform: uppercase;
 		font-size: 0.6875rem;
 		font-weight: 600;
@@ -562,12 +562,12 @@
 
 	.when {
 		margin-left: auto;
-		color: #666;
+		color: #747c88;
 	}
 
 	.task-title {
 		margin-top: 0.35rem;
-		color: #e5e5e5;
+		color: #eef1f5;
 		font-size: 0.875rem;
 		line-height: 1.4;
 	}
@@ -586,7 +586,7 @@
 
 	.activity-list p {
 		margin: 0.35rem 0 0;
-		color: #ccc;
+		color: #eef1f5;
 		font-size: 0.875rem;
 		line-height: 1.45;
 	}
@@ -597,13 +597,13 @@
 		justify-content: space-between;
 		gap: 1rem;
 		padding: 0.625rem 0.75rem;
-		background: #050505;
-		border: 1px solid #1a1a1a;
+		background: #0c0e11;
+		border: 1px solid #1c2026;
 		border-radius: 0;
 	}
 
 	.failure-list span {
-		color: #ddd;
+		color: #eef1f5;
 		font-size: 0.875rem;
 	}
 

@@ -20,10 +20,10 @@
 	}
 </script>
 
-<div class={nested ? 'border-l border-[#262626] pl-2' : ''}>
+<div class={nested ? 'border-l border-sc-line pl-2' : ''}>
 	{#if nested || rule.items.length > 1}
-		<div class="mb-0.5 text-[10px] uppercase tracking-wider text-[#555]">
-			{rule.logic === 'and' ? 'all of' : 'any of'} · <span class={rule.result ? 'text-emerald-500' : 'text-[#666]'}>{rule.result ? 'held' : 'did not hold'}</span>
+		<div class="mb-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+			{rule.logic === 'and' ? 'all of' : 'any of'} · <span class={rule.result ? 'text-emerald-500' : 'text-sc-ink3'}>{rule.result ? 'held' : 'did not hold'}</span>
 		</div>
 	{/if}
 	<ul class="space-y-1">
@@ -33,17 +33,17 @@
 					<RuleTraceView rule={item} {labels} {knobs} nested />
 				{:else}
 					<div class="flex items-baseline gap-2 text-[12px] leading-5">
-						<span class="w-3 shrink-0 {item.result ? 'text-emerald-400' : 'text-[#555]'}" aria-label={item.result ? 'held' : 'did not hold'}>{item.result ? '✓' : '✗'}</span>
-						<span class={item.result ? 'text-[#ddd]' : 'text-[#777]'}>
+						<span class="w-3 shrink-0 {item.result ? 'text-emerald-400' : 'text-sc-ink3'}" aria-label={item.result ? 'held' : 'did not hold'}>{item.result ? '✓' : '✗'}</span>
+						<span class={item.result ? 'text-sc-ink' : 'text-sc-ink3'}>
 							{operandDisplay(item.left, labels, knobs)}
-							{#if readsSeries(item.left)}<span class="font-mono text-[11px] text-white">{formatValue(item.left_value)}</span>{/if}
-							<span class="italic text-[#888]">{OPERATOR_LABELS[item.op] ?? item.op}</span>
+							{#if readsSeries(item.left)}<span class="font-mono text-[11px] text-sc-ink">{formatValue(item.left_value)}</span>{/if}
+							<span class="italic text-sc-ink2">{OPERATOR_LABELS[item.op] ?? item.op}</span>
 							{operandDisplay(item.right, labels, knobs)}
-							{#if readsSeries(item.right)}<span class="font-mono text-[11px] text-white">{formatValue(item.right_value)}</span>{/if}
+							{#if readsSeries(item.right)}<span class="font-mono text-[11px] text-sc-ink">{formatValue(item.right_value)}</span>{/if}
 						</span>
 					</div>
 					{#if item.op.startsWith('crosses')}
-						<div class="ml-5 text-[10px] text-[#555]">the bar before: {formatValue(item.left_prev)} vs {formatValue(item.right_prev)}</div>
+						<div class="ml-5 text-[10px] text-sc-ink3">the bar before: {formatValue(item.left_prev)} vs {formatValue(item.right_prev)}</div>
 					{/if}
 				{/if}
 			</li>

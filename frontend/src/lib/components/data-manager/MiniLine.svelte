@@ -24,5 +24,5 @@
 		<path d={path} fill="none" stroke="#8b8b8b" stroke-width="1" />
 	</svg>
 {:else}
-	<span class="block text-[10px] text-[#444]" style="width: {width}px">—</span>
+	<span class="block text-[10px] text-sc-ink4" style="width: {width}px">—</span>
 {/if}

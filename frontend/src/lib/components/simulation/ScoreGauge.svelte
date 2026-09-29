@@ -45,7 +45,7 @@
 		/>
 	</svg>
 	<div class="absolute inset-0 flex flex-col items-center justify-center">
-		<span class="text-2xl font-bold text-white">{percentage}%</span>
-		<span class="text-xs text-[#666]">{score}/{maxScore}</span>
+		<span class="text-2xl font-bold text-sc-ink">{percentage}%</span>
+		<span class="text-xs text-sc-ink3">{score}/{maxScore}</span>
 	</div>
 </div>

@@ -1340,7 +1340,7 @@
 	</div>
 	<button
 		type="button"
-		class="rounded-md border border-sc-ink bg-sc-ink font-medium text-[#0b0d10] transition hover:bg-white shrink-0 text-[12px]"
+		class="rounded-md border border-sc-ink bg-sc-ink font-medium text-[#0b0d10] transition hover:bg-sc-ink shrink-0 text-[12px]"
 		on:click={runFullSuite}
 		disabled={anyLoading || suiteRunning}
 	>

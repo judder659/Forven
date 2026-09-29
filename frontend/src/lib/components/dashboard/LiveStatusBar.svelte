@@ -34,14 +34,14 @@
 	$: scanStale = lastScanTs === null || now - lastScanTs > staleAfterMs;
 
 	const chip = 'border px-2 py-0.5 whitespace-nowrap';
-	const calm = 'border-[#333] text-gray-400';
+	const calm = 'border-sc-line2 text-sc-ink2';
 	const good = 'border-emerald-900 text-emerald-400';
 	const warn = 'border-amber-800 bg-amber-500/5 text-amber-300';
 	const bad = 'border-red-800 bg-red-500/10 text-red-300';
 </script>
 
 <div
-	class="flex flex-wrap items-center gap-x-2 gap-y-1.5 border border-[#222] bg-[#050505] px-3 py-2 text-[11px] uppercase tracking-wider"
+	class="rounded-md flex flex-wrap items-center gap-x-2 gap-y-1.5 border border-sc-line bg-sc-panel px-3 py-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]"
 	data-testid="live-status-bar"
 >
 	{#if !dashboard}

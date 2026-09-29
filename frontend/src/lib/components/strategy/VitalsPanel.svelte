@@ -13,7 +13,7 @@
 	const COLUMNS: Array<{ label: string; title: string; cell: (s: SampleStats) => string; tone?: (s: SampleStats) => string }> = [
 		{ label: 'Trades', title: 'Closed trades', cell: (s) => String(s.trades) },
 		{ label: 'Return', title: 'Net return, compounded on closed trades', cell: (s) => pct(s.net_return),
-			tone: (s) => (s.net_return > 0 ? 'text-emerald-400' : s.net_return < 0 ? 'text-red-400' : 'text-[#aaa]') },
+			tone: (s) => (s.net_return > 0 ? 'text-emerald-400' : s.net_return < 0 ? 'text-red-400' : 'text-sc-ink2') },
 		{ label: 'Win', title: 'Winning trades', cell: (s) => (s.trades ? pct(s.win_rate, 0, false) : '—') },
 		{ label: 'PF', title: 'Profit factor: gross wins ÷ gross losses', cell: (s) => (!s.trades ? '—' : s.profit_factor_is_infinite ? '∞' : (s.profit_factor ?? 0).toFixed(2)) },
 		{ label: 'Max DD', title: 'Deepest fall from a closed-trade equity peak', cell: (s) => pct(-Math.abs(s.max_drawdown), 1, false) },
@@ -28,45 +28,45 @@
 		]
 		: [];
 	$: dsr = vitals?.deflated_sharpe ?? null;
-	$: dsrTone = !dsr ? 'text-[#666]' : dsr.probability >= 0.95 ? 'text-emerald-400' : dsr.probability >= 0.5 ? 'text-amber-400' : 'text-red-400';
+	$: dsrTone = !dsr ? 'text-sc-ink3' : dsr.probability >= 0.95 ? 'text-emerald-400' : dsr.probability >= 0.5 ? 'text-amber-400' : 'text-red-400';
 </script>
 
 {#if vitals}
-	<div class="border border-[#222] bg-[#050505]" data-testid="vitals">
+	<div class="rounded-md border border-sc-line bg-sc-panel" data-testid="vitals">
 		<table class="w-full text-[11px]">
 			<thead>
-				<tr class="text-[9px] uppercase tracking-wider text-[#555]">
+				<tr class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
 					<th class="px-3 py-1.5 text-left font-normal">Sample</th>
 					{#each COLUMNS as col}<th class="px-2 py-1.5 text-right font-normal" title={col.title}>{col.label}</th>{/each}
 				</tr>
 			</thead>
 			<tbody>
 				{#each rows as row (row.label)}
-					<tr class="border-t border-[#141414] {row.scored ? 'bg-white/[0.03]' : ''}">
+					<tr class="border-t border-sc-line {row.scored ? 'bg-sc-ink/[0.03]' : ''}">
 						<td class="px-3 py-1.5" title={row.note}>
-							<div class={row.scored ? 'text-white' : 'text-[#aaa]'}>{row.label}</div>
-							<div class="text-[9px] text-[#555]">{day(row.stats.start)} → {day(row.stats.end)}</div>
+							<div class={row.scored ? 'text-sc-ink' : 'text-sc-ink2'}>{row.label}</div>
+							<div class="text-[9px] text-sc-ink3">{day(row.stats.start)} → {day(row.stats.end)}</div>
 						</td>
 						{#each COLUMNS as col}
-							<td class="px-2 py-1.5 text-right font-mono {col.tone ? col.tone(row.stats) : 'text-[#ccc]'}">{col.cell(row.stats)}</td>
+							<td class="px-2 py-1.5 text-right font-mono {col.tone ? col.tone(row.stats) : 'text-sc-ink'}">{col.cell(row.stats)}</td>
 						{/each}
 					</tr>
 				{/each}
 			</tbody>
 		</table>
-		<div class="flex flex-wrap items-baseline gap-x-2 border-t border-[#141414] px-3 py-1.5 text-[11px]" data-testid="deflated-sharpe">
-			<span class="text-[9px] uppercase tracking-wider text-[#555]">Deflated Sharpe</span>
+		<div class="flex flex-wrap items-baseline gap-x-2 border-t border-sc-line px-3 py-1.5 text-[11px]" data-testid="deflated-sharpe">
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Deflated Sharpe</span>
 			{#if dsr}
 				<span class="font-mono {dsrTone}">{(dsr.probability * 100).toFixed(0)}%</span>
-				<span class="text-[#777]">chance the out-of-sample edge is real, allowing for the {dsr.trials} result{dsr.trials === 1 ? '' : 's'} seen this session</span>
+				<span class="text-sc-ink3">chance the out-of-sample edge is real, allowing for the {dsr.trials} result{dsr.trials === 1 ? '' : 's'} seen this session</span>
 			{:else}
-				<span class="text-[#666]">needs at least 5 out-of-sample trades</span>
+				<span class="text-sc-ink3">needs at least 5 out-of-sample trades</span>
 			{/if}
 		</div>
 		{#if vitals.traps.length}
-			<div class="space-y-0.5 border-t border-[#141414] px-3 py-1.5" data-testid="traps">
+			<div class="space-y-0.5 border-t border-sc-line px-3 py-1.5" data-testid="traps">
 				{#each vitals.traps as trap (trap.code)}
-					<div class="text-[11px] {trap.level === 'warn' ? 'text-amber-400' : 'text-[#888]'}">{trap.level === 'warn' ? '⚠' : 'ℹ'} {trap.text}</div>
+					<div class="text-[11px] {trap.level === 'warn' ? 'text-amber-400' : 'text-sc-ink2'}">{trap.level === 'warn' ? '⚠' : 'ℹ'} {trap.text}</div>
 				{/each}
 			</div>
 		{/if}

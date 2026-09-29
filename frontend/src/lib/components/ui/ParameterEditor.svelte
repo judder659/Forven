@@ -142,9 +142,9 @@
 </script>
 
 {#if paramEntries.length === 0}
-	<div class="border border-dashed border-[#333] px-4 py-5 text-center">
-		<div class="text-xs font-bold uppercase tracking-widest text-white">No editable parameters yet</div>
-		<div class="mt-1 text-[11px] text-[#666]">
+	<div class="border border-dashed border-sc-line2 px-4 py-5 text-center">
+		<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">No editable parameters yet</div>
+		<div class="mt-1 text-[11px] text-sc-ink3">
 			This strategy does not currently expose a default parameter set for the draft editor.
 		</div>
 	</div>
@@ -153,20 +153,20 @@
 		{#each paramEntries as [key, value]}
 			{@const kind = detectParameterValueKind(value)}
 			<div
-				class={`border bg-[#050505] p-2 ${
+				class={`rounded-md border bg-sc-panel p-2 ${
 					kind === 'json'
-						? 'sm:col-span-2 xl:col-span-3 border-[#333]'
-						: 'border-[#222]'
+						? 'sm:col-span-2 xl:col-span-3 border-sc-line2'
+						: 'border-sc-line'
 				}`}
 			>
 				<div class="flex items-center justify-between gap-2">
-					<div class="text-[10px] uppercase tracking-wider text-[#888]">{prettyLabel(key)}</div>
-					<span class="border border-[#333] px-1.5 py-0.5 font-mono text-[9px] text-[#555]">{key}</span>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{prettyLabel(key)}</div>
+					<span class="border border-sc-line2 px-1.5 py-0.5 font-mono text-[9px] text-sc-ink3">{key}</span>
 				</div>
 				<div class="mt-1.5">
 					{#if kind === 'boolean'}
-						<label class={`flex cursor-pointer items-center justify-between gap-3 border border-[#333] bg-black px-2.5 py-1.5 text-xs ${saving ? 'cursor-not-allowed opacity-60' : ''}`}>
-							<span class="text-[#888]">{value ? 'Enabled' : 'Disabled'}</span>
+						<label class={`rounded-md flex cursor-pointer items-center justify-between gap-3 border border-sc-line2 bg-sc-bg px-2.5 py-1.5 text-xs ${saving ? 'cursor-not-allowed opacity-60' : ''}`}>
+							<span class="text-sc-ink2">{value ? 'Enabled' : 'Disabled'}</span>
 							<!--
 								The checkbox is the real focusable control (peer). It is visually
 								collapsed but remains keyboard-operable and focus-visible — the
@@ -183,26 +183,26 @@
 								on:change={(event) => updateBoolean(key, (event.currentTarget as HTMLInputElement).checked)}
 								disabled={saving}
 							/>
-							<span class={`relative inline-flex h-5 w-9 items-center border transition-colors peer-focus-visible:ring-1 peer-focus-visible:ring-white peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-black ${value ? 'border-white bg-white/20' : 'border-[#333] bg-black'}`}>
-								<span class={`inline-block h-3.5 w-3.5 ${value ? 'bg-white' : 'bg-[#555]'} transition ${value ? 'translate-x-4' : 'translate-x-0.5'}`}></span>
+							<span class={`relative inline-flex h-5 w-9 items-center border transition-colors peer-focus-visible:ring-1 peer-focus-visible:ring-sc-ink peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-black ${value ? 'border-sc-ink bg-sc-ink/20' : 'border-sc-line2 bg-sc-bg'}`}>
+								<span class={`inline-block h-3.5 w-3.5 ${value ? 'bg-sc-ink' : 'bg-sc-line2'} transition ${value ? 'translate-x-4' : 'translate-x-0.5'}`}></span>
 							</span>
 						</label>
 					{:else if kind === 'json'}
-						<div class={`border ${fieldErrors[key] ? 'border-red-900' : 'border-[#333]'} bg-black p-2 transition-colors focus-within:border-white`}>
+						<div class={`border ${fieldErrors[key] ? 'border-red-900' : 'border-sc-line2'} bg-sc-bg p-2 transition-colors focus-within:border-sc-ink`}>
 							<textarea
 								rows={rowsForJsonBuffer(jsonBuffers[key] ?? serializeParameterValue(value))}
-								class="w-full resize-y bg-transparent font-mono text-xs leading-5 text-white outline-none placeholder:text-[#444] disabled:opacity-40"
+								class="w-full resize-y bg-transparent font-mono text-xs leading-5 text-sc-ink outline-none placeholder:text-sc-ink4 disabled:opacity-40"
 								value={jsonBuffers[key] ?? serializeParameterValue(value)}
 								on:input={(event) => updateJsonBuffer(key, (event.currentTarget as HTMLTextAreaElement).value)}
 								disabled={saving}
 							></textarea>
 						</div>
 					{:else}
-						<div class={`border ${fieldErrors[key] ? 'border-red-900' : 'border-[#333]'} bg-black px-2.5 py-1.5 transition-colors focus-within:border-white`}>
+						<div class={`border ${fieldErrors[key] ? 'border-red-900' : 'border-sc-line2'} bg-sc-bg px-2.5 py-1.5 transition-colors focus-within:border-sc-ink`}>
 							<input
 								type={kind === 'number' ? 'number' : 'text'}
 								step={kind === 'number' ? 'any' : undefined}
-								class="w-full bg-transparent text-sm text-white outline-none placeholder:text-[#444] disabled:opacity-40"
+								class="w-full bg-transparent text-sm text-sc-ink outline-none placeholder:text-sc-ink4 disabled:opacity-40"
 								value={serializeParameterValue(value)}
 								on:input={(event) => updatePrimitive(key, (event.currentTarget as HTMLInputElement).value, kind)}
 								disabled={saving}

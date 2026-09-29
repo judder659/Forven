@@ -1,5 +1,13 @@
 <script lang="ts">
 	import '../app.css';
+	// The app's type: IBM Plex, bundled so every page renders the same offline.
+	import '@fontsource/ibm-plex-sans/latin-400.css';
+	import '@fontsource/ibm-plex-sans/latin-500.css';
+	import '@fontsource/ibm-plex-sans/latin-600.css';
+	import '@fontsource/ibm-plex-sans-condensed/latin-500.css';
+	import '@fontsource/ibm-plex-sans-condensed/latin-600.css';
+	import '@fontsource/ibm-plex-mono/latin-400.css';
+	import '@fontsource/ibm-plex-mono/latin-500.css';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
@@ -260,7 +268,7 @@
      the page pushes over and stays usable next to the chat (no dimming overlay).
      min(440px, 92vw) mirrors the panel's w-[440px] max-w-[92vw]. -->
 <div
-	class="flex h-screen bg-black text-white font-mono overflow-hidden selection:bg-white selection:text-black"
+	class="flex h-screen bg-sc-bg text-sc-ink font-sans overflow-hidden selection:bg-sc-ink selection:text-black"
 	style="transition: padding-right 250ms ease;"
 	style:padding-right={$assistantUI.open ? 'min(440px, 92vw)' : '0px'}
 >
@@ -269,7 +277,7 @@
 	<!-- Main Content: z-0 keeps every page z-index, modals included, below the
 	     fixed chrome after it (chat button, toasts, assistant, wizard, save bar).
 	     The sidebar has no z-index and comes first, so page overlays cover it. -->
-	<main class="flex-1 min-w-0 bg-black flex flex-col relative z-0">
+	<main class="flex-1 min-w-0 bg-sc-bg flex flex-col relative z-0">
 		<RiskDisclaimerBanner />
 		<UpdateBanner />
 		<AgentProviderBanner />
@@ -296,7 +304,7 @@
 <!-- Floating Chat Button: slides left of the panel when it's open so it stays a toggle. -->
 <button
 	on:click={toggleAssistant}
-	class="fixed z-50 w-14 h-14 border border-[#333] bg-black text-white hover:bg-white hover:text-black flex items-center justify-center relative"
+	class="rounded-md fixed z-50 w-14 h-14 border border-sc-line2 bg-sc-bg text-sc-ink hover:bg-sc-ink hover:text-black flex items-center justify-center relative"
 	style="position: fixed; bottom: 1.5rem; left: auto; top: auto; transition: right 250ms ease, background-color 150ms ease, color 150ms ease;"
 	style:right={$assistantUI.open ? 'calc(1.5rem + min(440px, 92vw))' : '1.5rem'}
 	aria-label="Open assistant"
@@ -313,7 +321,7 @@
 
 	{#if !$assistantUI.open && $chatUnreadCount > 0}
 		<span
-			class="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 bg-red-500 text-[10px] font-bold text-white flex items-center justify-center"
+			class="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 bg-red-500 text-[10px] font-bold text-sc-ink flex items-center justify-center"
 			aria-label={`${$chatUnreadCount} unread chat replies`}
 		>
 			{unreadChatCountLabel}

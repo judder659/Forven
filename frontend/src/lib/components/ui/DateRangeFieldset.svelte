@@ -29,29 +29,29 @@
 	// Terminal design language: accents collapse to the white/neutral scale.
 	const accentStyles = {
 		cyan: {
-			active: 'border-white bg-white text-black',
-			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
-			meta: 'text-[#888]',
+			active: 'border-sc-ink bg-sc-ink text-black',
+			idle: 'border-sc-line2 bg-transparent text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink',
+			meta: 'text-sc-ink2',
 		},
 		blue: {
-			active: 'border-white bg-white text-black',
-			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
-			meta: 'text-[#888]',
+			active: 'border-sc-ink bg-sc-ink text-black',
+			idle: 'border-sc-line2 bg-transparent text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink',
+			meta: 'text-sc-ink2',
 		},
 		violet: {
-			active: 'border-white bg-white text-black',
-			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
-			meta: 'text-[#888]',
+			active: 'border-sc-ink bg-sc-ink text-black',
+			idle: 'border-sc-line2 bg-transparent text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink',
+			meta: 'text-sc-ink2',
 		},
 		amber: {
-			active: 'border-white bg-white text-black',
-			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
-			meta: 'text-[#888]',
+			active: 'border-sc-ink bg-sc-ink text-black',
+			idle: 'border-sc-line2 bg-transparent text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink',
+			meta: 'text-sc-ink2',
 		},
 		rose: {
-			active: 'border-white bg-white text-black',
-			idle: 'border-[#333] bg-transparent text-[#666] hover:border-[#555] hover:text-white',
-			meta: 'text-[#888]',
+			active: 'border-sc-ink bg-sc-ink text-black',
+			idle: 'border-sc-line2 bg-transparent text-sc-ink3 hover:border-sc-line2 hover:text-sc-ink',
+			meta: 'text-sc-ink2',
 		},
 	};
 
@@ -74,17 +74,17 @@
 	$: styles = accentStyles[accent];
 </script>
 
-<div class="border border-[#222] bg-[#050505] p-3">
+<div class="rounded-md border border-sc-line bg-sc-panel p-3">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">{title}</div>
-			<div class="mt-1 text-[11px] text-[#555]">{description}</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{title}</div>
+			<div class="mt-1 text-[11px] text-sc-ink3">{description}</div>
 		</div>
 		<div class="flex flex-wrap items-center gap-2 text-[11px]">
-			<span class={`border border-[#333] px-2 py-0.5 ${styles.meta}`}>
+			<span class={`border border-sc-line2 px-2 py-0.5 ${styles.meta}`}>
 				{windowSummary}
 			</span>
-			<span class="border border-[#333] px-2 py-0.5 text-[#666]">
+			<span class="border border-sc-line2 px-2 py-0.5 text-sc-ink3">
 				{barEstimateLabel}
 			</span>
 		</div>
@@ -94,7 +94,7 @@
 		{#each DATE_RANGE_PRESETS as preset}
 			<button
 				type="button"
-				class={`border px-2.5 py-1 text-[11px] uppercase tracking-wide transition-colors ${activePreset === preset.id ? styles.active : styles.idle}`}
+				class={`rounded-md border px-2.5 py-1 text-[11px] transition-colors ${activePreset === preset.id ? styles.active : styles.idle}`}
 				on:click={() => applyPreset(preset.id)}
 			>
 				{preset.label}
@@ -103,20 +103,20 @@
 		{#if minDate}
 			<button
 				type="button"
-				class={`border px-2.5 py-1 text-[11px] uppercase tracking-wide transition-colors ${activePreset === 'max' ? styles.active : styles.idle}`}
+				class={`rounded-md border px-2.5 py-1 text-[11px] transition-colors ${activePreset === 'max' ? styles.active : styles.idle}`}
 				on:click={() => applyPreset('max')}
 			>
 				Max
 			</button>
 		{/if}
-		<span class={`border px-2.5 py-1 text-[11px] uppercase tracking-wide ${activePreset === 'custom' ? styles.active : 'border-[#333] text-[#555]'}`}>
+		<span class={`border px-2.5 py-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${activePreset === 'custom' ? styles.active : 'border-sc-line2 text-sc-ink3'}`}>
 			Custom
 		</span>
 	</div>
 
 	<div class="mt-3 grid gap-3 md:grid-cols-2">
 		<label class="block" for={`${idPrefix}-start`}>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">Start</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Start</div>
 			<input
 				id={`${idPrefix}-start`}
 				type="date"
@@ -127,7 +127,7 @@
 			/>
 		</label>
 		<label class="block" for={`${idPrefix}-end`}>
-			<div class="text-[10px] uppercase tracking-wider text-[#666]">End</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">End</div>
 			<input
 				id={`${idPrefix}-end`}
 				type="date"

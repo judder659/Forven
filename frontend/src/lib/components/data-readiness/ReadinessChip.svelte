@@ -23,7 +23,7 @@
 	const STATUS: Record<ReadinessRequirement['status'], { word: string; tone: string }> = {
 		ok: { word: 'OK', tone: 'border-emerald-900 text-emerald-400' },
 		warn: { word: 'Warn', tone: 'border-amber-900 text-amber-400' },
-		missing: { word: 'Missing', tone: 'border-[#444] text-[#aaa]' },
+		missing: { word: 'Missing', tone: 'border-sc-line2 text-sc-ink2' },
 		blocked: { word: 'Blocked', tone: 'border-red-900 text-red-400' },
 	};
 
@@ -90,30 +90,30 @@
 	<div class="relative inline-block text-left" data-testid="readiness">
 		<button type="button" on:click={() => (open = !open)} aria-expanded={open} title={report.summary}
 			data-testid="readiness-chip" data-verdict={report.verdict}
-			class="inline-flex items-center gap-1.5 border bg-black px-2 py-0.5 text-[10px] uppercase tracking-wider transition-opacity {tone.chip} {loading ? 'opacity-60' : ''}">
+			class="rounded-md inline-flex items-center gap-1.5 border bg-sc-bg px-2 py-0.5 text-[12px] transition-opacity {tone.chip} {loading ? 'opacity-60' : ''}">
 			<span class="h-1.5 w-1.5 {tone.dot}" aria-hidden="true"></span>
 			<span>{tone.word}</span>
-			{#if counted}<span class="normal-case tracking-normal text-[#888]">· {counted}</span>{/if}
+			{#if counted}<span class="normal-case tracking-normal text-sc-ink2">· {counted}</span>{/if}
 		</button>
 		{#if open}
-			<div class="absolute {align === 'right' ? 'right-0' : 'left-0'} top-full z-30 mt-1 w-[28rem] max-w-[90vw] border border-[#222] bg-[#050505] shadow-xl shadow-black"
+			<div class="rounded-md absolute {align === 'right' ? 'right-0' : 'left-0'} top-full z-30 mt-1 w-[28rem] max-w-[90vw] border border-sc-line bg-sc-panel shadow-xl shadow-black"
 				role="region" aria-label="Data readiness" data-testid="readiness-panel">
-				<div class="flex items-baseline gap-2 border-b border-[#141414] px-3 py-1.5">
-					<span class="text-[9px] uppercase tracking-wider text-[#555]">Data</span>
-					<span class="font-mono text-[11px] text-[#ccc]">{report.subject.symbol} · {report.subject.timeframe}</span>
+				<div class="flex items-baseline gap-2 border-b border-sc-line px-3 py-1.5">
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Data</span>
+					<span class="font-mono text-[11px] text-sc-ink">{report.subject.symbol} · {report.subject.timeframe}</span>
 				</div>
-				<p class="px-3 py-1.5 text-[11px] text-white" data-testid="readiness-summary">{report.summary}</p>
+				<p class="px-3 py-1.5 text-[11px] text-sc-ink" data-testid="readiness-summary">{report.summary}</p>
 				<ul>
 					{#each report.requirements as req (req.key)}
 						{@const href = req.status === 'ok' ? null : readinessFixHref(req.fix)}
-						<li class="border-t border-[#141414] px-3 py-1.5 text-[11px]" data-testid="readiness-requirement" data-status={req.status}>
+						<li class="border-t border-sc-line px-3 py-1.5 text-[11px]" data-testid="readiness-requirement" data-status={req.status}>
 							<div class="flex items-baseline gap-2">
-								<span class="w-[4.5rem] shrink-0 border px-1 text-center text-[9px] uppercase tracking-wider {STATUS[req.status].tone}">{STATUS[req.status].word}</span>
-								<span class="text-[#ddd]">{req.label}</span>
+								<span class="w-[4.5rem] shrink-0 border px-1 text-center font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {STATUS[req.status].tone}">{STATUS[req.status].word}</span>
+								<span class="text-sc-ink">{req.label}</span>
 							</div>
-							<div class="mt-0.5 pl-[5.25rem] text-[10px] leading-snug text-[#888]">{req.detail}</div>
+							<div class="mt-0.5 pl-[5.25rem] text-[10px] leading-snug text-sc-ink2">{req.detail}</div>
 							{#if href && req.fix}
-								<a {href} class="mt-0.5 block pl-[5.25rem] text-[10px] text-white underline decoration-[#555] hover:decoration-white">{req.fix.label} →</a>
+								<a {href} class="mt-0.5 block pl-[5.25rem] text-[10px] text-sc-ink underline decoration-sc-line2 hover:decoration-sc-ink3">{req.fix.label} →</a>
 							{/if}
 						</li>
 					{/each}
@@ -122,5 +122,5 @@
 		{/if}
 	</div>
 {:else if loading}
-	<span class="text-[10px] uppercase tracking-wider text-[#444]" data-testid="readiness-loading">Checking data…</span>
+	<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink4" data-testid="readiness-loading">Checking data…</span>
 {/if}

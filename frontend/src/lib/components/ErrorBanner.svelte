@@ -10,7 +10,7 @@
 	const toneClasses: Record<typeof tone, string> = {
 		error: 'text-red-400 border-red-900 bg-red-500/5',
 		warning: 'text-yellow-400 border-yellow-900 bg-yellow-500/5',
-		info: 'text-[#888] border-[#333] bg-[#111]',
+		info: 'text-sc-ink2 border-sc-line2 bg-sc-panel2',
 	};
 
 	$: classes = toneClasses[tone] ?? toneClasses.error;
@@ -23,7 +23,7 @@
 			{#if dismissible}
 				<button
 					type="button"
-					class="text-[10px] uppercase tracking-wider opacity-80 hover:opacity-100"
+					class="text-[12px] opacity-80 hover:opacity-100"
 					on:click={() => dispatch('dismiss')}
 				>
 					Dismiss

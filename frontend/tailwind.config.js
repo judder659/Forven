@@ -4,7 +4,8 @@ export default {
 	theme: {
 		extend: {
 			colors: {
-				// The strategy container's theme: blue-black panels, soft ink levels.
+				// The app's palette: blue-black panels, soft ink levels (named for the strategy
+				// container, where the theme started).
 				sc: {
 					bg: '#07080a',
 					panel: '#0c0e11',
@@ -20,6 +21,9 @@ export default {
 				},
 			},
 			fontFamily: {
+				// The app's type: IBM Plex, bundled via @fontsource (imported in the root layout).
+				sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', '-apple-system', '"Segoe UI"', 'Roboto', 'sans-serif'],
+				mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
 				plex: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', '-apple-system', '"Segoe UI"', 'Roboto', 'sans-serif'],
 				'plex-cond': ['"IBM Plex Sans Condensed"', '"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
 				'plex-mono': ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],

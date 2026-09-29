@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	/**
 	 * Cumulative realized P&L from closed live trades, net of recorded fees and
 	 * funding, over a trailing window. Steps at each close; green above zero,
@@ -48,10 +49,10 @@
 		chart = createChart(container, {
 			width: container.clientWidth,
 			height: 180,
-			layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#6b7280', fontSize: 10 },
-			grid: { vertLines: { visible: false }, horzLines: { color: '#161616' } },
-			rightPriceScale: { borderColor: '#222' },
-			timeScale: { borderColor: '#222' },
+			layout: { background: { type: ColorType.Solid, color: CHART_THEME.background }, textColor: CHART_THEME.text, fontFamily: CHART_THEME.fontFamily, fontSize: 10 },
+			grid: { vertLines: { visible: false }, horzLines: { color: CHART_THEME.grid } },
+			rightPriceScale: { borderColor: CHART_THEME.border },
+			timeScale: { borderColor: CHART_THEME.border },
 			crosshair: { mode: CrosshairMode.Magnet },
 			localization: { priceFormatter: (value: number) => formatUsd(value, true) },
 		});
@@ -83,9 +84,9 @@
 	});
 </script>
 
-<div class="border border-[#222] bg-[#050505]" data-testid="live-pnl">
-	<div class="flex items-center justify-between gap-2 border-b border-[#222] px-3 py-2">
-		<h2 class="text-[10px] font-bold uppercase tracking-wider text-gray-400" title="Closed live trades, net of recorded fees and funding">
+<div class="rounded-md border border-sc-line bg-sc-panel" data-testid="live-pnl">
+	<div class="flex items-center justify-between gap-2 border-b border-sc-line px-3 py-2">
+		<h2 class="text-[14px] font-semibold text-sc-ink2" title="Closed live trades, net of recorded fees and funding">
 			Realized P&amp;L
 			{#if hasTrades && total !== null}
 				<span class="ml-1 font-mono normal-case {pnlTone(total)}">{formatUsd(total, true)}</span>
@@ -95,9 +96,9 @@
 			{#each RANGES as option (option.key)}
 				<button
 					type="button"
-					class="border px-2 py-0.5 text-[10px] uppercase tracking-wider {range === option.key
-						? 'border-white bg-white text-black'
-						: 'border-[#333] text-gray-500 hover:text-white'}"
+					class="rounded-md border px-2 py-0.5 text-[12px] {range === option.key
+						? 'border-sc-ink bg-sc-ink text-black'
+						: 'border-sc-line2 text-sc-ink3 hover:text-sc-ink'}"
 					aria-pressed={range === option.key}
 					on:click={() => (range = option.key)}
 				>
@@ -109,7 +110,7 @@
 	<div class="relative px-1 py-1">
 		<div bind:this={container} class="h-[180px] w-full"></div>
 		{#if !hasTrades}
-			<div class="absolute inset-0 flex items-center justify-center bg-[#050505] text-xs text-gray-500">
+			<div class="absolute inset-0 flex items-center justify-center bg-sc-panel text-xs text-sc-ink3">
 				No closed live trades yet.
 			</div>
 		{/if}
