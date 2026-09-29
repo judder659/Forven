@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	/**
 	 * Cumulative realized P&L from closed live trades, net of recorded fees and
 	 * funding, over a trailing window. Steps at each close; green above zero,
@@ -48,10 +49,10 @@
 		chart = createChart(container, {
 			width: container.clientWidth,
 			height: 180,
-			layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#6b7280', fontSize: 10 },
-			grid: { vertLines: { visible: false }, horzLines: { color: '#161616' } },
-			rightPriceScale: { borderColor: '#222' },
-			timeScale: { borderColor: '#222' },
+			layout: { background: { type: ColorType.Solid, color: CHART_THEME.background }, textColor: CHART_THEME.text, fontFamily: CHART_THEME.fontFamily, fontSize: 10 },
+			grid: { vertLines: { visible: false }, horzLines: { color: CHART_THEME.grid } },
+			rightPriceScale: { borderColor: CHART_THEME.border },
+			timeScale: { borderColor: CHART_THEME.border },
 			crosshair: { mode: CrosshairMode.Magnet },
 			localization: { priceFormatter: (value: number) => formatUsd(value, true) },
 		});

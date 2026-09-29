@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	// The series chart: the full history, downsampled by the server, that loads
 	// finer bars as you zoom in and more bars as you pan, down to the raw bars.
 	// Gaps are marked on the bar before them. Streams draw their first column
@@ -160,11 +161,11 @@
 		chart = createChart(el, {
 			width: el.clientWidth,
 			height: el.clientHeight,
-			layout: { background: { color: '#000000' }, textColor: '#666', fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: 10 },
-			grid: { vertLines: { color: '#0d0d0d' }, horzLines: { color: '#0d0d0d' } },
+			layout: { background: { color: CHART_THEME.background }, textColor: CHART_THEME.text, fontFamily: CHART_THEME.fontFamily, fontSize: 10 },
+			grid: { vertLines: { color: CHART_THEME.grid }, horzLines: { color: CHART_THEME.grid } },
 			crosshair: { mode: CrosshairMode.Normal },
-			rightPriceScale: { borderColor: '#1a1a1a' },
-			timeScale: { borderColor: '#1a1a1a', timeVisible: true, secondsVisible: false },
+			rightPriceScale: { borderColor: CHART_THEME.border },
+			timeScale: { borderColor: CHART_THEME.border, timeVisible: true, secondsVisible: false },
 			localization: { timeFormatter: (t: Time) => iso(Number(t)).slice(0, 16).replace('T', ' ') },
 			handleScroll: { vertTouchDrag: false },
 		});

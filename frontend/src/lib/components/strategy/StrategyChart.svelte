@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	// The Strategy Creator's chart: price with the preview's trades, the
 	// out-of-sample region and entry-rule shading on top, and one synced pane
 	// (own scale, own axis) per indicator that draws below price. Click a trade
@@ -40,10 +41,10 @@
 	const dispatch = createEventDispatcher<{ select: number | null }>();
 	const DEFAULT_VISIBLE_BARS = 400;
 	const CHART_OPTIONS = {
-		layout: { background: { color: '#000000' }, textColor: '#666', fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: 10 },
-		grid: { vertLines: { color: '#0d0d0d' }, horzLines: { color: '#0d0d0d' } },
+		layout: { background: { color: CHART_THEME.background }, textColor: CHART_THEME.text, fontFamily: CHART_THEME.fontFamily, fontSize: 10 },
+		grid: { vertLines: { color: CHART_THEME.grid }, horzLines: { color: CHART_THEME.grid } },
 		crosshair: { mode: CrosshairMode.Normal },
-		rightPriceScale: { borderColor: '#1a1a1a', minimumWidth: 72 },
+		rightPriceScale: { borderColor: CHART_THEME.border, minimumWidth: 72 },
 		handleScroll: { vertTouchDrag: false },
 	};
 
@@ -327,7 +328,7 @@
 		// The price chart carries the TradingView attribution once for the stack.
 		const paneChart = createChart(node, {
 			...CHART_OPTIONS, layout: { ...CHART_OPTIONS.layout, attributionLogo: false },
-			width: node.clientWidth, height: node.clientHeight, timeScale: { visible: false, borderColor: '#1a1a1a' },
+			width: node.clientWidth, height: node.clientHeight, timeScale: { visible: false, borderColor: CHART_THEME.border },
 		});
 		const pane: Pane = { id: group.id, chart: paneChart, anchor: paneChart.addLineSeries({ visible: false }), series: new Map(), lines: [], legend: '' };
 		panes = [...panes, pane];
@@ -360,7 +361,7 @@
 	}
 
 	onMount(() => {
-		chart = createChart(mainEl, { ...CHART_OPTIONS, width: mainEl.clientWidth, height: mainEl.clientHeight, timeScale: { borderColor: '#1a1a1a', timeVisible: true, secondsVisible: false } });
+		chart = createChart(mainEl, { ...CHART_OPTIONS, width: mainEl.clientWidth, height: mainEl.clientHeight, timeScale: { borderColor: CHART_THEME.border, timeVisible: true, secondsVisible: false } });
 		// Shading first so it draws behind the candles.
 		oosShade = chart.addHistogramSeries({ priceScaleId: 'shade-oos', color: 'rgba(255,255,255,0.035)', priceLineVisible: false, lastValueVisible: false });
 		ruleShade = chart.addHistogramSeries({ priceScaleId: 'shade-rule', priceLineVisible: false, lastValueVisible: false });

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	import { onDestroy, onMount } from 'svelte';
 	import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 	import type { LabRegimeTimelinePricePoint, LabRegimeTimelineSegment } from '$lib/api';
@@ -45,13 +46,13 @@
 		const { createChart, ColorType, CrosshairMode } = await import('lightweight-charts');
 		chart = createChart(chartContainer, {
 			layout: {
-				background: { type: ColorType.Solid, color: 'transparent' },
-				textColor: '#888888',
-				fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+				background: { type: ColorType.Solid, color: CHART_THEME.background },
+				textColor: CHART_THEME.text,
+				fontFamily: CHART_THEME.fontFamily,
 			},
 			grid: {
 				vertLines: { visible: false },
-				horzLines: { color: 'rgba(34, 34, 34, 0.9)' },
+				horzLines: { color: CHART_THEME.grid },
 			},
 			width: chartContainer.clientWidth,
 			height: chartContainer.clientHeight,

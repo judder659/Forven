@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CHART_THEME } from '$lib/utils/chartTheme';
 	import { createEventDispatcher, onMount, onDestroy } from 'svelte';
 	import {
 		createChart,
@@ -159,22 +160,23 @@
 			...(chartContainer.clientWidth > 0 ? { width: chartContainer.clientWidth } : {}),
 			...(chartContainer.clientHeight > 0 ? { height: chartContainer.clientHeight } : {}),
 			layout: {
-				background: { color: '#000000' },
-				textColor: '#666',
+				background: { color: CHART_THEME.background },
+				textColor: CHART_THEME.text,
+				fontFamily: CHART_THEME.fontFamily,
 			},
 			grid: {
-				vertLines: { color: '#111' },
-				horzLines: { color: '#111' },
+				vertLines: { color: CHART_THEME.grid },
+				horzLines: { color: CHART_THEME.grid },
 			},
 			crosshair: {
 				mode: CrosshairMode.Normal,
 			},
 			rightPriceScale: {
-				borderColor: '#222',
+				borderColor: CHART_THEME.border,
 				autoScale: true,
 			},
 			timeScale: {
-				borderColor: '#222',
+				borderColor: CHART_THEME.border,
 				timeVisible: true,
 				secondsVisible: false,
 			},
