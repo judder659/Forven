@@ -101,6 +101,8 @@ export function buildRows(input: {
 		// The session is fresher than the scorecard for positions.
 		if (legs.length && state !== 'exit_blocked' && state !== 'stale') state = 'in_position';
 		if (!legs.length && (state === 'in_position' || state === 'exit_blocked')) state = 'watching';
+		// The scanner's current block outranks a quiet refusal history.
+		if (state === 'watching' && session.status === 'blocked' && session.blocked_reason) state = 'blocked';
 		const perf = strategyPerformance({
 			mode: input.mode,
 			session,

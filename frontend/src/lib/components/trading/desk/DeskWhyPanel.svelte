@@ -7,6 +7,8 @@
 	import { ago, cap1, fmtDateTime, fmtDay, fmtNum, fmtPct, fmtTime, fmtUsd, lastBarClose, num } from '$lib/utils/tradingDesk/format';
 	import { blockingGates } from '$lib/utils/tradingDesk/gates';
 	import type { DeskRow } from '$lib/utils/tradingDesk/rows';
+	import ExecutionCheckPanel from '$lib/components/strategy/ExecutionCheckPanel.svelte';
+	import type { ExecutionCheck } from '$lib/api/executionCheck';
 
 	export let mode: DeskMode;
 	export let row: DeskRow;
@@ -22,6 +24,13 @@
 	const HIDDEN_INDICATORS = new Set(['price', 'live_price', 'entry_signal', 'exit_signal']);
 
 	$: recentRefusals = refusals.filter((event) => event.kind === 'entry_refused' || event.kind === 'exit_refused');
+	$: sessionBlocked = row.session.status === 'blocked' && Boolean(row.session.blocked_reason);
+	// A fix clears the check at once; the session's own flag waits for the scanner's next pass.
+	let fixedFor: string | null = null;
+	$: if (fixedFor && fixedFor !== row.sid) fixedFor = null;
+	function onChecked(event: CustomEvent<ExecutionCheck>): void {
+		if (event.detail.executable) fixedFor = row.sid;
+	}
 	$: items = buildItems(mode, row, dashboard, risk, fleet, recentRefusals, now);
 
 	function buildItems(
@@ -129,6 +138,19 @@
 	const GLYPH: Record<Tone, string> = { ok: '✓', caution: '!', fail: '!', info: 'i' };
 </script>
 
+{#if sessionBlocked}
+	<div class="mb-2 grid gap-2">
+		<ExecutionCheckPanel
+			strategyId={row.sid}
+			refreshKey={`${row.session.status}|${row.session.blocked_reason ?? ''}`}
+			forgeHref={`/lab/strategy/${encodeURIComponent(row.sid)}`}
+			on:changed={onChecked}
+		/>
+		{#if fixedFor === row.sid}
+			<p class="text-[12px] text-[#3cc48f]" data-testid="desk-why-fixed">Execution check passed. The strategy card updates after the scanner's next pass, within a few minutes.</p>
+		{/if}
+	</div>
+{/if}
 <ul class="grid" data-testid="desk-why">
 	{#each items as item}
 		<li class="grid grid-cols-[22px_minmax(0,1fr)] gap-2 border-b border-sc-line py-2 last:border-b-0">

@@ -28,6 +28,8 @@ export function buildAttention(input: {
 	fleet: LiveFleet | null;
 	journal: JournalEvent[];
 	expectations: Record<string, Expectation | null>;
+	/** Strategy id -> the reason the scanner refuses its new entries right now. */
+	sessionBlocks?: Record<string, string>;
 	now: number;
 }): AttentionItem[] {
 	const { mode, dashboard, risk, fleet, now } = input;
@@ -93,7 +95,18 @@ export function buildAttention(input: {
 				body: `${describeRefusal(flat[0].reason).short}. Harmless while flat; the same fault on an open position would leave it stuck.`,
 			});
 		}
-		if (strategy.state === 'blocked') {
+		const currentBlock = input.sessionBlocks?.[sid];
+		if (currentBlock) {
+			// A block in force now outranks the refusal history; its Why tab carries the fix.
+			items.push({
+				id: `blocked-${sid}`,
+				severity: 'caution',
+				strategyId: sid,
+				tab: 'why',
+				title: `${sid}: new ${noun} entries are blocked`,
+				body: `${describeRefusal(currentBlock).short}. Its Why tab shows what changed and how to fix it.`,
+			});
+		} else if (strategy.state === 'blocked') {
 			const blocked = strategy.blocked_entries;
 			items.push({
 				id: `blocked-${sid}`,

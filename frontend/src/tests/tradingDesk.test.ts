@@ -52,6 +52,12 @@ describe('plain-language descriptions', () => {
 		expect(humanFamily('imported__dropzone_sol_kc69701_pullback_thrust_46da8680c456')).toBe('KC pullback thrust');
 	});
 
+	it('puts execution-contract refusals in plain words', () => {
+		expect(describeRefusal('Execution differs from its promotion backtest: parameters changed; revalidation required').short).toBe('Settings changed since validation; accept or restore them');
+		expect(describeRefusal('Live execution settings are unverified; validate the existing live configuration before new entries').short).toBe('No accepted live evidence; accept a backtest of these settings');
+		expect(describeRefusal('Execution differs from its promotion backtest: source identity is missing or changed; revalidation required').short).toBe('Strategy code changed since validation');
+	});
+
 	it('shortens refusal reasons and keeps the raw text', () => {
 		const leverage = describeRefusal('BLOCKED BTC live — validated leverage 1.3 cannot be applied exactly at the exchange');
 		expect(leverage.short).toBe("Leverage 1.3× can't be set exactly on the exchange");
@@ -265,6 +271,25 @@ describe('attention', () => {
 		expect(live.find((item) => item.id.startsWith('conflict'))?.body).toContain('refuses the others');
 		const paper = buildAttention({ mode: 'paper', dashboard: { trading_allowed: false }, risk, fleet: { ...fleet, capacity: null }, journal: [], expectations: {}, now: NOW });
 		expect(paper.some((item) => item.id === 'trading' || item.id === 'ceilings')).toBe(false);
+	});
+
+	it('lists a block in force now instead of the refusal history, with the fix one click away', () => {
+		const fleet = {
+			generated_at: '', stale_after_seconds: 1800, live_bots_armed: 0, recent_fills: [], realized: {} as LiveFleet['realized'], capacity: null,
+			strategies: [
+				strategy({ strategy_id: 'S2', state: 'blocked', blocked_entries: { window_days: 30, count: 84, last_at: '2026-09-24T09:55:45Z', last_reason: 'x', top_reason: 'BLOCKED BTC live — validated leverage 1.3 cannot be applied exactly at the exchange', top_count: 71 } }),
+				strategy({ strategy_id: 'S3', state: 'watching' }),
+			],
+		} as LiveFleet;
+		const reason = 'Execution differs from its promotion backtest: parameters changed; revalidation required';
+		const items = buildAttention({ mode: 'live', dashboard: { trading_allowed: true }, risk: null, fleet, journal: [], expectations: {}, sessionBlocks: { S2: reason, S3: reason }, now: NOW });
+		const s2 = items.filter((item) => item.strategyId === 'S2');
+		expect(s2).toHaveLength(1);
+		expect(s2[0].title).toBe('S2: new live entries are blocked');
+		expect(s2[0].body).toContain('Settings changed since validation');
+		expect(s2[0].tab).toBe('why');
+		// A strategy with no refusals yet still surfaces: the block holds its next entry.
+		expect(items.find((item) => item.strategyId === 'S3')?.title).toBe('S3: new live entries are blocked');
 	});
 });
 

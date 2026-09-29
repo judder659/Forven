@@ -109,7 +109,10 @@
 	$: selected = rows.find((row) => row.session.id === selectedId) ?? null;
 	$: selectedSid = selected?.sid ?? null;
 	$: expectations = Object.fromEntries(rows.map((row) => [row.sid, row.expectation]));
-	$: attention = buildAttention({ mode, dashboard: dash, risk, fleet, journal, expectations, now: rowsNow });
+	$: sessionBlocks = Object.fromEntries(
+		rows.filter((row) => row.session.status === 'blocked' && row.session.blocked_reason).map((row) => [row.sid, String(row.session.blocked_reason)])
+	);
+	$: attention = buildAttention({ mode, dashboard: dash, risk, fleet, journal, expectations, sessionBlocks, now: rowsNow });
 	$: selectedRefusals = selectedSid ? journal.filter((event) => event.strategy_id === selectedSid && (event.kind === 'entry_refused' || event.kind === 'exit_refused')) : [];
 	$: allLegs = rows.flatMap((row) => row.legs.map((leg, index) => ({ leg, math: row.legMath[index] })));
 	$: openPnl = allLegs.reduce((sum, entry) => sum + (entry.math?.pnl ?? 0), 0);
