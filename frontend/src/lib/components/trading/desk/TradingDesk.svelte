@@ -38,7 +38,6 @@
 	import { forvenDashboard, forvenRisk } from '$lib/stores/forven';
 	import { forvenLivePrices, forvenWsConnected } from '$lib/stores/forvenWebSocket';
 	import { setPageContext } from '$lib/stores/pageContext';
-	import { createPoller, type Poller } from '$lib/utils/polling';
 	import { buildAttention, type SideTab } from '$lib/utils/tradingDesk/attention';
 	import { cap1, fmtPct, fmtPx, fmtQty, fmtUsd, num, parseTs } from '$lib/utils/tradingDesk/format';
 	import { blockingGates } from '$lib/utils/tradingDesk/gates';
@@ -95,7 +94,9 @@
 	let chartAtr: number | null = null;
 	let chartRefresh = 0;
 	let preselect: string | null = null;
-	let pollers: Poller[] = [];
+	let fleetAttempted = false;
+	let initialPicked = false;
+	let stopTimers: Array<() => void> = [];
 	let clockTimer: ReturnType<typeof setInterval> | null = null;
 	let eventTimer: ReturnType<typeof setTimeout> | null = null;
 	let unsubscribePrices: (() => void) | null = null;
@@ -113,6 +114,13 @@
 	$: openPnl = allLegs.reduce((sum, entry) => sum + (entry.math?.pnl ?? 0), 0);
 	$: openLong = allLegs.filter((entry) => entry.leg.side === 'long').length;
 	$: openShort = allLegs.filter((entry) => entry.leg.side === 'short').length;
+	$: riskAtStops = allLegs.reduce((sum, entry) => sum + (entry.math?.risk ?? 0), 0);
+	$: maxBookRiskPct = rows.reduce<number | null>((max, row) => {
+		const capital = num(row.session.capital);
+		if (!capital || !row.legs.length) return max;
+		const pct = (row.legMath.reduce((sum, math) => sum + (math.risk ?? 0), 0) / capital) * 100;
+		return max === null || pct > max ? pct : max;
+	}, null);
 	$: selectedMarket = selected ? market?.assets?.[selected.asset] ?? null : null;
 	$: selectedLivePrice = selected ? livePrice(prices, selected.session.symbol) : null;
 	$: budget = risk?.portfolio_budget_live ?? null;
@@ -157,7 +165,6 @@
 			rowsNow = Date.now();
 			if (!sessionsLoaded) {
 				sessionsLoaded = true;
-				pickInitialSelection();
 				void loadMarket();
 			} else if (selectedId && !next.some((session) => session.id === selectedId) && !archivedDetail) {
 				selectedId = sortRows(buildRows({ mode, sessions: next, fleet, stats: statsMap, prices, now: rowsNow }))[0]?.session.id ?? null;
@@ -178,6 +185,8 @@
 			fleet = await getFleet(mode);
 		} catch {
 			// Keep the last good scorecard through a transient miss.
+		} finally {
+			fleetAttempted = true;
 		}
 	}
 
@@ -251,6 +260,12 @@
 	}
 
 	$: if (railFilter === 'archived' && mode === 'paper') void loadArchived();
+	// Pick the first selection once sessions and the scorecard are in, so a stuck
+	// or blocked strategy leads rather than whichever id sorts first.
+	$: if (!initialPicked && sessionsLoaded && fleetAttempted) {
+		initialPicked = true;
+		pickInitialSelection();
+	}
 	$: if (blotTab === 'performance' && mode === 'live' && !equity) void loadEquity();
 
 	// ---- selection ----
@@ -527,22 +542,44 @@
 		window.addEventListener('forven:event', handleTradeEvent);
 		window.addEventListener('forven:select-session', handleSelectEvent);
 		clockTimer = setInterval(() => (clock = Date.now()), 1000);
-		pollers = [
-			createPoller(async () => { await Promise.allSettled([loadSessions(), loadStatus()]); }, 15_000),
-			createPoller(loadFleet, 30_000),
-			createPoller(loadSlow, 60_000),
-		];
-		pollers.forEach((poller) => poller.start());
+		// First load runs even in a background tab; the refresh cadence then pauses
+		// while the tab is hidden and catches up when it is shown again.
+		void Promise.allSettled([loadFast(), loadFleet(), loadSlow()]);
+		stopTimers = [every(15_000, loadFast), every(30_000, loadFleet), every(60_000, loadSlow)];
+		document.addEventListener('visibilitychange', onVisible);
 	});
 
+	async function loadFast(): Promise<void> {
+		await Promise.allSettled([loadSessions(), loadStatus()]);
+	}
+
+	function every(ms: number, fn: () => Promise<void>): () => void {
+		let inFlight = false;
+		const id = setInterval(async () => {
+			if (document.hidden || inFlight) return;
+			inFlight = true;
+			try {
+				await fn();
+			} finally {
+				inFlight = false;
+			}
+		}, ms);
+		return () => clearInterval(id);
+	}
+
+	function onVisible(): void {
+		if (!document.hidden) void Promise.allSettled([loadFast(), loadFleet()]);
+	}
+
 	onDestroy(() => {
-		pollers.forEach((poller) => poller.stop());
+		stopTimers.forEach((stop) => stop());
 		unsubscribePrices?.();
 		if (clockTimer) clearInterval(clockTimer);
 		if (eventTimer) clearTimeout(eventTimer);
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('forven:event', handleTradeEvent);
 			window.removeEventListener('forven:select-session', handleSelectEvent);
+			document.removeEventListener('visibilitychange', onVisible);
 		}
 	});
 
@@ -575,7 +612,7 @@
 			{/if}
 
 			<DeskStatusLine {mode} dashboard={dash} {jobs} wsConnected={$forvenWsConnected} now={clock} />
-			<DeskAccountStrip {mode} dashboard={dash} {risk} {fleet} {sessions} {openPnl} openLegs={allLegs.length} {openLong} {openShort} now={clock} />
+			<DeskAccountStrip {mode} dashboard={dash} {risk} {fleet} {sessions} {openPnl} openLegs={allLegs.length} {openLong} {openShort} {riskAtStops} {maxBookRiskPct} now={clock} />
 			<DeskAttention items={attention} on:show={(event) => selectStrategy(event.detail.strategyId, event.detail.tab)} />
 
 			<div class="grid gap-2.5 lg:grid-cols-[272px_minmax(0,1fr)] 2xl:grid-cols-[292px_minmax(0,1fr)_372px]">

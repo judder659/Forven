@@ -11,7 +11,7 @@
 	/** One open leg: P&L in dollars and R, the price ladder, protection, funding and controls. */
 	import { createEventDispatcher } from 'svelte';
 	import type { AssetMarketContext, DeskMode } from '$lib/api/desk';
-	import { cap1, dur, fmtPct, fmtPx, fmtQty, fmtUsd, num, toneClass, MINUS } from '$lib/utils/tradingDesk/format';
+	import { cap1, dur, fmtPct, fmtPx, fmtQty, fmtUsd, num, pxDigits, toneClass, MINUS } from '$lib/utils/tradingDesk/format';
 	import { fundingFlowText, positionFundingPerHour } from '$lib/utils/tradingDesk/market';
 	import { ladder, type Leg, type LegMath } from '$lib/utils/tradingDesk/position';
 
@@ -33,8 +33,8 @@
 	let lastLegId = '';
 	$: if (leg.id !== lastLegId) {
 		lastLegId = leg.id;
-		stopInput = leg.stop !== null ? String(leg.stop) : '';
-		targetInput = leg.takeProfit !== null ? String(leg.takeProfit) : '';
+		stopInput = leg.stop !== null ? Number(leg.stop.toFixed(pxDigits(leg.stop))) : '';
+		targetInput = leg.takeProfit !== null ? Number(leg.takeProfit.toFixed(pxDigits(leg.takeProfit))) : '';
 	}
 
 	$: geometry = ladder(leg, math.mark);
@@ -78,11 +78,12 @@
 			{:else}
 				<i class={`absolute top-[18px] -ml-px h-[18px] w-0.5 ${mark.key === 'stop' ? 'bg-[#e0663f]' : mark.key === 'target' ? 'bg-[#139a9f]' : 'bg-sc-ink2'}`} style={`left:${mark.at}%`}></i>
 			{/if}
-			<span class={`absolute whitespace-nowrap text-[11px] text-sc-ink3 ${mark.row === 'top' ? 'top-0' : 'top-10'}`} style={labelStyle(mark.anchor, mark.at)}>
-				{mark.key === 'stop' ? 'Stop' : mark.key === 'target' ? 'Target' : mark.key === 'entry' ? 'Entry' : 'Mark'}
-				<b class="font-plex-mono font-medium text-sc-ink2">{fmtPx(mark.price)}</b>
-				{#if mark.key === 'stop' && math.stopDistPct !== null}<span class="text-[#f2956f]"> {fmtPct(math.stopDistPct)}</span>{/if}
-			</span>
+			{#if !mark.hideLabel}
+				<span class={`absolute whitespace-nowrap text-[11px] text-sc-ink3 ${mark.row === 'top' ? 'top-0' : 'top-10'}`} style={labelStyle(mark.anchor, mark.at)}>
+					{mark.key === 'stop' ? 'Stop' : mark.key === 'target' ? 'Target' : mark.key === 'entry' ? 'Entry' : 'Mark'}
+					<b class="font-plex-mono font-medium text-sc-ink2">{fmtPx(mark.price)}</b>
+				</span>
+			{/if}
 		{/each}
 	</div>
 
@@ -91,7 +92,7 @@
 		<div><dt class="text-[11.5px] text-sc-ink3">Mark</dt><dd class="font-plex-mono text-[12.5px] text-sc-ink">{fmtPx(math.mark)}</dd></div>
 		<div><dt class="text-[11.5px] text-sc-ink3">Position value</dt><dd class="font-plex-mono text-[12.5px] text-sc-ink">{fmtUsd(math.notional)}</dd></div>
 		<div><dt class="text-[11.5px] text-sc-ink3">Margin</dt><dd class="font-plex-mono text-[12.5px] text-sc-ink">{fmtUsd(math.margin)}</dd></div>
-		<div><dt class="text-[11.5px] text-sc-ink3">Loss if the stop fills</dt><dd class="font-plex-mono text-[12.5px] text-[#f2956f]">{math.risk !== null ? fmtUsd(-math.risk) : 'No stop'}</dd></div>
+		<div><dt class="text-[11.5px] text-sc-ink3">Loss if the stop fills</dt><dd class="font-plex-mono text-[12.5px] text-[#f2956f]">{math.risk !== null ? fmtUsd(-math.risk) : 'No stop'}{#if math.stopDistPct !== null}<span class="text-sc-ink3"> · {fmtPct(Math.abs(math.stopDistPct), 2, false)} away</span>{/if}</dd></div>
 		<div><dt class="text-[11.5px] text-sc-ink3">Target</dt><dd class="font-plex-mono text-[12.5px] text-sc-ink">{leg.takeProfit !== null ? fmtPx(leg.takeProfit) : 'Strategy exit'}</dd></div>
 		<div><dt class="text-[11.5px] text-sc-ink3">Time in trade</dt><dd class="font-plex-mono text-[12.5px] text-sc-ink">{math.heldMs !== null ? dur(math.heldMs) : '—'}</dd></div>
 		<div><dt class="text-[11.5px] text-sc-ink3">Bars held</dt><dd class="font-plex-mono text-[12.5px] text-sc-ink">{math.barsHeld ?? '—'} × {timeframe}</dd></div>

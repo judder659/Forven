@@ -86,10 +86,15 @@ export interface ExecutionSummary {
 	worstEntry: number | null;
 }
 
-/** Median slippage against the signal price; medians so a few test trades don't skew it. */
+/**
+ * Median slippage against the signal price over strategy fills. Bot Factory fills
+ * (strategy ids starting "bot:") are left out: early bot test orders slipped
+ * 100+ bps and would swamp the strategies' own execution.
+ */
 export function executionSummary(fills: DeskFill[]): ExecutionSummary {
-	const entries = fills.map((fill) => num(fill.entry_slippage_bps)).filter((v): v is number => v !== null);
-	const exits = fills.map((fill) => num(fill.exit_slippage_bps)).filter((v): v is number => v !== null);
+	const strategyFills = fills.filter((fill) => !String(fill.strategy_id ?? '').startsWith('bot:'));
+	const entries = strategyFills.map((fill) => num(fill.entry_slippage_bps)).filter((v): v is number => v !== null);
+	const exits = strategyFills.map((fill) => num(fill.exit_slippage_bps)).filter((v): v is number => v !== null);
 	return {
 		entryMedian: median(entries),
 		entryCount: entries.length,

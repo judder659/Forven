@@ -23,6 +23,7 @@
 		return events.length ? events[events.length - 1] : null;
 	})();
 	$: reason = String(demotion?.reason || strategy.blocked_reason || 'No reason was recorded.').replace(/\s+/g, ' ').trim();
+	$: leftPaper = demotion ? PAPER.has(state(demotion.from_state)) : false;
 	$: timeline = [...events].reverse();
 </script>
 
@@ -35,7 +36,7 @@
 		<p class="text-[12px] text-sc-ink3">Loading its history…</p>
 	{:else}
 		<div class="grid gap-1 rounded-md border border-sc-line bg-sc-panel2 p-3">
-			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Why it left paper</span>
+			<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{leftPaper ? 'Why it left paper' : 'Why it was archived'}</span>
 			<p class="text-[13px] leading-relaxed text-sc-ink">{reason}</p>
 			{#if demotion}
 				<span class="text-[12px] text-sc-ink3">{pretty(demotion.from_state)} → {pretty(demotion.to_state)} · {demotion.actor || 'system'} · {fmtDateTime(demotion.created_at)}</span>

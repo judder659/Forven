@@ -52,6 +52,8 @@
 	let stop: string | number | null = '';
 	let takeProfit: string | number | null = '';
 	let seededFor = '';
+	let riskSeededFor = '';
+	let riskTouched = false;
 
 	// Re-seed when the strategy or direction changes (and once the price arrives).
 	$: seedKey = `${strategyId}|${direction}|${price !== null}|${atr !== null}`;
@@ -59,11 +61,18 @@
 		const strategyChanged = !seededFor.startsWith(`${strategyId}|`);
 		seededFor = seedKey;
 		if (strategyChanged) {
-			riskPct = defaultRiskPct(mode, riskPerTrade, sliceUsd, equity);
+			riskTouched = false;
 			leverage = mode === 'live' ? Math.max(1, Math.ceil(validatedLeverage || 1)) : Math.max(1, validatedLeverage || 1);
 			takeProfit = '';
 		}
 		stop = suggestedStop() ?? '';
+	}
+	// The default risk mirrors the strategy's own sizing, so wait for its inputs
+	// (live: the capital slice and account equity) and never override an edit.
+	$: riskKey = `${strategyId}|${riskPerTrade}|${sliceUsd}|${equity !== null}`;
+	$: if (riskKey !== riskSeededFor && !riskTouched && (mode === 'paper' || (sliceUsd !== null && equity !== null))) {
+		riskSeededFor = riskKey;
+		riskPct = defaultRiskPct(mode, riskPerTrade, sliceUsd, equity);
 	}
 	$: if (tradeMode === 'short_only' && direction === 'long') direction = 'short';
 	$: if (tradeMode === 'long_only' && direction === 'short') direction = 'long';
@@ -159,7 +168,7 @@
 	{#if sizeMode === 'risk'}
 		<div class={field}>
 			<label class="text-[12px] text-sc-ink2" for="desk-ticket-risk">Risk</label>
-			<div class="flex min-w-0 items-center gap-1.5"><input id="desk-ticket-risk" class={inputClass} type="number" min="0" step="0.05" bind:value={riskPct} /><span class="whitespace-nowrap text-[12px] text-sc-ink3">% of {mode === 'live' ? 'equity' : 'this book'}</span></div>
+			<div class="flex min-w-0 items-center gap-1.5"><input id="desk-ticket-risk" class={inputClass} type="number" min="0" step="0.05" bind:value={riskPct} on:input={() => (riskTouched = true)} /><span class="whitespace-nowrap text-[12px] text-sc-ink3">% of {mode === 'live' ? 'equity' : 'this book'}</span></div>
 			<span class={hint}>
 				{fmtUsd(((equity ?? 0) * (num(riskPct) ?? 0)) / 100)} {result.riskUsd !== null ? 'lost if the stop fills' : 'deployed per 1× leverage without a stop'}.
 				{riskPerTrade ? `${strategyId}'s own orders risk ${fmtPct(riskPerTrade * 100, 0, false)} of ${mode === 'live' ? `its ${fmtUsd(sliceUsd)} slice` : 'its book'}.` : `Forven's default sizing risks 1% of ${mode === 'live' ? `a strategy's ${fmtUsd(sliceUsd)} slice` : 'the book'}.`}

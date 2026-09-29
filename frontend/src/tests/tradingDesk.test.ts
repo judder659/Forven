@@ -81,6 +81,15 @@ describe('fills and execution', () => {
 		expect(rows[1].slippageBps).toBe(-5.97);
 	});
 
+	it('leaves Bot Factory test fills out of the execution summary', () => {
+		const summary = executionSummary([
+			fill({ entry_slippage_bps: -1.4 }),
+			fill({ id: 'B1', strategy_id: 'bot:abc', entry_slippage_bps: 147.7 }),
+		]);
+		expect(summary.entryCount).toBe(1);
+		expect(summary.worstEntry).toBe(-1.4);
+	});
+
 	it('reports median slippage, ignoring trades without a signal price', () => {
 		const summary = executionSummary([
 			fill({ entry_slippage_bps: -5.97 }),
@@ -199,6 +208,15 @@ describe('positions', () => {
 		expect(math.r).toBeCloseTo(0.59);
 		expect(math.stopDistPct).toBeCloseTo(((125 - 117) / 117) * 100);
 		expect(math.inProfit).toBe(true);
+	});
+
+	it('moves or hides a mark label that would collide with the entry label', () => {
+		const [leg] = legsOf(session);
+		const marks = ladder(leg, 119.9).marks; // mark right next to the 120 entry
+		const markLabel = marks.find((mark) => mark.key === 'mark');
+		const entry = marks.find((mark) => mark.key === 'entry');
+		expect(markLabel?.row === 'top' || markLabel?.hideLabel).toBe(true);
+		expect(entry?.row).toBe('bottom');
 	});
 
 	it('keeps ladder labels inside the card', () => {

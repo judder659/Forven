@@ -63,7 +63,7 @@
 					<span class={`font-plex-cond text-[10.5px] font-semibold uppercase tracking-[0.08em] ${tag.tone}`}>{tag.text}</span>
 					<span class="text-[12.5px] text-sc-ink [overflow-wrap:anywhere]">
 						{#if event.kind === 'opened'}
-							{cap1(event.direction)} <span class="font-plex-mono">{fmtQty(event.size)} {event.asset}</span> at <span class="font-plex-mono">{fmtPx(event.price)}</span>{#if event.signal_price !== null && event.signal_price !== undefined}, {slippageWords(event.slippage_bps)}{/if}{#if event.stop_price} · stop <span class="font-plex-mono">{fmtPx(event.stop_price)}</span>{/if}{#if event.risk_usd} · risking <span class="font-plex-mono">{fmtUsd(event.risk_usd)}</span>{/if}{#if event.book} · {event.book} wallet{/if}{#if event.source === 'manual'} · opened by hand{/if}
+							{cap1(event.direction)} <span class="font-plex-mono">{fmtQty(event.size)} {event.asset}</span> at <span class="font-plex-mono">{fmtPx(event.price)}</span>{#if event.signal_price !== null && event.signal_price !== undefined}{`, ${slippageWords(event.slippage_bps)}`}{/if}{#if event.stop_price}{' · stop '}<span class="font-plex-mono">{fmtPx(event.stop_price)}</span>{/if}{#if event.risk_usd}{' · risking '}<span class="font-plex-mono">{fmtUsd(event.risk_usd)}</span>{/if}{#if event.book}{` · ${event.book} wallet`}{/if}{#if event.source === 'manual'}{' · opened by hand'}{/if}
 						{:else if event.kind === 'closed'}
 							{@const why = describeClose({ status: 'CLOSED', close_reason: event.close_reason, exit_price: event.price, stop_price: event.stop_price })}
 							{cap1(event.direction)} closed at <span class="font-plex-mono">{fmtPx(event.price)}</span> · <span class={why.tone === 'stop' ? 'text-[#f2956f]' : ''}>{why.text}</span> · net <span class={`font-plex-mono ${toneClass(event.net_pnl_usd)}`}>{fmtUsd(event.net_pnl_usd, { signed: true })}</span>
@@ -74,12 +74,12 @@
 							{cap1(event.direction)} {event.asset} entry order failed{event.failure_reason ? `: ${event.failure_reason}` : ''}
 						{:else if event.kind === 'entry_refused' || event.kind === 'exit_refused'}
 							{@const refusal = describeRefusal(event.reason)}
-							{refusal.short}{#if event.kind === 'exit_refused'} · {#if event.positioned}<b class="font-medium text-[#e5574f]">position open</b>{:else}while flat{/if}{/if}
+							{refusal.short}{#if event.kind === 'exit_refused'}{' · '}{#if event.positioned}<b class="font-medium text-[#e5574f]">position open</b>{:else}while flat{/if}{/if}
 							{#if refusal.raw && refusal.raw !== refusal.short}
 								<details class="text-[11.5px] text-sc-ink3"><summary class="w-fit cursor-pointer">Recorded reason</summary><p class="mt-1 font-plex-mono text-[11px]">{refusal.raw}</p></details>
 							{/if}
 						{:else}
-							Would have blocked a {event.direction} in {humanRegime(event.regime)} ({event.gate_mode} mode{event.gate_mode === 'observe' ? ', so it went ahead' : ''}).{#if event.mtm_pct !== null && event.mtm_pct !== undefined} 48 h later the entry was <span class={`font-plex-mono ${toneClass(event.mtm_pct)}`}>{fmtPct(event.mtm_pct)}</span>.{/if}
+							Would have blocked a {event.direction} in {humanRegime(event.regime)} ({event.gate_mode} mode{event.gate_mode === 'observe' ? ', so it went ahead' : ''}).{#if event.mtm_pct !== null && event.mtm_pct !== undefined}{' 48 h later the entry was '}<span class={`font-plex-mono ${toneClass(event.mtm_pct)}`}>{fmtPct(event.mtm_pct)}</span>.{/if}
 						{/if}
 					</span>
 				</div>

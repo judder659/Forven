@@ -19,6 +19,9 @@
 	export let openLegs = 0;
 	export let openLong = 0;
 	export let openShort = 0;
+	/** Paper: dollars lost if every open stop filled, and the largest share of one book. */
+	export let riskAtStops = 0;
+	export let maxBookRiskPct: number | null = null;
 	export let now = Date.now();
 
 	const label = 'font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3';
@@ -44,10 +47,6 @@
 	$: bookTotal = sessions.reduce((sum, session) => sum + (num(session.capital) ?? 0), 0);
 	$: bookStart = sessions.reduce((sum, session) => sum + (num(session.initial_capital) ?? 10_000), 0);
 	$: bookChange = bookTotal - bookStart;
-	$: paperRisk = risk?.portfolio_paper ?? null;
-	$: paperGroups = Object.values(paperRisk?.groups ?? {});
-	$: paperGrossLong = paperGroups.reduce((sum, group) => sum + (num(group.gross_long) ?? 0), 0);
-	$: paperGrossShort = paperGroups.reduce((sum, group) => sum + (num(group.gross_short) ?? 0), 0);
 	$: sortedBooks = [...sessions].sort((a, b) => (num(a.capital) ?? 0) - (num(b.capital) ?? 0));
 
 	function meterTone(fraction: number): string {
@@ -56,13 +55,13 @@
 </script>
 
 {#snippet realizedBlock()}
-	<div class="grid grid-cols-3 justify-start gap-x-3 text-[12px]">
+	<div class="grid grid-cols-[repeat(3,minmax(0,auto))] justify-start gap-x-3 text-[12px]">
 		{#each ['7d', '30d', 'all'] as key}
 			<span class="text-[11px] text-sc-ink3">{key === 'all' ? 'All time' : key}</span>
 		{/each}
 		{#each ['7d', '30d', 'all'] as key}
 			{@const win = realized?.[key as '7d' | '30d' | 'all']}
-			<span class={`whitespace-nowrap font-plex-mono text-[13px] font-medium ${toneClass(win?.net_pnl_usd)}`}>{fmtUsd(win?.net_pnl_usd, { signed: true })}</span>
+			<span class={`whitespace-nowrap font-plex-mono text-[13px] font-medium ${toneClass(win?.net_pnl_usd)}`}>{fmtUsd(win?.net_pnl_usd, { signed: true, digits: Math.abs(num(win?.net_pnl_usd) ?? 0) >= 1000 ? 0 : 2 })}</span>
 		{/each}
 		{#each ['7d', '30d', 'all'] as key}
 			<span class="text-[11px] text-sc-ink3">{realized?.[key as '7d' | '30d' | 'all']?.closed ?? 0} trades</span>
@@ -138,8 +137,8 @@
 		</div>
 		<div class={tile}>
 			<span class={label}>Risk at stops</span>
-			<span class={big}>{fmtPct((num(paperRisk?.total_net_risk) ?? 0) * 100, 1, false)}<small class="ml-1 text-[12px] font-normal text-sc-ink3">net</small></span>
-			<span class="text-[12px] text-sc-ink3">Long {fmtPct(paperGrossLong * 100, 1, false)} · short {fmtPct(paperGrossShort * 100, 1, false)} of each book, summed</span>
+			<span class={big}>{fmtUsd(riskAtStops, { digits: 0 })}</span>
+			<span class="text-[12px] text-sc-ink3">{openLegs ? `Lost if every open stop filled · largest ${maxBookRiskPct !== null ? fmtPct(maxBookRiskPct, 1, false) : '—'} of one book` : 'No open paper positions'}</span>
 		</div>
 		<div class={tile}>
 			<span class={label}>Books</span>

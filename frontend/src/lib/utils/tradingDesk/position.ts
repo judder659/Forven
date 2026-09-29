@@ -118,6 +118,8 @@ export interface LadderMark {
 	/** Label anchoring so edge labels stay inside the card. */
 	anchor: 'start' | 'middle' | 'end';
 	row: 'top' | 'bottom';
+	/** True when there is no room for the label; the tick and the details grid still show it. */
+	hideLabel: boolean;
 }
 
 export interface Ladder {
@@ -126,7 +128,14 @@ export interface Ladder {
 	gainZone: { from: number; to: number };
 }
 
-/** Positions on one scale for the stop, entry, mark and target (loss and gain zones shaded). */
+/** Minimum gap (percent of the ladder) between two labels on the same row. */
+const LABEL_GAP = 24;
+
+/**
+ * Positions on one scale for the stop, entry, mark and target (loss and gain zones
+ * shaded). The bounds (stop, target) label above the track and entry and mark
+ * below; a label that would collide moves rows or hides.
+ */
 export function ladder(leg: Leg, mark: number): Ladder {
 	const prices = [leg.entry, mark];
 	if (leg.stop !== null) prices.push(leg.stop);
@@ -138,16 +147,29 @@ export function ladder(leg: Leg, mark: number): Ladder {
 	hi += pad;
 	const at = (price: number) => ((price - lo) / (hi - lo)) * 100;
 	const anchor = (x: number): LadderMark['anchor'] => (x > 70 ? 'end' : x < 30 ? 'start' : 'middle');
+	const make = (key: LadderMark['key'], price: number, row: LadderMark['row']): LadderMark => ({
+		key, price, at: at(price), anchor: anchor(at(price)), row, hideLabel: false,
+	});
 	const marks: LadderMark[] = [];
-	if (leg.stop !== null) marks.push({ key: 'stop', price: leg.stop, at: at(leg.stop), anchor: anchor(at(leg.stop)), row: 'top' });
-	if (leg.takeProfit !== null) {
-		marks.push({ key: 'target', price: leg.takeProfit, at: at(leg.takeProfit), anchor: anchor(at(leg.takeProfit)), row: 'top' });
+	if (leg.stop !== null) marks.push(make('stop', leg.stop, 'top'));
+	if (leg.takeProfit !== null) marks.push(make('target', leg.takeProfit, 'top'));
+	marks.push(make('entry', leg.entry, 'bottom'));
+	const markMark = make('mark', mark, 'bottom');
+	const clashes = (row: LadderMark['row']) => marks.some((other) => other.row === row && Math.abs(other.at - markMark.at) < LABEL_GAP);
+	if (clashes('bottom')) {
+		if (!clashes('top')) markMark.row = 'top';
+		else markMark.hideLabel = true;
 	}
-	marks.push({ key: 'entry', price: leg.entry, at: at(leg.entry), anchor: anchor(at(leg.entry)), row: 'bottom' });
-	const markAt = at(mark);
-	const nearStop = leg.stop !== null && Math.abs(markAt - at(leg.stop)) < 30;
-	const nearEntry = Math.abs(markAt - at(leg.entry)) < 18;
-	marks.push({ key: 'mark', price: mark, at: markAt, anchor: anchor(markAt), row: nearStop && !nearEntry ? 'bottom' : 'top' });
+	marks.push(markMark);
+	const top = marks.filter((entry) => entry.row === 'top' && !entry.hideLabel);
+	if (top.length === 2 && Math.abs(top[0].at - top[1].at) < LABEL_GAP) {
+		const target = top.find((entry) => entry.key === 'target');
+		if (target) {
+			const bottomFree = !marks.some((other) => other.row === 'bottom' && !other.hideLabel && Math.abs(other.at - target.at) < LABEL_GAP);
+			if (bottomFree) target.row = 'bottom';
+			else target.hideLabel = true;
+		}
+	}
 	const gainEnd = leg.takeProfit ?? (leg.side === 'short' ? lo : hi);
 	return {
 		marks,
