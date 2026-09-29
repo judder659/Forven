@@ -35,9 +35,12 @@ const BADGE_EVENTS = [
 ];
 
 // A slow poll even while the WebSocket is up: counts with no event of their
-// own (bots started elsewhere, data going late, issues acknowledged in another
-// tab) still settle within a minute instead of waiting for unrelated traffic.
-const HEARTBEAT_POLL_MS = 60_000;
+// own (bots started elsewhere, data going stale, issues acknowledged in another
+// tab) still settle within two minutes instead of waiting for unrelated
+// traffic. Kept slow on purpose: the heartbeat is a heavy composite (~3.5s,
+// ~500KB on a busy instance) and the events above already refresh it on
+// nearly every badge change.
+const HEARTBEAT_POLL_MS = 120_000;
 
 /** The /data badge: live and paper series past their freshness allowance, from
  * the SLA census (cached for a minute; null until the census endpoint exists). */
