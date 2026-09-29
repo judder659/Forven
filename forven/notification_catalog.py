@@ -331,9 +331,12 @@ _EVENT_CATEGORIES: dict[str, str] = {
     "approval_resolved": "approval_resolved",
     "risk_critical": "risk_alerts",
     "equity_anomaly": "risk_alerts",
-    "risk_alert": "risk_alerts",
+    # NOT "risk_alert": its only emitter is the paper funding-carry basket's
+    # beta-drift check (~24 a day), a model-quality warning rather than a
+    # trading risk — it falls through to system_warning by severity.
     "pipeline_transition": "pipeline_transition",
-    "pipeline_hygiene": "pipeline_transition",
+    # NOT "pipeline_hygiene": the housekeeping sweep report (~23 a day, info) is
+    # not a stage change; it stays in the notification log only.
     "system_recovered": "system_recovered",
     "health_recovery": "system_recovered",
     "agent_task_failed": "agent_failure",

@@ -109,3 +109,15 @@ def test_category_for_event_sorts_unmapped_events_by_severity():
     assert catalog.category_for_event("trade_failed", "warning") == "live_order_failure"
     assert catalog.category_for_event("bug_report", "critical") == "bug_report"
     assert catalog.category_for_event("notification_test", "info") == catalog.TEST_CATEGORY
+
+
+def test_the_paper_basket_drift_warning_is_not_a_risk_alert():
+    # The funding-carry basket's beta-drift check (event 'risk_alert', ~24 a day
+    # on the live instance) would have made "Risk alerts" — a pop-up that is on
+    # by default — the noisiest thing in the app.
+    assert catalog.category_for_event("risk_alert", "warn") == "system_warning"
+    assert catalog.category_for_event("risk_critical", "critical") == "risk_alerts"
+    assert catalog.category_for_event("equity_anomaly", "warn") == "risk_alerts"
+    # Likewise the hygiene sweep report (~23 a day) is not a stage change.
+    assert catalog.category_for_event("pipeline_hygiene", "info") is None
+    assert catalog.category_for_event("pipeline_transition", "info") == "pipeline_transition"
