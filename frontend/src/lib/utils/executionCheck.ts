@@ -31,7 +31,7 @@ export function explainCheck(check: ExecutionCheck): CheckExplanation {
 				body: `Its settings changed after they were validated. A ${noun} strategy only trades the exact settings it was accepted with.`,
 				fix: live
 					? 'Accept a backtest of the new settings as the live baseline, or restore the validated settings.'
-					: 'Restore the validated settings, or run the gauntlet on the new settings.',
+					: 'Restore the validated settings, or move it back to Gauntlet so the pipeline validates the new ones and promotes it back to paper.',
 			};
 		case 'unverified':
 			return live
@@ -43,12 +43,12 @@ export function explainCheck(check: ExecutionCheck): CheckExplanation {
 				: {
 						title,
 						body: 'Its paper promotion has no verified backtest of the current settings.',
-						fix: 'Run the gauntlet on the current settings. Paper has no operator shortcut; only a gauntlet promotion verifies it.',
+						fix: 'Move it back to Gauntlet (stage control on its Forge page). The pipeline re-runs the gauntlet on the current settings and, if it passes, promotes it back to paper with fresh evidence. A Forge backtest alone does not verify paper, and there is no operator shortcut.',
 					};
 		case 'engine_changed':
-			return { title, body: 'The backtest engine changed since the settings were validated.', fix: live ? 'Run a fresh backtest of the current settings and accept it here.' : 'Run the gauntlet again on the current engine.' };
+			return { title, body: 'The backtest engine changed since the settings were validated.', fix: live ? 'Run a fresh backtest of the current settings and accept it here.' : 'Move it back to Gauntlet so it re-validates on the current engine.' };
 		case 'source_changed':
-			return { title, body: "The strategy's code changed since it was validated.", fix: live ? 'Run a fresh backtest of the current code and accept it here.' : 'Run the gauntlet again on the current code.' };
+			return { title, body: "The strategy's code changed since it was validated.", fix: live ? 'Run a fresh backtest of the current code and accept it here.' : 'Move it back to Gauntlet so it re-validates on the current code.' };
 		case 'config_changed':
 			return { title, body: 'Its market or timeframe changed since it was validated.', fix: 'Restore the validated market and timeframe, or validate the new ones.' };
 		case 'unavailable':
@@ -110,6 +110,6 @@ export function executingEditWarning(input: {
 	const more = changes.length > shown.length ? `\n• …and ${changes.length - shown.length} more` : '';
 	const resolve = live
 		? 'accept a backtest of the new settings as the live baseline, or restore the validated settings'
-		: 'run the gauntlet on the new settings, or restore the validated settings';
+		: 'move it back to Gauntlet to validate the new settings, or restore the validated settings';
 	return `${input.strategyId} trades ${live ? 'LIVE' : 'on paper'}. Saving changes:\n${shown.join('\n')}${more}\n\nIf these differ from the settings it was validated with, new ${live ? 'live' : 'paper'} entries are refused until you ${resolve} (Execution check at the top of the strategy page). Save anyway?`;
 }

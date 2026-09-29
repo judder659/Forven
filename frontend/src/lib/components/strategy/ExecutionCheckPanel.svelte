@@ -31,11 +31,22 @@
 	let reason = '';
 	let selectedResultId = '';
 	let sequence = 0;
+	let loadedFor = '';
 
 	$: void load(strategyId, refreshKey);
 
 	async function load(id: string, _key: unknown): Promise<void> {
 		if (!id) return;
+		if (id !== loadedFor) {
+			// A reused panel (the desk switches strategies) must not carry one strategy's
+			// half-finished confirm, reason or chosen backtest over to the next.
+			loadedFor = id;
+			check = null;
+			step = 'idle';
+			reason = '';
+			selectedResultId = '';
+			actionError = '';
+		}
 		const mine = ++sequence;
 		try {
 			const next = await getExecutionCheck(id);
@@ -52,7 +63,8 @@
 		step = next;
 		actionError = '';
 		reason = next === 'restore' ? 'Undo a settings change' : 'Accept the new settings for live trading';
-		selectedResultId = next === 'accept' ? check?.candidates[0]?.result_id ?? '' : '';
+		// Nothing preselected: the operator picks which backtest becomes the evidence.
+		selectedResultId = '';
 	}
 
 	async function run(action: () => Promise<ExecutionCheck>): Promise<void> {
@@ -125,7 +137,7 @@
 					<button type="button" class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12.5px] font-medium text-sc-ink hover:border-sc-ink4" on:click={() => begin('restore')} data-testid="execution-check-restore">Restore validated settings</button>
 				{/if}
 				{#if needsForge && forgeHref}
-					<a class="rounded-md border border-sc-line2 px-3 py-1.5 text-[12.5px] text-sc-ink2 no-underline hover:text-sc-ink" href={forgeHref}>{check.actions.gauntlet ? 'Open the Forge to run the gauntlet' : 'Open the Forge to run a backtest'}</a>
+					<a class="rounded-md border border-sc-line2 px-3 py-1.5 text-[12.5px] text-sc-ink2 no-underline hover:text-sc-ink" href={forgeHref}>{check.actions.gauntlet ? 'Open the Forge to move it back to Gauntlet' : 'Open the Forge to run a backtest'}</a>
 				{/if}
 			</div>
 		{:else if step === 'restore'}

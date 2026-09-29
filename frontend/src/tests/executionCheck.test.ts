@@ -40,8 +40,8 @@ describe('execution check wording', () => {
 		expect(live.fix).toContain('Accept a backtest of the new settings');
 		const paper = explainCheck(check({ stage: 'paper', kind: 'unverified' }));
 		expect(paper.title).toBe('New paper entries are blocked');
-		expect(paper.fix).toContain('gauntlet');
-		expect(paper.fix).toContain('no operator shortcut');
+		expect(paper.fix).toContain('Move it back to Gauntlet');
+		expect(paper.fix).toContain('A Forge backtest alone does not verify paper');
 	});
 
 	it('lists what a save changes and warns only for trading strategies', () => {
@@ -52,7 +52,7 @@ describe('execution check wording', () => {
 		expect(warning).toContain('S05665 trades LIVE');
 		expect(warning).toContain('execution_profile.leverage: not set → 2');
 		expect(warning).toContain('accept a backtest of the new settings as the live baseline');
-		expect(executingEditWarning({ strategyId: 'S1', stage: 'paper', current, next })).toContain('run the gauntlet');
+		expect(executingEditWarning({ strategyId: 'S1', stage: 'paper', current, next })).toContain('move it back to Gauntlet');
 		expect(executingEditWarning({ strategyId: 'S1', stage: 'quick_screen', current, next })).toBeNull();
 		expect(executingEditWarning({ strategyId: 'S1', stage: 'live_graduated', current, next: current })).toBeNull();
 	});
@@ -104,6 +104,8 @@ describe('ExecutionCheckPanel', () => {
 		expect(confirm.textContent).toContain('does not re-run the research gates');
 		expect(confirm.textContent).toContain('36 trades');
 		expect(confirm.textContent).toContain('172 trades');
+		// Nothing is preselected, so accepting needs an explicit choice.
+		expect((screen.getByRole('button', { name: 'Accept as live baseline' }) as HTMLButtonElement).disabled).toBe(true);
 		await fireEvent.click(screen.getByDisplayValue('S05665-manual-a6d6'));
 		await fireEvent.click(screen.getByRole('button', { name: 'Accept as live baseline' }));
 		await flush();
@@ -123,6 +125,6 @@ describe('ExecutionCheckPanel', () => {
 		await flush();
 		expect(screen.queryByTestId('execution-check-accept')).toBeNull();
 		expect(screen.queryByTestId('execution-check-restore')).toBeNull();
-		expect(screen.getByText('Open the Forge to run the gauntlet').getAttribute('href')).toBe('/lab/strategy/S05665');
+		expect(screen.getByText('Open the Forge to move it back to Gauntlet').getAttribute('href')).toBe('/lab/strategy/S05665');
 	});
 });

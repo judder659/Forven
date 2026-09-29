@@ -361,7 +361,7 @@ HOWTOS: dict[str, dict] = {
             "A paper or live strategy only trades the exact settings it was validated with. Editing its parameters or execution settings blocks new entries until the change is accepted or undone.",
             "Open the strategy's Why tab on Live/Paper Trades, or its Forge page (/lab/strategy/<id>): the Execution check lists what changed since validation.",
             "Live: run a backtest of the current settings, then 'Accept a backtest as the live baseline' (a recorded operator acceptance; research gates are not re-run). Or 'Restore validated settings'.",
-            "Paper: 'Restore validated settings', or run the gauntlet on the new settings. Paper has no operator shortcut.",
+            "Paper: 'Restore validated settings', or move it back to Gauntlet (stage control on its Forge page): the pipeline re-runs the gauntlet on the current settings and promotes it back to paper if it passes. A Forge backtest alone does not verify paper, and there is no operator shortcut.",
             "Moving a live strategy to paper and back does not clear it: going live again is refused while another live strategy trades the same coin and side.",
         ],
         "routes": ["/live-trades", "/paper-trades", "/lab"],
