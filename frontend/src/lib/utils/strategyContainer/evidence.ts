@@ -484,3 +484,11 @@ export function buildStressRows(evidence: ContainerEvidence): StressRow[] {
 
 	return rows;
 }
+
+/** The short verdict label a stress row shows. */
+export function stressVerdictText(row: StressRow): string {
+	if (row.tone === 'idle') return row.verdict === 'NOT RUN' ? 'Not run' : row.verdict.charAt(0) + row.verdict.slice(1).toLowerCase();
+	if (row.tone === 'fail') return 'Fail';
+	if (row.tone === 'caution') return row.verdict === 'LOW' ? 'Low' : row.stale ? 'Pass · stale' : 'Pass · thin';
+	return row.verdict === 'PASS*' ? 'Pass*' : 'Pass';
+}
