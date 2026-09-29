@@ -20,7 +20,7 @@ unchanged until the user approves the new one.
 ## 0. Safety rules (non-negotiable)
 
 The live trading backend (port 8003) runs on this machine from the main checkout
-`C:\Users\Aaron\Projects\forven`, with real money. Its data lives in `C:\Users\Aaron\.forven`.
+(`<repo>`), with real money. Its data lives in the live `FORVEN_HOME` (`~/.forven`).
 
 1. Work **only** inside your own worktree directory. Run every shell command with that directory
    as cwd (`cd <your worktree> && ...`). Never edit files in the main checkout or in another
@@ -28,7 +28,7 @@ The live trading backend (port 8003) runs on this machine from the main checkout
    or anything that touches another worktree.
 2. Any Python process that imports `forven` must run with a scratch home and mainnet unarmed:
    `FORVEN_HOME=<your scratch dir> FORVEN_ALLOW_MAINNET=` (empty). Never let code write under
-   `C:\Users\Aaron\.forven`.
+   the live `~/.forven`.
 3. Against the live backend (`http://127.0.0.1:8003`) you may send **GET requests only**, to look
    at real payloads. Never POST/PUT/DELETE there. Never open the live `forven.db` except with
    `sqlite3.connect("file:...forven.db?mode=ro", uri=True)`.
@@ -37,8 +37,8 @@ The live trading backend (port 8003) runs on this machine from the main checkout
    `-p no:cacheprovider -p noeditable` and at most `-n 2`. The command:
    ```
    cd <worktree> && FORVEN_HOME=<scratch> FORVEN_ALLOW_MAINNET= \
-     PYTHONPATH=C:/Users/Aaron/AppData/Local/Temp/claude/C--Users-Aaron-Projects-forven/8bda547a-188e-46e6-a378-d5d3d215a00b/scratchpad/pyplug \
-     C:/Users/Aaron/Projects/forven/.venv/Scripts/python.exe -m pytest tests/<files> -q -p no:cacheprovider -p noeditable
+     PYTHONPATH=<scratchpad>/pyplug \
+     <repo>/.venv/Scripts/python.exe -m pytest tests/<files> -q -p no:cacheprovider -p noeditable
    ```
    Verify imports resolve to your worktree once: `python -c "import forven; print(forven.__file__)"`.
 5. Frontend: `npx vitest run <your test files>` and `npm run check` are fine; **never `npm run
