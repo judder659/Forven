@@ -133,9 +133,10 @@ def targets(symbol: str) -> dict[str, Any]:
     with ThreadPoolExecutor(max_workers=len(exchanges), thread_name_prefix="forven-acquire-markets") as pool:
         markets = dict(zip(exchanges, pool.map(_venue_markets, exchanges)))
 
-    listing = fdata._binance_listing(fs_symbol)
+    # Advisory: an expired Binance list answers too (the write path re-checks strictly).
+    listing = fdata._binance_listing(fs_symbol, markets=fdata.cached_markets_stale_ok)
     try:
-        perp = fdata._binance_perp_symbol(fs_symbol) if listing else None
+        perp = fdata._binance_perp_symbol(fs_symbol, markets=fdata.cached_markets_stale_ok) if listing else None
     except Exception:  # spot listed, USD-M list unavailable: perp vs spot unknown
         listing, perp = None, None
     if listing and perp:

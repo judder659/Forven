@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 from forven.symbol_mapping import detect_asset_class
@@ -1957,40 +1957,43 @@ def _save_venue_frame_locked(
     return max(0, len(merged) - (len(existing) if existing is not None else 0))
 
 
-def _binance_perp_symbol(symbol: str) -> str | None:
+def _binance_perp_symbol(symbol: str, *, markets: Callable[[str], dict[str, Any]] | None = None) -> str | None:
     """The listed USD-M linear perp ("BTC/USDT:USDT") for a USDT/USDC pair, else
     None (spot is canonical only for bases without a perp). Raises when the USD-M
     market list cannot be loaded: guessing spot then would splice spot bars into
-    a perp series — the silent perp->spot fallback this used to take."""
+    a perp series — the silent perp->spot fallback this used to take. ``markets``
+    loads a venue's list (advisory reads pass ``cached_markets_stale_ok``)."""
     ccxt_symbol = symbol_to_ccxt(symbol)
     parts = ccxt_symbol.split("/")
     if len(parts) == 2 and parts[1] in ("USDT", "USDC"):
         perp_symbol = f"{ccxt_symbol}:{parts[1]}"
-        if perp_symbol in _cached_markets("binanceusdm"):
+        if perp_symbol in (markets or _cached_markets)("binanceusdm"):
             return perp_symbol
     return None
 
 
-def _binance_listing(symbol: str) -> bool | None:
+def _binance_listing(symbol: str, *, markets: Callable[[str], dict[str, Any]] | None = None) -> bool | None:
     """Whether Binance lists a USD-M perp or a spot market for the pair: True /
     False, or None when unknown (markets could not be loaded, or came back
     empty — a real Binance market list never is). A symbol that is not a
-    BASE/QUOTE pair (an equity ticker such as "AAPL") is not Binance-listed."""
+    BASE/QUOTE pair (an equity ticker such as "AAPL") is not Binance-listed.
+    ``markets`` loads a venue's list (advisory reads pass ``cached_markets_stale_ok``)."""
     ccxt_symbol = symbol_to_ccxt(symbol)
     base, _, quote = ccxt_symbol.partition("/")
     if not base or not quote:
         return False
+    load = markets or _cached_markets
     unknown = False
     for exchange_id, market_symbol in (("binanceusdm", f"{ccxt_symbol}:{quote}"), ("binance", ccxt_symbol)):
         try:
-            markets = _cached_markets(exchange_id)
+            markets_list = load(exchange_id)
         except Exception as exc:
             log.warning("Could not load %s markets to check %s: %s", exchange_id, ccxt_symbol, exc)
             unknown = True
             continue
-        if not markets:
+        if not markets_list:
             unknown = True
-        elif market_symbol in markets:
+        elif market_symbol in markets_list:
             return True
     return None if unknown else False
 

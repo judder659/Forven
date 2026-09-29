@@ -696,13 +696,14 @@ def get_snapshot(*, refresh: bool = False, max_age: float = SNAPSHOT_TTL_SECONDS
         generation = _snapshot_generation
     if not refresh and cached is not None and time.monotonic() - cached[0] < max_age:
         return cached[1]
-    started = time.monotonic()
     snap = build_snapshot()
     with _snapshot_lock:
         # Invalidated mid-build: the lake moved under this answer, so serve it
-        # but don't cache it.
+        # but don't cache it. The TTL counts from the build's end: the census
+        # takes seconds to build, and the header, nav badge and health monitor
+        # all read it.
         if generation == _snapshot_generation:
-            _snapshot_cache = (started, snap)
+            _snapshot_cache = (time.monotonic(), snap)
     return snap
 
 
