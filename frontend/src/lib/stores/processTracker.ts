@@ -2,14 +2,30 @@
  * Global process tracker store.
  *
  * Provides a single polling loop that tracks jobs, scans, and tournaments
- * regardless of which route the user is viewing.  Emits toast notifications
- * on terminal-status transitions and exposes activity-badge counts per route.
+ * regardless of which route the user is viewing. Emits a "Background jobs"
+ * notification on terminal-status transitions and exposes activity counts per
+ * route.
+ *
+ * The pop-up stack itself lives in $lib/stores/toasts; it is re-exported here
+ * because most pages import addToast from this module.
  */
 
 import { writable, derived, get } from 'svelte/store';
 import { getJob, getJobs, getScan, listScans, getTournament, listTournaments } from '$lib/api';
 import type { Job, Scan, Tournament } from '$lib/api';
 import { createPoller, type Poller } from '$lib/utils/polling';
+import { notify } from '$lib/stores/toasts';
+
+export {
+	addToast,
+	clearSnooze,
+	dismissToast,
+	getSnoozeOptions,
+	snoozeNotifications,
+	snoozeUntil,
+	toasts,
+	type ToastItem,
+} from '$lib/stores/toasts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,14 +42,6 @@ export interface TrackedProcess {
 	data: Job | Scan | Tournament;
 	addedAt: number;
 	lastPoll: number;
-}
-
-export interface ToastItem {
-	id: string;
-	message: string;
-	type: 'success' | 'error' | 'warning' | 'info';
-	href?: string;
-	duration: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,36 +101,6 @@ function hasMeaningfulDataChange(
 // ---------------------------------------------------------------------------
 
 export const trackedProcesses = writable<TrackedProcess[]>([]);
-export const toasts = writable<ToastItem[]>([]);
-
-// Snooze notifications until a specific timestamp
-export const snoozeUntil = writable<number>(0);
-
-const SNOOZE_OPTIONS = [
-	{ label: '5 min', ms: 5 * 60 * 1000 },
-	{ label: '15 min', ms: 15 * 60 * 1000 },
-	{ label: '30 min', ms: 30 * 60 * 1000 },
-	{ label: '1 hour', ms: 60 * 60 * 1000 },
-	{ label: '4 hours', ms: 4 * 60 * 60 * 1000 },
-	{ label: '24 hours', ms: 24 * 60 * 60 * 1000 },
-];
-
-export function snoozeNotifications(durationMs: number) {
-	snoozeUntil.set(Date.now() + durationMs);
-	// FE-02: clear the chatter, KEEP the errors. Snooze used to `toasts.set([])`
-	// and addToast then dropped every replacement, so a failed GO-LIVE promotion
-	// produced literally zero feedback anywhere in the UI. Snooze means "stop
-	// telling me about routine completions", never "hide failures".
-	toasts.update((t) => t.filter((x) => x.type === 'error'));
-}
-
-export function clearSnooze() {
-	snoozeUntil.set(0);
-}
-
-export function getSnoozeOptions() {
-	return SNOOZE_OPTIONS;
-}
 
 /** Non-terminal processes only. */
 export const activeProcesses = derived(trackedProcesses, ($tp) =>
@@ -139,33 +117,6 @@ export const activityByRoute = derived(trackedProcesses, ($tp) => {
 	}
 	return counts;
 });
-
-// ---------------------------------------------------------------------------
-// Toast helpers
-// ---------------------------------------------------------------------------
-
-let toastCounter = 0;
-
-export function addToast(
-	message: string,
-	type: ToastItem['type'] = 'info',
-	href?: string,
-	duration = 5000
-): string | null {
-	// Check if notifications are snoozed. FE-02: errors are exempt — they are the
-	// one class the operator cannot afford to have silently dropped.
-	const snoozeEnd = get(snoozeUntil);
-	if (type !== 'error' && Date.now() < snoozeEnd) {
-		return null; // Silently drop the toast
-	}
-	const id = `toast-${++toastCounter}-${Date.now()}`;
-	toasts.update((t) => [...t, { id, message, type, href, duration }]);
-	return id;
-}
-
-export function dismissToast(id: string) {
-	toasts.update((t) => t.filter((x) => x.id !== id));
-}
 
 // ---------------------------------------------------------------------------
 // Track / untrack
@@ -359,7 +310,7 @@ function emitTerminalToast(proc: TrackedProcess, newStatus: string) {
 	const failed = newStatus === 'failed';
 	const type = success ? 'success' : failed ? 'error' : 'info';
 	const verb = success ? 'completed' : failed ? 'failed' : 'finished';
-	addToast(`${proc.label} ${verb}`, type, proc.href);
+	notify({ category: 'background_jobs', message: `${proc.label} ${verb}`, type, href: proc.href });
 }
 
 // ---------------------------------------------------------------------------

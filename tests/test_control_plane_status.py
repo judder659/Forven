@@ -125,27 +125,56 @@ def test_get_system_heartbeat_nav_indicators_use_frontend_route_keys(monkeypatch
     payload = control_plane_status.get_system_heartbeat()
     nav = payload["nav_indicators"]
 
-    # Keys must be the frontend sidebar hrefs — the client silently drops
-    # indicators for routes it doesn't render (this regressed as /trades + /ops).
-    # Badge ALLOWLIST (operator decision 2026-07-06): only approvals,
-    # diagnostics, trades, and bot factory carry state badges; /integrations
-    # badges via event pulse only. Mirrors navMetrics.NAV_BADGE_HREFS.
-    assert set(nav) == {
-        "/paper-trades",
-        "/live-trades",
-        "/bot-factory",
-        "/approval",
-        "/diagnostics",
-    }
+    # Keys must be the sidebar hrefs the notification catalog defines badges
+    # for — the client ignores indicators for routes it has no badge for (this
+    # regressed once as /trades + /ops). The /data badge is computed client-side
+    # from the SLA census, so it is the one catalog badge the backend omits.
+    from forven.notification_catalog import NAV_BADGES
 
+    assert set(nav) == {badge.href for badge in NAV_BADGES} - {"/data"}
+
+    # Real counts, with the ids behind them (the client tells new from seen by id).
     assert nav["/approval"]["kind"] == "count"
     assert nav["/approval"]["count"] == 2
     assert nav["/approval"]["severity"] == "warn"
+    assert nav["/approval"]["item_ids"] == ["11", "12"]
 
     assert nav["/live-trades"]["kind"] == "count"
     assert nav["/live-trades"]["count"] == 1
-    # No paper sessions in this fixture — the paper tab must stay quiet.
+    assert nav["/live-trades"]["item_ids"] == ["t1"]
+    # No open paper positions in this fixture — the paper tab stays quiet.
     assert nav["/paper-trades"]["kind"] == "none"
+
+
+def test_paper_trades_nav_indicator_counts_open_paper_positions_only():
+    # The Paper Trades badge counts open paper POSITIONS (what the page lists as
+    # open), not "active sessions" — watching sessions re-lit it constantly.
+    open_trades = [
+        {"id": "P1", "execution_type": "paper"},
+        {"id": "P2", "execution_type": "paper"},
+        {"id": "L1", "execution_type": "live"},
+    ]
+    indicator = control_plane_status._build_paper_trades_nav_indicator(open_trades)
+    assert indicator["kind"] == "count"
+    assert indicator["count"] == 2
+    assert indicator["item_ids"] == ["P1", "P2"]
+
+
+def test_diagnostics_nav_indicator_carries_ids_and_danger_subset():
+    indicator = control_plane_status._build_ops_nav_indicator(
+        {
+            "count": 3,
+            "highest_severity": "critical",
+            "notification_ids": [30, 20, 10],
+            "danger_ids": [30],
+            "window_days": 7,
+        }
+    )
+    assert indicator["count"] == 3
+    assert indicator["severity"] == "danger"
+    assert indicator["item_ids"] == ["30", "20", "10"]
+    assert indicator["danger_ids"] == ["30"]
+    assert control_plane_status._build_ops_nav_indicator({"notification_ids": []})["kind"] == "none"
 
 
 def test_live_trades_nav_indicator_excludes_paper_positions():

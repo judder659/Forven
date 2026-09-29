@@ -4,7 +4,6 @@ from forven.notifications import (
     acknowledge_notification,
     acknowledge_notifications,
     create_notification_repair_task,
-    filter_actionable_notifications,
     get_notification_preferences,
     get_notification_stats,
     list_notification_deliveries,
@@ -45,6 +44,8 @@ def get_notifications_list(
     before_id: int | None = None,
     actionable: bool = False,
 ) -> dict[str, object]:
+    # actionable=True filters in SQL (the same predicate the Diagnostics badge
+    # summary uses), so the inbox holds the newest actionable rows.
     items = list_notifications(
         limit=limit,
         status=status,
@@ -53,11 +54,8 @@ def get_notifications_list(
         event_type=event_type,
         group_key=group_key,
         before_id=before_id,
+        actionable=actionable,
     )
-    if actionable:
-        # Same filter (and same page of rows) as the nav-badge summary, so the
-        # inbox always shows exactly what the badge counted.
-        items = filter_actionable_notifications(items)
     return {
         "items": items,
         "stats": get_notification_stats(),
@@ -156,7 +154,10 @@ def get_notifications_preferences() -> dict[str, object]:
 
 
 def put_notifications_preferences(body: NotificationPreferencesBody) -> dict[str, object]:
-    return update_notification_preferences(body.updates)
+    # A partial update: keys the body leaves out keep their stored values.
+    # (update_notification_preferences merges onto DEFAULTS, so passing the body
+    # alone used to reset every other switch.)
+    return update_notification_preferences({**get_notification_preferences(), **body.updates})
 
 
 def post_notification_repair_task(

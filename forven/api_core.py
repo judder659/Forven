@@ -1364,13 +1364,16 @@ def _save_pipeline_settings_payload(payload: dict) -> None:
     kv_set(_SETTINGS_PIPELINE_STORAGE_KEY, payload)
 
 
-# Maps each Notifications-panel toggle to the notification_preferences keys it
-# drives. Used for BOTH the write bridge (_apply_settings_section 'notifications')
-# and the get_settings read-back so the round-trip is consistent: one toggle sets
-# all N prefs on write; on read a toggle is "on" only if every pref it drives is on.
+# Maps each legacy coarse Discord toggle to the notification_preferences keys it
+# drives. The Settings page now edits the preferences directly (per-event
+# matrix, Settings → Notifications); these stay for API clients that still send
+# the coarse keys. Used for BOTH the write bridge (_apply_settings_section
+# 'notifications') and the get_settings read-back so the round-trip is
+# consistent: one toggle sets all N prefs on write; on read a toggle is "on"
+# only if every pref it drives is on.
 _NOTIF_TOGGLE_PREF_KEYS: dict[str, tuple[str, ...]] = {
-    "notify_on_entry": ("trade_opened_to_discord",),
-    "notify_on_exit": ("trade_closed_to_discord",),
+    "notify_on_entry": ("trade_opened_to_discord", "paper_trade_opened_to_discord"),
+    "notify_on_exit": ("trade_closed_to_discord", "paper_trade_closed_to_discord"),
     "notify_daily_summary": ("digests_to_discord",),
     "notify_health_reports": ("system_degraded_to_discord", "system_recovered_to_discord"),
     "notify_errors": ("trade_failed_to_discord", "agent_failure_to_discord", "risk_critical_to_discord"),

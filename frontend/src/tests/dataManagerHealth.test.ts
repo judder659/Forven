@@ -10,7 +10,7 @@ import {
 	seriesName,
 	whyText,
 } from '../lib/components/data-manager/health';
-import { navRouteMetrics, setNavIndicators } from '../lib/stores/navMetrics';
+import { navBadges, setNavIndicators } from '../lib/stores/navMetrics';
 
 function withCounts(census: SlaCensus, tier: SlaTier, counts: Partial<Record<SlaState, number>>): SlaCensus {
 	return { ...census, by_tier: { ...census.by_tier, [tier]: { fresh: 0, late: 0, breach: 0, frozen: 0, missing: 0, ...counts } } };
@@ -106,33 +106,40 @@ describe('Needs attention', () => {
 describe('/data nav indicator', () => {
 	const census = fixtureCensus();
 
-	it('counts live and paper problems only', () => {
-		const indicator = buildDataNavIndicator(census);
-		expect(indicator.kind).toBe('count');
-		expect(indicator.severity).toBe('warn');
-		expect(indicator.count).toBe(1);
-		expect(indicator.summary).toBe('1 paper series is late');
-		// The census ranks `worst` across tiers, so the paper row may not be in it:
-		// the key still changes with the live/paper counts.
-		expect(indicator.seen_key).toMatch(/^data-sla:0\.0\.0\.1/);
-		const withRow = buildDataNavIndicator({ ...census, worst: [row({ tier: 'paper', state: 'late', symbol: 'SOL-USDT', timeframe: '15m' })] });
-		expect(withRow.seen_key).toBe('data-sla:0.0.0.1:ohlcv:canonical:SOL-USDT:15m');
+	it('stays quiet for merely late series — they flicker at every bar boundary', () => {
+		// The fixture has one paper series late (and live series read a few
+		// seconds late right after each hour until the collector catches up).
+		expect(census.by_tier.paper.late).toBe(1);
+		expect(buildDataNavIndicator(census).kind).toBe('none');
+		expect(buildDataNavIndicator(withCounts(census, 'live', { late: 17, fresh: 15 })).kind).toBe('none');
+	});
+
+	it('counts badly stale or missing paper series', () => {
+		const indicator = buildDataNavIndicator(withCounts(census, 'paper', { breach: 1, missing: 1 }));
+		expect(indicator).toMatchObject({ kind: 'count', severity: 'warn', count: 2 });
+		expect(indicator.summary).toBe('2 paper series are badly stale or missing');
+		// The census ranks `worst` across tiers, so the paper rows may not be in it:
+		// a counts stand-in still changes with the live/paper counts.
+		expect(indicator.item_ids).toEqual(['counts:0.2']);
+		const withRow = buildDataNavIndicator({
+			...withCounts(census, 'paper', { breach: 1 }),
+			worst: [row({ tier: 'paper', state: 'breach', symbol: 'SOL-USDT', timeframe: '15m' })],
+		});
+		expect(withRow.item_ids).toEqual(['ohlcv:canonical:SOL-USDT:15m:breach']);
 	});
 
 	it('a live breach is a standing STALE pill', () => {
 		const indicator = buildDataNavIndicator(withCounts(census, 'live', { breach: 2 }));
-		expect(indicator).toMatchObject({ kind: 'status', severity: 'danger', label: 'STALE', count: 3 });
+		expect(indicator).toMatchObject({ kind: 'status', severity: 'danger', label: 'STALE', count: 2 });
 	});
 
 	it('is empty when live and paper are current', () => {
 		expect(buildDataNavIndicator(withCounts(census, 'paper', { fresh: 4 })).kind).toBe('none');
 	});
 
-	it('passes the sidebar badge allowlist', () => {
-		setNavIndicators({ '/data': buildDataNavIndicator(census) });
-		const metric = get(navRouteMetrics)['/data'];
-		expect(metric.kind).toBe('count');
-		expect(metric.count).toBe(1);
-		expect(metric.seen).toBe(false);
+	it('becomes the /data sidebar badge', () => {
+		setNavIndicators({ '/data': buildDataNavIndicator(withCounts(census, 'paper', { missing: 1 })) });
+		const badge = get(navBadges)['/data'];
+		expect(badge).toMatchObject({ kind: 'count', count: 1 });
 	});
 });

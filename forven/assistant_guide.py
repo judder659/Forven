@@ -243,7 +243,8 @@ PAGES: list[dict] = [
         "actions": [
             "Tune pipeline gate thresholds (presets: relaxed/default/strict — every threshold editable)",
             "Set the Lab backtest window",
-            "Configure Hyperliquid credentials and Discord notifications",
+            "Configure Hyperliquid credentials",
+            "Choose which events pop up, which go to Discord, and which sidebar badges show (Notifications)",
             "Danger zone: factory reset",
         ],
     },
@@ -417,7 +418,7 @@ HOWTOS: dict[str, dict] = {
             "Settings (/settings) is sectioned: home, data, lab, trading, hyperliquid, notifications, system, danger zone.",
             "Lab: the backtest window and every pipeline gate threshold (presets relaxed/default/strict are just premades — everything is editable).",
             "Trading: execution mode and risk knobs. Hyperliquid: credentials and wallets.",
-            "Notifications: Discord channels and per-category toggles (with a test button).",
+            "Notifications: for every kind of event, whether it pops up in the app and whether it goes to Discord; which sidebar badges show; Discord credentials; and a test button.",
             "Danger zone: factory reset. Approval policies live at /settings/approvals.",
         ],
         "routes": ["/settings", "/settings/approvals", "/settings/profile"],
@@ -435,9 +436,11 @@ HOWTOS: dict[str, dict] = {
     "notifications": {
         "title": "Set up notifications",
         "steps": [
-            "Settings › Notifications: Discord delivery, per-category toggles, and a test button.",
+            "Settings › Notifications: one row per kind of event (live and paper trades, approvals, risk, jobs, system, agents) with a Pop-up switch and a Discord switch, plus a switch per sidebar badge and a test button.",
+            "Paper-trade and AI-client pop-ups are off by default; kill switch / loss halts and live order failures always pop up.",
+            "Any pop-up has a Mute button (turns that kind off) and a Pause control (15 min to 24 h; safety alerts still show).",
+            "Sidebar badges are real counts (pending approvals, open live positions, late data, running bots); Diagnostics counts issues raised since you last opened it.",
             "Routines each pick their own Discord channel.",
-            "In-app: sidebar badges and toasts surface approvals, trade events, and alerts as they happen.",
         ],
         "routes": ["/settings"],
     },

@@ -1,88 +1,53 @@
 <script lang="ts">
-	import type { NavMetric, NavPulse } from '$lib/stores/navMetrics';
+	import type { NavBadgeView } from '$lib/stores/navMetrics';
 
-	/** Heartbeat state indicator (standing facts: pending approvals, HALT, scans running). */
-	export let metric: NavMetric | undefined = undefined;
-	/** Realtime event pulse (things that happened since the tab was last visited) — wins over metric. */
-	export let pulse: NavPulse | undefined = undefined;
-	/** No badge while the route is being viewed; visiting is what clears it. */
-	export let active = false;
+	/** What the sidebar link shows (navMetrics.navBadges); nothing when null. */
+	export let badge: NavBadgeView | null | undefined = undefined;
 
-	const COUNT_COLORS: Record<string, string> = {
-		danger: 'border border-red-900 bg-red-500/10 text-red-400',
-		warn: 'border border-yellow-900 bg-yellow-500/10 text-yellow-400',
-		success: 'border border-emerald-900 bg-emerald-500/10 text-emerald-400',
-		info: 'border border-sc-line2 text-sc-ink',
-		neutral: 'border border-sc-line2 text-sc-ink2',
+	// Bright while the badge holds something you have not seen on that page yet;
+	// dimmed (outline only) once you have. The number itself never changes on a
+	// visit — it is the real count until the items are resolved.
+	const FRESH: Record<string, string> = {
+		danger: 'border-red-900 bg-red-500/15 text-red-300',
+		warn: 'border-yellow-900 bg-yellow-500/15 text-yellow-300',
+		success: 'border-emerald-900 bg-emerald-500/15 text-emerald-300',
+		info: 'border-sc-line2 bg-sc-raise text-sc-ink',
+		neutral: 'border-sc-line2 bg-sc-raise text-sc-ink2',
 	};
 
-	const COUNT_COLORS_SEEN: Record<string, string> = {
-		danger: 'border border-red-900 text-red-400',
-		warn: 'border border-yellow-900 text-yellow-500',
-		success: 'border border-emerald-900 text-emerald-500',
-		info: 'border border-sc-line2 text-sc-ink2',
-		neutral: 'border border-sc-line2 text-sc-ink3',
-	};
-
-	const PILL_COLORS: Record<string, string> = {
-		danger: 'border-red-900 bg-red-500/10 text-red-400',
-		warn: 'border-yellow-900 bg-yellow-500/10 text-yellow-400',
-		success: 'border-emerald-900 bg-emerald-500/10 text-emerald-400',
-		info: 'border-sc-line2 text-sc-ink',
-		neutral: 'border-sc-line2 text-sc-ink2',
-	};
-
-	const DOT_COLORS: Record<string, string> = {
-		danger: 'bg-red-500',
-		warn: 'bg-yellow-400',
-		success: 'bg-emerald-400',
-		info: 'bg-sc-ink',
-		neutral: 'bg-sc-ink3',
+	const SEEN: Record<string, string> = {
+		danger: 'border-red-900/70 text-red-400/80',
+		warn: 'border-yellow-900/70 text-yellow-500/80',
+		success: 'border-emerald-900/70 text-emerald-500/80',
+		info: 'border-sc-line2 text-sc-ink3',
+		neutral: 'border-sc-line2 text-sc-ink3',
 	};
 
 	function countLabel(count: number): string {
 		return count > 99 ? '99+' : String(count);
 	}
 
-	$: showPulse = !active && !!pulse && pulse.count > 0;
-	// Count/activity badges are NEWS: once the route has been visited they
-	// disappear entirely until the underlying seen_key changes (new approval,
-	// new trade set, new notifications). Only status pills (HALT, AUTH) persist
-	// while their condition holds — they flag standing hazards, not news.
-	$: showMetric =
-		!active
-		&& !showPulse
-		&& !!metric
-		&& metric.kind !== 'none'
-		&& (metric.kind === 'status' || !metric.seen);
-	$: metricDimmed = !!metric && metric.seen && metric.severity !== 'danger';
+	// A status pill (e.g. STALE live data) is a standing hazard: always bright.
+	$: palette = badge?.fresh || badge?.kind === 'status' ? FRESH : SEEN;
+	$: tone = palette[badge?.severity ?? 'neutral'] ?? palette.neutral;
+	$: tooltip = badge?.summary ?? '';
 </script>
 
-{#if showPulse && pulse}
-	<span class="relative flex shrink-0" title={pulse.summary}>
-		<span class="relative min-w-[18px] h-[18px] px-1 text-[10px] font-bold flex items-center justify-center animate-pulse {COUNT_COLORS[pulse.severity] ?? COUNT_COLORS.neutral}">
-			{countLabel(pulse.count)}
-		</span>
+{#if badge && badge.kind === 'status' && badge.label}
+	<span
+		class="shrink-0 border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {tone}"
+		title={tooltip}
+		data-fresh={badge.fresh}
+	>
+		{badge.label}
 	</span>
-{:else if showMetric && metric}
-	{#if metric.kind === 'count' && metric.count > 0}
-		<span
-			class="shrink-0 min-w-[18px] h-[18px] px-1 text-[10px] font-bold flex items-center justify-center {(metricDimmed ? COUNT_COLORS_SEEN : COUNT_COLORS)[metric.severity] ?? COUNT_COLORS.neutral}"
-			title={metric.summary}
-		>
-			{countLabel(metric.count)}
-		</span>
-	{:else if metric.kind === 'status' && metric.label}
-		<span
-			class="shrink-0 border px-1.5 py-0.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {PILL_COLORS[metric.severity] ?? PILL_COLORS.neutral} {metricDimmed ? 'opacity-50' : ''}"
-			title={metric.summary}
-		>
-			{metric.label}
-		</span>
-	{:else if metric.kind === 'activity'}
-		<span
-			class="shrink-0 w-2 h-2 rounded-full animate-pulse {DOT_COLORS[metric.severity] ?? DOT_COLORS.neutral} {metricDimmed ? 'opacity-50' : ''}"
-			title={metric.summary}
-		></span>
-	{/if}
+{:else if badge && badge.kind === 'count' && badge.count > 0}
+	<span
+		class="shrink-0 min-w-[18px] h-[18px] px-1 border text-[10px] font-bold tabular-nums flex items-center justify-center {tone}"
+		title={tooltip}
+		aria-label={tooltip}
+		data-fresh={badge.fresh}
+	>
+		{countLabel(badge.count)}
+	</span>
 {/if}

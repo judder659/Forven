@@ -17,6 +17,7 @@
 	import { startHeartbeat, stopHeartbeat } from '$lib/stores/heartbeat';
 	import { connectForvenWs, disconnectForvenWs, forvenWsConnected } from '$lib/stores/forvenWebSocket';
 	import { startNotificationRouter, stopNotificationRouter } from '$lib/stores/notificationRouter';
+	import { loadNotificationPrefs } from '$lib/stores/notificationPrefs';
 	import { shouldMarkBackendDisconnected } from '$lib/utils/connectionHealth';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import Toast from '$lib/components/Toast.svelte';
@@ -27,7 +28,6 @@
 	import ThroughputSuggestionBanner from '$lib/components/ThroughputSuggestionBanner.svelte';
 	import ConnectionHealthBanner from '$lib/components/ConnectionHealthBanner.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
-	import PositionAlertWidget from '$lib/components/PositionAlertWidget.svelte';
 	import AIChatPanel from '$lib/components/AIChatPanel.svelte';
 	import { chatUnreadCount } from '$lib/stores/chatStore';
 	import { assistantUI, toggleAssistant } from '$lib/stores/assistantUI';
@@ -136,10 +136,6 @@
 	// navigation. Pages enrich this with their entity/visible-data via setPageContext.
 	$: setRoute($page.url.pathname);
 
-	function shouldEnableLiveChannels(pathname: string): boolean {
-		return !(pathname === '/settings' || pathname.startsWith('/settings/'));
-	}
-
 	function startPollers(): void {
 		if (pollersActive) return;
 		startHeartbeat();
@@ -174,12 +170,11 @@
 		wsChannelActive = false;
 	}
 
+	// The heartbeat runs on every page, Settings included: it is the only source
+	// of the sidebar badge counts, which otherwise froze (or, on a fresh load,
+	// vanished) while Settings was open.
 	$: if (typeof window !== 'undefined' && connectionStatus === 'connected') {
-		if (shouldEnableLiveChannels($page.url.pathname)) {
-			startPollers();
-		} else {
-			stopPollers();
-		}
+		startPollers();
 	}
 
 	$: if (typeof window !== 'undefined') {
@@ -228,10 +223,13 @@
 		// On WS reconnect, re-check health and restart pollers
 		connectionStatus = 'checking';
 		attemptHealthCheck();
+		// The backend may have restarted with switches changed elsewhere.
+		void loadNotificationPrefs();
 	}
 
 	onMount(() => {
 		startWsChannel();
+		void loadNotificationPrefs();
 		startNotificationRouter();
 		attemptHealthCheck();
 		reloadWizardSettings().then(() => {
@@ -291,13 +289,14 @@
 	</main>
 </div>
 
-<!-- Shared bottom-right notification stack: children must render plain flex items (no fixed positioning) so alerts and toasts stack instead of overlapping. Shifts left of the assistant panel when it's open. -->
+<!-- Bottom-right pop-up stack (which events pop up: Settings → Notifications).
+     Sits above the floating chat button and shifts left of the assistant panel
+     when it's open. -->
 <div
-	class="fixed bottom-4 z-[9999] flex flex-col items-end gap-2 pointer-events-none"
+	class="fixed bottom-24 z-[9999] flex flex-col items-end gap-2 pointer-events-none"
 	style="transition: right 250ms ease;"
 	style:right={$assistantUI.open ? 'calc(1rem + min(440px, 92vw))' : '1rem'}
 >
-	<PositionAlertWidget />
 	<Toast />
 </div>
 

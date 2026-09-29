@@ -11,14 +11,20 @@ export interface ManagerRow {
 	hypothesis_display_id?: string | null;
 	symbol: string;
 	timeframe: string;
+	// Strategy type key (e.g. 'sol_kc69704_pullback_thrust'); the Forge humanizes it into a title.
+	type: string | null;
 	stage: string;
 	// `untestable:<code>: <why>` when the strategy was archived without a fair
 	// test (broken code, lookahead leak, missing data, not enough history).
 	status_reason: string | null;
+	// Free-text notes; on an archived strategy this is the archival sentence (why it was retired).
+	notes: string | null;
 	source: string | null;
 	source_ref: string | null;
 	has_backtest_results: boolean;
 	created_at: string;
+	// When the strategy entered its current stage (for the graveyard: when it was archived).
+	stage_changed_at: string | null;
 	deleted_at?: string;
 	recovery_active: boolean;
 	recovery_status: string | null;
@@ -283,12 +289,15 @@ export function parseManagerRow(raw: any, deletedAt?: string): ManagerRow {
 		hypothesis_display_id: raw.hypothesis_display_id ? String(raw.hypothesis_display_id) : null,
 		symbol: String(raw.symbol || 'MULTI'),
 		timeframe: String(raw.timeframe || '1h'),
+		type: typeof raw.type === 'string' && raw.type.trim() ? raw.type.trim() : null,
 		stage: String(raw.stage || raw.status || 'unknown'),
 		status_reason: typeof raw.status_reason === 'string' && raw.status_reason.trim() ? raw.status_reason : null,
+		notes: typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes : null,
 		source: raw.source ? String(raw.source) : null,
 		source_ref: raw.source_ref ? String(raw.source_ref) : null,
 		has_backtest_results: Boolean(raw.has_backtest_results ?? raw.best_backtest_result_id),
 		created_at: String(raw.created_at || ''),
+		stage_changed_at: typeof raw.stage_changed_at === 'string' && raw.stage_changed_at.trim() ? raw.stage_changed_at : null,
 		deleted_at: deletedAt,
 		recovery_active: Boolean(raw.recovery_active),
 		recovery_status: typeof raw.recovery_status === 'string' ? raw.recovery_status : null,
