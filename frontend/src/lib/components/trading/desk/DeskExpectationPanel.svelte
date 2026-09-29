@@ -54,13 +54,14 @@
 				<tr class="border-b border-sc-line"><td class="py-1.5 font-sans text-sc-ink2">Profit factor</td><td class="text-right">{num(bt.profit_factor)?.toFixed(2) ?? '—'}</td><td class="text-right">{stats.profitFactor !== null ? stats.profitFactor.toFixed(2) : '—'}</td></tr>
 				<tr class="border-b border-sc-line"><td class="py-1.5 font-sans text-sc-ink2">Avg trade, % of capital</td><td class="text-right">{fmtPct((num(bt.avg_trade_pct) ?? 0) * 100, 2)}</td><td class="text-right">{fmtPct(stats.avgPctOfCapital, 2)}</td></tr>
 				<tr class="border-b border-sc-line"><td class="py-1.5 font-sans text-sc-ink2">Avg hold</td><td class="text-right">{num(bt.avg_bars_held) ?? '—'} bars</td><td class="text-right">{holdBars !== null ? `${holdBars.toFixed(1)} bars` : '—'}</td></tr>
-				<tr class="border-b border-sc-line"><td class="py-1.5 font-sans text-sc-ink2">Max drawdown</td><td class="text-right">{fmtPct((num(bt.max_drawdown_pct) ?? 0) * 100, 1, false)}</td><td class="text-right">—</td></tr>
-				<tr><td class="py-1.5 font-sans text-sc-ink2">Net result</td><td class="text-right">{fmtPct((num(bt.total_return_pct) ?? 0) * 100, 1)}</td><td class="text-right">{fmtUsd(stats.net, { signed: true })}</td></tr>
+				<tr class="border-b border-sc-line"><td class="py-1.5 font-sans text-sc-ink2">Max drawdown</td><td class="text-right">{fmtPct((num(bt.max_drawdown_pct) ?? 0) * 100, 1, false)}</td><td class="text-right">{fmtPct(row.perf.maxDrawdownPct, 1, false)}</td></tr>
+				<tr><td class="py-1.5 font-sans text-sc-ink2">Return</td><td class="text-right">{fmtPct((num(bt.total_return_pct) ?? 0) * 100, 1)}</td><td class="text-right" title={`${fmtUsd(row.perf.total, { signed: true })} since inception, open P&L included`}>{fmtPct(row.perf.returnPct, 1)}</td></tr>
 			</tbody>
 		</table>
 		<p class="text-[12px] text-sc-ink3">
 			{mode === 'live' ? 'Live capital per trade is the strategy’s slice of the account' : 'Paper trades size off the strategy’s own book'}, so "% of capital" compares like with like. Win rate is the steadiest comparison at small samples; profit factor swings on a single trade.{stats.failed ? ` ${stats.failed} failed entr${stats.failed === 1 ? 'y is' : 'ies are'} left out.` : ''}
 			{#if stats.avgHoldHours !== null}{` Average hold ${dur(stats.avgHoldHours * 3_600_000)}.`}{/if}
+			{' The backtest return covers its whole window; the forward return covers the time since inception.'}
 		</p>
 		<p class="font-plex-mono text-[10.5px] text-sc-ink4">Backtest window {bt.start_date?.slice(0, 10) ?? '—'} → {bt.end_date?.slice(0, 10) ?? '—'}</p>
 	</div>

@@ -1,5 +1,8 @@
 <script lang="ts">
-	/** Per-strategy results, equity (live), realized per day and how trades closed. */
+	/**
+	 * Results since inception. Scoped to one strategy: its own curve. Across the
+	 * desk: a leaderboard by return, and (live) the account equity for all of them.
+	 */
 	import type { ForvenEquityHistory } from '$lib/api';
 	import type { DeskFill, DeskMode } from '$lib/api/desk';
 	import { describeClose } from '$lib/utils/tradingDesk/describe';
@@ -13,8 +16,15 @@
 	export let fills: DeskFill[] = [];
 	export let equity: ForvenEquityHistory | null = null;
 	export let selectedSid: string | null = null;
+	/** True when the blotter is scoped to the selected strategy. */
+	export let scoped = false;
 	export let scopeLabel = '';
 	export let now = Date.now();
+
+	$: board = [...rows].sort((a, b) =>
+		(b.perf.returnPct ?? Number.NEGATIVE_INFINITY) - (a.perf.returnPct ?? Number.NEGATIVE_INFINITY) || b.perf.total - a.perf.total);
+	$: focus = scoped ? rows[0] ?? null : null;
+	$: focusHistory = focus ? { base: focus.perf.base, curve: focus.perf.curve } : null;
 
 	$: closeMix = (() => {
 		const counts = new Map<string, { count: number; net: number; tone: string }>();
@@ -36,30 +46,39 @@
 
 <div class="grid xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]" data-testid="desk-performance">
 	<div class="grid min-w-0 content-start gap-2 border-sc-line p-3 xl:border-r">
-		<h3 class="text-[13px] font-semibold text-sc-ink">By strategy</h3>
+		<h3 class="text-[13px] font-semibold text-sc-ink">{scoped ? 'This strategy since inception' : 'Since inception, best return first'}</h3>
 		<div class="overflow-x-auto">
-			<table class="w-full border-collapse text-[12px]">
+			<table class="w-full border-collapse text-[12px]" data-testid="desk-performance-board">
 				<thead>
 					<tr>
 						<th class={`${th} text-left`}>Strategy</th><th class={`${th} text-left`}>Market</th><th class={`${th} text-right`}>Since</th>
+						<th class={`${th} text-right`} title="Closed trades net of costs, plus open P&L">All-time P&amp;L</th>
+						<th class={`${th} text-right`} title={mode === 'paper' ? 'Of the $10,000 paper book' : 'Of the average capital slice its trades were sized from'}>Return</th>
+						{#if mode === 'paper'}<th class={`${th} text-right`} title="Paper book balance, open P&L included">Book</th>{/if}
+						<th class={`${th} text-right`}>Open</th>
 						<th class={`${th} text-right`}>Trades</th><th class={`${th} text-right`}>Win rate</th><th class={`${th} text-right`}>Backtest win</th>
-						<th class={`${th} text-right`}>Net P&amp;L</th><th class={`${th} text-right`}>Profit factor</th><th class={`${th} text-right`}>Avg, % of capital</th>
-						<th class={`${th} text-right`}>Costs</th><th class={`${th} text-right`}>Best</th><th class={`${th} text-right`}>Worst</th><th class={`${th} text-right`}>Avg hold</th>
+						<th class={`${th} text-right`}>Profit factor</th><th class={`${th} text-right`} title={mode === 'paper' ? 'Largest fall from the peak book' : 'Largest fall from the peak, as a percent of the average capital slice'}>Max drawdown</th>
+						<th class={`${th} text-right`}>Avg, % of capital</th><th class={`${th} text-right`}>Costs</th><th class={`${th} text-right`}>Best</th><th class={`${th} text-right`}>Worst</th><th class={`${th} text-right`}>Avg hold</th>
 					</tr>
 				</thead>
 				<tbody class="font-plex-mono tabular-nums">
-					{#each rows as row (row.session.id)}
+					{#each board as row (row.session.id)}
 						{@const stats = row.stats}
+						{@const perf = row.perf}
 						{@const bt = row.fleet?.backtest_oos}
 						<tr class={`hover:bg-sc-hover ${row.sid === selectedSid ? 'bg-[#0f1319]' : ''}`}>
 							<td class={`${td} text-left font-sans`}>{row.sid}</td>
 							<td class={`${td} text-left font-sans`}>{row.asset} {row.timeframe}</td>
-							<td class={`${td} text-right`}>{fmtDay(row.fleet?.live_since ?? row.session.started_at)}</td>
-							<td class={`${td} text-right`}>{stats.n}{#if stats.failed}<span class="text-sc-ink3"> +{stats.failed} failed</span>{/if}</td>
+							<td class={`${td} text-right`}>{fmtDay(perf.since)}</td>
+							<td class={`${td} text-right font-medium ${toneClass(perf.total)}`}>{fmtUsd(perf.total, { signed: true })}</td>
+							<td class={`${td} text-right ${toneClass(perf.returnPct)}`}>{fmtPct(perf.returnPct, 2)}</td>
+							{#if mode === 'paper'}<td class={`${td} text-right`}>{fmtUsd(perf.balance, { digits: 0 })}</td>{/if}
+							<td class={`${td} text-right ${row.legs.length ? toneClass(perf.open) : 'text-sc-ink3'}`}>{row.legs.length ? fmtUsd(perf.open, { signed: true }) : '—'}</td>
+							<td class={`${td} text-right`}>{stats.n}{#if stats.failed}<span class="text-sc-ink3">{` +${stats.failed} failed`}</span>{/if}</td>
 							<td class={`${td} text-right`}>{stats.n ? fmtPct((stats.wins / stats.n) * 100, 0, false) : '—'}</td>
 							<td class={`${td} text-right text-sc-ink3`}>{bt?.win_rate !== null && bt?.win_rate !== undefined ? fmtPct(bt.win_rate * 100, 0, false) : '—'}</td>
-							<td class={`${td} text-right ${toneClass(stats.net)}`}>{fmtUsd(stats.net, { signed: true })}</td>
 							<td class={`${td} text-right`}>{stats.profitFactor !== null ? stats.profitFactor.toFixed(2) : '—'}</td>
+							<td class={`${td} text-right`}>{perf.maxDrawdown ? `${fmtUsd(perf.maxDrawdown)}${perf.maxDrawdownPct !== null ? ` · ${fmtPct(perf.maxDrawdownPct, 1, false)}` : ''}` : '—'}</td>
 							<td class={`${td} text-right ${toneClass(stats.avgPctOfCapital)}`}>{fmtPct(stats.avgPctOfCapital, 2)}</td>
 							<td class={`${td} text-right`}>{fmtUsd(stats.costs)}</td>
 							<td class={`${td} text-right text-[#5ccac4]`}>{fmtUsd(stats.best, { signed: true })}</td>
@@ -71,7 +90,7 @@
 			</table>
 		</div>
 		{#if closedTotal}
-			<h3 class="mt-2 text-[13px] font-semibold text-sc-ink">How trades closed</h3>
+			<h3 class="mt-2 text-[13px] font-semibold text-sc-ink">How trades closed{scopeLabel ? ` · ${scopeLabel}` : ''}</h3>
 			<div class="grid gap-1.5">
 				{#each closeMix as [text, entry]}
 					<div class="grid grid-cols-[minmax(0,10em)_minmax(0,1fr)_auto] items-center gap-2.5 text-[12px]">
@@ -84,9 +103,18 @@
 		{/if}
 	</div>
 	<div class="grid min-w-0 content-start gap-2 p-3">
-		{#if mode === 'live'}
-			<h3 class="text-[13px] font-semibold text-sc-ink">Account equity, closed trades</h3>
+		{#if focus}
+			<h3 class="text-[13px] font-semibold text-sc-ink">{focus.sid} · {mode === 'paper' ? 'book balance since inception' : 'P&L since going live'}</h3>
+			<DeskEquityChart
+				history={focusHistory}
+				label={`${focus.sid} ${mode === 'paper' ? 'book balance' : 'cumulative live P&L'} after each closed trade, ending at now`}
+				emptyText="No history for this strategy yet."
+				startTitle={mode === 'paper' ? 'Start' : '$0'}
+			/>
+		{:else if mode === 'live'}
+			<h3 class="text-[13px] font-semibold text-sc-ink">Live account equity, all strategies</h3>
 			<DeskEquityChart history={equity} />
+			<p class="text-[11.5px] text-sc-ink3">The whole account after each closed trade. Pick “This strategy” to see one strategy’s own curve.</p>
 		{/if}
 		<h3 class="text-[13px] font-semibold text-sc-ink">Realized per day, last 30 days{scopeLabel ? ` · ${scopeLabel}` : ''}</h3>
 		<DeskDailyBars {fills} {now} />

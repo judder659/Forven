@@ -145,6 +145,12 @@ export function dur(ms: number): string {
 	return `${m}m ${String(sec).padStart(2, '0')}s`;
 }
 
+/** `dur` without the seconds once a minute or more is left, for tight spaces. */
+export function durShort(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : dur(ms);
+}
+
 export function fmtTime(value: unknown): string {
 	const ms = parseTs(value);
 	return ms === null ? '—' : new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
