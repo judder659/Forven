@@ -24,7 +24,7 @@
 		{/if}
 	</div>
 	{#if staleRows.length}
-		<div class="border border-yellow-900 bg-yellow-500/5 px-2.5 py-2 text-[11px] text-yellow-400" data-testid="gauntlet-stale-warning">
+		<div class="border border-yellow-900 bg-yellow-500/5 px-2.5 py-2 text-[11px] text-yellow-400" data-testid="stress-stale-warning">
 			Params changed since {staleRows.map((row) => row.label).join(', ')} ran — {staleRows.length === 1 ? 'that verdict describes' : 'those verdicts describe'} an older version of this strategy. Rerun before relying on {staleRows.length === 1 ? 'it' : 'them'}.
 		</div>
 	{/if}
@@ -57,7 +57,7 @@
 							<td class="whitespace-nowrap px-2.5 py-2 text-left">
 								<span class={`text-[10.5px] font-semibold uppercase tracking-[0.06em] ${TONE[row.tone]}`}>{stressVerdictText(row)}</span>
 								{#if row.stale}
-									<span class="ml-1 rounded-full border border-yellow-900 px-1.5 text-[9px] uppercase text-yellow-400" data-testid={`gauntlet-test-stale-${row.key}`} title="Params changed after this test ran">Stale</span>
+									<span class="ml-1 rounded-full border border-yellow-900 px-1.5 text-[9px] uppercase text-yellow-400" data-testid={`stress-stale-${row.key}`} title="Params changed after this test ran">Stale</span>
 								{/if}
 							</td>
 							<td class={`min-w-[200px] px-2.5 py-2 text-left text-[11px] ${row.weak || row.stale ? 'text-[#e7b24a]' : 'text-[#777]'}`}>{row.evidence}</td>

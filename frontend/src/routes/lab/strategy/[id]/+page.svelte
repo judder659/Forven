@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
@@ -39,7 +39,6 @@
 	import HeatmapChart from '$lib/components/charts/HeatmapChart.svelte';
 	import RobustnessPanel from '$lib/components/robustness/RobustnessPanel.svelte';
 	import GauntletStatusCard from '$lib/components/robustness/GauntletStatusCard.svelte';
-	import RegimePerfStrip from '$lib/components/regime/RegimePerfStrip.svelte';
 	import ExecutionSettingsFields from '$lib/components/lab/ExecutionSettingsFields.svelte';
 	import ContainerHeatmap from '$lib/components/strategy/ContainerHeatmap.svelte';
 	import ContainerMarkets from '$lib/components/strategy/ContainerMarkets.svelte';
@@ -67,7 +66,6 @@
 		lifecycleStageLabel,
 		normalizeLifecycleStage,
 		sortLifecycleEventsDescending,
-		summarizeLifecycleEvent,
 	} from '$lib/utils/lifecyclePresentation';
 	import {
 		areParameterRecordsEqual,
@@ -95,15 +93,51 @@
 	import DrawdownTable from '$lib/components/strategy/container/DrawdownTable.svelte';
 	import MonthlyHeatmap from '$lib/components/strategy/container/MonthlyHeatmap.svelte';
 	import TradeTable from '$lib/components/strategy/container/TradeTable.svelte';
+	import LifecycleRail from '$lib/components/strategy/container/LifecycleRail.svelte';
+	import VerdictCard from '$lib/components/strategy/container/VerdictCard.svelte';
+	import StandingCard from '$lib/components/strategy/container/StandingCard.svelte';
+	import EvidenceLadder from '$lib/components/strategy/container/EvidenceLadder.svelte';
+	import EvidenceTimeline from '$lib/components/strategy/container/EvidenceTimeline.svelte';
+	import RobustnessScorecard from '$lib/components/strategy/container/RobustnessScorecard.svelte';
+	import AttributionCard from '$lib/components/strategy/container/AttributionCard.svelte';
+	import ForwardCone from '$lib/components/strategy/container/ForwardCone.svelte';
+	import GateCard from '$lib/components/strategy/container/GateCard.svelte';
+	import StressMatrix from '$lib/components/strategy/container/StressMatrix.svelte';
+	import WalkForwardFolds from '$lib/components/strategy/container/WalkForwardFolds.svelte';
+	import MonteCarloOutcome from '$lib/components/strategy/container/MonteCarloOutcome.svelte';
+	import JitterStrip from '$lib/components/strategy/container/JitterStrip.svelte';
+	import CostStressDumbbell from '$lib/components/strategy/container/CostStressDumbbell.svelte';
+	import RegimeSplit from '$lib/components/strategy/container/RegimeSplit.svelte';
+	import HeldBackCard from '$lib/components/strategy/container/HeldBackCard.svelte';
+	import DeflatedSharpeCard from '$lib/components/strategy/container/DeflatedSharpeCard.svelte';
+	import ParameterSpace from '$lib/components/strategy/container/ParameterSpace.svelte';
 	import {
 		curvePoints,
 		drawdownPeriods,
+		exitMix,
 		monthlyReturns,
+		profitConcentration,
+		readSlice,
+		regimeSlices,
 		runSlices,
+		sideSlices,
 		tradeRows,
 		tradeStats,
+		tradesPerMonth,
 	} from '$lib/utils/strategyContainer/metrics';
-	import { fmtUsd } from '$lib/utils/strategyContainer/format';
+	import {
+		EMPTY_EVIDENCE,
+		buildStressRows,
+		loadContainerEvidence,
+		monteCarloFan,
+		readHeldBack,
+		readWalkForward,
+		type ContainerEvidence,
+	} from '$lib/utils/strategyContainer/evidence';
+	import { bookStats, buildLadder, paperEquityPath } from '$lib/utils/strategyContainer/ladder';
+	import { buildRail, paperGateEta, stageEntries } from '$lib/utils/strategyContainer/lifecycle';
+	import { buildFindings, summarizeVerdict } from '$lib/utils/strategyContainer/verdict';
+	import { fmtDateUtc, fmtNum, fmtUsd, toNumber } from '$lib/utils/strategyContainer/format';
 
 	let showImportDialog = false;
 
@@ -190,11 +224,13 @@
 	//   'performance' -> "Performance" (the full report of one run: the reference run unless picked)
 	//   'robustness'  -> "Robustness" (stress tests, runners, heatmap + market grid under Sensitivity)
 	//   'runs'        -> "Runs" (new backtest / optimization, history, compare, run detail)
-	//   'execution'   -> "Paper & live"
+	//   'execution'   -> "Paper & live" (realized growth, parity, open and closed trades)
+	//   'parameters'  -> "Parameters" (the saved configuration; the draft editor lives on Runs)
 	//   'activity'    -> "Activity" (lifecycle events and Brain decisions)
 	// PromotionReadiness on:action maps: 'run_confirmation_backtest', 'run_optimization' and
 	//   'apply_best_params' -> 'runs'; '*_validation_suite' -> 'robustness'.
-	type TabKey = 'summary' | 'performance' | 'robustness' | 'runs' | 'execution' | 'activity';
+	type TabKey = 'summary' | 'performance' | 'robustness' | 'runs' | 'execution' | 'parameters' | 'activity';
+	const TAB_KEYS: TabKey[] = ['summary', 'performance', 'robustness', 'runs', 'execution', 'parameters', 'activity'];
 	// Where an opened run's detail renders: under the run history, the optimization list, or
 	// the robustness runners.
 	type RunSection = 'backtests' | 'optimizations' | 'robustness';
@@ -380,26 +416,14 @@
 	let selectedRobustnessTest: GauntletTestKey = 'walk_forward';
 	let robustnessStatusOverrides: Partial<Record<GauntletTestKey, GauntletTestEntry>> = {};
 
-	// ── Overview: active-run snapshot ────────────────────────────────────────────
+	// ── Reference run ────────────────────────────────────────────────────────────
 	// The run whose params/metrics drive paper/live (pinned) or, absent a pin, the
-	// most recent Gauntlet run. Its full result is fetched lazily for the Overview
-	// equity curve.
+	// most recent Gauntlet run. Its full result is fetched lazily for the Summary and
+	// Performance.
 	let overviewResult: BacktestResult | null = null;
 	let overviewResultId = '';
 	let overviewResultError = '';
 	let overviewResultLoading = false;
-	$: overviewEquityOos = overviewResult?.equity_curve ?? null;
-	$: overviewEquityFull = overviewResult?.equity_curve_full ?? null;
-	$: overviewUsingFullCurve = Array.isArray(overviewEquityFull) && overviewEquityFull.length > 1;
-	$: overviewEquityForChart = overviewUsingFullCurve ? (overviewEquityFull ?? []) : (overviewEquityOos ?? []);
-	$: overviewBenchmarkForChart = overviewUsingFullCurve
-		? (overviewResult?.benchmark_curve_full ?? null)
-		: (overviewResult?.benchmark_curve ?? null);
-	$: overviewOosStartTimestamp =
-		overviewUsingFullCurve && Array.isArray(overviewEquityOos) && overviewEquityOos.length > 0
-			? (overviewEquityOos[0]?.timestamp ?? null)
-			: null;
-	$: overviewHasEquity = Array.isArray(overviewEquityForChart) && overviewEquityForChart.length > 1;
 
 	// ── Performance: one run's full report ─────────────────────────────────────────
 	// The reference run (pinned, else newest — the Summary's run) unless the operator
@@ -450,6 +474,262 @@
 	function openPerformanceReport(item: StrategyContainerHistoryItem): void {
 		void selectPerformanceRun(item.result_id);
 		activeTab = 'performance';
+	}
+
+	// ── Summary and Robustness: the evidence model ──────────────────────────────────
+	// The gauntlet rollup, the held-back test, the gate explanation and each stored
+	// robustness payload, loaded beside the container (a slow call never holds the page).
+	let evidence: ContainerEvidence = EMPTY_EVIDENCE;
+	let evidenceLoading = false;
+	let evidenceSequence = 0;
+
+	async function refreshEvidence(targetStrategyId: string): Promise<void> {
+		if (!targetStrategyId) return;
+		const sequence = ++evidenceSequence;
+		evidenceLoading = true;
+		const next = await loadContainerEvidence(targetStrategyId).catch(() => EMPTY_EVIDENCE);
+		if (destroyed || sequence !== evidenceSequence || strategyId !== targetStrategyId) return;
+		evidence = next;
+		evidenceLoading = false;
+	}
+
+	function bagOf(value: unknown): Record<string, unknown> | null {
+		return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+	}
+
+	// A runner that just finished shows its verdict before the refetch lands.
+	$: evidenceForRows = evidence.gauntlet
+		? { ...evidence, gauntlet: { ...evidence.gauntlet, tests: { ...evidence.gauntlet.tests, ...robustnessStatusOverrides } } }
+		: evidence;
+	$: stressRows = buildStressRows(evidenceForRows);
+	$: walkForwardEvidence = readWalkForward(evidence.payloads.walk_forward?.payload);
+	$: heldBack = readHeldBack(evidence.holdout);
+	$: mcPayload = bagOf(evidence.payloads.monte_carlo?.payload);
+	$: jitterPayload = bagOf(evidence.payloads.parameter_jitter?.payload);
+	$: costPayload = bagOf(evidence.payloads.cost_stress?.payload);
+	$: regimePayload = bagOf(evidence.payloads.regime_split?.payload);
+	$: dsrValue = toNumber(evidence.gauntlet?.deflated_sharpe?.dsr);
+	$: dsrTrials = toNumber(evidence.gauntlet?.deflated_sharpe?.n_trials);
+	$: gauntletComposite = toNumber(evidence.gauntlet?.composite_robustness_score);
+	$: gauntletFloor = toNumber(evidence.gauntlet?.min_robustness_score) ?? toNumber(gauntletMinScore);
+	$: gauntletPassed = evidence.gauntlet ? evidence.gauntlet.tests_passed : null;
+	$: gauntletTotal = evidence.gauntlet ? evidence.gauntlet.tests_total : null;
+
+	// The reference run (pinned, else newest), shared with Performance's default.
+	$: refSlices = runSlices(overviewResult);
+	$: refTrades = tradeRows(overviewResult?.trades);
+	$: refSides = sideSlices(overviewResult);
+	$: refRegimes = regimeSlices(overviewResult);
+	$: refExits = exitMix(refTrades);
+	$: refFullCurve = curvePoints(overviewResult?.equity_curve_full);
+	$: refOosCurve = curvePoints(overviewResult?.equity_curve);
+	$: refUsesFull = refFullCurve.length > 1;
+	$: refCurve = refUsesFull ? refFullCurve : refOosCurve;
+	$: refBenchmark = curvePoints(refUsesFull ? overviewResult?.benchmark_curve_full : overviewResult?.benchmark_curve);
+	$: refOosStart = refUsesFull && refOosCurve.length ? refOosCurve[0].t : null;
+	$: refCapital = Number(overviewResult?.config?.initial_capital) > 0 ? Number(overviewResult?.config?.initial_capital) : 10000;
+
+	// Forward evidence: paper and live books, never summed.
+	$: bookTrades = growthTrades ?? executionTrades;
+	$: paperBook = bookStats(bookTrades, 'paper');
+	$: liveBook = bookStats(bookTrades, 'live');
+	$: paperEquity = paperEquityPath(bookTrades);
+	$: stageEnteredAt = stageEntries(container?.events ?? []);
+	$: stageSinceFallback = (() => {
+		const record = (container?.strategy ?? {}) as unknown as Record<string, unknown>;
+		const raw = record.stage_changed_at ?? container?.strategy.state_changed_at ?? null;
+		return typeof raw === 'string' && raw.trim() ? raw : null;
+	})();
+	$: paperStageStart = (() => {
+		const entered = stageEnteredAt.paper;
+		if (entered !== undefined) return new Date(entered).toISOString();
+		return container?.strategy.paper_started_at || (currentLifecycleStage === 'paper' ? stageSinceFallback : null);
+	})();
+	$: currentStageSince = (() => {
+		const entered = stageEnteredAt[currentLifecycleStage];
+		return entered !== undefined ? new Date(entered).toISOString() : stageSinceFallback;
+	})();
+	$: paperThresholds = thresholdSection(pipelineThresholds, 'paper_trading');
+	$: paperNeedDays = finiteOrNull(paperThresholds?.min_paper_days);
+	$: paperNeedTrades = finiteOrNull(paperThresholds?.min_closed_trades);
+	$: paperProgress =
+		currentLifecycleStage === 'paper'
+			? {
+					days: paperStageStart && Number.isFinite(Date.parse(paperStageStart)) ? (Date.now() - Date.parse(paperStageStart)) / 86_400_000 : null,
+					needDays: paperNeedDays,
+					trades: paperBook?.count ?? 0,
+					needTrades: paperNeedTrades,
+				}
+			: null;
+	$: refOosRate = tradesPerMonth(refSlices.outOfSample);
+	$: heldRate = tradesPerMonth(readSlice(heldBack?.metrics));
+	$: tradesPerWeek = refOosRate === null ? null : (refOosRate * 12) / 52;
+	$: gateEta =
+		currentLifecycleStage === 'paper'
+			? paperGateEta({
+					now: Date.now(),
+					stageStart: paperStageStart,
+					needDays: paperNeedDays,
+					needTrades: paperNeedTrades,
+					closedTrades: paperBook?.count ?? 0,
+					rates: [refOosRate, heldRate],
+				})
+			: null;
+	$: mcFan = monteCarloFan(mcPayload?.equity_paths);
+
+	$: ladderColumns = buildLadder({
+		inSample: refSlices.inSample,
+		outOfSample: refSlices.outOfSample,
+		walkForward: walkForwardEvidence,
+		heldBack,
+		paper: paperBook,
+		live: liveBook,
+		stage: currentLifecycleStage,
+		stageSince: currentStageSince,
+	});
+	$: findings = buildFindings({
+		inSample: refSlices.inSample,
+		outOfSample: refSlices.outOfSample,
+		heldBack,
+		walkForward: walkForwardEvidence,
+		stressRows,
+		dsr: dsrValue,
+		concentration: profitConcentration(refTrades),
+		exits: refExits,
+		tradeCount: refTrades.length,
+		stage: currentLifecycleStage,
+		gate: gateEta,
+		paperNeed: { days: paperNeedDays, trades: paperNeedTrades },
+	});
+	$: verdictSummary = summarizeVerdict(findings);
+	$: railStages = buildRail({
+		stage: currentLifecycleStage,
+		events: container?.events ?? [],
+		gauntletPassed,
+		gauntletTotal,
+		heldBackPassed: heldBack?.verdict === 'PASS' ? true : heldBack?.verdict === 'FAIL' ? false : null,
+		paper: paperProgress,
+		liveDays: liveRampInfo ? liveRampInfo.daysLive : null,
+	});
+	$: railGate = (() => {
+		const stage = currentLifecycleStage;
+		if (stage in TERMINAL_STAGES) return { label: 'Pipeline', headline: '', detail: '', terminal: TERMINAL_STAGES[stage] };
+		if (stage === 'quick_screen') return { label: 'Next gate · quick screen → gauntlet', headline: 'Entry gate on its own backtest.', detail: 'Checklist below.', terminal: '' };
+		if (stage === 'gauntlet') {
+			return {
+				label: 'Next gate · gauntlet → paper',
+				headline: gauntletPassed !== null && gauntletTotal !== null ? `${gauntletPassed} of ${gauntletTotal} robustness tests passed.` : 'Robustness suite.',
+				detail: heldBack?.verdict === 'PASS' ? 'Held-back test passed.' : heldBack?.verdict === 'FAIL' ? 'Held-back test failed.' : 'The held-back test runs last.',
+				terminal: '',
+			};
+		}
+		if (stage === 'paper') {
+			return {
+				label: 'Next gate · paper → live',
+				headline: gateEta ? `Earliest ${fmtDateUtc(gateEta.earliest)} – ${fmtDateUtc(gateEta.latest)}.` : paperNeedTrades !== null ? `Needs ${paperNeedDays ?? '—'} days and ${paperNeedTrades} closed trades.` : 'Forward evidence on paper.',
+				detail: gateEta ? `${gateEta.remainingTrades} closed trades to go at the backtest's pace.` : '',
+				terminal: '',
+			};
+		}
+		if (stage === 'live_graduated') {
+			return {
+				label: 'Live',
+				headline: liveRampInfo ? `Day ${liveRampInfo.daysLive} on real money.` : 'Real money.',
+				detail: liveRampInfo?.killSwitchPct != null ? `Kill switch at ${liveRampInfo.killSwitchPct}% drawdown.` : '',
+				terminal: '',
+			};
+		}
+		return { label: 'Next gate', headline: '', detail: '', terminal: '' };
+	})();
+	$: gateTitle =
+		currentLifecycleStage in TERMINAL_STAGES
+			? 'Pipeline'
+			: currentLifecycleStage === 'quick_screen'
+				? 'Quick screen → gauntlet'
+				: currentLifecycleStage === 'gauntlet'
+					? 'Gauntlet → paper'
+					: currentLifecycleStage === 'paper'
+						? 'Paper → live gate'
+						: currentLifecycleStage === 'live_graduated'
+							? 'Live'
+							: 'Next gate';
+	$: timelineSegments = [
+		{ label: 'In-sample', start: refSlices.inSample?.start ?? null, end: refSlices.inSample?.end ?? null, totalReturn: refSlices.inSample?.totalReturn ?? null },
+		{ label: 'Out-of-sample', start: refSlices.outOfSample?.start ?? null, end: refSlices.outOfSample?.end ?? null, totalReturn: refSlices.outOfSample?.totalReturn ?? null },
+		...(heldBack?.start ? [{ label: 'Held-back', start: heldBack.start, end: heldBack.end, totalReturn: toNumber(heldBack.metrics.total_return_pct) }] : []),
+		...(paperStageStart && (currentLifecycleStage === 'paper' || currentLifecycleStage === 'live_graduated')
+			? [{
+					label: 'Paper',
+					start: paperStageStart,
+					end: stageEnteredAt.live_graduated !== undefined ? new Date(stageEnteredAt.live_graduated).toISOString() : null,
+					totalReturn: paperBook?.totalReturn ?? null,
+				}]
+			: []),
+		...(currentLifecycleStage === 'live_graduated' && currentStageSince ? [{ label: 'Live', start: currentStageSince, end: null, totalReturn: null }] : []),
+	];
+
+	const STRESS_ANCHORS: Record<string, string> = {
+		walk_forward: 'rb-wfa',
+		monte_carlo: 'rb-mc',
+		parameter_jitter: 'rb-jitter',
+		cost_stress: 'rb-cost',
+		regime_split: 'rb-regime',
+		held_back: 'rb-holdout',
+		baseline: 'rb-holdout',
+		deflated_sharpe: 'rb-dsr',
+	};
+
+	async function navigateTo(tab: string, anchor?: string): Promise<void> {
+		if (!TAB_KEYS.includes(tab as TabKey)) return;
+		activeTab = tab as TabKey;
+		await tick();
+		if (!anchor || typeof document === 'undefined') return;
+		const node = document.getElementById(anchor);
+		if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	async function openStressRow(key: string): Promise<void> {
+		const row = stressRows.find((item) => item.key === key);
+		if (row?.testKey) selectedRobustnessTest = row.testKey;
+		await navigateTo('robustness', key ? (STRESS_ANCHORS[key] ?? 'stress-matrix') : 'stress-matrix');
+	}
+
+	// ── Parameters: the saved configuration that drives paper and live ────────────
+	$: pinnedRunItem = pinnedBacktestId ? (backtestHistoryRaw.find((item) => item.result_id === pinnedBacktestId) ?? null) : null;
+	$: drivingParams = (() => {
+		const fromRun = bagOf(pinnedRunItem?.config?.params);
+		return stripExecutionProfile(fromRun ?? container?.configuration.params);
+	})();
+	$: drivingSpace = bagOf(drivingParams._parameter_space) ?? {};
+	$: contractFields = systemParams(drivingParams);
+	$: executionProfileRows = (() => {
+		const d = containerExecutionDefaults;
+		const rows: Array<[string, string]> = [
+			['Starting capital', d.initial_capital ? fmtUsd(Number(d.initial_capital), 0, false) : '—'],
+			['Fees', d.fee_bps ? `${d.fee_bps} bps a side` : '—'],
+			['Slippage', d.slippage_bps ? `${d.slippage_bps} bps a side` : '—'],
+			['Leverage', d.leverage ? `${d.leverage}×` : '—'],
+			['Sizing', d.sizing_mode],
+			['Trade mode', String(drivingParams.trade_mode ?? '—')],
+		];
+		if (d.risk_per_trade) rows.push(['Risk per trade', d.risk_per_trade]);
+		if (d.fixed_size) rows.push(['Fixed size', d.fixed_size]);
+		if (d.atr_stop_multiplier) rows.push(['ATR stop multiplier', d.atr_stop_multiplier]);
+		if (d.kelly_multiplier) rows.push(['Kelly multiplier', d.kelly_multiplier]);
+		if (d.stop_loss_pct) rows.push(['Stop loss', `${d.stop_loss_pct}%`]);
+		if (d.take_profit_pct) rows.push(['Take profit', `${d.take_profit_pct}%`]);
+		if (d.trailing_stop_pct) rows.push(['Trailing stop', `${d.trailing_stop_pct}%`]);
+		if (d.time_stop_bars) rows.push(['Time stop', `${d.time_stop_bars} bars`]);
+		return rows;
+	})();
+
+	async function editParametersOnRuns(): Promise<void> {
+		activeTab = 'runs';
+		await tick();
+		const panel = typeof document === 'undefined' ? null : document.querySelector<HTMLDetailsElement>('[data-testid="backtest-parameter-panel"]');
+		if (!panel) return;
+		panel.open = true;
+		if (typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	type HistorySortField =
@@ -1242,7 +1522,6 @@
 	$: someOptimizationExecutionSelected = optimizationExecutionSelectedCount > 0 && !allOptimizationExecutionSelected;
 	$: syncBacktestParamDrafts(backtestHistory);
 	$: orderedRecentEvents = sortLifecycleEventsDescending(recentEvents);
-	$: latestLifecycleEvent = orderedRecentEvents[0] ?? null;
 	$: currentLifecycleStage = normalizeLifecycleStage(container?.strategy.state);
 	$: currentStageDescriptors = buildLifecycleStageDescriptors(currentLifecycleStage, displayStages);
 	let selectedReadinessStage: string | null = null;
@@ -2175,6 +2454,7 @@
 				error: detail.error ?? null,
 			},
 		};
+		void refreshEvidence(strategyId);
 	}
 
 	function readMetricOptional(item: StrategyContainerHistoryItem, ...keys: string[]): number | null {
@@ -4077,6 +4357,10 @@
 		// Refetch the full growth series alongside the container.
 		growthTrades = null;
 		growthTradesLoadedFor = '';
+		// The previous strategy's evidence must never show on this one.
+		evidence = EMPTY_EVIDENCE;
+		evidenceSequence += 1;
+		evidenceLoading = false;
 		let nextSelectedBacktest: StrategyContainerHistoryItem | null = null;
 		let loadSucceeded = false;
 		try {
@@ -4087,6 +4371,7 @@
 				getPipelineConfig().catch(() => null),
 			]);
 			container = payload;
+			void refreshEvidence(strategyId);
 			availableDatasets = Array.isArray(datasetCatalog) ? datasetCatalog : [];
 			pipelineSettings = nextPipelineSettings;
 			pipelineThresholds = nextPipelineThresholds;
@@ -4586,6 +4871,7 @@
 					{ key: 'robustness', label: 'Robustness' },
 					{ key: 'runs', label: 'Runs' },
 					{ key: 'execution', label: 'Paper & live' },
+					{ key: 'parameters', label: 'Parameters' },
 					{ key: 'activity', label: 'Activity' },
 				] as tab (tab.key)}
 					<button
@@ -4628,100 +4914,82 @@
 			{/if}
 
 			{#if activeTab === 'summary'}
-				<!-- Identity strip — carries the strategy facts the removed Configuration tab used to show. -->
-				<div class="mb-3 flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="overview-identity-strip">
-					<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Strategy type">{String(container.configuration.type ?? '-')}</span>
-					<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Owner">{String(container.configuration.owner ?? '-')}</span>
-					<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-white" title="Configured market">{String(container.configuration.symbol ?? '-')}</span>
-					<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-white" title="Configured timeframe">{String(container.configuration.timeframe ?? '-')}</span>
-					<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#888]" title="Created">{fmtDate(container.strategy.created_at)}</span>
-					<span class="ml-auto"></span>
-					<button
-						type="button"
-						data-testid="deepdive-toggle-overview"
-						class="border border-[#333] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-white transition hover:bg-[#111]"
-						on:click={launchDeepdive}
-					>
-						🔍 Deepdive
-					</button>
-				</div>
-				<div class="grid grid-cols-1 gap-3 xl:grid-cols-[0.95fr_1.05fr]">
-					<div class="space-y-3">
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3">
-							<div class="flex items-center justify-between gap-2">
-								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Pipeline</div>
-								<div class="flex items-center gap-2 text-[11px]">
-									<span class="text-[#555]">{latestLifecycleEvent ? fmtDate(latestLifecycleEvent.created_at) : '--'}</span>
-									<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#888]">{orderedRecentEvents.length} event{orderedRecentEvents.length === 1 ? '' : 's'}</span>
+				<div class="grid gap-3" data-testid="summary-tab">
+					<div class="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="overview-identity-strip">
+						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Strategy type">{String(container.configuration.type ?? '-')}</span>
+						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#aaa]" title="Owner">{String(container.configuration.owner ?? '-')}</span>
+						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-white" title="Configured market">{String(container.configuration.symbol ?? '-')}</span>
+						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-white" title="Configured timeframe">{String(container.configuration.timeframe ?? '-')}</span>
+						<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 text-[#888]" title="Created">{fmtDate(container.strategy.created_at)}</span>
+						<span class="ml-auto"></span>
+						<button
+							type="button"
+							data-testid="deepdive-toggle-overview"
+							class="border border-[#333] bg-[#0c0c0c] px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-white transition hover:bg-[#111]"
+							on:click={launchDeepdive}
+						>
+							🔍 Deepdive
+						</button>
+					</div>
+					<LifecycleRail stages={railStages} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
+					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+						<VerdictCard verdict={verdictSummary} {findings} loading={evidenceLoading || overviewResultLoading} on:navigate={(event) => void navigateTo(event.detail.tab, event.detail.anchor)} />
+						<StandingCard
+							composite={gauntletComposite}
+							floor={gauntletFloor}
+							testsPassed={gauntletPassed}
+							testsTotal={gauntletTotal}
+							{heldBack}
+							dsr={dsrValue}
+							{dsrTrials}
+							paper={paperProgress}
+							{tradesPerWeek}
+						/>
+					</div>
+					<EvidenceLadder columns={ladderColumns} runLabel={referenceRunId ? `run ${referenceRunId}` : ''} />
+					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+						<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="summary-growth">
+							<div class="flex flex-wrap items-baseline justify-between gap-2">
+								<div>
+									<h2 class="m-0 text-[13px] font-semibold text-white">Growth of {fmtUsd(refCapital, 0, false)}</h2>
+									<div class="text-[11px] text-[#666]">
+										{#if activeRunItem}
+											Run {referenceRunId} · {pinnedBacktestId && pinnedBacktestId === referenceRunId ? 'pinned, drives paper and live' : 'newest; the saved defaults drive execution'}{refUsesFull ? ' · the shaded span is in-sample' : ''}
+										{:else}
+											No runs yet.
+										{/if}
+									</div>
 								</div>
+								{#if activeRunItem}
+									<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="summary-open-report" on:click={() => { performanceRunId = ''; activeTab = 'performance'; }}>Full report →</button>
+								{/if}
 							</div>
-							{#if latestLifecycleEvent}
-								<div class="mt-2 text-xs text-[#888]">{summarizeLifecycleEvent(latestLifecycleEvent)}</div>
-							{/if}
-							{#if currentLifecycleStage in TERMINAL_STAGES}
-								<div class="mt-2 border border-red-900/40 bg-red-950/15 px-2 py-1.5 text-xs text-red-200">
-									<span class="font-medium">{lifecycleStageLabel(currentLifecycleStage)}.</span>
-									<span class="ml-1 text-red-300/80">{TERMINAL_STAGES[currentLifecycleStage]}</span>
-								</div>
-								<div class="mt-2">
-									<button
-										type="button"
-										data-testid="overview-revive-button"
-										on:click={() => openStageChange('quick_screen')}
-										class="border border-emerald-700/50 bg-emerald-950/30 px-3 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-900/40"
-									>Revive to Quick Screen</button>
-								</div>
+							{#if !activeRunItem}
+								<div class="border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">No Gauntlet runs yet — start one from Runs to see how this strategy performs.</div>
+							{:else if overviewResultLoading && !overviewResult}
+								<div class="border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading equity curve…</div>
+							{:else if overviewResultError}
+								<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{overviewResultError}</div>
 							{:else}
-								<div class="mt-2 flex gap-1.5">
-									{#each currentStageDescriptors as stage}
-										<button
-											on:click={() => { selectedReadinessStage = stage.key === currentLifecycleStage ? null : stage.key; }}
-											title={stage.tooltip ?? ''}
-											class={`flex-1 border px-2 py-1.5 text-center cursor-pointer transition-colors ${
-												readinessViewStage === stage.key
-													? 'border-[#333] bg-[#0c0c0c] text-white '
-													: stage.kind === 'current'
-														? 'border-[#333] bg-[#0c0c0c] text-white'
-														: stage.kind === 'past'
-															? 'border-emerald-900/40 bg-emerald-950/10 text-emerald-200'
-															: 'border-[#1f1f1f] bg-[#070707] text-[#555] hover:border-gray-700 hover:text-[#888]'
-											}`}
-										>
-											<div class="text-[10px] uppercase tracking-wide">{stage.label}</div>
-										</button>
-									{/each}
-								</div>
-								<div class="mt-2">
-									<PromotionReadiness
-										{strategyId}
-										stage={readinessViewStage}
-										quickScreenRows={quickScreenRows}
-										on:action={(e) => {
-											const action = e.detail?.action;
-											if (action === 'run_optimization' || action === 'apply_best_params' || action === 'run_confirmation_backtest') activeTab = 'runs';
-											else if (action === 'run_validation_suite' || action === 're_run_validation_suite') activeTab = 'robustness';
-										}}
-									/>
-								</div>
-
-								<div class="mt-2 flex flex-wrap items-center gap-2">
-									{#if nextPipelineStage}
-										<button
-											data-testid="overview-promote-button"
-											on:click={() => openStageChange(nextPipelineStage?.key)}
-											class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors"
-										>Promote to {nextPipelineStage.label}</button>
-									{/if}
-									<button on:click={() => goto(`/bot-factory/editor?strategy=${strategyId}`)} class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors">Deploy as Bot</button>
-									<button
-										data-testid="overview-archive-button"
-										on:click={() => openStageChange('archived')}
-										class="border border-red-900/40 bg-red-950/20 px-3 py-1.5 text-xs text-red-300 hover:bg-red-900/30 transition-colors"
-									>Archive</button>
-								</div>
+								<GrowthChart strategy={refCurve} benchmark={refBenchmark} oosStart={refOosStart} />
 							{/if}
-						</div>
-
+							<EvidenceTimeline segments={timelineSegments} folds={walkForwardEvidence?.folds ?? []} />
+						</article>
+						<RobustnessScorecard rows={stressRows} loading={evidenceLoading} on:open={(event) => void openStressRow(event.detail.key)} />
+					</div>
+					<AttributionCard sides={refSides} regimes={refRegimes} exits={refExits} trades={refTrades} start={refSlices.outOfSample?.start ?? null} end={refSlices.outOfSample?.end ?? null} />
+					<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+						<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="forward-cone">
+							<div>
+								<h2 class="m-0 text-[13px] font-semibold text-white">What paper should look like</h2>
+								<div class="text-[11px] text-[#666]">The next {mcFan.length ? mcFan[mcFan.length - 1][0] : '—'} trades, resampled from the walk-forward's out-of-sample trades. Paper is drawn on top as it trades.</div>
+							</div>
+							<ForwardCone fan={mcFan} paper={paperEquity} />
+							{#if mcFan.length && refOosRate}
+								<p class="m-0 text-[11px] leading-relaxed text-[#777]">If paper sits under the 5th percentile after 20 or more trades, the backtest edge is probably not showing up forward. At {fmtNum(refOosRate, 1)} trades a month, 20 trades takes about {Math.round((20 / refOosRate) * 30.4)} days.</p>
+							{/if}
+						</article>
+						<GateCard title={gateTitle} eta={gateEta} needDays={paperNeedDays} needTrades={paperNeedTrades}>
 						{#if liveRampInfo}
 							<div class="border border-emerald-900/40 bg-[#090909] p-3" data-testid="overview-live-ramp">
 								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Live Status</div>
@@ -4747,187 +5015,69 @@
 								</div>
 							</div>
 						{/if}
-
-						<GauntletStatusCard
-							{strategyId}
-							stage={currentLifecycleStage}
-							selectedTestKey={selectedRobustnessTest}
-							testOverrides={robustnessStatusOverrides}
-							on:selectTest={(event) => {
-								selectedRobustnessTest = event.detail.key;
-								activeTab = 'robustness';
-							}}
-							on:promote={() => openStageChange()}
-						/>
-
-						<RegimePerfStrip {validationHistory} />
-					</div>
-
-					<div class="space-y-3">
-						<div
-							class={` border p-3 ${activeRunItem && pinnedBacktestId && pinnedBacktestId === activeRunItem.result_id ? 'border-emerald-700/60 shadow-[inset_2px_0_0_0_rgba(16,185,129,0.9)] bg-[#090909]' : 'border-[#1d1d1d] bg-[#090909]'}`}
-							data-testid="overview-active-run-card"
-						>
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<div class="flex items-center gap-2">
-									<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Execution Driver</div>
-									{#if activeRunItem}
-										{#if pinnedBacktestId && pinnedBacktestId === activeRunItem.result_id}
-											<span class="rounded-full border border-emerald-600/60 bg-emerald-950/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200" title="This pinned run's params and metrics drive paper/live execution.">Pinned · Active</span>
-										{:else}
-											<span class="rounded-full border border-yellow-900 bg-yellow-500/5 px-2 py-0.5 text-[9px] uppercase tracking-wide text-yellow-400" title="No run is pinned — the manually-saved container defaults drive paper/live. Showing the latest Gauntlet run.">Latest run · defaults drive execution</span>
-										{/if}
-									{/if}
-								</div>
-								{#if activeRunItem}
+						{#if currentLifecycleStage in TERMINAL_STAGES}
+							<div class="mt-2 border border-red-900/40 bg-red-950/15 px-2 py-1.5 text-xs text-red-200">
+								<span class="font-medium">{lifecycleStageLabel(currentLifecycleStage)}.</span>
+								<span class="ml-1 text-red-300/80">{TERMINAL_STAGES[currentLifecycleStage]}</span>
+							</div>
+							<div class="mt-2">
+								<button
+									type="button"
+									data-testid="overview-revive-button"
+									on:click={() => openStageChange('quick_screen')}
+									class="border border-emerald-700/50 bg-emerald-950/30 px-3 py-1.5 text-xs text-emerald-200 transition-colors hover:bg-emerald-900/40"
+								>Revive to Quick Screen</button>
+							</div>
+						{:else}
+							<div class="mt-2 flex gap-1.5">
+								{#each currentStageDescriptors as stage}
 									<button
-										type="button"
-										data-testid="overview-open-active-run"
-										class="border border-[#2b2b2b] bg-black px-2 py-0.5 text-[10px] uppercase tracking-wide text-[#888] transition hover:text-white"
-										on:click={() => { activeTab = 'runs'; if (activeRunItem) void openResult(activeRunItem); }}
-									>Open Run</button>
-								{/if}
+										on:click={() => { selectedReadinessStage = stage.key === currentLifecycleStage ? null : stage.key; }}
+										title={stage.tooltip ?? ''}
+										class={`flex-1 border px-2 py-1.5 text-center cursor-pointer transition-colors ${
+											readinessViewStage === stage.key
+												? 'border-[#333] bg-[#0c0c0c] text-white '
+												: stage.kind === 'current'
+													? 'border-[#333] bg-[#0c0c0c] text-white'
+													: stage.kind === 'past'
+														? 'border-emerald-900/40 bg-emerald-950/10 text-emerald-200'
+														: 'border-[#1f1f1f] bg-[#070707] text-[#555] hover:border-gray-700 hover:text-[#888]'
+										}`}
+									>
+										<div class="text-[10px] uppercase tracking-wide">{stage.label}</div>
+									</button>
+								{/each}
 							</div>
-							{#if !activeRunItem}
-								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
-									No Gauntlet runs yet — run one from the Gauntlet tab to see how this strategy performs.
-								</div>
-							{:else}
-								<div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#555]">
-									<span class="font-mono text-white">{activeRunItem.result_id}</span>
-									<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5 font-mono text-[#aaa]">{activeRunItem.symbol || '--'} / {activeRunItem.timeframe || '--'}</span>
-									<span class="border border-[#2b2b2b] bg-black px-1.5 py-0.5">{fmtShortDate(activeRunItem.start_date)} → {fmtShortDate(activeRunItem.end_date)}</span>
-									<span>{fmtDate(activeRunItem.created_at)}</span>
-								</div>
-								<div class="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 xl:grid-cols-7" data-testid="overview-active-run-metrics">
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Out-of-sample CAGR (annualized)">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">OOS CAGR</div>
-										<div class={`mt-1 font-mono text-sm ${isCagrReliable(activeRunItem) ? signedPercentClass(readOutOfSampleCagr(activeRunItem)) : 'text-[#555]'}`}>{formatOutOfSampleCagr(activeRunItem)}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Out-of-sample annualized Sharpe">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">OOS Sharpe</div>
-										<div class={`mt-1 font-mono text-sm ${isSharpeReliable(activeRunItem) ? 'text-[#aaa]' : 'text-[#555]'}`}>{formatOutOfSampleSharpe(activeRunItem)}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Full-window (IS + OOS) max drawdown — approximate: the larger of the two halves">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Max DD · full</div>
-										<div class="mt-1 font-mono text-sm text-red-400">{pct(readDrawdownPercentMetric(activeRunItem, 'max_drawdown_pct', 'max_drawdown'))}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Full-window (IS + OOS) win rate">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Win% · full</div>
-										<div class="mt-1 font-mono text-sm text-[#aaa]">{pct(readPercentMetric(activeRunItem, 'win_rate', 'win_rate_pct'))}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Completed trades across the full window (IS + OOS)">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Trades · full</div>
-										<div class="mt-1 font-mono text-sm text-[#aaa]">{historyTradesCount(activeRunItem)}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Full-window (IS + OOS) gross profit / gross loss">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">PF · full</div>
-										<div class="mt-1 font-mono text-sm text-[#aaa]">{formatProfitFactor(activeRunItem)}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title={OOS_RETENTION_TITLE}>
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">OOS/IS</div>
-										<div class="mt-1 font-mono text-sm text-[#aaa]">{formatRobustness(activeRunItem)}</div>
-									</div>
-								</div>
-								{#if overviewResultLoading}
-									<div class="mt-3 border border-[#333] bg-[#0c0c0c] px-3 py-4 text-xs text-white">Loading equity curve…</div>
-								{:else if overviewResultError}
-									<div class="mt-3 border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400">{overviewResultError}</div>
-								{:else if overviewHasEquity}
-									<div class="mt-3" data-testid="overview-equity-curve">
-										{#key overviewResultId}
-											<EquityChart
-												data={overviewEquityForChart}
-												benchmarkData={overviewBenchmarkForChart}
-												oosStartTimestamp={overviewOosStartTimestamp}
-												showDrawdown={true}
-												height={240}
-											/>
-										{/key}
-									</div>
-								{/if}
-							{/if}
-						</div>
-
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-growth-card">
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Strategy Growth</div>
-								{#if executionGrowth}
-									<div class="flex items-center gap-2 text-[11px]">
-										<span class={` border px-1.5 py-0.5 font-mono ${executionGrowth.totalPnl >= 0 ? 'border-emerald-900/50 bg-emerald-950/15 text-emerald-300' : 'border-red-900/50 bg-red-950/15 text-red-300'}`}>
-											{formatSignedCurrency(executionGrowth.totalPnl)}
-										</span>
-										<span class="text-[#555]">{executionGrowth.tradeCount} closed trade{executionGrowth.tradeCount === 1 ? '' : 's'}</span>
-									</div>
-								{/if}
+							<div class="mt-2">
+								<PromotionReadiness
+									{strategyId}
+									stage={readinessViewStage}
+									quickScreenRows={quickScreenRows}
+									on:action={(e) => {
+										const action = e.detail?.action;
+										if (action === 'run_optimization' || action === 'apply_best_params' || action === 'run_confirmation_backtest') activeTab = 'runs';
+										else if (action === 'run_validation_suite' || action === 're_run_validation_suite') activeTab = 'robustness';
+									}}
+								/>
 							</div>
-							{#if executionGrowth}
-								<div class="mt-1 text-xs text-[#555]" data-testid="overview-growth-mode">
-									{#if executionGrowth.mode === 'paper'}
-										Paper book equity — the strategy's isolated ${PAPER_START_EQUITY.toLocaleString()} book plus realized PnL from each closed paper trade.
-									{:else}
-										Cumulative realized PnL from closed live trades, in real wallet dollars.
-									{/if}
-									{#if executionGrowth.otherBookTrades > 0}
-										<span class="text-[#777]">
-											{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (see the Execution tab).
-										</span>
-									{/if}
-								</div>
-								<div class="mt-3">
-									<EquityChart
-										data={executionGrowth.points}
-										showDrawdown={executionGrowth.mode === 'paper'}
-										annotations={growthAnnotations}
-										height={220}
-									/>
-								</div>
-							{:else}
-								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
-									No closed paper/live trades yet — real trading growth appears here once the strategy starts closing trades.
-								</div>
-							{/if}
-						</div>
 
-						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-parity-card">
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Backtest ↔ Reality</div>
-								{#if executionParity}
-									<span class="text-[11px] text-[#555]">{executionParity.book} fills · avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
+							<div class="mt-2 flex flex-wrap items-center gap-2">
+								{#if nextPipelineStage}
+									<button
+										data-testid="overview-promote-button"
+										on:click={() => openStageChange(nextPipelineStage?.key)}
+										class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors"
+									>Promote to {nextPipelineStage.label}</button>
 								{/if}
+								<button on:click={() => goto(`/bot-factory/editor?strategy=${strategyId}`)} class="border border-[#333] bg-[#0c0c0c] px-3 py-1.5 text-xs text-white hover:bg-[#111] transition-colors">Deploy as Bot</button>
+								<button
+									data-testid="overview-archive-button"
+									on:click={() => openStageChange('archived')}
+									class="border border-red-900/40 bg-red-950/20 px-3 py-1.5 text-xs text-red-300 hover:bg-red-900/30 transition-colors"
+								>Archive</button>
 							</div>
-							{#if executionParity}
-								<div class="mt-1 text-xs text-[#555]">
-									Realized execution costs vs the execution profile's model. Slippage is signed — positive = filled worse than the signal price.
-								</div>
-								<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="overview-parity-metrics">
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed entry slippage vs the signal price across fills. Modeled budget: the execution profile's per-side slippage.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Entry Slippage</div>
-										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.entrySlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.entrySlipBps)}</div>
-										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.entryCount}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed exit slippage vs the signal price across closes.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Exit Slippage</div>
-										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.exitSlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.exitSlipBps)}</div>
-										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.exitCount}</div>
-									</div>
-									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average realized round-trip cost drag per closed trade (gross − net PnL, includes leverage). Modeled: 2 × fee × avg leverage.">
-										<div class="text-[9px] uppercase tracking-wide text-[#555]">Cost / Trade</div>
-										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.costDragPct, modeledCostDragPct)}`}>{executionParity.costDragPct !== null ? `${executionParity.costDragPct.toFixed(3)}%` : '—'}</div>
-										{#if executionParity.costCount > 0}
-											<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
-										{:else}
-											<div class="mt-0.5 text-[10px] text-[#555]" data-testid="overview-parity-cost-unmeasured">not measured — {executionParity.book === 'paper' ? 'paper books PnL net of the modeled fee' : 'no fill recorded its fees'}</div>
-										{/if}
-									</div>
-								</div>
-							{:else}
-								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
-									No fills with recorded slippage/cost data yet — parity metrics appear once the strategy starts trading.
-								</div>
-							{/if}
-						</div>
-
+						{/if}
+					</GateCard>
 					</div>
 				</div>
 			{/if}
@@ -5824,6 +5974,38 @@
 
 			{#if activeTab === 'robustness'}
 					<div class="space-y-3">
+						<StressMatrix rows={stressRows} composite={gauntletComposite} floor={gauntletFloor} loading={evidenceLoading} on:select={(event) => void openStressRow(event.detail.key)} />
+						<div class="grid gap-3 xl:grid-cols-2">
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-wfa">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Walk-forward folds</h2><div class="text-[11px] text-[#666]">Sharpe per fold: fitted on the in-sample span, scored on the next one.</div></div>
+								<WalkForwardFolds wf={walkForwardEvidence} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-mc">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Monte Carlo</h2><div class="text-[11px] text-[#666]">Final return of resampled walk-forward trade sequences.</div></div>
+								<MonteCarloOutcome payload={mcPayload} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-jitter">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Parameter jitter</h2><div class="text-[11px] text-[#666]">Sharpe after nudging every parameter.</div></div>
+								<JitterStrip payload={jitterPayload} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-cost">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Cost stress</h2><div class="text-[11px] text-[#666]">{costPayload ? `${costPayload.fee_multiplier ?? '—'}× fees and ${costPayload.slippage_multiplier ?? '—'}× slippage (base ${costPayload.base_fee_bps ?? '—'} / ${costPayload.base_slippage_bps ?? '—'} bps), the baseline run's window` : 'Higher fees and slippage on the baseline run'}</div></div>
+								<CostStressDumbbell payload={costPayload} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-regime">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Regime split</h2><div class="text-[11px] text-[#666]">Average return per trade by the market regime at entry (walk-forward trades).</div></div>
+								<RegimeSplit payload={regimePayload} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-holdout">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Held-back test</h2><div class="text-[11px] text-[#666]">One shot on data sealed away from research; its baselines cover the same days.</div></div>
+								<HeldBackCard held={heldBack} />
+							</article>
+							<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4" id="rb-dsr">
+								<div><h2 class="m-0 text-[13px] font-semibold text-white">Deflated Sharpe</h2><div class="text-[11px] text-[#666]">Probability the edge is real after counting every variant tried.</div></div>
+								<DeflatedSharpeCard dsr={dsrValue} trials={dsrTrials} />
+							</article>
+						</div>
+						<div class="mt-3 text-[10px] uppercase tracking-[0.2em] text-[#555]" id="rb-run">Run a test</div>
 						<GauntletStatusCard
 							{strategyId}
 							stage={currentLifecycleStage}
@@ -5919,6 +6101,85 @@
 
 			{#if activeTab === 'execution'}
 				<div class="space-y-4">
+					<div class="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-growth-card">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Strategy Growth</div>
+								{#if executionGrowth}
+									<div class="flex items-center gap-2 text-[11px]">
+										<span class={` border px-1.5 py-0.5 font-mono ${executionGrowth.totalPnl >= 0 ? 'border-emerald-900/50 bg-emerald-950/15 text-emerald-300' : 'border-red-900/50 bg-red-950/15 text-red-300'}`}>
+											{formatSignedCurrency(executionGrowth.totalPnl)}
+										</span>
+										<span class="text-[#555]">{executionGrowth.tradeCount} closed trade{executionGrowth.tradeCount === 1 ? '' : 's'}</span>
+									</div>
+								{/if}
+							</div>
+							{#if executionGrowth}
+								<div class="mt-1 text-xs text-[#555]" data-testid="overview-growth-mode">
+									{#if executionGrowth.mode === 'paper'}
+										Paper book equity — the strategy's isolated ${PAPER_START_EQUITY.toLocaleString()} book plus realized PnL from each closed paper trade.
+									{:else}
+										Cumulative realized PnL from closed live trades, in real wallet dollars.
+									{/if}
+									{#if executionGrowth.otherBookTrades > 0}
+										<span class="text-[#777]">
+											{executionGrowth.otherBookTrades} closed paper trade{executionGrowth.otherBookTrades === 1 ? '' : 's'} left out — paper PnL is simulated on a ${PAPER_START_EQUITY.toLocaleString()} book and is not added to live dollars (see the Execution tab).
+										</span>
+									{/if}
+								</div>
+								<div class="mt-3">
+									<EquityChart
+										data={executionGrowth.points}
+										showDrawdown={executionGrowth.mode === 'paper'}
+										annotations={growthAnnotations}
+										height={220}
+									/>
+								</div>
+							{:else}
+								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
+									No closed paper/live trades yet — real trading growth appears here once the strategy starts closing trades.
+								</div>
+							{/if}
+						</div>
+						<div class="border border-[#1d1d1d] bg-[#090909] p-3" data-testid="overview-parity-card">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div class="text-[10px] uppercase tracking-[0.2em] text-[#555]">Backtest ↔ Reality</div>
+								{#if executionParity}
+									<span class="text-[11px] text-[#555]">{executionParity.book} fills · avg leverage {executionParity.avgLeverage.toFixed(1)}×</span>
+								{/if}
+							</div>
+							{#if executionParity}
+								<div class="mt-1 text-xs text-[#555]">
+									Realized execution costs vs the execution profile's model. Slippage is signed — positive = filled worse than the signal price.
+								</div>
+								<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="overview-parity-metrics">
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed entry slippage vs the signal price across fills. Modeled budget: the execution profile's per-side slippage.">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">Entry Slippage</div>
+										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.entrySlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.entrySlipBps)}</div>
+										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.entryCount}</div>
+									</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average signed exit slippage vs the signal price across closes.">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">Exit Slippage</div>
+										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.exitSlipBps, modeledSlippageBps)}`}>{fmtBps(executionParity.exitSlipBps)}</div>
+										<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledSlippageBps !== null ? `${modeledSlippageBps} bps` : '—'} · n={executionParity.exitCount}</div>
+									</div>
+									<div class="border border-[#1f1f1f] bg-black px-2.5 py-2" title="Average realized round-trip cost drag per closed trade (gross − net PnL, includes leverage). Modeled: 2 × fee × avg leverage.">
+										<div class="text-[9px] uppercase tracking-wide text-[#555]">Cost / Trade</div>
+										<div class={`mt-1 font-mono text-sm ${parityTone(executionParity.costDragPct, modeledCostDragPct)}`}>{executionParity.costDragPct !== null ? `${executionParity.costDragPct.toFixed(3)}%` : '—'}</div>
+										{#if executionParity.costCount > 0}
+											<div class="mt-0.5 text-[10px] text-[#555]">modeled {modeledCostDragPct !== null ? `${modeledCostDragPct.toFixed(3)}%` : '—'} · n={executionParity.costCount}</div>
+										{:else}
+											<div class="mt-0.5 text-[10px] text-[#555]" data-testid="overview-parity-cost-unmeasured">not measured — {executionParity.book === 'paper' ? 'paper books PnL net of the modeled fee' : 'no fill recorded its fees'}</div>
+										{/if}
+									</div>
+								</div>
+							{:else}
+								<div class="mt-3 border border-[#1f1f1f] bg-[#070707] px-4 py-6 text-sm text-[#555]">
+									No fills with recorded slippage/cost data yet — parity metrics appear once the strategy starts trading.
+								</div>
+							{/if}
+						</div>
+					</div>
 					{#if executionRealizedByBook.length > 0}
 						<div class="space-y-1.5 border border-[#1d1d1d] bg-[#090909] p-3" data-testid="execution-summary-strip">
 							{#each executionRealizedByBook as entry (entry.book)}
@@ -6084,6 +6345,53 @@
 							</div>
 						{/if}
 					</details>
+				</div>
+			{/if}
+
+			{#if activeTab === 'parameters'}
+				<div class="grid gap-3 xl:grid-cols-2" data-testid="parameters-tab">
+					<article class="grid content-start gap-3 border border-[#1d1d1d] bg-[#090909] p-4">
+						<div class="flex flex-wrap items-start justify-between gap-2">
+							<div>
+								<h2 class="m-0 text-[13px] font-semibold text-white">Strategy parameters</h2>
+								<div class="text-[11px] text-[#666]">{pinnedRunItem ? `Pinned run ${pinnedBacktestId}'s parameters` : 'The saved defaults'} against the declared search space. A value at the edge of its range means the optimum may lie outside what was searched.</div>
+							</div>
+							<button type="button" class="rounded-full border border-[#2a2f38] px-2.5 py-0.5 text-[11px] text-[#aab1bc] hover:text-white" data-testid="parameters-edit" on:click={() => void editParametersOnRuns()}>Edit on Runs</button>
+						</div>
+						<ParameterSpace params={drivingParams} space={drivingSpace} />
+					</article>
+					<div class="grid content-start gap-3">
+						<article class="grid gap-1.5 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-driver">
+							<h2 class="m-0 text-[13px] font-semibold text-white">What drives paper and live</h2>
+							<p class="m-0 text-[12px] text-[#aab1bc]">
+								{#if pinnedBacktestId}
+									Pinned run <span class="font-mono text-white">{pinnedBacktestId}</span>: its stored parameters and metrics drive execution. Pin another run, or unpin to fall back to the saved defaults, from Runs.
+								{:else}
+									No run is pinned, so the saved defaults drive execution. Pin a run from Runs to make its parameters the driver.
+								{/if}
+							</p>
+						</article>
+						<article class="grid gap-2 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-execution">
+							<h2 class="m-0 text-[13px] font-semibold text-white">Execution profile</h2>
+							<div class="grid">
+								{#each executionProfileRows as [label, value] (label)}
+									<div class="flex items-baseline justify-between gap-3 border-b border-[#161616] py-1.5 text-[12px] last:border-b-0"><span class="text-[#aab1bc]">{label}</span><span class="font-mono text-white">{value}</span></div>
+								{/each}
+							</div>
+						</article>
+						<article class="grid gap-2 border border-[#1d1d1d] bg-[#090909] p-4" data-testid="parameters-contract">
+							<div><h2 class="m-0 text-[13px] font-semibold text-white">Contract fields</h2><div class="text-[11px] text-[#666]">Read by the engine and lifecycle; kept as saved on every edit.</div></div>
+							{#if Object.keys(contractFields).length === 0}
+								<div class="text-[12px] text-[#666]">None.</div>
+							{:else}
+								<div class="grid">
+									{#each Object.entries(contractFields) as [key, value] (key)}
+										<div class="grid grid-cols-[minmax(0,11em)_minmax(0,1fr)] gap-3 border-b border-[#161616] py-1.5 text-[12px] last:border-b-0"><span class="font-mono text-[#aab1bc]">{key}</span><span class="break-all font-mono text-[#ddd]">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span></div>
+									{/each}
+								</div>
+							{/if}
+						</article>
+					</div>
 				</div>
 			{/if}
 

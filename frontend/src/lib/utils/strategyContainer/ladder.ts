@@ -62,6 +62,17 @@ export function bookStats(trades: Record<string, unknown>[], book: Book): BookSt
 	};
 }
 
+/** Paper book equity after each closed trade, from the $10k start, oldest first. */
+export function paperEquityPath(trades: Record<string, unknown>[]): number[] {
+	const pnls = trades
+		.filter((row) => tradeBook(row) === 'paper' && String(row.status ?? '').trim().toUpperCase() === 'CLOSED')
+		.map((row) => ({ pnl: toNumber(row.pnl_usd) ?? toNumber(row.pnl), closedAt: Date.parse(String(row.closed_at ?? '')) }))
+		.filter((row): row is { pnl: number; closedAt: number } => row.pnl !== null)
+		.sort((a, b) => (Number.isFinite(a.closedAt) ? a.closedAt : 0) - (Number.isFinite(b.closedAt) ? b.closedAt : 0));
+	let equity = PAPER_START_EQUITY;
+	return [equity, ...pnls.map((row) => (equity += row.pnl))];
+}
+
 export interface LadderColumn {
 	key: 'is' | 'oos' | 'wfa' | 'held' | 'paper' | 'live';
 	name: string;

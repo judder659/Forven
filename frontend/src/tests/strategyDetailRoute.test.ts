@@ -2006,7 +2006,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(target.textContent).toContain('1 / 5 completed');
 	});
 
-	it('renders the strategy growth curve from closed execution trades on the Overview', async () => {
+	it('renders the strategy growth curve from closed execution trades on Paper & live', async () => {
 		const container = buildContainer(['B1001']);
 		(container.execution as Record<string, unknown>).trades = [
 			{
@@ -2050,6 +2050,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(container);
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() => target.querySelector('[data-testid="overview-growth-card"]') !== null);
 
 		const card = target.querySelector('[data-testid="overview-growth-card"]');
@@ -2069,6 +2071,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() => target.querySelector('[data-testid="overview-growth-card"]') !== null);
 
 		expect(target.querySelector('[data-testid="overview-growth-card"]')?.textContent).toContain(
@@ -2089,6 +2093,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		});
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() =>
 			target.querySelector('[data-testid="overview-growth-card"] [data-testid="equity-chart-stub"]') !== null,
 		);
@@ -2122,6 +2128,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(container);
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() =>
 			target.querySelector('[data-testid="overview-growth-card"] [data-testid="equity-chart-stub"]') !== null,
 		);
@@ -2150,6 +2158,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(container);
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() => target.querySelector('[data-testid="overview-parity-metrics"]') !== null);
 
 		const card = target.querySelector('[data-testid="overview-parity-card"]');
@@ -2172,6 +2182,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		});
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-robustness"]') !== null);
+		clickByTestId(target, 'strategy-tab-robustness');
 		await waitForCondition(() => target.querySelector('[data-testid="gauntlet-test-stale-walk_forward"]') !== null);
 
 		expect(target.querySelector('[data-testid="gauntlet-test-stale-walk_forward"]')?.textContent).toContain('Stale');
@@ -2319,6 +2331,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(container);
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() =>
 			target.querySelector('[data-testid="overview-growth-card"] [data-testid="equity-chart-stub"]') !== null,
 		);
@@ -2369,6 +2383,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(container);
 
 		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
 		await waitForCondition(() => target.querySelector('[data-testid="overview-parity-metrics"]') !== null);
 
 		const parity = target.querySelector('[data-testid="overview-parity-card"]')?.textContent ?? '';
@@ -2662,5 +2678,115 @@ describe('/lab/strategy/[id] backtest history', () => {
 		clickByTestId(target, 'strategy-tab-activity');
 		await waitForCondition(() => target.querySelector('[data-testid="activity-lifecycle-feed"]') !== null);
 		expect(target.querySelector('[data-testid="activity-lifecycle-feed"]')?.textContent).toContain('Every gate passed');
+	});
+	it('builds the Summary verdict, evidence ladder and scorecard from the stored robustness evidence', async () => {
+		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
+		apiMocks.getResult.mockImplementation(async (resultId: string) =>
+			buildResult(resultId, {
+				metrics: {
+					in_sample: { total_trades: 40, win_rate: 0.4, sharpe: 2.1, total_return_pct: 0.3, backtest_months: 36, start_date: '2021-01-01T00:00:00Z', end_date: '2023-12-31T00:00:00Z' },
+					out_of_sample: { total_trades: 7, win_rate: 0.43, sharpe: 1.5, total_return_pct: 0.12, backtest_months: 12, start_date: '2024-01-01T00:00:00Z', end_date: '2024-12-31T00:00:00Z' },
+				},
+				trades: [900, 400, 300, -100, -120, -80, -50].map((pnl, index) => ({
+					entry_time: `2024-0${index + 1}-02 10:00:00+00:00`, exit_time: `2024-0${index + 1}-03 10:00:00+00:00`,
+					pnl, return_pct: pnl / 100, direction: 'long', bars_held: 24, exit_reason: pnl < 0 ? 'stop_loss' : 'signal',
+				})),
+			}),
+		);
+		lifecycleMocks.getGauntletStatus.mockResolvedValue({
+			...gauntletStatus,
+			composite_robustness_score: 72.5,
+			min_robustness_score: 50,
+			deflated_sharpe: { dsr: 0.41, n_trials: 120 },
+			tests: {
+				walk_forward: { result_id: 'WF-1', status: 'passed', verdict: 'PASS' },
+				monte_carlo: { result_id: null, status: 'not_started', verdict: null },
+				parameter_jitter: { result_id: 'PJ-1', status: 'passed', verdict: 'PASS' },
+				cost_stress: { result_id: 'CS-1', status: 'passed', verdict: 'PASS' },
+				regime_split: { result_id: null, status: 'not_started', verdict: null },
+			},
+			tests_passed: 3,
+			tests_total: 5,
+		});
+		const payloads: Record<string, Record<string, unknown>> = {
+			'WF-1': {
+				verdict: 'PASS', avg_is_sharpe: 1.2, avg_oos_sharpe: 1.0, verdict_thresholds: { max_degradation: 0.35 },
+				splits: [1, 2, 3].map((split) => ({
+					split,
+					date_range: { split_at: `2024-0${split * 2}-01T00:00:00Z`, end: `2024-0${split * 2 + 1}-01T00:00:00Z` },
+					in_sample: { sharpe: 1.2, total_trades: 30 },
+					out_of_sample: { sharpe: split === 2 ? -0.4 : 1.4, total_trades: 12, total_return_pct: 0.02 },
+				})),
+				aggregate_oos: { total_trades: 36, sharpe: 1.0, total_return_pct: 0.2, win_rate: 0.4 },
+				baseline_hurdle: { alpha_pct: 8, alpha_t: 1.1, sharpe: { strategy: 1.0, buy_hold: 0.3, trend: 0.2 }, total_return_pct: { strategy: 20, buy_hold: 5, trend: 2 }, status: 'pass' },
+			},
+			'PJ-1': {
+				verdict: 'PASS', pass_rate: 1, verdict_threshold: 0.6, n_iterations: 15, iterations_completed: 4, deadline_hit: true,
+				sharpe_values: [1.1, 1.0, 1.2, 0.9], reference_sharpe: 1.1, allowed_degradation: 0.5, jitter_pct: 10,
+			},
+			'CS-1': {
+				verdict: 'PASS', fee_multiplier: 2, slippage_multiplier: 2, degradation_pct: 22.7, verdict_threshold: 0.3,
+				original: { sharpe: 1.07, total_return: 0.108, profit_factor: 1.44, total_trades: 43 },
+				stressed: { sharpe: 0.82, total_return: 0.081, profit_factor: 1.32, total_trades: 43 },
+			},
+		};
+		backtestingMocks.getRobustnessResult.mockImplementation(async (resultId: string) => ({ result_id: resultId, payload: payloads[resultId] ?? {} }));
+		backtestingMocks.getHoldoutSummary.mockResolvedValue({
+			state: 'pass',
+			max_family_shots: 3,
+			result_id: 'HO-1',
+			latest: {
+				result: {
+					verdict: 'PASS',
+					family: 'thrust',
+					family_shot: 1,
+					held_back: { start: '2025-01-01T00:00:00+00:00', end: '2025-09-01T00:00:00+00:00', bars: 5800 },
+					out_of_sample: { total_trades: 60, sharpe: 0.5, total_return_pct: 0.09, win_rate: 0.37 },
+					baseline_hurdle: { alpha_pct: 13.4, alpha_t: 0.66, sharpe: { strategy: 0.74, buy_hold: 0.1, trend: 0.09 }, total_return_pct: { strategy: 9.1, buy_hold: -9.2, trend: -0.3 }, status: 'pass' },
+				},
+			},
+		});
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="finding-thin"]') !== null);
+
+		expect(target.querySelector('[data-testid="verdict-label"]')?.textContent).toContain('Promising · not proven');
+		expect(target.querySelector('[data-testid="verdict-headline"]')?.textContent).toContain('Profitable out of sample and on held-back data');
+		expect(target.querySelector('[data-testid="finding-thin"]')?.textContent).toContain('4 of 15 reruns finished');
+		expect(target.querySelector('[data-testid="finding-concentration"]')).not.toBeNull();
+		expect(target.querySelector('[data-testid="ladder-sharpe-held"]')?.textContent).toContain('0.50');
+		expect(target.querySelector('[data-testid="ladder-sharpe-oos"]')?.textContent).toContain('1.50');
+		expect(target.querySelector('[data-testid="scorecard-parameter_jitter"]')?.textContent).toContain('Pass · thin');
+		expect(target.querySelector('[data-testid="standing-held-back"]')?.textContent).toContain('Pass');
+
+		// A finding's evidence link opens the tab that holds the proof.
+		const evidenceButton = Array.from(target.querySelectorAll<HTMLButtonElement>('[data-testid="finding-thin"] button')).find((button) => button.textContent?.includes('Evidence'));
+		evidenceButton?.click();
+		await waitForCondition(() => target.querySelector('[data-testid="stress-matrix"]') !== null);
+		expect(target.querySelector('[data-testid="strategy-tab-robustness"]')?.getAttribute('aria-pressed')).toBe('true');
+		expect(target.querySelector('[data-testid="stress-row-walk_forward"]')?.textContent).toContain('83% OOS/IS Sharpe');
+		expect(target.querySelector('[data-testid="jitter-slots"]')?.children.length).toBe(15);
+		expect(target.querySelector('[data-testid="held-back-verdict"]')?.textContent).toContain('Pass');
+	});
+
+	it('shows the parameters that drive execution against their search space on Parameters', async () => {
+		const params = { fast: 12, slow: 26, signal: 9, _asset: 'BTC', _parameter_space: { fast: [8, 12, 16], slow: [20, 26] } };
+		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001'], { params }));
+		apiMocks.getResult.mockImplementation(async (resultId: string) => buildResult(resultId));
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-parameters"]') !== null);
+		clickByTestId(target, 'strategy-tab-parameters');
+		await waitForCondition(() => target.querySelector('[data-testid="parameter-space-fast"]') !== null);
+
+		expect(target.querySelector('[data-testid="parameter-space-fast"]')?.textContent).toContain('inside its range');
+		expect(target.querySelector('[data-testid="parameter-space-slow"]')?.textContent).toContain('at the high edge of its range');
+		expect(target.querySelector('[data-testid="parameter-space-signal"]')?.textContent).toContain('fixed (not searched)');
+		expect(target.querySelector('[data-testid="parameters-contract"]')?.textContent).toContain('_asset');
+		expect(target.querySelector('[data-testid="parameters-driver"]')?.textContent).toContain('No run is pinned');
+
+		clickByTestId(target, 'parameters-edit');
+		await waitForCondition(() => target.querySelector('[data-testid="backtest-parameter-panel"]') !== null);
+		expect((target.querySelector('[data-testid="backtest-parameter-panel"]') as HTMLDetailsElement | null)?.open).toBe(true);
 	});
 });
