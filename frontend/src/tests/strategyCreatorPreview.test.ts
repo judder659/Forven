@@ -254,7 +254,11 @@ it('runs a heatmap a row per request, counts every cell, and a cell sets both kn
 		['oversold', [10, 30, 50], 'exit_level', [80]],
 	]);
 	expect(target.querySelectorAll('[data-testid="heatmap-grid"] button').length).toBe(9);
-	expect(target.querySelector('[data-testid="heatmap-verdict"]')?.textContent).toContain('Plateau');
+	// The current settings (oversold 30, exit_level 55) are also the best cell: one verdict.
+	const verdict = target.querySelector('[data-testid="heatmap-verdict"]')?.textContent ?? '';
+	expect(verdict).toContain('Current setting');
+	expect(verdict).toContain('8 of 8 neighbours keep at least half its return');
+	expect(verdict).toContain('It is also the best cell here');
 
 	// Nine settings seen, one of them the preview's own: the next preview charges for 9.
 	await vi.advanceTimersByTimeAsync(600); await settle();
