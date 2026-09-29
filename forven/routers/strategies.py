@@ -648,6 +648,14 @@ def list_indicators():
     return {"indicators": indicators_registry.metadata()}
 
 
+@router.get("/api/backtests/defaults")
+def get_manual_backtest_defaults() -> dict:
+    """What a manual backtest uses for each setting left blank, and the holdout cutoff."""
+    from forven.api_domains.manual_backtest import manual_backtest_defaults
+
+    return manual_backtest_defaults()
+
+
 @router.post("/api/backtests/preview")
 def post_backtest_preview(body: core.BacktestPreviewBody):
     return core.post_backtest_preview(body)
