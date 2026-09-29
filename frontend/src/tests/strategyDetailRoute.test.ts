@@ -37,6 +37,10 @@ const lifecycleMocks = vi.hoisted(() => ({
 	runTimeframeSweep: vi.fn(),
 }));
 
+const paperMocks = vi.hoisted(() => ({
+	closePaperPosition: vi.fn(),
+}));
+
 const appMocks = vi.hoisted(() => ({
 	goto: vi.fn(),
 	pageValue: {
@@ -74,6 +78,10 @@ vi.mock('$lib/api/strategies', () => ({
 }));
 vi.mock('$lib/api/backtesting', () => backtestingMocks);
 vi.mock('$lib/api/lifecycle', () => lifecycleMocks);
+vi.mock('$lib/api/paper', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/api/paper')>()),
+	closePaperPosition: paperMocks.closePaperPosition,
+}));
 vi.mock('$lib/stores/processTracker', () => ({
 	addToast: toastMocks.addToast,
 	trackProcess: toastMocks.trackProcess,
@@ -2117,16 +2125,17 @@ describe('/lab/strategy/[id] backtest history', () => {
 
 	it('shows the Backtest↔Reality parity card from recorded slippage and cost drag', async () => {
 		const container = buildContainer(['B1001']);
+		// Live rows record fees separately (fees_pct), so gross − net is a measured cost.
 		(container.execution as Record<string, unknown>).trades = [
 			{
-				id: 'T1', asset: 'BTC', direction: 'long', status: 'CLOSED', execution_type: 'paper_challenger',
-				pnl_usd: 100, pnl_pct: 0.052, net_pnl_pct: 0.05, leverage: 2,
+				id: 'T1', asset: 'BTC', direction: 'long', status: 'CLOSED', execution_type: 'live',
+				pnl_usd: 100, pnl_pct: 0.052, net_pnl_pct: 0.05, fees_pct: 0.0018, leverage: 2,
 				entry_slippage_bps: 6, exit_slippage_bps: 2,
 				opened_at: '2026-03-01T00:00:00Z', closed_at: '2026-03-02T00:00:00Z',
 			},
 			{
-				id: 'T2', asset: 'BTC', direction: 'long', status: 'CLOSED', execution_type: 'paper_challenger',
-				pnl_usd: -40, pnl_pct: -0.02, net_pnl_pct: -0.022, leverage: 2,
+				id: 'T2', asset: 'BTC', direction: 'long', status: 'CLOSED', execution_type: 'live',
+				pnl_usd: -40, pnl_pct: -0.02, net_pnl_pct: -0.022, fees_pct: 0.0018, leverage: 2,
 				entry_slippage_bps: 2, exit_slippage_bps: -1,
 				opened_at: '2026-03-03T00:00:00Z', closed_at: '2026-03-04T00:00:00Z',
 			},
@@ -2142,7 +2151,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(card?.textContent).toContain('+0.5 bps');
 		// Cost drag: ((0.052-0.05)+( -0.02 - -0.022))/2 = 0.002 → 0.200%.
 		expect(card?.textContent).toContain('0.200%');
-		expect(card?.textContent).toContain('avg leverage 2.0×');
+		expect(card?.textContent).toContain('live fills · avg leverage 2.0×');
 	});
 
 	it('marks stale gauntlet verdicts with a STALE badge and warning', async () => {
@@ -2272,5 +2281,302 @@ describe('/lab/strategy/[id] backtest history', () => {
 
 		expect(ideaButton()?.getAttribute('aria-expanded')).toBe('false');
 		expect(target.querySelector('a[href^="/hypotheses/"]')).toBeNull();
+	});
+
+	// ── 2026-09-29 container review regressions ────────────────────────────────
+
+	it('keeps paper and live books apart in the growth card, parity card and realized summary', async () => {
+		const container = buildContainer(['B1001']);
+		// A graduated strategy: two live fills (real wallet dollars) after a paper phase
+		// on the simulated $10k book. Nulls are missing measurements, not zeros.
+		(container.execution as Record<string, unknown>).trades = [
+			{
+				id: 'L1', asset: 'ETH', direction: 'long', status: 'CLOSED', execution_type: 'live',
+				pnl_usd: -1.68, pnl: -1.68, pnl_pct: -0.0524, net_pnl_pct: -0.0533, fees_pct: 0.0009, leverage: 2,
+				entry_slippage_bps: -6, exit_slippage_bps: null,
+				opened_at: '2026-09-20T00:00:00Z', closed_at: '2026-09-21T00:00:00Z',
+			},
+			{
+				id: 'L2', asset: 'ETH', direction: 'long', status: 'CLOSED', execution_type: 'live',
+				pnl_usd: 0.93, pnl: 0.93, pnl_pct: 0.0329, net_pnl_pct: 0.0287, fees_pct: 0.0018, leverage: 2,
+				entry_slippage_bps: null, exit_slippage_bps: 5.7,
+				opened_at: '2026-09-22T00:00:00Z', closed_at: '2026-09-23T00:00:00Z',
+			},
+			{
+				id: 'P1', asset: 'ETH', direction: 'long', status: 'CLOSED', execution_type: 'paper',
+				pnl_usd: 130.82, pnl: 130.82, pnl_pct: 0.07, net_pnl_pct: 0.0132, fees_pct: null, leverage: 2,
+				entry_slippage_bps: 0, exit_slippage_bps: null,
+				opened_at: '2026-07-20T00:00:00Z', closed_at: '2026-07-21T00:00:00Z',
+			},
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() =>
+			target.querySelector('[data-testid="overview-growth-card"] [data-testid="equity-chart-stub"]') !== null,
+		);
+
+		const growth = target.querySelector('[data-testid="overview-growth-card"]')?.textContent ?? '';
+		// Live only: −1.68 + 0.93. The paper trade's +$130.82 is never added to live dollars.
+		expect(growth).toContain('-$0.75');
+		expect(growth).toContain('2 closed trades');
+		expect(growth).toContain('1 closed paper trade left out');
+
+		const parity = target.querySelector('[data-testid="overview-parity-card"]')?.textContent ?? '';
+		expect(parity).toContain('live fills');
+		// Entry slippage averages only the live fill that recorded one (L1 −6); exit only L2.
+		expect(parity).toContain('-6.0 bps');
+		expect(parity).toContain('+5.7 bps');
+		// Cost drag from the live rows' recorded fees: (0.09% + 0.42%) / 2.
+		expect(parity).toContain('0.255%');
+
+		clickByTestId(target, 'strategy-tab-execution');
+		await waitForCondition(() => target.querySelector('[data-testid="execution-summary-live"]') !== null);
+		expect(target.querySelector('[data-testid="execution-summary-live"]')?.textContent).toContain('-$0.75');
+		expect(target.querySelector('[data-testid="execution-summary-paper"]')?.textContent).toContain('+$130.82');
+	});
+
+	it('does not report paper cost drag or a still-open trade as measured zeros', async () => {
+		const container = buildContainer(['B1001']);
+		// Paper rows book PnL net of the modeled fee (pnl_pct == net_pnl_pct, no fees_pct).
+		(container.execution as Record<string, unknown>).trades = [
+			{
+				id: 'P1', asset: 'SOL', direction: 'long', status: 'CLOSED', execution_type: 'paper',
+				pnl_usd: 26.78, pnl_pct: 0.0027, net_pnl_pct: 0.0027, fees_pct: null, leverage: 1,
+				entry_slippage_bps: -30.1, exit_slippage_bps: null,
+				opened_at: '2026-09-24T00:00:00Z', closed_at: '2026-09-28T00:00:00Z',
+			},
+			{
+				id: 'P2', asset: 'SOL', direction: 'long', status: 'CLOSED', execution_type: 'paper',
+				pnl_usd: 58.49, pnl_pct: 0.0059, net_pnl_pct: 0.0059, fees_pct: null, leverage: 1,
+				entry_slippage_bps: -18.1, exit_slippage_bps: -2.6,
+				opened_at: '2026-09-20T00:00:00Z', closed_at: '2026-09-23T00:00:00Z',
+			},
+			{
+				id: 'P3', asset: 'SOL', direction: 'long', status: 'OPEN', execution_type: 'paper',
+				pnl_usd: null, pnl_pct: null, net_pnl_pct: null, fees_pct: null, leverage: 1,
+				entry_slippage_bps: 0, exit_slippage_bps: null,
+				opened_at: '2026-09-29T00:00:00Z', closed_at: null,
+			},
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="overview-parity-metrics"]') !== null);
+
+		const parity = target.querySelector('[data-testid="overview-parity-card"]')?.textContent ?? '';
+		expect(target.querySelector('[data-testid="overview-parity-cost-unmeasured"]')?.textContent).toContain(
+			'paper books PnL net of the modeled fee',
+		);
+		expect(parity).not.toContain('0.000%');
+		// Exit slippage: only P2 recorded one; the open trade has no exit at all.
+		expect(parity).toContain('-2.6 bps');
+	});
+
+	it('offers Close Position from the strategy id when the container carries no paper session id', async () => {
+		const container = buildContainer(['B1001']);
+		(container.execution as Record<string, unknown>).trades = [
+			{
+				id: 'T-OPEN', asset: 'SOL', direction: 'long', status: 'OPEN', execution_type: 'paper',
+				entry_price: 119.49, size: 13.76, leverage: 1, entry_slippage_bps: 0,
+				signal_data: JSON.stringify({ stop_loss: 112.25, take_profit: null }),
+				opened_at: '2026-09-29T08:20:58Z', closed_at: null,
+			},
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+		paperMocks.closePaperPosition.mockResolvedValue({});
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-execution"]') !== null);
+		clickByTestId(target, 'strategy-tab-execution');
+		await waitForCondition(() => target.querySelector('[data-testid="execution-close-position"]') !== null);
+
+		const openTable = target.querySelector('[data-testid="execution-open-trades"]')?.textContent ?? '';
+		expect(openTable).toContain('112.2500');
+		// A missing take-profit is "none", not a 0 price.
+		expect(openTable).not.toContain('0.0000');
+
+		clickByTestId(target, 'execution-close-position');
+		await waitForCondition(() => paperMocks.closePaperPosition.mock.calls.length > 0);
+		expect(paperMocks.closePaperPosition).toHaveBeenCalledWith('S0001', 'Manual close from strategy container');
+	});
+
+	it('reads engine fractions in the result viewer and shows the window that actually ran', async () => {
+		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
+		apiMocks.getResult.mockImplementation(async (resultId: string) =>
+			buildResult(resultId, {
+				start: '2020-12-23T06:00:00+00:00',
+				end: '2025-12-31T23:00:00+00:00',
+				metrics: {
+					annualized_return_pct: undefined,
+					total_return_pct: undefined,
+					total_return: 0.26914,
+					max_drawdown_pct: undefined,
+					max_drawdown: 0.10114,
+					win_rate: 0.5385,
+					total_trades: 39,
+					profit_factor: 1.76,
+					sharpe_ratio: 2.7,
+					sortino_ratio: 5.56,
+					monthly_return_pct: 0.06697,
+					avg_trade_pct: 0.00402,
+					avg_bars_held: 36,
+					in_sample: { annualized_return_pct: 0.60762, sharpe: 1.52, win_rate: 0.45 },
+					out_of_sample: { annualized_return_pct: 1.17357, sharpe: 2.7, win_rate: 0.5385 },
+				},
+				config: { start: '2021-09-27T00:00:00.000Z', end: '2026-09-27T00:00:00.000Z' },
+				trades: [
+					{
+						entry_time: '2024-07-03 21:00:00+00:00', entry_price: 3258.05,
+						exit_time: '2024-07-04 00:00:00+00:00', exit_price: 3310.31,
+						pnl: -107.9, return_pct: -1.079, direction: 'short', bars_held: 3,
+					},
+				],
+			}),
+		);
+		apiMocks.getResultChartContext.mockImplementation(async (resultId: string) => buildChartContext(resultId));
+
+		app = mount(StrategyDetailPage, { target });
+		await openBacktestHistory(target);
+		clickByTestId(target, 'backtest-row-B1001');
+		await waitForCondition(() => target.querySelector('[data-testid="selected-result-cagr"]') !== null);
+
+		// A CAGR above 100% stored as a fraction (1.17357) is 117.36%, not "1.17%".
+		expect(target.querySelector('[data-testid="selected-result-cagr"]')?.textContent).toContain('117.36%');
+		expect(target.querySelector('[data-testid="selected-result-in-sample-cagr"]')?.textContent).toContain('60.76%');
+		const risk = target.querySelector('[data-testid="selected-result-risk-metrics"]')?.textContent ?? '';
+		expect(risk).toContain('6.70%');
+		expect(risk).toContain('0.40%');
+		expect(risk).toContain('36.0 bars');
+		const window = target.querySelector('[data-testid="selected-result-window"]')?.textContent ?? '';
+		expect(window).toContain('Dec 23, 2020');
+		expect(window).toContain('Dec 31, 2025');
+		expect(target.querySelector('[data-testid="selected-result-requested-window"]')?.textContent).toContain('Sep 27, 2021');
+
+		const tradesTable = target.querySelector('div[data-testid="selected-result-trades"]')?.textContent ?? '';
+		expect(tradesTable).toContain('-$107.90');
+		expect(tradesTable).toContain('2024-07-03 21:00');
+		// No trade carries MAE/MFE, so the columns are not drawn.
+		expect(tradesTable).not.toContain('MAE%');
+	});
+
+	it('shows window dates in UTC', async () => {
+		const container = buildContainer(['B1001']);
+		(container.history as Record<string, unknown>).backtests = [
+			buildHistoryItem('B1001', { start_date: '2025-01-01T00:00:00Z', end_date: '2025-12-31T23:00:00Z' }),
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+
+		app = mount(StrategyDetailPage, { target });
+		await openBacktestHistory(target);
+
+		const row = target.querySelector('[data-testid="backtest-row-B1001"]')?.textContent ?? '';
+		expect(row).toContain('Jan 1, 2025');
+		expect(row).not.toContain('Dec 31, 2024');
+	});
+
+	it('opening an optimization run leaves the Gauntlet draft alone and shows its detail only on the Optimization tab', async () => {
+		const optimization = buildHistoryItem('OPT1', {
+			result_type: 'optimization',
+			symbol: 'ETH/USDT',
+			timeframe: '4h',
+			start_date: '2024-01-01T00:00:00Z',
+			end_date: '2024-06-01T00:00:00Z',
+			config: { params: { fast: 30, slow: 60, signal: 12 }, best_params: { fast: 30 } },
+		});
+		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001'], { optimizations: [optimization] }));
+		apiMocks.getResult.mockImplementation(async (resultId: string) =>
+			buildResult(resultId, { result_type: 'optimization', symbol: 'ETH/USDT', timeframe: '4h' }),
+		);
+		apiMocks.getResultChartContext.mockImplementation(async (resultId: string) => buildChartContext(resultId));
+
+		app = mount(StrategyDetailPage, { target });
+		await openOptimizationHistory(target);
+		clickByTestId(target, 'optimization-row-OPT1');
+		await waitForCondition(() => target.querySelector('[data-testid="selected-result-metrics-strip"]') !== null);
+
+		clickByTestId(target, 'strategy-tab-backtests');
+		await waitForCondition(() => target.querySelector('#container-backtest-symbol') !== null);
+		expect((target.querySelector('#container-backtest-symbol') as HTMLInputElement | null)?.value).toBe('BTC/USDT');
+		expect((target.querySelector('#container-backtest-start') as HTMLInputElement | null)?.value).toBe('2025-03-11');
+		// The optimization's detail belongs to its own tab.
+		expect(target.querySelector('[data-testid="selected-result-metrics-strip"]')).toBeNull();
+	});
+
+	it('labels the per-run OOS/IS retention and never reads a stamped composite into it', async () => {
+		const container = buildContainer(['B1001']);
+		(container.history as Record<string, unknown>).backtests = [
+			buildHistoryItem('B1001', { metrics: { robustness: 0.755, composite_robustness_score: 66.57 } }),
+		];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+
+		app = mount(StrategyDetailPage, { target });
+		await openBacktestHistory(target);
+
+		const row = target.querySelector('[data-testid="backtest-row-B1001"]')?.textContent ?? '';
+		expect(row).toContain('75.5%');
+		expect(row).not.toContain('66.6%');
+		expect(target.textContent).toContain('OOS/IS');
+		expect(target.textContent).not.toContain('Rob%');
+	});
+
+	it('takes stage tooltips and the live kill switch from the configured gate thresholds', async () => {
+		const container = buildContainer(['B1001']);
+		(container.strategy as Record<string, unknown>).state = 'live_graduated';
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+		lifecycleMocks.getPipelineConfig.mockResolvedValue({
+			...pipelineThresholds,
+			paper_trading: { min_paper_days: 30, min_closed_trades: 50, min_total_return_pct: 0, max_drawdown_pct: 0.15 },
+			live_graduated: {
+				allocation_schedule: [
+					{ week_start: 1, week_end: 2, allocation_pct: 25 },
+					{ week_start: 3, week_end: 4, allocation_pct: 50 },
+					{ week_start: 5, week_end: 999, allocation_pct: 100 },
+				],
+				decay_kill_switch_pct: 0.3,
+			},
+		});
+
+		app = mount(StrategyDetailPage, { target });
+		await waitForCondition(() => target.querySelector('[data-testid="overview-live-ramp"]') !== null);
+
+		expect(target.querySelector('[data-testid="overview-live-ramp"]')?.textContent).toContain('Decay kill switch at 30% drawdown');
+		const titles = Array.from(target.querySelectorAll('button[title]'), (node) => node.getAttribute('title') ?? '');
+		expect(titles.some((title) => title.includes('at least 30 days and 50 closed trades'))).toBe(true);
+		expect(titles.some((title) => title.includes('25% (wk 1–2) → 50% (wk 3–4) → 100% (wk 5+)'))).toBe(true);
+	});
+
+	it('hides contract params from the chips and editor but keeps them on save', async () => {
+		const params = { fast: 12, slow: 26, signal: 9, _asset: 'BTC', _timeframe: '1h', _parameter_space: { fast: [8, 12, 16] } };
+		const container = buildContainer(['B1001'], { params });
+		(container.history as Record<string, unknown>).backtests = [buildHistoryItem('B1001', { config: { params } })];
+		apiMocks.getStrategyContainer.mockResolvedValue(container);
+		backtestingMocks.updateStrategyDefaultParams.mockResolvedValue({ ok: true });
+
+		app = mount(StrategyDetailPage, { target });
+		await openBacktestHistory(target);
+
+		const chips = target.querySelector('[data-testid="backtest-param-summary-B1001"]')?.textContent ?? '';
+		expect(chips).toContain('fast=12');
+		expect(chips).not.toContain('_asset');
+		expect(target.querySelector('[data-testid="gauntlet-system-params-note"]')?.textContent).toContain('_timeframe');
+		const editorKeys = Array.from(
+			target.querySelectorAll('[data-testid="backtest-parameter-editor"] span.font-mono'),
+			(node) => node.textContent?.trim(),
+		);
+		expect(editorKeys).toContain('fast');
+		expect(editorKeys).not.toContain('_timeframe');
+
+		const fastInput =
+			Array.from(target.querySelectorAll<HTMLInputElement>('[data-testid="backtest-parameter-editor"] input[type="number"]')).find(
+				(input) => input.value === '12',
+			) ?? null;
+		setInputValue(fastInput, '14');
+		await flush();
+		clickByTestId(target, 'backtest-params-save');
+		await waitForCondition(() => backtestingMocks.updateStrategyDefaultParams.mock.calls.length > 0);
+
+		const [, saved] = backtestingMocks.updateStrategyDefaultParams.mock.calls[0];
+		expect(saved).toMatchObject({ fast: 14, _asset: 'BTC', _timeframe: '1h', _parameter_space: { fast: [8, 12, 16] } });
 	});
 });

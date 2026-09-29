@@ -297,16 +297,17 @@ describe('Strategy detail promotion readiness routing', () => {
 		expect(target.textContent).toContain('Robustness Panel Stub');
 	});
 
-	it('passes three derived quick screen rows into PromotionReadiness', async () => {
+	it('passes the derived quick screen gate rows into PromotionReadiness', async () => {
 		app = mount(StrategyDetailPage, { target });
 		await waitForCondition(() => target.querySelector('[data-testid="promotion-readiness-stub"]') !== null);
 
 		expect(apiMocks.getPipelineSettings).toHaveBeenCalledTimes(1);
-		// The validation-coverage row was dropped from quick-screen readiness
-		// (commit c86a782), so buildQuickScreenEvidenceRows now derives 3 rows.
-		expect(target.querySelector('[data-testid="stub-quick-screen-row-count"]')?.textContent).toBe('3');
+		// The rows mirror policy._evaluate_quick_screen_gate: trades, IS Sharpe floor,
+		// profit factor, OOS return, OOS drawdown, OOS Sharpe (no validation suite —
+		// that runs inside the gauntlet).
+		expect(target.querySelector('[data-testid="stub-quick-screen-row-count"]')?.textContent).toBe('6');
 		expect(target.querySelector('[data-testid="stub-quick-screen-first-label"]')?.textContent).toBe(
-			'IS Sharpe Ratio'
+			'Trade Count'
 		);
 	});
 });

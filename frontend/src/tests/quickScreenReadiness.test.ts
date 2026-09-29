@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LifecycleStrategy, PipelineSettings, StrategyContainerHistoryItem } from '../lib/api/lifecycle';
+import type { LifecycleStrategy, StrategyContainerHistoryItem } from '../lib/api/lifecycle';
 import { buildQuickScreenEvidenceRows } from '../lib/utils/quickScreenReadiness';
 
 function buildBacktest(metrics: Record<string, unknown>): StrategyContainerHistoryItem {
@@ -19,27 +19,14 @@ function buildBacktest(metrics: Record<string, unknown>): StrategyContainerHisto
 	};
 }
 
-const pipelineSettings: PipelineSettings = {
-	version: 1,
-	autopilot_enabled: false,
-	autopilot_worker_concurrency: 1,
-	autopilot_generation_batch_size: 1,
-	autopilot_scan_symbol: 'BTC/USDT',
-	autopilot_scan_timeframe: '1h',
-	promotion_mode: 'quick_screen',
-	min_backtest_trades: 20,
-	min_sharpe_ratio: 0.5,
-	max_drawdown_pct: 40,
-	min_profit_factor: 1.2,
-	min_paper_days: 0,
-	max_paper_divergence_pct: 0,
-	min_paper_trades: 0,
-	min_paper_sharpe: 0,
-	failed_retention_hours: 24,
-	ranking_top_n: 10,
-	ranking_metric: 'sharpe_ratio',
-	created_at: '2026-04-01T00:00:00Z',
-	created_by: 'brain',
+// The live install's pipeline thresholds (quick_screen section): what
+// policy._evaluate_quick_screen_gate reads.
+const gateThresholds = {
+	min_total_return_pct: 0.0,
+	max_drawdown_pct: 0.3,
+	min_sharpe: 0.0,
+	min_trades: 20,
+	min_profit_factor: 1.05,
 };
 
 function buildStrategy(metrics: LifecycleStrategy['metrics'] = null): LifecycleStrategy {
@@ -76,94 +63,112 @@ function buildStrategy(metrics: LifecycleStrategy['metrics'] = null): LifecycleS
 	};
 }
 
+// Engine units: fractions for returns/drawdowns/win rate. The top-level scalars of a
+// container payload are a full-window overlay, so they deliberately disagree with the
+// nested slices here — the rows must read the slices, as the gate does.
+function engineMetrics(
+	overrides: { in_sample?: Record<string, unknown>; out_of_sample?: Record<string, unknown> } = {},
+): LifecycleStrategy['metrics'] {
+	const metrics = {
+		total_trades: 165,
+		total_return_pct: 0.9,
+		max_drawdown_pct: 0.05,
+		win_rate: 0.4,
+		in_sample: { total_trades: 120, sharpe: 0.82, profit_factor: 1.4, win_rate: 0.41, ...overrides.in_sample },
+		out_of_sample: {
+			total_trades: 45,
+			sharpe: 0.6,
+			profit_factor: 1.2,
+			total_return_pct: 0.124,
+			max_drawdown_pct: 0.187,
+			win_rate: 0.38,
+			...overrides.out_of_sample,
+		},
+	};
+	// Partial on purpose: the slices are what the gate reads.
+	return metrics as unknown as LifecycleStrategy['metrics'];
+}
+
 describe('buildQuickScreenEvidenceRows', () => {
-	it('builds the three quick-screen entry-gate rows from backtest metrics', () => {
+	it('mirrors the quick-screen gate checks from the nested slices, in engine units', () => {
 		const rows = buildQuickScreenEvidenceRows({
-			strategy: buildStrategy(),
-			backtests: [
-				buildBacktest({
-					in_sample_sharpe: 0.82,
-					total_return_pct: 12.4,
-					max_drawdown_pct: 18.7,
-				}),
-			],
-			pipelineSettings,
+			strategy: buildStrategy(engineMetrics()),
+			backtests: [],
+			thresholds: gateThresholds,
 		});
 
-		expect(rows).toHaveLength(3);
-		expect(rows).toEqual([
-			{
-				key: 'is_sharpe_ratio',
-				label: 'IS Sharpe Ratio',
-				status: 'passed',
-				actual: '0.82',
-				required: '> 0.50',
-				detail: 'Actual 0.82 | Required > 0.50',
-			},
-			{
-				key: 'minimum_return',
-				label: 'Minimum Return',
-				status: 'passed',
-				actual: '12.4%',
-				required: '> 0%',
-				detail: 'Actual 12.4% | Required > 0%',
-			},
-			{
-				key: 'max_drawdown',
-				label: 'Max Drawdown',
-				status: 'passed',
-				actual: '18.7%',
-				required: '< 40%',
-				detail: 'Actual 18.7% | Required < 40%',
-			},
+		expect(rows.map((row) => [row.key, row.status, row.actual, row.required])).toEqual([
+			['trade_count', 'passed', '120', '≥ 20'],
+			['is_sharpe_ratio', 'passed', '0.82', '> 0.10'],
+			['profit_factor', 'passed', '1.20', '≥ 1.05'],
+			['minimum_return', 'passed', '12.4%', '≥ 0%'],
+			['max_drawdown', 'passed', '18.7%', '≤ 30%'],
+			['oos_sharpe_ratio', 'passed', '0.60', '≥ 0.00'],
 		]);
+	});
+
+	it('judges against the gate thresholds, not the Settings page values', () => {
+		// Settings carries min_sharpe_ratio 0.5 / max_drawdown_pct 40; the gate reads the
+		// thresholds. An IS Sharpe of 0.3 passes the gate's 0.1 floor, and a 35% OOS
+		// drawdown fails its 30% limit.
+		const rows = buildQuickScreenEvidenceRows({
+			strategy: buildStrategy(
+				engineMetrics({ in_sample: { sharpe: 0.3 }, out_of_sample: { max_drawdown_pct: 0.35, profit_factor: 1.02 } }),
+			),
+			backtests: [],
+			thresholds: gateThresholds,
+		});
+		const status = Object.fromEntries(rows.map((row) => [row.key, row.status]));
+		expect(status.is_sharpe_ratio).toBe('passed');
+		expect(status.max_drawdown).toBe('failed');
+		// The weaker slice's profit factor decides (IS 1.4, OOS 1.02 < 1.05).
+		expect(status.profit_factor).toBe('failed');
+	});
+
+	it('falls back to the gate defaults when the thresholds did not load', () => {
+		const rows = buildQuickScreenEvidenceRows({ strategy: buildStrategy(engineMetrics()), backtests: [], thresholds: null });
+		expect(Object.fromEntries(rows.map((row) => [row.key, row.required]))).toMatchObject({
+			trade_count: '≥ 20',
+			profit_factor: '≥ 1.00',
+			max_drawdown: '≤ 30%',
+		});
+	});
+
+	it('reads legacy percent-point slices without rescaling them', () => {
+		const rows = buildQuickScreenEvidenceRows({
+			strategy: null,
+			backtests: [
+				buildBacktest({
+					in_sample: { sharpe: 0.9, profit_factor: 1.3, win_rate: 52 },
+					out_of_sample: { sharpe: 0.7, profit_factor: 1.2, total_return_pct: 12.4, max_drawdown_pct: 18.7, win_rate: 48 },
+				}),
+			],
+			thresholds: gateThresholds,
+		});
+		const actual = Object.fromEntries(rows.map((row) => [row.key, row.actual]));
+		expect(actual.minimum_return).toBe('12.4%');
+		expect(actual.max_drawdown).toBe('18.7%');
 	});
 
 	it('does NOT gate on the gauntlet validation suite at quick-screen', () => {
 		// Regression: a 'Validation Coverage' row requiring 5 robustness artifacts used to be
 		// emitted here, false-blocking every candidate at 0/5 since that suite only runs INSIDE
 		// the gauntlet. The requirement belongs to gauntlet -> paper readiness, not quick-screen.
-		const rows = buildQuickScreenEvidenceRows({
-			strategy: buildStrategy(),
-			backtests: [buildBacktest({ in_sample_sharpe: 0.82, total_return_pct: 12.4, max_drawdown_pct: 18.7 })],
-			pipelineSettings,
-		});
-		expect(rows.map((r) => r.key)).toEqual(['is_sharpe_ratio', 'minimum_return', 'max_drawdown']);
-		expect(rows.some((r) => r.key === 'validation_coverage')).toBe(false);
+		const rows = buildQuickScreenEvidenceRows({ strategy: buildStrategy(engineMetrics()), backtests: [], thresholds: gateThresholds });
+		expect(rows.some((row) => row.key === 'validation_coverage')).toBe(false);
 	});
 
 	it('marks missing evidence as warning rows', () => {
-		const rows = buildQuickScreenEvidenceRows({
-			strategy: null,
-			backtests: [],
-			pipelineSettings,
-		});
+		const rows = buildQuickScreenEvidenceRows({ strategy: null, backtests: [], thresholds: gateThresholds });
 
-		expect(rows).toEqual([
-			{
-				key: 'is_sharpe_ratio',
-				label: 'IS Sharpe Ratio',
-				status: 'warning',
-				actual: 'Unavailable',
-				required: '> 0.50',
-				detail: 'Unavailable | Required > 0.50',
-			},
-			{
-				key: 'minimum_return',
-				label: 'Minimum Return',
-				status: 'warning',
-				actual: 'Unavailable',
-				required: '> 0%',
-				detail: 'Unavailable | Required > 0%',
-			},
-			{
-				key: 'max_drawdown',
-				label: 'Max Drawdown',
-				status: 'warning',
-				actual: 'Unavailable',
-				required: '< 40%',
-				detail: 'Unavailable | Required < 40%',
-			},
-		]);
+		expect(rows.every((row) => row.status === 'warning')).toBe(true);
+		expect(rows.find((row) => row.key === 'is_sharpe_ratio')).toEqual({
+			key: 'is_sharpe_ratio',
+			label: 'IS Sharpe Ratio',
+			status: 'warning',
+			actual: 'Unavailable',
+			required: '> 0.10',
+			detail: 'Unavailable | Required > 0.10',
+		});
 	});
 });
