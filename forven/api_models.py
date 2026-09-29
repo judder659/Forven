@@ -156,7 +156,6 @@ class BacktestSubmitBody(BaseModel):
     as_of: str | None = Field(default=None, max_length=64)
 
 
-
 class StrategyHeatmapAxis(BaseModel):
     """A heatmap axis for a saved strategy: a param, or a knob or indicator setting in its rule spec."""
     target: Literal["param", "spec_param", "spec_indicator"]
