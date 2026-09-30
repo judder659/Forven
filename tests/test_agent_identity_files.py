@@ -173,3 +173,41 @@ def test_put_agent_document_writes_per_agent_not_global(forven_db, _isolate_forv
         global_soul = ws_dir / "SOUL.md"
         if global_soul.exists():
             assert "Sim-specific soul." not in global_soul.read_text(encoding="utf-8")
+
+
+def test_saving_role_md_keeps_the_role_label_intact(forven_db, _isolate_forven_home):
+    """ROLE.md prose must not be copied into agents.role: a custom developer is
+    recognised by role == 'strategy-developer', and the label is a one-liner."""
+    home = _isolate_forven_home
+    with _pin_workspace_dir(home) as ws_dir:
+        from forven.agents.manager import create_agent
+        from forven.api_core import LegacyAgentDocumentBody, put_agent_document
+        from forven.db import get_db
+
+        create_agent(agent_id="two", name="Two", role="strategy-developer")
+
+        put_agent_document("two", "role", LegacyAgentDocumentBody(content="# Two\n\nBuild momentum ideas only."))
+
+        assert "momentum ideas" in (ws_dir / "agents" / "two" / "ROLE.md").read_text(encoding="utf-8")
+        with get_db() as conn:
+            role = conn.execute("SELECT role FROM agents WHERE id = 'two'").fetchone()["role"]
+        assert role == "strategy-developer"
+
+
+def test_agent_terminal_memory_is_the_agents_memory_file(forven_db, _isolate_forven_home):
+    home = _isolate_forven_home
+    with _pin_workspace_dir(home) as ws_dir:
+        from forven.agents.manager import create_agent
+        from forven.api_core import get_agent_terminal
+
+        create_agent(agent_id="risk-manager", name="Risk Manager", role="Oversee risk.")
+        memory_dir = ws_dir / "agents" / "risk-manager" / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        (memory_dir / "MEMORY.md").write_text("- S03402 refuses exits while flat\n", encoding="utf-8")
+
+        payload = get_agent_terminal("risk-manager")
+
+        assert payload["memory"] == "- S03402 refuses exits while flat\n"
+        assert "S03402" not in payload["documents"]["soul"]
+        assert payload["runs"] == []
+        assert "calls" not in payload
