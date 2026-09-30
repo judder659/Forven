@@ -12,7 +12,7 @@
 	import { grantMCPServer, listMCPGrants, listMCPServers, revokeMCPServer, type MCPGrant, type MCPServer } from '$lib/api/mcp';
 	import { addToast } from '$lib/stores/processTracker';
 	import type { AttentionAction, AttentionItem } from '$lib/utils/agentsHub/attention';
-	import { STATE_META, agentJob, canPause, modelParts, stateLine, typeLabel } from '$lib/utils/agentsHub/agents';
+	import { STATE_META, agentJob, canPause, fallbackNote, modelParts, stateLine, typeLabel } from '$lib/utils/agentsHub/agents';
 	import { fmtCost, fmtRate, fmtSeconds, fmtTokens, plural } from '$lib/utils/agentsHub/format';
 	import { TONE_PILL, TONE_TEXT } from '$lib/utils/forge/status';
 	import { ago, parseUtc, shortDateTime } from '$lib/utils/forge/time';
@@ -26,6 +26,7 @@
 	export let window: FleetWindow = '24h';
 	export let now = Date.now();
 	export let autonomy: string | null = null;
+	export let chains: Record<string, Array<{ provider?: string | null; model_id?: string | null }>> | null = null;
 
 	const dispatch = createEventDispatcher<{
 		close: void;
@@ -79,15 +80,19 @@
 	$: meta = STATE_META[agent.state];
 	$: job = agentJob(agent.id);
 	$: model = modelParts(agent);
+	$: fallback = fallbackNote(agent, chains);
 	$: stats = agent.window;
 	$: windowWords = window === '7d' ? 'the last 7 days' : 'the last 24 hours';
 	$: types = Object.entries(stats.types);
 	$: dirtyDocs = (Object.keys(drafts) as DocKey[]).filter((key) => drafts[key] !== saved[key]);
 	$: activeDoc = DOCS.find((doc) => doc.key === docKey) ?? DOCS[0];
-	$: if (tab === 'tools' && !mcpLoaded && !mcpLoading) void loadMcp();
+	// Once per visit to the tab: a failed load shows its error and waits for Reload.
+	$: if (tab === 'tools' && !mcpLoaded && !mcpLoading && !mcpError) void loadMcp();
 	$: grantedNames = new Set(grants.map((grant) => grant.server_name));
 
 	async function loadWorkspace() {
+		mcpError = null;
+		mcpLoaded = false;
 		workspaceLoading = true;
 		workspaceError = null;
 		try {
@@ -518,6 +523,9 @@
 							<a class="text-[12px] text-sc-ink2 hover:text-sc-ink" href="/agents?tab=routing">Change model & fallbacks →</a>
 						</div>
 						<p class="m-0 mt-1 text-[12px] text-sc-ink2"><span class="font-plex-mono text-sc-ink">{model.model}</span> on {model.provider}. Models and fallback chains are set in one place, Setup → Routing, so every agent follows the same connected-provider rules.</p>
+						{#if fallback}
+							<p class={`m-0 mt-1.5 text-[12px] ${TONE_TEXT[fallback.tone]}`}>{fallback.text[0].toUpperCase() + fallback.text.slice(1)}. <span class="text-sc-ink3">{fallback.help}</span></p>
+						{/if}
 					</section>
 					{#if canPause(agent)}
 						<section class="rounded-md border border-sc-line bg-sc-panel px-3.5 py-3">

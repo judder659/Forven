@@ -243,10 +243,13 @@
 		windowKey = readWindow();
 		void refreshAll();
 		void agentsConfig.load();
+		// Task events refresh at once; the slow poll also runs while the stream is
+		// up, because a pause, a job failure or a stuck run sends no task event.
 		realtime = createRealtimeRefresh(refreshLive, {
-			fallbackMs: 30_000,
+			fallbackMs: 45_000,
 			wsDebounceMs: 1500,
 			wsEvents: ['task_queued', 'task_status_changed', 'task_completed', 'task_failed', 'strategy_transition'],
+			pollWhenWsOfflineOnly: false,
 		});
 		realtime.start();
 		pollers = [createPoller(loadProviders, 60_000), createPoller(loadJobs, 60_000), createPoller(loadYield, 300_000)];
@@ -477,10 +480,10 @@
 				>
 					{item.label}
 					{#if item.id === 'tasks' && fleet && fleet.totals.blocked + fleet.totals.failed_open > 0}
-						<span class="ml-1 rounded-full bg-[#e7b24a]/15 px-1.5 font-plex-mono text-[10.5px] text-[#e7b24a]">{(fleet.totals.blocked + fleet.totals.failed_open).toLocaleString('en-US')}</span>
+						<span class="ml-1 rounded-full bg-[#e7b24a]/15 px-1.5 font-plex-mono text-[10.5px] text-[#e7b24a]" title="Blocked or failed runs waiting for a resume or a dismiss">{(fleet.totals.blocked + fleet.totals.failed_open).toLocaleString('en-US')}</span>
 					{/if}
 					{#if item.id === 'schedules' && fleet && fleet.attention.scheduler.length > 0}
-						<span class="ml-1 rounded-full bg-[#e5574f]/15 px-1.5 font-plex-mono text-[10.5px] text-[#f2956f]">{fleet.attention.scheduler.length}</span>
+						<span class="ml-1 rounded-full bg-[#e5574f]/15 px-1.5 font-plex-mono text-[10.5px] text-[#f2956f]" title="Background jobs whose last run failed">{fleet.attention.scheduler.length}</span>
 					{/if}
 				</button>
 			{/each}
@@ -526,6 +529,7 @@
 					window={windowKey}
 					{now}
 					{autonomy}
+					chains={$agentsConfig.policy?.fallback_chains ?? null}
 					loading={fleetLoading}
 					busyAgent={toggleBusy}
 					on:open={(event) => openAgent(event.detail)}
@@ -581,6 +585,7 @@
 		window={windowKey}
 		{now}
 		{autonomy}
+		chains={$agentsConfig.policy?.fallback_chains ?? null}
 		on:close={closeAgent}
 		on:toggle={(event) => askToggle(event.detail)}
 		on:action={onAttention}

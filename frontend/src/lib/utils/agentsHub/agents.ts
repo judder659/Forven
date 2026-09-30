@@ -132,3 +132,41 @@ export function providerLabel(provider: string | null | undefined): string {
 export function modelParts(agent: Pick<FleetAgent, 'model' | 'model_id'>): { model: string; provider: string } {
 	return { model: agent.model_id || 'Default model', provider: providerLabel(agent.model) };
 }
+
+export interface FallbackNote {
+	/** Two or three words for the roster. */
+	short: string;
+	text: string;
+	/** Why it matters, for a tooltip. */
+	help: string;
+	tone: Tone;
+}
+
+type FallbackChains = Record<string, Array<{ provider?: string | null; model_id?: string | null }>>;
+
+/**
+ * What happens when this agent's provider fails, from the routing policy's
+ * `agent:<id>` chain. A chain that stays on the same provider cannot survive
+ * that provider's outage, so it reads as a warning, like no chain at all.
+ * Brain cycles do not use the agent chain (they run on the Brain's model and
+ * the global backup), so the Brain gets no note rather than a wrong one.
+ */
+export function fallbackNote(agent: Pick<FleetAgent, 'id' | 'model'>, chains: FallbackChains | null | undefined): FallbackNote | null {
+	if (!chains || agent.id === BRAIN_ID) return null;
+	const chain = (chains[`agent:${agent.id}`] ?? []).filter((entry) => entry?.provider);
+	const provider = String(agent.model ?? '').toLowerCase();
+	if (chain.length === 0) {
+		return { short: 'no failover', text: 'no fallback', help: 'If this provider fails, the agent’s runs fail. Add a fallback in Setup → Routing.', tone: 'caution' };
+	}
+	const other = chain.find((entry) => String(entry.provider).toLowerCase() !== provider);
+	if (!other) {
+		return {
+			short: 'no failover',
+			text: `fallback stays on ${providerLabel(provider)}`,
+			help: `Every fallback uses ${providerLabel(provider)} too, so an outage there stops this agent. Add another provider in Setup → Routing.`,
+			tone: 'caution',
+		};
+	}
+	const target = other.model_id || providerLabel(other.provider);
+	return { short: `→ ${target}`, text: `falls back to ${target}`, help: `If ${providerLabel(provider)} fails, runs move to ${providerLabel(other.provider)}.`, tone: 'idle' };
+}

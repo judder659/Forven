@@ -2,9 +2,9 @@
 	import { createEventDispatcher } from 'svelte';
 	import type { FleetAgent, FleetWindow } from '$lib/api/agentsHub';
 	import Sparkbars from './Sparkbars.svelte';
-	import { STATE_META, agentJob, canPause, modelParts, stateLine } from '$lib/utils/agentsHub/agents';
+	import { STATE_META, agentJob, canPause, fallbackNote, modelParts, stateLine } from '$lib/utils/agentsHub/agents';
 	import { fmtCost, fmtRate, fmtSeconds, fmtTokens, plural } from '$lib/utils/agentsHub/format';
-	import { TONE_DOT, TONE_PILL } from '$lib/utils/forge/status';
+	import { TONE_DOT, TONE_PILL, TONE_TEXT } from '$lib/utils/forge/status';
 
 	export let agents: FleetAgent[] = [];
 	export let window: FleetWindow = '24h';
@@ -13,6 +13,8 @@
 	/** Agent whose pause/resume is in flight. */
 	export let busyAgent: string | null = null;
 	export let autonomy: string | null = null;
+	/** The routing policy's fallback chains, keyed `agent:<id>`; null until loaded. */
+	export let chains: Record<string, Array<{ provider?: string | null; model_id?: string | null }>> | null = null;
 
 	const dispatch = createEventDispatcher<{ open: string; toggle: FleetAgent }>();
 
@@ -60,6 +62,7 @@
 						{@const meta = STATE_META[agent.state]}
 						{@const job = agentJob(agent.id)}
 						{@const model = modelParts(agent)}
+						{@const fallback = fallbackNote(agent, chains)}
 						{@const stats = agent.window}
 						<tr class={`group align-top hover:bg-sc-hover ${agent.enabled ? '' : 'bg-[#e7b24a]/[0.03]'}`} data-testid="agents-roster-row">
 							<td class="px-3.5 py-2.5">
@@ -111,6 +114,9 @@
 							<td class="px-3 py-2.5">
 								<div class="truncate font-plex-mono text-[11.5px] text-sc-ink2" title={`${model.model} · ${model.provider}`}>{model.model}</div>
 								<div class="truncate text-[11px] text-sc-ink3">{model.provider}</div>
+								{#if fallback}
+									<div class={`truncate text-[11px] ${TONE_TEXT[fallback.tone]}`} title={`${fallback.text}: ${fallback.help}`}>{fallback.short}</div>
+								{/if}
 							</td>
 							<td class="whitespace-nowrap px-3.5 py-2.5 text-right">
 								<div class="inline-flex items-center gap-1.5">

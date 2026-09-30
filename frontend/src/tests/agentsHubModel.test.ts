@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentFleet, AgentYield, FleetAgent, FleetProblemGroup } from '$lib/api/agentsHub';
 import { buildAttention, FAILED_GROUPS_SHOWN } from '$lib/utils/agentsHub/attention';
-import { canPause, stateLine, typeLabel } from '$lib/utils/agentsHub/agents';
+import { canPause, fallbackNote, stateLine, typeLabel } from '$lib/utils/agentsHub/agents';
 import { fmtCost, fmtRate, fmtSeconds, fmtTokens } from '$lib/utils/agentsHub/format';
 import { fleetHeadline } from '$lib/utils/agentsHub/headline';
 import { furthestReach, summarizeYield } from '$lib/utils/agentsHub/yield';
@@ -76,6 +76,22 @@ describe('agents', () => {
 		expect(stateLine(agent('quant-researcher', { state: 'paused', enabled: false, pending: 3 }), NOW)).toBe('Paused · 3 runs waiting');
 		expect(stateLine(agent('brain', { last: { id: 9, display_id: 'B9', title: 'Brain cycle', type: 'brain_invoke', strategy_id: null, status: 'done', completed_at: iso(7), error: null } }), NOW)).toBe('Idle · last cycle 7m ago');
 		expect(stateLine(agent('full-stack-engineer'), NOW)).toBe('Idle · no runs yet');
+	});
+
+	it('warns when an agent’s fallbacks cannot survive its provider going down', () => {
+		const minimax = { id: 'risk-manager', model: 'minimax' };
+		expect(fallbackNote(minimax, null)).toBeNull();
+		expect(fallbackNote({ id: 'brain', model: 'minimax' }, {})).toBeNull();
+		expect(fallbackNote(minimax, {})?.text).toBe('no fallback');
+		expect(fallbackNote(minimax, { 'agent:risk-manager': [{ provider: 'minimax', model_id: 'MiniMax-M3' }] })).toMatchObject({
+			short: 'no failover',
+			text: 'fallback stays on MiniMax',
+			tone: 'caution',
+		});
+		expect(fallbackNote(minimax, { 'agent:risk-manager': [{ provider: 'minimax', model_id: 'MiniMax-M3' }, { provider: 'openai', model_id: 'gpt-6-luna' }] })).toMatchObject({
+			text: 'falls back to gpt-6-luna',
+			tone: 'idle',
+		});
 	});
 
 	it('never offers the agent switch for the Brain, whose cycles follow the autonomy mode', () => {
