@@ -29,7 +29,7 @@ from forven.model_routing import (
 # `api_core.FORVEN_HOME` has been a public attribute for the whole life of the
 # file. Deleting it is a separate, grep-first decision.
 from forven.config import AUTH_FILE, FORVEN_HOME, is_beta_build  # noqa: F401
-from forven.agents.manager import create_agent, delete_agent, inspect_agent, update_agent
+from forven.agents.manager import create_agent, delete_agent, update_agent
 from forven.auth.store import (
     delete_profile,
     get_profile,
@@ -5152,13 +5152,12 @@ def get_agent_terminal(agent_id: str):
             "FROM agent_tasks WHERE agent_id = ? ORDER BY id DESC LIMIT 60",
             (agent_id,),
         ).fetchall()
-    details = inspect_agent(agent_id)
+    # No raw agent row here: it carries the Discord bot token.
     return {
         "memory": memory,
         "memory_today": memory_today,
         "memory_day": today,
         "documents": docs,
-        "agent": details,
         "logs": [dict(row) for row in logs],
         "runs": [dict(row) for row in runs],
     }

@@ -54,42 +54,66 @@ export function isProviderConnected(p: ForvenAuthProviderStatus): boolean {
 	return Boolean(p.configured) && p.status === 'active';
 }
 
+// The load in flight, so a tab that mounts mid-load can wait for it instead of
+// reading a store that is still empty.
+let inflight: Promise<void> | null = null;
+
+async function loadAll(opts: { refreshModels?: boolean }): Promise<void> {
+	store.update((s) => ({ ...s, loading: true, error: null }));
+	const [authRes, modelRes, policyRes] = await Promise.allSettled([
+		getForvenAuthProviders(),
+		getForvenAgentModelOptions(Boolean(opts.refreshModels)),
+		getForvenModelPolicy(),
+	]);
+
+	store.update((s) => {
+		const next: AgentsConfigState = { ...s, loading: false };
+		if (authRes.status === 'fulfilled') {
+			next.providers = authRes.value.providers ?? [];
+			next.authFile = authRes.value.auth_file ?? null;
+		} else {
+			next.error = authRes.reason instanceof Error ? authRes.reason.message : 'Failed to load providers';
+		}
+		if (modelRes.status === 'fulfilled') {
+			next.modelOptions = modelRes.value.options ?? [];
+			next.enabledKeys = new Set(next.modelOptions.filter((o) => o.enabled).map((o) => o.key));
+		} else {
+			const msg = modelRes.reason instanceof Error ? modelRes.reason.message : 'Failed to load models';
+			next.error = next.error ? `${next.error}; ${msg}` : msg;
+		}
+		if (policyRes.status === 'fulfilled') {
+			next.policy = policyRes.value;
+		} else {
+			const msg = policyRes.reason instanceof Error ? policyRes.reason.message : 'Failed to load model policy';
+			next.error = next.error ? `${next.error}; ${msg}` : msg;
+		}
+		return next;
+	});
+}
+
 export const agentsConfig = {
 	subscribe: store.subscribe,
 	get: () => get(store),
 
 	/** Reload everything. Tabs call this after they mutate providers/keys/policy. */
 	async load(opts: { refreshModels?: boolean } = {}): Promise<void> {
-		store.update((s) => ({ ...s, loading: true, error: null }));
-		const [authRes, modelRes, policyRes] = await Promise.allSettled([
-			getForvenAuthProviders(),
-			getForvenAgentModelOptions(Boolean(opts.refreshModels)),
-			getForvenModelPolicy(),
-		]);
+		const run = loadAll(opts);
+		inflight = run;
+		try {
+			await run;
+		} finally {
+			if (inflight === run) inflight = null;
+		}
+	},
 
-		store.update((s) => {
-			const next: AgentsConfigState = { ...s, loading: false };
-			if (authRes.status === 'fulfilled') {
-				next.providers = authRes.value.providers ?? [];
-				next.authFile = authRes.value.auth_file ?? null;
-			} else {
-				next.error = authRes.reason instanceof Error ? authRes.reason.message : 'Failed to load providers';
-			}
-			if (modelRes.status === 'fulfilled') {
-				next.modelOptions = modelRes.value.options ?? [];
-				next.enabledKeys = new Set(next.modelOptions.filter((o) => o.enabled).map((o) => o.key));
-			} else {
-				const msg = modelRes.reason instanceof Error ? modelRes.reason.message : 'Failed to load models';
-				next.error = next.error ? `${next.error}; ${msg}` : msg;
-			}
-			if (policyRes.status === 'fulfilled') {
-				next.policy = policyRes.value;
-			} else {
-				const msg = policyRes.reason instanceof Error ? policyRes.reason.message : 'Failed to load model policy';
-				next.error = next.error ? `${next.error}; ${msg}` : msg;
-			}
-			return next;
-		});
+	/**
+	 * Resolve once the store holds a model policy, joining a load already in
+	 * flight. The page starts a load on mount; a tab that read the store before
+	 * it landed saw no policy and seeded every fallback chain empty.
+	 */
+	async ensureLoaded(): Promise<void> {
+		if (inflight) await inflight;
+		if (!get(store).policy) await agentsConfig.load();
 	},
 
 	/** Optimistically reflect an enabled-keys toggle without a full reload. */

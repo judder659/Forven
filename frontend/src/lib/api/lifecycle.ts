@@ -576,17 +576,6 @@ export async function getPipelineMotionLog(limit = 200): Promise<PipelineMotionL
 	return fetchApi(`/pipeline/motion-log?limit=${limit}`);
 }
 
-export async function assignErrorToAgent(
-	taskId: number,
-	agentId: string,
-	reason?: string
-): Promise<{ ok: boolean; task_id: number }> {
-	return fetchApi(`/pipeline/errors/${taskId}/assign`, {
-		method: 'POST',
-		body: JSON.stringify({ agent_id: agentId, reason: reason || 'Error investigation' }),
-	});
-}
-
 export async function seedPipeline(): Promise<{ ok: boolean; created: string[]; skipped: string[] }> {
 	return fetchApi('/pipeline/seed', { method: 'POST' });
 }

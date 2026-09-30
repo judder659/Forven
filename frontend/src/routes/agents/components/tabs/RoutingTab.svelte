@@ -274,10 +274,10 @@
 		loading = true;
 		loadError = null;
 		try {
-			// Ensure the shared store is populated (providers/models/policy).
-			if (!$agentsConfig.policy && !$agentsConfig.loading) {
-				await agentsConfig.load();
-			}
+			// Wait for the shared store (providers/models/policy), joining the load
+			// the page starts on mount. Reading it before that load lands seeded
+			// every fallback chain empty, and a save then overwrote the stored chains.
+			await agentsConfig.ensureLoaded();
 			const p = $agentsConfig.policy;
 
 			const [auxRes, live, agentsRes] = await Promise.allSettled([
@@ -521,7 +521,8 @@
 		backupDirty = true;
 	}
 
-	$: noneSelectable = selectable.length === 0;
+	// Not while loading: an empty picker list then means "not loaded yet", not "nothing connected".
+	$: noneSelectable = !loading && selectable.length === 0;
 </script>
 
 <div class="space-y-6">
@@ -598,7 +599,9 @@
 				</div>
 			</div>
 		{/if}
-		{#if agentRows.length === 0}
+		{#if loading && agentRows.length === 0}
+			<p class="text-xs text-sc-ink3">Loading agents…</p>
+		{:else if agentRows.length === 0}
 			<p class="text-xs text-sc-ink3">No agents found.</p>
 		{:else}
 			<ul class="space-y-3">

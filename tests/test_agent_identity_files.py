@@ -211,3 +211,5 @@ def test_agent_terminal_memory_is_the_agents_memory_file(forven_db, _isolate_for
         assert "S03402" not in payload["documents"]["soul"]
         assert payload["runs"] == []
         assert "calls" not in payload
+        # The raw agent row (with its Discord bot token) is not part of the payload.
+        assert "agent" not in payload

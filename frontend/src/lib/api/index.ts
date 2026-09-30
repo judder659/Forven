@@ -607,7 +607,6 @@ export {
 	getPipelineErrors,
 	getPipelineActivity,
 	getPipelineMotionLog,
-	assignErrorToAgent,
 	seedPipeline,
 	getTaskContainers,
 	getContainerAudit,
