@@ -139,10 +139,9 @@
 		return { tone: 'ok', text: `${providerLabel(provider)} connected`, help: '' };
 	}
 
-	// Same rule as the roster: own fallbacks, then the backup; Brain cycles have only the backup.
-	function cover(id: string, slot: Slot, backup: string, live: Set<string>): FallbackNote | null {
-		const brain = id === BRAIN_ID;
-		return coverNote(outageCover(slot.key, brain ? [] : slot.fallbacks, backup, live), slot.key, brain);
+	// Same rule as the roster: the agent's own fallbacks, then the backup.
+	function cover(slot: Slot, backup: string, live: Set<string>): FallbackNote | null {
+		return coverNote(outageCover(slot.key, slot.fallbacks, backup, live), slot.key);
 	}
 
 	$: live = new Set([...connected].map((id) => id.toLowerCase()));
@@ -150,11 +149,11 @@
 	// ---- The three-step checklist at the top.
 	$: required = agents.map((agent) => draft?.agents[agent.id]?.key ?? '');
 	$: unassigned = required.filter((key) => !key || !connected.has(providerOfKey(key))).length;
-	$: exposed = draft ? agents.filter((agent) => !cover(agent.id, draft!.agents[agent.id], draft!.backup.key, live)?.covered).length : 0;
+	$: exposed = draft ? agents.filter((agent) => !cover(draft!.agents[agent.id], draft!.backup.key, live)?.covered).length : 0;
 	$: providersInUse = draft ? [...new Set(Object.values(draft.agents).map((slot) => providerOfKey(slot.key)).filter(Boolean))] : [];
 	$: backupCarries = draft ? agents.filter((agent) => {
 		const slot = draft!.agents[agent.id];
-		return outageCover(slot.key, agent.id === BRAIN_ID ? [] : slot.fallbacks, draft!.backup.key, live).via?.backup;
+		return outageCover(slot.key, slot.fallbacks, draft!.backup.key, live).via?.backup;
 	}).length : 0;
 	$: backupNote = describeBackup(draft?.backup.key ?? '', backupCarries, exposed, agents.length, live);
 
@@ -203,7 +202,7 @@
 
 	{#if loadErrors.length > 0}
 		<p class="m-0 rounded-md border border-[#e7b24a]/40 bg-[#e7b24a]/10 px-3 py-2 text-[12px] text-[#e7b24a]" role="alert">
-			Could not load {loadErrors.join(', ')}.{#if policyMissing} Saving is off until it loads, so stored fallbacks are never overwritten.{/if}
+			Could not load {loadErrors.join(', ')}.{#if policyMissing}{' '}Saving is off until it loads, so stored fallbacks are never overwritten.{/if}
 			<button type="button" class="ml-1 underline" on:click={() => void load()}>Retry</button>
 		</p>
 	{/if}
@@ -226,7 +225,7 @@
 				{#each agents as agent (agent.id)}
 					{@const slot = draft.agents[agent.id]}
 					{@const status = modelStatus(slot.key, true, connected, healthOf)}
-					{@const note = cover(agent.id, slot, draft.backup.key, live)}
+					{@const note = cover(slot, draft.backup.key, live)}
 					{@const changed = base ? slot.key !== base.agents[agent.id]?.key || slot.fallbacks.join('|') !== base.agents[agent.id]?.fallbacks.join('|') : false}
 					<li class={`grid items-start gap-3 px-3.5 py-2.5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)_minmax(0,1.5fr)_minmax(0,0.9fr)] ${changed ? 'bg-[#7fb2ff]/[0.04]' : ''}`} data-testid="setup-agent-row">
 						<div class="min-w-0">
@@ -239,9 +238,6 @@
 						<ModelSelect value={slot.key} {options} {shortlist} unsetLabel={slot.key ? null : 'Choose a model'} ariaLabel={`${agent.name} model`} on:change={(event) => setAgent(agent.id, { key: event.detail.value })} />
 						<div class="min-w-0">
 							<FallbackList fallbacks={slot.fallbacks} primary={slot.key} {options} {shortlist} ariaLabel={`${agent.name} fallback`} on:change={(event) => setAgent(agent.id, { fallbacks: event.detail.fallbacks })} />
-							{#if agent.id === BRAIN_ID}
-								<p class="m-0 mt-1 text-[11px] text-sc-ink3">Used by the Brain's recall runs. Brain cycles fall back to the backup model below.</p>
-							{/if}
 						</div>
 						<div class="min-w-0 text-[11.5px]">
 							<p class={`m-0 flex items-center gap-1.5 ${TONE_TEXT[status.tone]}`} title={status.help}><span class={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE_DOT[status.tone]}`} aria-hidden="true"></span><span class="truncate">{status.text}</span></p>
@@ -292,7 +288,7 @@
 		<section class="overflow-hidden rounded-md border border-sc-line bg-sc-panel" aria-label="Safety net">
 			<header class="border-b border-sc-line px-3.5 py-2.5">
 				<h3 class="m-0 text-[13px] font-semibold text-sc-ink">Safety net</h3>
-				<p class="m-0 text-[11.5px] text-sc-ink3">One model, tried last when a run's own model and fallbacks fail. It is the only fallback Brain cycles have. A run whose model or fallbacks already use its provider skips it, so it helps only on a provider your agents do not use. Off: those runs fail and show up in Needs you.</p>
+				<p class="m-0 text-[11.5px] text-sc-ink3">One model, tried last when a run's own model and fallbacks fail, for every agent including the Brain. A run whose model or fallbacks already use its provider skips it, so it helps only on a provider your agents do not use. Off: those runs fail and show up in Needs you.</p>
 			</header>
 			{#if draft.backup}
 				{@const status = modelStatus(draft.backup.key, false, connected, healthOf)}

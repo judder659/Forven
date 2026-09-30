@@ -430,7 +430,7 @@
 						title={$forvenWsConnected ? 'Streaming task events; the page refreshes as runs start and finish.' : 'Live stream offline; the page polls instead.'}
 					>
 						<span class={`h-1.5 w-1.5 rounded-full ${$forvenWsConnected ? 'animate-pulse bg-[#3cc48f]' : 'bg-[#e7b24a]'}`} aria-hidden="true"></span>
-						{$forvenWsConnected ? 'Live' : 'Polling'}{#if lastLoadedAt} · updated {ago(lastLoadedAt, now)}{/if}
+						{$forvenWsConnected ? 'Live' : 'Polling'}{#if lastLoadedAt}{' '}· updated {ago(lastLoadedAt, now)}{/if}
 					</span>
 					{#if autonomy}
 						<span class="inline-flex items-center rounded-full border border-sc-line2 px-2 py-0.5 text-[11px] text-sc-ink2" title="The autonomy mode in the top bar decides whether agents act on their own.">

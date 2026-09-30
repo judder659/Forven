@@ -101,18 +101,18 @@ describe('agents', () => {
 		expect(fallbackNote(minimax, context({ 'agent:risk-manager': [{ provider: 'zai', model_id: 'glm-5.1' }] }))).toMatchObject({ text: 'Z.AI not connected', covered: false });
 	});
 
-	it('counts the backup model as failover, and it is all Brain cycles have', () => {
+	it('counts the backup model as failover, and treats the Brain like every agent', () => {
 		const minimax = { id: 'risk-manager', model: 'minimax', model_id: 'MiniMax-M3' };
 		const brain = { id: 'brain', model: 'minimax', model_id: 'MiniMax-M3' };
-		const chains = { 'agent:brain': [{ provider: 'openai', model_id: 'gpt-6-luna' }] };
-		const withBackup = (backup: string) => failoverContext(chains, backup, ['minimax', 'openai']);
-		expect(fallbackNote(minimax, withBackup('openai:gpt-6-luna'))).toMatchObject({ short: '→ backup', covered: true });
+		const context = (backup: string, chains: Record<string, Array<{ provider: string; model_id: string }>> = {}) =>
+			failoverContext(chains, backup, ['minimax', 'openai']);
+		expect(fallbackNote(minimax, context('openai:gpt-6-luna'))).toMatchObject({ short: '→ backup', covered: true });
+		expect(fallbackNote(minimax, context('openai:gpt-6-luna'))?.help).toBe('If MiniMax fails, runs move to the backup model on OpenAI.');
 		// A backup on the agent's own provider is skipped by the runner.
-		expect(fallbackNote(minimax, withBackup('minimax:MiniMax-M3'))).toMatchObject({ text: 'fallback stays on MiniMax', covered: false });
-		// Brain cycles never read the agent:brain chain.
-		expect(fallbackNote(brain, withBackup(''))).toMatchObject({ text: 'no backup', covered: false });
-		expect(fallbackNote(brain, withBackup('minimax:MiniMax-M3'))).toMatchObject({ text: 'backup stays on MiniMax', covered: false });
-		expect(fallbackNote(brain, withBackup('openai:gpt-6-luna'))?.help).toBe('If MiniMax fails, Brain cycles move to the backup model on OpenAI.');
+		expect(fallbackNote(minimax, context('minimax:MiniMax-M3'))).toMatchObject({ text: 'fallback stays on MiniMax', covered: false });
+		// Brain cycles run with agent_id "brain", so its own chain counts.
+		expect(fallbackNote(brain, context('', { 'agent:brain': [{ provider: 'openai', model_id: 'gpt-6-luna' }] }))).toMatchObject({ text: 'falls back to gpt-6-luna', covered: true });
+		expect(fallbackNote(brain, context(''))).toMatchObject({ text: 'no fallback', covered: false });
 	});
 
 	it('never offers the agent switch for the Brain, whose cycles follow the autonomy mode', () => {

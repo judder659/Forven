@@ -52,7 +52,7 @@
 						<div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
 							<h3 class="m-0 text-[12.5px] font-medium text-sc-ink">{names[summary.agentId] ?? summary.agentId}</h3>
 							<span class="text-[11px] text-sc-ink3">
-								{#if summary.ideas > 0}{plural(summary.ideas, 'idea')} · {/if}{#if summary.spend !== null}{fmtCost(summary.spend)} spent{#if summary.costPerStrategy !== null} · {fmtCost(summary.costPerStrategy)} per strategy{/if}{/if}
+								{#if summary.ideas > 0}{plural(summary.ideas, 'idea')} ·{' '}{/if}{#if summary.spend !== null}{fmtCost(summary.spend)} spent{#if summary.costPerStrategy !== null}{' '}· {fmtCost(summary.costPerStrategy)} per strategy{/if}{/if}
 							</span>
 						</div>
 

@@ -1,9 +1,9 @@
 // Whether a run survives an outage of its model's provider, judged the way the
 // runner builds a run's chain (forven/agents/runner.py): the model, then its own
 // fallbacks on connected providers, then the backup model when the backup's
-// provider is connected and differs from the model's. Brain cycles pass no
-// fallbacks of their own: the backup is the only one they have. Nothing at
-// runtime reads a fallback list for the backup itself.
+// provider is connected and differs from the model's. The Brain is no
+// exception: its cycles run with agent_id "brain" (forven/runtime_worker.py).
+// Nothing at runtime reads a fallback list for the backup itself.
 
 type ChainEntry = { provider?: string | null; model_id?: string | null };
 

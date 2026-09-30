@@ -166,7 +166,7 @@
 							<dt class="text-sc-ink3">Used by</dt>
 							<dd class="m-0 truncate text-sc-ink2" title={users.join(', ')}>{users.length ? namesList(users) : routing ? 'nothing yet' : '…'}</dd>
 							<dt class="text-sc-ink3">Models</dt>
-							<dd class="m-0 text-sc-ink2">{modelCount.get(key) ?? 0} available{#if shortlistCount.get(key)} · {shortlistCount.get(key)} on your shortlist{/if}</dd>
+							<dd class="m-0 text-sc-ink2">{modelCount.get(key) ?? 0} available{#if shortlistCount.get(key)}{' '}· {shortlistCount.get(key)} on your shortlist{/if}</dd>
 							{#if provider.expires_in}
 								<dt class="text-sc-ink3">Sign-in</dt>
 								<dd class="m-0 text-sc-ink2">{provider.expires_in}</dd>

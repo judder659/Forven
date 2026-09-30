@@ -145,39 +145,29 @@ export interface FallbackNote {
 	covered: boolean;
 }
 
-/**
- * What happens to runs on `key` when its provider fails, in words. The Brain's
- * cycles have no fallbacks of their own, only the backup, so its wording names
- * the backup.
- */
-export function coverNote(cover: OutageCover, key: string, brain: boolean): FallbackNote | null {
+/** What happens to runs on `key` when its provider fails, in words. */
+export function coverNote(cover: OutageCover, key: string): FallbackNote | null {
 	const from = providerLabel(providerOf(key));
-	const runs = brain ? 'Brain cycles' : 'runs';
 	if (cover.via) {
 		const to = providerLabel(providerOf(cover.via.key));
 		const model = modelOf(cover.via.key);
 		return cover.via.backup
-			? { short: '→ backup', text: `falls back to the backup, ${model}`, help: `If ${from} fails, ${runs} move to the backup model on ${to}.`, tone: 'idle', covered: true }
-			: { short: `→ ${model}`, text: `falls back to ${model}`, help: `If ${from} fails, ${runs} move to ${to}.`, tone: 'idle', covered: true };
+			? { short: '→ backup', text: `falls back to the backup, ${model}`, help: `If ${from} fails, runs move to the backup model on ${to}.`, tone: 'idle', covered: true }
+			: { short: `→ ${model}`, text: `falls back to ${model}`, help: `If ${from} fails, runs move to ${to}.`, tone: 'idle', covered: true };
 	}
 	const fix = 'Add a fallback or a backup model on another provider in Setup → Agent models.';
-	const stops = brain ? 'Brain cycles stop' : 'this agent stops';
 	switch (cover.gap) {
 		case 'none':
-			return brain
-				? { short: 'no failover', text: 'no backup', help: `Brain cycles fall back only to the backup model, which is off, so if ${from} fails they stop. Set a backup on another provider in Setup → Agent models.`, tone: 'caution', covered: false }
-				: { short: 'no failover', text: 'no fallback', help: `If ${from} fails, this agent’s runs fail. ${fix}`, tone: 'caution', covered: false };
+			return { short: 'no failover', text: 'no fallback', help: `If ${from} fails, this agent’s runs fail. ${fix}`, tone: 'caution', covered: false };
 		case 'same-provider':
-			return brain
-				? { short: 'no failover', text: `backup stays on ${from}`, help: `Brain cycles fall back only to the backup model, which is on ${from} too, so an outage there stops them. Set a backup on another provider in Setup → Agent models.`, tone: 'caution', covered: false }
-				: { short: 'no failover', text: `fallback stays on ${from}`, help: `Everything it falls back to is on ${from} too, so an outage there stops this agent. ${fix}`, tone: 'caution', covered: false };
+			return { short: 'no failover', text: `fallback stays on ${from}`, help: `Everything it falls back to is on ${from} too, so an outage there stops this agent. ${fix}`, tone: 'caution', covered: false };
 		case 'not-connected': {
 			const blocked = cover.blocked!;
 			const other = providerLabel(providerOf(blocked.key));
 			return {
 				short: 'no failover',
 				text: `${other} not connected`,
-				help: `${blocked.backup ? 'The backup model' : 'Its fallback'} is on ${other}, which is not connected, so if ${from} fails ${stops}. Connect ${other} under Setup → Providers.`,
+				help: `${blocked.backup ? 'The backup model' : 'Its fallback'} is on ${other}, which is not connected, so if ${from} fails this agent stops. Connect ${other} under Setup → Providers.`,
 				tone: 'caution',
 				covered: false,
 			};
@@ -189,17 +179,16 @@ export function coverNote(cover: OutageCover, key: string, brain: boolean): Fall
 
 /**
  * What happens when this agent's provider fails: its `agent:<id>` fallbacks,
- * then the backup model. A fallback on the same provider, or on one that is not
- * connected, cannot carry a run through that outage, so it reads as a warning.
- * Brain cycles skip the agent chain and use only the backup. Null until the
- * policy, the backup and the connected providers have loaded.
+ * then the backup model. The Brain is no exception: its cycles run with
+ * agent_id "brain" (forven/runtime_worker.py). A fallback on the same provider,
+ * or on one that is not connected, cannot carry a run through that outage, so
+ * it reads as a warning. Null until the policy, the backup and the connected
+ * providers have loaded.
  */
 export function fallbackNote(agent: Pick<FleetAgent, 'id' | 'model' | 'model_id'>, context: FailoverContext | null | undefined): FallbackNote | null {
 	if (!context) return null;
 	const provider = String(agent.model ?? '').trim().toLowerCase();
 	if (!provider) return null;
 	const key = `${provider}:${agent.model_id ?? ''}`;
-	const brain = agent.id === BRAIN_ID;
-	const fallbacks = brain ? [] : context.chains[`agent:${agent.id}`] ?? [];
-	return coverNote(outageCover(key, fallbacks, context.backup, context.connected), key, brain);
+	return coverNote(outageCover(key, context.chains[`agent:${agent.id}`] ?? [], context.backup, context.connected), key);
 }

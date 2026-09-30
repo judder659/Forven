@@ -132,7 +132,7 @@ describe('Setup · Agent models', () => {
 
 		await choose('Alpha fallback', LUNA);
 		expect(target.textContent).toContain('falls back to gpt-6-luna');
-		// Brain cycles only use the backup, which is off.
+		// The Brain still has no fallback of its own, and the backup is off.
 		expect(target.textContent).toContain('1 of 2 agents stop if Anthropic goes down');
 		button('Save changes').click();
 		await flush();
