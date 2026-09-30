@@ -103,6 +103,29 @@
 		if (state === 'ok') return 'OK';
 		return state || 'Unknown';
 	}
+	// A provider nobody has called for a week has no current health to report;
+	// its last state is history, so it reads "idle" rather than a green OK.
+	const IDLE_AFTER_MS = 7 * 24 * 3600 * 1000;
+
+	function toMs(value?: string | number | null): number | null {
+		if (value === null || value === undefined || value === '') return null;
+		const t = typeof value === 'number' ? value * 1000 : Date.parse(value);
+		return Number.isNaN(t) ? null : t;
+	}
+
+	function isIdle(r: ProviderRuntimeHealth): boolean {
+		const last = toMs(r.last_event_at) ?? toMs(r.since);
+		return r.state === 'ok' && last !== null && Date.now() - last > IDLE_AFTER_MS;
+	}
+
+	const STATE_RANK: Record<string, number> = { down: 0, degraded: 1, ok: 2 };
+	$: ordered = [...runtime].sort(
+		(a, b) =>
+			Number(isIdle(a)) - Number(isIdle(b)) ||
+			(STATE_RANK[a.state] ?? 3) - (STATE_RANK[b.state] ?? 3) ||
+			a.provider.localeCompare(b.provider),
+	);
+
 	function formatSince(value?: string | number | null): string {
 		if (value === null || value === undefined || value === '') return '';
 		// Backend emits epoch SECONDS as a number; an ISO string is also accepted.
@@ -159,16 +182,20 @@
 			</p>
 		{:else}
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-				{#each runtime as r (r.provider)}
-					<div class="border p-4 space-y-2 {stateColor(r.state)}">
+				{#each ordered as r (r.provider)}
+					{@const idle = isIdle(r)}
+					<div class="border p-4 space-y-2 {idle ? 'border-sc-line bg-sc-panel opacity-70' : stateColor(r.state)}">
 						<div class="flex items-center justify-between gap-2">
 							<span class="font-mono text-sm text-sc-ink uppercase">{r.provider}</span>
 							<span class="flex items-center gap-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink">
-								<span class="w-1.5 h-1.5 rounded-full {dotColor(r.state)}"></span>
-								{stateLabel(r.state)}
+								<span class="w-1.5 h-1.5 rounded-full {idle ? 'bg-sc-ink4' : dotColor(r.state)}"></span>
+								{idle ? 'Idle' : stateLabel(r.state)}
 							</span>
 						</div>
-						{#if r.kind}
+						{#if idle}
+							<p class="text-xs text-sc-ink3">No calls in over a week; this was its state when last used.</p>
+						{/if}
+						{#if r.kind && r.kind !== 'ok'}
 							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">{r.kind}</div>
 						{/if}
 						{#if r.message}

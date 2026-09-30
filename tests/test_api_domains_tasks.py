@@ -289,11 +289,6 @@ def test_get_pipeline_errors_and_activity_stub(forven_db):
     assert activity[0]["type"] in {"task", "transition"}
 
 
-def test_assign_pipeline_error_requires_agent_id():
-    with pytest.raises(Exception):
-        tasks_domain.assign_pipeline_error_stub(task_id=1, agent_id="")
-
-
 def test_seed_pipeline_creates_missing_strategies(monkeypatch, forven_db):
     created: list[str] = []
     promoted: list[str] = []

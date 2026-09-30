@@ -241,3 +241,46 @@ describe('RoutingTab — set every agent to one model', () => {
 		}
 	});
 });
+
+describe('RoutingTab — mounting while the page is still loading the config', () => {
+	it('waits for the load in flight instead of seeding every fallback chain empty', async () => {
+		// A direct load of /agents?tab=routing: the page starts the config load and
+		// the tab mounts before it lands. The stored chain must still show up, and
+		// a save must carry it rather than overwrite it with an empty list.
+		const brainChain = [{ provider: 'anthropic', model_id: 'claude-sonnet-5' }];
+		agentsConfig.setPolicy(null as any);
+		let releasePolicy: (value: unknown) => void = () => {};
+		apiMocks.getForvenModelPolicy.mockReturnValue(
+			new Promise((resolve) => {
+				releasePolicy = resolve;
+			}),
+		);
+		const pageLoad = agentsConfig.load();
+
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(RoutingTab, { target, props: {} });
+		await flush();
+
+		releasePolicy({
+			primary_provider: 'anthropic',
+			primary_model: 'claude-opus-4-8',
+			provider_priority: ['anthropic'],
+			fallback_chains: { 'agent:brain': brainChain },
+		});
+		await pageLoad;
+		await flush();
+
+		expect(cardByLabel('Brain').textContent).toContain('Claude Sonnet 5');
+
+		const alpha = cardByLabel('Alpha').querySelector('select') as HTMLSelectElement;
+		alpha.value = OPUS;
+		alpha.dispatchEvent(new Event('change', { bubbles: true }));
+		await flush();
+		byButtonText('Save changes').click();
+		await flush();
+
+		const payload = apiMocks.updateForvenModelPolicy.mock.calls[0][0];
+		expect(payload.fallback_chains['agent:brain']).toEqual(brainChain);
+	});
+});

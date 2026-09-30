@@ -29,7 +29,7 @@ from forven.model_routing import (
 # `api_core.FORVEN_HOME` has been a public attribute for the whole life of the
 # file. Deleting it is a separate, grep-first decision.
 from forven.config import AUTH_FILE, FORVEN_HOME, is_beta_build  # noqa: F401
-from forven.agents.manager import create_agent, delete_agent, inspect_agent, update_agent
+from forven.agents.manager import create_agent, delete_agent, update_agent
 from forven.auth.store import (
     delete_profile,
     get_profile,
@@ -5004,8 +5004,10 @@ def put_agent_document(agent_id: str, document: str, payload: LegacyAgentDocumen
     elif key == "agents":
         write_workspace(f"agents/{agent_id}/AGENTS.md", content)
     elif key == "role":
+        # ROLE.md is the mandate the agent reads. `agents.role` is its one-line
+        # persona label (and how a custom developer is recognised), so the
+        # document's prose must never be copied into it.
         write_workspace(f"agents/{agent_id}/ROLE.md", content)
-        update_agent(agent_id, role=content)
     else:
         raise HTTPException(status_code=400, detail=f"unsupported document: {document}")
 
@@ -5124,67 +5126,40 @@ def post_agent_test_discord(agent_id: str, payload: AgentDiscordTestBody | None 
 
 
 def get_agent_terminal(agent_id: str):
+    """One agent's working context: its memory, documents, activity and recent runs.
+
+    ``memory`` is ``agents/<id>/memory/MEMORY.md``, the long-term memory injected
+    into every run; ``memory_today`` is today's log beside it. Runs are listed
+    without their output blobs: the run page (/tasks/<id>) carries the transcript.
+    """
     if not _lookup_agent(agent_id):
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     docs = _build_agent_documents(agent_id)
+    today = datetime.now(timezone.utc).date().isoformat()
+    memory = read_workspace(f"agents/{agent_id}/memory/MEMORY.md", optional=True) or ""
+    memory_today = read_workspace(f"agents/{agent_id}/memory/{today}.md", optional=True) or ""
     with get_db() as conn:
         source_prefix = f"agent:{agent_id}"
-        source_like = f"{source_prefix}:%"
         logs = conn.execute(
-            "SELECT * FROM activity_log "
+            "SELECT id, level, source, message, created_at FROM activity_log "
             "WHERE source = ? OR source LIKE ? "
-            "ORDER BY id DESC LIMIT 50",
-            (source_prefix, source_like),
+            "ORDER BY id DESC LIMIT 80",
+            (source_prefix, f"{source_prefix}:%"),
         ).fetchall()
-        logs_payload = [dict(log_row) for log_row in logs]
-        # Recent task "calls": the request + model response + per-provider attempt
-        # trace (with error bodies) so the Logs tab can show the full request->response
-        # back-and-forth and exactly WHY a provider failed (incl. masked fallback hops).
-        try:
-            call_rows = conn.execute(
-                "SELECT id, title, status, provider, model_id, output_data, error, "
-                "created_at, completed_at "
-                "FROM agent_tasks WHERE agent_id = ? "
-                "ORDER BY id DESC LIMIT 25",
-                (agent_id,),
-            ).fetchall()
-            calls_payload = [dict(r) for r in call_rows]
-            # The Brain reasons via a separate brain_invoke task (different table);
-            # fold those in so its terminal shows its real request->response decisions
-            # (and per-provider trace), not just the RAG recall lookups.
-            if agent_id == "brain":
-                brain_rows = conn.execute(
-                    "SELECT id, status, result, error, created_at, completed_at "
-                    "FROM tasks WHERE type='brain_invoke' ORDER BY id DESC LIMIT 25"
-                ).fetchall()
-                for r in brain_rows:
-                    d = dict(r)
-                    calls_payload.append({
-                        "id": d["id"],
-                        "title": f"Brain cycle #{d['id']}",
-                        "status": d["status"],
-                        "provider": None,
-                        "model_id": None,
-                        "output_data": d.get("result"),
-                        "error": d.get("error"),
-                        "created_at": d["created_at"],
-                        "completed_at": d.get("completed_at"),
-                    })
-                # Normalize the two created_at formats (ISO 'T' vs space) before sorting.
-                calls_payload.sort(
-                    key=lambda c: str(c.get("created_at") or "").replace("T", " ")[:19],
-                    reverse=True,
-                )
-                calls_payload = calls_payload[:40]
-        except Exception:
-            calls_payload = []
-    details = inspect_agent(agent_id)
+        runs = conn.execute(
+            "SELECT id, display_id, type, title, status, provider, model_id, started_at, completed_at, "
+            "created_at, total_tokens, cost_usd, strategy_id, substr(COALESCE(error, ''), 1, 400) AS error "
+            "FROM agent_tasks WHERE agent_id = ? ORDER BY id DESC LIMIT 60",
+            (agent_id,),
+        ).fetchall()
+    # No raw agent row here: it carries the Discord bot token.
     return {
-        "memory": docs.get("soul"),
+        "memory": memory,
+        "memory_today": memory_today,
+        "memory_day": today,
         "documents": docs,
-        "agent": details,
-        "logs": logs_payload,
-        "calls": calls_payload,
+        "logs": [dict(row) for row in logs],
+        "runs": [dict(row) for row in runs],
     }
 
 

@@ -27,6 +27,9 @@
 	let activeContext = '';
 	let categoryFilter: string | 'all' = 'all';
 	let nameFilter = '';
+	// Tools outside the agent's base permissions never reach the override step,
+	// so they are hidden unless asked for and cannot be overridden.
+	let showUnavailable = false;
 	let overrideMap: Map<string, RowState> = new Map();
 	let savedOverrideMap: Map<string, RowState> = new Map();
 	let dirty = false;
@@ -34,16 +37,18 @@
 	$: contexts = toolsets ? toolsets.valid_contexts : [];
 	$: categories = toolsets ? ['all', ...toolsets.categories] : ['all'];
 	$: tools = toolsets ? toolsets.all_tools : ([] as ToolDefinition[]);
+	$: activeContextData = toolsets && activeContext ? toolsets.contexts[activeContext] : null;
+	$: effectiveByName = buildEffectiveLookup(activeContextData?.effective ?? []);
+	$: unavailableCount = tools.filter((t) => !effectiveByName.has(t.name)).length;
 	$: filteredTools = tools.filter(
 		(t) =>
+			(showUnavailable || effectiveByName.has(t.name)) &&
 			(categoryFilter === 'all' || t.category === categoryFilter) &&
 			(!nameFilter.trim() || t.name.toLowerCase().includes(nameFilter.trim().toLowerCase())),
 	);
-	$: activeContextData = toolsets && activeContext ? toolsets.contexts[activeContext] : null;
-	$: effectiveByName = buildEffectiveLookup(activeContextData?.effective ?? []);
 	$: contextOverrideCount = activeContextData ? activeContextData.overrides.length : 0;
 	$: filteredEnabledCount = filteredTools.filter((t) => effectiveByName.get(t.name)?.enabled).length;
-	$: filteredDisabledCount = filteredTools.length - filteredEnabledCount;
+	$: filteredDisabledCount = filteredTools.filter((t) => effectiveByName.get(t.name)?.enabled === false).length;
 
 	function contextOverrideCountFor(ctx: string): number {
 		return toolsets?.contexts[ctx]?.overrides.length ?? 0;
@@ -150,13 +155,13 @@
 
 	function effectiveLabel(tool: ToolDefinition): string {
 		const eff = effectiveByName.get(tool.name);
-		if (!eff) return 'unknown';
+		if (!eff) return 'not available to this agent';
 		return `${eff.enabled ? 'enabled' : 'disabled'} via ${eff.source}`;
 	}
 
 	function effectiveClass(tool: ToolDefinition): string {
 		const eff = effectiveByName.get(tool.name);
-		if (!eff) return 'text-sc-ink2';
+		if (!eff) return 'text-sc-ink4';
 		return eff.enabled ? 'text-emerald-400' : 'text-red-400';
 	}
 
@@ -225,10 +230,10 @@
 
 <svelte:head><title>Agent Toolsets | Forven</title></svelte:head>
 
-<div class="flex h-screen overflow-hidden">
+<div class="flex h-full min-h-0 overflow-hidden">
 	<aside class="w-64 border-r border-sc-line bg-sc-panel overflow-y-auto">
 		<header class="px-4 py-4 border-b border-sc-line">
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agents</div>
+			<a href={selectedAgentId ? `/agents?agent=${encodeURIComponent(selectedAgentId)}` : '/agents'} class="text-[12px] text-sc-ink3 hover:text-sc-ink">← Agents</a>
 			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink mt-1">Toolset matrix</h1>
 		</header>
 		{#if agentsLoading}
@@ -332,10 +337,16 @@
 				</div>
 			</nav>
 
-			<div class="flex items-center gap-3 text-[11px] text-sc-ink3">
+			<div class="flex flex-wrap items-center gap-3 text-[11px] text-sc-ink3">
 				<span>{filteredTools.length} tool(s)</span>
 				<span class="text-emerald-400">{filteredEnabledCount} enabled</span>
 				<span class="text-red-400">{filteredDisabledCount} disabled</span>
+				{#if unavailableCount > 0}
+					<label class="ml-auto flex items-center gap-1.5">
+						<input type="checkbox" bind:checked={showUnavailable} />
+						Show {unavailableCount} tools outside this agent's permissions
+					</label>
+				{/if}
 			</div>
 
 			<table class="w-full text-xs">
@@ -362,14 +373,18 @@
 							<td class="px-3 py-1.5 text-sc-ink3">{tool.category}</td>
 							<td class="px-3 py-1.5 {effectiveClass(tool)}">{effectiveLabel(tool)}</td>
 							<td class="px-3 py-1.5">
-								<button
-									type="button"
-									disabled={saving}
-									class="rounded-md text-[12px] px-2 py-0.5 border disabled:opacity-50 {rowChipClass(state)}"
-									on:click={() => cycleRow(tool.name)}
-								>
-									{rowChipLabel(state)}
-								</button>
+								{#if effectiveByName.has(tool.name)}
+									<button
+										type="button"
+										disabled={saving}
+										class="rounded-md text-[12px] px-2 py-0.5 border disabled:opacity-50 {rowChipClass(state)}"
+										on:click={() => cycleRow(tool.name)}
+									>
+										{rowChipLabel(state)}
+									</button>
+								{:else}
+									<span class="text-[12px] text-sc-ink4" title="An override cannot grant a tool outside the agent's base permissions.">—</span>
+								{/if}
 							</td>
 						</tr>
 					{/each}

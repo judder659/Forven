@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from forven import api_core as core
 from forven.api_security import require_operator_access
@@ -91,10 +91,28 @@ def get_agents_spend(days: int = 30):
     return {"days": days, "daily": rows, "totals": sorted(totals.values(), key=lambda a: -a["cost_usd"])}
 
 
-@router.get("/api/agents/outcomes")
-def get_agent_outcomes(days: int = 7) -> dict:
-    from forven.agents.outcomes import get_agent_outcomes as summarize
-    return summarize(days)
+@router.get("/api/agents/fleet")
+def get_agents_fleet(window: str = "24h") -> dict:
+    """Every agent's state now, its runs over the window, and what needs the operator."""
+    from forven.api_domains.agents_fleet import build_fleet
+
+    return build_fleet(window)
+
+
+@router.get("/api/agents/yield")
+def get_agents_yield(days: int = Query(default=7, ge=1, le=90)) -> dict:
+    """Strategies the agents created in the last `days` and how far each got."""
+    from forven.api_domains.agents_fleet import build_yield
+
+    return build_yield(days)
+
+
+@router.get("/api/agents/activity")
+def get_agents_activity(limit: int = Query(default=40, ge=1, le=200)) -> list[dict]:
+    """The latest finished runs across every agent, Brain cycles included."""
+    from forven.api_domains.agents_fleet import recent_runs
+
+    return recent_runs(limit)
 
 
 @router.get("/api/agents/{agent_id}")

@@ -281,14 +281,23 @@ def get_task_containers(
     status: str | None = None,
     agent_id: str | None = None,
     strategy_id: str | None = None,
+    include_dismissed: bool = False,
 ) -> dict[str, list[dict]]:
+    """Newest runs first. ``status`` takes one status or a comma-separated list.
+
+    Dismissed runs are hidden unless asked for: dismissing is how the operator
+    clears a failure, so it must leave the list.
+    """
     normalized_limit = max(1, min(int(limit or 200), 5000))
     filters: list[str] = []
     params: list[object] = []
 
-    if status:
-        filters.append("LOWER(t.status) = LOWER(?)")
-        params.append(status.strip())
+    statuses = [part.strip().lower() for part in str(status or "").split(",") if part.strip()]
+    if statuses:
+        filters.append(f"t.status IN ({', '.join('?' * len(statuses))})")
+        params.extend(statuses)
+    if not include_dismissed:
+        filters.append("t.dismissed_at IS NULL")
     if agent_id:
         filters.append("t.agent_id = ?")
         params.append(agent_id.strip())
@@ -463,19 +472,6 @@ def get_pipeline_activity_stub(limit: int = 50) -> list[dict[str, object]]:
     return payload
 
 
-def assign_pipeline_error_stub(task_id: int, agent_id: str, reason: str | None = None) -> dict[str, object]:
-    normalized_agent = str(agent_id or "").strip()
-    if not normalized_agent:
-        raise HTTPException(status_code=400, detail="agent_id is required")
-    log_activity(
-        "warning",
-        "pipeline",
-        f"Assigned pipeline error task_id={task_id} to {normalized_agent}",
-        {"task_id": int(task_id), "agent_id": normalized_agent, "reason": reason or "Error investigation"},
-    )
-    return {"ok": True, "task_id": int(task_id)}
-
-
 def seed_pipeline() -> dict[str, object]:
     """Populate the database with a few initial strategies and stress tests."""
     from forven.brain import create_strategy
@@ -536,7 +532,6 @@ def seed_pipeline() -> dict[str, object]:
 
 
 __all__ = [
-    "assign_pipeline_error_stub",
     "get_agent_tasks",
     "get_pipeline_activity_stub",
     "get_pipeline_errors_stub",

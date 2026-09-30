@@ -31,12 +31,14 @@ def get_task_containers(
     status: str | None = None,
     agent_id: str | None = None,
     strategy_id: str | None = None,
+    include_dismissed: bool = False,
 ):
     return tasks_domain.get_task_containers(
         limit=limit,
         status=status,
         agent_id=agent_id,
         strategy_id=strategy_id,
+        include_dismissed=include_dismissed,
     )
 
 
@@ -56,12 +58,14 @@ def get_pipeline_task_containers(
     status: str | None = None,
     agent_id: str | None = None,
     strategy_id: str | None = None,
+    include_dismissed: bool = False,
 ):
     return tasks_domain.get_task_containers(
         limit=limit,
         status=status,
         agent_id=agent_id,
         strategy_id=strategy_id,
+        include_dismissed=include_dismissed,
     )
 
 
@@ -78,13 +82,6 @@ def get_pipeline_errors(limit: int = 50):
 @router.get("/api/pipeline/activity")
 def get_pipeline_activity(limit: int = 50):
     return tasks_domain.get_pipeline_activity_stub(limit=limit)
-
-
-@router.post("/api/pipeline/errors/{task_id}/assign")
-def assign_pipeline_error(task_id: int, body: dict):
-    agent_id = str(body.get("agent_id") or "").strip()
-    reason = str(body.get("reason") or "").strip() or None
-    return tasks_domain.assign_pipeline_error_stub(task_id=task_id, agent_id=agent_id, reason=reason)
 
 
 @router.post("/api/pipeline/seed")
