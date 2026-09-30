@@ -3,6 +3,7 @@
 	import type { FleetAgent, FleetWindow } from '$lib/api/agentsHub';
 	import Sparkbars from './Sparkbars.svelte';
 	import { STATE_META, agentJob, canPause, fallbackNote, modelParts, stateLine } from '$lib/utils/agentsHub/agents';
+	import type { FailoverContext } from '$lib/utils/agentsHub/failover';
 	import { fmtCost, fmtRate, fmtSeconds, fmtTokens, plural } from '$lib/utils/agentsHub/format';
 	import { TONE_DOT, TONE_PILL, TONE_TEXT } from '$lib/utils/forge/status';
 
@@ -13,8 +14,8 @@
 	/** Agent whose pause/resume is in flight. */
 	export let busyAgent: string | null = null;
 	export let autonomy: string | null = null;
-	/** The routing policy's fallback chains, keyed `agent:<id>`; null until loaded. */
-	export let chains: Record<string, Array<{ provider?: string | null; model_id?: string | null }>> | null = null;
+	/** Fallback chains, backup and connected providers; null until loaded. */
+	export let failover: FailoverContext | null = null;
 
 	const dispatch = createEventDispatcher<{ open: string; toggle: FleetAgent }>();
 
@@ -62,7 +63,7 @@
 						{@const meta = STATE_META[agent.state]}
 						{@const job = agentJob(agent.id)}
 						{@const model = modelParts(agent)}
-						{@const fallback = fallbackNote(agent, chains)}
+						{@const fallback = fallbackNote(agent, failover)}
 						{@const stats = agent.window}
 						<tr class={`group align-top hover:bg-sc-hover ${agent.enabled ? '' : 'bg-[#e7b24a]/[0.03]'}`} data-testid="agents-roster-row">
 							<td class="px-3.5 py-2.5">

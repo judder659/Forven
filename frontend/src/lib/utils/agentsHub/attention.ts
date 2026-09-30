@@ -133,7 +133,7 @@ export function buildAttention(
 				.join(' '),
 			meta: health.last_event_at ? `last call ${ago(epochToMs(health.last_event_at), now)}` : '',
 			agentId: null,
-			actions: [{ kind: 'link', label: 'Health', href: '/agents?tab=health' }],
+			actions: [{ kind: 'link', label: 'Providers', href: '/agents?tab=providers' }],
 		});
 	}
 
@@ -159,7 +159,7 @@ export function buildAttention(
 			detail: warning.fallback ? `Its runs fall back to ${warning.fallback}.` : 'There is no fallback, so its runs fail.',
 			meta: '',
 			agentId: warning.agent_id,
-			actions: [{ kind: 'link', label: 'Routing', href: '/agents?tab=routing' }],
+			actions: [{ kind: 'link', label: 'Agent models', href: '/agents?tab=routing' }],
 		});
 	}
 
