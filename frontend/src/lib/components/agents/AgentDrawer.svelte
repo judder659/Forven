@@ -207,7 +207,8 @@
 	}
 
 	async function deleteAgent() {
-		if (!confirm(`Delete ${agent.name}? Its runs stay in the history; the agent and its settings are removed.`)) return;
+		// forven.agents.manager.delete_agent removes the agent's runs with it.
+		if (!confirm(`Delete ${agent.name}? Its runs and their history are deleted with it. Its memory and documents stay on disk.`)) return;
 		deleting = true;
 		try {
 			await deleteForvenAgent(agent.id);
@@ -550,7 +551,7 @@
 							<div class="flex flex-wrap items-center justify-between gap-2">
 								<div>
 									<h3 class="m-0 text-[12.5px] font-medium text-sc-ink">Delete this agent</h3>
-									<p class="m-0 mt-0.5 text-[12px] text-sc-ink3">Its past runs stay in the history.</p>
+									<p class="m-0 mt-0.5 text-[12px] text-sc-ink3">Its runs are deleted with it; its memory and documents stay on disk.</p>
 								</div>
 								<button type="button" class="rounded-md border border-[#e5574f]/60 bg-[#e5574f]/10 px-3 py-1 text-[12px] text-[#f6b4ae] hover:bg-[#e5574f]/20 disabled:opacity-50" disabled={deleting} on:click={deleteAgent}>{deleting ? 'Deleting…' : 'Delete agent'}</button>
 							</div>

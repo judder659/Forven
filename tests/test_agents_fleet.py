@@ -273,3 +273,34 @@ def test_task_containers_hide_dismissed_runs_and_take_several_statuses(forven_db
     assert [task["id"] for task in failed] == [kept]
     assert sorted(task["id"] for task in both) == sorted([kept, stopped])
     assert len(everything) == 2
+
+
+def test_real_routes_resolve_and_pause_persists(forven_db):
+    """Through the real app: the new routes resolve ahead of /api/agents/{id},
+    the terminal carries no raw agent row, and a pause sticks."""
+    from fastapi.testclient import TestClient
+
+    from forven.api import app
+
+    client = TestClient(app)
+    _agent("risk-manager")
+    _task("risk-manager", "failed", created=-timedelta(hours=1), completed=-timedelta(hours=1), error="boom")
+
+    fleet = client.get("/api/agents/fleet?window=7d")
+    assert fleet.status_code == 200, fleet.text
+    assert fleet.json()["window"] == "7d"
+    assert client.get("/api/agents/yield?days=1").status_code == 200
+    assert isinstance(client.get("/api/agents/activity").json(), list)
+    terminal = client.get("/api/agents/risk-manager/terminal")
+    assert terminal.status_code == 200, terminal.text
+    assert "agent" not in terminal.json()
+    runs = client.get("/api/pipeline/task-containers?status=failed,blocked")
+    assert [task["status"] for task in runs.json()["tasks"]] == ["failed"]
+
+    paused = client.patch("/api/agents/risk-manager", json={"enabled": False})
+    assert paused.status_code == 200, paused.text
+    with get_db() as conn:
+        assert conn.execute("SELECT enabled FROM agents WHERE id = 'risk-manager'").fetchone()["enabled"] == 0
+    state = next(agent for agent in agents_fleet.build_fleet("24h")["agents"] if agent["id"] == "risk-manager")
+    assert state["state"] == "paused"
+    assert state["enabled"] is False
