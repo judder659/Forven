@@ -92,6 +92,32 @@ def test_cycle_stops_at_the_daily_budget(auto_mode, monkeypatch):
     assert result["reason"] == "daily budget spent"
 
 
+def test_spent_budget_logs_once_until_creation_resumes(auto_mode, monkeypatch, caplog):
+    import forven.strategy_creation as creation
+
+    monkeypatch.setattr(creation, "_last_idle_logged", None)
+    budget = {"daily_budget": 1, "max_in_flight": 20}
+    monkeypatch.setattr(creation, "creation_settings", lambda raw_settings=None: budget)
+    with get_db() as conn:
+        _insert_creation_task(conn, origin=creation.AUTONOMOUS_ORIGIN, status="done")
+
+    def idle_lines() -> list[str]:
+        return [r.getMessage() for r in caplog.records if "strategy creation idle" in r.getMessage()]
+
+    with caplog.at_level("INFO", logger="forven.strategy_creation"):
+        creation.run_creation_cycle()
+        creation.run_creation_cycle()
+        assert len(idle_lines()) == 1
+        assert "daily budget spent (1/1" in idle_lines()[0]
+        assert "resumes at 00:00 UTC" in idle_lines()[0]
+
+        budget["daily_budget"] = 2
+        assert creation.run_creation_cycle()["status"] == "queued"
+        creation.run_creation_cycle()
+        assert len(idle_lines()) == 2
+        assert "(2/2" in idle_lines()[1]
+
+
 def test_yesterdays_tasks_do_not_count_against_today(auto_mode, monkeypatch):
     import forven.strategy_creation as creation
 
