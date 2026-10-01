@@ -1789,7 +1789,9 @@ def _robustness_outcome(
                     int(_load_wfa_config().get("gauntlet", {}).get("wfa_min_folds", 2)),
                     int(_floors["wfa_min_folds"]),
                 )
-                if 0 < evaluated_splits < _min_folds:
+                if is_required and 0 < evaluated_splits < _min_folds:
+                    # (A non-required thin WFA falls through to the non-required
+                    # FAIL handling below so the serial chain keeps running.)
                     # Too few folds reached wfa_min_fold_trades to judge consistency.
                     # That is absence of evidence (the window was short for the
                     # strategy's cadence), the same class the paper gate maps to

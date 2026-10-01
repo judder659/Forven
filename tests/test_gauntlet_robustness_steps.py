@@ -272,3 +272,21 @@ def test_single_fold_rescue_follows_an_operator_lowered_fold_minimum(robustness_
 
     assert outcome["status"] == "passed"
     assert outcome["rescued_by_fold_pass_rate"] is True
+
+
+def test_non_required_thin_walk_forward_does_not_block_the_chain(robustness_env, monkeypatch):
+    _patch_fold_floor(monkeypatch, 0.33)
+    response = {
+        "persisted_result_id": "WF-THIN-NR",
+        "verdict": "FAIL",
+        "splits": [
+            {"out_of_sample": {"total_trades": 7, "sharpe": -0.4}},
+            {"out_of_sample": {"total_trades": 2, "sharpe": 1.5}},
+        ],
+    }
+    monkeypatch.setattr(tasks, "_run_walk_forward", lambda _body: response)
+
+    outcome = tasks.run_walk_forward(_workflow(["monte_carlo"]), {})
+
+    assert outcome["status"] == "passed"
+    assert outcome["non_required_failure"] is True
