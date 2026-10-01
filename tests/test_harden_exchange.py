@@ -127,11 +127,40 @@ def test_requested_testnet_with_mainnet_credentials_is_refused(monkeypatch):
     with pytest.raises(RuntimeError, match="Refusing to place a MAINNET order"):
         hl.cancel_all_orders("BTC", testnet=True)
     with pytest.raises(RuntimeError, match="Refusing to place a MAINNET order"):
-        hl.place_protective_stop("BTC", "long", 0.01, 49_000.0, testnet=True)
-    with pytest.raises(RuntimeError, match="Refusing to place a MAINNET order"):
-        hl.place_take_profit("BTC", "long", 0.01, 51_000.0, testnet=True)
-    with pytest.raises(RuntimeError, match="Refusing to place a MAINNET order"):
         hl.set_leverage("BTC", 3.0, testnet=True)
+
+
+def test_unarmed_mainnet_still_permits_reduce_only_protective_triggers(monkeypatch):
+    """STOP-GUARD-1: stops and TPs are reduce-only, so they can only shrink a
+    position. Refusing them unarmed left an open mainnet position unprotected
+    (no stop repair, no trailing ratchet, no orphan emergency stop)."""
+    import forven.exchange.hyperliquid as hl
+
+    monkeypatch.delenv("FORVEN_ALLOW_MAINNET", raising=False)
+    monkeypatch.setattr("forven.sim.clock.is_sim_active", lambda: False)
+    monkeypatch.setattr(
+        hl,
+        "_get_creds",
+        lambda: {"HL_API_SECRET": "0x" + ("1" * 64), "USE_TESTNET": "false"},
+    )
+    sent = []
+
+    class _Ex:
+        def order(self, *args, **kwargs):
+            sent.append(kwargs)
+            return {"status": "ok", "response": {"data": {"statuses": [{"resting": {"oid": 7}}]}}}
+
+    monkeypatch.setattr(hl, "_exchange_for_trading", lambda testnet, vault_address=None: (_Ex(), object(), "0xabc"))
+    monkeypatch.setattr(hl, "_submit", lambda _name, _breaker, fn, *a, **k: fn(*a, **k))
+    monkeypatch.setattr(hl, "quantize_size", lambda asset, size, url: float(size))
+    monkeypatch.setattr(hl, "round_to_tick", lambda px, asset, url: float(px))
+    monkeypatch.setattr(hl, "_resolve_exchange_url", lambda ex: "url")
+
+    stop = hl.place_protective_stop("BTC", "long", 0.01, 49_000.0, testnet=True)
+    tp = hl.place_take_profit("BTC", "long", 0.01, 51_000.0, testnet=True)
+
+    assert not stop.get("error") and not tp.get("error")
+    assert [k.get("reduce_only") for k in sent] == [True, True]
 
 
 def test_requested_testnet_with_mainnet_credentials_is_allowed_when_armed(monkeypatch):

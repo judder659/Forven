@@ -60,6 +60,20 @@ class TestModeAwareRiskLimits:
         assert limits["max_risk_per_trade"] == 0.01
         assert limits["portfolio_budget"] == 0.01
 
+    def test_mainnet_resolving_credentials_use_mainnet_limits(self):
+        """RISK-NET-1: get_execution_mode never returns "mainnet", so the tight
+        profile must follow the network orders actually resolve to."""
+        with patch("forven.config.get_execution_mode", return_value="paper"), \
+                patch("forven.exchange.hyperliquid.resolve_configured_testnet", return_value=False):
+            limits = _get_risk_limits()
+        assert limits == _MAINNET_LIMITS
+
+    def test_testnet_resolving_credentials_keep_testnet_limits(self):
+        with patch("forven.config.get_execution_mode", return_value="live"), \
+                patch("forven.exchange.hyperliquid.resolve_configured_testnet", return_value=True):
+            limits = _get_risk_limits()
+        assert limits == _TESTNET_LIMITS
+
     def test_mainnet_limits_strictly_tighter_than_testnet(self):
         for key in _TESTNET_LIMITS:
             assert _MAINNET_LIMITS[key] <= _TESTNET_LIMITS[key], (

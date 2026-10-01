@@ -19,7 +19,7 @@ import pytest
 
 def _patch_hl(monkeypatch, hl, exchange):
     monkeypatch.setattr("forven.sim.clock.is_sim_active", lambda: False)
-    monkeypatch.setattr(hl, "_assert_execution_allowed", lambda testnet: None)
+    monkeypatch.setattr(hl, "_assert_execution_allowed", lambda testnet, **_kw: None)
     monkeypatch.setattr(hl, "_exchange_for_trading", lambda testnet=True, vault_address=None: (exchange, object(), "0xabc"))
     monkeypatch.setattr(hl, "_with_breaker", lambda _name, _breaker, fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr(hl, "get_all_mids", lambda testnet=True: {"BTC": 100.0})

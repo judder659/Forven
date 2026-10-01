@@ -84,3 +84,27 @@ def test_unarmed_mainnet_entry_is_still_refused(monkeypatch, forven_db):
     monkeypatch.delenv("FORVEN_ALLOW_MAINNET", raising=False)
     with pytest.raises(RuntimeError, match="FORVEN_ALLOW_MAINNET is not set"):
         hl._assert_execution_allowed(False)
+
+
+def test_expired_arming_still_permits_protective_stops(armed, monkeypatch, forven_db):
+    """STOP-GUARD-1: a lapsed arming must not stop the stop-loss on an open
+    position from being repaired or ratcheted. Reduce-only triggers are exits."""
+    _expire(monkeypatch)
+    calls = []
+    monkeypatch.setattr("forven.sim.clock.is_sim_active", lambda: False)
+    monkeypatch.setattr(hl, "_effective_testnet", lambda requested: False)
+    monkeypatch.setattr(
+        hl, "_exchange_for_trading",
+        lambda testnet, vault_address=None: (_ for _ in ()).throw(RuntimeError("reached exchange")),
+    )
+    real_guard = hl._assert_execution_allowed
+
+    def _spy(testnet, **kwargs):
+        calls.append(kwargs)
+        return real_guard(testnet, **kwargs)
+
+    monkeypatch.setattr(hl, "_assert_execution_allowed", _spy)
+    for placer in (hl.place_protective_stop, hl.place_take_profit):
+        with pytest.raises(RuntimeError, match="reached exchange"):
+            placer("BTC", "long", 0.01, 49_000.0)
+    assert calls == [{"exit_only": True}, {"exit_only": True}]

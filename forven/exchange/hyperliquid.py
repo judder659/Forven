@@ -552,8 +552,14 @@ def _assert_execution_allowed(testnet: bool, *, exit_only: bool = False) -> None
     emergency flatten into ``RuntimeError`` unless the operator had armed the flag,
     i.e. a system that cannot get OUT of a real position. Being unable to exit is
     strictly more dangerous than entering unarmed, so a reduce-only exit is always
-    permitted; it is logged CRITICAL instead of raised. ONLY ``close_position``
-    may pass this — never market/limit/stop/take-profit/cancel/leverage.
+    permitted; it is logged CRITICAL instead of raised. ``close_position`` and the
+    reduce-only protective triggers (``place_protective_stop``,
+    ``place_take_profit``) may pass this — never market/limit/cancel/leverage.
+
+    STOP-GUARD-1: the protective triggers are always ``reduce_only=True``, so they
+    can only shrink an existing position. Refusing them on an unarmed or lapsed
+    arming left stop repairs, trailing ratchets and orphan emergency stops failing
+    while the position stayed open, which is the same "cannot get out" hazard.
     """
     if testnet:
         return
@@ -599,7 +605,7 @@ def _assert_execution_allowed(testnet: bool, *, exit_only: bool = False) -> None
         return
     if exit_only:
         log.critical(
-            "UNARMED MAINNET EXIT PERMITTED: a reduce-only close resolved to the MAINNET "
+            "UNARMED MAINNET EXIT PERMITTED: a reduce-only exit resolved to the MAINNET "
             "endpoint while FORVEN_ALLOW_MAINNET is NOT set. Refusing it would strand real "
             "capital, so the exit proceeds. Real MAINNET funds are at risk on this instance — "
             "flatten and reconcile, then either arm the flag deliberately or repoint the "
@@ -1887,7 +1893,8 @@ def place_protective_stop(
 
     # MAINNET-GUARD-1: resolve the network ONCE, then guard/route off it.
     testnet = _effective_testnet(testnet)
-    _assert_execution_allowed(testnet)
+    # STOP-GUARD-1: a reduce-only protective trigger is an exit, not an entry.
+    _assert_execution_allowed(testnet, exit_only=True)
     exchange, info, address = _exchange_for_trading(testnet, vault_address=vault_address)
     asset = asset.upper()
     _raw_stop_size = normalized_size
@@ -1983,7 +1990,8 @@ def place_take_profit(
 
     # MAINNET-GUARD-1: resolve the network ONCE, then guard/route off it.
     testnet = _effective_testnet(testnet)
-    _assert_execution_allowed(testnet)
+    # STOP-GUARD-1: a reduce-only protective trigger is an exit, not an entry.
+    _assert_execution_allowed(testnet, exit_only=True)
     exchange, info, address = _exchange_for_trading(testnet, vault_address=vault_address)
     asset = asset.upper()
     _raw_tp_size = normalized_size
