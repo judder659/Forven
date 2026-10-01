@@ -80,6 +80,14 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
     # an operator can export FORVEN_DISABLE_CHROMA_IN_PROCESS=0 to override.
     if sys.platform.startswith("win"):
         env.setdefault("FORVEN_DISABLE_CHROMA_IN_PROCESS", "1")
+    # The subprocess reads stored provider logins and settings from the
+    # encrypted store under FORVEN_HOME. When the key comes from the
+    # environment rather than the on-disk key file, the bot needs it too or
+    # every decrypt fails (#117).
+    encryption_key = os.environ.get("FORVEN_ENCRYPTION_KEY")
+    if encryption_key:
+        env["FORVEN_ENCRYPTION_KEY"] = encryption_key
+
     for guard_var in (
         "FORVEN_DISABLE_CHROMA_IN_PROCESS",
         "FORVEN_DISABLE_CHROMA",

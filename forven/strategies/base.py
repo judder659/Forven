@@ -10,6 +10,23 @@ import pandas as pd
 
 TradeMode = Literal["long_only", "short_only", "both"]
 
+# Shorthand spellings authors commonly write for a trade mode. Without these a
+# strategy declaring trade_mode="short" silently backtested long-only (#117).
+_TRADE_MODE_ALIASES: dict[str, str] = {
+    "long_only": "long_only",
+    "long": "long_only",
+    "short_only": "short_only",
+    "short": "short_only",
+    "both": "both",
+    "long_short": "both",
+}
+
+
+def normalize_trade_mode(value: object) -> str | None:
+    """Return the canonical trade mode for ``value``, or None if unrecognized."""
+    raw = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return _TRADE_MODE_ALIASES.get(raw)
+
 
 class ParamAccessor:
     """Compatibility wrapper for generated strategies that use ``self.p``."""

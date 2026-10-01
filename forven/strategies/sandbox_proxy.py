@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from forven.strategies.base import BaseStrategy, DirectionalSignals, Signal
+from forven.strategies.base import BaseStrategy, DirectionalSignals, Signal, normalize_trade_mode
 
 
 class SandboxOnlyExecutionError(RuntimeError):
@@ -71,11 +71,11 @@ class SandboxOnlyStrategy(BaseStrategy):
         declared = self.params.get("_supported_trade_modes")
         if isinstance(declared, (list, tuple, set)):
             for candidate in declared:
-                normalized = str(candidate or "").strip().lower()
-                if normalized in {"long_only", "short_only", "both"}:
+                normalized = normalize_trade_mode(candidate)
+                if normalized is not None:
                     modes.add(normalized)
-        trade_mode = str(self.params.get("trade_mode") or "").strip().lower()
-        if trade_mode in {"long_only", "short_only", "both"}:
+        trade_mode = normalize_trade_mode(self.params.get("trade_mode"))
+        if trade_mode is not None:
             modes.add(trade_mode)
         return modes
 
