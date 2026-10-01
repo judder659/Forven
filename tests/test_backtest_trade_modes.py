@@ -386,3 +386,33 @@ def test_param_derived_both_on_long_only_clamps_instead_of_erroring():
     )
     assert err is None, err
     assert mode == "long_only"
+
+
+def test_trade_mode_shorthand_aliases_normalize():
+    """Issue #117: trade_mode="short" silently backtested long-only (0 trades)."""
+    norm = backtest_mod._normalize_trade_mode_value
+    assert norm("short") == "short_only"
+    assert norm("Long") == "long_only"
+    assert norm("short-only") == "short_only"
+    assert norm("long_short") == "both"
+    assert norm("both") == "both"
+    assert norm("sideways") is None
+    assert backtest_mod._default_trade_mode_from_params({"trade_mode": "short"}) == "short_only"
+
+
+def test_short_shorthand_resolves_for_mirror_safe_strategy():
+    resolved_mode, error = backtest_mod.resolve_backtest_trade_mode(
+        None,
+        strategy_type="mirror_short_dummy",
+        params={"trade_mode": "short"},
+        strategy_obj=_MirrorShortStrategy("S-MIRROR", {"trade_mode": "short"}),
+    )
+    assert error is None
+    assert resolved_mode == "short_only"
+
+
+def test_unrecognized_trade_mode_warns(caplog):
+    backtest_mod._warned_invalid_trade_modes.discard("sideways")
+    with caplog.at_level("WARNING", logger="forven.strategies.backtest"):
+        assert backtest_mod._default_trade_mode_from_params({"trade_mode": "sideways"}) == "long_only"
+    assert any("sideways" in record.getMessage() for record in caplog.records)

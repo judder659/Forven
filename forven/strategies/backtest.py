@@ -767,17 +767,46 @@ def validate_backtest_risk_controls(
     )
 
 
+# Shorthand authors naturally write. The paper dashboard
+# (api_domains.paper._normalize_session_trade_mode) already reads these, so the
+# backtest and the paper kernel must too, or a strategy written with
+# trade_mode="short" is validated and traded long-only while the dashboard
+# calls it short.
+_TRADE_MODE_ALIASES: dict[str, str] = {
+    "short": "short_only",
+    "shorts": "short_only",
+    "long": "long_only",
+    "longs": "long_only",
+    "long_short": "both",
+    "long_and_short": "both",
+    "bidirectional": "both",
+}
+
+_warned_invalid_trade_modes: set[str] = set()
+
+
 def _normalize_trade_mode_value(value: object) -> str | None:
-    normalized = str(value or "").strip().lower()
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     if normalized in _VALID_TRADE_MODES:
         return normalized
-    return None
+    return _TRADE_MODE_ALIASES.get(normalized)
 
 
 def _default_trade_mode_from_params(params: dict | None) -> str:
-    configured = _normalize_trade_mode_value((params or {}).get("trade_mode"))
+    raw_mode = (params or {}).get("trade_mode")
+    configured = _normalize_trade_mode_value(raw_mode)
     if configured is not None:
         return configured
+    if str(raw_mode or "").strip():
+        key = str(raw_mode).strip()
+        if key not in _warned_invalid_trade_modes:
+            _warned_invalid_trade_modes.add(key)
+            log.warning(
+                "Unrecognized trade_mode %r in strategy params; expected one of %s. "
+                "Falling back to the position/direction hint or long_only.",
+                raw_mode,
+                ", ".join(sorted(_VALID_TRADE_MODES)),
+            )
     side_hint = str(
         (params or {}).get("position")
         or (params or {}).get("direction")

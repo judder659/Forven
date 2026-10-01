@@ -1231,6 +1231,19 @@ class TestBotLifecyclePhase2:
         assert env.get("ZAI_API_KEY") == "zai-secret"
         assert "DISCORD_TOKEN" not in env
 
+    def test_build_isolated_env_forwards_encryption_key(self, monkeypatch):
+        """Issue #117: an env-supplied Fernet key reaches the subprocess, so it can
+        decrypt in-app auth profiles instead of reading every provider as offline."""
+        from forven.bot_factory.manager import _build_isolated_env
+
+        monkeypatch.setenv("FORVEN_ENCRYPTION_KEY", "fernet-key")
+        env = _build_isolated_env({"id": "b1", "model": "deepseek:deepseek-chat"})
+        assert env.get("FORVEN_ENCRYPTION_KEY") == "fernet-key"
+
+        monkeypatch.delenv("FORVEN_ENCRYPTION_KEY")
+        env = _build_isolated_env({"id": "b1", "model": "deepseek:deepseek-chat"})
+        assert "FORVEN_ENCRYPTION_KEY" not in env
+
     def test_build_isolated_env_forwards_chroma_guard(self, monkeypatch):
         """ISO-4: the in-process ChromaDB segfault guard is forwarded to the subprocess."""
         from forven.bot_factory.manager import _build_isolated_env

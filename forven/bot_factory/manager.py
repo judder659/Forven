@@ -53,7 +53,7 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
     """Build a minimal environment for the bot subprocess.
 
     Passes FORVEN_HOME, BOT_ID, minimal system vars, the ChromaDB in-process
-    guard, and only the credential(s) for the bot's RESOLVED LLM provider. Does
+    guard, FORVEN_ENCRYPTION_KEY when set, and only the credential(s) for the bot's RESOLVED LLM provider. Does
     NOT inherit the parent's full environment (no Discord/exchange secrets, etc.).
     """
     env = {
@@ -88,6 +88,17 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
         val = os.environ.get(guard_var)
         if val:
             env[guard_var] = val
+
+    # In-app auth profiles and KV secrets are encrypted with the Fernet key. It
+    # normally lives in a key file under FORVEN_HOME (already reachable), but an
+    # operator can supply it as FORVEN_ENCRYPTION_KEY instead. Without it the
+    # subprocess cannot decrypt auth.json, so every provider reads as
+    # disconnected, and with no key file present it would mint a fresh key
+    # that orphans the existing ciphertext. Forwarding it gives the bot the same
+    # access the key file already grants in the default setup.
+    encryption_key = os.environ.get("FORVEN_ENCRYPTION_KEY")
+    if encryption_key:
+        env["FORVEN_ENCRYPTION_KEY"] = encryption_key
 
     # Forward only the credential(s) for the bot's RESOLVED provider, derived
     # via the canonical resolver (not a model-name substring heuristic), so a
