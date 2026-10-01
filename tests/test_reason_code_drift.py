@@ -309,6 +309,29 @@ def test_producer_wfa_window_insufficient_too_few_folds(forven_db, monkeypatch):
     _assert_exempt(reason, "wfa_window_insufficient")
 
 
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"state": "missing"},
+        {"state": "running", "result_id": "R1"},
+        {"state": "errored", "attempts": 3},
+        {"state": "budget_exhausted", "family": "other", "limit": 3},
+        {"state": "fail", "reasons": ["lost money on the held-back period (-0.9%)"]},
+    ],
+)
+def test_producer_holdout_prose_keeps_its_code(state):
+    """The research holdout's reasons carry their code structurally, but a consumer
+    that sees only the flattened "Gate failure: ..." prose re-derives it. A pending
+    held-back test read as gate_reject failed the gauntlet workflow step, which
+    archives the strategy (S10869/S11388). A completed FAIL stays merit."""
+    from forven.research_holdout import gate_message
+
+    message, code = gate_message(state)
+    assert _resolve_reason_code(GateRejection(message, reason_code=code)) == code
+    assert _extract_reason_code(f"Gate failure: {message}") == code
+    assert (code in _EVIDENCE_ABSENCE_REASON_CODES) is (code != "holdout_reject")
+
+
 # --------------------------------------------------------------------------------------
 # Historical rows: the prose templates the sites emit must still text-match exempt via
 # the _extract_reason_code fallback (protects old gate_rejections rows that store prose
@@ -365,6 +388,15 @@ _HISTORICAL_PROSE = [
         "S00552 REJECT: Walk-forward has 1 folds, requires minimum 2; re-run WFA on the "
         "trade-frequency-aware window",
         "wfa_window_insufficient",
+    ),
+    (
+        "Held-back test pending — the one-shot test is running; its verdict decides",
+        "holdout_pending",
+    ),
+    (
+        "Held-back test budget for the 'other' family is spent (3 per quarter) — waits "
+        "for the next quarterly roll",
+        "holdout_budget_exhausted",
     ),
 ]
 

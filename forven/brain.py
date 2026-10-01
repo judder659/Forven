@@ -1514,12 +1514,28 @@ def transition_stage(
         # rows for transitions that end up blocked. Keep `conn` read-only until
         # all gates have passed.
 
-        def _record_blocked_transition(block_reason: str, motion: str) -> dict[str, str | None]:
-            """Record a blocked promotion without changing the strategy's stage."""
+        def _record_blocked_transition(
+            block_reason: str, motion: str, gate_reason_code: str | None = None
+        ) -> dict[str, str | None]:
+            """Record a blocked promotion without changing the strategy's stage.
+
+            ``motion`` is this function's own vocabulary and stays the result's
+            ``reason_code``. ``gate_reason_code`` is the policy gate's taxonomy code
+            (``GateRejection.reason_code``): the gate's reason is flattened into the
+            ``blocked_reason`` prose, so its code travels beside it.
+            """
             now = datetime.now(timezone.utc).isoformat()
             current_owner = row["owner"]
             display_id = row["display_id"]
             event_reason = str(block_reason or "").strip() or f"Transition blocked: {current_stage} -> {normalized_target}"
+            details = {
+                "display_id": display_id,
+                "base_id": row["base_id"],
+                "motion": motion,
+                "requested_stage": normalized_target,
+            }
+            if gate_reason_code:
+                details["gate_reason_code"] = gate_reason_code
 
             conn.execute(
                 "INSERT INTO strategy_events "
@@ -1533,14 +1549,7 @@ def transition_stage(
                     event_reason,
                     current_owner,
                     current_owner,
-                    json.dumps(
-                        {
-                            "display_id": display_id,
-                            "base_id": row["base_id"],
-                            "motion": motion,
-                            "requested_stage": normalized_target,
-                        }
-                    ),
+                    json.dumps(details),
                     now,
                 ),
             )
@@ -1565,7 +1574,7 @@ def transition_stage(
                 normalized_target,
                 event_reason,
             )
-            return {
+            blocked = {
                 "strategy_id": strategy_id,
                 "from": current_stage,
                 "to": current_stage,
@@ -1575,6 +1584,9 @@ def transition_stage(
                 "blocked_reason": event_reason,
                 "reason_code": motion,
             }
+            if gate_reason_code:
+                blocked["gate_reason_code"] = gate_reason_code
+            return blocked
 
         # FORCE BYPASS: Only the user (via UI/API) or a designated automated SAFETY
         # actor (e.g. the decay kill-switch) can force-bypass gates. Other automated
@@ -1874,9 +1886,16 @@ def transition_stage(
                 # caller (e.g. the gauntlet paper-promotion step) must RETRY rather
                 # than terminally fail + auto-archive the challenger.
                 motion = "gate_contention" if _is_slot_contention_reason(gate_reason) else "gate_failure"
+                # The f-string flattens a GateRejection to plain text, so pass its
+                # structural code along: the gauntlet workflow step reads it to tell
+                # evidence absence (holdout_pending) from merit. Without it, a
+                # held-back test still running read as a merit failure and the step
+                # went failed_gate, which archives the strategy. S10869 and S11388
+                # reached paper only because their tests finished first.
                 return _record_blocked_transition(
                     f"Gate failure: {gate_reason}",
                     motion,
+                    gate_reason_code=getattr(gate_reason, "reason_code", None),
                 )
 
         # Promotion approval gate: for capital-consuming promotions (gauntlet→paper,

@@ -467,6 +467,76 @@ def test_mcp_gate_report_surfaces_the_held_back_fail(forven_db, monkeypatch, hol
     assert any("held-back test FAILED" in action for action in report["next_actions"])
 
 
+# --- the gauntlet workflow's paper step --------------------------------------------------
+
+
+def _set_holdout(sid, state):
+    """Give ``sid`` real held-back test records in ``state`` (``missing``: none yet)."""
+    if state == "running":
+        _insert_holdout(sid, status="running")
+    elif state == "errored":
+        for attempt in range(rh.MAX_ATTEMPTS):
+            _insert_holdout(sid, status="failed", rid=f"{sid}-err-{attempt}")
+    elif state == "budget_exhausted":
+        for idx in range(3):
+            _insert_holdout(f"{sid}-SIB{idx}", status="succeeded", verdict="FAIL", rid=f"{sid}-sib-{idx}")
+    elif state == "fail":
+        _insert_holdout(sid, status="succeeded", verdict="FAIL")
+
+
+@pytest.mark.parametrize(
+    "state, status, code",
+    [
+        ("missing", "blocked_runtime", "holdout_pending"),
+        ("running", "blocked_runtime", "holdout_pending"),
+        ("errored", "blocked_runtime", "holdout_pending"),
+        ("budget_exhausted", "blocked_runtime", "holdout_budget_exhausted"),
+        ("fail", "failed_gate", "holdout_reject"),
+    ],
+)
+def test_workflow_paper_step_waits_for_the_held_back_verdict(forven_db, monkeypatch, holdout_on, state, status, code):
+    """S10869 (2026-09-27) and S11388 (2026-10-01): the workflow's own gate attempt
+    submitted the one-shot test, then the step ended failed_gate on "Held-back test
+    pending". demote_failed_gate_strategies archives failed_gate workflows, so both
+    PASSes reached paper only by finishing first. Through the real
+    brain.transition_stage, a test with no verdict now blocks the step retryably under
+    a no-drain code; a completed FAIL is still a merit failure."""
+    import forven.gauntlet.status as gstatus
+    import forven.gauntlet.tasks as tasks
+
+    submitted = []
+    monkeypatch.setattr(
+        engine,
+        "run_holdout_submit",
+        lambda sid, source="system": submitted.append(sid) or {"result_id": "R-WF", "status": "running"},
+    )
+    monkeypatch.setattr(
+        gstatus, "get_strategy_gauntlet_status", lambda sid, **kw: {"ok": True, "missing_required": [], "tests": {}}
+    )
+    # Admission check ahead of the gate; the fixture's type is not registered here.
+    monkeypatch.setattr("forven.strategies.registry.runtime_unloadable_reason", lambda *a, **k: None)
+    _gauntlet_candidate(monkeypatch, "S-WF", verdict=None)
+    _set_holdout("S-WF", state)
+    assert engine.holdout_state("S-WF")["state"] == state
+
+    outcome = tasks.run_paper_promotion_gate(
+        {"id": "wf-holdout", "strategy_id": "S-WF"}, {"step_key": "paper_promotion_gate"}
+    )
+
+    assert outcome["status"] == status, outcome
+    assert outcome["transition"]["gate_reason_code"] == code
+    if status == "blocked_runtime":
+        assert outcome["retryable"] is True and outcome["reason_code"] == code
+    assert submitted == (["S-WF"] if state == "missing" else [])  # the gate spends the shot only when due
+    with get_db() as conn:
+        assert conn.execute("SELECT stage FROM strategies WHERE id = 'S-WF'").fetchone()["stage"] == "gauntlet"
+        event = conn.execute(
+            "SELECT details_json FROM strategy_events WHERE strategy_id = 'S-WF' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    details = json.loads(event["details_json"])
+    assert details["motion"] == "gate_failure" and details["gate_reason_code"] == code
+
+
 # --- the evaluation itself -------------------------------------------------------------
 
 
