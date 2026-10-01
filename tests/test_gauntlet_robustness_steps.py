@@ -241,3 +241,34 @@ def test_single_judgeable_fold_is_insufficient_evidence_not_a_gate_failure(robus
     assert outcome["merit"] is False
     assert outcome["retryable"] is False
     assert "rescued_by_fold_pass_rate" not in outcome
+
+
+def test_single_fold_rescue_follows_an_operator_lowered_fold_minimum(robustness_env, monkeypatch):
+    # gauntlet.wfa_min_folds=1 with safety_floors.wfa_min_folds=0 is the
+    # operator-editable setting under which the paper gate accepts one
+    # judgeable fold; the step must apply the same minimum, not a hard 2.
+    import forven.policy as policy
+
+    monkeypatch.setattr(
+        policy,
+        "load_pipeline_config",
+        lambda: {
+            "robustness_thresholds": {"wfa_min_fold_trades": 5, "wfa_fold_pass_rate_min": 0.33},
+            "gauntlet": {"wfa_min_folds": 1},
+            "safety_floors": {"wfa_min_folds": 0},
+        },
+    )
+    response = {
+        "persisted_result_id": "WF-ONE",
+        "verdict": "FAIL",
+        "splits": [
+            {"out_of_sample": {"total_trades": 7, "sharpe": 0.6}},
+            {"out_of_sample": {"total_trades": 2, "sharpe": -1.5}},
+        ],
+    }
+    monkeypatch.setattr(tasks, "_run_walk_forward", lambda _body: response)
+
+    outcome = tasks.run_walk_forward(_workflow(["walk_forward"]), {})
+
+    assert outcome["status"] == "passed"
+    assert outcome["rescued_by_fold_pass_rate"] is True

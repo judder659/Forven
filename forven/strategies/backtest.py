@@ -504,6 +504,10 @@ def _isolated_walk_forward_worker(
         train_end = initial_train_bars + i * (test_bars + purge_bars + embargo_bars)
         test_start = train_end + purge_bars
         test_end = min(test_start + test_bars, n_rows)
+        if initial_train_bars_override is not None and i == resolved_n_splits - 1:
+            # Whole-holdout mode promises every bar after the boundary is OOS:
+            # the integer split remainder goes into the final fold.
+            test_end = n_rows
         train_start = max(0, train_end - initial_train_bars) if rolling else 0
         train_window = df.iloc[train_start:train_end].copy()
         if len(train_window) < warmup + _MIN_WALK_FORWARD_EVAL_BARS:
@@ -8151,13 +8155,28 @@ def walk_forward(
         return {"error": str(exc)}
 
     # Apply bar cap after loading — when date ranges produce too many bars,
-    # keep the most recent data so the analysis stays relevant.
-    if len(df) > _WFA_MAX_BARS:
+    # keep the most recent data so the analysis stays relevant. With a dated
+    # OOS boundary the cap trims only the in-sample prefix and always keeps the
+    # whole holdout plus the minimum in-sample warmup (the holdout itself is
+    # capped at the same ceiling when it is planned).
+    keep_bars = _WFA_MAX_BARS
+    if oos_start and len(df) > _WFA_MAX_BARS:
+        try:
+            _boundary = pd.Timestamp(str(oos_start).replace("Z", "+00:00"))
+            if _boundary.tzinfo is None and df.index.tz is not None:
+                _boundary = _boundary.tz_localize("UTC")
+            elif _boundary.tzinfo is not None and df.index.tz is None:
+                _boundary = _boundary.tz_convert("UTC").tz_localize(None)
+            _holdout_bars = len(df) - int(df.index.searchsorted(_boundary, side="left"))
+            keep_bars = max(_WFA_MAX_BARS, _holdout_bars + 210 + _MIN_WALK_FORWARD_EVAL_BARS)
+        except (TypeError, ValueError):
+            pass  # the boundary is validated (and rejected) below
+    if len(df) > keep_bars:
         log.info(
             "Walk-forward trimming %d bars to %d for %s",
-            len(df), _WFA_MAX_BARS, strategy_id,
+            len(df), keep_bars, strategy_id,
         )
-        df = df.tail(_WFA_MAX_BARS)
+        df = df.tail(keep_bars)
 
     if len(df) < 420:
 

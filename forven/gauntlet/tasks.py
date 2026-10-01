@@ -1776,8 +1776,8 @@ def _robustness_outcome(
                     if oos_sharpe > 0:
                         passed_splits += 1
                 fold_pass_rate = (passed_splits / evaluated_splits) if evaluated_splits > 0 else 0.0
-                # Same judgeable-fold minimum the paper gate enforces (gauntlet
-                # wfa_min_folds clamped by safety_floors, never below 2).
+                # Same judgeable-fold minimum the paper gate enforces: gauntlet
+                # wfa_min_folds clamped from below by safety_floors.wfa_min_folds.
                 from forven.policy import _PAPER_GATE_FLOORS
 
                 _floors = dict(_PAPER_GATE_FLOORS)
@@ -1785,9 +1785,9 @@ def _robustness_outcome(
                     k: v for k, v in (_load_wfa_config().get("safety_floors") or {}).items() if k in _floors
                 })
                 _min_folds = max(
-                    2,
-                    int(_load_wfa_config().get("gauntlet", {}).get("wfa_min_folds", 2) or 2),
-                    int(_floors.get("wfa_min_folds", 2) or 0),
+                    1,
+                    int(_load_wfa_config().get("gauntlet", {}).get("wfa_min_folds", 2)),
+                    int(_floors["wfa_min_folds"]),
                 )
                 if 0 < evaluated_splits < _min_folds:
                     # Too few folds reached wfa_min_fold_trades to judge consistency.

@@ -46,15 +46,17 @@ def test_worker_override_tiles_every_bar_after_the_boundary(forven_db, monkeypat
         resolved_timeframe="1h",
         resolved_n_splits=5,
         resolved_in_sample_pct=0.7,
-        initial_train_bars_override=600,
+        initial_train_bars_override=603,
     )
 
     assert "error" not in result, result.get("error")
     splits = result["splits"]
     assert len(splits) == 5
-    assert splits[0]["date_range"]["split_at"] == df.index[600].isoformat()
+    assert splits[0]["date_range"]["split_at"] == df.index[603].isoformat()
+    # 897 OOS bars do not divide by 5: the remainder lands in the last fold
+    # instead of being dropped, so every bar after the boundary is scored.
     assert splits[-1]["date_range"]["end"] == df.index[-1].isoformat()
-    assert sum(s["oos_bars"] for s in splits) == 900
+    assert sum(s["oos_bars"] for s in splits) == 897
     # in_sample_pct alone would have scored only the last 30% (450 bars).
 
 
@@ -107,3 +109,37 @@ def test_walk_forward_rejects_boundary_without_in_sample_warmup(forven_db, monke
     )
 
     assert "in-sample history before oos_start" in result["error"]
+
+
+def test_bar_cap_trims_only_the_in_sample_prefix(forven_db, monkeypatch):
+    # Holdout of 49,900 bars + 600 selection bars exceeds the 50k WFA cap. A
+    # plain tail(50_000) would leave 100 in-sample bars (< 230 warmup) and
+    # reject the run; the cap must keep the holdout plus the warmup minimum.
+    df = _frame(50_500)
+    monkeypatch.setattr(bt, "load_backtest_candles", lambda **_kw: df)
+    monkeypatch.setattr(bt, "_should_use_process_isolation", lambda: False)
+    captured: dict = {}
+
+    def _fake_worker(*args):
+        captured["df"] = args[4]
+        captured["override"] = args[-1]
+        return {"splits": [], "all_oos_trades": [], "all_oos_curves": []}
+
+    monkeypatch.setattr(bt, "_isolated_walk_forward_worker", _fake_worker)
+
+    result = bt.walk_forward(
+        strategy_id="S-WFOOS4",
+        asset="BTC/USDT",
+        strategy_type="rsi_momentum",
+        params={},
+        n_splits=5,
+        timeframe="1h",
+        start_date=df.index[0].isoformat(),
+        end_date=df.index[-1].isoformat(),
+        oos_start=df.index[600].isoformat(),
+    )
+
+    assert "error" not in result, result.get("error")
+    assert captured["override"] == 230
+    assert len(captured["df"]) == 49_900 + 230
+    assert result["oos_start"] == df.index[600].isoformat()
