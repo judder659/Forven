@@ -181,7 +181,9 @@ def test_reconcile_exchange_positions_confirms_pending_close_and_cancels_reduce_
     monkeypatch.setattr("forven.exchange.hyperliquid.get_all_mids", lambda testnet=True: {"BTC": 108.0})
     monkeypatch.setattr(
         "forven.exchange.hyperliquid.cancel_order",
-        lambda asset, oid, testnet=True: cancelled.append((asset, oid, testnet)) or {"ok": True},
+        lambda asset, oid, testnet=True, protective_cleanup=False: (
+            cancelled.append((asset, oid, testnet)) if protective_cleanup else None
+        ) or {"ok": True},
     )
     monkeypatch.setattr(risk_mod, "log_activity", lambda *_args, **_kwargs: None)
 

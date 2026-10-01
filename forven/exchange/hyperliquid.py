@@ -554,7 +554,8 @@ def _assert_execution_allowed(testnet: bool, *, exit_only: bool = False) -> None
     strictly more dangerous than entering unarmed, so a reduce-only exit is always
     permitted; it is logged CRITICAL instead of raised. ``close_position`` and the
     reduce-only protective triggers (``place_protective_stop``,
-    ``place_take_profit``) may pass this — never market/limit/cancel/leverage.
+    ``place_take_profit``) may pass this, as may ``cancel_order`` with
+    ``protective_cleanup=True`` — never market/limit/leverage or a general cancel.
 
     STOP-GUARD-1: the protective triggers are always ``reduce_only=True``, so they
     can only shrink an existing position. Refusing them on an unarmed or lapsed
@@ -1838,15 +1839,28 @@ def limit_order(
     return payload
 
 
-def cancel_order(asset: str, oid: int, testnet: bool = True, vault_address: str | None = None) -> dict:
-    """Cancel an order (optionally on a routed sub-account)."""
+def cancel_order(
+    asset: str,
+    oid: int,
+    testnet: bool = True,
+    vault_address: str | None = None,
+    *,
+    protective_cleanup: bool = False,
+) -> dict:
+    """Cancel an order (optionally on a routed sub-account).
+
+    ``protective_cleanup`` (STOP-GUARD-1): set ONLY when ``oid`` is a reduce-only
+    protective order the caller has confirmed is superseded (a replaced trailing
+    stop) or orphaned by a close. Such a cancel passes the mainnet guard as an
+    exit, so a lapsed arming cannot leave stale, untracked stops on the book.
+    """
     from forven.sim.clock import is_sim_active
     if is_sim_active():
         return {"status": "ok", "cancelled": True, "oid": oid}
 
     # MAINNET-GUARD-1: resolve the network ONCE, then guard/route off it.
     testnet = _effective_testnet(testnet)
-    _assert_execution_allowed(testnet)
+    _assert_execution_allowed(testnet, exit_only=protective_cleanup)
     exchange, info, address = _exchange_for_trading(testnet, vault_address=vault_address)
     result = _submit("order_cancel", hl_trade_breaker, exchange.cancel, asset.upper(), oid)
     nested_error = _first_status_error(result) if isinstance(result, dict) else None

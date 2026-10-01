@@ -68,6 +68,20 @@ class TestModeAwareRiskLimits:
             limits = _get_risk_limits()
         assert limits == _MAINNET_LIMITS
 
+    def test_saved_settings_cannot_loosen_mainnet_limits(self, forven_db):
+        """RISK-NET-2: seeded settings (10% risk/trade, 30% DD) must not override
+        the mainnet ceiling; a stricter override still applies."""
+        kv_set(
+            "forven:settings",
+            {"max_risk_per_trade_pct": 10, "max_drawdown_pct": 30, "max_daily_loss_pct": 2},
+        )
+        with patch("forven.config.get_execution_mode", return_value="paper"), \
+                patch("forven.exchange.hyperliquid.resolve_configured_testnet", return_value=False):
+            limits = _get_risk_limits()
+        assert limits["max_risk_per_trade"] == _MAINNET_LIMITS["max_risk_per_trade"]
+        assert limits["max_drawdown"] == _MAINNET_LIMITS["max_drawdown"]
+        assert limits["daily_loss_limit"] == 0.02
+
     def test_testnet_resolving_credentials_keep_testnet_limits(self):
         with patch("forven.config.get_execution_mode", return_value="live"), \
                 patch("forven.exchange.hyperliquid.resolve_configured_testnet", return_value=True):

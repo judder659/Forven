@@ -163,6 +163,35 @@ def test_unarmed_mainnet_still_permits_reduce_only_protective_triggers(monkeypat
     assert [k.get("reduce_only") for k in sent] == [True, True]
 
 
+def test_unarmed_mainnet_permits_only_protective_cleanup_cancels(monkeypatch):
+    """STOP-GUARD-1: a superseded reduce-only stop must be cancellable on a
+    lapsed arming, or ratchets leave stale untracked stops on the book. A general
+    cancel stays refused."""
+    import forven.exchange.hyperliquid as hl
+
+    monkeypatch.delenv("FORVEN_ALLOW_MAINNET", raising=False)
+    monkeypatch.setattr("forven.sim.clock.is_sim_active", lambda: False)
+    monkeypatch.setattr(
+        hl,
+        "_get_creds",
+        lambda: {"HL_API_SECRET": "0x" + ("1" * 64), "USE_TESTNET": "false"},
+    )
+    cancelled = []
+
+    class _Ex:
+        def cancel(self, asset, oid):
+            cancelled.append(oid)
+            return {"status": "ok"}
+
+    monkeypatch.setattr(hl, "_exchange_for_trading", lambda testnet, vault_address=None: (_Ex(), object(), "0xabc"))
+    monkeypatch.setattr(hl, "_submit", lambda _name, _breaker, fn, *a, **k: fn(*a, **k))
+
+    with pytest.raises(RuntimeError, match="Refusing to place a MAINNET order"):
+        hl.cancel_order("BTC", 123, testnet=True)
+    hl.cancel_order("BTC", 456, testnet=True, protective_cleanup=True)
+    assert cancelled == [456]
+
+
 def test_requested_testnet_with_mainnet_credentials_is_allowed_when_armed(monkeypatch):
     """FORVEN_ALLOW_MAINNET is the only thing that unblocks the resolved-mainnet path."""
     import forven.exchange.hyperliquid as hl

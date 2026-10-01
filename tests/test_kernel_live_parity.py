@@ -152,6 +152,7 @@ def test_kernel_refresh_live_ratchets_trailing_stop(monkeypatch):
 
     def _fake_cancel(asset, oid, **k):
         calls["cancel"] = oid
+        calls["cancel_kwargs"] = k
         return {}
 
     monkeypatch.setattr("forven.exchange.hyperliquid.place_protective_stop", _fake_place)
@@ -166,6 +167,8 @@ def test_kernel_refresh_live_ratchets_trailing_stop(monkeypatch):
     msg = scanner._kernel_refresh_live_trade("S1", _refresh_action(row, pos))
     assert calls["place"]["price"] == pytest.approx(105.6)
     assert calls["cancel"] == 111  # old stop retired AFTER the new one is confirmed
+    # STOP-GUARD-1: the superseded stop is cleared even on a lapsed mainnet arming.
+    assert calls["cancel_kwargs"].get("protective_cleanup") is True
     assert updates["stop_loss_price"] == pytest.approx(105.6)
     assert updates["exchange_stop_order_id"] == "222"
     assert updates["stop_loss_source"] == "kernel_trailing"

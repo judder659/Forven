@@ -174,6 +174,19 @@ def _get_risk_limits() -> dict[str, float]:
     except Exception:
         pass
 
+    if on_mainnet:
+        # RISK-NET-2: on real capital the mainnet profile is a ceiling, not a
+        # default. Saved settings routinely carry testnet-era values (e.g. the
+        # seeded max_risk_per_trade_pct=10, max_drawdown_pct=30) that would
+        # otherwise loosen it silently. Overrides may tighten, never loosen.
+        for key, ceiling in _MAINNET_LIMITS.items():
+            if float(base_limits.get(key, ceiling)) > ceiling:
+                log.warning(
+                    "Risk override %s=%.4f exceeds the mainnet ceiling %.4f; clamping",
+                    key, float(base_limits[key]), ceiling,
+                )
+                base_limits[key] = ceiling
+
     return base_limits
 
 
@@ -2635,7 +2648,8 @@ def _cancel_reduce_only_orders_for_asset(
             remaining.append(order)
             continue
         try:
-            cancel_kwargs = {"testnet": testnet}
+            # Only reduce-only protective orders reach here (filtered above).
+            cancel_kwargs = {"testnet": testnet, "protective_cleanup": True}
             if vault_address:
                 cancel_kwargs["vault_address"] = vault_address
             result = cancel_order(normalized_asset, int(normalized_oid), **cancel_kwargs)
