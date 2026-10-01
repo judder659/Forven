@@ -86,6 +86,20 @@ def revoke_bot_token(bot_id: str) -> None:
         logger.debug("Could not revoke credential token for bot %s", bot_id, exc_info=True)
 
 
+def bot_process_is_live(bot_id: str) -> bool:
+    """True only while the bot is recorded as running on a live PID.
+
+    The broker requires this on top of the token, so a token copied out of a
+    bot that has since exited (on any path, including a runner-initiated
+    shutdown that never reaches monitor_bots) stops working.
+    """
+    from forven.db import get_bot_status
+
+    status = get_bot_status(bot_id) or {}
+    pid = status.get("pid")
+    return status.get("status") == "running" and bool(pid) and _is_pid_alive(int(pid))
+
+
 def resolve_bot_provider(bot_config: dict) -> str:
     """The LLM provider a bot's model resolves to (canonical resolver)."""
     try:

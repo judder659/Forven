@@ -525,8 +525,12 @@ def api_bot_credential(bot_id: str, token: str | None) -> dict:
     Raises PermissionError for a bad token, LookupError for an unknown bot,
     ValueError when the bot's provider has no usable credential.
     """
-    from forven.bot_factory.manager import brokered_credential_for_bot, verify_bot_token
+    from forven.bot_factory.manager import (
+        bot_process_is_live,
+        brokered_credential_for_bot,
+        verify_bot_token,
+    )
 
-    if not verify_bot_token(bot_id, token):
+    if not verify_bot_token(bot_id, token) or not bot_process_is_live(bot_id):
         raise PermissionError("invalid bot credential token")
     return brokered_credential_for_bot(bot_id)

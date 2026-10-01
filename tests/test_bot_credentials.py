@@ -3,6 +3,8 @@ master encryption key."""
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from forven.bot_factory import broker_client
@@ -48,13 +50,14 @@ def test_secret_storage_refuses_key_in_bot_process(monkeypatch, tmp_path):
 def test_broker_serves_only_the_bots_own_provider(forven_db, monkeypatch):
     from forven.api_domains.bot_factory import api_bot_credential
     from forven.auth import store
-    from forven.db import create_bot
+    from forven.db import create_bot, set_bot_status
 
     bot_id = create_bot({"name": "Z", "model": "zai:glm-4.6"})
     monkeypatch.setattr(store, "get_token", lambda provider: f"{provider}-token")
     monkeypatch.setattr(store, "get_profile", lambda provider: {"base_url": "https://z.example", "expires": 123})
 
     token = credentials.issue_bot_token(bot_id)
+    set_bot_status(bot_id, "running", pid=os.getpid())
     payload = api_bot_credential(bot_id, token)
     assert payload == {"provider": "zai", "access": "zai-token", "base_url": "https://z.example", "expires": 123}
 
@@ -63,6 +66,14 @@ def test_broker_serves_only_the_bots_own_provider(forven_db, monkeypatch):
     other_bot = create_bot({"name": "O", "model": "gpt-4.1-mini"})
     with pytest.raises(PermissionError):
         api_bot_credential(other_bot, token)
+
+    # A token copied out of a bot that has exited stops working even if it
+    # was never revoked (e.g. a runner-initiated shutdown).
+    set_bot_status(bot_id, "stopped")
+    with pytest.raises(PermissionError):
+        api_bot_credential(bot_id, token)
+    set_bot_status(bot_id, "running", pid=os.getpid())
+    assert api_bot_credential(bot_id, token)["access"] == "zai-token"
 
     credentials.revoke_bot_token(bot_id)
     with pytest.raises(PermissionError):
@@ -92,7 +103,7 @@ def test_broker_endpoint_serves_stored_login(forven_db, monkeypatch, tmp_path):
     from forven import secret_storage
     from forven.api import app
     from forven.auth.store import upsert_profile
-    from forven.db import create_bot
+    from forven.db import create_bot, set_bot_status
 
     monkeypatch.setattr(secret_storage, "_preferred_key_path", lambda: tmp_path / ".forven_key")
     secret_storage._reset_cache_for_tests()
@@ -101,6 +112,7 @@ def test_broker_endpoint_serves_stored_login(forven_db, monkeypatch, tmp_path):
     upsert_profile("zai", {"access": "stored-zai-login"})
     bot_id = create_bot({"name": "Z", "model": "zai:glm-4.6"})
     token = credentials.issue_bot_token(bot_id)
+    set_bot_status(bot_id, "running", pid=os.getpid())
 
     local = TestClient(app, client=("127.0.0.1", 50000))
     resp = local.get(
