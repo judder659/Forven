@@ -23,7 +23,11 @@ internal_router = APIRouter(tags=["bot-factory"])
 @internal_router.get("/api/bot-factory/internal/bots/{bot_id}/credential")
 def bot_credential(bot_id: str, request: Request):
     client_host = request.client.host if request.client else ""
-    if not client_host or not is_loopback_host(client_host):
+    server = request.scope.get("server") or ("", 0)
+    # Local means loopback, or the API's own bind address when it listens on a
+    # specific interface (the bot then connects from that same address).
+    is_local = bool(client_host) and (is_loopback_host(client_host) or client_host == server[0])
+    if not is_local:
         raise HTTPException(status_code=403, detail="Bot credentials are only served to local bot processes")
     try:
         return bf_domain.api_bot_credential(bot_id, request.headers.get(BOT_TOKEN_HEADER))

@@ -212,3 +212,40 @@ def test_keyless_broker_profile_is_accepted(monkeypatch):
     profile = store.get_profile("lmstudio")
     assert profile is not None and profile["base_url"] == "http://127.0.0.1:1234/v1"
     assert store.get_token("lmstudio") == ""
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "expected_url_host"),
+    [("", "127.0.0.1"), ("0.0.0.0", "127.0.0.1"), ("::", "[::1]"), ("::1", "[::1]"), ("127.0.0.1", "127.0.0.1")],
+)
+def test_broker_url_follows_bind_host(monkeypatch, bind_host, expected_url_host):
+    monkeypatch.delenv("FORVEN_HOST", raising=False)
+    if bind_host:
+        monkeypatch.setenv("FORVEN_BIND_HOST", bind_host)
+    else:
+        monkeypatch.delenv("FORVEN_BIND_HOST", raising=False)
+    env = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini"}, "t")
+    monkeypatch.setenv(broker_client.BROKER_HOST_ENV, env[broker_client.BROKER_HOST_ENV])
+    monkeypatch.setenv("FORVEN_PORT", "8003")
+    assert broker_client._broker_url("b1") == (
+        f"http://{expected_url_host}:8003/api/bot-factory/internal/bots/b1/credential"
+    )
+
+
+def test_monitor_revokes_token_of_dead_bot(monkeypatch):
+    import asyncio
+
+    revoked = []
+    monkeypatch.setattr(credentials, "get_running_bots", lambda: [{"bot_id": "b1", "pid": 999999}])
+    monkeypatch.setattr(credentials, "_is_pid_alive", lambda pid: False)
+    monkeypatch.setattr(credentials, "set_bot_status", lambda *a, **k: None)
+    monkeypatch.setattr(credentials, "log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(credentials, "revoke_bot_token", revoked.append)
+
+    async def _stop(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(credentials.asyncio, "sleep", _stop)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(credentials.BotManager().monitor_bots())
+    assert revoked == ["b1"]

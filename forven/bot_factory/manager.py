@@ -14,7 +14,7 @@ from pathlib import Path
 
 import psutil
 
-from forven.bot_factory.broker_client import BOT_TOKEN_ENV, NO_MASTER_KEY_ENV
+from forven.bot_factory.broker_client import BOT_TOKEN_ENV, BROKER_HOST_ENV, NO_MASTER_KEY_ENV
 from forven.config import FORVEN_HOME
 from forven.db import (
     get_bot,
@@ -186,6 +186,7 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
     if bot_token:
         env[BOT_TOKEN_ENV] = bot_token
     env["FORVEN_PORT"] = os.environ.get("FORVEN_PORT", "8003")
+    env[BROKER_HOST_ENV] = _broker_host()
 
     for guard_var in (
         "FORVEN_DISABLE_CHROMA_IN_PROCESS",
@@ -249,6 +250,25 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
             env.setdefault(var, val)
 
     return env
+
+
+def _broker_host() -> str:
+    """The address a bot should use to reach this API's credential broker.
+
+    Follows the API's bind host: a wildcard bind is reached over the matching
+    loopback, a specific address (e.g. ``::1``) directly.
+    """
+    try:
+        from forven.api_security import resolved_bind_host
+
+        host = resolved_bind_host().strip().strip("[]")
+    except Exception:
+        host = ""
+    if host in {"", "0.0.0.0"}:
+        return "127.0.0.1"
+    if host == "::":
+        return "::1"
+    return host
 
 
 def _resolve_live_exchange_env() -> dict[str, str]:
@@ -564,6 +584,7 @@ class BotManager:
                     if pid and not _is_pid_alive(pid):
                         logger.warning("Bot %s PID %s is dead", bot_id, pid)
                         set_bot_status(bot_id, "error", error_message="Process died unexpectedly")
+                        revoke_bot_token(bot_id)
                         log_activity(
                             "error", "bot_factory",
                             f"Bot '{bot_info.get('name', bot_id)}' process died (PID {pid})",
@@ -594,6 +615,7 @@ class BotManager:
                                     bot_id, "error",
                                     error_message=f"Heartbeat stale ({int(age)}s)",
                                 )
+                                revoke_bot_token(bot_id)
                                 log_activity(
                                     "warning", "bot_factory",
                                     f"Bot '{bot_info.get('name', bot_id)}' heartbeat stale ({int(age)}s)",

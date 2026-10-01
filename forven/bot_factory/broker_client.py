@@ -23,6 +23,9 @@ BOT_ID_ENV = "BOT_ID"
 # Tells forven.secret_storage to refuse to load (or generate) the master key.
 NO_MASTER_KEY_ENV = "FORVEN_NO_MASTER_KEY"
 
+# Where the parent API listens (bot_factory.manager._broker_host).
+BROKER_HOST_ENV = "FORVEN_BOT_BROKER_HOST"
+
 BOT_TOKEN_HEADER = "x-forven-bot-token"
 # Re-fetch a brokered credential at least this often even without expiry info,
 # so a rotated/re-entered login reaches a long-running bot.
@@ -51,7 +54,10 @@ def _cache_fresh(fetched_at: float, profile: dict) -> bool:
 
 def _broker_url(bot_id: str) -> str:
     port = os.environ.get("FORVEN_PORT", "8003")
-    return f"http://127.0.0.1:{port}/api/bot-factory/internal/bots/{bot_id}/credential"
+    host = os.environ.get(BROKER_HOST_ENV, "").strip().strip("[]") or "127.0.0.1"
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}/api/bot-factory/internal/bots/{bot_id}/credential"
 
 
 def fetch_brokered_profile(provider: str, *, force: bool = False) -> dict | None:
