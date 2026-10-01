@@ -136,7 +136,8 @@ def _strategy_row(strategy_id: str) -> dict[str, Any] | None:
     try:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT id, name, type, symbol, timeframe, params, metrics, stage, status FROM strategies WHERE id = ?",
+                "SELECT id, name, type, runtime_type, symbol, timeframe, params, metrics, stage, status "
+                "FROM strategies WHERE id = ?",
                 (strategy_id,),
             ).fetchone()
     except Exception as exc:
@@ -148,6 +149,20 @@ def _strategy_row(strategy_id: str) -> dict[str, Any] | None:
             raise
         return {"id": strategy_id, "params": "{}"}
     return dict(row) if row else None
+
+
+def _execution_strategy_type(row: dict[str, Any]) -> str:
+    """The type the engine executes: a dropzone/imported row's namespaced
+    ``runtime_type``, else the bare ``type``.
+
+    An imported row's bare ``type`` names no class in this process (its source
+    moved to imported/ at registration), so backtest/walk_forward land on the
+    orphan guard — or, when a custom/ module or param family shares the name,
+    silently run that code instead.
+    """
+    from forven.api_core import resolve_execution_strategy_type
+
+    return resolve_execution_strategy_type(row) or ""
 
 
 def _workflow_settings(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -1377,7 +1392,7 @@ def run_apply_optimized_defaults(workflow: dict[str, Any], step: dict[str, Any])
     outcome = apply_optimized_params_if_accepted(
         strategy_id=strategy_id,
         asset=str(row.get("symbol") or "BTC"),
-        strategy_type=str(row.get("type") or ""),
+        strategy_type=_execution_strategy_type(row),
         current_params=current_params,
         candidate_params=new_params,
         write_fn=_write_optimized,
@@ -2137,7 +2152,7 @@ def _select_and_persist_execution_profile(workflow: dict[str, Any], strategy_id:
     selection = select_execution_profile(
         strategy_id=strategy_id,
         asset=str(row.get("symbol") or "BTC"),
-        strategy_type=str(row.get("type") or ""),
+        strategy_type=_execution_strategy_type(row),
         params=params,
         timeframe=str(row.get("timeframe") or "1h"),
         regime_gate=False,  # match the paper scanner's kernel call (the parity reference)

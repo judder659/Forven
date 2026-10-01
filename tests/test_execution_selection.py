@@ -150,14 +150,14 @@ def test_calmar_objective_uses_proxy_not_silent_sharpe():
 
 # ── gauntlet persistence ────────────────────────────────────────────────────
 
-def _insert_strategy(db_path, sid, params):
+def _insert_strategy(db_path, sid, params, *, type_="rsi_momentum", runtime_type=None):
     from forven.db import get_db
 
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO strategies (id, name, type, symbol, timeframe, params, metrics, stage, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (sid, sid, "rsi_momentum", "BTC", "1h", json.dumps(params), "{}", "gauntlet", "active"),
+            "INSERT INTO strategies (id, name, type, runtime_type, symbol, timeframe, params, metrics, stage, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, sid, type_, runtime_type, "BTC", "1h", json.dumps(params), "{}", "gauntlet", "active"),
         )
 
 
@@ -185,6 +185,25 @@ def test_gauntlet_persists_selected_profile(forven_db, monkeypatch):
     assert params["execution_profile"]["sizing_mode"] == "atr"
     assert params["execution_profile"]["risk_per_trade"] == 0.02
     assert metrics["gauntlet_selected_execution_profile"]["chosen_label"] == "atr r2%"
+
+
+def test_gauntlet_scores_sandbox_strategy_under_runtime_type(forven_db, monkeypatch):
+    """A dropzone row's bare type is an orphan here: every candidate backtest
+    errored and selection froze the default "over 0 candidates" (47 strategies
+    by 2026-10-01, three of them in paper)."""
+    from forven.gauntlet import tasks
+
+    runtime = "imported__dropzone_zz_dz_sel_s99998_deadbeef0001"
+    _insert_strategy(forven_db, "SEL_DZ", {"lookback": 20}, type_="zz_dz_sel_s99998", runtime_type=runtime)
+    seen: dict = {}
+    monkeypatch.setattr(tasks, "_execution_profile_selection_enabled", lambda: True)
+    monkeypatch.setattr(
+        "forven.strategies.execution_selection.select_execution_profile",
+        lambda **kw: seen.update(kw) or {"chosen": None, "objective": "sharpe_ratio", "n_candidates": 12, "n_eligible": 3},
+    )
+
+    tasks._select_and_persist_execution_profile({"id": "wf1"}, "SEL_DZ")
+    assert seen["strategy_type"] == runtime
 
 
 def test_gauntlet_skips_when_profile_already_present(forven_db, monkeypatch):

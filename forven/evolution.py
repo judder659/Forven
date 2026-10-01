@@ -1991,6 +1991,11 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
             log.warning("Evolution: workflow-deferral check failed for %s: %s", strat_id, exc)
 
         strat_type = candidate.get("type", "")
+        # Execution resolves a dropzone/imported row's runtime_type; the bare
+        # type above stays the display identity (container name, prompts).
+        from forven.api_core import resolve_execution_strategy_type
+
+        exec_type = resolve_execution_strategy_type(candidate) or ""
         params = candidate.get("params", {})
         if isinstance(params, str):
             try:
@@ -2070,7 +2075,7 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
                 )
                 advance_result = _advance_gauntlet_readiness(
                     strategy_id=strat_id,
-                    strategy_type=strat_type,
+                    strategy_type=exec_type,
                     symbol=symbol,
                     timeframe=timeframe,
                     params=params,
@@ -2127,7 +2132,7 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
             try:
                 validation_matrix = _run_backtest_validation_matrix_sync(
                     strategy_id=strat_id,
-                    strategy_type=strat_type,
+                    strategy_type=exec_type,
                     symbol=symbol,
                     timeframe=timeframe,
                     params=params,
@@ -2573,7 +2578,9 @@ def check_paper_graduation():
             if paper_metrics_ok and not readiness.get("ready"):
                 # Paper metrics passed but optimization pending — drive it
                 log.info("Evolution: %s paper metrics met, driving optimization", strat_id)
-                strategy_type = s.get("strategy_type", s.get("type", ""))
+                from forven.api_core import resolve_execution_strategy_type
+
+                strategy_type = resolve_execution_strategy_type(s) or ""
                 symbol = s.get("symbol", s.get("asset", ""))
                 timeframe = s.get("timeframe", "1h")
                 params = {}
