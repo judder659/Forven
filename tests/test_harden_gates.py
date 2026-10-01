@@ -941,13 +941,24 @@ def test_retryable_reason_codes_come_from_one_registry():
             "wfa_window_insufficient",
         ),
         ("gate failure: oos profit factor 0.80 below 1.05", None),
+        (
+            "gate failure: held-back test pending — the one-shot test is running; its verdict decides",
+            "holdout_pending",
+        ),
+        (
+            "gate failure: held-back test budget for the 'other' family is spent (3 per quarter) "
+            "— waits for the next quarterly roll",
+            "holdout_budget_exhausted",
+        ),
+        ("gate failure: held-back test failed: lost money on the held-back period (-0.9%)", None),
     ],
 )
 def test_blocked_prose_maps_to_a_retryable_code(blocked_text, expected):
     """brain.transition_stage stamps its own motion ('gate_failure') as the
-    transition reason_code, so a GateRejection's structural code does NOT survive
-    the hop — the prose classifier is the only thing standing between an
-    evidence-absence block and demote_failed_gate_strategies ARCHIVING it."""
+    transition reason_code. A GateRejection's structural code rides beside it as
+    gate_reason_code, but a plain-string gate site has none — then the prose
+    classifier is the only thing standing between an evidence-absence block and
+    demote_failed_gate_strategies ARCHIVING it."""
     from forven.gauntlet.tasks import _retryable_block_code
 
     assert _retryable_block_code("gate_failure", blocked_text) == expected
@@ -966,6 +977,10 @@ def test_blocked_prose_maps_to_a_retryable_code(blocked_text, expected):
             "['walk_forward']",
             "missing_evidence",
         ),
+        (
+            "Gate failure: Held-back test pending — the one-shot test is running; its verdict decides",
+            "holdout_pending",
+        ),
     ],
 )
 def test_evidence_absence_blocks_the_workflow_step_instead_of_failing_it(
@@ -977,11 +992,11 @@ def test_evidence_absence_blocks_the_workflow_step_instead_of_failing_it(
     false-green fixes (dsr-gate-fails-open, verdict-stub-backfills) into a
     wrong-archive.
 
-    The transition payload mirrors brain._record_blocked_transition (brain.py:1555-
-    1564) as produced by the gate-rejection branch (brain.py:1817-1830): the prose
-    survives, but reason_code is brain's own motion vocabulary — 'gate_failure' —
-    NOT the policy GateRejection's structural code. That is precisely why tasks.py
-    has to re-derive the taxonomy code from the message."""
+    The transition payload mirrors brain._record_blocked_transition as produced by
+    the gate-rejection branch, minus gate_reason_code: the prose survives, but
+    reason_code is brain's own motion vocabulary — 'gate_failure'. That is what a
+    plain-string gate site produces, and why tasks.py still re-derives the taxonomy
+    code from the message. (tests/test_research_holdout.py drives the real hop.)"""
     import forven.gauntlet.status as gstatus
     import forven.gauntlet.tasks as tasks
 

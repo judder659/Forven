@@ -2913,6 +2913,19 @@ def evaluate_promotion(
 def _extract_reason_code(reason_text: str) -> str:
     """Extract a machine-readable reason code from gate rejection text."""
     text = reason_text.lower()
+    # Research holdout (research_holdout.gate_message). Matched first because its
+    # messages embed free text (family name, verdict and hurdle reasons) that the
+    # broad rules below could misread. A test that is running, errored or out of
+    # budget has no verdict yet. Read as gate_reject, it failed the gauntlet
+    # workflow step, and a failed step gets the strategy archived (S10869 and
+    # S11388 reached paper only because their tests finished first). Only a
+    # completed FAIL is merit.
+    if "held-back test pending" in text:
+        return "holdout_pending"
+    if "held-back test budget" in text:
+        return "holdout_budget_exhausted"
+    if "held-back test failed" in text:
+        return "holdout_reject"
     # Error / no-evidence outcomes must NOT share the generic ``gate_reject``
     # bucket with genuine performance rejections. "No metrics available" means
     # the backtest never ran (db-lock / timeout / process-restart / blocked

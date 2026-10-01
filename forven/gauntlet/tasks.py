@@ -14,8 +14,9 @@ GAUNTLET_RUNTIME_REVISION = "2026-09-09-forge-drain-v2"
 
 # Prose -> taxonomy code for blocked promotions that reach here as TEXT ONLY.
 # brain.transition_stage stamps the transition's reason_code from its own motion
-# vocabulary ("gate_failure"), so a policy GateRejection's STRUCTURAL code does not
-# survive the hop — this path has to read the message. Everything the canonical
+# vocabulary ("gate_failure") and carries a policy GateRejection's STRUCTURAL code
+# beside it as gate_reason_code. A gate site that returns a plain string has no
+# structural code, so this path still reads the message. Everything the canonical
 # matcher (policy._extract_reason_code) already classifies is handled by
 # _retryable_block_code below; only phrases it does not cover are listed here.
 _RETRYABLE_BLOCK_TEXTS: tuple[tuple[str, str], ...] = (
@@ -2394,7 +2395,9 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
     _blocked_text = str(
         transition.get("blocked_reason") or transition.get("reason") or transition.get("message") or ""
     ).lower()
-    _retryable_code = _retryable_block_code(reason_code, _blocked_text)
+    # The gate's own code first (e.g. holdout_pending while the held-back test
+    # runs): reading the motion alone failed the step on a pending verdict.
+    _retryable_code = _retryable_block_code(transition.get("gate_reason_code") or reason_code, _blocked_text)
     if _retryable_code:
         if "window insufficient" in _blocked_text:
             # This block's whole premise is "the re-run produces judgeable folds"
