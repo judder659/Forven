@@ -20,6 +20,9 @@ class WalkForwardBody(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     as_of: str | None = None
+    # Dated OOS boundary: bars before it are in-sample, bars from it to
+    # end_date are split into the OOS folds (see strategies.backtest.walk_forward).
+    oos_start: str | None = None
 
 
 class MonteCarloBody(BaseModel):

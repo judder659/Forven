@@ -687,6 +687,81 @@ def test_run_walk_forward_drops_window_starving_folds_at_measured_cadence(forven
     assert captured.get("start") == roomy_window["start"]
 
 
+def test_run_walk_forward_scores_whole_holdout_with_selection_as_in_sample(forven_db, monkeypatch):
+    """With the optimizer's selection window known, the WFA loads selection +
+    holdout and fixes the OOS boundary at the holdout start, so every holdout
+    bar is scored. Without a selection window the holdout runs alone as before."""
+    from datetime import datetime, timedelta, timezone
+
+    from forven.db import get_db
+    from forven.gauntlet import tasks as gtasks
+
+    sid = "S-WFWIN3"
+    now = datetime.now(timezone.utc)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, symbol, timeframe, params, metrics, "
+            "status, owner, stage, stage_changed_at, created_at, updated_at) "
+            "VALUES (?, ?, 'rsi_momentum', 'BTC/USDT', '1h', '{}', '{}', 'gauntlet', 'brain', "
+            "'gauntlet', ?, ?, ?)",
+            (sid, sid, now.isoformat(), now.isoformat(), now.isoformat()),
+        )
+        conn.commit()
+
+    captured: dict = {}
+
+    def _fake_run_wf(body):
+        captured.update(start=body.start_date, end=body.end_date, oos_start=body.oos_start)
+        return {
+            "persisted_result_id": "WF-WHOLE",
+            "verdict": "PASS",
+            "splits": [
+                {"out_of_sample": {"sharpe": 1.0, "total_trades": 12}} for _ in range(5)
+            ],
+            "aggregate_oos": {"sharpe": 0.9, "total_trades": 60},
+        }
+
+    monkeypatch.setattr(gtasks, "_run_walk_forward", _fake_run_wf)
+    selection = {
+        "start": (now - timedelta(days=730)).isoformat(),
+        "end": (now - timedelta(days=200, hours=1)).isoformat(),
+    }
+    holdout = {
+        "start": (now - timedelta(days=200)).isoformat(),
+        "end": now.isoformat(),
+        "minimum_validation_bars": 4800,
+    }
+    monkeypatch.setattr(
+        gtasks, "_workflow_optimization_windows", lambda _wf: (selection, holdout)
+    )
+
+    workflow = {"id": "gw-test-wfwin3", "strategy_id": sid, "settings_snapshot_json": "{}"}
+    gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
+
+    assert captured == {
+        "start": selection["start"],
+        "end": holdout["end"],
+        "oos_start": holdout["start"],
+    }
+
+    captured.clear()
+    monkeypatch.setattr(
+        gtasks, "_workflow_optimization_windows", lambda _wf: ({}, holdout)
+    )
+    gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
+    assert captured == {"start": holdout["start"], "end": holdout["end"], "oos_start": None}
+
+    # No genuine holdout (holdout_applied=false persists identical windows):
+    # keep the old in-holdout split instead of a boundary with no in-sample.
+    captured.clear()
+    same = {"start": holdout["start"], "end": holdout["end"]}
+    monkeypatch.setattr(
+        gtasks, "_workflow_optimization_windows", lambda _wf: (dict(same), holdout)
+    )
+    gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
+    assert captured == {"start": holdout["start"], "end": holdout["end"], "oos_start": None}
+
+
 def test_confirmation_backfills_canonical_metrics_when_blob_lacks_trade_count(forven_db, monkeypatch):
     """When the strategy blob carries no performance metrics (the quick-screen
     gate deliberately skips persisting a degeneracy-skipped declared-TF slice),

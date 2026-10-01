@@ -20,8 +20,12 @@ def test_slow_strategy_reserves_larger_holdout_without_growing_selection(monkeyp
     plan = optimization_history_requirements("S-test", "1h", 365, {})
     assert plan["minimum_validation_bars"] > 109 * 24
     assert plan["selection_bars"] == 6132
-    expected = plan["minimum_validation_bars"] / 24 * (1 - plan["train_ratio"]) / plan["n_folds"] * 4 / 30.44
-    assert expected >= plan["minimum_trades_per_fold"] * 2
+    # The gauntlet WFA scores the whole holdout as OOS folds (selection window is
+    # the in-sample prefix), so each fold gets holdout / n_folds of calendar time.
+    expected = plan["minimum_validation_bars"] / 24 / plan["n_folds"] * 4 / 30.44
+    assert expected >= plan["minimum_trades_per_fold"] * 2 - 1e-9
+    # ...and no 1 / (1 - train_ratio) multiple on top: ~380 days, not ~1268.
+    assert plan["minimum_validation_bars"] / 24 < 400
 
 
 @pytest.mark.parametrize("rate", [None, float("nan"), float("inf"), 0.0])

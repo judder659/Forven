@@ -1776,7 +1776,41 @@ def _robustness_outcome(
                     if oos_sharpe > 0:
                         passed_splits += 1
                 fold_pass_rate = (passed_splits / evaluated_splits) if evaluated_splits > 0 else 0.0
-                if evaluated_splits >= 2 and fold_pass_rate >= _fold_min:
+                # Same judgeable-fold minimum the paper gate enforces: gauntlet
+                # wfa_min_folds clamped from below by safety_floors.wfa_min_folds.
+                from forven.policy import _PAPER_GATE_FLOORS
+
+                _floors = dict(_PAPER_GATE_FLOORS)
+                _floors.update({
+                    k: v for k, v in (_load_wfa_config().get("safety_floors") or {}).items() if k in _floors
+                })
+                _min_folds = max(
+                    1,
+                    int(_load_wfa_config().get("gauntlet", {}).get("wfa_min_folds", 2)),
+                    int(_floors["wfa_min_folds"]),
+                )
+                if is_required and 0 < evaluated_splits < _min_folds:
+                    # (A non-required thin WFA falls through to the non-required
+                    # FAIL handling below so the serial chain keeps running.)
+                    # Too few folds reached wfa_min_fold_trades to judge consistency.
+                    # That is absence of evidence (the window was short for the
+                    # strategy's cadence), the same class the paper gate maps to
+                    # wfa_window_insufficient. Falling through to failed_gate here
+                    # archived these strategies as merit failures.
+                    return {
+                        "status": "blocked_data",
+                        "retryable": False,
+                        "merit": False,
+                        "reason_code": "insufficient_evidence",
+                        "result_id": result_id,
+                        "message": (
+                            f"Walk-forward produced only {evaluated_splits} fold(s) with at least "
+                            f"{_min_fold_trades} out-of-sample trades; {_min_folds} are needed to judge"
+                        ),
+                        "verdict": verdict,
+                        "payload": response,
+                    }
+                if evaluated_splits >= _min_folds and fold_pass_rate >= _fold_min:
                     return {
                         "status": "passed",
                         "result_id": result_id,
@@ -1862,6 +1896,7 @@ def _dated_wfa_window_issue(
     n_splits: int,
     train_ratio: float,
     check_cadence: bool = True,
+    whole_window_oos: bool = False,
 ) -> str | None:
     """Reason the optimizer's dated validation window cannot judge WFA folds, or None.
 
@@ -1898,7 +1933,10 @@ def _dated_wfa_window_issue(
         min_fold_trades = int(rob.get("wfa_min_fold_trades", 5) or 5)
         minutes_per_bar = max(_timeframe_to_minutes(str(timeframe or "1h")), 1)
         window_days = span_bars * minutes_per_bar / (24.0 * 60.0)
-        oos_days_per_fold = window_days * (1.0 - train_ratio) / max(n_splits, 1)
+        # With a selection window prepended as in-sample, the whole dated window
+        # is scored as OOS folds; otherwise only its last (1 - train_ratio).
+        oos_fraction = 1.0 if whole_window_oos else (1.0 - train_ratio)
+        oos_days_per_fold = window_days * oos_fraction / max(n_splits, 1)
         expected_fold_trades = rate_per_day * oos_days_per_fold
         if expected_fold_trades < min_fold_trades:
             return (
@@ -1916,18 +1954,53 @@ def _dated_wfa_window_issue(
     return None
 
 
+def _selection_precedes_holdout(selection: dict[str, Any], validation: dict[str, Any]) -> bool:
+    """True when the optimizer recorded a genuine holdout: a selection window
+    that ends strictly before the validation window starts. Without that
+    (no holdout applied, legacy rows, overlapping dates) the walk-forward keeps
+    the old in-holdout 70/30 split rather than a boundary it cannot use."""
+    from datetime import datetime, timezone
+
+    def _parse(value: object) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    sel_start, sel_end = _parse(selection.get("start")), _parse(selection.get("end"))
+    val_start, val_end = _parse(validation.get("start")), _parse(validation.get("end"))
+    if None in (sel_start, sel_end, val_start, val_end):
+        return False
+    return sel_start <= sel_end < val_start < val_end
+
+
 def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
     row = _strategy_row(str(workflow.get("strategy_id") or ""))
     if not row:
         return {"status": "blocked_runtime", "message": "strategy not found", "retryable": True}
     settings = _workflow_settings(workflow)
     wf_cfg = settings.get("walk_forward") if isinstance(settings.get("walk_forward"), dict) else {}
-    _selection_window, validation_window = _workflow_optimization_windows(workflow)
+    selection_window, validation_window = _workflow_optimization_windows(workflow)
     tf = str(row.get("timeframe") or "1h")
     n_splits = int(wf_cfg.get("n_folds") or 5)
     train_ratio = float(wf_cfg.get("in_sample_pct") or 0.7)
     start_date = str(validation_window.get("start") or "").strip() or None
     end_date = str(validation_window.get("end") or "").strip() or None
+    # Score the optimizer's WHOLE untouched holdout. Parameters are fixed across
+    # folds (no refit), so the old 70% "in-sample" slice of the holdout was
+    # unseen data that never counted toward a fold. With the selection window
+    # prepended as the in-sample prefix, every holdout bar lands in an OOS fold
+    # and in-sample means the data the parameters were actually chosen on.
+    selection_start = str(selection_window.get("start") or "").strip() or None
+    oos_start = (
+        start_date
+        if _selection_precedes_holdout(selection_window, validation_window)
+        else None
+    )
     if start_date and end_date:
         # An inadequate holdout is missing evidence, not permission to reuse
         # the selection history as independent validation.
@@ -1935,6 +2008,7 @@ def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
             str(row["id"]), start_date, end_date, tf,
             n_splits=n_splits, train_ratio=train_ratio,
             check_cadence=not bool(validation_window.get("minimum_validation_bars")),
+            whole_window_oos=oos_start is not None,
         )
         if window_issue:
             message = f"Independent validation window insufficient: {window_issue}"
@@ -1956,9 +2030,10 @@ def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
                 timeframe=tf,
                 n_splits=n_splits,
                 train_ratio=train_ratio,
-                start_date=start_date,
+                start_date=selection_start if oos_start else start_date,
                 end_date=end_date,
                 as_of=_workflow_as_of(workflow),
+                oos_start=oos_start,
             )
         )
     except Exception as exc:

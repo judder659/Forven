@@ -933,6 +933,7 @@ def _run_walk_forward_analysis(body: WalkForwardBody) -> dict:
         start_date=body.start_date,
         end_date=body.end_date,
         as_of=body.as_of,
+        oos_start=body.oos_start,
     )
     if not isinstance(result, dict):
         raise HTTPException(500, "Walk-forward analysis returned an invalid payload")
