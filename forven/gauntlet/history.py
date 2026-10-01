@@ -32,8 +32,11 @@ def optimization_history_requirements(
     validation_bars = max(validation_bars, folds * fold_bars)
     if rate is not None and math.isfinite(rate) and rate > 0:
         # Match the existing WFA recommender's target: twice the minimum trades,
-        # at least ten per fold. Cadence can change after optimization.
-        required_days = (max(2 * min_trades, 10) * folds) / (rate * (1 - train_ratio))
+        # at least ten per fold. Cadence can change after optimization. The
+        # gauntlet walk-forward scores the whole holdout as OOS folds (the
+        # selection window is its in-sample prefix), so the holdout only has to
+        # hold the OOS trades themselves, not a 1 / (1 - train_ratio) multiple.
+        required_days = (max(2 * min_trades, 10) * folds) / rate
         validation_bars = max(validation_bars, math.ceil(required_days * 1440 / minutes))
     return {
         "version": 1, "timeframe": timeframe,

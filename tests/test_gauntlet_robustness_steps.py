@@ -213,3 +213,31 @@ def test_outright_walk_forward_pass_has_no_rescue_markers(robustness_env, monkey
     assert outcome["verdict"] == "PASS"
     assert "rescued_by_fold_pass_rate" not in outcome
     assert "wfa_verdict_raw" not in outcome
+
+
+def test_single_judgeable_fold_is_insufficient_evidence_not_a_gate_failure(robustness_env, monkeypatch):
+    # Overall FAIL with only one fold reaching wfa_min_fold_trades (the rest have
+    # 1-2 OOS trades). Consistency cannot be judged from one fold, so this is
+    # absence of evidence, the class the paper gate calls wfa_window_insufficient.
+    # It used to fall through to failed_gate, which archives as a merit failure.
+    _patch_fold_floor(monkeypatch, 0.33)
+    response = {
+        "persisted_result_id": "WF-THIN",
+        "verdict": "FAIL",
+        "splits": [
+            {"out_of_sample": {"total_trades": 7, "sharpe": -0.4}},
+            {"out_of_sample": {"total_trades": 2, "sharpe": 1.5}},
+            {"out_of_sample": {"total_trades": 1, "sharpe": -2.0}},
+            {"out_of_sample": {"total_trades": 2, "sharpe": 0.3}},
+            {"out_of_sample": {"total_trades": 1, "sharpe": 0.0}},
+        ],
+    }
+    monkeypatch.setattr(tasks, "_run_walk_forward", lambda _body: response)
+
+    outcome = tasks.run_walk_forward(_workflow(["walk_forward"]), {})
+
+    assert outcome["status"] == "blocked_data"
+    assert outcome["reason_code"] == "insufficient_evidence"
+    assert outcome["merit"] is False
+    assert outcome["retryable"] is False
+    assert "rescued_by_fold_pass_rate" not in outcome

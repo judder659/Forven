@@ -428,8 +428,13 @@ def _isolated_walk_forward_worker(
     cv_method: str = "expanding",
     purge_gap: int = 0,
     embargo_pct: float = 0.0,
+    initial_train_bars_override: int | None = None,
 ) -> dict:
     """Run walk-forward splits in an isolated child process.
+
+    ``initial_train_bars_override`` pins the first fold's training prefix to an
+    exact bar count (the caller's out-of-sample boundary) instead of deriving
+    it from ``resolved_in_sample_pct``.
 
     ``execution_controls`` (already normalized by the caller, so it is either a
     plain picklable dict or None) lets the walk-forward folds honor the
@@ -468,7 +473,9 @@ def _isolated_walk_forward_worker(
 
     n_rows = len(df)
     initial_train_bars = max(
-        int(n_rows * resolved_in_sample_pct),
+        int(initial_train_bars_override)
+        if initial_train_bars_override is not None
+        else int(n_rows * resolved_in_sample_pct),
         warmup + _MIN_WALK_FORWARD_EVAL_BARS,
     )
     purge_bars = max(int(purge_gap), 0)
@@ -7774,8 +7781,15 @@ def walk_forward(
     execution_controls: dict | None = None,
     initial_capital: float = 10000.0,
     as_of: str | None = None,
+    oos_start: str | None = None,
 ) -> dict:
     """Chronological rolling-origin validation for a fixed parameter set.
+
+    ``oos_start`` (with ``start_date``/``end_date``) fixes the out-of-sample
+    boundary at a date: bars before it are the first fold's training prefix
+    and every bar from it to ``end_date`` is split into the OOS folds. The
+    gauntlet uses this to score the optimizer's whole untouched holdout, with
+    the selection window as in-sample. Without it, ``in_sample_pct`` decides.
 
 
 
@@ -8149,6 +8163,31 @@ def walk_forward(
 
         return {"error": f"Insufficient data for walk-forward: {len(df)} bars (need 420+)"}
 
+    initial_train_bars_override: int | None = None
+    if oos_start:
+        try:
+            boundary = pd.Timestamp(str(oos_start).replace("Z", "+00:00"))
+            if boundary.tzinfo is None and df.index.tz is not None:
+                boundary = boundary.tz_localize("UTC")
+            elif boundary.tzinfo is not None and df.index.tz is None:
+                boundary = boundary.tz_convert("UTC").tz_localize(None)
+        except (TypeError, ValueError) as exc:
+            return {"error": f"walk_forward: invalid oos_start {oos_start!r}: {exc}"}
+        train_bars = int(df.index.searchsorted(boundary, side="left"))
+        oos_bars_total = len(df) - train_bars
+        if train_bars < 210 + _MIN_WALK_FORWARD_EVAL_BARS:
+            return {"error": (
+                f"Insufficient in-sample history before oos_start for walk-forward: "
+                f"{train_bars} bars (need {210 + _MIN_WALK_FORWARD_EVAL_BARS}+)"
+            )}
+        if oos_bars_total < resolved_n_splits * _MIN_WALK_FORWARD_EVAL_BARS:
+            return {"error": (
+                f"Insufficient out-of-sample bars after oos_start for walk-forward: "
+                f"{oos_bars_total} bars for {resolved_n_splits} folds"
+            )}
+        initial_train_bars_override = train_bars
+        resolved_in_sample_pct = train_bars / len(df)
+
     # ... (lookback check)
 
     split_size = max(int(len(df) * resolved_in_sample_pct), 230)
@@ -8215,6 +8254,7 @@ def walk_forward(
                 resolved_cv_method,
                 resolved_purge_gap,
                 resolved_embargo_pct,
+                initial_train_bars_override,
             )
             try:
                 worker_result = _wait_for_worker_result(executor, future, walk_forward_timeout)
@@ -8254,6 +8294,7 @@ def walk_forward(
             resolved_cv_method,
             resolved_purge_gap,
             resolved_embargo_pct,
+            initial_train_bars_override,
         )
 
     from forven.work_budget import check_work_budget
@@ -8348,6 +8389,8 @@ def walk_forward(
         "embargo_bars": worker_result.get("embargo_bars", 0),
         "as_of": as_of,
     }
+    if initial_train_bars_override is not None:
+        result["oos_start"] = df.index[initial_train_bars_override].isoformat()
 
     # Does the OOS edge beat buy-and-hold and a zero-search trend rule over the same
     # days and costs? Measured here, where the per-fold OOS curves and the candles
