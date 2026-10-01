@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseManagerRow } from '../lib/utils/strategy';
+import { parseManagerRow, tradesPerMonth } from '../lib/utils/strategy';
 
 describe('parseManagerRow', () => {
 	it('preserves AI Drop Zone provenance and backtest readiness flags', () => {
@@ -73,5 +73,27 @@ describe('parseManagerRow', () => {
 
 		expect(row.hypothesis_id).toBe('HYP-001');
 		expect(row.hypothesis_display_id).toBe('H00001');
+	});
+});
+
+describe('tradesPerMonth', () => {
+	it('divides backtest trades by the full test window', () => {
+		expect(tradesPerMonth({ total_trades: 120, backtest_months: 24 })).toBe(5);
+	});
+
+	it('is null when the count or window is missing or empty', () => {
+		expect(tradesPerMonth({ total_trades: null, backtest_months: 12 })).toBeNull();
+		expect(tradesPerMonth({ total_trades: 30, backtest_months: null })).toBeNull();
+		expect(tradesPerMonth({ total_trades: 30, backtest_months: 0 })).toBeNull();
+	});
+
+	it('reads the combined window parsed from the list payload', () => {
+		const row = parseManagerRow({
+			id: 'S01001',
+			name: 'BTC-TREND-S01001',
+			stage: 'gauntlet',
+			metrics: { total_trades: 90, backtest_months: 18 }
+		});
+		expect(tradesPerMonth(row)).toBe(5);
 	});
 });

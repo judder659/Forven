@@ -34,6 +34,7 @@
 		isArchivedStage,
 		normalizeStage,
 		stageClass,
+		tradesPerMonth,
 		type ManagerRow,
 	} from '$lib/utils/strategy';
 	import { buildStrategyHref } from '$lib/utils/strategyLinks';
@@ -86,6 +87,7 @@
 		| 'drawdown'
 		| 'win_rate'
 		| 'trades'
+		| 'trades_per_month'
 		| 'profit_factor';
 	type SortDirection = 'asc' | 'desc';
 	type GraveyardStrategyLimitMode = 'capped' | 'unlimited';
@@ -398,6 +400,7 @@
 			case 'drawdown': return row.max_drawdown ?? Number.POSITIVE_INFINITY;
 			case 'win_rate': return row.win_rate ?? Number.NEGATIVE_INFINITY;
 			case 'trades': return row.total_trades ?? Number.NEGATIVE_INFINITY;
+			case 'trades_per_month': return tradesPerMonth(row) ?? Number.NEGATIVE_INFINITY;
 			// Infinite profit factor (no losing trades) is the strongest possible PF and
 			// must sort to the top; a missing PF sinks to the bottom on a descending sort.
 			case 'profit_factor': return row.profit_factor_is_infinite ? Number.POSITIVE_INFINITY : (row.profit_factor ?? Number.NEGATIVE_INFINITY);
@@ -1460,7 +1463,8 @@
 						<col class="w-[74px]" />
 						<col class="w-[80px]" />
 						<col class="w-[72px]" />
-						<col class="hidden w-[72px] xl:table-column" />
+						<col class="w-[64px]" />
+						<col class="hidden w-[56px] xl:table-column" />
 						<col class="hidden w-[64px] 2xl:table-column" />
 						<col class="w-[44px]" />
 					</colgroup>
@@ -1495,9 +1499,12 @@
 							<SortPairTh thClass="border-y border-sc-line" sortBy={sortBy} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)}
 								primary={{ field: 'drawdown', label: 'Max DD', title: 'Full-window max drawdown (approximate: max of IS and OOS). ≤20% fine, ≤35% marginal.' }}
 								secondary={{ field: 'win_rate', label: 'Win', title: 'Combined win rate across IS + OOS.' }} />
-							<SortPairTh thClass="hidden border-y border-sc-line xl:table-cell" sortBy={sortBy} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)}
-								primary={{ field: 'profit_factor', label: 'PF', title: 'Full-window profit factor. ≥1.5 good, ≥1.0 marginal. ∞ = no losing trades.' }}
-								secondary={{ field: 'trades', label: 'Trades', title: 'Completed trades across IS + OOS.' }} />
+							<SortPairTh thClass="border-y border-sc-line" sortBy={sortBy} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)}
+								primary={{ field: 'trades', label: 'Trades', title: 'Completed backtest trades across IS + OOS. Muted = fewer than 20.' }}
+								secondary={{ field: 'trades_per_month', label: '/mo', title: 'Backtest trades per month: how active the strategy is, comparable across test windows.' }} />
+							<th class="hidden border-y border-sc-line px-2 py-1.5 text-right align-bottom font-normal xl:table-cell" aria-sort={sortBy === 'profit_factor' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
+								<button type="button" class="text-[12px] hover:text-sc-ink {sortBy === 'profit_factor' ? 'text-sc-ink' : ''}" title="Full-window profit factor. ≥1.5 good, ≥1.0 marginal. ∞ = no losing trades." on:click={() => toggleSort('profit_factor')}>PF{#if sortBy === 'profit_factor'}<span class="ml-0.5 text-[9px]">{sortDirection === 'desc' ? '▼' : '▲'}</span>{/if}</button>
+							</th>
 							<SortPairTh thClass="hidden border-y border-sc-line 2xl:table-cell" sortBy={sortBy} direction={sortDirection} on:sort={(e) => toggleSort(e.detail as SortField)}
 								primary={{ field: 'dsr', label: 'DSR', title: 'Deflated Sharpe (0–1): chance the edge survives selection bias. ≥0.95 significant. Last computed value.' }}
 								secondary={{ field: 'robustness', label: 'Rob', title: 'Gauntlet robustness score (0–100).' }} />
@@ -1508,6 +1515,7 @@
 						{#if !loading}
 							{#each activePageRows as row (row.id)}
 								{@const entry = explainById.get(row.id) ?? null}
+								{@const perMonth = tradesPerMonth(row)}
 								{@const fwd = forwardById.get(row.id) ?? null}
 								{@const stage = normalizeStage(row.stage)}
 								<tr
@@ -1574,9 +1582,12 @@
 										<div class={`font-plex-mono text-[12px] ${metricTone('drawdown', row.max_drawdown)}`} title={row.max_drawdown_is_approximation ? 'Full-window max DD (approximate: max of IS and OOS halves)' : 'Maximum peak-to-trough drawdown'}>{formatPercent(row.max_drawdown, 1)}{row.max_drawdown_is_approximation ? '~' : ''}</div>
 										<div class="font-plex-mono text-[10.5px] text-sc-ink3" title="Win rate">{formatPercent(row.win_rate, 0)}</div>
 									</td>
+									<td class="border-b border-sc-line px-2 py-2 text-right align-top">
+										<div class={`font-plex-mono text-[12px] ${row.total_trades !== null && row.total_trades < 20 ? 'text-sc-ink3' : 'text-sc-ink2'}`} title="Completed backtest trades (IS + OOS)">{formatNumber(row.total_trades, 0)}</div>
+										<div class="font-plex-mono text-[10.5px] text-sc-ink3" title="Backtest trades per month">{perMonth === null ? '—' : formatNumber(perMonth, perMonth < 10 ? 1 : 0)}</div>
+									</td>
 									<td class="hidden border-b border-sc-line px-2 py-2 text-right align-top xl:table-cell">
 										<div class={`font-plex-mono text-[12px] ${row.profit_factor_is_infinite ? 'text-[#3cc48f]' : metricTone('profit_factor', row.profit_factor)}`}>{row.profit_factor_is_infinite ? '∞' : formatNumber(row.profit_factor, 2)}</div>
-										<div class="font-plex-mono text-[10.5px] text-sc-ink3" title="Trades">{formatNumber(row.total_trades, 0)}</div>
 									</td>
 									<td class="hidden border-b border-sc-line px-2 py-2 text-right align-top 2xl:table-cell">
 										<div class={`font-plex-mono text-[12px] ${metricTone('dsr', row.deflated_sharpe)}`} title="Deflated Sharpe (last computed value)">{formatNumber(row.deflated_sharpe, 2)}</div>

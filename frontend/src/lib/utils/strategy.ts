@@ -53,6 +53,20 @@ export interface ManagerRow {
 	backtest_months: number | null;
 }
 
+/**
+ * Backtest trades per month: how active a strategy is, comparable across
+ * strategies tested over different window lengths. Null when either input is
+ * missing or the window is empty.
+ */
+export function tradesPerMonth(row: Pick<ManagerRow, 'total_trades' | 'backtest_months'>): number | null {
+	const trades = row.total_trades;
+	const months = row.backtest_months;
+	if (trades === null || months === null || !Number.isFinite(trades) || !Number.isFinite(months) || months <= 0) {
+		return null;
+	}
+	return trades / months;
+}
+
 export function parseMetric(val: unknown, fallback: number | null = null): number | null {
 	if (typeof val === 'number') return Number.isFinite(val) ? val : fallback;
 	if (typeof val === 'string' && val.trim()) {
