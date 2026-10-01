@@ -648,6 +648,26 @@ def test_margin_gate_fails_closed_on_zero_value_books_off(forven_db, monkeypatch
     assert "Cannot verify exchange margin" in reason
 
 
+def test_margin_gate_runs_on_mainnet_credentials_in_paper_mode(forven_db, monkeypatch):
+    """RISK-NET-1: mainnet is reachable with execution_mode "paper" (USE_TESTNET
+    false + FORVEN_ALLOW_MAINNET). Rule 0c must follow the resolved network,
+    not the mode, or a real-money open skips the margin and daily-loss checks."""
+    import forven.config as config
+    import forven.exchange.hyperliquid as hl
+
+    kv_set("forven:settings", {"live_books_enabled": False})
+    monkeypatch.setattr(config, "get_execution_mode", lambda: "paper")
+    monkeypatch.setattr(hl, "get_account_value",
+                        lambda **kw: {"accountValue": 0.0, "totalMarginUsed": 0.0})
+    monkeypatch.setattr(hl, "resolve_configured_testnet", lambda *a, **k: False)
+
+    allowed, _r, reason = risk.can_open(
+        "BTC", "long", "s", risk_pct=0.005, execution_type="live"
+    )
+    assert allowed is False
+    assert "Cannot verify exchange margin" in reason
+
+
 @pytest.mark.parametrize("exec_type", ["paper", "paper_challenger", "simulation"])
 def test_rule_0c_never_gates_paper_opens(forven_db, monkeypatch, exec_type):
     """PAPER-HALT-1: Rule 0c is a real-capital margin gate, so it must be

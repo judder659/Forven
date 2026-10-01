@@ -6888,7 +6888,8 @@ def _kernel_refresh_live_trade(strat_id: str, action) -> str | None:
                 if new_oid:
                     if old_oid:
                         try:
-                            cancel_order(asset, int(old_oid), testnet=_resolve_hyperliquid_testnet(), vault_address=vault)
+                            cancel_order(asset, int(old_oid), testnet=_resolve_hyperliquid_testnet(),
+                                         vault_address=vault, protective_cleanup=True)
                         except Exception:  # a stale/already-filled order is fine to ignore
                             log.warning("[%s] old stop cancel failed for %s oid=%s", strat_id, asset, old_oid, exc_info=True)
                     updates.update({

@@ -90,12 +90,33 @@ def _coerce_non_negative_float(value: object) -> float | None:
     return parsed
 
 
+def _orders_resolve_to_mainnet() -> bool:
+    """Whether live orders from this instance hit the Hyperliquid MAINNET endpoint.
+
+    RISK-NET-1: real-capital protections used to key off ``execution_mode``, but
+    ``get_execution_mode`` only ever returns ``paper`` or ``live`` while the
+    network an order hits is resolved from the credentials' ``USE_TESTNET``
+    (``resolve_configured_testnet``, the same resolution the mainnet guard uses).
+    A mainnet deploy left in mode ``paper`` therefore ran on the looser testnet
+    profile and skipped the margin and daily-loss checks. Never raises; an
+    unresolvable network reads as testnet, preserving the mode-based behavior.
+    """
+    try:
+        from forven.exchange.hyperliquid import resolve_configured_testnet
+
+        return not resolve_configured_testnet()
+    except Exception:  # noqa: BLE001 — risk lookups must never break the open path
+        log.warning("Could not resolve the Hyperliquid network for risk limits", exc_info=True)
+        return False
+
+
 def _get_risk_limits() -> dict[str, float]:
-    """Return active risk limits based on execution mode, merged with user settings."""
+    """Return active risk limits based on the resolved network, merged with user settings."""
     from forven import config as cfg
 
     mode = str(cfg.get_execution_mode() or "paper").strip().lower()
-    base_limits = dict(_MAINNET_LIMITS) if mode == "mainnet" else dict(_TESTNET_LIMITS)
+    on_mainnet = mode == "mainnet" or _orders_resolve_to_mainnet()
+    base_limits = dict(_MAINNET_LIMITS) if on_mainnet else dict(_TESTNET_LIMITS)
 
     # Override with user settings if they exist
     try:
@@ -152,6 +173,19 @@ def _get_risk_limits() -> dict[str, float]:
                 base_limits["daily_loss_limit"] = float(settings["max_daily_loss"]) / cap
     except Exception:
         pass
+
+    if on_mainnet:
+        # RISK-NET-2: on real capital the mainnet profile is a ceiling, not a
+        # default. Saved settings routinely carry testnet-era values (e.g. the
+        # seeded max_risk_per_trade_pct=10, max_drawdown_pct=30) that would
+        # otherwise loosen it silently. Overrides may tighten, never loosen.
+        for key, ceiling in _MAINNET_LIMITS.items():
+            if float(base_limits.get(key, ceiling)) > ceiling:
+                log.warning(
+                    "Risk override %s=%.4f exceeds the mainnet ceiling %.4f; clamping",
+                    key, float(base_limits[key]), ceiling,
+                )
+                base_limits[key] = ceiling
 
     return base_limits
 
@@ -1981,7 +2015,10 @@ def can_open(
         # non-positive-value refusal below would then refuse EVERY paper open.
         from forven.config import get_execution_mode
         mode = get_execution_mode()
-        if mode == "live" and _halt_scope not in _PAPER_EXECUTION_TYPES:
+        # RISK-NET-1: a mainnet-resolving deploy gets this check whatever the
+        # execution mode says (see _orders_resolve_to_mainnet).
+        _real_capital = mode in ("live", "mainnet") or _orders_resolve_to_mainnet()
+        if _real_capital and _halt_scope not in _PAPER_EXECUTION_TYPES:
             try:
                 from forven.exchange.hyperliquid import (
                     get_account_value,
@@ -2611,7 +2648,8 @@ def _cancel_reduce_only_orders_for_asset(
             remaining.append(order)
             continue
         try:
-            cancel_kwargs = {"testnet": testnet}
+            # Only reduce-only protective orders reach here (filtered above).
+            cancel_kwargs = {"testnet": testnet, "protective_cleanup": True}
             if vault_address:
                 cancel_kwargs["vault_address"] = vault_address
             result = cancel_order(normalized_asset, int(normalized_oid), **cancel_kwargs)
