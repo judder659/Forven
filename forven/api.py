@@ -956,6 +956,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=None)
     args = parser.parse_args()
     port = args.port if args.port is not None else int(os.environ.get("FORVEN_PORT", "8003"))
+    # Bot subprocesses reach this API (health checks, credential broker) via
+    # FORVEN_PORT, so it must name the port we actually listen on.
+    os.environ["FORVEN_PORT"] = str(port)
     # Detect a listener before handing off to uvicorn. On Windows uvicorn's
     # SO_REUSEADDR masks bind-collisions, so we connect-probe instead.
     _probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)

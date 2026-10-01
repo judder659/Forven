@@ -86,7 +86,9 @@ def fetch_brokered_profile(provider: str, *, force: bool = False) -> dict | None
         logger.warning("Credential broker unreachable for bot %s: %s", bot_id, exc)
         return None
 
-    if not isinstance(payload, dict) or not payload.get("access"):
+    # A keyless provider (LM Studio) legitimately has an empty token and only a
+    # base_url, so accept any payload that carries a usable profile.
+    if not isinstance(payload, dict) or ("access" not in payload and not payload.get("base_url")):
         return None
     served = str(payload.get("provider") or "").strip().lower()
     with _cache_lock:

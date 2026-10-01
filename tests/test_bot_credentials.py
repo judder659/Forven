@@ -191,3 +191,24 @@ def test_fetch_brokered_profile_round_trip(monkeypatch):
     assert broker_client.fetch_brokered_profile("zai")["access"] == "brokered"  # cached
     assert broker_client.fetch_brokered_profile("openai") is None  # not this bot's provider
     assert seen == [("http://127.0.0.1:8123/api/bot-factory/internal/bots/b1/credential", "spawn-token")]
+
+
+def test_keyless_broker_profile_is_accepted(monkeypatch):
+    import io
+    import json as _json
+
+    from forven.auth import store
+
+    monkeypatch.setenv(broker_client.BOT_ID_ENV, "b1")
+    monkeypatch.setenv(broker_client.BOT_TOKEN_ENV, "spawn-token")
+    monkeypatch.delenv("LMSTUDIO_API_KEY", raising=False)
+    monkeypatch.delenv("LMSTUDIO_BASE_URL", raising=False)
+    body = {"provider": "lmstudio", "access": "", "base_url": "http://127.0.0.1:1234/v1"}
+    monkeypatch.setattr(
+        broker_client.urllib.request, "urlopen",
+        lambda request, timeout: io.BytesIO(_json.dumps(body).encode()),
+    )
+
+    profile = store.get_profile("lmstudio")
+    assert profile is not None and profile["base_url"] == "http://127.0.0.1:1234/v1"
+    assert store.get_token("lmstudio") == ""
