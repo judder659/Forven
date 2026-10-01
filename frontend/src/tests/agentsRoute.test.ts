@@ -22,6 +22,9 @@ const api = vi.hoisted(() => ({
 	getForvenAuthProviders: vi.fn(),
 	getForvenAgentModelOptions: vi.fn(),
 	getForvenModelPolicy: vi.fn(),
+	getForvenAgents: vi.fn(),
+	getBrainAuxiliary: vi.fn(),
+	getSettings: vi.fn(),
 }));
 
 const appState = vi.hoisted(() => ({ url: new URL('http://localhost/agents') }));
@@ -105,6 +108,9 @@ beforeEach(() => {
 	api.getForvenAuthProviders.mockResolvedValue({ providers: [], auth_file: null });
 	api.getForvenAgentModelOptions.mockResolvedValue({ options: [] });
 	api.getForvenModelPolicy.mockResolvedValue({ fallback_chains: {} });
+	api.getForvenAgents.mockResolvedValue([{ id: 'brain', name: 'Brain', model: 'minimax', model_id: 'MiniMax-M3' }]);
+	api.getBrainAuxiliary.mockResolvedValue({ auxiliary: {} });
+	api.getSettings.mockResolvedValue({ backup_ai_provider: 'none', backup_ai_model: '' });
 	target = document.createElement('div');
 	document.body.appendChild(target);
 });
@@ -160,5 +166,21 @@ describe('Agents page', () => {
 		const failed = [...target.querySelectorAll('[aria-label="Run status"] button')].find((button) => button.textContent?.startsWith('Failed'));
 		expect(failed?.getAttribute('aria-pressed')).toBe('true');
 		expect(failed?.textContent).toContain('27');
+	});
+
+	it('lands the old Setup links on the new sections', async () => {
+		for (const [tab, section] of [
+			['routing', 'setup-agent-models'],
+			['health', 'setup-providers'],
+			['providers', 'setup-providers'],
+			['models', 'setup-shortlist'],
+		]) {
+			appState.url = new URL(`http://localhost/agents?tab=${tab}`);
+			instance = mount(AgentsPage, { target });
+			await flush();
+			expect(target.querySelector(`[data-testid="${section}"]`), tab).not.toBeNull();
+			unmount(instance);
+			instance = null;
+		}
 	});
 });

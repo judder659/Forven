@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentFleet, AgentYield, FleetAgent, FleetProblemGroup } from '$lib/api/agentsHub';
 import { buildAttention, FAILED_GROUPS_SHOWN } from '$lib/utils/agentsHub/attention';
 import { canPause, fallbackNote, stateLine, typeLabel } from '$lib/utils/agentsHub/agents';
+import { failoverContext } from '$lib/utils/agentsHub/failover';
 import { fmtCost, fmtRate, fmtSeconds, fmtTokens } from '$lib/utils/agentsHub/format';
 import { fleetHeadline } from '$lib/utils/agentsHub/headline';
 import { furthestReach, summarizeYield } from '$lib/utils/agentsHub/yield';
@@ -79,19 +80,39 @@ describe('agents', () => {
 	});
 
 	it('warns when an agent’s fallbacks cannot survive its provider going down', () => {
-		const minimax = { id: 'risk-manager', model: 'minimax' };
+		const minimax = { id: 'risk-manager', model: 'minimax', model_id: 'MiniMax-M3' };
+		const same = { provider: 'minimax', model_id: 'MiniMax-M3' };
+		const luna = { provider: 'openai', model_id: 'gpt-6-luna' };
+		const context = (chains: Record<string, Array<typeof same>>, backup = '') => failoverContext(chains, backup, ['minimax', 'openai']);
 		expect(fallbackNote(minimax, null)).toBeNull();
-		expect(fallbackNote({ id: 'brain', model: 'minimax' }, {})).toBeNull();
-		expect(fallbackNote(minimax, {})?.text).toBe('no fallback');
-		expect(fallbackNote(minimax, { 'agent:risk-manager': [{ provider: 'minimax', model_id: 'MiniMax-M3' }] })).toMatchObject({
+		expect(fallbackNote(minimax, context({}))?.text).toBe('no fallback');
+		expect(fallbackNote(minimax, context({ 'agent:risk-manager': [same] }))).toMatchObject({
 			short: 'no failover',
 			text: 'fallback stays on MiniMax',
 			tone: 'caution',
+			covered: false,
 		});
-		expect(fallbackNote(minimax, { 'agent:risk-manager': [{ provider: 'minimax', model_id: 'MiniMax-M3' }, { provider: 'openai', model_id: 'gpt-6-luna' }] })).toMatchObject({
+		expect(fallbackNote(minimax, context({ 'agent:risk-manager': [same, luna] }))).toMatchObject({
 			text: 'falls back to gpt-6-luna',
 			tone: 'idle',
+			covered: true,
 		});
+		// A fallback whose provider is not connected cannot carry a run.
+		expect(fallbackNote(minimax, context({ 'agent:risk-manager': [{ provider: 'zai', model_id: 'glm-5.1' }] }))).toMatchObject({ text: 'Z.AI not connected', covered: false });
+	});
+
+	it('counts the backup model as failover, and treats the Brain like every agent', () => {
+		const minimax = { id: 'risk-manager', model: 'minimax', model_id: 'MiniMax-M3' };
+		const brain = { id: 'brain', model: 'minimax', model_id: 'MiniMax-M3' };
+		const context = (backup: string, chains: Record<string, Array<{ provider: string; model_id: string }>> = {}) =>
+			failoverContext(chains, backup, ['minimax', 'openai']);
+		expect(fallbackNote(minimax, context('openai:gpt-6-luna'))).toMatchObject({ short: '→ backup', covered: true });
+		expect(fallbackNote(minimax, context('openai:gpt-6-luna'))?.help).toBe('If MiniMax fails, runs move to the backup model on OpenAI.');
+		// A backup on the agent's own provider is skipped by the runner.
+		expect(fallbackNote(minimax, context('minimax:MiniMax-M3'))).toMatchObject({ text: 'fallback stays on MiniMax', covered: false });
+		// Brain cycles run with agent_id "brain", so its own chain counts.
+		expect(fallbackNote(brain, context('', { 'agent:brain': [{ provider: 'openai', model_id: 'gpt-6-luna' }] }))).toMatchObject({ text: 'falls back to gpt-6-luna', covered: true });
+		expect(fallbackNote(brain, context(''))).toMatchObject({ text: 'no fallback', covered: false });
 	});
 
 	it('never offers the agent switch for the Brain, whose cycles follow the autonomy mode', () => {

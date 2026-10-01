@@ -41,21 +41,19 @@
 	import RunsView from '$lib/components/agents/RunsView.svelte';
 	import SchedulesView from '$lib/components/agents/SchedulesView.svelte';
 	import YieldPanel from '$lib/components/agents/YieldPanel.svelte';
-	import ProvidersTab from './components/tabs/ProvidersTab.svelte';
-	import ModelsTab from './components/tabs/ModelsTab.svelte';
-	import RoutingTab from './components/tabs/RoutingTab.svelte';
-	import HealthTab from './components/tabs/HealthTab.svelte';
-	import { agentsConfig } from './components/agentsConfigStore';
+	import SetupAgentModels from '$lib/components/agents/setup/SetupAgentModels.svelte';
+	import SetupProviders from '$lib/components/agents/setup/SetupProviders.svelte';
+	import SetupShortlist from '$lib/components/agents/setup/SetupShortlist.svelte';
+	import { agentsConfig, failoverContext } from '$lib/stores/agentsConfig';
 
 	// ---- Tabs (?tab=). Old ids keep working: roster → overview, tasks = Runs,
-	// and each Setup section keeps its own id so deep links land on it.
-	type Tab = 'overview' | 'tasks' | 'schedules' | 'providers' | 'models' | 'routing' | 'health';
-	type SetupTab = 'providers' | 'models' | 'routing' | 'health';
-	const SETUP: Array<{ id: SetupTab; label: string }> = [
-		{ id: 'providers', label: 'Providers & keys' },
-		{ id: 'models', label: 'Models' },
-		{ id: 'routing', label: 'Routing & fallbacks' },
-		{ id: 'health', label: 'Provider health' },
+	// routing = Agent models, models = Shortlist, health = Providers.
+	type Tab = 'overview' | 'tasks' | 'schedules' | 'routing' | 'providers' | 'models';
+	type SetupTab = 'routing' | 'providers' | 'models';
+	const SETUP: Array<{ id: SetupTab; label: string; help: string }> = [
+		{ id: 'routing', label: 'Agent models', help: 'Who runs on which model' },
+		{ id: 'providers', label: 'Providers', help: 'Connections and their health' },
+		{ id: 'models', label: 'Shortlist', help: 'Models listed first' },
 	];
 	const SETUP_IDS = new Set<string>(SETUP.map((item) => item.id));
 	const NAV: Array<{ id: 'overview' | 'tasks' | 'schedules' | 'setup'; label: string }> = [
@@ -69,13 +67,15 @@
 		const tab = String(value ?? '').trim().toLowerCase();
 		if (tab === 'tasks' || tab === 'runs') return 'tasks';
 		if (tab === 'schedules') return 'schedules';
+		if (tab === 'health') return 'providers';
+		if (tab === 'setup') return 'routing';
 		if (SETUP_IDS.has(tab)) return tab as SetupTab;
 		return 'overview';
 	}
 
 	$: activeTab = normalizeTab($page.url.searchParams.get('tab'));
 	$: inSetup = SETUP_IDS.has(activeTab);
-	let lastSetup: SetupTab = 'providers';
+	let lastSetup: SetupTab = 'routing';
 	$: if (inSetup) lastSetup = activeTab as SetupTab;
 
 	// Setup's Routing and Models tabs unmount on switch, taking unsaved edits
@@ -430,7 +430,7 @@
 						title={$forvenWsConnected ? 'Streaming task events; the page refreshes as runs start and finish.' : 'Live stream offline; the page polls instead.'}
 					>
 						<span class={`h-1.5 w-1.5 rounded-full ${$forvenWsConnected ? 'animate-pulse bg-[#3cc48f]' : 'bg-[#e7b24a]'}`} aria-hidden="true"></span>
-						{$forvenWsConnected ? 'Live' : 'Polling'}{#if lastLoadedAt} · updated {ago(lastLoadedAt, now)}{/if}
+						{$forvenWsConnected ? 'Live' : 'Polling'}{#if lastLoadedAt}{' '}· updated {ago(lastLoadedAt, now)}{/if}
 					</span>
 					{#if autonomy}
 						<span class="inline-flex items-center rounded-full border border-sc-line2 px-2 py-0.5 text-[11px] text-sc-ink2" title="The autonomy mode in the top bar decides whether agents act on their own.">
@@ -529,7 +529,7 @@
 					window={windowKey}
 					{now}
 					{autonomy}
-					chains={$agentsConfig.policy?.fallback_chains ?? null}
+					failover={$failoverContext}
 					loading={fleetLoading}
 					busyAgent={toggleBusy}
 					on:open={(event) => openAgent(event.detail)}
@@ -553,22 +553,24 @@
 						<button
 							type="button"
 							aria-current={activeTab === item.id ? 'page' : undefined}
-							class={`whitespace-nowrap rounded-md px-3 py-1.5 text-left text-[12.5px] transition-colors ${activeTab === item.id ? 'bg-sc-raise text-sc-ink' : 'text-sc-ink3 hover:bg-sc-hover hover:text-sc-ink'}`}
+							class={`whitespace-nowrap rounded-md px-3 py-1.5 text-left transition-colors ${activeTab === item.id ? 'bg-sc-raise text-sc-ink' : 'text-sc-ink3 hover:bg-sc-hover hover:text-sc-ink'}`}
 							on:click={() => go(item.id)}
-						>{item.label}</button>
+						>
+							<span class="block text-[12.5px]">{item.label}</span>
+							<span class="hidden text-[11px] text-sc-ink3 lg:block">{item.help}</span>
+						</button>
 					{/each}
+					<span class="mx-3 my-1 hidden border-t border-sc-line lg:block" aria-hidden="true"></span>
 					<a href="/agents/toolsets" class="whitespace-nowrap rounded-md px-3 py-1.5 text-[12.5px] text-sc-ink3 transition-colors hover:bg-sc-hover hover:text-sc-ink">Tool permissions ↗</a>
 					<a href="/integrations/mcp" class="whitespace-nowrap rounded-md px-3 py-1.5 text-[12.5px] text-sc-ink3 transition-colors hover:bg-sc-hover hover:text-sc-ink">MCP servers ↗</a>
 				</nav>
 				<div class="min-w-0">
-					{#if activeTab === 'providers'}
-						<ProvidersTab />
+					{#if activeTab === 'routing'}
+						<SetupAgentModels health={providers?.runtime ?? []} onDirtyChange={(dirty) => (routingDirty = dirty)} onNavigate={(section) => go(section)} />
+					{:else if activeTab === 'providers'}
+						<SetupProviders health={providers?.runtime ?? []} warnings={providers?.warnings ?? []} onHealthChanged={() => void loadProviders()} />
 					{:else if activeTab === 'models'}
-						<ModelsTab onDirtyChange={(dirty) => (modelsDirty = dirty)} />
-					{:else if activeTab === 'routing'}
-						<RoutingTab onDirtyChange={(dirty) => (routingDirty = dirty)} />
-					{:else if activeTab === 'health'}
-						<HealthTab />
+						<SetupShortlist onDirtyChange={(dirty) => (modelsDirty = dirty)} />
 					{/if}
 				</div>
 			</div>
@@ -585,7 +587,7 @@
 		window={windowKey}
 		{now}
 		{autonomy}
-		chains={$agentsConfig.policy?.fallback_chains ?? null}
+		failover={$failoverContext}
 		on:close={closeAgent}
 		on:toggle={(event) => askToggle(event.detail)}
 		on:action={onAttention}

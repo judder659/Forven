@@ -13,6 +13,7 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import type { AttentionAction, AttentionItem } from '$lib/utils/agentsHub/attention';
 	import { STATE_META, agentJob, canPause, fallbackNote, modelParts, stateLine, typeLabel } from '$lib/utils/agentsHub/agents';
+	import type { FailoverContext } from '$lib/utils/agentsHub/failover';
 	import { fmtCost, fmtRate, fmtSeconds, fmtTokens, plural } from '$lib/utils/agentsHub/format';
 	import { TONE_PILL, TONE_TEXT } from '$lib/utils/forge/status';
 	import { ago, parseUtc, shortDateTime } from '$lib/utils/forge/time';
@@ -26,7 +27,8 @@
 	export let window: FleetWindow = '24h';
 	export let now = Date.now();
 	export let autonomy: string | null = null;
-	export let chains: Record<string, Array<{ provider?: string | null; model_id?: string | null }>> | null = null;
+	/** Fallback chains, backup and connected providers; null until loaded. */
+	export let failover: FailoverContext | null = null;
 
 	const dispatch = createEventDispatcher<{
 		close: void;
@@ -80,7 +82,7 @@
 	$: meta = STATE_META[agent.state];
 	$: job = agentJob(agent.id);
 	$: model = modelParts(agent);
-	$: fallback = fallbackNote(agent, chains);
+	$: fallback = fallbackNote(agent, failover);
 	$: stats = agent.window;
 	$: windowWords = window === '7d' ? 'the last 7 days' : 'the last 24 hours';
 	$: types = Object.entries(stats.types);
@@ -320,7 +322,7 @@
 					<p class="m-0 text-[12.5px] text-sc-ink2">{stateLine(agent, now)}</p>
 					{#if agent.id === 'brain'}
 						<p class="m-0 rounded-md border border-sc-line bg-sc-panel px-3 py-2 text-[12px] text-sc-ink2">
-							Brain cycles follow the autonomy mode{#if autonomy} (now <span class="text-sc-ink">{autonomy === 'semi_auto' ? 'Semi' : autonomy.charAt(0).toUpperCase() + autonomy.slice(1)}</span>){/if}. Switch Manual · Semi · Auto in the top bar to stop or start them.
+							Brain cycles follow the autonomy mode{#if autonomy}{' '}(now <span class="text-sc-ink">{autonomy === 'semi_auto' ? 'Semi' : autonomy.charAt(0).toUpperCase() + autonomy.slice(1)}</span>){/if}. Switch Manual · Semi · Auto in the top bar to stop or start them.
 						</p>
 					{/if}
 					<dl class="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-sc-line bg-sc-line sm:grid-cols-4">
@@ -447,7 +449,7 @@
 							>{doc.label} <span class="font-plex-mono text-[10.5px] text-sc-ink3">{doc.file}</span>{#if drafts[doc.key] !== saved[doc.key]}<span class="ml-1 text-[#e7b24a]">●</span>{/if}</button>
 						{/each}
 					</div>
-					<p class="m-0 text-[11.5px] text-sc-ink3">{activeDoc.help}{#if !saved[docKey].trim()} Empty: the agent falls back to its built-in instructions.{/if}</p>
+					<p class="m-0 text-[11.5px] text-sc-ink3">{activeDoc.help}{#if !saved[docKey].trim()}{' '}Empty: the agent falls back to its built-in instructions.{/if}</p>
 					{#if workspaceError}
 						<p class="text-[12px] text-[#f2956f]">{workspaceError}</p>
 					{:else if !workspace}
@@ -523,7 +525,7 @@
 							<h3 class="m-0 text-[12.5px] font-medium text-sc-ink">Model</h3>
 							<a class="text-[12px] text-sc-ink2 hover:text-sc-ink" href="/agents?tab=routing">Change model & fallbacks →</a>
 						</div>
-						<p class="m-0 mt-1 text-[12px] text-sc-ink2"><span class="font-plex-mono text-sc-ink">{model.model}</span> on {model.provider}. Models and fallback chains are set in one place, Setup → Routing, so every agent follows the same connected-provider rules.</p>
+						<p class="m-0 mt-1 text-[12px] text-sc-ink2"><span class="font-plex-mono text-sc-ink">{model.model}</span> on {model.provider}. Every agent's model and fallbacks are set in one place: Setup → Agent models.</p>
 						{#if fallback}
 							<p class={`m-0 mt-1.5 text-[12px] ${TONE_TEXT[fallback.tone]}`}>{fallback.text[0].toUpperCase() + fallback.text.slice(1)}. <span class="text-sc-ink3">{fallback.help}</span></p>
 						{/if}

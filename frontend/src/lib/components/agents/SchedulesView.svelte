@@ -103,7 +103,7 @@
 <div class="grid gap-3" data-testid="agents-schedules">
 	<div class="flex flex-wrap items-center gap-2">
 		<p class="m-0 text-[12.5px] text-sc-ink2">
-			{jobs.length} background jobs · <span class={failing.length > 0 ? 'text-[#f2956f]' : ''}>{failing.length} failing</span> · {off.length} off{#if nextJob} · next: <span class="text-sc-ink">{nextJob.name}</span> {nextLabel(nextJob)}{/if}
+			{jobs.length} background jobs · <span class={failing.length > 0 ? 'text-[#f2956f]' : ''}>{failing.length} failing</span> · {off.length} off{#if nextJob}{' '}· next: <span class="text-sc-ink">{nextJob.name}</span> {nextLabel(nextJob)}{/if}
 		</p>
 		<div class="ml-auto flex flex-wrap items-center gap-2">
 			<div class="flex rounded-md border border-sc-line bg-sc-panel p-0.5" role="group" aria-label="Job filter">

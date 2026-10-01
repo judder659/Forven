@@ -1,24 +1,25 @@
 /**
- * Shared, page-level store for the Agents control page. Loads model discovery,
- * provider status, the model-policy, and the enabled agent-model-keys ONCE at
- * the host page and hands them to every tab — replacing the three independent
- * fetch copies that previously lived in SettingsAgents / SettingsModels / the
- * Hub roster.
+ * Shared, page-level store for the Agents page's Setup: provider status, model
+ * discovery, the model policy and the shortlist (`agent_model_keys`), loaded
+ * once by the page and read by every Setup view.
  *
- * Safety invariant the whole page is built around: the bot must NEVER use a
- * model the operator hasn't explicitly CONNECTED (provider) AND ENABLED (model
- * key). The derived helpers here (`isProviderConnected`, `enabledOptions`) are
- * the single source of truth every picker constrains itself to.
+ * Safety invariant: an agent can only use a model from a provider the operator
+ * CONNECTED in the app, and only a model the operator chose. Assigning a model
+ * in Setup is that choice (the backend's model_selection treats every assigned
+ * model as selected); the shortlist only decides which models pickers show
+ * first, and which other pickers in the app offer.
  */
 import { writable, derived, get, type Readable } from 'svelte/store';
 import {
 	getForvenAuthProviders,
 	getForvenAgentModelOptions,
 	getForvenModelPolicy,
+	getSettings,
 	type ForvenAuthProviderStatus,
 	type ForvenAgentModelOption,
 	type ForvenModelPolicyResponse,
 } from '$lib/api';
+import { backupKey, failoverContext as buildFailoverContext, type FailoverContext } from '$lib/utils/agentsHub/failover';
 
 export interface AgentsConfigState {
 	providers: ForvenAuthProviderStatus[];
@@ -26,6 +27,8 @@ export interface AgentsConfigState {
 	modelOptions: ForvenAgentModelOption[];
 	enabledKeys: Set<string>;
 	policy: ForvenModelPolicyResponse | null;
+	/** The backup model key, '' when off; null until it loads (or when it failed to). */
+	backup: string | null;
 	loading: boolean;
 	error: string | null;
 }
@@ -37,6 +40,7 @@ function emptyState(): AgentsConfigState {
 		modelOptions: [],
 		enabledKeys: new Set<string>(),
 		policy: null,
+		backup: null,
 		loading: true,
 		error: null,
 	};
@@ -60,10 +64,11 @@ let inflight: Promise<void> | null = null;
 
 async function loadAll(opts: { refreshModels?: boolean }): Promise<void> {
 	store.update((s) => ({ ...s, loading: true, error: null }));
-	const [authRes, modelRes, policyRes] = await Promise.allSettled([
+	const [authRes, modelRes, policyRes, settingsRes] = await Promise.allSettled([
 		getForvenAuthProviders(),
 		getForvenAgentModelOptions(Boolean(opts.refreshModels)),
 		getForvenModelPolicy(),
+		getSettings(),
 	]);
 
 	store.update((s) => {
@@ -87,6 +92,8 @@ async function loadAll(opts: { refreshModels?: boolean }): Promise<void> {
 			const msg = policyRes.reason instanceof Error ? policyRes.reason.message : 'Failed to load model policy';
 			next.error = next.error ? `${next.error}; ${msg}` : msg;
 		}
+		// Unknown rather than "off" when it fails, so no view claims an agent has no failover.
+		next.backup = settingsRes.status === 'fulfilled' ? backupKey(settingsRes.value, next.policy?.default_models) : null;
 		return next;
 	});
 }
@@ -138,23 +145,25 @@ export const connectedProviderIds: Readable<Set<string>> = derived(connectedProv
 );
 
 /**
- * Model options SELECTABLE anywhere: a model whose provider is CONNECTED *and*
- * that the operator has ENABLED in the Models tab.
- *
- * This is the page-wide safety invariant the rest of the UI promises everywhere
- * ("limited to connected providers and enabled models"): ticking a model in the
- * Models tab is exactly what makes it appear in the agent/routing pickers, and
- * un-ticking it removes it. Previously this returned every connected-provider
- * model (enabled ones merely sorted first), so enabling one model did NOT narrow
- * the pickers — the un-enabled models kept showing up, which reads as the enable
- * list doing the opposite of what it says.
- *
- * Honoring the enable-list here never strands a working pick: ModelPicker still
- * renders an agent's CURRENT saved model even when it's absent from this set, and
- * only flags it when its *provider* is disconnected (not merely un-enabled).
+ * Every model a Setup picker offers: all models of a connected provider. The
+ * pickers show the shortlisted ones first; a model from a provider that is not
+ * connected never appears (an agent still on one is flagged instead).
  */
-export const selectableModelOptions: Readable<ForvenAgentModelOption[]> = derived(
+export const pickableModelOptions: Readable<ForvenAgentModelOption[]> = derived(
+	[store, connectedProviderIds],
+	([$s, $ids]) => $s.modelOptions.filter((o) => $ids.has(String(o.provider)))
+);
+
+/**
+ * What the roster and drawer need to tell whether an agent survives its
+ * provider going down. Null until the providers, the policy and the backup
+ * have all loaded: a partial picture would report failover gaps that are not
+ * there.
+ */
+export const failoverContext: Readable<FailoverContext | null> = derived(
 	[store, connectedProviderIds],
 	([$s, $ids]) =>
-		$s.modelOptions.filter((o) => $ids.has(String(o.provider)) && $s.enabledKeys.has(o.key))
+		$s.providers.length > 0 && $s.policy && $s.backup !== null
+			? buildFailoverContext($s.policy.fallback_chains, $s.backup, $ids)
+			: null
 );
