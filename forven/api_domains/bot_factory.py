@@ -531,6 +531,7 @@ def api_bot_credential(bot_id: str, token: str | None) -> dict:
         verify_bot_token,
     )
 
-    if not verify_bot_token(bot_id, token) or not bot_process_is_live(bot_id):
+    provider = verify_bot_token(bot_id, token)
+    if not provider or not bot_process_is_live(bot_id):
         raise PermissionError("invalid bot credential token")
-    return brokered_credential_for_bot(bot_id)
+    return brokered_credential_for_bot(bot_id, provider)

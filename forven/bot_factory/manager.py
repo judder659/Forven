@@ -53,35 +53,42 @@ def _digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def issue_bot_token(bot_id: str) -> str:
+def issue_bot_token(bot_id: str, provider: str) -> str:
     """Mint a fresh token for one bot spawn; only its hash is stored.
 
     The hash is persisted (not held in memory) so a bot that survives an API
     restart and is adopted by the new process can still fetch credentials.
+    The provider is pinned to the spawn: the runner loads its config once, so
+    an edit to a running bot's model must not switch which login it is served.
     """
     from forven.db import kv_set
 
     token = secrets.token_urlsafe(32)
-    kv_set(_kv_key(bot_id), _digest(token))
+    kv_set(_kv_key(bot_id), {"hash": _digest(token), "provider": provider})
     return token
 
 
-def verify_bot_token(bot_id: str, token: str | None) -> bool:
+def verify_bot_token(bot_id: str, token: str | None) -> str | None:
+    """The provider pinned to this bot's spawn when the token matches, else None."""
     from forven.db import kv_get
 
     if not bot_id or not token:
-        return False
-    expected = kv_get(_kv_key(bot_id))
-    if not isinstance(expected, str) or not expected:
-        return False
-    return hmac.compare_digest(expected, _digest(token))
+        return None
+    record = kv_get(_kv_key(bot_id))
+    if not isinstance(record, dict):
+        return None
+    expected = str(record.get("hash") or "")
+    provider = str(record.get("provider") or "")
+    if not expected or not provider or not hmac.compare_digest(expected, _digest(token)):
+        return None
+    return provider
 
 
 def revoke_bot_token(bot_id: str) -> None:
     from forven.db import kv_set
 
     try:
-        kv_set(_kv_key(bot_id), "")
+        kv_set(_kv_key(bot_id), {})
     except Exception:
         logger.debug("Could not revoke credential token for bot %s", bot_id, exc_info=True)
 
@@ -111,21 +118,19 @@ def resolve_bot_provider(bot_config: dict) -> str:
         return "openai"
 
 
-def brokered_credential_for_bot(bot_id: str) -> dict:
+def brokered_credential_for_bot(bot_id: str, provider: str) -> dict:
     """Decrypt and return only the bot's own provider credential.
 
-    The provider is derived from the bot's stored config, never from the
-    request, so a bot cannot ask for another provider's login. Raises
+    ``provider`` is the one pinned to the bot's spawn token, never taken from
+    the request, so a bot cannot ask for another provider's login. Raises
     LookupError when the bot is unknown and ValueError when the provider has
     no usable credential.
     """
     from forven.auth.store import get_profile, get_token
     from forven.db import get_bot
 
-    bot = get_bot(bot_id)
-    if not bot:
+    if not get_bot(bot_id):
         raise LookupError(f"Bot {bot_id} not found")
-    provider = resolve_bot_provider(bot)
     try:
         token = get_token(provider)  # refreshes OAuth in the parent if needed
     except Exception as exc:
@@ -403,7 +408,7 @@ class BotManager:
             )
             set_bot_status(bot_id, "stopped")
 
-        env = _build_isolated_env(bot, issue_bot_token(bot_id))
+        env = _build_isolated_env(bot, issue_bot_token(bot_id, resolve_bot_provider(bot)))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
 

@@ -56,7 +56,7 @@ def test_broker_serves_only_the_bots_own_provider(forven_db, monkeypatch):
     monkeypatch.setattr(store, "get_token", lambda provider: f"{provider}-token")
     monkeypatch.setattr(store, "get_profile", lambda provider: {"base_url": "https://z.example", "expires": 123})
 
-    token = credentials.issue_bot_token(bot_id)
+    token = credentials.issue_bot_token(bot_id, "zai")
     set_bot_status(bot_id, "running", pid=os.getpid())
     payload = api_bot_credential(bot_id, token)
     assert payload == {"provider": "zai", "access": "zai-token", "base_url": "https://z.example", "expires": 123}
@@ -75,6 +75,13 @@ def test_broker_serves_only_the_bots_own_provider(forven_db, monkeypatch):
     set_bot_status(bot_id, "running", pid=os.getpid())
     assert api_bot_credential(bot_id, token)["access"] == "zai-token"
 
+    # Editing a running bot's model doesn't switch the login it's served; the
+    # runner keeps the provider it was spawned with until restarted.
+    from forven.db import update_bot
+
+    update_bot(bot_id, {"model": "gpt-4.1-mini"})
+    assert api_bot_credential(bot_id, token)["provider"] == "zai"
+
     credentials.revoke_bot_token(bot_id)
     with pytest.raises(PermissionError):
         api_bot_credential(bot_id, token)
@@ -87,7 +94,7 @@ def test_broker_endpoint_rejects_non_local_and_bad_tokens(forven_db):
     from forven.db import create_bot
 
     bot_id = create_bot({"name": "Z", "model": "zai:glm-4.6"})
-    token = credentials.issue_bot_token(bot_id)
+    token = credentials.issue_bot_token(bot_id, "zai")
     url = f"/api/bot-factory/internal/bots/{bot_id}/credential"
 
     remote = TestClient(app, client=("203.0.113.5", 50000))
@@ -111,7 +118,7 @@ def test_broker_endpoint_serves_stored_login(forven_db, monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     upsert_profile("zai", {"access": "stored-zai-login"})
     bot_id = create_bot({"name": "Z", "model": "zai:glm-4.6"})
-    token = credentials.issue_bot_token(bot_id)
+    token = credentials.issue_bot_token(bot_id, "zai")
     set_bot_status(bot_id, "running", pid=os.getpid())
 
     local = TestClient(app, client=("127.0.0.1", 50000))
@@ -261,3 +268,26 @@ def test_monitor_revokes_token_of_dead_bot(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(credentials.BotManager().monitor_bots())
     assert revoked == ["b1"]
+
+
+def test_live_bot_without_master_key_uses_forwarded_exchange_creds(forven_db, monkeypatch):
+    # Settings-stored Hyperliquid creds are encrypted; inside a bot (no master
+    # key) that read must fall through to the FORVEN_HL_* vars the parent set.
+    from forven import secret_storage
+    from forven.db import kv_set
+    from forven.exchange import hyperliquid
+
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("FORVEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    secret_storage._reset_cache_for_tests()
+    kv_set("forven:settings:secrets", {"hyperliquid_private_key": secret_storage.encrypt_secret("0xstored")})
+    kv_set("forven:settings", {"hyperliquid_wallet": "0xstoredwallet"})
+
+    monkeypatch.setenv(broker_client.NO_MASTER_KEY_ENV, "1")
+    monkeypatch.setenv("FORVEN_HL_API_SECRET", "0xforwarded")
+    monkeypatch.setenv("FORVEN_HL_WALLET_ADDRESS", "0xforwardedwallet")
+    creds = hyperliquid._get_creds()
+    assert creds["HL_API_SECRET"] == "0xforwarded"
+    assert creds["HL_WALLET_ADDRESS"] == "0xforwardedwallet"
+    secret_storage._reset_cache_for_tests()
