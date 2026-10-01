@@ -294,6 +294,9 @@ def test_bakeoff_error_retains_baseline():
         )
     assert decision.accepted is False
     assert decision.code == "bakeoff_error"
+    # The engine's own error reaches the record, so a code-path failure is not
+    # indistinguishable from a fair loss.
+    assert "insufficient data" in decision.reason
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +417,76 @@ def test_evolution_uses_optimization_acceptance_chokepoint(forven_db):
     assert spy.call_count == 1, "evolution must delegate the apply decision to the chokepoint"
     assert result.get("baseline_retained") is True
     assert _strategy_params("SOPT_E") == {"rsi_entry": 30}, "rejected candidate must not mutate params"
+
+
+_DZ_TYPE = "zz_dz_bakeoff_s99999"
+_DZ_RUNTIME = "imported__dropzone_zz_dz_bakeoff_s99999_deadbeef0000"
+
+
+def _sandbox_apply_step(strategy_id):
+    """A gauntlet-stage dropzone row whose workflow holds a validated optimization."""
+    from forven.api_core import _persist_backtest_result_row
+    from forven.db import get_db
+    from forven.gauntlet.settings import build_settings_snapshot
+    from forven.gauntlet.store import create_or_get_workflow, get_workflow_detail, update_step_status
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, runtime_type, sandbox_only, symbol, timeframe, params, metrics, "
+            "stage, status, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'SOL', '4h', '{\"lookback\": 20}', '{}', "
+            "'gauntlet', 'gauntlet', datetime('now'), datetime('now'))",
+            (strategy_id, f"DZ-{strategy_id}", _DZ_TYPE, _DZ_RUNTIME),
+        )
+    _persist_backtest_result_row(
+        result_id=f"opt-{strategy_id}", strategy_id=strategy_id, result_type="optimization",
+        symbol="SOL", timeframe="4h", start_date=None, end_date=None,
+        metrics={}, config={**_OK_OPT, "best_params": {"lookback": 30}},
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    workflow = create_or_get_workflow(
+        strategy_id=strategy_id, created_by="pytest", settings_snapshot=build_settings_snapshot(),
+    )
+    steps = {step["step_key"]: step for step in get_workflow_detail(workflow["id"])["steps"]}
+    update_step_status(
+        steps["validation_optimization"]["id"], "passed",
+        output={"result_id": f"opt-{strategy_id}", "timeframe": "4h"},
+    )
+    return workflow, steps["apply_optimized_defaults"]
+
+
+def test_gauntlet_bakeoff_runs_sandbox_strategy_under_runtime_type(forven_db):
+    """REGRESSION (S11388, 2026-10-01): the gauntlet passed the bare container
+    type, an orphan in this process, so no drop-zone candidate was ever judged."""
+    from forven.gauntlet.tasks import run_apply_optimized_defaults
+
+    workflow, apply_step = _sandbox_apply_step("SOPT_DZ")
+    ctx, mock = _patch_walk_forward(_wfa([0.5, 0.5, 0.5]), _wfa([1.2, 1.1, 1.3]))
+    with ctx:
+        result = run_apply_optimized_defaults(workflow, apply_step)
+
+    assert mock.call_count == 2, "baseline + candidate bake-off must actually run"
+    assert [call.kwargs["strategy_type"] for call in mock.call_args_list] == [_DZ_RUNTIME, _DZ_RUNTIME]
+    assert result["status"] == "passed"
+    assert not result.get("baseline_retained")
+    assert _strategy_params("SOPT_DZ") == {"lookback": 30}
+
+
+def test_gauntlet_bakeoff_for_sandbox_strategy_clears_the_orphan_guard(forven_db, monkeypatch):
+    """The REAL walk_forward, stopped at the step after its orphan guard."""
+    from forven.gauntlet.tasks import run_apply_optimized_defaults
+    from forven.strategies import backtest as bt
+
+    monkeypatch.setattr(bt, "resolve_backtest_trade_mode", lambda *a, **k: (None, "sentinel: guard cleared"))
+    # The pre-fix input: the bare container type dies on the guard.
+    assert "orphan" in bt.walk_forward("S", "SOL", _DZ_TYPE, {"lookback": 20})["error"]
+
+    workflow, apply_step = _sandbox_apply_step("SOPT_DZG")
+    result = run_apply_optimized_defaults(workflow, apply_step)
+
+    reason = result["acceptance"]["reason"]
+    assert "sentinel: guard cleared" in reason
+    assert "orphan" not in reason
+    assert _strategy_params("SOPT_DZG") == {"lookback": 20}
 
 
 def test_unvalidated_optimization_never_writes_params(forven_db):

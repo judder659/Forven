@@ -98,6 +98,95 @@ def test_active_registration_sweep_skips_imported_rows(forven_db, monkeypatch):
     )
 
 
+def test_evolution_testing_step_executes_runtime_type(forven_db, monkeypatch):
+    """Both execution legs of the legacy testing step (readiness drive, then the
+    code-first validation matrix) run the runtime_type; the container name keeps
+    the author's bare TYPE_NAME."""
+    import forven.evolution as evolution
+    import forven.gauntlet.store as store
+
+    candidate = {
+        "id": "S-DZEVO", "stage": "gauntlet", "status": "gauntlet",
+        "type": "zz_dz_evo_s99997", "runtime_type": "imported__dropzone_zz_dz_evo_s99997_deadbeef0002",
+        "params": {}, "symbol": "SOL/USDT", "timeframe": "4h",
+    }
+    executed: list[str] = []
+    named: list[str] = []
+
+    def _readiness(**kwargs):
+        executed.append(kwargs["strategy_type"])
+        raise RuntimeError("fall through to the code-first path")
+
+    def _matrix(**kwargs):
+        executed.append(kwargs["strategy_type"])
+        return {"contexts": [], "best": {"symbol": "SOL/USDT", "timeframe": "4h", "fitness": 0.5, "metrics": {}}}
+
+    monkeypatch.setattr(evolution, "get_strategies", lambda: [candidate])
+    monkeypatch.setattr(evolution, "_is_pipeline_candidate_strategy", lambda s: True)
+    monkeypatch.setattr(
+        evolution, "_resolve_pipeline_execution_plan",
+        lambda n: {"drain": False, "drain_max_seconds": 60, "max_assignments": 3, "adaptive": False, "target_clear_hours": 0},
+    )
+    monkeypatch.setattr(evolution, "_attempt_stage_promotion", lambda sid, **kwargs: (False, "no promotion in this test"))
+    monkeypatch.setattr(store, "has_active_workflow_for_strategy", lambda sid: False)
+    monkeypatch.setattr(store, "get_latest_workflow_for_strategy", lambda sid: None)
+    monkeypatch.setattr(evolution, "_advance_gauntlet_readiness", _readiness)
+    monkeypatch.setattr(evolution, "_run_backtest_validation_matrix_sync", _matrix)
+    monkeypatch.setattr(evolution, "build_strategy_container_name", lambda **kwargs: named.append(kwargs["type_"]) or "n")
+
+    evolution._run_testing_step_impl()
+
+    assert executed == [candidate["runtime_type"]] * 2
+    assert named == [candidate["type"]]
+
+
+def test_paper_graduation_drives_runtime_type(forven_db, monkeypatch):
+    import forven.evolution as evolution
+    import forven.policy as policy
+
+    paper = {
+        "id": "S-DZPAPER", "stage": "paper", "status": "paper",
+        "type": "zz_dz_paper_s99996", "runtime_type": "imported__dropzone_zz_dz_paper_s99996_deadbeef0003",
+        "params": "{}", "symbol": "SOL/USDT", "timeframe": "4h",
+    }
+    driven: list[str] = []
+    monkeypatch.setattr(evolution, "get_strategies", lambda: [paper])
+    monkeypatch.setattr(evolution, "evaluate_promotion", lambda *args: (False, "not yet"))
+    monkeypatch.setattr(
+        policy, "check_paper_live_readiness",
+        lambda sid: {"ready": False, "steps": [{"name": "paper_trades", "status": "passed"}]},
+    )
+    monkeypatch.setattr(
+        evolution, "_advance_paper_live_readiness",
+        lambda **kwargs: driven.append(kwargs["strategy_type"]) or {"action": "none"},
+    )
+
+    evolution.check_paper_graduation()
+
+    assert driven == [paper["runtime_type"]]
+
+
+def test_optimizer_resolves_runtime_type_for_imported_rows(forven_db, monkeypatch):
+    """optimize_strategy(strategy_id) without a type (CLI, agent tool) and the
+    weekly optimize_all_deployed both used the bare type."""
+    from forven.strategies import optimizer
+
+    runtime = "imported__dropzone_zz_dz_opt_s99995_deadbeef0004"
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, runtime_type, symbol, timeframe, params, status, stage, "
+            "created_at, updated_at, sandbox_only) "
+            "VALUES ('S-DZOPT', 'dz', 'zz_dz_opt_s99995', ?, 'SOL', '4h', '{}', 'deployed', 'paper', ?, ?, 1)",
+            (runtime, _now(), _now()),
+        )
+    assert optimizer._resolve_strategy("S-DZOPT")[1] == runtime
+
+    optimized: list[str] = []
+    monkeypatch.setattr(optimizer, "optimize_strategy", lambda **kwargs: optimized.append(kwargs["strategy_type"]) or {})
+    optimizer.optimize_all_deployed()
+    assert optimized == [runtime]
+
+
 def test_normalize_passes_imported_types_through_unchanged():
     """_normalize_strategy_type must never lowercase or family-alias a namespaced
     sandbox type: the worker registry lookup is case-sensitive, and the *_orb

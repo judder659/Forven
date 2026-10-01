@@ -293,7 +293,7 @@ def _decide(baseline_wfa: dict, candidate_wfa: dict) -> AcceptanceDecision:
 
 
 def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timeframe, total_bars, leverage, execution_controls=None, experiment_context=None):
-    """Run a walk_forward over a fixed context; returns the result dict or None."""
+    """Run a walk_forward over a fixed context; returns ``(result, None)`` or ``(None, error)``."""
     from forven.strategies.backtest import walk_forward
 
     # walk_forward derives its timeframe from params["timeframe"]; pin both runs
@@ -314,14 +314,12 @@ def _run_walk_forward(strategy_id, asset, strategy_type, params, *, eval_timefra
         )
     except Exception as exc:  # noqa: BLE001 - any failure -> can't prove better -> retain
         log.warning("acceptance bake-off walk_forward crashed for %s: %s", strategy_id, exc)
-        return None
+        return None, f"walk_forward crashed: {exc}"
     if not isinstance(result, dict) or result.get("error"):
-        log.warning(
-            "acceptance bake-off walk_forward error for %s: %s",
-            strategy_id, (result or {}).get("error") if isinstance(result, dict) else "non-dict result",
-        )
-        return None
-    return result
+        error = str(result.get("error")) if isinstance(result, dict) else "non-dict result"
+        log.warning("acceptance bake-off walk_forward error for %s: %s", strategy_id, error)
+        return None, error
+    return result, None
 
 
 def evaluate_optimization_candidate(
@@ -397,20 +395,23 @@ def evaluate_optimization_candidate(
         **{key: optimization_metrics[key] for key in ("fee_bps", "slippage_bps", "initial_capital")
            if optimization_metrics.get(key) is not None},
     }
-    baseline_wfa = _run_walk_forward(
+    baseline_wfa, baseline_error = _run_walk_forward(
         strategy_id, asset, strategy_type, current_params,
         eval_timeframe=resolved_tf, total_bars=total_bars, leverage=resolved_leverage,
         execution_controls=shared_ec, experiment_context=experiment_context,
     )
-    candidate_wfa = _run_walk_forward(
+    candidate_wfa, candidate_error = _run_walk_forward(
         strategy_id, asset, strategy_type, candidate_params,
         eval_timeframe=resolved_tf, total_bars=total_bars, leverage=resolved_leverage,
         execution_controls=shared_ec, experiment_context=experiment_context,
     )
     if baseline_wfa is None or candidate_wfa is None:
+        # Carry the engine's error into the decision: a code-path failure (e.g.
+        # an orphan type) must not read like a fair "baseline retained".
+        errors = "; ".join(dict.fromkeys(e for e in (baseline_error, candidate_error) if e))
         return AcceptanceDecision(
             accepted=False, code="bakeoff_error",
-            reason="could not run baseline/candidate walk-forward; retaining baseline (do no harm)",
+            reason=f"could not run baseline/candidate walk-forward ({errors}); retaining baseline (do no harm)",
             candidate_params=candidate_params, baseline_params=current_params,
         )
 

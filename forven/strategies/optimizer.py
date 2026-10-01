@@ -981,6 +981,7 @@ def optimize_strategy(
 
 def optimize_all_deployed() -> list[dict]:
     """Optimize all deployed strategies. Called weekly by scheduler."""
+    from forven.api_core import resolve_execution_strategy_type
     from forven.db import get_strategies
 
     strategies = get_strategies()
@@ -996,7 +997,7 @@ def optimize_all_deployed() -> list[dict]:
             result = optimize_strategy(
                 strategy_id=s["id"],
                 asset=s.get("symbol", "ETH"),
-                strategy_type=s.get("type", ""),
+                strategy_type=resolve_execution_strategy_type(s) or "",
             )
             results.append(result)
             time.sleep(1)  # Rate limit between strategies
@@ -1021,7 +1022,11 @@ def _resolve_strategy(strategy_id: str) -> tuple[str, str, dict]:
                     params = json.loads(params)
                 except (json.JSONDecodeError, TypeError):
                     params = {}
-            return row.get("symbol", "ETH"), row.get("type", ""), params
+            # The executable type: a dropzone/imported row runs under its
+            # namespaced runtime_type (its bare type is an orphan here).
+            from forven.api_core import resolve_execution_strategy_type
+
+            return row.get("symbol", "ETH"), resolve_execution_strategy_type(row) or "", params
 
     # Try registry
     try:
