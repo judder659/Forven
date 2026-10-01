@@ -72,6 +72,7 @@ from forven.routers.verdict import router as verdict_router
 from forven.routers.robustness import router as robustness_router
 from forven.routers.gauntlet import router as gauntlet_router
 from forven.routers.lab_regime import router as lab_regime_router
+from forven.routers.bot_factory import internal_router as bot_factory_internal_router
 from forven.routers.bot_factory import router as bot_factory_router
 from forven.routers.wallets import router as wallets_router
 from forven.routers.propr import router as propr_router
@@ -806,6 +807,7 @@ app.include_router(gauntlet_router)
 if regime_lab_enabled():
     app.include_router(lab_regime_router)
 app.include_router(bot_factory_router)
+app.include_router(bot_factory_internal_router)
 app.include_router(wallets_router)
 app.include_router(propr_router)
 app.include_router(brain_router)

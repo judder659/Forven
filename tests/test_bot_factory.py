@@ -1239,19 +1239,6 @@ class TestBotLifecyclePhase2:
         env = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini"})
         assert env.get("FORVEN_DISABLE_CHROMA_IN_PROCESS") == "1"
 
-    def test_build_isolated_env_forwards_encryption_key(self, monkeypatch):
-        """#117: a bot must get FORVEN_ENCRYPTION_KEY when the operator supplies it
-        via the environment, or it cannot decrypt stored provider logins."""
-        from forven.bot_factory.manager import _build_isolated_env
-
-        monkeypatch.setenv("FORVEN_ENCRYPTION_KEY", "env-key")
-        env = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini"})
-        assert env.get("FORVEN_ENCRYPTION_KEY") == "env-key"
-
-        monkeypatch.delenv("FORVEN_ENCRYPTION_KEY")
-        env = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini"})
-        assert "FORVEN_ENCRYPTION_KEY" not in env
-
     def test_daily_cap_resets_on_new_day(self, forven_db):
         """PERSIST-7: a stale reset date is treated as a fresh day so a
         daily-cap-paused bot can resume without a real LLM call."""

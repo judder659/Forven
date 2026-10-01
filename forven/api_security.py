@@ -29,6 +29,9 @@ _API_EXEMPT_PATH_PREFIXES = (
     # Origin backstop in the handler, so the residual is only a genuine local
     # process triggering our own teardown.
     "/api/shutdown",
+    # Bot subprocesses carry no API key. This endpoint checks a per-bot token
+    # and a loopback client itself (routers/bot_factory.bot_credential).
+    "/api/bot-factory/internal/",
 )
 
 _TRUTHY = {"1", "true", "yes", "on"}

@@ -132,6 +132,10 @@ def _load_fernet_key() -> bytes:
          prevents regenerating a fresh key that would orphan existing ciphertext).
       4. Newly generated key, written to the preferred path under a file lock.
     """
+    if str(os.environ.get("FORVEN_NO_MASTER_KEY") or "").strip() == "1":
+        # Bot subprocesses are spawned without key access (bot_factory.manager);
+        # fail closed rather than reading the key file or generating a new key.
+        raise RuntimeError("The master encryption key is not available in this process.")
     configured = str(os.environ.get("FORVEN_ENCRYPTION_KEY") or "").strip()
     if configured:
         return configured.encode("utf-8")

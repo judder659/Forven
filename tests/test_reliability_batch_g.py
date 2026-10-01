@@ -57,7 +57,8 @@ def test_h_r1_popen_failure_closes_log_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mgr, "_bot_log_path", _fake_log_path)
     monkeypatch.setattr(mgr.subprocess, "Popen", _fake_popen)
-    monkeypatch.setattr(mgr, "_build_isolated_env", lambda bot: {})
+    monkeypatch.setattr(mgr, "_build_isolated_env", lambda bot, token=None: {})
+    monkeypatch.setattr(mgr, "issue_bot_token", lambda bot_id: "token")
     monkeypatch.setattr(mgr, "get_bot", lambda bid: {"id": bid, "name": "test", "status": "stopped"})
     monkeypatch.setattr(mgr, "set_bot_status", lambda *a, **kw: None)
 

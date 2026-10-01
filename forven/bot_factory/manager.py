@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
 
 import psutil
 
+from forven.bot_factory.broker_client import BOT_TOKEN_ENV, NO_MASTER_KEY_ENV
 from forven.config import FORVEN_HOME
 from forven.db import (
     get_bot,
@@ -27,6 +31,100 @@ _MONITOR_INTERVAL = 30
 # How long before a heartbeat is considered stale
 # Must be generous — LLM calls + market data fetch can take 30-60s per tick
 _HEARTBEAT_STALE_SECONDS = 180
+
+
+# ── Per-bot credential broker (parent side) ─────────────────────────
+#
+# Bot subprocesses never receive the master encryption key, so they cannot
+# decrypt Forven's secret stores (provider logins, exchange keys, webhooks).
+# Each spawn is issued a random token; the bot presents it to the parent API,
+# which decrypts and returns ONLY the LLM provider credential that bot is
+# configured to use. OAuth refresh happens here, in the process that owns the
+# encrypted store. The bot-side client is forven.bot_factory.broker_client.
+
+_KV_PREFIX = "forven:bot-cred-token:"
+
+
+def _kv_key(bot_id: str) -> str:
+    return f"{_KV_PREFIX}{bot_id}"
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_bot_token(bot_id: str) -> str:
+    """Mint a fresh token for one bot spawn; only its hash is stored.
+
+    The hash is persisted (not held in memory) so a bot that survives an API
+    restart and is adopted by the new process can still fetch credentials.
+    """
+    from forven.db import kv_set
+
+    token = secrets.token_urlsafe(32)
+    kv_set(_kv_key(bot_id), _digest(token))
+    return token
+
+
+def verify_bot_token(bot_id: str, token: str | None) -> bool:
+    from forven.db import kv_get
+
+    if not bot_id or not token:
+        return False
+    expected = kv_get(_kv_key(bot_id))
+    if not isinstance(expected, str) or not expected:
+        return False
+    return hmac.compare_digest(expected, _digest(token))
+
+
+def revoke_bot_token(bot_id: str) -> None:
+    from forven.db import kv_set
+
+    try:
+        kv_set(_kv_key(bot_id), "")
+    except Exception:
+        logger.debug("Could not revoke credential token for bot %s", bot_id, exc_info=True)
+
+
+def resolve_bot_provider(bot_config: dict) -> str:
+    """The LLM provider a bot's model resolves to (canonical resolver)."""
+    try:
+        from forven.ai import normalize_provider_and_model
+
+        provider, _ = normalize_provider_and_model("auto", bot_config.get("model") or "")
+        return str(provider or "openai")
+    except Exception:
+        return "openai"
+
+
+def brokered_credential_for_bot(bot_id: str) -> dict:
+    """Decrypt and return only the bot's own provider credential.
+
+    The provider is derived from the bot's stored config, never from the
+    request, so a bot cannot ask for another provider's login. Raises
+    LookupError when the bot is unknown and ValueError when the provider has
+    no usable credential.
+    """
+    from forven.auth.store import get_profile, get_token
+    from forven.db import get_bot
+
+    bot = get_bot(bot_id)
+    if not bot:
+        raise LookupError(f"Bot {bot_id} not found")
+    provider = resolve_bot_provider(bot)
+    try:
+        token = get_token(provider)  # refreshes OAuth in the parent if needed
+    except Exception as exc:
+        raise ValueError(f"No usable {provider} credential: {exc}") from exc
+    profile = get_profile(provider) or {}
+    payload: dict = {"provider": provider, "access": token}
+    base_url = str(profile.get("base_url") or "").strip()
+    if base_url:
+        payload["base_url"] = base_url
+    expires = profile.get("expires")
+    if isinstance(expires, (int, float)) and expires > 0:
+        payload["expires"] = int(expires)
+    return payload
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -49,7 +147,7 @@ def _is_pid_alive(pid: int) -> bool:
     return True
 
 
-def _build_isolated_env(bot_config: dict) -> dict[str, str]:
+def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[str, str]:
     """Build a minimal environment for the bot subprocess.
 
     Passes FORVEN_HOME, BOT_ID, minimal system vars, the ChromaDB in-process
@@ -80,13 +178,14 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
     # an operator can export FORVEN_DISABLE_CHROMA_IN_PROCESS=0 to override.
     if sys.platform.startswith("win"):
         env.setdefault("FORVEN_DISABLE_CHROMA_IN_PROCESS", "1")
-    # The subprocess reads stored provider logins and settings from the
-    # encrypted store under FORVEN_HOME. When the key comes from the
-    # environment rather than the on-disk key file, the bot needs it too or
-    # every decrypt fails (#117).
-    encryption_key = os.environ.get("FORVEN_ENCRYPTION_KEY")
-    if encryption_key:
-        env["FORVEN_ENCRYPTION_KEY"] = encryption_key
+    # #117: the bot never gets the master encryption key, whether it comes
+    # from FORVEN_ENCRYPTION_KEY or the key file, and its secret_storage
+    # refuses to load one. Its own provider login is served by the parent's
+    # credential broker (below) using this per-spawn token.
+    env[NO_MASTER_KEY_ENV] = "1"
+    if bot_token:
+        env[BOT_TOKEN_ENV] = bot_token
+    env["FORVEN_PORT"] = os.environ.get("FORVEN_PORT", "8003")
 
     for guard_var in (
         "FORVEN_DISABLE_CHROMA_IN_PROCESS",
@@ -101,12 +200,7 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
     # via the canonical resolver (not a model-name substring heuristic), so a
     # zai / openrouter / anthropic / deepseek bot whose key lives only in the
     # environment can actually authenticate.
-    try:
-        from forven.ai import normalize_provider_and_model
-
-        provider, _ = normalize_provider_and_model("auto", bot_config.get("model") or "")
-    except Exception:
-        provider = "openai"
+    provider = resolve_bot_provider(bot_config)
 
     try:
         from forven.auth.store import _ENV_ACCESS_TOKEN_KEYS, _ENV_BASE_URL_KEYS
@@ -148,8 +242,31 @@ def _build_isolated_env(bot_config: dict) -> dict[str, str]:
             val = os.environ.get(var)
             if val:
                 env[var] = val
+        # Without the master key the bot can't decrypt the Settings store
+        # itself, so the parent resolves the Hyperliquid credentials and
+        # hands over exactly those (live bots only, as before).
+        for var, val in _resolve_live_exchange_env().items():
+            env.setdefault(var, val)
 
     return env
+
+
+def _resolve_live_exchange_env() -> dict[str, str]:
+    """Hyperliquid credentials from the encrypted Settings store, as env vars."""
+    try:
+        from forven.exchange.hyperliquid import _load_creds_from_forven_settings
+
+        creds = _load_creds_from_forven_settings() or {}
+    except Exception:
+        logger.warning("Could not resolve Hyperliquid credentials for a live bot", exc_info=True)
+        return {}
+    mapping = {
+        "HL_API_SECRET": "FORVEN_HL_API_SECRET",
+        "HL_API_KEY": "FORVEN_HL_API_KEY",
+        "HL_WALLET_ADDRESS": "FORVEN_HL_WALLET_ADDRESS",
+        "USE_TESTNET": "FORVEN_HL_USE_TESTNET",
+    }
+    return {env_var: str(creds[key]) for key, env_var in mapping.items() if creds.get(key)}
 
 
 def _bot_log_path(bot_id: str) -> Path:
@@ -252,7 +369,7 @@ class BotManager:
             )
             set_bot_status(bot_id, "stopped")
 
-        env = _build_isolated_env(bot)
+        env = _build_isolated_env(bot, issue_bot_token(bot_id))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
 
@@ -361,6 +478,7 @@ class BotManager:
 
         self._processes.pop(bot_id, None)
         set_bot_status(bot_id, "stopped")
+        revoke_bot_token(bot_id)
 
         bot = get_bot(bot_id)
         # LIVE-STOP-1: a stopped bot no longer manages its positions, so leaving
