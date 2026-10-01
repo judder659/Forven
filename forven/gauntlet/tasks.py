@@ -1952,6 +1952,30 @@ def _dated_wfa_window_issue(
     return None
 
 
+def _selection_precedes_holdout(selection: dict[str, Any], validation: dict[str, Any]) -> bool:
+    """True when the optimizer recorded a genuine holdout: a selection window
+    that ends strictly before the validation window starts. Without that
+    (no holdout applied, legacy rows, overlapping dates) the walk-forward keeps
+    the old in-holdout 70/30 split rather than a boundary it cannot use."""
+    from datetime import datetime, timezone
+
+    def _parse(value: object) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    sel_start, sel_end = _parse(selection.get("start")), _parse(selection.get("end"))
+    val_start, val_end = _parse(validation.get("start")), _parse(validation.get("end"))
+    if None in (sel_start, sel_end, val_start, val_end):
+        return False
+    return sel_start <= sel_end < val_start < val_end
+
+
 def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
     row = _strategy_row(str(workflow.get("strategy_id") or ""))
     if not row:
@@ -1970,7 +1994,11 @@ def run_walk_forward(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
     # prepended as the in-sample prefix, every holdout bar lands in an OOS fold
     # and in-sample means the data the parameters were actually chosen on.
     selection_start = str(selection_window.get("start") or "").strip() or None
-    oos_start = start_date if (selection_start and start_date and end_date) else None
+    oos_start = (
+        start_date
+        if _selection_precedes_holdout(selection_window, validation_window)
+        else None
+    )
     if start_date and end_date:
         # An inadequate holdout is missing evidence, not permission to reuse
         # the selection history as independent validation.

@@ -8168,9 +8168,15 @@ def walk_forward(
             elif _boundary.tzinfo is not None and df.index.tz is None:
                 _boundary = _boundary.tz_convert("UTC").tz_localize(None)
             _holdout_bars = len(df) - int(df.index.searchsorted(_boundary, side="left"))
-            keep_bars = max(_WFA_MAX_BARS, _holdout_bars + 210 + _MIN_WALK_FORWARD_EVAL_BARS)
         except (TypeError, ValueError):
-            pass  # the boundary is validated (and rejected) below
+            _holdout_bars = None  # the boundary is validated (and rejected) below
+        if _holdout_bars is not None:
+            if _holdout_bars > _WFA_MAX_BARS:
+                return {"error": (
+                    f"Walk-forward holdout after oos_start is {_holdout_bars} bars; "
+                    f"the supported maximum is {_WFA_MAX_BARS}"
+                )}
+            keep_bars = max(_WFA_MAX_BARS, _holdout_bars + 210 + _MIN_WALK_FORWARD_EVAL_BARS)
     if len(df) > keep_bars:
         log.info(
             "Walk-forward trimming %d bars to %d for %s",

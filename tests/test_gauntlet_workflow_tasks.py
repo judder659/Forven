@@ -751,6 +751,16 @@ def test_run_walk_forward_scores_whole_holdout_with_selection_as_in_sample(forve
     gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
     assert captured == {"start": holdout["start"], "end": holdout["end"], "oos_start": None}
 
+    # No genuine holdout (holdout_applied=false persists identical windows):
+    # keep the old in-holdout split instead of a boundary with no in-sample.
+    captured.clear()
+    same = {"start": holdout["start"], "end": holdout["end"]}
+    monkeypatch.setattr(
+        gtasks, "_workflow_optimization_windows", lambda _wf: (dict(same), holdout)
+    )
+    gtasks.run_walk_forward(workflow, {"step_key": "walk_forward"})
+    assert captured == {"start": holdout["start"], "end": holdout["end"], "oos_start": None}
+
 
 def test_confirmation_backfills_canonical_metrics_when_blob_lacks_trade_count(forven_db, monkeypatch):
     """When the strategy blob carries no performance metrics (the quick-screen

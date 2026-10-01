@@ -143,3 +143,22 @@ def test_bar_cap_trims_only_the_in_sample_prefix(forven_db, monkeypatch):
     assert captured["override"] == 230
     assert len(captured["df"]) == 49_900 + 230
     assert result["oos_start"] == df.index[600].isoformat()
+
+
+def test_holdout_above_the_bar_cap_is_rejected_not_uncapped(forven_db, monkeypatch):
+    df = _frame(50_600)
+    monkeypatch.setattr(bt, "load_backtest_candles", lambda **_kw: df)
+
+    result = bt.walk_forward(
+        strategy_id="S-WFOOS5",
+        asset="BTC/USDT",
+        strategy_type="rsi_momentum",
+        params={},
+        n_splits=5,
+        timeframe="1h",
+        start_date=df.index[0].isoformat(),
+        end_date=df.index[-1].isoformat(),
+        oos_start=df.index[300].isoformat(),
+    )
+
+    assert "supported maximum is 50000" in result["error"]
