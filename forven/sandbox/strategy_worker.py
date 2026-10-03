@@ -23,10 +23,10 @@ pickle: the parent writes the OHLCV frame, the worker writes four boolean signal
 columns back, and the parent reads them as *data* and re-validates the schema — a
 compromised worker therefore cannot achieve code execution in the trusted parent.
 
-PERFORMANCE: a worker imports forven and runs ``registry.discover()`` ONCE at startup
-(~seconds), then SERVES many signal-gen requests over a pipe. A module-level persistent
-worker (per process) is lazily spawned, reused across calls, and respawned on death or
-timeout, so the discover() cost is amortized rather than paid per call.
+PERFORMANCE: a worker imports forven and registers the builtins ONCE at startup
+(~seconds), then SERVES many signal-gen requests over a pipe, loading each requested
+strategy module on first use. A module-level persistent worker (per process) is lazily
+spawned, reused across calls, and respawned on death or timeout.
 
 NOTE (Phase 2 status): this is the isolation primitive + a persistent worker. Wiring it
 into the backtest/scanner hot paths — so the parent stops importing custom strategy code
@@ -72,7 +72,7 @@ WORKER_ENV_FLAG = "FORVEN_IN_STRATEGY_WORKER"
 _SIGNAL_COLUMNS = ("long_entries", "long_exits", "short_entries", "short_exits")
 
 DEFAULT_TIMEOUT_SECONDS = 120  # per-request, on an already-warm worker
-READY_TIMEOUT_SECONDS = 90  # startup: import forven + registry.discover()
+READY_TIMEOUT_SECONDS = 90  # startup: import forven + register the builtins
 PERSISTENT_MAX_MEMORY_MB = 2048  # worker-lifetime cap (set once at spawn)
 VALIDATE_TIMEOUT_SECONDS = 60  # one-shot import+probe+certify+lookahead of one module
 
@@ -155,10 +155,15 @@ def _compute_signals(workdir: Path) -> bool:
     strategy_type = str(request["strategy_type"])
     cls = registry._TYPE_MAP.get(strategy_type)
     if cls is None and strategy_type.startswith(registry.IMPORTED_TYPE_PREFIX):
-        # Persistent workers predate later strategy intakes. Resolve that exact
-        # namespaced module under the same AST guard without rediscovering every
-        # strategy, importing it in the parent, or substituting another family.
+        # Imported types load on demand: resolve that exact namespaced module under
+        # the same AST guard without scanning the library, importing it in the
+        # parent, or substituting another family.
         cls = registry.load_imported_runtime_type(strategy_type)
+    if cls is None:
+        # A custom/ TYPE_NAME maps to its module only through the full scan. Only
+        # the global isolation flag routes those here; pay the scan on first need.
+        registry.discover()
+        cls = registry._TYPE_MAP.get(strategy_type)
     if cls is None:
         raise StrategyWorkerError(f"unknown strategy type {strategy_type!r}")
     strat = cls("isolated", dict(request.get("params") or {}))
@@ -316,18 +321,20 @@ def _validate_custom_module(workdir: Path) -> dict:
 
 
 def _prepare_worker_runtime():
-    """Import the trusted forven modules, deny network, then discover() the registry
-    (which imports strategy modules — custom top-level code runs HERE, under the
-    AST guard, network-denied)."""
+    """Import the trusted forven modules, deny network, then register the builtins.
+
+    Strategy modules load per request in _compute_signals (their top-level code
+    runs HERE, under the AST guard, network-denied). A full discover() at startup
+    imported the whole library: past ~100s it outran READY_TIMEOUT_SECONDS, so
+    every spawn was killed before it became ready (2026-10-02)."""
     import forven.strategies.backtest  # noqa: F401 — warm the (trusted) import
     from forven.strategies import registry
 
     _install_network_deny()
     try:
-        registry.discover()
+        registry.discover(include_custom=False)
     except Exception:
-        # discover() skips individual broken modules itself; a total failure here
-        # still leaves builtins registered, and unknown types fail per-request.
+        # A total failure leaves an empty registry; unknown types fail per-request.
         pass
 
 
