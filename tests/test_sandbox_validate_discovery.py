@@ -80,3 +80,40 @@ def test_validation_certifies_without_scanning_the_library(library, tmp_path, mo
     assert result["ok"] and result["certified"], result
     assert result["type_name"] == "candidate_type"
     assert "unrelated_type" not in registry._TYPE_MAP
+
+
+def test_worker_startup_registers_builtins_without_scanning_the_library(library, monkeypatch):
+    """The persistent worker's startup must not import the whole library: on a large
+    one that outran the 90s ready timeout, so every spawn was killed (2026-10-02)."""
+    from forven.sandbox import strategy_worker
+    from forven.strategies.builtin.atr_volume_breakout import TYPE_NAME as BUILTIN_TYPE
+
+    monkeypatch.setattr(strategy_worker, "_install_network_deny", lambda: None)
+    library("unrelated_library_module", "unrelated_type")
+
+    strategy_worker._prepare_worker_runtime()
+
+    assert BUILTIN_TYPE in registry._TYPE_MAP
+    assert "unrelated_type" not in registry._TYPE_MAP
+
+
+def test_worker_resolves_a_custom_type_on_first_request(library, tmp_path, monkeypatch):
+    import pandas as pd
+
+    from forven.sandbox import strategy_worker
+
+    monkeypatch.setattr(strategy_worker, "_install_network_deny", lambda: None)
+    library("candidate_in_library", "candidate_type")
+    strategy_worker._prepare_worker_runtime()
+    idx = pd.date_range("2025-01-01", periods=300, freq="1h", tz="UTC")
+    close = pd.Series(range(300), index=idx, dtype=float) + 100.0
+    frame = pd.DataFrame({"open": close, "high": close + 1, "low": close - 1, "close": close, "volume": 1000.0})
+    workdir = tmp_path / "request"
+    workdir.mkdir()
+    frame.to_parquet(workdir / "in.parquet")
+    (workdir / "request.json").write_text(
+        json.dumps({"strategy_type": "candidate_type", "params": {}, "trade_mode": "long_only"}), encoding="utf-8",
+    )
+
+    assert strategy_worker._compute_signals(workdir) is True
+    assert (workdir / "out.parquet").is_file()
