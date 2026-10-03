@@ -24,8 +24,22 @@ def test_slow_strategy_reserves_larger_holdout_without_growing_selection(monkeyp
     # the in-sample prefix), so each fold gets holdout / n_folds of calendar time.
     expected = plan["minimum_validation_bars"] / 24 / plan["n_folds"] * 4 / 30.44
     assert expected >= plan["minimum_trades_per_fold"] * 2 - 1e-9
-    # ...and no 1 / (1 - train_ratio) multiple on top: ~380 days, not ~1268.
-    assert plan["minimum_validation_bars"] / 24 < 400
+    # ...and no 1 / (1 - train_ratio) multiple on top of the fold requirement:
+    # ~380 days, not ~1268, when the Monte Carlo baseline floor does not bind.
+    wfa_only = optimization_history_requirements("S-test", "1h", 365, {"gauntlet": {"min_trades": 1}})
+    assert wfa_only["minimum_validation_bars"] / 24 < 400
+
+
+def test_holdout_test_slice_holds_the_monte_carlo_baseline_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    # S11879 (2026-10-03): ~3 trades/week sized a 230-day holdout whose 30%
+    # confirmation slice held 26 trades; every test passed, then the paper gate
+    # rejected the 26-trade Monte Carlo baseline against gauntlet.min_trades=30.
+    rate = 0.435
+    monkeypatch.setattr("forven.wfa_window.measured_trade_rate", lambda *a: (rate, "fixture"))
+    settings = {"gauntlet": {"min_trades": 30}, "walk_forward": {"in_sample_pct": 0.7}}
+    plan = optimization_history_requirements("S-test", "1h", 365, settings)
+    test_slice_trades = plan["minimum_validation_bars"] / 24 * (1 - 0.7) * rate
+    assert test_slice_trades >= 30 * 1.5 - 1e-9
 
 
 @pytest.mark.parametrize("rate", [None, float("nan"), float("inf"), 0.0])
