@@ -11,6 +11,7 @@ from forven.db import _now, get_db, kv_get, kv_set, live_equity_baseline_kv_key
 from forven.execution_observations import NOT_BLOCKS
 from forven.market_data import fetch_market_candles
 from forven.scheduler import enable_job
+from forven.strategies.base import normalize_trade_mode
 from forven.trade_state import parse_trade_signal_data
 
 log = logging.getLogger("forven.api")
@@ -2084,8 +2085,8 @@ def _resolve_trigger_trade_mode(strat, params: dict) -> str:
     this it defaults to ``long_only`` and a SHORT-only strategy produces ZERO trades
     → ZERO triggers (the 'no triangles on the chart' bug). Mirrors the scanner's
     ``_resolve_kernel_trade_mode`` so the chart's would-be trades match paper's."""
-    tm = str((params or {}).get("trade_mode") or "").strip().lower()
-    if tm in ("long_only", "short_only", "both"):
+    tm = normalize_trade_mode((params or {}).get("trade_mode"))
+    if tm is not None:
         return tm
     modes = getattr(strat, "supported_trade_modes", None)
     if modes and "both" in modes:

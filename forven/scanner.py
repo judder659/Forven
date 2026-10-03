@@ -77,6 +77,7 @@ from forven.strategies.certification import (
     certify_execution_strategy,
 )
 from forven.strategies.params import canonicalize_params_with_metadata, resolve_strategy_family
+from forven.strategies.base import normalize_trade_mode
 from forven.trade_state import close_trade_record, mark_trade_pending_close_reconcile, parse_trade_signal_data
 
 log = logging.getLogger("forven.scanner")
@@ -2791,9 +2792,7 @@ def _sandbox_latest_signal(
 
     rt = str(getattr(strategy_instance, "strategy_type", None) or resolved_runtime_type or "")
     params = dict(getattr(strategy_instance, "params", {}) or {})
-    trade_mode = str(params.get("trade_mode") or "long_only").strip().lower()
-    if trade_mode not in {"long_only", "short_only", "both"}:
-        trade_mode = "long_only"
+    trade_mode = normalize_trade_mode(params.get("trade_mode")) or "long_only"
     price = 0.0
     try:
         if not df.empty:

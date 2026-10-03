@@ -126,6 +126,12 @@ def test_kernel_triggers_respect_prelive_cutoff():
 def test_resolve_trigger_trade_mode():
     assert paper_domain._resolve_trigger_trade_mode(None, {"trade_mode": "short_only"}) == "short_only"
     assert paper_domain._resolve_trigger_trade_mode(None, {"trade_mode": "both"}) == "both"
+    # #117 shorthand: a "short" strategy whose supported set also includes the
+    # default long_only must still replay the short side.
+    class _LongOrShort:
+        supported_trade_modes = {"long_only", "short_only"}
+
+    assert paper_domain._resolve_trigger_trade_mode(_LongOrShort(), {"trade_mode": "short"}) == "short_only"
 
     class _ShortOnly:
         supported_trade_modes = {"short_only"}

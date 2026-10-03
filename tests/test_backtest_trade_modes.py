@@ -386,3 +386,66 @@ def test_param_derived_both_on_long_only_clamps_instead_of_erroring():
     )
     assert err is None, err
     assert mode == "long_only"
+
+
+def test_short_alias_in_params_resolves_to_short_only():
+    # #117: trade_mode="short" used to fall through to long_only and backtest
+    # with zero trades and no warning.
+    obj = _MirrorShortStrategy("s-short-alias", {"trade_mode": "short"})
+    mode, err = backtest_mod.resolve_backtest_trade_mode(
+        None, strategy_type="mirror_short_dummy", params={"trade_mode": "short"}, strategy_obj=obj,
+    )
+    assert err is None, err
+    assert mode == "short_only"
+
+
+def test_short_alias_as_explicit_request_backtests_short(forven_db, monkeypatch):
+    _patch_backtest_environment(monkeypatch)
+    monkeypatch.setattr(
+        backtest_mod,
+        "_resolve_strategy_class",
+        lambda strategy_type: _MirrorShortStrategy if strategy_type == "mirror_short_dummy" else None,
+    )
+
+    result = backtest_mod.backtest_strategy(
+        strategy_id="S-SHORT-ALIAS",
+        asset="BTC/USDT",
+        strategy_type="mirror_short_dummy",
+        params={},
+        bars=260,
+        candles_df=_price_frame(),
+        trade_mode="short",
+        persist_legacy_run=False,
+    )
+
+    assert not result.get("error")
+    assert result["trade_mode"] == "short_only"
+    assert result["metrics"]["by_side"]["short"]["total_trades"] >= 1
+
+
+def test_trade_mode_aliases_normalize():
+    from forven.strategies.base import normalize_trade_mode
+
+    assert normalize_trade_mode("short") == "short_only"
+    assert normalize_trade_mode(" Short ") == "short_only"
+    assert normalize_trade_mode("long") == "long_only"
+    assert normalize_trade_mode("long-short") == "both"
+    assert normalize_trade_mode("sideways") is None
+    assert normalize_trade_mode(None) is None
+
+
+def test_imported_strategy_short_alias_supports_short_only():
+    from forven.strategies.sandbox_proxy import SandboxOnlyStrategy
+
+    proxy = SandboxOnlyStrategy(
+        "S-IMPORTED-SHORT", {"_asset": "BTC", "trade_mode": "short"}, runtime_type="imported__short_alias",
+    )
+    assert proxy.supported_trade_modes == {"long_only", "short_only"}
+
+
+def test_unrecognized_trade_mode_param_warns(caplog):
+    backtest_mod._WARNED_TRADE_MODES.discard("sideways")
+    with caplog.at_level("WARNING", logger="forven.strategies.backtest"):
+        mode = backtest_mod._default_trade_mode_from_params({"trade_mode": "sideways"})
+    assert mode == "long_only"
+    assert any("Unrecognized trade_mode 'sideways'" in rec.getMessage() for rec in caplog.records)

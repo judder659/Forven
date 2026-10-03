@@ -77,7 +77,7 @@ from forven.scanner import (
 
 
 from forven.strategies.certification import certify_execution_strategy
-from forven.strategies.base import BaseStrategy, DirectionalSignals, TradeMode
+from forven.strategies.base import BaseStrategy, DirectionalSignals, TradeMode, normalize_trade_mode
 from forven.strategies.experiment_evidence import frame_fingerprint
 
 
@@ -778,17 +778,26 @@ def validate_backtest_risk_controls(
     )
 
 
+_WARNED_TRADE_MODES: set[str] = set()
+
+
 def _normalize_trade_mode_value(value: object) -> str | None:
-    normalized = str(value or "").strip().lower()
-    if normalized in _VALID_TRADE_MODES:
-        return normalized
-    return None
+    return normalize_trade_mode(value)
 
 
 def _default_trade_mode_from_params(params: dict | None) -> str:
-    configured = _normalize_trade_mode_value((params or {}).get("trade_mode"))
+    raw_mode = (params or {}).get("trade_mode")
+    configured = _normalize_trade_mode_value(raw_mode)
     if configured is not None:
         return configured
+    if str(raw_mode or "").strip() and str(raw_mode) not in _WARNED_TRADE_MODES:
+        _WARNED_TRADE_MODES.add(str(raw_mode))
+        log.warning(
+            "Unrecognized trade_mode %r in strategy params; expected one of %s. "
+            "Falling back to the position/direction hint (default long_only).",
+            raw_mode,
+            sorted(_VALID_TRADE_MODES),
+        )
     side_hint = str(
         (params or {}).get("position")
         or (params or {}).get("direction")

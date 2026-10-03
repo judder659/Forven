@@ -1,10 +1,11 @@
 """Bot Factory API router."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from forven.api_domains import bot_factory as bf_domain
-from forven.api_security import require_operator_access
+from forven.api_security import is_loopback_host, require_operator_access
+from forven.bot_factory.broker_client import BOT_TOKEN_HEADER
 from forven.bot_factory.models import (
     BotCloneRequest,
     BotConfigCreate,
@@ -14,6 +15,28 @@ from forven.bot_factory.models import (
 )
 
 router = APIRouter(tags=["bot-factory"], dependencies=[Depends(require_operator_access)])
+# Bot subprocesses hold no API/operator key; they authenticate to this one
+# endpoint with their per-spawn token instead (see bot_factory.manager, credential broker).
+internal_router = APIRouter(tags=["bot-factory"])
+
+
+@internal_router.get("/api/bot-factory/internal/bots/{bot_id}/credential")
+def bot_credential(bot_id: str, request: Request):
+    client_host = request.client.host if request.client else ""
+    server = request.scope.get("server") or ("", 0)
+    # Local means loopback, or the API's own bind address when it listens on a
+    # specific interface (the bot then connects from that same address).
+    is_local = bool(client_host) and (is_loopback_host(client_host) or client_host == server[0])
+    if not is_local:
+        raise HTTPException(status_code=403, detail="Bot credentials are only served to local bot processes")
+    try:
+        return bf_domain.api_bot_credential(bot_id, request.headers.get(BOT_TOKEN_HEADER))
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Invalid bot credential token")
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 # ── Bot CRUD ─────────────────────────────────────────────────────────

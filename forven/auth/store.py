@@ -336,9 +336,21 @@ def get_profile(provider: str) -> dict | None:
     as a plaintext token. An env override still wins, since it represents an
     explicit runtime credential independent of the stored ciphertext.
     """
+    from forven.bot_factory.broker_client import fetch_brokered_profile, is_brokered_process
+
+    env_override = _env_profile(provider)
+    if is_brokered_process():
+        # Bot subprocess: it has no master key, so never touch the encrypted
+        # store. The parent's broker serves this bot's own provider login.
+        brokered = fetch_brokered_profile(provider) or {}
+        merged = {**brokered, **env_override}
+        if not merged:
+            return None
+        merged["provider"] = str(provider or "").strip().lower()
+        return merged
+
     store = load_auth()
     stored = store["profiles"].get(f"{provider}:default")
-    env_override = _env_profile(provider)
     if is_profile_opaque(stored):
         if env_override:
             env_override["provider"] = str(provider or "").strip().lower()
@@ -354,6 +366,12 @@ def get_profile(provider: str) -> dict | None:
         env_override["provider"] = str(provider or "").strip().lower()
         return env_override
     return None
+
+
+def _brokered() -> bool:
+    from forven.bot_factory.broker_client import is_brokered_process
+
+    return is_brokered_process()
 
 
 def _is_expired(profile: dict) -> bool:
@@ -440,7 +458,14 @@ def get_token(provider: str) -> str:
             or ""
         ).strip()
 
-    if _is_expired(profile):
+    if _is_expired(profile) and _brokered():
+        # The parent refreshes and persists OAuth tokens; ask it again.
+        from forven.bot_factory.broker_client import fetch_brokered_profile
+
+        profile = {**(fetch_brokered_profile(provider, force=True) or {}), **_env_profile(provider)}
+        if not profile or _is_expired(profile):
+            raise RuntimeError(f"{provider} token expired and the bot credential broker has no fresh one.")
+    elif _is_expired(profile):
         refresher = REFRESHERS.get(provider)
         if refresher and profile.get("refresh"):
             try:
