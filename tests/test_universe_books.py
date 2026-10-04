@@ -65,6 +65,16 @@ def test_panel_keeps_complete_days_and_sums_funding(monkeypatch):
     assert panel.funding["AAA-USDT"].iloc[0] == pytest.approx(24 * 0.0001)
 
 
+@pytest.mark.parametrize(("hours_of_last_day", "days"), [(23, 5), (24, 6)])
+def test_a_day_counts_only_once_its_last_hour_is_stored(monkeypatch, hours_of_last_day, days):
+    from forven.universe.lake import load_daily_panel
+
+    index = _patch_lake(monkeypatch, hours=24 * 5 + hours_of_last_day)
+    # The clock is well past the last day: only the lake's own bars decide.
+    panel = load_daily_panel(["AAA-USDT"], sealed=False, now=index[-1] + pd.Timedelta(days=2))
+    assert len(panel.close) == days
+
+
 def test_sealed_panel_ends_at_last_complete_day_before_a_midday_cutoff(monkeypatch):
     import forven.research_contract as research_contract
     from forven.universe.lake import load_daily_panel

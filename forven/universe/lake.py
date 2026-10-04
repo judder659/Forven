@@ -82,6 +82,12 @@ def load_daily_panel(
         hourly = hourly[hourly.index < end]
         if hourly.empty:
             continue
+        # Labels are bar OPEN times, so a day is complete only once its 23:00 bar
+        # is stored. The lake can lag the clock by hours: without this, a tick just
+        # after midnight would book yesterday at an earlier hour's close.
+        hourly = hourly[hourly.index < (hourly.index.max() + pd.Timedelta(hours=1)).floor("D")]
+        if hourly.empty:
+            continue
         day = hourly.index.floor("D")
         closes[symbol] = hourly.groupby(day).last()
         per_hour = _per_hour_funding_series(symbol, hourly.index)
