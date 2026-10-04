@@ -462,14 +462,20 @@ def test_stale_seed_kv_never_reads_as_running(client, fake_seed):
 
 
 def test_interrupted_seed_is_reported_and_retryable(client, fake_seed):
+    from datetime import datetime, timedelta, timezone
+
     from forven.api_domains.data_ops import run_startup_maintenance
     from forven.db import get_db
 
+    # Relative to now: startup maintenance also prunes jobs past 90 days, and a
+    # fixed 2026-07-06 start aged out on 2026-10-04.
+    started = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with get_db() as conn:
         conn.execute(
             "INSERT INTO data_jobs (id, kind, title, status, lane, params_json, created_at, started_at, updated_at) "
             "VALUES ('dj-seed-old', 'universe_seed', 'Seed the research universe', 'running', 'binance-vision', '{}', "
-            "'2026-07-06T11:43:35Z', '2026-07-06T11:43:35Z', 'x')"
+            "?, ?, 'x')",
+            (started, started),
         )
     out = run_startup_maintenance()
     out["purge_thread"].join(10)
