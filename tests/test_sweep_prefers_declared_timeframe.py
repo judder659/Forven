@@ -240,3 +240,25 @@ def test_validation_contexts_stay_on_a_declared_timeframe(forven_db, monkeypatch
     contexts = evolution._build_validation_contexts("SOL/USDT", "1h", params={"_timeframe": "4h"})
 
     assert contexts and {timeframe for _symbol, timeframe in contexts} == {"4h"}
+
+
+def test_validation_contexts_stay_on_a_declared_asset(forven_db, monkeypatch):
+    # S11884 (2026-10-03): an ETH design was validated on SOL/ETH/BTC and
+    # re-homed onto BTC, the best-scoring context, despite _asset="ETH".
+    from forven import evolution
+
+    monkeypatch.setattr(evolution, "_collect_validation_symbols", lambda symbol, params=None: [symbol, "SOL/USDT", "BTC/USDT"])
+
+    contexts = evolution._build_validation_contexts("BTC/USDT", "1h", params={"_asset": "ETH", "_timeframe": "1h"})
+
+    assert contexts == [("ETH/USDT", "1h")]
+
+
+def test_validation_contexts_without_a_declared_asset_still_span_markets(forven_db, monkeypatch):
+    from forven import evolution
+
+    monkeypatch.setattr(evolution, "_collect_validation_symbols", lambda symbol, params=None: [symbol, "ETH/USDT"])
+
+    contexts = evolution._build_validation_contexts("SOL/USDT", "1h", params={"_timeframe": "1h"})
+
+    assert {s for s, _tf in contexts} == {"SOL/USDT", "ETH/USDT"}
