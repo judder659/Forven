@@ -7133,12 +7133,28 @@ def auto_assign_best_symbol_timeframe(strategy_id: str) -> tuple[str, str] | Non
         # strategies belong to the sweep's quality-barred selection, not fitness
         # shopping across contexts.
         declared_tf = ""
+        declared_asset = ""
         try:
             params_blob = json.loads(row["params"]) if row["params"] else {}
             if isinstance(params_blob, dict):
                 declared_tf = str(params_blob.get("_timeframe") or "").strip().lower()
+                declared_asset = _symbol_asset_key(params_blob.get("_asset"))
         except Exception:
             declared_tf = ""
+            declared_asset = ""
+        # The declared asset is a contract too (S12281, an ETH design, was moved to
+        # BTC after a post-mortem BTC backtest; its gauntlet then ran on BTC).
+        if declared_asset and _symbol_asset_key(best_symbol) != declared_asset:
+            log_activity(
+                "info",
+                "db.auto_assign_context",
+                (
+                    f"Auto-assign for {strategy_id} kept declared asset "
+                    f"{declared_asset} (fitness winner was {best_symbol} {best_timeframe})"
+                ),
+                {"strategy_id": strategy_id, "declared_asset": declared_asset},
+            )
+            return old_symbol, old_timeframe
         if declared_tf and str(best_timeframe or "").strip().lower() != declared_tf:
             log_activity(
                 "info",
