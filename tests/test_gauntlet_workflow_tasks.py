@@ -141,7 +141,8 @@ def test_quick_screen_pass_advances_to_gate(forven_db, monkeypatch):
         return {
             "result_id": "B-quick-pass",
             "metrics": {
-                "total_trades": 12,
+                # Above the quick-screen trade floor (20), matching the 40-trade row.
+                "total_trades": 40,
                 "total_return_pct": 8.0,
                 "max_drawdown_pct": 0.05,
                 "sharpe_ratio": 1.2,

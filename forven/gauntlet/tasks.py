@@ -399,6 +399,8 @@ def _metric(metrics: dict[str, Any], *keys: str, default: float = 0.0) -> float:
 
 
 def _quick_screen_failures(metrics: dict[str, Any], cfg: dict[str, Any]) -> list[str]:
+    from forven.policy import resolve_profit_factor
+
     failures: list[str] = []
     total_return = _metric(metrics, "total_return_pct", "total_return", default=0.0)
     # total_return_pct is stored as a RATIO (0.12 == 12%) while min_total_return_pct is
@@ -408,7 +410,9 @@ def _quick_screen_failures(metrics: dict[str, Any], cfg: dict[str, Any]) -> list
     sharpe = _metric(metrics, "sharpe_ratio", "sharpe", default=0.0)
     max_dd = _ratio(metrics.get("max_drawdown_pct", metrics.get("max_drawdown")), 0.0)
     win_rate = _ratio(metrics.get("win_rate"), 0.0)
-    profit_factor = _metric(metrics, "profit_factor", default=0.0)
+    # None = not measured (no trades, or no PF recorded): never a failed floor. An
+    # infinite PF (no losing trades) arrives here as null + profit_factor_is_infinite.
+    profit_factor = resolve_profit_factor(metrics)
 
     min_total_return = _as_float(cfg.get("min_total_return_pct"), 0.0)
     min_sharpe = _as_float(cfg.get("min_sharpe"), 0.0)
@@ -424,9 +428,62 @@ def _quick_screen_failures(metrics: dict[str, Any], cfg: dict[str, Any]) -> list
         failures.append(f"max_drawdown_pct {max_dd:.2%} > {max_drawdown:.2%}")
     if min_win_rate > 0 and win_rate < min_win_rate:
         failures.append(f"win_rate {win_rate:.2%} < {min_win_rate:.2%}")
-    if min_profit_factor > 0 and profit_factor < min_profit_factor:
+    if min_profit_factor > 0 and profit_factor is not None and profit_factor < min_profit_factor:
         failures.append(f"profit_factor {profit_factor:.2f} < {min_profit_factor:.2f}")
     return failures
+
+
+def _quick_screen_judged_slice(metrics: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """The slice of the screen backtest the quick-screen check judges, and its name.
+
+    The top-level blob is flattened from the OUT-OF-SAMPLE slice only
+    (strategies/backtest.py). A slice with no trades has no profit factor, Sharpe or
+    return — the engine writes 0.0 placeholders — and judging them archived S11167
+    on "profit_factor 0.00 < 1.05" while the in-sample slice of the same screen run
+    held 6 trades at PF 2.11. Like policy._evaluate_quick_screen_gate without
+    distinct out-of-sample evidence, judge the in-sample slice then. ``(None,
+    "no_trades")`` means the whole screen window has no trades: nothing to judge.
+    """
+    from forven.policy import metrics_trade_count
+
+    headline_trades = metrics_trade_count(metrics)
+    if headline_trades is None or headline_trades > 0:
+        return metrics, "headline"
+    in_sample = metrics.get("in_sample")
+    if isinstance(in_sample, dict) and (metrics_trade_count(in_sample) or 0.0) > 0:
+        return in_sample, "in_sample"
+    return None, "no_trades"
+
+
+def _quick_screen_trade_count(metrics: dict[str, Any]) -> float | None:
+    """The larger of the screen run's headline, out-of-sample and in-sample trade counts."""
+    from forven.policy import metrics_trade_count
+
+    counts = [
+        metrics_trade_count(section)
+        for section in (
+            metrics,
+            metrics.get("out_of_sample") or metrics.get("oos"),
+            metrics.get("in_sample") or metrics.get("is"),
+        )
+    ]
+    measured = [count for count in counts if count is not None]
+    return max(measured) if measured else None
+
+
+def _quick_screen_trade_floor(quick_cfg: dict[str, Any]) -> int:
+    from forven.policy import DEFAULT_PIPELINE_CONFIG
+
+    default = DEFAULT_PIPELINE_CONFIG["quick_screen"]["min_trades"]
+    return int(_as_float(quick_cfg.get("min_trades", default), default))
+
+
+def _quick_screen_window(metrics: dict[str, Any]) -> str:
+    """'2025-01-01 to 2025-12-31' for the screen run, or '' when undated."""
+    in_sample = metrics.get("in_sample") if isinstance(metrics.get("in_sample"), dict) else {}
+    start = str(in_sample.get("start_date") or metrics.get("start_date") or "")[:10]
+    end = str(metrics.get("end_date") or in_sample.get("end_date") or "")[:10]
+    return f"{start} to {end}" if start and end else ""
 
 
 def _persist_strategy_symbol(strategy_id: str, symbol: str) -> None:
@@ -702,15 +759,48 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
         )
         metrics = screen_metrics
 
-    failures = _quick_screen_failures(metrics, quick_cfg)
+    from forven.metrics_integrity import check_metrics_integrity, data_quality_hold_reason
+
+    judged, basis = _quick_screen_judged_slice(metrics)
+    trades, trade_floor = _quick_screen_trade_count(metrics), _quick_screen_trade_floor(quick_cfg)
+    unjudged_code: str | None = None
+    window = _quick_screen_window(metrics)
+    anomalies = check_metrics_integrity(metrics)
+    if anomalies:
+        # A lost or leaking leg (e.g. 0 in-sample trades beside an active out-of-sample
+        # leg) is a data fault, not a quiet strategy: checked before the trade floor,
+        # in the brain guardrails' order, so it is never filed as "too few signals".
+        unjudged_code = "data_quality_hold"
+        failures = [data_quality_hold_reason(anomalies)]
+    elif judged is None:
+        unjudged_code = "zero_trade"
+        failures = [
+            f"zero trades in the quick-screen window{f' ({window})' if window else ''}: "
+            "the strategy produces no signals there, so there is nothing to judge"
+        ]
+    elif trades is not None and trade_floor > 0 and trades < trade_floor:
+        # Return, Sharpe and PF mean nothing below the floor, and an infinite PF from
+        # one winning trade would otherwise clear every check here. The brain's own
+        # trade guardrail cannot catch it: a sub-floor slice is never persisted to
+        # strategies.metrics. Same floor and count as policy._evaluate_quick_screen_gate.
+        unjudged_code = "insufficient_trades"
+        failures = [
+            f"{trades:.0f} trades in the quick-screen window{f' ({window})' if window else ''} "
+            f"(minimum {trade_floor}): too few to judge"
+        ]
+    else:
+        failures = _quick_screen_failures(judged, quick_cfg)
+        if failures and basis == "in_sample":
+            failures[-1] += " (judged on the in-sample slice: the out-of-sample slice had no trades)"
     deferred_note: str | None = None
     if failures:
         if not _quick_screen_defer_to_optimization():
-            return {
-                "status": "failed_gate",
-                "message": "; ".join(failures),
-                "metrics": metrics,
-            }
+            outcome = {"status": "failed_gate", "message": "; ".join(failures), "metrics": metrics}
+            if unjudged_code:
+                # Nothing was measured, so this is no merit verdict: demote archives the
+                # strategy as untestable (merit=False), never as a profit-factor failure.
+                outcome.update(retryable=False, merit=False, reason_code=unjudged_code)
+            return outcome
         # testing_mode: the quick-screen profitability check judges RAW, un-optimized
         # params over a fixed recent window — a premature gate that rejects strategies
         # before the gauntlet's own validation_optimization step can find good params.
@@ -754,12 +844,19 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
             # A hard quality verdict from the brain's quick-screen guardrails
             # (e.g. "Trades 0 < 30 (reject)") — deterministic, cannot improve by
             # retrying the same evidence. Terminal so the workflow drains.
-            return {
+            outcome = {
                 "status": "failed_gate",
                 "message": message,
                 "metrics": metrics,
                 "transition": transition,
             }
+            from forven.metrics_integrity import DATA_QUALITY_HOLD_PREFIX
+
+            if DATA_QUALITY_HOLD_PREFIX in message:
+                # The metrics contradict themselves ("held for investigation — not a
+                # strategy failure"): archive as untestable, never as a merit failure.
+                outcome.update(retryable=False, merit=False, reason_code="data_quality_hold")
+            return outcome
         if reason_code == "wip_cap_exceeded":
             # WIP-cap contention on the gauntlet stage is exactly like a capital-slot
             # wait at the paper gate: the candidate is admissible and must WAIT for a
