@@ -766,6 +766,61 @@ def is_degenerate_backtest_metrics(
         return False
 
 
+def metrics_trade_count(section: object) -> float | None:
+    """The trade count one metrics slice records, or None when it records none."""
+    if not isinstance(section, dict):
+        return None
+    for key in ("total_trades", "trades", "num_trades"):
+        if section.get(key) not in (None, ""):
+            return _coerce_optional_float(section.get(key))
+    return None
+
+
+def resolve_profit_factor(section: object) -> float | None:
+    """The profit factor one metrics slice measured, or None when it measured none.
+
+    Reading ``profit_factor`` with a 0.0 default turns three stored shapes into a
+    PF-0 loser (2026-09-29: 138 quick-screen archivals in a week cited
+    "profit_factor 0.00 < 1.05"):
+
+    * no trades: the engine writes a 0.0 placeholder, so PF is undefined -> None;
+    * no losing trades: PF is infinite, but gauntlet step payloads sanitize inf to
+      null next to ``profit_factor_is_infinite: true`` -> ``inf``;
+    * no PF recorded, or every trade broke even: derived from gross profit/loss
+      when both are recorded, else None.
+
+    None means "not measured": a gate must never fail a PF floor on it.
+    """
+    if not isinstance(section, dict):
+        return None
+    trades = metrics_trade_count(section)
+    if trades is not None and trades <= 0:
+        return None
+    if section.get("profit_factor_is_infinite") is True:
+        return math.inf
+    raw = section.get("profit_factor", section.get("pf"))
+    try:
+        value = float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        value = None
+    if value is not None and math.isnan(value):
+        value = None
+    if value is not None and math.isinf(value):
+        return math.inf if value > 0 else None
+    gross_profit = _coerce_optional_float(section.get("gross_profit"))
+    gross_loss = _coerce_optional_float(section.get("gross_loss"))
+    gross_known = gross_profit is not None and gross_loss is not None
+    if value is not None:
+        if value == 0.0 and gross_known and gross_profit == 0.0 and gross_loss == 0.0:
+            return None  # 0/0: every trade broke even
+        return value
+    if not gross_known:
+        return None
+    if abs(gross_loss) > 0:
+        return gross_profit / abs(gross_loss)
+    return math.inf if gross_profit > 0 else None
+
+
 def score_strategy(metrics: dict) -> float:
     """
     Compute fitness score (0-100) from backtest metrics.
@@ -2962,6 +3017,9 @@ def _extract_reason_code(reason_text: str) -> str:
         return "stale_validation"
     if "zero trades" in text or "produces no signals" in text:
         return "zero_trade"
+    # The quick screen's sub-floor window ("N trades ... (minimum M): too few to judge").
+    if "too few to judge" in text:
+        return "insufficient_trades"
     # L-21 (2026-06-09 audit): paper warm-up rejections ("Insufficient paper
     # duration/sample/trades") are absence of forward evidence, not evidence of
     # a bad edge. A dedicated code replaces the brittle startswith/SQL-NOT-LIKE

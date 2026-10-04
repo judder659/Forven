@@ -1028,14 +1028,8 @@ def backfill_missing_quick_screen_workflows(*, limit: int = 20) -> int:
     return created + healed
 
 
-def _failed_gate_reason(strategy_id: str) -> str | None:
-    """The real reason a strategy's gauntlet workflow failed its gate.
-
-    Reads the failed step's message so the archive record names the actual cause
-    (funding, step ordering, symbol, source divergence, robustness, ...) instead
-    of a blanket "did not pass the robustness gate" label — which is wrong for
-    every non-robustness failure and misleads operators triaging archived strats.
-    """
+def _failed_gate_payload(strategy_id: str) -> dict[str, Any]:
+    """The error payload of the step that failed the strategy's gauntlet workflow."""
     import json as _json
 
     from forven.db import get_db
@@ -1055,17 +1049,51 @@ def _failed_gate_reason(strategy_id: str) -> str | None:
                 """,
                 (strategy_id,),
             ).fetchone()
-        if not row or not row["error_json"]:
-            return None
-        payload = _json.loads(row["error_json"])
-        if isinstance(payload, dict):
-            msg = payload.get("message") or payload.get("gate_message") or payload.get("reason")
-            if msg:
-                # The step already prefixes "Gate failure:" — drop it to avoid doubling.
-                return str(msg).replace("Gate failure:", "").strip() or None
+        if row and row["error_json"]:
+            payload = _json.loads(row["error_json"])
+            if isinstance(payload, dict):
+                return payload
     except Exception:
-        log.debug("Gauntlet: could not resolve failed-gate reason for %s", strategy_id, exc_info=True)
-    return None
+        log.debug("Gauntlet: could not read the failed-gate payload for %s", strategy_id, exc_info=True)
+    return {}
+
+
+def _failed_gate_message(payload: dict[str, Any]) -> str | None:
+    msg = payload.get("message") or payload.get("gate_message") or payload.get("reason")
+    if not msg:
+        return None
+    # The step already prefixes "Gate failure:" — drop it to avoid doubling.
+    return str(msg).replace("Gate failure:", "").strip() or None
+
+
+def _failed_gate_reason(strategy_id: str) -> str | None:
+    """The real reason a strategy's gauntlet workflow failed its gate.
+
+    Reads the failed step's message so the archive record names the actual cause
+    (funding, step ordering, symbol, source divergence, robustness, ...) instead
+    of a blanket "did not pass the robustness gate" label — which is wrong for
+    every non-robustness failure and misleads operators triaging archived strats.
+    """
+    return _failed_gate_message(_failed_gate_payload(strategy_id))
+
+
+# Untestable codes (util.untestable_status_reason) for the reason codes a step
+# stamps on a ``merit: False`` failure. Unlisted codes are used as-is.
+_UNTESTABLE_CODE_BY_REASON = {
+    "invalid_strategy_code": "broken_code",
+    "insufficient_evidence": "insufficient_history",
+    # The quick screen's no-trade and sub-floor windows: the same cause intake's
+    # candidate checks archive as no_signal ("too few signals" in the Forge).
+    "zero_trade": "no_signal",
+    "insufficient_trades": "no_signal",
+}
+
+
+def _untestable_code(payload: dict[str, Any]) -> str:
+    if payload.get("exhausted"):
+        return "retries_exhausted"
+    code = str(payload.get("reason_code") or "").strip().lower()
+    return _UNTESTABLE_CODE_BY_REASON.get(code, code or "unjudged")
 
 
 def demote_failed_gate_strategies(*, limit: int = 50) -> int:
@@ -1077,6 +1105,11 @@ def demote_failed_gate_strategies(*, limit: int = 50) -> int:
     advance nor drain the pipeline WIP, so the lab fills with un-promotable
     clutter. Archiving frees the slot (and is reversible: archived -> quick_screen).
     Idempotent: a strategy already out of quick_screen/gauntlet is skipped.
+
+    A failed step stamped ``merit: False`` never judged the strategy: its code could
+    not run, its screen window held no trades, or transient blocks exhausted their
+    retries. Those archive as untestable (brain.archive_untestable), which skips the
+    failure post-mortem and negative outcome feedback a merit failure records.
     """
     from forven.db import get_db
 
@@ -1099,9 +1132,20 @@ def demote_failed_gate_strategies(*, limit: int = 50) -> int:
     demoted = 0
     for strategy_id in strategy_ids:
         try:
-            from forven.brain import transition_stage
+            from forven.brain import archive_untestable, transition_stage
 
-            real_reason = _failed_gate_reason(strategy_id)
+            payload = _failed_gate_payload(strategy_id)
+            real_reason = _failed_gate_message(payload)
+            if payload.get("merit") is False:
+                archive_untestable(
+                    strategy_id,
+                    code=_untestable_code(payload),
+                    detail=real_reason or "the gauntlet could not judge the strategy",
+                    actor="gauntlet_sweep",
+                    force=True,
+                )
+                demoted += 1
+                continue
             reason_text = (
                 f"Gauntlet failed_gate: {real_reason}"
                 if real_reason
