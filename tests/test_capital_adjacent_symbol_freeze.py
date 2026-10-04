@@ -240,3 +240,42 @@ def test_auto_assign_never_moves_timeframe_off_declaration(forven_db):
     assert str(row["timeframe"]).lower() == "4h", (
         "auto-assign must never move the timeframe away from params._timeframe"
     )
+
+
+def test_auto_assign_never_moves_symbol_off_declared_asset(forven_db):
+    """S12281 (2026-10-04), an ETH design in the gauntlet, was re-homed onto BTC
+    after a post-mortem BTC backtest won the cross-asset fitness contest.
+    params._asset pins the market the way params._timeframe pins the timeframe."""
+    import json
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    sid = "S-ASSETPIN1"
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, symbol, timeframe, params, metrics, "
+            "status, owner, stage, stage_changed_at, created_at, updated_at) "
+            "VALUES (?, ?, 'rsi_momentum', 'ETH/USDT', '1h', ?, '{}', 'gauntlet', 'brain', "
+            "'gauntlet', ?, ?, ?)",
+            (sid, sid, json.dumps({"_asset": "ETH", "_timeframe": "1h"}), now, now, now),
+        )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, "
+            "timeframe, metrics_json, config_json, created_at) "
+            "VALUES ('bt-assetpin-btc', ?, 'backtest', 'BTC/USDT', '1h', ?, '{}', ?)",
+            (
+                sid,
+                json.dumps({
+                    "sharpe": 2.5, "sharpe_ratio": 2.5, "total_trades": 60,
+                    "total_return_pct": 20.0, "max_drawdown_pct": 0.05, "win_rate": 0.6,
+                }),
+                now,
+            ),
+        )
+        conn.commit()
+
+    auto_assign_best_symbol_timeframe(sid)
+
+    with get_db() as conn:
+        row = conn.execute("SELECT symbol FROM strategies WHERE id = ?", (sid,)).fetchone()
+    assert row["symbol"] == "ETH/USDT"
