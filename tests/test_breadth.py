@@ -178,3 +178,20 @@ def test_routes_404_on_an_unknown_strategy(forven_db):
         with pytest.raises(HTTPException) as missing:
             route("S-NOPE")
         assert missing.value.status_code == 404
+
+
+def test_agent_client_polls_until_the_run_finishes(monkeypatch):
+    from forven.agent import client as client_mod
+    from forven.agent.cli import build_parser
+
+    fc = client_mod.ForvenAgentClient()
+    states = iter([{"status": "running"}, {"status": "running"}, {"status": "done", "summary": {"verdict": "mixed"}}])
+    posted: list[str] = []
+    monkeypatch.setattr(fc, "post", lambda path, body=None, timeout=None: posted.append(path) or next(states))
+    monkeypatch.setattr(fc, "get", lambda path, params=None, timeout=None: next(states))
+    monkeypatch.setattr(client_mod.time, "sleep", lambda seconds: None)
+    assert fc.breadth("S90001", refresh=True)["status"] == "done"
+    assert posted == ["/api/strategies/S90001/breadth?refresh=true"]
+
+    args = build_parser().parse_args(["breadth", "S90001", "--no-wait"])
+    assert (args.cmd, args.id, args.no_wait, args.refresh) == ("breadth", "S90001", True, False)
