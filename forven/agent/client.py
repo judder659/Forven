@@ -351,6 +351,20 @@ class ForvenAgentClient:
             (isinstance(promo, dict) and promo.get("ok")) or ("found gauntlet" in msg))
         return verdict
 
+    def get_breadth(self, strategy_id: str) -> Any:
+        """The stored breadth test: the strategy's frozen rule on 15 coins (sealed data)."""
+        return self.get(f"/api/strategies/{strategy_id}/breadth")
+
+    def breadth(self, strategy_id: str, *, refresh: bool = False, wait: bool = True,
+                timeout: float = 1800.0, interval: float = 15.0) -> Any:
+        """Start (or reuse) a breadth test; with ``wait``, poll until it finishes."""
+        state = self.post(f"/api/strategies/{strategy_id}/breadth?refresh={'true' if refresh else 'false'}")
+        deadline = time.time() + timeout
+        while wait and isinstance(state, dict) and state.get("status") == "running" and time.time() < deadline:
+            time.sleep(interval)
+            state = self.get_breadth(strategy_id)
+        return state
+
     def wait_for_paper(self, strategy_ids: Iterable[str], *, timeout: float = 3600.0,
                        interval: float = 90.0) -> dict:
         """Poll until each strategy reaches paper or a terminal (archived/failed) state.
