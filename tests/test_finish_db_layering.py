@@ -83,7 +83,12 @@ _EXCLUDED_PREFIXES = (
 # its two edges downward. Bump it only after you have looked at the edge and
 # decided it must exist.
 # ---------------------------------------------------------------------------
-MAX_IMPORT_CYCLE_SIZE = 180
+# 180 -> 182 (2026-10-04): forven.universe.book (the hourly universe-books
+# scheduler job) and forven.universe.lake (its lake loader). Both edges point
+# down (scheduler -> book -> db/data); the loop closes only through db.py's
+# existing upward import of forven.scheduler. The rest of forven.universe was
+# split so that it stays out of the cluster.
+MAX_IMPORT_CYCLE_SIZE = 182
 
 
 def _module_name(path: Path) -> str:

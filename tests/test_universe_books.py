@@ -38,7 +38,7 @@ def _panel(close: pd.DataFrame, funding: float = 0.0) -> DailyPanel:
 
 def _patch_lake(monkeypatch, hours: int, per_hour_funding: float = 0.0001) -> pd.DatetimeIndex:
     import forven.basket_lab as basket_lab
-    import forven.universe.panel as panel_mod
+    import forven.universe.lake as lake_mod
 
     index = pd.date_range("2026-03-01", periods=hours, freq="h", tz="UTC")
 
@@ -48,13 +48,13 @@ def _patch_lake(monkeypatch, hours: int, per_hour_funding: float = 0.0001) -> pd
     def fake_funding(symbol, hourly_index):
         return pd.Series(per_hour_funding, index=hourly_index)
 
-    monkeypatch.setattr(panel_mod, "_hourly_close", fake_hourly)
+    monkeypatch.setattr(lake_mod, "_hourly_close", fake_hourly)
     monkeypatch.setattr(basket_lab, "_per_hour_funding_series", fake_funding)
     return index
 
 
 def test_panel_keeps_complete_days_and_sums_funding(monkeypatch):
-    from forven.universe.panel import load_daily_panel
+    from forven.universe.lake import load_daily_panel
 
     index = _patch_lake(monkeypatch, hours=24 * 5 + 6)  # 5 full days + 6h of a 6th
     panel = load_daily_panel(["AAA-USDT"], sealed=False, now=index[-1])
@@ -67,7 +67,7 @@ def test_panel_keeps_complete_days_and_sums_funding(monkeypatch):
 
 def test_sealed_panel_ends_at_last_complete_day_before_a_midday_cutoff(monkeypatch):
     import forven.research_contract as research_contract
-    from forven.universe.panel import load_daily_panel
+    from forven.universe.lake import load_daily_panel
 
     index = _patch_lake(monkeypatch, hours=24 * 8)
     monkeypatch.setattr(research_contract, "research_read_cutoff", lambda: pd.Timestamp("2026-03-05T12:00:00"))

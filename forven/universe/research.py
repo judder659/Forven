@@ -19,7 +19,8 @@ import pandas as pd
 from forven.db import kv_get, kv_set_best_effort
 from forven.sim.clock import get_now
 from forven.universe import engine
-from forven.universe.panel import DailyPanel, load_daily_panel
+from forven.universe.lake import load_daily_panel
+from forven.universe.panel import DailyPanel
 from forven.universe.strategies import BOOKS, TrendBlendSpec, book_weights, coin_positions
 
 log = logging.getLogger(__name__)

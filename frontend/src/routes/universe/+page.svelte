@@ -54,7 +54,10 @@
 			const res = await getUniverseResearch(name, refresh);
 			reports = { ...reports, [name]: res.report };
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			// Record the failure as this book's report so the reactive loader
+			// does not retry it in a loop; "Recompute" retries on demand.
+			const message = e instanceof Error ? e.message : String(e);
+			reports = { ...reports, [name]: { error: message } as UniverseResearchReport };
 		} finally {
 			reportLoading = false;
 		}

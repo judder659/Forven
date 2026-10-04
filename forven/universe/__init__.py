@@ -3,7 +3,7 @@
 A single-coin strategy makes too few trades in six months to tell skill from luck;
 a rule held across a universe produces far more independent evidence per week.
 
-- ``panel``: daily close + funding panels (research reads SEALED at the research
+- ``panel`` / ``lake``: the daily close + funding panel and its lake loader (research reads SEALED at the research
   holdout cutoff; the forward paper book reads unsealed, like every paper path).
 - ``strategies``: the pre-registered books (docs/universe-trend-blend-spec.md).
 - ``engine``: daily book simulation and the evidence statistics.
