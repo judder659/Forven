@@ -20,7 +20,9 @@ Reading (thresholds fixed 2026-10-04, before any strategy was run through it):
 - ``mixed``: anything else.
 
 ``sign_test_p`` is the chance that at least that many of the traded coins come
-out positive when the rule has no edge (each coin a fair coin flip). Coins
+out positive when the rule has no edge (each coin a fair coin flip). Coins move
+together over a shared window, so they are not independent flips and this
+p-value is optimistic: a guide to the reading, not a significance test. Coins
 whose backtest refuses to run (for example a required data feed missing on
 that coin) are listed as untestable, never as losses.
 
