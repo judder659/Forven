@@ -96,13 +96,14 @@
 		}
 	}
 
+	// Books keep equity as a multiple of 1.0; charts show the growth of $10,000.
 	function curve(points: UniverseCurvePoint[] | undefined) {
-		return (points ?? []).map((p) => ({ timestamp: `${p.day}T00:00:00Z`, equity: p.equity }));
+		return (points ?? []).map((p) => ({ timestamp: `${p.day}T00:00:00Z`, equity: p.equity * 10_000 }));
 	}
 
-	function pct(value: number | null | undefined, digits = 1): string {
+	function pct(value: number | null | undefined, digits = 1, signed = true): string {
 		if (value == null || !Number.isFinite(value)) return '—';
-		return `${value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
+		return `${signed && value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
 	}
 
 	function num(value: number | null | undefined, digits = 2): string {
@@ -122,7 +123,7 @@
 			{ label: 'CAGR', value: pct(stats.cagr_pct), cls: tone(stats.cagr_pct) },
 			{ label: 'Sharpe', value: num(stats.sharpe), cls: tone(stats.sharpe) },
 			{ label: 'Max drawdown', value: pct(stats.max_drawdown_pct), cls: 'text-sc-ink' },
-			{ label: 'Realised vol', value: pct(stats.ann_vol_pct), cls: 'text-sc-ink' },
+			{ label: 'Realised vol', value: pct(stats.ann_vol_pct, 1, false), cls: 'text-sc-ink' },
 			{ label: 'Avg gross exposure', value: num(stats.avg_gross_exposure), cls: 'text-sc-ink' },
 		];
 	}
@@ -232,6 +233,7 @@
 					<p class="text-[11px] text-sc-ink3">Last close booked: {book.last_day ?? '—'}</p>
 
 					{#if (book.equity_curve ?? []).length > 1}
+						<div class="text-[11px] text-sc-ink3">Growth of $10,000</div>
 						<EquityChart data={curve(book.equity_curve)} height={220} showDrawdown={false} />
 					{/if}
 
@@ -298,6 +300,7 @@
 					</div>
 
 					{#if (report.equity_curve ?? []).length > 1}
+						<div class="text-[11px] text-sc-ink3">Growth of $10,000</div>
 						<EquityChart data={curve(report.equity_curve)} height={240} />
 					{/if}
 
@@ -346,7 +349,7 @@
 									<tr class="border-t border-sc-line">
 										<td class="py-1 text-sc-ink2">Cost / funding drag per year</td>
 										<td class="py-1 text-right font-mono text-sc-ink">
-											{pct(report.summary.cost_drag_pct_per_year, 2)} / {pct(report.summary.funding_drag_pct_per_year, 2)}
+											{pct(report.summary.cost_drag_pct_per_year, 2, false)} / {pct(report.summary.funding_drag_pct_per_year, 2, false)}
 										</td>
 									</tr>
 								</tbody>
