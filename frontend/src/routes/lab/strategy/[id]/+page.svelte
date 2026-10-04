@@ -111,6 +111,7 @@
 	import CostStressDumbbell from '$lib/components/strategy/container/CostStressDumbbell.svelte';
 	import RegimeSplit from '$lib/components/strategy/container/RegimeSplit.svelte';
 	import HeldBackCard from '$lib/components/strategy/container/HeldBackCard.svelte';
+	import BreadthCard from '$lib/components/strategy/container/BreadthCard.svelte';
 	import DeflatedSharpeCard from '$lib/components/strategy/container/DeflatedSharpeCard.svelte';
 	import ParameterSpace from '$lib/components/strategy/container/ParameterSpace.svelte';
 	import {
@@ -6082,6 +6083,10 @@
 								<article class="rounded-md grid content-start gap-3 border border-sc-line bg-sc-panel p-4" id="rb-dsr">
 									<div><h2 class="m-0 text-[13px] font-semibold text-sc-ink">Deflated Sharpe</h2><div class="text-[11px] text-sc-ink3">Probability the edge is real after counting every variant tried.</div></div>
 									<DeflatedSharpeCard dsr={dsrValue} trials={dsrTrials} />
+								</article>
+								<article class="rounded-md grid content-start gap-3 border border-sc-line bg-sc-panel p-4 xl:col-span-2" id="rb-breadth">
+									<div><h2 class="m-0 text-[13px] font-semibold text-sc-ink">Breadth</h2><div class="text-[11px] text-sc-ink3">The same rule and params on 15 coins, over sealed research data. A general edge should travel beyond its home coin.</div></div>
+									<BreadthCard {strategyId} />
 								</article>
 							</div>
 							<div class="mt-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3" id="rb-run">Run a test</div>

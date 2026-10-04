@@ -67,6 +67,7 @@ from forven.routers.profile import router as profile_router
 from forven.routers.webhooks import router as webhooks_router
 from forven.routers.updates import router as updates_router
 from forven.routers.backtesting import router as backtesting_router
+from forven.routers.breadth import router as breadth_router
 from forven.routers.lifecycle import router as lifecycle_router
 from forven.routers.verdict import router as verdict_router
 from forven.routers.robustness import router as robustness_router
@@ -786,6 +787,7 @@ app.include_router(agents_router)
 app.include_router(agent_toolsets_router)
 app.include_router(routines_router)
 app.include_router(profile_router)
+app.include_router(breadth_router)
 app.include_router(strategies_router)
 app.include_router(strategy_library_router)
 app.include_router(websockets_router)

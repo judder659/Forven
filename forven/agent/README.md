@@ -64,6 +64,8 @@ python -m forven.agent promote  --strategy S02550 --to gauntlet --from quick_scr
 python -m forven.agent enqueue  --file /abs/path/strat.py --dataset BTC/USDT-1h
 # then poll until paper or terminal
 python -m forven.agent wait-paper --strategies S02545,S02604 --timeout 1800 --interval 90
+# does the edge travel? the frozen rule on 15 coins over sealed research data
+python -m forven.agent breadth S02545            # waits; --no-wait returns at once, --refresh reruns
 ```
 
 ## Library (best for sidecars / embedding)

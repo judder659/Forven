@@ -21,6 +21,7 @@ Examples:
     python -m forven.agent promote --strategy S02550 --to gauntlet --from quick_screen
     python -m forven.agent wait-paper --strategies S02545,S02604 --timeout 1800
     python -m forven.agent data-census --stream ohlcv --limit-worst 20
+    python -m forven.agent breadth S12276            # frozen rule on 15 coins, sealed data
 """
 
 from __future__ import annotations
@@ -86,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("wait-paper"); c.add_argument("--strategies", required=True); c.add_argument("--timeout", type=float, default=3600.0); c.add_argument("--interval", type=float, default=90.0)
     c = sub.add_parser("data-census", help="freshness SLA census of every stored series (GET /api/data/sla)")
     c.add_argument("--stream", help="ohlcv|funding|oi|basis|iv|ls_ratio|taker|liquidations"); c.add_argument("--limit-worst", type=int, default=50)
+    c = sub.add_parser("breadth", help="run a strategy's frozen rule on 15 coins over sealed research data")
+    c.add_argument("id"); c.add_argument("--refresh", action="store_true"); c.add_argument("--no-wait", action="store_true")
+    c.add_argument("--timeout", dest="wait_timeout", type=float, default=1800.0)
     return p
 
 
@@ -160,6 +164,8 @@ def main(argv=None) -> int:
         elif cmd == "wait-paper":
             ids = [s.strip() for s in args.strategies.split(",") if s.strip()]
             _emit(fc.wait_for_paper(ids, timeout=args.timeout, interval=args.interval))
+        elif cmd == "breadth":
+            _emit(fc.breadth(args.id, refresh=args.refresh, wait=not args.no_wait, timeout=args.wait_timeout))
         else:
             print(f"unknown command {cmd}", file=sys.stderr)
             return 2
