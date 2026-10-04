@@ -104,8 +104,8 @@
 		<div class="flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-sc-ink2">
 			<span>Other coins positive <span class="font-plex-mono text-sc-ink">{s.other_positive} of {s.other_traded}</span></span>
 			<span>Median Sharpe <span class={`font-plex-mono ${signClass(s.median_sharpe)}`}>{fmtNum(s.median_sharpe)}</span></span>
-			<span>
-				Chance with no edge
+			<span title="Chance that this many coins come out positive if the rule has no edge. Coins move together, so this is optimistic.">
+				Sign test p
 				<span class="font-plex-mono text-sc-ink">{s.sign_test_p == null ? '—' : s.sign_test_p < 0.001 ? '<0.1%' : `${(s.sign_test_p * 100).toFixed(1)}%`}</span>
 			</span>
 			<span>Home ({s.home}) Sharpe rank <span class="font-plex-mono text-sc-ink">{s.home_sharpe_rank ?? '—'} of {s.ranked_coins}</span></span>
