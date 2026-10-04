@@ -512,7 +512,11 @@ def _collect_validation_timeframes(primary_timeframe: str | None = None) -> list
 
 
 def _build_validation_contexts(symbol: str, timeframe: str, params: dict | None = None) -> list[tuple[str, str]]:
-    symbols = _collect_validation_symbols(symbol, params=params)
+    # A declared asset is a contract too: the best context must not re-home the
+    # strategy onto another market (S11884, an ETH design, was moved to BTC).
+    declared_asset = str((params or {}).get("_asset") or "").strip() if isinstance(params, dict) else ""
+    declared_symbol = normalize_strategy_symbol_strict(declared_asset) if declared_asset else None
+    symbols = [declared_symbol] if declared_symbol else _collect_validation_symbols(symbol, params=params)
     # A declared timeframe is a contract: validate there only, so the best
     # context can never re-home the strategy onto another timeframe.
     declared = str((params or {}).get("_timeframe") or "").strip() if isinstance(params, dict) else ""
