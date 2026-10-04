@@ -32,6 +32,7 @@ const COMMAND_GROUPS: Record<string, JobGroup> = {
 	'capital-slot-dedupe': 'trading',
 	'regime-gate-mtm': 'trading',
 	'basket-funding-carry': 'trading',
+	'universe-books': 'trading',
 	'testnet-harness': 'trading',
 	'strategy-creation': 'pipeline',
 	'testing-cycle': 'pipeline',

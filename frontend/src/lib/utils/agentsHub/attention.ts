@@ -46,6 +46,7 @@ const TRADING_COMMANDS = new Set([
 	'capital-slot-dedupe',
 	'regime-gate-mtm',
 	'basket-funding-carry',
+	'universe-books',
 ]);
 
 export interface ProviderHealthInput {

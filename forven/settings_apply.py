@@ -686,6 +686,8 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         # PORT-LAYER-2 / BASKET-2 funding-carry basket
         "basket_funding_carry_enabled", "basket_rebalance_hours", "basket_n_legs",
         "basket_gross_leverage", "basket_universe_min_bars", "basket_rank_buffer",
+        # universe paper books
+        "universe_books_enabled",
         # LIVE-LOOP-1 paper->live graduation recommender
         "live_graduation_recommender_enabled", "graduation_min_soak_days",
         "graduation_min_paper_trades", "graduation_min_measured_trades",

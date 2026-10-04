@@ -1677,6 +1677,12 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
                 payload.get("basket_funding_carry_enabled"),
                 bool(updates.get("basket_funding_carry_enabled", False)),
             )
+        # Universe paper books toggle (forven.universe.book).
+        if "universe_books_enabled" in payload:
+            updates["universe_books_enabled"] = _coerce_bool(
+                payload.get("universe_books_enabled"),
+                bool(updates.get("universe_books_enabled", False)),
+            )
         # EQ-BASIS-1: whether the master wallet counts toward the live equity
         # basis when direction books are enabled (forven.daemon).
         if "live_equity_include_master" in payload:

@@ -103,6 +103,7 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
 
   // Portfolio — the layer above individual strategies (PORT-LAYER).
   { id: 'portfolio-allocator', area: 'portfolio', label: 'Measured-risk allocator', description: 'Per-strategy risk multipliers from realized vol and correlations, optional book vol targeting, and the live-sizing arm. Paper sandboxes are never scaled.' },
+  { id: 'portfolio-universe', area: 'portfolio', label: 'Universe books', description: 'Pre-registered rules held across a fixed list of coins as daily paper books. Paper only.' },
   { id: 'portfolio-basket', area: 'portfolio', label: 'Funding-carry basket', description: 'The forward-marked paper basket: rebalance cadence, legs, gross leverage, and universe rule. Paper only — live basket execution does not exist yet.' },
 
   // Lab
@@ -589,6 +590,20 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Ceiling on any strategy’s allocation multiplier. Bounds how much extra risk the allocator can concentrate into one strategy, independent of the hard per-trade risk caps (which always apply to the scaled size).',
     usedBy: ['forven.portfolio_allocator'],
+  },
+
+  {
+    id: 'risk.universe_books_enabled',
+    label: 'Universe paper books',
+    default: false,
+    type: 'toggle',
+    area: 'portfolio',
+    subsection: 'portfolio-universe',
+    backendSection: 'risk',
+    backendPath: 'universe_books_enabled',
+    description:
+      'Run the pre-registered universe books (the trend blend across 15 coins, long/flat and long/short) as forward paper books. Each book starts on the first tick after this is switched on, takes its first positions at the next daily close and is never backfilled. Paper only — no orders are ever placed.',
+    usedBy: ['forven.universe.book', 'forven.scheduler'],
   },
 
   // PORT-LAYER-2: funding-carry basket — a forward-marked PAPER book running

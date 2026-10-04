@@ -55,6 +55,11 @@
 			icon: 'M12 2L4 5v5c0 4.63 3.2 8.94 8 10 4.8-1.06 8-5.37 8-10V5l-8-3zm-1 11l-2.5-2.5 1.41-1.41L11 10.17l3.09-3.08 1.41 1.41L11 13z'
 		},
 		{
+			label: 'Universe',
+			href: '/universe',
+			icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zm6.93 6h-2.95a15.65 15.65 0 00-1.38-3.56A8.03 8.03 0 0118.93 8zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14a8.2 8.2 0 010-4h3.38a16.5 16.5 0 000 4H4.26zm.81 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.99 7.99 0 015.07 16zm2.95-8H5.07a7.99 7.99 0 014.33-3.56A15.65 15.65 0 008.02 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66a14.7 14.7 0 010-4h4.68a14.7 14.7 0 010 4zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 01-4.33 3.56zM16.36 14a16.5 16.5 0 000-4h3.38a8.2 8.2 0 010 4h-3.38z'
+		},
+		{
 			label: 'Propr',
 			href: '/propr',
 			icon: 'M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-2 .89-2 2v11c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z'
@@ -70,6 +75,9 @@
 	// on. The flag is env/config-only (FORVEN_PROPR_ENABLED) and deliberately
 	// has NO Settings-page control — an operator must know it exists.
 	let proprEnabled = false;
+	// The Universe entry follows the portfolio layer's master switch (its routes
+	// 404 while the layer is off).
+	let portfolioLayerEnabled = false;
 	onMount(async () => {
 		try {
 			const { getProprEnabled } = await import('$lib/api/propr');
@@ -77,9 +85,15 @@
 		} catch {
 			proprEnabled = false;
 		}
+		try {
+			const { getPortfolioLayerEnabled } = await import('$lib/api/universe');
+			portfolioLayerEnabled = await getPortfolioLayerEnabled();
+		} catch {
+			portfolioLayerEnabled = false;
+		}
 	});
 	$: visiblePrimaryLinks = primaryLinks.filter(
-		(l) => proprEnabled || l.href !== '/propr'
+		(l) => (proprEnabled || l.href !== '/propr') && (portfolioLayerEnabled || l.href !== '/universe')
 	);
 
 	const managementLinks: NavLink[] = [

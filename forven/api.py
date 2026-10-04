@@ -60,6 +60,7 @@ from forven.routers.strategy_library import router as strategy_library_router
 from forven.routers.system import router as system_router
 from forven.routers.tasks import router as tasks_router
 from forven.routers.trading import router as trading_router
+from forven.routers.universe import router as universe_router
 from forven.routers.websockets import router as websockets_router
 from forven.routers.quant_factory import router as quant_factory_router
 from forven.routers.routines import router as routines_router
@@ -767,6 +768,7 @@ app.include_router(notifications_router)
 app.include_router(ideas_router)
 app.include_router(approvals_router)
 app.include_router(ops_router)
+app.include_router(universe_router)
 app.include_router(analytics_router)
 app.include_router(data_router)
 app.include_router(data_acquire_router)
