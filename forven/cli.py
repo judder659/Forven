@@ -1684,5 +1684,65 @@ def dump_cmd(out):
         click.echo(serialized)
 
 
+# --- Bot account (OS-level bot isolation) ---
+
+@cli.group("bot-account")
+def bot_account():
+    """Run bots as a separate, low-privilege Windows account."""
+
+
+@bot_account.command("status")
+def bot_account_status():
+    """Show whether bots run as a separate account."""
+    from forven.bot_factory.bot_account import bot_isolation_status
+
+    status = bot_isolation_status()
+    if not status["enabled"]:
+        click.echo("Off: bots run as the same Windows user as Forven.")
+    elif status["ok"]:
+        click.echo(f"On: bots run as {status['username']}.")
+    else:
+        click.echo(f"Broken: {status['error']} Bots will not start until this is fixed or cleared.")
+
+
+@bot_account.command("set")
+@click.option("--username", required=True, help="Account bots run as, e.g. forven-bot or HOST\\forven-bot.")
+@click.option("--password-stdin", is_flag=True, help="Read the password from standard input.")
+def bot_account_set(username, password_stdin):
+    """Record the account bots run as (the password is stored encrypted)."""
+    import sys
+
+    from forven.bot_factory.bot_account import save_bot_os_account
+
+    password = sys.stdin.readline().rstrip("\r\n") if password_stdin else click.prompt(
+        "Password", hide_input=True
+    )
+    path = save_bot_os_account(username, password)
+    click.echo(f"Bots will run as {username} from their next start. Record: {path}")
+
+
+@bot_account.command("check")
+def bot_account_check():
+    """Start a probe as the bot account and confirm what it can and cannot reach."""
+    from forven.bot_factory.bot_account import check_bot_isolation
+
+    result = check_bot_isolation()
+    if result["ok"]:
+        click.echo("Pass: the bot account can run Forven bots and cannot read Forven's secret files.")
+        return
+    for problem in result["problems"]:
+        click.echo(f"Fail: {problem}")
+    raise SystemExit(1)
+
+
+@bot_account.command("clear")
+def bot_account_clear():
+    """Turn isolation off: bots run as Forven's own user again from their next start."""
+    from forven.bot_factory.bot_account import clear_bot_os_account
+
+    removed = clear_bot_os_account()
+    click.echo("Cleared." if removed else "Bot isolation was not set up.")
+
+
 if __name__ == "__main__":
     cli()

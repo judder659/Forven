@@ -15,6 +15,14 @@ from pathlib import Path
 import psutil
 
 from forven.bot_factory.broker_client import BOT_TOKEN_ENV, BROKER_HOST_ENV, NO_MASTER_KEY_ENV
+from forven.bot_factory.os_isolation import (
+    ACCOUNT_FILE_NAME,
+    BotOsAccount,
+    apply_account_env,
+    read_account_record,
+    spawn_as_account,
+    terminate_bot_job,
+)
 from forven.config import FORVEN_HOME
 from forven.db import (
     get_bot,
@@ -31,6 +39,7 @@ _MONITOR_INTERVAL = 30
 # How long before a heartbeat is considered stale
 # Must be generous — LLM calls + market data fetch can take 30-60s per tick
 _HEARTBEAT_STALE_SECONDS = 180
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ── Per-bot credential broker (parent side) ─────────────────────────
@@ -308,6 +317,36 @@ def _resolve_live_exchange_env() -> dict[str, str]:
     return {env_var: str(creds[key]) for key, env_var in mapping.items() if creds.get(key)}
 
 
+def bot_account_file() -> Path:
+    """Where the bot account is recorded: beside the master key, outside
+    FORVEN_HOME and the database, so a bot can neither read it nor delete it to
+    quietly turn isolation off."""
+    from forven.secret_storage import secret_config_dir
+
+    return secret_config_dir() / ACCOUNT_FILE_NAME
+
+
+def load_bot_os_account() -> BotOsAccount | None:
+    """The account bots run as, or None when OS isolation is off (the default)."""
+    from forven.secret_storage import decrypt_secret
+
+    return read_account_record(bot_account_file(), decrypt_secret)
+
+
+def _terminate_isolated_bot(bot_id: str, pid: int | None) -> bool:
+    """Kill a bot running as the separate bot account, via its Job Object.
+
+    Such a bot's process belongs to another user, so killing it by PID is
+    refused; its job is not. False when the bot is not isolated (or is gone),
+    so callers fall back to the PID path.
+    """
+    try:
+        return terminate_bot_job(bot_id, pid)
+    except Exception:
+        logger.warning("Could not terminate job for bot %s", bot_id, exc_info=True)
+        return False
+
+
 def _bot_log_path(bot_id: str) -> Path:
     """Get the log file path for a bot subprocess."""
     log_dir = FORVEN_HOME / "logs" / "bots"
@@ -408,10 +447,45 @@ class BotManager:
             )
             set_bot_status(bot_id, "stopped")
 
+        # Opt-in OS-level isolation: when a dedicated bot account is set up the
+        # bot runs as that account, and a damaged setup refuses the start
+        # rather than quietly running the bot as the operator.
+        account = load_bot_os_account()
         env = _build_isolated_env(bot, issue_bot_token(bot_id, resolve_bot_provider(bot)))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
+        argv = [
+            sys.executable, "-m", "forven.bot_factory.runner",
+            "--bot-id", bot_id,
+            "--parent-pid", str(os.getpid()),
+        ]
+        # Drop any handle left from an earlier run so its job name is released.
+        self._processes.pop(bot_id, None)
 
+        if account is not None:
+            process = spawn_as_account(
+                account, bot_id, argv,
+                env=apply_account_env(env, account, FORVEN_HOME),
+                cwd=_REPO_ROOT,
+                log_path=log_path,
+            )
+        else:
+            process = self._spawn_as_operator(argv, env, log_path)
+
+        self._processes[bot_id] = process
+        set_bot_status(bot_id, "running", pid=process.pid)
+        run_as = f" as {account.username}" if account is not None else ""
+        log_activity(
+            "info", "bot_factory",
+            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid}){run_as}",
+            {"bot_id": bot_id, "pid": process.pid, "os_account": account.username if account else None},
+        )
+
+        return {"status": "started", "pid": process.pid, "log_path": str(log_path)}
+
+    @staticmethod
+    def _spawn_as_operator(argv: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen:
+        """Spawn the runner as the API's own OS user (the default)."""
         # H-R1: open the log file, hand it to Popen, then close OUR copy so the
         # FD doesn't leak if we repeatedly start/restart bots. The child keeps
         # its inherited copy. If Popen itself raises, we still close in `finally`.
@@ -439,29 +513,12 @@ class BotManager:
             popen_kwargs["start_new_session"] = True
 
         try:
-            process = subprocess.Popen(
-                [
-                    sys.executable, "-m", "forven.bot_factory.runner",
-                    "--bot-id", bot_id,
-                    "--parent-pid", str(os.getpid()),
-                ],
-                **popen_kwargs,
-            )
+            return subprocess.Popen(argv, **popen_kwargs)
         finally:
             try:
                 log_handle.close()
             except Exception:
                 pass
-
-        self._processes[bot_id] = process
-        set_bot_status(bot_id, "running", pid=process.pid)
-        log_activity(
-            "info", "bot_factory",
-            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid})",
-            {"bot_id": bot_id, "pid": process.pid},
-        )
-
-        return {"status": "started", "pid": process.pid, "log_path": str(log_path)}
 
     def stop_bot(self, bot_id: str, timeout: float = 5.0) -> dict:
         """Stop a bot subprocess.
@@ -485,6 +542,8 @@ class BotManager:
             # Safety: never kill our own process
             if pid == os.getpid():
                 logger.error("Refusing to kill own PID %d for bot %s", pid, bot_id)
+            elif _terminate_isolated_bot(bot_id, pid):
+                pass
             else:
                 try:
                     p = psutil.Process(pid)
@@ -624,7 +683,10 @@ class BotManager:
                                 # LIFE-3: the process may be alive but wedged —
                                 # kill it and drop our handle so recovery respawns
                                 # a clean process instead of an untracked zombie.
-                                if pid and pid != os.getpid() and _is_pid_alive(pid):
+                                if (
+                                    pid and pid != os.getpid() and _is_pid_alive(pid)
+                                    and not _terminate_isolated_bot(bot_id, pid)
+                                ):
                                     try:
                                         psutil.Process(pid).kill()
                                     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -773,7 +835,9 @@ class BotManager:
         for bot_info in running:
             bot_id = bot_info["bot_id"]
             pid = bot_info.get("pid")
-            if pid and _is_pid_alive(pid):
+            # A bot under the separate account cannot be signalled across
+            # consoles or users, so it is ended through its job instead.
+            if pid and _is_pid_alive(pid) and not _terminate_isolated_bot(bot_id, pid):
                 try:
                     p = psutil.Process(pid)
                     # LIFE-8: give the bot a chance to drain gracefully. The
