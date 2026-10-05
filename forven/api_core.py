@@ -1559,6 +1559,10 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
                 payload.get("paper_max_concurrent_positions"),
                 updates.get("paper_max_concurrent_positions", 0),
             )
+        if "live_max_leverage" in payload:
+            updates["live_max_leverage"] = _coerce_optional_int(
+                payload.get("live_max_leverage"), updates.get("live_max_leverage", 3)
+            )
         # Guard book-routing changes while positions are open in those books:
         # re-pointing/clearing an address (or disabling books) would mis-route
         # the eventual CLOSE. Computed once, lazily.
@@ -3742,6 +3746,14 @@ def get_settings():
     _arming = mainnet_arming_snapshot()
     payload["mainnet_armed"] = bool(_arming.get("armed"))
     payload["mainnet_arming"] = _arming
+    # RISK-BOUND-1 locks are applied at read time inside the risk engine; report
+    # the values actually in force so Settings never shows a saved cap as live.
+    try:
+        from forven.risk_effective import effective_risk_settings
+
+        payload["risk_effective"] = effective_risk_settings(payload)
+    except Exception:
+        log.warning("Could not compute effective risk settings", exc_info=True)
     return payload
 
 

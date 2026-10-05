@@ -84,6 +84,9 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     "risk_slippage_bps": 2.0,
     "max_concurrent_positions": 5,
     "paper_max_concurrent_positions": 0,
+    # RISK-BOUND-1: operator cap on mainnet leverage. It can only LOWER the
+    # built-in ceiling (forven.exchange.hyperliquid.MAINNET_MAX_LEVERAGE = 3).
+    "live_max_leverage": 3,
     "live_books_enabled": False,
     "hyperliquid_long_book_address": "",
     "hyperliquid_short_book_address": "",
@@ -660,6 +663,7 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         "max_risk_per_trade_pct", "max_position_size_pct", "max_daily_loss_pct",
         "max_daily_loss", "max_drawdown_pct", "max_concurrent_positions",
         "paper_max_concurrent_positions", "cooldown_after_loss_hours",
+        "live_max_leverage",
         # direction books + margin mode
         "live_books_enabled", "hyperliquid_long_book_address",
         "hyperliquid_short_book_address", "hyperliquid_use_cross_margin",
@@ -726,6 +730,8 @@ _SETTINGS_SECTION_NUMERIC_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
         "max_drawdown_pct": (0.0001, 100.0),
         "max_concurrent_positions": (0.0, 1000.0),
         "paper_max_concurrent_positions": (0.0, 1000.0),
+        # Lowers the 3x mainnet ceiling only; a higher value would be ignored.
+        "live_max_leverage": (1.0, 3.0),
         "cooldown_after_loss_hours": (0.0, 8760.0),
         "liq_distance_warn_pct": (0.0, 100.0),
         "liq_distance_critical_pct": (0.0, 100.0),

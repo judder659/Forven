@@ -122,6 +122,7 @@
     "live_max_book_participation_pct": 25.0,
     "live_max_effective_exposure_pct": 200.0,
     "live_max_group_exposure_pct": 200.0,
+    "live_max_leverage": 3,
     "live_max_price_impact_bps": 50.0,
     "live_max_spread_bps": 50.0,
     "live_max_total_open_risk_pct": 5.0,
