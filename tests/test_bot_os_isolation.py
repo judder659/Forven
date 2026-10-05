@@ -14,7 +14,14 @@ from forven.bot_factory import os_isolation as iso
 @pytest.fixture
 def account_file(tmp_path, monkeypatch):
     from forven import secret_storage
+    from forven.bot_factory.broker_client import NO_MASTER_KEY_ENV
 
+    # This is the operator (API/CLI) side, which holds the master key; another
+    # test's bot-process environment must not leak in.
+    monkeypatch.delenv(NO_MASTER_KEY_ENV, raising=False)
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("FORVEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     key_dir = tmp_path / "operator-secrets"
     monkeypatch.setattr(secret_storage, "_preferred_key_path", lambda: key_dir / ".forven_key")
     secret_storage._reset_cache_for_tests()
@@ -73,12 +80,12 @@ def test_setup_is_refused_off_windows(account_file, monkeypatch):
 
 def test_account_env_replaces_the_operators_profile(tmp_path):
     env = {
-        "USERPROFILE": "C:\\Users\\Aaron",
+        "USERPROFILE": "C:\\Users\\Operator",
         "HOMEDRIVE": "C:",
-        "HOMEPATH": "\\Users\\Aaron",
-        "APPDATA": "C:\\Users\\Aaron\\AppData\\Roaming",
-        "LOCALAPPDATA": "C:\\Users\\Aaron\\AppData\\Local",
-        "TEMP": "C:\\Users\\Aaron\\AppData\\Local\\Temp",
+        "HOMEPATH": "\\Users\\Operator",
+        "APPDATA": "C:\\Users\\Operator\\AppData\\Roaming",
+        "LOCALAPPDATA": "C:\\Users\\Operator\\AppData\\Local",
+        "TEMP": "C:\\Users\\Operator\\AppData\\Local\\Temp",
         "FORVEN_BOT_TOKEN": "t",
         "PATH": "p",
     }
@@ -87,7 +94,7 @@ def test_account_env_replaces_the_operators_profile(tmp_path):
     assert "HOMEDRIVE" not in out and "HOMEPATH" not in out
     for var in ("USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"):
         assert out[var].startswith(str(runtime)), var
-        assert "Aaron" not in out[var]
+        assert "Operator" not in out[var]
     assert out["USERNAME"] == "forven-bot"
     assert out["FORVEN_BOT_TOKEN"] == "t" and out["PATH"] == "p"
     assert (runtime / "tmp").is_dir() and (runtime / "home" / "AppData" / "Local").is_dir()
@@ -107,12 +114,12 @@ def test_probe_judgement():
     ok = 'noise\nFORVEN_PROBE {"whoami": "host\\\\forven-bot", "imports_forven": true, "opens_database": true, "readable_secrets": []}\n'
     assert iso.judge_probe(ok, account)["ok"] is True
 
-    leaky = 'FORVEN_PROBE {"whoami": "host\\\\aaron", "imports_forven": true, "opens_database": "denied", "readable_secrets": ["k"]}'
+    leaky = 'FORVEN_PROBE {"whoami": "host\\\\operator", "imports_forven": true, "opens_database": "denied", "readable_secrets": ["k"]}'
     result = iso.judge_probe(leaky, account)
     assert result["ok"] is False
     assert any("database" in p for p in result["problems"])
     assert any("can read k" in p for p in result["problems"])
-    assert any("ran as host\\aaron" in p for p in result["problems"])
+    assert any("ran as host\\operator" in p for p in result["problems"])
 
     assert iso.judge_probe("Logon failure", account)["ok"] is False
 
