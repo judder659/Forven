@@ -4697,6 +4697,29 @@ def update_approval(
     return get_approval(approval_id)
 
 
+def reopen_approval_after_failed_apply(
+    approval_id: int,
+    restore_status: str,
+    error: str,
+) -> dict | None:
+    """Undo an 'approved' decision whose apply step failed.
+
+    APPROVE-STRAND-1: the approve handler marks the row 'approved' (the
+    concurrency claim) before applying it. When the apply raises — a mistyped
+    GO LIVE, a promotion blocked by a gate — the row must go back to the status
+    it had, with the decision cleared, so the operator can act on it again.
+    Only touches a row that is still 'approved'.
+    """
+    status_value = _normalize_approval_status(restore_status) or "pending_approval"
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE approvals SET status = ?, decision = NULL, decided_at = NULL, "
+            "error = ?, updated_at = ? WHERE id = ? AND status = 'approved'",
+            (status_value, str(error or "")[:2000], _now(), approval_id),
+        )
+    return get_approval(approval_id)
+
+
 def get_strategies(
     status: str | None = None,
     owner: str | None = None,

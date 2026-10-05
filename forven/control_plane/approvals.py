@@ -17,6 +17,7 @@ from forven.db import (
     list_approvals,
     log_activity,
     mark_approval_auto_approved,
+    reopen_approval_after_failed_apply,
     update_approval,
 )
 
@@ -899,11 +900,39 @@ def post_troubleshoot_approval(
     }
 
 
+def _promotion_targets_live(approval: Mapping[str, object]) -> bool:
+    payload = _approval_payload(approval)
+    target = str(
+        payload.get("recommended_target_stage")
+        or payload.get("requested_status")
+        or approval.get("requested_status")
+        or ""
+    ).strip().lower()
+    return target == "live_graduated"
+
+
 def post_approve_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[str, object]:
+    """Approve an approval and apply it.
+
+    APPROVE-STRAND-1: the row is claimed as 'approved' before the apply runs (so
+    two concurrent clicks can't both apply), and is put back to its previous
+    status if the apply fails. A mistyped GO LIVE used to leave the row
+    'approved' with nothing applied, which the Brain treats as an active
+    approval, so the strategy was left with nothing for the operator to click.
+    """
     approval = get_approval(approval_id)
     if not approval:
         raise HTTPException(status_code=404, detail=f"Approval {approval_id} not found")
     approval_type = str(approval.get("approval_type") or "").strip().lower()
+    previous_status = str(approval.get("status") or "pending_approval")
+
+    # Validate the GO LIVE ceremony before claiming the row at all.
+    if approval_type == _PROMOTION_APPROVAL_TYPE and _promotion_targets_live(approval):
+        from forven.exchange.risk import validate_go_live_confirmation
+
+        go_live_error = validate_go_live_confirmation(body.confirm, body.live_notional_ceiling_usd)
+        if go_live_error:
+            raise HTTPException(status_code=400, detail=go_live_error)
 
     try:
         updated = update_approval(
@@ -918,6 +947,27 @@ def post_approve_approval(approval_id: int, body: ApprovalDecisionBody) -> dict[
     except ApprovalTransitionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    try:
+        return _apply_approved_decision(approval_id, approval, approval_type, body, updated)
+    except Exception as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        try:
+            reopen_approval_after_failed_apply(
+                approval_id, previous_status, f"apply failed: {detail}"
+            )
+        except Exception:
+            # The original failure is what the operator needs to see.
+            pass
+        raise
+
+
+def _apply_approved_decision(
+    approval_id: int,
+    approval: Mapping[str, object],
+    approval_type: str,
+    body: ApprovalDecisionBody,
+    updated: Mapping[str, object] | None,
+) -> dict[str, object]:
     if approval_type == _DETHRONE_APPROVAL_TYPE:
         dethrone_result = _apply_dethrone_recommendation(approval, body)
         log_activity(

@@ -1212,7 +1212,7 @@ def validate_go_live_confirmation(confirm: str | None, ceiling_usd) -> str | Non
         value = float(ceiling_usd)
     except (TypeError, ValueError):
         value = 0.0
-    if not (value > 0):
+    if not (value > 0) or not math.isfinite(value):
         return (
             "going live requires live_notional_ceiling_usd — the initial per-asset "
             "notional ceiling (USD) this strategy may hold live"
