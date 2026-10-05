@@ -5,7 +5,7 @@
 
 	import { getSettings, getForvenDashboard } from '$lib/api';
 	import { SETTINGS_AREAS, type SettingsAreaId } from '$lib/settings/manifest';
-	import { dirtyFields } from '$lib/settings/dirty';
+	import { clearDirty, dirtyFields } from '$lib/settings/dirty';
 	import { openWizard } from '$lib/stores/setupWizard';
 
 	import SettingsSidebar from '$lib/components/settings/shell/SettingsSidebar.svelte';
@@ -123,6 +123,13 @@
 		}
 	});
 
+	// A reload or closed tab can't use the in-app prompt; ask the browser to warn.
+	function handleBeforeUnload(event: BeforeUnloadEvent): void {
+		if (get(dirtyFields).size === 0) return;
+		event.preventDefault();
+		event.returnValue = '';
+	}
+
 	beforeNavigate((navigation) => {
 		// Allow the navigation we re-triggered after the operator confirmed.
 		if (confirmedLeave) {
@@ -145,6 +152,10 @@
 		leavePromptOpen = false;
 		const url = pendingLeaveUrl;
 		pendingLeaveUrl = null;
+		// "Discard & leave" must actually discard: the save bar lives in the
+		// global layout, so kept edits would follow the operator to other pages
+		// where "Save all" would still commit them.
+		clearDirty();
 		// pendingLeaveUrl is null for full-page unloads / external nav; nothing to
 		// re-trigger in that case, so just drop the guard.
 		if (!url) return;
@@ -152,6 +163,8 @@
 		void goto(url);
 	}
 </script>
+
+<svelte:window on:beforeunload={handleBeforeUnload} />
 
 <div class="min-h-screen bg-sc-bg text-sc-ink p-6 space-y-6">
 	<header class="flex items-baseline justify-between gap-4 border-b border-sc-line pb-4">

@@ -139,6 +139,19 @@
 		}
 	}
 
+	// The button shows progress for a manual run only, so background refreshes
+	// don't flicker it.
+	let running = false;
+	async function runChecksNow() {
+		if (running) return;
+		running = true;
+		try {
+			await loadAll();
+		} finally {
+			running = false;
+		}
+	}
+
 	async function handleResume(task: ResumableTask) {
 		if (resumingId !== null) return;
 		if (isExternalMutating(task.type)) {
@@ -210,11 +223,11 @@
 		</div>
 		<button
 			class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors disabled:opacity-60"
-			on:click={() => void loadAll()}
-			disabled={loading}
+			on:click={() => void runChecksNow()}
+			disabled={loading || running}
 			title="Re-run all checks immediately"
 		>
-			{loading ? 'Running…' : 'Run checks now'}
+			{loading || running ? 'Running…' : 'Run checks now'}
 		</button>
 	</div>
 
