@@ -840,12 +840,23 @@ def _build_auth_provider_payload(provider: str) -> dict:
     # in the connected set AND a usable token. Otherwise an expired-token /
     # token-gone provider would show connected in the UI while the runtime
     # refuses to call it.
+    #
+    # "reconnect_required" = the operator connected it in-app, but its sign-in
+    # no longer works (expired token, failed refresh, unreadable key). The UI
+    # keeps such a provider under Connected with a "Sign in again" action
+    # instead of offering it as a provider that was never added.
     try:
         from forven import model_selection
 
         payload["connected"] = model_selection.provider_is_connected(provider)
+        payload["reconnect_required"] = (
+            not payload["connected"] and provider in model_selection.list_connected_providers()
+        )
     except Exception:
         payload["connected"] = configured
+        payload["reconnect_required"] = False
+    if payload["reconnect_required"] and status not in {"expired", "needs_reauth", "invalid", "error"}:
+        payload["status"] = "needs_reauth"
     if last_refresh_error:
         payload["last_refresh_error"] = str(last_refresh_error)[:500]
     return payload

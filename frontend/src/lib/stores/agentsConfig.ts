@@ -58,6 +58,15 @@ export function isProviderConnected(p: ForvenAuthProviderStatus): boolean {
 	return Boolean(p.configured) && p.status === 'active';
 }
 
+/**
+ * A provider the operator added in-app: connected, or connected earlier with a
+ * sign-in that has since expired. The Providers tab lists these under
+ * Connected, while model pickers keep using `isProviderConnected`.
+ */
+export function isProviderAdded(p: ForvenAuthProviderStatus): boolean {
+	return isProviderConnected(p) || p.reconnect_required === true;
+}
+
 // The load in flight, so a tab that mounts mid-load can wait for it instead of
 // reading a store that is still empty.
 let inflight: Promise<void> | null = null;

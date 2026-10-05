@@ -589,6 +589,13 @@ export interface ForvenAuthProviderStatus {
 	 * field is absent, callers fall back to `configured && status === 'active'`.
 	 */
 	connected?: boolean;
+	/**
+	 * The operator connected this provider in-app, but its sign-in no longer
+	 * works (expired token, failed refresh, unreadable key). It stays listed as
+	 * connected with a "Sign in again" action; `connected` is false because the
+	 * runtime cannot call it until the operator signs in again.
+	 */
+	reconnect_required?: boolean;
 	status:
 		| 'active'
 		| 'expiring_soon'
