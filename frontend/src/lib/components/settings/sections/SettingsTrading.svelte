@@ -9,6 +9,7 @@
 	import SettingsFieldRow from '$lib/components/settings/primitives/SettingsFieldRow.svelte';
 	import SettingsAdvancedHeader from '$lib/components/settings/primitives/SettingsAdvancedHeader.svelte';
 	import { originalValues, pendingValues } from '$lib/settings/dirty';
+	import { effectiveRiskReport, effectiveValueFor } from '$lib/settings/effective';
 
 	export let settings: Record<string, unknown>;
 	// currentValues is exposed so the parent (Task 20 shell) can read it for the save bar.
@@ -73,6 +74,9 @@
 		currentValues = { ...currentValues, ...originals, ...areaPending };
 	}
 
+	$: riskReport = effectiveRiskReport(settings);
+	$: lockedCount = Object.keys(riskReport?.locked ?? {}).length;
+
 	function displayValue(entry: SettingsEntry): unknown {
 		const pend = $pendingValues;
 		if (entry.id in pend) return pend[entry.id];
@@ -81,6 +85,11 @@
 </script>
 
 <div class="space-y-6">
+	{#if riskReport?.on_mainnet}
+		<div class="rounded-md border border-red-800/70 bg-red-950/20 px-4 py-3 text-xs text-red-200" data-testid="mainnet-risk-banner">
+			Live orders go to Hyperliquid mainnet (real money). Some limits are locked tighter for real money{lockedCount > 0 ? `, and ${lockedCount} saved value${lockedCount === 1 ? ' is' : 's are'} replaced` : ''}. Fields marked "In force" show the value the engine actually uses.
+		</div>
+	{/if}
 	{#each subs as sub (sub.id)}
 		{@const entries = entriesBySub[sub.id] ?? []}
 		{@const usedBy = [...new Set(entries.flatMap((e) => e.usedBy))]}
@@ -101,6 +110,7 @@
 					value={displayValue(entry)}
 					type={entry.type}
 					options={entry.options ?? []}
+					inForce={effectiveValueFor(settings, entry.backendPath)}
 				/>
 			{/each}
 		</SettingsSubsection>

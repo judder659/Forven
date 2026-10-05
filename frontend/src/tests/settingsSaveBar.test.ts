@@ -42,6 +42,22 @@ vi.mock('../lib/settings/manifest', () => ({
 			description: '',
 			usedBy: [],
 		},
+		{
+			id: 'trading-mode.trading_mode',
+			label: 'Trading mode',
+			default: 'paper',
+			type: 'select',
+			options: [
+				{ value: 'paper', label: 'Paper' },
+				{ value: 'live', label: 'Live' },
+			],
+			area: 'trading',
+			subsection: 'trading-mode-capital',
+			backendSection: 'trading-mode',
+			backendPath: 'trading_mode',
+			description: '',
+			usedBy: [],
+		},
 	],
 	SETTINGS_AREAS: [],
 }));
@@ -279,5 +295,39 @@ describe('SettingsSaveBar', () => {
 		expect(dirty.has('risk.max_drawdown_pct')).toBe(true);
 		// The error names the offending field.
 		expect(target.textContent || '').toContain("'Max daily loss' is empty");
+	});
+
+	it('asks for a typed LIVE before saving a switch to live trading', async () => {
+		dirtyFields.set(new Set(['trading-mode.trading_mode', 'risk.max_daily_loss']));
+		originalValues.set({ 'trading-mode.trading_mode': 'paper', 'risk.max_daily_loss': 200 });
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(SettingsSaveBar, {
+			target,
+			props: { currentValues: { 'trading-mode.trading_mode': 'live', 'risk.max_daily_loss': 150 } },
+		});
+		await flush();
+
+		const saveBtn = Array.from(target.querySelectorAll('button')).find((b) => (b.textContent || '').includes('Save all'));
+		saveBtn!.click();
+		await flush();
+
+		expect(updateSettingsSectionMock).not.toHaveBeenCalled();
+		const rows = target.querySelector('[data-testid="confirm-dialog-rows"]')?.textContent || '';
+		expect(rows).toContain('Paper → Live');
+		expect(rows).toContain('200 → 150');
+		const go = target.querySelector('[data-testid="confirm-dialog-go"]') as HTMLButtonElement;
+		expect(go.disabled).toBe(true);
+		const phrase = target.querySelector('[data-testid="confirm-dialog-phrase"]') as HTMLInputElement;
+		phrase.value = 'live';
+		phrase.dispatchEvent(new Event('input', { bubbles: true }));
+		await flush();
+		expect(go.disabled).toBe(false);
+		go.click();
+		await flush();
+		await flush();
+
+		expect(updateSettingsSectionMock).toHaveBeenCalledWith('trading-mode', { trading_mode: 'live' });
+		expect(get(dirtyFields).size).toBe(0);
 	});
 });

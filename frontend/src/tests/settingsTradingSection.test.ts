@@ -89,4 +89,29 @@ describe('SettingsTrading section', () => {
 		expect(originals['risk.max_position_size_pct']).toBeUndefined();
 		expect(originals['risk.max_daily_loss']).toBeUndefined();
 	});
+
+	it('shows the value in force when mainnet locks replace a saved value', async () => {
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(SettingsTrading, {
+			target,
+			props: {
+				settings: {
+					max_concurrent_positions: 25,
+					risk_effective: {
+						on_mainnet: true,
+						leverage_cap: 3,
+						locked: { max_concurrent_positions: { effective: 10, reason: 'Capped at 10 on mainnet' } },
+					},
+				},
+			},
+		});
+		await flush();
+
+		expect(target.querySelector('[data-testid="mainnet-risk-banner"]')?.textContent).toContain('1 saved value is replaced');
+		const note = target.querySelector('[data-testid="in-force-risk.max_concurrent_positions"]');
+		expect(note?.textContent).toContain('10');
+		expect(note?.textContent).toContain('Capped at 10 on mainnet');
+		expect(target.querySelector('[data-testid="in-force-risk.max_daily_loss_pct"]')).toBeNull();
+	});
 });

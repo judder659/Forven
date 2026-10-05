@@ -10,6 +10,14 @@
 		type WalletsSnapshot,
 	} from '$lib/api';
 	import { addToast } from '$lib/stores/processTracker';
+	import ConfirmDialog, { type ConfirmDialogSpec } from '$lib/components/ConfirmDialog.svelte';
+
+	/** True when fund moves hit Hyperliquid mainnet (real money). */
+	export let onMainnet = false;
+
+	// Fund moves are confirmed in a dialog that names the network first.
+	let pendingMove: (ConfirmDialogSpec & { run: () => Promise<void> }) | null = null;
+	$: networkLabel = onMainnet ? 'Mainnet (real money)' : 'Testnet';
 
 	let snapshot: WalletsSnapshot | null = null;
 	let loading = true;
@@ -102,6 +110,49 @@
 		}
 	}
 
+	function requestTransfer(label: string) {
+		if (transferring || !transferAmount || transferAmount <= 0) return;
+		const amount = transferAmount;
+		const deposit = transferDirection === 'deposit';
+		pendingMove = {
+			title: deposit ? `Send ${fmtUsd(amount)} to '${label}'?` : `Withdraw ${fmtUsd(amount)} from '${label}'?`,
+			warn: onMainnet ? 'This moves real funds on Hyperliquid mainnet.' : undefined,
+			rows: [
+				['Network', networkLabel],
+				['From', deposit ? 'Master wallet' : label],
+				['To', deposit ? label : 'Master wallet'],
+				['Amount', fmtUsd(amount)],
+			],
+			cta: deposit ? 'Send funds' : 'Withdraw funds',
+			danger: onMainnet,
+			run: () => handleTransfer(label),
+		};
+	}
+
+	function requestClassTransfer(wallet: string) {
+		if (classBusy || !classAmount || classAmount <= 0) return;
+		const amount = classAmount;
+		pendingMove = {
+			title: `Move ${fmtUsd(amount)} ${classToPerp ? 'spot → perp' : 'perp → spot'}?`,
+			warn: onMainnet ? 'This moves real funds on Hyperliquid mainnet.' : undefined,
+			rows: [
+				['Network', networkLabel],
+				['Wallet', wallet === 'master' ? 'Master wallet' : wallet],
+				['Direction', classToPerp ? 'Spot → Perp' : 'Perp → Spot'],
+				['Amount', fmtUsd(amount)],
+			],
+			cta: 'Move funds',
+			danger: onMainnet,
+			run: () => handleClassTransfer(wallet),
+		};
+	}
+
+	async function runPendingMove() {
+		const move = pendingMove;
+		pendingMove = null;
+		if (move) await move.run();
+	}
+
 	async function handleTransfer(label: string) {
 		if (transferring || !transferAmount || transferAmount <= 0) return;
 		transferring = true;
@@ -171,7 +222,13 @@
 <section class="rounded-md border border-sc-line bg-sc-panel">
 	<header class="flex items-center justify-between border-b border-sc-line px-4 py-3">
 		<div>
-			<h3 class="text-[13px] font-semibold text-sc-ink2">Wallets &amp; sub-accounts</h3>
+			<h3 class="flex items-center gap-2 text-[13px] font-semibold text-sc-ink2">
+				Wallets &amp; sub-accounts
+				<span
+					class="rounded border px-1.5 py-0.5 font-plex-cond text-[10px] font-medium uppercase tracking-[0.08em] {onMainnet ? 'border-red-800 bg-red-950/30 text-red-300' : 'border-sc-line2 text-sc-ink3'}"
+					data-testid="wallets-network"
+				>{onMainnet ? 'Mainnet' : 'Testnet'}</span>
+			</h3>
 			<p class="mt-0.5 text-xs text-sc-ink3">
 				Master balances, named sub-account wallets (Bot Factory isolation), funding, and spot ⇄ perp moves.
 			</p>
@@ -227,7 +284,7 @@
 						<button on:click={() => (classToPerp = true)} class="rounded-md border px-2.5 py-1.5 text-[12px] {classToPerp ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Spot → Perp</button>
 						<button on:click={() => (classToPerp = false)} class="rounded-md border px-2.5 py-1.5 text-[12px] {!classToPerp ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Perp → Spot</button>
 					</div>
-					<button on:click={() => handleClassTransfer('master')} disabled={classBusy || !classAmount || classAmount <= 0} class="terminal-button-primary text-[12px]">
+					<button on:click={() => requestClassTransfer('master')} disabled={classBusy || !classAmount || classAmount <= 0} class="terminal-button-primary text-[12px]">
 						{classBusy ? 'Sending…' : 'Send'}
 					</button>
 				</div>
@@ -283,7 +340,7 @@
 												<button on:click={() => (transferDirection = 'deposit')} class="rounded-md border px-2.5 py-1.5 text-[12px] {transferDirection === 'deposit' ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Master → {book.label}</button>
 												<button on:click={() => (transferDirection = 'withdraw')} class="rounded-md border px-2.5 py-1.5 text-[12px] {transferDirection === 'withdraw' ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">{book.label} → Master</button>
 											</div>
-											<button on:click={() => handleTransfer(book.label)} disabled={transferring || !transferAmount || transferAmount <= 0} class="terminal-button-primary text-[12px]">
+											<button on:click={() => requestTransfer(book.label)} disabled={transferring || !transferAmount || transferAmount <= 0} class="terminal-button-primary text-[12px]">
 												{transferring ? 'Sending…' : 'Send'}
 											</button>
 										</div>
@@ -305,7 +362,7 @@
 												<button on:click={() => (classToPerp = true)} class="rounded-md border px-2.5 py-1.5 text-[12px] {classToPerp ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Spot → Perp</button>
 												<button on:click={() => (classToPerp = false)} class="rounded-md border px-2.5 py-1.5 text-[12px] {!classToPerp ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Perp → Spot</button>
 											</div>
-											<button on:click={() => handleClassTransfer(book.label)} disabled={classBusy || !classAmount || classAmount <= 0} class="terminal-button-primary text-[12px]">
+											<button on:click={() => requestClassTransfer(book.label)} disabled={classBusy || !classAmount || classAmount <= 0} class="terminal-button-primary text-[12px]">
 												{classBusy ? 'Sending…' : 'Send'}
 											</button>
 										</div>
@@ -354,7 +411,7 @@
 												<button on:click={() => (transferDirection = 'deposit')} class="rounded-md border px-2.5 py-1.5 text-[12px] {transferDirection === 'deposit' ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Master → {wallet.label}</button>
 												<button on:click={() => (transferDirection = 'withdraw')} class="rounded-md border px-2.5 py-1.5 text-[12px] {transferDirection === 'withdraw' ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">{wallet.label} → Master</button>
 											</div>
-											<button on:click={() => handleTransfer(wallet.label)} disabled={transferring || !transferAmount || transferAmount <= 0} class="terminal-button-primary text-[12px]">
+											<button on:click={() => requestTransfer(wallet.label)} disabled={transferring || !transferAmount || transferAmount <= 0} class="terminal-button-primary text-[12px]">
 												{transferring ? 'Sending…' : 'Send'}
 											</button>
 											<span class="text-xs text-sc-ink3">Moves PERP USD between master and the sub-account.</span>
@@ -377,7 +434,7 @@
 												<button on:click={() => (classToPerp = true)} class="rounded-md border px-2.5 py-1.5 text-[12px] {classToPerp ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Spot → Perp</button>
 												<button on:click={() => (classToPerp = false)} class="rounded-md border px-2.5 py-1.5 text-[12px] {!classToPerp ? 'border-sc-ink bg-sc-ink text-black' : 'border-sc-line2 text-sc-ink2 hover:border-sc-line2'}">Perp → Spot</button>
 											</div>
-											<button on:click={() => handleClassTransfer(wallet.label)} disabled={classBusy || !classAmount || classAmount <= 0} class="terminal-button-primary text-[12px]">
+											<button on:click={() => requestClassTransfer(wallet.label)} disabled={classBusy || !classAmount || classAmount <= 0} class="terminal-button-primary text-[12px]">
 												{classBusy ? 'Sending…' : 'Send'}
 											</button>
 											<span class="text-xs text-sc-ink3">Bots trade PERP — keep their capital on the perp side.</span>
@@ -462,3 +519,7 @@
 		</div>
 	{/if}
 </section>
+
+{#if pendingMove}
+	<ConfirmDialog spec={pendingMove} on:cancel={() => (pendingMove = null)} on:confirm={runPendingMove} />
+{/if}

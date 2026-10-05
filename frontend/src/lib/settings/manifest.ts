@@ -296,6 +296,20 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.exchange.risk'],
   },
   {
+    id: 'risk.live_max_leverage',
+    label: 'Max leverage (mainnet)',
+    unit: 'x',
+    default: 3,
+    type: 'number',
+    area: 'trading',
+    subsection: 'trading-risk-position-sizing',
+    backendSection: 'risk',
+    backendPath: 'live_max_leverage',
+    description:
+      'Highest leverage a live position may open at on mainnet. Forven never goes above 3x on real money; this can only lower it (1 to 3). Testnet is not capped.',
+    usedBy: ['forven.exchange.hyperliquid'],
+  },
+  {
     id: 'risk.live_books_enabled',
     label: 'Live direction books (long/short sub-accounts)',
     default: false,

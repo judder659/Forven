@@ -12,6 +12,7 @@ import StrategyApprovalCard from './StrategyApprovalCard.svelte';
 import TaskApprovalCard from './TaskApprovalCard.svelte';
 import RegimeChampionCard from './RegimeChampionCard.svelte';
 import RoutineCreateCard from './RoutineCreateCard.svelte';
+import LiveGraduationCard from './LiveGraduationCard.svelte';
 
 export const APPROVAL_TYPE_TITLES: Record<string, string> = {
 	strategy_dethrone_recommendation: 'Dethrone Recommendation',
@@ -45,6 +46,7 @@ const PAYLOAD_RENDERERS: Record<string, ApprovalCard> = {
 	code_change: TaskApprovalCard,
 	regime_champion_promotion: RegimeChampionCard,
 	routine_create: RoutineCreateCard,
+	strategy_live_graduation_recommendation: LiveGraduationCard,
 };
 
 export function payloadRenderer(approvalType: string | null | undefined): ApprovalCard | null {

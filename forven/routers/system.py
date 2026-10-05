@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Response
 
 from forven import api_core as core
 from forven.api_security import require_operator_access
+from forven.risk_effective import with_effective_risk
 
 router = APIRouter(tags=["system"], dependencies=[Depends(require_operator_access)])
 
@@ -36,7 +37,7 @@ def put_pipeline_settings(body: core.PipelineSettingsUpdateBody):
 
 @router.get("/api/settings")
 def get_settings():
-    return core.get_settings()
+    return with_effective_risk(core.get_settings())
 
 
 @router.put("/api/settings/{section}")

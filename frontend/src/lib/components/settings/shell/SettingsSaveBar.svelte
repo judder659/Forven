@@ -8,11 +8,14 @@
 	} from '$lib/settings/dirty';
 	import { updateSettingsSection } from '$lib/api';
 	import { addToast } from '$lib/stores/processTracker';
+	import ConfirmDialog, { type ConfirmDialogSpec } from '$lib/components/ConfirmDialog.svelte';
+	import { REAL_MONEY_PHRASE, changeSummary, realMoneyWarnings } from '$lib/settings/realMoney';
 
 	export let currentValues: Record<string, unknown>;
 
 	let saving = false;
 	let error: string | null = null;
+	let confirmSpec: ConfirmDialogSpec | null = null;
 
 	$: count = $dirtyFields.size;
 	$: hidden = count === 0;
@@ -83,6 +86,29 @@
 		}
 	}
 
+	// Real-money switches (live mode, testnet off, automatic go-live) never save
+	// on a bare click: the operator sees every pending change and types LIVE.
+	function requestSave() {
+		const warnings = realMoneyWarnings($dirtyFields, currentValues);
+		if (warnings.length === 0) {
+			void saveAll();
+			return;
+		}
+		confirmSpec = {
+			title: 'Save changes that affect real money?',
+			warn: warnings.join(' '),
+			rows: changeSummary($dirtyFields, $originalValues, currentValues),
+			cta: 'Save changes',
+			danger: true,
+			phrase: REAL_MONEY_PHRASE,
+		};
+	}
+
+	async function confirmSave() {
+		confirmSpec = null;
+		await saveAll();
+	}
+
 	function revertAll() {
 		clearDirty();
 	}
@@ -107,7 +133,7 @@
 			</button>
 			<button
 				type="button"
-				on:click={saveAll}
+				on:click={requestSave}
 				disabled={saving}
 				class="terminal-button-primary text-[12px]"
 			>
@@ -115,4 +141,8 @@
 			</button>
 		</div>
 	</div>
+{/if}
+
+{#if confirmSpec}
+	<ConfirmDialog spec={confirmSpec} busy={saving} on:cancel={() => (confirmSpec = null)} on:confirm={confirmSave} />
 {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { dirtyFields, markField } from '$lib/settings/dirty';
+	import { formatEffective } from '$lib/settings/effective';
 
 	export let id: string;
 	export let label: string;
@@ -17,6 +18,9 @@
 	// the settings blob (e.g. discord_bot_token_configured) used to render a
 	// "Saved" badge so users can see a credential is persisted.
 	export let configured: boolean = false;
+	// RISK-BOUND-1: when the engine replaces the saved value (e.g. a cap locked
+	// on mainnet), the value actually in force and why.
+	export let inForce: { effective: unknown; reason: string } | null = null;
 
 	$: dirty = $dirtyFields.has(id);
 	$: showSavedBadge = type === 'secret' && configured && !dirty;
@@ -205,6 +209,11 @@
 			{#if yearHint}<span class="text-xs text-sc-ink3" data-testid="value-hint-{id}">{yearHint}</span>{/if}
 		</div>
 	</div>
+	{#if inForce}
+		<p class="text-xs text-yellow-300" data-testid="in-force-{id}">
+			In force: <span class="font-semibold">{formatEffective(inForce.effective)}{unit ? ` ${unit}` : ''}</span> · {inForce.reason}
+		</p>
+	{/if}
 	<p class="text-xs text-sc-ink2">{description}</p>
 	<p class="text-[10px] text-sc-ink3">Default: {defaultValue} · Setting ID: {id}</p>
 </div>

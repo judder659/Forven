@@ -15,6 +15,14 @@
 	export let variant: 'default' | 'wizard' = 'default';
 	export let visibleSubsections: string[] | null = null;
 
+	// The network fund moves hit: the backend's resolved network when reported,
+	// else the saved testnet toggle.
+	$: mainnetNetwork = (() => {
+		const report = (settings?.risk_effective ?? null) as { on_mainnet?: boolean } | null;
+		if (report && typeof report.on_mainnet === 'boolean') return report.on_mainnet;
+		return settings?.hyperliquid_testnet === false;
+	})();
+
 	const AREA = 'hyperliquid' as const;
 
 	const allSubs = SETTINGS_SUBSECTIONS.filter((s) => s.area === AREA);
@@ -68,7 +76,7 @@
 	{#if variant !== 'wizard'}
 		<!-- Wallets manager first — the operational heart of the page. Manifest
 		     fields (credentials, books) follow below. -->
-		<WalletsManager />
+		<WalletsManager onMainnet={mainnetNetwork} />
 	{/if}
 
 	{#each subs as sub (sub.id)}
