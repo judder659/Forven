@@ -110,6 +110,32 @@ def _orders_resolve_to_mainnet() -> bool:
         return False
 
 
+# RISK-BOUND-1: absolute sanity bounds on operator risk overrides, on every
+# network. Mainnet is tighter still (its profile is a ceiling, RISK-NET-2).
+# A non-finite, zero or negative override is ignored (the profile default
+# stands): NaN in particular compares False against every limit, so a NaN
+# daily-loss limit used to mean "never halt".
+_MAX_RISK_PER_TRADE_CEILING = 0.10
+_MAX_DAILY_LOSS_CEILING = 0.50
+
+
+def _bounded_limit_override(raw: object, key: str, ceiling: float) -> float | None:
+    """Percent override -> fraction in (0, ceiling], or None to keep the default."""
+    try:
+        fraction = float(raw) / 100.0
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(fraction) or fraction <= 0:
+        log.warning("Ignoring invalid risk override %s=%r", key, raw)
+        return None
+    if fraction > ceiling:
+        log.warning(
+            "Risk override %s=%.2f%% exceeds the %.0f%% bound; clamping", key, fraction * 100, ceiling * 100
+        )
+        return ceiling
+    return fraction
+
+
 def _get_risk_limits() -> dict[str, float]:
     """Return active risk limits based on the resolved network, merged with user settings."""
     from forven import config as cfg
@@ -132,6 +158,8 @@ def _get_risk_limits() -> dict[str, float]:
     try:
         if "max_drawdown_pct" in settings:
             raw_dd = float(settings["max_drawdown_pct"]) / 100.0
+            if not math.isfinite(raw_dd):
+                raise ValueError("non-finite max_drawdown_pct")
             if raw_dd > 0.30:
                 log.warning(
                     "max_drawdown_pct override %.1f%% exceeds 30%% cap — clamping to 30%%",
@@ -153,15 +181,22 @@ def _get_risk_limits() -> dict[str, float]:
         raw_risk_per_trade = settings.get("max_risk_per_trade_pct")
         if raw_risk_per_trade is None:
             raw_risk_per_trade = settings.get("max_position_size_pct")
-        if raw_risk_per_trade is not None:
-            base_limits["max_risk_per_trade"] = float(raw_risk_per_trade) / 100.0
+        risk_fraction = _bounded_limit_override(
+            raw_risk_per_trade, "max_risk_per_trade_pct", _MAX_RISK_PER_TRADE_CEILING
+        )
+        if risk_fraction is not None:
+            base_limits["max_risk_per_trade"] = risk_fraction
     except Exception:
         pass
 
     # max_daily_loss_pct (e.g. 2 -> 0.02)
     try:
         if "max_daily_loss_pct" in settings:
-            base_limits["daily_loss_limit"] = float(settings["max_daily_loss_pct"]) / 100.0
+            daily_fraction = _bounded_limit_override(
+                settings["max_daily_loss_pct"], "max_daily_loss_pct", _MAX_DAILY_LOSS_CEILING
+            )
+            if daily_fraction is not None:
+                base_limits["daily_loss_limit"] = daily_fraction
     except Exception:
         pass
 
@@ -170,7 +205,11 @@ def _get_risk_limits() -> dict[str, float]:
         if "max_daily_loss_pct" not in settings and "max_daily_loss" in settings and "initial_capital" in settings:
             cap = float(settings["initial_capital"])
             if cap > 0:
-                base_limits["daily_loss_limit"] = float(settings["max_daily_loss"]) / cap
+                daily_fraction = _bounded_limit_override(
+                    float(settings["max_daily_loss"]) / cap * 100.0, "max_daily_loss", _MAX_DAILY_LOSS_CEILING
+                )
+                if daily_fraction is not None:
+                    base_limits["daily_loss_limit"] = daily_fraction
     except Exception:
         pass
 
@@ -205,13 +244,59 @@ def max_risk_per_trade_limit() -> float:
     return float(_get_risk_limits()["max_risk_per_trade"])
 
 
+# RISK-BOUND-1: on real capital the account-level guards cannot be switched off
+# or loosened past their defaults from Settings. Saved values may tighten them.
+MAINNET_MAX_CONCURRENT_POSITIONS = 10
+
+
+def orders_resolve_to_mainnet() -> bool:
+    """Public form of :func:`_orders_resolve_to_mainnet` for sibling guards."""
+    return _orders_resolve_to_mainnet()
+
+
+def _apply_mainnet_setting_locks(settings: dict) -> dict:
+    """Return ``settings`` with the real-capital locks applied (a copy)."""
+    locked = dict(settings)
+    if not bool(locked.get("live_portfolio_budget_enabled", True)):
+        log.warning("live_portfolio_budget_enabled=False ignored on mainnet")
+    locked["live_portfolio_budget_enabled"] = True
+    for key, default in _PORTFOLIO_BUDGET_DEFAULTS.items():
+        try:
+            value = float(locked[key]) if locked.get(key) is not None else float(default)
+        except (TypeError, ValueError):
+            value = float(default)
+        if not math.isfinite(value) or value > float(default):
+            log.warning("Risk setting %s=%r exceeds the mainnet ceiling %.1f; clamping", key, locked.get(key), default)
+            value = float(default)
+        locked[key] = value
+    concurrent = _coerce_position_limit(locked.get("max_concurrent_positions"))
+    if concurrent is None or concurrent > MAINNET_MAX_CONCURRENT_POSITIONS:
+        locked["max_concurrent_positions"] = MAINNET_MAX_CONCURRENT_POSITIONS
+    return locked
+
+
 def _load_risk_settings() -> dict:
-    """Return persisted settings as a plain dict."""
+    """Return persisted settings as a plain dict, with the mainnet locks applied
+    when live orders resolve to the Hyperliquid mainnet."""
     try:
         raw_settings = kv_get("forven:settings", {})
     except Exception:
         raw_settings = {}
-    return raw_settings if isinstance(raw_settings, dict) else {}
+    settings = raw_settings if isinstance(raw_settings, dict) else {}
+    if _orders_resolve_to_mainnet():
+        return _apply_mainnet_setting_locks(settings)
+    return settings
+
+
+def kill_switch_auto_enabled() -> bool:
+    """Whether the drawdown kill switch may auto-trigger.
+
+    The operator toggle can disable it on testnet; on mainnet it is always on
+    (RISK-BOUND-1) — an emergency halt is not something to lose to a stale
+    testnet-era setting."""
+    if bool(kv_get("kill_switch_enabled", True)):
+        return True
+    return _orders_resolve_to_mainnet()
 
 
 def _coerce_position_limit(value: object) -> int | None:
@@ -888,6 +973,8 @@ def _budget_pct_setting(settings: dict, key: str) -> float:
         value = float(raw) if raw is not None else float(_PORTFOLIO_BUDGET_DEFAULTS[key])
     except (TypeError, ValueError):
         value = float(_PORTFOLIO_BUDGET_DEFAULTS[key])
+    if not math.isfinite(value):
+        value = float(_PORTFOLIO_BUDGET_DEFAULTS[key])
     return max(value, 0.0)
 
 
@@ -1212,7 +1299,7 @@ def validate_go_live_confirmation(confirm: str | None, ceiling_usd) -> str | Non
         value = float(ceiling_usd)
     except (TypeError, ValueError):
         value = 0.0
-    if not (value > 0):
+    if not (value > 0) or not math.isfinite(value):
         return (
             "going live requires live_notional_ceiling_usd — the initial per-asset "
             "notional ceiling (USD) this strategy may hold live"
@@ -5162,7 +5249,7 @@ def _update_equity_locked(
     # kill-switch's close-all): the M9 open-path check still refuses NEW opens on
     # the very first breaching read, so the un-confirmed window blocks entries
     # without flattening the book on a phantom.
-    kill_switch_enabled = kv_get("kill_switch_enabled", True)
+    kill_switch_enabled = kill_switch_auto_enabled()
     # HALT-STREAK-1: set when a streak is cleared this tick — the clear is as
     # un-reconstructible as an increment (a dropped reset would let a LATER
     # breach latch off non-consecutive ticks), so it forces a blocking write too.
@@ -5585,7 +5672,10 @@ def set_kill_switch_enabled(enabled: bool):
     kv_set("kill_switch_enabled", bool(enabled))
     label = "enabled" if enabled else "disabled"
     log.info("Kill-switch auto-trigger %s by operator", label)
-    log_activity("warning", "risk", f"Kill-switch auto-trigger {label} by operator")
+    note = ""
+    if not enabled and _orders_resolve_to_mainnet():
+        note = " (no effect while trading on mainnet: the kill switch stays on there)"
+    log_activity("warning", "risk", f"Kill-switch auto-trigger {label} by operator{note}")
 
 
 def reset_kill_switch():
@@ -5783,7 +5873,7 @@ def get_risk_status() -> dict:
     return {
         "execution_mode": cfg.get_execution_mode(),
         "system_paused": is_system_paused(),
-        "kill_switch_enabled": kv_get("kill_switch_enabled", True),
+        "kill_switch_enabled": kill_switch_auto_enabled(),
         "kill_switch_active": state.get("kill_switch_active", False),
         "kill_switch_triggered_at": state.get("kill_switch_triggered_at"),
         "daily_loss_halt": state.get("daily_loss_halt", False),

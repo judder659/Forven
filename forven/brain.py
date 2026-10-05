@@ -600,7 +600,18 @@ def _requires_operator_promotion_approval(current_stage: str, target_stage: str)
     return not _auto_approve_promotions_enabled(current_stage, target_stage)
 
 
+# APPROVE-STRAND-1: an 'approved' promotion is only "active" while its apply can
+# still be in flight. A strategy still asking for the same transition long after
+# the decision means the apply failed (before the fix in post_approve_approval, a
+# mistyped GO LIVE left the row 'approved' with nothing applied), and treating
+# that row as active forever left the operator nothing to click.
+_APPROVED_PROMOTION_INFLIGHT_MINUTES = 10
+
+
 def _find_active_promotion_approval(conn, strategy_id: str, requested_status: str):
+    inflight_cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=_APPROVED_PROMOTION_INFLIGHT_MINUTES)
+    ).isoformat()
     return conn.execute(
         """
         SELECT id, requested_status, status
@@ -609,11 +620,14 @@ def _find_active_promotion_approval(conn, strategy_id: str, requested_status: st
           AND target_type = 'strategy'
           AND LOWER(COALESCE(target_id, '')) = LOWER(?)
           AND LOWER(COALESCE(requested_status, '')) = LOWER(?)
-          AND status IN ('pending_approval', 'approved')
+          AND (
+            status = 'pending_approval'
+            OR (status = 'approved' AND COALESCE(decided_at, updated_at, '') >= ?)
+          )
         ORDER BY id DESC
         LIMIT 1
         """,
-        (_PROMOTION_APPROVAL_TYPE, strategy_id, requested_status),
+        (_PROMOTION_APPROVAL_TYPE, strategy_id, requested_status, inflight_cutoff),
     ).fetchone()
 
 

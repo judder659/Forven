@@ -166,3 +166,103 @@ def test_approval_apply_refuses_live_without_confirmation(forven_db):
         _apply_promotion_approval(approval, ApprovalDecisionBody(actor="operator"))
     assert exc.value.status_code == 400
     assert "GO LIVE" in str(exc.value.detail)
+
+
+# ------------------------------------------------- APPROVE-STRAND-1
+
+
+def _queued_live_promotion(strategy_id: str = "S-ST") -> int:
+    from forven.db import get_db, insert_approval
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, stage, base_id) VALUES (?, 'Strand test', 'paper', 1)",
+            (strategy_id,),
+        )
+    return insert_approval(
+        "strategy_promotion_approval",
+        target_id=strategy_id,
+        requested_status="live_graduated",
+        payload={"strategy_id": strategy_id, "recommended_target_stage": "live_graduated"},
+    )
+
+
+def test_mistyped_go_live_leaves_approval_pending(forven_db):
+    """A mistyped GO LIVE is refused BEFORE the row is claimed, so the operator
+    can simply try again — the row must not be left 'approved' with nothing done."""
+    from fastapi import HTTPException
+
+    from forven.control_plane.approvals import post_approve_approval
+    from forven.control_plane.models import ApprovalDecisionBody
+    from forven.db import get_approval
+
+    approval_id = _queued_live_promotion()
+    with pytest.raises(HTTPException) as exc:
+        post_approve_approval(
+            approval_id,
+            ApprovalDecisionBody(actor="operator", confirm="GO LIVF", live_notional_ceiling_usd=500.0),
+        )
+    assert exc.value.status_code == 400
+    row = get_approval(approval_id)
+    assert row["status"] == "pending_approval"
+    assert row["decided_at"] is None
+
+
+def test_failed_apply_reopens_the_approval(forven_db, monkeypatch):
+    """When the transition itself is refused after a valid GO LIVE, the approval
+    goes back to its previous status with the failure recorded."""
+    from fastapi import HTTPException
+
+    from forven import brain
+    from forven.control_plane.approvals import post_approve_approval
+    from forven.control_plane.models import ApprovalDecisionBody
+    from forven.db import get_approval
+
+    approval_id = _queued_live_promotion("S-ST2")
+    monkeypatch.setattr(
+        brain, "transition_stage",
+        lambda *a, **k: {"blocked_reason": "paper soak too short"},
+    )
+    with pytest.raises(HTTPException) as exc:
+        post_approve_approval(
+            approval_id,
+            ApprovalDecisionBody(actor="operator", confirm="GO LIVE", live_notional_ceiling_usd=500.0),
+        )
+    assert exc.value.status_code == 400
+    row = get_approval(approval_id)
+    assert row["status"] == "pending_approval"
+    assert row["decision"] is None
+    assert row["decided_at"] is None
+    assert "paper soak too short" in str(row["error"])
+
+
+def test_stale_approved_promotion_no_longer_blocks_a_new_request(forven_db):
+    """A promotion approval stranded as 'approved' by the old bug must not count
+    as active forever; a fresh 'approved' row (apply in flight) still does."""
+    from forven import brain
+    from forven.db import get_db, insert_approval
+
+    stale_id = insert_approval(
+        "strategy_promotion_approval", target_id="S-OLD",
+        requested_status="live_graduated", status="approved",
+    )
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE approvals SET decided_at = '2026-01-01T00:00:00+00:00', "
+            "updated_at = '2026-01-01T00:00:00+00:00' WHERE id = ?",
+            (stale_id,),
+        )
+        assert brain._find_active_promotion_approval(conn, "S-OLD", "live_graduated") is None
+
+    fresh_id = insert_approval(
+        "strategy_promotion_approval", target_id="S-NEW",
+        requested_status="live_graduated", status="approved",
+    )
+    with get_db() as conn:
+        row = brain._find_active_promotion_approval(conn, "S-NEW", "live_graduated")
+    assert row is not None and int(row["id"]) == fresh_id
+
+
+def test_go_live_ceiling_must_be_finite():
+    err = validate_go_live_confirmation(GO_LIVE_CONFIRM_PHRASE, float("inf"))
+    assert err and "ceiling" in err

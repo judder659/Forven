@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 import urllib.request
@@ -71,6 +72,8 @@ def _setting(settings: dict, key: str) -> float:
         raw = settings.get(key)
         value = float(raw) if raw is not None else float(_LIQUIDITY_DEFAULTS[key])
     except (TypeError, ValueError):
+        value = float(_LIQUIDITY_DEFAULTS[key])
+    if not math.isfinite(value):
         value = float(_LIQUIDITY_DEFAULTS[key])
     return max(value, 0.0)
 
@@ -164,6 +167,19 @@ def _record(asset: str, is_buy: bool, ok: bool, reason: str, detail: dict) -> No
         pass
 
 
+def _guard_enabled(settings: dict) -> bool:
+    """The operator toggle can switch the guard off on testnet only. On mainnet
+    it is always on (RISK-BOUND-1)."""
+    if bool(settings.get("live_liquidity_guard_enabled", True)):
+        return True
+    try:
+        from forven.exchange.risk import orders_resolve_to_mainnet
+
+        return orders_resolve_to_mainnet()
+    except Exception:  # noqa: BLE001 — unresolvable network: keep the guard on
+        return True
+
+
 def check_order_liquidity(asset: str, is_buy: bool, size: float, mid: float) -> tuple[bool, str]:
     """The pre-order liquidity admission check. Returns (allowed, reason).
 
@@ -173,7 +189,7 @@ def check_order_liquidity(asset: str, is_buy: bool, size: float, mid: float) -> 
     settings = _load_settings()
     asset_u = str(asset or "").strip().upper()
     detail: dict = {}
-    if not bool(settings.get("live_liquidity_guard_enabled", True)):
+    if not _guard_enabled(settings):
         return True, "liquidity guard disabled"
     try:
         order_notional = max(float(size), 0.0) * max(float(mid), 0.0)
@@ -296,7 +312,7 @@ def liquidity_guard_snapshot() -> dict:
     """Operator-facing view of the liquidity guard (rides /api/risk)."""
     settings = _load_settings()
     return {
-        "enabled": bool(settings.get("live_liquidity_guard_enabled", True)),
+        "enabled": _guard_enabled(settings),
         "limits": {key: _setting(settings, key) for key in _LIQUIDITY_DEFAULTS},
         "recent_decisions": list(_RECENT_DECISIONS),
     }
