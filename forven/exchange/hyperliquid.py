@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import inspect
@@ -2065,6 +2066,27 @@ def configured_margin_is_cross() -> bool:
         return False
 
 
+# RISK-BOUND-1: hard ceiling on the leverage any real-capital position may be
+# opened at. Strategies default to 3x; the operator setting `live_max_leverage`
+# can only lower it. Testnet is unbounded (no real capital at risk).
+MAINNET_MAX_LEVERAGE = 3
+
+
+def mainnet_leverage_cap() -> int:
+    """The effective mainnet leverage cap: MAINNET_MAX_LEVERAGE, or the operator's
+    lower `live_max_leverage` setting."""
+    cap = MAINNET_MAX_LEVERAGE
+    try:
+        raw = (kv_get("forven:settings", {}) or {}).get("live_max_leverage")
+        if raw is not None:
+            configured = float(raw)
+            if math.isfinite(configured) and configured >= 1:
+                cap = min(cap, int(configured))
+    except Exception:
+        pass
+    return cap
+
+
 def set_leverage(
     asset: str,
     leverage: float,
@@ -2093,6 +2115,13 @@ def set_leverage(
         lev = max(1, int(round(float(leverage or 1))))
     except Exception:
         lev = 1
+    if not testnet:
+        cap = mainnet_leverage_cap()
+        if lev > cap:
+            # Refuse rather than clamp: callers size margin off the leverage they
+            # asked for, so silently setting a lower one would break that math.
+            log.warning("set_leverage %s: %dx refused, mainnet cap is %dx", asset, lev, cap)
+            return {"error": f"leverage {lev}x exceeds the mainnet cap of {cap}x"}
     try:
         result = _submit(
             "update_leverage", hl_trade_breaker, exchange.update_leverage, lev, asset.upper(), cross
