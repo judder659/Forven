@@ -1,73 +1,57 @@
-# Running bots as a separate Windows account
+# Bot sandbox (Windows)
 
 Bots never receive Forven's master encryption key: each spawn gets a one-off
-token, and the API hands it only its own provider login. By default, though,
-bots still run as your own Windows user. A compromised bot could then read
-anything you can, including the key file, your browser profile and Forven's own
-code.
+token, and the API hands it only its own provider login. They still run as your
+Windows user, though, so on Windows Forven also starts every bot inside a
+**low-integrity sandbox**, the same Windows mechanism browsers use for their
+sandboxes. There's nothing to set up and no extra account. It is on by default.
 
-This optional setup runs every bot as a dedicated, low-privilege local account
-instead. It is off until you turn it on, and nothing else about your install
-changes.
+## What a sandboxed bot can and cannot do
 
-## Turning it on
+| | Sandboxed bot |
+|---|---|
+| Read and write Forven's data folder (`~\.forven`): database, market data, its memory | Yes |
+| Reach the API (credential broker, health) and the internet | Yes |
+| Change Forven's code, Python, or anything else in your profile | **No** |
+| Read the master key (in `%LOCALAPPDATA%\Forven` or `~\.forven`) or `.env` files | **No** |
 
-From an **administrator** PowerShell, opened as the same Windows user that runs
-Forven, in the Forven folder:
+Bots get a private profile and temp folder under `~\.forven\bot-runtime`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-bot-user.ps1
-```
+## How it is set up
 
-The script:
+The first time a bot starts after an API start, Forven:
 
-1. Creates a local account `forven-bot` with a long random password that nobody
-   needs to know, hidden from the sign-in screen.
-2. Grants it read-and-run access to Forven's code and Python (no writes), and
-   read-write access to Forven's data folder (`~\.forven`): the database, market
-   data and bot memory.
-3. Explicitly denies it the master key (both locations) and `.env` files.
-4. Stores the password, encrypted with Forven's key, beside that key in
-   `%LOCALAPPDATA%\Forven`, where bots cannot read or delete it.
-5. Runs `python -m forven bot-account check`, which starts a probe as the
-   account and confirms it really runs as `forven-bot`, can load Forven and open
-   the database, and cannot read any secret file. If the check fails the setup
-   is cleared again and bots keep running as you.
+1. Labels `~\.forven` so low-integrity processes may write it. This one-off
+   pass can take a moment on a large data folder; files created later inherit
+   the label.
+2. Labels the key's folder, any legacy key file and `.env` files as unreadable
+   from low integrity.
+3. Starts a short probe in the sandbox. It confirms the probe ran at low
+   integrity, can load Forven and write the database, can't write the code
+   folder, and can't read any protected file.
 
-Each bot switches to the account the next time it starts. Restart running bots
-from the Bot Factory page to switch them straight away.
+If the probe shows a bot could not work in the sandbox, or the sandbox cannot be
+created, bots start the way they always have, and the activity log says why. The
+sandbox never stops a bot from starting.
 
-## Checking and undoing
+## Checking and turning it off
 
 ```powershell
-python -m forven bot-account status   # On / Off / Broken
-python -m forven bot-account check    # re-run the probe
-.\scripts\setup-bot-user.ps1 -Remove  # admin: delete the account and its permissions
+python -m forven bot-sandbox   # prepare and run the check now
 ```
 
-`python -m forven bot-account clear` turns isolation off without deleting the
-account.
-
-## How it behaves
-
-- Fail-closed: once set up, a bot that cannot start as the account is not
-  started at all. It never quietly falls back to your user.
-- Each isolated bot runs inside a Windows Job Object created by the API before
-  the bot runs any code. Stop, kill-all, the heartbeat watchdog and shutdown end
-  the bot (and anything it started) through that job, including after an API
-  restart. The bot cannot leave the job.
-- Bots get a private profile and temp folder under `~\.forven\bot-runtime`.
-- Isolated bots are stopped immediately on shutdown rather than being given the
-  few seconds' graceful drain, because Windows cannot send them a console
-  break across accounts.
+Set `FORVEN_BOT_SANDBOX=0` in Forven's environment to turn it off.
 
 ## What it does not cover yet
 
-- Bots still read and write the shared database directly, so a compromised bot
-  could change settings stored there. Closing that means moving bot writes
-  behind the API.
+- Bots can still *read* most of your profile, though not the key or `.env`
+  files. A separate Windows account would close that, at the cost of a setup
+  step.
+- Bots read and write the shared database directly, so a compromised bot could
+  change settings stored there. Closing that means moving bot writes behind the
+  API.
 - The API trusts any program on this PC that connects over localhost unless
   `FORVEN_API_KEY` and `FORVEN_OPERATOR_KEY` are set.
 - Live bots still receive their Hyperliquid credentials as environment
   variables from the API.
-- Windows only. On macOS and Linux the setup is refused.
+- Windows only. On macOS and Linux bots start as before.

@@ -16,14 +16,13 @@ import psutil
 
 from forven.bot_factory.broker_client import BOT_TOKEN_ENV, BROKER_HOST_ENV, NO_MASTER_KEY_ENV
 from forven.bot_factory.os_isolation import (
-    ACCOUNT_FILE_NAME,
-    BotOsAccount,
-    apply_account_env,
-    read_account_record,
-    spawn_as_account,
-    terminate_bot_job,
+    SandboxStatus,
+    ensure_sandbox_ready,
+    sandbox_enabled,
+    sandbox_env,
+    spawn_sandboxed,
 )
-from forven.config import FORVEN_HOME
+from forven.config import FORVEN_DB, FORVEN_HOME
 from forven.db import (
     get_bot,
     get_running_bots,
@@ -317,34 +316,33 @@ def _resolve_live_exchange_env() -> dict[str, str]:
     return {env_var: str(creds[key]) for key, env_var in mapping.items() if creds.get(key)}
 
 
-def bot_account_file() -> Path:
-    """Where the bot account is recorded: beside the master key, outside
-    FORVEN_HOME and the database, so a bot can neither read it nor delete it to
-    quietly turn isolation off."""
-    from forven.secret_storage import secret_config_dir
+def _sandbox_protected_paths() -> list[Path]:
+    """Files a sandboxed bot must not be able to read: the master key wherever
+    it lives, and .env files."""
+    from forven.secret_storage import _legacy_key_path, secret_config_dir
 
-    return secret_config_dir() / ACCOUNT_FILE_NAME
-
-
-def load_bot_os_account() -> BotOsAccount | None:
-    """The account bots run as, or None when OS isolation is off (the default)."""
-    from forven.secret_storage import decrypt_secret
-
-    return read_account_record(bot_account_file(), decrypt_secret)
+    return [secret_config_dir(), _legacy_key_path(), _REPO_ROOT / ".env", FORVEN_HOME / ".env"]
 
 
-def _terminate_isolated_bot(bot_id: str, pid: int | None) -> bool:
-    """Kill a bot running as the separate bot account, via its Job Object.
+_sandbox_warned = False
 
-    Such a bot's process belongs to another user, so killing it by PID is
-    refused; its job is not. False when the bot is not isolated (or is gone),
-    so callers fall back to the PID path.
-    """
-    try:
-        return terminate_bot_job(bot_id, pid)
-    except Exception:
-        logger.warning("Could not terminate job for bot %s", bot_id, exc_info=True)
-        return False
+
+def bot_sandbox_status() -> SandboxStatus | None:
+    """The low-integrity sandbox's state, or None when it is off (non-Windows,
+    or FORVEN_BOT_SANDBOX=0). Prepares and self-checks it on first use."""
+    if not sandbox_enabled():
+        return None
+    status = ensure_sandbox_ready(FORVEN_HOME, _sandbox_protected_paths(), FORVEN_DB, _REPO_ROOT)
+    global _sandbox_warned
+    if status.problems and not _sandbox_warned:
+        _sandbox_warned = True
+        what = "Bot sandbox is on, with caveats" if status.usable else "Bots are starting without the sandbox"
+        log_activity(
+            "warning", "bot_factory",
+            f"{what}: {'; '.join(status.problems)}",
+            {"usable": status.usable, "problems": status.problems},
+        )
+    return status
 
 
 def _bot_log_path(bot_id: str) -> Path:
@@ -447,10 +445,6 @@ class BotManager:
             )
             set_bot_status(bot_id, "stopped")
 
-        # Opt-in OS-level isolation: when a dedicated bot account is set up the
-        # bot runs as that account, and a damaged setup refuses the start
-        # rather than quietly running the bot as the operator.
-        account = load_bot_os_account()
         env = _build_isolated_env(bot, issue_bot_token(bot_id, resolve_bot_provider(bot)))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
@@ -459,33 +453,37 @@ class BotManager:
             "--bot-id", bot_id,
             "--parent-pid", str(os.getpid()),
         ]
-        # Drop any handle left from an earlier run so its job name is released.
-        self._processes.pop(bot_id, None)
 
-        if account is not None:
-            process = spawn_as_account(
-                account, bot_id, argv,
-                env=apply_account_env(env, account, FORVEN_HOME),
-                cwd=_REPO_ROOT,
-                log_path=log_path,
-            )
-        else:
-            process = self._spawn_as_operator(argv, env, log_path)
+        # Windows: run the bot at low integrity so it can't read the master key
+        # or change Forven's code. Never blocks a start: if the sandbox is
+        # unusable here, the bot starts as before (and the activity log says why).
+        process = None
+        sandboxed = False
+        sandbox = bot_sandbox_status()
+        if sandbox is not None and sandbox.usable:
+            try:
+                process = spawn_sandboxed(
+                    argv, env=sandbox_env(env, FORVEN_HOME), cwd=_REPO_ROOT, log_path=log_path,
+                )
+                sandboxed = True
+            except Exception as exc:
+                logger.warning("Sandboxed start failed for bot %s; starting unsandboxed: %s", bot_id, exc)
+        if process is None:
+            process = self._spawn_unsandboxed(argv, env, log_path)
 
         self._processes[bot_id] = process
         set_bot_status(bot_id, "running", pid=process.pid)
-        run_as = f" as {account.username}" if account is not None else ""
         log_activity(
             "info", "bot_factory",
-            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid}){run_as}",
-            {"bot_id": bot_id, "pid": process.pid, "os_account": account.username if account else None},
+            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid})" + (" in the sandbox" if sandboxed else ""),
+            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed},
         )
 
         return {"status": "started", "pid": process.pid, "log_path": str(log_path)}
 
     @staticmethod
-    def _spawn_as_operator(argv: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen:
-        """Spawn the runner as the API's own OS user (the default)."""
+    def _spawn_unsandboxed(argv: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen:
+        """Spawn the runner as a normal child process."""
         # H-R1: open the log file, hand it to Popen, then close OUR copy so the
         # FD doesn't leak if we repeatedly start/restart bots. The child keeps
         # its inherited copy. If Popen itself raises, we still close in `finally`.
@@ -542,8 +540,6 @@ class BotManager:
             # Safety: never kill our own process
             if pid == os.getpid():
                 logger.error("Refusing to kill own PID %d for bot %s", pid, bot_id)
-            elif _terminate_isolated_bot(bot_id, pid):
-                pass
             else:
                 try:
                     p = psutil.Process(pid)
@@ -683,10 +679,7 @@ class BotManager:
                                 # LIFE-3: the process may be alive but wedged —
                                 # kill it and drop our handle so recovery respawns
                                 # a clean process instead of an untracked zombie.
-                                if (
-                                    pid and pid != os.getpid() and _is_pid_alive(pid)
-                                    and not _terminate_isolated_bot(bot_id, pid)
-                                ):
+                                if pid and pid != os.getpid() and _is_pid_alive(pid):
                                     try:
                                         psutil.Process(pid).kill()
                                     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -835,9 +828,7 @@ class BotManager:
         for bot_info in running:
             bot_id = bot_info["bot_id"]
             pid = bot_info.get("pid")
-            # A bot under the separate account cannot be signalled across
-            # consoles or users, so it is ended through its job instead.
-            if pid and _is_pid_alive(pid) and not _terminate_isolated_bot(bot_id, pid):
+            if pid and _is_pid_alive(pid):
                 try:
                     p = psutil.Process(pid)
                     # LIFE-8: give the bot a chance to drain gracefully. The
