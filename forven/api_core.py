@@ -395,6 +395,13 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                 run_gauntlet_backtest_migration()
             except Exception as exc:
                 log.warning("Gauntlet backtest migration failed: %s", exc)
+            # Deflated-Sharpe gate + research holdout: on once, holdout stamped.
+            try:
+                from forven.readiness_checks import apply_readiness_checks
+                with _SETTINGS_MUTATION_LOCK:
+                    apply_readiness_checks(kv_get, kv_set)
+            except Exception as exc:
+                log.warning("Readiness-checks startup step failed: %s", exc)
             existing_jobs = get_jobs()
             if not existing_jobs:
                 seed_forven_jobs()

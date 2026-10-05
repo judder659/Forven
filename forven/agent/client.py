@@ -160,15 +160,24 @@ class ForvenAgentClient:
         """Composite read: container + lifecycle readiness + latest result.
 
         Mirrors the MCP forven_get_gate_report; use to diagnose why a strategy
-        is/ isn't promotable without driving the lifecycle.
+        is/ isn't promotable without driving the lifecycle. ``readiness`` is the
+        checklist for the next hop (``target_stage``): gauntlet->paper, or for
+        a paper strategy the paper->live checklist ending in the real gate.
         """
         report: dict[str, Any] = {"strategy_id": strategy_id}
+        stage = ""
         try:
             report["container"] = self.get(f"/api/strategies/{strategy_id}/container")
+            row = report["container"].get("strategy") if isinstance(report["container"], dict) else None
+            if isinstance(row, dict):
+                stage = str(row.get("stage") or "").strip().lower()
         except ForvenAPIError as e:
             report["container_error"] = str(e)
+        is_paper = stage.startswith("paper")
+        report["target_stage"] = "live_graduated" if is_paper else "paper"
+        path = "paper-live-readiness" if is_paper else "readiness"
         try:
-            report["readiness"] = self.get(f"/api/lifecycle/strategies/{strategy_id}/readiness")
+            report["readiness"] = self.get(f"/api/lifecycle/strategies/{strategy_id}/{path}")
         except ForvenAPIError:
             report["readiness"] = None
         try:

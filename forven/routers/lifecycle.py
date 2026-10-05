@@ -103,12 +103,13 @@ def read_strategy_explain(strategy_id: str):
 def read_paper_live_readiness(strategy_id: str):
     """Return a paper-to-live readiness checklist for a strategy.
 
-    Covers paper trading metrics (duration, trades, return, drawdown) and
-    optimization gates (optimization, params applied, confirmation backtest).
+    Covers paper trading metrics (duration, trades, return, drawdown),
+    optimization gates (optimization, params applied, confirmation backtest),
+    and the real paper->live gate as a dry run (``live_gate``).
     """
     from forven.policy import check_paper_live_readiness
 
-    return check_paper_live_readiness(strategy_id)
+    return check_paper_live_readiness(strategy_id, include_gate=True)
 
 
 @router.post("/api/lifecycle/strategies/{strategy_id}/run-timeframe-sweep")

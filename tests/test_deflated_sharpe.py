@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from forven.gauntlet.deflated_sharpe import (
     deflated_sharpe_ratio,
     expected_max_sharpe,
@@ -87,12 +89,13 @@ def test_dsr_scale_invariant():
 
 # --- wiring ------------------------------------------------------------------
 
-def test_dsr_gate_defaults_observe_first():
-    # Gate ships OFF (observe-first); threshold present and sane.
+@pytest.mark.dsr_gate_default
+def test_dsr_gate_defaults_on():
+    # Gate ships ON since the 2026-10 live-capital readiness review; threshold present and sane.
     from forven.policy import DEFAULT_PIPELINE_CONFIG
 
     rob = DEFAULT_PIPELINE_CONFIG["robustness_thresholds"]
-    assert rob["deflated_sharpe_gate_enabled"] is False
+    assert rob["deflated_sharpe_gate_enabled"] is True
     assert 0.0 < float(rob["min_deflated_sharpe"]) <= 1.0
     assert int(rob["deflated_sharpe_default_trials"]) >= 1
 

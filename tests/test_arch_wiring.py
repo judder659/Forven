@@ -125,6 +125,7 @@ def test_manifest_parses_and_is_not_empty():
     assert all(e["default_raw"] is not None for e in entries if e["backend_section"] == "pipeline")
 
 
+@pytest.mark.dsr_gate_default
 def test_manifest_defaults_match_the_engine_defaults():
     """Every manifest default that resolves in the backend must equal it."""
     from forven.api_core import _DEFAULT_SETTINGS_PAYLOAD

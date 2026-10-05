@@ -1490,6 +1490,9 @@ _PENDING_EVIDENCE_GATE_MARKERS = (
     # ("Held-back test failed") is merit and still archives.
     "held-back test pending",
     "held-back test budget",
+    # Deflated-Sharpe gate: the DSR could not be computed (e.g. a compacted trades
+    # artifact). Evidence absence, not merit; a backtest re-run makes it computable.
+    "deflated-sharpe could not be computed",
 )
 
 

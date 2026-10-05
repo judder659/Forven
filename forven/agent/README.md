@@ -42,7 +42,7 @@ python -m forven.agent context --out .tmp/ctx.json     # context is large; save 
 python -m forven.agent skills --regime range_bound
 python -m forven.agent list --status paper
 python -m forven.agent strategy S02545                  # full container
-python -m forven.agent gate-report S02545               # why it is/isn't promotable
+python -m forven.agent gate-report S02545               # why it is/isn't promotable to its next stage
 python -m forven.agent readiness --symbol BTC/USDT --timeframe 1h --streams funding,oi  # is the data there?
 python -m forven.agent readiness --strategy S02545      # the data contract of a registered strategy
 python -m forven.agent status S02545,S02604             # {stage,status} for polling
@@ -109,6 +109,15 @@ if verdict["enqueued"]:
 - `paper_promotion_gate` runs a **Deflated Sharpe Ratio** (penalized for the
   optimization trials) → needs *many clean trades* + OOS Sharpe ≈ 1.7 + low
   kurtosis. Together with cost_stress this is a vise; few archetypes thread it.
+  (On by default; Settings can switch it off.)
+- The **research holdout** is on by default: research reads (backtests,
+  optimizer, walk-forward) stop at a cutoff 6–9 months back, and each new
+  strategy gets ONE test on the held-back period before paper. Don't tune
+  against it; a FAIL is a merit rejection.
+- `gate-report` reports the gate to the strategy's next stage (`target_stage`):
+  gauntlet→paper, or for a paper strategy the paper→live checklist ending in
+  the real paper→live gate (`live_gate`). Live promotion also needs the
+  operator's typed GO LIVE approval.
 - Never set `force=true` to skip a gate.
 
 ## Data readiness (check before you build)

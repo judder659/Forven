@@ -672,7 +672,7 @@ export interface ReadinessStep {
 	detail: string;
 	actionable: string | null;
 	extra?: unknown;
-	// Set on a failing `stage` or `promotion_gate` step (e.g. holdout_reject).
+	// Set on a failing `stage`, `promotion_gate` or `live_gate` step (e.g. holdout_reject).
 	reason_code?: string;
 	kind?: string;
 }

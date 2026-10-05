@@ -9,9 +9,9 @@ DSR is in [0, 1]; values near 1 mean the edge is unlikely to be a selection
 artifact (~>=0.95 is the conventional "significant" bar). This is the suite's
 guard against the optimizer-overfitting blind spot (no untouched holdout).
 
-Observe-first wiring: the value is surfaced as an informational metric; the
-reject gate is OPT-IN (robustness_thresholds.deflated_sharpe_gate_enabled,
-default off) so its behaviour can be watched before it blocks anything.
+The value is surfaced as an informational metric, and the gauntlet->paper
+reject gate (robustness_thresholds.deflated_sharpe_gate_enabled) is on by
+default since the 2026-10 live-capital readiness review.
 
 Note: returns scale cancels in the Sharpe / skew / kurtosis, so per-trade pnl in
 ratio or percent units gives the same DSR — no unit normalisation needed.
@@ -330,7 +330,7 @@ def compute_strategy_dsr(
 
     dsr-gate-fails-open (2026-07-25): pass ``with_reason=True`` and every
     unavailability path returns ``{"dsr": None, "reason": <code>, "unavailable": True}``
-    instead of a bare ``None``, so the opt-in reject gate in
+    instead of a bare ``None``, so the reject gate in
     ``policy._evaluate_gauntlet_gate`` can BLOCK with an actionable reason. An
     uncomputable DSR (compacted trades artifact, missing backtest row, locked stage
     with no stamp) used to read at that gate as "silently pass" — a false green for

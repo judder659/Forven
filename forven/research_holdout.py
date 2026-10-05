@@ -49,7 +49,7 @@ HOLDOUT_ROLLS = ("quarterly", "manual")
 MAX_ATTEMPTS = 3  # errored runs before the test stops being retried automatically
 
 DEFAULTS: dict[str, Any] = {
-    "enabled": False,
+    "enabled": True,
     "roll": "quarterly",
     "lag_quarters": 2,
     "cutoff": "",  # ISO date, used when roll == "manual"
