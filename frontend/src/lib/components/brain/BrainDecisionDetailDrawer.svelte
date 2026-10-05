@@ -79,6 +79,13 @@
 		return task.strategy_id ? `/lab/strategy/${task.strategy_id}` : null;
 	}
 
+	const SECTION_TITLE = 'm-0 mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3';
+	const BLOCK =
+		'm-0 max-h-[360px] overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-sc-line bg-sc-panel p-2.5 font-plex-mono text-[12px] leading-relaxed text-sc-ink';
+	const CHIP =
+		'rounded border border-sc-line2 bg-sc-raise px-1.5 py-px font-plex-cond text-[10.5px] font-medium uppercase tracking-[0.06em] text-sc-ink2';
+	const DT = 'font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] text-sc-ink3';
+
 	function handleEsc(e: KeyboardEvent) {
 		if (e.key === 'Escape') onClose();
 	}
@@ -95,101 +102,112 @@
 	});
 </script>
 
-<button type="button" class="overlay" on:click={onClose} aria-label="Close drawer"></button>
+<button type="button" class="fixed inset-0 z-[1000] cursor-pointer border-0 bg-black/70 p-0" on:click={onClose} aria-label="Close drawer"></button>
 
-<div class="drawer" role="dialog" aria-modal="true" aria-label="Decision detail" tabindex="-1">
-	<header>
-		<div class="title">
-			<span class="kicker">Decision</span>
-			<h2>#{decisionId}</h2>
+<div
+	class="fixed right-0 top-0 z-[1001] flex h-screen w-full flex-col border-sc-line bg-sc-bg shadow-2xl sm:max-w-[640px] sm:border-l"
+	role="dialog"
+	aria-modal="true"
+	aria-label="Decision detail"
+	tabindex="-1"
+>
+	<header class="flex items-start justify-between gap-4 border-b border-sc-line bg-sc-panel px-5 py-4">
+		<div class="min-w-0">
+			<span class="block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Decision</span>
+			<h2 class="m-0 font-plex-mono text-[18px] font-semibold text-sc-ink">#{decisionId}</h2>
 		</div>
-		<div class="header-actions">
+		<div class="flex shrink-0 items-center gap-1.5">
 			<button
 				type="button"
-				class="copy-link"
+				class="whitespace-nowrap rounded-md border border-sc-line2 px-2.5 py-1 text-[12px] text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink"
 				on:click={copyLink}
 				title="Copy a shareable link to this decision"
 			>
 				{copied ? 'Copied' : 'Copy link'}
 			</button>
-			<button type="button" class="close" on:click={onClose} aria-label="Close">×</button>
+			<button
+				type="button"
+				class="rounded-md border border-sc-line2 px-2 py-1 text-[12px] leading-none text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink"
+				on:click={onClose}
+				aria-label="Close">×</button
+			>
 		</div>
 	</header>
 
-	<div class="body">
+	<div class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
 		{#if loading}
-			<div class="loading">Loading…</div>
+			<div class="text-[13px] text-sc-ink3">Loading…</div>
 		{:else if error}
-			<div class="error-banner">
-				<strong>Failed to load decision:</strong>
+			<div class="rounded-md border border-[#e5574f]/40 bg-[#e5574f]/10 px-3 py-2 text-[12.5px] text-[#f2956f]" role="alert">
+				<strong class="font-medium">Failed to load decision:</strong>
 				{error}
 			</div>
 		{:else if detail}
-			<dl>
-				<dt>Cycle</dt>
-				<dd>{detail.cycle_id ?? '—'}</dd>
-				<dt>Created</dt>
-				<dd>{formatTimestamp(detail.created_at)}</dd>
-				<dt>Outcome</dt>
-				<dd>{detail.outcome_observed ?? 'pending'}{detail.outcome_at ? ` @ ${formatTimestamp(detail.outcome_at)}` : ''}</dd>
-				<dt>Prompt hash</dt>
-				<dd class="mono">{detail.prompt_hash ?? '—'}</dd>
+			<dl class="m-0 grid grid-cols-1 gap-x-4 gap-y-1.5 rounded-md border border-sc-line bg-sc-panel px-3.5 py-3 text-[13px] sm:grid-cols-[120px_minmax(0,1fr)]">
+				<dt class={DT}>Cycle</dt>
+				<dd class="m-0 break-all font-plex-mono text-[12.5px] text-sc-ink">{detail.cycle_id ?? '—'}</dd>
+				<dt class={DT}>Created</dt>
+				<dd class="m-0 text-sc-ink">{formatTimestamp(detail.created_at)}</dd>
+				<dt class={DT}>Outcome</dt>
+				<dd class="m-0 text-sc-ink">{detail.outcome_observed ?? 'pending'}{detail.outcome_at ? ` @ ${formatTimestamp(detail.outcome_at)}` : ''}</dd>
+				<dt class={DT}>Prompt hash</dt>
+				<dd class="m-0 break-all font-plex-mono text-[12px] text-sc-ink">{detail.prompt_hash ?? '—'}</dd>
 			</dl>
 
 			<section>
-				<h3>Situation</h3>
-				<pre class="block">{detail.situation_summary ?? ''}</pre>
+				<h3 class={SECTION_TITLE}>Situation</h3>
+				<pre class={BLOCK}>{detail.situation_summary ?? ''}</pre>
 			</section>
 
 			<section>
-				<h3>
+				<h3 class={SECTION_TITLE}>
 					<button
 						type="button"
-						class="collapse"
+						class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] uppercase tracking-[inherit] text-sc-ink3 transition-colors hover:text-sc-ink"
 						on:click={() => (decisionExpanded = !decisionExpanded)}
 					>
 						Decision JSON {decisionExpanded ? '▾' : '▸'}
 					</button>
 				</h3>
 				{#if decisionExpanded}
-					<pre class="block">{JSON.stringify(detail.decision, null, 2)}</pre>
+					<pre class={BLOCK}>{JSON.stringify(detail.decision, null, 2)}</pre>
 				{/if}
 			</section>
 
 			{#if detail.action_taken}
 				<section>
-					<h3>Action taken</h3>
-					<pre class="block">{detail.action_taken}</pre>
+					<h3 class={SECTION_TITLE}>Action taken</h3>
+					<pre class={BLOCK}>{detail.action_taken}</pre>
 				</section>
 			{/if}
 
 			<section>
-				<h3>Linked tasks ({detail.linked_tasks.length})</h3>
+				<h3 class={SECTION_TITLE}>Linked tasks ({detail.linked_tasks.length})</h3>
 				{#if detail.linked_tasks.length === 0}
-					<p class="empty">No agent_tasks rows linked to this decision.</p>
+					<p class="m-0 text-[12.5px] text-sc-ink3">No agent_tasks rows linked to this decision.</p>
 				{:else}
-					<ul class="tasks">
+					<ul class="m-0 flex list-none flex-col gap-2 p-0">
 						{#each detail.linked_tasks as task (task.id)}
-							<li>
-								<div class="task-head">
-									<a href={taskLink(task)}>#{task.id}</a>
-									<span class="chip">{task.type ?? '—'}</span>
-									<span class="chip">{task.status ?? '—'}</span>
+							<li class="rounded-md border border-sc-line bg-sc-panel px-3 py-2">
+								<div class="mb-1.5 flex flex-wrap items-center gap-2">
+									<a class="font-plex-mono text-[12px] text-sc-ink2 transition-colors hover:text-sc-ink hover:underline" href={taskLink(task)}>#{task.id}</a>
+									<span class={CHIP}>{task.type ?? '—'}</span>
+									<span class={CHIP}>{task.status ?? '—'}</span>
 									{#if task.strategy_id}
-										<a class="strategy" href={strategyLink(task)}>
+										<a class="font-plex-mono text-[12px] text-sc-ink transition-colors hover:underline sm:ml-auto" href={strategyLink(task)}>
 											{task.strategy_id}
 										</a>
 									{/if}
 								</div>
-								<div class="task-meta">
-									<span>{task.title ?? ''}</span>
+								<div class="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-sc-ink2">
+									<span class="text-sc-ink">{task.title ?? ''}</span>
 									{#if task.cost_usd != null}
-										<span>${task.cost_usd.toFixed(4)}</span>
+										<span class="font-plex-mono">${task.cost_usd.toFixed(4)}</span>
 									{/if}
 									{#if task.provider}
-										<span>{task.provider}:{task.model_id ?? '—'}</span>
+										<span class="font-plex-mono">{task.provider}:{task.model_id ?? '—'}</span>
 									{/if}
-									<span>{formatTimestamp(task.created_at)}</span>
+									<span class="text-sc-ink3">{formatTimestamp(task.created_at)}</span>
 								</div>
 							</li>
 						{/each}
@@ -199,231 +217,3 @@
 		{/if}
 	</div>
 </div>
-
-<style>
-	.overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.8);
-		border: none;
-		padding: 0;
-		cursor: pointer;
-		z-index: 1000;
-	}
-
-	.drawer {
-		position: fixed;
-		top: 0;
-		right: 0;
-		width: min(640px, 100%);
-		height: 100vh;
-		background: #0c0e11;
-		border-left: 1px solid #1c2026;
-		display: flex;
-		flex-direction: column;
-		z-index: 1001;
-		box-shadow: none;
-	}
-
-	header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 1rem 1.25rem;
-		border-bottom: 1px solid #1c2026;
-	}
-
-	.kicker {
-		display: block;
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: #aab1bc;
-	}
-
-	header h2 {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 600;
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.copy-link {
-		background: #181c23;
-		border: 1px solid #2a2f38;
-		color: #aab1bc;
-		font-size: 0.8125rem;
-		cursor: pointer;
-		padding: 0.35rem 0.7rem;
-		border-radius: 0;
-		white-space: nowrap;
-	}
-
-	.copy-link:hover {
-		background: #181c23;
-		color: #eef1f5;
-	}
-
-	.close {
-		background: transparent;
-		border: none;
-		color: #aab1bc;
-		font-size: 1.5rem;
-		line-height: 1;
-		cursor: pointer;
-		padding: 0.25rem 0.5rem;
-		border-radius: 0;
-	}
-
-	.close:hover {
-		background: #181c23;
-		color: #eef1f5;
-	}
-
-	.body {
-		flex: 1;
-		overflow-y: auto;
-		padding: 1rem 1.25rem;
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
-	}
-
-	.loading,
-	.empty {
-		color: #aab1bc;
-		font-size: 0.875rem;
-	}
-
-	.error-banner {
-		background: #2a1010;
-		border: 1px solid #5a2020;
-		color: #f8c0c0;
-		padding: 0.625rem 0.875rem;
-		border-radius: 0;
-		font-size: 0.875rem;
-	}
-
-	dl {
-		display: grid;
-		grid-template-columns: 120px 1fr;
-		gap: 0.4rem 1rem;
-		margin: 0;
-		font-size: 0.875rem;
-	}
-
-	dt {
-		color: #aab1bc;
-		text-transform: uppercase;
-		font-size: 0.75rem;
-		letter-spacing: 0.04em;
-	}
-
-	dd {
-		margin: 0;
-		color: #eef1f5;
-	}
-
-	dd.mono {
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-		font-size: 0.8125rem;
-		word-break: break-all;
-	}
-
-	section h3 {
-		margin: 0 0 0.5rem;
-		font-size: 0.9375rem;
-		color: #eef1f5;
-	}
-
-	.collapse {
-		background: transparent;
-		border: none;
-		color: #eef1f5;
-		cursor: pointer;
-		padding: 0;
-		font-size: inherit;
-		font-weight: inherit;
-	}
-
-	.collapse:hover {
-		color: #eef1f5;
-	}
-
-	.block {
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.625rem;
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-		font-size: 0.8125rem;
-		color: #eef1f5;
-		white-space: pre-wrap;
-		word-wrap: break-word;
-		max-height: 360px;
-		overflow-y: auto;
-	}
-
-	.tasks {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.tasks li {
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.5rem 0.75rem;
-	}
-
-	.task-head {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-bottom: 0.375rem;
-	}
-
-	.task-head a {
-		color: #aab1bc;
-		text-decoration: none;
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	}
-
-	.task-head a:hover {
-		text-decoration: underline;
-	}
-
-	.task-head .strategy {
-		margin-left: auto;
-		color: #fde68a;
-	}
-
-	.chip {
-		padding: 0.125rem 0.5rem;
-		border-radius: 0;
-		font-size: 0.7rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		background: #181c23;
-		color: #aab1bc;
-		border: 1px solid #1c2026;
-	}
-
-	.task-meta {
-		display: flex;
-		gap: 1rem;
-		flex-wrap: wrap;
-		font-size: 0.75rem;
-		color: #aab1bc;
-	}
-</style>

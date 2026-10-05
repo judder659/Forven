@@ -24,7 +24,7 @@
 		{ id: 'transcript', label: 'Transcript' },
 		{ id: 'audit', label: 'Audit Log' },
 		{ id: 'tools', label: 'Tool Calls' },
-		{ id: 'data', label: 'Task Data' },
+		{ id: 'data', label: 'Run Data' },
 		{ id: 'raw', label: 'Raw JSON' },
 	] as const;
 	let activeTab: string = 'overview';
@@ -292,7 +292,7 @@
 					{taskStatus(task)}
 				</span>
 			{:else}
-				<h1 class="text-lg font-bold text-sc-ink tracking-tight">Task Detail</h1>
+				<h1 class="text-lg font-bold text-sc-ink tracking-tight">Run Detail</h1>
 			{/if}
 		</div>
 		<button
@@ -306,7 +306,7 @@
 
 	{#if loading}
 		<div class="flex-1 flex items-center justify-center">
-			<div class="text-sc-ink3 text-sm">Loading task details...</div>
+			<div class="text-sc-ink3 text-sm">Loading run details...</div>
 		</div>
 	{:else if error}
 		<div class="flex-1 flex items-center justify-center">

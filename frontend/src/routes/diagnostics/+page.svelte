@@ -201,7 +201,7 @@
 
 <svelte:head>
 	<title>Diagnostics | Forven</title>
-	<meta name="description" content="Health checks, 24h cost rollup, and resumable tasks for the Forven runtime." />
+	<meta name="description" content="Health checks, 24h cost rollup, and resumable runs for the Forven runtime." />
 </svelte:head>
 
 <div class="h-full overflow-y-auto p-6 space-y-6">
@@ -216,7 +216,7 @@
 					{#if snapshot}
 						Updated {formatTimestamp(snapshot.generated_at)} · auto-refresh 60s
 					{:else}
-						Health checks, 24h cost rollup, and resumable tasks
+						Health checks, 24h cost rollup, and resumable runs
 					{/if}
 				</div>
 			</div>
@@ -278,7 +278,7 @@
 				{/if}
 			</div>
 			<div class="rounded-md border border-sc-line bg-sc-panel p-4">
-				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Resumable Tasks</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Resumable Runs</div>
 				<div class="text-2xl font-bold mt-1 text-sc-ink">{resumable.length}</div>
 				<div class="text-[11px] text-sc-ink3 mt-1">interrupted &amp; recoverable</div>
 			</div>
@@ -388,12 +388,12 @@
 
 		<div class="rounded-md border border-sc-line bg-sc-panel">
 			<div class="px-4 py-3 border-b border-sc-line flex items-center justify-between">
-				<h2 class="text-[14px] font-semibold text-sc-ink2">Resumable Tasks</h2>
+				<h2 class="text-[14px] font-semibold text-sc-ink2">Resumable Runs</h2>
 				<span class="text-[10px] text-sc-ink3">{resumable.length} waiting</span>
 			</div>
 			{#if resumable.length === 0}
 				<div class="px-4 py-6 text-center text-xs text-sc-ink3">
-					No interrupted tasks. Tasks left running when the app closes show up here.
+					No interrupted runs. Runs left going when the app closes show up here.
 				</div>
 			{:else}
 				<div class="divide-y divide-sc-line">

@@ -55,7 +55,8 @@ class CronPreviewBody(BaseModel):
 
 @router.get("/api/routines")
 def list_routines(enabled_only: bool = False) -> dict[str, Any]:
-    return {"routines": control_plane_routines.list_routines(enabled_only=enabled_only)}
+    routines = control_plane_routines.list_routines(enabled_only=enabled_only)
+    return {"routines": control_plane_routines.attach_next_runs(routines)}
 
 
 # NOTE: registered before /api/routines/{routine_id} so "channels" is not

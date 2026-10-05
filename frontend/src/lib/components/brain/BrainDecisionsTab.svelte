@@ -127,16 +127,23 @@
 		return value.length > max ? `${value.slice(0, max)}…` : value;
 	}
 
+	const CHIP = 'rounded border px-1.5 py-px font-plex-cond text-[10.5px] font-medium uppercase tracking-[0.06em]';
+	const LABEL = 'flex flex-col gap-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3';
+	const INPUT =
+		'rounded-md border border-sc-line2 bg-sc-bg px-2 py-1.5 font-plex text-[13px] normal-case tracking-normal text-sc-ink outline-none placeholder:text-sc-ink4 focus:border-sc-ink4';
+	const BUTTON =
+		'rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink disabled:cursor-not-allowed disabled:opacity-50';
+
 	function outcomeClass(value: string | null): string {
 		switch ((value ?? '').toLowerCase()) {
 			case 'success':
-				return 'chip chip-success';
+				return `${CHIP} border-[#3cc48f]/40 bg-[#3cc48f]/10 text-[#3cc48f]`;
 			case 'failure':
-				return 'chip chip-failure';
+				return `${CHIP} border-[#e5574f]/40 bg-[#e5574f]/10 text-[#f2956f]`;
 			case 'mixed':
-				return 'chip chip-mixed';
+				return `${CHIP} border-[#e7b24a]/40 bg-[#e7b24a]/10 text-[#e7b24a]`;
 			default:
-				return 'chip chip-pending';
+				return `${CHIP} border-sc-line2 bg-sc-raise text-sc-ink2`;
 		}
 	}
 
@@ -167,86 +174,98 @@
 	}
 </script>
 
-<div class="decisions-tab">
-	<div class="filters">
-		<label>
+<div class="flex flex-col gap-3">
+	<div class="grid grid-cols-1 items-end gap-3 rounded-md border border-sc-line bg-sc-panel p-3.5 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
+		<label class={LABEL}>
 			<span>Cycle ID</span>
 			<input
 				type="text"
+				class={INPUT}
 				bind:value={cycleId}
 				placeholder="e.g. cycle-2026-04-25-T03"
 			/>
 		</label>
-		<label>
+		<label class={LABEL}>
 			<span>Action type</span>
 			<input
 				type="text"
+				class={INPUT}
 				bind:value={actionType}
 				placeholder="research, backtest, paper, …"
 			/>
 		</label>
-		<label>
+		<label class={LABEL}>
 			<span>Strategy ID</span>
 			<input
 				type="text"
+				class={INPUT}
 				bind:value={strategyId}
 				placeholder="e.g. S00123"
 			/>
 		</label>
-		<label>
+		<label class={LABEL}>
 			<span>Outcome</span>
-			<select bind:value={outcome}>
+			<select class={INPUT} bind:value={outcome}>
 				<option value="">All</option>
 				<option value="success">Success</option>
 				<option value="failure">Failure</option>
 				<option value="mixed">Mixed</option>
 			</select>
 		</label>
-		<div class="filter-actions">
-			<button type="button" class="primary" on:click={applyFilters} disabled={loading}>
+		<div class="flex gap-2">
+			<button
+				type="button"
+				class="rounded-md bg-sc-ink px-3 py-1.5 text-[12px] font-medium text-black hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+				on:click={applyFilters}
+				disabled={loading}
+			>
 				Apply
 			</button>
-			<button type="button" on:click={clearFilters} disabled={loading}>Clear</button>
+			<button type="button" class={BUTTON} on:click={clearFilters} disabled={loading}>Clear</button>
 		</div>
 	</div>
 
 	{#if error}
-		<div class="error-banner">
-			<strong>Failed to load decisions:</strong>
+		<div class="rounded-md border border-[#e5574f]/40 bg-[#e5574f]/10 px-3 py-2 text-[12.5px] text-[#f2956f]" role="alert">
+			<strong class="font-medium">Failed to load decisions:</strong>
 			{error}
-			<button class="link-btn" type="button" on:click={() => loadFirstPage()}>retry</button>
+			<button class="ml-2 underline transition-colors hover:text-sc-ink" type="button" on:click={() => loadFirstPage()}>retry</button>
 		</div>
 	{/if}
 
 	{#if loading && items.length === 0}
-		<div class="loading">Loading decisions…</div>
+		<div class="rounded-md border border-dashed border-sc-line p-4 text-center text-[13px] text-sc-ink3">Loading decisions…</div>
 	{:else if items.length === 0 && !error}
-		<div class="empty">
+		<div class="rounded-md border border-dashed border-sc-line p-4 text-center text-[13px] text-sc-ink3">
 			No decisions yet. They appear here after the Brain's next cycle.
 		</div>
 	{:else}
-		<div class="meta">{items.length} of {total} decisions</div>
-		<ul class="rows">
+		<div class="text-[12px] text-sc-ink3">{items.length} of {total} decisions</div>
+		<ul class="m-0 flex list-none flex-col gap-2 p-0">
 			{#each items as row (row.id)}
 				<li>
-					<button type="button" class="row" on:click={() => openDrawer(row.id)}>
-						<div class="row-head">
-							<span class="cycle">{row.cycle_id ?? '—'}</span>
-							<span class="action chip">{actionLabel(row)}</span>
+					<button
+						type="button"
+						class="flex w-full flex-col gap-2 rounded-md border border-sc-line bg-sc-panel px-3.5 py-3 text-left text-sc-ink transition-colors hover:border-sc-line2 hover:bg-sc-hover"
+						on:click={() => openDrawer(row.id)}
+					>
+						<div class="flex w-full flex-wrap items-center gap-2 text-[12px]">
+							<span class="break-all font-plex-mono text-sc-ink">{row.cycle_id ?? '—'}</span>
+							<span class={`${CHIP} border-sc-line2 bg-sc-raise text-sc-ink2`}>{actionLabel(row)}</span>
 							<span class={outcomeClass(row.outcome_observed)}>
 								{row.outcome_observed ?? 'pending'}
 							</span>
-							<span class="when">{formatTimestamp(row.created_at)}</span>
+							<span class="text-[11.5px] text-sc-ink3 sm:ml-auto">{formatTimestamp(row.created_at)}</span>
 						</div>
-						<div class="row-summary">{previewSituation(row.situation_summary)}</div>
+						<div class="break-words text-[13px] leading-snug text-sc-ink2">{previewSituation(row.situation_summary)}</div>
 					</button>
 				</li>
 			{/each}
 		</ul>
 
 		{#if items.length < total}
-			<div class="load-more">
-				<button type="button" on:click={loadMore} disabled={loading}>
+			<div class="flex justify-center py-2">
+				<button type="button" class={BUTTON} on:click={loadMore} disabled={loading}>
 					{loading ? 'Loading…' : `Load more (${total - items.length} remaining)`}
 				</button>
 			</div>
@@ -257,232 +276,3 @@
 {#if selectedId != null}
 	<BrainDecisionDetailDrawer decisionId={selectedId} onClose={closeDrawer} />
 {/if}
-
-<style>
-	.decisions-tab {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.filters {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-		gap: 0.75rem;
-		align-items: end;
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.875rem;
-	}
-
-	.filters label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		font-size: 0.75rem;
-		color: #aab1bc;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.filters input,
-	.filters select {
-		background: #0c0e11;
-		border: 1px solid #2a2f38;
-		border-radius: 0;
-		color: #eef1f5;
-		padding: 0.4rem 0.5rem;
-		font-size: 0.875rem;
-	}
-
-	.filters input:focus,
-	.filters select:focus {
-		outline: none;
-		border-color: #eef1f5;
-	}
-
-	.filter-actions {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	.filter-actions button {
-		background: #181c23;
-		border: 1px solid #2a2f38;
-		color: #eef1f5;
-		padding: 0.5rem 1rem;
-		border-radius: 0;
-		cursor: pointer;
-		font-size: 0.875rem;
-	}
-
-	.filter-actions .primary {
-		background: #fff;
-		border-color: #eef1f5;
-		color: #4b525c;
-	}
-
-	.filter-actions .primary:hover:not(:disabled) {
-		background: #ddd;
-	}
-
-	.filter-actions button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.error-banner {
-		background: #2a1010;
-		border: 1px solid #5a2020;
-		color: #f8c0c0;
-		padding: 0.625rem 0.875rem;
-		border-radius: 0;
-		font-size: 0.875rem;
-	}
-
-	.link-btn {
-		background: transparent;
-		color: #f8c0c0;
-		border: none;
-		text-decoration: underline;
-		cursor: pointer;
-		margin-left: 0.5rem;
-		padding: 0;
-	}
-
-	.loading,
-	.empty {
-		color: #aab1bc;
-		font-size: 0.875rem;
-		padding: 1rem;
-		text-align: center;
-		border: 1px dashed #1c2026;
-		border-radius: 0;
-	}
-
-	.meta {
-		color: #aab1bc;
-		font-size: 0.8125rem;
-	}
-
-	.rows {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.row {
-		width: 100%;
-		text-align: left;
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.75rem 0.875rem;
-		color: #eef1f5;
-		cursor: pointer;
-		transition: border-color 120ms ease, background 120ms ease;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.row:hover {
-		border-color: #2a2f38;
-		background: #11141a;
-	}
-
-	.row-head {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		flex-wrap: wrap;
-		font-size: 0.8125rem;
-	}
-
-	.cycle {
-		color: #eef1f5;
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	}
-
-	.chip {
-		padding: 0.125rem 0.5rem;
-		border-radius: 0;
-		font-size: 0.75rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		background: #181c23;
-		color: #aab1bc;
-		border: 1px solid #1c2026;
-	}
-
-	.chip-success {
-		background: #14532d;
-		color: #86efac;
-		border-color: #14532d;
-	}
-
-	.chip-failure {
-		background: #5b1e1e;
-		color: #fca5a5;
-		border-color: #5b1e1e;
-	}
-
-	.chip-mixed {
-		background: #5a4a14;
-		color: #fde68a;
-		border-color: #5a4a14;
-	}
-
-	.chip-pending {
-		background: #181c23;
-		color: #aab1bc;
-		border-color: #1c2026;
-	}
-
-	.action {
-		background: #181c23;
-		color: #aab1bc;
-		border-color: #1c2026;
-	}
-
-	.when {
-		color: #747c88;
-		margin-left: auto;
-		font-size: 0.75rem;
-	}
-
-	.row-summary {
-		color: #eef1f5;
-		font-size: 0.875rem;
-		line-height: 1.4;
-	}
-
-	.load-more {
-		display: flex;
-		justify-content: center;
-		padding: 0.5rem 0;
-	}
-
-	.load-more button {
-		background: #181c23;
-		border: 1px solid #2a2f38;
-		color: #eef1f5;
-		padding: 0.5rem 1.25rem;
-		border-radius: 0;
-		cursor: pointer;
-		font-size: 0.875rem;
-	}
-
-	.load-more button:hover:not(:disabled) {
-		background: #181c23;
-	}
-
-	.load-more button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-</style>

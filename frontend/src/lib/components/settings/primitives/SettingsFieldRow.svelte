@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { dirtyFields, markField } from '$lib/settings/dirty';
 	import { formatEffective } from '$lib/settings/effective';
+	import { describeRange, numberBounds, outOfRange } from '$lib/settings/bounds';
 
 	export let id: string;
 	export let label: string;
@@ -23,6 +24,9 @@
 	export let inForce: { effective: unknown; reason: string } | null = null;
 
 	$: dirty = $dirtyFields.has(id);
+	$: bounds = type === 'number' ? numberBounds(id) : undefined;
+	$: rangeText = describeRange(bounds);
+	$: invalid = outOfRange(value, bounds);
 	$: showSavedBadge = type === 'secret' && configured && !dirty;
 	$: selectedValues = arrayValue(value);
 	$: yearHint =
@@ -166,8 +170,13 @@
 					{id}
 					type="number"
 					value={value as number}
+					min={bounds?.min}
+					max={bounds?.max}
+					step={bounds?.step ?? 'any'}
+					aria-invalid={invalid || undefined}
+					aria-describedby={invalid ? `${id}-range` : undefined}
 					on:input={handleNumberOrTextInput}
-					class="bg-sc-panel2 border border-sc-line2 text-sc-ink px-2 py-1 rounded text-sm w-32"
+					class="bg-sc-panel2 border text-sc-ink px-2 py-1 rounded text-sm w-32 {invalid ? 'border-[#e7b24a]' : 'border-sc-line2'}"
 				/>
 			{:else if type === 'csv'}
 				{#if options.length > 0}
@@ -214,6 +223,11 @@
 			In force: <span class="font-semibold">{formatEffective(inForce.effective)}{unit ? ` ${unit}` : ''}</span> · {inForce.reason}
 		</p>
 	{/if}
+	{#if invalid}
+		<p id="{id}-range" class="text-xs text-[#e7b24a]" data-testid="out-of-range-{id}">
+			Must be {rangeText}{unit ? ` ${unit}` : ''}.{bounds?.enforced ? ' The save will not keep this value.' : ''}
+		</p>
+	{/if}
 	<p class="text-xs text-sc-ink2">{description}</p>
-	<p class="text-[10px] text-sc-ink3">Default: {defaultValue} · Setting ID: {id}</p>
+	<p class="text-[10px] text-sc-ink3">Default: {defaultValue}{unit ? ` ${unit}` : ''}{#if rangeText}{' '}· Range: <span data-testid="range-{id}">{rangeText}{unit ? ` ${unit}` : ''}</span>{/if} · Setting ID: {id}</p>
 </div>

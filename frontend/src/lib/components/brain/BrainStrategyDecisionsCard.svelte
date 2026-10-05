@@ -70,11 +70,13 @@
 		}
 	}
 
+	const CHIP = 'rounded border px-1.5 py-px font-plex-cond text-[10.5px] font-medium uppercase tracking-[0.06em]';
+
 	function outcomeClass(outcome: BrainDecisionOutcome | null): string {
-		if (outcome === 'success') return 'outcome-success';
-		if (outcome === 'failure') return 'outcome-failure';
-		if (outcome === 'mixed') return 'outcome-mixed';
-		return 'outcome-pending';
+		if (outcome === 'success') return `${CHIP} border-[#3cc48f]/40 bg-[#3cc48f]/10 text-[#3cc48f]`;
+		if (outcome === 'failure') return `${CHIP} border-[#e5574f]/40 bg-[#e5574f]/10 text-[#f2956f]`;
+		if (outcome === 'mixed') return `${CHIP} border-[#e7b24a]/40 bg-[#e7b24a]/10 text-[#e7b24a]`;
+		return `${CHIP} border-sc-line2 bg-sc-raise text-sc-ink2`;
 	}
 
 	function outcomeLabel(outcome: BrainDecisionOutcome | null): string {
@@ -90,186 +92,48 @@
 
 {#if loaded && !error && items.length > 0}
 	<aside
-		class="card"
+		class="flex min-w-0 flex-col gap-2.5 rounded-md border border-sc-line bg-sc-panel p-3.5"
 		aria-labelledby="brain-decisions-card-heading"
 	>
-		<header>
-			<h3 id="brain-decisions-card-heading">
+		<header class="flex flex-wrap items-baseline justify-between gap-2">
+			<h3 id="brain-decisions-card-heading" class="m-0 text-[13px] font-medium text-sc-ink">
 				Brain decisions about this strategy
-				<span class="count" aria-label="{total} total">{total}</span>
+				<span
+					class="ml-1.5 inline-block min-w-[1.5em] rounded-full bg-sc-raise px-1.5 text-center font-plex-mono text-[10.5px] text-sc-ink2"
+					aria-label="{total} total">{total}</span
+				>
 			</h3>
-			<a class="deep-link" href={deepLinkHref}>View in /brain →</a>
+			<a class="text-[12px] text-sc-ink2 transition-colors hover:text-sc-ink hover:underline" href={deepLinkHref}>View in /brain →</a>
 		</header>
 
-		<ul>
+		<ul class="m-0 flex list-none flex-col gap-2 p-0">
 			{#each items as row (row.id)}
-				<li>
-					<div class="row-head">
+				<li class="flex flex-col gap-1.5 rounded-md border border-sc-line bg-sc-panel2 px-2.5 py-2">
+					<div class="flex flex-wrap items-center gap-2 text-[11.5px]">
 						{#if row.cycle_id}
-							<span class="cycle" title="cycle_id">cycle {row.cycle_id}</span>
+							<span class="break-all font-plex-mono text-sc-ink2" title="cycle_id">cycle {row.cycle_id}</span>
 						{/if}
-						<span class="outcome {outcomeClass(row.outcome_observed)}">
+						<span class={outcomeClass(row.outcome_observed)}>
 							{outcomeLabel(row.outcome_observed)}
 						</span>
-						<span class="when">{formatTimestamp(row.created_at)}</span>
+						<span class="ml-auto text-sc-ink3">{formatTimestamp(row.created_at)}</span>
 					</div>
-					<p class="preview">{decisionPreview(row)}</p>
+					<p class="m-0 whitespace-pre-wrap break-words font-plex-mono text-[12px] leading-snug text-sc-ink2">{decisionPreview(row)}</p>
 				</li>
 			{/each}
 		</ul>
 	</aside>
 {:else if error}
-	<aside class="card error" role="alert">
-		<p>Failed to load Brain decisions: {error}</p>
-		<button type="button" on:click={load}>Retry</button>
+	<aside class="flex flex-col gap-2.5 rounded-md border border-[#e5574f]/40 bg-[#e5574f]/10 p-3.5 text-[12.5px] text-[#f2956f]" role="alert">
+		<p class="m-0">Failed to load Brain decisions: {error}</p>
+		<button
+			type="button"
+			class="self-start rounded-md border border-[#e5574f]/40 px-2.5 py-1 text-[12px] text-[#f2956f] transition-colors hover:border-[#f2956f]"
+			on:click={load}>Retry</button
+		>
 	</aside>
 {:else if loading && !loaded}
-	<aside class="card loading" aria-busy="true">
-		<p>Loading Brain decisions…</p>
+	<aside class="rounded-md border border-sc-line bg-sc-panel p-3.5 text-[12.5px] text-sc-ink3" aria-busy="true">
+		<p class="m-0">Loading Brain decisions…</p>
 	</aside>
 {/if}
-
-<style>
-	.card {
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.875rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.625rem;
-	}
-
-	.card.error {
-		border-color: #5a2020;
-		background: #2a1010;
-		color: #f8c0c0;
-	}
-
-	.card.loading {
-		color: #aab1bc;
-	}
-
-	header {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-
-	header h3 {
-		margin: 0;
-		font-size: 0.9375rem;
-		color: #eef1f5;
-	}
-
-	.count {
-		display: inline-block;
-		min-width: 1.5em;
-		margin-left: 0.375rem;
-		padding: 0 0.5rem;
-		border-radius: 0;
-		background: #181c23;
-		color: #aab1bc;
-		font-size: 0.6875rem;
-		font-weight: 600;
-		text-align: center;
-	}
-
-	.deep-link {
-		color: #aab1bc;
-		text-decoration: none;
-		font-size: 0.8125rem;
-	}
-
-	.deep-link:hover {
-		text-decoration: underline;
-	}
-
-	ul {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	li {
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.5rem 0.625rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-	}
-
-	.row-head {
-		display: flex;
-		gap: 0.5rem;
-		align-items: center;
-		flex-wrap: wrap;
-		font-size: 0.75rem;
-	}
-
-	.cycle {
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-		color: #aab1bc;
-	}
-
-	.outcome {
-		padding: 0.0625rem 0.4rem;
-		border-radius: 0;
-		font-size: 0.6875rem;
-		font-weight: 600;
-		text-transform: uppercase;
-	}
-
-	.outcome-success {
-		background: #14532d;
-		color: #86efac;
-	}
-
-	.outcome-failure {
-		background: #5a1a1a;
-		color: #fca5a5;
-	}
-
-	.outcome-mixed {
-		background: #4a3814;
-		color: #fde68a;
-	}
-
-	.outcome-pending {
-		background: #181c23;
-		color: #aab1bc;
-	}
-
-	.when {
-		margin-left: auto;
-		color: #747c88;
-	}
-
-	.preview {
-		margin: 0;
-		font-size: 0.8125rem;
-		color: #aab1bc;
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-		line-height: 1.45;
-		white-space: pre-wrap;
-		word-wrap: break-word;
-	}
-
-	button {
-		align-self: flex-start;
-		margin-top: 0.25rem;
-		background: transparent;
-		color: #f8c0c0;
-		border: 1px solid #5a2020;
-		border-radius: 0;
-		padding: 0.25rem 0.625rem;
-		cursor: pointer;
-		font-size: 0.75rem;
-	}
-</style>

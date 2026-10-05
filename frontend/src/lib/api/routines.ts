@@ -13,6 +13,8 @@ export interface Routine {
 	last_run_at: string | null;
 	last_status: string | null;
 	last_error: string | null;
+	/** Next scheduled fire (UTC ISO); null while paused. */
+	next_run_at?: string | null;
 	created_at: string;
 	updated_at: string;
 }
