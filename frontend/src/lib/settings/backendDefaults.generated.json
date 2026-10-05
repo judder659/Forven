@@ -184,7 +184,7 @@
     "retention_gate_rejections_days": 30,
     "retention_scanner_results_days": 30,
     "robustness_thresholds.cost_stress_max_degradation_pct": 60.0,
-    "robustness_thresholds.deflated_sharpe_gate_enabled": false,
+    "robustness_thresholds.deflated_sharpe_gate_enabled": true,
     "robustness_thresholds.dsr_swarm_lookback_days": 90,
     "robustness_thresholds.dsr_swarm_trials_enabled": true,
     "robustness_thresholds.min_deflated_sharpe": 0.9,

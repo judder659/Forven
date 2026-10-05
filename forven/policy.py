@@ -221,11 +221,13 @@ DEFAULT_PIPELINE_CONFIG = {
         "wfa_min_fold_trades": 5,
         # Deflated Sharpe Ratio — optimizer selection-bias guard (the suite's
         # overfitting blind spot: strategies are optimized before validation with
-        # no untouched holdout). OBSERVE-FIRST: the DSR is always computed and
-        # surfaced for inspection; the reject gate is OPT-IN (default off) so its
-        # effect can be watched before it blocks anything. min_deflated_sharpe is a
-        # probability in [0,1] (~0.95 = conventional significance).
-        "deflated_sharpe_gate_enabled": False,
+        # no untouched holdout). The DSR is always computed and surfaced; the
+        # reject gate on the gauntlet->paper hop is ON by default since the
+        # 2026-10 live-capital readiness review (it was observe-first before).
+        # forven.readiness_checks switches it on once in existing installs'
+        # stored config; an operator can still turn it off. min_deflated_sharpe
+        # is a probability in [0,1] (~0.95 = conventional significance).
+        "deflated_sharpe_gate_enabled": True,
         "min_deflated_sharpe": 0.90,
         "deflated_sharpe_default_trials": 50,
         # Swarm-level selection bias (issue #17): the agents try many sibling
@@ -234,7 +236,7 @@ DEFAULT_PIPELINE_CONFIG = {
         # true selection pressure. When enabled, DSR n_trials is multiplied by
         # (1 + same-cluster siblings that failed on merit within the lookback
         # window; 0 = unbounded). Safe to leave on: it only changes the computed
-        # DSR — the reject gate above stays opt-in.
+        # DSR; whether it rejects is the gate switch above.
         "dsr_swarm_trials_enabled": True,
         "dsr_swarm_lookback_days": 90,
     },
@@ -1647,11 +1649,20 @@ def _action_for_check(name: str) -> str | None:
     return actions.get(name)
 
 
-def check_paper_live_readiness(strategy_id: str) -> dict:
+def check_paper_live_readiness(strategy_id: str, *, include_gate: bool = False) -> dict:
     """Build a readiness checklist for promoting a strategy from paper to live.
 
     Returns the same shape as ``check_promotion_readiness``: ``{ready, steps, strategy_id}``.
     Steps cover paper trading metrics (informational) and optimization gates (actionable).
+
+    The steps are an evidence checklist, not the gate: the real paper->live gate
+    also runs the strict robustness battery, the paper Sharpe t-stat and profit
+    factor, funding completeness and engine freshness. With ``include_gate`` the
+    report adds that gate as a dry run (``live_gate`` step), so ``ready`` means a
+    live promotion would pass the gate (the operator's GO LIVE approval is still
+    required). Read surfaces (the API endpoint, gate reports) pass it; the
+    optimization driver and pipeline_explain, which run the gate themselves or
+    act only on actionable steps, keep the default.
     """
     ps = _load_pipeline_settings()
     steps: list[dict] = []
@@ -1699,8 +1710,38 @@ def check_paper_live_readiness(strategy_id: str) -> dict:
                "paper_live_gate_confirmation_backtest_required",
                _check_confirmation_backtest, strategy_id)
 
+    if include_gate:
+        steps.append(_live_gate_step(strategy_id))
+
     ready = all(s["status"] in ("passed", "skipped", "warning") for s in steps)
     return {"ready": ready, "steps": steps, "strategy_id": strategy_id}
+
+
+def _live_gate_step(strategy_id: str) -> dict:
+    """The paper->live gate as a readiness step (a dry run: no writes, no submits)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT stage, status FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+    if row is None:
+        return {"name": "live_gate", "status": "failed", "detail": "Strategy not found",
+                "actionable": None, "reason_code": "not_found"}
+    stage = normalize_stage(row["stage"] or row["status"])
+    if stage != "paper":
+        return {"name": "live_gate", "status": "failed",
+                "detail": f"Strategy is {stage}, not paper — the paper->live gate applies only to paper strategies",
+                "actionable": None, "reason_code": "wrong_stage"}
+    try:
+        passed, reason = evaluate_promotion(
+            strategy_id, stage, "live_graduated", record_rejection=False, dry_run=True
+        )
+    except Exception as exc:
+        passed, reason = False, f"Paper->live gate unavailable: {exc}"
+    step = {"name": "live_gate", "status": "passed" if passed else "failed",
+            "detail": str(reason), "actionable": None}
+    if not passed:
+        step["reason_code"], step["kind"] = classify_rejection_reason(reason)
+    return step
 
 
 def _check_paper_duration(strategy_id: str) -> tuple:
@@ -4761,12 +4802,12 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # drawdown SAFETY floor above still fires at paper regardless.) Log advisory.
     _log_advisory_robustness_paper(strategy_id, verdict_payloads, rob_thresholds)
 
-    # Deflated Sharpe Ratio — optimizer selection-bias guard. OPT-IN: the DSR is
-    # computed and surfaced for observation regardless, but only REJECTS here when
-    # robustness_thresholds.deflated_sharpe_gate_enabled is on, so it can be
-    # calibrated before it blocks strategies. Once enabled it is authoritative,
-    # so an unavailable computation blocks rather than silently disabling the gate.
-    if bool(rob_thresholds.get("deflated_sharpe_gate_enabled", False)):
+    # Deflated Sharpe Ratio — optimizer selection-bias guard. The DSR is computed
+    # and surfaced regardless, and REJECTS here while
+    # robustness_thresholds.deflated_sharpe_gate_enabled is on (the default).
+    # When enabled it is authoritative, so an unavailable computation blocks
+    # rather than silently disabling the gate.
+    if bool(rob_thresholds.get("deflated_sharpe_gate_enabled", True)):
         try:
             from forven.gauntlet.deflated_sharpe import compute_strategy_dsr
 

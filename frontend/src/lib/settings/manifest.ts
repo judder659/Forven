@@ -1602,18 +1602,18 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.policy'],
   },
 
-  // Deflated Sharpe Ratio — optimizer selection-bias guard (observe-then-gate)
+  // Deflated Sharpe Ratio — optimizer selection-bias guard
   {
     id: 'pipeline.robustness_thresholds.deflated_sharpe_gate_enabled',
     label: 'Deflated Sharpe gate',
-    default: false,
+    default: true,
     type: 'toggle',
     area: 'lab',
     subsection: 'lab-pipeline-robustness-gauntlet',
     backendSection: 'pipeline',
     backendPath: 'robustness_thresholds.deflated_sharpe_gate_enabled',
     description:
-      'When ON, reject strategies whose Deflated Sharpe Ratio (Sharpe corrected for optimizer selection bias / number of trials) is below the minimum. OFF by default — the DSR is always computed and shown on the Robustness tab so you can observe it before enabling the gate.',
+      'When ON, the gauntlet->paper gate rejects strategies whose Deflated Sharpe Ratio (Sharpe corrected for optimizer selection bias / number of trials) is below the minimum. ON by default; strategies already in paper or live are not re-judged. The DSR is always computed and shown on the Robustness tab.',
     usedBy: ['forven.policy'],
   },
   {

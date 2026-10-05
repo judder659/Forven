@@ -421,9 +421,10 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         name="forven_get_gate_report",
         description=(
             "STEP 8 — the single status readout: lifecycle stage, latest "
-            "compact backtest, promotion_ready flag (the real gauntlet->paper "
-            "gate, evaluated as a dry run), structured failed_gates (each "
-            "with a reason_code and actionable hint), and next_actions. "
+            "compact backtest, target_stage, promotion_ready flag (the real "
+            "gate to target_stage, evaluated as a dry run: gauntlet->paper, "
+            "or paper->live for a paper strategy), structured failed_gates "
+            "(each with a reason_code and actionable hint), and next_actions. "
             "Read-only; call it whenever you need to know what stands "
             "between a strategy and promotion."
         ),
@@ -442,9 +443,16 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         # Strategy-scoped, structured gate checklist (the per-strategy
         # `/events` subroute does not exist; readiness is the purpose-built
         # source and gives structured pass/fail steps directly).
+        # A paper strategy's next hop is live: report the paper->live checklist
+        # and gate, not the gauntlet->paper one it already cleared.
+        strategy_row = container.get("strategy") if isinstance(container, dict) else None
+        stage = str((strategy_row or {}).get("stage") or "").strip().lower() if isinstance(strategy_row, dict) else ""
+        is_paper = stage.startswith("paper")
+        target_stage = "live_graduated" if is_paper else "paper"
+        readiness_path = "paper-live-readiness" if is_paper else "readiness"
         readiness: Any = None
         try:
-            readiness = forven.get(f"/api/lifecycle/strategies/{strategy_id}/readiness")
+            readiness = forven.get(f"/api/lifecycle/strategies/{strategy_id}/{readiness_path}")
         except Exception as exc:
             readiness = {"error": f"Could not fetch readiness: {exc}"}
         failed_gates: list[dict[str, Any]] = []
@@ -462,7 +470,12 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
                     )
         ready = readiness.get("ready") if isinstance(readiness, dict) else None
         next_actions: list[str] = []
-        if ready:
+        if ready and is_paper:
+            next_actions.append(
+                "All paper->live gates green — live promotion needs the operator's typed "
+                "GO LIVE approval; don't promote it yourself."
+            )
+        elif ready:
             next_actions.append("All gates green — call forven_promote_strategy (force=false).")
             # Passing steps can carry a two-tier caveat (e.g. walk_forward passed
             # the paper-tier fold criteria while its strict artifact verdict is
@@ -509,6 +522,7 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
             "strategy_id": strategy_id,
             "strategy": container.get("strategy") if isinstance(container, dict) else container,
             "latest_result": _compact_backtest_payload(result_payload),
+            "target_stage": target_stage,
             "promotion_ready": ready,
             "failed_gates": failed_gates,
             "latest_gate_failure": failed_gates[0] if failed_gates else None,

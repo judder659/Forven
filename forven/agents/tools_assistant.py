@@ -311,10 +311,11 @@ def _tool_list_strategies(stage: str = "", search: str = "", limit: int = 25) ->
 @register_tool(
     name="get_gate_report",
     description=(
-        "Why can/can't a strategy advance: promotion-readiness steps (pass/fail with "
-        "detail), gauntlet test rollup (per-test verdicts, robustness score), and — "
-        "for paper strategies — paper→live readiness. THE tool for 'why is this "
-        "stuck?' / 'what does it still need?'."
+        "Why can/can't a strategy advance to its next stage (target_stage): "
+        "readiness steps (pass/fail with detail) ending in the real gate as a dry "
+        "run, plus the gauntlet test rollup. For paper strategies the steps are the "
+        "paper→live checklist and gate. THE tool for 'why is this stuck?' / 'what "
+        "does it still need?'."
     ),
     input_schema={
         "type": "object",
@@ -336,12 +337,19 @@ def _tool_get_gate_report(strategy_id: str) -> str:
     if not row:
         return f"No strategy found with id {sid}."
     stage = row["stage"] or row["status"]
-    out: dict = {"strategy_id": sid, "name": row["name"], "stage": stage}
+    from forven.policy import check_paper_live_readiness, check_promotion_readiness, normalize_stage
 
-    from forven.policy import check_promotion_readiness
+    is_paper = normalize_stage(stage) == "paper"
+    # A paper strategy's next hop is live: report the paper->live gate, not the
+    # gauntlet->paper checklist it already cleared.
+    out: dict = {"strategy_id": sid, "name": row["name"], "stage": stage,
+                 "target_stage": "live_graduated" if is_paper else "paper"}
 
     try:
-        readiness = check_promotion_readiness(sid)
+        if is_paper:
+            readiness = check_paper_live_readiness(sid, include_gate=True)
+        else:
+            readiness = check_promotion_readiness(sid)
         out["promotion_ready"] = readiness.get("ready")
         out["readiness_steps"] = [
             {"name": s.get("name"), "status": s.get("status"), "detail": s.get("detail"),
@@ -372,20 +380,11 @@ def _tool_get_gate_report(strategy_id: str) -> str:
     except Exception as exc:
         out["gauntlet_error"] = str(exc)
 
-    if str(stage or "").lower() == "paper":
-        from forven.policy import check_paper_live_readiness
-
-        try:
-            live = check_paper_live_readiness(sid)
-            out["paper_to_live"] = {
-                "ready": live.get("ready"),
-                "steps": [
-                    {"name": s.get("name"), "status": s.get("status"), "detail": s.get("detail")}
-                    for s in (live.get("steps") or [])
-                ],
-            }
-        except Exception as exc:
-            out["paper_to_live_error"] = str(exc)
+    if is_paper:
+        out["note"] = (
+            "Paper->live: even with every gate green, live promotion needs the "
+            "operator's typed GO LIVE approval."
+        )
 
     failed = [s["name"] for s in out.get("readiness_steps", []) if s.get("status") == "failed"]
     out["failed_gates"] = failed

@@ -10,7 +10,7 @@
 		type ProviderRuntimeHealth,
 	} from '$lib/api';
 	import { addToast } from '$lib/stores/processTracker';
-	import { agentsConfig, isProviderConnected } from '$lib/stores/agentsConfig';
+	import { agentsConfig, isProviderAdded } from '$lib/stores/agentsConfig';
 	import { providerLabel } from '$lib/utils/agentsHub/agents';
 	import { namesList, providerState } from '$lib/utils/agentsHub/providers';
 	import { loadRouting, providerUsage, type RoutingAgent, type RoutingDraft } from '$lib/utils/agentsHub/routing';
@@ -30,8 +30,8 @@
 	let now = Date.now();
 
 	$: providers = $agentsConfig.providers;
-	$: connected = providers.filter(isProviderConnected);
-	$: available = providers.filter((provider) => !isProviderConnected(provider)).sort((a, b) => providerLabel(a.provider).localeCompare(providerLabel(b.provider)));
+	$: connected = providers.filter(isProviderAdded);
+	$: available = providers.filter((provider) => !isProviderAdded(provider)).sort((a, b) => providerLabel(a.provider).localeCompare(providerLabel(b.provider)));
 	$: runtimeOf = new Map(health.map((entry) => [String(entry.provider).toLowerCase(), entry]));
 	$: usage = routing ? providerUsage(routing.draft, routing.agents) : new Map<string, string[]>();
 	$: modelCount = countBy($agentsConfig.modelOptions.map((option) => String(option.provider)));

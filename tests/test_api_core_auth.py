@@ -292,6 +292,33 @@ def test_auth_provider_connected_matches_runtime_gate(forven_db, monkeypatch):
     assert api_core._build_auth_provider_payload("openai")["connected"] is False
 
 
+def test_auth_provider_expired_sign_in_stays_listed_for_reconnect(forven_db, monkeypatch):
+    """A provider the operator connected whose sign-in stopped working is
+    reported as needing a reconnect, not as a provider that was never added."""
+    from forven import model_selection as ms
+
+    monkeypatch.setattr(ms, "_provider_has_token", lambda provider: False)
+
+    monkeypatch.setattr(ms, "list_connected_providers", lambda: {"openai"})
+    payload = api_core._build_auth_provider_payload("openai")
+    assert payload["connected"] is False
+    assert payload["reconnect_required"] is True
+    assert payload["status"] in {"expired", "needs_reauth", "invalid", "error"}
+
+    # Never connected in-app (e.g. only an env key exists): not a reconnect.
+    monkeypatch.setattr(ms, "list_connected_providers", lambda: set())
+    payload = api_core._build_auth_provider_payload("openai")
+    assert payload["connected"] is False
+    assert payload["reconnect_required"] is False
+
+    # Working sign-in: connected, nothing to reconnect.
+    monkeypatch.setattr(ms, "list_connected_providers", lambda: {"openai"})
+    monkeypatch.setattr(ms, "_provider_has_token", lambda provider: True)
+    payload = api_core._build_auth_provider_payload("openai")
+    assert payload["connected"] is True
+    assert payload["reconnect_required"] is False
+
+
 def test_model_policy_save_warns_on_not_connected_provider(forven_db, monkeypatch):
     """Saving a policy pointing at a not-connected provider still persists but
     returns a structured warnings array naming the (provider, model)."""

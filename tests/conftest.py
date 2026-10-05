@@ -34,6 +34,39 @@ def _restore_event_loop_policy():
     asyncio.set_event_loop_policy(_DEFAULT_EVENT_LOOP_POLICY)
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "dsr_gate_default: keep the deflated-Sharpe gate at its production default (on)",
+    )
+
+
+# Every DEFAULT_PIPELINE_CONFIG dict seen so far: one test reloads forven.policy,
+# and modules that imported the name earlier keep the pre-reload dict.
+_SEEN_PIPELINE_DEFAULTS: dict[int, dict] = {}
+
+
+@pytest.fixture(autouse=True)
+def _dsr_gate_off_in_tests(request, monkeypatch):
+    """Gate tests build minimal fixtures (often no backtest row), and the
+    deflated-Sharpe gate, on in production since the 2026-10 readiness review,
+    would block all of them with dsr_unavailable before the check under test
+    runs. Tests start with it off, as before; tests of the DSR gate enable it
+    in their config, and ``@pytest.mark.dsr_gate_default`` keeps the default."""
+    if request.node.get_closest_marker("dsr_gate_default"):
+        yield
+        return
+    import sys
+
+    policy_module = sys.modules.get("forven.policy")
+    if policy_module is not None:
+        defaults = policy_module.DEFAULT_PIPELINE_CONFIG
+        _SEEN_PIPELINE_DEFAULTS[id(defaults)] = defaults
+    for defaults in _SEEN_PIPELINE_DEFAULTS.values():
+        monkeypatch.setitem(defaults["robustness_thresholds"], "deflated_sharpe_gate_enabled", False)
+    yield
+
+
 def _clear_data_manager_caches() -> None:
     """Drop the Data Manager's short process-wide caches (consumer index, SLA
     policy, collector snapshot, readiness reports, fingerprints, storage
