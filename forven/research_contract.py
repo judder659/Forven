@@ -70,15 +70,17 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     # untestable:insufficient_history at registration. 0 disables.
     "candidate_min_feed_coverage_pct": 50,
     # Research holdout (forven.research_holdout): recent data research never sees.
-    # Off by default. When on, research reads stop at the cutoff and each new
-    # candidate gets one test on the held-back period before the paper gate.
+    # On by default since the 2026-10 live-capital readiness review
+    # (forven.readiness_checks switches it on once in existing installs). When on,
+    # research reads stop at the cutoff and each new candidate gets one test on
+    # the held-back period before the paper gate.
     #   roll: "quarterly" (cutoff = current quarter start - lag_quarters) or
     #     "manual" (cutoff below). established_at is stamped when first enabled;
     #     strategies created earlier saw the held-back data and are exempt.
     #   paper_mode: off | observe | enforce (block paper promotion without a pass).
     #   max_family_shots: held-back tests per strategy family per cutoff (0 = no cap).
     "research_holdout": {
-        "enabled": False,
+        "enabled": True,
         "roll": "quarterly",
         "lag_quarters": 2,
         "cutoff": "",

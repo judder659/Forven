@@ -128,6 +128,9 @@ def test_the_held_back_test_sees_past_the_cutoff(sealed):
 
 
 def test_reads_are_unsealed_while_the_holdout_is_off(forven_db):
+    from forven.db import kv_set
+
+    kv_set("forven:settings", {"research_settings": {"research_holdout": {"enabled": False}}})
     assert research_contract.research_read_cutoff() is None
 
 

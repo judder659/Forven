@@ -119,8 +119,17 @@ export const ForvenAgent = {
 
 	async getGateReport(id: string): Promise<Record<string, unknown>> {
 		const report: Record<string, unknown> = { strategy_id: id };
-		try { report.container = await this.getStrategy(id); } catch (e) { report.container_error = String(e); }
-		try { report.readiness = await get(`/lifecycle/strategies/${id}/readiness`); } catch { report.readiness = null; }
+		let stage = '';
+		try {
+			const container = (await this.getStrategy(id)) as { strategy?: { stage?: unknown } } | null;
+			report.container = container;
+			stage = String(container?.strategy?.stage ?? '').trim().toLowerCase();
+		} catch (e) { report.container_error = String(e); }
+		// A paper strategy's next hop is live: its checklist ends in the real paper->live gate.
+		const isPaper = stage.startsWith('paper');
+		report.target_stage = isPaper ? 'live_graduated' : 'paper';
+		const path = isPaper ? 'paper-live-readiness' : 'readiness';
+		try { report.readiness = await get(`/lifecycle/strategies/${id}/${path}`); } catch { report.readiness = null; }
 		return report;
 	},
 

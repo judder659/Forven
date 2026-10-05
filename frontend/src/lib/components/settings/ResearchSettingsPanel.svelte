@@ -31,7 +31,7 @@
 	}
 
 	const RESEARCH_HOLDOUT_DEFAULTS = {
-		enabled: false,
+		enabled: true,
 		roll: 'quarterly' as 'quarterly' | 'manual',
 		lag_quarters: 2,
 		cutoff: '',
