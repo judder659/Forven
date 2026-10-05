@@ -1817,6 +1817,8 @@ export interface ApprovalRecord {
 	troubleshoot_task?: ApprovalTaskSummary | null;
 	can_troubleshoot?: boolean;
 	can_watch_execution?: boolean;
+	/** GO-LIVE-1: approving needs the typed GO LIVE + a notional ceiling. */
+	requires_go_live?: boolean;
 	expires_at?: string | null;
 	classifier_recommendation?: 'auto_approve' | 'escalate' | 'hold' | null;
 	classifier_reasoning?: string | null;
@@ -2353,6 +2355,14 @@ export interface ForvenSettings {
 	research_settings?: ResearchSettings;
 	backup_ai_provider?: string;
 	backup_ai_model?: string;
+	/** OPS-4: real-money order placement is armed on this instance. */
+	mainnet_armed?: boolean;
+	/** Pipeline promotion mode; 'auto' self-approves gauntlet->paper. */
+	promotion_mode?: string;
+	allow_auto_live_promotion?: boolean;
+	auto_approve_dethrone?: boolean;
+	/** RISK-BOUND-1: saved risk values the engine replaces, with the value in force. */
+	risk_effective?: import('$lib/settings/effective').EffectiveRiskReport;
 	updated_at: string;
 }
 

@@ -266,3 +266,29 @@ def test_stale_approved_promotion_no_longer_blocks_a_new_request(forven_db):
 def test_go_live_ceiling_must_be_finite():
     err = validate_go_live_confirmation(GO_LIVE_CONFIRM_PHRASE, float("inf"))
     assert err and "ceiling" in err
+
+
+def test_approval_rows_flag_when_approve_needs_go_live(forven_db):
+    """The list and context rows carry `requires_go_live` from the same test the
+    approve endpoint applies, including a live target set only in the payload."""
+    from forven.control_plane.approvals import get_approval_context, get_approvals_list
+    from forven.db import get_db, insert_approval
+
+    payload_only = _queued_live_promotion("S-FLAG1")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, stage, base_id) VALUES ('S-FLAG2', 'Flag', 'gauntlet', 1)"
+        )
+    to_paper = insert_approval(
+        "strategy_promotion_approval",
+        target_id="S-FLAG2",
+        requested_status="paper",
+        payload={"strategy_id": "S-FLAG2", "recommended_target_stage": "paper"},
+    )
+    with get_db() as conn:
+        conn.execute("UPDATE approvals SET requested_status = NULL WHERE id = ?", (payload_only,))
+
+    rows = {row["id"]: row for row in get_approvals_list()}
+    assert rows[payload_only]["requires_go_live"] is True
+    assert rows[to_paper]["requires_go_live"] is False
+    assert get_approval_context(payload_only)["approval"]["requires_go_live"] is True

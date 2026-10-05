@@ -21,6 +21,9 @@
 		type ApprovalTaskSummary,
 	} from '$lib/api/forven';
 	import SkillUpdateProposalCard from '$lib/components/approvals/SkillUpdateProposalCard.svelte';
+	import GoLiveApprovalDialog from '$lib/components/approvals/GoLiveApprovalDialog.svelte';
+	import DenyReasonPicker from '$lib/components/approvals/DenyReasonPicker.svelte';
+	import ConfirmDialog, { type ConfirmDialogSpec } from '$lib/components/ConfirmDialog.svelte';
 	import { friendlyTitle, isStrategyLifecycleType, payloadRenderer } from '$lib/components/approvals/renderers';
 
 	type PendingDecision = 'approve' | 'deny' | 'revise';
@@ -48,6 +51,12 @@
 	let viewMode: ViewMode = 'pending';
 	let autoApproveCodeEdits = false;
 	let autoApprovePromotions = false;
+	// The Brain also self-approves gauntlet->paper when the pipeline's
+	// promotion_mode is 'auto' (the shipped default), so the page shows the
+	// effective state rather than the one flag it used to read.
+	let promotionMode = '';
+	let allowAutoLivePromotion = false;
+	let autoApproveDethrone = true;
 	let settingsLoading = true;
 	let approvalModes: Record<string, string> = {};
 	let defaultApprovalMode = '';
@@ -56,9 +65,10 @@
 	let filterText = '';
 	let collapsedGroups: Set<string> = new Set();
 	let denyPickerId: number | null = null;
-	let denyPreset = '';
-	let denyFreeText = '';
-	const DENY_PRESETS = ['Performing fine', 'Insufficient evidence', 'Wrong target stage'];
+	let goLiveApproval: ApprovalRecord | null = null;
+	let goLivePreferredTab: DrawerTab | undefined = undefined;
+	let confirmSpec: (ConfirmDialogSpec & { run: () => Promise<void> }) | null = null;
+	let confirmBusy = false;
 
 	let selectedApprovalId: number | null = null;
 	let approvalContext: ApprovalContextResponse | null = null;
@@ -233,7 +243,8 @@
 			.filter(
 				(a) =>
 					(a.classifier_recommendation || '').toLowerCase() === 'auto_approve' &&
-					(a.status || '').toLowerCase() === 'pending_approval',
+					(a.status || '').toLowerCase() === 'pending_approval' &&
+					!requiresGoLive(a),
 			)
 			.map((a) => a.id);
 	}
@@ -250,12 +261,23 @@
 		}
 	}
 
-	async function runBulkApprove() {
+	function confirmBulkApprove() {
 		const ids = autoApprovableIds();
 		if (ids.length === 0) {
 			actionMessage = 'No auto_approve candidates to bulk approve.';
 			return;
 		}
+		confirmSpec = {
+			title: `Approve ${ids.length} item${ids.length === 1 ? '' : 's'}?`,
+			warn: 'Approves every pending item the classifier marked safe to auto-approve. Live promotions are left out: they always need your typed GO LIVE.',
+			cta: 'Approve all',
+			run: runBulkApprove,
+		};
+	}
+
+	async function runBulkApprove() {
+		const ids = autoApprovableIds();
+		if (ids.length === 0) return;
 		bulkApproving = true;
 		try {
 			const res = await bulkApproveApprovals(ids, { actor: 'operator', feedback: 'bulk-approve from /approval' });
@@ -367,11 +389,19 @@
 		}
 	}
 
+	const truthy = (value: unknown, fallback = false) =>
+		value === undefined || value === null ? fallback : String(value).toLowerCase() === 'true';
+
 	async function loadSettings() {
 		try {
-			const settings = await getSettings();
-			autoApproveCodeEdits = String(settings.auto_approve_code_edits || 'false').toLowerCase() === 'true';
-			autoApprovePromotions = String(settings.auto_approve_promotions || 'false').toLowerCase() === 'true';
+			const settings = (await getSettings()) as unknown as Record<string, unknown>;
+			autoApproveCodeEdits = truthy(settings.auto_approve_code_edits);
+			autoApprovePromotions = truthy(settings.auto_approve_promotions);
+			promotionMode = String(settings.promotion_mode || '').trim().toLowerCase();
+			allowAutoLivePromotion = truthy(settings.allow_auto_live_promotion);
+			autoApproveDethrone = truthy(settings.auto_approve_dethrone, true);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load approval settings';
 		} finally {
 			settingsLoading = false;
 		}
@@ -389,22 +419,79 @@
 		}
 	}
 
-	async function toggleAutoApproveCodeEdits() {
-		const nextState = !autoApproveCodeEdits;
-		if (nextState && !window.confirm('Enable automatic approval for code edits? Code changes will proceed without manual review until you turn it back off.')) return;
-		await updateSettingsSection('bot-operations', { auto_approve_code_edits: String(nextState) });
-		autoApproveCodeEdits = nextState;
-		actionMessage = `Code edit auto-approval ${nextState ? 'enabled' : 'disabled'}.`;
+	function flash(message: string) {
+		actionMessage = message;
 		setTimeout(() => actionMessage = null, 3000);
 	}
 
-	async function toggleAutoApprovePromotions() {
-		const nextState = !autoApprovePromotions;
-		if (nextState && !window.confirm('Enable automatic approval for promotions? Strategy promotions and config changes will proceed without manual review until you turn it back off.')) return;
-		await updateSettingsSection('bot-operations', { auto_approve_promotions: String(nextState) });
-		autoApprovePromotions = nextState;
-		actionMessage = `Promotion auto-approval ${nextState ? 'enabled' : 'disabled'}.`;
-		setTimeout(() => actionMessage = null, 3000);
+	async function runConfirm() {
+		if (!confirmSpec) return;
+		confirmBusy = true;
+		try {
+			await confirmSpec.run();
+			confirmSpec = null;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'The change could not be saved';
+			confirmSpec = null;
+		} finally {
+			confirmBusy = false;
+		}
+	}
+
+	async function setAutoApproveCodeEdits(nextState: boolean) {
+		await updateSettingsSection('bot-operations', { auto_approve_code_edits: String(nextState) });
+		autoApproveCodeEdits = nextState;
+		flash(`Code edit auto-approval ${nextState ? 'enabled' : 'disabled'}.`);
+	}
+
+	function toggleAutoApproveCodeEdits() {
+		const nextState = !autoApproveCodeEdits;
+		if (!nextState) {
+			void setAutoApproveCodeEdits(false).catch((e) => {
+				error = e instanceof Error ? e.message : 'Failed to update code edit auto-approval';
+			});
+			return;
+		}
+		confirmSpec = {
+			title: 'Approve code edits automatically?',
+			warn: 'Agent code changes will go ahead without your review until you turn this back off.',
+			cta: 'Turn on',
+			danger: true,
+			run: () => setAutoApproveCodeEdits(true),
+		};
+	}
+
+	function toggleAutoApprovePromotions() {
+		if (promotionsAuto) {
+			confirmSpec = {
+				title: 'Review promotions yourself?',
+				warn: 'Strategies moving from gauntlet to paper will wait here for your approval.',
+				rows: promotionModeAuto ? [['Pipeline promotion mode', 'auto → manual']] : [],
+				cta: 'Switch to manual review',
+				run: async () => {
+					await updateSettingsSection('bot-operations', { auto_approve_promotions: 'false' });
+					if (promotionModeAuto) await updateSettingsSection('pipeline', { promotion_mode: 'manual' });
+					autoApprovePromotions = false;
+					promotionMode = promotionModeAuto ? 'manual' : promotionMode;
+					flash('Promotions now wait for your approval.');
+				},
+			};
+			return;
+		}
+		confirmSpec = {
+			title: 'Approve promotions automatically?',
+			warn: allowAutoLivePromotion
+				? 'Gauntlet to paper AND paper to live will approve themselves, because "Allow automatic go-live" is on in Settings.'
+				: 'Gauntlet to paper promotions will approve themselves. Going live still always needs your typed GO LIVE.',
+			rows: autoApproveDethrone ? [] : [['Dethrones', 'also approve themselves']],
+			cta: 'Turn on',
+			danger: true,
+			run: async () => {
+				await updateSettingsSection('bot-operations', { auto_approve_promotions: 'true' });
+				autoApprovePromotions = true;
+				flash('Promotion auto-approval enabled.');
+			},
+		};
 	}
 
 	function stopPolling() {
@@ -479,49 +566,59 @@
 	function handleDenyClick(approval: ApprovalRecord) {
 		if (isStrategyLifecycleType(approval.approval_type)) {
 			denyPickerId = denyPickerId === approval.id ? null : approval.id;
-			denyPreset = '';
-			denyFreeText = '';
 			return;
 		}
 		void submitDecision(approval.id, 'deny');
 	}
 
-	async function confirmDeny(approvalId: number) {
-		const reason = [denyPreset, denyFreeText.trim()].filter(Boolean).join(' — ') || 'Denied via UI';
+	async function confirmDeny(approvalId: number, reason: string) {
 		denyPickerId = null;
 		await submitDecision(approvalId, 'deny', undefined, reason);
 	}
 
-	async function submitDecision(approvalId: number, action: PendingDecision, preferredTab?: DrawerTab, reasonOverride?: string) {
-		if (isBusy(approvalId)) return;
-		// GO-LIVE-1: approving a paper→live promotion is never a bare click — the
-		// backend requires a typed "GO LIVE" confirmation plus an initial per-asset
-		// notional ceiling (USD), so collect both before submitting.
-		const record = approvals.find((row) => row.id === approvalId);
-		let goLive: { confirm: string; live_notional_ceiling_usd: number } | undefined;
-		if (
-			action === 'approve' &&
-			record?.approval_type === 'strategy_promotion_approval' &&
-			(record?.requested_status || '').toLowerCase() === 'live_graduated'
-		) {
-			const ceilingRaw = window.prompt(
-				`Going LIVE trades real capital.\n\nInitial per-asset notional ceiling (USD) for ${record?.target_id ?? 'this strategy'} — the largest live position it may hold. Enforced on every order; editable later.`,
-				'1000'
-			);
-			if (ceilingRaw === null) return;
-			const ceiling = Number(ceilingRaw);
-			if (!Number.isFinite(ceiling) || ceiling <= 0) {
-				error = 'Go-live needs a positive notional ceiling (USD).';
-				return;
-			}
-			const typed = window.prompt(`Type GO LIVE to confirm promoting ${record?.target_id ?? 'this strategy'} to live trading:`);
-			if (typed === null) return;
-			if (typed.trim().toUpperCase() !== 'GO LIVE') {
-				error = 'Go-live not confirmed — you must type GO LIVE exactly.';
-				return;
-			}
-			goLive = { confirm: 'GO LIVE', live_notional_ceiling_usd: ceiling };
+	// GO-LIVE-1: the backend flags rows whose approve needs the typed GO LIVE
+	// and a notional ceiling; older backends without the flag fall back to the
+	// same target-stage test the approve endpoint applies.
+	function requiresGoLive(record: ApprovalRecord | null | undefined): boolean {
+		if (!record) return false;
+		if (typeof record.requires_go_live === 'boolean') return record.requires_go_live;
+		if (record.approval_type !== 'strategy_promotion_approval') return false;
+		const payload = (record.payload ?? {}) as Record<string, unknown>;
+		const target = String(payload.recommended_target_stage || payload.requested_status || record.requested_status || '');
+		return target.trim().toLowerCase() === 'live_graduated';
+	}
+
+	function approve(approvalId: number, preferredTab?: DrawerTab) {
+		const record =
+			approvals.find((row) => row.id === approvalId) ??
+			(approvalContext?.approval?.id === approvalId ? approvalContext.approval : null);
+		if (requiresGoLive(record)) {
+			error = null;
+			goLiveApproval = record;
+			goLivePreferredTab = preferredTab;
+			return;
 		}
+		void submitDecision(approvalId, 'approve', preferredTab);
+	}
+
+	async function confirmGoLive(ceilingUsd: number) {
+		if (!goLiveApproval) return;
+		const approvalId = goLiveApproval.id;
+		const ok = await submitDecision(approvalId, 'approve', goLivePreferredTab, undefined, {
+			confirm: 'GO LIVE',
+			live_notional_ceiling_usd: ceilingUsd,
+		});
+		if (ok) goLiveApproval = null;
+	}
+
+	async function submitDecision(
+		approvalId: number,
+		action: PendingDecision,
+		preferredTab?: DrawerTab,
+		reasonOverride?: string,
+		goLive?: { confirm: string; live_notional_ceiling_usd: number },
+	): Promise<boolean> {
+		if (isBusy(approvalId)) return false;
 		setBusy(approvalId, true);
 		actionMessage = null;
 		error = null;
@@ -542,8 +639,10 @@
 				selectedApprovalId = approvalId;
 				await loadApprovalContext(approvalId, false, preferredTab);
 			}
+			return true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Failed to ${action} approval #${approvalId}`;
+			return false;
 		} finally {
 			setBusy(approvalId, false);
 		}
@@ -659,6 +758,9 @@
 		viewMode = mode;
 		void loadApprovals();
 	}
+	$: promotionModeAuto = promotionMode === 'auto';
+	$: promotionsAuto = autoApprovePromotions || promotionModeAuto;
+	$: promotionsSource = autoApprovePromotions ? 'Approvals toggle' : promotionModeAuto ? 'Pipeline promotion mode' : '';
 	$: oldestVisibleAge = approvals.length > 0
 		? fmtAge(approvals.reduce((oldest, row) => (parseDate(row.created_at) < parseDate(oldest.created_at) ? row : oldest)).created_at)
 		: '--';
@@ -703,13 +805,13 @@
 		</div>
 		<div class="flex items-center gap-3">
 			{#if !settingsLoading}
-				<button type="button" class="rounded-md flex items-center gap-2 px-3 py-1.5 border {autoApprovePromotions ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-sc-panel2 border-sc-line2 text-sc-ink2'}" on:click={toggleAutoApprovePromotions}>
-					<div class="w-3 h-3 rounded-full {autoApprovePromotions ? 'bg-emerald-500' : 'bg-sc-line2'}"></div>
-					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Promotions</span>
+				<button type="button" class="rounded-md flex items-center gap-2 px-3 py-1.5 border {promotionsAuto ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-sc-panel2 border-sc-line2 text-sc-ink2'}" title={promotionsAuto ? `Auto-approving gauntlet to paper (set by ${promotionsSource})` : 'Promotions wait for your review'} on:click={toggleAutoApprovePromotions} data-testid="toggle-auto-promotions">
+					<div class="w-3 h-3 rounded-full {promotionsAuto ? 'bg-emerald-500' : 'bg-sc-line2'}"></div>
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Auto promotions</span>
 				</button>
 				<button type="button" class="rounded-md flex items-center gap-2 px-3 py-1.5 border {autoApproveCodeEdits ? 'bg-emerald-900/30 border-emerald-700 text-emerald-400' : 'bg-sc-panel2 border-sc-line2 text-sc-ink2'}" on:click={toggleAutoApproveCodeEdits}>
 					<div class="w-3 h-3 rounded-full {autoApproveCodeEdits ? 'bg-emerald-500' : 'bg-sc-line2'}"></div>
-					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Code edits</span>
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">Auto code edits</span>
 				</button>
 			{/if}
 			<a href="/settings/approvals" class="text-xs border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2">Configure approval modes</a>
@@ -718,7 +820,7 @@
 					type="button"
 					disabled={bulkApproving}
 					class="rounded-md text-[12px] border border-emerald-700 bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-300 px-3 py-1.5 disabled:opacity-40"
-					on:click={() => void runBulkApprove()}
+					on:click={confirmBulkApprove}
 				>
 					{bulkApproving ? 'Approving...' : `Bulk approve (${autoApprovableIds().length})`}
 				</button>
@@ -730,21 +832,32 @@
 	{#if actionMessage}<div class="bg-emerald-900/20 border border-emerald-800 text-emerald-300 text-xs px-3 py-2 rounded">{actionMessage}</div>{/if}
 	{#if error}<div class="bg-red-900/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded">{error}</div>{/if}
 
-	<div class="grid gap-3 md:grid-cols-4">
-		<div class="border px-4 py-3 {autoApprovePromotions ? 'border-yellow-700 bg-yellow-900/20' : 'border-emerald-700 bg-emerald-900/20'}">
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Promotions</div>
-			<div class="mt-1 text-sm font-semibold {autoApprovePromotions ? 'text-yellow-300' : 'text-emerald-300'}">{autoApprovePromotions ? 'Auto-approve' : 'Manual review'}</div>
+	<!-- Who approves what: every lever the backend honours, in one place. -->
+	<div class="rounded-md grid grid-cols-2 gap-px border border-sc-line bg-sc-line lg:grid-cols-6" data-testid="who-approves-what">
+		<div class="bg-sc-panel px-4 py-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Gauntlet → paper</div>
+			<div class="mt-1 text-sm font-semibold {promotionsAuto ? 'text-yellow-300' : 'text-emerald-300'}" data-testid="who-promotions">{settingsLoading ? '…' : promotionsAuto ? 'Automatic' : 'You approve'}</div>
+			{#if promotionsAuto}<div class="mt-0.5 text-[11px] text-sc-ink3">Set by {promotionsSource}</div>{/if}
 		</div>
-		<div class="border px-4 py-3 {autoApproveCodeEdits ? 'border-yellow-700 bg-yellow-900/20' : 'border-sc-line2 bg-sc-panel2'}">
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Code edits</div>
-			<div class="mt-1 text-sm font-semibold {autoApproveCodeEdits ? 'text-yellow-300' : 'text-sc-ink2'}">{autoApproveCodeEdits ? 'Auto-approve' : 'Logged for review'}</div>
+		<div class="bg-sc-panel px-4 py-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Paper → live</div>
+			<div class="mt-1 text-sm font-semibold {allowAutoLivePromotion ? 'text-red-300' : 'text-emerald-300'}" data-testid="who-live">{settingsLoading ? '…' : allowAutoLivePromotion ? 'Automatic' : 'You type GO LIVE'}</div>
+			{#if allowAutoLivePromotion}<a href="/settings#trading/bot-operations.allow_auto_live_promotion" class="mt-0.5 block text-[11px] text-red-300 underline">"Allow automatic go-live" is on</a>{/if}
 		</div>
-		<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-3">
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Visible approvals</div>
+		<div class="bg-sc-panel px-4 py-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Dethrones</div>
+			<div class="mt-1 text-sm font-semibold text-sc-ink">{settingsLoading ? '…' : autoApproveDethrone || promotionsAuto ? 'Automatic' : 'You approve'}</div>
+		</div>
+		<div class="bg-sc-panel px-4 py-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Code edits</div>
+			<div class="mt-1 text-sm font-semibold {autoApproveCodeEdits ? 'text-yellow-300' : 'text-sc-ink'}">{settingsLoading ? '…' : autoApproveCodeEdits ? 'Automatic' : 'You approve'}</div>
+		</div>
+		<div class="bg-sc-panel px-4 py-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Showing</div>
 			<div class="mt-1 text-sm font-semibold text-sc-ink">{approvals.length}</div>
 		</div>
-		<div class="rounded-md border border-sc-line bg-sc-panel px-4 py-3">
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Oldest visible age</div>
+		<div class="bg-sc-panel px-4 py-3">
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Oldest waiting</div>
 			<div class="mt-1 text-sm font-semibold text-sc-ink">{oldestVisibleAge}</div>
 		</div>
 	</div>
@@ -880,33 +993,14 @@
 							{approvalStatus(approval) === 'approved' ? 'Watch Task' : 'Details'}
 						</button>
 						{#if viewMode === 'pending'}
-							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-primary text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(approval.id, 'approve')}>{isBusy(approval.id) ? 'Approving...' : 'Approve'}</button>
+							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-primary text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => approve(approval.id)}>{isBusy(approval.id) ? 'Approving...' : requiresGoLive(approval) ? 'Approve (go live)' : 'Approve'}</button>
 							<button type="button" disabled={isBusy(approval.id)} class="terminal-button text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => void handleUserComplete(approval.id)}>{isBusy(approval.id) ? 'Completing...' : 'I Did This'}</button>
 							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-danger text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => handleDenyClick(approval)}>{isBusy(approval.id) ? 'Denying...' : 'Deny'}</button>
 						{/if}
 					</div>
 
-					{#if denyPickerId === approval.id && viewMode === 'pending'}
-						<div class="border border-red-900/60 bg-red-950/15 p-3 space-y-2">
-							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-300">Why deny?</div>
-							<div class="flex flex-wrap gap-2">
-								{#each DENY_PRESETS as preset}
-									<button
-										type="button"
-										class="rounded-md text-[12px] border px-3 py-1.5 {denyPreset === preset ? 'border-red-500 bg-red-900/40 text-red-200' : 'border-sc-line2 text-sc-ink2 hover:text-sc-ink'}"
-										on:click={() => denyPreset = denyPreset === preset ? '' : preset}
-									>
-										{preset}
-									</button>
-								{/each}
-							</div>
-							<input type="text" placeholder="Optional details..." class="rounded-md w-full bg-sc-bg border border-sc-line text-xs px-3 py-2 text-sc-ink" bind:value={denyFreeText} />
-							<div class="text-[10px] text-sc-ink3">Denying pauses dethrone re-asks for this strategy: 24h on the first deny, then 3 days, then 7 days. Approving one (or the strategy leaving paper/live) resets the ladder.</div>
-							<div class="flex gap-2">
-								<button type="button" disabled={isBusy(approval.id)} class="terminal-button-danger text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => void confirmDeny(approval.id)}>Confirm deny</button>
-								<button type="button" class="terminal-button text-[12px] px-3 py-2" on:click={() => denyPickerId = null}>Cancel</button>
-							</div>
-						</div>
+					{#if denyPickerId === approval.id && viewMode === 'pending' && selectedApprovalId === null}
+						<DenyReasonPicker busy={isBusy(approval.id)} on:confirm={(event) => void confirmDeny(approval.id, event.detail.reason)} on:cancel={() => denyPickerId = null} />
 					{/if}
 
 					{#if viewMode === 'pending'}
@@ -965,10 +1059,13 @@
 
 			{#if selectedApproval && approvalStatus(selectedApproval) === 'pending_approval'}
 				<div class="flex flex-wrap gap-2">
-					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button-primary text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(selectedApproval.id, 'approve', 'execution')}>{isBusy(selectedApproval.id) ? 'Approving...' : 'Approve + Watch'}</button>
+					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button-primary text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => selectedApproval && approve(selectedApproval.id, 'execution')}>{isBusy(selectedApproval.id) ? 'Approving...' : requiresGoLive(selectedApproval) ? 'Approve (go live)' : 'Approve + Watch'}</button>
 					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => void handleUserComplete(selectedApproval.id)}>{isBusy(selectedApproval.id) ? 'Completing...' : 'I Did This'}</button>
-					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button-danger text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => void submitDecision(selectedApproval.id, 'deny')}>{isBusy(selectedApproval.id) ? 'Denying...' : 'Deny'}</button>
+					<button type="button" disabled={isBusy(selectedApproval.id)} class="terminal-button-danger text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => selectedApproval && handleDenyClick(selectedApproval)}>{isBusy(selectedApproval.id) ? 'Denying...' : 'Deny'}</button>
 				</div>
+				{#if denyPickerId === selectedApproval.id}
+					<DenyReasonPicker busy={isBusy(selectedApproval.id)} on:confirm={(event) => selectedApproval && void confirmDeny(selectedApproval.id, event.detail.reason)} on:cancel={() => denyPickerId = null} />
+				{/if}
 			{/if}
 		</header>
 
@@ -1040,4 +1137,18 @@
 			{/if}
 		</div>
 	</aside>
+{/if}
+
+{#if goLiveApproval}
+	<GoLiveApprovalDialog
+		approval={goLiveApproval}
+		busy={isBusy(goLiveApproval.id)}
+		errorMessage={error}
+		on:cancel={() => { goLiveApproval = null; }}
+		on:confirm={(event) => void confirmGoLive(event.detail.ceilingUsd)}
+	/>
+{/if}
+
+{#if confirmSpec}
+	<ConfirmDialog spec={confirmSpec} busy={confirmBusy} on:cancel={() => { if (!confirmBusy) confirmSpec = null; }} on:confirm={runConfirm} />
 {/if}

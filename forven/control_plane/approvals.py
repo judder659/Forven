@@ -223,6 +223,12 @@ def _augment_approval_rows(rows: list[dict[str, object]]) -> list[dict[str, obje
         item["troubleshoot_task"] = troubleshoot_task
         item["can_troubleshoot"] = linked_task is not None
         item["can_watch_execution"] = linked_task is not None
+        # GO-LIVE-1: the UI asks for the typed GO LIVE + notional ceiling exactly
+        # when the approve endpoint will demand them, so it uses the same test.
+        item["requires_go_live"] = bool(
+            str(approval.get("approval_type") or "").strip().lower() == _PROMOTION_APPROVAL_TYPE
+            and _promotion_targets_live(approval)
+        )
         enriched.append(item)
     return enriched
 
