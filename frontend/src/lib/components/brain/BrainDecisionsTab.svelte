@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
@@ -222,7 +222,7 @@
 		<div class="loading">Loading decisions…</div>
 	{:else if items.length === 0 && !error}
 		<div class="empty">
-			No decisions yet — Brain hasn't run with the new logging in place.
+			No decisions yet. They appear here after the Brain's next cycle.
 		</div>
 	{:else}
 		<div class="meta">{items.length} of {total} decisions</div>

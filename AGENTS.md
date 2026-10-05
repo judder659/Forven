@@ -67,20 +67,28 @@ forven/                    # Python backend package
 frontend/                  # SvelteKit frontend
   src/
     routes/
-      +page.svelte         #   /
-      agents/              #   /agents
-      ai-dropzone/         #   /ai-dropzone
-      approval/            #   /approval
+      +page.svelte         #   / (dashboard)
       data/                #   /data
-      lab/                 #   /lab
+      strategy-creator/    #   /strategy-creator
+      backtest/new/        #   /backtest/new (manual backtest)
+      lab/                 #   /lab (The Forge)
         strategy/[id]/     #   /lab/strategy/:id
-      memory/              #   /memory
-      ops/                 #   /ops
+      paper-trades/        #   /paper-trades
+      live-trades/         #   /live-trades
+      all-trades/          #   /all-trades
       risk/                #   /risk
-      runs/                #   /runs
+      universe/            #   /universe (portfolio layer only)
+      propr/               #   /propr (hidden integration flag only)
+      bot-factory/         #   /bot-factory
+      agents/              #   /agents (Management)
+      brain/               #   /brain (Management)
+      approval/            #   /approval (Management)
+      diagnostics/         #   /diagnostics (Management)
+      pipeline/            #   /pipeline (Management)
+      routines/            #   /routines (Management)
+      integrations/        #   /integrations (Management; AI clients + MCP servers)
       settings/            #   /settings
-      tasks/               #   /tasks
-      trades/              #   /trades
+      tasks/[id]/          #   /tasks/:id (/tasks redirects to /agents?tab=tasks)
     lib/
       api/                 # Typed API client modules
       stores/              # Svelte writable stores

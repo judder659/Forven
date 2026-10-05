@@ -171,7 +171,7 @@
 		} catch (error) {
 			fleetError =
 				error instanceof Error && /404|Not Found/i.test(error.message)
-					? 'The fleet summary needs a newer backend. Restart the backend to load it.'
+					? 'The agent summary is not available from the server. Restart Forven after an update to load it.'
 					: error instanceof Error
 						? error.message
 						: 'Could not load the agents.';
