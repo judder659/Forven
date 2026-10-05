@@ -53,7 +53,7 @@
 
 	function systemModeDescription(mode: SystemMode): string {
 		if (mode === 'manual') {
-			return 'Manual mode: all autonomous background work freezes. Scheduled jobs stop, queued autonomous tasks pause, and only direct operator actions can run until you leave manual mode.';
+			return 'Manual mode: all autonomous background work freezes. Scheduled jobs stop, queued autonomous runs pause, and only direct operator actions can run until you leave manual mode.';
 		}
 		if (mode === 'semi_auto') {
 			return 'Semi-automatic mode: agents will not write new ideas on their own. Ideas you submit are built into strategies and fully evaluated by the Gauntlet and lifecycle machinery. Trading stays active.';
@@ -82,7 +82,7 @@
 		if (counts.total <= 0) {
 			return 'Manual mode - all background work frozen. Only direct operator actions run.';
 		}
-		const pausedLabel = counts.total === 1 ? '1 queued task paused' : `${counts.total} queued tasks paused`;
+		const pausedLabel = counts.total === 1 ? '1 queued run paused' : `${counts.total} queued runs paused`;
 		return `Manual mode - all background work frozen. ${pausedLabel}.`;
 	}
 

@@ -56,29 +56,30 @@
 	<title>Brain — Forven</title>
 </svelte:head>
 
-<div class="brain-page">
-	<header class="brain-header">
-		<div>
-			<h1>Brain</h1>
-			<p class="subtitle">{activeMeta.description}</p>
+<div class="min-h-full bg-sc-bg" data-testid="brain-page">
+	<header class="border-b border-sc-line bg-sc-panel">
+		<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-5 pb-3 pt-4">
+			<div class="min-w-0 max-w-[980px] flex-1">
+				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Brain</h1>
+				<p class="m-0 mt-1.5 text-[13px] leading-relaxed text-sc-ink2">{activeMeta.description}</p>
+			</div>
+		</div>
+		<div class="flex flex-wrap gap-1 px-5" role="tablist" aria-label="Brain sections">
+			{#each TABS as tab (tab.id)}
+				<button
+					type="button"
+					role="tab"
+					aria-selected={activeTab === tab.id}
+					class={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-[13px] transition-colors ${activeTab === tab.id ? 'border-sc-ink text-sc-ink' : 'border-transparent text-sc-ink3 hover:text-sc-ink'}`}
+					on:click={() => setTab(tab.id)}
+				>
+					{tab.label}
+				</button>
+			{/each}
 		</div>
 	</header>
 
-	<div class="tabs" role="tablist" aria-label="Brain sections">
-		{#each TABS as tab (tab.id)}
-			<button
-				type="button"
-				role="tab"
-				aria-selected={activeTab === tab.id}
-				class:active={activeTab === tab.id}
-				on:click={() => setTab(tab.id)}
-			>
-				{tab.label}
-			</button>
-		{/each}
-	</div>
-
-	<section class="tab-content">
+	<section class="min-h-[400px] px-5 pb-10 pt-4">
 		{#if activeTab === 'overview'}
 			<BrainOverviewTab />
 		{:else if activeTab === 'decisions'}
@@ -88,63 +89,3 @@
 		{/if}
 	</section>
 </div>
-
-<style>
-	.brain-page {
-		padding: 1.5rem 2rem 3rem;
-		color: #eef1f5;
-		max-width: 1280px;
-		margin: 0 auto;
-	}
-
-	.brain-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-end;
-		margin-bottom: 1rem;
-	}
-
-	.brain-header h1 {
-		font-size: 22px;
-		font-weight: 600;
-		margin: 0;
-		letter-spacing: -0.01em;
-	}
-
-	.subtitle {
-		color: #aab1bc;
-		margin: 0.25rem 0 0;
-		font-size: 0.875rem;
-	}
-
-	.tabs {
-		display: flex;
-		gap: 0;
-		border-bottom: 1px solid #1c2026;
-		margin-bottom: 1.5rem;
-	}
-
-	.tabs button {
-		background: transparent;
-		border: none;
-		color: #aab1bc;
-		padding: 0.625rem 1.25rem;
-		font-size: 0.875rem;
-		cursor: pointer;
-		border-bottom: 2px solid transparent;
-		transition: color 120ms ease, border-color 120ms ease;
-	}
-
-	.tabs button:hover {
-		color: #eef1f5;
-	}
-
-	.tabs button.active {
-		color: #eef1f5;
-		border-bottom-color: #eef1f5;
-	}
-
-	.tab-content {
-		min-height: 400px;
-	}
-</style>

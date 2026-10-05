@@ -81,6 +81,37 @@ def list_routines(*, enabled_only: bool = False) -> list[dict[str, Any]]:
     return [_row_to_dict(row) for row in rows]
 
 
+def attach_next_runs(routines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add ``next_run_at`` (UTC ISO) to each routine for display.
+
+    Reads the scheduler job the routine syncs to (``routine-{id}``), which
+    also reflects retry backoff; falls back to the cron's next fire when the
+    job has not been synced yet. Paused routines get ``None``.
+    """
+    job_next: dict[str, str | None] = {}
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, enabled, next_run_at FROM scheduler_jobs WHERE id LIKE 'routine-%'"
+            ).fetchall()
+        job_next = {
+            str(row["id"]): (row["next_run_at"] if row["enabled"] else None) for row in rows
+        }
+    except Exception:
+        job_next = {}
+    for routine in routines:
+        next_run: str | None = None
+        if routine.get("enabled"):
+            next_run = job_next.get(f"routine-{routine.get('id')}")
+            if not next_run:
+                try:
+                    next_run = preview_schedule(str(routine.get("cron_expr") or ""), count=1)[0]
+                except Exception:
+                    next_run = None
+        routine["next_run_at"] = next_run
+    return routines
+
+
 def get_routine(routine_id: int) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute(
@@ -289,6 +320,7 @@ __all__ = [
     "RoutineValidationError",
     "RoutineDispatchError",
     "list_routines",
+    "attach_next_runs",
     "get_routine",
     "get_routine_by_name",
     "create_routine",

@@ -272,6 +272,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.max_concurrent_positions',
     label: 'Max concurrent positions (live)',
+    unit: 'positions',
     default: 5,
     type: 'number',
     area: 'trading',
@@ -285,6 +286,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.paper_max_concurrent_positions',
     label: 'Max concurrent positions (paper, per session)',
+    unit: 'positions',
     default: 0,
     type: 'number',
     area: 'trading',
@@ -582,6 +584,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.portfolio_min_risk_multiplier',
     label: 'Portfolio min risk multiplier',
+    unit: 'x',
     default: 0.25,
     type: 'number',
     area: 'portfolio',
@@ -595,6 +598,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.portfolio_max_risk_multiplier',
     label: 'Portfolio max risk multiplier',
+    unit: 'x',
     default: 2.0,
     type: 'number',
     area: 'portfolio',
@@ -653,6 +657,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.basket_n_legs',
     label: 'Basket legs per side',
+    unit: 'legs',
     default: 5,
     type: 'number',
     area: 'portfolio',
@@ -726,6 +731,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.live_failed_open_max_attempts',
     label: 'Failed live open breaker attempts',
+    unit: 'attempts',
     default: 3,
     type: 'number',
     area: 'trading',
@@ -1230,6 +1236,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.quick_screen.min_trades',
     label: 'Quick-screen min trades',
+    unit: 'trades',
     default: 20,
     type: 'number',
     area: 'lab',
@@ -1269,6 +1276,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.quick_screen.fitness_min_trades',
     label: 'Fitness scorer min trades',
+    unit: 'trades',
     default: 20,
     type: 'number',
     area: 'lab',
@@ -1367,6 +1375,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.gauntlet.min_trades',
     label: 'Gauntlet min trade count',
+    unit: 'trades',
     default: 20,
     type: 'number',
     area: 'lab',
@@ -1481,6 +1490,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.gauntlet.wfa_min_folds',
     label: 'Walk-forward min folds',
+    unit: 'folds',
     default: 2,
     type: 'number',
     area: 'lab',
@@ -1662,6 +1672,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.robustness_thresholds.param_jitter_max_iterations',
     label: 'Param jitter max reruns',
+    unit: 'runs',
     default: 30,
     type: 'number',
     area: 'lab',
@@ -1828,6 +1839,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.paper_trading.min_closed_trades',
     label: 'Paper min closed trades',
+    unit: 'trades',
     default: 10,
     type: 'number',
     area: 'lab',
@@ -1939,6 +1951,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.safety_floors.min_trades',
     label: 'Floor: min trades (->paper)',
+    unit: 'trades',
     default: 3,
     type: 'number',
     area: 'lab',
@@ -1987,6 +2000,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.safety_floors.wfa_min_folds',
     label: 'Floor: min walk-forward folds (->paper)',
+    unit: 'folds',
     default: 2,
     type: 'number',
     area: 'lab',
@@ -2012,6 +2026,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.safety_floors.live_min_closed_trades',
     label: 'Floor: live min closed trades (REAL MONEY)',
+    unit: 'trades',
     default: 3,
     type: 'number',
     area: 'lab',
@@ -2054,6 +2069,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.paper_wip_cap',
     label: 'Paper strategy cap',
+    unit: 'strategies',
     default: 20,
     type: 'number',
     area: 'lab',
@@ -2082,6 +2098,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'pipeline.graveyard_strategy_limit',
     label: 'Graveyard strategy cap',
+    unit: 'strategies',
     default: 500,
     type: 'number',
     area: 'lab',
@@ -2142,6 +2159,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.graduation_min_paper_trades',
     label: 'Graduation min paper trades',
+    unit: 'trades',
     default: 10,
     type: 'number',
     area: 'lab',
@@ -2154,6 +2172,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.graduation_min_measured_trades',
     label: 'Graduation min measured fills',
+    unit: 'fills',
     default: 5,
     type: 'number',
     area: 'lab',
@@ -2194,6 +2213,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'risk.graduation_daily_limit',
     label: 'Graduation recommendations per day',
+    unit: 'per day',
     default: 2,
     type: 'number',
     area: 'lab',
@@ -2453,6 +2473,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'backtesting-defaults.walkforward_folds',
     label: 'Walk-forward folds',
+    unit: 'folds',
     default: 5,
     type: 'number',
     area: 'lab',
@@ -2673,6 +2694,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.backtest_matrix_workers',
     label: 'Gauntlet matrix workers',
+    unit: 'workers',
     default: 4,
     type: 'number',
     area: 'system',
@@ -2686,6 +2708,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.backtest_subprocess_budget',
     label: 'Backtest subprocess budget',
+    unit: 'processes',
     default: 4,
     type: 'number',
     area: 'system',
@@ -2700,6 +2723,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.gauntlet_drain_workers',
     label: 'Gauntlet drain workers',
+    unit: 'workers',
     default: 3,
     type: 'number',
     area: 'system',
@@ -2730,6 +2754,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.pipeline_saturation_threshold',
     label: 'Pipeline saturation threshold',
+    unit: 'queued',
     default: 100,
     type: 'number',
     area: 'system',
@@ -2743,6 +2768,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.pipeline_resume_threshold',
     label: 'Pipeline resume threshold',
+    unit: 'queued',
     default: 60,
     type: 'number',
     area: 'system',
@@ -2811,6 +2837,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.pipeline_assignments_per_cycle',
     label: 'Pipeline assignments per cycle',
+    unit: 'strategies',
     default: 3,
     type: 'number',
     area: 'system',
@@ -2866,6 +2893,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.pipeline_gate_failure_archive_attempts',
     label: 'Gate failure archive attempts',
+    unit: 'attempts',
     default: 3,
     type: 'number',
     area: 'system',
@@ -2879,6 +2907,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.agent_task_claim_limit',
     label: 'Agent task claim limit',
+    unit: 'tasks',
     default: 12,
     type: 'number',
     area: 'system',
@@ -2892,6 +2921,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.brain_task_claim_limit',
     label: 'Brain task claim limit',
+    unit: 'tasks',
     default: 12,
     type: 'number',
     area: 'system',
@@ -2944,6 +2974,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   {
     id: 'bot-operations.brain_queue_max_pending',
     label: 'Brain queue soft cap',
+    unit: 'dispatches',
     default: 15,
     type: 'number',
     area: 'system',
