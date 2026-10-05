@@ -48,16 +48,46 @@ def _arm(capital=10_000.0):
 
 
 class _Exchange:
-    """Mock venue: records calls, returns configurable mids/positions."""
+    """Mock venue: records calls, returns configurable mids/positions.
 
-    def __init__(self, mids=None, positions=None, close_fill="full"):
+    Stateful: opens and closes move the positions, stops rest on the book until
+    cancelled, so the post-order stop pass sees what a real wallet would."""
+
+    def __init__(self, mids=None, positions=None, close_fill="full", stop_error=None, leverage_error=None):
         self.mids = mids or {"AAA": 10.0, "BBB": 20.0}
         self.positions = positions or []
         self.market_orders: list[dict] = []
         self.closes: list[dict] = []
+        self.stops: list[dict] = []
+        self.cancels: list[dict] = []
+        self.leverage_calls: list[dict] = []
+        self.resting: dict[str, dict] = {}
+        self._next_oid = 100
         # "full" -> confirmed complete fill; a float -> partial fill of that many
         # units; None -> the AMBIGUOUS receipt (no filled_size at all).
         self.close_fill = close_fill
+        self.stop_error = stop_error
+        self.leverage_error = leverage_error
+
+    def held(self, asset):
+        for p in self.positions:
+            if str(p["asset"]).upper() == asset.upper():
+                units = float(p["size"])
+                return -units if p.get("direction") == "short" else units
+        return 0.0
+
+    def _set_held(self, asset, units):
+        self.positions = [p for p in self.positions if str(p["asset"]).upper() != asset.upper()]
+        if abs(units) > 1e-12:
+            self.positions.append({"asset": asset.upper(), "size": abs(units),
+                                   "direction": "long" if units > 0 else "short",
+                                   "entry": self.mids.get(asset, self.mids.get(asset.upper()))})
+
+    def _rest(self, asset, kind, px, size):
+        self._next_oid += 1
+        oid = self._next_oid
+        self.resting[str(oid)] = {"oid": oid, "coin": asset.upper(), "kind": kind, "px": px, "sz": size}
+        return oid
 
     def install(self, monkeypatch):
         import forven.exchange.hyperliquid as hl
@@ -77,17 +107,29 @@ class _Exchange:
             szi = abs(float(p.get("size") or 0.0))
             if str(p.get("direction") or "").lower() == "short":
                 szi = -szi
-            return {"position": {"coin": p.get("asset"), "szi": str(szi), "entryPx": "1.0"},
+            entry = p.get("entry") or self.mids.get(p.get("asset")) or 1.0
+            return {"position": {"coin": p.get("asset"), "szi": str(szi), "entryPx": str(entry)},
                     "type": "oneWay"}
 
         monkeypatch.setattr(
             hl, "get_positions",
             lambda testnet=True, account_address=None: {"positions": [_wrap(p) for p in self.positions]},
         )
+        monkeypatch.setattr(
+            hl, "get_open_orders",
+            lambda testnet=True, account_address=None: [
+                {"oid": o["oid"], "coin": o["coin"]} for o in self.resting.values()
+            ],
+        )
 
         def _market_order(asset, side, size, **kw):
             self.market_orders.append({"asset": asset, "side": side, "size": size, **kw})
-            return {"order_id": "X1"}
+            signed = size if side == "buy" else -size
+            self._set_held(asset, self.held(asset) + signed)
+            out = {"order_id": "X1", "filled_size": size}
+            if kw.get("stop_loss_price"):
+                out["stop_order_id"] = self._rest(asset, "stop", kw["stop_loss_price"], size)
+            return out
 
         def _close_position(asset, size, side="sell", **kw):
             self.closes.append({"asset": asset, "side": side, "size": size, **kw})
@@ -102,10 +144,34 @@ class _Exchange:
             if self.close_fill is None:
                 return {"order_id": "X2", "exit_price": self.mids.get(asset)}
             filled = size if self.close_fill == "full" else float(self.close_fill)
+            current = self.held(asset)
+            self._set_held(asset, current - filled if current > 0 else current + filled)
             return {"order_id": "X2", "exit_price": self.mids.get(asset), "filled_size": filled}
+
+        def _place_protective_stop(asset, direction, size, stop_loss_price, **kw):
+            self.stops.append({"asset": asset, "direction": direction, "size": size,
+                               "stop": stop_loss_price, **kw})
+            if self.stop_error:
+                return {"error": self.stop_error}
+            oid = self._rest(asset, "stop", stop_loss_price, size)
+            return {"stop_order_id": oid, "stop_loss": stop_loss_price}
+
+        def _cancel_order(asset, oid, **kw):
+            self.cancels.append({"asset": asset, "oid": oid, **kw})
+            self.resting.pop(str(oid), None)
+            return {"status": "ok"}
+
+        def _set_leverage(asset, leverage, **kw):
+            self.leverage_calls.append({"asset": asset, "leverage": leverage, **kw})
+            if self.leverage_error:
+                return {"error": self.leverage_error}
+            return {"status": "ok"}
 
         monkeypatch.setattr(hl, "market_order", _market_order)
         monkeypatch.setattr(hl, "close_position", _close_position)
+        monkeypatch.setattr(hl, "place_protective_stop", _place_protective_stop)
+        monkeypatch.setattr(hl, "cancel_order", _cancel_order)
+        monkeypatch.setattr(hl, "set_leverage", _set_leverage)
         return self
 
 
@@ -425,3 +491,169 @@ def test_dead_strategy_reaper_spares_basket_ceiling(forven_db):
     revoked = revoke_dead_strategy_ceilings()
     assert CEILING_ID not in revoked
     assert CEILING_ID in get_live_notional_ceilings()
+
+
+# ------------------------------------------------ BASKET-STOP-1 (leg stops)
+
+
+def test_leg_stop_distance_targets_one_percent_of_capital():
+    from forven.basket_live import leg_stop_distance
+
+    assert leg_stop_distance(0.1) == pytest.approx(0.10)    # 10% leg -> 10% stop -> 1% of capital
+    assert leg_stop_distance(-0.05) == pytest.approx(0.15)  # capped at the max distance
+    assert leg_stop_distance(0.5) == pytest.approx(0.03)    # floored at the min distance
+    assert leg_stop_distance(0.0) == pytest.approx(0.15)
+
+
+def test_fresh_leg_opens_with_stop_and_pinned_leverage(forven_db, monkeypatch):
+    from forven.basket_live import get_stops
+
+    _settings()
+    _paper_book({"AAA-USDT": 0.1, "BBB-USDT": -0.1})
+    _arm(10_000.0)
+    venue = _Exchange(mids={"AAA": 10.0, "BBB": 20.0}).install(monkeypatch)
+    report = reconcile_basket_live()
+    assert report["orders_failed"] == 0
+    by_asset = {mo["asset"]: mo for mo in venue.market_orders}
+    # 10% legs -> 10% stops: below entry for the long, above for the short.
+    assert by_asset["AAA"]["stop_loss_price"] == pytest.approx(9.0)
+    assert by_asset["BBB"]["stop_loss_price"] == pytest.approx(22.0)
+    assert {c["asset"]: c["leverage"] for c in venue.leverage_calls} == {"AAA": 3, "BBB": 3}
+    assert all(c["vault_address"] == WALLET_ADDR for c in venue.leverage_calls)
+    # The entry stops already cover the full legs: no second stop is placed.
+    assert venue.stops == []
+    stops = get_stops()
+    assert set(stops) == {"AAA", "BBB"}
+    assert stops["AAA"]["units"] == pytest.approx(100.0)
+    assert stops["BBB"]["units"] == pytest.approx(-50.0)
+
+
+def test_unprotected_existing_leg_gets_a_full_size_stop(forven_db, monkeypatch):
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    venue = _Exchange(
+        mids={"AAA": 10.0},
+        positions=[{"asset": "AAA", "size": 100.0, "direction": "long", "entry": 10.0}],
+    ).install(monkeypatch)
+    report = reconcile_basket_live()
+    assert report["orders"] == []
+    assert len(venue.stops) == 1
+    stop = venue.stops[0]
+    assert stop["direction"] == "long" and stop["size"] == pytest.approx(100.0)
+    assert stop["stop"] == pytest.approx(9.0)
+    assert stop["vault_address"] == WALLET_ADDR
+
+
+def test_adding_to_a_leg_resizes_its_stop_place_before_cancel(forven_db, monkeypatch):
+    from forven.basket_live import get_stops
+
+    _settings()
+    _paper_book({"AAA-USDT": 0.05})
+    _arm(10_000.0)
+    venue = _Exchange(
+        mids={"AAA": 10.0},
+        positions=[{"asset": "AAA", "size": 50.0, "direction": "long", "entry": 10.0}],
+    ).install(monkeypatch)
+    reconcile_basket_live()  # at target: only protects the existing 50
+    assert venue.market_orders == []
+    old_oid = get_stops()["AAA"]["oid"]
+    venue.stops.clear()
+    # Second tick: target 100, held 50 -> an add with no entry stop, then a resize.
+    _paper_book({"AAA-USDT": 0.1})
+    reconcile_basket_live()
+    add = venue.market_orders[-1]
+    assert add["stop_loss_price"] is None
+    assert len(venue.stops) == 1 and venue.stops[0]["size"] == pytest.approx(100.0)
+    assert [c["oid"] for c in venue.cancels] == [old_oid]
+    assert venue.cancels[0]["protective_cleanup"] is True
+    assert get_stops()["AAA"]["units"] == pytest.approx(100.0)
+
+
+def test_stopped_out_leg_cools_down_instead_of_reopening(forven_db, monkeypatch):
+    from forven.basket_live import STOPS_KV_KEY, get_cooldowns
+
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    # A stop was recorded last pass; the venue fired it (gone from the book) and
+    # the wallet is now flat.
+    kv_set(STOPS_KV_KEY, {"stops": {"AAA": {"units": 100.0, "stop_price": 9.0, "oid": 7}}, "cooldowns": {}})
+    venue = _Exchange(mids={"AAA": 10.0}).install(monkeypatch)
+    report = reconcile_basket_live()
+    assert report["stopped_out"] == ["AAA"]
+    assert venue.market_orders == []
+    assert "cooldown" in report["orders"][0]["error"]
+    assert "AAA" in get_cooldowns()
+
+
+def test_flat_read_with_all_stops_resting_skips_the_pass(forven_db, monkeypatch):
+    """Every leg reads flat while every stop still rests: trust the stops, not
+    the read. Re-opening the whole book here would double the exposure."""
+    from forven.basket_live import STOPS_KV_KEY, get_stops
+
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    venue = _Exchange(mids={"AAA": 10.0}).install(monkeypatch)
+    venue.resting["7"] = {"oid": 7, "coin": "AAA"}
+    kv_set(STOPS_KV_KEY, {"stops": {"AAA": {"units": 100.0, "stop_price": 9.0, "oid": 7}}, "cooldowns": {}})
+    report = reconcile_basket_live()
+    assert report == {"skipped": "inconsistent wallet snapshot"}
+    assert venue.market_orders == [] and venue.cancels == []
+    assert "AAA" in get_stops()
+
+
+def test_leg_that_cannot_be_protected_is_closed(forven_db, monkeypatch):
+    from forven.basket_live import get_cooldowns
+
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    venue = _Exchange(
+        mids={"AAA": 10.0},
+        positions=[{"asset": "AAA", "size": 100.0, "direction": "long", "entry": 10.0}],
+        stop_error="trigger rejected",
+    ).install(monkeypatch)
+    report = reconcile_basket_live()
+    assert len(venue.closes) == 1 and venue.closes[0]["size"] == pytest.approx(100.0)
+    assert report["stops"][0]["action"] == "stop_failed_closed"
+    assert "AAA" in get_cooldowns()
+
+
+def test_open_refused_when_leverage_cannot_be_pinned(forven_db, monkeypatch):
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    venue = _Exchange(mids={"AAA": 10.0}, leverage_error="nope").install(monkeypatch)
+    report = reconcile_basket_live()
+    assert venue.market_orders == []
+    assert "leverage" in report["orders"][0]["error"]
+
+
+def test_stop_rebased_when_leg_is_already_past_it(forven_db, monkeypatch):
+    """A leg opened before stops existed and already 20% under water gets a stop
+    from the current price, not one that would dump it on the spot."""
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    venue = _Exchange(
+        mids={"AAA": 8.0},
+        positions=[{"asset": "AAA", "size": 125.0, "direction": "long", "entry": 10.0}],
+    ).install(monkeypatch)
+    reconcile_basket_live()
+    assert venue.stops[-1]["stop"] == pytest.approx(7.2)
+
+
+def test_disarm_flatten_cancels_the_closed_legs_stops(forven_db, monkeypatch):
+    from forven.basket_live import get_stops
+
+    _settings()
+    _paper_book({"AAA-USDT": 0.1})
+    _arm(10_000.0)
+    venue = _Exchange(mids={"AAA": 10.0}).install(monkeypatch)
+    reconcile_basket_live()
+    oid = get_stops()["AAA"]["oid"]
+    disarm_basket_live(actor="test", flatten=True)
+    assert [c["oid"] for c in venue.cancels] == [oid]
+    assert get_stops() == {}
