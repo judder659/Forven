@@ -70,7 +70,7 @@ def test_testnet_reports_only_range_clamps(forven_db, on_testnet):
 
 
 def test_settings_payload_carries_the_report(forven_db, on_mainnet):
-    from forven.api_core import get_settings
+    from forven.routers.system import get_settings
 
     _saved({"max_concurrent_positions": 25})
     payload = get_settings()

@@ -3746,14 +3746,6 @@ def get_settings():
     _arming = mainnet_arming_snapshot()
     payload["mainnet_armed"] = bool(_arming.get("armed"))
     payload["mainnet_arming"] = _arming
-    # RISK-BOUND-1 locks are applied at read time inside the risk engine; report
-    # the values actually in force so Settings never shows a saved cap as live.
-    try:
-        from forven.risk_effective import effective_risk_settings
-
-        payload["risk_effective"] = effective_risk_settings(payload)
-    except Exception:
-        log.warning("Could not compute effective risk settings", exc_info=True)
     return payload
 
 

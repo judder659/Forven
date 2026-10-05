@@ -10,9 +10,12 @@ value the enforcement path replaces, so the UI can show the value in force.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # Settings key (percent) -> key in the fraction-valued limits from _get_risk_limits.
 _PROFILE_LIMIT_KEYS = {
@@ -95,3 +98,16 @@ def effective_risk_settings(saved: Mapping[str, Any]) -> dict[str, Any]:
                 ),
             }
     return result
+
+
+def with_effective_risk(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach ``risk_effective`` to a settings payload (GET /api/settings).
+
+    Kept out of ``forven.api_core`` so the exchange import doesn't join the big
+    import cycle (tests/test_finish_db_layering.py ratchet).
+    """
+    try:
+        payload["risk_effective"] = effective_risk_settings(payload)
+    except Exception:  # noqa: BLE001 — Settings must load even if this fails
+        log.warning("Could not compute effective risk settings", exc_info=True)
+    return payload
