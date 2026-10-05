@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, unmount } from 'svelte';
 
-import { clearDirty, originalValues, pendingValues } from '../lib/settings/dirty';
+import { get } from 'svelte/store';
+import { clearDirty, dirtyFields, markField, originalValues, pendingValues } from '../lib/settings/dirty';
 
 const apiMocks = vi.hoisted(() => ({
 	getSettings: vi.fn(),
@@ -12,8 +13,14 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('$lib/api', () => apiMocks);
 
+const nav = vi.hoisted(() => ({
+	guard: null as null | ((navigation: { cancel: () => void; to: { url: URL } | null }) => void),
+}));
+
 vi.mock('$app/navigation', () => ({
-	beforeNavigate: vi.fn(),
+	beforeNavigate: vi.fn((callback) => {
+		nav.guard = callback;
+	}),
 	goto: vi.fn(),
 }));
 
@@ -106,5 +113,27 @@ describe('Settings page shell', () => {
 		await flush();
 
 		expect(apiMocks.getSettings).toHaveBeenCalled();
+	});
+
+	it('"Discard & leave" really discards the pending edits', async () => {
+		const SettingsPage = (await import('../routes/settings/+page.svelte')).default;
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(SettingsPage, { target, props: {} });
+		await flush();
+
+		markField('risk.max_daily_loss', 999);
+		expect(get(dirtyFields).size).toBe(1);
+		const cancel = vi.fn();
+		nav.guard!({ cancel, to: { url: new URL('http://localhost/approval') } });
+		await flush();
+		expect(cancel).toHaveBeenCalled();
+
+		const discard = [...target.querySelectorAll('button')].find((b) => b.textContent?.includes('Discard'));
+		discard!.click();
+		await flush();
+
+		expect(get(dirtyFields).size).toBe(0);
+		expect(get(pendingValues)).toEqual({});
 	});
 });

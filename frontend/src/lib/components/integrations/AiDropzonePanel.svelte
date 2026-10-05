@@ -22,7 +22,7 @@
 	const SESSION_STORAGE_KEY = 'forven:ai-dropzone:active-session-id';
 	const REFRESH_MS = 5000;
 	// Keep in sync with tests/test_mcp_server.py EXPECTED_TOOL_NAMES.
-	const MCP_TOOL_COUNT = 20;
+	const MCP_TOOL_COUNT = 21;
 
 	// ── State ────────────────────────────────────────────────────────────
 	let context: AiDropzoneContext | null = null;

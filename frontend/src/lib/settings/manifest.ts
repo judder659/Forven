@@ -2123,7 +2123,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Daily scan of paper strategies for live-readiness: soak, forward-positive paper PnL, the strict paper→live checklist, and a measured-cost gate (real fill skew must sit inside the modeled cost budget the strategy was validated at). Eligible candidates queue an APPROVAL with a proposed arm size — nothing goes live without the typed GO-LIVE flow.',
     usedBy: ['forven.live_graduation', 'forven.scheduler'],
-    deepLinkTo: '/approvals',
+    deepLinkTo: '/approval',
   },
   {
     id: 'risk.graduation_min_soak_days',

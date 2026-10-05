@@ -64,6 +64,8 @@
 	);
 	$: tradingMode = (settings.trading_mode as string | undefined) ?? executionMode ?? 'paper';
 	$: selfHealing = (settings.self_healing_enabled as boolean | undefined) ?? true;
+	$: onTestnet = settings.hyperliquid_testnet !== false;
+	$: mainnetArmed = Boolean(settings.mainnet_armed);
 
 	// ---- Needs-config rules ----
 	type Issue = { key: string; label: string; area: string; id?: string };
@@ -135,22 +137,24 @@
 			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Mode</div>
 			<div class="mt-1 text-lg font-bold" class:text-red-400={tradingMode === 'live'} class:text-sc-ink={tradingMode !== 'live'}>
 				{tradingMode === 'live' ? 'Live' : 'Paper'}
+				<span class="text-sm font-semibold" class:text-red-400={!onTestnet} class:text-sc-ink3={onTestnet} data-testid="home-network">· {onTestnet ? 'Testnet' : 'Mainnet'}</span>
 			</div>
-			<div class="mt-1 text-xs text-sc-ink3">Paper-trades vs. real orders.</div>
+			<div class="mt-1 text-xs text-sc-ink3">
+				{#if onTestnet}Orders go to Hyperliquid testnet.{:else}Mainnet orders {mainnetArmed ? 'are armed (real money)' : 'are refused until armed'}.{/if}
+			</div>
 		</button>
 
-		<button
-			type="button"
-			aria-label="Open system settings — kill switch ({killSwitchActive ? 'active' : 'inactive'})"
-			on:click={() => jumpTo('system')}
-			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
+		<a
+			href="/risk"
+			aria-label="Open the Risk page — kill switch ({killSwitchActive ? 'active' : 'inactive'})"
+			class="block bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
 			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Kill Switch</div>
 			<div class="mt-1 text-lg font-bold" class:text-red-400={killSwitchActive} class:text-emerald-400={!killSwitchActive}>
 				{killSwitchActive ? 'TRIPPED' : 'Armed'}
 			</div>
 			<div class="mt-1 text-xs text-sc-ink3">Emergency halt state.</div>
-		</button>
+		</a>
 
 		<button
 			type="button"
