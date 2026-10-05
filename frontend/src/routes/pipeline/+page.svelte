@@ -3,15 +3,12 @@
 	import {
 		getJobs,
 		getDashboardOverview,
-		getForvenSchedulerJobs,
 		type Job,
 		type DashboardOverview,
-		type ForvenSchedulerJob,
 		type Scan,
 	} from '$lib/api';
 	import { activeProcesses, type TrackedProcess } from '$lib/stores/processTracker';
 	import { createRealtimeRefresh } from '$lib/utils/realtime';
-	import { formatIntervalMs } from '$lib/utils/schedule';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { fetchApi } from '$lib/api/core';
@@ -21,7 +18,6 @@
 
 	let recentJobs: Job[] = [];
 	let runningJobs: Job[] = [];
-	let schedulerJobs: ForvenSchedulerJob[] = [];
 	let overview: DashboardOverview | null = null;
 	let loading = true;
 	let error: string | null = null;
@@ -54,12 +50,11 @@
 
 	async function refresh() {
 		try {
-			const [succeeded, failed, running, queued, scheduler, dash] = await Promise.allSettled([
+			const [succeeded, failed, running, queued, dash] = await Promise.allSettled([
 				getJobs('succeeded', 10),
 				getJobs('failed', 10),
 				getJobs('running', 20),
 				getJobs('queued', 20),
-				getForvenSchedulerJobs(),
 				getDashboardOverview(),
 			]);
 
@@ -76,15 +71,6 @@
 				if (running.status === 'fulfilled') backendActive.push(...running.value);
 				if (queued.status === 'fulfilled') backendActive.push(...queued.value);
 				runningJobs = backendActive.filter(j => !trackedIds.has(j.id));
-			}
-			if (scheduler.status === 'fulfilled') {
-				schedulerJobs = scheduler.value
-					.sort((a, b) => {
-						if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-						if (!a.next_run_at) return 1;
-						if (!b.next_run_at) return -1;
-						return new Date(a.next_run_at).getTime() - new Date(b.next_run_at).getTime();
-					});
 			}
 			if (dash.status === 'fulfilled') {
 				overview = dash.value;
@@ -184,15 +170,6 @@
 	}
 
 	$: totalActive = $activeProcesses.length + runningJobs.length;
-
-	function schedulerStatusColor(status: string | null | undefined): string {
-		if (!status) return 'text-sc-ink3';
-		const s = status.toLowerCase();
-		if (s === 'ok' || s === 'success' || s === 'succeeded') return 'text-emerald-400';
-		if (s === 'failed' || s === 'error') return 'text-red-400';
-		if (s === 'running') return 'text-yellow-400';
-		return 'text-sc-ink2';
-	}
 </script>
 
 <div class="p-6 space-y-6 font-mono text-sm">
@@ -201,7 +178,7 @@
 		<div class="flex items-center gap-4">
 			<div>
 				<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Pipeline</h1>
-				<p class="text-xs text-sc-ink3 mt-1">Strategy funnel, background processes, scheduler jobs, and autopilot status.</p>
+				<p class="text-xs text-sc-ink3 mt-1">Strategy funnel, background processes and autopilot status.</p>
 			</div>
 			<div class="rounded-md flex bg-sc-panel2 border border-sc-line p-0.5 ml-4">
 				<button class="px-3 py-1 text-[12px] {activeTab === 'strategies' ? 'bg-sc-line2 text-sc-ink' : 'text-sc-ink2 hover:text-sc-ink'}" on:click={() => selectTab('strategies')} data-testid="pipeline-tab-strategies">Strategies</button>
@@ -333,7 +310,7 @@
 		{/if}
 	</section>
 
-	<!-- Grid: Autopilot + Recent + Scheduler -->
+	<!-- Grid: Autopilot + Recent -->
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 		<!-- Autopilot Status -->
 		<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden">
@@ -424,49 +401,11 @@
 			{/if}
 		</section>
 
-		<!-- Scheduler — spans full width -->
-		<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden lg:col-span-2">
-			<div class="px-4 py-3 border-b border-sc-line flex justify-between items-center">
-				<h2 class="text-[14px] font-semibold text-sc-ink3">Scheduler</h2>
-				<span class="text-[11px] text-sc-ink3">{schedulerJobs.length} jobs</span>
-			</div>
-			<div class="px-4 py-2 border-b border-sc-line text-[10px] text-sc-ink3">
-				Engine cron jobs (backtests, maintenance). For LLM agent routines see <a href="/routines" class="text-sc-ink2 hover:text-sc-ink underline">Routines</a>.
-			</div>
-			{#if schedulerJobs.length === 0}
-				<div class="px-4 py-8 text-center text-sc-ink3 text-xs">
-					{loading ? 'Loading...' : 'No scheduler jobs found.'}
-				</div>
-			{:else}
-				<div class="overflow-x-auto">
-					<table class="w-full text-left border-collapse">
-						<thead>
-							<tr class="text-[10px] text-sc-ink3 uppercase border-b border-sc-line">
-								<th class="px-4 py-2 font-medium"></th>
-								<th class="px-4 py-2 font-medium">Name</th>
-								<th class="px-4 py-2 font-medium">Schedule</th>
-								<th class="px-4 py-2 font-medium text-right">Next Run</th>
-								<th class="px-4 py-2 font-medium text-right">Last Run</th>
-								<th class="px-4 py-2 font-medium text-right">Last Status</th>
-							</tr>
-						</thead>
-						<tbody class="text-xs">
-							{#each schedulerJobs as job}
-								<tr class="border-b border-sc-line hover:bg-sc-panel2 transition-colors {!job.enabled ? 'opacity-40' : ''}">
-									<td class="px-4 py-2">
-										<span class="w-2 h-2 rounded-full inline-block {job.enabled ? 'bg-emerald-400' : 'bg-sc-line2'}"></span>
-									</td>
-									<td class="px-4 py-2 text-sc-ink2 whitespace-nowrap">{job.name || '-'}</td>
-									<td class="px-4 py-2 text-sc-ink3 font-mono text-[11px]">{job.schedule_type === 'interval' ? formatIntervalMs(job.schedule_expr) : job.schedule_expr || '-'}</td>
-									<td class="px-4 py-2 text-right text-sc-ink2 tabular-nums">{timeAgo(job.next_run_at)}</td>
-									<td class="px-4 py-2 text-right text-sc-ink2 tabular-nums">{timeAgo(job.last_run_at)}</td>
-									<td class="px-4 py-2 text-right font-bold uppercase {schedulerStatusColor(job.last_status)}">{job.last_status || '-'}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{/if}
+		<!-- Scheduled jobs live on Agents → Schedules (filters, editing, toggles). -->
+		<section class="rounded-md border border-sc-line bg-sc-panel px-4 py-3 lg:col-span-2 text-xs text-sc-ink3">
+			Scheduled jobs, including routines, are on
+			<a href="/agents?tab=schedules" class="text-sc-ink2 underline hover:text-sc-ink">Agents → Schedules</a>,
+			where you can also edit and pause them.
 		</section>
 	</div>
 	{/if}

@@ -82,7 +82,7 @@ export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'hyperliquid', label: 'HyperLiquid', description: 'Credentials, wallets & sub-accounts, spot/perp balances, direction books — all Hyperliquid setup in one place.', deepLinks: [{ label: 'Bot Factory', href: '/bot-factory' }] },
   { id: 'notifications', label: 'Notifications', description: 'Which events pop up in the app or go to Discord, sidebar badges, and the Discord connection.', deepLinks: [] },
   { id: 'system', label: 'System', description: 'API keys, remote engine, bot operations, health & telemetry.', deepLinks: [] },
-  { id: 'danger', label: 'Danger Zone', description: 'Factory reset, credential purge.', deepLinks: [], danger: true },
+  { id: 'danger', label: 'Danger Zone', description: 'Factory reset.', deepLinks: [], danger: true },
 ];
 
 export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [

@@ -223,7 +223,7 @@
 							/>
 						</div>
 					{:else if step.id === 'ai'}
-						<SettingsAgents variant="wizard" />
+						<SettingsAgents />
 					{:else if step.id === 'notifications'}
 						<SettingsNotifications {settings} />
 					{:else if step.id === 'done'}
