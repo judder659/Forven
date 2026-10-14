@@ -291,6 +291,18 @@ def test_pending_codes_never_drain_but_a_fail_counts():
     assert "holdout_reject" not in RETRYABLE_BLOCK_REASON_CODES
 
 
+def test_spent_holdout_budget_is_rechecked_slowly_not_every_ten_minutes():
+    from forven.gauntlet import engine as gauntlet_engine
+
+    # The budget only refills at the quarterly roll; a 10-minute re-check
+    # repeated the same rejection ~144 times a day per strategy.
+    assert gauntlet_engine._requeue_backoff_minutes(0, "holdout_budget_exhausted") >= 360.0
+    # A queued/running held-back test still resolves within minutes.
+    assert gauntlet_engine._requeue_backoff_minutes(0, "holdout_pending") == (
+        gauntlet_engine._GATE_CONTENTION_BACKOFF_MINUTES
+    )
+
+
 def test_stuck_gauntlet_sweep_treats_waiting_as_pending():
     from forven.evolution import _is_pending_evidence_gate_reason
 
