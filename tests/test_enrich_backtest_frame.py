@@ -343,3 +343,76 @@ def test_load_backtest_candles_gains_order_flow_columns(tmp_path, monkeypatch):
     # No row eviction from the enrichment join.
     assert len(frame) == 48
     assert isinstance(frame.index, pd.DatetimeIndex)
+
+
+def _write_oi(tmp_path, n: int = 48, symbol: str = "BTC-USDT", tf: str = "1h") -> None:
+    ts = pd.date_range("2026-01-01", periods=n, freq="1h", tz="UTC")
+    df = pd.DataFrame({"timestamp": ts, "open_interest": np.linspace(1000.0, 2000.0, n)})
+    _save_stream_parquet(df, tmp_path / "oi" / symbol / f"{tf}.parquet", "oi", symbol)
+
+
+def test_order_flow_exclude_streams_keeps_oi_only_when_market_join_supplied_it():
+    from forven.strategies.backtest import _order_flow_exclude_streams
+
+    frame = _backtest_frame()
+    assert _order_flow_exclude_streams(frame) == ("funding",)
+    frame["open_interest"] = 1.0
+    assert _order_flow_exclude_streams(frame) == ("funding", "oi")
+
+
+def test_load_backtest_candles_falls_back_to_oi_lake_when_market_join_has_none(tmp_path, monkeypatch):
+    """Binance's OI history endpoint only covers ~30 days, so a deep-history
+    window gets no OI from _enrich_with_market_data. The local OI lake must fill
+    open_interest instead of leaving the column absent (KeyError in every
+    strategy that reads it), while funding stays excluded."""
+    import forven.strategies.backtest as backtest_mod
+
+    _write_oi(tmp_path)
+    _write_binance_funding(tmp_path)
+
+    ts = pd.date_range("2026-01-01", periods=48, freq="1h", tz="UTC")
+    raw = pd.DataFrame(
+        {"timestamp": ts, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 10.0}
+    )
+
+    monkeypatch.setattr("forven.data.load_parquet", lambda *a, **k: raw.copy())
+    monkeypatch.setattr(backtest_mod, "_dataset_symbol_candidates", lambda asset: ["BTC-USDT"])
+    monkeypatch.setattr(backtest_mod, "_resolve_point_in_time_as_of", lambda: None)
+    # Market-data join returns funding but no OI (the >30-day Binance case).
+    monkeypatch.setattr(
+        backtest_mod,
+        "_resolve_market_data_series",
+        lambda asset, start_ms, end_ms: ([(int(ts[0].timestamp() * 1000), 0.0001)], []),
+    )
+
+    with _patch_dirs(tmp_path):
+        frame = backtest_mod.load_backtest_candles("BTC-USDT", bars=48, timeframe="1h")
+
+    assert "open_interest" in frame.columns
+    assert frame["open_interest"].iloc[-1] == 2000.0
+    # Funding still comes from the market-data join, never the per-8h lake.
+    assert (frame["funding_rate"] == 0.0001).all()
+
+
+def test_load_backtest_candles_market_join_oi_is_not_replaced_by_lake(tmp_path, monkeypatch):
+    import forven.strategies.backtest as backtest_mod
+
+    _write_oi(tmp_path)
+    ts = pd.date_range("2026-01-01", periods=48, freq="1h", tz="UTC")
+    raw = pd.DataFrame(
+        {"timestamp": ts, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 10.0}
+    )
+
+    monkeypatch.setattr("forven.data.load_parquet", lambda *a, **k: raw.copy())
+    monkeypatch.setattr(backtest_mod, "_dataset_symbol_candidates", lambda asset: ["BTC-USDT"])
+    monkeypatch.setattr(backtest_mod, "_resolve_point_in_time_as_of", lambda: None)
+    monkeypatch.setattr(
+        backtest_mod,
+        "_resolve_market_data_series",
+        lambda asset, start_ms, end_ms: ([], [(int(ts[0].timestamp() * 1000), 7.0)]),
+    )
+
+    with _patch_dirs(tmp_path):
+        frame = backtest_mod.load_backtest_candles("BTC-USDT", bars=48, timeframe="1h")
+
+    assert (frame["open_interest"] == 7.0).all()

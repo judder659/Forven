@@ -2189,7 +2189,9 @@ def test_enrich_scan_frame_passes_pair_form_to_data_manager(monkeypatch):
 
     assert seen["symbol"] == "BTC/USDT"  # NOT the bare "BTC" that misses the parquet dir
     assert seen["timeframe"] == "4h"
-    assert "funding" in seen["exclude"] and "oi" in seen["exclude"]
+    # Funding always comes from the market-data join. That join returned no OI
+    # here, so the local OI lake is allowed to fill open_interest.
+    assert "funding" in seen["exclude"] and "oi" not in seen["exclude"]
 
 
 def test_enrich_scan_frame_preserves_explicit_pair_symbol(monkeypatch):

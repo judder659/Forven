@@ -40,6 +40,14 @@ _TRANSIENT_MAX_ATTEMPTS = 8
 _REQUEUE_BACKOFF_BASE_MINUTES = 2.0
 _REQUEUE_BACKOFF_CAP_MINUTES = 30.0
 _GATE_CONTENTION_BACKOFF_MINUTES = 10.0
+# Blocks that cannot clear on a short cadence get a slower re-check. A family's
+# held-back test budget only refills at the next quarterly roll, so re-running the
+# gate every 10 minutes just repeated the same rejection ~144 times a day per
+# strategy (and wrote a gauntlet->gauntlet event each time). Six hours still picks
+# up the roll the same day it happens.
+_SLOW_BLOCK_BACKOFF_MINUTES = {
+    "holdout_budget_exhausted": 360.0,
+}
 # Blocks that must NEVER be drained to a terminal failed_gate (retried forever).
 #   * ``gate_contention`` — a fully-passing strategy waiting for a capital slot.
 #   * ``awaiting_data_backfill`` — the screen needs more OHLCV history than is
@@ -140,6 +148,8 @@ def _effective_max_attempts(row_max_attempts: object) -> int:
 
 
 def _requeue_backoff_minutes(attempt_count: object, reason_code: str) -> float:
+    if reason_code in _SLOW_BLOCK_BACKOFF_MINUTES:
+        return _SLOW_BLOCK_BACKOFF_MINUTES[reason_code]
     if reason_code in _NO_DRAIN_REASON_CODES:
         return _GATE_CONTENTION_BACKOFF_MINUTES
     try:
