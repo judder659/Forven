@@ -349,6 +349,82 @@ def test_beta_drift_needs_minimum_history(forven_db, monkeypatch):
     assert emitted == []
 
 
+def _drifting_state(name: str = "funding_carry") -> dict:
+    from forven.basket_runtime import _fresh_state
+
+    state = _fresh_state("x")
+    state["name"] = name
+    state["history"] = [
+        {"t": f"h{i}", "equity": 1.0, "funding_pnl": 0.0001, "price_pnl": 0.002, "cost": 0.0}
+        for i in range(60)
+    ]
+    return state
+
+
+def test_beta_drift_alerts_once_per_day_not_every_tick(forven_db, monkeypatch):
+    from datetime import datetime, timezone
+
+    from forven import basket_runtime
+    import forven.notifications as notifications
+
+    emitted = []
+    monkeypatch.setattr(
+        notifications, "emit_notification",
+        lambda event_type, **kw: emitted.append((event_type, kw)) or {},
+    )
+    state = _drifting_state()
+    start = datetime(2026, 10, 6, 0, 0, tzinfo=timezone.utc)
+    for hour in range(48):  # two days of hourly ticks while drift persists
+        basket_runtime._check_beta_drift(state, start + timedelta(hours=hour))
+    assert len(emitted) == 2
+
+    # Recovery clears the marker, so a fresh episode alerts immediately.
+    state["history"] = [
+        {"t": f"r{i}", "equity": 1.0, "funding_pnl": 0.002, "price_pnl": 0.0001, "cost": 0.0}
+        for i in range(60)
+    ]
+    basket_runtime._check_beta_drift(state, start + timedelta(hours=48))
+    assert "beta_drift_alerted_at" not in state
+    state["history"] = _drifting_state()["history"]
+    basket_runtime._check_beta_drift(state, start + timedelta(hours=49))
+    assert len(emitted) == 3
+
+
+def test_beta_drift_names_each_book_separately(forven_db, monkeypatch):
+    from forven import basket_runtime
+    import forven.notifications as notifications
+
+    emitted = []
+    monkeypatch.setattr(
+        notifications, "emit_notification",
+        lambda event_type, **kw: emitted.append((event_type, kw)) or {},
+    )
+    basket_runtime._check_beta_drift(_drifting_state("funding_carry"))
+    basket_runtime._check_beta_drift(_drifting_state("funding_carry_hl"))
+    assert len(emitted) == 2
+    assert "Binance-ranked" in emitted[0][1]["title"]
+    assert "HL-native" in emitted[1][1]["title"]
+    assert emitted[0][1]["dedupe_key"] != emitted[1][1]["dedupe_key"]
+
+
+def test_tick_persists_beta_drift_marker(forven_db, monkeypatch):
+    import forven.notifications as notifications
+
+    emitted = []
+    monkeypatch.setattr(
+        notifications, "emit_notification",
+        lambda event_type, **kw: emitted.append((event_type, kw)) or {},
+    )
+    panel = _panel()
+    now = panel.index[-1].to_pydatetime() + timedelta(minutes=30)
+    state = _drifting_state()
+    new_state, report = tick_basket(state, panel, now, _config())
+    assert report["ticked"]
+    assert emitted and new_state.get("beta_drift_alerted_at") == now.isoformat()
+    tick_basket(new_state, panel, now + timedelta(hours=1), _config())
+    assert len(emitted) == 1
+
+
 # -------------------------------------------------------- HL-native book
 
 
