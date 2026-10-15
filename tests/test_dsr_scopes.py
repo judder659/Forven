@@ -251,23 +251,49 @@ def test_same_origin_counts_only_the_candidates_searcher(forven_db):
 
 
 def test_non_trials_never_count(forven_db):
-    """Crashes, data blocks, no-signal and short-history archives are not trials, whatever the prefix."""
+    """A trial is a judgeable backtest; the archive label alone neither makes nor unmakes one."""
     _seed("S-1")
     _seed("M1", stage="archived", trades=35)                                    # merit: counts
+    _seed("T1", stage="archived", trades=621,                                   # ran for real, then lost
+          status_reason="tier2:no runtime class registered for strategy type")  # its class: counts
     _seed("N1", stage="archived")                                               # crashed: no backtest
     _seed("N2", stage="archived", trades=0)                                     # ran, no trades
+    _seed("U1", stage="rejected", trades=19)                                    # merit label, under the floor
     _seed("N3", stage="archived", trades=11,
           status_reason="untestable:no_signal: 11 trades in the quick-screen window (min 20)")
-    _seed("N4", stage="archived", trades=5, status_reason="lookahead not verifiable: no signal")
+    _seed("U2", stage="archived", trades=300,                                   # untestable verdict wins
+          status_reason="untestable:insufficient_history: too short to validate")
+    _seed("N4", stage="archived", trades=25, status_reason="lookahead not verifiable: no signal")
     _seed("N5", stage="archived", status_reason="tier2:no runtime class registered")
     _seed("N6", stage="archived", status_reason="data_blocked: funding missing")
     _seed("N7", stage="rejected", trades=8, status_reason="sandbox_validation: KeyError 'oi'")
-    _seed("N8", stage="archived", trades=12, status_reason="lookahead_blocked: probe")
+    _seed("N8", stage="archived", trades=40, status_reason="lookahead_blocked: probe")
 
     for scope in ("same_origin", "all"):
         out = ds._swarm_cluster_breakdown("S-1", 0, scope)
-        assert out["attempts"] == 1, scope
-        assert out["non_trials_excluded"] == 8, scope
+        assert out["attempts"] == 2, scope
+        assert out["non_trials_excluded"] == 10, scope
+
+
+def test_trial_floor_follows_the_quick_screen_setting(forven_db, monkeypatch):
+    _seed("S-floor")
+    _seed("F1", stage="rejected", trades=8)
+    _seed_confirmation("S-floor", is_trades=len(_IS), write_is_artifact=True)
+    _stub_oos(monkeypatch)
+
+    _config(monkeypatch)  # no quick_screen block -> the default floor (20)
+    assert ds.compute_strategy_dsr("S-floor", dry_run=True)["swarm_cluster_attempts"] == 0
+    monkeypatch.setattr(
+        "forven.policy.load_pipeline_config",
+        lambda: {"quick_screen": {"min_trades": 5}, "robustness_thresholds": {}},
+    )
+    assert ds.compute_strategy_dsr("S-floor", dry_run=True)["swarm_cluster_attempts"] == 1
+
+
+def test_judgeable_trade_count_matches_the_quick_screen():
+    assert ds._judgeable_trade_count({"total_trades": 3, "in_sample": {"total_trades": 22}}) == 22
+    assert ds._judgeable_trade_count({"out_of_sample": {"trades": 25}}) == 25
+    assert ds._judgeable_trade_count({}) == 0
 
 
 def test_deleted_backtest_is_not_a_trial(forven_db):

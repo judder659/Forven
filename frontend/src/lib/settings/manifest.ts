@@ -1697,7 +1697,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendSection: 'pipeline',
     backendPath: 'robustness_thresholds.dsr_swarm_scope',
     description:
-      'Whose failed siblings count in the DSR swarm-trials factor. Same search origin = only the candidate\'s own origin (Drop Zone, in-app agents, or another source), so one searcher\'s mass failures do not deflate another\'s survivor. All origins = every failed sibling. Under both, siblings that were never a real trial (no completed backtest with trades, or archived as untestable / data-blocked / no runtime) are excluded.',
+      'Whose failed siblings count in the DSR swarm-trials factor. Same search origin = only the candidate\'s own origin (Drop Zone, in-app agents, or another source), so one searcher\'s mass failures do not deflate another\'s survivor. All origins = every failed sibling. Under both, siblings that were never a real trial are excluded: no completed backtest reaching the quick-screen trade minimum, or an untestable / lookahead verdict.',
     usedBy: ['forven.gauntlet.deflated_sharpe'],
   },
   // Parameter-jitter compute bounds (the heaviest robustness step: N full-window

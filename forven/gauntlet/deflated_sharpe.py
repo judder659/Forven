@@ -37,8 +37,12 @@ the DSR is computed over:
   the candidate's own search origin (see ``strategy_origin``); ``"all"``
   (legacy) counts every origin, so one searcher's mass failures deflated
   another's survivor. Under either scope a sibling counts only when it was a
-  real trial: a completed backtest with trades, and not archived for a
-  non-merit reason (``_NON_TRIAL_REASON_PREFIXES``).
+  real trial: a completed backtest the quick screen could judge (at least
+  ``quick_screen.min_trades`` trades, counted the way the quick screen counts
+  them), and no untestable or lookahead verdict
+  (``_NON_TRIAL_REASON_PREFIXES``). The archive label is not trusted beyond
+  that: a "tier2: no runtime class" archive that ran hundreds of trades was a
+  trial, and a merit archive with no judgeable backtest was not.
 """
 
 from __future__ import annotations
@@ -58,16 +62,14 @@ SWARM_SCOPE_SAME_ORIGIN = "same_origin"
 SWARM_SCOPE_ALL = "all"
 SWARM_SCOPES = (SWARM_SCOPE_SAME_ORIGIN, SWARM_SCOPE_ALL)
 
-# status_reason prefixes of archives that were never a fair trial: the code did
-# not run, emitted no signal, read future bars, lacked data, or never got a
-# runtime class. Lower-cased; matched with startswith.
+# status_reason prefixes that are verdicts on the TEST, not the strategy: the
+# codebase's untestable marker (no signal, broken code, short history, ...) and
+# the lookahead verdicts (results not valid). Such a sibling is never a trial,
+# even when an earlier backtest produced trades. Lower-cased; startswith.
 _NON_TRIAL_REASON_PREFIXES = (
     "untestable:",
     "lookahead not verifiable",
     "lookahead_blocked",
-    "tier2:",
-    "data_blocked",
-    "sandbox_validation",
 )
 
 
@@ -361,14 +363,35 @@ def _base_asset(symbol: object) -> str:
     return text
 
 
-def _sibling_trial_ids(conn, strategy_ids: list[str]) -> set[str]:
-    """Ids among ``strategy_ids`` with a completed backtest that produced trades.
+def _judgeable_trade_count(metrics: dict) -> float:
+    """Trades in one backtest row, counted like the quick screen counts them.
 
-    A sibling without one never yielded a Sharpe to select from (crashed,
-    blocked on data, emitted nothing), so it is not a trial.
+    The larger of the headline, out-of-sample and in-sample counts (see
+    gauntlet.tasks._quick_screen_trade_count).
+    """
+    from forven.policy import metrics_trade_count
+
+    counts = [
+        metrics_trade_count(section)
+        for section in (
+            metrics,
+            metrics.get("out_of_sample") or metrics.get("oos"),
+            metrics.get("in_sample") or metrics.get("is"),
+        )
+    ]
+    return max((float(c) for c in counts if c is not None), default=0.0)
+
+
+def _sibling_trial_ids(conn, strategy_ids: list[str], min_trades: int) -> set[str]:
+    """Ids among ``strategy_ids`` with a completed backtest holding ``min_trades``.
+
+    A sibling without one never yielded a Sharpe the quick screen could judge
+    (it crashed, was blocked on data, or traded too rarely), so nothing was
+    selected on it and it is not a trial.
     """
     import json
 
+    floor = max(float(min_trades), 1.0)
     found: set[str] = set()
     for i in range(0, len(strategy_ids), 500):
         chunk = strategy_ids[i : i + 500]
@@ -388,28 +411,30 @@ def _sibling_trial_ids(conn, strategy_ids: list[str]) -> set[str]:
                 metrics = json.loads(row["metrics_json"]) if row["metrics_json"] else {}
             except (TypeError, ValueError):
                 continue
-            if not isinstance(metrics, dict):
-                continue
-            in_sample = metrics.get("in_sample") if isinstance(metrics.get("in_sample"), dict) else {}
-            for value in (metrics.get("total_trades"), in_sample.get("total_trades")):
-                try:
-                    if float(value or 0) > 0:
-                        found.add(sid)
-                        break
-                except (TypeError, ValueError):
-                    continue
+            if isinstance(metrics, dict) and _judgeable_trade_count(metrics) >= floor:
+                found.add(sid)
     return found
 
 
+def _default_trial_min_trades() -> int:
+    from forven.policy import DEFAULT_PIPELINE_CONFIG
+
+    return int(DEFAULT_PIPELINE_CONFIG["quick_screen"]["min_trades"])
+
+
 def _swarm_cluster_breakdown(
-    strategy_id: str, lookback_days: int, scope: str = SWARM_SCOPE_SAME_ORIGIN
+    strategy_id: str,
+    lookback_days: int,
+    scope: str = SWARM_SCOPE_SAME_ORIGIN,
+    min_trades: int | None = None,
 ) -> dict:
     """Same-cluster (family x asset) siblings that were real trials and failed.
 
     The swarm-level selection pressure behind this survivor. A sibling counts
-    when it was rejected/archived inside the lookback, was not archived for a
-    non-merit reason, has a completed backtest with trades, and (under
-    ``same_origin``) came from the candidate's own search origin. ``attempts``
+    when it was rejected/archived inside the lookback, carries no untestable or
+    lookahead verdict, has a completed backtest with at least ``min_trades``
+    trades (the quick-screen floor), and (under ``same_origin``) came from the
+    candidate's own search origin. ``attempts``
     is 0 when the family or asset cannot be placed in a cluster and on ANY
     error: the swarm factor is advisory and must never take down the base DSR.
     """
@@ -426,6 +451,7 @@ def _swarm_cluster_breakdown(
         from forven.db import get_db
         from forven.strategy_diversity import infer_strategy_family
 
+        floor = _default_trial_min_trades() if min_trades is None else int(min_trades)
         columns = (
             "id, type, runtime_type, name, symbol, status_reason, "
             "source, origin_agent_id, dropzone_session_id"
@@ -469,10 +495,10 @@ def _swarm_cluster_breakdown(
                     (same_origin if sibling_origin == origin else other).append(sibling)
                 cluster = same_origin
             candidates = [s for s in cluster if not _is_non_trial_reason(s["status_reason"])]
-            trial_ids = _sibling_trial_ids(conn, [str(s["id"]) for s in candidates])
+            trial_ids = _sibling_trial_ids(conn, [str(s["id"]) for s in candidates], floor)
             # Reported only: other-origin failures that WOULD have counted.
             other_candidates = [s for s in other if not _is_non_trial_reason(s["status_reason"])]
-            other_ids = _sibling_trial_ids(conn, [str(s["id"]) for s in other_candidates])
+            other_ids = _sibling_trial_ids(conn, [str(s["id"]) for s in other_candidates], floor)
         attempts = sum(1 for s in candidates if str(s["id"]) in trial_ids)
         out["attempts"] = attempts
         out["non_trials_excluded"] = len(cluster) - attempts
@@ -484,10 +510,13 @@ def _swarm_cluster_breakdown(
 
 
 def _swarm_cluster_attempts(
-    strategy_id: str, lookback_days: int, scope: str = SWARM_SCOPE_SAME_ORIGIN
+    strategy_id: str,
+    lookback_days: int,
+    scope: str = SWARM_SCOPE_SAME_ORIGIN,
+    min_trades: int | None = None,
 ) -> int:
     """Real-trial, same-cluster failed siblings (see _swarm_cluster_breakdown)."""
-    return int(_swarm_cluster_breakdown(strategy_id, lookback_days, scope).get("attempts") or 0)
+    return int(_swarm_cluster_breakdown(strategy_id, lookback_days, scope, min_trades).get("attempts") or 0)
 
 
 def _load_confirmation_in_sample_trades(
@@ -572,9 +601,10 @@ def compute_strategy_dsr(
         try:
             from forven.policy import load_pipeline_config
 
-            rob = load_pipeline_config().get("robustness_thresholds", {}) or {}
+            pipeline_config = load_pipeline_config() or {}
         except Exception:
-            rob = {}
+            pipeline_config = {}
+        rob = pipeline_config.get("robustness_thresholds", {}) or {}
         if default_trials is None:
             try:
                 default_trials = int(rob.get("deflated_sharpe_default_trials", 50) or 50)
@@ -685,7 +715,12 @@ def compute_strategy_dsr(
                 lookback = int(rob.get("dsr_swarm_lookback_days", 90))
             except (TypeError, ValueError):
                 lookback = 90
-            swarm = _swarm_cluster_breakdown(strategy_id, lookback, resolve_swarm_scope(rob))
+            quick = pipeline_config.get("quick_screen") if isinstance(pipeline_config.get("quick_screen"), dict) else {}
+            try:
+                trial_floor = int(float(quick.get("min_trades", _default_trial_min_trades())))
+            except (TypeError, ValueError):
+                trial_floor = _default_trial_min_trades()
+            swarm = _swarm_cluster_breakdown(strategy_id, lookback, resolve_swarm_scope(rob), trial_floor)
             swarm_attempts = int(swarm.get("attempts") or 0)
 
         n_trials = n_trials_base * (1 + swarm_attempts)
