@@ -239,6 +239,7 @@ from forven.settings_apply import (  # noqa: F401
 # through the hottest code in the repo. They stay until those seams are
 # rewritten to patch the owning module instead.
 from forven.backtest_api import (  # noqa: F401
+    IN_SAMPLE_TRADES_ARTIFACT_SUFFIX,
     _BACKTEST_DISPLAY_EQUITY,
     _backtest_trash_table,
     _build_backtest_chart_context_payload,
@@ -278,6 +279,7 @@ from forven.backtest_api import (  # noqa: F401
     _write_backtest_chart_artifacts,
     _write_backtest_result_artifacts,
     calculate_backtest_verdict,
+    load_in_sample_trades,
 )
 
 
