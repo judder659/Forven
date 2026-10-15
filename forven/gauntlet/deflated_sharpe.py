@@ -199,12 +199,22 @@ def _latest_trial_sharpe_var(opt_metrics: dict | None, opt_config: dict | None) 
     return None
 
 
+# An optimization that evaluated ONE combination searched nothing: an imported
+# strategy with no captured parameter space runs a one-combo grid of the author's
+# own params (optimizer._get_param_space), and a choice list misread as a range
+# used to collapse a grid to one value. Its "n_trials: 1" says nothing about how
+# the params were chosen, so it must not replace the configured default trial
+# count (which would zero the selection benchmark and turn the DSR into
+# P(Sharpe > 0)). Rows declaring more than this are real search breadth.
+_UNSEARCHED_TRIALS = 1
+
+
 def _latest_n_trials(opt_metrics: dict | None, opt_config: dict | None, default_trials: int) -> int:
     for blob in (opt_metrics, opt_config):
         if isinstance(blob, dict) and blob.get("n_trials") is not None:
             try:
                 n = int(float(blob.get("n_trials")))
-                if n > 0:
+                if n > _UNSEARCHED_TRIALS:
                     return n
             except (TypeError, ValueError):
                 continue
@@ -212,12 +222,16 @@ def _latest_n_trials(opt_metrics: dict | None, opt_config: dict | None, default_
 
 
 def _row_n_trials(opt_metrics: dict | None, opt_config: dict | None) -> int:
-    """n_trials declared by ONE optimization row (0 when the row declares none)."""
+    """n_trials declared by ONE optimization row (0 when the row declares none).
+
+    A row declaring a single trial searched nothing (see ``_UNSEARCHED_TRIALS``)
+    and declares no selection breadth.
+    """
     for blob in (opt_metrics, opt_config):
         if isinstance(blob, dict) and blob.get("n_trials") is not None:
             try:
                 n = int(float(blob.get("n_trials")))
-                if n > 0:
+                if n > _UNSEARCHED_TRIALS:
                     return n
             except (TypeError, ValueError):
                 continue
@@ -449,7 +463,14 @@ def compute_strategy_dsr(
         n_trials = n_trials_base * (1 + swarm_attempts)
         trial_var = _latest_trial_sharpe_var(opt_metrics, opt_config)
         result = deflated_sharpe_ratio(returns, n_trials, trial_var)
-        result["trials_source"] = ("optimization_result" if opt else "default") + (
+        if n_optimization_runs > 0:
+            trials_base_source = "optimization_result"
+        elif opt:
+            # Optimization rows exist but none searched more than one combination.
+            trials_base_source = "default_unsearched_optimization"
+        else:
+            trials_base_source = "default"
+        result["trials_source"] = trials_base_source + (
             "+swarm" if swarm_attempts > 0 else ""
         )
         result["n_trials_base"] = int(n_trials_base)

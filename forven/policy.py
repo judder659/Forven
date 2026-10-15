@@ -4845,14 +4845,25 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
             # not just the newest (dsr-trials-only-latest-optimization).
             runs_n = int(dsr_info.get("n_optimization_runs") or 0)
             runs_note = f"{runs_n} optimization runs totalling " if runs_n > 1 else ""
+            # The optimizer searched no parameters (or never ran): the base is the
+            # configured default trial count, not a measured optimizer breadth.
+            base_is_default = str(dsr_info.get("trials_source") or "").startswith("default")
+            base_label = "default" if base_is_default else "optimizer"
             if swarm_n > 0:
                 trials_note = (
                     f"~{dsr_info.get('n_trials')} effective trials "
-                    f"({runs_note}{dsr_info.get('n_trials_base')} optimizer x "
+                    f"({runs_note}{dsr_info.get('n_trials_base')} {base_label} x "
                     f"{swarm_n + 1} swarm attempts in this idea-cluster)"
                 )
             else:
                 trials_note = f"{runs_note}{dsr_info.get('n_trials')} trials"
+                if base_is_default:
+                    trials_note += " (default count)"
+            if str(dsr_info.get("trials_source") or "").startswith("default_unsearched_optimization"):
+                trials_note += (
+                    "; the optimizer searched no parameters, so the default trial count "
+                    "applies — declare parameter_space() to have the search measured"
+                )
             return False, (
                 f"DSR REJECT: Deflated Sharpe {float(dsr_val):.2f} below {min_dsr:.2f} "
                 f"target (likely a selection artifact across {trials_note})"

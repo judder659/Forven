@@ -246,6 +246,64 @@ def _expand_range_dict_spec(spec: dict) -> list | None:
     return values or None
 
 
+def _range_values(low, high, step) -> list:  # noqa: ANN001
+    """Values of a ``(low, high, step)`` range tuple: ``low``, ``low + step``, ... <= ``high``."""
+    values = []
+    v = low
+    while v <= high:
+        values.append(v)
+        v += step
+    return values
+
+
+def _is_numeric_triple(spec: object) -> bool:
+    return isinstance(spec, (list, tuple)) and len(spec) == 3 and all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in spec
+    )
+
+
+def _is_choice_triple(spec: object) -> bool:
+    """A 3-item LIST that can only be a choice list, not a ``(low, high, step)`` range.
+
+    JSON turns a range tuple into a list, so a stored ``[a, b, c]`` is ambiguous.
+    Read as a range, a strictly increasing triple has ``step = c > b - a`` and
+    yields the single value ``a``: no author writes a range that searches one
+    value, but ``[168, 336, 720]`` is a common way to list three choices. Read
+    those as choices; every other triple keeps the range reading.
+    """
+    if not isinstance(spec, list) or len(spec) != 3:
+        return False
+    if not _is_numeric_triple(spec):
+        return True  # ["fast", "slow", "mid"] has no range reading at all
+    low, high, step = spec
+    return low < high < step and low + step > high
+
+
+def _axis_values(spec: object) -> list:
+    """Candidate values for one grid axis.
+
+    Accepted specs: ``{"min", "max", "step"}``; ``{"values": [...]}`` (explicit
+    choices) and ``{"range": [low, high, step]}`` (an explicit range tuple), the
+    two forms the sandbox worker stores for imported strategies so JSON cannot
+    blur them; a ``(low, high, step)`` tuple; a list of choices (a 3-item list is
+    read as a range unless ``_is_choice_triple``); or a single value.
+    """
+    expanded = _expand_range_dict_spec(spec)
+    if expanded is not None:
+        return expanded
+    if isinstance(spec, dict):
+        if isinstance(spec.get("values"), list):
+            return list(spec["values"])
+        rng = spec.get("range")
+        if _is_numeric_triple(rng):
+            return _range_values(*rng)
+    if _is_numeric_triple(spec) and not _is_choice_triple(spec):
+        return _range_values(*spec)
+    if isinstance(spec, list):
+        return spec
+    return [spec]
+
+
 def _normalize_explicit_param_space(param_space: dict | None) -> dict | None:
     if not isinstance(param_space, dict) or not param_space:
         return None
@@ -385,41 +443,12 @@ def grid_search(
     param_ranges: list[list] = []
 
     for name in param_space:
-        spec = param_space[name]
-        expanded = _expand_range_dict_spec(spec)
-        if expanded is not None:
-            param_ranges.append(expanded)
-        elif isinstance(spec, (list, tuple)) and len(spec) == 3:
-            low, high, step = spec
-            values = []
-            v = low
-            while v <= high:
-                values.append(v)
-                v += step
-            param_ranges.append(values)
-        elif isinstance(spec, list):
-            param_ranges.append(spec)
-        else:
-            param_ranges.append([spec])
+        param_ranges.append(_axis_values(param_space[name]))
         axes.append(("param", name))
 
     for name in execution_param_space:
         spec = execution_param_space[name]
-        expanded = _expand_range_dict_spec(spec)
-        if expanded is not None:
-            values = expanded
-        elif isinstance(spec, (list, tuple)) and len(spec) == 3:
-            low, high, step = spec
-            values = []
-            v = low
-            while v <= high:
-                values.append(v)
-                v += step
-        elif isinstance(spec, list):
-            values = spec
-        else:
-            values = [spec]
-        values = _sanitize_execution_axis_values(name, values)
+        values = _sanitize_execution_axis_values(name, _axis_values(spec))
         if not values:
             log.warning("Grid search %s: skipping invalid execution axis %s=%s", strategy_id, name, spec)
             continue
