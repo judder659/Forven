@@ -93,7 +93,7 @@ def test_grid_search_evaluates_every_listed_choice(monkeypatch):
 _RETURNS = [0.02] * 60 + [-0.005] * 40
 
 
-def _seed(sid: str, opt_metrics: list[dict]) -> None:
+def _seed(sid: str, opt_metrics: list[dict], opt_config: dict | None = None) -> None:
     from forven.db import get_db
 
     with get_db() as conn:
@@ -108,9 +108,10 @@ def _seed(sid: str, opt_metrics: list[dict]) -> None:
         )
         for i, metrics in enumerate(opt_metrics):
             conn.execute(
-                "INSERT INTO backtest_results (result_id, strategy_id, result_type, metrics_json, created_at)"
-                " VALUES (?,?,?,?,datetime('now', ?))",
-                (f"opt-{sid}-{i}", sid, "optimization", json.dumps(metrics), f"-{i} minutes"),
+                "INSERT INTO backtest_results (result_id, strategy_id, result_type, metrics_json, config_json, created_at)"
+                " VALUES (?,?,?,?,?,datetime('now', ?))",
+                (f"opt-{sid}-{i}", sid, "optimization", json.dumps(metrics),
+                 json.dumps(opt_config or {}), f"-{i} minutes"),
             )
 
 
@@ -146,3 +147,21 @@ def test_a_real_search_keeps_its_measured_breadth(forven_db, monkeypatch):
     assert out["n_trials"] == 81  # the one-combo rerun adds nothing
     assert out["trials_source"] == "optimization_result"
     assert out["n_optimization_runs"] == 1
+
+
+def test_unsearched_run_never_inherits_its_requested_budget(forven_db, monkeypatch):
+    """MCP / agent optimizations store the requested budget (50) in config_json; the
+    metrics' measured 1 is authoritative, so the row still counts as unsearched."""
+    _seed("S-requested", [{"n_trials": 1}], opt_config={"n_trials": 50})
+    out = _dsr("S-requested", monkeypatch)
+
+    assert out["trials_source"] == "default_unsearched_optimization"
+    assert out["n_optimization_runs"] == 0
+
+
+def test_config_budget_still_counts_when_metrics_declare_nothing(forven_db, monkeypatch):
+    _seed("S-legacy", [{}], opt_config={"n_trials": 40})
+    out = _dsr("S-legacy", monkeypatch)
+
+    assert out["n_trials"] == 40
+    assert out["trials_source"] == "optimization_result"

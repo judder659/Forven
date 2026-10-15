@@ -209,33 +209,34 @@ def _latest_trial_sharpe_var(opt_metrics: dict | None, opt_config: dict | None) 
 _UNSEARCHED_TRIALS = 1
 
 
-def _latest_n_trials(opt_metrics: dict | None, opt_config: dict | None, default_trials: int) -> int:
-    for blob in (opt_metrics, opt_config):
-        if isinstance(blob, dict) and blob.get("n_trials") is not None:
-            try:
-                n = int(float(blob.get("n_trials")))
-                if n > _UNSEARCHED_TRIALS:
-                    return n
-            except (TypeError, ValueError):
-                continue
-    return max(int(default_trials), 1)
+def _declared_n_trials(opt_metrics: dict | None, opt_config: dict | None) -> int | None:
+    """Trials ONE optimization row says it searched, or None when it says nothing.
 
-
-def _row_n_trials(opt_metrics: dict | None, opt_config: dict | None) -> int:
-    """n_trials declared by ONE optimization row (0 when the row declares none).
-
-    A row declaring a single trial searched nothing (see ``_UNSEARCHED_TRIALS``)
-    and declares no selection breadth.
+    The metrics blob holds the combos actually evaluated and is authoritative
+    whenever it has a count; the config blob holds the caller's REQUESTED
+    budget (MCP / agent runs default it to 50) and is read only when metrics
+    has none. A row whose count is ``_UNSEARCHED_TRIALS`` or less searched
+    nothing and declares no breadth (0), so a one-combo run never inherits its
+    request.
     """
     for blob in (opt_metrics, opt_config):
         if isinstance(blob, dict) and blob.get("n_trials") is not None:
             try:
                 n = int(float(blob.get("n_trials")))
-                if n > _UNSEARCHED_TRIALS:
-                    return n
             except (TypeError, ValueError):
                 continue
-    return 0
+            return n if n > _UNSEARCHED_TRIALS else 0
+    return None
+
+
+def _latest_n_trials(opt_metrics: dict | None, opt_config: dict | None, default_trials: int) -> int:
+    n = _declared_n_trials(opt_metrics, opt_config)
+    return n if n else max(int(default_trials), 1)
+
+
+def _row_n_trials(opt_metrics: dict | None, opt_config: dict | None) -> int:
+    """n_trials declared by ONE optimization row (0 when it declares none or searched nothing)."""
+    return _declared_n_trials(opt_metrics, opt_config) or 0
 
 
 def _cumulative_n_trials(
