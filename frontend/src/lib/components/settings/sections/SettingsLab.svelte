@@ -105,7 +105,7 @@
 			short: 'Strict freeze',
 			tagline: 'Only direct operator actions run',
 			description:
-				'All autonomous background work freezes. Scheduled jobs stop, queued autonomous tasks pause, and only direct operator actions can run until you leave manual mode.',
+				'All autonomous background work freezes. Scheduled jobs stop, queued autonomous runs pause, and only direct operator actions can run until you leave manual mode.',
 		},
 		{
 			value: 'semi_auto',
@@ -144,8 +144,8 @@
 
 	function pausedManualSummary(counts: PausedManualCounts): string {
 		if (counts.total <= 0) return 'No queued autonomous work is currently paused.';
-		if (counts.total === 1) return '1 queued autonomous task is currently paused.';
-		return `${counts.total} queued autonomous tasks are currently paused.`;
+		if (counts.total === 1) return '1 queued autonomous run is currently paused.';
+		return `${counts.total} queued autonomous runs are currently paused.`;
 	}
 
 	async function loadSystemMode() {

@@ -231,3 +231,29 @@ def test_channel_cleared_by_empty_update(forven_db) -> None:
     updated = r.update_routine(routine_id, channel="")
     assert updated is not None
     assert updated["channel"] is None
+
+
+# --- next run ---------------------------------------------------------------
+
+def test_attach_next_runs_uses_cron_then_scheduler_job(forven_db) -> None:
+    from forven.db import get_db
+
+    init_db()
+    live_id = _make(name="live")
+    paused_id = _make(name="paused")
+    r.set_routine_enabled(paused_id, False)
+
+    rows = {row["id"]: row for row in r.attach_next_runs(r.list_routines())}
+    # No scheduler job yet: falls back to the cron's next fire.
+    assert rows[live_id]["next_run_at"] == r.preview_schedule("0 17 * * *", count=1)[0]
+    assert rows[paused_id]["next_run_at"] is None
+
+    # Once synced, the scheduler job's next_run_at wins (it carries retry backoff).
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO scheduler_jobs (id, name, enabled, schedule_type, schedule_expr, command, next_run_at) "
+            "VALUES (?, 'Routine: live', 1, 'cron', '0 17 * * *', 'brain_routine', '2030-01-01T00:00:00+00:00')",
+            (f"routine-{live_id}",),
+        )
+    rows = {row["id"]: row for row in r.attach_next_runs(r.list_routines())}
+    assert rows[live_id]["next_run_at"] == "2030-01-01T00:00:00+00:00"

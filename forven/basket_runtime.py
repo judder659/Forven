@@ -325,7 +325,7 @@ def tick_basket(state: dict, panel, now: datetime, config: dict) -> tuple[dict, 
         "cost": round(cost, 8),
         "positions": len(state["weights"]),
     })
-    _check_beta_drift(state)
+    _check_beta_drift(state, now)
     return state, report
 
 
@@ -336,9 +336,16 @@ def tick_basket(state: dict, panel, now: datetime, config: dict) -> tuple[dict, 
 BETA_DRIFT_WINDOW_TICKS = 24 * 7  # trailing week of hourly ticks
 BETA_DRIFT_MIN_TICKS = 48  # don't judge on noise
 BETA_DRIFT_FUNDING_SHARE_FLOOR = 0.5
+# The check runs every hourly tick, but the condition it reports moves over
+# days. Notify on ENTERING drift, then at most once per this window while it
+# persists (the notification layer's 5-minute dedupe cooldown alone let it page
+# every hour, and only ever named one of the two books).
+BETA_DRIFT_REALERT_HOURS = 24.0
 
 
-def _check_beta_drift(state: dict) -> None:
+def _check_beta_drift(state: dict, now: datetime | None = None) -> None:
+    """Flag a book whose PnL is price, not carry. Mutates ``state``: the
+    ``beta_drift_alerted_at`` marker throttles repeats and clears on recovery."""
     try:
         history = (state.get("history") or [])[-BETA_DRIFT_WINDOW_TICKS:]
         active = [h for h in history if h.get("funding_pnl") or h.get("price_pnl")]
@@ -351,22 +358,37 @@ def _check_beta_drift(state: dict) -> None:
             return
         funding_share = funding_abs / gross
         if funding_share >= BETA_DRIFT_FUNDING_SHARE_FLOOR:
+            state.pop("beta_drift_alerted_at", None)
             return
+        now = now or get_now()
+        last_alerted = state.get("beta_drift_alerted_at")
+        if last_alerted:
+            try:
+                age_hours = (now - datetime.fromisoformat(str(last_alerted))).total_seconds() / 3600.0
+                if 0 <= age_hours < BETA_DRIFT_REALERT_HOURS:
+                    return
+            except (TypeError, ValueError):
+                pass
         from forven.notifications import emit_notification
 
+        is_hl = str(state.get("name") or "").endswith("_hl")
+        book = "HL-native" if is_hl else "Binance-ranked"
         emit_notification(
             "risk_alert",
             severity="warn",
             source="basket_runtime",
-            title="Funding-carry basket drifting toward beta",
+            title=f"Funding-carry basket drifting toward beta ({book} book)",
             summary=(
                 f"Over the trailing {len(active)} active ticks, funding is only "
-                f"{funding_share:.0%} of gross PnL (floor {BETA_DRIFT_FUNDING_SHARE_FLOOR:.0%}) — "
+                f"{funding_share:.1%} of gross PnL (floor {BETA_DRIFT_FUNDING_SHARE_FLOOR:.0%}) — "
                 "returns are coming from price moves, not collected fees. The carry "
-                "edge may be decaying; do not arm (or consider disarming) live execution."
+                "edge may be decaying; do not arm (or consider disarming) live execution. "
+                f"Repeats at most every {BETA_DRIFT_REALERT_HOURS:.0f}h while it persists."
             ),
-            dedupe_key="basket_beta_drift",
+            metadata={"venue": "hyperliquid" if is_hl else "binance", "funding_share": round(funding_share, 6)},
+            dedupe_key="basket_beta_drift:hl" if is_hl else "basket_beta_drift",
         )
+        state["beta_drift_alerted_at"] = now.isoformat()
     except Exception:
         log.debug("beta-drift check failed", exc_info=True)
 

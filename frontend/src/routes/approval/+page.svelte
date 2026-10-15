@@ -962,7 +962,7 @@
 
 					<div class="grid gap-3 sm:grid-cols-2 text-xs">
 						<div class="rounded-md border border-sc-line bg-sc-bg/30 px-3 py-2">
-							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Execution task</div>
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agent run</div>
 							<div class="mt-1 font-mono">{#if taskDetailUrl(approval.linked_task)}<button type="button" class="text-sc-ink2 hover:text-sc-ink hover:underline" on:click={() => goto(taskDetailUrl(approval.linked_task))}>{taskLabel(approval.linked_task)}</button>{:else}<span class="text-sc-ink2">{taskLabel(approval.linked_task)}</span>{/if}</div>
 							{#if approval.linked_task}
 								<div class="mt-1 text-sc-ink2">{compact(approval.linked_task.title || approval.linked_task.description)}</div>
@@ -990,7 +990,7 @@
 							</button>
 						{/if}
 						<button type="button" class="terminal-button text-[12px] px-3 py-2" on:click={() => openInspector(approval, approvalStatus(approval) === 'approved' ? 'execution' : 'diagnosis')}>
-							{approvalStatus(approval) === 'approved' ? 'Watch Task' : 'Details'}
+							{approvalStatus(approval) === 'approved' ? 'Watch Run' : 'Details'}
 						</button>
 						{#if viewMode === 'pending'}
 							<button type="button" disabled={isBusy(approval.id)} class="terminal-button-primary text-[12px] px-3 py-2 disabled:opacity-40" on:click={() => approve(approval.id)}>{isBusy(approval.id) ? 'Approving...' : requiresGoLive(approval) ? 'Approve (go live)' : 'Approve'}</button>
@@ -1109,7 +1109,7 @@
 				</div>
 			{:else}
 				<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Execution task</div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agent run</div>
 					<div class="text-sm">{#if taskDetailUrl(approvalContext?.linked_task)}<button type="button" class="text-sc-ink hover:text-sc-ink hover:underline font-mono" on:click={() => goto(taskDetailUrl(approvalContext?.linked_task))}>{taskLabel(approvalContext?.linked_task)}</button>{:else}<span class="text-sc-ink">{approvalContext?.linked_task ? taskLabel(approvalContext.linked_task) : 'No linked task'}</span>{/if}</div>
 					{#if approvalContext?.linked_task}
 						<div class="text-xs text-sc-ink2">{compact(approvalContext.linked_task.title || approvalContext.linked_task.description, 180)}</div>

@@ -53,6 +53,10 @@
 	let editSched: FriendlySchedule = defaultFriendlySchedule();
 	let editAdvanced = false;
 
+	let showCreate = false;
+	let createTouched = false;
+	let now = Date.now();
+
 	const VALID_CONTEXTS = ['scheduled', 'interactive', 'recovery', 'research'];
 
 	const FREQ_OPTIONS: { value: FriendlySchedule['freq']; label: string }[] = [
@@ -68,6 +72,19 @@
 		const d = new Date(String(value));
 		if (Number.isNaN(d.getTime())) return '--';
 		return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+	}
+
+	// "in 3h 12m" for a future time; the absolute time sits beside it.
+	function fmtUntil(value: string | null | undefined, now: number): string {
+		if (!value) return '';
+		const ms = new Date(String(value)).getTime() - now;
+		if (Number.isNaN(ms)) return '';
+		if (ms <= 60_000) return 'due now';
+		const mins = Math.round(ms / 60_000);
+		if (mins < 60) return `in ${mins}m`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 48) return `in ${hours}h${mins % 60 ? ` ${mins % 60}m` : ''}`;
+		return `in ${Math.round(hours / 24)}d`;
 	}
 
 	function statusClass(status: string | null): string {
@@ -101,6 +118,9 @@
 		error = null;
 		try {
 			routines = await listRoutines();
+			now = Date.now();
+			// Open the form for a first routine; otherwise keep it out of the way.
+			if (!createTouched) showCreate = routines.length === 0;
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -139,6 +159,7 @@
 			createSched = defaultFriendlySchedule();
 			createAdvanced = false;
 			cronPreview = [];
+			showCreate = false;
 			await load();
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
@@ -245,9 +266,33 @@
 
 	$: scheduleCronPreview(createForm.cron_expr || '');
 
+	// Keep the edit form's upcoming fires in step with the schedule being edited.
+	let editPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+	function scheduleEditPreview(expr: string) {
+		if (editPreviewTimer) clearTimeout(editPreviewTimer);
+		if (editingId === null || !expr.trim()) return;
+		editPreviewTimer = setTimeout(async () => {
+			try {
+				editPreview = await previewCronExpression(expr.trim(), 5);
+				editError = null;
+			} catch (err) {
+				editPreview = [];
+				editError = err instanceof Error ? err.message : String(err);
+			}
+		}, 300);
+	}
+	$: editCron = editDraft.cron_expr || '';
+	$: if (editingId !== null) scheduleEditPreview(editCron);
+
 	onMount(() => {
 		void load();
 		void loadChannels();
+		const tick = setInterval(() => (now = Date.now()), 30_000);
+		return () => {
+			clearInterval(tick);
+			if (cronPreviewTimer) clearTimeout(cronPreviewTimer);
+			if (editPreviewTimer) clearTimeout(editPreviewTimer);
+		};
 	});
 </script>
 
@@ -270,88 +315,13 @@
 	{#if actionMessage}<div class="border border-emerald-900 bg-emerald-500/5 text-emerald-400 text-xs px-3 py-2">{actionMessage}</div>{/if}
 	{#if error}<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{error}</div>{/if}
 
-	<section class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
-		<h2 class="text-sm uppercase tracking-wider text-sc-ink2">Create routine</h2>
-		<div class="grid sm:grid-cols-2 gap-3">
-			<label class="text-xs"><span class="text-sc-ink3 uppercase tracking-wider">Name</span>
-				<input type="text" bind:value={createForm.name} placeholder="hourly-status-report" class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
-			</label>
-			<div class="text-xs">
-				<div class="flex items-center justify-between gap-2">
-					<span class="text-sc-ink3 uppercase tracking-wider">Schedule</span>
-					<button type="button" class="rounded-md text-[12px] px-2 py-0.5 border {createAdvanced ? 'bg-sc-raise text-sc-ink border-sc-line2' : 'text-sc-ink3 border-sc-line2 hover:text-sc-ink2'}" on:click={() => (createAdvanced = !createAdvanced)}>Advanced</button>
-				</div>
-				{#if createAdvanced}
-					<input type="text" bind:value={createForm.cron_expr} placeholder="0 14 * * 1" class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink font-mono" />
-					<div class="mt-1 text-[11px] text-sc-ink3">Raw 5-field cron, UTC.</div>
-				{:else}
-					<div class="mt-1 flex flex-wrap items-center gap-2">
-						<select bind:value={createSched.freq} class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
-							{#each FREQ_OPTIONS as opt}<option value={opt.value}>{opt.label}</option>{/each}
-						</select>
-						{#if createSched.freq === 'minutes' || createSched.freq === 'hours'}
-							<span class="text-sc-ink2">every</span>
-							<input type="number" min="1" max={createSched.freq === 'minutes' ? 59 : 23} step="1" bind:value={createSched.every} class="rounded-md w-16 bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
-							<span class="text-sc-ink2">{createSched.freq}</span>
-						{:else}
-							{#if createSched.freq === 'weekly'}
-								<span class="text-sc-ink2">on</span>
-								<select bind:value={createSched.weekday} class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
-									{#each WEEKDAY_NAMES as day, i}<option value={i}>{day}</option>{/each}
-								</select>
-							{:else if createSched.freq === 'monthly'}
-								<span class="text-sc-ink2">on day</span>
-								<input type="number" min="1" max="31" step="1" bind:value={createSched.dom} class="rounded-md w-16 bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
-							{/if}
-							<span class="text-sc-ink2">at</span>
-							<input type="time" bind:value={createSched.time} class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
-						{/if}
-					</div>
-					<div class="mt-1 text-[11px] text-sc-ink2">{describeFriendly(createSched)} (your local time)</div>
-				{/if}
-			</div>
-		</div>
-		<label class="text-xs block"><span class="text-sc-ink3 uppercase tracking-wider">Prompt</span>
-			<textarea rows="3" bind:value={createForm.prompt} class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" placeholder="What should the Brain do when this fires?"></textarea>
-		</label>
-		<div class="grid sm:grid-cols-3 gap-3">
-			<label class="text-xs"><span class="text-sc-ink3 uppercase tracking-wider">Post result to Discord</span>
-				{#if channels.length > 0}
-					<select bind:value={createForm.channel} class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
-						<option value="">— don't post —</option>
-						{#each channels as ch}<option value={ch.id}>{ch.label}</option>{/each}
-					</select>
-				{:else}
-					<input type="text" bind:value={createForm.channel} placeholder="channel alias or id (optional)" class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
-				{/if}
-			</label>
-			<label class="text-xs"><span class="text-sc-ink3 uppercase tracking-wider">Tools context</span>
-				<select bind:value={createForm.tools_context} class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
-					{#each VALID_CONTEXTS as ctx}<option value={ctx}>{ctx}</option>{/each}
-				</select>
-			</label>
-			<label class="text-xs flex items-center gap-2 mt-5">
-				<input type="checkbox" bind:checked={createForm.enabled} />
-				<span class="text-sc-ink2 uppercase tracking-wider">Enabled</span>
-			</label>
-		</div>
-		<div class="text-[11px] text-sc-ink3">
-			Next 5 fire times (local):
-			{#if cronPreviewError}<span class="text-red-400 ml-2">{cronPreviewError}</span>
-			{:else if cronPreview.length === 0}<span class="ml-2">--</span>
-			{:else}
-				<ul class="ml-2 inline-flex flex-wrap gap-2">
-					{#each cronPreview as t}<li class="rounded-md border border-sc-line bg-sc-bg px-2 py-0.5 font-mono">{fmtDate(t)}</li>{/each}
-				</ul>
-			{/if}
-		</div>
-		<div>
-			<button type="button" disabled={creating || !createForm.name.trim() || !createForm.prompt.trim() || !createForm.cron_expr.trim()} class="rounded-md border border-emerald-900 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-4 py-2 text-[12px] font-medium disabled:opacity-40" on:click={() => void handleCreate()}>{creating ? 'Creating...' : 'Create routine'}</button>
-		</div>
-	</section>
-
 	<section class="rounded-md border border-sc-line bg-sc-panel">
-		<header class="px-4 py-3 border-b border-sc-line"><h2 class="text-sm uppercase tracking-wider text-sc-ink2">Active routines</h2></header>
+		<header class="flex items-center justify-between gap-2 px-4 py-3 border-b border-sc-line">
+			<h2 class="text-sm uppercase tracking-wider text-sc-ink2">Routines</h2>
+			{#if !showCreate}
+				<button type="button" class="rounded-md border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink" aria-controls="new-routine" on:click={() => { showCreate = true; createTouched = true; }}>+ New routine</button>
+			{/if}
+		</header>
 		{#if loading}
 			<div class="px-4 py-6 text-xs text-sc-ink3">Loading...</div>
 		{:else if routines.length === 0}
@@ -383,6 +353,9 @@
 									<span class="border px-2 py-0.5 uppercase tracking-wider {statusClass(routine.last_status)}">{routine.last_status}</span>
 								{/if}
 								<span class="text-sc-ink3">last: {fmtDate(routine.last_run_at)}</span>
+								<span class={routine.enabled ? 'text-sc-ink2' : 'text-sc-ink3'} title={routine.next_run_at ? `Next scheduled run: ${fmtDate(routine.next_run_at)} (your local time)` : 'Paused routines do not run on schedule'} data-testid="routine-next-run">
+									next: {#if routine.enabled && routine.next_run_at}{fmtDate(routine.next_run_at)} <span class="text-sc-ink3">({fmtUntil(routine.next_run_at, now)})</span>{:else if routine.enabled}--{:else}paused{/if}
+								</span>
 							</div>
 						</div>
 						{#if routine.last_error && ['error', 'failed'].includes((routine.last_status || '').toLowerCase())}
@@ -476,4 +449,91 @@
 			</ul>
 		{/if}
 	</section>
+
+	{#if showCreate}
+	<section id="new-routine" class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
+		<div class="flex items-center justify-between gap-2">
+			<h2 class="text-sm uppercase tracking-wider text-sc-ink2">New routine</h2>
+			{#if routines.length > 0}
+				<button type="button" class="rounded-md text-[12px] border border-sc-line2 px-2 py-0.5 text-sc-ink3 hover:text-sc-ink" on:click={() => { showCreate = false; createTouched = true; }}>Close</button>
+			{/if}
+		</div>
+		<div class="grid sm:grid-cols-2 gap-3">
+			<label class="text-xs"><span class="text-sc-ink3 uppercase tracking-wider">Name</span>
+				<input type="text" bind:value={createForm.name} placeholder="hourly-status-report" class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
+			</label>
+			<div class="text-xs">
+				<div class="flex items-center justify-between gap-2">
+					<span class="text-sc-ink3 uppercase tracking-wider">Schedule</span>
+					<button type="button" class="rounded-md text-[12px] px-2 py-0.5 border {createAdvanced ? 'bg-sc-raise text-sc-ink border-sc-line2' : 'text-sc-ink3 border-sc-line2 hover:text-sc-ink2'}" on:click={() => (createAdvanced = !createAdvanced)}>Advanced</button>
+				</div>
+				{#if createAdvanced}
+					<input type="text" bind:value={createForm.cron_expr} placeholder="0 14 * * 1" class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink font-mono" />
+					<div class="mt-1 text-[11px] text-sc-ink3">Raw 5-field cron, UTC.</div>
+				{:else}
+					<div class="mt-1 flex flex-wrap items-center gap-2">
+						<select bind:value={createSched.freq} class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
+							{#each FREQ_OPTIONS as opt}<option value={opt.value}>{opt.label}</option>{/each}
+						</select>
+						{#if createSched.freq === 'minutes' || createSched.freq === 'hours'}
+							<span class="text-sc-ink2">every</span>
+							<input type="number" min="1" max={createSched.freq === 'minutes' ? 59 : 23} step="1" bind:value={createSched.every} class="rounded-md w-16 bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
+							<span class="text-sc-ink2">{createSched.freq}</span>
+						{:else}
+							{#if createSched.freq === 'weekly'}
+								<span class="text-sc-ink2">on</span>
+								<select bind:value={createSched.weekday} class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
+									{#each WEEKDAY_NAMES as day, i}<option value={i}>{day}</option>{/each}
+								</select>
+							{:else if createSched.freq === 'monthly'}
+								<span class="text-sc-ink2">on day</span>
+								<input type="number" min="1" max="31" step="1" bind:value={createSched.dom} class="rounded-md w-16 bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
+							{/if}
+							<span class="text-sc-ink2">at</span>
+							<input type="time" bind:value={createSched.time} class="rounded-md bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
+						{/if}
+					</div>
+					<div class="mt-1 text-[11px] text-sc-ink2">{describeFriendly(createSched)} (your local time)</div>
+				{/if}
+			</div>
+		</div>
+		<label class="text-xs block"><span class="text-sc-ink3 uppercase tracking-wider">Prompt</span>
+			<textarea rows="3" bind:value={createForm.prompt} class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" placeholder="What should the Brain do when this fires?"></textarea>
+		</label>
+		<div class="grid sm:grid-cols-3 gap-3">
+			<label class="text-xs"><span class="text-sc-ink3 uppercase tracking-wider">Post result to Discord</span>
+				{#if channels.length > 0}
+					<select bind:value={createForm.channel} class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
+						<option value="">— don't post —</option>
+						{#each channels as ch}<option value={ch.id}>{ch.label}</option>{/each}
+					</select>
+				{:else}
+					<input type="text" bind:value={createForm.channel} placeholder="channel alias or id (optional)" class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink" />
+				{/if}
+			</label>
+			<label class="text-xs"><span class="text-sc-ink3 uppercase tracking-wider">Tools context</span>
+				<select bind:value={createForm.tools_context} class="rounded-md mt-1 w-full bg-sc-bg border border-sc-line2 px-2 py-1.5 text-sc-ink">
+					{#each VALID_CONTEXTS as ctx}<option value={ctx}>{ctx}</option>{/each}
+				</select>
+			</label>
+			<label class="text-xs flex items-center gap-2 mt-5">
+				<input type="checkbox" bind:checked={createForm.enabled} />
+				<span class="text-sc-ink2 uppercase tracking-wider">Enabled</span>
+			</label>
+		</div>
+		<div class="text-[11px] text-sc-ink3">
+			Next 5 fire times (local):
+			{#if cronPreviewError}<span class="text-red-400 ml-2">{cronPreviewError}</span>
+			{:else if cronPreview.length === 0}<span class="ml-2">--</span>
+			{:else}
+				<ul class="ml-2 inline-flex flex-wrap gap-2">
+					{#each cronPreview as t}<li class="rounded-md border border-sc-line bg-sc-bg px-2 py-0.5 font-mono">{fmtDate(t)}</li>{/each}
+				</ul>
+			{/if}
+		</div>
+		<div>
+			<button type="button" disabled={creating || !createForm.name.trim() || !createForm.prompt.trim() || !createForm.cron_expr.trim()} class="rounded-md border border-emerald-900 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-4 py-2 text-[12px] font-medium disabled:opacity-40" on:click={() => void handleCreate()}>{creating ? 'Creating...' : 'Create routine'}</button>
+		</div>
+	</section>
+	{/if}
 </div>

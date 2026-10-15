@@ -25,7 +25,7 @@
 			const res = await getResumableTasks();
 			tasks = res.tasks ?? [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to check resumable tasks.';
+			error = err instanceof Error ? err.message : 'Failed to check resumable runs.';
 		} finally {
 			loading = false;
 		}
@@ -82,7 +82,7 @@
 	});
 
 	$: visible = !dismissed && tasks.length > 0;
-	$: countLabel = tasks.length === 1 ? '1 interrupted task' : `${tasks.length} interrupted tasks`;
+	$: countLabel = tasks.length === 1 ? '1 interrupted run' : `${tasks.length} interrupted runs`;
 </script>
 
 {#if visible}

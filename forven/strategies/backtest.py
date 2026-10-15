@@ -1724,6 +1724,22 @@ def _enrich_with_market_data(df: pd.DataFrame, asset: str) -> pd.DataFrame:
     return df
 
 
+def _order_flow_exclude_streams(frame: pd.DataFrame) -> tuple[str, ...]:
+    """Streams data_manager.enrich must skip after _enrich_with_market_data ran.
+
+    Funding is always skipped: the market-data join is its source of truth, and
+    data_manager's per-8h-epoch funding would overwrite it and mischarge ~8x.
+    Open interest is skipped only when the market-data join actually produced an
+    ``open_interest`` column. Binance's OI history endpoint serves the last ~30
+    days only, so any window that starts earlier comes back empty and the column
+    was never added; strategies reading ``open_interest`` then failed with
+    KeyError on every backtest even though the local OI lake holds years of it.
+    """
+    if frame is not None and "open_interest" in getattr(frame, "columns", ()):
+        return ("funding", "oi")
+    return ("funding",)
+
+
 def _enrichment_coverage_pct(frame: "pd.DataFrame", column: str) -> float:
     """Share of bars (0-100) where an enrichment column has a value."""
     try:
@@ -1999,7 +2015,8 @@ def load_backtest_candles(
                 # funding_rate would make _apply_funding_to_trades mischarge
                 # funding ~8x.
                 frame = data_manager.enrich(
-                    frame, symbol, resolved_timeframe, exclude_streams=("funding", "oi")
+                    frame, symbol, resolved_timeframe,
+                    exclude_streams=_order_flow_exclude_streams(frame),
                 )
             except Exception as _enrich_exc:
                 log.warning("DataManager enrich skipped for %s/%s: %s", symbol, resolved_timeframe, _enrich_exc)
@@ -2063,7 +2080,8 @@ def load_backtest_candles(
         # order-flow join (same parity gap fixed on the scanner path).
         _enrich_symbol = asset if "/" in str(asset) else f"{asset}/USDT"
         frame = data_manager.enrich(
-            frame, _enrich_symbol, resolved_timeframe, exclude_streams=("funding", "oi")
+            frame, _enrich_symbol, resolved_timeframe,
+            exclude_streams=_order_flow_exclude_streams(frame),
         )
     except Exception as _enrich_exc:
         log.warning("DataManager enrich skipped for %s/%s: %s", asset, resolved_timeframe, _enrich_exc)

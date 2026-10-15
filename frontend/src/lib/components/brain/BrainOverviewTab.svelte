@@ -60,17 +60,34 @@
 		return task.display_id || `T${task.id}`;
 	}
 
+	const PILL = 'rounded border px-1.5 py-px font-plex-cond text-[10.5px] font-medium uppercase tracking-[0.06em]';
+	const PANEL = 'min-w-0 rounded-md border border-sc-line bg-sc-panel p-3.5';
+	const PANEL_HEAD = 'mb-3 flex items-baseline justify-between gap-3';
+	const PANEL_TITLE = 'm-0 text-[13px] font-medium text-sc-ink';
+	const PANEL_AUX = 'text-[11px] text-sc-ink3';
+	const PANEL_LINK = 'text-[12px] text-sc-ink2 transition-colors hover:text-sc-ink hover:underline';
+	const ROW = 'rounded-md border border-sc-line bg-sc-panel2 px-3 py-2.5';
+	const EMPTY_INLINE = 'm-0 text-[12.5px] text-sc-ink3';
+	const BUTTON =
+		'rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink disabled:cursor-not-allowed disabled:opacity-50';
+
 	function attentionClass(item: BrainAttentionItem): string {
-		return `attention ${item.severity || 'info'}`;
+		const base = 'flex justify-between gap-3 rounded-md border px-3 py-2.5';
+		const severity = item.severity || 'info';
+		if (severity === 'critical') return `${base} border-[#e5574f]/40 bg-[#e5574f]/10`;
+		if (severity === 'warning') return `${base} border-[#e7b24a]/40 bg-[#e7b24a]/10`;
+		return `${base} border-sc-line bg-sc-panel2`;
 	}
 
 	function statusClass(status: string | null | undefined): string {
 		const normalized = (status || 'pending').toLowerCase();
-		if (normalized === 'failed') return 'status failed';
-		if (normalized === 'blocked' || normalized === 'paused_manual') return 'status blocked';
-		if (normalized === 'running') return 'status running';
-		if (normalized === 'done' || normalized === 'reviewed') return 'status done';
-		return 'status pending';
+		if (normalized === 'failed') return `${PILL} border-[#e5574f]/40 bg-[#e5574f]/10 text-[#f2956f]`;
+		if (normalized === 'blocked' || normalized === 'paused_manual')
+			return `${PILL} border-[#e7b24a]/40 bg-[#e7b24a]/10 text-[#e7b24a]`;
+		if (normalized === 'running') return `${PILL} border-[#3cc48f]/40 bg-[#3cc48f]/10 text-[#3cc48f]`;
+		if (normalized === 'done' || normalized === 'reviewed')
+			return `${PILL} border-[#3cc48f]/25 bg-[#3cc48f]/5 text-[#3cc48f]`;
+		return `${PILL} border-sc-line2 bg-sc-raise text-sc-ink2`;
 	}
 
 	function shortMessage(row: BrainActivityRow): string {
@@ -98,114 +115,114 @@
 	});
 </script>
 
-<div class="overview-tab">
+<div class="flex flex-col gap-3">
 	{#if loading}
-		<div class="empty">Loading Brain overview...</div>
+		<div class="rounded-md border border-dashed border-sc-line p-4 text-center text-[13px] text-sc-ink3">Loading Brain overview...</div>
 	{:else if error}
-		<div class="error-banner">
-			<strong>Failed to load overview:</strong>
+		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-[#e5574f]/40 bg-[#e5574f]/10 px-3 py-2 text-[12.5px] text-[#f2956f]" role="alert">
+			<strong class="font-medium">Failed to load overview:</strong>
 			{error}
-			<button type="button" on:click={() => load(false)}>Retry</button>
+			<button type="button" class="rounded-md border border-[#e5574f]/40 px-2.5 py-1 text-[12px] text-[#f2956f] transition-colors hover:border-[#f2956f]" on:click={() => load(false)}>Retry</button>
 		</div>
 	{:else if overview}
-		<section class="hero-panel">
-			<div>
-				<p class="kicker">Current Brain State</p>
-				<h2>Autonomy state, actions, blockers, and memory.</h2>
-				<p class="meta">
+		<section class="flex flex-col items-start justify-between gap-3 rounded-md border border-sc-line bg-sc-panel p-4 sm:flex-row sm:items-center">
+			<div class="min-w-0">
+				<p class="m-0 mb-1 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Current Brain State</p>
+				<h2 class="m-0 text-[16px] font-semibold text-sc-ink">Autonomy state, actions, blockers, and memory.</h2>
+				<p class="m-0 mt-1 text-[12.5px] text-sc-ink2">
 					Memory updated by {overview.memory.updated_by ?? '-'} at
 					{formatTimestamp(overview.memory.updated_at)}
 				</p>
 			</div>
-			<button type="button" on:click={() => load(true)} disabled={refreshing}>
+			<button type="button" class={`shrink-0 ${BUTTON}`} on:click={() => load(true)} disabled={refreshing}>
 				{refreshing ? 'Refreshing...' : 'Refresh'}
 			</button>
 		</section>
 
-		<section class="stats-grid" aria-label="Brain overview stats">
-			<a class="stat" href="/brain?tab=memory">
-				<span>Memory</span>
-				<strong>{overview.memory.char_count}/{overview.memory.cap}</strong>
+		<section class="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-sc-line bg-sc-line md:grid-cols-4" aria-label="Brain overview stats">
+			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/brain?tab=memory">
+				<span class="text-[11px] text-sc-ink3">Memory</span>
+				<strong class="font-plex-mono text-[18px] font-normal text-sc-ink">{overview.memory.char_count}/{overview.memory.cap}</strong>
 			</a>
-			<a class="stat" href="/agents?tab=tasks">
-				<span>Active Work</span>
-				<strong>{overview.stats.active_tasks}</strong>
+			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/agents?tab=tasks">
+				<span class="text-[11px] text-sc-ink3">Active runs</span>
+				<strong class="font-plex-mono text-[18px] font-normal text-sc-ink">{overview.stats.active_tasks}</strong>
 			</a>
-			<a class="stat" href="/approval">
-				<span>Approvals</span>
-				<strong>{overview.stats.pending_approvals}</strong>
+			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/approval">
+				<span class="text-[11px] text-sc-ink3">Approvals</span>
+				<strong class="font-plex-mono text-[18px] font-normal text-sc-ink">{overview.stats.pending_approvals}</strong>
 			</a>
-			<a class="stat" href="/brain?tab=decisions">
-				<span>Decisions</span>
-				<strong>{overview.stats.decisions}</strong>
+			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/brain?tab=decisions">
+				<span class="text-[11px] text-sc-ink3">Decisions</span>
+				<strong class="font-plex-mono text-[18px] font-normal text-sc-ink">{overview.stats.decisions}</strong>
 			</a>
 		</section>
 
-		<div class="main-grid">
-			<section class="panel attention-panel">
-				<header>
-					<h3>Needs Attention</h3>
-					<span>{overview.attention.length}</span>
+		<div class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+			<section class={PANEL}>
+				<header class={PANEL_HEAD}>
+					<h3 class={PANEL_TITLE}>Needs Attention</h3>
+					<span class={`font-plex-mono ${PANEL_AUX}`}>{overview.attention.length}</span>
 				</header>
 				{#if overview.attention.length === 0}
-					<p class="empty-inline">No attention signals right now.</p>
+					<p class={EMPTY_INLINE}>No attention signals right now.</p>
 				{:else}
-					<ul class="attention-list">
+					<ul class="m-0 flex list-none flex-col gap-2 p-0">
 						{#each overview.attention as item}
 							<li class={attentionClass(item)}>
-								<div>
-									<strong>{item.title}</strong>
-									<p>{item.detail}</p>
+								<div class="min-w-0">
+									<strong class="block text-[13px] font-medium text-sc-ink">{item.title}</strong>
+									<p class="m-0 mt-1 break-words text-[12.5px] leading-snug text-sc-ink2">{item.detail}</p>
 								</div>
-								<span>{item.kind}</span>
+								<span class="whitespace-nowrap font-plex-cond text-[11px] uppercase tracking-[0.06em] text-sc-ink3">{item.kind}</span>
 							</li>
 						{/each}
 					</ul>
 				{/if}
 			</section>
 
-			<section class="panel memory-panel">
-				<header>
-					<h3>Memory Snapshot</h3>
-					<a href="/brain?tab=memory">Edit</a>
+			<section class={PANEL}>
+				<header class={PANEL_HEAD}>
+					<h3 class={PANEL_TITLE}>Memory Snapshot</h3>
+					<a class={PANEL_LINK} href="/brain?tab=memory">Edit</a>
 				</header>
 				{#if overview.memory.body}
-					<ul class="memory-lines">
+					<ul class="m-0 flex list-none flex-col gap-1.5 p-0">
 						{#each memoryLines(overview.memory.body) as line}
-							<li>{line}</li>
+							<li class="break-words text-[13px] leading-snug text-sc-ink">{line}</li>
 						{/each}
 					</ul>
 				{:else}
-					<p class="empty-inline">Brain memory is empty.</p>
+					<p class={EMPTY_INLINE}>Brain memory is empty.</p>
 				{/if}
 			</section>
 		</div>
 
-		<section class="panel">
-			<header>
-				<h3>Active Brain-Assigned Work</h3>
-				<a href="/agents?tab=tasks">Open Tasks</a>
+		<section class={PANEL}>
+			<header class={PANEL_HEAD}>
+				<h3 class={PANEL_TITLE}>Active Brain-Assigned Runs</h3>
+				<a class={PANEL_LINK} href="/agents?tab=tasks">Open Runs</a>
 			</header>
 			{#if overview.active_tasks.length === 0}
-				<p class="empty-inline">No pending, running, blocked, or failed Brain-assigned tasks.</p>
+				<p class={EMPTY_INLINE}>No pending, running, blocked, or failed Brain-assigned tasks.</p>
 			{:else}
-				<ul class="task-list">
+				<ul class="m-0 flex list-none flex-col gap-2 p-0">
 					{#each overview.active_tasks as task (task.id)}
-						<li>
-							<div class="task-head">
-								<a href={taskHref(task)}>{taskLabel(task)}</a>
+						<li class={ROW}>
+							<div class="flex flex-wrap items-center gap-2 text-[11.5px] text-sc-ink2">
+								<a class="font-plex-mono text-sc-ink2 transition-colors hover:text-sc-ink hover:underline" href={taskHref(task)}>{taskLabel(task)}</a>
 								<span class={statusClass(task.status)}>{task.status ?? 'pending'}</span>
-								<span class="type">{task.type ?? '-'}</span>
-								<span class="when">{formatTimestamp(task.created_at)}</span>
+								<span class={`${PILL} border-sc-line2 bg-sc-raise text-sc-ink2`}>{task.type ?? '-'}</span>
+								<span class="text-sc-ink3 sm:ml-auto">{formatTimestamp(task.created_at)}</span>
 							</div>
-							<div class="task-title">{task.title ?? 'Untitled task'}</div>
-							<div class="task-meta">
+							<div class="mt-1.5 text-[13px] leading-snug text-sc-ink">{task.title ?? 'Untitled task'}</div>
+							<div class="mt-1.5 flex min-w-0 flex-wrap items-center gap-2 text-[11.5px] text-sc-ink2">
 								<span>{task.agent_id ?? '-'}</span>
 								{#if task.strategy_id}
-									<a href={strategyHref(task)}>{task.strategy_id}</a>
+									<a class="font-plex-mono text-sc-ink2 transition-colors hover:text-sc-ink hover:underline" href={strategyHref(task)}>{task.strategy_id}</a>
 								{/if}
 								{#if task.error}
-									<span class="task-error">{task.error}</span>
+									<span class="max-w-full truncate text-[#f2956f]">{task.error}</span>
 								{/if}
 							</div>
 						</li>
@@ -214,43 +231,43 @@
 			{/if}
 		</section>
 
-		<div class="main-grid">
-			<section class="panel">
-				<header>
-					<h3>Recent Brain Activity</h3>
-					<span>{overview.activity.length}</span>
+		<div class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+			<section class={PANEL}>
+				<header class={PANEL_HEAD}>
+					<h3 class={PANEL_TITLE}>Recent Brain Activity</h3>
+					<span class={`font-plex-mono ${PANEL_AUX}`}>{overview.activity.length}</span>
 				</header>
 				{#if overview.activity.length === 0}
-					<p class="empty-inline">No Brain activity rows found.</p>
+					<p class={EMPTY_INLINE}>No Brain activity rows found.</p>
 				{:else}
-					<ul class="activity-list">
+					<ul class="m-0 flex list-none flex-col gap-2 p-0">
 						{#each overview.activity.slice(0, 12) as row (row.id)}
-							<li>
-								<div class="activity-head">
-									<span class="level">{row.level}</span>
+							<li class={ROW}>
+								<div class="flex flex-wrap items-center gap-2 text-[11.5px] text-sc-ink2">
+									<span class={`${PILL} border-sc-line2 bg-sc-raise text-sc-ink2`}>{row.level}</span>
 									<span>{row.source ?? '-'}</span>
-									<span class="when">{formatTimestamp(row.created_at)}</span>
+									<span class="text-sc-ink3 sm:ml-auto">{formatTimestamp(row.created_at)}</span>
 								</div>
-								<p>{shortMessage(row)}</p>
+								<p class="m-0 mt-1.5 break-words text-[13px] leading-snug text-sc-ink">{shortMessage(row)}</p>
 							</li>
 						{/each}
 					</ul>
 				{/if}
 			</section>
 
-			<section class="panel">
-				<header>
-					<h3>Repeated Failures</h3>
-					<span>{overview.repeated_failures.length}</span>
+			<section class={PANEL}>
+				<header class={PANEL_HEAD}>
+					<h3 class={PANEL_TITLE}>Repeated Failures</h3>
+					<span class={`font-plex-mono ${PANEL_AUX}`}>{overview.repeated_failures.length}</span>
 				</header>
 				{#if overview.repeated_failures.length === 0}
-					<p class="empty-inline">No task types with 3 or more Brain-assigned failures.</p>
+					<p class={EMPTY_INLINE}>No task types with 3 or more Brain-assigned failures.</p>
 				{:else}
-					<ul class="failure-list">
+					<ul class="m-0 flex list-none flex-col gap-2 p-0">
 						{#each overview.repeated_failures as failure}
-							<li>
-								<span>{failureLabel(failure)}</span>
-								<strong>{failure.count}</strong>
+							<li class={`flex items-center justify-between gap-4 ${ROW}`}>
+								<span class="min-w-0 break-words text-[13px] text-sc-ink">{failureLabel(failure)}</span>
+								<strong class="font-plex-mono text-[15px] font-normal text-[#f2956f]">{failure.count}</strong>
 							</li>
 						{/each}
 					</ul>
@@ -259,371 +276,3 @@
 		</div>
 	{/if}
 </div>
-
-<style>
-	.overview-tab {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.hero-panel {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 1rem;
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-	}
-
-	.kicker {
-		margin: 0 0 0.25rem;
-		color: #aab1bc;
-		font-size: 0.75rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-	}
-
-	.hero-panel h2 {
-		margin: 0;
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: #eef1f5;
-	}
-
-	.meta {
-		margin: 0.35rem 0 0;
-		color: #aab1bc;
-		font-size: 0.8125rem;
-	}
-
-	button,
-	.panel a,
-	.stat {
-		color: #aab1bc;
-		text-decoration: none;
-	}
-
-	button {
-		background: #181c23;
-		border: 1px solid #2a2f38;
-		color: #eef1f5;
-		padding: 0.5rem 0.875rem;
-		border-radius: 0;
-		cursor: pointer;
-		font-size: 0.875rem;
-	}
-
-	button:hover:not(:disabled) {
-		background: #181c23;
-		color: #eef1f5;
-	}
-
-	button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.stats-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-		gap: 0.75rem;
-	}
-
-	.stat {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-		padding: 0.875rem;
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-	}
-
-	.stat:hover {
-		border-color: #2a2f38;
-		background: #11141a;
-	}
-
-	.stat span {
-		color: #aab1bc;
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.stat strong {
-		color: #eef1f5;
-		font-size: 1.35rem;
-		font-weight: 600;
-	}
-
-	.main-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
-		gap: 1rem;
-	}
-
-	.panel {
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-		padding: 0.875rem;
-	}
-
-	.panel header {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
-	}
-
-	.panel h3 {
-		margin: 0;
-		font-size: 0.9375rem;
-		font-weight: 600;
-		color: #eef1f5;
-	}
-
-	.panel header span,
-	.panel header a {
-		color: #aab1bc;
-		font-size: 0.75rem;
-	}
-
-	.panel header a:hover {
-		color: #aab1bc;
-		text-decoration: underline;
-	}
-
-	.empty,
-	.empty-inline {
-		color: #aab1bc;
-		font-size: 0.875rem;
-	}
-
-	.empty {
-		padding: 1rem;
-		text-align: center;
-		border: 1px dashed #1c2026;
-		border-radius: 0;
-	}
-
-	.error-banner {
-		background: #2a1010;
-		border: 1px solid #5a2020;
-		color: #f8c0c0;
-		padding: 0.625rem 0.875rem;
-		border-radius: 0;
-		font-size: 0.875rem;
-	}
-
-	.error-banner button {
-		margin-left: 0.5rem;
-		color: #f8c0c0;
-	}
-
-	.attention-list,
-	.memory-lines,
-	.task-list,
-	.activity-list,
-	.failure-list {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-	}
-
-	.attention-list,
-	.task-list,
-	.activity-list,
-	.failure-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.attention {
-		display: flex;
-		justify-content: space-between;
-		gap: 0.75rem;
-		padding: 0.625rem 0.75rem;
-		border-radius: 0;
-		border: 1px solid #1c2026;
-		background: #0c0e11;
-	}
-
-	.attention.critical {
-		border-color: #7f1d1d;
-		background: #241010;
-	}
-
-	.attention.warning {
-		border-color: #60430f;
-		background: #211b0d;
-	}
-
-	.attention.info {
-		border-color: #1c2026;
-		background: #0c0e11;
-	}
-
-	.attention strong {
-		display: block;
-		color: #eef1f5;
-		font-size: 0.875rem;
-	}
-
-	.attention p {
-		margin: 0.25rem 0 0;
-		color: #aab1bc;
-		font-size: 0.8125rem;
-		line-height: 1.4;
-	}
-
-	.attention > span {
-		color: #747c88;
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		white-space: nowrap;
-	}
-
-	.memory-lines {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-	}
-
-	.memory-lines li {
-		color: #eef1f5;
-		font-size: 0.875rem;
-		line-height: 1.45;
-		word-break: break-word;
-	}
-
-	.task-list li,
-	.activity-list li {
-		padding: 0.625rem 0.75rem;
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-	}
-
-	.task-head,
-	.activity-head,
-	.task-meta {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		font-size: 0.75rem;
-		color: #aab1bc;
-	}
-
-	.task-head a {
-		font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-		color: #aab1bc;
-	}
-
-	.status,
-	.type,
-	.level {
-		padding: 0.0625rem 0.4rem;
-		border-radius: 0;
-		background: #181c23;
-		color: #aab1bc;
-		text-transform: uppercase;
-		font-size: 0.6875rem;
-		font-weight: 600;
-	}
-
-	.status.failed {
-		background: #5a1a1a;
-		color: #fca5a5;
-	}
-
-	.status.blocked {
-		background: #4a3814;
-		color: #fde68a;
-	}
-
-	.status.running {
-		background: #0f3d28;
-		color: #34d399;
-	}
-
-	.status.done {
-		background: #14532d;
-		color: #86efac;
-	}
-
-	.when {
-		margin-left: auto;
-		color: #747c88;
-	}
-
-	.task-title {
-		margin-top: 0.35rem;
-		color: #eef1f5;
-		font-size: 0.875rem;
-		line-height: 1.4;
-	}
-
-	.task-meta {
-		margin-top: 0.35rem;
-	}
-
-	.task-error {
-		color: #fca5a5;
-		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.activity-list p {
-		margin: 0.35rem 0 0;
-		color: #eef1f5;
-		font-size: 0.875rem;
-		line-height: 1.45;
-	}
-
-	.failure-list li {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.625rem 0.75rem;
-		background: #0c0e11;
-		border: 1px solid #1c2026;
-		border-radius: 0;
-	}
-
-	.failure-list span {
-		color: #eef1f5;
-		font-size: 0.875rem;
-	}
-
-	.failure-list strong {
-		color: #fca5a5;
-		font-size: 1rem;
-	}
-
-	@media (max-width: 860px) {
-		.hero-panel {
-			align-items: flex-start;
-			flex-direction: column;
-		}
-
-		.main-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.when {
-			margin-left: 0;
-		}
-	}
-</style>

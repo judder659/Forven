@@ -92,8 +92,8 @@
 		'/risk': 'Monitor drawdown, kill-switch state, and live portfolio risk guardrails.',
 		'/lab': 'Build, scan, and run the 24/7 autopilot lifecycle for strategy development.',
 		'/agents': 'Review agent health, workloads, and orchestration status.',
-		'/approval': 'Review Brain proposals and approve, deny, or revise execution tasks.',
-		'/diagnostics': 'Health checks, cost rollups, and resumable tasks for the Forven runtime.',
+		'/approval': 'Review Brain proposals and approve, deny, or revise agent runs.',
+		'/diagnostics': 'Health checks, cost rollups, and resumable runs for the Forven runtime.',
 		'/integrations': 'Connect AI clients to Forven and manage external MCP tool servers for agents.',
 		'/integrations/mcp': 'Connect AI clients to Forven and manage external MCP tool servers for agents.',
 		'/settings': 'Configure execution, API keys, alerts, and platform preferences for Forven.',
@@ -115,14 +115,14 @@
 		const leaf = segments[segments.length - 1];
 		if (/^\d+$/.test(leaf)) return `${titleCase(segments[segments.length - 2] ?? 'Detail')} Detail`;
 		if (segments[0] === 'lab' && segments[1] === 'strategy') return 'Strategy Container';
-		if (segments[0] === 'tasks' && segments.length >= 2) return 'Task Detail';
+		if (segments[0] === 'tasks' && segments.length >= 2) return 'Run Detail';
 		if (segments[0] === 'integrations') return 'Integrations';
 		return titleCase(leaf);
 	}
 
 	function resolvePageDescription(pathname: string): string {
 		if (pathname.startsWith('/lab/strategy/')) return 'View a single strategy container dossier with lifecycle history and execution records.';
-		if (pathname.startsWith('/tasks/') && pathname !== '/tasks/') return 'Inspect a single task container with audit trail, tool calls, and execution data.';
+		if (pathname.startsWith('/tasks/') && pathname !== '/tasks/') return 'Inspect a single agent run with its audit trail, tool calls, and execution data.';
 		if (pathname.startsWith('/integrations')) return 'Connect AI clients to Forven and manage external MCP tool servers for agents.';
 		return DESCRIPTION_OVERRIDES[pathname] ?? 'Forven trading workspace.';
 	}
