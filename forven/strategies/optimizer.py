@@ -247,7 +247,13 @@ def _expand_range_dict_spec(spec: dict) -> list | None:
 
 
 def _range_values(low, high, step) -> list:  # noqa: ANN001
-    """Values of a ``(low, high, step)`` range tuple: ``low``, ``low + step``, ... <= ``high``."""
+    """Values of a ``(low, high, step)`` range tuple: ``low``, ``low + step``, ... <= ``high``.
+
+    A non-positive step has no range reading; it yields ``[low]`` rather than
+    looping forever (it used to run until MemoryError).
+    """
+    if step <= 0:
+        return [low] if low <= high else []
     values = []
     v = low
     while v <= high:
@@ -266,17 +272,20 @@ def _is_choice_triple(spec: object) -> bool:
     """A 3-item LIST that can only be a choice list, not a ``(low, high, step)`` range.
 
     JSON turns a range tuple into a list, so a stored ``[a, b, c]`` is ambiguous.
-    Read as a range, a strictly increasing triple has ``step = c > b - a`` and
-    yields the single value ``a``: no author writes a range that searches one
-    value, but ``[168, 336, 720]`` is a common way to list three choices. Read
-    those as choices; every other triple keeps the range reading.
+    It is a choice list whenever its range reading would search fewer than two
+    values: no author writes a range like that, but ``[168, 336, 720]`` (step
+    720 > 336 - 168: one value), ``[-2.0, -1.65, -1.3]`` (negative step) and
+    ``[-0.5, -1.0, -1.5]`` (min > max: no values) are common ways to list three
+    choices. Every other triple keeps the range reading.
     """
     if not isinstance(spec, list) or len(spec) != 3:
         return False
     if not _is_numeric_triple(spec):
         return True  # ["fast", "slow", "mid"] has no range reading at all
     low, high, step = spec
-    return low < high < step and low + step > high
+    if step <= 0 or low > high:
+        return True
+    return low + step > high  # the range reading searches only ``low``
 
 
 def _axis_values(spec: object) -> list:

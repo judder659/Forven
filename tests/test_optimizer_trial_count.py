@@ -24,6 +24,17 @@ def test_choice_triples_are_searched_as_choices():
     assert _axis_values([36, 48, 60]) == [36, 48, 60]
 
 
+def test_triples_with_no_usable_range_reading_are_choices():
+    # Real stored spaces (S07821, S11988): negative values, as a range these
+    # looped forever (negative step) or searched nothing (min > max).
+    assert _axis_values([-2.0, -1.65, -1.3]) == [-2.0, -1.65, -1.3]
+    assert _axis_values([-0.5, -1.0, -1.5]) == [-0.5, -1.0, -1.5]
+    assert _axis_values([-0.05, -0.02, 0.0]) == [-0.05, -0.02, 0.0]
+    # An explicit tuple with a bad step degrades to its low value instead of hanging.
+    assert _axis_values((5, 10, 0)) == [5]
+    assert _axis_values((5, 10, -1)) == [5]
+
+
 def test_genuine_range_triples_keep_the_range_reading():
     assert _axis_values([10, 50, 10]) == [10, 20, 30, 40, 50]
     assert _axis_values((10, 50, 10)) == [10, 20, 30, 40, 50]
