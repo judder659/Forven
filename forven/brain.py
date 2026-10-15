@@ -1330,6 +1330,11 @@ def _record_strategy_handoff_event(
 
 
 _TERMINAL_TASK_STAGES = {"archived", "rejected", "backtest_failed", "trash"}
+# Stages whose strategies the scanner runs LIVE exits for (normalize_stage folds
+# live/deployed/ceo_review into live_graduated).
+_LIVE_MANAGED_STAGES = {"live_graduated"}
+_STAGE_CHANGE_BLOCKED_OPEN_LIVE = "stage_change_blocked_open_live_position"
+_OPEN_LIVE_BLOCK_MOTIONS = {"terminal_blocked_open_live_position", _STAGE_CHANGE_BLOCKED_OPEN_LIVE}
 _STRATEGY_TEXT_INFERENCE_TASK_HINTS = (
     "backtest",
     "gauntlet",
@@ -1489,6 +1494,64 @@ def transition_stage(
     evidence: dict | None = None,
 ) -> dict[str, str | None]:
     """Move a strategy between lifecycle stages in one atomic update path."""
+    result = _transition_stage_impl(
+        strategy_id,
+        target_stage,
+        reason=reason,
+        actor=actor,
+        notes=notes,
+        force=force,
+        skip_approval_gate=skip_approval_gate,
+        evidence=evidence,
+    )
+    # Emitted here, after the write transaction closed: emit_notification opens
+    # its own connection and would contend with the held WAL writer lock.
+    if isinstance(result, dict) and result.get("reason_code") in _OPEN_LIVE_BLOCK_MOTIONS:
+        _alert_stage_change_blocked_by_open_live(result, actor)
+    return result
+
+
+def _alert_stage_change_blocked_by_open_live(result: dict, actor: str) -> None:
+    """STRAND-1: tell the operator a stage change is waiting on open live trades.
+
+    The block keeps the strategy live (still trading) until its positions are
+    flat, so a silent block — a Brain dethrone, a decay demotion, an approved
+    archive — would leave running a strategy the operator meant to stop.
+    """
+    strategy_id = str(result.get("strategy_id") or "")
+    requested = str(result.get("requested_to") or "")
+    try:
+        from forven.notifications import emit_notification
+
+        emit_notification(
+            "risk_critical",
+            severity="critical",
+            source="lifecycle",
+            title=f"{strategy_id} is still live: close its open trades to move it to {requested}",
+            summary=str(result.get("blocked_reason") or ""),
+            metadata={
+                "strategy_id": strategy_id,
+                "requested_stage": requested,
+                "from_stage": result.get("from"),
+                "actor": actor,
+                "execution_type": "live",
+            },
+            dedupe_key=f"stage_change_blocked_open_live:{strategy_id}:{requested}",
+        )
+    except Exception:
+        log.warning("Failed to alert on blocked stage change for %s", strategy_id, exc_info=True)
+
+
+def _transition_stage_impl(
+    strategy_id: str,
+    target_stage: str,
+    reason: str = "",
+    actor: str = "system",
+    notes: str | None = None,
+    force: bool = False,
+    skip_approval_gate: bool = False,
+    evidence: dict | None = None,
+) -> dict[str, str | None]:
     normalized_target = _normalize_stage(target_stage)
     if not normalized_target:
         raise ValueError(f"Invalid stage: {target_stage}")
@@ -2063,14 +2126,17 @@ def transition_stage(
                 )
                 log.info("DEMOTION COUNT: %s now at %d/3", strategy_id, new_demotion_count)
 
-        # ARCH-1: a terminal strategy must not keep real-money exposure. Open LIVE
-        # positions block the transition outright — even under force — because the
-        # scanner only loads paper/live-stage strategies, so archiving would leave a
-        # real position with its exit management amputated. Flatten via the manual
-        # position controls first. Paper positions do NOT block: they are force-
+        # ARCH-1: a strategy that leaves the live stage must not keep real-money
+        # exposure. Open LIVE positions block the transition outright — even under
+        # force — because the scanner manages a LIVE position only while its
+        # strategy is live: archiving amputates its exit management, and so does a
+        # demotion (STRAND-1: on 2026-10-15 S06153 went live -> paper -> gauntlet
+        # holding E0630, leaving only the exchange stop). Flatten via the manual
+        # position controls first; transition_stage() alerts the operator on the
+        # block. Paper positions do NOT block: on a terminal move they are force-
         # closed right after the transition commits (post-commit hook below), with
         # the pipeline-hygiene sweep as the backstop.
-        if normalized_target in _TERMINAL_TASK_STAGES:
+        if normalized_target not in _LIVE_MANAGED_STAGES:
             open_live_rows = conn.execute(
                 "SELECT id FROM trades "
                 "WHERE COALESCE(NULLIF(strategy_id, ''), strategy) = ? AND status = 'OPEN' "
@@ -2079,13 +2145,21 @@ def transition_stage(
             ).fetchall()
             if open_live_rows:
                 live_ids = ", ".join(str(r["id"]) for r in open_live_rows)
+                if normalized_target in _TERMINAL_TASK_STAGES:
+                    consequence = "a terminal stage would orphan real-money exposure."
+                    motion = "terminal_blocked_open_live_position"
+                else:
+                    consequence = (
+                        f"in {normalized_target} nothing would manage their exits "
+                        "(only live strategies manage live positions)."
+                    )
+                    motion = _STAGE_CHANGE_BLOCKED_OPEN_LIVE
                 return _record_blocked_transition(
                     block_reason=(
                         f"Strategy holds {len(open_live_rows)} open LIVE position(s) "
-                        f"({live_ids}) — close them first; a terminal stage would "
-                        "orphan real-money exposure."
+                        f"({live_ids}) — close them first; {consequence}"
                     ),
-                    motion="terminal_blocked_open_live_position",
+                    motion=motion,
                 )
 
         # Guardrail #1: Verify evidence before a terminal transition (skip for

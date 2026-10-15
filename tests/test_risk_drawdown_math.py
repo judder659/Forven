@@ -29,6 +29,8 @@ def test_drawdown_percent_tracks_high_water_mark(forven_db):
     assert second["daily_pnl_pct"] == -0.03
     assert second["action"] is None
 
+    # HWM-CONFIRM-1: a rise latches only once a second independent read confirms it.
+    assert update_equity(10200.0)["high_water_mark"] == 10000.0
     third = update_equity(10200.0)
     assert third["high_water_mark"] == 10200.0
     assert third["drawdown_pct"] == 0.0

@@ -4993,6 +4993,66 @@ def _rejected_equity_result(state: dict, reason: str) -> dict:
     }
 
 
+def _advance_high_water_mark(
+    state: dict, hwm: float, account_equity: float, *, source: str, degraded: bool,
+) -> float:
+    """HWM-CONFIRM-1: raise the real-capital high-water mark only on a CONFIRMED rise.
+
+    Drops already need several independent ticks before they can latch a halt,
+    but a rise used to latch the HWM from a single sample. On 2026-09-15 and
+    2026-09-27 one-tick reads that straddled a position close counted the
+    released isolated margin twice (perp accountValue still held it while free
+    spot already did), latching HWMs ~$25 above any equity the exchange ever
+    showed; the 2026-10-12 kill-switch then measured 5.0% against a peak that
+    never existed (~3.9% against the real one).
+
+    A rise is held as a pending candidate and committed once a later
+    non-degraded tick, at least ``_HALT_CONFIRM_MIN_SPACING_SECONDS`` after the
+    first, still reads above the HWM. The committed level is the LOWEST reading
+    seen while pending, i.e. the level every confirming read supports. Any read
+    at or below the HWM discards the candidate. Degraded reads neither start nor
+    confirm a rise. Paper/sim bases and the first-ever sample keep the old
+    immediate behavior — they arm no real-capital halt.
+    """
+    if account_equity <= hwm:
+        state.pop("hwm_pending", None)
+        state.pop("hwm_pending_at", None)
+        return hwm
+    if hwm <= 0 or not _is_real_capital_equity_source(source):
+        state.pop("hwm_pending", None)
+        state.pop("hwm_pending_at", None)
+        state["high_water_mark"] = account_equity
+        return account_equity
+    if degraded:
+        return hwm
+
+    now_dt = get_now()
+    pending = state.get("hwm_pending")
+    pending_at = None
+    try:
+        pending = float(pending) if pending is not None else None
+        pending_at = datetime.fromisoformat(str(state.get("hwm_pending_at")))
+    except (TypeError, ValueError):
+        pending = None
+    if pending is None or pending_at is None or pending <= hwm:
+        state["hwm_pending"] = float(account_equity)
+        state["hwm_pending_at"] = now_dt.isoformat()
+        return hwm
+
+    supported = min(pending, float(account_equity))
+    if (now_dt - pending_at).total_seconds() < _HALT_CONFIRM_MIN_SPACING_SECONDS:
+        state["hwm_pending"] = supported
+        return hwm
+
+    state["high_water_mark"] = supported
+    state.pop("hwm_pending", None)
+    state.pop("hwm_pending_at", None)
+    if account_equity > supported:
+        state["hwm_pending"] = float(account_equity)
+        state["hwm_pending_at"] = now_dt.isoformat()
+    return supported
+
+
 def _update_equity_locked(
     account_equity: float, source: str, *,
     rebaseline: bool = False, degraded: bool = False,
@@ -5148,11 +5208,9 @@ def _update_equity_locked(
         hwm = account_equity
         state["high_water_mark"] = hwm
 
-    if account_equity > hwm:
-        hwm = account_equity
-        state["high_water_mark"] = hwm
+    hwm = _advance_high_water_mark(state, hwm, account_equity, source=source, degraded=degraded)
 
-    drawdown_pct = (hwm - account_equity) / hwm if hwm > 0 else 0.0
+    drawdown_pct = max(0.0, (hwm - account_equity) / hwm) if hwm > 0 else 0.0
     state["drawdown_pct"] = round(drawdown_pct, 6)
     state["last_equity"] = float(account_equity)
     state["updated_at"] = get_now().isoformat()

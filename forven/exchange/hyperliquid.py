@@ -2305,6 +2305,22 @@ def get_positions(testnet: bool = True, *, account_address: str | None = None) -
     }
 
 
+def _position_sizes(state: object) -> dict[str, str]:
+    """Signed size per coin from a ``user_state`` payload (empty when flat)."""
+    if not isinstance(state, dict):
+        return {}
+    sizes: dict[str, str] = {}
+    for row in state.get("assetPositions") or []:
+        pos = row.get("position") if isinstance(row, dict) else None
+        if not isinstance(pos, dict):
+            continue
+        coin = str(pos.get("coin") or "")
+        szi = str(pos.get("szi") or "0")
+        if coin and _safe_float(szi):
+            sizes[coin] = szi
+    return sizes
+
+
 def get_account_value(
     testnet: bool = True, require_connection: bool = False, *, account_address: str | None = None
 ) -> dict:
@@ -2387,6 +2403,39 @@ def get_account_value(
     # storm read a $490 book as $8.13 (perp margin only), poisoned the book
     # cache, and latched a false −48% daily-loss halt.
     _spot_total, spot_free = _extract_spot_usdc_balance(info, address)
+
+    # EQ-SNAPSHOT-1: perp and spot are two separate reads. A position that
+    # closes between them leaves its isolated margin in the perp accountValue
+    # AND releases it into free spot, so the sum counts it twice (~$25-28 per
+    # close on the live books, 2026-09-15 / 2026-09-27) and latched a phantom
+    # high-water mark. When the first perp read holds positions, re-read perp
+    # after spot; if the position set moved, the pair straddled a fill, so take
+    # one fresh pair and fail the read (EQ-ATOMIC-1 semantics) if it moves again.
+    if _position_sizes(state):
+        for attempt in range(2):
+            confirm = _with_breaker("account", hl_account_breaker, info.user_state, address)
+            if _position_sizes(confirm) == _position_sizes(state):
+                break
+            if attempt:
+                raise RuntimeError(
+                    f"account {address} equity read straddled a fill twice; "
+                    "perp and spot legs are not one snapshot"
+                )
+            state = confirm
+            _spot_total, spot_free = _extract_spot_usdc_balance(info, address)
+            if not _position_sizes(state):
+                break
+        margin = state.get("marginSummary", {})
+        perp_value = _safe_float(margin.get("accountValue"))
+        total_margin_used = _safe_float(margin.get("totalMarginUsed"))
+        total_ntl_pos = _safe_float(margin.get("totalNtlPos"))
+        perp_raw_usd = _safe_float(margin.get("totalRawUsd"))
+        perp_withdrawable = _safe_float(
+            state.get("withdrawable")
+            or margin.get("withdrawable")
+            or state.get("availableToWithdraw")
+            or state.get("available")
+        )
 
     perp_value = 0.0 if perp_value is None else float(perp_value)
     perp_raw_usd = 0.0 if perp_raw_usd is None else float(perp_raw_usd)
