@@ -563,6 +563,24 @@ def _load_result_artifacts(result_id: str, meta: dict, result_type: str) -> dict
     }
 
 
+IN_SAMPLE_TRADES_ARTIFACT_SUFFIX = "trades_is"
+
+
+def load_in_sample_trades(result_id: str, meta: dict | None = None, result_type: str = "backtest") -> list[dict] | None:
+    """In-sample trades persisted beside a result's OOS trades, or None.
+
+    None means the artifact does not exist (results written before it was
+    added, or by a writer that never had IS trades); ``[]`` means the run had
+    no in-sample trades. Rows are normalized like the OOS trades artifact.
+    """
+    raw, _path = _load_result_json_artifact(
+        result_id, meta if isinstance(meta, dict) else {}, result_type, IN_SAMPLE_TRADES_ARTIFACT_SUFFIX
+    )
+    if not isinstance(raw, list):
+        return None
+    return _normalize_trade_rows(raw)
+
+
 def _load_backtest_chart_artifact(result_id: str, meta: dict, result_type: str) -> dict | None:
     raw_payload, source_path = _load_result_json_artifact(result_id, meta, result_type, "chart")
     payload = _normalize_backtest_chart_context_payload(raw_payload)
@@ -1930,6 +1948,7 @@ def _write_backtest_result_artifacts(
     benchmark_curve: list | None = None,
     equity_curve_full: list | None = None,
     benchmark_curve_full: list | None = None,
+    in_sample_trades: object = None,
 ):
     target_dir = core._ensure_result_data_dir()
 
@@ -1941,6 +1960,18 @@ def _write_backtest_result_artifacts(
             path = os.path.join(target_dir, f"{safe_key}_trades.json")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(payload)
+
+    # In-sample trades of the same run, kept apart from the OOS ``_trades``
+    # artifact every other reader uses. Written even when empty: the file's
+    # presence is what tells the deflated-Sharpe gate the IS slice was
+    # persisted (a run with no IS trades) rather than predating this artifact.
+    if isinstance(in_sample_trades, list):
+        is_payload = json.dumps(_normalize_trade_artifact_rows(in_sample_trades), separators=(",", ":"))
+        for key in (result_id, job_id):
+            safe_key = _safe_result_artifact_key(key)
+            path = os.path.join(target_dir, f"{safe_key}_{IN_SAMPLE_TRADES_ARTIFACT_SUFFIX}.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(is_payload)
 
     if equity_curve and isinstance(equity_curve, list) and len(equity_curve) > 0:
         eq_payload = json.dumps(equity_curve, separators=(",", ":"))

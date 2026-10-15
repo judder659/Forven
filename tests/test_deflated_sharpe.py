@@ -117,23 +117,37 @@ def _seed_strategy(
     stage: str = "gauntlet",
     status_reason: str | None = None,
     stage_changed_at: str | None = None,
+    source: str | None = None,
+    origin_agent_id: str | None = None,
+    dropzone_session_id: str | None = None,
+    trades: int | None = None,
 ):
+    """Seed a strategy; ``trades`` adds a completed backtest with that many trades."""
+    import json
+
     from forven.db import get_db
 
     with get_db() as conn:
         conn.execute(
             "INSERT INTO strategies (id, name, type, symbol, stage, status_reason, stage_changed_at,"
-            " created_at, updated_at) VALUES (?,?,?,?,?,?,COALESCE(?, datetime('now')),"
+            " source, origin_agent_id, dropzone_session_id,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,COALESCE(?, datetime('now')),?,?,?,"
             " datetime('now'), datetime('now'))",
-            (sid, sid, type_, symbol, stage, status_reason, stage_changed_at),
+            (sid, sid, type_, symbol, stage, status_reason, stage_changed_at,
+             source, origin_agent_id, dropzone_session_id),
         )
+        if trades is not None:
+            conn.execute(
+                "INSERT INTO backtest_results (result_id, strategy_id, result_type, metrics_json) VALUES (?,?,?,?)",
+                (f"sib-bt-{sid}", sid, "backtest", json.dumps({"total_trades": trades})),
+            )
 
 
-def _seed_ema_cluster(survivor_id: str, failed: int):
+def _seed_ema_cluster(survivor_id: str, failed: int, **origin):
     """A SOL EMA survivor plus ``failed`` same-cluster siblings rejected on merit."""
-    _seed_strategy(survivor_id)
+    _seed_strategy(survivor_id, **origin)
     for i in range(failed):
-        _seed_strategy(f"SF{i}", stage="rejected")
+        _seed_strategy(f"SF{i}", stage="rejected", trades=40, **origin)
 
 
 def test_swarm_cluster_attempts_counts_failed_siblings(forven_db):
@@ -143,7 +157,7 @@ def test_swarm_cluster_attempts_counts_failed_siblings(forven_db):
     _seed_strategy("SX1", symbol="BTC/USDT", stage="rejected")      # diff asset
     _seed_strategy("SX2", type_="rsi_momentum", stage="rejected")   # diff family
     _seed_strategy("SX3", stage="archived", status_reason="untestable:no_signal: 0 trades")
-    _seed_strategy("SX4", stage="archived", status_reason="failed walk-forward")  # merit
+    _seed_strategy("SX4", stage="archived", status_reason="failed walk-forward", trades=30)  # merit
     _seed_strategy("SX5", stage="paper")                              # still alive
 
     assert _swarm_cluster_attempts("S1", 0) == 3
@@ -153,7 +167,7 @@ def test_swarm_cluster_attempts_fail_open(forven_db):
     from forven.gauntlet.deflated_sharpe import _swarm_cluster_attempts
 
     _seed_strategy("S-unplaced", type_="mystery_thing")
-    _seed_strategy("SF0", type_="mystery_thing", stage="rejected")
+    _seed_strategy("SF0", type_="mystery_thing", stage="rejected", trades=40)
     assert _swarm_cluster_attempts("S-unplaced", 0) == 0  # no family -> no penalty
     assert _swarm_cluster_attempts("missing", 0) == 0     # unknown strategy -> no penalty
 
@@ -162,7 +176,7 @@ def test_swarm_cluster_attempts_respects_lookback_window(forven_db):
     from forven.gauntlet.deflated_sharpe import _swarm_cluster_attempts
 
     _seed_strategy("S1")
-    _seed_strategy("SF0", stage="rejected", stage_changed_at="2020-01-01T00:00:00+00:00")
+    _seed_strategy("SF0", stage="rejected", stage_changed_at="2020-01-01T00:00:00+00:00", trades=40)
 
     assert _swarm_cluster_attempts("S1", 30) == 0  # failed outside the window
     assert _swarm_cluster_attempts("S1", 0) == 1   # 0 = unbounded

@@ -22,6 +22,23 @@ strategies per idea-cluster (family x asset) and only survivors reach the
 gauntlet, so a survivor's effective trial count is per-strategy trials x cluster
 attempts. compute_strategy_dsr() therefore multiplies n_trials by (1 + same-
 cluster siblings that failed on merit within the lookback window).
+
+Scopes (2026-10-15). Two settings under ``robustness_thresholds`` decide what
+the DSR is computed over:
+
+* ``deflated_sharpe_trade_scope`` — ``"confirmation_window"`` (default) scores
+  every trade of the gauntlet confirmation backtest: its in-sample AND
+  out-of-sample slices. Both sit after the optimizer's selection window, so
+  neither was fitted on. ``"oos"`` (legacy) scores only the OOS tail, ~45-55
+  trades from the most recent months, which rewards a strong recent stretch
+  over a consistent record. Results that predate the in-sample trades artifact
+  fall back to the OOS tail and say so (``trade_scope_fallback``).
+* ``dsr_swarm_scope`` — ``"same_origin"`` (default) counts only siblings from
+  the candidate's own search origin (see ``strategy_origin``); ``"all"``
+  (legacy) counts every origin, so one searcher's mass failures deflated
+  another's survivor. Under either scope a sibling counts only when it was a
+  real trial: a completed backtest with trades, and not archived for a
+  non-merit reason (``_NON_TRIAL_REASON_PREFIXES``).
 """
 
 from __future__ import annotations
@@ -33,6 +50,96 @@ log = logging.getLogger(__name__)
 
 # Euler-Mascheroni constant (used in the expected-maximum-Sharpe estimator).
 _EULER_GAMMA = 0.5772156649015329
+
+TRADE_SCOPE_CONFIRMATION_WINDOW = "confirmation_window"
+TRADE_SCOPE_OOS = "oos"
+TRADE_SCOPES = (TRADE_SCOPE_CONFIRMATION_WINDOW, TRADE_SCOPE_OOS)
+SWARM_SCOPE_SAME_ORIGIN = "same_origin"
+SWARM_SCOPE_ALL = "all"
+SWARM_SCOPES = (SWARM_SCOPE_SAME_ORIGIN, SWARM_SCOPE_ALL)
+
+# status_reason prefixes of archives that were never a fair trial: the code did
+# not run, emitted no signal, read future bars, lacked data, or never got a
+# runtime class. Lower-cased; matched with startswith.
+_NON_TRIAL_REASON_PREFIXES = (
+    "untestable:",
+    "lookahead not verifiable",
+    "lookahead_blocked",
+    "tier2:",
+    "data_blocked",
+    "sandbox_validation",
+)
+
+
+def _resolve_scope(rob: dict | None, key: str, allowed: tuple[str, ...]) -> str:
+    """The configured scope, or the first (default) one when absent or unknown."""
+    value = str((rob or {}).get(key) or "").strip().lower()
+    return value if value in allowed else allowed[0]
+
+
+def resolve_trade_scope(rob: dict | None) -> str:
+    return _resolve_scope(rob, "deflated_sharpe_trade_scope", TRADE_SCOPES)
+
+
+def resolve_swarm_scope(rob: dict | None) -> str:
+    return _resolve_scope(rob, "dsr_swarm_scope", SWARM_SCOPES)
+
+
+def strategy_origin(source: object, origin_agent_id: object, dropzone_session_id: object) -> str:
+    """The search process a strategy came from, for the same-origin swarm count.
+
+    * ``"dropzone"`` — an external researcher through the AI Drop Zone (any
+      session: one researcher's search spans reconnects, so a per-session key
+      would let a new session reset its own deflation).
+    * ``"agent"`` — the in-app agents (``origin_agent_id`` set, or registered
+      through the agent tool), which mint strategies in bulk.
+    * ``"source:<source>"`` — any other recorded source (manual, prebuilt, ...).
+    * ``""`` — nothing recorded; unknown origins are grouped with each other.
+    """
+    src = str(source or "").strip().lower()
+    if str(dropzone_session_id or "").strip() or src.startswith("ai_dropzone"):
+        return "dropzone"
+    if str(origin_agent_id or "").strip() or src == "agent_register":
+        return "agent"
+    return f"source:{src}" if src else ""
+
+
+def _is_non_trial_reason(status_reason: object) -> bool:
+    reason = str(status_reason or "").strip().lower()
+    return any(reason.startswith(prefix) for prefix in _NON_TRIAL_REASON_PREFIXES)
+
+
+def describe_dsr_scope(info: dict | None) -> str:
+    """One line naming what a DSR value was computed over (for gate messages)."""
+    if not isinstance(info, dict):
+        return ""
+    parts: list[str] = []
+    scope = info.get("trade_scope")
+    if scope:
+        n_obs = info.get("n_obs")
+        if scope == TRADE_SCOPE_CONFIRMATION_WINDOW:
+            text = (
+                f"{n_obs} trades over the whole confirmation window "
+                f"({info.get('n_obs_in_sample', 0)} in-sample + {info.get('n_obs_oos', 0)} OOS)"
+            )
+        else:
+            text = f"{n_obs} trades in the OOS tail"
+        if info.get("trade_scope_fallback"):
+            text += f"; {info.get('trade_scope_requested')} unavailable: {info['trade_scope_fallback']}"
+        parts.append(f"trade scope {scope}: {text}")
+    swarm_scope = info.get("swarm_scope")
+    if swarm_scope:
+        text = f"swarm scope {swarm_scope}"
+        if swarm_scope == SWARM_SCOPE_SAME_ORIGIN:
+            text += f" ({info.get('swarm_origin') or 'unknown origin'})"
+        excluded = int(info.get("swarm_non_trials_excluded") or 0)
+        if excluded:
+            text += f", {excluded} non-trial siblings excluded"
+        other = int(info.get("swarm_other_origin_excluded") or 0)
+        if other:
+            text += f", {other} other-origin failures excluded"
+        parts.append(text)
+    return "; ".join(parts)
 
 
 def _norm_cdf(x: float) -> float:
@@ -254,53 +361,170 @@ def _base_asset(symbol: object) -> str:
     return text
 
 
-def _swarm_cluster_attempts(strategy_id: str, lookback_days: int) -> int:
-    """Same-cluster (family x asset) siblings that failed on merit in the lookback.
+def _sibling_trial_ids(conn, strategy_ids: list[str]) -> set[str]:
+    """Ids among ``strategy_ids`` with a completed backtest that produced trades.
 
-    The swarm-level selection pressure behind this survivor. Untestable
-    archives are not attempts (no fair test ran). Returns 0 when the family or
-    asset cannot be placed in a cluster and on ANY error: the swarm factor is
-    advisory and must never take down the base DSR.
+    A sibling without one never yielded a Sharpe to select from (crashed,
+    blocked on data, emitted nothing), so it is not a trial.
     """
+    import json
+
+    found: set[str] = set()
+    for i in range(0, len(strategy_ids), 500):
+        chunk = strategy_ids[i : i + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""SELECT strategy_id, metrics_json FROM backtest_results
+                WHERE strategy_id IN ({placeholders})
+                  AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
+                  AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')""",
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            sid = str(row["strategy_id"])
+            if sid in found:
+                continue
+            try:
+                metrics = json.loads(row["metrics_json"]) if row["metrics_json"] else {}
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(metrics, dict):
+                continue
+            in_sample = metrics.get("in_sample") if isinstance(metrics.get("in_sample"), dict) else {}
+            for value in (metrics.get("total_trades"), in_sample.get("total_trades")):
+                try:
+                    if float(value or 0) > 0:
+                        found.add(sid)
+                        break
+                except (TypeError, ValueError):
+                    continue
+    return found
+
+
+def _swarm_cluster_breakdown(
+    strategy_id: str, lookback_days: int, scope: str = SWARM_SCOPE_SAME_ORIGIN
+) -> dict:
+    """Same-cluster (family x asset) siblings that were real trials and failed.
+
+    The swarm-level selection pressure behind this survivor. A sibling counts
+    when it was rejected/archived inside the lookback, was not archived for a
+    non-merit reason, has a completed backtest with trades, and (under
+    ``same_origin``) came from the candidate's own search origin. ``attempts``
+    is 0 when the family or asset cannot be placed in a cluster and on ANY
+    error: the swarm factor is advisory and must never take down the base DSR.
+    """
+    out: dict = {
+        "attempts": 0,
+        "scope": scope,
+        "origin": None,
+        "non_trials_excluded": 0,
+        "other_origin_excluded": 0,
+    }
     try:
         from datetime import datetime, timedelta, timezone
 
         from forven.db import get_db
         from forven.strategy_diversity import infer_strategy_family
 
+        columns = (
+            "id, type, runtime_type, name, symbol, status_reason, "
+            "source, origin_agent_id, dropzone_session_id"
+        )
         with get_db() as conn:
             row = conn.execute(
-                "SELECT type, runtime_type, name, symbol FROM strategies WHERE id = ?",
+                f"SELECT {columns} FROM strategies WHERE id = ?",
                 (str(strategy_id),),
             ).fetchone()
             if not row:
-                return 0
+                return out
+            origin = strategy_origin(row["source"], row["origin_agent_id"], row["dropzone_session_id"])
+            out["origin"] = origin or "unknown"
             family = infer_strategy_family(row["type"], row["runtime_type"], row["name"])
             asset = _base_asset(row["symbol"])
             if family in ("", "other") or not asset:
-                return 0
-            clauses = [
-                "id != ?",
-                "stage IN ('rejected', 'archived')",
-                "LOWER(COALESCE(status_reason, '')) NOT LIKE 'untestable:%'",
-            ]
+                return out
+            clauses = ["id != ?", "stage IN ('rejected', 'archived')"]
             params: list[object] = [str(strategy_id)]
             if int(lookback_days) > 0:
                 cutoff = (datetime.now(timezone.utc) - timedelta(days=int(lookback_days))).isoformat()
                 clauses.append("COALESCE(stage_changed_at, updated_at, created_at) >= ?")
                 params.append(cutoff)
             rows = conn.execute(
-                f"SELECT type, runtime_type, name, symbol FROM strategies WHERE {' AND '.join(clauses)}",
+                f"SELECT {columns} FROM strategies WHERE {' AND '.join(clauses)}",
                 tuple(params),
             ).fetchall()
-        return sum(
-            1
-            for sibling in rows
-            if _base_asset(sibling["symbol"]) == asset
-            and infer_strategy_family(sibling["type"], sibling["runtime_type"], sibling["name"]) == family
-        )
+            cluster = [
+                sibling
+                for sibling in rows
+                if _base_asset(sibling["symbol"]) == asset
+                and infer_strategy_family(sibling["type"], sibling["runtime_type"], sibling["name"]) == family
+            ]
+            other: list = []
+            if scope == SWARM_SCOPE_SAME_ORIGIN:
+                same_origin = []
+                for sibling in cluster:
+                    sibling_origin = strategy_origin(
+                        sibling["source"], sibling["origin_agent_id"], sibling["dropzone_session_id"]
+                    )
+                    (same_origin if sibling_origin == origin else other).append(sibling)
+                cluster = same_origin
+            candidates = [s for s in cluster if not _is_non_trial_reason(s["status_reason"])]
+            trial_ids = _sibling_trial_ids(conn, [str(s["id"]) for s in candidates])
+            # Reported only: other-origin failures that WOULD have counted.
+            other_candidates = [s for s in other if not _is_non_trial_reason(s["status_reason"])]
+            other_ids = _sibling_trial_ids(conn, [str(s["id"]) for s in other_candidates])
+        attempts = sum(1 for s in candidates if str(s["id"]) in trial_ids)
+        out["attempts"] = attempts
+        out["non_trials_excluded"] = len(cluster) - attempts
+        out["other_origin_excluded"] = len(other_ids)
+        return out
     except Exception:
-        return 0
+        out["attempts"] = 0
+        return out
+
+
+def _swarm_cluster_attempts(
+    strategy_id: str, lookback_days: int, scope: str = SWARM_SCOPE_SAME_ORIGIN
+) -> int:
+    """Real-trial, same-cluster failed siblings (see _swarm_cluster_breakdown)."""
+    return int(_swarm_cluster_breakdown(strategy_id, lookback_days, scope).get("attempts") or 0)
+
+
+def _load_confirmation_in_sample_trades(
+    result_id: str, config_json: object, metrics_json: object
+) -> tuple[list | None, str | None]:
+    """In-sample trades of a backtest result, or ``(None, why)`` when not persisted.
+
+    A result whose stored metrics show no in-sample trades needs no artifact:
+    its whole window is the OOS slice. Otherwise a missing artifact (results
+    written before it existed) is reported so the caller can fall back.
+    """
+    import json
+
+    def _parse(blob: object) -> dict:
+        try:
+            parsed = json.loads(blob) if isinstance(blob, str) and blob else blob
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    try:
+        from forven.backtest_api import load_in_sample_trades
+
+        trades = load_in_sample_trades(str(result_id), _parse(config_json), "backtest")
+    except Exception as exc:  # noqa: BLE001 — fall back to the OOS tail, never raise
+        log.warning("DSR: in-sample trades unreadable for %s: %s", result_id, exc)
+        return None, "in_sample_trades_unreadable"
+    if trades is not None:
+        return trades, None
+    in_sample = _parse(metrics_json).get("in_sample")
+    if isinstance(in_sample, dict) and in_sample.get("total_trades") is not None:
+        try:
+            if float(in_sample["total_trades"]) == 0:
+                return [], None
+        except (TypeError, ValueError):
+            pass
+    return None, "in_sample_trades_not_persisted"
 
 
 def _unavailable(reason: str, with_reason: bool) -> dict | None:
@@ -323,9 +547,12 @@ def compute_strategy_dsr(
 ) -> dict | None:
     """Best-effort DSR for a strategy's latest backtest. Returns None on any issue.
 
-    Pulls per-trade returns from the latest backtest result and the trial count
-    from the latest optimization result (falling back to the configured default),
-    then scales the trial count by the swarm-level cluster attempts (issue #17).
+    Pulls per-trade returns from the latest backtest result (its in-sample and
+    OOS slices, or the OOS tail alone, per ``deflated_sharpe_trade_scope``) and
+    the trial count from the optimization results (falling back to the
+    configured default), then scales the trial count by the swarm-level cluster
+    attempts (issue #17, scoped by ``dsr_swarm_scope``). The scopes actually
+    used are returned (``trade_scope``, ``swarm_scope``, ...).
     Never raises — DSR is advisory, not on the critical path.
 
     dsr-gate-fails-open (2026-07-25): pass ``with_reason=True`` and every
@@ -385,7 +612,7 @@ def compute_strategy_dsr(
 
         with get_db() as conn:
             bt = conn.execute(
-                """SELECT result_id FROM backtest_results
+                """SELECT result_id, config_json, metrics_json FROM backtest_results
                    WHERE strategy_id = ?
                      AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
                      AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
@@ -416,7 +643,20 @@ def compute_strategy_dsr(
             # per-trade return series the DSR needs no longer exists.
             return _unavailable("no_trades_in_artifact", with_reason)
 
-        returns = _extract_trade_returns(trades)
+        oos_returns = _extract_trade_returns(trades)
+        trade_scope_requested = resolve_trade_scope(rob)
+        trade_scope = trade_scope_requested
+        trade_scope_fallback: str | None = None
+        is_returns: list[float] = []
+        if trade_scope_requested == TRADE_SCOPE_CONFIRMATION_WINDOW:
+            in_sample_trades, trade_scope_fallback = _load_confirmation_in_sample_trades(
+                bt["result_id"], bt["config_json"], bt["metrics_json"]
+            )
+            if in_sample_trades is None:
+                trade_scope = TRADE_SCOPE_OOS
+            else:
+                is_returns = _extract_trade_returns(in_sample_trades)
+        returns = is_returns + oos_returns
         if len(returns) < 2:
             return _unavailable("insufficient_trade_returns", with_reason)
 
@@ -439,12 +679,14 @@ def compute_strategy_dsr(
         # Effective trials = optimizer trials x cluster attempts (the survivor
         # itself + same-cluster siblings that failed). 0 siblings -> unchanged.
         swarm_attempts = 0
+        swarm: dict = {}
         if bool(rob.get("dsr_swarm_trials_enabled", True)):
             try:
                 lookback = int(rob.get("dsr_swarm_lookback_days", 90))
             except (TypeError, ValueError):
                 lookback = 90
-            swarm_attempts = _swarm_cluster_attempts(strategy_id, lookback)
+            swarm = _swarm_cluster_breakdown(strategy_id, lookback, resolve_swarm_scope(rob))
+            swarm_attempts = int(swarm.get("attempts") or 0)
 
         n_trials = n_trials_base * (1 + swarm_attempts)
         trial_var = _latest_trial_sharpe_var(opt_metrics, opt_config)
@@ -455,6 +697,17 @@ def compute_strategy_dsr(
         result["n_trials_base"] = int(n_trials_base)
         result["n_optimization_runs"] = int(n_optimization_runs)
         result["swarm_cluster_attempts"] = int(swarm_attempts)
+        result["trade_scope"] = trade_scope
+        result["trade_scope_requested"] = trade_scope_requested
+        if trade_scope_fallback:
+            result["trade_scope_fallback"] = trade_scope_fallback
+        result["n_obs_in_sample"] = len(is_returns)
+        result["n_obs_oos"] = len(oos_returns)
+        if swarm:
+            result["swarm_scope"] = swarm.get("scope")
+            result["swarm_origin"] = swarm.get("origin")
+            result["swarm_non_trials_excluded"] = int(swarm.get("non_trials_excluded") or 0)
+            result["swarm_other_origin_excluded"] = int(swarm.get("other_origin_excluded") or 0)
         # Write-through snapshot: list views display the last computed DSR
         # without ever paying this function's cost per row. Strategies whose
         # DSR was never computed have no value to show.

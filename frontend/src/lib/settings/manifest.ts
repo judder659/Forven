@@ -1666,6 +1666,40 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
       'Window for counting same-cluster siblings that failed in the DSR swarm-trials factor. 0 = unbounded (count the full graveyard).',
     usedBy: ['forven.gauntlet.deflated_sharpe'],
   },
+  {
+    id: 'pipeline.robustness_thresholds.deflated_sharpe_trade_scope',
+    label: 'DSR trade scope',
+    default: 'confirmation_window',
+    type: 'select',
+    options: [
+      { value: 'confirmation_window', label: 'Whole confirmation window' },
+      { value: 'oos', label: 'OOS tail only (legacy)' },
+    ],
+    area: 'lab',
+    subsection: 'lab-pipeline-robustness-gauntlet',
+    backendSection: 'pipeline',
+    backendPath: 'robustness_thresholds.deflated_sharpe_trade_scope',
+    description:
+      'Which trades the Deflated Sharpe is computed on. Whole confirmation window = every trade of the confirmation backtest (in-sample and out-of-sample, both after the optimizer\'s selection window). OOS tail = only its most recent out-of-sample slice (~45-55 trades), which favours a strong recent stretch. Results that predate stored in-sample trades use the OOS tail and say so.',
+    usedBy: ['forven.gauntlet.deflated_sharpe'],
+  },
+  {
+    id: 'pipeline.robustness_thresholds.dsr_swarm_scope',
+    label: 'DSR swarm scope',
+    default: 'same_origin',
+    type: 'select',
+    options: [
+      { value: 'same_origin', label: 'Same search origin' },
+      { value: 'all', label: 'All origins (legacy)' },
+    ],
+    area: 'lab',
+    subsection: 'lab-pipeline-robustness-gauntlet',
+    backendSection: 'pipeline',
+    backendPath: 'robustness_thresholds.dsr_swarm_scope',
+    description:
+      'Whose failed siblings count in the DSR swarm-trials factor. Same search origin = only the candidate\'s own origin (Drop Zone, in-app agents, or another source), so one searcher\'s mass failures do not deflate another\'s survivor. All origins = every failed sibling. Under both, siblings that were never a real trial (no completed backtest with trades, or archived as untestable / data-blocked / no runtime) are excluded.',
+    usedBy: ['forven.gauntlet.deflated_sharpe'],
+  },
   // Parameter-jitter compute bounds (the heaviest robustness step: N full-window
   // backtests). These keep the sweep under the step timeout so it can't wedge the
   // gauntlet at param_jitter.

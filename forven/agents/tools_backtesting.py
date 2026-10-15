@@ -297,6 +297,7 @@ def _persist_agent_backtest(
             result_id, job_id, result.get("trades"),
             equity_curve=result.get("equity_curve"),
             benchmark_curve=result.get("benchmark_curve"),
+            in_sample_trades=result.get("is_trades"),
         )
     except Exception:
         pass
