@@ -54,6 +54,9 @@ class FakeVenue:
     def list_orders(self, limit=None):
         return self._orders
 
+    def raw_positions(self):
+        return []
+
 
 def _entry_order(oid, trade_id, pid, qty, fill):
     return {
@@ -133,6 +136,37 @@ def test_archived_roster_member_is_flagged_and_missed_trades_keep_their_reason(f
     assert row["forward"]["missed"] == 1
     assert row["forward"]["missed_reasons"] == {"entry older than the freshness window": 1}
     assert row["forward"]["mean_r"] == -2.0
+
+
+def test_venue_book_decides_open_even_when_fill_quantities_disagree(forven_db):
+    """A flip closes a different quantity than was entered; only the venue's
+    current book can say whether the position is still open."""
+    _insert_strategy("S1", "live_graduated")
+    _insert_trade("E1", "S1")
+    trades = [_fill("f2", "c1", "p1", "flip", 1, 110.0, pnl="10", fee="0")]
+    orders = [_entry_order("o1", "E1", "p1", 2, 100.0)]
+
+    closed = sc.build_scorecard(FakeVenue(trades, orders), roster={"S1": JOINED},
+                                state={}, starting_balance=None, equity=None)
+    assert closed["trades"][0]["venue_open"] is False
+    assert closed["fidelity"]["trades"] == 1
+
+    class Holding(FakeVenue):
+        def raw_positions(self):
+            return [{"positionId": "p1"}]
+
+    still = sc.build_scorecard(Holding(trades, orders), roster={"S1": JOINED},
+                               state={}, starting_balance=None, equity=None)
+    assert still["trades"][0]["venue_open"] is True
+    assert still["trades"][0]["r"] is None
+
+
+def test_gauntlet_member_is_not_flagged_inactive(forven_db):
+    _insert_strategy("S1", "gauntlet")
+    card = sc.build_scorecard(FakeVenue([], []), roster={"S1": JOINED}, state={},
+                              starting_balance=None, equity=None)
+    assert card["strategies"][0]["health"]["label"] == "Not trading yet"
+    assert card["inactive_roster"] == []
 
 
 def test_ledger_keeps_history_when_a_read_fails(forven_db):

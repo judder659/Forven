@@ -379,7 +379,15 @@
 	$: inactiveRoster = scorecard?.inactive_roster ?? [];
 	$: scoreTrades = [...(scorecard?.trades ?? [])].reverse();
 	$: visibleTrades = showAllTrades ? scoreTrades : scoreTrades.slice(0, 12);
-	$: closedTrades = (scorecard?.trades ?? []).filter((t) => t.closed_at && !t.venue_open);
+	$: closedTrades = (scorecard?.trades ?? []).filter((t) => !t.venue_open);
+	// What removing the inactive members does to everyone else's size: the
+	// slice is equity / roster size, so risk per trade scales with it.
+	$: riskAfterPrune = (() => {
+		const n = capitalSlice?.roster_size ?? 0;
+		const keep = n - inactiveRoster.length;
+		if (!riskPerTrade || !n || keep <= 0) return null;
+		return (riskPerTrade * n) / keep;
+	})();
 	$: winRate = closedTrades.length
 		? closedTrades.filter((t) => t.pnl_usd > 0).length / closedTrades.length
 		: null;
@@ -481,8 +489,12 @@
 			<div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-900 bg-red-500/5 px-3 py-2 text-[12px] text-red-400">
 				<span>
 					{inactiveRoster.length} of {Object.keys(mirror?.strategies ?? {}).length} roster strategies
-					can no longer trade ({inactiveRoster.join(', ')}). They still take an equal share of the
-					account, so every active member trades smaller than it should.
+					can no longer trade ({inactiveRoster.join(', ')}) but still hold an equal share of the
+					account.
+					{#if riskAfterPrune}
+						Removing them raises each remaining member's risk per trade from {fmtUsd(riskPerTrade)}
+						to about {fmtUsd(riskAfterPrune)}; check the scorecard below before you do.
+					{/if}
 				</span>
 				<button
 					class="rounded-md border border-red-800 px-3 py-1 text-[12px] text-red-300 hover:bg-red-950 disabled:opacity-50"

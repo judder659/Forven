@@ -165,8 +165,15 @@ def _strategy_rows(ids: set[str]) -> dict[str, dict]:
     return {str(dict(r)["id"]): dict(r) for r in rows}
 
 
-def _attribute(ledger: dict, sources: list[dict]) -> tuple[list[dict], dict]:
+def _attribute(ledger: dict, sources: list[dict],
+               open_position_ids: set[str] | None = None) -> tuple[list[dict], dict]:
     """Per mirrored source trade: venue fills, realized PnL, fees, R.
+
+    ``open_position_ids`` is the venue's CURRENT book. When readable it is the
+    truth for "still open": fill arithmetic alone misreads flipped or netted
+    positions (a flip's closing quantity is not the entries' quantity), which
+    showed long-flat July positions as open. Unreadable (None) falls back to
+    comparing closed against entered quantity.
 
     Returns (mirrored_rows, unattributed_totals)."""
     from forven.exchange.propr import deterministic_ulid
@@ -208,6 +215,10 @@ def _attribute(ledger: dict, sources: list[dict]) -> tuple[list[dict], dict]:
         closed_at = max((str(f.get("executedAt") or "") for f in closes), default="") or None
         entries = entries_by_position.get(pid, [])
         total_qty = sum(q for _o, q, _s in entries)
+        if open_position_ids is not None:
+            still_open = pid in open_position_ids
+        else:
+            still_open = close_qty + 1e-12 < total_qty
         attributed_qty = 0.0
         for order, qty, source in entries:
             if source is None:
@@ -229,8 +240,8 @@ def _attribute(ledger: dict, sources: list[dict]) -> tuple[list[dict], dict]:
                 "direction": direction.lower(),
                 "execution_type": source.get("execution_type"),
                 "opened_at": order.get("filledAt") or order.get("createdAt"),
-                "closed_at": closed_at if close_qty > 0 else None,
-                "venue_open": close_qty + 1e-12 < total_qty,
+                "closed_at": None if still_open else closed_at,
+                "venue_open": still_open,
                 "quantity": qty,
                 "entry_fill": fill_entry,
                 "exit_fill": exit_avg,
@@ -243,7 +254,7 @@ def _attribute(ledger: dict, sources: list[dict]) -> tuple[list[dict], dict]:
                 "pnl_usd": round(pnl, 4),
                 "fees_usd": round(fees * share, 4),
                 "risk_usd": round(risk_usd, 4) if risk_usd else None,
-                "r": round(pnl / risk_usd, 3) if (risk_usd and close_qty > 0) else None,
+                "r": round(pnl / risk_usd, 3) if (risk_usd and not still_open) else None,
                 "source_r": (
                     round(_r_multiple(direction, src_entry, _num(source.get("exit_price")), stop), 3)
                     if source_closed and _r_multiple(direction, src_entry, _num(source.get("exit_price")), stop) is not None
@@ -273,6 +284,9 @@ def _health(stage: str | None, forward_n: int, forward_mean_r: float | None) -> 
     if stage is None:
         return {"level": "bad", "label": "Strategy missing",
                 "detail": "No longer in the strategy table; it can never trade again."}
+    if stage == "gauntlet":
+        return {"level": "info", "label": "Not trading yet",
+                "detail": "Still in the gauntlet; it mirrors once it reaches paper or live."}
     if stage not in _ACTIVE_STAGES:
         return {"level": "bad", "label": f"Inactive ({stage})",
                 "detail": "Not in paper or live, so it emits no trades — but it still takes "
@@ -290,6 +304,14 @@ def _health(stage: str | None, forward_n: int, forward_mean_r: float | None) -> 
 def build_scorecard(propr, *, roster: dict[str, str], state: dict,
                     starting_balance: float | None, equity: float | None) -> dict:
     ledger = refresh_venue_ledger(propr)
+    open_position_ids: set[str] | None
+    try:
+        open_position_ids = {
+            str(p.get("positionId") or p.get("id") or "")
+            for p in (propr.raw_positions() or [])
+        }
+    except Exception:  # noqa: BLE001 — fall back to fill arithmetic
+        open_position_ids = None
     order_times = [
         _parse_when(o.get("createdAt")) for o in (ledger.get("orders") or {}).values()
     ]
@@ -297,7 +319,7 @@ def build_scorecard(propr, *, roster: dict[str, str], state: dict,
     join_times = [t for t in (_parse_when(v) for v in roster.values()) if t]
     horizon = min(order_times + join_times, default=datetime.now(timezone.utc) - timedelta(days=90))
     sources = _source_trades(horizon - timedelta(days=1))
-    mirrored, unattributed = _attribute(ledger, sources)
+    mirrored, unattributed = _attribute(ledger, sources, open_position_ids)
     mirrored_ids = {m["trade_id"] for m in mirrored}
 
     by_strategy: dict[str, list[dict]] = defaultdict(list)
@@ -311,7 +333,7 @@ def build_scorecard(propr, *, roster: dict[str, str], state: dict,
     for sid in sorted(strategy_ids):
         joined = _parse_when(roster.get(sid))
         mine = by_strategy.get(sid, [])
-        closed = [m for m in mine if m.get("closed_at") and not m.get("venue_open")]
+        closed = [m for m in mine if not m.get("venue_open")]
         rs = [m["r"] for m in closed if m.get("r") is not None]
         slips = [m["entry_slippage_bps"] for m in mine if m.get("entry_slippage_bps") is not None]
 
@@ -369,7 +391,7 @@ def build_scorecard(propr, *, roster: dict[str, str], state: dict,
             },
         })
 
-    realized_total = sum(m.get("pnl_usd") or 0.0 for m in mirrored if m.get("closed_at"))
+    realized_total = sum(m.get("pnl_usd") or 0.0 for m in mirrored if not m.get("venue_open"))
     trading_net = realized_total + unattributed["realized_usd"] - unattributed["fees_usd"]
     account_change = (
         round(float(equity) - float(starting_balance), 2)
