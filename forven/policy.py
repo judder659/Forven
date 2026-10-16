@@ -239,6 +239,16 @@ DEFAULT_PIPELINE_CONFIG = {
         # DSR; whether it rejects is the gate switch above.
         "dsr_swarm_trials_enabled": True,
         "dsr_swarm_lookback_days": 90,
+        # What the DSR is computed over (2026-10-15; forven.readiness_checks
+        # stores both on existing installs once, only where absent).
+        # "confirmation_window" scores every trade of the confirmation backtest
+        # (in-sample + OOS, both after the optimizer's selection window);
+        # "oos" is the legacy ~45-55-trade recent OOS tail.
+        "deflated_sharpe_trade_scope": "confirmation_window",
+        # "same_origin" counts only failed siblings from the candidate's own
+        # search origin (Drop Zone / in-app agents / other source); "all" is the
+        # legacy every-origin count. Non-trials never count under either.
+        "dsr_swarm_scope": "same_origin",
     },
     "paper_trading": {
         "min_paper_days": 14,
@@ -4864,9 +4874,13 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
                     "; the optimizer searched no parameters, so the default trial count "
                     "applies — declare parameter_space() to have the search measured"
                 )
+            from forven.gauntlet.deflated_sharpe import describe_dsr_scope
+
+            scope_note = describe_dsr_scope(dsr_info)
             return False, (
                 f"DSR REJECT: Deflated Sharpe {float(dsr_val):.2f} below {min_dsr:.2f} "
                 f"target (likely a selection artifact across {trials_note})"
+                + (f" [{scope_note}]" if scope_note else "")
             )
 
     # S00552: Profit Factor enforcement at gauntlet (in addition to quick_screen).

@@ -239,6 +239,7 @@ from forven.settings_apply import (  # noqa: F401
 # through the hottest code in the repo. They stay until those seams are
 # rewritten to patch the owning module instead.
 from forven.backtest_api import (  # noqa: F401
+    IN_SAMPLE_TRADES_ARTIFACT_SUFFIX,
     _BACKTEST_DISPLAY_EQUITY,
     _backtest_trash_table,
     _build_backtest_chart_context_payload,
@@ -278,6 +279,7 @@ from forven.backtest_api import (  # noqa: F401
     _write_backtest_chart_artifacts,
     _write_backtest_result_artifacts,
     calculate_backtest_verdict,
+    load_in_sample_trades,
 )
 
 
@@ -402,6 +404,13 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                     apply_readiness_checks(kv_get, kv_set)
             except Exception as exc:
                 log.warning("Readiness-checks startup step failed: %s", exc)
+            # Deflated-Sharpe scopes: stored once where absent, never overwritten.
+            try:
+                from forven.readiness_checks import apply_dsr_scope_migration
+                with _SETTINGS_MUTATION_LOCK:
+                    apply_dsr_scope_migration(kv_get, kv_set)
+            except Exception as exc:
+                log.warning("DSR-scope settings migration failed: %s", exc)
             existing_jobs = get_jobs()
             if not existing_jobs:
                 seed_forven_jobs()
@@ -6816,6 +6825,7 @@ def _persist_completed_backtest_run(
             benchmark_curve=run.get("benchmark_curve"),
             equity_curve_full=run.get("equity_curve_full"),
             benchmark_curve_full=run.get("benchmark_curve_full"),
+            in_sample_trades=run.get("is_trades"),
         )
     except Exception:
         pass
@@ -8172,6 +8182,7 @@ def post_backtest_submit(
         benchmark_curve=run.get("benchmark_curve"),
         equity_curve_full=run.get("equity_curve_full"),
         benchmark_curve_full=run.get("benchmark_curve_full"),
+        in_sample_trades=run.get("is_trades"),
     )
     try:
         chart_context = _build_backtest_chart_context_payload(
