@@ -1684,5 +1684,23 @@ def dump_cmd(out):
         click.echo(serialized)
 
 
+# --- Bot sandbox ---
+
+@cli.command("bot-sandbox")
+def bot_sandbox():
+    """Prepare and check the low-integrity sandbox bots run in (Windows)."""
+    from forven.bot_factory.manager import bot_sandbox_status
+
+    status = bot_sandbox_status()
+    if status is None:
+        click.echo("Off: the bot sandbox only runs on Windows, and FORVEN_BOT_SANDBOX=0 turns it off.")
+        return
+    click.echo("On: bots start at low integrity." if status.usable else "Unusable: bots start without the sandbox.")
+    for problem in status.problems:
+        click.echo(f"  - {problem}")
+    if not status.usable:
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     cli()

@@ -65,6 +65,11 @@ def _preferred_key_path() -> Path:
     return base / "forven" / _KEY_FILE_NAME
 
 
+def secret_config_dir() -> Path:
+    """The operator-only folder holding the key file (outside FORVEN_HOME)."""
+    return _preferred_key_path().parent
+
+
 def _legacy_key_path() -> Path:
     return Path(cfg.FORVEN_HOME) / _KEY_FILE_NAME
 
