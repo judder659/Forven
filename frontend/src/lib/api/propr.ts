@@ -71,8 +71,12 @@ export interface ProprMirrorHalt {
 	daily_rule_fully_enforced?: boolean;
 }
 
+export type ProprRosterMode = 'manual' | 'track_record';
+
 export interface ProprMirror {
 	enabled: boolean;
+	/** PROPR-TRACK-1: manual picks, or the mirror keeps the roster by forward record. */
+	mode?: ProprRosterMode;
 	strategies: Record<string, string>;
 	candidates: ProprMirrorCandidate[];
 	state: Record<string, ProprMirrorTradeState>;
@@ -149,7 +153,13 @@ export async function getProprMirror(): Promise<ProprMirror> {
 export async function updateProprMirror(update: {
 	enabled?: boolean;
 	strategies?: string[];
-}): Promise<{ ok: boolean; enabled: boolean; strategies: Record<string, string> }> {
+	mode?: ProprRosterMode;
+}): Promise<{
+	ok: boolean;
+	enabled: boolean;
+	strategies: Record<string, string>;
+	mode: ProprRosterMode;
+}> {
 	return fetchApi('/api/propr/mirror', {
 		method: 'PUT',
 		body: JSON.stringify(update)
@@ -262,6 +272,20 @@ export interface ProprScorecard {
 	};
 	fidelity: { trades: number; mirror_sum_r: number | null; source_sum_r: number | null };
 	inactive_roster: string[];
+	track_record: {
+		mode: ProprRosterMode;
+		min_trades: number;
+		strategies: {
+			strategy_id: string;
+			stage: string;
+			trades: number;
+			wins: number;
+			sum_r: number;
+			mean_r: number | null;
+			verdict: 'qualified' | 'probation' | 'benched';
+			on_roster: boolean;
+		}[];
+	};
 }
 
 export async function getProprScorecard(refresh = false): Promise<ProprScorecard> {

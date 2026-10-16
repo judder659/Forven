@@ -89,6 +89,60 @@ def _r_multiple(direction: str, entry: float | None, exit_: float | None,
 
 
 # --------------------------------------------------------------------------
+# Forward records (shared with the mirror's track-record roster)
+# --------------------------------------------------------------------------
+
+def forward_records() -> dict[str, dict]:
+    """Every paper/live strategy's whole forward record in R.
+
+    {strategy_id: {stage, trades, mean_r, sum_r, wins}} over CLOSED paper and
+    live trades that carry a stop (R needs one). This is the evidence the
+    track-record roster mode trades on, so it deliberately ignores backtests:
+    a strategy earns a place by what it did after promotion."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT s.id AS sid, s.stage AS stage, t.direction, t.entry_price, t.exit_price, "
+            "t.signal_data FROM strategies s JOIN trades t "
+            "ON (t.strategy_id = s.id OR (t.strategy_id IS NULL AND t.strategy = s.id)) "
+            "WHERE s.stage IN ('paper', 'live_graduated') AND UPPER(t.status) = 'CLOSED' "
+            "AND t.execution_type IN ('paper', 'live')"
+        ).fetchall()
+        stages = conn.execute(
+            "SELECT id, stage FROM strategies WHERE stage IN ('paper', 'live_graduated')"
+        ).fetchall()
+    out: dict[str, dict] = {
+        str(dict(r)["id"]): {"stage": dict(r)["stage"], "trades": 0, "wins": 0,
+                             "sum_r": 0.0, "mean_r": None}
+        for r in stages
+    }
+    for raw in rows:
+        row = dict(raw)
+        r = _r_multiple(str(row.get("direction") or ""), _num(row.get("entry_price")),
+                        _num(row.get("exit_price")), _signal_stop(row.get("signal_data")))
+        if r is None:
+            continue
+        rec = out.setdefault(str(row["sid"]), {"stage": row.get("stage"), "trades": 0,
+                                               "wins": 0, "sum_r": 0.0, "mean_r": None})
+        rec["trades"] += 1
+        rec["wins"] += int(r > 0)
+        rec["sum_r"] += r
+    for rec in out.values():
+        if rec["trades"]:
+            rec["mean_r"] = round(rec["sum_r"] / rec["trades"], 3)
+        rec["sum_r"] = round(rec["sum_r"], 2)
+    return out
+
+
+def track_record_verdict(record: dict | None, min_trades: int = MIN_VERDICT_TRADES) -> str:
+    """'qualified' (enough trades, positive average), 'benched' (enough
+    trades, average <= 0) or 'probation' (too few trades to judge)."""
+    if not record or int(record.get("trades") or 0) < min_trades:
+        return "probation"
+    mean_r = record.get("mean_r")
+    return "qualified" if mean_r is not None and mean_r > 0 else "benched"
+
+
+# --------------------------------------------------------------------------
 # Venue ledger
 # --------------------------------------------------------------------------
 
@@ -302,7 +356,8 @@ def _health(stage: str | None, forward_n: int, forward_mean_r: float | None) -> 
 
 
 def build_scorecard(propr, *, roster: dict[str, str], state: dict,
-                    starting_balance: float | None, equity: float | None) -> dict:
+                    starting_balance: float | None, equity: float | None,
+                    mode: str = "manual") -> dict:
     ledger = refresh_venue_ledger(propr)
     open_position_ids: set[str] | None
     try:
@@ -400,6 +455,16 @@ def build_scorecard(propr, *, roster: dict[str, str], state: dict,
     all_r = [m["r"] for m in mirrored if m.get("r") is not None]
     all_src_r = [m["source_r"] for m in mirrored if m.get("r") is not None and m.get("source_r") is not None]
     inactive = [r["strategy_id"] for r in rows if r["on_roster"] and r["health"]["level"] == "bad"]
+    records = forward_records()
+    track = sorted(
+        (
+            {"strategy_id": sid, **rec, "verdict": track_record_verdict(rec),
+             "on_roster": sid in roster}
+            for sid, rec in records.items()
+        ),
+        key=lambda r: ({"qualified": 0, "probation": 1, "benched": 2}[r["verdict"]],
+                       -(r["mean_r"] if r["mean_r"] is not None else -9), r["strategy_id"]),
+    )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "ledger_refreshed_at": ledger.get("refreshed_at"),
@@ -424,7 +489,16 @@ def build_scorecard(propr, *, roster: dict[str, str], state: dict,
             "source_sum_r": round(sum(all_src_r), 2) if all_src_r else None,
         },
         "inactive_roster": inactive,
+        "track_record": {
+            "mode": mode,
+            "min_trades": MIN_VERDICT_TRADES,
+            "strategies": track,
+        },
     }
+
+
+def invalidate_scorecard() -> None:
+    _cache.update(at=0.0, value=None)
 
 
 def get_scorecard(force: bool = False) -> dict:
@@ -442,6 +516,7 @@ def get_scorecard(force: bool = False) -> dict:
         state=propr_mirror.get_state(),
         starting_balance=_num(halt.get("starting_balance")),
         equity=_num(halt.get("equity")),
+        mode=propr_mirror.roster_mode(),
     )
     _cache.update(at=now, value=value)
     return value

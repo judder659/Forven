@@ -90,6 +90,16 @@ log = logging.getLogger("forven.propr_mirror")
 
 MIRROR_ENABLED_KEY = "propr_mirror_enabled"
 MIRROR_STRATEGIES_KEY = "propr_mirror_strategies"
+# PROPR-TRACK-1: how the roster is chosen. "manual" (default) = the operator's
+# picks. "track_record" = the mirror keeps the roster itself: every paper/live
+# strategy whose whole forward record is at least MIN_VERDICT_TRADES trades
+# with a positive average R is on it, everything else is off. It will often be
+# EMPTY — that is the point: the challenge account sits flat until something
+# has earned a place, instead of copying strategies with no forward edge.
+ROSTER_MODE_KEY = "propr_mirror_roster_mode"
+ROSTER_MODES = ("manual", "track_record")
+TRACK_RECORD_SYNC_SECONDS = 900
+_track_sync = {"at": None}
 STATE_KEY = "forven:propr-mirror:state"
 HALT_STATE_KEY = "forven:propr-mirror:halt"
 UNMANAGED_STATE_KEY = "forven:propr-mirror:unmanaged"
@@ -205,11 +215,56 @@ def mirror_roster(settings: dict | None = None) -> dict[str, str]:
     return roster
 
 
-def set_mirror_config(enabled: bool | None = None, strategy_ids: list[str] | None = None) -> dict:
-    """Persist the toggle and/or roster. New roster entries are stamped with
-    the current time so pre-existing open trades are never mirrored; entries
-    already on the roster keep their original timestamp."""
+def roster_mode(settings: dict | None = None) -> str:
+    s = settings if isinstance(settings, dict) else _settings()
+    mode = str(s.get(ROSTER_MODE_KEY) or "manual").strip().lower()
+    return mode if mode in ROSTER_MODES else "manual"
+
+
+def track_record_roster(existing: dict[str, str], now: datetime) -> dict[str, str]:
+    """The roster track-record mode wants right now. Members that stay keep
+    their join time; newcomers join NOW, so only their future trades mirror."""
+    from forven.propr_scorecard import forward_records, track_record_verdict
+
+    records = forward_records()
+    return {
+        sid: existing.get(sid) or now.isoformat()
+        for sid, rec in sorted(records.items())
+        if track_record_verdict(rec) == "qualified"
+    }
+
+
+def _sync_track_record_roster(settings: dict, now: datetime, *, force: bool = False) -> dict[str, str]:
+    """Re-derive and persist the track-record roster (throttled)."""
+    current = mirror_roster(settings)
+    last = _track_sync.get("at")
+    if not force and last is not None and (now - last).total_seconds() < TRACK_RECORD_SYNC_SECONDS:
+        return current
+    _track_sync["at"] = now
+    wanted = track_record_roster(current, now)
+    if wanted != current:
+        added = sorted(set(wanted) - set(current))
+        dropped = sorted(set(current) - set(wanted))
+        log.info("Propr mirror track-record roster: +%s -%s", added, dropped)
+        settings[MIRROR_STRATEGIES_KEY] = wanted
+        kv_set("forven:settings", settings)
+    return wanted
+
+
+def set_mirror_config(enabled: bool | None = None, strategy_ids: list[str] | None = None,
+                      mode: str | None = None) -> dict:
+    """Persist the toggle, roster mode and/or roster. New roster entries are
+    stamped with the current time so pre-existing open trades are never
+    mirrored; entries already on the roster keep their original timestamp.
+    In track-record mode the roster is derived, so a manual list is refused."""
     settings = _settings()
+    if mode is not None:
+        cleaned = str(mode).strip().lower()
+        if cleaned not in ROSTER_MODES:
+            raise ValueError(f"roster mode must be one of {ROSTER_MODES}")
+        settings[ROSTER_MODE_KEY] = cleaned
+    if strategy_ids is not None and roster_mode(settings) == "track_record":
+        raise ValueError("the roster is chosen by track record; switch to manual to edit it")
     if enabled is not None:
         settings[MIRROR_ENABLED_KEY] = bool(enabled)
     if strategy_ids is not None:
@@ -221,7 +276,10 @@ def set_mirror_config(enabled: bool | None = None, strategy_ids: list[str] | Non
             if str(sid or "").strip()
         }
     kv_set("forven:settings", settings)
-    return {"enabled": mirror_enabled(settings), "strategies": mirror_roster(settings)}
+    if mode is not None and roster_mode(settings) == "track_record":
+        _sync_track_record_roster(settings, datetime.now(timezone.utc), force=True)
+    return {"enabled": mirror_enabled(settings), "strategies": mirror_roster(settings),
+            "mode": roster_mode(settings)}
 
 
 def get_state() -> dict:
@@ -1852,7 +1910,20 @@ def mirror_tick() -> dict:
     if not mirror_enabled(settings):
         return {"skipped": "mirror disabled"}
     roster = mirror_roster(settings)
-    if not roster:
+    if roster_mode(settings) == "track_record":
+        try:
+            roster = _sync_track_record_roster(settings, datetime.now(timezone.utc))
+        except Exception as exc:  # noqa: BLE001 — keep the last roster on a read error
+            log.warning("Propr mirror track-record sync failed: %s", exc)
+    if not roster and not any(
+        isinstance(e, dict) and (
+            e.get("status") in _UNRESOLVED_CLAIM_STATUSES or e.get("bracket_cancel_pending")
+        )
+        for e in get_state().values()
+    ):
+        # Nothing to open and nothing to unwind. With mirrored legs still
+        # open the tick must run on: an emptied roster (operator edit or a
+        # track-record bench) must never strand a leg without its close pass.
         return {"skipped": "empty roster"}
     from forven.sim.clock import is_sim_active
     if is_sim_active():

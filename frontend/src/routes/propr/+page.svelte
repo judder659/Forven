@@ -218,6 +218,27 @@
 		}
 	}
 
+	async function setRosterMode(mode: 'manual' | 'track_record') {
+		if (mirror?.mode === mode) return;
+		mirrorBusy = true;
+		actionMessage = '';
+		try {
+			const res = await updateProprMirror({ mode });
+			rosterDraft = new Set(Object.keys(res.strategies));
+			rosterDirty = false;
+			const n = Object.keys(res.strategies).length;
+			actionMessage =
+				mode === 'track_record'
+					? `Track record mode: the mirror now follows ${n} strateg${n === 1 ? 'y' : 'ies'} with a winning forward record${n === 0 ? ' — none qualify yet, so the account stays flat' : ''}.`
+					: 'Manual mode: the roster is yours to pick again.';
+			await load();
+		} catch (e) {
+			actionMessage = `Could not change the roster mode: ${e instanceof Error ? e.message : e}`;
+		} finally {
+			mirrorBusy = false;
+		}
+	}
+
 	async function toggleMirror() {
 		mirrorBusy = true;
 		actionMessage = '';
@@ -376,7 +397,14 @@
 			(healthRank[a.health.level] ?? 9) - (healthRank[b.health.level] ?? 9) ||
 			a.strategy_id.localeCompare(b.strategy_id)
 	);
-	$: inactiveRoster = scorecard?.inactive_roster ?? [];
+	$: inactiveRoster = mirror?.mode === 'track_record' ? [] : (scorecard?.inactive_roster ?? []);
+	$: trackMode = mirror?.mode === 'track_record';
+	$: trackRows = scorecard?.track_record?.strategies ?? [];
+	const verdictClass: Record<string, string> = {
+		qualified: 'border-emerald-800 text-emerald-400',
+		probation: 'border-sc-line2 text-sc-ink3',
+		benched: 'border-red-900 text-red-400',
+	};
 	$: scoreTrades = [...(scorecard?.trades ?? [])].reverse();
 	$: visibleTrades = showAllTrades ? scoreTrades : scoreTrades.slice(0, 12);
 	$: closedTrades = (scorecard?.trades ?? []).filter((t) => !t.venue_open);
@@ -940,7 +968,49 @@
 					the next UTC day; the drawdown halt clears if equity recovers.
 				</div>
 			{/if}
+			<div class="flex flex-wrap items-center gap-2 text-[12px]">
+				<span class="text-sc-ink3">Who to follow:</span>
+				{#each [['track_record', 'Track record'], ['manual', 'Manual picks']] as [m, label] (m)}
+					<button
+						class={`rounded-md border px-3 py-1 disabled:opacity-50 ${
+							(mirror?.mode ?? 'manual') === m
+								? 'border-emerald-800 bg-[#081008] text-emerald-400'
+								: 'border-sc-line2 bg-sc-panel2 text-sc-ink2 hover:bg-sc-raise'
+						}`}
+						on:click={() => setRosterMode(m as 'manual' | 'track_record')}
+						disabled={mirrorBusy}
+					>
+						{label}
+					</button>
+				{/each}
+				<span class="text-[11px] text-sc-ink3">
+					{trackMode
+						? `Follows every paper or live strategy with ${scorecard?.track_record?.min_trades ?? 8}+ forward trades and a positive average R; benches the rest. Re-checked every 15 minutes. Open copies always close normally.`
+						: 'You choose the roster below.'}
+				</span>
+			</div>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#if trackMode}
+				<div class="space-y-2">
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						Forward records ({trackRows.filter((r) => r.verdict === 'qualified').length} qualify)
+					</span>
+					<div class="max-h-64 overflow-y-auto border border-sc-line divide-y divide-sc-line">
+						{#each trackRows as r (r.strategy_id)}
+							<div class="flex items-center gap-2 px-2 py-1.5 text-[11px]">
+								<span class={`rounded border px-1.5 py-0.5 text-[10px] ${verdictClass[r.verdict] ?? ''}`}>{r.verdict}</span>
+								<span class="font-bold text-sc-ink2">{r.strategy_id}</span>
+								<span class="text-sc-ink3">{r.stage}</span>
+								<span class="flex-1"></span>
+								<span class="text-sc-ink3">{r.trades} trades · {r.wins}W</span>
+								<span class={`w-20 text-right ${toneOf(r.mean_r)}`}>{fmtR(r.mean_r)} avg</span>
+							</div>
+						{:else}
+							<div class="px-2 py-3 text-[11px] text-sc-ink3">No paper or live strategies yet.</div>
+						{/each}
+					</div>
+				</div>
+				{:else}
 				<div class="space-y-2">
 					<div class="flex items-center justify-between">
 						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
@@ -990,6 +1060,7 @@
 						</button>
 					{/if}
 				</div>
+				{/if}
 
 				<div class="space-y-1">
 					<div class="flex items-center justify-between">

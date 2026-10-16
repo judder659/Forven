@@ -254,3 +254,63 @@ def test_repeating_bracket_cancel_failure_notifies_once(forven_db, monkeypatch):
 
     assert len(sent) == 1
     assert entry["bracket_cancel_pending"] == {"stop_order_id": "venue unavailable"}
+
+
+# ---------------------------------------------------------------------------
+# PROPR-TRACK-1: track-record roster mode
+# ---------------------------------------------------------------------------
+
+def _record(sid, stage, rs):
+    _insert_strategy(sid, stage)
+    for i, r in enumerate(rs):
+        # entry 100, stop 95 => exit = 100 + 5R for a long
+        _insert_trade(f"{sid}-{i}", sid, entry=100.0, exit_=100.0 + 5.0 * r, stop=95.0)
+
+
+def test_track_record_verdicts(forven_db):
+    _record("SWIN", "paper", [1.0] * 5 + [-1.0] * 3)      # 8 trades, +0.25R
+    _record("SLOSE", "live_graduated", [-0.5] * 8)        # 8 trades, -0.5R
+    _record("SNEW", "paper", [2.0] * 3)                    # too few
+    _record("SOLD", "archived", [1.0] * 10)                # not paper/live
+
+    records = sc.forward_records()
+    verdicts = {sid: sc.track_record_verdict(rec) for sid, rec in records.items()}
+
+    assert verdicts == {"SWIN": "qualified", "SLOSE": "benched", "SNEW": "probation"}
+    assert records["SWIN"]["mean_r"] == 0.25
+
+
+def test_track_record_mode_rosters_only_earners_and_keeps_join_times(forven_db):
+    _record("SWIN", "paper", [1.0] * 8)
+    _record("SLOSE", "paper", [-1.0] * 8)
+    pm.set_mirror_config(strategy_ids=["SLOSE"])
+    pm.set_mirror_config(mode="track_record")
+
+    roster = pm.mirror_roster()
+    assert set(roster) == {"SWIN"}
+    joined = roster["SWIN"]
+
+    pm._sync_track_record_roster(pm._settings(), datetime.now(timezone.utc), force=True)
+    assert pm.mirror_roster()["SWIN"] == joined
+
+
+def test_track_record_mode_refuses_a_hand_picked_roster(forven_db):
+    import pytest
+
+    pm.set_mirror_config(mode="track_record")
+    with pytest.raises(ValueError):
+        pm.set_mirror_config(strategy_ids=["S1"])
+
+
+def test_empty_roster_still_runs_the_close_pass_for_open_legs(forven_db, monkeypatch):
+    _tick_env(monkeypatch, [])
+    monkeypatch.setattr(pm, "mirror_roster", lambda *a, **k: {})
+    _insert_trade("T1", "S1", status="CLOSED")
+    closed = []
+    monkeypatch.setattr(pm, "_mirror_close",
+                        lambda _p, tid, entry, *_a, **_k: (closed.append(tid), entry.update(status="closed")))
+    pm._save_state({"T1": {"status": "open", "asset": "ETH", "direction": "long"}})
+
+    pm.mirror_tick()
+
+    assert closed == ["T1"]
