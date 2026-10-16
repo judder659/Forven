@@ -61,7 +61,6 @@ def _parse_when(value) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-
 # --------------------------------------------------------------------------
 # Venue ledger
 # --------------------------------------------------------------------------
