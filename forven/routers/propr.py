@@ -153,6 +153,17 @@ def propr_get_mirror():
     }
 
 
+@router.get("/api/propr/scorecard")
+def propr_scorecard(refresh: bool = False):
+    """Per-strategy record of the mirror: venue-realized PnL and R for every
+    mirrored trade, each strategy's own forward record since it joined, the
+    trades the mirror missed and why, and roster health (PROPR-SCORE-1)."""
+    _require_enabled()
+    from forven.propr_scorecard import get_scorecard
+
+    return get_scorecard(force=refresh)
+
+
 @router.put("/api/propr/mirror")
 def propr_update_mirror(body: MirrorConfigRequest):
     _require_enabled()

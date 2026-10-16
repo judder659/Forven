@@ -898,6 +898,7 @@ def _cancel_bracket_legs(
     failed cancellation therefore remains durable state and is retried on
     later mirror ticks instead of being forgotten with the retired leg."""
     failures: dict[str, str] = {}
+    previous_failures = entry.get("bracket_cancel_pending")
     for leg_key in ("stop_order_id", "take_profit_order_id"):
         if skip_leg_keys and leg_key in skip_leg_keys:
             continue
@@ -968,7 +969,9 @@ def _cancel_bracket_legs(
             "Propr mirror: retired leg %s still has unverified bracket order(s): %s",
             trade_id or "<unknown>", detail,
         )
-        if trade_id:
+        # Retried every tick until it clears — tell the operator when the
+        # failure first appears or changes, not 385 times (Aug 2026 incident).
+        if trade_id and previous_failures != failures:
             _notify_mirror_failure(
                 trade_id, entry, "bracket cancellation", reason=detail
             )
@@ -1824,6 +1827,22 @@ def _reconcile_unmanaged_positions(propr, state: dict, now: datetime, summary: d
         log.debug("Could not emit propr mirror unmanaged notification: %s", exc)
 
 
+def _mark_deferred(state: dict, rows: list[dict], why: str) -> None:
+    """Record that a halt is holding these entries back (status stays
+    pending, so they mirror normally if the halt clears in time)."""
+    for row in rows:
+        entry = state.setdefault(str(row["id"]), {"status": "pending", "attempts": 0})
+        if entry.get("status") not in ("pending", "error"):
+            continue
+        entry.update({
+            "status": "pending",
+            "reason": f"deferred: {why}",
+            "asset": row.get("asset"),
+            "strategy": str(row.get("strategy_id") or row.get("strategy") or ""),
+            "direction": str(row.get("direction") or ""),
+        })
+
+
 def mirror_tick() -> dict:
     """One observer pass. Cheap no-op unless the flag, the toggle, and a
     non-empty roster all hold. Never raises — the job wrapper logs the summary."""
@@ -1949,7 +1968,13 @@ def mirror_tick() -> dict:
         # entry signal (checked above, every tick) is the stronger form of the
         # same "is this still the trade the strategy took?" question.
         if not signal_gated and opened_at and (now - opened_at) > timedelta(minutes=OPEN_FRESHNESS_MINUTES):
-            state[trade_id] = {"status": "skipped", "reason": "entry older than the freshness window",
+            # PROPR-SCORE-1: keep WHY it sat out its window. A bare "too old"
+            # hid a month of netting/halt deferrals behind one generic reason.
+            prior = str((existing or {}).get("reason") or "")
+            reason = "entry older than the freshness window"
+            if prior.startswith("deferred: "):
+                reason += f" (held by {prior[len('deferred: '):]})"
+            state[trade_id] = {"status": "skipped", "reason": reason,
                                "asset": row.get("asset"), "strategy": sid}
             summary["skipped"] += 1
             continue
@@ -1969,12 +1994,18 @@ def mirror_tick() -> dict:
 
     if to_open and not _global_ok:
         summary["halted"] = [f"trading halted: {_global_why}"]
+        _mark_deferred(state, to_open, f"trading halted: {_global_why}")
     elif to_open and halt and halt.get("halted"):
-        # PROPR-3: opens blocked near the challenge limits. Trades are NOT
-        # marked in state — if the halt clears inside their freshness window
-        # they mirror normally; past it they expire to a stale-skip, which is
-        # correct (a delayed entry is a different trade than the strategy took).
+        # PROPR-3: opens blocked near the challenge limits. Trades are only
+        # marked pending (with the reason) — if the halt clears inside their
+        # freshness window they mirror normally; past it they expire to a
+        # stale-skip that names the halt, which is correct (a delayed entry is
+        # a different trade than the strategy took).
         summary["halted"] = halt.get("reasons")
+        _mark_deferred(
+            state, to_open,
+            "challenge halt: " + "; ".join(str(r) for r in (halt.get("reasons") or [])),
+        )
     elif to_open:
         if not equity:
             for row in to_open:
@@ -2014,6 +2045,18 @@ def mirror_tick() -> dict:
                     summary["errors"] += 1
                     state.setdefault(str(row["id"]), {})["reason"] = str(exc)
                     log.warning("Propr mirror open for %s raised: %s", row["id"], exc)
+
+    # --- settle deferrals whose source trade is already gone ---------------
+    # A pending entry is only ever re-examined while its source row is OPEN;
+    # once the source closes it would sit "pending" forever and never age out.
+    for trade_id, entry in state.items():
+        if isinstance(entry, dict) and entry.get("status") == "pending":
+            if _trade_status(str(trade_id)) not in (None, "OPEN"):
+                prior = str(entry.get("reason") or "")
+                reason = "source trade closed before the mirror could open"
+                if prior.startswith("deferred: "):
+                    reason += f" (held by {prior[len('deferred: '):]})"
+                entry.update({"status": "skipped", "reason": reason})
 
     # --- prune aged terminal entries ----------------------------------------
     cutoff = now - timedelta(days=_STATE_RETENTION_DAYS)
