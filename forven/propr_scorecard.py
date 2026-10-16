@@ -26,32 +26,29 @@ do not; the per-trade rows flag ``shared_position`` so the page can say so.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from forven.db import get_db, kv_get, kv_set
+from forven.propr_mirror import (
+    MIN_VERDICT_TRADES,
+    _r_multiple,
+    _signal_stop,
+    forward_records,
+    track_record_verdict,
+)
+from forven.propr_mirror import _record_num as _num
 
 log = logging.getLogger("forven.propr_scorecard")
 
 LEDGER_KEY = "forven:propr-mirror:venue-ledger"
 _VENUE_PAGE = 100
 _CACHE_TTL_S = 60.0
-# A strategy needs this many forward trades before its record is called a
-# verdict rather than noise on the page.
-MIN_VERDICT_TRADES = 8
 _ACTIVE_STAGES = frozenset({"paper", "live_graduated"})
 
 _cache: dict = {"at": 0.0, "value": None}
-
-
-def _num(value) -> float | None:
-    try:
-        return float(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _parse_when(value) -> datetime | None:
@@ -63,83 +60,6 @@ def _parse_when(value) -> datetime | None:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
-
-def _signal_stop(raw) -> float | None:
-    data = raw
-    if isinstance(raw, str) and raw:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(data, dict):
-        return None
-    for key in ("stop_loss_price", "stop_loss"):
-        value = _num(data.get(key))
-        if value:
-            return value
-    return None
-
-
-def _r_multiple(direction: str, entry: float | None, exit_: float | None,
-                stop: float | None) -> float | None:
-    if not entry or not exit_ or not stop or abs(entry - stop) <= 1e-12:
-        return None
-    sign = 1.0 if str(direction or "").lower().startswith("l") else -1.0
-    return sign * (exit_ - entry) / abs(entry - stop)
-
-
-# --------------------------------------------------------------------------
-# Forward records (shared with the mirror's track-record roster)
-# --------------------------------------------------------------------------
-
-def forward_records() -> dict[str, dict]:
-    """Every paper/live strategy's whole forward record in R.
-
-    {strategy_id: {stage, trades, mean_r, sum_r, wins}} over CLOSED paper and
-    live trades that carry a stop (R needs one). This is the evidence the
-    track-record roster mode trades on, so it deliberately ignores backtests:
-    a strategy earns a place by what it did after promotion."""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT s.id AS sid, s.stage AS stage, t.direction, t.entry_price, t.exit_price, "
-            "t.signal_data FROM strategies s JOIN trades t "
-            "ON (t.strategy_id = s.id OR (t.strategy_id IS NULL AND t.strategy = s.id)) "
-            "WHERE s.stage IN ('paper', 'live_graduated') AND UPPER(t.status) = 'CLOSED' "
-            "AND t.execution_type IN ('paper', 'live')"
-        ).fetchall()
-        stages = conn.execute(
-            "SELECT id, stage FROM strategies WHERE stage IN ('paper', 'live_graduated')"
-        ).fetchall()
-    out: dict[str, dict] = {
-        str(dict(r)["id"]): {"stage": dict(r)["stage"], "trades": 0, "wins": 0,
-                             "sum_r": 0.0, "mean_r": None}
-        for r in stages
-    }
-    for raw in rows:
-        row = dict(raw)
-        r = _r_multiple(str(row.get("direction") or ""), _num(row.get("entry_price")),
-                        _num(row.get("exit_price")), _signal_stop(row.get("signal_data")))
-        if r is None:
-            continue
-        rec = out.setdefault(str(row["sid"]), {"stage": row.get("stage"), "trades": 0,
-                                               "wins": 0, "sum_r": 0.0, "mean_r": None})
-        rec["trades"] += 1
-        rec["wins"] += int(r > 0)
-        rec["sum_r"] += r
-    for rec in out.values():
-        if rec["trades"]:
-            rec["mean_r"] = round(rec["sum_r"] / rec["trades"], 3)
-        rec["sum_r"] = round(rec["sum_r"], 2)
-    return out
-
-
-def track_record_verdict(record: dict | None, min_trades: int = MIN_VERDICT_TRADES) -> str:
-    """'qualified' (enough trades, positive average), 'benched' (enough
-    trades, average <= 0) or 'probation' (too few trades to judge)."""
-    if not record or int(record.get("trades") or 0) < min_trades:
-        return "probation"
-    mean_r = record.get("mean_r")
-    return "qualified" if mean_r is not None and mean_r > 0 else "benched"
 
 
 # --------------------------------------------------------------------------

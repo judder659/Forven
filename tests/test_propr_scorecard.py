@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import forven.propr_mirror as pm
 import forven.propr_scorecard as sc
+from forven.propr_mirror import forward_records, track_record_verdict
 from forven.db import get_db
 from forven.exchange.propr import deterministic_ulid
 
@@ -273,8 +274,8 @@ def test_track_record_verdicts(forven_db):
     _record("SNEW", "paper", [2.0] * 3)                    # too few
     _record("SOLD", "archived", [1.0] * 10)                # not paper/live
 
-    records = sc.forward_records()
-    verdicts = {sid: sc.track_record_verdict(rec) for sid, rec in records.items()}
+    records = forward_records()
+    verdicts = {sid: track_record_verdict(rec) for sid, rec in records.items()}
 
     assert verdicts == {"SWIN": "qualified", "SLOSE": "benched", "SNEW": "probation"}
     assert records["SWIN"]["mean_r"] == 0.25
