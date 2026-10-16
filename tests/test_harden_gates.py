@@ -218,6 +218,29 @@ def test_dsr_reject_names_the_scopes_it_was_computed_over(forven_db, monkeypatch
     assert "swarm scope same_origin (dropzone), 3 non-trial siblings excluded, 113 other-origin failures excluded" in msg
 
 
+def test_dsr_reject_names_a_default_trial_count(forven_db, monkeypatch):
+    """An optimizer that searched no parameters falls back to the default count; say so."""
+    from forven.gauntlet import deflated_sharpe
+    from forven.policy import _evaluate_gauntlet_gate
+
+    _stub_gate_prereqs(monkeypatch)
+    with get_db() as conn:
+        _insert_gauntlet(conn, "dsr-default-trials")
+
+    monkeypatch.setattr(
+        deflated_sharpe, "compute_strategy_dsr",
+        lambda sid, **kw: {
+            "dsr": 0.2, "n_trials": 50, "n_trials_base": 50, "n_optimization_runs": 0,
+            "swarm_cluster_attempts": 0, "trials_source": "default_unsearched_optimization",
+        },
+    )
+    passed, msg = _evaluate_gauntlet_gate("dsr-default-trials", _dsr_gate_cfg())
+
+    assert not passed
+    assert "across 50 trials (default count)" in str(msg)
+    assert "optimizer searched no parameters" in str(msg)
+
+
 def test_dsr_unavailable_code_never_drains_the_workflow():
     from forven.gauntlet.engine import _NO_DRAIN_REASON_CODES
 

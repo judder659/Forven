@@ -477,13 +477,15 @@ def test_imported_single_asset_proxy_reports_real_data_requirements(forven_db):
         # The proxy reports the captured requirement, not the BaseStrategy default.
         proxy = make_sandbox_proxy(sid, params, f"imported__{module_name}")
         assert proxy.data_requirements() == reqs
-        # parameter_space() was captured too (tuples are lists after JSON), so the
-        # optimizer can tune the imported strategy instead of silently never doing so.
+        # parameter_space() was captured too, each axis tagged so JSON cannot blur a
+        # (min, max, step) tuple into a choice list, and the optimizer can tune the
+        # imported strategy instead of silently never doing so.
         ps = params.get("_parameter_space")
-        assert isinstance(ps, dict) and len(ps.get("fast", [])) == 3
-        from forven.strategies.optimizer import _get_param_space
+        assert isinstance(ps, dict) and ps.get("fast") == {"range": [4, 12, 2]}
+        from forven.strategies.optimizer import _axis_values, _get_param_space
 
         assert _get_param_space(sid, f"imported__{module_name}", params) == ps
+        assert _axis_values(ps["fast"]) == [4, 6, 8, 10, 12]
     finally:
         if target.exists():
             target.unlink()
