@@ -239,6 +239,16 @@ DEFAULT_PIPELINE_CONFIG = {
         # DSR; whether it rejects is the gate switch above.
         "dsr_swarm_trials_enabled": True,
         "dsr_swarm_lookback_days": 90,
+        # What the DSR is computed over (2026-10-15; forven.readiness_checks
+        # stores both on existing installs once, only where absent).
+        # "confirmation_window" scores every trade of the confirmation backtest
+        # (in-sample + OOS, both after the optimizer's selection window);
+        # "oos" is the legacy ~45-55-trade recent OOS tail.
+        "deflated_sharpe_trade_scope": "confirmation_window",
+        # "same_origin" counts only failed siblings from the candidate's own
+        # search origin (Drop Zone / in-app agents / other source); "all" is the
+        # legacy every-origin count. Non-trials never count under either.
+        "dsr_swarm_scope": "same_origin",
     },
     "paper_trading": {
         "min_paper_days": 14,
@@ -4845,17 +4855,32 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
             # not just the newest (dsr-trials-only-latest-optimization).
             runs_n = int(dsr_info.get("n_optimization_runs") or 0)
             runs_note = f"{runs_n} optimization runs totalling " if runs_n > 1 else ""
+            # The optimizer searched no parameters (or never ran): the base is the
+            # configured default trial count, not a measured optimizer breadth.
+            base_is_default = str(dsr_info.get("trials_source") or "").startswith("default")
+            base_label = "default" if base_is_default else "optimizer"
             if swarm_n > 0:
                 trials_note = (
                     f"~{dsr_info.get('n_trials')} effective trials "
-                    f"({runs_note}{dsr_info.get('n_trials_base')} optimizer x "
+                    f"({runs_note}{dsr_info.get('n_trials_base')} {base_label} x "
                     f"{swarm_n + 1} swarm attempts in this idea-cluster)"
                 )
             else:
                 trials_note = f"{runs_note}{dsr_info.get('n_trials')} trials"
+                if base_is_default:
+                    trials_note += " (default count)"
+            if str(dsr_info.get("trials_source") or "").startswith("default_unsearched_optimization"):
+                trials_note += (
+                    "; the optimizer searched no parameters, so the default trial count "
+                    "applies — declare parameter_space() to have the search measured"
+                )
+            from forven.gauntlet.deflated_sharpe import describe_dsr_scope
+
+            scope_note = describe_dsr_scope(dsr_info)
             return False, (
                 f"DSR REJECT: Deflated Sharpe {float(dsr_val):.2f} below {min_dsr:.2f} "
                 f"target (likely a selection artifact across {trials_note})"
+                + (f" [{scope_note}]" if scope_note else "")
             )
 
     # S00552: Profit Factor enforcement at gauntlet (in addition to quick_screen).

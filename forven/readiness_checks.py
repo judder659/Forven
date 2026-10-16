@@ -20,6 +20,10 @@ Neither guard re-judges a strategy already in paper or live: the DSR gate runs
 only on the gauntlet->paper hop, and the holdout exempts strategies created
 before it was established.
 
+``apply_dsr_scope_migration()`` (2026-10-15) stores the deflated-Sharpe scope
+keys once, only where a stored config lacks them, so an operator's explicit
+scope survives every restart.
+
 A leaf like ``forven.research_holdout``: the caller passes the KV accessors, so
 this module adds no edge into the import cluster around ``forven.api_core``.
 """
@@ -36,6 +40,13 @@ from forven.research_holdout import stamp_established
 log = logging.getLogger(__name__)
 
 READINESS_CHECKS_MIGRATION_KEY = "forven:migrations:readiness_checks_on_v1"
+DSR_SCOPES_MIGRATION_KEY = "forven:migrations:dsr_scopes_v1"
+# The deflated-Sharpe scopes introduced 2026-10-15, with the values a stored
+# config gets when it has none. An operator's explicit value is never replaced.
+DSR_SCOPE_DEFAULTS = {
+    "deflated_sharpe_trade_scope": "confirmation_window",
+    "dsr_swarm_scope": "same_origin",
+}
 PIPELINE_STORAGE_KEY = "forven:pipeline_thresholds"
 SETTINGS_STORAGE_KEY = "forven:settings"
 
@@ -52,6 +63,47 @@ def _enable_dsr_gate(pipeline_config: Any) -> bool:
         return False
     rob["deflated_sharpe_gate_enabled"] = True
     return True
+
+
+def _store_dsr_scopes(pipeline_config: Any) -> list[str]:
+    """Store the DSR scope keys a stored config lacks (mutates); returns the keys set.
+
+    ``policy._normalize_pipeline_config`` already supplies absent keys from the
+    code defaults on every load, so this changes no behaviour on its own. It
+    writes the scopes into the stored config once, where Settings shows them
+    as the install's explicit values, and records that it ran.
+    """
+    if not isinstance(pipeline_config, dict):
+        return []
+    rob = pipeline_config.get("robustness_thresholds")
+    if not isinstance(rob, dict):
+        return []
+    added = [key for key in DSR_SCOPE_DEFAULTS if key not in rob]
+    for key in added:
+        rob[key] = DSR_SCOPE_DEFAULTS[key]
+    return added
+
+
+def apply_dsr_scope_migration(
+    kv_get: Callable[..., Any], kv_set: Callable[[str, Any], None]
+) -> dict[str, Any]:
+    """Once per install, store the deflated-Sharpe scope keys where absent.
+
+    Idempotent; never overwrites a value already stored. Run it under the
+    settings mutation lock. Returns ``{"first_run": bool, "added": [keys]}``.
+    """
+    first_run = not kv_get(DSR_SCOPES_MIGRATION_KEY)
+    summary: dict[str, Any] = {"first_run": first_run, "added": []}
+    if not first_run:
+        return summary
+    pipeline_config = kv_get(PIPELINE_STORAGE_KEY)
+    added = _store_dsr_scopes(pipeline_config)
+    if added:
+        kv_set(PIPELINE_STORAGE_KEY, pipeline_config)
+        summary["added"] = added
+        log.info("Deflated-Sharpe scopes stored: %s", ", ".join(f"{k}={DSR_SCOPE_DEFAULTS[k]}" for k in added))
+    kv_set(DSR_SCOPES_MIGRATION_KEY, {"applied_at": datetime.now(timezone.utc).isoformat(), "added": added})
+    return summary
 
 
 def _update_holdout(settings: dict[str, Any], *, enable: bool) -> dict[str, Any]:

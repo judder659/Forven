@@ -98,6 +98,15 @@ def _json_safe(value):  # noqa: ANN001, ANN201
         return {}
 
 
+def _tag_space_axis(spec):  # noqa: ANN001, ANN201
+    """One parameter_space() axis in a form that survives JSON unambiguously."""
+    if isinstance(spec, tuple) and len(spec) == 3:
+        return {"range": list(spec)}
+    if isinstance(spec, list):
+        return {"values": list(spec)}
+    return spec
+
+
 class StrategyWorkerError(RuntimeError):
     """Raised when the isolated worker fails to produce valid signals."""
 
@@ -277,12 +286,15 @@ def _validate_custom_module(workdir: Path) -> dict:
         data_reqs = None
 
     # Capture the optimizable parameter space so the parent CAN tune an imported
-    # strategy (it can't introspect the absent class). (min, max, step) tuples become
-    # lists through JSON — the optimizer's grid builder treats a 3-element list
-    # identically to the tuple.
+    # strategy (it can't introspect the absent class). JSON turns a (min, max, step)
+    # tuple into a list, which the grid builder could not tell from a 3-item choice
+    # list ([168, 336, 720] collapsed to one value), so each axis is tagged here:
+    # {"range": [min, max, step]} or {"values": [...]}.
     try:
         param_space = probe.parameter_space()
-        if not isinstance(param_space, dict):
+        if isinstance(param_space, dict):
+            param_space = {name: _tag_space_axis(spec) for name, spec in param_space.items()}
+        else:
             param_space = None
     except Exception:
         param_space = None

@@ -4,11 +4,26 @@
 	export let space: Record<string, unknown> = {};
 
 	const same = (a: unknown, b: unknown) => String(a) === String(b) || (Number(a) === Number(b) && Number.isFinite(Number(a)));
+	// Imported strategies store each axis tagged: {values: [...]} or {range: [min, max, step]}.
+	const optionsOf = (spec: unknown): unknown[] | null => {
+		if (Array.isArray(spec)) return spec;
+		if (!spec || typeof spec !== 'object') return null;
+		const tagged = spec as { values?: unknown; range?: unknown };
+		if (Array.isArray(tagged.values)) return tagged.values;
+		if (Array.isArray(tagged.range) && tagged.range.length === 3) {
+			const [low, high, step] = tagged.range.map(Number);
+			if (![low, high, step].every(Number.isFinite) || step <= 0) return null;
+			const out: number[] = [];
+			for (let v = low; v <= high && out.length < 200; v += step) out.push(parseFloat(v.toPrecision(12)));
+			return out;
+		}
+		return null;
+	};
 	$: rows = Object.entries(params)
 		.filter(([key]) => !key.startsWith('_'))
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([key, value]) => {
-			const options = Array.isArray(space[key]) ? (space[key] as unknown[]) : null;
+			const options = optionsOf(space[key]);
 			const at = options ? options.findIndex((option) => same(option, value)) : -1;
 			const note = !options
 				? 'fixed (not searched)'

@@ -190,6 +190,57 @@ def test_enabled_dsr_gate_blocks_when_dsr_cannot_be_computed(forven_db, monkeypa
     assert "dsr_unavailable" in _EVIDENCE_ABSENCE_REASON_CODES
 
 
+def test_dsr_reject_names_the_scopes_it_was_computed_over(forven_db, monkeypatch):
+    """The reject (and so the gate report / pipeline explain) says what was scored."""
+    from forven.gauntlet import deflated_sharpe
+    from forven.policy import _evaluate_gauntlet_gate
+
+    _stub_gate_prereqs(monkeypatch)
+    with get_db() as conn:
+        _insert_gauntlet(conn, "dsr-scoped")
+
+    monkeypatch.setattr(
+        deflated_sharpe, "compute_strategy_dsr",
+        lambda sid, **kw: {
+            "dsr": 0.42, "n_obs": 131, "n_trials": 20, "n_trials_base": 10,
+            "n_optimization_runs": 1, "swarm_cluster_attempts": 1,
+            "trade_scope": "confirmation_window", "trade_scope_requested": "confirmation_window",
+            "n_obs_in_sample": 77, "n_obs_oos": 54,
+            "swarm_scope": "same_origin", "swarm_origin": "dropzone",
+            "swarm_non_trials_excluded": 3, "swarm_other_origin_excluded": 113,
+        },
+    )
+    passed, msg = _evaluate_gauntlet_gate("dsr-scoped", _dsr_gate_cfg())
+
+    assert not passed
+    assert str(msg).startswith("DSR REJECT: Deflated Sharpe 0.42 below 0.90")
+    assert "trade scope confirmation_window: 131 trades over the whole confirmation window (77 in-sample + 54 OOS)" in msg
+    assert "swarm scope same_origin (dropzone), 3 non-trial siblings excluded, 113 other-origin failures excluded" in msg
+
+
+def test_dsr_reject_names_a_default_trial_count(forven_db, monkeypatch):
+    """An optimizer that searched no parameters falls back to the default count; say so."""
+    from forven.gauntlet import deflated_sharpe
+    from forven.policy import _evaluate_gauntlet_gate
+
+    _stub_gate_prereqs(monkeypatch)
+    with get_db() as conn:
+        _insert_gauntlet(conn, "dsr-default-trials")
+
+    monkeypatch.setattr(
+        deflated_sharpe, "compute_strategy_dsr",
+        lambda sid, **kw: {
+            "dsr": 0.2, "n_trials": 50, "n_trials_base": 50, "n_optimization_runs": 0,
+            "swarm_cluster_attempts": 0, "trials_source": "default_unsearched_optimization",
+        },
+    )
+    passed, msg = _evaluate_gauntlet_gate("dsr-default-trials", _dsr_gate_cfg())
+
+    assert not passed
+    assert "across 50 trials (default count)" in str(msg)
+    assert "optimizer searched no parameters" in str(msg)
+
+
 def test_dsr_unavailable_code_never_drains_the_workflow():
     from forven.gauntlet.engine import _NO_DRAIN_REASON_CODES
 

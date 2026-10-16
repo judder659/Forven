@@ -1645,6 +1645,93 @@ def _close_terminal_stage_orphan_positions() -> int:
     return closed_count
 
 
+# Re-alert at most hourly per strategy while a live position stays unmanaged
+# (the hygiene sweep itself runs every ~5 minutes).
+_UNMANAGED_LIVE_ALERT_KEY = "pipeline:unmanaged_live_alerted"
+_UNMANAGED_LIVE_ALERT_INTERVAL_SECONDS = 3600
+
+
+def _alert_unmanaged_live_positions() -> int:
+    """STRAND-1 backstop: alert on OPEN live trades whose strategy is not live.
+
+    The scanner runs exits for a live position only while its strategy is in
+    the live stage. Anything else (archived, demoted to paper or gauntlet, or a
+    move that predates the transition guard, like S06153/E0630 on 2026-10-15)
+    leaves the position with no exit but its exchange stop. Never auto-closed
+    here: a real-money close must be a deliberate operator action, so this
+    raises a critical alert per strategy (deduped by the notification policy).
+    Returns the number of strategies alerted on.
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(t.strategy_id, ''), t.strategy) AS sid,
+                   COALESCE(s.stage, s.status, '') AS stage,
+                   t.id AS trade_id, t.asset AS asset, t.direction AS direction
+            FROM trades t
+            JOIN strategies s ON s.id = COALESCE(NULLIF(t.strategy_id, ''), t.strategy)
+            WHERE t.status = 'OPEN'
+              AND LOWER(COALESCE(t.execution_type, 'live')) NOT IN
+                  ('paper', 'paper_challenger', 'simulation')
+            ORDER BY sid, t.id
+            """
+        ).fetchall()
+    stranded: dict[str, dict] = {}
+    for row in rows:
+        stage = normalize_stage(str(row["stage"] or "")) or ""
+        if stage == "live_graduated":
+            continue
+        sid = str(row["sid"] or "").strip()
+        if not sid:
+            continue
+        entry = stranded.setdefault(sid, {"stage": stage, "trades": []})
+        entry["trades"].append(f"{row['trade_id']} ({row['asset']} {row['direction']})")
+    if not stranded:
+        return 0
+    from forven.notifications import emit_notification
+
+    now = datetime.now(timezone.utc)
+    alerted = kv_get(_UNMANAGED_LIVE_ALERT_KEY) or {}
+    if not isinstance(alerted, dict):
+        alerted = {}
+    for sid, entry in sorted(stranded.items()):
+        trades = ", ".join(entry["trades"])
+        log.error(
+            "Open LIVE position(s) with no live strategy managing exits: %s in %s — %s",
+            sid, entry["stage"] or "unknown", trades,
+        )
+        try:
+            last = datetime.fromisoformat(str(alerted.get(sid)))
+            if (now - last).total_seconds() < _UNMANAGED_LIVE_ALERT_INTERVAL_SECONDS:
+                continue
+        except (TypeError, ValueError):
+            pass
+        alerted[sid] = now.isoformat()
+        try:
+            emit_notification(
+                "risk_critical",
+                severity="critical",
+                source="pipeline_hygiene",
+                title=f"Unmanaged live position: {sid} is in {entry['stage'] or 'unknown'}",
+                summary=(
+                    f"{trades} is open with real money, but {sid} is not live, so nothing "
+                    "runs its exit except the exchange stop. Close it from the trading "
+                    "desk, or move the strategy back to live."
+                ),
+                metadata={
+                    "strategy_id": sid,
+                    "stage": entry["stage"],
+                    "trades": entry["trades"],
+                    "execution_type": "live",
+                },
+                dedupe_key=f"unmanaged_live_position:{sid}",
+            )
+        except Exception:
+            log.warning("Failed to alert on unmanaged live position for %s", sid, exc_info=True)
+    kv_set(_UNMANAGED_LIVE_ALERT_KEY, {k: v for k, v in alerted.items() if k in stranded})
+    return len(stranded)
+
+
 def _sweep_pipeline_hygiene() -> dict[str, int]:
     """Archive obviously dead strategies in gauntlet and quick_screen.
 
@@ -1816,6 +1903,11 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
         orphan_closed = _close_terminal_stage_orphan_positions()
         if orphan_closed:
             archived["orphan_positions_closed"] = orphan_closed
+
+        try:
+            _alert_unmanaged_live_positions()
+        except Exception:
+            log.warning("Unmanaged live position check failed", exc_info=True)
 
         total = sum(archived.values())
         if total:
