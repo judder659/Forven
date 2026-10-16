@@ -698,8 +698,11 @@ class TestMirrorHonorsGlobalHalts:
         assert summary["opened"] == 0
         assert calls["orders"] == []
         assert any("Kill-switch" in r for r in summary["halted"])
-        # Not stamped in state: it mirrors normally if the halt clears in time.
-        assert "T-g1" not in pm.get_state()
+        # Only marked pending with the halt as its reason (PROPR-SCORE-1): it
+        # mirrors normally if the halt clears in time.
+        held = pm.get_state()["T-g1"]
+        assert held["status"] == "pending"
+        assert "Kill-switch" in held["reason"]
 
     def test_global_halt_still_lets_closes_run(self, mirror, monkeypatch):
         """Reducing risk is never halted — same stance as

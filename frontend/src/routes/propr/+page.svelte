@@ -6,6 +6,7 @@
 		closeProprPosition,
 		getProprMirror,
 		getProprOverview,
+		getProprScorecard,
 		getProprStatus,
 		runProprConnectionTest,
 		setProprApiKey,
@@ -14,6 +15,7 @@
 		type ProprConnectionCheck,
 		type ProprMirror,
 		type ProprOverview,
+		type ProprScorecard,
 		type ProprStatus,
 	} from '$lib/api/propr';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
@@ -47,6 +49,11 @@
 	let mirrorBusy = false;
 	let mirrorTickBusy = false;
 	let strategyFilter = '';
+
+	// --- scorecard (PROPR-SCORE-1) -------------------------------------------
+	let scorecard: ProprScorecard | null = null;
+	let scorecardError = '';
+	let showAllTrades = false;
 
 	type Row = Record<string, unknown>;
 	// Propr response field names are matched permissively — the docs don't pin
@@ -91,13 +98,21 @@
 				loading = false;
 				return;
 			}
-			const [ov, mi] = await Promise.all([
+			const [ov, mi, sc] = await Promise.all([
 				getProprOverview(),
 				getProprMirror().catch(() => null),
+				getProprScorecard().catch((e) => {
+					scorecardError = e instanceof Error ? e.message : String(e);
+					return null;
+				}),
 			]);
 			overview = ov;
 			status = ov.status;
 			mirror = mi;
+			if (sc) {
+				scorecard = sc;
+				scorecardError = '';
+			}
 			if (mi && !rosterDirty) rosterDraft = new Set(Object.keys(mi.strategies));
 			error = '';
 		} catch (e) {
@@ -179,6 +194,46 @@
 			await load();
 		} catch (e) {
 			actionMessage = `Roster save failed: ${e instanceof Error ? e.message : e}`;
+		} finally {
+			mirrorBusy = false;
+		}
+	}
+
+	async function removeInactive() {
+		const inactive = new Set(scorecard?.inactive_roster ?? []);
+		if (!inactive.size || !mirror) return;
+		mirrorBusy = true;
+		actionMessage = '';
+		try {
+			const keep = Object.keys(mirror.strategies).filter((id) => !inactive.has(id));
+			await updateProprMirror({ strategies: keep });
+			rosterDraft = new Set(keep);
+			rosterDirty = false;
+			actionMessage = `Removed ${inactive.size} inactive strateg${inactive.size === 1 ? 'y' : 'ies'}; each remaining member's capital slice grows to match.`;
+			await load();
+		} catch (e) {
+			actionMessage = `Could not update the roster: ${e instanceof Error ? e.message : e}`;
+		} finally {
+			mirrorBusy = false;
+		}
+	}
+
+	async function setRosterMode(mode: 'manual' | 'track_record') {
+		if (mirror?.mode === mode) return;
+		mirrorBusy = true;
+		actionMessage = '';
+		try {
+			const res = await updateProprMirror({ mode });
+			rosterDraft = new Set(Object.keys(res.strategies));
+			rosterDirty = false;
+			const n = Object.keys(res.strategies).length;
+			actionMessage =
+				mode === 'track_record'
+					? `Track record mode: the mirror now follows ${n} strateg${n === 1 ? 'y' : 'ies'} with a winning forward record${n === 0 ? ' — none qualify yet, so the account stays flat' : ''}.`
+					: 'Manual mode: the roster is yours to pick again.';
+			await load();
+		} catch (e) {
+			actionMessage = `Could not change the roster mode: ${e instanceof Error ? e.message : e}`;
 		} finally {
 			mirrorBusy = false;
 		}
@@ -304,7 +359,7 @@
 		return { counts, realized: hasRealized ? realized : null };
 	})();
 
-	// Challenge P&L tiles: since-start and today, plus open unrealized.
+	// Challenge P&L: since-start and today.
 	$: todayPnl =
 		halt?.equity !== undefined && halt?.day_start_equity !== undefined
 			? (halt.equity ?? 0) - (halt.day_start_equity ?? 0)
@@ -313,26 +368,6 @@
 		halt?.profit_progress_usd !== undefined && halt?.starting_balance
 			? ((halt.profit_progress_usd ?? 0) / halt.starting_balance) * 100
 			: null;
-	$: unrealizedTotal = (() => {
-		let total = 0;
-		let seen = false;
-		for (const row of positions) {
-			const v = pickNum(row as Row, 'unrealizedPnl', 'unrealized_pnl');
-			if (v !== null) {
-				total += v;
-				seen = true;
-			}
-		}
-		return seen ? total : null;
-	})();
-	// Days into the active attempt, from the attempts list the venue serves.
-	$: attemptDaysIn = (() => {
-		const active = attempts.find((a) => pickStr(a, 'status').toLowerCase() === 'active');
-		const started = pick(active ?? {}, 'createdAt', 'created_at', 'startedAt');
-		if (!started) return null;
-		const ms = Date.now() - new Date(String(started)).getTime();
-		return Number.isFinite(ms) && ms >= 0 ? Math.floor(ms / 86_400_000) : null;
-	})();
 	const signedUsd = (v: number | null | undefined) =>
 		v === null || v === undefined ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`;
 
@@ -344,6 +379,72 @@
 	};
 	const gaugeColor = (pctUsed: number) =>
 		pctUsed >= 80 ? '#f87171' : pctUsed >= 50 ? '#eab308' : '#34d399';
+	// --- scorecard derived --------------------------------------------------
+	const fmtR = (v: number | null | undefined, digits = 2) =>
+		v === null || v === undefined || Number.isNaN(v) ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(digits)}R`;
+	const toneOf = (v: number | null | undefined) =>
+		v === null || v === undefined || v === 0 ? 'text-sc-ink2' : v > 0 ? 'text-emerald-400' : 'text-red-400';
+	const healthClass: Record<string, string> = {
+		ok: 'border-emerald-800 text-emerald-400',
+		info: 'border-sc-line2 text-sc-ink3',
+		warn: 'border-yellow-900 text-yellow-500',
+		bad: 'border-red-900 text-red-400',
+	};
+	const healthRank: Record<string, number> = { bad: 0, warn: 1, info: 2, ok: 3 };
+	$: scoreRows = [...(scorecard?.strategies ?? [])].sort(
+		(a, b) =>
+			Number(b.on_roster) - Number(a.on_roster) ||
+			(healthRank[a.health.level] ?? 9) - (healthRank[b.health.level] ?? 9) ||
+			a.strategy_id.localeCompare(b.strategy_id)
+	);
+	$: inactiveRoster = mirror?.mode === 'track_record' ? [] : (scorecard?.inactive_roster ?? []);
+	$: trackMode = mirror?.mode === 'track_record';
+	$: trackRows = scorecard?.track_record?.strategies ?? [];
+	const verdictClass: Record<string, string> = {
+		qualified: 'border-emerald-800 text-emerald-400',
+		probation: 'border-sc-line2 text-sc-ink3',
+		benched: 'border-red-900 text-red-400',
+	};
+	$: scoreTrades = [...(scorecard?.trades ?? [])].reverse();
+	$: visibleTrades = showAllTrades ? scoreTrades : scoreTrades.slice(0, 12);
+	$: closedTrades = (scorecard?.trades ?? []).filter((t) => !t.venue_open);
+	// What removing the inactive members does to everyone else's size: the
+	// slice is equity / roster size, so risk per trade scales with it.
+	$: riskAfterPrune = (() => {
+		const n = capitalSlice?.roster_size ?? 0;
+		const keep = n - inactiveRoster.length;
+		if (!riskPerTrade || !n || keep <= 0) return null;
+		return (riskPerTrade * n) / keep;
+	})();
+	$: winRate = closedTrades.length
+		? closedTrades.filter((t) => t.pnl_usd > 0).length / closedTrades.length
+		: null;
+	$: totalR = closedTrades.reduce((sum, t) => sum + (t.r ?? 0), 0);
+	// Challenge track: drawdown floor ... start ... target, with equity marked.
+	$: track = (() => {
+		const start = halt?.starting_balance;
+		const allowance = halt?.drawdown_allowance_usd;
+		const target = halt?.profit_target_usd;
+		const equity = halt?.equity ?? status?.account_value ?? null;
+		if (!start || !allowance || !target || equity === null || equity === undefined) return null;
+		// Works for static and trailing rules alike: the floor sits wherever the
+		// remaining drawdown allowance runs out from here.
+		const floor = equity - (allowance - (halt?.drawdown_used ?? 0));
+		const top = start + target;
+		const span = top - floor;
+		const at = (v: number) => Math.max(0, Math.min(100, ((v - floor) / span) * 100));
+		return {
+			floor,
+			top,
+			equity,
+			startPct: at(start),
+			equityPct: at(equity),
+			haltPct: at(floor + allowance * 0.2),
+			toTarget: top - equity,
+			toFloor: equity - floor,
+		};
+	})();
+	$: riskPerTrade = capitalSlice?.risk_usd_per_trade ?? null;
 	$: positions = (overview?.positions ?? []) as Row[];
 	$: openOrders = ((overview?.orders ?? []) as Row[]).filter((o) =>
 		['pending', 'open', 'partially_filled'].includes(pickStr(o, 'status').toLowerCase())
@@ -362,9 +463,8 @@
 		<div>
 			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Propr</h1>
 			<p class="text-[11px] text-sc-ink3">
-				On-chain prop firm on Hyperliquid: a purchased challenge account trades real HL markets
-				through Propr's API. This page manages the connection, the challenge account, and manual
-				position control. Live dispatch only reaches Propr when explicitly armed on the backend.
+				Your Propr challenge account, traded by mirroring the strategies you pick. Who is making
+				and losing money is below, rebuilt from the venue's own fills.
 			</p>
 		</div>
 		{#if status?.enabled}
@@ -412,197 +512,277 @@
 			</p>
 		</div>
 	{:else}
-		<!-- ─────────────────────── connection ─────────────────────── -->
-		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
-			<div class="flex items-center justify-between">
-				<h2 class="text-[14px] font-semibold text-sc-ink">Connection</h2>
-				<span class="text-[10px] text-sc-ink3">{status?.base_url}</span>
+		<!-- ─────────────────────── roster health alert ─────────────────────── -->
+		{#if inactiveRoster.length > 0}
+			<div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-900 bg-red-500/5 px-3 py-2 text-[12px] text-red-400">
+				<span>
+					{inactiveRoster.length} of {Object.keys(mirror?.strategies ?? {}).length} roster strategies
+					can no longer trade ({inactiveRoster.join(', ')}) but still hold an equal share of the
+					account.
+					{#if riskAfterPrune}
+						Removing them raises each remaining member's risk per trade from {fmtUsd(riskPerTrade)}
+						to about {fmtUsd(riskAfterPrune)}; check the scorecard below before you do.
+					{/if}
+				</span>
+				<button
+					class="rounded-md border border-red-800 px-3 py-1 text-[12px] text-red-300 hover:bg-red-950 disabled:opacity-50"
+					on:click={removeInactive}
+					disabled={mirrorBusy}
+				>
+					{mirrorBusy ? 'Updating…' : `Remove ${inactiveRoster.length} inactive`}
+				</button>
 			</div>
-			{#if status?.connected && status?.account_error}
-				<div class="border border-red-900 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">
-					Propr answered, but your ACCOUNT could not be resolved ({status.account_error}).
-					Nothing can be placed until that clears — opens, closes, protective legs and cancels
-					all resolve the same account and will fail with this error. This is a venue or
-					connection problem, not the permission gate.
+		{/if}
+
+		<!-- ─────────────────────── challenge hero ─────────────────────── -->
+		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-4">
+			<div class="flex flex-wrap items-end justify-between gap-4">
+				<div>
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						Challenge equity
+					</div>
+					<div class="text-[28px] font-semibold leading-tight text-sc-ink">
+						{fmtUsd(halt?.equity ?? status?.account_value)}
+					</div>
+					<div class={`text-[13px] ${toneOf(halt?.profit_progress_usd)}`}>
+						{signedUsd(halt?.profit_progress_usd)}
+						{#if netPnlPct !== null}({netPnlPct >= 0 ? '+' : ''}{netPnlPct.toFixed(2)}%){/if}
+						<span class="text-sc-ink3">since the {fmtUsd(halt?.starting_balance)} start</span>
+					</div>
 				</div>
-			{:else if status?.connected && !status?.orders_allowed}
-				<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-500">
-					NEW POSITIONS are DISARMED: the account is not verifiably a paper/trial account
-					(type: {status?.account_type ?? 'unknown'}) and the backend live opt-in is not set.
-					This is the designed behavior for when the evaluation ends and the account becomes
-					real. You are NOT locked in: closing a position, arming a stop or take-profit, and
-					cancelling an order all still work (PROPR-PERM-2) — only opens need the opt-in.
+				<div class="grid grid-cols-2 gap-x-6 gap-y-1 text-[12px] sm:grid-cols-4">
+					<div>
+						<div class="text-[10px] uppercase tracking-wider text-sc-ink3">Today</div>
+						<div class={toneOf(todayPnl)}>{signedUsd(todayPnl)}</div>
+					</div>
+					<div>
+						<div class="text-[10px] uppercase tracking-wider text-sc-ink3">Mirrored trades</div>
+						<div class="text-sc-ink2">
+							{closedTrades.length}
+							{#if winRate !== null}<span class="text-sc-ink3">· {(winRate * 100).toFixed(0)}% won</span>{/if}
+						</div>
+					</div>
+					<div>
+						<div class="text-[10px] uppercase tracking-wider text-sc-ink3">Net result</div>
+						<div class={toneOf(totalR)}>{closedTrades.length ? fmtR(totalR, 1) : '—'}</div>
+					</div>
+					<div>
+						<div class="text-[10px] uppercase tracking-wider text-sc-ink3">Risk per trade</div>
+						<div class="text-sc-ink2">{fmtUsd(riskPerTrade)}</div>
+					</div>
 				</div>
-			{:else if accountIsPaper && !status?.allow_live}
-				<div class="border border-[#1a2438] bg-[#050a12] px-3 py-2 text-[11px] text-[#9ab]">
-					Orders are allowed WITHOUT the backend live opt-in because Propr reports this account
-					as paper — re-verified against the exchange on every single open, not from a cache
-					(PROPR-PERM-1). The moment the evaluation ends and the account type changes, new
-					positions fail closed automatically; exits keep working.
+			</div>
+
+			{#if track}
+				<div class="space-y-1">
+					<div class="relative h-2.5 rounded-full bg-sc-panel2">
+						<div
+							class="absolute inset-y-0 rounded-full bg-red-500/30"
+							style={`left:0; width:${track.haltPct}%`}
+							title="Inside the mirror's drawdown halt zone"
+						></div>
+						<div class="absolute inset-y-[-3px] w-px bg-sc-ink3" style={`left:${track.startPct}%`} title="Starting balance"></div>
+						<div
+							class={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-sc-panel ${track.equity >= (halt?.starting_balance ?? 0) ? 'bg-emerald-400' : 'bg-red-400'}`}
+							style={`left:${track.equityPct}%`}
+							title={`Equity ${fmtUsd(track.equity)}`}
+						></div>
+					</div>
+					<div class="flex justify-between text-[11px] text-sc-ink3">
+						<span>Fail at {fmtUsd(track.floor)} · {fmtUsd(track.toFloor)} of room</span>
+						<span>Pass at {fmtUsd(track.top)} · {fmtUsd(track.toTarget)} to go</span>
+					</div>
+					{#if riskPerTrade && track.toTarget > 0}
+						<div class="text-[11px] text-sc-ink3">
+							At {fmtUsd(riskPerTrade)} risked per trade, passing needs about
+							{Math.ceil(track.toTarget / riskPerTrade)}R of net wins; failing takes about
+							{Math.ceil(track.toFloor / riskPerTrade)}R of net losses.
+						</div>
+					{/if}
 				</div>
 			{/if}
-			<div class="grid grid-cols-1 md:grid-cols-3 gap-2 items-end text-[11px]">
-				<label class="space-y-1 md:col-span-2">
-					<span class="text-sc-ink3 uppercase text-[10px] tracking-wider">
-						API key {status?.api_key_configured ? '(configured — paste to replace)' : '(from app.propr.xyz → Settings)'}
+
+			{#if scorecard?.account?.change_usd !== null && scorecard?.account?.change_usd !== undefined}
+				{@const acct = scorecard.account}
+				<div class="flex flex-wrap gap-x-5 gap-y-1 border-t border-sc-line pt-2 text-[11px] text-sc-ink3">
+					<span>Where it went:</span>
+					<span>trading after fees <span class={toneOf(acct.trading_net_usd)}>{signedUsd(acct.trading_net_usd)}</span></span>
+					<span
+						title="Balance changes that are not fills — mostly funding payments. Derived as account change minus trading."
+					>
+						funding and other <span class={toneOf(acct.other_usd)}>{signedUsd(acct.other_usd)}</span>
 					</span>
-					<input
-						type="password"
-						bind:value={apiKeyInput}
-						placeholder="pk_live_…"
-						autocomplete="off"
-						class="rounded-md w-full border border-sc-line2 bg-sc-panel px-2 py-1.5 text-sc-ink outline-none"
-					/>
-				</label>
-				<div class="flex items-center gap-2">
-					<button
-						class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-raise disabled:opacity-50"
-						on:click={saveKey}
-						disabled={keyBusy || !apiKeyInput.trim()}
-					>
-						{keyBusy ? 'Saving…' : 'Save key'}
-					</button>
-					{#if status?.api_key_configured}
-						<button
-							class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-raise disabled:opacity-50"
-							on:click={clearKey}
-							disabled={keyBusy}
+					{#if scorecard.fidelity.trades > 0}
+						<span
+							title="Each mirrored trade's R against the same trade in the source strategy. Close numbers mean the mirror is copying faithfully."
 						>
-							Remove
-						</button>
+							copy fidelity: mirror {fmtR(scorecard.fidelity.mirror_sum_r, 1)} vs source {fmtR(scorecard.fidelity.source_sum_r, 1)}
+							over {scorecard.fidelity.trades} trades
+						</span>
 					{/if}
-					<button
-						class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-raise disabled:opacity-50"
-						on:click={runTest}
-						disabled={testBusy || !status?.api_key_configured}
-					>
-						{testBusy ? 'Testing…' : 'Connection test'}
-					</button>
-				</div>
-			</div>
-			{#if testChecks}
-				<div class="space-y-1">
-					{#each testChecks as check (check.name)}
-						<div class="flex items-center gap-2 text-[11px]">
-							<span class={check.ok ? 'text-emerald-400' : 'text-red-400'}>{check.ok ? '✓' : '✗'}</span>
-							<span class="uppercase text-[10px] tracking-wider text-sc-ink2 w-20">{check.name}</span>
-							<span class="text-sc-ink3 truncate font-mono text-[10px]">
-								{check.ok ? 'ok' : String(check.detail)}
-							</span>
-						</div>
-					{/each}
 				</div>
 			{/if}
 		</div>
 
-		<!-- ─────────────────────── challenge account ─────────────────────── -->
+		<!-- ─────────────────────── scorecard ─────────────────────── -->
 		<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3">
-			<h2 class="text-[14px] font-semibold text-sc-ink">Challenge account</h2>
-			{#if sectionErrors.attempts}
-				<div class="text-[11px] text-yellow-500">{sectionErrors.attempts}</div>
-			{/if}
-			<div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Account value</div>
-					<div class="text-base font-bold text-sc-ink">{fmtUsd(status?.account_value)}</div>
-					{#if halt?.starting_balance}
-						<div class="text-[10px] text-sc-ink3">started {fmtUsd(halt.starting_balance)}</div>
-					{/if}
+			<div class="flex flex-wrap items-baseline justify-between gap-2">
+				<div>
+					<h2 class="text-[14px] font-semibold text-sc-ink">Who is making money</h2>
+					<p class="text-[11px] text-sc-ink3">
+						The mirror can only be as good as what it copies. "Strategy" is each strategy's own
+						record since it joined, mirrored or not; "On Propr" is what the copies actually made.
+						R is profit in units of the trade's risk at its stop.
+					</p>
 				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">P&L since start</div>
-					<div
-						class={`text-base font-bold ${(halt?.profit_progress_usd ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
-					>
-						{signedUsd(halt?.profit_progress_usd)}
-					</div>
-					{#if netPnlPct !== null}
-						<div class="text-[10px] text-sc-ink3">{netPnlPct >= 0 ? '+' : ''}{netPnlPct.toFixed(2)}%</div>
-					{/if}
-				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Today</div>
-					<div class={`text-base font-bold ${(todayPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-						{signedUsd(todayPnl)}
-					</div>
-					<div class="text-[10px] text-sc-ink3">resets each UTC day</div>
-				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Unrealized</div>
-					<div
-						class={`text-base font-bold ${unrealizedTotal === null ? 'text-sc-ink2' : unrealizedTotal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
-					>
-						{unrealizedTotal === null ? '—' : signedUsd(unrealizedTotal)}
-					</div>
-					<div class="text-[10px] text-sc-ink3">
-						{positions.length} open position{positions.length === 1 ? '' : 's'}
-					</div>
-				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Attempt status</div>
-					<div class="text-base font-bold text-sc-ink2">{status?.attempt_status ?? '—'}</div>
-					{#if attemptDaysIn !== null}
-						<div class="text-[10px] text-sc-ink3">day {attemptDaysIn + 1}</div>
-					{/if}
-				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">To target</div>
-					{#if halt?.profit_target_usd}
-						<div class="text-base font-bold text-sc-ink">
-							{fmtUsd(Math.max(0, (halt.profit_target_usd ?? 0) - (halt.profit_progress_usd ?? 0)))}
-						</div>
-						<div class="text-[10px] text-sc-ink3">of {fmtUsd(halt.profit_target_usd)} target</div>
-					{:else}
-						<div class="text-base font-bold text-sc-ink2">—</div>
-					{/if}
-				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Sizing</div>
-					{#if capitalSlice?.risk_pct}
-						<div class="text-base font-bold text-sc-ink">
-							{capitalSlice.risk_pct}% <span class="text-sc-ink3 text-xs">/ trade</span>
-						</div>
-						<div class="text-[10px] text-sc-ink3">
-							≈ {fmtUsd(capitalSlice.risk_usd_per_trade)} risk on a {fmtUsd(capitalSlice.slice_usd)} slice
-						</div>
-					{:else}
-						<div class="text-base font-bold text-sc-ink2">—</div>
-					{/if}
-				</div>
-				<div class="rounded-md border border-sc-line bg-sc-panel p-2">
-					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Account</div>
-					<div class="text-[10px] font-mono text-sc-ink2 pt-1.5 truncate" title={status?.account_id}>
-						{status?.account_id ?? '—'}
-					</div>
-				</div>
+				{#if scorecard?.ledger_refreshed_at}
+					<span class="text-[10px] text-sc-ink3">from venue fills · {fmtWhen(scorecard.ledger_refreshed_at)}</span>
+				{/if}
 			</div>
-			{#if attempts.length > 0}
-				<details class="text-[11px]">
-					<summary class="cursor-pointer text-sc-ink3 hover:text-sc-ink2 uppercase text-[10px] tracking-wider">
-						Challenge attempts ({attempts.length})
-					</summary>
-					<div class="mt-1 space-y-0.5 max-h-40 overflow-y-auto">
-						{#each attempts as attempt}
-							<div class="flex items-center gap-3 border-b border-sc-line py-1 text-sc-ink2">
-								<span class="font-mono text-[10px] truncate">{pickStr(attempt, 'id', 'attemptId')}</span>
-								<span class="uppercase text-[10px]">{pickStr(attempt, 'status')}</span>
-								<span class="text-sc-ink3 text-[10px]">{fmtWhen(pick(attempt, 'createdAt', 'created_at'))}</span>
-							</div>
-						{/each}
-					</div>
-				</details>
+			{#if scorecardError && !scorecard}
+				<div class="text-[11px] text-yellow-500">Scorecard unavailable: {scorecardError}</div>
+			{:else if scoreRows.length === 0}
+				<div class="text-[11px] text-sc-ink3">No roster strategies or mirrored trades yet.</div>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="w-full text-[12px]">
+						<thead>
+							<tr class="border-b border-sc-line text-left font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+								<th class="py-1.5 pr-3">Strategy</th>
+								<th class="py-1.5 pr-3">Status</th>
+								<th class="py-1.5 pr-3 text-right">Strategy trades</th>
+								<th class="py-1.5 pr-3 text-right">Strategy result</th>
+								<th class="py-1.5 pr-3 text-right">On Propr</th>
+								<th class="py-1.5 pr-3 text-right">Propr P&L</th>
+								<th class="py-1.5 pr-3 text-right">Missed</th>
+								<th class="py-1.5 text-right" title="Average entry price gap vs the source trade; positive is worse">Slip</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each scoreRows as row (row.strategy_id)}
+								{@const reasons = Object.entries(row.forward.missed_reasons)
+									.map(([why, n]) => `${n}× ${why}`)
+									.join('\n')}
+								<tr class={`border-b border-sc-line ${row.on_roster ? '' : 'opacity-60'}`}>
+									<td class="py-1.5 pr-3">
+										<div class="font-semibold text-sc-ink">{row.strategy_id}</div>
+										<div class="max-w-[220px] truncate text-[10px] text-sc-ink3" title={row.name ?? ''}>
+											{row.on_roster ? '' : 'left roster · '}{row.stage ?? 'missing'}{row.timeframe ? ` · ${row.timeframe}` : ''}
+										</div>
+									</td>
+									<td class="py-1.5 pr-3">
+										<span
+											class={`whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] ${healthClass[row.health.level] ?? ''}`}
+											title={row.health.detail}
+										>
+											{row.health.label}
+										</span>
+									</td>
+									<td class="py-1.5 pr-3 text-right text-sc-ink2">
+										{row.forward.trades}
+										{#if row.forward.with_r}<span class="text-sc-ink3">· {row.forward.wins}W</span>{/if}
+									</td>
+									<td class={`py-1.5 pr-3 text-right ${toneOf(row.forward.sum_r)}`}>
+										{fmtR(row.forward.sum_r, 1)}
+										{#if row.forward.mean_r !== null}
+											<div class="text-[10px] text-sc-ink3">{fmtR(row.forward.mean_r)} avg</div>
+										{/if}
+									</td>
+									<td class="py-1.5 pr-3 text-right text-sc-ink2">
+										{row.mirror.closed}
+										{#if row.mirror.closed}<span class="text-sc-ink3">· {row.mirror.wins}W</span>{/if}
+									</td>
+									<td class={`py-1.5 pr-3 text-right ${toneOf(row.mirror.pnl_usd)}`}>
+										{row.mirror.closed ? signedUsd(row.mirror.pnl_usd) : '—'}
+										{#if row.mirror.sum_r !== null}
+											<div class="text-[10px] text-sc-ink3">{fmtR(row.mirror.sum_r, 1)}</div>
+										{/if}
+									</td>
+									<td class="py-1.5 pr-3 text-right">
+										{#if row.forward.missed}
+											<span class="cursor-help text-yellow-500 underline decoration-dotted" title={reasons}>
+												{row.forward.missed}
+											</span>
+										{:else}
+											<span class="text-sc-ink3">0</span>
+										{/if}
+									</td>
+									<td class="py-1.5 text-right text-sc-ink3">
+										{row.mirror.avg_entry_slippage_bps === null ? '—' : `${row.mirror.avg_entry_slippage_bps.toFixed(1)} bps`}
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<p class="text-[10px] text-sc-ink3">
+					Hover a status or a missed count for details. Fewer than 8 trades is noise, not a verdict.
+				</p>
 			{/if}
 		</div>
+
+		<!-- ─────────────────────── mirrored trade history ─────────────────────── -->
+		{#if scoreTrades.length > 0}
+			<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-2">
+				<div class="flex items-baseline justify-between">
+					<h2 class="text-[14px] font-semibold text-sc-ink">Mirrored trades</h2>
+					<span class="text-[10px] text-sc-ink3">all time, from venue fills</span>
+				</div>
+				<div class="overflow-x-auto">
+					<table class="w-full text-[11px]">
+						<thead>
+							<tr class="border-b border-sc-line text-left font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+								<th class="py-1 pr-2">Opened</th>
+								<th class="py-1 pr-2">Strategy</th>
+								<th class="py-1 pr-2">Trade</th>
+								<th class="py-1 pr-2 text-right">Entry → exit</th>
+								<th class="py-1 pr-2 text-right">P&L</th>
+								<th class="py-1 pr-2 text-right">Propr R</th>
+								<th class="py-1 text-right">Source R</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each visibleTrades as t (t.trade_id)}
+								<tr class="border-b border-sc-line text-sc-ink2">
+									<td class="py-1 pr-2 text-sc-ink3">{fmtWhen(t.opened_at)}</td>
+									<td class="py-1 pr-2">{t.strategy_id} <span class="text-sc-ink3">({t.execution_type})</span></td>
+									<td class="py-1 pr-2">
+										<span class="font-semibold">{t.asset}</span>
+										<span class={t.direction === 'short' ? 'text-red-400' : 'text-emerald-400'}>{t.direction}</span>
+										{#if t.shared_position}
+											<span class="text-sc-ink3" title="Shared a netted venue position with another mirrored trade; P&L split by quantity">· shared</span>
+										{/if}
+									</td>
+									<td class="py-1 pr-2 text-right">
+										{fmtNum(t.entry_fill)} → {t.venue_open ? 'open' : fmtNum(t.exit_fill)}
+									</td>
+									<td class={`py-1 pr-2 text-right ${t.venue_open ? 'text-sc-ink3' : toneOf(t.pnl_usd)}`}>
+										{t.venue_open ? '—' : signedUsd(t.pnl_usd)}
+									</td>
+									<td class={`py-1 pr-2 text-right ${toneOf(t.r)}`}>{fmtR(t.r)}</td>
+									<td class={`py-1 text-right ${toneOf(t.source_r)}`}>{fmtR(t.source_r)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				{#if scoreTrades.length > 12}
+					<button class="text-[11px] text-sc-ink3 hover:text-sc-ink2" on:click={() => (showAllTrades = !showAllTrades)}>
+						{showAllTrades ? 'Show fewer' : `Show all ${scoreTrades.length}`}
+					</button>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- ─────────────────────── challenge rules ─────────────────────── -->
 		{#if halt?.checked_at}
 			{@const dailyPct = gaugePct(halt.daily_loss, halt.daily_loss_limit_usd)}
 			{@const ddPct = gaugePct(halt.drawdown_used, halt.drawdown_allowance_usd)}
 			{@const targetPct = gaugePct(halt.profit_progress_usd, halt.profit_target_usd)}
-			<div class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-4">
-				<div class="flex items-center justify-between">
+			<details class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-4" open={halt.halted || dailyPct >= 50 || ddPct >= 50}>
+				<summary class="flex cursor-pointer items-center justify-between">
 					<div>
-						<h2 class="text-[14px] font-semibold text-sc-ink">Challenge rules</h2>
+						<h2 class="inline text-[14px] font-semibold text-sc-ink">Challenge rules and safeguards</h2>
 						<p class="text-[11px] text-sc-ink3">
 							The venue's kill conditions, read from the challenge itself
 							({halt.rules_source === 'challenge' ? "Propr's own phase rules" : 'conservative fallback defaults'}),
@@ -613,7 +793,7 @@
 					<span class="text-[10px] text-sc-ink3 shrink-0">
 						checked {fmtWhen(halt.checked_at)}
 					</span>
-				</div>
+				</summary>
 
 				{#if halt.daily_rule_fully_enforced === false}
 					<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-500">
@@ -724,7 +904,23 @@
 					<span>✓ auto-disarm if the account stops reporting as paper</span>
 					<span>✓ unreadable rules fall back to the strictest tier (3% / 6%)</span>
 				</div>
-			</div>
+				{#if attempts.length > 0}
+				<details class="text-[11px]">
+					<summary class="cursor-pointer text-sc-ink3 hover:text-sc-ink2 uppercase text-[10px] tracking-wider">
+						Challenge attempts ({attempts.length})
+					</summary>
+					<div class="mt-1 space-y-0.5 max-h-40 overflow-y-auto">
+						{#each attempts as attempt}
+							<div class="flex items-center gap-3 border-b border-sc-line py-1 text-sc-ink2">
+								<span class="font-mono text-[10px] truncate">{pickStr(attempt, 'id', 'attemptId')}</span>
+								<span class="uppercase text-[10px]">{pickStr(attempt, 'status')}</span>
+								<span class="text-sc-ink3 text-[10px]">{fmtWhen(pick(attempt, 'createdAt', 'created_at'))}</span>
+							</div>
+						{/each}
+					</div>
+				</details>
+			{/if}
+			</details>
 		{/if}
 
 		<!-- ─────────────────────── strategy mirror ─────────────────────── -->
@@ -772,7 +968,49 @@
 					the next UTC day; the drawdown halt clears if equity recovers.
 				</div>
 			{/if}
+			<div class="flex flex-wrap items-center gap-2 text-[12px]">
+				<span class="text-sc-ink3">Who to follow:</span>
+				{#each [['track_record', 'Track record'], ['manual', 'Manual picks']] as [m, label] (m)}
+					<button
+						class={`rounded-md border px-3 py-1 disabled:opacity-50 ${
+							(mirror?.mode ?? 'manual') === m
+								? 'border-emerald-800 bg-[#081008] text-emerald-400'
+								: 'border-sc-line2 bg-sc-panel2 text-sc-ink2 hover:bg-sc-raise'
+						}`}
+						on:click={() => setRosterMode(m as 'manual' | 'track_record')}
+						disabled={mirrorBusy}
+					>
+						{label}
+					</button>
+				{/each}
+				<span class="text-[11px] text-sc-ink3">
+					{trackMode
+						? `Follows every paper or live strategy with ${scorecard?.track_record?.min_trades ?? 8}+ forward trades and a positive average R; benches the rest. Re-checked every 15 minutes. Open copies always close normally.`
+						: 'You choose the roster below.'}
+				</span>
+			</div>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#if trackMode}
+				<div class="space-y-2">
+					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						Forward records ({trackRows.filter((r) => r.verdict === 'qualified').length} qualify)
+					</span>
+					<div class="max-h-64 overflow-y-auto border border-sc-line divide-y divide-sc-line">
+						{#each trackRows as r (r.strategy_id)}
+							<div class="flex items-center gap-2 px-2 py-1.5 text-[11px]">
+								<span class={`rounded border px-1.5 py-0.5 text-[10px] ${verdictClass[r.verdict] ?? ''}`}>{r.verdict}</span>
+								<span class="font-bold text-sc-ink2">{r.strategy_id}</span>
+								<span class="text-sc-ink3">{r.stage}</span>
+								<span class="flex-1"></span>
+								<span class="text-sc-ink3">{r.trades} trades · {r.wins}W</span>
+								<span class={`w-20 text-right ${toneOf(r.mean_r)}`}>{fmtR(r.mean_r)} avg</span>
+							</div>
+						{:else}
+							<div class="px-2 py-3 text-[11px] text-sc-ink3">No paper or live strategies yet.</div>
+						{/each}
+					</div>
+				</div>
+				{:else}
 				<div class="space-y-2">
 					<div class="flex items-center justify-between">
 						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
@@ -822,11 +1060,12 @@
 						</button>
 					{/if}
 				</div>
+				{/if}
 
 				<div class="space-y-1">
 					<div class="flex items-center justify-between">
 						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
-							Mirrored trades <span class="normal-case text-sc-ink3">(last 7 days)</span>
+							Recent activity <span class="normal-case text-sc-ink3">(last 7 days, incl. skips and why)</span>
 						</span>
 						{#if mirrorRows.length > 0}
 							<span class="text-[10px] text-sc-ink3">
@@ -1071,5 +1310,88 @@
 				</div>
 			{/if}
 		</div>
+		<!-- ─────────────────────── connection ─────────────────────── -->
+		<details class="rounded-md border border-sc-line bg-sc-panel p-4 space-y-3" open={!status?.connected}>
+			<summary class="flex cursor-pointer items-center justify-between">
+				<h2 class="inline text-[14px] font-semibold text-sc-ink">Connection</h2>
+				<span class="text-[10px] text-sc-ink3">{status?.base_url}</span>
+			</summary>
+			{#if status?.connected && status?.account_error}
+				<div class="border border-red-900 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">
+					Propr answered, but your ACCOUNT could not be resolved ({status.account_error}).
+					Nothing can be placed until that clears — opens, closes, protective legs and cancels
+					all resolve the same account and will fail with this error. This is a venue or
+					connection problem, not the permission gate.
+				</div>
+			{:else if status?.connected && !status?.orders_allowed}
+				<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-500">
+					NEW POSITIONS are DISARMED: the account is not verifiably a paper/trial account
+					(type: {status?.account_type ?? 'unknown'}) and the backend live opt-in is not set.
+					This is the designed behavior for when the evaluation ends and the account becomes
+					real. You are NOT locked in: closing a position, arming a stop or take-profit, and
+					cancelling an order all still work (PROPR-PERM-2) — only opens need the opt-in.
+				</div>
+			{:else if accountIsPaper && !status?.allow_live}
+				<div class="border border-[#1a2438] bg-[#050a12] px-3 py-2 text-[11px] text-[#9ab]">
+					Orders are allowed WITHOUT the backend live opt-in because Propr reports this account
+					as paper — re-verified against the exchange on every single open, not from a cache
+					(PROPR-PERM-1). The moment the evaluation ends and the account type changes, new
+					positions fail closed automatically; exits keep working.
+				</div>
+			{/if}
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-2 items-end text-[11px]">
+				<label class="space-y-1 md:col-span-2">
+					<span class="text-sc-ink3 uppercase text-[10px] tracking-wider">
+						API key {status?.api_key_configured ? '(configured — paste to replace)' : '(from app.propr.xyz → Settings)'}
+					</span>
+					<input
+						type="password"
+						bind:value={apiKeyInput}
+						placeholder="pk_live_…"
+						autocomplete="off"
+						class="rounded-md w-full border border-sc-line2 bg-sc-panel px-2 py-1.5 text-sc-ink outline-none"
+					/>
+				</label>
+				<div class="flex items-center gap-2">
+					<button
+						class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-raise disabled:opacity-50"
+						on:click={saveKey}
+						disabled={keyBusy || !apiKeyInput.trim()}
+					>
+						{keyBusy ? 'Saving…' : 'Save key'}
+					</button>
+					{#if status?.api_key_configured}
+						<button
+							class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-raise disabled:opacity-50"
+							on:click={clearKey}
+							disabled={keyBusy}
+						>
+							Remove
+						</button>
+					{/if}
+					<button
+						class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:bg-sc-raise disabled:opacity-50"
+						on:click={runTest}
+						disabled={testBusy || !status?.api_key_configured}
+					>
+						{testBusy ? 'Testing…' : 'Connection test'}
+					</button>
+				</div>
+			</div>
+			{#if testChecks}
+				<div class="space-y-1">
+					{#each testChecks as check (check.name)}
+						<div class="flex items-center gap-2 text-[11px]">
+							<span class={check.ok ? 'text-emerald-400' : 'text-red-400'}>{check.ok ? '✓' : '✗'}</span>
+							<span class="uppercase text-[10px] tracking-wider text-sc-ink2 w-20">{check.name}</span>
+							<span class="text-sc-ink3 truncate font-mono text-[10px]">
+								{check.ok ? 'ok' : String(check.detail)}
+							</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</details>
+
 	{/if}
 </div>

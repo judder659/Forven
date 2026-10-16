@@ -71,8 +71,12 @@ export interface ProprMirrorHalt {
 	daily_rule_fully_enforced?: boolean;
 }
 
+export type ProprRosterMode = 'manual' | 'track_record';
+
 export interface ProprMirror {
 	enabled: boolean;
+	/** PROPR-TRACK-1: manual picks, or the mirror keeps the roster by forward record. */
+	mode?: ProprRosterMode;
 	strategies: Record<string, string>;
 	candidates: ProprMirrorCandidate[];
 	state: Record<string, ProprMirrorTradeState>;
@@ -149,7 +153,13 @@ export async function getProprMirror(): Promise<ProprMirror> {
 export async function updateProprMirror(update: {
 	enabled?: boolean;
 	strategies?: string[];
-}): Promise<{ ok: boolean; enabled: boolean; strategies: Record<string, string> }> {
+	mode?: ProprRosterMode;
+}): Promise<{
+	ok: boolean;
+	enabled: boolean;
+	strategies: Record<string, string>;
+	mode: ProprRosterMode;
+}> {
 	return fetchApi('/api/propr/mirror', {
 		method: 'PUT',
 		body: JSON.stringify(update)
@@ -185,4 +195,99 @@ export async function runProprConnectionTest(): Promise<{
 	checks: ProprConnectionCheck[];
 }> {
 	return fetchApi('/api/propr/connection-test', { method: 'POST' });
+}
+
+// PROPR-SCORE-1: the mirror's per-strategy record, rebuilt from venue fills.
+export interface ProprScorecardHealth {
+	level: 'ok' | 'info' | 'warn' | 'bad';
+	label: string;
+	detail: string;
+}
+
+export interface ProprScorecardStrategy {
+	strategy_id: string;
+	name: string | null;
+	stage: string | null;
+	timeframe: string | null;
+	on_roster: boolean;
+	joined_at: string | null;
+	health: ProprScorecardHealth;
+	mirror: {
+		trades: number;
+		closed: number;
+		wins: number;
+		pnl_usd: number;
+		fees_usd: number;
+		sum_r: number | null;
+		mean_r: number | null;
+		avg_entry_slippage_bps: number | null;
+	};
+	/** The strategy's own forward record since it joined, mirrored or not. */
+	forward: {
+		trades: number;
+		with_r: number;
+		wins: number;
+		sum_r: number | null;
+		mean_r: number | null;
+		missed: number;
+		missed_reasons: Record<string, number>;
+	};
+}
+
+export interface ProprScorecardTrade {
+	trade_id: string;
+	strategy_id: string;
+	asset: string;
+	direction: string;
+	execution_type: string;
+	opened_at: string | null;
+	closed_at: string | null;
+	venue_open: boolean;
+	quantity: number;
+	entry_fill: number | null;
+	exit_fill: number | null;
+	source_entry: number | null;
+	entry_slippage_bps: number | null;
+	pnl_usd: number;
+	fees_usd: number;
+	risk_usd: number | null;
+	r: number | null;
+	source_r: number | null;
+	shared_position: boolean;
+}
+
+export interface ProprScorecard {
+	generated_at: string;
+	ledger_refreshed_at: string | null;
+	ledger_errors: Record<string, string>;
+	strategies: ProprScorecardStrategy[];
+	trades: ProprScorecardTrade[];
+	account: {
+		starting_balance: number | null;
+		equity: number | null;
+		change_usd: number | null;
+		trading_net_usd: number;
+		other_usd: number | null;
+		unattributed: { realized_usd: number; fees_usd: number; positions: number };
+	};
+	fidelity: { trades: number; mirror_sum_r: number | null; source_sum_r: number | null };
+	inactive_roster: string[];
+	track_record: {
+		mode: ProprRosterMode;
+		min_trades: number;
+		strategies: {
+			strategy_id: string;
+			stage: string;
+			trades: number;
+			wins: number;
+			sum_r: number;
+			mean_r: number | null;
+			verdict: 'qualified' | 'probation' | 'benched';
+			on_roster: boolean;
+		}[];
+	};
+}
+
+export async function getProprScorecard(refresh = false): Promise<ProprScorecard> {
+	return fetchApi(`/api/propr/scorecard?refresh=${refresh}`);
 }

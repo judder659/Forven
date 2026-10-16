@@ -952,9 +952,11 @@ def test_halted_tick_blocks_opens_but_still_closes(mirror_env):
     assert halt["starting_balance"] == pytest.approx(5_000.0)
     assert halt["profit_target_usd"] == pytest.approx(500.0)
     assert halt["profit_progress_usd"] == pytest.approx(-130.0)
-    # T-h2 was NOT stamped in state — it mirrors normally if the halt clears
-    # within its freshness window.
-    assert "T-h2" not in pm.get_state()
+    # T-h2 is only marked PENDING with the halt as its reason (PROPR-SCORE-1)
+    # — it mirrors normally if the halt clears within its freshness window.
+    held = pm.get_state()["T-h2"]
+    assert held["status"] == "pending"
+    assert held["reason"].startswith("deferred: challenge halt: ")
 
 
 def test_open_risk_at_stops_consumes_the_daily_budget(mirror_env):

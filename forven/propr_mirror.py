@@ -90,6 +90,16 @@ log = logging.getLogger("forven.propr_mirror")
 
 MIRROR_ENABLED_KEY = "propr_mirror_enabled"
 MIRROR_STRATEGIES_KEY = "propr_mirror_strategies"
+# PROPR-TRACK-1: how the roster is chosen. "manual" (default) = the operator's
+# picks. "track_record" = the mirror keeps the roster itself: every paper/live
+# strategy whose whole forward record is at least MIN_VERDICT_TRADES trades
+# with a positive average R is on it, everything else is off. It will often be
+# EMPTY — that is the point: the challenge account sits flat until something
+# has earned a place, instead of copying strategies with no forward edge.
+ROSTER_MODE_KEY = "propr_mirror_roster_mode"
+ROSTER_MODES = ("manual", "track_record")
+TRACK_RECORD_SYNC_SECONDS = 900
+_track_sync = {"at": None}
 STATE_KEY = "forven:propr-mirror:state"
 HALT_STATE_KEY = "forven:propr-mirror:halt"
 UNMANAGED_STATE_KEY = "forven:propr-mirror:unmanaged"
@@ -205,11 +215,146 @@ def mirror_roster(settings: dict | None = None) -> dict[str, str]:
     return roster
 
 
-def set_mirror_config(enabled: bool | None = None, strategy_ids: list[str] | None = None) -> dict:
-    """Persist the toggle and/or roster. New roster entries are stamped with
-    the current time so pre-existing open trades are never mirrored; entries
-    already on the roster keep their original timestamp."""
+# --------------------------------------------------------------------------
+# PROPR-TRACK-1 forward records. Kept in this module (not a new one) because
+# every module the mirror imports from sits on the main import cycle; the
+# scorecard reads these from here.
+# --------------------------------------------------------------------------
+
+# A strategy needs this many forward trades before its record is a verdict
+# rather than noise.
+MIN_VERDICT_TRADES = 8
+
+
+def _record_num(value) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _signal_stop(raw) -> float | None:
+    data = raw
+    if isinstance(raw, str) and raw:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("stop_loss_price", "stop_loss"):
+        value = _record_num(data.get(key))
+        if value:
+            return value
+    return None
+
+
+def _r_multiple(direction: str, entry: float | None, exit_: float | None,
+                stop: float | None) -> float | None:
+    if not entry or not exit_ or not stop or abs(entry - stop) <= 1e-12:
+        return None
+    sign = 1.0 if str(direction or "").lower().startswith("l") else -1.0
+    return sign * (exit_ - entry) / abs(entry - stop)
+
+
+def forward_records() -> dict[str, dict]:
+    """Every paper/live strategy's whole forward record in R.
+
+    {strategy_id: {stage, trades, mean_r, sum_r, wins}} over CLOSED paper and
+    live trades that carry a stop (R needs one). This is the evidence the
+    track-record roster mode trades on, so it deliberately ignores backtests:
+    a strategy earns a place by what it did after promotion."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT s.id AS sid, s.stage AS stage, t.direction, t.entry_price, t.exit_price, "
+            "t.signal_data FROM strategies s JOIN trades t "
+            "ON (t.strategy_id = s.id OR (t.strategy_id IS NULL AND t.strategy = s.id)) "
+            "WHERE s.stage IN ('paper', 'live_graduated') AND UPPER(t.status) = 'CLOSED' "
+            "AND t.execution_type IN ('paper', 'live')"
+        ).fetchall()
+        stages = conn.execute(
+            "SELECT id, stage FROM strategies WHERE stage IN ('paper', 'live_graduated')"
+        ).fetchall()
+    out: dict[str, dict] = {
+        str(dict(r)["id"]): {"stage": dict(r)["stage"], "trades": 0, "wins": 0,
+                             "sum_r": 0.0, "mean_r": None}
+        for r in stages
+    }
+    for raw in rows:
+        row = dict(raw)
+        r = _r_multiple(str(row.get("direction") or ""), _record_num(row.get("entry_price")),
+                        _record_num(row.get("exit_price")), _signal_stop(row.get("signal_data")))
+        if r is None:
+            continue
+        rec = out.setdefault(str(row["sid"]), {"stage": row.get("stage"), "trades": 0,
+                                               "wins": 0, "sum_r": 0.0, "mean_r": None})
+        rec["trades"] += 1
+        rec["wins"] += int(r > 0)
+        rec["sum_r"] += r
+    for rec in out.values():
+        if rec["trades"]:
+            rec["mean_r"] = round(rec["sum_r"] / rec["trades"], 3)
+        rec["sum_r"] = round(rec["sum_r"], 2)
+    return out
+
+
+def track_record_verdict(record: dict | None, min_trades: int = MIN_VERDICT_TRADES) -> str:
+    """'qualified' (enough trades, positive average), 'benched' (enough
+    trades, average <= 0) or 'probation' (too few trades to judge)."""
+    if not record or int(record.get("trades") or 0) < min_trades:
+        return "probation"
+    mean_r = record.get("mean_r")
+    return "qualified" if mean_r is not None and mean_r > 0 else "benched"
+
+
+def roster_mode(settings: dict | None = None) -> str:
+    s = settings if isinstance(settings, dict) else _settings()
+    mode = str(s.get(ROSTER_MODE_KEY) or "manual").strip().lower()
+    return mode if mode in ROSTER_MODES else "manual"
+
+
+def track_record_roster(existing: dict[str, str], now: datetime) -> dict[str, str]:
+    """The roster track-record mode wants right now. Members that stay keep
+    their join time; newcomers join NOW, so only their future trades mirror."""
+    records = forward_records()
+    return {
+        sid: existing.get(sid) or now.isoformat()
+        for sid, rec in sorted(records.items())
+        if track_record_verdict(rec) == "qualified"
+    }
+
+
+def _sync_track_record_roster(settings: dict, now: datetime, *, force: bool = False) -> dict[str, str]:
+    """Re-derive and persist the track-record roster (throttled)."""
+    current = mirror_roster(settings)
+    last = _track_sync.get("at")
+    if not force and last is not None and (now - last).total_seconds() < TRACK_RECORD_SYNC_SECONDS:
+        return current
+    _track_sync["at"] = now
+    wanted = track_record_roster(current, now)
+    if wanted != current:
+        added = sorted(set(wanted) - set(current))
+        dropped = sorted(set(current) - set(wanted))
+        log.info("Propr mirror track-record roster: +%s -%s", added, dropped)
+        settings[MIRROR_STRATEGIES_KEY] = wanted
+        kv_set("forven:settings", settings)
+    return wanted
+
+
+def set_mirror_config(enabled: bool | None = None, strategy_ids: list[str] | None = None,
+                      mode: str | None = None) -> dict:
+    """Persist the toggle, roster mode and/or roster. New roster entries are
+    stamped with the current time so pre-existing open trades are never
+    mirrored; entries already on the roster keep their original timestamp.
+    In track-record mode the roster is derived, so a manual list is refused."""
     settings = _settings()
+    if mode is not None:
+        cleaned = str(mode).strip().lower()
+        if cleaned not in ROSTER_MODES:
+            raise ValueError(f"roster mode must be one of {ROSTER_MODES}")
+        settings[ROSTER_MODE_KEY] = cleaned
+    if strategy_ids is not None and roster_mode(settings) == "track_record":
+        raise ValueError("the roster is chosen by track record; switch to manual to edit it")
     if enabled is not None:
         settings[MIRROR_ENABLED_KEY] = bool(enabled)
     if strategy_ids is not None:
@@ -221,7 +366,10 @@ def set_mirror_config(enabled: bool | None = None, strategy_ids: list[str] | Non
             if str(sid or "").strip()
         }
     kv_set("forven:settings", settings)
-    return {"enabled": mirror_enabled(settings), "strategies": mirror_roster(settings)}
+    if mode is not None and roster_mode(settings) == "track_record":
+        _sync_track_record_roster(settings, datetime.now(timezone.utc), force=True)
+    return {"enabled": mirror_enabled(settings), "strategies": mirror_roster(settings),
+            "mode": roster_mode(settings)}
 
 
 def get_state() -> dict:
@@ -898,6 +1046,7 @@ def _cancel_bracket_legs(
     failed cancellation therefore remains durable state and is retried on
     later mirror ticks instead of being forgotten with the retired leg."""
     failures: dict[str, str] = {}
+    previous_failures = entry.get("bracket_cancel_pending")
     for leg_key in ("stop_order_id", "take_profit_order_id"):
         if skip_leg_keys and leg_key in skip_leg_keys:
             continue
@@ -968,7 +1117,9 @@ def _cancel_bracket_legs(
             "Propr mirror: retired leg %s still has unverified bracket order(s): %s",
             trade_id or "<unknown>", detail,
         )
-        if trade_id:
+        # Retried every tick until it clears — tell the operator when the
+        # failure first appears or changes, not 385 times (Aug 2026 incident).
+        if trade_id and previous_failures != failures:
             _notify_mirror_failure(
                 trade_id, entry, "bracket cancellation", reason=detail
             )
@@ -1824,6 +1975,22 @@ def _reconcile_unmanaged_positions(propr, state: dict, now: datetime, summary: d
         log.debug("Could not emit propr mirror unmanaged notification: %s", exc)
 
 
+def _mark_deferred(state: dict, rows: list[dict], why: str) -> None:
+    """Record that a halt is holding these entries back (status stays
+    pending, so they mirror normally if the halt clears in time)."""
+    for row in rows:
+        entry = state.setdefault(str(row["id"]), {"status": "pending", "attempts": 0})
+        if entry.get("status") not in ("pending", "error"):
+            continue
+        entry.update({
+            "status": "pending",
+            "reason": f"deferred: {why}",
+            "asset": row.get("asset"),
+            "strategy": str(row.get("strategy_id") or row.get("strategy") or ""),
+            "direction": str(row.get("direction") or ""),
+        })
+
+
 def mirror_tick() -> dict:
     """One observer pass. Cheap no-op unless the flag, the toggle, and a
     non-empty roster all hold. Never raises — the job wrapper logs the summary."""
@@ -1833,7 +2000,20 @@ def mirror_tick() -> dict:
     if not mirror_enabled(settings):
         return {"skipped": "mirror disabled"}
     roster = mirror_roster(settings)
-    if not roster:
+    if roster_mode(settings) == "track_record":
+        try:
+            roster = _sync_track_record_roster(settings, datetime.now(timezone.utc))
+        except Exception as exc:  # noqa: BLE001 — keep the last roster on a read error
+            log.warning("Propr mirror track-record sync failed: %s", exc)
+    if not roster and not any(
+        isinstance(e, dict) and (
+            e.get("status") in _UNRESOLVED_CLAIM_STATUSES or e.get("bracket_cancel_pending")
+        )
+        for e in get_state().values()
+    ):
+        # Nothing to open and nothing to unwind. With mirrored legs still
+        # open the tick must run on: an emptied roster (operator edit or a
+        # track-record bench) must never strand a leg without its close pass.
         return {"skipped": "empty roster"}
     from forven.sim.clock import is_sim_active
     if is_sim_active():
@@ -1949,7 +2129,13 @@ def mirror_tick() -> dict:
         # entry signal (checked above, every tick) is the stronger form of the
         # same "is this still the trade the strategy took?" question.
         if not signal_gated and opened_at and (now - opened_at) > timedelta(minutes=OPEN_FRESHNESS_MINUTES):
-            state[trade_id] = {"status": "skipped", "reason": "entry older than the freshness window",
+            # PROPR-SCORE-1: keep WHY it sat out its window. A bare "too old"
+            # hid a month of netting/halt deferrals behind one generic reason.
+            prior = str((existing or {}).get("reason") or "")
+            reason = "entry older than the freshness window"
+            if prior.startswith("deferred: "):
+                reason += f" (held by {prior[len('deferred: '):]})"
+            state[trade_id] = {"status": "skipped", "reason": reason,
                                "asset": row.get("asset"), "strategy": sid}
             summary["skipped"] += 1
             continue
@@ -1969,12 +2155,18 @@ def mirror_tick() -> dict:
 
     if to_open and not _global_ok:
         summary["halted"] = [f"trading halted: {_global_why}"]
+        _mark_deferred(state, to_open, f"trading halted: {_global_why}")
     elif to_open and halt and halt.get("halted"):
-        # PROPR-3: opens blocked near the challenge limits. Trades are NOT
-        # marked in state — if the halt clears inside their freshness window
-        # they mirror normally; past it they expire to a stale-skip, which is
-        # correct (a delayed entry is a different trade than the strategy took).
+        # PROPR-3: opens blocked near the challenge limits. Trades are only
+        # marked pending (with the reason) — if the halt clears inside their
+        # freshness window they mirror normally; past it they expire to a
+        # stale-skip that names the halt, which is correct (a delayed entry is
+        # a different trade than the strategy took).
         summary["halted"] = halt.get("reasons")
+        _mark_deferred(
+            state, to_open,
+            "challenge halt: " + "; ".join(str(r) for r in (halt.get("reasons") or [])),
+        )
     elif to_open:
         if not equity:
             for row in to_open:
@@ -2014,6 +2206,18 @@ def mirror_tick() -> dict:
                     summary["errors"] += 1
                     state.setdefault(str(row["id"]), {})["reason"] = str(exc)
                     log.warning("Propr mirror open for %s raised: %s", row["id"], exc)
+
+    # --- settle deferrals whose source trade is already gone ---------------
+    # A pending entry is only ever re-examined while its source row is OPEN;
+    # once the source closes it would sit "pending" forever and never age out.
+    for trade_id, entry in state.items():
+        if isinstance(entry, dict) and entry.get("status") == "pending":
+            if _trade_status(str(trade_id)) not in (None, "OPEN"):
+                prior = str(entry.get("reason") or "")
+                reason = "source trade closed before the mirror could open"
+                if prior.startswith("deferred: "):
+                    reason += f" (held by {prior[len('deferred: '):]})"
+                entry.update({"status": "skipped", "reason": reason})
 
     # --- prune aged terminal entries ----------------------------------------
     cutoff = now - timedelta(days=_STATE_RETENTION_DAYS)

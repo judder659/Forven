@@ -36,6 +36,7 @@ class ApiKeyRequest(BaseModel):
 class MirrorConfigRequest(BaseModel):
     enabled: bool | None = None
     strategies: list[str] | None = None
+    mode: str | None = Field(default=None, pattern="^(manual|track_record)$")
 
 
 class ClosePositionRequest(BaseModel):
@@ -144,6 +145,7 @@ def propr_get_mirror():
 
     return {
         "enabled": propr_mirror.mirror_enabled(),
+        "mode": propr_mirror.roster_mode(),
         "strategies": propr_mirror.mirror_roster(),
         "candidates": propr_mirror.roster_candidates(),
         "state": propr_mirror.get_state(),
@@ -153,18 +155,35 @@ def propr_get_mirror():
     }
 
 
+@router.get("/api/propr/scorecard")
+def propr_scorecard(refresh: bool = False):
+    """Per-strategy record of the mirror: venue-realized PnL and R for every
+    mirrored trade, each strategy's own forward record since it joined, the
+    trades the mirror missed and why, and roster health (PROPR-SCORE-1)."""
+    _require_enabled()
+    from forven.propr_scorecard import get_scorecard
+
+    return get_scorecard(force=refresh)
+
+
 @router.put("/api/propr/mirror")
 def propr_update_mirror(body: MirrorConfigRequest):
     _require_enabled()
-    if body.enabled is None and body.strategies is None:
+    if body.enabled is None and body.strategies is None and body.mode is None:
         raise HTTPException(status_code=400, detail="nothing to update")
     if body.enabled and not _propr().get_api_key():
         raise HTTPException(status_code=400, detail="configure the Propr API key first")
     from forven import propr_mirror
 
-    result = propr_mirror.set_mirror_config(
-        enabled=body.enabled, strategy_ids=body.strategies
-    )
+    try:
+        result = propr_mirror.set_mirror_config(
+            enabled=body.enabled, strategy_ids=body.strategies, mode=body.mode
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    from forven.propr_scorecard import invalidate_scorecard
+
+    invalidate_scorecard()
     return {"ok": True, **result}
 
 
