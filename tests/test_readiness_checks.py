@@ -200,3 +200,73 @@ def test_dsr_unavailable_is_pending_evidence_not_merit():
         "DSR BLOCK: deflated-Sharpe could not be computed (no_trades) and the DSR gate is enabled"
     )
     assert not _is_pending_evidence_gate_reason("DSR REJECT: Deflated Sharpe 0.40 below 0.90 target")
+
+
+# --- deflated-Sharpe scope keys (2026-10-15) ---------------------------------
+
+def _apply_dsr_scopes():
+    from forven.readiness_checks import apply_dsr_scope_migration
+
+    return apply_dsr_scope_migration(kv_get, kv_set)
+
+
+def _stored_rob() -> dict:
+    return (kv_get("forven:pipeline_thresholds") or {}).get("robustness_thresholds", {})
+
+
+def test_dsr_scopes_stored_when_absent(forven_db):
+    """A materialized config from before the scopes existed gets the new defaults once."""
+    kv_set("forven:pipeline_thresholds", {"robustness_thresholds": {"min_deflated_sharpe": 0.8}})
+
+    summary = _apply_dsr_scopes()
+
+    assert summary["first_run"] is True
+    assert sorted(summary["added"]) == ["deflated_sharpe_trade_scope", "dsr_swarm_scope"]
+    rob = _stored_rob()
+    assert rob["deflated_sharpe_trade_scope"] == "confirmation_window"
+    assert rob["dsr_swarm_scope"] == "same_origin"
+    assert rob["min_deflated_sharpe"] == 0.8  # untouched
+
+
+def test_dsr_scopes_never_overwrite_an_explicit_choice(forven_db):
+    kv_set(
+        "forven:pipeline_thresholds",
+        {"robustness_thresholds": {"deflated_sharpe_trade_scope": "oos", "dsr_swarm_scope": "all"}},
+    )
+
+    summary = _apply_dsr_scopes()
+
+    assert summary["added"] == []
+    rob = _stored_rob()
+    assert rob["deflated_sharpe_trade_scope"] == "oos" and rob["dsr_swarm_scope"] == "all"
+
+
+def test_dsr_scope_migration_is_idempotent(forven_db):
+    from forven.readiness_checks import DSR_SCOPES_MIGRATION_KEY
+
+    kv_set("forven:pipeline_thresholds", {"robustness_thresholds": {"dsr_swarm_scope": "all"}})
+    first = _apply_dsr_scopes()
+    assert first["added"] == ["deflated_sharpe_trade_scope"]
+    assert _stored_rob()["dsr_swarm_scope"] == "all"
+    assert kv_get(DSR_SCOPES_MIGRATION_KEY)
+
+    # The operator later switches back to the legacy tail and removes nothing else.
+    config = kv_get("forven:pipeline_thresholds")
+    config["robustness_thresholds"]["deflated_sharpe_trade_scope"] = "oos"
+    kv_set("forven:pipeline_thresholds", config)
+    second = _apply_dsr_scopes()
+    assert second == {"first_run": False, "added": []}
+    assert _stored_rob()["deflated_sharpe_trade_scope"] == "oos"
+
+
+def test_dsr_scopes_reach_a_config_without_them_through_the_loader(forven_db):
+    """Even before the migration runs, a stored config lacking the keys reads the new defaults."""
+    kv_set("forven:pipeline_thresholds", {"robustness_thresholds": {"min_deflated_sharpe": 0.8}})
+    rob = policy.load_pipeline_config()["robustness_thresholds"]
+    assert rob["deflated_sharpe_trade_scope"] == "confirmation_window"
+    assert rob["dsr_swarm_scope"] == "same_origin"
+
+
+def test_dsr_scope_migration_tolerates_no_stored_config(forven_db):
+    summary = _apply_dsr_scopes()
+    assert summary == {"first_run": True, "added": []}

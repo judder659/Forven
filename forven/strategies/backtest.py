@@ -6834,6 +6834,11 @@ def backtest_strategy(
         metrics["execution_contract"]["execution_model"] = "unverified"
     result = {
         "trades": oos_trades, # returns OOS trades for UI visualization
+        # In-sample trades of the same run. Metrics, Monte Carlo, the regime
+        # split and the UI stay on the OOS ``trades`` above; the deflated-Sharpe
+        # gate scores the whole confirmation window (see
+        # gauntlet/deflated_sharpe.py), so these are persisted beside them.
+        "is_trades": list(is_trades),
         "metrics": metrics,
         "bars": bars,
         "asset": asset,
@@ -6931,6 +6936,7 @@ def backtest_strategy(
                     run_id, run_id, oos_trades,
                     equity_curve=result.get("equity_curve"),
                     benchmark_curve=result.get("benchmark_curve"),
+                    in_sample_trades=result.get("is_trades"),
                 )
 
             except Exception as artifact_exc:
