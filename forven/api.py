@@ -172,6 +172,7 @@ def _spawn_supervised_runtime_thread(
     factory: Callable[[], Awaitable[object]],
     *,
     initial_delay_seconds: float = 0.0,
+    cpu_tier: str | None = None,
 ) -> threading.Thread:
     """Run a long-lived runtime coroutine away from uvicorn's request loop.
 
@@ -186,6 +187,11 @@ def _spawn_supervised_runtime_thread(
 
     def _runner() -> None:
         try:
+            if cpu_tier:
+                # forven.cpu_priority: research loops yield to the live scanner.
+                from forven.cpu_priority import lower_thread_priority
+
+                lower_thread_priority(cpu_tier)
             if initial_delay_seconds > 0:
                 threading.Event().wait(initial_delay_seconds)
             asyncio.run(_supervise_background_loop(name, factory))
@@ -520,6 +526,7 @@ async def lifespan(_app: FastAPI):
                         "headless-agent-loop",
                         lambda: run_headless_agent_loop(poll_seconds=5.0, concurrency=agent_concurrency),
                         initial_delay_seconds=runtime_start_delay,
+                        cpu_tier="agents",
                     ),
                     _spawn_supervised_runtime_thread(
                         "headless-brain-loop",

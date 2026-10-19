@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 
+from forven.cpu_priority import lower_process_priority as _lower_worker_priority
 from forven.db import create_strategy_container, get_db, init_db, next_container_id
 
 
@@ -3202,6 +3203,7 @@ def _run_creator_worker(purpose: str, bars: int, target, *args):
 
     with backtest_subprocess_slot(purpose), concurrent.futures.ProcessPoolExecutor(
         max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+        initializer=_lower_worker_priority, initargs=("gauntlet",),
     ) as executor:
         future = executor.submit(target, *args)
         return _wait_for_worker_result(
@@ -6620,6 +6622,7 @@ def backtest_strategy(
         with backtest_subprocess_slot("backtest"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(
                 _isolated_backtest_worker,
@@ -6661,6 +6664,7 @@ def backtest_strategy(
                     with concurrent.futures.ProcessPoolExecutor(
                         max_workers=1,
                         mp_context=multiprocessing.get_context("spawn"),
+                        initializer=_lower_worker_priority, initargs=("gauntlet",),
                     ) as executor:
                         future = executor.submit(
                             _isolated_backtest_worker,
@@ -8301,6 +8305,7 @@ def walk_forward(
         with backtest_subprocess_slot("walk_forward"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(
                 _isolated_walk_forward_worker,
