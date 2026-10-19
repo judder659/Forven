@@ -64,6 +64,11 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     # tasks queued per UTC day, and creation tasks allowed in flight at once.
     "strategy_creation_daily_budget": 40,
     "strategy_creation_max_in_flight": 2,
+    # Strategies agents may register per UTC day, across all their tasks (0 = no
+    # cap). One creation task can register several candidates; before this cap
+    # agents registered about 400 a day and three in four never traded enough to
+    # be judged. Registrations the operator or Brain makes do not count.
+    "agent_registration_daily_cap": 120,
     # A new agent candidate whose input feeds cover less than this percent of the
     # quick-screen window cannot be fairly tested there (a recently collected feed
     # is "present" but silent for most of the window). It is archived
@@ -73,7 +78,8 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     # On by default since the 2026-10 live-capital readiness review
     # (forven.readiness_checks switches it on once in existing installs). When on,
     # research reads stop at the cutoff and each new candidate gets one test on
-    # the held-back period before the paper gate.
+    # the held-back period before the paper->live gate (the paper gate under the
+    # strict paper door; 2026-10 gate plan).
     #   roll: "quarterly" (cutoff = current quarter start - lag_quarters) or
     #     "manual" (cutoff below). established_at is stamped when first enabled;
     #     strategies created earlier saw the held-back data and are exempt.
@@ -82,7 +88,7 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     "research_holdout": {
         "enabled": True,
         "roll": "quarterly",
-        "lag_quarters": 2,
+        "lag_quarters": 1,
         "cutoff": "",
         "established_at": "",
         "paper_mode": "enforce",

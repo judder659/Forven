@@ -49,6 +49,9 @@ python -m forven.agent status S02545,S02604             # {stage,status} for pol
 python -m forven.agent runs --limit 10
 python -m forven.agent result <result_id>
 python -m forven.agent data-census --stream ohlcv       # freshness SLA census (late/breach series first)
+python -m forven.agent paper-pool                       # paper occupancy, queue, door in force
+python -m forven.agent readmit-candidates --days 30     # archives the research door would admit (report)
+python -m forven.agent live-recheck                     # live strategies vs the new live gate (report)
 
 # write / lifecycle
 python -m forven.agent create-session --label hunt --objective "find paper strats"
@@ -109,18 +112,37 @@ if verdict["enqueued"]:
   (`ForvenAgentClient.quick_screen(compact)` pre-checks this offline.)
 - `cost_stress` (2× fees) needs **big per-trade edges** → favors *selective*
   setups or high win-rate reversion. Kills high-volume, low-edge momentum.
-- `paper_promotion_gate` runs a **Deflated Sharpe Ratio** (penalized for the
-  optimization trials) → needs *many clean trades* + OOS Sharpe ≈ 1.7 + low
-  kurtosis. Together with cost_stress this is a vise; few archetypes thread it.
-  (On by default; Settings can switch it off.)
+- `paper_promotion_gate` is the **door into paper**. Paper risks no capital, so
+  the default *research door* admits a strategy that is not broken or clearly
+  losing: 20+ confirmation trades, non-negative return, OOS profit factor ≥ 1
+  and OOS Sharpe > 0, drawdown and tail-risk floors, and no loss under 2× costs.
+  Every robustness test must still have *run*. The **Deflated Sharpe Ratio**,
+  walk-forward fold rate, regime split, jitter and robustness score are
+  *recorded* there and enforced at paper→live. (Settings → Door into paper →
+  *Strict paper* restores the old door where all of them block paper.)
+- The **paper pool** holds 40 strategies by default (3 per coin, 10 per
+  family). A strategy that passes the door while the pool is full waits in a
+  queue ranked by its recorded evidence (`paper_queue_full` is capacity, not a
+  rejection). Paper strategies are retired automatically when clearly losing
+  (15+ trades, negative mean, t < −1), at a 15% forward drawdown, after 60 idle
+  days, or when forward trades contradict the backtest.
 - The **research holdout** is on by default: research reads (backtests,
-  optimizer, walk-forward) stop at a cutoff 6–9 months back, and each new
-  strategy gets ONE test on the held-back period before paper. Don't tune
+  optimizer, walk-forward) stop at a cutoff 3–6 months back, and each strategy
+  gets ONE test on the held-back period when it applies for live. Don't tune
   against it; a FAIL is a merit rejection.
+- **Paper→live** needs 20+ forward trades and 30 days, then a sequential test:
+  forward must track the backtest, and backtest + forward evidence must clear a
+  bar corrected for how many strategies are in paper. The recorded checks, the
+  held-back test and DSR on backtest + forward trades are enforced here.
 - `gate-report` reports the gate to the strategy's next stage (`target_stage`):
-  gauntlet→paper, or for a paper strategy the paper→live checklist ending in
-  the real paper→live gate (`live_gate`). Live promotion also needs the
-  operator's typed GO LIVE approval.
+  gauntlet→paper (with `paper_door` and `paper_pool`), or for a paper strategy
+  the paper→live checklist ending in the real paper→live gate (`live_gate`,
+  plus `live_evidence`). Live promotion also needs the operator's typed GO
+  LIVE approval.
+- `paper-pool` shows occupancy and the queue; `readmit-candidates` lists recent
+  archives the research door would have admitted (report only; the operator
+  re-queues with `requeue`); `live-recheck` reports how live strategies fare
+  against the new live gate (never demotes anything).
 - Never set `force=true` to skip a gate.
 
 ## Data readiness (check before you build)
@@ -171,6 +193,10 @@ over these — call them directly from any language.
 | GET  | `/api/backtesting/runs?limit=` | recent runs |
 | GET  | `/api/results/{id}` | one backtest result |
 | GET  | `/api/data/sla?stream=&limit_worst=` | freshness SLA census of every stored series |
+| GET  | `/api/lifecycle/paper-pool` | paper occupancy, limits, queue, door in force |
+| GET  | `/api/lifecycle/paper-pool/readmit-candidates?days=&limit=` | archives the research door would admit |
+| POST | `/api/lifecycle/paper-pool/requeue` `{strategy_ids}` | operator: re-run those archives through the door |
+| GET/POST | `/api/lifecycle/paper-pool/live-recheck` | report-only live re-check (POST recomputes) |
 | POST | `/api/ai-dropzone/sessions` `{label,actor,objective}` | open session |
 | POST | `/api/ai-dropzone/sessions/{id}/close` | close session |
 | POST | `/api/strategies/intake/register-file` `{file_path,source,session_id?}` | register a `.py` |

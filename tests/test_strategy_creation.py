@@ -383,6 +383,10 @@ def test_registration_takes_the_ideas_timeframe_when_the_code_declares_none(
     )["id"]
     monkeypatch.setattr(imported, "__file__", str(tmp_path / "__init__.py"))
     monkeypatch.setattr("forven.sandbox.strategy_worker._reset_worker", lambda: None)
+    # Symbol validation is not under test: DOGE must pass whatever another test on
+    # this worker left in the shared lake or registry (either one makes an unknown
+    # base fail validation instead of failing open).
+    monkeypatch.setattr("forven.dataeng.coverage._validation_evidence_available", lambda: False)
     (tmp_path / "timeframe_fixture.py").write_text('TYPE_NAME = "timeframe_fixture"\n')
 
     result = register_imported_strategy_file(

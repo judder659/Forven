@@ -96,6 +96,32 @@ _STREAM_FETCH: dict[str, tuple[str, ...] | str | None] = {feed.name: feed.fetch 
 _STREAM_LABEL: dict[str, str] = {feed.name: feed.label for feed in FEEDS}
 _KNOWN_COLUMNS: frozenset[str] = frozenset(_COLUMN_STREAM)
 
+# Fixed order for frames: the FEEDS order, column by column.
+ENRICHMENT_COLUMNS: tuple[str, ...] = tuple(column for feed in FEEDS for column in feed.columns)
+
+
+def ensure_enrichment_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Return ``df`` with every enrichment column present, NaN where missing.
+
+    A strategy reading ``df["funding_rate"]`` on a coin or window with no
+    funding history used to crash with KeyError and be archived as broken; a
+    NaN column lets it run and simply not fire on bars without data. Call it
+    only after every join has run: the joins replace columns, so a NaN column
+    added earlier would be overwritten anyway, but adding it last keeps the
+    "column absent" checks of the joins themselves working.
+    """
+    if df is None:
+        return df
+    missing = [column for column in ENRICHMENT_COLUMNS if column not in df.columns]
+    if not missing:
+        return df
+    import numpy as np
+
+    df = df.copy()
+    for column in missing:
+        df[column] = np.nan
+    return df
+
 # --- Cross-asset detection (XASSET-1) ---------------------------------------
 # The backtest frame is strictly SINGLE-symbol: no code path joins a second
 # asset's series onto it (load_multi_exchange_candles exists but has zero

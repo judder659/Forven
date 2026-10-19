@@ -245,8 +245,14 @@
 	// any stored knobs while "custom" lets per-knob edits win.
 	const PRESET_ID = 'pipeline.pipeline_preset';
 	const presetEntry = areaEntries.find((e) => e.id === PRESET_ID);
+	// The door into paper, the paper pool and the live-gate evidence rule are not
+	// part of any stance bundle (2026-10 gate plan): picking a stance leaves them alone.
+	const STANCE_INDEPENDENT_PREFIXES = ['paper_door.', 'paper_pool.', 'paper_trading.live_'];
 	const PIPELINE_KNOB_ENTRIES = areaEntries.filter(
-		(e) => e.backendSection === 'pipeline' && e.id !== PRESET_ID,
+		(e) =>
+			e.backendSection === 'pipeline' &&
+			e.id !== PRESET_ID &&
+			!STANCE_INDEPENDENT_PREFIXES.some((prefix) => e.backendPath.startsWith(prefix)),
 	);
 	$: presetBundles = ((settings?.pipeline_presets as Record<string, any>) ?? {}) as Record<
 		string,

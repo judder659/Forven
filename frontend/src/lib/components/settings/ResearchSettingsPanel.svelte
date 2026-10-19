@@ -33,7 +33,7 @@
 	const RESEARCH_HOLDOUT_DEFAULTS = {
 		enabled: true,
 		roll: 'quarterly' as 'quarterly' | 'manual',
-		lag_quarters: 2,
+		lag_quarters: 1,
 		cutoff: '',
 		established_at: '',
 		paper_mode: 'enforce' as 'off' | 'observe' | 'enforce',
@@ -218,7 +218,7 @@
 					</label>
 				{:else}
 					<label class="block text-xs text-sc-ink2">
-						Quarters held back (6–9 months at 2)
+						Quarters held back (3–6 months at 1)
 						<input
 							type="number"
 							min="1"
@@ -230,14 +230,14 @@
 					</label>
 				{/if}
 				<label class="block text-xs text-sc-ink2">
-					At the paper gate
+					At the gate that runs it (paper→live by default)
 					<select
 						data-testid="research-holdout-mode"
 						value={researchHoldout.paper_mode}
 						on:change={(e) => setResearchHoldout('paper_mode', (e.currentTarget as HTMLSelectElement).value as 'off' | 'observe' | 'enforce')}
 						class="terminal-select mt-1 w-full"
 					>
-						<option value="enforce">Enforce — a pass is required for paper</option>
+						<option value="enforce">Enforce — a pass is required to move on</option>
 						<option value="observe">Observe — run and show, never block</option>
 						<option value="off">Off — don't run the test</option>
 					</select>

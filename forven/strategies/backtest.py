@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 
+from forven.cpu_priority import lower_process_priority as _lower_worker_priority
 from forven.db import create_strategy_container, get_db, init_db, next_container_id
 
 
@@ -1692,6 +1693,13 @@ def _enrich_with_market_data(df: pd.DataFrame, asset: str) -> pd.DataFrame:
         funding_data, oi_data = _resolve_market_data_series(normalized_asset, start_ms, end_ms)
 
         # Funding rates
+        # Replacement semantics: a frame that already carries these columns
+        # (all-NaN placeholders from ensure_enrichment_columns, or an earlier
+        # join) would otherwise come back with _x/_y suffixed duplicates.
+        if funding_data and "funding_rate" in df.columns:
+            df = df.drop(columns=["funding_rate"])
+        if oi_data and "open_interest" in df.columns:
+            df = df.drop(columns=["open_interest"])
         if funding_data:
             fr_df = pd.DataFrame(funding_data, columns=["timestamp_ms", "funding_rate"])
             fr_df["t"] = pd.to_datetime(fr_df["timestamp_ms"], unit="ms", utc=True)
@@ -2020,7 +2028,10 @@ def load_backtest_candles(
                 )
             except Exception as _enrich_exc:
                 log.warning("DataManager enrich skipped for %s/%s: %s", symbol, resolved_timeframe, _enrich_exc)
-            return frame
+            from forven.strategies.data_availability import ensure_enrichment_columns
+
+            # Callers that opt out of market data get the raw joined frame.
+            return ensure_enrichment_columns(frame) if enrich_market_data else frame
 
         if venue is not None:
             raise DataVenueError(f"No stored {':'.join(venue)} candles for {asset} {resolved_timeframe}")
@@ -2085,7 +2096,10 @@ def load_backtest_candles(
         )
     except Exception as _enrich_exc:
         log.warning("DataManager enrich skipped for %s/%s: %s", asset, resolved_timeframe, _enrich_exc)
-    return frame
+    from forven.strategies.data_availability import ensure_enrichment_columns
+
+    # Callers that opt out of market data get the raw joined frame.
+    return ensure_enrichment_columns(frame) if enrich_market_data else frame
 
 
 def _dedupe_chart_messages(messages: list[str]) -> list[str]:
@@ -3189,6 +3203,7 @@ def _run_creator_worker(purpose: str, bars: int, target, *args):
 
     with backtest_subprocess_slot(purpose), concurrent.futures.ProcessPoolExecutor(
         max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+        initializer=_lower_worker_priority, initargs=("gauntlet",),
     ) as executor:
         future = executor.submit(target, *args)
         return _wait_for_worker_result(
@@ -6607,6 +6622,7 @@ def backtest_strategy(
         with backtest_subprocess_slot("backtest"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(
                 _isolated_backtest_worker,
@@ -6648,6 +6664,7 @@ def backtest_strategy(
                     with concurrent.futures.ProcessPoolExecutor(
                         max_workers=1,
                         mp_context=multiprocessing.get_context("spawn"),
+                        initializer=_lower_worker_priority, initargs=("gauntlet",),
                     ) as executor:
                         future = executor.submit(
                             _isolated_backtest_worker,
@@ -8288,6 +8305,7 @@ def walk_forward(
         with backtest_subprocess_slot("walk_forward"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(
                 _isolated_walk_forward_worker,

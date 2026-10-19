@@ -66,6 +66,7 @@ _DEFAULT_JOB_IDS = {
     "forven-data-funding-collect",
     "forven-data-bv-backfill",
     "forven-overnight-summary",
+    "forven-weekly-funnel-report",
     "forven-data-lsr-collect",
     "forven-data-taker-collect",
     "forven-data-liquidation-collect",
@@ -85,6 +86,8 @@ _DEFAULT_JOB_IDS = {
     # above is exactly this omission, and it has silently deleted seeded jobs twice.
     "forven-db-backup",
     "forven-capital-slot-dedupe",
+    # 2026-10 gate plan: paper-pool retirement + queue admission (forven.paper_pool).
+    "forven-paper-pool-tick",
     "forven-gauntlet-step-loop",
     "forven-phantom-sweep",
     "forven-param-optimization",
@@ -1142,6 +1145,7 @@ def _job_running_stale_seconds(job: dict) -> int:
         "reconcile_sweep",
         "market_data_collect",
         "overnight_summary",
+        "weekly_funnel_report",
     }:
         timeout_seconds = 10 * 60
 
@@ -1749,6 +1753,21 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 )
             return "ok", None
 
+        # Paper pool (2026-10 gate plan): retire paper strategies whose forward
+        # record is clearly losing, idle or contradicts their backtest, then fill
+        # free paper slots from the evidence-ranked queue. Idempotent.
+        if kind == "paper_pool_tick":
+            from forven.evolution import paper_pool_tick
+
+            result = await _run_sync_job(paper_pool_tick, timeout_seconds=300.0)
+            if isinstance(result, dict) and (result.get("retired") or result.get("admitted")):
+                log.info(
+                    "paper_pool_tick: retired %d, offered slots to %d",
+                    len(result.get("retired") or []),
+                    len(result.get("admitted") or []),
+                )
+            return "ok", None
+
         # Orphan runtime-type scan — detect strategies whose `type` has no
         # registered class and no known param family. These cannot optimize,
         # cannot trade, and clog pipeline WIP caps.
@@ -2186,6 +2205,19 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             from forven.phantom_recovery import run_phantom_recovery_sweep
             limit = int(payload.get("limit", 5)) if isinstance(payload, dict) else 5
             await _run_sync_job(run_phantom_recovery_sweep, limit=limit, timeout_seconds=120)
+            return "ok", None
+
+        # Weekly funnel report (digest)
+        if kind == "weekly_funnel_report":
+            from forven.jobs.weekly_funnel_report import run_weekly_funnel_report_job
+            from forven.notifications import emit_notification
+            days = int(payload.get("days", 7)) if isinstance(payload, dict) else 7
+
+            def _weekly_funnel_report() -> None:
+                with get_db() as conn:
+                    run_weekly_funnel_report_job(conn, emit_notification, days)
+
+            await _run_sync_job(_weekly_funnel_report)
             return "ok", None
 
         # Overnight Pipeline Summary
@@ -3163,6 +3195,18 @@ def seed_forven_jobs():
         payload={"kind": "capital_slot_dedupe"},
     )
 
+    # 4c6. Paper pool — hourly: retire clearly-losing/idle paper strategies and
+    # admit waiting door-passers into free paper slots (forven.paper_pool).
+    add_job(
+        job_id="forven-paper-pool-tick",
+        name="Paper Pool: Retire and Admit",
+        schedule_type="interval",
+        schedule_expr="3600000",  # 1h in ms
+        command="paper-pool-tick",
+        timezone_str="UTC",
+        payload={"kind": "paper_pool_tick"},
+    )
+
     # 4d. Orphan Runtime-Type Scan — Daily detection of unregistered strategy types.
     # Reports (but does not auto-demote by default) strategies whose `type` is
     # neither a known param family nor a registered class. These are typically
@@ -3482,6 +3526,18 @@ def seed_forven_jobs():
         command="overnight-summary",
         timezone_str="America/Halifax",
         payload={"kind": "overnight_summary", "lookback_hours": 12},
+    )
+
+    # 16b. Weekly funnel report — Monday 8 AM: registered, archived untestable,
+    # reached gauntlet/paper/live, paper pool, forward trades, live-ready.
+    add_job(
+        job_id="forven-weekly-funnel-report",
+        name="Weekly Funnel Report",
+        schedule_type="cron",
+        schedule_expr="0 8 * * 1",
+        command="weekly-funnel-report",
+        timezone_str="America/Halifax",
+        payload={"kind": "weekly_funnel_report", "days": 7},
     )
 
     # 17. Derivatives: Long/Short Ratio — every 1 hour

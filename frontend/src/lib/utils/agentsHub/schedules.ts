@@ -30,6 +30,7 @@ const COMMAND_GROUPS: Record<string, JobGroup> = {
 	'funding-history-reconcile': 'trading',
 	'portfolio-allocation': 'trading',
 	'capital-slot-dedupe': 'trading',
+	'paper-pool-tick': 'pipeline',
 	'regime-gate-mtm': 'trading',
 	'basket-funding-carry': 'trading',
 	'universe-books': 'trading',

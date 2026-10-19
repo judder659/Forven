@@ -489,6 +489,35 @@ def _tool_create_hypothesis(params: dict) -> str:
             ),
         })
 
+    # target_assets must be market symbols. A dataset id ("SUI/USDT-1h",
+    # "DATASET-SUI/USDT") is repaired to its pair; anything that is not a pair
+    # ("1/USDT", "1h") is rejected now rather than at the data check before the
+    # backtest, where the task used to die with an opaque error.
+    from forven.symbols import normalize_symbol
+
+    repaired_assets: list = []
+    bad_assets: list[str] = []
+    for asset in params.get("target_assets") or []:
+        check = normalize_symbol(str(asset or ""))
+        if not str(asset or "").strip():
+            continue
+        if not check.ok:
+            bad_assets.append(str(check.reason))
+        else:
+            repaired_assets.append(check.symbol if check.repaired else asset)
+    if bad_assets:
+        return json.dumps({
+            "ok": False,
+            "error_code": "invalid_target_symbol",
+            "error": "Invalid target asset(s): " + "; ".join(bad_assets),
+            "guidance": (
+                "List executable market symbols only (BTC/USDT, SOL/USDT). Put "
+                "timeframes in target_timeframes, not in the symbol."
+            ),
+        })
+    if params.get("target_assets"):
+        params = {**params, "target_assets": repaired_assets}
+
     # A repeated idea wastes the whole task. Derived variants of a named parent
     # are exempt: they build on it on purpose.
     if not operator_task and not params.get("derived_from_hypothesis_id"):

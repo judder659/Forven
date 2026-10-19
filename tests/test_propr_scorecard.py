@@ -281,9 +281,40 @@ def test_track_record_verdicts(forven_db):
     assert records["SWIN"]["mean_r"] == 0.25
 
 
-def test_track_record_mode_rosters_only_earners_and_keeps_join_times(forven_db):
+def _live_gate_states(monkeypatch, states: dict[str, str]) -> None:
+    """Stub the live-gate evidence: {strategy_id: sequential state}, no held-back block."""
+    monkeypatch.setattr(pm, "_live_gate_evidence", lambda sid, config: (states.get(sid, "collecting"), ""))
+
+
+def test_track_record_verdicts_follow_the_live_gate_evidence(forven_db, monkeypatch):
+    # 2026-10 gate plan: a positive 8-trade record is no longer enough; the
+    # sequential live-evidence test decides for paper strategies.
+    _record("SGO", "paper", [1.0] * 5 + [-1.0] * 3)
+    _record("SWAIT", "paper", [1.0] * 8)
+    _record("SFAIL", "paper", [-0.5] * 8)
+    _record("SLIVE", "live_graduated", [1.0] * 3)
+    _record("SLIVELOSE", "live_graduated", [-0.5] * 8)
+    _live_gate_states(monkeypatch, {"SGO": "go", "SWAIT": "continue", "SFAIL": "fail"})
+
+    assert pm.track_record_verdicts(forward_records()) == {
+        "SGO": "qualified",
+        "SWAIT": "probation",
+        "SFAIL": "benched",
+        "SLIVE": "qualified",
+        "SLIVELOSE": "benched",
+    }
+
+
+def test_a_held_back_block_keeps_a_go_strategy_off_the_roster(forven_db, monkeypatch):
+    _record("SGO", "paper", [1.0] * 8)
+    monkeypatch.setattr(pm, "_live_gate_evidence", lambda sid, config: ("go", "Held-back test pending"))
+    assert pm.track_record_verdicts(forward_records()) == {"SGO": "probation"}
+
+
+def test_track_record_mode_rosters_only_earners_and_keeps_join_times(forven_db, monkeypatch):
     _record("SWIN", "paper", [1.0] * 8)
     _record("SLOSE", "paper", [-1.0] * 8)
+    _live_gate_states(monkeypatch, {"SWIN": "go", "SLOSE": "fail"})
     pm.set_mirror_config(strategy_ids=["SLOSE"])
     pm.set_mirror_config(mode="track_record")
 

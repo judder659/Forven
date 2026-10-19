@@ -91,11 +91,13 @@ log = logging.getLogger("forven.propr_mirror")
 MIRROR_ENABLED_KEY = "propr_mirror_enabled"
 MIRROR_STRATEGIES_KEY = "propr_mirror_strategies"
 # PROPR-TRACK-1: how the roster is chosen. "manual" (default) = the operator's
-# picks. "track_record" = the mirror keeps the roster itself: every paper/live
-# strategy whose whole forward record is at least MIN_VERDICT_TRADES trades
-# with a positive average R is on it, everything else is off. It will often be
-# EMPTY — that is the point: the challenge account sits flat until something
-# has earned a place, instead of copying strategies with no forward edge.
+# picks. "track_record" = the mirror keeps the roster itself from the live-gate
+# evidence (2026-10 gate plan): every live strategy, plus every paper strategy
+# whose sequential live-evidence test says "go" and whose held-back test does
+# not block, is on it; everything else is off. It will often be EMPTY — that is
+# the point: the challenge account sits flat until something has earned a
+# place, instead of copying strategies with no forward edge. (Before the plan it
+# took any 8-trade record with a positive average R, which is mostly luck.)
 ROSTER_MODE_KEY = "propr_mirror_roster_mode"
 ROSTER_MODES = ("manual", "track_record")
 TRACK_RECORD_SYNC_SECONDS = 900
@@ -307,6 +309,58 @@ def track_record_verdict(record: dict | None, min_trades: int = MIN_VERDICT_TRAD
     return "qualified" if mean_r is not None and mean_r > 0 else "benched"
 
 
+def _live_gate_evidence(strategy_id: str, config: dict) -> tuple[str, str]:
+    """(sequential state, held-back gate message or "") for one paper strategy."""
+    from forven import live_evidence
+    from forven.policy import evaluate_live_evidence
+    from forven.robustness.engine import holdout_gate_reason
+
+    evidence = evaluate_live_evidence(strategy_id, config)
+    state = str(evidence.get("state") or "")
+    if state == live_evidence.STATE_COLLECTING and evidence.get("decision_if_old_enough") == live_evidence.STATE_FAIL:
+        state = live_evidence.STATE_FAIL
+    holdout = holdout_gate_reason(strategy_id, submit=False, stage="live") if state == live_evidence.STATE_GO else None
+    return state, (holdout[0] if holdout else "")
+
+
+def track_record_verdicts(records: dict[str, dict]) -> dict[str, str]:
+    """Track-record verdicts from the live-gate evidence.
+
+    'qualified': a live strategy (it passed the live gate), or a paper strategy
+    whose sequential live-evidence test says "go" with no held-back block.
+    'benched': the sequential test failed (forward contradicts the backtest or is
+    significantly losing), or a live strategy's forward record is
+    MIN_VERDICT_TRADES+ trades with a non-positive average R.
+    'probation': still collecting evidence.
+    """
+    from forven import live_evidence
+    from forven.policy import load_pipeline_config
+
+    try:
+        config = load_pipeline_config()
+    except Exception:  # noqa: BLE001
+        config = {}
+    out: dict[str, str] = {}
+    for sid, rec in records.items():
+        stage = str((rec or {}).get("stage") or "")
+        if stage == "live_graduated":
+            out[sid] = "benched" if track_record_verdict(rec) == "benched" else "qualified"
+            continue
+        try:
+            state, holdout_block = _live_gate_evidence(sid, config)
+        except Exception as exc:  # noqa: BLE001 — unreadable evidence never qualifies
+            log.warning("Live-gate evidence unavailable for %s: %s", sid, exc)
+            out[sid] = "probation"
+            continue
+        if state == live_evidence.STATE_FAIL:
+            out[sid] = "benched"
+        elif state == live_evidence.STATE_GO and not holdout_block:
+            out[sid] = "qualified"
+        else:
+            out[sid] = "probation"
+    return out
+
+
 def roster_mode(settings: dict | None = None) -> str:
     s = settings if isinstance(settings, dict) else _settings()
     mode = str(s.get(ROSTER_MODE_KEY) or "manual").strip().lower()
@@ -316,11 +370,11 @@ def roster_mode(settings: dict | None = None) -> str:
 def track_record_roster(existing: dict[str, str], now: datetime) -> dict[str, str]:
     """The roster track-record mode wants right now. Members that stay keep
     their join time; newcomers join NOW, so only their future trades mirror."""
-    records = forward_records()
+    verdicts = track_record_verdicts(forward_records())
     return {
         sid: existing.get(sid) or now.isoformat()
-        for sid, rec in sorted(records.items())
-        if track_record_verdict(rec) == "qualified"
+        for sid, verdict in sorted(verdicts.items())
+        if verdict == "qualified"
     }
 
 
