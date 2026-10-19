@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from forven import strategy_lifecycle as lifecycle
 from forven.api_security import require_operator_access
@@ -191,3 +192,57 @@ def run_timeframe_sweep(strategy_id: str):
         "errors": errors,
         "total_timeframes": len(sweep_tfs),
     }
+
+
+# --- Paper pool (2026-10 gate plan, forven.paper_pool) ---------------------------
+
+
+class PaperPoolRequeueBody(BaseModel):
+    strategy_ids: list[str]
+
+
+@router.get("/api/lifecycle/paper-pool")
+def read_paper_pool():
+    """Paper occupancy, limits, the evidence-ranked queue and the door in force."""
+    from forven import paper_door
+    from forven.policy import load_pipeline_config, paper_pool_status
+
+    config = load_pipeline_config()
+    return {**paper_pool_status(config), "paper_door": paper_door.describe(config)}
+
+
+@router.get("/api/lifecycle/paper-pool/readmit-candidates")
+def read_paper_pool_readmit_candidates(days: int = 30, limit: int = 100):
+    """Recent archives whose last paper rejection the research door no longer blocks on (report only)."""
+    from forven.evolution import paper_readmit_candidates
+
+    return {"candidates": paper_readmit_candidates(days=days, limit=limit)}
+
+
+@router.post("/api/lifecycle/paper-pool/requeue")
+def requeue_paper_pool(body: PaperPoolRequeueBody):
+    """Operator action: move the listed archives back through the research paper door."""
+    from forven.evolution import paper_requeue
+
+    if not body.strategy_ids:
+        raise HTTPException(status_code=422, detail="strategy_ids is empty")
+    if len(body.strategy_ids) > 100:
+        raise HTTPException(status_code=422, detail="at most 100 strategies per request")
+    return {"results": paper_requeue(body.strategy_ids, actor="api")}
+
+
+@router.get("/api/lifecycle/paper-pool/live-recheck")
+def read_paper_pool_live_recheck():
+    """The stored report of how live strategies fare against the new live gate."""
+    from forven.db import kv_get
+    from forven.paper_pool import LIVE_RECHECK_KEY
+
+    return kv_get(LIVE_RECHECK_KEY) or {"checked_at": None, "strategies": []}
+
+
+@router.post("/api/lifecycle/paper-pool/live-recheck")
+def run_paper_pool_live_recheck():
+    """Re-run the report-only live re-check (never demotes anything)."""
+    from forven.evolution import paper_live_recheck
+
+    return paper_live_recheck()

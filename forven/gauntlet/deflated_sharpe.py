@@ -795,3 +795,159 @@ def compute_strategy_dsr(
     except Exception as exc:
         log.warning("DSR computation failed for %s (treated as unavailable): %s", strategy_id, exc)
         return _unavailable("internal_error", with_reason)
+
+
+# --- Paper->live evidence (2026-10 gate plan) -------------------------------------
+
+
+def _latest_backtest_row(strategy_id: str):
+    from forven.db import get_db
+
+    with get_db() as conn:
+        return conn.execute(
+            """SELECT result_id, config_json, metrics_json FROM backtest_results
+               WHERE strategy_id = ?
+                 AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
+                 AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+               ORDER BY datetime(created_at) DESC LIMIT 1""",
+            (strategy_id,),
+        ).fetchone()
+
+
+def load_backtest_trade_returns(strategy_id: str, pipeline_config: dict | None = None) -> tuple[list[float], dict]:
+    """Per-trade returns of the strategy's latest backtest, read-only.
+
+    Same series the DSR scores: the confirmation window's in-sample plus OOS
+    trades when ``deflated_sharpe_trade_scope`` is the confirmation window (the
+    default) and the in-sample artifact exists, else the OOS trades. Returns
+    ``([], {"reason": ...})`` when no per-trade series is available.
+    """
+    rob = (pipeline_config or {}).get("robustness_thresholds", {}) or {}
+    bt = _latest_backtest_row(strategy_id)
+    if not bt:
+        return [], {"reason": "no_backtest_result"}
+    from forven.api_core import get_backtest_result
+
+    detail = get_backtest_result(bt["result_id"], remote_skip=True)
+    trades = detail.get("trades") if isinstance(detail, dict) else None
+    if not isinstance(trades, list) or not trades:
+        return [], {"reason": "no_trades_in_artifact", "result_id": bt["result_id"]}
+    oos_returns = _extract_trade_returns(trades)
+    scope = resolve_trade_scope(rob)
+    is_returns: list[float] = []
+    if scope == TRADE_SCOPE_CONFIRMATION_WINDOW:
+        in_sample_trades, _why = _load_confirmation_in_sample_trades(
+            bt["result_id"], bt["config_json"], bt["metrics_json"]
+        )
+        if in_sample_trades is None:
+            scope = TRADE_SCOPE_OOS
+        else:
+            is_returns = _extract_trade_returns(in_sample_trades)
+    return is_returns + oos_returns, {
+        "result_id": bt["result_id"],
+        "trade_scope": scope,
+        "n_in_sample": len(is_returns),
+        "n_oos": len(oos_returns),
+    }
+
+
+def _standardised(returns: list[float]) -> list[float]:
+    """Returns divided by their own population stdev (scale-free), [] when flat."""
+    rs = [float(r) for r in returns if r is not None and math.isfinite(float(r))]
+    if len(rs) < 2:
+        return []
+    avg = sum(rs) / len(rs)
+    sd = math.sqrt(sum((r - avg) ** 2 for r in rs) / len(rs))
+    if sd <= 1e-12:
+        return []
+    return [r / sd for r in rs]
+
+
+def compute_live_dsr(
+    strategy_id: str,
+    forward_returns: list[float],
+    *,
+    pipeline_config: dict | None = None,
+) -> dict:
+    """Deflated Sharpe over backtest PLUS forward paper trades, read-only.
+
+    The paper->live gate's selection-bias guard (2026-10 gate plan): the
+    deflation counts the optimizer's search and the same-origin sibling attempts
+    exactly as the paper-entry DSR does, while the sample now includes the
+    forward trades nobody selected on. Backtest per-trade returns and paper PnL
+    fractions are on different scales, so each series is divided by its own
+    volatility before the two are joined. Never writes the DSR stamp (a
+    paper strategy's stamp is frozen promotion evidence, DSR-FREEZE-1).
+    Returns ``{"dsr": None, "reason": ..., "unavailable": True}`` when it cannot
+    be computed.
+    """
+    try:
+        import json
+
+        from forven.db import get_db
+
+        if pipeline_config is None:
+            from forven.policy import load_pipeline_config
+
+            pipeline_config = load_pipeline_config() or {}
+        rob = pipeline_config.get("robustness_thresholds", {}) or {}
+        try:
+            default_trials = int(rob.get("deflated_sharpe_default_trials", 50) or 50)
+        except (TypeError, ValueError):
+            default_trials = 50
+        backtest, info = load_backtest_trade_returns(strategy_id, pipeline_config)
+        joined = _standardised(backtest) + _standardised(list(forward_returns or []))
+        if len(joined) < 2:
+            return {"dsr": None, "reason": info.get("reason") or "insufficient_trade_returns", "unavailable": True}
+
+        with get_db() as conn:
+            opt_rows = conn.execute(
+                """SELECT metrics_json, config_json FROM backtest_results
+                   WHERE strategy_id = ?
+                     AND LOWER(TRIM(COALESCE(result_type, ''))) = 'optimization'
+                     AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+                   ORDER BY datetime(created_at) DESC""",
+                (strategy_id,),
+            ).fetchall()
+
+        def _parse(blob: object) -> dict | None:
+            try:
+                parsed = json.loads(blob) if blob else None
+            except (TypeError, ValueError):
+                return None
+            return parsed if isinstance(parsed, dict) else None
+
+        parsed_rows = [(_parse(row["metrics_json"]), _parse(row["config_json"])) for row in opt_rows]
+        n_trials_base, n_runs = _cumulative_n_trials(parsed_rows, default_trials)
+        swarm_attempts = 0
+        if bool(rob.get("dsr_swarm_trials_enabled", True)):
+            try:
+                lookback = int(rob.get("dsr_swarm_lookback_days", 90))
+            except (TypeError, ValueError):
+                lookback = 90
+            quick = pipeline_config.get("quick_screen") if isinstance(pipeline_config.get("quick_screen"), dict) else {}
+            try:
+                trial_floor = int(float(quick.get("min_trades", _default_trial_min_trades())))
+            except (TypeError, ValueError):
+                trial_floor = _default_trial_min_trades()
+            swarm = _swarm_cluster_breakdown(strategy_id, lookback, resolve_swarm_scope(rob), trial_floor)
+            swarm_attempts = int(swarm.get("attempts") or 0)
+        n_trials = n_trials_base * (1 + swarm_attempts)
+        # The optimizer's cross-trial variance is on the backtest's own scale; the
+        # joined series is standardised, so the estimator proxy is the consistent choice.
+        result = deflated_sharpe_ratio(joined, n_trials, None)
+        result.update(
+            scope="backtest_plus_forward",
+            n_obs_backtest=len(_standardised(backtest)),
+            n_obs_forward=len(_standardised(list(forward_returns or []))),
+            n_trials_base=int(n_trials_base),
+            n_optimization_runs=int(n_runs),
+            swarm_cluster_attempts=int(swarm_attempts),
+            backtest_source=info,
+        )
+        if result.get("dsr") is None:
+            result["unavailable"] = True
+        return result
+    except Exception as exc:  # noqa: BLE001 — the live gate fails closed on unavailability
+        log.warning("Live DSR computation failed for %s: %s", strategy_id, exc)
+        return {"dsr": None, "reason": "internal_error", "unavailable": True}

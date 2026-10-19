@@ -106,9 +106,14 @@ _USER_ACTORS = {"api", "manual", "user", "ui", "pipeline_sweep", "gauntlet_sweep
 #     archive (M-13 2026-06-09): a hard "(reject)" gate verdict that cannot
 #     improve by waiting; previously actor='system' was silently downgraded and
 #     ghost protection blocked the intended archive 323x/7d.
+#   * paper_retirement — forven.paper_pool's forward-retirement sweep (2026-10
+#     gate plan): a PAPER strategy whose forward record is clearly losing, in
+#     drawdown, idle, or contradicting its backtest. Paper risks no capital and
+#     the retirement rules are operator settings (paper_pool.retire_*), so it
+#     must not wait on a dethrone approval. It never touches live strategies.
 # NOTE: none of these may retire a CANONICAL strategy — the canonical guard in
 # transition_stage only honours decay_tracker or forced _USER_ACTORS.
-_SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive"}
+_SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive", "paper_retirement"}
 _OPERATOR_OWNED_STAGES = {"paper", "live_graduated"}
 _TERMINAL_DETHRONE_STAGES = {"archived", "rejected", "backtest_failed"}
 
@@ -1600,6 +1605,16 @@ def _transition_stage_impl(
             untestable_reason = str(evidence.get("status_reason") or "").strip() or (
                 untestable_status_reason("unspecified", reason)
             )
+        # A merit archive may also name why (e.g. ``paper_retired:<why>`` from the
+        # paper pool's forward-retirement sweep) so the Forge can show it.
+        archive_status_reason = untestable_reason
+        if (
+            archive_status_reason is None
+            and normalized_target == "archived"
+            and isinstance(evidence, dict)
+            and str(evidence.get("status_reason") or "").strip()
+        ):
+            archive_status_reason = str(evidence.get("status_reason")).strip()
 
         # NOTE: the "container exists" pipeline-audit write is deliberately
         # deferred to the success path (just before the strategies UPDATE below).
@@ -2289,8 +2304,8 @@ def _transition_stage_impl(
                 int(reset_terminal_metrics),
                 int(reset_terminal_metrics),
                 int(reset_terminal_metrics),
-                untestable_reason,
-                untestable_reason,
+                untestable_reason or archive_status_reason,
+                untestable_reason or archive_status_reason,
                 now,
                 strategy_id,
             ),

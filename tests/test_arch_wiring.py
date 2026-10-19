@@ -126,6 +126,7 @@ def test_manifest_parses_and_is_not_empty():
 
 
 @pytest.mark.dsr_gate_default
+@pytest.mark.gate_plan_defaults
 def test_manifest_defaults_match_the_engine_defaults():
     """Every manifest default that resolves in the backend must equal it."""
     from forven.api_core import _DEFAULT_SETTINGS_PAYLOAD

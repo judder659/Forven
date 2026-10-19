@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -448,6 +449,14 @@ def _tool_run_backtest(params: dict) -> str:
         backtest_params = params.get("params")
         if not asset or not strategy_type or not isinstance(backtest_params, dict):
             return "Backtest error: asset, strategy_type, and params are required"
+        from forven.symbols import normalize_symbol
+
+        symbol_check = normalize_symbol(str(asset))
+        if not symbol_check.ok and re.fullmatch(r"[A-Za-z0-9/_-]+", str(asset).strip()):
+            return f"Backtest error: {symbol_check.reason}"
+        if symbol_check.repaired:
+            # A dataset id passed as the asset ("SUI/USDT-1h"): test the pair.
+            asset = symbol_check.symbol
         strategy_type = _sandbox_runtime_type_for(str(strategy_type))
 
         # Use the strategy ID from task context, falling back to agent ID

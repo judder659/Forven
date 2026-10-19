@@ -15,13 +15,16 @@ The holdout keeps the most recent stretch of market data away from research:
   that reaches past the cutoff shifts back to end at it, keeping its length.
   Truncation is by timestamp; stored values keep their latest corrections (an
   ``as_of`` pin would also roll back later data fixes).
-* **The one-shot test.** Before the paper gate each new candidate gets ONE
+* **The one-shot test.** Before the gate that runs it (paper->live by default
+  since the 2026-10 gate plan; gauntlet->paper under the strict paper door) each
+  candidate gets ONE
   walk-forward whose out-of-sample fold is exactly the held-back period, run with
   the seal lifted, never re-run for the same params. Every shot counts against a
   per-family budget for the current cutoff, so fifty sibling variants cannot take
   fifty draws. (``robustness.engine`` runs and records it.)
 * **The roll.** By default the cutoff is the start of the current calendar quarter
-  minus ``lag_quarters`` quarters, so 6–9 months are always held back and the
+  minus ``lag_quarters`` quarters (default 1, so 3–6 months are held back; it
+  was 2 before the 2026-10 gate plan), and the
   oldest quarter is released to research at each quarter start.
 
 Strategies created before the holdout was established were designed with the
@@ -51,7 +54,7 @@ MAX_ATTEMPTS = 3  # errored runs before the test stops being retried automatical
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "roll": "quarterly",
-    "lag_quarters": 2,
+    "lag_quarters": 1,  # 2 before the 2026-10 gate plan (migrated once at startup)
     "cutoff": "",  # ISO date, used when roll == "manual"
     "established_at": "",  # stamped when first enabled; earlier strategies are exempt
     "paper_mode": "enforce",
@@ -189,8 +192,8 @@ def verdict(split: Mapping[str, Any], hurdle: Mapping[str, Any], min_trades: int
     return ("FAIL" if reasons else "PASS"), reasons
 
 
-def gate_message(state: Mapping[str, Any]) -> tuple[str, str] | None:
-    """(message, reason_code) an enforcing paper gate returns for ``state``, else None."""
+def gate_message(state: Mapping[str, Any], *, stage: str = "paper") -> tuple[str, str] | None:
+    """(message, reason_code) the enforcing gate for ``stage`` returns for ``state``, else None."""
     kind = state.get("state")
     if kind in {"off", "exempt", "pass", None}:
         return None
@@ -211,8 +214,9 @@ def gate_message(state: Mapping[str, Any]) -> tuple[str, str] | None:
         )
     if kind == "running":
         return "Held-back test pending — the one-shot test is running; its verdict decides", "holdout_pending"
+    hop = "live" if stage == "live" else "paper"
     return (
-        "Held-back test pending — every other paper check passes; the one-shot test "
+        f"Held-back test pending — every other {hop} check passes; the one-shot test "
         "runs on the next promotion attempt",
         "holdout_pending",
     )

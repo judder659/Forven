@@ -716,15 +716,28 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
         by_stage[str(s.get("stage"))] = by_stage.get(str(s.get("stage")), 0) + 1
         by_status[str(s.get("status"))] = by_status.get(str(s.get("status")), 0) + 1
 
+    from forven import live_evidence, paper_door
     from forven.policy import load_pipeline_config
 
-    preset = str(load_pipeline_config().get("pipeline_preset") or "default")
+    pipeline_config = load_pipeline_config()
+    preset = str(pipeline_config.get("pipeline_preset") or "default")
+    # 2026-10 gate plan: which door into paper is in force, the paper pool's
+    # occupancy and queue, and the live gate's evidence rule.
+    gates: dict[str, Any] = {"paper_door": paper_door.describe(pipeline_config)}
+    try:
+        from forven.policy import paper_pool_status
+
+        gates["paper_pool"] = paper_pool_status(pipeline_config)
+    except Exception as exc:  # noqa: BLE001 — the explain view never fails on the pool
+        gates["paper_pool"] = {"error": str(exc)}
+    gates["live_gate"] = live_evidence.settings(pipeline_config)
 
     return sanitize_non_finite(
         {
             "ok": True,
             "generated_at": now.isoformat(),
             "pipeline_preset": preset,
+            "gates": gates,
             "stages": list(requested),
             "counts": {"by_stage": by_stage, "by_status": by_status},
             "truncated": truncated,

@@ -121,6 +121,20 @@ const SPECS: Record<string, Spec> = {
   'pipeline.paper_trading.min_profit_factor_paper': [0, null, 'any'],
   'pipeline.paper_trading.pf_position_reduction_threshold': [0, null, 'any'],
   'pipeline.paper_trading.max_oos_is_ratio': [0, null, 'any'],
+  'pipeline.paper_trading.live_min_forward_trades': [0, null, 1],
+  'pipeline.paper_trading.live_min_paper_days': [0, null, 1],
+  'pipeline.paper_trading.live_backtest_weight': [0, 1, 'any'],
+  'pipeline.paper_trading.live_sequential_alpha': [0, 1, 'any'],
+  'pipeline.paper_door.min_trades': [0, null, 1],
+  'pipeline.paper_door.min_oos_sharpe': [null, null, 'any'],
+  'pipeline.paper_door.min_oos_profit_factor': [0, null, 'any'],
+  'pipeline.paper_pool.max_strategies': [0, null, 1],
+  'pipeline.paper_pool.max_per_family': [0, null, 1],
+  'pipeline.paper_pool.max_per_market': [0, null, 1],
+  'pipeline.paper_pool.retire_min_trades': [0, null, 1],
+  'pipeline.paper_pool.retire_max_t_stat': [null, null, 'any'],
+  'pipeline.paper_pool.retire_max_drawdown_pct': [0, 100, 'any'],
+  'pipeline.paper_pool.retire_idle_days': [0, null, 1],
 
   // ---- lab: safety floors (fractions 0-1 where the description says so) ----
   'pipeline.safety_floors.min_trades': [0, null, 1],
@@ -175,6 +189,7 @@ const SPECS: Record<string, Spec> = {
   'bot-operations.brain_queue_max_pending': [1, null, 1],
   'research.strategy_creation_daily_budget': [0, 500, 1, E],
   'research.strategy_creation_max_in_flight': [1, null, 1],
+  'research.agent_registration_daily_cap': [0, null, 1],
   'agents.assistant_max_tool_rounds': [2, 40, 1, E],
 
   // ---- data ----

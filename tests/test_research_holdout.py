@@ -46,15 +46,28 @@ def holdout_on(monkeypatch):
 @pytest.mark.parametrize(
     "now, expected",
     [
-        ("2026-09-25", "2026-01-01"),
-        ("2026-10-01", "2026-04-01"),
-        ("2026-12-31T23:00", "2026-04-01"),
-        ("2027-01-01", "2026-07-01"),
-        ("2026-02-14", "2025-07-01"),
+        ("2026-09-25", "2026-04-01"),
+        ("2026-10-01", "2026-07-01"),
+        ("2026-12-31T23:00", "2026-07-01"),
+        ("2027-01-01", "2026-10-01"),
+        ("2026-02-14", "2025-10-01"),
     ],
 )
-def test_quarterly_cutoff_holds_back_six_to_nine_months(now, expected):
+def test_quarterly_cutoff_holds_back_three_to_six_months(now, expected):
+    # lag_quarters defaults to 1 since the 2026-10 gate plan (was 2: 6-9 months).
     assert rh.current_cutoff(_cfg(), now=now) == pd.Timestamp(expected, tz="UTC")
+
+
+@pytest.mark.parametrize(
+    "now, expected",
+    [
+        ("2026-09-25", "2026-01-01"),
+        ("2026-10-01", "2026-04-01"),
+        ("2027-01-01", "2026-07-01"),
+    ],
+)
+def test_two_quarter_lag_holds_back_six_to_nine_months(now, expected):
+    assert rh.current_cutoff(_cfg(lag_quarters=2), now=now) == pd.Timestamp(expected, tz="UTC")
 
 
 def test_manual_cutoff_and_disabled_holdout():

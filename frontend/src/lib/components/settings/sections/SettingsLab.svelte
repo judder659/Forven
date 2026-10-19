@@ -245,9 +245,13 @@
 	// any stored knobs while "custom" lets per-knob edits win.
 	const PRESET_ID = 'pipeline.pipeline_preset';
 	const presetEntry = areaEntries.find((e) => e.id === PRESET_ID);
-	// The quick-screen rule, its widest window and its OOS floor are not part of any
+	// The door into paper, the paper pool, the live-gate evidence rule and the
+	// quick-screen rule, its widest window and its OOS floor are not part of any
 	// stance bundle (2026-10 gate plan): picking a stance leaves them alone.
 	const STANCE_INDEPENDENT_PREFIXES = [
+		'paper_door.',
+		'paper_pool.',
+		'paper_trading.live_',
 		'quick_screen.rule',
 		'quick_screen.max_window_days',
 		'quick_screen.min_oos_sharpe',

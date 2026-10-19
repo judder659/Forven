@@ -24,6 +24,9 @@ before it was established.
 keys once, only where a stored config lacks them, so an operator's explicit
 scope survives every restart.
 
+``apply_gate_plan_migration()`` (2026-10-19) carries the gate plan's changed
+defaults (research holdout lag 2 -> 1 quarters) into stored settings once.
+
 A leaf like ``forven.research_holdout``: the caller passes the KV accessors, so
 this module adds no edge into the import cluster around ``forven.api_core``.
 """
@@ -176,4 +179,50 @@ def apply_readiness_checks(
         )
     elif summary["holdout"]["established_at"]:
         log.info("Research holdout established at %s", summary["holdout"]["established_at"])
+    return summary
+
+
+GATE_PLAN_MIGRATION_KEY = "forven:migrations:gate_plan_v1"
+# The research holdout's quarters-held-back default before the 2026-10 gate plan.
+_OLD_HOLDOUT_LAG_QUARTERS = 2
+
+
+def apply_gate_plan_migration(
+    kv_get: Callable[..., Any], kv_set: Callable[[str, Any], None]
+) -> dict[str, Any]:
+    """Once per install, carry the 2026-10 gate plan's changed defaults into stored settings.
+
+    New keys (the ``paper_door`` / ``paper_pool`` blocks and the ``live_*`` keys of
+    ``paper_trading``) need nothing here: ``policy.load_pipeline_config`` merges
+    absent keys from the code defaults. A CHANGED default does: the research
+    holdout's ``lag_quarters`` went from 2 to 1 (a quarter of data back to
+    research), and installs store the research settings in full. A stored 2 is
+    flipped to 1 once; an operator who sets 2 again afterwards keeps it. Any
+    other stored value is the operator's and is left alone.
+
+    Idempotent. Run it under the settings mutation lock. Returns
+    ``{"first_run": bool, "lag_quarters": [old, new] | None}``.
+    """
+    first_run = not kv_get(GATE_PLAN_MIGRATION_KEY)
+    summary: dict[str, Any] = {"first_run": first_run, "lag_quarters": None}
+    if not first_run:
+        return summary
+    settings = kv_get(SETTINGS_STORAGE_KEY, {})
+    research = settings.get("research_settings") if isinstance(settings, dict) else None
+    block = research.get("research_holdout") if isinstance(research, dict) else None
+    if isinstance(block, dict) and block.get("lag_quarters") in (_OLD_HOLDOUT_LAG_QUARTERS, str(_OLD_HOLDOUT_LAG_QUARTERS)):
+        new_lag = int(HOLDOUT_DEFAULTS["lag_quarters"])
+        block["lag_quarters"] = new_lag
+        kv_set(SETTINGS_STORAGE_KEY, settings)
+        summary["lag_quarters"] = [_OLD_HOLDOUT_LAG_QUARTERS, new_lag]
+        log.warning(
+            "Gate plan: research holdout now holds back %d quarter(s) instead of %d; "
+            "change it in Settings > Research if you want the old value.",
+            new_lag,
+            _OLD_HOLDOUT_LAG_QUARTERS,
+        )
+    kv_set(
+        GATE_PLAN_MIGRATION_KEY,
+        {"applied_at": datetime.now(timezone.utc).isoformat(), "lag_quarters": summary["lag_quarters"]},
+    )
     return summary

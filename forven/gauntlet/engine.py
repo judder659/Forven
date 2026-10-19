@@ -47,6 +47,9 @@ _GATE_CONTENTION_BACKOFF_MINUTES = 10.0
 # up the roll the same day it happens.
 _SLOW_BLOCK_BACKOFF_MINUTES = {
     "holdout_budget_exhausted": 360.0,
+    # Waiting for a paper slot: the hourly paper-pool tick admits from the queue
+    # (forven.paper_pool), so the workflow only needs an occasional re-check.
+    "paper_queue_full": 120.0,
 }
 # Blocks that must NEVER be drained to a terminal failed_gate (retried forever).
 #   * ``gate_contention`` — a fully-passing strategy waiting for a capital slot.
@@ -102,6 +105,9 @@ _NO_DRAIN_REASON_CODES = {
     # family's per-quarter test budget is spent until the next roll.
     "holdout_pending",
     "holdout_budget_exhausted",
+    # The paper door passed but the paper pool is full: the strategy waits in the
+    # evidence-ranked queue for a slot (forven.paper_pool). Capacity, not merit.
+    "paper_queue_full",
 }
 
 # Public alias — import THIS from other modules (tasks.py). Same object, so the
