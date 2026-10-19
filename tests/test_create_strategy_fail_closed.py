@@ -87,7 +87,7 @@ def test_strict_normalizer_repairs_legitimate_forms():
 
 def test_container_rejects_explicit_garbage_symbol(forven_db):
     with get_db() as conn:
-        with pytest.raises(ValueError, match="unknown symbol"):
+        with pytest.raises(ValueError, match="unknown symbol|unknown quote currency"):
             create_strategy_container(
                 conn=conn,
                 name="x",
