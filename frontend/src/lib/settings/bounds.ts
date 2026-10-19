@@ -121,6 +121,7 @@ const SPECS: Record<string, Spec> = {
   'pipeline.paper_trading.max_oos_is_ratio': [0, null, 'any'],
   'pipeline.paper_trading.live_min_forward_trades': [0, null, 1],
   'pipeline.paper_trading.live_min_paper_days': [0, null, 1],
+  'pipeline.paper_trading.multi_coin_max_coins': [2, 15, 1],
   'pipeline.paper_trading.live_backtest_weight': [0, 1, 'any'],
   'pipeline.paper_trading.live_sequential_alpha': [0, 1, 'any'],
   'pipeline.paper_door.min_trades': [0, null, 1],

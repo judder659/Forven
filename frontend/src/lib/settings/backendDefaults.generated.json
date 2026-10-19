@@ -166,6 +166,8 @@
     "paper_trading.min_profit_factor_live": 1.5,
     "paper_trading.min_profit_factor_paper": 1.2,
     "paper_trading.min_total_return_pct": 0.0,
+    "paper_trading.multi_coin_enabled": true,
+    "paper_trading.multi_coin_max_coins": 6,
     "paper_trading.pf_position_reduction_threshold": 2.0,
     "paper_wip_cap": 20,
     "paper_wip_cap_mode": "capped",

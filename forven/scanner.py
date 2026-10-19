@@ -6070,18 +6070,138 @@ def _kernel_entry_fraction(
         # Use actual forward equity, not hypothetical profits before go-live.
         fraction = _sizing.size_fraction(controls, None, leverage=leverage,
                                         initial_capital=equity, current_equity=equity)
-    occupied = _kernel_occupied_margin(strat_id, execution_type)
+    occupied = _kernel_occupied_margin(strat_id, execution_type, asset=_container_leg_asset(strat))
     return _sizing.allocate_entry_fractions([fraction], equity=equity, occupied_margin=occupied)[0]
 
 
-def _kernel_occupied_margin(strat_id: str, execution_type: str) -> float:
-    """Reserve existing dollars within the executing strategy's lane."""
+def _kernel_occupied_margin(strat_id: str, execution_type: str, *, asset: str | None = None) -> float:
+    """Reserve existing dollars within the executing strategy's lane.
+
+    ``asset`` scopes it to one leg of a multi-coin container, whose legs each
+    size against their own equal share of the strategy's equity.
+    """
+    leg = str(asset or "").strip().upper()
     return sum(
         float(row.get("size") or 0) * float(row.get("fill_entry_price") or row.get("entry_price") or 0)
         / max(float(row.get("leverage") or 1), 1e-9)
         for row in _get_open_trades(strat_id)
         if _recorded_row_execution_lane(row) in {execution_type, None}
+        and (not leg or str(row.get("asset") or "").strip().upper() == leg)
     )
+
+
+# --- Multi-coin paper containers (forven.multi_coin) --------------------------------
+# A paper strategy whose breadth test froze a coin list trades the same rule on
+# every coin: one kernel pass per coin ("leg"), every trade recorded under the
+# strategy's id. Each leg sizes on 1/len(coins) of the strategy's paper equity.
+
+
+def _paper_container(strat_id: str, strat: dict) -> tuple[list[str], str | None] | None:
+    """(frozen coin list, when it was frozen) when this paper strategy trades as a container."""
+    from forven import multi_coin
+
+    try:
+        if not multi_coin.settings(kv_get("forven:pipeline_thresholds", {}) or {})["multi_coin_enabled"]:
+            return None
+        record = kv_get(multi_coin.kv_key(strat_id), None)
+    except Exception:
+        return None
+    coins = multi_coin.coins_from_record(record, str(strat.get("asset") or ""))
+    return (coins, str(record.get("frozen_at") or "") or None) if coins else None
+
+
+def _paper_container_coins(strat_id: str, strat: dict) -> list[str] | None:
+    """The frozen coin list when this paper strategy trades as a container, else None."""
+    container = _paper_container(strat_id, strat)
+    return container[0] if container else None
+
+
+def _container_leg_asset(strat: dict) -> str | None:
+    """This leg's coin when ``strat`` is one leg of a container, else None."""
+    if not strat.get("container_coins"):
+        return None
+    return str(strat.get("asset") or "").strip().upper() or None
+
+
+def _paper_sizing_equity(strat_id: str, strat: dict) -> float:
+    """Paper equity a kernel entry sizes on: the strategy's, or a container leg's equal share."""
+    equity = _get_paper_strategy_equity(strat_id)
+    weight = strat.get("container_weight")
+    if strat.get("container_coins") and isinstance(weight, (int, float)) and 0 < weight <= 1:
+        return float(equity) * float(weight)
+    return equity
+
+
+def _container_leg(strat: dict, coin: str, coins: list[str], since: str | None = None) -> dict:
+    """``strat`` re-aimed at one coin of its container: same rule, same parameters.
+
+    A coin added to the container records from ``since`` (when the list was frozen),
+    never from the strategy's paper entry: its kernel trades before the freeze are
+    history, not forward evidence. The home coin keeps its paper entry.
+    """
+    symbol = str(strat.get("symbol") or "").strip().upper()
+    quote = "USDT"
+    for sep in ("/", "-"):
+        if sep in symbol:
+            quote = symbol.split(sep, 1)[1].split(":")[0] or quote
+            break
+    params = {**dict(strat.get("params") or {}), "_asset": coin}
+    contract = strat.get("execution_contract")
+    if isinstance(contract, dict) and contract:
+        contract = {**contract, "asset": coin}
+        if isinstance(contract.get("params"), dict):
+            contract["params"] = {**contract["params"], "_asset": coin}
+    leg = {
+        **strat, "asset": coin, "symbol": f"{coin}/{quote}", "params": params,
+        "execution_contract": contract, "container_coins": list(coins),
+        "container_weight": 1.0 / len(coins),
+    }
+    if coin != coins[0]:
+        joined = _parse_iso_ts(since) if since else None
+        entered = _parse_iso_ts(strat.get("stage_changed_at"))
+        # No freeze stamp: record from now rather than replay the coin's history.
+        joined = joined or get_now()
+        if entered is None or joined > entered:
+            leg["stage_changed_at"] = joined.isoformat()
+    return leg
+
+
+def manage_container_via_kernel(
+    strat_id: str, strat: dict, coins: list[str], *, since: str | None = None, account_equity=None, diagnostics=None,
+) -> list[str] | object | None:
+    """Paper-trade a multi-coin container: one kernel pass per coin, home coin first.
+
+    Returns like ``manage_positions_via_kernel``. A strategy the kernel cannot run
+    (None from the home leg) falls back to the caller's single-coin handling; a
+    leg whose data is unavailable this scan is skipped without stopping the others.
+    """
+    out: list[str] = []
+    legs: dict[str, dict | None] = {}
+    skipped = 0
+    for index, coin in enumerate(coins):
+        leg_diag: dict | None = {} if diagnostics is not None else None
+        result = manage_positions_via_kernel(
+            strat_id, _container_leg(strat, coin, coins, since), account_equity=account_equity,
+            execution_type="paper", diagnostics=leg_diag,
+        )
+        if result is KERNEL_IMPURE_REFUSED or (result is None and index == 0):
+            if diagnostics is not None and leg_diag:
+                diagnostics.update(leg_diag)
+            return result
+        if result is KERNEL_SKIP_SCAN or result is None:
+            skipped += 1
+            legs[coin] = (leg_diag or {}).get(strat_id) or {"execution_decision": "skipped"}
+            continue
+        out.extend(result)
+        legs[coin] = (leg_diag or {}).get(strat_id)
+    if diagnostics is not None:
+        diagnostics[strat_id] = {
+            "strategy_id": strat_id, "execution_decision": "kernel_managed_container",
+            "coins": list(coins), "legs": legs, "actions": out,
+        }
+    if skipped == len(coins):
+        return KERNEL_SKIP_SCAN
+    return out
 
 
 def _kernel_allocate_entry_batch(
@@ -6101,7 +6221,8 @@ def _kernel_allocate_entry_batch(
                                             initial_capital=equity, current_equity=equity)
         requests.append(request)
     allocated = _sizing.allocate_entry_fractions(
-        requests, equity=equity, occupied_margin=_kernel_occupied_margin(strat_id, execution_type),
+        requests, equity=equity,
+        occupied_margin=_kernel_occupied_margin(strat_id, execution_type, asset=_container_leg_asset(strat)),
     )
     for action, request, fraction in zip(actions, requests, allocated):
         action.position = {**(action.position or {}), "requested_size_fraction": request,
@@ -6298,20 +6419,26 @@ def _kernel_recorded_trades(strat_id: str) -> list[dict]:
     return out
 
 
-def _kernel_trade_exists(strat_id: str, direction: str, kernel_entry_time: str) -> bool:
+def _kernel_trade_exists(strat_id: str, direction: str, kernel_entry_time: str, *, asset: str | None = None) -> bool:
     """True if ANY recorded trade (open or closed) already carries this ``kernel_entry_time``
     for this strategy+direction. An UNCAPPED existence check (independent of the reconciler
     snapshot's row cap) used to dedupe backfills, so the same kernel round-trip can never be
     re-recorded twice. Fails open (returns False) on a query hiccup — the snapshot cap above
     is sized to make a genuine miss impossible, so this is belt-and-suspenders."""
     try:
+        sql = (
+            "SELECT 1 FROM trades WHERE COALESCE(strategy_id, strategy) = ? "
+            "AND lower(COALESCE(direction, 'long')) = ? "
+            "AND json_extract(signal_data, '$.kernel_entry_time') = ?"
+        )
+        args: list = [strat_id, str(direction or "long").strip().lower(), str(kernel_entry_time)]
+        if asset:
+            # A container's legs share the candle grid: the same entry bar on two
+            # coins is two trades.
+            sql += " AND UPPER(COALESCE(asset, '')) = ?"
+            args.append(str(asset).strip().upper())
         with get_db() as conn:
-            hit = conn.execute(
-                "SELECT 1 FROM trades WHERE COALESCE(strategy_id, strategy) = ? "
-                "AND lower(COALESCE(direction, 'long')) = ? "
-                "AND json_extract(signal_data, '$.kernel_entry_time') = ? LIMIT 1",
-                (strat_id, str(direction or "long").strip().lower(), str(kernel_entry_time)),
-            ).fetchone()
+            hit = conn.execute(sql + " LIMIT 1", tuple(args)).fetchone()
         return hit is not None
     except Exception:
         return False
@@ -6394,6 +6521,11 @@ def _kernel_open_paper_trade(strat_id: str, strat: dict, action, *, sizing_equit
             "leverage": leverage, "mirror_sized": True,
         },
     }
+    if strat.get("container_coins"):
+        # One leg of a multi-coin container: sized on this share of the strategy's
+        # equity, which the gates use to pool its record per day (forven.multi_coin).
+        signal_data["container_weight"] = float(strat.get("container_weight") or 1.0)
+        signal_data["container_coins"] = list(strat["container_coins"])
     try:
         trade_id = _open_trade_db(
             strat_id, asset, direction, entry_price, units,
@@ -6750,10 +6882,10 @@ def _kernel_close_paper_trade(
     # re-recording one already booked: if ANY trade already carries this kernel_entry_time,
     # it IS recorded (just absent from the capped reconciler snapshot) — skip, so a busy book
     # can't duplicate-count it (and inflate paper equity) on every subsequent scan.
-    if _kernel_trade_exists(strat_id, action.direction, action.entry_time):
+    if _kernel_trade_exists(strat_id, action.direction, action.entry_time, asset=_container_leg_asset(strat)):
         return None
     from forven.strategies.paper_reconcile import ReconcileAction
-    sizing_equity = _get_paper_strategy_equity(strat_id)
+    sizing_equity = _paper_sizing_equity(strat_id, strat)
     leverage = float((strat.get("execution_contract") or {}).get("leverage") or trade.get("leverage")
                      or (strat.get("params") or {}).get("leverage", 1.0) or 1.0)
     open_pos = {
@@ -6989,7 +7121,7 @@ def _kernel_close_cross_asset_orphan(row: dict) -> str | None:
     )
 
 
-def _kernel_handle_manual_exits(strat_id: str, current_price: float) -> list[str]:
+def _kernel_handle_manual_exits(strat_id: str, current_price: float, *, asset: str | None = None) -> list[str]:
     """Enforce operator-set ABSOLUTE stop/take-profit on MANUAL positions of a
     kernel-managed strategy.
 
@@ -7002,7 +7134,10 @@ def _kernel_handle_manual_exits(strat_id: str, current_price: float) -> list[str
     price = _coerce_positive_float(current_price)
     if price is None:
         return out
+    leg = str(asset or "").strip().upper()
     for trade in _get_open_trades(strat_id):
+        if leg and str(trade.get("asset") or "").strip().upper() != leg:
+            continue  # another coin of a multi-coin container: priced on its own leg
         sd = parse_trade_signal_data(trade.get("signal_data"))
         if sd.get("kernel_managed") or sd.get("manual_pause"):
             continue  # reconciler owns kernel trades; manual_pause = fully detached
@@ -7885,7 +8020,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
         sizing_equity, live_slice_meta = _live_sizing_slice()
         live_equity_unavailable = sizing_equity is None or sizing_equity <= 0
     else:
-        sizing_equity = _get_paper_strategy_equity(strat_id)
+        sizing_equity = _paper_sizing_equity(strat_id, strat)
     # Only RECORD activity from go-live forward — never replay the strategy's entire
     # would-be history as trades (that floods a fresh/reset book). Pre-cutoff trades show
     # on the chart as triggers, not recorded trades; closes/refreshes of already-recorded
@@ -7962,8 +8097,15 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     _recorded = _kernel_recorded_trades(strat_id)
     same_asset_recorded: list[dict] = []
     cross_asset_open_rows: list[dict] = []
+    # A multi-coin container's other coins belong to their own legs; rows on a
+    # coin outside the container are cross-asset orphans, handled once (home leg).
+    _container = [str(c).strip().upper() for c in strat.get("container_coins") or []]
     for _rec in _recorded:
         _rec_asset = str((_rec.get("_row") or {}).get("asset") or "").strip().upper()
+        if _container and _rec_asset != _strat_asset_u and (
+            _rec_asset in _container or _strat_asset_u != _container[0]
+        ):
+            continue
         _cross_asset = bool(_rec_asset and _strat_asset_u and _rec_asset != _strat_asset_u)
         if _cross_asset and _rec.get("status") == "open":
             cross_asset_open_rows.append(_rec["_row"])
@@ -8119,7 +8261,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                     # must reach the next size, and both directions share one
                     # pre-entry allocation rather than taking turns spending it.
                     if not is_live:
-                        sizing_equity = _get_paper_strategy_equity(strat_id)
+                        sizing_equity = _paper_sizing_equity(strat_id, strat)
                     batch = [entry for entry in actions_plan if entry.kind == "open" and entry.entry_time == a.entry_time]
                     for entry in batch:
                         _kernel_entry_geometry(strat, entry, hop_price)
@@ -8245,7 +8387,9 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # the gated live path.
     if not is_live:
         try:
-            out.extend(_kernel_handle_manual_exits(strat_id, float(df["close"].iloc[-1])))
+            out.extend(_kernel_handle_manual_exits(
+                strat_id, float(df["close"].iloc[-1]), asset=_container_leg_asset(strat),
+            ))
         except Exception as exc:
             log.error("[%s] kernel paper manual-exit check failed: %s", strat_id, exc, exc_info=True)
 
@@ -8759,9 +8903,16 @@ def _dispatch_execution_action_item(
         # decisions with real fills).
         if _paper_kernel_execution_enabled() and _is_kernel_paper_strategy(strat):
             kernel_mode = "paper"
-            actions = manage_positions_via_kernel(
-                strat_id, strat, account_equity=account_equity, execution_type="paper", diagnostics=diagnostics_out,
-            )
+            container = _paper_container(strat_id, strat)
+            if container:
+                actions = manage_container_via_kernel(
+                    strat_id, strat, container[0], since=container[1],
+                    account_equity=account_equity, diagnostics=diagnostics_out,
+                )
+            else:
+                actions = manage_positions_via_kernel(
+                    strat_id, strat, account_equity=account_equity, execution_type="paper", diagnostics=diagnostics_out,
+                )
         elif _live_kernel_execution_enabled() and _is_live_kernel_stage(strat):
             kernel_mode = "live"
             actions = manage_positions_via_kernel(
