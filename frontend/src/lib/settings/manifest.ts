@@ -1653,6 +1653,19 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.gauntlet.deflated_sharpe'],
   },
   {
+    id: 'research.auto_search_grid',
+    label: 'Automatic search grid',
+    default: true,
+    type: 'toggle',
+    area: 'lab',
+    subsection: 'lab-pipeline-robustness-gauntlet',
+    backendSection: 'research',
+    backendPath: 'research_settings.auto_search_grid',
+    description:
+      'A sandboxed strategy that declares no parameter_space() is optimized over x0.8, x1.0 and x1.2 of up to 3 of its numeric defaults (at most 27 combinations), and the Deflated Sharpe is charged the combinations actually tried. OFF = run its own params once and charge the default trial count (the old behaviour).',
+    usedBy: ['forven.strategies.optimizer', 'forven.gauntlet.deflated_sharpe'],
+  },
+  {
     id: 'pipeline.robustness_thresholds.dsr_swarm_lookback_days',
     label: 'DSR swarm lookback',
     unit: 'days',

@@ -762,8 +762,12 @@ def optimize_strategy(
 
     # Respect explicit tool-provided ranges before falling back to registry/defaults.
     resolved_param_space = _normalize_explicit_param_space(param_space)
+    param_space_source = "explicit"
     if resolved_param_space is None:
         resolved_param_space = _get_param_space(strategy_id, strategy_type, base_params)
+        param_space_source = "strategy"
+        if resolved_param_space and _is_auto_grid(strategy_type, base_params):
+            param_space_source = "auto_grid"
     if not resolved_param_space:
         from forven.strategies.sandbox_proxy import is_sandbox_only_type
 
@@ -997,6 +1001,9 @@ def optimize_strategy(
         # the DSR use the real trial variance instead of its conservative proxy.
         "trial_sharpe_var": best.get("trial_sharpe_var"),
         "trial_sharpe_count": best.get("trial_sharpe_count"),
+        # "auto_grid": the strategy declared no search grid, so the optimizer
+        # searched x0.8/x1.0/x1.2 around its defaults (_auto_search_grid).
+        "param_space_source": param_space_source,
         "top_results": grid_results[:3],
         "holdout_applied": holdout_applied,
         "minimum_validation_bars": minimum_validation_bars,
@@ -1178,6 +1185,75 @@ def _derive_param_space_from_defaults(default_params: dict) -> dict:
     return space
 
 
+# Automatic search grid (2026-10 gate plan). A sandbox-only strategy that declares
+# no parameter_space() used to be "optimized" with ONE combination (its author's
+# params). That searched nothing, so the Deflated Sharpe charged it the configured
+# default trial count (50) for a search it never ran, and almost no agent strategy
+# could pass. Instead the optimizer now tries a small grid around the author's
+# numeric defaults: x0.8, x1.0 and x1.2 on at most AUTO_GRID_MAX_AXES of them, so
+# the search is real, the DSR is charged what was actually tried (at most 27), and
+# a strategy only a hair from a better setting gets to find it. Research setting
+# ``auto_search_grid`` (default on) switches it off.
+AUTO_GRID_MULTIPLIERS = (0.8, 1.0, 1.2)
+AUTO_GRID_MAX_AXES = 3
+
+
+def _auto_search_grid_enabled() -> bool:
+    try:
+        from forven.research_contract import get_effective_research_settings
+
+        value = get_effective_research_settings().get("auto_search_grid", True)
+    except Exception:
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _is_auto_grid(strategy_type: str | None, base_params: dict | None) -> bool:
+    """True when ``_get_param_space`` falls back to the automatic grid for this strategy."""
+    from forven.strategies.sandbox_proxy import is_sandbox_only_type
+
+    if not is_sandbox_only_type(strategy_type):
+        return False
+    stored = base_params.get("_parameter_space") if isinstance(base_params, dict) else None
+    return not (isinstance(stored, dict) and stored)
+
+
+def _auto_search_grid(params: dict) -> dict:
+    """x0.8 / x1.0 / x1.2 choices on the first numeric alpha params, as ``{"values": [...]}`` axes.
+
+    Skips underscore-prefixed convention keys (``_asset``, ``_parameter_space``),
+    trading-dimension knobs, engine-inert risk fields, booleans, zeros, and any
+    param whose three values collapse to fewer than two (small integers).
+    Integers stay integers; floats keep 6 significant digits.
+    """
+    if not isinstance(params, dict):
+        return {}
+    space: dict = {}
+    for name, value in params.items():
+        if len(space) >= AUTO_GRID_MAX_AXES:
+            break
+        if not isinstance(name, str) or name.startswith("_"):
+            continue
+        if name in _NON_ALPHA_PARAMS or name in _NEVER_SIMULATED_RISK_AXES:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value == 0:
+            continue
+        if isinstance(value, float) and not math.isfinite(value):
+            continue
+        if isinstance(value, int):
+            values = sorted({int(round(value * m)) for m in AUTO_GRID_MULTIPLIERS})
+            if value > 0:
+                values = [v for v in values if v > 0]
+        else:
+            values = sorted({float(f"{value * m:.6g}") for m in AUTO_GRID_MULTIPLIERS})
+        if len(values) < 2:
+            continue
+        space[name] = {"values": values}
+    return space
+
+
 def _get_param_space(strategy_id: str, strategy_type: str, base_params: dict) -> dict:
     """Get parameter space for optimization from strategy class or defaults."""
     base_params = base_params if isinstance(base_params, dict) else {}
@@ -1195,6 +1271,8 @@ def _get_param_space(strategy_id: str, strategy_type: str, base_params: dict) ->
         stored_space = base_params.get("_parameter_space")
         if isinstance(stored_space, dict) and stored_space:
             return stored_space
+        if _auto_search_grid_enabled():
+            return _auto_search_grid(base_params)
         return {}
 
     # Try registry class first

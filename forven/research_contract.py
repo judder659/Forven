@@ -89,6 +89,12 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
         "min_trades": 5,
         "max_family_shots": 3,
     },
+    # Automatic search grid (forven.strategies.optimizer._auto_search_grid): a
+    # sandboxed strategy that declares no parameter_space() is optimized over
+    # x0.8/x1.0/x1.2 of up to 3 numeric defaults instead of one combination, so
+    # the Deflated Sharpe is charged the trials actually run (at most 27) rather
+    # than the default 50 for a search that never happened. False = old behaviour.
+    "auto_search_grid": True,
 }
 
 
