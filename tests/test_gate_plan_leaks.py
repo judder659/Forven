@@ -180,10 +180,14 @@ def _ohlcv(start, periods, freq, price=100.0):
                          "close": values, "volume": np.ones(periods)})
 
 
-def test_seed_from_finer_series_rebuilds_older_history():
+def test_seed_from_finer_series_rebuilds_older_history(monkeypatch, tmp_path):
+    import forven.data as data_mod
     from forven.data import load_parquet, parquet_path, save_parquet
     from forven.dataeng.coverage import coverage_days, seed_from_finer_series
 
+    # A private lake: a series left in the shared one makes symbol validation in
+    # later tests on this worker stop failing open (DOGE in test_strategy_creation).
+    monkeypatch.setattr(data_mod, "DATA_DIR", tmp_path / "ohlcv")
     symbol = "SEEDTST/USDT"
     now = pd.Timestamp.now(tz="UTC").floor("4h")
     try:
