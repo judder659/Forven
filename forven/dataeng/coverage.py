@@ -27,6 +27,7 @@ Design guardrails (why this is safe to run in the hot pipeline path):
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -50,25 +51,23 @@ def canonical_market_symbol(symbol: str) -> str:
     s = str(symbol or "").strip().upper()
     if not s:
         return ""
-    if "/" in s:
-        base, _, quote = s.partition("/")
-        return f"{base}/{quote}" if base and quote else s
-    if "-" in s:
-        base, _, quote = s.partition("-")
-        return f"{base}/{quote}" if base and quote else s
-    for quote in ("USDT", "USDC", "BUSD", "USD"):
-        if s.endswith(quote) and len(s) > len(quote):
-            return f"{s[: -len(quote)]}/{quote}"
-    # Pure base token. Default to the USDT pair for crypto; leave non-crypto tickers
-    # (stocks/ETFs/forex) untouched so we never invent a bogus crypto pair for them.
-    try:
-        from forven.data import classify_dataset_asset_class
+    from forven.symbols import normalize_symbol
 
-        if classify_dataset_asset_class(s) in _NON_CRYPTO_ASSET_CLASSES:
-            return s
-    except Exception:
-        pass
-    return f"{s}/USDT"
+    if "/" not in s and "-" not in s and "_" not in s:
+        # Pure token. Leave non-crypto tickers (stocks/ETFs/forex) untouched so
+        # we never invent a bogus crypto pair for them.
+        try:
+            from forven.data import classify_dataset_asset_class
+
+            if classify_dataset_asset_class(s) in _NON_CRYPTO_ASSET_CLASSES:
+                return s
+        except Exception:
+            pass
+    check = normalize_symbol(s)
+    # Not a market symbol (``1``, ``1/USDT``, ``BTC/EXOTIC``): return it as
+    # typed rather than inventing a pair; validate_strategy_symbol and the
+    # readiness check report the reason.
+    return check.symbol if check.ok else s
 
 
 # SYMBOL-VALID-1: strategies were minted with fabricated market symbols
@@ -185,11 +184,24 @@ def validate_strategy_symbol(symbol: str) -> dict[str, Any]:
     raw = str(symbol or "").strip()
     if not raw:
         return {"ok": False, "symbol": "", "repaired": False, "reason": "empty symbol"}
+    from forven.symbols import normalize_symbol
+
+    check = normalize_symbol(raw)
+    if not check.ok and re.fullmatch(r"[A-Za-z0-9/_-]+", raw):
+        # Structurally not a market symbol (``1/USDT``, ``1h``, ``BTC/EXOTIC``):
+        # reject with the reason whatever the lake holds. Shapes the shared
+        # normaliser cannot read at all (``BRK.B``) fall through to the checks
+        # below, so stock and forex tickers keep their carve-out.
+        return {"ok": False, "symbol": check.symbol, "repaired": False, "reason": check.reason}
+    # A leaked dataset id or timeframe (``DATASET-SUI/USDT``, ``ETH/USDT-8H``)
+    # is repaired to the pair.
+    repaired = bool(check.ok and check.repaired)
+    note = f"repaired {raw!r} to {check.symbol!r} (dataset prefix or timeframe removed)" if repaired else None
     try:
         canon = canonical_market_symbol(raw)
 
         if _series_is_known(canon):
-            return {"ok": True, "symbol": canon, "repaired": False, "reason": None}
+            return {"ok": True, "symbol": canon, "repaired": repaired, "reason": note}
 
         # Repairable: a dataset-context name leaked into the symbol column
         # (``ETH/USDT-8H``). Strip the trailing timeframe token and re-check.
@@ -222,13 +234,13 @@ def validate_strategy_symbol(symbol: str) -> dict[str, Any]:
         # terminates it cleanly if the venue doesn't actually list it.
         base, _, quote = canon.partition("/")
         if quote in _PLAUSIBLE_QUOTES and _base_is_known(base):
-            return {"ok": True, "symbol": canon, "repaired": False, "reason": None}
+            return {"ok": True, "symbol": canon, "repaired": repaired, "reason": note}
 
         # No evidence base to judge against (fresh install / isolated test home:
         # empty lake AND empty registry) → fail open. Rejection is only meaningful
         # when the system actually knows what markets exist.
         if not _validation_evidence_available():
-            return {"ok": True, "symbol": canon, "repaired": False, "reason": None}
+            return {"ok": True, "symbol": canon, "repaired": repaired, "reason": note}
 
         return {
             "ok": False,
@@ -262,6 +274,124 @@ def coverage_days(symbol: str, timeframe: str) -> float:
         return max(0.0, (end - start).total_seconds() / 86_400.0)
     except Exception:
         return 0.0
+
+
+# Finer timeframes a coarser series can be rebuilt from, coarsest first (fewest
+# rows to read). 1m is left out: its multi-million-row series are the costliest
+# read and every venue that has 1m history also serves 5m.
+_SEED_SOURCE_TIMEFRAMES = ("2h", "1h", "30m", "15m", "5m")
+
+
+def _series_start(symbol: str, timeframe: str):
+    """First stored bar of (symbol, timeframe) from the parquet footer, or None."""
+    try:
+        import pandas as pd
+
+        from forven.data import coverage_entry, parquet_path
+
+        entry = coverage_entry(parquet_path(symbol, timeframe))
+        if not entry or not entry.get("from"):
+            return None
+        start = pd.Timestamp(entry.get("from"))
+        return start.tz_localize("UTC") if start.tzinfo is None else start.tz_convert("UTC")
+    except Exception:
+        return None
+
+
+def _resample_ohlcv(frame, source_ms: int, target_ms: int):
+    """Complete ``target_ms`` bars built from ``source_ms`` bars (partial buckets dropped)."""
+    import pandas as pd
+
+    bars = frame.set_index("timestamp").sort_index()
+    grouped = bars.resample(f"{int(target_ms)}ms", origin="epoch", label="left", closed="left")
+    out = grouped.agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+    counts = grouped["close"].count()
+    out = out[counts >= int(target_ms // source_ms)].dropna(subset=["open", "high", "low", "close"])
+    return out.reset_index().rename(columns={"index": "timestamp"}) if not out.empty else pd.DataFrame()
+
+
+def seed_from_finer_series(symbol: str, timeframe: str, required_days: int) -> dict[str, Any] | None:
+    """Rebuild missing older ``timeframe`` bars from a deeper finer stored series.
+
+    A backfill used to write a native series holding only the recent window it
+    fetched (TRX 4h, 2026-10-15: one year stored while the 1h series went back six),
+    and the strategy was archived untestable on the short series. Before asking the
+    network, the older stretch is resampled from the deepest finer series that
+    starts earlier (complete buckets only) and merged under the native bars, which
+    win wherever both exist. Local and idempotent: a series that already reaches as
+    far back as its finer siblings is left alone.
+
+    Returns ``{"source_timeframe", "added_bars"}`` when bars were added, else None.
+    """
+    try:
+        import pandas as pd
+
+        from forven.data import (
+            TIMEFRAME_MS,
+            load_parquet,
+            merge_and_dedup,
+            parquet_path,
+            save_parquet,
+        )
+    except Exception:
+        return None
+    target_ms = TIMEFRAME_MS.get(str(timeframe or ""))
+    if not target_ms:
+        return None
+    native_start = _series_start(symbol, timeframe)
+    wanted_start = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=max(1, int(required_days or 1)))
+    if native_start is not None and native_start <= wanted_start:
+        return None
+    for source_tf in _SEED_SOURCE_TIMEFRAMES:
+        source_ms = TIMEFRAME_MS.get(source_tf)
+        if not source_ms or source_ms >= target_ms or target_ms % source_ms:
+            continue
+        source_start = _series_start(symbol, source_tf)
+        if source_start is None:
+            continue
+        if native_start is not None and source_start >= native_start - pd.Timedelta(milliseconds=target_ms):
+            continue  # the finer series is no deeper than the native one
+        try:
+            older = load_parquet(
+                symbol, source_tf,
+                start=max(source_start, wanted_start - pd.Timedelta(milliseconds=target_ms)),
+                end=native_start,
+            )
+            if older is None or older.empty:
+                continue
+            seed = _resample_ohlcv(older, source_ms, target_ms)
+            if seed is None or seed.empty:
+                continue
+            if native_start is not None:
+                seed = seed[pd.to_datetime(seed["timestamp"], utc=True) < native_start]
+            if seed.empty:
+                continue
+            native = load_parquet(symbol, timeframe) if native_start is not None else None
+            # merge_and_dedup keeps the LAST row per timestamp: native bars win.
+            merged = merge_and_dedup(seed, native)
+            source = _stored_source(parquet_path(symbol, timeframe)) or _stored_source(
+                parquet_path(symbol, source_tf)
+            ) or "ccxt"
+            save_parquet(merged, symbol, timeframe, source=source)
+        except Exception as exc:  # noqa: BLE001 - seeding is an optimisation, never a blocker
+            log.warning("coverage: seeding %s %s from %s failed: %s", symbol, timeframe, source_tf, exc)
+            continue
+        log.info(
+            "coverage: seeded %d older %s %s bars from the %s series", len(seed), symbol, timeframe, source_tf
+        )
+        return {"source_timeframe": source_tf, "added_bars": int(len(seed))}
+    return None
+
+
+def _stored_source(path) -> str | None:
+    try:
+        import pyarrow.parquet as pq
+
+        meta = pq.read_metadata(path).metadata or {}
+    except Exception:
+        return None
+    value = (meta.get(b"forven_source") or b"").decode("utf-8", errors="ignore").strip()
+    return value or None
 
 
 def _autobackfill_enabled() -> bool:
@@ -413,6 +543,12 @@ def ensure_coverage(
     cov = coverage_days(canon, timeframe)
     if cov >= need:
         return {"status": "ready", "coverage_days": cov, "symbol": canon}
+    # Older bars a finer stored series already holds are rebuilt locally first, so
+    # a short native series never shadows deeper history (TRX 4h, 2026-10-15).
+    if seed_from_finer_series(canon, timeframe, need):
+        cov = coverage_days(canon, timeframe)
+        if cov >= need:
+            return {"status": "ready", "coverage_days": cov, "symbol": canon, "seeded": True}
 
     if not _autobackfill_enabled():
         # Backfill disabled (e.g. under tests): never touch the network — proceed on

@@ -308,6 +308,7 @@ DB_ALLOWED_FIRST_PARTY_IMPORTS = frozenset(
         "forven.strategies.sizing", # pure risk-param lifting, no back edge
         "forven.backups",           # snapshot retention; backups.py owns the
                                     # policy, db.py owns backup_db beneath it
+        "forven.symbols",           # stdlib-only symbol normaliser (leaf)
         # --- UPWARD: known inversions, each with the function that holds it -
         "forven.control_plane.approvals",  # create_approval shim (workflow lives
                                            # in the control plane since the

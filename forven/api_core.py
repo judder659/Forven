@@ -8881,33 +8881,24 @@ def post_backtesting_run(body: dict):
             # dataset_id format: "BTC/USDT-4h-ccxt" or "BTC/USDT 1h" (legacy)
             # Also check body.timeframe as override
             dataset_id = str(body.get("dataset_id", ""))
-            # Strip Forven dataset prefix (e.g., "dataset-26-" from "dataset-26-BTC/USDT-1h")
-            dataset_id = re.sub(r"^dataset-\d+-", "", dataset_id)
             # Priority: body.timeframe > parse from dataset_id > the strategy row's
             # stored timeframe > "1h" (the row is applied below, once it is loaded)
             explicit_timeframe = str(body.get("timeframe") or "").strip()
-            
-            # Parse symbol and timeframe from dataset_id - always extract symbol
-            VALID_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d", "1w")
-            parts = dataset_id.split("-")
-            if len(parts) >= 2 and parts[-2] in VALID_TIMEFRAMES:
-                timeframe = parts[-2]
-                symbol = "-".join(parts[:-2]) if len(parts) > 2 else parts[0]
-            elif len(parts) == 2 and parts[1] in VALID_TIMEFRAMES:
-                # Handle 2-part hyphenated format: BTC/USDT-1h
-                symbol = parts[0]
-                timeframe = parts[1]
-            elif " " in dataset_id:
+
+            if " " in dataset_id.strip():
                 # Legacy space-separated format: "BTC/USDT 1h"
                 symbol = dataset_id.split()[0]
                 timeframe = dataset_id.split()[-1]
             else:
-                # Plain symbol: "BTC/USDT" names no timeframe. None lets the
-                # strategy row's stored one apply (a 1h default here silently
-                # ran a 4h strategy at 1h).
-                symbol = dataset_id
-                timeframe = None
-            
+                # The shared parser strips any "dataset-26-" / "DATASET-" prefix
+                # and "-ccxt" source suffix, and splits off the timeframe. A plain
+                # symbol ("BTC/USDT") names no timeframe: None lets the strategy
+                # row's stored one apply (a 1h default here silently ran a 4h
+                # strategy at 1h).
+                from forven.symbols import parse_dataset_id
+
+                symbol, timeframe = parse_dataset_id(dataset_id)
+
             # Override timeframe if explicitly provided
             if explicit_timeframe:
                 timeframe = explicit_timeframe
