@@ -1770,6 +1770,31 @@ def _step_is_required(step_key: str, required_tests: list[str] | None) -> bool:
     return normalize_step_key(step_key) in set(required_tests)
 
 
+def _step_recorded_at_paper_door(step_key: str) -> bool:
+    try:
+        from forven import paper_door
+        from forven.policy import load_pipeline_config
+
+        return paper_door.step_recorded(load_pipeline_config(), step_key)
+    except Exception:  # noqa: BLE001 — unreadable config: the strict (blocking) behaviour
+        return False
+
+
+def _recorded_failure(
+    step_key: str, result_id: Any, verdict: str, response: dict[str, Any], detail: str
+) -> dict[str, Any]:
+    """A recorded-at-the-paper-door failure: the step passes, the FAIL is kept for the live gate."""
+    return {
+        "status": "passed",
+        "result_id": result_id,
+        "message": f"{step_key}: {detail} — recorded for the live gate (research paper door)",
+        "verdict": verdict or "FAIL",
+        "recorded_at_paper_door": True,
+        "non_required_failure": True,
+        "payload": response,
+    }
+
+
 def _robustness_outcome(
     step_key: str,
     response: dict[str, Any],
@@ -1791,6 +1816,11 @@ def _robustness_outcome(
                 "reason": "Walk-forward produced no folds with enough out-of-sample trades to judge",
             }
     is_required = _step_is_required(step_key, required_tests)
+    # 2026-10 gate plan (forven.paper_door): under the research door a measured
+    # FAIL (or an unjudgeably thin walk-forward) of a recorded test is recorded
+    # for the paper->live gate instead of ending the workflow. The test must
+    # still have run and produced a legitimate, persisted result.
+    recorded_at_door = _step_recorded_at_paper_door(step_key)
     not_applicable = step_key == "parameter_jitter" and response.get("not_applicable") is True
     response_issue = None
     if is_nonresult_validation_row(response, {}):
@@ -1832,6 +1862,8 @@ def _robustness_outcome(
                 "payload": response,
             }
         insufficient = legitimacy.get("reason_code") == "insufficient_evidence"
+        if insufficient and recorded_at_door:
+            return _recorded_failure(step_key, result_id, verdict, response, legitimacy["reason"])
         return {
             "status": "blocked_data" if insufficient else "blocked_runtime",
             "retryable": not insufficient,
@@ -1886,6 +1918,11 @@ def _robustness_outcome(
                     int(_load_wfa_config().get("gauntlet", {}).get("wfa_min_folds", 2)),
                     int(_floors["wfa_min_folds"]),
                 )
+                if is_required and recorded_at_door and evaluated_splits < _min_folds:
+                    return _recorded_failure(
+                        step_key, result_id, verdict, response,
+                        f"only {evaluated_splits} judgeable fold(s); {_min_folds} needed",
+                    )
                 if is_required and 0 < evaluated_splits < _min_folds:
                     # (A non-required thin WFA falls through to the non-required
                     # FAIL handling below so the serial chain keeps running.)
@@ -1941,6 +1978,8 @@ def _robustness_outcome(
                 "non_required_failure": True,
                 "payload": response,
             }
+        if recorded_at_door:
+            return _recorded_failure(step_key, result_id, verdict, response, "verdict FAIL")
         return {
             "status": "failed_gate",
             "result_id": result_id,
@@ -2484,12 +2523,26 @@ def run_paper_promotion_gate(workflow: dict[str, Any], step: dict[str, Any]) -> 
                 merit_missing.append(str(item))
             else:
                 absent_missing.append(str(item))
+        # Research paper door: a measured FAIL of a recorded test is evidence for
+        # the live gate, not a reason to stop here (policy records it too).
+        recorded_missing: list[str] = []
+        try:
+            from forven import paper_door
+            from forven.policy import load_pipeline_config
+
+            _door_cfg = load_pipeline_config()
+            recorded_missing = [item for item in merit_missing if paper_door.step_recorded(_door_cfg, item)]
+        except Exception:  # noqa: BLE001 — unreadable config: the strict behaviour
+            recorded_missing = []
+        merit_missing = [item for item in merit_missing if item not in recorded_missing]
         if merit_missing:
             return {
                 "status": "failed_gate",
                 "message": f"required robustness tests failed: {', '.join(merit_missing)}",
                 "gauntlet_status": status,
             }
+        missing = [str(item) for item in missing if str(item) not in recorded_missing]
+    if missing:
         reason_code = (
             "stale_engine_artifacts"
             if stale_engine_missing and not absent_missing

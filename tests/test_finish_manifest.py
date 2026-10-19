@@ -192,6 +192,7 @@ def test_defaults_payload_is_stable_across_calls():
 
 
 @pytest.mark.dsr_gate_default
+@pytest.mark.gate_plan_defaults
 def test_generated_snapshot_is_up_to_date():
     """`python -m forven.settings_manifest` must be a no-op on a clean tree."""
     assert GENERATED_PATH.exists(), (
@@ -228,6 +229,7 @@ def test_manifest_reader_still_matches_the_file():
 
 
 @pytest.mark.dsr_gate_default
+@pytest.mark.gate_plan_defaults
 def test_no_manifest_literal_disagrees_with_the_backend():
     """The remaining literals are offline fallbacks; a wrong one is still a lie.
 

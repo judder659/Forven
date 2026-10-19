@@ -168,7 +168,12 @@ def _patch_fold_floor(monkeypatch, floor: float) -> None:
     monkeypatch.setattr(
         policy,
         "load_pipeline_config",
-        lambda: {"robustness_thresholds": {"wfa_min_fold_trades": 5, "wfa_fold_pass_rate_min": floor}},
+        # The Strict paper door: a failed walk-forward ends the workflow (under the
+        # research door it is recorded for the live gate; tests/test_gate_plan.py).
+        lambda: {
+            "robustness_thresholds": {"wfa_min_fold_trades": 5, "wfa_fold_pass_rate_min": floor},
+            "paper_door": {"mode": "strict"},
+        },
     )
 
 

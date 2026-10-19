@@ -37,7 +37,7 @@ from forven.propr_mirror import (
     _r_multiple,
     _signal_stop,
     forward_records,
-    track_record_verdict,
+    track_record_verdicts,
 )
 from forven.propr_mirror import _record_num as _num
 
@@ -375,9 +375,10 @@ def build_scorecard(propr, *, roster: dict[str, str], state: dict,
     all_src_r = [m["source_r"] for m in mirrored if m.get("r") is not None and m.get("source_r") is not None]
     inactive = [r["strategy_id"] for r in rows if r["on_roster"] and r["health"]["level"] == "bad"]
     records = forward_records()
+    verdicts = track_record_verdicts(records)
     track = sorted(
         (
-            {"strategy_id": sid, **rec, "verdict": track_record_verdict(rec),
+            {"strategy_id": sid, **rec, "verdict": verdicts.get(sid, "probation"),
              "on_roster": sid in roster}
             for sid, rec in records.items()
         ),

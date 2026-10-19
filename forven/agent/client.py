@@ -156,6 +156,24 @@ class ForvenAgentClient:
         """Freshness SLA census of every stored series (GET /api/data/sla)."""
         return self.get("/api/data/sla", params={"stream": stream, "limit_worst": limit_worst})
 
+    def paper_pool(self) -> Any:
+        """Paper occupancy, limits, the evidence-ranked queue and the door in force."""
+        return self.get("/api/lifecycle/paper-pool")
+
+    def readmit_candidates(self, days: int = 30, limit: int = 100) -> Any:
+        """Recent archives the research paper door would no longer have stopped (report only)."""
+        return self.get("/api/lifecycle/paper-pool/readmit-candidates", params={"days": days, "limit": limit})
+
+    def requeue(self, strategy_ids: list[str]) -> Any:
+        """Operator action: send the listed archives back through the research paper door."""
+        return self.post("/api/lifecycle/paper-pool/requeue", {"strategy_ids": list(strategy_ids)})
+
+    def live_recheck(self, run: bool = False) -> Any:
+        """The report-only live re-check against the new live gate (``run`` re-computes it)."""
+        if run:
+            return self.post("/api/lifecycle/paper-pool/live-recheck", {})
+        return self.get("/api/lifecycle/paper-pool/live-recheck")
+
     def get_gate_report(self, strategy_id: str) -> dict:
         """Composite read: container + lifecycle readiness + latest result.
 

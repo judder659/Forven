@@ -1792,6 +1792,19 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
         from forven.policy import _evaluate_gauntlet_gate, load_pipeline_config
         pipeline_config = load_pipeline_config()
 
+        # 2026-10 gate plan: strategies waiting in the paper queue (forven.paper_pool)
+        # passed the paper door and wait only for capacity — never archive them
+        # for staleness. The research door admits any positive out-of-sample edge,
+        # so the low-quality Sharpe bar (Rule 4) applies only under Strict paper.
+        from forven import paper_door
+        from forven.policy import paper_queue_snapshot
+
+        try:
+            queued_ids = {str(entry["strategy_id"]) for entry in paper_queue_snapshot(limit=100000)}
+        except Exception:
+            queued_ids = set()
+        low_quality_sharpe = 0.3 if paper_door.is_strict(pipeline_config) else 0.0
+
         for row in rows:
             strat_id = row["id"]
             stage = str(row["stage"]).strip().lower()
@@ -1817,7 +1830,9 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
 
             reason = None
 
-            if stage == "gauntlet":
+            if stage == "gauntlet" and strat_id in queued_ids:
+                pass  # waiting for a paper slot (capacity, not merit)
+            elif stage == "gauntlet":
                 # Rule 1: Zero trades + stale → broken strategy
                 if total_trades == 0 and age_days > _GAUNTLET_ZERO_TRADE_DAYS:
                     reason = f"Zero trades after {age_days:.0f}d in gauntlet (broken strategy)"
@@ -1831,7 +1846,7 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
                     reason = f"No fitness after {age_days:.0f}d in gauntlet"
 
                 # Rule 4: Below quality bar + stale
-                elif sharpe < 0.3 and age_days > _GAUNTLET_LOW_QUALITY_DAYS and total_trades > 0:
+                elif sharpe < low_quality_sharpe and age_days > _GAUNTLET_LOW_QUALITY_DAYS and total_trades > 0:
                     reason = f"Low sharpe ({sharpe:.3f}) after {age_days:.0f}d in gauntlet"
 
                 # Rule 5: Insufficient trades + stale
@@ -2833,3 +2848,214 @@ def get_evolution_status() -> dict:
         "total": len(strategies),
         "strategies_by_status": by_status,
     }
+
+
+# --- Paper pool: retire, then admit (2026-10 gate plan) ----------------------------
+# The rules and the queue live in the leaf forven.paper_pool; admission into paper
+# runs inside the gauntlet->paper gate (policy.paper_admission_reason). This is the
+# scheduled side: forward retirement and filling free slots from the queue.
+
+
+def paper_retire_sweep(config: dict | None = None, *, dry_run: bool = False) -> list[dict]:
+    """Archive paper strategies whose forward record retires them. Returns what it did."""
+    from forven import live_evidence, paper_pool
+    from forven.policy import evaluate_live_evidence, live_forward_pnls, load_pipeline_config
+
+    config = config if config is not None else load_pipeline_config()
+    knobs = paper_pool.settings(config)
+    if not knobs["retire_enabled"]:
+        return []
+    live_knobs = live_evidence.settings(config)
+    with get_db() as conn:
+        candidates = []
+        for row in paper_pool.paper_rows(conn):
+            since = str(row["stage_changed_at"] or "").strip() or str(row["created_at"] or "").strip() or None
+            has_open, last_at = paper_pool.trade_activity(conn, str(row["id"]), since)
+            candidates.append((str(row["id"]), since, has_open, last_at))
+    now = datetime.now(timezone.utc)
+    out: list[dict] = []
+    for strategy_id, since, has_open, last_at in candidates:
+        try:
+            pnls = live_forward_pnls(strategy_id, since)
+            reference = paper_pool.parse_ts(last_at) or paper_pool.parse_ts(since)
+            days_idle = (now - reference).total_seconds() / 86400.0 if reference else None
+            seq_state, seq_reason = None, ""
+            if knobs["retire_on_sequential_fail"] and len(pnls) >= live_knobs["live_min_forward_trades"]:
+                evidence = evaluate_live_evidence(strategy_id, config, forward=pnls)
+                seq_state = evidence.get("decision_if_old_enough") or evidence.get("state")
+                seq_reason = str(evidence.get("reason") or "")
+            verdict = paper_pool.retirement_reason(
+                pnls,
+                knobs=knobs,
+                days_idle=days_idle,
+                has_open_trade=has_open,
+                sequential_state=seq_state,
+                sequential_reason=seq_reason,
+            )
+        except Exception as exc:  # noqa: BLE001 — one unreadable strategy never stops the sweep
+            log.warning("Paper retirement check failed for %s: %s", strategy_id, exc)
+            continue
+        if verdict is None:
+            continue
+        code, detail = verdict
+        entry = {"strategy_id": strategy_id, "code": code, "detail": detail, "trades": len(pnls)}
+        if not dry_run:
+            entry["result"] = _retire_paper_strategy(strategy_id, code, detail)
+        out.append(entry)
+    return out
+
+
+def _retire_paper_strategy(strategy_id: str, code: str, detail: str) -> str:
+    from forven.paper_pool import RETIREMENT_ACTOR
+
+    try:
+        result = transition_stage(
+            strategy_id,
+            "archived",
+            reason=f"Retired from paper ({code}): {detail}",
+            actor=RETIREMENT_ACTOR,
+            force=True,
+            evidence={
+                "merit": True,
+                "reason_code": f"paper_retired:{code}",
+                "status_reason": f"paper_retired:{code}: {detail}",
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Paper retirement of %s failed: %s", strategy_id, exc)
+        return f"error: {exc}"
+    to_stage = str((result or {}).get("to") or "")
+    if to_stage != "archived":
+        return f"blocked: {(result or {}).get('blocked_reason') or to_stage}"
+    log.info("Paper retirement: %s archived (%s) — %s", strategy_id, code, detail)
+    return to_stage
+
+
+def paper_admit_from_queue(config: dict | None = None) -> list[dict]:
+    """Offer free paper slots to waiting strategies, best evidence first."""
+    from forven import paper_pool
+    from forven.policy import load_pipeline_config
+
+    config = config if config is not None else load_pipeline_config()
+    knobs = paper_pool.settings(config)
+    with get_db() as conn:
+        paper_pool.prune_queue(conn)
+        occupied = len(paper_pool.paper_rows(conn))
+        waiting = [entry["strategy_id"] for entry in paper_pool.queue_snapshot(conn, 100000)]
+    free = (knobs["max_strategies"] - occupied) if knobs["max_strategies"] else len(waiting)
+    out: list[dict] = []
+    for strategy_id in waiting:
+        if free <= 0:
+            break
+        try:
+            # The full door runs again: evidence may have gone stale while waiting.
+            result = transition_stage(
+                strategy_id,
+                "paper",
+                reason="Paper slot free: admitted from the evidence-ranked queue",
+                actor=paper_pool.ADMISSION_ACTOR,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Paper queue admission of %s failed: %s", strategy_id, exc)
+            continue
+        admitted = str((result or {}).get("to") or "") in {"paper", "paper_trading"}
+        out.append({"strategy_id": strategy_id, "admitted": admitted, "detail": (result or {}).get("blocked_reason")})
+        if admitted:
+            free -= 1
+    return out
+
+
+def paper_pool_tick(config: dict | None = None) -> dict:
+    """Scheduled pass: retire losing paper strategies, then fill free slots from the queue."""
+    from forven.paper_pool import LIVE_RECHECK_KEY
+    from forven.policy import load_pipeline_config
+
+    config = config if config is not None else load_pipeline_config()
+    out: dict = {"retired": paper_retire_sweep(config), "admitted": paper_admit_from_queue(config)}
+    # Once per install: report (never act on) how live strategies fare against
+    # the new live gate. Re-run on demand with `forven-agent live-recheck`.
+    if not kv_get(LIVE_RECHECK_KEY):
+        try:
+            out["live_recheck"] = paper_live_recheck(config)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Live re-check report failed: %s", exc)
+    return out
+
+
+def paper_readmit_candidates(*, days: int = 30, limit: int = 100) -> list[dict]:
+    """Recent archives the research paper door would no longer have stopped (report only)."""
+    from forven import paper_pool
+
+    with get_db() as conn:
+        return paper_pool.readmit_candidates(conn, days=days, limit=limit)
+
+
+def paper_requeue(strategy_ids: list[str], *, actor: str = "triage-cli") -> list[dict]:
+    """Operator action: move listed archives back to the gauntlet and re-run the paper door."""
+    out: list[dict] = []
+    for strategy_id in strategy_ids:
+        try:
+            back = transition_stage(
+                strategy_id,
+                "gauntlet",
+                reason="Re-queued for the research paper door (2026-10 gate plan)",
+                actor=actor,
+            )
+            entry: dict = {"strategy_id": strategy_id, "to_gauntlet": back.get("to") == "gauntlet"}
+            if entry["to_gauntlet"]:
+                ahead = transition_stage(
+                    strategy_id, "paper", reason="Research paper door re-check after re-queue", actor=actor
+                )
+                entry["stage"] = ahead.get("to")
+                entry["detail"] = ahead.get("blocked_reason")
+            else:
+                entry["detail"] = back.get("blocked_reason")
+        except Exception as exc:  # noqa: BLE001
+            entry = {"strategy_id": strategy_id, "error": str(exc)}
+        out.append(entry)
+    return out
+
+
+def paper_live_recheck(config: dict | None = None, *, store: bool = True) -> dict:
+    """Report-only: how today's live strategies fare against the new live gate.
+
+    Nothing is demoted. Each live strategy's paper forward record (every paper
+    stay) is run through the sequential evidence test and the checks the paper
+    door now only records, and the result is stored for the gate report.
+    """
+    from forven.paper_pool import LIVE_RECHECK_KEY
+    from forven.policy import (
+        _load_metrics_blob,
+        _paper_door_checks_at_live,
+        evaluate_live_evidence,
+        live_forward_pnls,
+        load_pipeline_config,
+    )
+
+    config = config if config is not None else load_pipeline_config()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM strategies WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('live_graduated', 'deployed')"
+        ).fetchall()
+    report: list[dict] = []
+    for row in rows:
+        strategy_id = str(row["id"])
+        entry: dict = {"strategy_id": strategy_id, "symbol": row["symbol"]}
+        try:
+            pnls = live_forward_pnls(strategy_id, None)
+            evidence = evaluate_live_evidence(strategy_id, config, forward=pnls)
+            entry["forward_trades"] = len(pnls)
+            entry["sequential"] = evidence.get("decision_if_old_enough") or evidence.get("state")
+            entry["sequential_reason"] = evidence.get("reason")
+            moved = _paper_door_checks_at_live(strategy_id, row, _load_metrics_blob(row) or {}, config)
+            entry["moved_checks"] = str(moved) if moved else "pass"
+        except Exception as exc:  # noqa: BLE001
+            entry["error"] = str(exc)
+        report.append(entry)
+    result = {"checked_at": datetime.now(timezone.utc).isoformat(), "strategies": report}
+    if store:
+        try:
+            kv_set(LIVE_RECHECK_KEY, result)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not store the live re-check report: %s", exc)
+    return result
