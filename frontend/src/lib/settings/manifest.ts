@@ -2723,6 +2723,21 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.strategy_creation'],
     advanced: true,
   },
+  {
+    id: 'research.agent_registration_daily_cap',
+    label: 'Daily agent registration cap',
+    unit: 'strategies/day',
+    default: 120,
+    type: 'number',
+    area: 'system',
+    subsection: 'system-throughput',
+    backendSection: 'research',
+    backendPath: 'research_settings.agent_registration_daily_cap',
+    description:
+      'Strategies agents may register per UTC day across all their tasks. Once reached, agents are told to stop registering and no new creation tasks start until 00:00 UTC. Your own registrations do not count. 0 = no cap (the old behaviour).',
+    usedBy: ['forven.strategies.candidate_checks', 'forven.strategy_creation'],
+    advanced: true,
+  },
 
   // Resource tuning (advanced)
   {

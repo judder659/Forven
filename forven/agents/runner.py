@@ -59,7 +59,7 @@ from .ownership import (
 )
 
 from forven.agents.execution_state import (
-    IncompleteTask, ToolLimitReached, block_task, current_execution, load_execution, record_response, task_usage,
+    ExecutionState, IncompleteTask, ToolLimitReached, block_task, current_execution, load_execution, record_response, task_usage,
 )
 
 log = logging.getLogger("forven.agents.runner")
@@ -564,6 +564,44 @@ async def _call_with_tools(
     raise last_error
 
 
+# Rounds (counted from the start) at which a creation task with no registered
+# strategy is told to register now: 8 and 3 rounds before the limit.
+_REGISTER_NUDGE_ROUNDS = frozenset({MAX_TOOL_ROUNDS - 8, MAX_TOOL_ROUNDS - 3})
+
+
+def _creation_task_unregistered(state: "ExecutionState | None") -> bool:
+    """True for a running strategy-creation task that has not registered a strategy yet."""
+    if state is None:
+        return False
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT type, strategy_id FROM agent_tasks WHERE id = ?", (state.task_id,)
+            ).fetchone()
+    except Exception:
+        return False
+    if not row or str(row["type"] or "") not in {"develop_candidate", "generate_strategies"}:
+        return False
+    return not str(row["strategy_id"] or "").strip()
+
+
+def _register_nudge(rounds_left: int, *, ending: bool = False) -> str:
+    """The message that steers a creation task to register before it runs out."""
+    lead = (
+        "You are about to finish, but this strategy-creation task has no registered strategy, "
+        "so it will be marked blocked."
+        if ending
+        else f"You have {rounds_left} tool rounds left and no strategy is registered for this task yet."
+    )
+    return (
+        f"{lead} Write the idea with create_hypothesis if you have not, then register your best "
+        "candidate now with register_strategy (pass hypothesis_id); stop exploring. If the "
+        "registration check rejects it, fix it and register once more. If no candidate can be "
+        "registered (data missing, the daily registration cap reached), say exactly why in "
+        "your final answer."
+    )
+
+
 async def _call_with_tools_single(
     provider: str, model_id: str, messages: list[dict], system: str,
     tools: list[dict] | None = None,
@@ -592,6 +630,7 @@ async def _call_with_tools_single(
     last_nonempty_text = ""
     _recent_tool_calls: list[tuple[str, str]] = []
     nudged_for_tool = bool(state and state.checkpoint.get("has_tools"))
+    nudged_for_registration = False
     total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     def _accum(usage: dict):
@@ -611,7 +650,14 @@ async def _call_with_tools_single(
             if not cost_allowed:
                 raise IncompleteTask(cost_reason, last_nonempty_text)
 
-        if round_num == MAX_TOOL_ROUNDS - 5:
+        if round_num in _REGISTER_NUDGE_ROUNDS and _creation_task_unregistered(state):
+            # The top cause of blocked tasks: a creation task spends its rounds
+            # exploring and hits the limit with no strategy registered.
+            nudge = _register_nudge(MAX_TOOL_ROUNDS - round_num)
+            messages.append({"role": "user", "content": nudge})
+            if transcript is not None:
+                transcript.write("event", content=nudge, tool_round=round_num)
+        elif round_num == MAX_TOOL_ROUNDS - 5:
             nudge = (
                 "Note: You have 5 tool calls remaining before the limit. "
                 "Start wrapping up and prepare your final answer."
@@ -643,6 +689,18 @@ async def _call_with_tools_single(
             last_nonempty_text = response.text
 
         if not response.tool_calls or response.stop:
+            # A creation task about to end with no registered strategy would be
+            # blocked: give it one more chance to register (or say why it cannot).
+            if (
+                active_tools
+                and not nudged_for_registration
+                and round_num < MAX_TOOL_ROUNDS - 1
+                and _creation_task_unregistered(state)
+            ):
+                nudged_for_registration = True
+                impl.append_assistant(messages, response)
+                messages.append({"role": "user", "content": _register_nudge(MAX_TOOL_ROUNDS - round_num - 1, ending=True)})
+                continue
             # Nudge once if the model skipped tools despite tool availability.
             if active_tools and not _recent_tool_calls and not nudged_for_tool:
                 nudged_for_tool = True

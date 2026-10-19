@@ -150,6 +150,13 @@ def run_creation_cycle() -> dict[str, Any]:
             f"on {datetime.now(timezone.utc).date().isoformat()}); resumes at 00:00 UTC"
         )
         return {"status": "skipped", "reason": "daily budget spent", **counts, **settings}
+    # Tasks queued after the agents' daily registration cap is reached could
+    # only end blocked, so wait for the next UTC day.
+    from forven.strategies.candidate_checks import registration_cap_error
+
+    if registration_cap_error():
+        _log_idle("daily agent registration cap reached; resumes at 00:00 UTC")
+        return {"status": "skipped", "reason": "registration cap reached", **counts, **settings}
     # A full in-flight cap is routine between checks, so it is not an idle state.
     if counts["in_flight"] >= settings["max_in_flight"]:
         return {"status": "skipped", "reason": "creation tasks already in flight", **counts, **settings}

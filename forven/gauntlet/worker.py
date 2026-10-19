@@ -48,6 +48,8 @@ def _execute(
     adapter: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
 ) -> None:
     work_budget = importlib.import_module("forven.work_budget").work_budget
+    # Gauntlet steps yield the CPU to the live scanner and paper trading.
+    importlib.import_module("forven.cpu_priority").lower_thread_priority("gauntlet")
 
     try:
         try:

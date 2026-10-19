@@ -1200,12 +1200,14 @@ def _run_monte_carlo_bootstrap(
     import multiprocessing
 
     from forven.strategies.backtest import _kill_executor_processes
+    from forven.cpu_priority import lower_process_priority as _lower_worker_priority
     from forven.strategies.concurrency import backtest_subprocess_slot
 
     try:
         with backtest_subprocess_slot("monte_carlo"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(_monte_carlo_bootstrap_worker, returns, **kwargs)
             try:
@@ -1796,12 +1798,14 @@ def _run_regime_classification(candles: "pd.DataFrame", trades: list[dict]) -> d
     import multiprocessing
 
     from forven.strategies.backtest import _kill_executor_processes
+    from forven.cpu_priority import lower_process_priority as _lower_worker_priority
     from forven.strategies.concurrency import backtest_subprocess_slot
 
     try:
         with backtest_subprocess_slot("regime_split"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(_regime_classify_trades_worker, candles, trades)
             try:
