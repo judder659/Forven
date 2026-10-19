@@ -40,6 +40,7 @@ from forven.workspace import (
 )
 from forven.util import is_untestable_reason, normalize_stage, untestable_status_reason
 from forven.dethrone_cooldown import clear_dethrone_cooldown, dethrone_cooldown_active_until
+from forven import quick_screen_rule
 from forven.policy import evaluate_promotion, load_pipeline_config
 from forven.strategies.certification import certify_execution_strategy
 
@@ -336,7 +337,25 @@ def _quick_screen_overfitting_guardrails(metrics: dict) -> tuple[bool, str]:
     
     failures = []
     warnings = []
-    
+
+    if not quick_screen_rule.is_strict(qs_cfg):
+        # Fair-sample rule (2026-10 gate plan, phase 1): judge the whole screen
+        # window, count both slices toward the trade floor, and record the IS/OOS
+        # sign flip, gap and ratio (Gates 1, 2 and 6) instead of rejecting on them.
+        failures.extend(quick_screen_rule.fair_sample_failures(metrics, qs_cfg))
+        if robustness is not None and robustness < min_robustness:
+            failures.append(f"Gate3: Robustness {robustness:.0f} < {min_robustness:g} (reject)")
+        whole_trades = quick_screen_rule.whole_window_trades(metrics)
+        if whole_trades is not None and whole_trades < min_trades:
+            failures.append(f"Gate5: Trades {whole_trades:.0f} < {min_trades} over the whole window (reject)")
+        divergence = quick_screen_rule.recorded_divergence(metrics)
+        if divergence:
+            warnings.append(divergence)
+        is_sharpe = None  # Gates 1, 2 and 6 below are recorded above, not enforced
+        max_drawdown = None  # Gate 4 ran on the whole window above
+        total_trades = None  # Gate 5 ran on the whole window above
+        robustness = None  # Gate 3 ran above
+
     # Gate 1: IS Sharpe floor
     if is_sharpe is not None and is_sharpe < min_is_sharpe:
         failures.append(f"Gate1: IS Sharpe {is_sharpe:.2f} < {min_is_sharpe:g} (reject)")

@@ -151,6 +151,8 @@ def _config_with_low_pf_floor():
     config = dict(config)
     qs = dict(config.get("quick_screen", {}))
     qs["min_profit_factor"] = 0.5
+    # The win-rate trap reads the split slices: the strict quick-screen rule.
+    qs["rule"] = "strict"
     config["quick_screen"] = qs
     return config
 

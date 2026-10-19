@@ -57,14 +57,18 @@ export interface EnqueueVerdict {
 	error?: string;
 }
 
-/** Quick-screen gate thresholds (mirrors forven/agent/client.py). */
+/**
+ * Quick-screen gate thresholds (mirrors forven/agent/client.py). The default
+ * fair-sample rule judges the whole window (in-sample plus out-of-sample); the
+ * gauntlet widens a thin window to up to 1,460 days before judging.
+ */
 export const QUICK_SCREEN_THRESHOLDS = {
-	min_profit_factor: 1.05,
+	min_profit_factor: 1.0,
 	min_sharpe: 0.0,
 	max_sharpe: 5.0,
 	max_drawdown_pct: 0.3,
-	min_trades_oos: 15,
-	min_trades_is: 20,
+	min_trades: 20,
+	min_oos_sharpe: -0.5,
 	min_total_return_pct: 0.0,
 };
 
@@ -185,15 +189,39 @@ export const ForvenAgent = {
 		const t = { ...QUICK_SCREEN_THRESHOLDS, ...thresholds };
 		const reasons: string[] = [];
 		const num = (x: unknown) => (typeof x === 'number' ? x : null);
-		for (const [side, minTr] of [['in_sample', t.min_trades_is], ['out_of_sample', t.min_trades_oos]] as const) {
-			const s = (c as any)?.[side] ?? {};
-			const pf = num(s.profit_factor), sh = num(s.sharpe), tr = num(s.total_trades), dd = num(s.max_drawdown_pct), ret = num(s.total_return_pct);
-			if (pf === null || pf < t.min_profit_factor) reasons.push(`${side} profit_factor ${pf} < ${t.min_profit_factor}`);
-			if (sh === null || sh < t.min_sharpe || sh > t.max_sharpe) reasons.push(`${side} sharpe ${sh} out of [${t.min_sharpe},${t.max_sharpe}]`);
-			if (dd === null || dd >= t.max_drawdown_pct) reasons.push(`${side} max_drawdown_pct ${dd} >= ${t.max_drawdown_pct}`);
-			if (tr === null || tr < minTr) reasons.push(`${side} total_trades ${tr} < ${minTr}`);
-			if (ret === null || ret < t.min_total_return_pct) reasons.push(`${side} total_return_pct ${ret} < ${t.min_total_return_pct}`);
-		}
+		const sides = (['in_sample', 'out_of_sample'] as const).map((side) => ((c as any)?.[side] ?? {}) as Record<string, unknown>);
+		const trades = sides.map((s) => num(s.total_trades) ?? 0);
+		const total = trades[0] + trades[1];
+		// Trade-weighted whole-window ratio (the gate itself sums gross profit and loss).
+		const weighted = (key: string): number | null => {
+			let sum = 0;
+			let weight = 0;
+			sides.forEach((s, i) => {
+				const v = num(s[key]);
+				if (v !== null && trades[i] > 0) {
+					sum += v * trades[i];
+					weight += trades[i];
+				}
+			});
+			return weight > 0 ? sum / weight : null;
+		};
+		const pf = weighted('profit_factor');
+		const sh = weighted('sharpe');
+		const returns = sides.map((s) => num(s.total_return_pct));
+		const ret = returns.some((r) => r !== null) ? returns.reduce<number>((acc, r) => acc * (1 + (r ?? 0)), 1) - 1 : null;
+		const drawdowns = sides.map((s) => num(s.max_drawdown_pct)).filter((d): d is number => d !== null);
+		const dd = drawdowns.length ? Math.max(...drawdowns) : null;
+		if (total < t.min_trades) reasons.push(`whole-window total_trades ${total} < ${t.min_trades} (the gauntlet widens the window before judging)`);
+		if (pf === null || pf < t.min_profit_factor) reasons.push(`whole-window profit_factor ${pf} < ${t.min_profit_factor}`);
+		if (sh === null || sh <= t.min_sharpe) reasons.push(`whole-window sharpe ${sh} not above ${t.min_sharpe}`);
+		if (dd === null || dd >= t.max_drawdown_pct) reasons.push(`max_drawdown_pct ${dd} >= ${t.max_drawdown_pct}`);
+		if (ret === null || ret < t.min_total_return_pct) reasons.push(`whole-window total_return_pct ${ret} < ${t.min_total_return_pct}`);
+		(['in_sample', 'out_of_sample'] as const).forEach((side, i) => {
+			const v = num(sides[i].sharpe);
+			if (v !== null && v > t.max_sharpe) reasons.push(`${side} sharpe ${v} > ${t.max_sharpe} (implausible: check for a leak)`);
+		});
+		const oosSharpe = num(sides[1].sharpe);
+		if (oosSharpe !== null && trades[1] > 0 && oosSharpe <= t.min_oos_sharpe) reasons.push(`out_of_sample sharpe ${oosSharpe} not above ${t.min_oos_sharpe}`);
 		return { pass: reasons.length === 0, reasons };
 	},
 
