@@ -3272,8 +3272,13 @@ def holdout_gate_reason(strategy_id: str, *, submit: bool = False) -> tuple[str,
 
 
 def holdout_summary(strategy_id: str) -> dict:
-    """Cutoff, settings and this strategy's held-back test state plus latest result."""
+    """Cutoff, settings and this strategy's held-back test state plus latest result.
+
+    JSON-safe: a held-back result can carry an infinite profit factor (no losing
+    trade) or a NaN ratio, which the JSON response rejects with HTTP 500.
+    """
     from forven.research_holdout import current_cutoff
+    from forven.util import sanitize_json_floats
 
     cfg = holdout_settings()
     cutoff = current_cutoff(cfg)
@@ -3289,7 +3294,7 @@ def holdout_summary(strategy_id: str) -> dict:
                     "result": record["metrics"],
                 }
                 break
-    return {
+    return sanitize_json_floats({
         "enabled": bool(cfg.get("enabled")),
         "cutoff": cutoff.isoformat() if cutoff is not None else None,
         "roll": cfg.get("roll"),
@@ -3298,7 +3303,7 @@ def holdout_summary(strategy_id: str) -> dict:
         "max_family_shots": cfg.get("max_family_shots"),
         **state,
         "latest": latest,
-    }
+    })
 
 
 def _run_holdout_analysis(strategy_id: str) -> dict:

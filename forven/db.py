@@ -347,60 +347,25 @@ def _strategy_asset_token(symbol: str | None) -> str:
     return "GENERIC"
 
 
-_SYMBOL_TIMEFRAME_SUFFIX_RE = re.compile(
-    r"[_\-](?:1M|3M|5M|15M|30M|1H|2H|4H|6H|8H|12H|1D|3D|1W|1MO)$",
-    re.IGNORECASE,
-)
 _KNOWN_QUOTE_CURRENCIES = ("USDT", "USDC", "USD", "BUSD", "BTC", "ETH", "DAI", "FDUSD")
 
 
 def _repair_symbol_format(candidate: str) -> str | None:
     """Repair common symbol corruption patterns; return None if irreparable.
 
-    Handles:
-      * Trailing timeframe suffixes baked into the symbol (``ETH/USDT_15M`` ->
-        ``ETH/USDT``). The strategy-developer agent has been observed
-        appending the timeframe to the pair, which then propagates into the
-        OHLCV keepalive symbol set and produces 0-trade backtests.
-      * Bare base assets without a quote (``FIL`` -> ``FIL/USDT``). The brain
-        intake has emitted bare tickers for assets that have no other
-        defaulted quote.
-      * Garbage characters that won't survive ``symbol_to_fs`` conversion.
+    Delegates to :func:`forven.symbols.normalize_symbol`, the one shared
+    normaliser. It handles trailing timeframe suffixes (``ETH/USDT_15M``),
+    leaked dataset ids (``DATASET-SUI/USDT``, ``dataset-3-ETH/USDT-4h``) and
+    bare bases (``FIL`` -> ``FIL/USDT``), and rejects bases that are not coin
+    tickers (``1/USDT``, ``1H``) and unknown quotes.
     """
     text = (candidate or "").strip().upper()
     if not text or text == "GENERIC":
         return None
+    from forven.symbols import normalize_symbol
 
-    # Strip a single trailing timeframe suffix (case-insensitive). Repeat once
-    # in case the corruption was nested (defensive — we have not seen this in
-    # the wild, but it's cheap insurance).
-    for _ in range(2):
-        stripped = _SYMBOL_TIMEFRAME_SUFFIX_RE.sub("", text)
-        if stripped == text:
-            break
-        text = stripped
-
-    # Reject anything with whitespace or characters that aren't part of a
-    # canonical pair representation.
-    if not re.fullmatch(r"[A-Z0-9/\-]+", text):
-        return None
-
-    # If we have a slash OR dash separator, validate it splits into a base +
-    # recognized quote. The dash form (``BTC-USDT``) is the filesystem-canonical
-    # representation; we accept it and convert to slash form so the strategies
-    # table stays consistent.
-    for sep in ("/", "-"):
-        if sep in text:
-            parts = [p for p in text.split(sep) if p]
-            if len(parts) == 2 and parts[0] and parts[1] in _KNOWN_QUOTE_CURRENCIES:
-                return f"{parts[0]}/{parts[1]}"
-            return None
-
-    # Bare token: treat as a base asset and pair against USDT if it looks like
-    # a real ticker (2-8 alphanumerics).
-    if re.fullmatch(r"[A-Z0-9]{2,8}", text):
-        return f"{text}/USDT"
-    return None
+    check = normalize_symbol(text)
+    return check.symbol if check.ok else None
 
 
 def normalize_strategy_symbol_strict(symbol: str | None, params: dict | None = None) -> str | None:

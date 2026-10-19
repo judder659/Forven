@@ -2020,7 +2020,9 @@ def load_backtest_candles(
                 )
             except Exception as _enrich_exc:
                 log.warning("DataManager enrich skipped for %s/%s: %s", symbol, resolved_timeframe, _enrich_exc)
-            return frame
+            from forven.strategies.data_availability import ensure_enrichment_columns
+
+            return ensure_enrichment_columns(frame)
 
         if venue is not None:
             raise DataVenueError(f"No stored {':'.join(venue)} candles for {asset} {resolved_timeframe}")
@@ -2085,7 +2087,9 @@ def load_backtest_candles(
         )
     except Exception as _enrich_exc:
         log.warning("DataManager enrich skipped for %s/%s: %s", asset, resolved_timeframe, _enrich_exc)
-    return frame
+    from forven.strategies.data_availability import ensure_enrichment_columns
+
+    return ensure_enrichment_columns(frame)
 
 
 def _dedupe_chart_messages(messages: list[str]) -> list[str]:
