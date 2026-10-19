@@ -85,6 +85,8 @@ _DEFAULT_JOB_IDS = {
     # above is exactly this omission, and it has silently deleted seeded jobs twice.
     "forven-db-backup",
     "forven-capital-slot-dedupe",
+    # 2026-10 gate plan: paper-pool retirement + queue admission (forven.paper_pool).
+    "forven-paper-pool-tick",
     "forven-gauntlet-step-loop",
     "forven-phantom-sweep",
     "forven-param-optimization",
@@ -1749,6 +1751,21 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 )
             return "ok", None
 
+        # Paper pool (2026-10 gate plan): retire paper strategies whose forward
+        # record is clearly losing, idle or contradicts their backtest, then fill
+        # free paper slots from the evidence-ranked queue. Idempotent.
+        if kind == "paper_pool_tick":
+            from forven.evolution import paper_pool_tick
+
+            result = await _run_sync_job(paper_pool_tick, timeout_seconds=300.0)
+            if isinstance(result, dict) and (result.get("retired") or result.get("admitted")):
+                log.info(
+                    "paper_pool_tick: retired %d, offered slots to %d",
+                    len(result.get("retired") or []),
+                    len(result.get("admitted") or []),
+                )
+            return "ok", None
+
         # Orphan runtime-type scan — detect strategies whose `type` has no
         # registered class and no known param family. These cannot optimize,
         # cannot trade, and clog pipeline WIP caps.
@@ -3161,6 +3178,18 @@ def seed_forven_jobs():
         command="capital-slot-dedupe",
         timezone_str="UTC",
         payload={"kind": "capital_slot_dedupe"},
+    )
+
+    # 4c6. Paper pool — hourly: retire clearly-losing/idle paper strategies and
+    # admit waiting door-passers into free paper slots (forven.paper_pool).
+    add_job(
+        job_id="forven-paper-pool-tick",
+        name="Paper Pool: Retire and Admit",
+        schedule_type="interval",
+        schedule_expr="3600000",  # 1h in ms
+        command="paper-pool-tick",
+        timezone_str="UTC",
+        payload={"kind": "paper_pool_tick"},
     )
 
     # 4d. Orphan Runtime-Type Scan — Daily detection of unregistered strategy types.

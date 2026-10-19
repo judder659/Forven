@@ -39,6 +39,11 @@ def pytest_configure(config):
         "markers",
         "dsr_gate_default: keep the deflated-Sharpe gate at its production default (on)",
     )
+    config.addinivalue_line(
+        "markers",
+        "gate_plan_defaults: keep the 2026-10 gate plan's production defaults (research "
+        "paper door, sequential live gate, capped paper pool)",
+    )
 
 
 # Every DEFAULT_PIPELINE_CONFIG dict seen so far: one test reloads forven.policy,
@@ -64,6 +69,34 @@ def _dsr_gate_off_in_tests(request, monkeypatch):
         _SEEN_PIPELINE_DEFAULTS[id(defaults)] = defaults
     for defaults in _SEEN_PIPELINE_DEFAULTS.values():
         monkeypatch.setitem(defaults["robustness_thresholds"], "deflated_sharpe_gate_enabled", False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _pre_gate_plan_rules_in_tests(request, monkeypatch):
+    """The existing gate tests pin the pre-plan rules: every gauntlet check blocks
+    paper (the "Strict paper" door), the live gate uses the fixed forward floors,
+    and paper has no pool cap. The 2026-10 gate plan changed all three defaults;
+    tests of the new behaviour opt in with ``@pytest.mark.gate_plan_defaults``."""
+    if request.node.get_closest_marker("gate_plan_defaults"):
+        yield
+        return
+    import sys
+
+    # Imported here, not looked up: the gauntlet workflow reads the door lazily,
+    # so a test may reach it before anything imported forven.policy.
+    import forven.policy  # noqa: F401
+
+    defaults = sys.modules["forven.policy"].DEFAULT_PIPELINE_CONFIG
+    _SEEN_PIPELINE_DEFAULTS[id(defaults)] = defaults
+    for defaults in _SEEN_PIPELINE_DEFAULTS.values():
+        if isinstance(defaults.get("paper_door"), dict):
+            monkeypatch.setitem(defaults["paper_door"], "mode", "strict")
+        if isinstance(defaults.get("paper_trading"), dict):
+            monkeypatch.setitem(defaults["paper_trading"], "live_gate_mode", "fixed")
+        if isinstance(defaults.get("paper_pool"), dict):
+            for key in ("max_strategies", "max_per_market", "max_per_family"):
+                monkeypatch.setitem(defaults["paper_pool"], key, 0)
     yield
 
 

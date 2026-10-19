@@ -3249,13 +3249,16 @@ def ensure_holdout(strategy_id: str, *, source: str = "system") -> dict:
     return {"state": "running", "result_id": handle.get("result_id"), "submitted": True}
 
 
-def holdout_gate_reason(strategy_id: str, *, submit: bool = False) -> tuple[str, str] | None:
-    """(message, reason_code) when an enforcing paper gate must hold or reject.
+def holdout_gate_reason(
+    strategy_id: str, *, submit: bool = False, stage: str = "paper"
+) -> tuple[str, str] | None:
+    """(message, reason_code) when the enforcing gate that runs the held-back test must hold or reject.
 
-    The paper gate checks this LAST, so a missing test here means every other
-    ->paper check passed: with ``submit`` (any non-dry-run evaluation) the one
-    shot is spent now, whichever path is promoting — the workflow step, the
-    reconcile after validation, the stuck-gauntlet sweep or a direct promote.
+    ``stage`` names the hop that runs it: "paper" (gauntlet->paper, the strict
+    paper door) or "live" (paper->live, the default since the 2026-10 gate plan).
+    The gate checks this LAST, so a missing test here means every other check
+    for that hop passed: with ``submit`` (any non-dry-run evaluation) the one
+    shot is spent now, whichever path is promoting.
     """
     from forven.research_holdout import gate_message
 
@@ -3268,7 +3271,7 @@ def holdout_gate_reason(strategy_id: str, *, submit: bool = False) -> tuple[str,
             log.warning("Held-back test submission failed for %s: %s", strategy_id, exc)
     if cfg.get("paper_mode") != "enforce":
         return None
-    return gate_message(state)
+    return gate_message(state, stage=stage)
 
 
 def holdout_summary(strategy_id: str) -> dict:

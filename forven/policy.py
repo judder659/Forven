@@ -1,6 +1,7 @@
 """Single source of truth for all pipeline promotion, demotion, and gate policies."""
 
 import copy
+import importlib
 import json
 import logging
 import math
@@ -8,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, pstdev
 from typing import Any
 
+from forven import live_evidence, paper_door, paper_pool
 from forven.baseline_hurdle import baseline_hurdle_gate_reason
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
 from forven.dethrone_cooldown import dethrone_cooldown_active_until
@@ -280,6 +282,41 @@ DEFAULT_PIPELINE_CONFIG = {
         # OOS Sharpe may not exceed IS Sharpe by more than this ratio (OOS>>IS
         # signals a lucky/overfit OOS window).
         "max_oos_is_ratio": 1.5,
+        # 2026-10 gate plan: the paper->live forward test. "sequential" waits for
+        # live_min_forward_trades closed forward trades over live_min_paper_days,
+        # then runs forven.live_evidence's sequential evidence test (forward must
+        # track backtest; combined evidence must clear a bar corrected for the
+        # paper-pool size at live_sequential_alpha) in place of the fixed forward
+        # Sharpe/PF floors above. "fixed" is the pre-plan rule (min_paper_days,
+        # min_closed_trades, min_paper_sharpe, min_profit_factor_paper).
+        **live_evidence.DEFAULTS,
+    },
+    # 2026-10 gate plan: which gauntlet checks block entry to paper ("enforce")
+    # and which are recorded there and enforced at paper->live ("observe").
+    # mode "strict" is the Strict paper preset (the pre-plan door). See
+    # forven.paper_door.
+    "paper_door": dict(paper_door.DEFAULTS),
+    # 2026-10 gate plan: paper is a managed pool (forven.paper_pool). A wider
+    # door needs a cap: at most max_strategies run at once (default measured in
+    # the gate-plan PR: ~85 ms of scan compute per strategy on 1,500 bars, so 40
+    # strategies stay under ~4% of one core at the 5-minute scan cadence, with a
+    # 3x allowance for candle loads), at most max_per_market on one coin and
+    # max_per_family in one strategy family (0 = no limit). Strategies that pass
+    # the door while the pool is full wait in a queue ranked by their recorded
+    # evidence. Paper strategies whose forward record shows them losing are
+    # retired (archived as paper_retired:<why>), freeing their slot.
+    "paper_pool": {
+        "max_strategies": 40,
+        "max_per_market": 3,
+        "max_per_family": 10,
+        "retire_enabled": True,
+        "retire_min_trades": 15,
+        "retire_max_t_stat": -1.0,
+        "retire_max_drawdown_pct": 0.15,
+        "retire_idle_days": 60,
+        # Retire when the sequential evidence test fails (forward significantly
+        # worse than the backtest, or significantly losing).
+        "retire_on_sequential_fail": True,
     },
     "dethrone": {
         # Paper soak protection (2026-07-06 operator request): a paper strategy
@@ -434,6 +471,7 @@ _RATIO_THRESHOLD_PATHS = (
     ("safety_floors", "wfa_fold_pass_rate_min"),
     ("safety_floors", "param_jitter_pass_rate_min"),
     ("safety_floors", "live_max_drawdown_pct"),
+    ("paper_pool", "retire_max_drawdown_pct"),
     # Legacy keys preserved for backward compatibility.
     ("paper_gate", "max_drawdown_pct"),
     ("retirement", "max_drawdown_pct"),
@@ -465,6 +503,7 @@ _UI_PERCENT_THRESHOLD_PATHS = (
     ("gauntlet", "max_drawdown_pct"),
     ("paper_trading", "max_drawdown_pct"),
     ("live_graduated", "decay_kill_switch_pct"),
+    ("paper_pool", "retire_max_drawdown_pct"),
 )
 
 
@@ -630,6 +669,10 @@ def _normalize_pipeline_config(config: dict | None) -> dict:
         "degradation_threshold": float(merged["live_graduated"].get("decay_kill_switch_pct", 0.30)),
         "min_trades": 5,
     }
+
+    # The paper door block is enum-shaped: keep only recognised values so a typo
+    # in a stored config can never silently open (or close) the door.
+    merged["paper_door"] = paper_door.normalize(merged.get("paper_door"))
 
     # Guard: walk_forward is the core out-of-sample gate and must always be a
     # REQUIRED test. A config that drops it — e.g. a stale settings-save that
@@ -1628,7 +1671,17 @@ def check_promotion_readiness(strategy_id: str, *, include_gate: bool = True) ->
         steps.append(_promotion_gate_step(strategy_id, stage))
 
     ready = all(s["status"] in ("passed", "skipped", "warning") for s in steps)
-    return {"ready": ready, "steps": steps, "strategy_id": strategy_id}
+    report = {"ready": ready, "steps": steps, "strategy_id": strategy_id}
+    if include_gate:
+        # 2026-10 gate plan: which door into paper is in force (research or
+        # Strict paper), and the paper pool's occupancy and queue.
+        config = load_pipeline_config()
+        report["paper_door"] = paper_door.describe(config)
+        try:
+            report["paper_pool"] = paper_pool_status(config)
+        except Exception as exc:  # noqa: BLE001 — a report, never a blocker
+            report["paper_pool"] = {"error": str(exc)}
+    return report
 
 
 def _promotion_gate_step(strategy_id: str, stage: str) -> dict:
@@ -1724,7 +1777,17 @@ def check_paper_live_readiness(strategy_id: str, *, include_gate: bool = False) 
         steps.append(_live_gate_step(strategy_id))
 
     ready = all(s["status"] in ("passed", "skipped", "warning") for s in steps)
-    return {"ready": ready, "steps": steps, "strategy_id": strategy_id}
+    report = {"ready": ready, "steps": steps, "strategy_id": strategy_id}
+    if include_gate:
+        # 2026-10 gate plan: the live gate's forward-evidence rule and where this
+        # strategy stands on it (read-only).
+        config = load_pipeline_config()
+        report["live_gate"] = live_evidence.settings(config)
+        try:
+            report["live_evidence"] = evaluate_live_evidence(strategy_id, config)
+        except Exception as exc:  # noqa: BLE001 — a report, never a blocker
+            report["live_evidence"] = {"error": str(exc)}
+    return report
 
 
 def _live_gate_step(strategy_id: str) -> dict:
@@ -1757,8 +1820,7 @@ def _live_gate_step(strategy_id: str) -> dict:
 def _check_paper_duration(strategy_id: str) -> tuple:
     """Check if strategy has been in paper stage long enough."""
     config = load_pipeline_config()
-    gate = config.get("paper_trading", {})
-    min_days = int(gate.get("min_paper_days", 14))
+    min_days, _ = _live_forward_minimums(config)
     row = _load_strategy_row_for_gate(strategy_id)
     if not row:
         return False, "Strategy not found"
@@ -1798,8 +1860,7 @@ _PARITY_PNL_FILTER = " AND json_extract(signal_data, '$.pnl_is_equity_fraction')
 def _check_paper_trades(strategy_id: str) -> tuple:
     """Check if strategy has enough closed paper trades."""
     config = load_pipeline_config()
-    gate = config.get("paper_trading", {})
-    min_trades = int(gate.get("min_closed_trades", 50))
+    _, min_trades = _live_forward_minimums(config)
     row = _load_strategy_row_for_gate(strategy_id)
     if not row:
         return False, "Strategy not found"
@@ -2691,7 +2752,9 @@ def verify_backtest_exists_for_stage_transition(strategy_id: str, target_stage: 
 
     return True, f"Verified: {message}"
 
-def _evaluate_source_divergence_gate(strategy_id: str, general_settings: Any) -> tuple[bool, str]:
+def _evaluate_source_divergence_gate(
+    strategy_id: str, general_settings: Any, *, block_when_missing: bool | None = None
+) -> tuple[bool, str]:
     """Cache-only source-divergence promotion gate.
 
     Refuses to admit a strategy into a capital-bearing stage when the price series
@@ -2707,6 +2770,11 @@ def _evaluate_source_divergence_gate(strategy_id: str, general_settings: Any) ->
     Missing / stale / insufficient-overlap readings block by default. Operators can
     explicitly set ``block_when_missing=false`` to accept unknown source divergence,
     but the capital path never opts into that risk implicitly.
+
+    ``block_when_missing=False`` from the caller narrows that further for one hop:
+    the research paper door (forven.paper_door) blocks paper only on a MEASURED
+    divergence — paper risks no capital and a reading arrives within hours — while
+    the live hop keeps the configured behaviour.
     """
     cfg: dict[str, Any] = {}
     if isinstance(general_settings, dict):
@@ -2718,7 +2786,8 @@ def _evaluate_source_divergence_gate(strategy_id: str, general_settings: Any) ->
     if not cfg.get("enabled"):
         return True, "source reconciliation disabled"
 
-    block_when_missing = bool(cfg.get("block_when_missing", True))
+    configured_block = bool(cfg.get("block_when_missing", True))
+    block_when_missing = configured_block if block_when_missing is None else (configured_block and block_when_missing)
 
     def _coerce(value: Any, fallback: float) -> float:
         try:
@@ -2897,7 +2966,13 @@ def evaluate_promotion(
     # write txn. Logged under the gate of the FROM stage (gauntlet for ->paper,
     # paper for ->live_graduated) to match the other gates' rejection records.
     if normalized_to in {"paper", "live_graduated"}:
-        div_ok, div_reason = _evaluate_source_divergence_gate(strategy_id, general_settings)
+        div_ok, div_reason = _evaluate_source_divergence_gate(
+            strategy_id,
+            general_settings,
+            block_when_missing=(
+                paper_door.block_missing_reconciliation(config) if normalized_to == "paper" else None
+            ),
+        )
         if not div_ok:
             stage_label = "gauntlet" if normalized_to == "paper" else "paper"
             # Honor record_rejection like every other gate site: read-only
@@ -3003,6 +3078,12 @@ def evaluate_promotion(
                             f"(same {my_symbol} {my_timeframe}) — awaiting dethrone"
                         )
         result = _evaluate_gauntlet_gate(strategy_id, config, dry_run=dry_run)
+        if result[0]:
+            # Capacity, not merit: the door passed, so the strategy either takes a
+            # free paper slot or waits in the evidence-ranked queue (paper_pool).
+            queued = paper_admission_reason(strategy_id, config, record=not dry_run)
+            if queued:
+                result = (False, GateRejection(queued, reason_code="paper_queue_full"))
         if record_rejection and not result[0]:
             _log_gate_rejection_record(strategy_id, "gauntlet", result[1], config)
         return result
@@ -3032,6 +3113,15 @@ def _extract_reason_code(reason_text: str) -> str:
         return "holdout_budget_exhausted"
     if "held-back test failed" in text:
         return "holdout_reject"
+    # Paper pool capacity (forven.paper_pool): the door passed, a slot is not free.
+    if text.startswith("paper pool full") or "waiting for a paper slot" in text:
+        return "paper_queue_full"
+    if text.startswith("live evidence pending"):
+        return "live_evidence_pending"
+    if text.startswith("breadth test pending"):
+        return "breadth_pending"
+    if text.startswith("breadth test home_only"):
+        return "breadth_home_only"
     # Error / no-evidence outcomes must NOT share the generic ``gate_reject``
     # bucket with genuine performance rejections. "No metrics available" means
     # the backtest never ran (db-lock / timeout / process-restart / blocked
@@ -3306,6 +3396,16 @@ _EVIDENCE_ABSENCE_REASON_CODES = {
     # spent and the candidate waits for the next roll. Neither judged the edge.
     "holdout_pending",
     "holdout_budget_exhausted",
+    # Paper pool full: the strategy passed the paper door and waits in the
+    # evidence-ranked queue for a slot (forven.paper_pool). Capacity, not merit.
+    "paper_queue_full",
+    # Live gate: forward evidence is not yet decisive either way (sequential test
+    # "continue") or could not be loaded. Keep paper trading.
+    "live_evidence_pending",
+    # Live gate: the breadth test has not finished, or reads home_only. Neither
+    # judges the forward record; the strategy keeps paper trading.
+    "breadth_pending",
+    "breadth_home_only",
 }
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _DETHRONE_MANUAL_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
@@ -4527,11 +4627,385 @@ _PAPER_GATE_FLOORS = {
 }
 
 
-def holdout_gate_reason(strategy_id: str, *, submit: bool = False) -> tuple[str, str] | None:
-    """The research holdout's (message, reason_code) for ->paper, or None."""
+def _robustness_score_reason(robustness: float, gate: dict, floors: dict) -> str | None:
+    """The composite robustness-score floor (gauntlet.min_robustness_score)."""
+    min_robustness = max(float(gate.get("min_robustness_score", 50)), floors["min_robustness_score"])  # F2 floor
+    if robustness < min_robustness:
+        return f"Gauntlet robustness too low: {robustness:.1f}/100 (minimum {min_robustness:.1f})"
+    return None
+
+
+def _wfa_thresholds(gate: dict, floors: dict) -> dict:
+    """P1-9: explicit, configurable walk-forward thresholds."""
+    return {
+        "max_degradation": float(gate.get("wfa_max_degradation", 0.35)),
+        "min_oos_trades": int(gate.get("wfa_min_oos_trades", 20)),
+        "min_oos_sharpe": float(gate.get("wfa_min_oos_sharpe", 0.3)),
+        # F2 floor (wfa-min-folds-has-no-safety-floor): the only gauntlet threshold
+        # that used to reach the gate UNCLAMPED. See _PAPER_GATE_FLOORS.
+        "min_folds": max(int(gate.get("wfa_min_folds", 2)), int(floors["wfa_min_folds"])),
+    }
+
+
+def _wfa_consistency_reason(
+    wfa_payload: dict, wfa_thresholds: dict, rob_thresholds: dict, floors: dict
+) -> str | None:
+    """The walk-forward OOS consistency check: enough judgeable folds, enough positive.
+
+    Shared by the paper door (where the research door records it) and the
+    paper->live gate (where it is always enforced, 2026-10 gate plan).
+    """
+    if wfa_payload.get("insufficient_fold_evidence"):
+        # Every OOS fold fell below wfa_min_fold_trades: the run judged
+        # nothing (window too short for the strategy's trade rate). This is
+        # ABSENCE of evidence — block with an actionable reason rather than
+        # grading coin-flip folds (S05925) or emitting a merit reject. The
+        # trade-frequency-aware default window (forven.wfa_window) makes the
+        # re-run produce judgeable folds.
+        _min_fold_trades_msg = int((rob_thresholds or {}).get("wfa_min_fold_trades", 5) or 5)
+        return GateRejection(
+            "S00552 BLOCK: walk-forward window insufficient — no OOS fold reached "
+            f"{_min_fold_trades_msg} trades; re-run WFA on the trade-frequency-aware window",
+            reason_code="wfa_window_insufficient",
+        )
+    # F4(b): the WFA fold-consistency floor fires whenever walk_forward actually
+    # ran — narrowing required_tests must NOT disable a ran-but-failed safety
+    # check (the membership-gating was a bypass lever).
+    wfa_folds = wfa_payload.get("folds", wfa_payload.get("n_folds", 0))
+    # Use pass_rate (numeric 0-1) for fold evaluation, NOT the boolean 'passed'
+    # flag which reflects the overall verdict (may fail for non-fold reasons like
+    # negative IS Sharpe average).
+    wfa_pass_rate = wfa_payload.get("pass_rate", 1.0)
+    if isinstance(wfa_pass_rate, bool):
+        wfa_pass_rate = 1.0 if wfa_pass_rate else 0.0
+    wfa_pass_rate = float(wfa_pass_rate)
+    if wfa_folds < wfa_thresholds["min_folds"]:
+        # Same evidence-density class as the insufficient_fold_evidence block
+        # above (only N-of-min judgeable folds instead of zero): actionable
+        # re-run, not a merit failure — taxonomy maps it to the counter-exempt
+        # wfa_window_insufficient code.
+        return GateRejection(
+            f"S00552 REJECT: Walk-forward has {wfa_folds} folds, requires minimum "
+            f"{wfa_thresholds['min_folds']}; re-run WFA on the trade-frequency-aware window",
+            reason_code="wfa_window_insufficient",
+        )
+    # Single source of truth for the WFA fold-pass-rate floor: the same
+    # robustness_thresholds.wfa_fold_pass_rate_min the composite scorer uses
+    # (_validation_row_passed), so the money gate and the rank score can't
+    # silently drift. (Previously this gate read wfa_pass_rate_band[0]=0.30
+    # while the scorer used wfa_fold_pass_rate_min=0.40 — two thresholds for
+    # the same property.)
+    min_pass_rate = max(
+        float(
+            rob_thresholds.get(
+                "wfa_fold_pass_rate_min",
+                DEFAULT_PIPELINE_CONFIG["robustness_thresholds"]["wfa_fold_pass_rate_min"],
+            )
+        ),
+        floors["wfa_fold_pass_rate_min"],  # F2 floor
+    )
+    if wfa_pass_rate < min_pass_rate:
+        return f"S00552 REJECT: Walk-forward pass rate {wfa_pass_rate:.0%} below {min_pass_rate:.0%} minimum"
+    return None
+
+
+def _jitter_reason(jitter_payload: dict, rob_thresholds: dict, floors: dict) -> str | None:
+    """Parameter-jitter pass-rate floor: does the edge survive parameter perturbation."""
+    jitter_rate = jitter_payload.get("pass_rate", jitter_payload.get("stable_pct"))
+    jitter_min = max(float(rob_thresholds.get("param_jitter_pass_rate_min", 0.60)), floors["param_jitter_pass_rate_min"])  # F2 floor
+    if jitter_rate is not None and float(jitter_rate) < jitter_min:
+        return (
+            f"P25-4 REJECT: Parameter jitter pass rate {float(jitter_rate):.1%} "
+            f"below {jitter_min:.0%} target"
+        )
+    return None
+
+
+def holdout_gate_reason(
+    strategy_id: str, *, submit: bool = False, stage: str = "paper"
+) -> tuple[str, str] | None:
+    """The research holdout's (message, reason_code) for the hop it guards, or None."""
     from forven.robustness.engine import holdout_gate_reason as engine_holdout_gate_reason
 
-    return engine_holdout_gate_reason(strategy_id, submit=submit)
+    return engine_holdout_gate_reason(strategy_id, submit=submit, stage=stage)
+
+
+# --- Paper pool and live evidence: the database side ----------------------------
+# forven.paper_pool and forven.live_evidence are leaves (no first-party imports);
+# the reads and writes they need are here, next to the gates that call them.
+
+
+def _paper_pool_family(row) -> str:
+    """The strategy family, judged on design fields only (as the held-back test does)."""
+    from forven.strategy_diversity import infer_strategy_family
+
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
+    return infer_strategy_family(
+        *(row[field] if field in keys else None for field in ("type", "runtime_type", "name", "params"))
+    )
+
+
+def strategy_breadth(strategy_id: str) -> dict:
+    """The stored breadth test state (forven.breadth.get_breadth), or ``{"status": "none"}``."""
+    try:
+        # Imported by name: breadth runs backtests, so a static import here would
+        # pull it into the policy import cycle (tests/test_finish_db_layering.py).
+        return importlib.import_module("forven.breadth").get_breadth(strategy_id)
+    except Exception as exc:  # noqa: BLE001 — unreadable breadth counts as not run
+        log.debug("Breadth state unavailable for %s: %s", strategy_id, exc)
+        return {"strategy_id": strategy_id, "status": "none"}
+
+
+def _breadth_verdict(strategy_id: str) -> str | None:
+    state = strategy_breadth(strategy_id)
+    if state.get("status") != "done" or state.get("stale"):
+        return None
+    summary = state.get("summary") if isinstance(state.get("summary"), dict) else {}
+    return summary.get("verdict")
+
+
+def _paper_evidence_score(row) -> float:
+    """The paper-queue rank from what the door recorded (paper_pool.evidence_score)."""
+    keys = set(row.keys()) if hasattr(row, "keys") else set()
+    try:
+        metrics = _load_metrics_blob(row) or {}
+    except Exception:  # noqa: BLE001 — an unreadable blob ranks last, never blocks
+        metrics = {}
+    oos = _unwrap_metrics_dict(metrics.get("out_of_sample", metrics)) if metrics else {}
+    oos = oos if isinstance(oos, dict) else {}
+    return paper_pool.evidence_score(
+        row["deflated_sharpe"] if "deflated_sharpe" in keys else None,
+        _resolve_robustness_points(metrics) if metrics else None,
+        oos.get("sharpe_ratio", oos.get("sharpe")),
+        _breadth_verdict(str(row["id"])) if "id" in keys else None,
+    )
+
+
+def paper_admission_reason(strategy_id: str, config: dict | None = None, *, record: bool = True) -> str | None:
+    """None when a door-passing strategy may take a paper slot now, else why it waits (paper_pool)."""
+    knobs = paper_pool.settings(config if config is not None else load_pipeline_config())
+    with get_db() as conn:
+        return paper_pool.admission_reason(
+            conn,
+            strategy_id,
+            knobs,
+            family_of=_paper_pool_family,
+            score_of=_paper_evidence_score,
+            record=record,
+        )
+
+
+def paper_queue_snapshot(limit: int = 100) -> list[dict]:
+    """Strategies waiting for a paper slot, best evidence first."""
+    with get_db() as conn:
+        return paper_pool.queue_snapshot(conn, limit)
+
+
+def paper_pool_status(config: dict | None = None) -> dict:
+    """Paper occupancy, limits, retirement rules and the queue head."""
+    knobs = paper_pool.settings(config if config is not None else load_pipeline_config())
+    with get_db() as conn:
+        paper_pool.ensure_schema(conn)
+        in_paper = len(paper_pool.paper_rows(conn))
+        queue = paper_pool.queue_snapshot(conn, 20)
+    return paper_pool.pool_summary(knobs, in_paper, queue)
+
+
+def live_forward_pnls(strategy_id: str, since: str | None) -> list[float]:
+    """Closed paper-trade PnL fractions since ``since`` (the paper-stage entry), oldest first."""
+    params: list[object] = [strategy_id]
+    where_since = ""
+    if since:
+        where_since = " AND datetime(closed_at) >= datetime(?)"
+        params.append(since)
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(net_pnl_pct, pnl_pct) AS pnl_pct FROM trades "
+            "WHERE COALESCE(strategy_id, strategy) = ? "
+            "AND status = 'CLOSED' "
+            "AND pnl_pct IS NOT NULL "
+            "AND LOWER(COALESCE(execution_type, '')) LIKE 'paper%'"
+            + _PARITY_PNL_FILTER
+            + where_since
+            + " ORDER BY datetime(closed_at)",
+            tuple(params),
+        ).fetchall()
+    out: list[float] = []
+    for row in rows:
+        value = _coerce_optional_float(row["pnl_pct"])
+        if value is not None and math.isfinite(value):
+            out.append(float(value))
+    return out
+
+
+def live_pool_size(lookback_days: int, *, now: datetime | None = None) -> int:
+    """Distinct strategies in paper at any point in the last ``lookback_days`` (the pool correction's K)."""
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=int(lookback_days))).isoformat()
+    ids: set[str] = set()
+    with get_db() as conn:
+        for row in conn.execute(
+            "SELECT id FROM strategies WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading')"
+        ).fetchall():
+            ids.add(str(row["id"]))
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT strategy_id FROM strategy_events "
+                "WHERE LOWER(TRIM(COALESCE(to_state, ''))) IN ('paper', 'paper_trading') "
+                "AND datetime(created_at) >= datetime(?)",
+                (cutoff,),
+            ).fetchall()
+        except Exception:  # noqa: BLE001 — an install without the events table counts current paper only
+            rows = []
+        ids.update(str(row["strategy_id"]) for row in rows)
+    return len(ids)
+
+
+def evaluate_live_evidence(
+    strategy_id: str,
+    config: dict | None = None,
+    *,
+    forward: list[float] | None = None,
+    pool_size: int | None = None,
+) -> dict:
+    """The sequential evidence test (forven.live_evidence) for one paper strategy, read-only.
+
+    Before ``live_min_paper_days`` the state stays ``collecting``; the decision the
+    test would reach is kept as ``decision_if_old_enough``.
+    """
+    if config is None:
+        config = load_pipeline_config()
+    knobs = live_evidence.settings(config)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT stage, stage_changed_at FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+    if row is None:
+        return {"state": live_evidence.STATE_COLLECTING, "reason": "strategy not found", "strategy_id": strategy_id}
+    since = str(row["stage_changed_at"] or "").strip() or None
+    if forward is None:
+        forward = live_forward_pnls(strategy_id, since)
+    try:
+        from forven.gauntlet.deflated_sharpe import load_backtest_trade_returns
+
+        backtest, backtest_info = load_backtest_trade_returns(strategy_id, config)
+    except Exception as exc:  # noqa: BLE001 — forward-only is the documented fallback
+        log.warning("Backtest trade returns unavailable for %s: %s", strategy_id, exc)
+        backtest, backtest_info = [], {"reason": "error"}
+    if pool_size is None:
+        pool_size = live_pool_size(knobs["live_pool_lookback_days"])
+    result = live_evidence.sequential_evidence(
+        forward,
+        backtest,
+        alpha=knobs["live_sequential_alpha"],
+        backtest_weight=knobs["live_backtest_weight"],
+        pool_size=pool_size,
+        min_trades=knobs["live_min_forward_trades"],
+        correction=knobs["live_pool_correction"],
+    )
+    days = None
+    if since:
+        try:
+            started = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            days = (datetime.now(timezone.utc) - started).days
+        except ValueError:
+            days = None
+    result["paper_days"] = days
+    result["min_paper_days"] = knobs["live_min_paper_days"]
+    if result["state"] != live_evidence.STATE_COLLECTING and (days is None or days < knobs["live_min_paper_days"]):
+        result["decision_if_old_enough"] = result["state"]
+        result["state"] = live_evidence.STATE_COLLECTING
+        result["reason"] = f"{days if days is not None else '?'}/{knobs['live_min_paper_days']} days in paper"
+    result["strategy_id"] = strategy_id
+    result["backtest_source"] = backtest_info
+    return result
+
+
+def _live_forward_minimums(config: dict) -> tuple[int, int]:
+    """(minimum paper days, minimum closed forward trades) before the live gate judges.
+
+    Sequential mode (2026-10 gate plan): live_min_paper_days / live_min_forward_trades,
+    after which the sequential evidence test decides. Fixed mode: the pre-plan
+    min_paper_days / min_closed_trades. Both clamped by safety_floors.live_min_closed_trades.
+    """
+    gate = config.get("paper_trading", {}) or {}
+    defaults = DEFAULT_PIPELINE_CONFIG["paper_trading"]
+    floors = config.get("safety_floors") or {}
+    live_cfg = live_evidence.settings(config)
+    if live_cfg["live_gate_mode"] == "sequential":
+        min_days = int(live_cfg["live_min_paper_days"])
+        min_trades = int(live_cfg["live_min_forward_trades"])
+    else:
+        min_days = int(gate.get("min_paper_days", defaults["min_paper_days"]))
+        min_trades = int(gate.get("min_closed_trades", defaults["min_closed_trades"]))
+    return min_days, max(min_trades, int(floors.get("live_min_closed_trades", 3)))
+
+
+def _paper_door_checks_at_live(strategy_id: str, row, metrics: dict, config: dict) -> str | None:
+    """Enforce at paper->live the checks the paper door may only have recorded.
+
+    Walk-forward fold consistency, parameter-jitter pass rate and the composite
+    robustness score, at the same bars the strict paper door uses. Absent
+    payloads are left to the strict battery's evidence-completeness check.
+    """
+    gate = config.get("gauntlet", {}) or {}
+    rob = config.get("robustness_thresholds", {}) or {}
+    floors = dict(_PAPER_GATE_FLOORS)
+    floors.update({k: v for k, v in (config.get("safety_floors") or {}).items() if k in floors})
+    try:
+        verdict_payloads, _ = _extract_gauntlet_verdict_payloads(strategy_id, row, metrics)
+    except Exception as exc:  # noqa: BLE001 — fail closed before capital
+        return GateRejection(f"Live gate: robustness evidence unavailable: {exc}", reason_code="missing_evidence")
+    wfa = verdict_payloads.get("walk_forward")
+    if isinstance(wfa, dict):
+        reason = _wfa_consistency_reason(wfa, _wfa_thresholds(gate, floors), rob, floors)
+        if reason:
+            return reason if isinstance(reason, GateRejection) else f"Live gate: {reason}"
+    jitter = verdict_payloads.get("param_jitter")
+    if isinstance(jitter, dict):
+        reason = _jitter_reason(jitter, rob, floors)
+        if reason:
+            return f"Live gate: {reason}"
+    configured = {
+        _canonicalize_gauntlet_verdict_test(name) for name in (gate.get("required_tests") or []) if str(name).strip()
+    } or set(_GAUNTLET_VALIDATION_TYPES)
+    scoring = {name: payload for name, payload in verdict_payloads.items() if name in configured}
+    if scoring:
+        robustness = max(
+            _resolve_robustness_points(metrics),
+            round(100.0 * sum(1 for v in scoring.values() if not _verdict_payload_failed(v)) / len(scoring), 1),
+        )
+        reason = _robustness_score_reason(robustness, gate, floors)
+        if reason:
+            return f"Live gate: {reason}"
+    return None
+
+
+def _live_dsr_reason(strategy_id: str, forward_pnls: list[float], config: dict) -> str | None:
+    """Deflated Sharpe on backtest PLUS forward trades (enforced while the DSR gate is on)."""
+    rob = config.get("robustness_thresholds", {}) or {}
+    if not bool(rob.get("deflated_sharpe_gate_enabled", True)):
+        return None
+    from forven.gauntlet.deflated_sharpe import compute_live_dsr
+
+    info = compute_live_dsr(strategy_id, forward_pnls, pipeline_config=config)
+    value = info.get("dsr") if isinstance(info, dict) else None
+    if value is None:
+        why = str((info or {}).get("reason") or "unknown") if isinstance(info, dict) else "unavailable"
+        return GateRejection(
+            f"DSR BLOCK: deflated-Sharpe on backtest plus forward trades could not be computed ({why}) "
+            "— re-run the backtest so per-trade returns are persisted",
+            reason_code="dsr_unavailable",
+        )
+    min_dsr = float(rob.get("min_deflated_sharpe", 0.90))
+    if float(value) < min_dsr:
+        return (
+            f"DSR REJECT: Deflated Sharpe {float(value):.2f} on backtest plus forward trades below "
+            f"{min_dsr:.2f} target ({info.get('n_trials')} trials, "
+            f"{info.get('n_obs_backtest')} backtest + {info.get('n_obs_forward')} forward trades)"
+        )
+    return None
 
 
 def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = False) -> tuple[bool, str]:
@@ -4546,6 +5020,16 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # relaxed preset / custom config can soften this ->paper gate.
     floors = dict(_PAPER_GATE_FLOORS)
     floors.update({k: v for k, v in (config.get("safety_floors") or {}).items() if k in floors})
+    # 2026-10 gate plan (forven.paper_door): the research door RECORDS the
+    # selection-bias checks (walk-forward fold rate, jitter, robustness score,
+    # deflated Sharpe, robustness verdicts) instead of blocking on them; the
+    # paper->live gate enforces them. The Strict paper preset enforces all of
+    # them here, exactly as before the plan. ``recorded`` collects what a strict
+    # door would have rejected, for the pass message and the strategy's history.
+    door = paper_door.resolve(config)
+    strict_door = door["mode"] == paper_door.MODE_STRICT
+    recorded_tests = paper_door.recorded_tests(config)
+    recorded: list[str] = []
     configured_required = gate.get("required_tests", []) or []
     configured_required_tests = {
         _canonicalize_gauntlet_verdict_test(test_name)
@@ -4609,10 +5093,12 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # (default 3) so a relaxed gauntlet.min_trades config cannot soften it below that
     # operator-set rail. (The old immutable 30 is now a low, tunable "achievable paper"
     # floor — entry to paper risks no real capital.)
-    sample_min_trades = max(
-        int(_coerce_float(gate.get("min_trades", floors["min_trades"]), floors["min_trades"])),
-        floors["min_trades"],
+    door_min_trades = (
+        int(_coerce_float(gate.get("min_trades", floors["min_trades"]), floors["min_trades"]))
+        if strict_door
+        else int(door["min_trades"])
     )
+    sample_min_trades = max(door_min_trades, floors["min_trades"])
     sample_trades = _resolve_full_sample_trade_count(metrics)
     if sample_trades is None:
         return False, (
@@ -4684,9 +5170,11 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
                     required_robustness,
                 )
 
-    min_robustness = max(float(gate.get("min_robustness_score", 50)), floors["min_robustness_score"])  # F2 floor
-    if robustness < min_robustness:
-        return False, f"Gauntlet robustness too low: {robustness:.1f}/100 (minimum {min_robustness:.1f})"
+    robustness_reason = _robustness_score_reason(robustness, gate, floors)
+    if robustness_reason:
+        if paper_door.enforced_at_paper(config, "robustness_score"):
+            return False, robustness_reason
+        recorded.append(robustness_reason)
 
     # === S00552 GAUNTLET: WFA and Monte Carlo enforcement ===
     verdict_payloads, overall_status = _extract_gauntlet_verdict_payloads(strategy_id, row, metrics)
@@ -4694,70 +5182,14 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # P25-4: Load robustness thresholds early (needed for WFA pass-rate band below)
     rob_thresholds = config.get("robustness_thresholds", {})
 
-    # P1-9: Explicit, configurable WFA thresholds with stricter targets.
-    wfa_thresholds = {
-        "max_degradation": float(gate.get("wfa_max_degradation", 0.35)),
-        "min_oos_trades": int(gate.get("wfa_min_oos_trades", 20)),
-        "min_oos_sharpe": float(gate.get("wfa_min_oos_sharpe", 0.3)),
-        # F2 floor (wfa-min-folds-has-no-safety-floor): the only gauntlet threshold
-        # that used to reach the gate UNCLAMPED. See _PAPER_GATE_FLOORS.
-        "min_folds": max(int(gate.get("wfa_min_folds", 2)), int(floors["wfa_min_folds"])),
-    }
-
+    wfa_thresholds = _wfa_thresholds(gate, floors)
     wfa_payload = verdict_payloads.get("walk_forward")
     if wfa_payload:
-        if wfa_payload.get("insufficient_fold_evidence"):
-            # Every OOS fold fell below wfa_min_fold_trades: the run judged
-            # nothing (window too short for the strategy's trade rate). This is
-            # ABSENCE of evidence — block with an actionable reason rather than
-            # grading coin-flip folds (S05925) or emitting a merit reject. The
-            # trade-frequency-aware default window (forven.wfa_window) makes the
-            # re-run produce judgeable folds.
-            _min_fold_trades_msg = int((rob_thresholds or {}).get("wfa_min_fold_trades", 5) or 5)
-            return False, GateRejection(
-                "S00552 BLOCK: walk-forward window insufficient — no OOS fold reached "
-                f"{_min_fold_trades_msg} trades; re-run WFA on the trade-frequency-aware window",
-                reason_code="wfa_window_insufficient",
-            )
-        # F4(b): at the paper gate the WFA fold-consistency floor fires whenever
-        # walk_forward actually ran — narrowing required_tests must NOT disable a
-        # ran-but-failed safety check (the membership-gating was a bypass lever).
-        enforce_wfa = True
-        wfa_folds = wfa_payload.get("folds", wfa_payload.get("n_folds", 0))
-        # Use pass_rate (numeric 0-1) for fold evaluation, NOT the boolean 'passed'
-        # flag which reflects the overall verdict (may fail for non-fold reasons like
-        # negative IS Sharpe average).
-        wfa_pass_rate = wfa_payload.get("pass_rate", 1.0)
-        if isinstance(wfa_pass_rate, bool):
-            wfa_pass_rate = 1.0 if wfa_pass_rate else 0.0
-        wfa_pass_rate = float(wfa_pass_rate)
-        if enforce_wfa and wfa_folds < wfa_thresholds["min_folds"]:
-            # Same evidence-density class as the insufficient_fold_evidence block
-            # above (only N-of-min judgeable folds instead of zero): actionable
-            # re-run, not a merit failure — taxonomy maps it to the counter-exempt
-            # wfa_window_insufficient code.
-            return False, GateRejection(
-                f"S00552 REJECT: Walk-forward has {wfa_folds} folds, requires minimum "
-                f"{wfa_thresholds['min_folds']}; re-run WFA on the trade-frequency-aware window",
-                reason_code="wfa_window_insufficient",
-            )
-        # Single source of truth for the WFA fold-pass-rate floor: the same
-        # robustness_thresholds.wfa_fold_pass_rate_min the composite scorer uses
-        # (_validation_row_passed), so the money gate and the rank score can't
-        # silently drift. (Previously this gate read wfa_pass_rate_band[0]=0.30
-        # while the scorer used wfa_fold_pass_rate_min=0.40 — two thresholds for
-        # the same property.)
-        min_pass_rate = max(
-            float(
-                rob_thresholds.get(
-                    "wfa_fold_pass_rate_min",
-                    DEFAULT_PIPELINE_CONFIG["robustness_thresholds"]["wfa_fold_pass_rate_min"],
-                )
-            ),
-            floors["wfa_fold_pass_rate_min"],  # F2 floor
-        )
-        if enforce_wfa and wfa_pass_rate < min_pass_rate:
-            return False, f"S00552 REJECT: Walk-forward pass rate {wfa_pass_rate:.0%} below {min_pass_rate:.0%} minimum"
+        wfa_reason = _wfa_consistency_reason(wfa_payload, wfa_thresholds, rob_thresholds, floors)
+        if wfa_reason:
+            if paper_door.enforced_at_paper(config, "walk_forward"):
+                return False, wfa_reason
+            recorded.append(str(wfa_reason))
 
         # Baseline hurdle — blocks ->paper only when the operator set the paper mode
         # to enforce (default observe). Absent/insufficient measurements never block.
@@ -4782,7 +5214,12 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # percentile *calibration band* below stays gated behind required_tests.
     if mc_payload:
         mc_trades = mc_payload.get("n_trades", mc_payload.get("trade_count", mc_payload.get("total_trades")))
-        mc_min_trades = max(int(gate.get("min_trades", DEFAULT_PIPELINE_CONFIG["gauntlet"]["min_trades"]) or 1), floors["min_trades"])  # F2 floor
+        mc_min_trades = max(
+            int(gate.get("min_trades", DEFAULT_PIPELINE_CONFIG["gauntlet"]["min_trades"]) or 1)
+            if strict_door
+            else int(door["min_trades"]),
+            floors["min_trades"],
+        )  # F2 floor
         if mc_trades is not None and int(float(mc_trades or 0)) < mc_min_trades:
             return False, (
                 f"S00552 REJECT: Monte Carlo baseline has {int(float(mc_trades or 0))} trades, "
@@ -4792,18 +5229,31 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
         if mc_dd_reject:
             return False, mc_dd_reject
 
-    # Param jitter pass rate check — KEPT as a paper hard gate. This is the genuine
-    # overfitting probe (does the edge survive parameter perturbation), orthogonal to
-    # the OOS/regime checks, so it stays even at the lean paper stage.
+    # Param jitter pass rate — the genuine overfitting probe (does the edge survive
+    # parameter perturbation). A hard gate in the Strict paper door; recorded by the
+    # research door and enforced at paper->live.
     jitter_payload = verdict_payloads.get("param_jitter")
     if jitter_payload:  # F4(b): fire whenever param_jitter ran, regardless of required_tests
-        jitter_rate = jitter_payload.get("pass_rate", jitter_payload.get("stable_pct"))
-        jitter_min = max(float(rob_thresholds.get("param_jitter_pass_rate_min", 0.60)), floors["param_jitter_pass_rate_min"])  # F2 floor
-        if jitter_rate is not None and float(jitter_rate) < jitter_min:
-            return False, (
-                f"P25-4 REJECT: Parameter jitter pass rate {float(jitter_rate):.1%} "
-                f"below {jitter_min:.0%} target"
-            )
+        jitter_reason = _jitter_reason(jitter_payload, rob_thresholds, floors)
+        if jitter_reason:
+            if paper_door.enforced_at_paper(config, "param_jitter"):
+                return False, jitter_reason
+            recorded.append(jitter_reason)
+
+    # Research door sanity floor: a strategy that LOSES money under 2x fees and
+    # slippage is a catastrophe, not a selection-bias question, so it never reaches
+    # paper. (The cost-stress verdict's stricter Sharpe/degradation bars are
+    # recorded here and enforced at paper->live.) Presence-conditional like the
+    # Monte-Carlo floor: the live gate demands the evidence itself.
+    if not strict_door:
+        cost_payload = verdict_payloads.get("cost_stress")
+        if isinstance(cost_payload, dict) and not cost_payload.get("non_required_failure"):
+            stressed = _coerce_optional_float(cost_payload.get("stressed_sharpe"))
+            if stressed is not None and stressed <= 0:
+                return False, (
+                    f"Cost stress REJECT: loses money under 2x fees and slippage "
+                    f"(stressed Sharpe {stressed:.2f})"
+                )
 
     # MC percentile, cost-stress Sharpe, and regime-split profitability are
     # STRICT-LIVE criteria (regime-trap / underpowered at the paper stage) — they no
@@ -4817,7 +5267,23 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # robustness_thresholds.deflated_sharpe_gate_enabled is on (the default).
     # When enabled it is authoritative, so an unavailable computation blocks
     # rather than silently disabling the gate.
-    if bool(rob_thresholds.get("deflated_sharpe_gate_enabled", True)):
+    dsr_enforced_here = paper_door.enforced_at_paper(config, "deflated_sharpe")
+    if bool(rob_thresholds.get("deflated_sharpe_gate_enabled", True)) and not dsr_enforced_here:
+        # Research door: the DSR is computed and recorded (it ranks the paper
+        # queue); the paper->live gate enforces it on backtest plus forward trades.
+        try:
+            from forven.gauntlet.deflated_sharpe import compute_strategy_dsr
+
+            _dsr_seen = compute_strategy_dsr(strategy_id, with_reason=True, dry_run=dry_run)
+        except Exception:  # noqa: BLE001 — recorded only; absence never blocks here
+            _dsr_seen = None
+        _dsr_value = _dsr_seen.get("dsr") if isinstance(_dsr_seen, dict) else None
+        _dsr_min = float(rob_thresholds.get("min_deflated_sharpe", 0.90))
+        if _dsr_value is None:
+            recorded.append("deflated Sharpe not computable")
+        elif float(_dsr_value) < _dsr_min:
+            recorded.append(f"deflated Sharpe {float(_dsr_value):.2f} below {_dsr_min:.2f}")
+    if bool(rob_thresholds.get("deflated_sharpe_gate_enabled", True)) and dsr_enforced_here:
         try:
             from forven.gauntlet.deflated_sharpe import compute_strategy_dsr
 
@@ -4886,13 +5352,25 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # S00552: Profit Factor enforcement at gauntlet (in addition to quick_screen).
     # M-15 (2026-06-09 audit): configurable via gauntlet.min_oos_profit_factor
     # (default 1.05 preserves the previously-hardcoded floor).
-    min_oos_pf = _coerce_float(
-        gate.get("min_oos_profit_factor", DEFAULT_PIPELINE_CONFIG["gauntlet"]["min_oos_profit_factor"]),
-        DEFAULT_PIPELINE_CONFIG["gauntlet"]["min_oos_profit_factor"],
+    min_oos_pf = (
+        _coerce_float(
+            gate.get("min_oos_profit_factor", DEFAULT_PIPELINE_CONFIG["gauntlet"]["min_oos_profit_factor"]),
+            DEFAULT_PIPELINE_CONFIG["gauntlet"]["min_oos_profit_factor"],
+        )
+        if strict_door
+        else float(door["min_oos_profit_factor"])
     )
     oos_pf = float(target_metrics.get("profit_factor", 0.0) or 0.0)
     if oos_pf < min_oos_pf:
         return False, f"S00552 REJECT: Gauntlet OOS Profit Factor {oos_pf:.2f} below {min_oos_pf:.2f} minimum"
+    if not strict_door:
+        # Research door: the confirmation's OOS slice must show a positive edge.
+        oos_sharpe = _coerce_optional_float(target_metrics.get("sharpe", target_metrics.get("sharpe_ratio")))
+        min_oos_sharpe = float(door["min_oos_sharpe"])
+        if oos_sharpe is not None and oos_sharpe <= min_oos_sharpe:
+            return False, (
+                f"S00552 REJECT: Gauntlet OOS Sharpe {oos_sharpe:.2f} not above {min_oos_sharpe:.2f}"
+            )
 
     if not verdict_payloads:
         verdict_payloads, overall_status = _extract_gauntlet_verdict_payloads(strategy_id, row, metrics)
@@ -4914,8 +5392,12 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
         for test_name in required_tests
         if _verdict_payload_failed(verdict_payloads.get(test_name))
     )
+    recorded_failing = [name for name in failing if name in recorded_tests]
+    failing = [name for name in failing if name not in recorded_tests]
     if failing:
         return False, f"Gauntlet required verdict tests failed: {', '.join(failing)}"
+    if recorded_failing:
+        recorded.append(f"verdict FAIL recorded for {', '.join(recorded_failing)}")
 
     # === Promotion Readiness Gates (configurable via pipeline settings) ===
     ps = _load_pipeline_settings()
@@ -4952,15 +5434,23 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # workflow step, reconcile after validation, stuck-gauntlet sweep, direct
     # promote. Queued/running/budget-spent is evidence absence; a completed FAIL
     # is merit.
-    holdout = holdout_gate_reason(strategy_id, submit=not dry_run)
-    if holdout:
-        return False, GateRejection(holdout[0], reason_code=holdout[1])
+    # In the research door the held-back test runs when the strategy applies for
+    # live instead (paper_door.holdout_stage), so its per-family budget is spent
+    # on live candidates, not on research.
+    if paper_door.holdout_at_paper(config):
+        holdout = holdout_gate_reason(strategy_id, submit=not dry_run)
+        if holdout:
+            return False, GateRejection(holdout[0], reason_code=holdout[1])
 
     suffix = ""
     if warnings_list:
         suffix = f" (warnings: {'; '.join(warnings_list)})"
+    if recorded:
+        suffix += f" [recorded for the live gate: {'; '.join(recorded)}]"
 
-    return True, f"Passed robustness gauntlet with S00552 guardrails{suffix}"
+    if strict_door:
+        return True, f"Passed robustness gauntlet with S00552 guardrails{suffix}"
+    return True, f"Passed the research paper door with S00552 safety floors{suffix}"
 
 
 def _snapshot_graduation_baseline(strategy_id: str, metrics: dict, paper_pnls: list[float]):
@@ -5027,7 +5517,9 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
     # stage_changed_at silently skipped the min-duration check AND unbounded the
     # trade-evidence window to all history.
     stage_since = str(row["stage_changed_at"] or "").strip()
-    min_days = int(gate.get("min_paper_days", _pt_defaults["min_paper_days"]))
+    live_cfg = live_evidence.settings(config)
+    sequential = live_cfg["live_gate_mode"] == "sequential"
+    min_days, min_trades_required = _live_forward_minimums(config)
     started = None
     if stage_since:
         try:
@@ -5072,10 +5564,7 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
 
     # S00152: Extended Paper Trading - min trades AND min days (both required)
     # Editable absolute live floors (safe defaults; fully operator-tunable).
-    min_trades = max(
-        int(gate.get("min_closed_trades", _pt_defaults["min_closed_trades"])),
-        int(_floors.get("live_min_closed_trades", 3)),
-    )
+    min_trades = min_trades_required
     min_return = float(gate.get("min_total_return_pct", _pt_defaults["min_total_return_pct"]))
     max_dd_limit = min(
         float(gate.get("max_drawdown_pct", _pt_defaults["max_drawdown_pct"])),
@@ -5169,16 +5658,59 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
     # so the significance floor is skipped when there is no dispersion (the PF
     # floor below still binds). Real paper data always disperses.
     has_return_dispersion = len(pnls) > 1 and pstdev(pnls) > 1e-12
-    if min_paper_sharpe > 0 and has_return_dispersion and paper_sharpe < min_paper_sharpe:
-        return False, (
-            f"S00152 REJECT: forward paper Sharpe {paper_sharpe:.2f} below "
-            f"{min_paper_sharpe:.2f} minimum (no demonstrated forward edge)"
-        )
-    if min_paper_pf > 0 and paper_pf < min_paper_pf:
-        return False, (
-            f"S00152 REJECT: forward paper profit factor {paper_pf:.2f} below "
-            f"{min_paper_pf:.2f} minimum (no demonstrated forward edge)"
-        )
+    if not sequential:
+        if min_paper_sharpe > 0 and has_return_dispersion and paper_sharpe < min_paper_sharpe:
+            return False, (
+                f"S00152 REJECT: forward paper Sharpe {paper_sharpe:.2f} below "
+                f"{min_paper_sharpe:.2f} minimum (no demonstrated forward edge)"
+            )
+        if min_paper_pf > 0 and paper_pf < min_paper_pf:
+            return False, (
+                f"S00152 REJECT: forward paper profit factor {paper_pf:.2f} below "
+                f"{min_paper_pf:.2f} minimum (no demonstrated forward edge)"
+            )
+
+    # 2026-10 gate plan: the checks the research paper door only RECORDS are
+    # enforced here, at today's bars (walk-forward fold consistency, parameter
+    # jitter, composite robustness score; MC percentile, cost stress and regime
+    # split are in the strict battery above), then the deflated Sharpe on
+    # backtest plus forward trades and the sequential evidence test. Under the
+    # Strict paper door those checks (and the DSR) already blocked paper entry,
+    # so the live gate is exactly the pre-plan one there.
+    if not paper_door.is_strict(config):
+        moved_reason = _paper_door_checks_at_live(strategy_id, row, metrics, config)
+        if moved_reason:
+            return False, moved_reason
+        dsr_reason = _live_dsr_reason(strategy_id, pnls, config)
+        if dsr_reason:
+            return False, dsr_reason
+    if sequential:
+        evidence = evaluate_live_evidence(strategy_id, config, forward=pnls)
+        state = evidence.get("state")
+        if state == live_evidence.STATE_FAIL:
+            return False, GateRejection(
+                f"Live evidence FAIL: {evidence.get('reason')}", reason_code="live_evidence_fail"
+            )
+        if state != live_evidence.STATE_GO:
+            return False, GateRejection(
+                f"Live evidence pending: {evidence.get('reason')}", reason_code="live_evidence_pending"
+            )
+        # The breadth test is required for live (2026-10 gate plan): the rule
+        # must not be fitted to its home coin. A missing or stale result is
+        # started here and holds the strategy in paper until it finishes.
+        if live_evidence.settings(config)["live_require_breadth"]:
+            breadth_state = strategy_breadth(strategy_id)
+            breadth_block = live_evidence.breadth_reason(breadth_state)
+            if breadth_block:
+                if not dry_run and breadth_state.get("status") != "running" and "pending" in breadth_block:
+                    try:
+                        importlib.import_module("forven.breadth").start_breadth(
+                            strategy_id, refresh=bool(breadth_state.get("stale"))
+                        )
+                    except Exception as exc:  # noqa: BLE001 — retried on the next gate pass
+                        log.warning("Could not start the breadth test for %s: %s", strategy_id, exc)
+                code = "breadth_home_only" if "home_only" in breadth_block else "breadth_pending"
+                return False, GateRejection(breadth_block, reason_code=code)
 
     # === Paper-to-Live Optimization Gates ===
     ps = _load_pipeline_settings()
@@ -5196,6 +5728,14 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
         ok, detail, *_ = check_fn(strategy_id)
         if not ok and ps.get(required_key, True):
             return False, detail
+
+    # The one-shot held-back test, LAST: every other live check passed, so the
+    # family's test budget is spent only on a genuine live candidate. (The Strict
+    # paper door runs it at the paper hop instead; it has already passed there.)
+    if not paper_door.holdout_at_paper(config):
+        holdout = holdout_gate_reason(strategy_id, submit=not dry_run, stage="live")
+        if holdout:
+            return False, GateRejection(holdout[0], reason_code=holdout[1])
 
     allocation_cap = _resolve_live_allocation_pct(days_in_stage, config, strategy_id=strategy_id)
 

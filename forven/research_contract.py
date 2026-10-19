@@ -73,7 +73,8 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     # On by default since the 2026-10 live-capital readiness review
     # (forven.readiness_checks switches it on once in existing installs). When on,
     # research reads stop at the cutoff and each new candidate gets one test on
-    # the held-back period before the paper gate.
+    # the held-back period before the paper->live gate (the paper gate under the
+    # strict paper door; 2026-10 gate plan).
     #   roll: "quarterly" (cutoff = current quarter start - lag_quarters) or
     #     "manual" (cutoff below). established_at is stamped when first enabled;
     #     strategies created earlier saw the held-back data and are exempt.
@@ -82,7 +83,7 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     "research_holdout": {
         "enabled": True,
         "roll": "quarterly",
-        "lag_quarters": 2,
+        "lag_quarters": 1,
         "cutoff": "",
         "established_at": "",
         "paper_mode": "enforce",

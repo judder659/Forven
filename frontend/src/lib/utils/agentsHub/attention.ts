@@ -44,6 +44,7 @@ const TRADING_COMMANDS = new Set([
 	'funding-history-reconcile',
 	'portfolio-allocation',
 	'capital-slot-dedupe',
+	'paper-pool-tick',
 	'regime-gate-mtm',
 	'basket-funding-carry',
 	'universe-books',

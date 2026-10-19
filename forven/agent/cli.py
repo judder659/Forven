@@ -90,6 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("breadth", help="run a strategy's frozen rule on 15 coins over sealed research data")
     c.add_argument("id"); c.add_argument("--refresh", action="store_true"); c.add_argument("--no-wait", action="store_true")
     c.add_argument("--timeout", dest="wait_timeout", type=float, default=1800.0)
+    sub.add_parser("paper-pool", help="paper occupancy, limits, queue and the door in force")
+    c = sub.add_parser("readmit-candidates", help="recent archives the research paper door would admit (report only)")
+    c.add_argument("--days", type=int, default=30); c.add_argument("--limit", type=int, default=100)
+    c = sub.add_parser("requeue", help="operator: send archives back through the research paper door")
+    c.add_argument("ids", help="comma-separated strategy ids")
+    c = sub.add_parser("live-recheck", help="report-only: live strategies against the new live gate")
+    c.add_argument("--run", action="store_true", help="re-compute instead of reading the stored report")
     return p
 
 
@@ -166,6 +173,14 @@ def main(argv=None) -> int:
             _emit(fc.wait_for_paper(ids, timeout=args.timeout, interval=args.interval))
         elif cmd == "breadth":
             _emit(fc.breadth(args.id, refresh=args.refresh, wait=not args.no_wait, timeout=args.wait_timeout))
+        elif cmd == "paper-pool":
+            _emit(fc.paper_pool())
+        elif cmd == "readmit-candidates":
+            _emit(fc.readmit_candidates(days=args.days, limit=args.limit))
+        elif cmd == "requeue":
+            _emit(fc.requeue([s.strip() for s in args.ids.split(",") if s.strip()]))
+        elif cmd == "live-recheck":
+            _emit(fc.live_recheck(run=args.run))
         else:
             print(f"unknown command {cmd}", file=sys.stderr)
             return 2

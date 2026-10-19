@@ -411,6 +411,13 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                     apply_dsr_scope_migration(kv_get, kv_set)
             except Exception as exc:
                 log.warning("DSR-scope settings migration failed: %s", exc)
+            # 2026-10 gate plan: changed defaults carried into stored settings once.
+            try:
+                from forven.readiness_checks import apply_gate_plan_migration
+                with _SETTINGS_MUTATION_LOCK:
+                    apply_gate_plan_migration(kv_get, kv_set)
+            except Exception as exc:
+                log.warning("Gate-plan settings migration failed: %s", exc)
             existing_jobs = get_jobs()
             if not existing_jobs:
                 seed_forven_jobs()
@@ -3678,6 +3685,10 @@ _PIPELINE_THRESHOLD_SETTING_KEYS = {
     "deploy_gate",
     "retirement",
     "decay",
+    # 2026-10 gate plan: the door into paper (research | strict = "Strict paper")
+    # and the paper pool (cap, diversity, automatic retirement).
+    "paper_door",
+    "paper_pool",
 }
 
 # Keys that exist in BOTH the main settings blob and the flat pipeline payload
