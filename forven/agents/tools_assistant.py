@@ -975,6 +975,16 @@ def _bt_side(result: dict, side: str) -> dict:
 
 def _quick_screen(compact: dict) -> dict:
     """Pre-screen compact IS/OOS metrics against the quick-screen gate."""
+    from forven import quick_screen_rule
+
+    try:
+        from forven.policy import load_pipeline_config
+
+        cfg = load_pipeline_config().get("quick_screen") or {}
+    except Exception:  # noqa: BLE001 - a pre-check never fails on settings
+        cfg = {}
+    if not quick_screen_rule.is_strict(cfg):
+        return _fair_sample_pre_screen(compact, cfg)
     reasons: list[str] = []
 
     def num(x):
@@ -995,6 +1005,31 @@ def _quick_screen(compact: dict) -> dict:
             reasons.append(f"{side} total_trades {tr} < {min_tr}")
         if ret is None or ret < _QUICK_SCREEN["min_total_return_pct"]:
             reasons.append(f"{side} total_return_pct {ret} < 0")
+    return {"pass": not reasons, "reasons": reasons}
+
+
+def _fair_sample_pre_screen(compact: dict, cfg: dict) -> dict:
+    """The fair-sample quick screen (2026-10 gate plan) on one backtest's slices.
+
+    Mirrors forven.quick_screen_rule: whole-window trades, Sharpe, profit factor,
+    return and drawdown, plus an out-of-sample slice that must not lose badly. A
+    window short of trades is reported, but the gauntlet's own quick screen widens
+    the window before judging, so it is not a verdict on the strategy.
+    """
+    from forven import quick_screen_rule
+
+    reasons = list(quick_screen_rule.fair_sample_failures(compact, cfg))
+    floor = int(cfg.get("min_trades") or 20)
+    trades = quick_screen_rule.whole_window_trades(compact) or 0
+    if trades < floor:
+        reasons.append(
+            f"{trades:.0f} trades over the whole window < {floor}: the gauntlet's quick screen "
+            f"widens the window (up to {int(cfg.get('max_window_days') or 0)} days) before judging"
+        )
+    for side in ("in_sample", "out_of_sample"):
+        sharpe = (compact.get(side) or {}).get("sharpe") if isinstance(compact, dict) else None
+        if isinstance(sharpe, (int, float)) and sharpe > _QUICK_SCREEN["max_sharpe"]:
+            reasons.append(f"{side} sharpe {sharpe} > {_QUICK_SCREEN['max_sharpe']} (implausible: check for a leak)")
     return {"pass": not reasons, "reasons": reasons}
 
 

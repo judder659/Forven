@@ -104,9 +104,14 @@ if verdict["enqueued"]:
    to PAPER. Poll with `wait-paper` / `status`.
 
 **Gate reality (so you design things that can pass):**
-- `quick_screen` judges **both** the IS and OOS windows: PF ≥ 1.05 (aim ≥ 1.3),
-  Sharpe ∈ [0, 5], MaxDD < 30%, OOS trades ≥ 15 / IS ≥ 20, robustness ≥ 50.
-  (`ForvenAgentClient.quick_screen(compact)` pre-checks this offline.)
+- `quick_screen` (default fair-sample rule) judges the **whole** window: 20+
+  trades, Sharpe above 0, PF ≥ 1.0 (aim ≥ 1.3), MaxDD < 30%, and an OOS slice
+  that does not lose badly (Sharpe above −0.5). A window short of trades is
+  widened (365 → 730 → 1,460 days, data permitting) before it is judged, so a
+  slow strategy is not archived for being slow. The IS/OOS gap and ratio are
+  recorded, not enforced; Sharpe ≥ 5 or PF ≥ 8 is still rejected as a likely
+  leak. (`ForvenAgentClient.quick_screen(compact)` pre-checks this offline;
+  Settings → Quick-screen rule → Strict restores the old split-slice screen.)
 - `cost_stress` (2× fees) needs **big per-trade edges** → favors *selective*
   setups or high win-rate reversion. Kills high-volume, low-edge momentum.
 - `paper_promotion_gate` is the **door into paper**. Paper risks no capital, so

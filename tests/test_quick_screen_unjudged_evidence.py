@@ -268,15 +268,15 @@ def test_a_losing_in_sample_slice_fails_on_its_own_numbers(forven_db) -> None:
 
     payload = _gate_payload(workflow["id"])
     assert _step(workflow["id"], "quick_screen_gate")["status"] == "failed_gate"
-    assert "profit_factor 0.80 < 1.05" in payload["message"]
-    assert "in-sample slice" in payload["message"]
+    # The fair-sample rule judges the whole window (both slices' gross profit and loss).
+    assert "whole-window profit factor 0.78 < 1.05" in payload["message"]
     assert payload.get("merit") is not False  # a measured loss is a merit verdict
 
     assert demote_failed_gate_strategies() == 1
     row, event = _archive("S-QS-IS-LOSER")
     assert row["stage"] == "archived"
     assert not str(row["status_reason"] or "").startswith("untestable:")
-    assert "profit_factor 0.80 < 1.05" in event["reason"]
+    assert "whole-window profit factor 0.78 < 1.05" in event["reason"]
 
 
 def test_an_infinite_pf_clears_the_floor_after_sanitization(forven_db, transitions) -> None:

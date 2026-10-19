@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from forven import quick_screen_rule
 from forven.gauntlet.engine import RETRYABLE_BLOCK_REASON_CODES
 from forven.work_budget import check_work_budget
 
@@ -591,21 +592,150 @@ def run_quick_screen(workflow: dict[str, Any], step: dict[str, Any]) -> dict[str
     except Exception as exc:
         return _classify_exception(exc)
 
-    result_id = response.get("result_id") if isinstance(response, dict) else None
-    metrics = response.get("metrics") if isinstance(response, dict) and isinstance(response.get("metrics"), dict) else {}
-    if not metrics:
-        metrics = _load_result_metrics(result_id)
-    if not result_id or not metrics or (isinstance(response, dict) and response.get("error")):
+    result_id, metrics = _completed_backtest(response)
+    if not result_id or not metrics:
         return {
             "status": "blocked_runtime", "retryable": True,
             "message": "Quick-screen backtest returned no completed evidence",
         }
+    widened = _widen_quick_screen_window(
+        workflow, row, symbol=symbol, timeframe=timeframe, params=params,
+        base_days=required_days, result_id=result_id, metrics=metrics,
+    )
+    if widened.get("status"):
+        return widened
     return {
         "status": "passed",
+        "result_id": widened["result_id"],
+        "metrics": widened["metrics"],
+        "window_days": widened["window_days"],
+        "windows_tried": widened["windows_tried"],
+        "message": widened["message"],
+    }
+
+
+def _completed_backtest(response: object) -> tuple[str | None, dict[str, Any]]:
+    """``(result_id, metrics)`` of a submitted backtest, or ``(None, {})`` when it
+    returned no completed evidence."""
+    if not isinstance(response, dict) or response.get("error"):
+        return None, {}
+    result_id = response.get("result_id")
+    metrics = response.get("metrics") if isinstance(response.get("metrics"), dict) else {}
+    if not metrics:
+        metrics = _load_result_metrics(result_id)
+    if not result_id or not metrics:
+        return None, {}
+    return str(result_id), metrics
+
+
+# A wider window must reach at least this many days further back to count as more
+# data: a series that starts later than the wider window asks for returns the same
+# bars again.
+_WIDEN_MIN_EXTRA_DAYS = 7.0
+
+
+def _widen_quick_screen_window(
+    workflow: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    symbol: str,
+    timeframe: str,
+    params: dict[str, Any],
+    base_days: int,
+    result_id: str,
+    metrics: dict[str, Any],
+    wait_for_backfill: bool = True,
+) -> dict[str, Any]:
+    """Widen the quick-screen window until it holds the trade floor (2026-10 gate plan).
+
+    A strategy that trades slowly used to be archived as untestable for being slow:
+    the fixed one-year window held fewer than ``quick_screen.min_trades`` trades.
+    Under the fair-sample rule the window doubles (365 -> 730 -> 1,460 days with the
+    defaults, see quick_screen_rule.window_ladder) while it holds fewer trades than
+    the floor and older data exists. A missing older series is backfilled first (the
+    step waits, drain-exempt) when ``wait_for_backfill``; the timeframe sweep widens
+    on the history already stored. A series with no older history stops the ladder.
+
+    Returns ``{"result_id", "metrics", "window_days", "windows_tried", "message"}``,
+    or a step outcome with a ``status`` when the step must wait for a backfill.
+    """
+    settings = _workflow_settings(workflow)
+    quick_cfg = settings.get("quick_screen") if isinstance(settings.get("quick_screen"), dict) else {}
+    floor = _quick_screen_trade_floor(quick_cfg)
+    ladder = quick_screen_rule.window_ladder(base_days, quick_cfg)
+    best = {
         "result_id": result_id,
         "metrics": metrics,
+        "window_days": int(base_days),
+        "windows_tried": [int(base_days)],
         "message": "Quick-screen backtest completed",
     }
+    trades = quick_screen_rule.whole_window_trades(metrics) or 0.0
+    if floor <= 0 or not ladder or trades >= floor:
+        return best
+
+    from forven.dataeng.coverage import coverage_days, ensure_coverage
+
+    coverage = (
+        ensure_coverage(symbol, timeframe, ladder[-1], require_request_evidence=True)
+        if wait_for_backfill else {}
+    )
+    if coverage.get("status") == "backfilling":
+        return {
+            "status": "blocked_data",
+            "message": (
+                f"{trades:.0f} trades in {base_days} days (minimum {floor}): backfilling "
+                f"{symbol} {timeframe} history to widen the quick-screen window to {ladder[-1]} days"
+            ),
+            "retryable": True,
+            "reason_code": "awaiting_data_backfill",
+        }
+
+    from forven.api_core import BacktestSubmitBody
+
+    span = quick_screen_rule.window_span_days(metrics) or float(base_days)
+    for days in ladder:
+        available = coverage_days(symbol, timeframe)
+        if 0 < available < span + _WIDEN_MIN_EXTRA_DAYS:
+            break  # no older history to widen into
+        if _data_quality_block(symbol, timeframe, days) is not None:
+            break  # the older stretch has a defect: keep the verdict on clean data
+        check_work_budget()
+        try:
+            response = _submit_backtest(
+                BacktestSubmitBody(
+                    strategy_id=row["id"],
+                    strategy_name=row.get("name"),
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    params=params,
+                    duration_days=days,
+                    as_of=_workflow_as_of(workflow),
+                ),
+                skip_auto_trash=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the narrower verdict
+            log.warning("quick_screen: widening %s to %sd failed: %s", row.get("id"), days, exc)
+            break
+        wide_id, wide_metrics = _completed_backtest(response)
+        if not wide_id or not wide_metrics:
+            break
+        best["windows_tried"].append(int(days))
+        wide_span = quick_screen_rule.window_span_days(wide_metrics)
+        if wide_span is not None and wide_span < span + _WIDEN_MIN_EXTRA_DAYS:
+            break  # the series starts inside the narrower window: nothing older exists
+        span = wide_span if wide_span is not None else float(days)
+        wide_trades = quick_screen_rule.whole_window_trades(wide_metrics) or 0.0
+        best.update(result_id=wide_id, metrics=wide_metrics, window_days=int(days))
+        trades = wide_trades
+        if trades >= floor:
+            break
+    if best["window_days"] != int(base_days):
+        best["message"] = (
+            f"Quick-screen backtest completed on a {best['window_days']}-day window "
+            f"({trades:.0f} trades; the {base_days}-day window held fewer than {floor})"
+        )
+    return best
 
 
 def _quick_screen_defer_to_optimization() -> bool:
@@ -698,6 +828,7 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
             params=row_params if isinstance(row_params, dict) else {},
             since=since,
             as_of=as_of,
+            fair_sample=not quick_screen_rule.is_strict(quick_cfg),
         )
         if best_metrics:
             metrics = best_metrics
@@ -761,8 +892,12 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
 
     from forven.metrics_integrity import check_metrics_integrity, data_quality_hold_reason
 
+    # Fair-sample rule (2026-10 gate plan): the quick_screen step widened the window
+    # until it held the trade floor, so count and judge the whole window.
+    fair_sample = not quick_screen_rule.is_strict(quick_cfg)
     judged, basis = _quick_screen_judged_slice(metrics)
-    trades, trade_floor = _quick_screen_trade_count(metrics), _quick_screen_trade_floor(quick_cfg)
+    trades = quick_screen_rule.whole_window_trades(metrics) if fair_sample else _quick_screen_trade_count(metrics)
+    trade_floor = _quick_screen_trade_floor(quick_cfg)
     unjudged_code: str | None = None
     window = _quick_screen_window(metrics)
     anomalies = check_metrics_integrity(metrics)
@@ -788,6 +923,8 @@ def run_quick_screen_gate(workflow: dict[str, Any], step: dict[str, Any]) -> dic
             f"{trades:.0f} trades in the quick-screen window{f' ({window})' if window else ''} "
             f"(minimum {trade_floor}): too few to judge"
         ]
+    elif fair_sample:
+        failures = quick_screen_rule.fair_sample_failures(metrics, quick_cfg)
     else:
         failures = _quick_screen_failures(judged, quick_cfg)
         if failures and basis == "in_sample":
@@ -1002,6 +1139,8 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
     from forven.policy import is_nonresult_validation_row
 
     sweep_duration_days = stage_backtest_duration_days("timeframe_sweep")
+    sweep_symbol = str(row.get("symbol") or "BTC/USDT")
+    widened_windows: dict[str, int] = {}
 
     for timeframe in sweep_timeframes:
         check_work_budget()
@@ -1016,7 +1155,7 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
                 BacktestSubmitBody(
                     strategy_id=row["id"],
                     strategy_name=row.get("name"),
-                    symbol=row.get("symbol") or "BTC/USDT",
+                    symbol=sweep_symbol,
                     timeframe=tf,
                     params=params,
                     duration_days=sweep_duration_days,
@@ -1036,6 +1175,15 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
                 errors.append({"timeframe": tf, "error": "backtest returned no completed evidence"})
                 continue
             submitted.append(tf)
+            # Fair-sample rule: a timeframe whose window holds too few trades is
+            # widened like the quick screen, on the history already stored.
+            widened = _widen_quick_screen_window(
+                workflow, row, symbol=sweep_symbol, timeframe=tf, params=params,
+                base_days=sweep_duration_days, result_id=str(result_id), metrics=metrics,
+                wait_for_backfill=False,
+            )
+            if widened.get("window_days", sweep_duration_days) != sweep_duration_days:
+                widened_windows[tf] = int(widened["window_days"])
         except Exception as exc:
             errors.append({"timeframe": tf, "error": str(getattr(exc, "detail", exc))})
 
@@ -1053,6 +1201,7 @@ def run_timeframe_sweep(workflow: dict[str, Any], step: dict[str, Any]) -> dict[
         "skipped": skipped,
         "errors": errors,
         "total_timeframes": len(sweep_timeframes),
+        **({"widened_windows": widened_windows} if widened_windows else {}),
     }
 
 
@@ -1063,6 +1212,7 @@ def _best_sweep_result(
     params: dict[str, Any] | None = None,
     since: str | None = None,
     as_of: str | None = None,
+    fair_sample: bool = False,
 ) -> tuple[str, str | None, dict[str, Any]]:
     """Return ``(best_timeframe, best_result_id, best_metrics)`` across all persisted
     plain backtests for the strategy, scored sharpe-first with tie-breaks on trade
@@ -1090,7 +1240,12 @@ def _best_sweep_result(
     only the declared context is judged. Crowning a better-looking timeframe after
     seeing the results is selection bias. A degenerate or missing declared slice
     comes back UNMEASURED, so the gate judges the declared row's own numbers (or
-    resubmits it) without persisting a degenerate slice."""
+    resubmits it) without persisting a degenerate slice.
+
+    ``fair_sample`` (the 2026-10 quick-screen rule): each timeframe is judged on its
+    widest window only (the quick_screen step and the sweep widen a thin window, and
+    picking the best-looking of several windows would be selection again), and rows
+    are scored and floored on the whole window rather than the out-of-sample slice."""
     from forven.db import get_db
 
     with get_db() as conn:
@@ -1127,22 +1282,26 @@ def _best_sweep_result(
     # most-traded context, never crowned by a lucky 4-trade slice.
     fb_tf, fb_result_id, fb_metrics, fb_trades = best_tf, None, {}, -1.0
     from forven.policy import is_degenerate_backtest_metrics
-    for row in rows:
-        if not _usable_sweep_artifact(row):
-            continue
-        if params is not None and not _current_sweep_artifact(
-            row,
-            params=params,
-            since=since,
-            as_of=as_of,
-        ):
-            continue
+    eligible = [
+        row for row in rows
+        if _usable_sweep_artifact(row)
+        and (params is None or _current_sweep_artifact(row, params=params, since=since, as_of=as_of))
+    ]
+    if fair_sample:
+        eligible = _widest_window_rows(eligible)
+    for row in eligible:
         metrics = _loads(row["metrics_json"], {})
         if not isinstance(metrics, dict) or not metrics:
             continue
-        trades = _metric(metrics, "total_trades", default=0.0)
-        sharpe = _metric(metrics, "sharpe_ratio", "sharpe", default=0.0)
-        total_return = _metric(metrics, "total_return_pct", "total_return", default=0.0)
+        if fair_sample:
+            whole = quick_screen_rule.whole_window(metrics)
+            trades = quick_screen_rule.whole_window_trades(metrics) or 0.0
+            sharpe = _metric(whole, "sharpe", "sharpe_ratio", default=0.0)
+            total_return = _metric(whole, "total_return_pct", "total_return", default=0.0)
+        else:
+            trades = _metric(metrics, "total_trades", default=0.0)
+            sharpe = _metric(metrics, "sharpe_ratio", "sharpe", default=0.0)
+            total_return = _metric(metrics, "total_return_pct", "total_return", default=0.0)
         tf = str(row["timeframe"] or best_tf).strip() or best_tf
         rid = str(row["result_id"]) if row["result_id"] else None
         if float(trades) > fb_trades:
@@ -1151,7 +1310,9 @@ def _best_sweep_result(
         # high Sharpe that swamps this Sharpe-dominated score and contaminates the
         # strategy's stored metrics (the gate then reads IS Sharpe 0.00 and rejects).
         # Such a slice can never be the sweep winner.
-        if is_degenerate_backtest_metrics(metrics):
+        if is_degenerate_backtest_metrics(
+            {**metrics, "total_trades": trades} if fair_sample else metrics
+        ):
             continue
         score = sharpe * 10.0 + min(trades, 100.0) * 0.01 + total_return * 0.01
         if tf.lower() == declared_tf and score > declared_score:
@@ -1191,6 +1352,7 @@ def _best_sweep_timeframe(
     params: dict[str, Any] | None = None,
     since: str | None = None,
     as_of: str | None = None,
+    fair_sample: bool = False,
 ) -> str:
     best_tf, _result_id, _metrics = _best_sweep_result(
         strategy_id,
@@ -1198,8 +1360,48 @@ def _best_sweep_timeframe(
         params=params,
         since=since,
         as_of=as_of,
+        fair_sample=fair_sample,
     )
     return best_tf
+
+
+def _row_window_days(row: Any) -> float | None:
+    """Calendar days a backtest row's configured window spans (start to end)."""
+    from datetime import datetime, timezone
+
+    config = _loads(row["config_json"], {})
+    if not isinstance(config, dict):
+        return None
+    try:
+        start = datetime.fromisoformat(str(config.get("start") or "").replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(config.get("end") or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return max(0.0, (end - start).total_seconds() / 86400.0)
+
+
+def _widest_window_rows(rows: list[Any]) -> list[Any]:
+    """Per timeframe, only the rows run on that timeframe's widest window.
+
+    Rows whose window cannot be read are kept: they predate nothing the widening
+    produces, and dropping them could leave a timeframe unmeasured.
+    """
+    widest: dict[str, float] = {}
+    spans: list[tuple[Any, str, float | None]] = []
+    for row in rows:
+        tf = str(row["timeframe"] or "").strip().lower()
+        span = _row_window_days(row)
+        spans.append((row, tf, span))
+        if span is not None:
+            widest[tf] = max(widest.get(tf, 0.0), span)
+    return [
+        row for row, tf, span in spans
+        if span is None or span >= widest.get(tf, 0.0) - _WIDEN_MIN_EXTRA_DAYS
+    ]
 
 
 def _persist_quick_screen_winner(strategy_id: str, timeframe: str, metrics: dict[str, Any]) -> None:
@@ -1307,6 +1509,7 @@ def run_validation_optimization(workflow: dict[str, Any], step: dict[str, Any]) 
         params=params,
         since=str(workflow.get("created_at") or "").strip() or None,
         as_of=_workflow_as_of(workflow),
+        fair_sample=not quick_screen_rule.is_strict(_workflow_settings(workflow).get("quick_screen")),
     )
 
     try:

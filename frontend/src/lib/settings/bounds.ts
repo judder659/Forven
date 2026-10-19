@@ -81,6 +81,8 @@ const SPECS: Record<string, Spec> = {
   'pipeline.quick_screen.min_is_sharpe': [null, null, 'any'],
   'pipeline.quick_screen.fitness_min_trades': [0, null, 1],
   'pipeline.quick_screen.fitness_min_profit_factor': [0, null, 'any'],
+  'pipeline.quick_screen.max_window_days': [0, null, 1],
+  'pipeline.quick_screen.min_oos_sharpe': [null, null, 'any'],
 
   // ---- lab: gauntlet ----
   'pipeline.gauntlet_step_stale_minutes': [1, null, 1],

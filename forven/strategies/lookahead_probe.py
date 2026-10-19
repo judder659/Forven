@@ -43,6 +43,9 @@ _PROBE_OFFSETS = (60, 40, 20, 5)
 # warm-up, and the trending/volatile segments below give a signal something to
 # actually fire on.
 _SYNTHETIC_ROWS = 900
+# A strategy silent on the 900-bar walk is probed again on this longer one before it
+# is reported unverifiable (2026-10 gate plan): slow strategies and long warm-ups.
+_REPROBE_ROWS = 3600
 
 # Left-truncation offsets k for the PREFIX-invariance arm: signals at a given
 # timestamp recomputed over df.iloc[k:]. Small enough to leave the compared span
@@ -88,6 +91,9 @@ class LookaheadVerdict:
     comparisons: int = 0
     bounded_lookback: bool | None = None
     left_comparisons: int = 0
+    # The strategy fired at no probe bar (as opposed to an uninterpretable payload or
+    # a probe fault): the one inconclusive case a longer frame can resolve.
+    silent: bool = False
 
 
 def _build_synthetic_ohlcv(rows: int = _SYNTHETIC_ROWS) -> pd.DataFrame:
@@ -240,9 +246,34 @@ def probe_lookahead(strategy_obj) -> LookaheadVerdict:
         # Nothing to probe vectorized; the per-bar path is checked elsewhere.
         return LookaheadVerdict()
 
+    verdict = _probe_on_frame(strategy_obj, _SYNTHETIC_ROWS)
+    if not verdict.silent:
+        return verdict
+    # Re-probe a silent strategy on a longer frame before calling it unverifiable
+    # (2026-10 gate plan): a slow strategy, or one with a long warm-up, often fires
+    # on none of the 900 bars yet fires on a longer walk. The verdict on the longer
+    # frame stands, a leak included.
+    longer = _probe_on_frame(strategy_obj, _REPROBE_ROWS)
+    if longer.silent:
+        return LookaheadVerdict(
+            inconclusive=(
+                "strategy emitted no signal at any probe bar of the synthetic "
+                f"{_SYNTHETIC_ROWS}-bar or {_REPROBE_ROWS}-bar walks, so right-truncation "
+                "invariance compared nothing"
+            ),
+            comparisons=0,
+            bounded_lookback=longer.bounded_lookback,
+            left_comparisons=longer.left_comparisons,
+            silent=True,
+        )
+    return longer
+
+
+def _probe_on_frame(strategy_obj, rows: int) -> LookaheadVerdict:
+    """One run of the truncation probe on a synthetic frame of ``rows`` bars."""
     strategy_file = _strategy_source_file(strategy_obj)
     try:
-        df = _build_synthetic_ohlcv()
+        df = _build_synthetic_ohlcv(rows)
         index = df.index
 
         full_payload = strategy_obj.generate_signals(df)
@@ -300,6 +331,7 @@ def probe_lookahead(strategy_obj) -> LookaheadVerdict:
                 comparisons=0,
                 bounded_lookback=bounded,
                 left_comparisons=left_comparisons,
+                silent=True,
             )
         return LookaheadVerdict(
             comparisons=comparisons,

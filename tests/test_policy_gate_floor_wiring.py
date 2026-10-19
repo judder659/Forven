@@ -144,7 +144,7 @@ def test_quick_screen_pf_floor_rejects_at_default(forven_db):
 
     passed, msg = _evaluate_quick_screen_gate("qs-default-pf", load_pipeline_config())
     assert not passed
-    assert "Profit Factor" in msg
+    assert "profit factor" in msg.lower()
     assert "1.00" in msg  # Default preset PF floor relaxed 1.05 -> 1.0
 
 
@@ -227,7 +227,7 @@ def test_gauntlet_oos_pf_floor_rejects_at_default(forven_db, monkeypatch):
 
     passed, msg = _evaluate_gauntlet_gate("g-default-pf", cfg)
     assert not passed
-    assert "Profit Factor" in msg
+    assert "profit factor" in msg.lower()
     assert "1.05" in msg
 
 
