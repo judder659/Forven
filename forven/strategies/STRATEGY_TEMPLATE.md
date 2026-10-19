@@ -410,6 +410,27 @@ STRATEGY_CLASS = RSIMomentum_S00700
 - Indicator periods should have sensible defaults (RSI: 14, EMA: 20/50/200, BB: 20)
 - You can define any parameters your strategy needs — the system stores them as-is for novel families
 
+### Declare a small search grid (`parameter_space`)
+
+The optimizer tunes your strategy over the grid `parameter_space()` returns, and the
+Deflated Sharpe gate then discounts the result by how many combinations were tried.
+Declare a SMALL grid of the values you actually believe in, as explicit choices:
+
+```python
+    def parameter_space(self) -> dict:
+        return {
+            "lookback": {"values": [14, 20, 28]},
+            "entry_z": {"values": [1.5, 2.0, 2.5]},
+        }
+```
+
+Keep it to 2-3 params with 2-4 values each (9-27 combinations). A bigger grid costs
+you twice: it takes longer and the deflation bar rises with every combination.
+If you declare nothing, the optimizer tries x0.8, x1.0 and x1.2 of your first three
+numeric `default_params` (underscore keys, `leverage` and risk fields are skipped)
+and charges you those combinations. So put the params that matter first in
+`default_params`, or declare the grid yourself.
+
 ### Trading short or both sides (REQUIRED declarations)
 
 The engine defaults every strategy to `long_only`. If your strategy shorts, declare BOTH:

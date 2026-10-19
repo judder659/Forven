@@ -437,7 +437,8 @@ def test_sandbox_only_param_space_uses_stored_then_falls_back_empty():
 
     space = {"window": [10, 30, 5]}
     assert _get_param_space("S1", "imported__x", {"window": 20, "_parameter_space": space}) == space
-    assert _get_param_space("S2", "imported__y", {"window": 20}) == {}
+    # No captured space: the automatic grid (x0.8/x1.0/x1.2 of numeric defaults).
+    assert _get_param_space("S2", "imported__y", {"window": 20}) == {"window": {"values": [16, 20, 24]}}
 
 
 def test_imported_single_asset_proxy_reports_real_data_requirements(forven_db):

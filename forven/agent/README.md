@@ -97,7 +97,10 @@ if verdict["enqueued"]:
    vectorized `generate_signals` returning a 4-tuple of bool Series; stateless;
    closed-bar only — never `.shift(-1)`; **no `stop_loss_pct` in `default_params`**;
    set `compatible_regimes = ["trending","volatile","range_bound"]` — omitting a
-   real regime makes the engine force-exit and shred the strategy).
+   real regime makes the engine force-exit and shred the strategy); declare a
+   small `parameter_space()` (2-3 params x 2-4 values, `{"p": {"values": [...]}}`).
+   With none, the optimizer tries x0.8/x1.0/x1.2 of the first three numeric
+   `default_params`; the DSR is charged every combination tried.
 2. **`enqueue`** — registers, runs a 365-day backtest, pre-screens, and (if it
    passes) promotes to the gauntlet. Never forces a gate.
 3. The background **Gauntlet Advancer** drives genuine passers through 12 steps

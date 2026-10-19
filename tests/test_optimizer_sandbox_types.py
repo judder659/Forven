@@ -1,10 +1,13 @@
 """optimize_strategy must never orphan-error a sandbox-only (imported/dropzone)
 strategy: the class is worker-held BY DESIGN, so the parent-side orphan check is
 always false for them. A sandbox strategy with no worker-captured
-_parameter_space uses the documented degenerate space (single grid evaluation
-of the stored params through the worker) instead of erroring. Pre-fix, every
+_parameter_space uses the automatic grid around its numeric defaults (gate
+plan 5/6), or with auto_search_grid off the documented degenerate space (single
+grid evaluation of the stored params through the worker), instead of erroring. Pre-fix, every
 such strategy's validation_optimization step retried into exhaustion and the
 workflow failed (S06895, 2026-07-12)."""
+
+import pytest
 
 import forven.strategies.optimizer as optimizer_mod
 from forven.strategies.optimizer import optimize_strategy
@@ -12,7 +15,21 @@ from forven.strategies.optimizer import optimize_strategy
 _SANDBOX_TYPE = "imported__dropzone_btc_funding_trend_align_s63123_b1d5025a517a"
 
 
-def test_sandbox_type_without_stored_space_uses_degenerate_grid(forven_db, monkeypatch):
+@pytest.mark.parametrize(
+    ("auto_grid", "expected_space", "expected_source"),
+    [
+        # Default: the automatic grid, x0.8/x1.0/x1.2 of the numeric defaults.
+        (True, {"fz_win": {"values": [144, 180, 216]}}, "auto_grid"),
+        # auto_search_grid off: the old degenerate one-combination grid.
+        (False, {}, "strategy"),
+    ],
+)
+def test_sandbox_type_without_stored_space(forven_db, monkeypatch, auto_grid, expected_space, expected_source):
+    import forven.research_contract as research_contract
+
+    research = research_contract.default_research_settings()
+    research["auto_search_grid"] = auto_grid
+    monkeypatch.setattr(research_contract, "get_effective_research_settings", lambda raw=None: research)
     captured: dict = {}
 
     def _fake_grid_search(strategy_id, asset, strategy_type, param_space, **kwargs):
@@ -47,9 +64,8 @@ def test_sandbox_type_without_stored_space_uses_degenerate_grid(forven_db, monke
     )
 
     assert "orphan" not in str(result.get("error") or ""), f"got: {result.get('error')}"
-    assert captured.get("param_space") == {}, (
-        "sandbox type without _parameter_space must run the degenerate grid"
-    )
+    assert captured.get("param_space") == expected_space
+    assert result.get("param_space_source") == expected_source
     assert captured.get("strategy_type") == _SANDBOX_TYPE
 
 
