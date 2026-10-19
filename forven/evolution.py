@@ -2977,6 +2977,10 @@ def paper_pool_tick(config: dict | None = None) -> dict:
         out["breadth_started"] = paper_breadth_tick()
     except Exception as exc:  # noqa: BLE001
         log.warning("Paper breadth tick failed: %s", exc)
+    try:
+        out["multi_coin_frozen"] = paper_multi_coin_tick(config)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Paper multi-coin tick failed: %s", exc)
     # Once per install: report (never act on) how live strategies fare against
     # the new live gate. Re-run on demand with `forven-agent live-recheck`.
     if not kv_get(LIVE_RECHECK_KEY):
@@ -3018,6 +3022,49 @@ def paper_breadth_tick() -> str | None:
         )
         return strategy_id if started.get("status") == "running" and not started.get("busy_with") else None
     return None
+
+
+def paper_multi_coin_tick(config: dict | None = None) -> list[dict]:
+    """Freeze the coin list of each paper strategy whose breadth test supports one.
+
+    forven.multi_coin: a paper strategy with a current ``general`` breadth result
+    becomes a multi-coin container (home coin plus the coins where the rule made
+    money in the test). The list is set once and never rewritten, so the rule's
+    coins are as fixed as its parameters. Returns the containers created.
+    """
+    from forven import multi_coin
+    from forven.policy import load_pipeline_config, strategy_breadth
+
+    config = config if config is not None else load_pipeline_config()
+    knobs = multi_coin.settings(config)
+    if not knobs["multi_coin_enabled"]:
+        return []
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM strategies WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading') "
+            "ORDER BY COALESCE(stage_changed_at, created_at) ASC"
+        ).fetchall()
+    created: list[dict] = []
+    for row in rows:
+        strategy_id = str(row["id"])
+        key = multi_coin.kv_key(strategy_id)
+        if kv_get(key):
+            continue  # frozen once, never rewritten
+        state = strategy_breadth(strategy_id)
+        coins = multi_coin.choose_coins(state, knobs["multi_coin_max_coins"])
+        if not coins:
+            continue
+        record = multi_coin.frozen_record(coins, state, datetime.now(timezone.utc).isoformat())
+        kv_set(key, record)
+        log_activity(
+            "info",
+            "pipeline",
+            f"{strategy_id} now paper-trades {len(coins)} coins ({', '.join(coins)}), "
+            f"chosen by its breadth test ({record.get('breadth_verdict')})",
+            {"strategy_id": strategy_id, **record},
+        )
+        created.append({"strategy_id": strategy_id, "coins": coins})
+    return created
 
 
 def paper_readmit_candidates(*, days: int = 30, limit: int = 100) -> list[dict]:

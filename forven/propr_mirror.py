@@ -334,7 +334,7 @@ def track_record_verdicts(records: dict[str, dict]) -> dict[str, str]:
     'probation': still collecting evidence.
     """
     from forven import live_evidence
-    from forven.policy import load_pipeline_config
+    from forven.policy import load_pipeline_config, strategy_container_coins
 
     try:
         config = load_pipeline_config()
@@ -354,6 +354,8 @@ def track_record_verdicts(records: dict[str, dict]) -> dict[str, str]:
             continue
         if state == live_evidence.STATE_FAIL:
             out[sid] = "benched"
+        elif state == live_evidence.STATE_GO and strategy_container_coins(sid):
+            out[sid] = "probation"  # multi-coin containers are not mirrored yet
         elif state == live_evidence.STATE_GO and not holdout_block:
             out[sid] = "qualified"
         else:
@@ -701,7 +703,11 @@ def _roster_trades(roster_ids: set[str]) -> list[dict]:
             f"AND (strategy_id IN ({placeholders}) OR strategy IN ({placeholders}))",
             params + params,
         ).fetchall()
-    return [dict(r) for r in rows]
+    # Multi-coin paper containers (forven.multi_coin) are not mirrored: each leg
+    # is sized on a share of the strategy's paper equity, and how a container
+    # should map onto the challenge account is not defined yet.
+    out = [dict(r) for r in rows]
+    return [row for row in out if not (isinstance(_signal_data(row), dict) and _signal_data(row).get("container_coins"))]
 
 
 def _trade_status(trade_id: str) -> str | None:

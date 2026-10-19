@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, pstdev
 from typing import Any
 
-from forven import live_evidence, paper_door, paper_pool
+from forven import live_evidence, multi_coin, paper_door, paper_pool
 from forven.baseline_hurdle import baseline_hurdle_gate_reason
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
 from forven import quick_screen_rule
@@ -295,6 +295,11 @@ DEFAULT_PIPELINE_CONFIG = {
         # Sharpe/PF floors above. "fixed" is the pre-plan rule (min_paper_days,
         # min_closed_trades, min_paper_sharpe, min_profit_factor_paper).
         **live_evidence.DEFAULTS,
+        # 2026-10 gate plan, phase 5: a paper strategy whose breadth test reads
+        # "general" paper-trades its home coin plus the coins where the rule made
+        # money, up to multi_coin_max_coins, as one record (forven.multi_coin).
+        # Paper only; the Strict paper preset switches it off.
+        **multi_coin.DEFAULTS,
     },
     # 2026-10 gate plan: which gauntlet checks block entry to paper ("enforce")
     # and which are recorded there and enforced at paper->live ("observe").
@@ -3127,6 +3132,8 @@ def _extract_reason_code(reason_text: str) -> str:
         return "breadth_pending"
     if text.startswith("breadth test home_only"):
         return "breadth_home_only"
+    if text.startswith("multi-coin live review pending"):
+        return "multi_coin_live_review"
     # Error / no-evidence outcomes must NOT share the generic ``gate_reject``
     # bucket with genuine performance rejections. "No metrics available" means
     # the backtest never ran (db-lock / timeout / process-restart / blocked
@@ -3411,6 +3418,9 @@ _EVIDENCE_ABSENCE_REASON_CODES = {
     # judges the forward record; the strategy keeps paper trading.
     "breadth_pending",
     "breadth_home_only",
+    # Live gate: a multi-coin paper container waits for the live order path to
+    # be reviewed for several coins. Not a judgement of its record.
+    "multi_coin_live_review",
 }
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _DETHRONE_MANUAL_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
@@ -4872,8 +4882,52 @@ def paper_pool_status(config: dict | None = None) -> dict:
     return paper_pool.pool_summary(knobs, in_paper, queue)
 
 
+def strategy_container_coins(strategy_id: str, symbol: str | None = None) -> list[str] | None:
+    """The frozen multi-coin list of a paper container (forven.multi_coin), or None."""
+    try:
+        record = kv_get(multi_coin.kv_key(strategy_id), None)
+    except Exception:  # noqa: BLE001 — an unreadable record means single-coin
+        return None
+    if not record:
+        return None
+    if symbol is None:
+        with get_db() as conn:
+            row = conn.execute("SELECT symbol FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        symbol = str(row["symbol"] or "") if row else ""
+    home = str(symbol or "").strip().upper().replace("-", "/").split("/")[0] or None
+    return multi_coin.coins_from_record(record, home)
+
+
+def _forward_pnls(strategy_id: str, rows: list) -> list[float]:
+    """Forward PnL fractions from closed paper-trade rows, oldest first.
+
+    A multi-coin container's trades are pooled per UTC day first
+    (multi_coin.pool_by_day): its coins move together, so the gates count days
+    of evidence, not correlated trades.
+    """
+    if strategy_container_coins(strategy_id):
+        return multi_coin.pool_by_day(
+            (
+                row["closed_at"],
+                row["pnl_pct"],
+                multi_coin.leg_weight(_parse_json_blob(row["signal_data"], {})),
+            )
+            for row in rows
+            if row["pnl_pct"] is not None
+        )
+    out: list[float] = []
+    for row in rows:
+        value = _coerce_optional_float(row["pnl_pct"])
+        if value is not None and math.isfinite(value):
+            out.append(float(value))
+    return out
+
+
 def live_forward_pnls(strategy_id: str, since: str | None) -> list[float]:
-    """Closed paper-trade PnL fractions since ``since`` (the paper-stage entry), oldest first."""
+    """Closed paper-trade PnL fractions since ``since`` (the paper-stage entry), oldest first.
+
+    Day-pooled for a multi-coin container (``_forward_pnls``).
+    """
     params: list[object] = [strategy_id]
     where_since = ""
     if since:
@@ -4881,7 +4935,7 @@ def live_forward_pnls(strategy_id: str, since: str | None) -> list[float]:
         params.append(since)
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT COALESCE(net_pnl_pct, pnl_pct) AS pnl_pct FROM trades "
+            "SELECT COALESCE(net_pnl_pct, pnl_pct) AS pnl_pct, closed_at, signal_data FROM trades "
             "WHERE COALESCE(strategy_id, strategy) = ? "
             "AND status = 'CLOSED' "
             "AND pnl_pct IS NOT NULL "
@@ -4891,12 +4945,7 @@ def live_forward_pnls(strategy_id: str, since: str | None) -> list[float]:
             + " ORDER BY datetime(closed_at)",
             tuple(params),
         ).fetchall()
-    out: list[float] = []
-    for row in rows:
-        value = _coerce_optional_float(row["pnl_pct"])
-        if value is not None and math.isfinite(value):
-            out.append(float(value))
-    return out
+    return _forward_pnls(strategy_id, rows)
 
 
 def live_pool_size(lookback_days: int, *, now: datetime | None = None) -> int:
@@ -5607,17 +5656,19 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
 
     with get_db() as conn:
         trade_rows = conn.execute(
-            "SELECT COALESCE(net_pnl_pct, pnl_pct) AS pnl_pct FROM trades "
+            "SELECT COALESCE(net_pnl_pct, pnl_pct) AS pnl_pct, closed_at, signal_data FROM trades "
             "WHERE COALESCE(strategy_id, strategy) = ? "
             "AND status = 'CLOSED' "
             "AND pnl_pct IS NOT NULL "
             "AND LOWER(COALESCE(execution_type, '')) LIKE 'paper%'"
             + _PARITY_PNL_FILTER
-            + where_since,
+            + where_since
+            + " ORDER BY datetime(closed_at)",
             tuple(params),
         ).fetchall()
 
-    pnls = [float(r["pnl_pct"]) for r in trade_rows if r["pnl_pct"] is not None]
+    # A multi-coin container's record is pooled per day (strategy_container_coins).
+    pnls = _forward_pnls(strategy_id, trade_rows)
     live = compute_live_metrics(pnls)
     total_trades = int(live.get("total_trades", 0))
     total_return = float(live.get("total_return_pct", 0.0))
@@ -5772,6 +5823,18 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
                         log.warning("Could not start the breadth test for %s: %s", strategy_id, exc)
                 code = "breadth_home_only" if "home_only" in breadth_block else "breadth_pending"
                 return False, GateRejection(breadth_block, reason_code=code)
+
+    # Multi-coin containers trade in paper only (forven.multi_coin): the live
+    # order path is single-coin until it is reviewed for several coins per
+    # strategy. The record is judged above; going live waits for that review.
+    container_coins = strategy_container_coins(strategy_id)
+    if container_coins:
+        return False, GateRejection(
+            f"Multi-coin live review pending: this strategy trades {len(container_coins)} coins "
+            f"({', '.join(container_coins)}) in paper; the live order path supports one coin "
+            "per strategy until it is reviewed for several (docs/multi-coin-live-followup.md)",
+            reason_code="multi_coin_live_review",
+        )
 
     # === Paper-to-Live Optimization Gates ===
     ps = _load_pipeline_settings()
