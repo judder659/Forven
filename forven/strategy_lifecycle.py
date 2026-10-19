@@ -29,6 +29,7 @@ from forven.strategies.certification import (
     resolve_initial_stage,
 )
 from forven.strategies.params import canonicalize_params
+from forven.quick_screen_rule import combine_is_oos_metrics
 from forven.util import normalize_stage, sanitize_json_floats
 
 _TERMINAL_DISPLAY_STAGES = {"archived", "rejected", "backtest_failed"}
@@ -509,122 +510,6 @@ def _apply_full_window_overlay(normalized: dict, raw: dict) -> None:
             normalized["out_of_sample_sharpe"] = float(oos_sharpe)
         if oos_cagr is not None:
             normalized["out_of_sample_annualized_return_pct"] = float(oos_cagr)
-
-
-def combine_is_oos_metrics(in_sample: object, out_of_sample: object) -> dict:
-    """Compose a full-window (IS + OOS) metrics view from two split blobs.
-
-    Exact fields (sums/recomputed from sums):
-        total_trades, wins, losses, breakeven_trades,
-        gross_profit, gross_loss, win_rate, profit_factor,
-        total_return_pct, backtest_months,
-        monthly_return_pct, annualized_return_pct,
-        avg_trade_pct, avg_bars_held.
-
-    Approximate fields (flagged via *_is_approximation):
-        sharpe           — bar-weighted average of IS and OOS.
-                           True combined Sharpe requires the combined
-                           return stream, which we don't persist.
-        max_drawdown_pct — max(IS, OOS). A drawdown that straddles the
-                           IS/OOS boundary would be understated here.
-    """
-    is_dict = in_sample if isinstance(in_sample, dict) else {}
-    oos_dict = out_of_sample if isinstance(out_of_sample, dict) else {}
-    if not is_dict and not oos_dict:
-        return {}
-
-    def _num(d: dict, key: str, default: float = 0.0) -> float:
-        v = _coerce_optional_float(d.get(key))
-        return float(v) if v is not None else float(default)
-
-    def _int(d: dict, key: str, default: int = 0) -> int:
-        v = _coerce_optional_float(d.get(key))
-        return int(v) if v is not None else int(default)
-
-    total_trades = _int(is_dict, "total_trades") + _int(oos_dict, "total_trades")
-    wins = _int(is_dict, "wins") + _int(oos_dict, "wins")
-    losses = _int(is_dict, "losses") + _int(oos_dict, "losses")
-    breakeven = _int(is_dict, "breakeven_trades") + _int(oos_dict, "breakeven_trades")
-    gross_profit = _num(is_dict, "gross_profit") + _num(oos_dict, "gross_profit")
-    gross_loss = _num(is_dict, "gross_loss") + _num(oos_dict, "gross_loss")
-
-    is_return = _num(is_dict, "total_return_pct")
-    oos_return = _num(oos_dict, "total_return_pct")
-    if is_dict and oos_dict:
-        total_return_pct = (1.0 + is_return) * (1.0 + oos_return) - 1.0
-    else:
-        total_return_pct = is_return or oos_return
-
-    is_months = _num(is_dict, "backtest_months")
-    oos_months = _num(oos_dict, "backtest_months")
-    months = is_months + oos_months
-
-    win_rate = (wins / total_trades) if total_trades > 0 else 0.0
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
-    monthly_return_pct = (total_return_pct / months) if months > 0 else None
-    annualized_return_pct = (
-        (1.0 + total_return_pct) ** (12.0 / months) - 1.0 if months > 0 else None
-    )
-
-    is_avg_trade = _num(is_dict, "avg_trade_pct")
-    oos_avg_trade = _num(oos_dict, "avg_trade_pct")
-    is_n = _int(is_dict, "total_trades")
-    oos_n = _int(oos_dict, "total_trades")
-    avg_trade_pct = (
-        (is_avg_trade * is_n + oos_avg_trade * oos_n) / total_trades
-        if total_trades > 0
-        else 0.0
-    )
-
-    is_avg_bars = _num(is_dict, "avg_bars_held")
-    oos_avg_bars = _num(oos_dict, "avg_bars_held")
-    avg_bars_held = (
-        (is_avg_bars * is_n + oos_avg_bars * oos_n) / total_trades
-        if total_trades > 0
-        else 0.0
-    )
-
-    is_sharpe = _coerce_optional_float(is_dict.get("sharpe"))
-    oos_sharpe = _coerce_optional_float(oos_dict.get("sharpe"))
-    if is_sharpe is not None and oos_sharpe is not None and months > 0:
-        sharpe = (
-            float(is_sharpe) * is_months + float(oos_sharpe) * oos_months
-        ) / months
-    elif is_sharpe is not None:
-        sharpe = float(is_sharpe)
-    elif oos_sharpe is not None:
-        sharpe = float(oos_sharpe)
-    else:
-        sharpe = 0.0
-
-    is_mdd = _num(is_dict, "max_drawdown_pct")
-    oos_mdd = _num(oos_dict, "max_drawdown_pct")
-    max_drawdown_pct = max(is_mdd, oos_mdd)
-
-    combined = {
-        "total_trades": total_trades,
-        "wins": wins,
-        "losses": losses,
-        "breakeven_trades": breakeven,
-        "gross_profit": gross_profit,
-        "gross_loss": gross_loss,
-        "win_rate": win_rate,
-        "profit_factor": profit_factor,
-        "total_return_pct": total_return_pct,
-        "backtest_months": months,
-        "monthly_return_pct": monthly_return_pct,
-        "annualized_return_pct": annualized_return_pct,
-        "avg_trade_pct": avg_trade_pct,
-        "avg_bars_held": avg_bars_held,
-        "sharpe": sharpe,
-        "sharpe_is_approximation": True,
-        "sharpe_is_reliable": total_trades >= 20,
-        "max_drawdown_pct": max_drawdown_pct,
-        "max_drawdown_is_approximation": True,
-        "start_date": is_dict.get("start_date") or oos_dict.get("start_date"),
-        "end_date": oos_dict.get("end_date") or is_dict.get("end_date"),
-    }
-    return combined
 
 
 def _normalize_history_metrics(raw_metrics: object) -> dict:

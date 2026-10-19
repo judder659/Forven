@@ -397,6 +397,7 @@ def test_quick_screen_guardrails_still_hard_reject_without_testing_mode(forven_d
 
     cfg = load_pipeline_config()
     cfg["testing_mode"] = False
+    cfg["quick_screen"]["rule"] = "strict"  # Gate1 is the split-slice rule
     save_pipeline_config(cfg)
 
     can_proceed, reason = _quick_screen_overfitting_guardrails(
@@ -406,6 +407,35 @@ def test_quick_screen_guardrails_still_hard_reject_without_testing_mode(forven_d
     assert can_proceed is False
     assert "Gate5" in reason  # trades floor
     assert "Gate1" in reason  # IS sharpe floor
+
+
+def test_quick_screen_guardrails_fair_sample_judge_the_whole_window(forven_db):
+    from forven.brain import _quick_screen_overfitting_guardrails
+    from forven.policy import load_pipeline_config, save_pipeline_config
+
+    cfg = load_pipeline_config()
+    cfg["testing_mode"] = False
+    save_pipeline_config(cfg)
+
+    can_proceed, reason = _quick_screen_overfitting_guardrails(
+        {"sharpe": -0.5, "total_trades": 5, "robustness_score": 0.03}
+    )
+
+    assert can_proceed is False
+    assert "Gate5" in reason and "whole window" in reason
+    assert "whole-window Sharpe -0.50" in reason
+    assert "Gate1" not in reason
+
+    # An IS/OOS gap and a sign flip are recorded, not rejected.
+    can_proceed, reason = _quick_screen_overfitting_guardrails(
+        {
+            "in_sample": {"sharpe": -0.2, "total_trades": 30, "total_return_pct": 0.02},
+            "out_of_sample": {"sharpe": 2.5, "total_trades": 12, "total_return_pct": 0.05},
+            "robustness_score": 0.5,
+        }
+    )
+    assert can_proceed is True, reason
+    assert "recorded, not enforced" in reason
 
 
 def test_quick_screen_guardrail_floors_are_wired_settings(forven_db):
@@ -420,6 +450,7 @@ def test_quick_screen_guardrail_floors_are_wired_settings(forven_db):
     cfg["quick_screen"]["min_robustness_score"] = 0
     cfg["quick_screen"]["min_is_sharpe"] = -10.0
     cfg["quick_screen"]["max_is_maxdd_pct"] = 1.0
+    cfg["quick_screen"]["rule"] = "strict"  # these are the split-slice floors
     save_pipeline_config(cfg)
 
     can_proceed, reason = _quick_screen_overfitting_guardrails(

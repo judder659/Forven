@@ -41,16 +41,19 @@ STAGE_QUICK_SCREEN = "quick_screen"
 STAGE_GAUNTLET = "gauntlet"
 STAGE_PAPER = "paper"
 
-# Quick-screen gate thresholds (judged on BOTH the in-sample and out-of-sample
-# windows of a 365-day backtest). These mirror the live pipeline config; treat
-# them as guidance for pre-screening before you enqueue into the gauntlet.
+# Quick-screen gate thresholds. The default fair-sample rule (2026-10 gate plan)
+# judges the WHOLE window (in-sample plus out-of-sample): 20+ trades, Sharpe above
+# 0, profit factor >= 1, drawdown < 30%, and an out-of-sample slice that does not
+# lose badly (Sharpe above -0.5). The gauntlet widens a thin window to up to 1,460
+# days before judging, so a short-of-trades pre-check is not a verdict. These mirror
+# the live pipeline config; treat them as guidance for pre-screening.
 QUICK_SCREEN_THRESHOLDS = {
-    "min_profit_factor": 1.05,   # gate floor; aim >=1.3 ("fitness")
-    "min_sharpe": 0.0,           # both windows; cost_stress later needs ~0.3+
-    "max_sharpe": 5.0,           # leak guard
+    "min_profit_factor": 1.0,    # whole window; aim >=1.3 ("fitness")
+    "min_sharpe": 0.0,           # whole window must be above; cost_stress later needs ~0.3+
+    "max_sharpe": 5.0,           # leak guard, either slice
     "max_drawdown_pct": 0.30,
-    "min_trades_oos": 15,
-    "min_trades_is": 20,
+    "min_trades": 20,            # whole window, after widening
+    "min_oos_sharpe": -0.5,      # the out-of-sample slice must be above
     "min_total_return_pct": 0.0,
 }
 
@@ -301,9 +304,11 @@ class ForvenAgentClient:
 
     @staticmethod
     def quick_screen(compact: dict, thresholds: dict | None = None) -> dict:
-        """Pre-screen a compact backtest against the quick-screen gate (both windows).
+        """Pre-screen a compact backtest against the quick-screen gate (whole window).
 
-        Returns {"pass": bool, "reasons": [..failing checks..]}.
+        Returns {"pass": bool, "reasons": [..failing checks..]}. Profit factor and
+        Sharpe of the whole window are the slices' trade-weighted averages (the
+        gate itself reads the summed gross profit and loss).
         """
         t = {**QUICK_SCREEN_THRESHOLDS, **(thresholds or {})}
         reasons: list[str] = []
@@ -311,20 +316,44 @@ class ForvenAgentClient:
         def num(x):
             return x if isinstance(x, (int, float)) else None
 
-        for side, min_tr in (("in_sample", t["min_trades_is"]), ("out_of_sample", t["min_trades_oos"])):
-            s = compact.get(side, {}) if isinstance(compact, dict) else {}
-            pf, sh, tr = num(s.get("profit_factor")), num(s.get("sharpe")), num(s.get("total_trades"))
-            dd, ret = num(s.get("max_drawdown_pct")), num(s.get("total_return_pct"))
-            if pf is None or pf < t["min_profit_factor"]:
-                reasons.append(f"{side} profit_factor {pf} < {t['min_profit_factor']}")
-            if sh is None or sh < t["min_sharpe"] or sh > t["max_sharpe"]:
-                reasons.append(f"{side} sharpe {sh} out of [{t['min_sharpe']},{t['max_sharpe']}]")
-            if dd is None or dd >= t["max_drawdown_pct"]:
-                reasons.append(f"{side} max_drawdown_pct {dd} >= {t['max_drawdown_pct']}")
-            if tr is None or tr < min_tr:
-                reasons.append(f"{side} total_trades {tr} < {min_tr}")
-            if ret is None or ret < t["min_total_return_pct"]:
-                reasons.append(f"{side} total_return_pct {ret} < {t['min_total_return_pct']}")
+        sides = [compact.get(side) or {} for side in ("in_sample", "out_of_sample")] if isinstance(compact, dict) else []
+        trades = [num(s.get("total_trades")) or 0 for s in sides]
+        total = sum(trades)
+
+        def weighted(key):
+            pairs = [(num(s.get(key)), n) for s, n in zip(sides, trades) if num(s.get(key)) is not None and n > 0]
+            weight = sum(n for _v, n in pairs)
+            return sum(v * n for v, n in pairs) / weight if weight else None
+
+        pf, sh = weighted("profit_factor"), weighted("sharpe")
+        returns = [num(s.get("total_return_pct")) for s in sides]
+        ret = None
+        if any(r is not None for r in returns):
+            ret = 1.0
+            for r in returns:
+                ret *= 1.0 + (r or 0.0)
+            ret -= 1.0
+        drawdowns = [num(s.get("max_drawdown_pct")) for s in sides if num(s.get("max_drawdown_pct")) is not None]
+        dd = max(drawdowns) if drawdowns else None
+        if total < t["min_trades"]:
+            reasons.append(
+                f"whole-window total_trades {total} < {t['min_trades']} (the gauntlet widens the window before judging)"
+            )
+        if pf is None or pf < t["min_profit_factor"]:
+            reasons.append(f"whole-window profit_factor {pf} < {t['min_profit_factor']}")
+        if sh is None or sh <= t["min_sharpe"]:
+            reasons.append(f"whole-window sharpe {sh} not above {t['min_sharpe']}")
+        if dd is None or dd >= t["max_drawdown_pct"]:
+            reasons.append(f"max_drawdown_pct {dd} >= {t['max_drawdown_pct']}")
+        if ret is None or ret < t["min_total_return_pct"]:
+            reasons.append(f"whole-window total_return_pct {ret} < {t['min_total_return_pct']}")
+        for side, s in zip(("in_sample", "out_of_sample"), sides):
+            side_sharpe = num(s.get("sharpe"))
+            if side_sharpe is not None and side_sharpe > t["max_sharpe"]:
+                reasons.append(f"{side} sharpe {side_sharpe} > {t['max_sharpe']} (implausible: check for a leak)")
+        oos_sharpe = num(sides[1].get("sharpe")) if len(sides) == 2 else None
+        if oos_sharpe is not None and trades[1] > 0 and oos_sharpe <= t["min_oos_sharpe"]:
+            reasons.append(f"out_of_sample sharpe {oos_sharpe} not above {t['min_oos_sharpe']}")
         return {"pass": not reasons, "reasons": reasons}
 
     def enqueue_candidate(self, file_path: str, dataset_id: str, *, session_id: str | None = None,

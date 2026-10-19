@@ -95,7 +95,11 @@ def test_gate_judges_declared_row_not_offdeclared_screen(forven_db):
     sid = "S-QSGDT1"
     stored_metrics = {"sharpe": -2.40, "total_return_pct": -9.16, "total_trades": 31}
     _insert_strategy(sid, metrics=stored_metrics)
-    workflow = create_or_get_workflow(strategy_id=sid, created_by="pytest")
+    # The out-of-sample degeneracy floor is the strict quick-screen rule's: the
+    # fair-sample rule counts the 4h row's 20 + 9 trades as a whole window.
+    workflow = create_or_get_workflow(
+        strategy_id=sid, created_by="pytest", settings_snapshot={"quick_screen": {"rule": "strict"}}
+    )
     wf_as_of = gauntlet_tasks._workflow_as_of(workflow)
     _insert_bt(sid, "bt-1h", "1h", trades=31, sharpe=-2.40, total_return=-9.16, as_of=wf_as_of)
     _insert_bt(sid, "bt-4h", "4h", trades=9, sharpe=-0.50, total_return=-1.0, as_of=wf_as_of)

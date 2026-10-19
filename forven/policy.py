@@ -10,6 +10,7 @@ from typing import Any
 
 from forven.baseline_hurdle import baseline_hurdle_gate_reason
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
+from forven import quick_screen_rule
 from forven.dethrone_cooldown import dethrone_cooldown_active_until
 
 from forven.gauntlet.legitimacy import validate_robustness_payload
@@ -101,6 +102,10 @@ DEFAULT_PIPELINE_CONFIG = {
         # always rejected regardless of this ceiling.
         "max_plausible_sharpe": 5.0,
         "max_plausible_profit_factor": 8.0,
+        # 2026-10 gate plan, phase 1 (forven/quick_screen_rule.py): the window widens
+        # until it holds min_trades, the whole window is judged, and the IS/OOS gap and
+        # ratio are recorded. rule="strict" restores the fixed window and split checks.
+        **quick_screen_rule.DEFAULTS,
     },
     "gauntlet": {
         # NOTE: the optimize/confirm WINDOW = the global `backtest_duration_days`
@@ -4018,6 +4023,9 @@ def _evaluate_quick_screen_gate(strategy_id: str, config: dict) -> tuple[bool, s
     if total_trades == 0 and oos_trades == 0:
         return False, "Quick screen reject: zero trades — strategy produces no signals in this market window"
 
+    if not quick_screen_rule.is_strict(gate):
+        return _evaluate_fair_sample_quick_screen(strategy_id, metrics, gate, config)
+
     # Launch hardening: enforce the wired quick_screen.min_trades floor. The
     # gate previously rejected ONLY the zero/zero case, so the min_trades knob
     # (default 30) was dead code and a 5-trade luck strategy advanced to the
@@ -4172,6 +4180,59 @@ def _evaluate_quick_screen_gate(strategy_id: str, config: dict) -> tuple[bool, s
         return False, f"Quick screen Sharpe too low: {sharpe:.2f} (minimum {min_sharpe:.2f})"
     
     return True, "Passed quick screen triage with S00552 guardrails"
+
+def _evaluate_fair_sample_quick_screen(
+    strategy_id: str, metrics: dict, gate: dict, config: dict
+) -> tuple[bool, str]:
+    """The quick screen under the fair-sample rule (2026-10 gate plan, phase 1).
+
+    Judges the whole screen window (the gauntlet's quick_screen step widens it
+    until it holds the trade floor): the trade floor counts both slices, return,
+    Sharpe, profit factor and drawdown are read from the whole window, and the
+    out-of-sample slice only has to avoid losing badly. The IS/OOS gap and ratio
+    are recorded in the pass message instead of rejecting. The robustness floor,
+    the implausible-metrics guard and the high-win-rate trap stay.
+    """
+    _qs_defaults = DEFAULT_PIPELINE_CONFIG["quick_screen"]
+    trades = quick_screen_rule.whole_window_trades(metrics) or 0.0
+    min_trades_floor = int(
+        _coerce_float(gate.get("min_trades", _qs_defaults["min_trades"]), _qs_defaults["min_trades"])
+    )
+    if min_trades_floor > 0 and trades < min_trades_floor:
+        return False, (
+            f"Quick screen reject: {trades:.0f} trades over the whole screen window < "
+            f"{min_trades_floor} minimum (metrics statistically meaningless below the floor)"
+        )
+
+    robustness = _resolve_robustness_points(metrics)
+    min_qs_robustness = float(gate.get("min_robustness_score", _qs_defaults.get("min_robustness_score", 0.0)) or 0.0)
+    if robustness < min_qs_robustness:
+        return False, (
+            f"S00552 REJECT: Robustness {robustness:.1f}/100 below {min_qs_robustness:.0f} "
+            "minimum (pre-gauntlet gate failed)"
+        )
+
+    failures = quick_screen_rule.fair_sample_failures(metrics, gate)
+    if failures:
+        return False, "Quick screen reject: " + "; ".join(failures)
+
+    reason = _implausible_metrics_reason(metrics, config)
+    if reason:
+        return False, reason
+
+    whole = quick_screen_rule.whole_window(metrics)
+    win_rate = _to_percent_points(whole.get("win_rate", 0.0))
+    whole_pf = quick_screen_rule.profit_factor_of(whole)
+    if whole_pf is not None and win_rate > 60.0 and whole_pf <= 1.2:
+        return False, (
+            f"OVERFIT REJECT: High win rate {win_rate:.1f}% requires whole-window PF > 1.2, "
+            f"got {whole_pf:.2f}"
+        )
+
+    divergence = quick_screen_rule.recorded_divergence(metrics)
+    log.debug("Quick screen (fair sample) passed for %s: %s", strategy_id, divergence)
+    return True, "Passed quick screen on the whole window" + (f"; {divergence}" if divergence else "")
+
 
 def _mc_dd_floor_reject(mc_payload: dict, mc_dd_limit: float) -> str | None:
     """Monte-Carlo 95th-percentile drawdown SAFETY FLOOR (S00552).

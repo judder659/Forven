@@ -1172,6 +1172,52 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
   },
 
   // Quick screen (Step 1)
+  // The rule, window ceiling and OOS floor are independent of the stance preset
+  // (SettingsLab leaves them alone when a stance is picked). forven.quick_screen_rule.
+  {
+    id: 'pipeline.quick_screen.rule',
+    label: 'Quick-screen rule',
+    default: 'fair_sample',
+    type: 'select',
+    options: [
+      { value: 'fair_sample', label: 'Fair sample (default)' },
+      { value: 'strict', label: 'Strict quick screen' },
+    ],
+    area: 'lab',
+    subsection: 'lab-pipeline-quick-screen',
+    backendSection: 'pipeline',
+    backendPath: 'quick_screen.rule',
+    description:
+      'Fair sample: the window widens (365 -> 730 -> 1,460 days, data permitting) until it holds the minimum trades, the whole window is judged (Sharpe above the minimum, profit factor at or above the floor), the out-of-sample slice only has to avoid losing badly, and the in-sample/out-of-sample gap and ratio are recorded, not enforced. Strict quick screen: a fixed window with the split in-sample and out-of-sample checks, as before the 2026-10 gate plan.',
+    usedBy: ['forven.quick_screen_rule', 'forven.policy', 'forven.brain', 'forven.gauntlet.tasks'],
+  },
+  {
+    id: 'pipeline.quick_screen.max_window_days',
+    label: 'Quick-screen widest window',
+    unit: 'days',
+    default: 1460,
+    type: 'number',
+    area: 'lab',
+    subsection: 'lab-pipeline-quick-screen',
+    backendSection: 'pipeline',
+    backendPath: 'quick_screen.max_window_days',
+    description:
+      'Fair sample: the quick-screen window doubles up to this many days while it holds fewer than the minimum trades and older data exists (0 = never widen).',
+    usedBy: ['forven.quick_screen_rule', 'forven.gauntlet.tasks'],
+  },
+  {
+    id: 'pipeline.quick_screen.min_oos_sharpe',
+    label: 'Quick-screen OOS Sharpe above',
+    default: -0.5,
+    type: 'number',
+    area: 'lab',
+    subsection: 'lab-pipeline-quick-screen',
+    backendSection: 'pipeline',
+    backendPath: 'quick_screen.min_oos_sharpe',
+    description:
+      'Fair sample: the out-of-sample slice must not lose badly. Its Sharpe must be above this value.',
+    usedBy: ['forven.quick_screen_rule'],
+  },
   {
     id: 'pipeline.quick_screen.min_total_return_pct',
     label: 'Quick-screen min total return',
@@ -1212,8 +1258,8 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     subsection: 'lab-pipeline-quick-screen',
     backendSection: 'pipeline',
     backendPath: 'quick_screen.min_sharpe',
-    description: 'Lowest Sharpe a strategy must achieve in quick screen to reach the gauntlet.',
-    usedBy: ['forven.strategy_lifecycle', 'forven.routers.strategies'],
+    description: 'Lowest Sharpe a strategy must achieve in quick screen to reach the gauntlet. The fair-sample rule requires the whole-window Sharpe to be above it.',
+    usedBy: ['forven.strategy_lifecycle', 'forven.routers.strategies', 'forven.quick_screen_rule'],
   },
   {
     id: 'pipeline.quick_screen.min_profit_factor',
@@ -1230,7 +1276,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     subsection: 'lab-pipeline-quick-screen',
     backendSection: 'pipeline',
     backendPath: 'quick_screen.min_profit_factor',
-    description: 'Profit-factor floor enforced at BOTH the in-sample and out-of-sample legs of the quick screen.',
+    description: 'Profit-factor floor of the quick screen: on the whole window under the fair-sample rule, at BOTH the in-sample and out-of-sample legs under the strict rule.',
     usedBy: ['forven.policy', 'forven.brain'],
   },
   {
@@ -1244,7 +1290,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendSection: 'pipeline',
     backendPath: 'quick_screen.min_trades',
     description:
-      'Minimum in-sample trade count for the quick-screen overfitting guardrails (Gate5). Was a hardcoded 30 before it was wired; the Default preset now runs 20 (the Strict preset restores 30). Deferred entirely when testing mode is on.',
+      'Minimum trade count of the quick screen (Gate5): over the whole, widened window under the fair-sample rule, the in-sample slice under the strict rule. Was a hardcoded 30 before it was wired; the Default preset now runs 20 (the Strict preset restores 30). Deferred entirely when testing mode is on.',
     usedBy: ['forven.brain'],
   },
   {
