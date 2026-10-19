@@ -1200,12 +1200,14 @@ def _run_monte_carlo_bootstrap(
     import multiprocessing
 
     from forven.strategies.backtest import _kill_executor_processes
+    from forven.cpu_priority import lower_process_priority as _lower_worker_priority
     from forven.strategies.concurrency import backtest_subprocess_slot
 
     try:
         with backtest_subprocess_slot("monte_carlo"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(_monte_carlo_bootstrap_worker, returns, **kwargs)
             try:
@@ -1796,12 +1798,14 @@ def _run_regime_classification(candles: "pd.DataFrame", trades: list[dict]) -> d
     import multiprocessing
 
     from forven.strategies.backtest import _kill_executor_processes
+    from forven.cpu_priority import lower_process_priority as _lower_worker_priority
     from forven.strategies.concurrency import backtest_subprocess_slot
 
     try:
         with backtest_subprocess_slot("regime_split"), concurrent.futures.ProcessPoolExecutor(
             max_workers=1,
             mp_context=multiprocessing.get_context("spawn"),
+            initializer=_lower_worker_priority, initargs=("gauntlet",),
         ) as executor:
             future = executor.submit(_regime_classify_trades_worker, candles, trades)
             try:
@@ -3275,8 +3279,13 @@ def holdout_gate_reason(
 
 
 def holdout_summary(strategy_id: str) -> dict:
-    """Cutoff, settings and this strategy's held-back test state plus latest result."""
+    """Cutoff, settings and this strategy's held-back test state plus latest result.
+
+    JSON-safe: a held-back result can carry an infinite profit factor (no losing
+    trade) or a NaN ratio, which the JSON response rejects with HTTP 500.
+    """
     from forven.research_holdout import current_cutoff
+    from forven.util import sanitize_json_floats
 
     cfg = holdout_settings()
     cutoff = current_cutoff(cfg)
@@ -3292,7 +3301,7 @@ def holdout_summary(strategy_id: str) -> dict:
                     "result": record["metrics"],
                 }
                 break
-    return {
+    return sanitize_json_floats({
         "enabled": bool(cfg.get("enabled")),
         "cutoff": cutoff.isoformat() if cutoff is not None else None,
         "roll": cfg.get("roll"),
@@ -3301,7 +3310,7 @@ def holdout_summary(strategy_id: str) -> dict:
         "max_family_shots": cfg.get("max_family_shots"),
         **state,
         "latest": latest,
-    }
+    })
 
 
 def _run_holdout_analysis(strategy_id: str) -> dict:

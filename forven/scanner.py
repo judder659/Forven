@@ -1906,7 +1906,10 @@ def _enrich_scan_frame(df: pd.DataFrame, asset: str, timeframe: str) -> pd.DataF
         )
     except Exception as exc:
         log.warning("Scan order-flow enrichment skipped for %s/%s: %s", asset, timeframe, exc)
-    return df
+    # Same frame shape as the backtest: every enrichment column, NaN when absent.
+    from forven.strategies.data_availability import ensure_enrichment_columns
+
+    return ensure_enrichment_columns(df)
 
 
 # ─── Technical Indicators ─────────────────────────────────────────────────────

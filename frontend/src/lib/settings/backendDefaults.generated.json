@@ -199,6 +199,7 @@
     "remote_engine_data_root": "",
     "remote_engine_enabled": false,
     "remote_engine_url": "http://127.0.0.1:9050",
+    "research_settings.agent_registration_daily_cap": 120,
     "research_settings.strategy_creation_daily_budget": 40,
     "research_settings.strategy_creation_max_in_flight": 2,
     "retention_activity_log_days": 90,

@@ -123,6 +123,7 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
     # A single candidate uses one execution frame. Multi-target hypotheses may
     # name several frames, but prose and external reference features are not frames.
     canonical_market_symbol = importlib.import_module("forven.dataeng.coverage").canonical_market_symbol
+    normalize_symbol = importlib.import_module("forven.symbols").normalize_symbol
 
     unresolved = []
     canonical = []
@@ -130,6 +131,12 @@ def candidate_readiness(task: dict, input_data: dict) -> dict:
         raw = str(symbol).strip()
         if raw.lower() in {"unspecified", "unknown", "tbd"} or not re.fullmatch(r"[A-Za-z0-9./:_-]+", raw):
             unresolved.append(raw)
+            continue
+        check = normalize_symbol(raw)
+        if not check.ok and re.fullmatch(r"[A-Za-z0-9/_-]+", raw):
+            # "1/USDT", "1h", "BTC/EXOTIC": say what is wrong instead of
+            # failing later on a data check for a market that cannot exist.
+            unresolved.append(f"{raw} ({check.reason})")
         else:
             canonical.append(canonical_market_symbol(re.sub(r"[-_]PERP$", "", raw, flags=re.I)))
     valid_tfs = [tf.strip() for tf in timeframes if re.fullmatch(r"[1-9][0-9]*[mhdwM]", tf.strip())]

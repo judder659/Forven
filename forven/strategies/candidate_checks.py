@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -92,11 +93,59 @@ def current_task_is_creation_task(task_display_id: str | None) -> bool:
     return str(task.get("type") or "").strip() in CREATION_TASK_TYPES
 
 
+_DEFAULT_REGISTRATION_DAILY_CAP = 120
+
+
+def agent_registration_daily_cap() -> int:
+    """Agent strategy registrations allowed per UTC day (0 = no cap)."""
+    try:
+        from forven.research_contract import get_effective_research_settings
+
+        value = get_effective_research_settings().get("agent_registration_daily_cap")
+        return max(0, int(float(_DEFAULT_REGISTRATION_DAILY_CAP if value is None else value)))
+    except Exception:
+        return _DEFAULT_REGISTRATION_DAILY_CAP
+
+
+def agent_registrations_today() -> int:
+    """Strategies registered from agent tasks since the start of the UTC day."""
+    from datetime import datetime, timezone
+
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM strategies WHERE origin_task_id IS NOT NULL "
+            "AND TRIM(origin_task_id) <> '' AND created_at >= ?",
+            (day_start.isoformat(),),
+        ).fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def registration_cap_error() -> str | None:
+    """The agent-facing error once today's agent registrations reach the cap."""
+    cap = agent_registration_daily_cap()
+    if cap <= 0:
+        return None
+    try:
+        used = agent_registrations_today()
+    except Exception as exc:  # noqa: BLE001 - a counting failure never blocks work
+        log.debug("registration cap count failed: %s", exc)
+        return None
+    if used < cap:
+        return None
+    return (
+        f"The daily cap of {cap} agent strategy registrations is reached ({used} today, UTC). "
+        "Do not register more today: finish this task by writing up what you found, and keep "
+        "the idea for a later task."
+    )
+
+
 def validate_agent_registration(agent_id: str | None, task_display_id: str | None) -> str | None:
     """Return an agent-facing error when an in-app agent may not register now.
 
     Manual, MCP and Brain calls pass. An agent must register from its own
-    running task, so strategies are always tied to the work that asked for them.
+    running task, so strategies are always tied to the work that asked for them,
+    and only up to the daily registration cap.
     """
     normalized_agent_id = str(agent_id or "").strip()
     if not normalized_agent_id or normalized_agent_id == "brain":
@@ -109,7 +158,7 @@ def validate_agent_registration(agent_id: str | None, task_display_id: str | Non
         )
     if str(task.get("agent_id") or "").strip() != normalized_agent_id:
         return "Agent-created strategies must be registered from a task assigned to the current agent."
-    return None
+    return registration_cap_error()
 
 
 @dataclass(frozen=True)
@@ -148,6 +197,38 @@ def fair_test_min_trades() -> int:
         return max(1, int(float(quick_screen.get("min_trades") or 0)))
     except Exception:
         return _FALLBACK_MIN_TRADES
+
+
+def fair_sample_window_days() -> float | None:
+    """The quick screen's widest window in days under the fair-sample rule, else None.
+
+    Under ``quick_screen.rule = "fair_sample"`` the quick screen widens a slow
+    strategy's window (up to ``max_window_days``) until it holds the trade floor,
+    so a registration check on the default window must not reject a candidate
+    the quick screen would judge. Under the strict rule (or an install without
+    the rule) the fixed window applies and this returns None.
+    """
+    try:
+        from forven.policy import load_pipeline_config
+
+        quick_screen = load_pipeline_config().get("quick_screen") or {}
+        if str(quick_screen.get("rule") or "strict").strip().lower() != "fair_sample":
+            return None
+        return max(1.0, float(quick_screen.get("max_window_days") or 1460))
+    except Exception:
+        return None
+
+
+def required_candidate_trades(min_trades: int, window_days: float | None) -> int:
+    """Trades a candidate needs on a ``window_days`` check to reach the floor.
+
+    The fair-sample rule judges the trade rate: a strategy that would reach
+    ``min_trades`` over the quick screen's widest window passes, pro rata.
+    """
+    widest = fair_sample_window_days()
+    if widest is None or not window_days or window_days >= widest:
+        return min_trades
+    return max(1, math.ceil(min_trades * float(window_days) / widest))
 
 
 def min_feed_coverage_pct() -> float:
@@ -237,6 +318,7 @@ def check_candidate_trades(strategy_id: str, *, budget_seconds: float = CANDIDAT
                                    detail=detail)
     metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
     trades = _effective_trades(metrics)
+    min_trades = required_candidate_trades(min_trades, _window_days(result))
     short_feeds = _short_history_feeds(row, symbol, timeframe, result)
     if short_feeds:
         status = "short_history"
@@ -245,6 +327,19 @@ def check_candidate_trades(strategy_id: str, *, budget_seconds: float = CANDIDAT
     return CandidateTradeCheck(
         status, trades=trades, min_trades=min_trades, symbol=symbol, timeframe=timeframe, short_feeds=short_feeds
     )
+
+
+def _window_days(result: dict) -> float | None:
+    """Days between a backtest result's start and end dates, or None."""
+    try:
+        from datetime import datetime
+
+        start = datetime.fromisoformat(str(result.get("start_date"))[:19])
+        end = datetime.fromisoformat(str(result.get("end_date"))[:19])
+    except (TypeError, ValueError):
+        return None
+    days = (end - start).total_seconds() / 86400.0
+    return days if days > 0 else None
 
 
 def _short_history_feeds(row: Any, symbol: str, timeframe: str, result: dict) -> tuple[tuple[str, str], ...]:

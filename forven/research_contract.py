@@ -64,6 +64,11 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     # tasks queued per UTC day, and creation tasks allowed in flight at once.
     "strategy_creation_daily_budget": 40,
     "strategy_creation_max_in_flight": 2,
+    # Strategies agents may register per UTC day, across all their tasks (0 = no
+    # cap). One creation task can register several candidates; before this cap
+    # agents registered about 400 a day and three in four never traded enough to
+    # be judged. Registrations the operator or Brain makes do not count.
+    "agent_registration_daily_cap": 120,
     # A new agent candidate whose input feeds cover less than this percent of the
     # quick-screen window cannot be fairly tested there (a recently collected feed
     # is "present" but silent for most of the window). It is archived

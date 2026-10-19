@@ -84,7 +84,9 @@ def parse_backtesting_dataset_context(dataset_id: object) -> tuple[str, str]:
     if not normalized:
         return "", ""
 
-    normalized = re.sub(r"^(?:remote-)?dataset-\d+-", "", normalized, flags=re.IGNORECASE)
+    # Same prefix rule as forven.symbols.parse_dataset_id: "DATASET-SUI/USDT"
+    # (no number) is a dataset id too.
+    normalized = re.sub(r"^(?:remote-)?dataset(?:-\d+)?-", "", normalized, flags=re.IGNORECASE)
     parts = normalized.split("-")
     if len(parts) >= 2 and parts[-1].lower() in _VALID_DATASET_TIMEFRAMES:
         symbol = "-".join(parts[:-1]).strip()
