@@ -1,6 +1,7 @@
 """Single source of truth for all pipeline promotion, demotion, and gate policies."""
 
 import copy
+import importlib
 import json
 import logging
 import math
@@ -3117,6 +3118,10 @@ def _extract_reason_code(reason_text: str) -> str:
         return "paper_queue_full"
     if text.startswith("live evidence pending"):
         return "live_evidence_pending"
+    if text.startswith("breadth test pending"):
+        return "breadth_pending"
+    if text.startswith("breadth test home_only"):
+        return "breadth_home_only"
     # Error / no-evidence outcomes must NOT share the generic ``gate_reject``
     # bucket with genuine performance rejections. "No metrics available" means
     # the backtest never ran (db-lock / timeout / process-restart / blocked
@@ -3397,6 +3402,10 @@ _EVIDENCE_ABSENCE_REASON_CODES = {
     # Live gate: forward evidence is not yet decisive either way (sequential test
     # "continue") or could not be loaded. Keep paper trading.
     "live_evidence_pending",
+    # Live gate: the breadth test has not finished, or reads home_only. Neither
+    # judges the forward record; the strategy keeps paper trading.
+    "breadth_pending",
+    "breadth_home_only",
 }
 _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _DETHRONE_MANUAL_STAGES = {"paper", "paper_trading", "live_graduated", "deployed"}
@@ -4736,6 +4745,25 @@ def _paper_pool_family(row) -> str:
     )
 
 
+def strategy_breadth(strategy_id: str) -> dict:
+    """The stored breadth test state (forven.breadth.get_breadth), or ``{"status": "none"}``."""
+    try:
+        # Imported by name: breadth runs backtests, so a static import here would
+        # pull it into the policy import cycle (tests/test_finish_db_layering.py).
+        return importlib.import_module("forven.breadth").get_breadth(strategy_id)
+    except Exception as exc:  # noqa: BLE001 — unreadable breadth counts as not run
+        log.debug("Breadth state unavailable for %s: %s", strategy_id, exc)
+        return {"strategy_id": strategy_id, "status": "none"}
+
+
+def _breadth_verdict(strategy_id: str) -> str | None:
+    state = strategy_breadth(strategy_id)
+    if state.get("status") != "done" or state.get("stale"):
+        return None
+    summary = state.get("summary") if isinstance(state.get("summary"), dict) else {}
+    return summary.get("verdict")
+
+
 def _paper_evidence_score(row) -> float:
     """The paper-queue rank from what the door recorded (paper_pool.evidence_score)."""
     keys = set(row.keys()) if hasattr(row, "keys") else set()
@@ -4749,6 +4777,7 @@ def _paper_evidence_score(row) -> float:
         row["deflated_sharpe"] if "deflated_sharpe" in keys else None,
         _resolve_robustness_points(metrics) if metrics else None,
         oos.get("sharpe_ratio", oos.get("sharpe")),
+        _breadth_verdict(str(row["id"])) if "id" in keys else None,
     )
 
 
@@ -5666,6 +5695,22 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
             return False, GateRejection(
                 f"Live evidence pending: {evidence.get('reason')}", reason_code="live_evidence_pending"
             )
+        # The breadth test is required for live (2026-10 gate plan): the rule
+        # must not be fitted to its home coin. A missing or stale result is
+        # started here and holds the strategy in paper until it finishes.
+        if live_evidence.settings(config)["live_require_breadth"]:
+            breadth_state = strategy_breadth(strategy_id)
+            breadth_block = live_evidence.breadth_reason(breadth_state)
+            if breadth_block:
+                if not dry_run and breadth_state.get("status") != "running" and "pending" in breadth_block:
+                    try:
+                        importlib.import_module("forven.breadth").start_breadth(
+                            strategy_id, refresh=bool(breadth_state.get("stale"))
+                        )
+                    except Exception as exc:  # noqa: BLE001 — retried on the next gate pass
+                        log.warning("Could not start the breadth test for %s: %s", strategy_id, exc)
+                code = "breadth_home_only" if "home_only" in breadth_block else "breadth_pending"
+                return False, GateRejection(breadth_block, reason_code=code)
 
     # === Paper-to-Live Optimization Gates ===
     ps = _load_pipeline_settings()

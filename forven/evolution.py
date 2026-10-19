@@ -14,6 +14,7 @@ Promotion criteria:
 
 import asyncio
 import concurrent.futures
+import importlib
 import json
 import logging
 import re
@@ -2972,6 +2973,10 @@ def paper_pool_tick(config: dict | None = None) -> dict:
 
     config = config if config is not None else load_pipeline_config()
     out: dict = {"retired": paper_retire_sweep(config), "admitted": paper_admit_from_queue(config)}
+    try:
+        out["breadth_started"] = paper_breadth_tick()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Paper breadth tick failed: %s", exc)
     # Once per install: report (never act on) how live strategies fare against
     # the new live gate. Re-run on demand with `forven-agent live-recheck`.
     if not kv_get(LIVE_RECHECK_KEY):
@@ -2980,6 +2985,39 @@ def paper_pool_tick(config: dict | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("Live re-check report failed: %s", exc)
     return out
+
+
+def paper_breadth_tick() -> str | None:
+    """Start the breadth test for the paper or queued strategy that most needs it.
+
+    The breadth verdict ranks the paper queue and is required for live, and only
+    one breadth run goes at a time, so each tick starts at most one: paper
+    strategies first (oldest in paper, closest to the live gate), then the queue
+    best first. Returns the strategy id started, or None.
+    """
+    from forven.policy import paper_queue_snapshot, strategy_breadth
+
+    with get_db() as conn:
+        paper = [
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM strategies WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading') "
+                "ORDER BY COALESCE(stage_changed_at, created_at) ASC"
+            ).fetchall()
+        ]
+    queued = [str(entry.get("strategy_id")) for entry in paper_queue_snapshot(50) if entry.get("strategy_id")]
+    for strategy_id in [*paper, *queued]:
+        state = strategy_breadth(strategy_id)
+        if state.get("status") == "running":
+            return None  # one at a time
+        if state.get("status") == "done" and not state.get("stale"):
+            continue
+        # By name, as in policy.strategy_breadth: keeps breadth out of the import cycle.
+        started = importlib.import_module("forven.breadth").start_breadth(
+            strategy_id, refresh=bool(state.get("stale"))
+        )
+        return strategy_id if started.get("status") == "running" and not started.get("busy_with") else None
+    return None
 
 
 def paper_readmit_candidates(*, days: int = 30, limit: int = 100) -> list[dict]:

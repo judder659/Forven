@@ -59,7 +59,14 @@ DEFAULTS: dict[str, Any] = {
     "live_backtest_weight": 0.5,
     "live_pool_correction": "sidak",  # sidak | none
     "live_pool_lookback_days": 90,
+    # The breadth test (forven.breadth) must have run on the current rule, with a
+    # verdict other than home_only, before a strategy can go live.
+    "live_require_breadth": True,
 }
+
+# Breadth verdicts that may go live. too_few (fewer than 5 other coins traded,
+# e.g. a feed only one coin has) is no evidence either way, so it does not block.
+BREADTH_LIVE_OK = frozenset({"general", "mixed", "too_few"})
 
 _MAX_ABS_TRADE_SHARPE = 3.0  # per-trade Sharpe cap: a near-constant series must not dominate
 
@@ -73,6 +80,10 @@ def settings(config: Mapping[str, Any] | None) -> dict[str, Any]:
     out["live_gate_mode"] = mode if mode in {"sequential", "fixed"} else DEFAULTS["live_gate_mode"]
     correction = str(block.get("live_pool_correction") or DEFAULTS["live_pool_correction"]).strip().lower()
     out["live_pool_correction"] = correction if correction in {"sidak", "none"} else "sidak"
+    require = block.get("live_require_breadth", DEFAULTS["live_require_breadth"])
+    out["live_require_breadth"] = (
+        require if isinstance(require, bool) else str(require).strip().lower() not in {"0", "false", "off", "no"}
+    )
     for key, low, high, cast in (
         ("live_min_forward_trades", 2, 10_000, int),
         ("live_min_paper_days", 0, 3650, int),
@@ -85,6 +96,32 @@ def settings(config: Mapping[str, Any] | None) -> dict[str, Any]:
         except (TypeError, ValueError):
             out[key] = DEFAULTS[key]
     return out
+
+
+def breadth_reason(state: Mapping[str, Any] | None) -> str | None:
+    """Why the breadth test blocks going live, or None when it allows it.
+
+    ``state`` is ``forven.breadth.get_breadth``'s result. The test must have
+    finished on the current rule (not stale) with a verdict in BREADTH_LIVE_OK.
+    """
+    state = state if isinstance(state, Mapping) else {}
+    status = str(state.get("status") or "none")
+    if status == "running":
+        return "Breadth test pending: running on 15 coins"
+    if status != "done":
+        return f"Breadth test pending: {'not run yet' if status == 'none' else status}"
+    if state.get("stale"):
+        return "Breadth test pending: the rule changed since it ran"
+    summary = state.get("summary") if isinstance(state.get("summary"), Mapping) else {}
+    verdict = str(summary.get("verdict") or "")
+    if verdict in BREADTH_LIVE_OK:
+        return None
+    if verdict == "home_only":
+        return (
+            f"Breadth test home_only: {summary.get('other_positive')} of {summary.get('other_traded')} "
+            "other coins made money, so the edge looks fitted to its home coin"
+        )
+    return f"Breadth test pending: no verdict ({verdict or 'missing'})"
 
 
 def _norm_ppf(p: float) -> float:

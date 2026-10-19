@@ -1391,6 +1391,19 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.live_evidence', 'forven.policy'],
   },
   {
+    id: 'pipeline.paper_trading.live_require_breadth',
+    label: 'Live gate: require the breadth test',
+    default: true,
+    type: 'toggle',
+    area: 'lab',
+    subsection: 'lab-pipeline-paper-live-gates',
+    backendSection: 'pipeline',
+    backendPath: 'paper_trading.live_require_breadth',
+    description:
+      'Before going live, the rule must have been run unchanged on 15 coins with a verdict other than home_only (edge only on its home coin). A missing result is started automatically (sequential rule).',
+    usedBy: ['forven.live_evidence', 'forven.policy', 'forven.breadth'],
+  },
+  {
     id: 'pipeline.paper_trading.live_sequential_alpha',
     label: 'Live gate: false-positive rate',
     default: 0.05,

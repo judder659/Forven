@@ -155,6 +155,7 @@
     "paper_trading.live_gate_mode": "sequential",
     "paper_trading.live_min_forward_trades": 20,
     "paper_trading.live_min_paper_days": 30,
+    "paper_trading.live_require_breadth": true,
     "paper_trading.live_sequential_alpha": 0.05,
     "paper_trading.live_strict_robustness_enabled": true,
     "paper_trading.max_drawdown_pct": 15.0,

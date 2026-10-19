@@ -141,17 +141,26 @@ def market_of(symbol: object) -> str:
     return text.split(":", 1)[0]
 
 
-def evidence_score(deflated_sharpe: object, robustness_points: object, oos_sharpe: object) -> float:
+# Breadth test verdict (forven.breadth) added to the queue rank: a rule that
+# works on most coins goes first, one fitted to its home coin goes last.
+BREADTH_RANK_BONUS = {"general": 0.2, "mixed": 0.05, "too_few": 0.0, "home_only": -0.2}
+
+
+def evidence_score(
+    deflated_sharpe: object, robustness_points: object, oos_sharpe: object, breadth_verdict: object = None
+) -> float:
     """Rank of a door-passing strategy in the paper queue (higher goes first).
 
     0.4 x deflated Sharpe (0-1) + 0.3 x robustness score (0-100, scaled to 0-1)
-    + 0.3 x out-of-sample Sharpe squashed to 0-1 by tanh. A missing component
-    counts as zero, so better-evidenced strategies rank ahead.
+    + 0.3 x out-of-sample Sharpe squashed to 0-1 by tanh, plus the breadth
+    verdict's BREADTH_RANK_BONUS. A missing component counts as zero, so
+    better-evidenced strategies rank ahead.
     """
     dsr = min(max(_float(deflated_sharpe, 0.0), 0.0), 1.0)
     robustness = min(max(_float(robustness_points, 0.0) / 100.0, 0.0), 1.0)
     oos = max(math.tanh(_float(oos_sharpe, 0.0)), 0.0)
-    return round(0.4 * dsr + 0.3 * robustness + 0.3 * oos, 6)
+    breadth = BREADTH_RANK_BONUS.get(str(breadth_verdict or ""), 0.0)
+    return round(0.4 * dsr + 0.3 * robustness + 0.3 * oos + breadth, 6)
 
 
 def strategy_row(conn, strategy_id: str):

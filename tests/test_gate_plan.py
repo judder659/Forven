@@ -414,3 +414,78 @@ def test_gate_plan_migration_keeps_an_operator_value(forven_db):
     kv_set("forven:settings", _settings_with_lag(4))
     assert apply_gate_plan_migration(kv_get, kv_set)["lag_quarters"] is None
     assert kv_get("forven:settings")["research_settings"]["research_holdout"]["lag_quarters"] == 4
+
+
+# --- breadth test: ranks the paper queue, required for live ---------------------------
+
+
+def _breadth(status="done", verdict="general", stale=False, **summary):
+    return {"status": status, "stale": stale, "summary": {"verdict": verdict, **summary}}
+
+
+@pytest.mark.parametrize("state,blocks,fragment", [
+    (_breadth(verdict="general"), False, None),
+    (_breadth(verdict="mixed"), False, None),
+    (_breadth(verdict="too_few"), False, None),
+    (_breadth(verdict="home_only", other_positive=2, other_traded=12), True, "home_only"),
+    (_breadth(status="running"), True, "pending"),
+    ({"status": "none"}, True, "not run yet"),
+    (_breadth(stale=True), True, "rule changed"),
+    (None, True, "pending"),
+])
+def test_breadth_reason(state, blocks, fragment):
+    reason = live_evidence.breadth_reason(state)
+    assert bool(reason) is blocks
+    if fragment:
+        assert fragment in reason
+
+
+def test_breadth_requirement_is_on_by_default_and_can_be_turned_off():
+    assert live_evidence.settings({})["live_require_breadth"] is True
+    assert live_evidence.settings({"paper_trading": {"live_require_breadth": False}})["live_require_breadth"] is False
+    assert live_evidence.settings({"paper_trading": {"live_require_breadth": "off"}})["live_require_breadth"] is False
+
+
+def test_breadth_verdict_moves_the_queue_rank():
+    base = paper_pool.evidence_score(0.5, 60, 1.0)
+    assert paper_pool.evidence_score(0.5, 60, 1.0, "general") > paper_pool.evidence_score(0.5, 60, 1.0, "mixed") > base
+    assert paper_pool.evidence_score(0.5, 60, 1.0, "home_only") < base
+    assert paper_pool.evidence_score(0.5, 60, 1.0, "too_few") == base
+
+
+def test_breadth_codes_are_not_merit():
+    assert policy._extract_reason_code("Breadth test pending: not run yet") == "breadth_pending"
+    assert policy._extract_reason_code("Breadth test home_only: 2 of 12 other coins made money") == "breadth_home_only"
+
+
+def test_breadth_verdict_ignores_stale_or_unfinished_runs(monkeypatch):
+    monkeypatch.setattr(policy, "strategy_breadth", lambda sid: _breadth(verdict="general"))
+    assert policy._breadth_verdict("S1") == "general"
+    monkeypatch.setattr(policy, "strategy_breadth", lambda sid: _breadth(verdict="general", stale=True))
+    assert policy._breadth_verdict("S1") is None
+    monkeypatch.setattr(policy, "strategy_breadth", lambda sid: {"status": "running"})
+    assert policy._breadth_verdict("S1") is None
+
+
+def test_pool_tick_starts_one_breadth_run_paper_first(forven_db, monkeypatch):
+    import forven.breadth as breadth
+
+    now = datetime.now(timezone.utc)
+    with get_db() as conn:
+        for sid, days in (("S-P-NEW", 2), ("S-P-OLD", 20)):
+            conn.execute(
+                "INSERT INTO strategies (id, name, stage, stage_changed_at) VALUES (?, ?, 'paper', ?)",
+                (sid, sid, (now - timedelta(days=days)).isoformat()),
+            )
+    states = {"S-P-OLD": _breadth(verdict="general"), "S-P-NEW": {"status": "none"}}
+    monkeypatch.setattr(policy, "strategy_breadth", lambda sid: states.get(sid, {"status": "none"}))
+    monkeypatch.setattr(policy, "paper_queue_snapshot", lambda limit=100: [{"strategy_id": "S-Q"}])
+    started: list[str] = []
+    monkeypatch.setattr(breadth, "start_breadth",
+                        lambda sid, refresh=False: started.append(sid) or {"status": "running"})
+    assert evolution.paper_breadth_tick() == "S-P-NEW"
+    assert started == ["S-P-NEW"]
+
+    states["S-P-NEW"] = {"status": "running"}
+    assert evolution.paper_breadth_tick() is None  # one at a time
+    assert started == ["S-P-NEW"]
