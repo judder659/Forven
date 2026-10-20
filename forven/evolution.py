@@ -1828,6 +1828,10 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
             total_trades = int(metrics.get("total_trades") or 0)
             fitness = metrics.get("fitness")
             cagr = metrics.get("cagr") or metrics.get("total_return") or metrics.get("total_return_pct")
+            # A re-queued strategy's metrics are not a quick-screen verdict until its
+            # fresh quick screen writes them (dropping the stamp): until then the
+            # quick-screen rules judge its age, not those numbers.
+            judge_metrics = not metrics.get(REQUEUE_STALE_METRICS_KEY)
 
             reason = None
 
@@ -1891,11 +1895,11 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
                     reason = f"Untested after {age_days:.0f}d in quick_screen"
 
                 # Rule 3: Tested garbage
-                elif total_trades > 0 and sharpe < 0 and cagr is not None and float(cagr) < 0:
+                elif judge_metrics and total_trades > 0 and sharpe < 0 and cagr is not None and float(cagr) < 0:
                     reason = f"Negative sharpe ({sharpe:.3f}) and negative return"
 
                 # Rule 4: Tested zero trades
-                elif metrics and total_trades == 0 and age_days > _GAUNTLET_ZERO_TRADE_DAYS:
+                elif judge_metrics and metrics and total_trades == 0 and age_days > _GAUNTLET_ZERO_TRADE_DAYS:
                     reason = "Zero trades after testing (broken strategy)"
 
             if reason:
@@ -3076,6 +3080,24 @@ def paper_readmit_candidates(*, days: int = 30, limit: int = 100) -> list[dict]:
 
 
 _REQUEUE_FROM_STAGES = frozenset({"archived", "rejected", "backtest_failed"})
+# Stamped into a re-queued strategy's metrics. Other backtests may merge numbers into
+# them before the fresh quick screen runs (the evolution validation matrix does, on its
+# own window); the quick screen overwrites the blob, dropping the stamp, when it judges
+# the strategy. Until then the hygiene sweep's quick-screen rules leave the numbers alone.
+REQUEUE_STALE_METRICS_KEY = "_stale_since_requeue"
+
+
+def _mark_metrics_stale(strategy_id: str) -> None:
+    with get_db() as conn:
+        row = conn.execute("SELECT metrics FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        try:
+            metrics = json.loads(row["metrics"]) if row and row["metrics"] else {}
+        except (TypeError, ValueError):
+            metrics = {}
+        if not isinstance(metrics, dict):
+            metrics = {}
+        metrics[REQUEUE_STALE_METRICS_KEY] = datetime.now(timezone.utc).isoformat()
+        conn.execute("UPDATE strategies SET metrics = ? WHERE id = ?", (json.dumps(metrics), strategy_id))
 
 
 def paper_requeue(strategy_ids: list[str], *, actor: str = "triage-cli") -> list[dict]:
@@ -3108,6 +3130,7 @@ def paper_requeue(strategy_ids: list[str], *, actor: str = "triage-cli") -> list
                 )
                 entry["stage"] = moved.get("to") or row["stage"]
                 if moved.get("to") == "quick_screen":
+                    _mark_metrics_stale(strategy_id)
                     entry["workflow_id"] = restart_workflow_with_current_settings(
                         strategy_id,
                         created_by=actor,

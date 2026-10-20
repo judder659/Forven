@@ -135,3 +135,43 @@ def test_requeue_leaves_active_and_unknown_strategies_alone(forven_db):
     active, missing = evolution.paper_requeue(["S-RQ4", "S-NOPE"], actor="api")
     assert active == {"strategy_id": "S-RQ4", "stage": "paper", "detail": "not re-queued: already paper"}
     assert missing == {"strategy_id": "S-NOPE", "error": "strategy not found"}
+
+
+_FAILED_RUN_METRICS = {"sharpe_ratio": -1.84, "total_trades": 41, "total_return_pct": -8.26}
+
+
+def _set_metrics(sid: str, metrics: dict) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET metrics = ? WHERE id = ?", (json.dumps(metrics), sid))
+
+
+def _stage(sid: str) -> str:
+    with get_db() as conn:
+        return conn.execute("SELECT stage FROM strategies WHERE id = ?", (sid,)).fetchone()["stage"]
+
+
+def _metrics(sid: str) -> dict:
+    with get_db() as conn:
+        raw = conn.execute("SELECT metrics FROM strategies WHERE id = ?", (sid,)).fetchone()["metrics"]
+    return json.loads(raw) if raw else {}
+
+
+def test_hygiene_sweep_does_not_judge_a_requeued_strategy_before_its_fresh_quick_screen(forven_db, monkeypatch):
+    monkeypatch.setattr(evolution, "_SWEEP_COOLDOWN_SECONDS", 0)
+    _archive_with_failed_workflow("S-RQ5")
+    _set_metrics("S-RQ5", _FAILED_RUN_METRICS)
+
+    evolution.paper_requeue(["S-RQ5"], actor="api")
+    assert _metrics("S-RQ5").get(evolution.REQUEUE_STALE_METRICS_KEY)
+
+    # Before the quick screen runs, writers that merge into the blob (the robustness
+    # recalculation backfills the latest plain backtest: the run it failed) bring the
+    # old losing numbers back. The stamp survives the merge, so the sweep skips them.
+    _set_metrics("S-RQ5", {**_FAILED_RUN_METRICS, **_metrics("S-RQ5")})
+    evolution._sweep_pipeline_hygiene()
+    assert _stage("S-RQ5") == "quick_screen"
+
+    # The quick screen replaces the blob with its own verdict; losing numbers then count.
+    _set_metrics("S-RQ5", _FAILED_RUN_METRICS)
+    evolution._sweep_pipeline_hygiene()
+    assert _stage("S-RQ5") == "archived"
