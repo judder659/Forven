@@ -47,9 +47,12 @@ Set `FORVEN_BOT_SANDBOX=0` in Forven's environment to turn it off.
 - Bots can still *read* most of your profile, though not the key or `.env`
   files. A separate Windows account would close that, at the cost of a setup
   step.
-- Bots read and write the shared database directly, so a compromised bot could
-  change settings stored there. Closing that means moving bot writes behind the
-  API.
+- A paper bot's own writes and reads (its trades, status, decisions,
+  positions, and the market data its inputs use) go through the API, which
+  only lets it touch its own rows. A bot can still open the database file
+  itself, and its AI calls still read and write shared settings there, so a
+  compromised bot could change them. Live order records still go straight to
+  the database.
 - The API trusts any program on this PC that connects over localhost unless
   `FORVEN_API_KEY` and `FORVEN_OPERATOR_KEY` are set.
 - Live bots still receive their Hyperliquid credentials as environment

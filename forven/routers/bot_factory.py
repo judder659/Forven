@@ -45,16 +45,32 @@ class BotWriteRequest(BaseModel):
     args: dict = {}
 
 
-@internal_router.post("/api/bot-factory/internal/bots/{bot_id}/write")
-def bot_write(bot_id: str, body: BotWriteRequest, request: Request):
-    """A bot subprocess's own database write (forven.bot_factory.bot_writes)."""
+def _require_local_bot_process(request: Request) -> None:
     client_host = request.client.host if request.client else ""
     server = request.scope.get("server") or ("", 0)
     is_local = bool(client_host) and (is_loopback_host(client_host) or client_host == server[0])
     if not is_local:
-        raise HTTPException(status_code=403, detail="Bot writes are only accepted from local bot processes")
+        raise HTTPException(status_code=403, detail="Only accepted from local bot processes")
+
+
+@internal_router.post("/api/bot-factory/internal/bots/{bot_id}/write")
+def bot_write(bot_id: str, body: BotWriteRequest, request: Request):
+    """A bot subprocess's own database write (forven.bot_factory.bot_writes)."""
+    _require_local_bot_process(request)
     try:
         return bf_domain.api_bot_write(bot_id, request.headers.get(BOT_TOKEN_HEADER), body.op, body.args)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@internal_router.post("/api/bot-factory/internal/bots/{bot_id}/read")
+def bot_read(bot_id: str, body: BotWriteRequest, request: Request):
+    """A bot subprocess's read of its own rows or market data."""
+    _require_local_bot_process(request)
+    try:
+        return bf_domain.api_bot_read(bot_id, request.headers.get(BOT_TOKEN_HEADER), body.op, body.args)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:

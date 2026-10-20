@@ -20,16 +20,14 @@ import psutil
 from forven.bot_factory.inputs import InputSources, enrich_snapshot, normalize_inputs
 from forven.bot_factory import rules
 import forven.db as _db
-from forven.bot_factory.bot_writes import routed
-from forven.db import (
-    get_bot,
-    get_bot_equity_state,
-    get_bot_run_id,
-    get_open_bot_positions,
-)
+from forven.bot_factory.bot_writes import routed, routed_read
 
-# The bot's own writes: through the API inside a bot subprocess, straight to
-# the database elsewhere.
+# The bot's own reads and writes: through the API inside a bot subprocess,
+# straight to the database elsewhere.
+get_bot = routed_read(_db, "get_bot")
+get_bot_equity_state = routed_read(_db, "get_bot_equity_state")
+get_bot_run_id = routed_read(_db, "get_bot_run_id")
+get_open_bot_positions = routed_read(_db, "get_open_bot_positions")
 accrue_bot_funding = routed(_db, "accrue_bot_funding")
 close_bot_trade = routed(_db, "close_bot_trade")
 execute_bot_trade = routed(_db, "execute_bot_trade")
@@ -269,36 +267,20 @@ def _build_memory_query(
     return ", ".join(fragments)
 
 
-def _signal_rows(coins: list[str], since: str) -> list[dict]:
-    """Recent entry/exit signals of paper and live strategies on these coins."""
-    from forven.db import get_db
-
-    marks = ",".join("?" for _ in coins)
-    with get_db() as conn:
-        rows = conn.execute(
-            f"""SELECT r.strategy_id, r.symbol, r.signal_type, r.ts, r.price,
-                       s.name, s.display_name, s.status
-                FROM scanner_signal_results r
-                JOIN strategies s ON s.id = r.strategy_id
-                WHERE r.matched = 1 AND r.signal_type IN ('entry', 'exit')
-                  AND r.ts >= ? AND UPPER(r.symbol) IN ({marks})
-                  AND s.status IN ('paper', 'live_graduated')
-                ORDER BY r.ts DESC LIMIT 200""",
-            (since, *coins),
-        ).fetchall()
-    return [dict(r) for r in rows]
+_signal_rows = routed_read(_db, "get_recent_strategy_signals")
+_followed_trades = routed_read(_db, "get_open_followed_trades")
 
 
 def _input_sources() -> InputSources:
     """Forven's own data behind the optional bot inputs."""
+    import forven.market_data_collector as collector
     from forven.data import load_parquet
-    from forven.market_data_collector import get_funding_rate_series, get_open_interest_series
     from forven.regime import _classify
 
     return InputSources(
         load_candles=lambda pair, tf: _indexed_by_time(load_parquet(pair, tf)),
-        funding_series=get_funding_rate_series,
-        open_interest_series=get_open_interest_series,
+        funding_series=routed_read(collector, "get_funding_rate_series"),
+        open_interest_series=routed_read(collector, "get_open_interest_series"),
         signal_rows=_signal_rows,
         classify_regime=_classify,
     )
@@ -857,16 +839,7 @@ class BotRunner:
         strategy_id = ((self._config or {}).get("rule_params") or {}).get("strategy_id")
         if not strategy_id:
             return []
-        from forven.db import get_db
-
-        with get_db() as conn:
-            rows = conn.execute(
-                """SELECT asset, direction, opened_at FROM trades
-                    WHERE strategy_id = ? AND status = 'OPEN'
-                      AND COALESCE(source, '') NOT LIKE 'bot:%'""",
-                (strategy_id,),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        return _followed_trades(strategy_id)
 
     def _rule_decision(self, market_event: dict | None, open_positions: list[dict], realized_pnl: float):
         """What a Grid, DCA or Signal-follower bot does this tick."""

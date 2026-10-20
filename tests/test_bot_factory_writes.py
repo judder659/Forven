@@ -160,3 +160,94 @@ class TestWriteRoute:
                               headers={"x-forven-bot-token": token})
         assert ok.status_code == 200, ok.text
         assert bad.status_code == 403 and far.status_code == 403
+
+
+class FakeReads:
+    def get_bot(self, bot_id):
+        return {"id": bot_id, "name": "direct"}
+
+
+def test_reads_go_to_the_api_inside_a_bot_process(in_bot_process):
+    with patch.object(bw, "_post", return_value={"id": "B1", "name": "api"}) as post:
+        assert bw.routed_read(FakeReads(), "get_bot")("B1")["name"] == "api"
+    post.assert_called_once_with("get_bot", {"bot_id": "B1"}, kind="read")
+
+
+def test_reads_fall_back_to_the_database_while_the_api_is_away(in_bot_process):
+    with patch.object(bw, "_post", side_effect=ConnectionError("down")):
+        assert bw.routed_read(FakeReads(), "get_bot")("B1")["name"] == "direct"
+
+
+def test_a_refused_read_is_not_answered_from_the_database(in_bot_process):
+    with patch.object(bw, "_post", side_effect=bw.BotWriteRefused("403")):
+        with pytest.raises(bw.BotWriteRefused):
+            bw.routed_read(FakeReads(), "get_bot")("B1")
+
+
+def test_reads_outside_a_bot_process_go_straight_to_the_database(monkeypatch):
+    monkeypatch.delenv("FORVEN_BOT_CRED_TOKEN", raising=False)
+    with patch.object(bw, "_post") as post:
+        assert bw.routed_read(FakeReads(), "get_bot")("B1")["name"] == "direct"
+    post.assert_not_called()
+
+
+def test_only_listed_reads_can_be_routed():
+    with pytest.raises(ValueError):
+        bw.routed_read(FakeReads(), "kv_get")
+
+
+class TestReadRoute:
+    def _bot(self, **extra):
+        from forven.bot_factory.manager import issue_bot_token
+        from forven.db import create_bot
+
+        bot_id = create_bot({"name": "R", "model": "gpt-4.1-mini", **extra})
+        return bot_id, issue_bot_token(bot_id, "openai")
+
+    def _read(self, bot_id, token, op, args):
+        from forven.api_domains.bot_factory import api_bot_read
+
+        with patch("forven.bot_factory.manager.bot_process_is_live", return_value=True):
+            return api_bot_read(bot_id, token, op, args)
+
+    def test_a_bot_reads_its_own_rows_and_market_data(self, forven_db):
+        bot_id, token = self._bot()
+        assert self._read(bot_id, token, "get_bot", {"bot_id": bot_id})["result"]["id"] == bot_id
+        assert self._read(bot_id, token, "get_open_bot_positions", {"bot_id": bot_id})["result"] == []
+        assert self._read(bot_id, token, "get_recent_strategy_signals",
+                          {"coins": ["BTC/USDT"], "since": "2026-01-01"})["result"] == []
+
+    def test_refusals(self, forven_db):
+        bot_id, token = self._bot()
+        other, _ = self._bot()
+        with pytest.raises(PermissionError):
+            self._read(bot_id, "wrong", "get_bot", {"bot_id": bot_id})
+        with pytest.raises(PermissionError, match="own rows"):
+            self._read(bot_id, token, "get_bot", {"bot_id": other})
+        with pytest.raises(PermissionError, match="follows"):
+            self._read(bot_id, token, "get_open_followed_trades", {"strategy_id": "S1"})
+        with pytest.raises(ValueError, match="unknown"):
+            self._read(bot_id, token, "kv_get", {"key": "x"})
+
+    def test_a_signal_follower_reads_the_strategy_it_follows(self, forven_db):
+        bot_id, token = self._bot(bot_type="signal", rule_params={"strategy_id": "S1"})
+        assert self._read(bot_id, token, "get_open_followed_trades", {"strategy_id": "S1"})["result"] == []
+        with pytest.raises(PermissionError):
+            self._read(bot_id, token, "get_open_followed_trades", {"strategy_id": "S2"})
+
+    def test_route_answers_over_http(self, forven_db):
+        from fastapi.testclient import TestClient
+
+        from forven.api import app
+
+        bot_id, token = self._bot()
+        client = TestClient(app, client=("127.0.0.1", 50000))
+        remote = TestClient(app, client=("203.0.113.5", 50000))
+        body = {"op": "get_bot_status", "args": {"bot_id": bot_id}}
+        with patch("forven.bot_factory.manager.bot_process_is_live", return_value=True):
+            ok = client.post(f"/api/bot-factory/internal/bots/{bot_id}/read", json=body,
+                             headers={"x-forven-bot-token": token})
+            far = remote.post(f"/api/bot-factory/internal/bots/{bot_id}/read", json=body,
+                              headers={"x-forven-bot-token": token})
+        assert ok.status_code == 200, ok.text
+        assert far.status_code == 403

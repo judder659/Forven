@@ -8582,6 +8582,39 @@ def rebase_bot_equity_watermark(bot_id: str) -> None:
         )
 
 
+def get_open_followed_trades(strategy_id: str) -> list[dict]:
+    """A strategy's open trades (paper or live), for a signal-follower bot.
+    Bots' own trades never count."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT asset, direction, opened_at FROM trades
+                WHERE strategy_id = ? AND status = 'OPEN'
+                  AND COALESCE(source, '') NOT LIKE 'bot:%'""",
+            (strategy_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_recent_strategy_signals(coins: list[str], since: str) -> list[dict]:
+    """Recent entry/exit signals of paper and live strategies on these coins."""
+    if not coins:
+        return []
+    marks = ",".join("?" for _ in coins)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT r.strategy_id, r.symbol, r.signal_type, r.ts, r.price,
+                       s.name, s.display_name, s.status
+                FROM scanner_signal_results r
+                JOIN strategies s ON s.id = r.strategy_id
+                WHERE r.matched = 1 AND r.signal_type IN ('entry', 'exit')
+                  AND r.ts >= ? AND UPPER(r.symbol) IN ({marks})
+                  AND s.status IN ('paper', 'live_graduated')
+                ORDER BY r.ts DESC LIMIT 200""",
+            (since, *coins),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_open_bot_positions(bot_id: str) -> list[dict]:
     """Return OPEN trades for this bot, shaped like the in-memory position dicts
     the runner uses: {trade_id, ticker, direction, qty, entry_price, ...}.
