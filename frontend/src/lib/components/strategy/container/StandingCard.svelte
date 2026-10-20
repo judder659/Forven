@@ -69,6 +69,12 @@
 			{#if isNum(tradesPerWeek)}<span class="col-span-2 text-[12px] text-sc-ink3">About {tradesPerWeek.toFixed(1)} a week expected from the backtest</span>{/if}
 			<div class="relative col-span-2 mt-1 h-1.5 rounded-full bg-sc-line2"><i class="absolute inset-y-0 left-0 rounded-full bg-sc-ink2" style={`width:${meter(paper.trades, paper.needTrades ?? 1)}%`}></i></div>
 		</div>
+	{:else if isNum(tradesPerWeek)}
+		<div class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2.5 py-2" data-testid="standing-trade-rate">
+			<span class="text-[12px] text-sc-ink2">Expected trades</span>
+			<span class="text-[15px] font-medium font-plex-mono tabular-nums text-sc-ink">{tradesPerWeek.toFixed(1)} a week</span>
+			<span class="col-span-2 text-[12px] text-sc-ink3">From the backtest; paper progress is on the stage rail above</span>
+		</div>
 	{/if}
 	<slot />
 </aside>

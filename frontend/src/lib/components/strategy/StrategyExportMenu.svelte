@@ -17,6 +17,8 @@
 	export let compact = false;
 	/** The strategy container's theme (rounded, IBM Plex); other pages keep the terminal look. */
 	export let themed = false;
+	/** Trigger text; a page can turn this into a general "More" menu and put its own items in the slot. */
+	export let triggerLabel = '⤓ Export';
 
 	let open = false;
 	let busy = false;
@@ -85,7 +87,7 @@
 		aria-expanded={open}
 		on:click|stopPropagation={toggle}
 	>
-		{busy ? '…' : '⤓'} Export
+		{busy ? '…' : triggerLabel}
 	</button>
 
 	{#if open}
@@ -103,10 +105,11 @@
 				: 'absolute right-0 z-50 mt-1 w-44 overflow-hidden border border-sc-line bg-sc-panel'}
 			role="menu"
 		>
+			<slot {close} />
 			<button
 				type="button"
 				data-testid="strategy-export-download"
-				class="block w-full px-3 py-2 text-left text-[11px] text-sc-ink2 transition-colors hover:bg-sc-panel2 hover:text-sc-ink"
+				class={`block w-full px-3 py-2 text-left text-[11px] text-sc-ink2 transition-colors hover:bg-sc-panel2 hover:text-sc-ink ${$$slots.default ? 'border-t border-sc-line' : ''}`}
 				role="menuitem"
 				on:click|stopPropagation={() => void exportDownload()}
 			>
