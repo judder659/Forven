@@ -125,8 +125,8 @@ if verdict["enqueued"]:
   walk-forward fold rate, regime split, jitter and robustness score are
   *recorded* there and enforced at paper→live. (Settings → Door into paper →
   *Strict paper* restores the old door where all of them block paper.)
-- The **paper pool** holds 40 strategies by default (3 per coin, 10 per
-  family). A strategy that passes the door while the pool is full waits in a
+- The **paper pool** holds 40 strategies by default (10 per family, no
+  per-coin limit). A strategy that passes the door while the pool is full waits in a
   queue ranked by its recorded evidence (`paper_queue_full` is capacity, not a
   rejection). Paper strategies are retired automatically when clearly losing
   (15+ trades, negative mean, t < −1), at a 15% forward drawdown, after 60 idle

@@ -142,7 +142,7 @@
     "paper_door.mode": "research",
     "paper_max_concurrent_positions": 0,
     "paper_pool.max_per_family": 10,
-    "paper_pool.max_per_market": 3,
+    "paper_pool.max_per_market": 0,
     "paper_pool.max_strategies": 40,
     "paper_pool.retire_enabled": true,
     "paper_pool.retire_idle_days": 60,

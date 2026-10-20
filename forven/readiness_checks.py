@@ -27,6 +27,9 @@ scope survives every restart.
 ``apply_gate_plan_migration()`` (2026-10-19) carries the gate plan's changed
 defaults (research holdout lag 2 -> 1 quarters) into stored settings once.
 
+``apply_paper_coin_cap_migration()`` (2026-10-20) lifts the paper pool's old
+per-coin default of 3 from stored pipeline settings once (no per-coin cap).
+
 A leaf like ``forven.research_holdout``: the caller passes the KV accessors, so
 this module adds no edge into the import cluster around ``forven.api_core``.
 """
@@ -224,5 +227,52 @@ def apply_gate_plan_migration(
     kv_set(
         GATE_PLAN_MIGRATION_KEY,
         {"applied_at": datetime.now(timezone.utc).isoformat(), "lag_quarters": summary["lag_quarters"]},
+    )
+    return summary
+
+
+PAPER_COIN_CAP_MIGRATION_KEY = "forven:migrations:paper_coin_cap_off_v1"
+# The paper pool's per-coin cap default from the gate plan (2026-10-19) until
+# 2026-10-20, when the default became 0 (no per-coin cap).
+_OLD_PAPER_MAX_PER_MARKET = 3
+
+
+def apply_paper_coin_cap_migration(
+    kv_get: Callable[..., Any], kv_set: Callable[[str, Any], None]
+) -> dict[str, Any]:
+    """Once per install, lift the old per-coin paper cap from stored pipeline settings.
+
+    Each paper strategy is its own simulated test, so the default per-coin cap
+    (``paper_pool.max_per_market``) went from 3 to 0 (none); the total cap
+    (``max_strategies``) and the per-family cap stay. Installs that saved their
+    pipeline settings store the old 3, so a stored 3 is set to 0 once; an
+    operator who sets a cap again afterwards keeps it. Any other stored value
+    is the operator's and is left alone.
+
+    Idempotent. Run it under the settings mutation lock. Returns
+    ``{"first_run": bool, "max_per_market": [old, new] | None}``.
+    """
+    first_run = not kv_get(PAPER_COIN_CAP_MIGRATION_KEY)
+    summary: dict[str, Any] = {"first_run": first_run, "max_per_market": None}
+    if not first_run:
+        return summary
+    pipeline_config = kv_get(PIPELINE_STORAGE_KEY)
+    block = pipeline_config.get("paper_pool") if isinstance(pipeline_config, dict) else None
+    if isinstance(block, dict) and block.get("max_per_market") in (
+        _OLD_PAPER_MAX_PER_MARKET,
+        str(_OLD_PAPER_MAX_PER_MARKET),
+    ):
+        block["max_per_market"] = 0
+        kv_set(PIPELINE_STORAGE_KEY, pipeline_config)
+        summary["max_per_market"] = [_OLD_PAPER_MAX_PER_MARKET, 0]
+        log.warning(
+            "Paper pool: the per-coin cap of %d is lifted (each paper strategy is its own "
+            "test); the total and per-family caps still apply. Set one again in Settings "
+            "if you want it.",
+            _OLD_PAPER_MAX_PER_MARKET,
+        )
+    kv_set(
+        PAPER_COIN_CAP_MIGRATION_KEY,
+        {"applied_at": datetime.now(timezone.utc).isoformat(), "max_per_market": summary["max_per_market"]},
     )
     return summary

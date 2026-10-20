@@ -418,6 +418,13 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                     apply_gate_plan_migration(kv_get, kv_set)
             except Exception as exc:
                 log.warning("Gate-plan settings migration failed: %s", exc)
+            # Paper pool: the old per-coin default of 3 lifted from stored settings once.
+            try:
+                from forven.readiness_checks import apply_paper_coin_cap_migration
+                with _SETTINGS_MUTATION_LOCK:
+                    apply_paper_coin_cap_migration(kv_get, kv_set)
+            except Exception as exc:
+                log.warning("Paper coin-cap settings migration failed: %s", exc)
             existing_jobs = get_jobs()
             if not existing_jobs:
                 seed_forven_jobs()

@@ -10,8 +10,9 @@ wide door needs three things so paper stays useful:
   strategies fit well inside one 1h bar even on a slow install while leaving the
   live scanner its CPU.
 * **An evidence-ranked queue with a diversity cap.** A strategy that passes the
-  door while the pool is full (or while its market or family already holds
-  ``max_per_market`` / ``max_per_family`` paper strategies) waits in
+  door while the pool is full (or while its family already holds
+  ``max_per_family`` paper strategies, or its market ``max_per_market`` when an
+  operator sets one) waits in
   ``paper_queue``, ranked by the evidence the door recorded: deflated Sharpe,
   composite robustness score and out-of-sample Sharpe. Free slots go to the
   highest-ranked waiting strategy first. Waiting is capacity, not merit: it
@@ -43,7 +44,10 @@ log = logging.getLogger("forven.paper_pool")
 
 DEFAULTS: dict[str, Any] = {
     "max_strategies": 40,  # 0 = no cap
-    "max_per_market": 3,  # 0 = no per-market cap
+    # 0 = no per-market cap. Off by default since 2026-10-20: each paper
+    # strategy is its own simulated test, so several on one coin cost nothing
+    # but CPU, which max_strategies already bounds.
+    "max_per_market": 0,
     "max_per_family": 10,  # 0 = no per-family cap
     "retire_enabled": True,
     "retire_min_trades": 15,

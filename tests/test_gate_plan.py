@@ -474,6 +474,51 @@ def test_gate_plan_migration_keeps_an_operator_value(forven_db):
     assert kv_get("forven:settings")["research_settings"]["research_holdout"]["lag_quarters"] == 4
 
 
+def _pipeline_with_coin_cap(cap) -> dict:
+    return {"paper_pool": {"max_strategies": 40, "max_per_market": cap, "max_per_family": 10}}
+
+
+def test_no_per_coin_paper_cap_by_default():
+    from forven import paper_pool
+    from forven.policy import DEFAULT_PIPELINE_CONFIG
+
+    assert paper_pool.DEFAULTS["max_per_market"] == 0
+    assert DEFAULT_PIPELINE_CONFIG["paper_pool"]["max_per_market"] == 0
+    # The total (CPU) and per-family (anti-cloning) caps stay.
+    assert paper_pool.DEFAULTS["max_strategies"] == 40
+    assert paper_pool.DEFAULTS["max_per_family"] == 10
+
+
+def test_coin_cap_migration_lifts_the_old_default_once(forven_db):
+    from forven.readiness_checks import apply_paper_coin_cap_migration
+
+    kv_set("forven:pipeline_thresholds", _pipeline_with_coin_cap(3))
+    summary = apply_paper_coin_cap_migration(kv_get, kv_set)
+    assert summary == {"first_run": True, "max_per_market": [3, 0]}
+    stored = kv_get("forven:pipeline_thresholds")["paper_pool"]
+    assert stored == {"max_strategies": 40, "max_per_market": 0, "max_per_family": 10}
+
+    # The operator sets 3 again afterwards: the migration never touches it again.
+    kv_set("forven:pipeline_thresholds", _pipeline_with_coin_cap(3))
+    assert apply_paper_coin_cap_migration(kv_get, kv_set)["first_run"] is False
+    assert kv_get("forven:pipeline_thresholds")["paper_pool"]["max_per_market"] == 3
+
+
+def test_coin_cap_migration_keeps_an_operator_value(forven_db):
+    from forven.readiness_checks import apply_paper_coin_cap_migration
+
+    kv_set("forven:pipeline_thresholds", _pipeline_with_coin_cap(5))
+    assert apply_paper_coin_cap_migration(kv_get, kv_set)["max_per_market"] is None
+    assert kv_get("forven:pipeline_thresholds")["paper_pool"]["max_per_market"] == 5
+
+
+def test_coin_cap_migration_with_nothing_stored(forven_db):
+    from forven.readiness_checks import apply_paper_coin_cap_migration
+
+    assert apply_paper_coin_cap_migration(kv_get, kv_set) == {"first_run": True, "max_per_market": None}
+    assert kv_get("forven:pipeline_thresholds") is None
+
+
 # --- breadth test: ranks the paper queue, required for live ---------------------------
 
 
