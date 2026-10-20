@@ -313,8 +313,8 @@ DEFAULT_PIPELINE_CONFIG = {
     # 3x allowance for candle loads), at most max_per_family in one strategy
     # family and, if an operator sets one, max_per_market on one coin (0 = no
     # limit; no per-coin limit by default since 2026-10-20). Strategies that pass
-    # the door while the pool is full wait in a queue ranked by their recorded
-    # evidence. Paper strategies whose forward record shows them losing are
+    # the door while the pool is full wait in a queue ranked by trade pace and
+    # timeframe first, then their recorded evidence. Paper strategies whose forward record shows them losing are
     # retired (archived as paper_retired:<why>), freeing their slot.
     "paper_pool": {
         "max_strategies": 40,
@@ -4864,12 +4864,30 @@ def _paper_evidence_score(row) -> float:
         metrics = {}
     oos = _unwrap_metrics_dict(metrics.get("out_of_sample", metrics)) if metrics else {}
     oos = oos if isinstance(oos, dict) else {}
+    pace, avg_trade = _backtest_pace(metrics)
     return paper_pool.evidence_score(
         row["deflated_sharpe"] if "deflated_sharpe" in keys else None,
         _resolve_robustness_points(metrics) if metrics else None,
         oos.get("sharpe_ratio", oos.get("sharpe")),
         _breadth_verdict(str(row["id"])) if "id" in keys else None,
+        trades_per_month=pace,
+        timeframe=row["timeframe"] if "timeframe" in keys else None,
+        avg_trade=avg_trade,
     )
+
+
+def _backtest_pace(metrics: dict) -> tuple[float | None, float | None]:
+    """(trades per month, net average trade) over the whole backtest window, None when unmeasured."""
+    whole = quick_screen_rule.whole_window(metrics) if metrics else {}
+    trades = _coerce_optional_float(whole.get("total_trades", whole.get("trades")))
+    if trades is None or trades <= 0:
+        return None, None
+    months = _coerce_optional_float(whole.get("backtest_months"))
+    if not months or months <= 0:
+        days = quick_screen_rule.window_span_days(metrics)
+        months = days / 30.44 if days else None
+    pace = trades / months if months else None
+    return pace, _coerce_optional_float(whole.get("avg_trade_pct"))
 
 
 def paper_admission_reason(strategy_id: str, config: dict | None = None, *, record: bool = True) -> str | None:
@@ -5532,6 +5550,17 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # === Promotion Readiness Gates (configurable via pipeline settings) ===
     ps = _load_pipeline_settings()
     warnings_list: list[str] = []
+
+    # Thin-edge warning (2026-10 forward replay): most strategies' average trade
+    # barely clears costs. Never blocks; it lowers the paper-queue rank.
+    _pace, _avg_trade = _backtest_pace(metrics)
+    _coverage = paper_pool.cost_coverage(_avg_trade)
+    if _coverage is not None and _coverage < paper_pool.MIN_COST_COVERAGE:
+        warnings_list.append(
+            f"thin edge: average trade {_avg_trade * 100:.3f}% covers {_coverage:.1f}x the "
+            f"{paper_pool.DEFAULT_ROUND_TRIP_COST * 100:.2f}% round-trip cost "
+            f"(want {paper_pool.MIN_COST_COVERAGE:.0f}x)"
+        )
 
     def _gate_check(enabled_key: str, required_key: str, check_fn, *args) -> tuple[bool, str] | None:
         if not ps.get(enabled_key, True):
