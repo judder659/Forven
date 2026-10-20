@@ -192,6 +192,14 @@ def kill_all():
     return bf_domain.api_kill_all()
 
 
+@router.get("/api/bot-factory/bots/{bot_id}/live-gate")
+def get_bot_live_gate(bot_id: str):
+    try:
+        return bf_domain.api_live_gate(bot_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/api/bot-factory/bots/{bot_id}/go-live")
 def go_live(bot_id: str, body: BotGoLiveRequest):
     try:

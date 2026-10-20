@@ -645,6 +645,17 @@ export async function startTemplateReplay(
 	return fetchApi(`/bot-factory/templates/${templateId}/replays`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+/** What a bot has shown against the live gate; GO LIVE is refused until it passes. */
+export interface BotLiveGate {
+	bot_id: string;
+	passed: boolean;
+	checks: Array<{ key: string; ok: boolean; label: string; detail: string }>;
+}
+
+export async function getBotLiveGate(id: string): Promise<BotLiveGate> {
+	return fetchApi(`/bot-factory/bots/${id}/live-gate`);
+}
+
 /** Move an existing bot onto the recommended settings (decide on each new candle). */
 export async function applyRecommendedBotSettings(id: string): Promise<BotConfig> {
 	return fetchApi(`/bot-factory/bots/${id}/apply-recommended`, { method: 'POST' });
