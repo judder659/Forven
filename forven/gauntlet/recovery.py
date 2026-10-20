@@ -71,3 +71,63 @@ def resolve_evidence_blocks(*, limit: int = 50) -> dict[str, int]:
         except Exception:
             log.exception("Unable to resolve evidence block for %s", row["strategy_id"])
     return summary
+
+
+def resolve_dead_market_blocks(*, limit: int = 50) -> dict[str, int]:
+    """Archive strategies waiting on data that will never come as untestable.
+
+    The data-quality gate blocks a stale series with a retryable
+    ``awaiting_data_backfill`` and the step retries until the collector catches
+    up. For a dead market (delisted or renamed coin, see
+    ``forven.dataeng.dead_markets``) it never does, so the strategy sits in
+    quick_screen or gauntlet forever. Those are archived as
+    ``untestable:dead_market`` (not a merit failure) and their workflow is
+    cancelled. Anything not provably dead keeps waiting.
+    """
+    archive_untestable = importlib.import_module("forven.brain").archive_untestable
+    get_db = importlib.import_module("forven.db").get_db
+    cancel_workflow = importlib.import_module("forven.gauntlet.engine").cancel_workflow
+    dead_markets = importlib.import_module("forven.dataeng.dead_markets")
+
+    summary = {"archived_dead_market": 0}
+    with get_db() as conn:
+        rows = conn.execute(
+            # The gate records the series it checked; fall back to the strategy's own.
+            """SELECT DISTINCT w.id AS workflow_id, w.strategy_id,
+                      COALESCE(json_extract(st.error_json,'$.quality.details.symbol'), s.symbol) AS symbol,
+                      COALESCE(json_extract(st.error_json,'$.quality.details.timeframe'), s.timeframe) AS timeframe
+               FROM gauntlet_steps st
+               JOIN gauntlet_workflows w ON w.id=st.workflow_id
+               JOIN strategies s ON s.id=w.strategy_id
+               WHERE st.status='blocked_data'
+                 AND w.status='blocked_data' AND s.stage IN ('quick_screen','gauntlet')
+                 AND json_valid(st.error_json)
+                 AND json_extract(st.error_json,'$.reason_code')='awaiting_data_backfill'
+               ORDER BY st.updated_at, st.id LIMIT ?""", (max(1, int(limit)),),
+        ).fetchall()
+    if not rows:
+        return summary
+    index = dead_markets.dead_market_index()
+    if not index:
+        return summary
+    for row in rows:
+        reason = dead_markets.dead_market_reason(row["symbol"], row["timeframe"] or "1h", index=index)
+        if not reason:
+            continue
+        try:
+            result = archive_untestable(
+                row["strategy_id"],
+                code=dead_markets.UNTESTABLE_CODE,
+                detail=reason,
+                actor="gauntlet_dead_market",
+            )
+            if result.get("to") == "archived":
+                cancel_workflow(
+                    row["workflow_id"],
+                    actor="gauntlet_dead_market",
+                    reason=f"Market data stopped for good (not a merit failure): {reason}",
+                )
+                summary["archived_dead_market"] += 1
+        except Exception:
+            log.exception("Unable to archive dead-market strategy %s", row["strategy_id"])
+    return summary

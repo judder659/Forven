@@ -74,6 +74,20 @@ def _idea_timeframe(hypothesis_id: str | None) -> str | None:
     return timeframe if _intended_timeframe({"_timeframe": timeframe}) == timeframe else None
 
 
+def _dead_market_reason(asset: str, meta: dict, hypothesis_id: str | None) -> str | None:
+    """Reason the strategy's market has no live data (forven.dataeng.dead_markets), else None.
+
+    Uses the timeframe the strategy will be stored with: its declared
+    ``_timeframe``, else its idea's, else 1h.
+    """
+    from forven.dataeng.dead_markets import dead_market_reason
+
+    params = meta.get("canonical_params") or meta.get("default_params") or {}
+    declared = isinstance(params, dict) and str(params.get("_timeframe") or "").strip()
+    timeframe = _intended_timeframe(params) if declared else (_idea_timeframe(hypothesis_id) or "1h")
+    return dead_market_reason(asset, timeframe)
+
+
 def _file_uses_banned_imports(path: Path) -> list[str]:
     """Return a list of banned top-level module names imported anywhere in
     the file (module level or inside function / class bodies). Empty list
@@ -725,7 +739,12 @@ def register_imported_strategy_file(
     # A strategy that cannot be fairly tested is registered straight into the
     # graveyard as untestable (not a merit failure); the author fixes the file and
     # registers it again — an archived holder never blocks its TYPE_NAME.
-    initial_stage = "archived" if (lookahead_blocked or execution_crash_reason or not certified) else "quick_screen"
+    # A market whose data stopped for good (delisted or renamed coin) can never
+    # pass the quick screen's freshness check, so it would wait there forever.
+    dead_market = _dead_market_reason(asset, meta, _hypothesis_id)
+    initial_stage = (
+        "archived" if (lookahead_blocked or execution_crash_reason or not certified or dead_market) else "quick_screen"
+    )
     untestable_reason: str | None = None
     if lookahead_blocked:
         untestable_reason = untestable_status_reason("lookahead", str(cert_error or "reads future bars"))
@@ -733,6 +752,8 @@ def register_imported_strategy_file(
         untestable_reason = untestable_status_reason("broken_code", str(cert_error))
     elif not certified:
         untestable_reason = untestable_status_reason("uncertified", str(cert_error or "certification failed"))
+    elif dead_market:
+        untestable_reason = untestable_status_reason("dead_market", dead_market)
     stored_params = (
         meta.get("canonical_params") if (certified and not lookahead_blocked) else meta.get("default_params")
     ) or {}
