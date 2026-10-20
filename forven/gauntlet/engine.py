@@ -1044,6 +1044,47 @@ def backfill_missing_quick_screen_workflows(*, limit: int = 20) -> int:
     return created + healed
 
 
+def restart_workflow_with_current_settings(strategy_id: str, *, created_by: str, reason: str) -> str:
+    """Give a strategy that re-entered the pipeline a fresh workflow run under TODAY's settings.
+
+    Used when an operator re-queues an archive. The backfill self-heal would leave a
+    ``failed_gate`` workflow terminal (and a revived one would keep the settings it was
+    created with), so this resets the current-version workflow in place, re-snapshots
+    the settings it runs under, and retires older-version gate failures so the demote
+    sweep cannot archive the strategy again before the new run finishes.
+    """
+    from forven.db import get_db
+    from forven.engine_provenance import stamp_engine_version
+    from forven.gauntlet.settings import build_settings_snapshot
+    from forven.gauntlet.store import WORKFLOW_DEFINITION_VERSION, create_or_get_workflow
+
+    snapshot = build_settings_snapshot()
+    now = _now()
+    with get_db() as conn:
+        init_gauntlet_schema(conn)
+        conn.execute(
+            """UPDATE gauntlet_workflows SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+               WHERE strategy_id = ? AND definition_version <> ? AND status = 'failed_gate'""",
+            (now, now, strategy_id, WORKFLOW_DEFINITION_VERSION),
+        )
+        current = conn.execute(
+            """SELECT id FROM gauntlet_workflows
+               WHERE strategy_id = ? AND definition_version = ?
+               ORDER BY datetime(created_at) DESC LIMIT 1""",
+            (strategy_id, WORKFLOW_DEFINITION_VERSION),
+        ).fetchone()
+        if current:
+            workflow_id = str(current["id"])
+            _reset_workflow_to_pending(conn, workflow_id, now, reason=reason)
+            conn.execute(
+                "UPDATE gauntlet_workflows SET settings_snapshot_json = ? WHERE id = ?",
+                (json.dumps(stamp_engine_version(snapshot), default=str), workflow_id),
+            )
+            return workflow_id
+    workflow = create_or_get_workflow(strategy_id=strategy_id, created_by=created_by, settings_snapshot=snapshot)
+    return str(workflow["id"])
+
+
 def _failed_gate_payload(strategy_id: str) -> dict[str, Any]:
     """The error payload of the step that failed the strategy's gauntlet workflow."""
     import json as _json

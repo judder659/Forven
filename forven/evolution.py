@@ -3075,28 +3075,49 @@ def paper_readmit_candidates(*, days: int = 30, limit: int = 100) -> list[dict]:
         return paper_pool.readmit_candidates(conn, days=days, limit=limit)
 
 
+_REQUEUE_FROM_STAGES = frozenset({"archived", "rejected", "backtest_failed"})
+
+
 def paper_requeue(strategy_ids: list[str], *, actor: str = "triage-cli") -> list[dict]:
-    """Operator action: move listed archives back to the gauntlet and re-run the paper door."""
+    """Operator action: send listed archives back through the pipeline under today's rules.
+
+    Each one re-enters at the quick screen (the only way back from the graveyard)
+    and gets a fresh gauntlet run under the CURRENT settings, so the paper door it
+    meets at the end is today's door, not the one it originally failed.
+    """
+    from forven.gauntlet.engine import restart_workflow_with_current_settings
+
     out: list[dict] = []
-    for strategy_id in strategy_ids:
+    for raw_id in strategy_ids:
+        strategy_id = str(raw_id or "").strip()
+        entry: dict = {"strategy_id": strategy_id}
         try:
-            back = transition_stage(
-                strategy_id,
-                "gauntlet",
-                reason="Re-queued for the research paper door (2026-10 gate plan)",
-                actor=actor,
-            )
-            entry: dict = {"strategy_id": strategy_id, "to_gauntlet": back.get("to") == "gauntlet"}
-            if entry["to_gauntlet"]:
-                ahead = transition_stage(
-                    strategy_id, "paper", reason="Research paper door re-check after re-queue", actor=actor
-                )
-                entry["stage"] = ahead.get("to")
-                entry["detail"] = ahead.get("blocked_reason")
+            with get_db() as conn:
+                row = conn.execute("SELECT stage FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+            if not row:
+                entry["error"] = "strategy not found"
+            elif str(row["stage"] or "").strip().lower() not in _REQUEUE_FROM_STAGES:
+                entry["stage"] = row["stage"]
+                entry["detail"] = f"not re-queued: already {row['stage']}"
             else:
-                entry["detail"] = back.get("blocked_reason")
+                moved = transition_stage(
+                    strategy_id,
+                    "quick_screen",
+                    reason="Re-queued for the research paper door (2026-10 gate plan)",
+                    actor=actor,
+                )
+                entry["stage"] = moved.get("to") or row["stage"]
+                if moved.get("to") == "quick_screen":
+                    entry["workflow_id"] = restart_workflow_with_current_settings(
+                        strategy_id,
+                        created_by=actor,
+                        reason="operator re-queue: fresh run under current settings",
+                    )
+                    entry["detail"] = "re-running the quick screen and gauntlet under current settings"
+                else:
+                    entry["detail"] = moved.get("blocked_reason") or "re-queue was blocked"
         except Exception as exc:  # noqa: BLE001
-            entry = {"strategy_id": strategy_id, "error": str(exc)}
+            entry["error"] = str(exc)
         out.append(entry)
     return out
 

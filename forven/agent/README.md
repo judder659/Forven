@@ -146,7 +146,8 @@ if verdict["enqueued"]:
   LIVE approval.
 - `paper-pool` shows occupancy and the queue; `readmit-candidates` lists recent
   archives the research door would have admitted (report only; the operator
-  re-queues with `requeue`); `live-recheck` reports how live strategies fare
+  re-queues with `requeue`, which sends each archive back to the quick screen
+  for a fresh gauntlet run under today's settings); `live-recheck` reports how live strategies fare
   against the new live gate (never demotes anything).
 - Never set `force=true` to skip a gate.
 
@@ -200,7 +201,7 @@ over these — call them directly from any language.
 | GET  | `/api/data/sla?stream=&limit_worst=` | freshness SLA census of every stored series |
 | GET  | `/api/lifecycle/paper-pool` | paper occupancy, limits, queue, door in force |
 | GET  | `/api/lifecycle/paper-pool/readmit-candidates?days=&limit=` | archives the research door would admit |
-| POST | `/api/lifecycle/paper-pool/requeue` `{strategy_ids}` | operator: re-run those archives through the door |
+| POST | `/api/lifecycle/paper-pool/requeue` `{strategy_ids}` | operator: send those archives back to the quick screen for a fresh run under current settings |
 | GET/POST | `/api/lifecycle/paper-pool/live-recheck` | report-only live re-check (POST recomputes) |
 | POST | `/api/ai-dropzone/sessions` `{label,actor,objective}` | open session |
 | POST | `/api/ai-dropzone/sessions/{id}/close` | close session |
