@@ -1,19 +1,17 @@
-"""Model availability and AI spend for Bot Factory bots.
+"""AI spend estimates for Bot Factory bots.
 
-A bot calls its model on every decision, so two things must be known before
-it runs: that the model is actually callable here (connected provider, model
-enabled), and roughly what a day of decisions costs. Costs are ESTIMATES: the
-provider call returns text only, so tokens are counted at ~4 characters each
-and priced from forven.cost_pricing (a provider ceiling rate when the model
-has no price row).
+Costs are ESTIMATES: the provider call returns text only, so tokens are
+counted at ~4 characters each and priced from forven.cost_pricing (a provider
+ceiling rate when the model has no price row).
+
+A leaf module on purpose: it imports nothing above forven.cost_pricing, so it
+stays out of the backend's import cycle (tests/test_finish_db_layering.py).
+Callers resolve the provider/model and the timeframe's bar size themselves.
 """
 
 from __future__ import annotations
 
-import logging
 import math
-
-logger = logging.getLogger(__name__)
 
 # ~4 characters per token is the usual rule of thumb for English + JSON.
 _CHARS_PER_TOKEN = 4
@@ -26,79 +24,6 @@ _OUTPUT_TOKENS_BY_VERBOSITY = {"minimal": 60, "standard": 150, "verbose": 400}
 FREE_ROAM_PAIRS = 6
 # The runner never decides faster than this (engine.MIN_LLM_INTERVAL_SECONDS).
 _MIN_INTERVAL_SECONDS = 10
-
-
-def resolve_bot_route(model: str | None) -> tuple[str, str]:
-    """(provider, model_id) a bot's model string routes to, falling back to
-    the operator's primary model when the bot has none."""
-    from forven.ai import normalize_provider_and_model
-
-    if not str(model or "").strip():
-        from forven.model_routing import get_primary_provider_model
-
-        provider, model_id = get_primary_provider_model()
-        return normalize_provider_and_model(provider, model_id)
-    return normalize_provider_and_model("auto", model)
-
-
-def default_model_key() -> str | None:
-    """The operator's primary model as a "provider:model" key, or None."""
-    try:
-        from forven.model_routing import get_primary_provider_model
-
-        provider, model_id = get_primary_provider_model()
-    except Exception:
-        return None
-    provider = str(provider or "").strip().lower()
-    model_id = str(model_id or "").strip()
-    if not provider or not model_id:
-        return None
-    return f"{provider}:{model_id}"
-
-
-def check_bot_model(model: str | None) -> dict:
-    """Whether a bot's model can be called on this install.
-
-    Mirrors the gate every provider call passes (model_selection.assert_callable):
-    the provider must be connected and the model enabled or selected somewhere.
-    Returns {ok, provider, model_id, reason, default_model}.
-    """
-    default_key = default_model_key()
-    try:
-        provider, model_id = resolve_bot_route(model)
-    except Exception as exc:
-        return {
-            "ok": False, "provider": None, "model_id": str(model or ""),
-            "reason": f"Model '{model}' can't be resolved to a provider ({exc}).",
-            "default_model": default_key,
-        }
-    try:
-        from forven.model_selection import enforcement_enabled, is_callable, provider_is_connected
-
-        # Before enforcement is armed (tests, scripts) calls aren't gated, so
-        # neither is Start.
-        if not enforcement_enabled() or is_callable(provider, model_id):
-            return {
-                "ok": True, "provider": provider, "model_id": model_id,
-                "reason": None, "default_model": default_key,
-            }
-        if not provider_is_connected(provider):
-            reason = f"Provider '{provider}' isn't connected, so model '{model_id}' can't be called."
-        else:
-            reason = (
-                f"Model '{model_id}' isn't enabled for {provider} (it may have been "
-                "retired or removed from your model list)."
-            )
-    except Exception as exc:
-        logger.debug("Bot model check failed for %s: %s", model, exc)
-        return {
-            "ok": True, "provider": provider, "model_id": model_id,
-            "reason": None, "default_model": default_key,
-        }
-    return {
-        "ok": False, "provider": provider, "model_id": model_id,
-        "reason": reason, "default_model": default_key,
-    }
 
 
 def estimate_tokens(text: str | None) -> int:
@@ -136,25 +61,25 @@ def estimate_call_cost(
 
 
 def decisions_per_day(
-    cadence: str, cooldown_seconds: int | float | None, timeframe: str = "1h",
+    cadence: str, cooldown_seconds: int | float | None, bar_minutes: int = 60,
 ) -> float:
     """Decisions a bot makes in a full day before any call cap."""
     if cadence == "candle_close":
-        from forven.db import BOT_TIMEFRAME_MINUTES, normalize_bot_timeframe
-
         # One per closed candle: 96 on 15m, 24 on 1h, 6 on 4h, 1 on 1d.
-        return 1440.0 / BOT_TIMEFRAME_MINUTES[normalize_bot_timeframe(timeframe)]
+        return 1440.0 / max(int(bar_minutes or 60), 1)
     interval = max(float(cooldown_seconds or 60), float(_MIN_INTERVAL_SECONDS))
     return 86400.0 / interval
 
 
 def project_daily_spend(
     *,
-    model: str | None,
+    provider: str | None,
+    model_id: str | None,
     cadence: str,
     cooldown_seconds: int | float | None,
     pairs: int,
     timeframe: str = "1h",
+    bar_minutes: int = 60,
     verbosity: str = "standard",
     max_llm_calls_per_day: int | None = 200,
     max_llm_cost_per_day: float | None = None,
@@ -166,10 +91,6 @@ def project_daily_spend(
     Uses the bot's own recorded average tokens per call when given, else a
     size heuristic from the number of watched pairs.
     """
-    try:
-        provider, model_id = resolve_bot_route(model)
-    except Exception:
-        provider, model_id = None, str(model or "")
     tokens_in = avg_tokens_in or (_BASE_PROMPT_TOKENS + _PER_PAIR_PROMPT_TOKENS * max(int(pairs or 1), 1))
     tokens_out = avg_tokens_out or _OUTPUT_TOKENS_BY_VERBOSITY.get(verbosity, 150)
     rate, priced = rate_for(provider, model_id)
@@ -177,7 +98,7 @@ def project_daily_spend(
     if rate is not None:
         cost_per_call = (tokens_in * rate[0] + tokens_out * rate[1]) / 1_000_000
 
-    wanted = decisions_per_day(cadence, cooldown_seconds, timeframe)
+    wanted = decisions_per_day(cadence, cooldown_seconds, bar_minutes)
     cap = int(max_llm_calls_per_day) if max_llm_calls_per_day else None
     calls = min(wanted, cap) if cap else wanted
     hours_until_cap = None

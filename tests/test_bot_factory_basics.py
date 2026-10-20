@@ -85,7 +85,7 @@ class TestModelCheck:
         assert get_bot_run_id(bot_id) is None
 
     def test_disconnected_provider_reason(self):
-        from forven.bot_factory.ai_budget import check_bot_model
+        from forven.bot_factory.manager import check_bot_model
 
         with patch("forven.model_selection.enforcement_enabled", return_value=True), \
              patch("forven.model_selection.is_callable", return_value=False), \
@@ -121,27 +121,27 @@ class TestAiSpend:
         assert not check_llm_daily_cap(bot_id)
 
     def test_default_interval_burns_call_cap_in_hours(self):
-        from forven.bot_factory.ai_budget import project_daily_spend
+        from forven.bot_factory.ai_costs import project_daily_spend
 
         projection = project_daily_spend(
-            model="openai:gpt-4.1-mini", cadence="interval", cooldown_seconds=60,
+            provider="openai", model_id="gpt-4.1-mini", cadence="interval", cooldown_seconds=60,
             pairs=3, max_llm_calls_per_day=200,
         )
         assert projection["calls_per_day"] == 200
         assert projection["hours_until_call_cap"] == pytest.approx(3.3, abs=0.05)
 
     def test_candle_close_is_24_calls(self):
-        from forven.bot_factory.ai_budget import project_daily_spend
+        from forven.bot_factory.ai_costs import project_daily_spend
 
         projection = project_daily_spend(
-            model="openai:gpt-4.1-mini", cadence="candle_close", cooldown_seconds=60,
+            provider="openai", model_id="gpt-4.1-mini", cadence="candle_close", cooldown_seconds=60,
             pairs=3, max_llm_calls_per_day=200,
         )
         assert projection["calls_per_day"] == 24
         assert projection["hours_until_call_cap"] is None
 
     def test_call_cost_estimate(self):
-        from forven.bot_factory.ai_budget import estimate_call_cost
+        from forven.bot_factory.ai_costs import estimate_call_cost
 
         usage = estimate_call_cost(
             "openai", "gpt-4.1-mini", [{"role": "user", "content": "x" * 4000}], "y" * 400,
@@ -297,12 +297,12 @@ class TestTimeframes:
         assert _closed_candle_open_expected(now, 1440) == datetime(2026, 10, 19, 0, 0, tzinfo=timezone.utc)
 
     def test_candle_close_calls_follow_timeframe(self):
-        from forven.bot_factory.ai_budget import decisions_per_day
+        from forven.bot_factory.ai_costs import decisions_per_day
 
-        assert decisions_per_day("candle_close", 60, "15m") == 96
-        assert decisions_per_day("candle_close", 60, "1h") == 24
-        assert decisions_per_day("candle_close", 60, "4h") == 6
-        assert decisions_per_day("candle_close", 60, "1d") == 1
+        from forven.db import BOT_TIMEFRAME_MINUTES
+
+        per_day = {tf: decisions_per_day("candle_close", 60, m) for tf, m in BOT_TIMEFRAME_MINUTES.items()}
+        assert per_day == {"15m": 96, "1h": 24, "4h": 6, "1d": 1}
 
     def test_bot_timeframe_saved_and_defaults_to_1h(self, forven_db):
         from forven.db import create_bot, get_bot

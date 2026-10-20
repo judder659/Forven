@@ -58,7 +58,7 @@ def _with_model_check(bot: dict | None) -> dict | None:
     retired or disconnected model before Start does."""
     if bot is None:
         return None
-    from forven.bot_factory.ai_budget import check_bot_model
+    from forven.bot_factory.manager import check_bot_model
 
     bot["model_check"] = check_bot_model(bot.get("model"))
     return bot
@@ -91,7 +91,7 @@ def api_update_bot(bot_id: str, updates: dict) -> dict | None:
 
 def api_use_default_model(bot_id: str) -> dict:
     """Switch a bot to the operator's primary model (the Start-refusal fix)."""
-    from forven.bot_factory.ai_budget import default_model_key
+    from forven.bot_factory.manager import default_model_key
 
     if not get_bot(bot_id):
         raise LookupError(f"Bot {bot_id} not found")
@@ -103,7 +103,7 @@ def api_use_default_model(bot_id: str) -> dict:
 
 
 def _watched_pair_count(asset_mode: str | None, locked_pairs: object) -> int:
-    from forven.bot_factory.ai_budget import FREE_ROAM_PAIRS
+    from forven.bot_factory.ai_costs import FREE_ROAM_PAIRS
 
     if asset_mode == "locked" and isinstance(locked_pairs, list) and locked_pairs:
         return len(locked_pairs)
@@ -125,19 +125,32 @@ def api_cost_estimate(
 ) -> dict:
     """Projected AI calls and spend per day for an editor configuration. With
     a bot id, uses that bot's recorded tokens per call when it has any."""
-    from forven.bot_factory.ai_budget import check_bot_model, project_daily_spend
-    from forven.db import get_bot_ai_usage, normalize_bot_cadence, normalize_bot_timeframe
+    from forven.bot_factory.ai_costs import project_daily_spend
+    from forven.bot_factory.manager import check_bot_model, resolve_bot_route
+    from forven.db import (
+        BOT_TIMEFRAME_MINUTES,
+        get_bot_ai_usage,
+        normalize_bot_cadence,
+        normalize_bot_timeframe,
+    )
 
     avg_in = avg_out = None
     if bot_id:
         usage = get_bot_ai_usage(bot_id)
         if usage["sampled_calls"] >= 5:
             avg_in, avg_out = usage["avg_tokens_in"], usage["avg_tokens_out"]
+    try:
+        provider, model_id = resolve_bot_route(model)
+    except Exception:
+        provider, model_id = None, str(model or "")
+    tf = normalize_bot_timeframe(timeframe)
     projection = project_daily_spend(
-        model=model,
+        provider=provider,
+        model_id=model_id,
         cadence=normalize_bot_cadence(decision_cadence),
         cooldown_seconds=cooldown_seconds,
-        timeframe=normalize_bot_timeframe(timeframe),
+        timeframe=tf,
+        bar_minutes=BOT_TIMEFRAME_MINUTES[tf],
         pairs=_watched_pair_count(asset_mode, locked_pairs),
         verbosity=reasoning_verbosity,
         max_llm_calls_per_day=max_llm_calls_per_day,

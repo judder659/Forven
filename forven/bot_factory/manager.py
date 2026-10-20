@@ -157,6 +157,85 @@ def brokered_credential_for_bot(bot_id: str, provider: str) -> dict:
     return payload
 
 
+# ── Model availability ──────────────────────────────────────────────
+# A bot calls its model on every decision, so Start checks the model is
+# callable here first. These live in the manager (not the leaf ai_costs
+# module) because they need forven.ai / model_selection.
+
+
+def resolve_bot_route(model: str | None) -> tuple[str, str]:
+    """(provider, model_id) a bot's model string routes to, falling back to
+    the operator's primary model when the bot has none."""
+    from forven.ai import normalize_provider_and_model
+
+    if not str(model or "").strip():
+        from forven.model_routing import get_primary_provider_model
+
+        provider, model_id = get_primary_provider_model()
+        return normalize_provider_and_model(provider, model_id)
+    return normalize_provider_and_model("auto", model)
+
+
+def default_model_key() -> str | None:
+    """The operator's primary model as a "provider:model" key, or None."""
+    try:
+        from forven.model_routing import get_primary_provider_model
+
+        provider, model_id = get_primary_provider_model()
+    except Exception:
+        return None
+    provider = str(provider or "").strip().lower()
+    model_id = str(model_id or "").strip()
+    if not provider or not model_id:
+        return None
+    return f"{provider}:{model_id}"
+
+
+def check_bot_model(model: str | None) -> dict:
+    """Whether a bot's model can be called on this install.
+
+    Mirrors the gate every provider call passes (model_selection.assert_callable):
+    the provider must be connected and the model enabled or selected somewhere.
+    Returns {ok, provider, model_id, reason, default_model}.
+    """
+    default_key = default_model_key()
+    try:
+        provider, model_id = resolve_bot_route(model)
+    except Exception as exc:
+        return {
+            "ok": False, "provider": None, "model_id": str(model or ""),
+            "reason": f"Model '{model}' can't be resolved to a provider ({exc}).",
+            "default_model": default_key,
+        }
+    try:
+        from forven.model_selection import enforcement_enabled, is_callable, provider_is_connected
+
+        # Before enforcement is armed (tests, scripts) calls aren't gated, so
+        # neither is Start.
+        if not enforcement_enabled() or is_callable(provider, model_id):
+            return {
+                "ok": True, "provider": provider, "model_id": model_id,
+                "reason": None, "default_model": default_key,
+            }
+        if not provider_is_connected(provider):
+            reason = f"Provider '{provider}' isn't connected, so model '{model_id}' can't be called."
+        else:
+            reason = (
+                f"Model '{model_id}' isn't enabled for {provider} (it may have been "
+                "retired or removed from your model list)."
+            )
+    except Exception as exc:
+        logger.debug("Bot model check failed for %s: %s", model, exc)
+        return {
+            "ok": True, "provider": provider, "model_id": model_id,
+            "reason": None, "default_model": default_key,
+        }
+    return {
+        "ok": False, "provider": provider, "model_id": model_id,
+        "reason": reason, "default_model": default_key,
+    }
+
+
 def _is_pid_alive(pid: int) -> bool:
     """Check if a process is alive by PID."""
     if pid <= 0:
@@ -467,8 +546,6 @@ class BotManager:
         # A model that can't be called here (provider disconnected, model
         # retired or not enabled) would fail on the first decision; refuse the
         # start with the fix instead.
-        from forven.bot_factory.ai_budget import check_bot_model
-
         model_check = check_bot_model(bot.get("model"))
         if not model_check["ok"]:
             fix = (
