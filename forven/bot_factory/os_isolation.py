@@ -65,6 +65,8 @@ class SandboxStatus:
     problems: list[str] = field(default_factory=list)
     # The self-check confirmed a closed file stays closed to a sandboxed bot.
     can_close_database: bool = False
+    # The check failed only because the database was busy; check again later.
+    transient: bool = False
 
 
 def _is_windows() -> bool:
@@ -165,11 +167,14 @@ def ensure_sandbox_ready(
             for path in protected:
                 _protect_from_low_readers(Path(path))
             lock_check = _prepare_lock_check(Path(forven_home))
-            _ready = _judge_probe(_run_probe(forven_home, protected, db_path, repo_root, lock_check))
+            status = _judge_probe(_run_probe(forven_home, protected, db_path, repo_root, lock_check))
         except Exception as exc:
             logger.warning("Bot sandbox unavailable", exc_info=True)
-            _ready = SandboxStatus(False, [f"The sandbox could not be set up: {exc}"])
-        return _ready
+            status = SandboxStatus(False, [f"The sandbox could not be set up: {exc}"])
+        # A busy database says nothing about the sandbox: the next start checks again.
+        if not status.transient:
+            _ready = status
+        return status
 
 
 def _reset_for_tests() -> None:
@@ -241,14 +246,20 @@ try:
     out["imports_forven"] = True
 except Exception as exc:
     out["imports_forven"] = repr(exc)
-try:
-    conn = sqlite3.connect(db, timeout=10)
-    conn.execute("BEGIN IMMEDIATE")
-    conn.execute("ROLLBACK")
-    conn.close()
-    out["writes_database"] = True
-except Exception as exc:
-    out["writes_database"] = repr(exc)
+for attempt in range(3):
+    try:
+        conn = sqlite3.connect(db, timeout=20)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("ROLLBACK")
+        finally:
+            conn.close()
+        out["writes_database"] = True
+        break
+    except Exception as exc:
+        out["writes_database"] = repr(exc)
+        if "locked" not in str(exc) and "busy" not in str(exc):
+            break
 probe = os.path.join(repo, ".forven-sandbox-probe")
 try:
     with open(probe, "w") as fh:
@@ -321,8 +332,9 @@ def _judge_probe(output: str) -> SandboxStatus:
         blocking.append("The check did not run at low integrity")
     if result.get("imports_forven") is not True:
         blocking.append(f"A sandboxed bot cannot load Forven: {result.get('imports_forven')}")
-    if result.get("writes_database") is not True:
-        blocking.append(f"A sandboxed bot cannot write the database: {result.get('writes_database')}")
+    writes = result.get("writes_database")
+    if writes is not True:
+        blocking.append(f"A sandboxed bot cannot write the database: {writes}")
     if result.get("code_writable") is not False:
         warnings.append("A sandboxed bot can still write Forven's code folder")
     for path in result.get("readable_secrets") or []:
@@ -330,7 +342,10 @@ def _judge_probe(output: str) -> SandboxStatus:
     can_close = result.get("closed_file_readable") is False
     if result.get("closed_file_readable") is True:
         warnings.append("The database can't be closed to bots: a sandboxed bot could still read a closed file")
-    return SandboxStatus(not blocking, blocking + warnings, can_close_database=can_close and not blocking)
+    busy = writes is not True and len(blocking) == 1 and any(w in str(writes) for w in ("locked", "busy"))
+    return SandboxStatus(
+        not blocking, blocking + warnings, can_close_database=can_close and not blocking, transient=busy,
+    )
 
 
 # ── Windows implementation ──────────────────────────────────────────

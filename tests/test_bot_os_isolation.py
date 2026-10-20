@@ -100,6 +100,44 @@ def test_readiness_runs_once_and_never_raises(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_a_busy_database_is_checked_again_at_the_next_start(tmp_path, monkeypatch):
+    busy = _probe(writes_database="OperationalError('database is locked')")
+    outputs = [busy, _probe()]
+    monkeypatch.setattr(iso, "_label_data_folder", lambda home: None)
+    monkeypatch.setattr(iso, "_set_mandatory_label", lambda path, sddl: None)
+    monkeypatch.setattr(iso, "_run_probe", lambda *a: outputs.pop(0))
+
+    first = iso.ensure_sandbox_ready(tmp_path, [], tmp_path / "db", tmp_path)
+    assert first.usable is False and first.transient is True
+    second = iso.ensure_sandbox_ready(tmp_path, [], tmp_path / "db", tmp_path)
+    assert second.usable is True and not outputs
+    assert iso.ensure_sandbox_ready(tmp_path, [], tmp_path / "db", tmp_path) is second
+
+
+def test_only_a_lone_busy_database_is_transient():
+    locked = "OperationalError('database is locked')"
+    assert iso._judge_probe(_probe(writes_database=locked)).transient is True
+    assert iso._judge_probe(_probe(writes_database=locked, imports_forven="x")).transient is False
+    readonly = "OperationalError('attempt to write a readonly database')"
+    assert iso._judge_probe(_probe(writes_database=readonly)).transient is False
+
+
+def test_a_busy_check_warns_again_once_final(monkeypatch):
+    statuses = [
+        iso.SandboxStatus(False, ["busy"], transient=True),
+        iso.SandboxStatus(False, ["broken"]),
+        iso.SandboxStatus(False, ["broken"]),
+    ]
+    logged = []
+    monkeypatch.setattr(mgr, "sandbox_enabled", lambda: True)
+    monkeypatch.setattr(mgr, "ensure_sandbox_ready", lambda *a: statuses.pop(0))
+    monkeypatch.setattr(mgr, "_sandbox_protected_paths", lambda: [])
+    monkeypatch.setattr(mgr, "log_activity", lambda *a, **k: logged.append(a[2]))
+    for _ in range(3):
+        mgr.bot_sandbox_status()
+    assert len(logged) == 2 and "broken" in logged[1]
+
+
 def test_secrets_are_labelled_before_the_check(tmp_path, monkeypatch):
     order = []
     key_dir = tmp_path / "secrets"

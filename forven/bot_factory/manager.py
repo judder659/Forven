@@ -428,8 +428,11 @@ def bot_sandbox_status() -> SandboxStatus | None:
     status = ensure_sandbox_ready(FORVEN_HOME, _sandbox_protected_paths(), FORVEN_DB, _REPO_ROOT)
     global _sandbox_warned
     if status.problems and not _sandbox_warned:
-        _sandbox_warned = True
+        # A busy-database failure is retried at the next start, so only warn
+        # once the result is final. The log line survives a busy activity log.
+        _sandbox_warned = not status.transient
         what = "Bot sandbox is on, with caveats" if status.usable else "Bots are starting without the sandbox"
+        logger.warning("%s: %s", what, "; ".join(status.problems))
         log_activity(
             "warning", "bot_factory",
             f"{what}: {'; '.join(status.problems)}",
