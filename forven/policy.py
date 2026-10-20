@@ -310,14 +310,15 @@ DEFAULT_PIPELINE_CONFIG = {
     # door needs a cap: at most max_strategies run at once (default measured in
     # the gate-plan PR: ~85 ms of scan compute per strategy on 1,500 bars, so 40
     # strategies stay under ~4% of one core at the 5-minute scan cadence, with a
-    # 3x allowance for candle loads), at most max_per_market on one coin and
-    # max_per_family in one strategy family (0 = no limit). Strategies that pass
+    # 3x allowance for candle loads), at most max_per_family in one strategy
+    # family and, if an operator sets one, max_per_market on one coin (0 = no
+    # limit; no per-coin limit by default since 2026-10-20). Strategies that pass
     # the door while the pool is full wait in a queue ranked by their recorded
     # evidence. Paper strategies whose forward record shows them losing are
     # retired (archived as paper_retired:<why>), freeing their slot.
     "paper_pool": {
         "max_strategies": 40,
-        "max_per_market": 3,
+        "max_per_market": 0,
         "max_per_family": 10,
         "retire_enabled": True,
         "retire_min_trades": 15,
