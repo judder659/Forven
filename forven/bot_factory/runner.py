@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psutil
 
+from forven.bot_factory.inputs import InputSources, enrich_snapshot, normalize_inputs
+from forven.bot_factory import rules
 from forven.db import (
     accrue_bot_funding,
     close_bot_trade,
@@ -261,6 +263,41 @@ def _build_memory_query(
     return ", ".join(fragments)
 
 
+def _signal_rows(coins: list[str], since: str) -> list[dict]:
+    """Recent entry/exit signals of paper and live strategies on these coins."""
+    from forven.db import get_db
+
+    marks = ",".join("?" for _ in coins)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT r.strategy_id, r.symbol, r.signal_type, r.ts, r.price,
+                       s.name, s.display_name, s.status
+                FROM scanner_signal_results r
+                JOIN strategies s ON s.id = r.strategy_id
+                WHERE r.matched = 1 AND r.signal_type IN ('entry', 'exit')
+                  AND r.ts >= ? AND UPPER(r.symbol) IN ({marks})
+                  AND s.status IN ('paper', 'live_graduated')
+                ORDER BY r.ts DESC LIMIT 200""",
+            (since, *coins),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _input_sources() -> InputSources:
+    """Forven's own data behind the optional bot inputs."""
+    from forven.data import load_parquet
+    from forven.market_data_collector import get_funding_rate_series, get_open_interest_series
+    from forven.regime import _classify
+
+    return InputSources(
+        load_candles=lambda pair, tf: _indexed_by_time(load_parquet(pair, tf)),
+        funding_series=get_funding_rate_series,
+        open_interest_series=get_open_interest_series,
+        signal_rows=_signal_rows,
+        classify_regime=_classify,
+    )
+
+
 class BotRunner:
     """Runs a single bot as an isolated subprocess."""
 
@@ -276,6 +313,12 @@ class BotRunner:
         self._candle_refresh_attempts: dict[str, float] = {}
         self._last_decided_candle: str | None = None
         self._stale_noted = False
+        # Rule bots: state kept between ticks (grid's last price, DCA's last
+        # deal, the follow start), and the followed strategy's open trades.
+        self._rule_state: dict = {
+            "following_since": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        self._followed: list[dict] = []
 
     def _owns_bot(self) -> bool:
         """Whether this process is still the bot's current run. A runner
@@ -472,6 +515,8 @@ class BotRunner:
         """Get the list of trading pairs this bot watches."""
         if not self._config:
             return []
+        if rules.is_rule_bot(self._config):
+            return rules.rule_pairs(self._config, self._followed)
         if self._config.get("asset_mode") == "locked" and self._config.get("locked_pairs"):
             return self._config["locked_pairs"]
         return self._free_roam_pairs()
@@ -522,6 +567,7 @@ class BotRunner:
         bars_per_day = max(1, 1440 // bar_minutes)
         window = max(20, bars_per_day)
         snapshot = {"pairs": {}, "fetched_at": None}
+        frames: dict = {}
         now = datetime.now(timezone.utc)
         expected_open = _closed_candle_open_expected(now, bar_minutes)
         stale_before = expected_open - timedelta(minutes=bar_minutes * (_STALE_AFTER_BARS - 1))
@@ -560,6 +606,7 @@ class BotRunner:
                         )
                         continue
 
+                    frames[pair] = df.tail(max(window, 250))
                     # Get live price, fall back to last candle close
                     live_price = self._fetch_live_price(pair)
                     last_row = rows[-1] if rows else {}
@@ -577,6 +624,9 @@ class BotRunner:
                 continue
 
         snapshot["fetched_at"] = now.isoformat()
+        inputs = normalize_inputs((self._config or {}).get("data_sources"))
+        if inputs and snapshot["pairs"]:
+            enrich_snapshot(snapshot, frames, inputs, timeframe=timeframe, sources=_input_sources(), now=now)
         if not snapshot["pairs"]:
             # Keep the stale report so the loop can say why it skipped.
             return snapshot if snapshot.get("stale_pairs") else None
@@ -607,9 +657,12 @@ class BotRunner:
         qty: float,
         market_price: float,
         reasoning: str | None,
+        levels: dict | None = None,
     ) -> dict | None:
         """Open a new position: apply slippage + fee, record in DB, return
-        an in-memory position dict with trade_id wired up."""
+        an in-memory position dict with trade_id wired up. ``levels`` carries
+        the decision's own stop and target (already clamped by the engine);
+        without them the bot's configured levels apply."""
         from forven.db import execute_bot_trade
 
         direction = "long" if action == "BUY" else "short"
@@ -618,6 +671,9 @@ class BotRunner:
         fee_bps = float(self._config.get("taker_fee_bps", 0) or 0)
         sl_pct = self._config.get("stop_loss_pct")
         tp_pct = self._config.get("take_profit_pct")
+        if levels:
+            sl_pct = levels.get("stop_loss_pct", sl_pct)
+            tp_pct = levels.get("take_profit_pct", tp_pct)
 
         fill_price = _apply_slippage(market_price, is_buy, slippage_bps)
         notional = fill_price * qty
@@ -670,6 +726,7 @@ class BotRunner:
         qty: float,
         market_price: float,
         reasoning: str | None,
+        levels: dict | None = None,
     ) -> tuple[dict | None, str | None]:
         """Open in the bot's execution mode. Returns (position, blocked_reason).
 
@@ -679,9 +736,12 @@ class BotRunner:
         if not self._is_live_mode():
             pos = self._execute_open(
                 ticker=ticker, action=action, qty=qty,
-                market_price=market_price, reasoning=reasoning,
+                market_price=market_price, reasoning=reasoning, levels=levels,
             )
             return pos, None
+        # Live orders keep the bot's configured stop and target: the live
+        # path places them on the exchange and changes only with the
+        # operator's go-ahead.
         from forven.bot_factory.live_exec import open_live
 
         direction = "long" if action == "BUY" else "short"
@@ -787,6 +847,37 @@ class BotRunner:
         )
         return fill_price, net_pnl, total_fees, new_realized
 
+    def _load_followed_trades(self) -> list[dict]:
+        """The followed strategy's open trades (paper or live), for a signal
+        follower. Bots' own trades never count."""
+        strategy_id = ((self._config or {}).get("rule_params") or {}).get("strategy_id")
+        if not strategy_id:
+            return []
+        from forven.db import get_db
+
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT asset, direction, opened_at FROM trades
+                    WHERE strategy_id = ? AND status = 'OPEN'
+                      AND COALESCE(source, '') NOT LIKE 'bot:%'""",
+                (strategy_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _rule_decision(self, market_event: dict | None, open_positions: list[dict], realized_pnl: float):
+        """What a Grid, DCA or Signal-follower bot does this tick."""
+        config = self._config or {}
+        params = config.get("rule_params") or {}
+        kind = rules.normalize_bot_type(config.get("bot_type"))
+        state = self._rule_state
+        if kind == rules.GRID:
+            return rules.decide_grid(config, params, market_event, open_positions, state, realized_pnl)
+        if kind == rules.DCA:
+            return rules.decide_dca(
+                config, params, market_event, open_positions, state, datetime.now(timezone.utc), realized_pnl,
+            )
+        return rules.decide_signal(config, params, market_event, open_positions, self._followed, state, realized_pnl)
+
     async def _event_loop(self):
         """Main event loop — runs decision cycles on a timer.
 
@@ -794,7 +885,7 @@ class BotRunner:
         checks the drawdown limit, then feeds everything to the LLM.
         """
         from forven.bot_factory.circuit_breaker import check_circuit_breaker, check_llm_daily_cap
-        from forven.bot_factory.engine import run_decision_cycle, MIN_LLM_INTERVAL_SECONDS
+        from forven.bot_factory.engine import MIN_LLM_INTERVAL_SECONDS, run_decision_cycle, run_rule_cycle
         from forven.bot_factory.memory import BotMemory
 
         logger.info(
@@ -811,7 +902,9 @@ class BotRunner:
         def _tick_seconds() -> float:
             # interval: decide every cooldown_seconds. candle_close: wake every
             # minute for risk checks; the model is only asked on a new candle.
-            if normalize_bot_cadence(self._config.get("decision_cadence")) == "candle_close":
+            if rules.is_rule_bot(self._config) or (
+                normalize_bot_cadence(self._config.get("decision_cadence")) == "candle_close"
+            ):
                 return _RISK_TICK_SECONDS
             return max(
                 self._config.get("cooldown_seconds", 60) or 60,
@@ -907,7 +1000,8 @@ class BotRunner:
                                 "taker_fee_bps", "slippage_bps", "funding_rate_bps_per_day",
                                 "cooldown_seconds", "max_llm_calls_per_day",
                                 "max_consecutive_errors", "max_llm_cost_per_day",
-                                "decision_cadence", "timeframe"):
+                                "decision_cadence", "timeframe", "data_sources",
+                                "rule_params"):
                         if key in fresh:
                             self._config[key] = fresh[key]
                     cooldown = _tick_seconds()
@@ -945,6 +1039,12 @@ class BotRunner:
                     realized_pnl = float(_state["realized_pnl"])
             except Exception:
                 pass
+
+            if rules.normalize_bot_type(self._config.get("bot_type")) == rules.SIGNAL:
+                try:
+                    self._followed = self._load_followed_trades()
+                except Exception as e:
+                    logger.debug("Bot %s followed-trade read failed: %s", self.bot_id, e)
 
             # Fetch market data (run in thread to avoid blocking heartbeat)
             market_event = None
@@ -1109,6 +1209,23 @@ class BotRunner:
                 self._set_status("paused", error_message=msg)
                 break
 
+            # Rule bots decide in code every tick: no model, no candle gate.
+            if rules.is_rule_bot(self._config):
+                if not self._owns_bot():
+                    break
+                try:
+                    decision = self._rule_decision(market_event, open_positions, realized_pnl)
+                    result = await run_rule_cycle(
+                        self._config, decision, market_event, open_positions, realized_pnl, self._rule_state,
+                    )
+                except Exception as e:
+                    logger.error("Bot %s rule decision failed: %s", self.bot_id, e, exc_info=True)
+                    await asyncio.sleep(cooldown)
+                    continue
+                result_ready = True
+            else:
+                result_ready = False
+
             # Candle-close cadence: the risk checks above ran; only ask the model
             # once per newly closed candle.
             newest_candle = max(
@@ -1116,7 +1233,8 @@ class BotRunner:
                 default="",
             )
             if (
-                normalize_bot_cadence(self._config.get("decision_cadence")) == "candle_close"
+                not result_ready
+                and normalize_bot_cadence(self._config.get("decision_cadence")) == "candle_close"
                 and newest_candle
                 and newest_candle == self._last_decided_candle
             ):
@@ -1128,22 +1246,24 @@ class BotRunner:
             # Recall memories using a query derived from the current situation,
             # so semantic search returns entries from *similar* past states.
             memory_results = []
-            try:
-                query = _build_memory_query(market_event, open_positions)
-                memory_results = memory.recall(query, n_results=5)
-            except Exception as e:
-                logger.debug("Memory recall failed: %s", e)
+            if not result_ready:
+                try:
+                    query = _build_memory_query(market_event, open_positions)
+                    memory_results = memory.recall(query, n_results=5)
+                except Exception as e:
+                    logger.debug("Memory recall failed: %s", e)
 
             # Run decision cycle
             try:
-                result = await run_decision_cycle(
-                    bot_config=self._config,
-                    market_event=market_event,
-                    positions=open_positions if open_positions else None,
-                    memory_results=memory_results,
-                    rolling_history=rolling_history[-10:],
-                    realized_pnl=realized_pnl,
-                )
+                if not result_ready:
+                    result = await run_decision_cycle(
+                        bot_config=self._config,
+                        market_event=market_event,
+                        positions=open_positions if open_positions else None,
+                        memory_results=memory_results,
+                        rolling_history=rolling_history[-10:],
+                        realized_pnl=realized_pnl,
+                    )
                 self._last_decided_candle = newest_candle or None
 
                 # Store observations to memory
@@ -1163,11 +1283,12 @@ class BotRunner:
                     logger.info("Bot %s paused: %s", self.bot_id, result.error)
                     break
 
-                if result.action_type == "trade" and result.trade_data:
-                    action = result.trade_data.get("action", "")
-                    ticker = result.trade_data.get("ticker", "")
-                    qty = result.trade_data.get("qty", 0)
-                    confidence = result.trade_data.get("confidence", 0)
+                lost_ownership = False
+                for trade_data in result.trades():
+                    action = trade_data.get("action", "")
+                    ticker = trade_data.get("ticker", "")
+                    qty = trade_data.get("qty", 0)
+                    confidence = trade_data.get("confidence", 0)
                     logger.info(
                         "Bot %s trade: %s %s x%s (confidence: %s)",
                         self.bot_id, action, ticker, qty, confidence,
@@ -1176,6 +1297,7 @@ class BotRunner:
                     is_close = action in ("SELL", "COVER")
                     # Never trade from a copy that lost ownership mid-decision.
                     if not self._owns_bot():
+                        lost_ownership = True
                         break
                     if ticker and (qty or is_close):
                         # Fetch live spot price for accurate entry/exit
@@ -1196,7 +1318,12 @@ class BotRunner:
                                     action=action,
                                     qty=qty,
                                     market_price=price,
-                                    reasoning=result.reasoning,
+                                    reasoning=trade_data.get("reasoning") or result.reasoning,
+                                    levels={
+                                        k: trade_data[k]
+                                        for k in ("stop_loss_pct", "take_profit_pct")
+                                        if k in trade_data
+                                    },
                                 )
                                 if new_pos:
                                     open_positions.append(new_pos)
@@ -1248,8 +1375,8 @@ class BotRunner:
                                 # Close the matching open lot. Prefer the exact
                                 # trade_id pinned by the engine; else match the
                                 # ticker AND direction (SELL→long, COVER→short).
-                                target_id = result.trade_data.get("trade_id")
-                                want_dir = result.trade_data.get("direction") or (
+                                target_id = trade_data.get("trade_id")
+                                want_dir = trade_data.get("direction") or (
                                     "long" if action == "SELL" else "short"
                                 )
                                 closing = None
@@ -1325,6 +1452,9 @@ class BotRunner:
                                             open_positions.pop(closing_idx)
                         except Exception as te:
                             logger.error("Bot %s trade execution failed: %s", self.bot_id, te)
+
+                if lost_ownership:
+                    break
 
             except Exception as e:
                 logger.error("Bot %s event loop error: %s", self.bot_id, e, exc_info=True)

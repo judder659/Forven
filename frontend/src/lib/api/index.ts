@@ -849,6 +849,7 @@ export {
 	getBotFleet,
 	applyRecommendedBotSettings,
 	testBotDecision,
+	listFollowableStrategies,
 	getBotVersions,
 	diffBotVersions,
 	getBotMemory,
@@ -888,6 +889,9 @@ export {
 	type BotFleetRow,
 	type BotFleet,
 	type BotTestDecision,
+	type BotInput,
+	type BotType,
+	type BotFollowableStrategy,
 } from './bot_factory';
 
 export {

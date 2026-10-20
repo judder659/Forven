@@ -19,6 +19,15 @@ _CHARS_PER_TOKEN = 4
 # soul/strategy/format text plus ~10 candles of JSON per watched pair.
 _BASE_PROMPT_TOKENS = 700
 _PER_PAIR_PROMPT_TOKENS = 450
+# Rough prompt tokens each optional input adds per watched pair.
+_INPUT_TOKENS_PER_PAIR = {
+    "indicators": 120,
+    "higher_timeframe": 280,
+    "funding": 60,
+    "open_interest": 50,
+    "regime": 50,
+    "strategy_signals": 150,
+}
 _OUTPUT_TOKENS_BY_VERBOSITY = {"minimal": 60, "standard": 150, "verbose": 400}
 # Free-roam bots watch up to this many pairs (BotRunner._FREE_ROAM_MAX_PAIRS).
 FREE_ROAM_PAIRS = 6
@@ -85,13 +94,15 @@ def project_daily_spend(
     max_llm_cost_per_day: float | None = None,
     avg_tokens_in: float | None = None,
     avg_tokens_out: float | None = None,
+    inputs: list[str] | None = None,
 ) -> dict:
     """Projected AI calls and spend per day for a bot configuration.
 
     Uses the bot's own recorded average tokens per call when given, else a
     size heuristic from the number of watched pairs.
     """
-    tokens_in = avg_tokens_in or (_BASE_PROMPT_TOKENS + _PER_PAIR_PROMPT_TOKENS * max(int(pairs or 1), 1))
+    per_pair = _PER_PAIR_PROMPT_TOKENS + sum(_INPUT_TOKENS_PER_PAIR.get(i, 0) for i in (inputs or []))
+    tokens_in = avg_tokens_in or (_BASE_PROMPT_TOKENS + per_pair * max(int(pairs or 1), 1))
     tokens_out = avg_tokens_out or _OUTPUT_TOKENS_BY_VERBOSITY.get(verbosity, 150)
     rate, priced = rate_for(provider, model_id)
     cost_per_call = None

@@ -6,6 +6,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+BotType = Literal["ai", "grid", "dca", "signal"]
+
+# Extra inputs an AI bot can be shown (see forven.bot_factory.inputs).
+BotInput = Literal[
+    "indicators", "higher_timeframe", "funding", "open_interest", "regime", "strategy_signals",
+]
+
 
 class BotConfigCreate(BaseModel):
     """Request body for creating a bot."""
@@ -41,6 +48,11 @@ class BotConfigCreate(BaseModel):
     decision_cadence: Literal["candle_close", "interval"] = "candle_close"
     # Candle timeframe the bot reads (and, on candle_close, decides on).
     timeframe: Literal["15m", "1h", "4h", "1d"] = "1h"
+    # Extra inputs joined to the candles in the prompt; empty = candles only.
+    data_sources: list[BotInput] | None = None
+    # "ai" asks a model; "grid", "dca" and "signal" decide in code (rule_params).
+    bot_type: BotType = "ai"
+    rule_params: dict | None = None
     template_id: str | None = None
 
 
@@ -73,6 +85,9 @@ class BotConfigUpdate(BaseModel):
     max_llm_cost_per_day: float | None = Field(default=None, ge=0)
     decision_cadence: Literal["candle_close", "interval"] | None = None
     timeframe: Literal["15m", "1h", "4h", "1d"] | None = None
+    data_sources: list[BotInput] | None = None
+    bot_type: BotType | None = None
+    rule_params: dict | None = None
 
 
 class BotCloneRequest(BaseModel):

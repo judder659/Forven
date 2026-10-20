@@ -49,7 +49,10 @@ def list_bots():
 
 @router.post("/api/bot-factory/bots")
 def create_bot(body: BotConfigCreate):
-    return bf_domain.api_create_bot(body.model_dump(exclude_none=True))
+    try:
+        return bf_domain.api_create_bot(body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/api/bot-factory/bots/{bot_id}")
@@ -68,7 +71,7 @@ def update_bot(bot_id: str, body: BotConfigUpdate):
     try:
         return bf_domain.api_update_bot(bot_id, updates)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404 if "not found" in str(e).lower() else 400, detail=str(e))
 
 
 @router.delete("/api/bot-factory/bots/{bot_id}")
@@ -120,6 +123,7 @@ def cost_estimate(
     max_llm_calls_per_day: int | None = 200,
     max_llm_cost_per_day: float | None = None,
     bot_id: str | None = None,
+    data_sources: str | None = None,
 ):
     pairs = [p.strip() for p in (locked_pairs or "").split(",") if p.strip()] or None
     return bf_domain.api_cost_estimate(
@@ -133,6 +137,7 @@ def cost_estimate(
         max_llm_calls_per_day=max_llm_calls_per_day,
         max_llm_cost_per_day=max_llm_cost_per_day,
         bot_id=bot_id,
+        data_sources=[d.strip() for d in (data_sources or "").split(",") if d.strip()],
     )
 
 
@@ -261,6 +266,11 @@ async def test_decision(body: BotTestDecisionRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Test decision failed: {e}")
+
+
+@router.get("/api/bot-factory/followable-strategies")
+def followable_strategies():
+    return bf_domain.api_followable_strategies()
 
 
 @router.get("/api/bot-factory/fleet")
