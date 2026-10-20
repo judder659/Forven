@@ -3,7 +3,7 @@
 // these shapes carry the frozen coin list and each coin's share of the record.
 // Sent on GET /paper/summary sessions and GET /strategies/{id}/container.
 
-import { asArray, asRecord } from './core';
+import { asArray, asRecord, fetchApi } from './core';
 
 export interface MultiCoinInfo {
 	/** Home coin first, then the coins the breadth test added. */
@@ -17,6 +17,10 @@ export interface MultiCoinInfo {
 	weight: number;
 	/** False when multi-coin paper is switched off: the list is kept, only the home coin trades. */
 	trading: boolean;
+	/** The breadth test's own pick; any other coin was added by hand and carries no breadth evidence. */
+	tested_coins: string[];
+	hand_edited: boolean;
+	edited_at: string | null;
 	/** Strategy container payload only. */
 	by_coin: CoinForward[];
 }
@@ -82,6 +86,47 @@ export function parseMultiCoin(value: unknown): MultiCoinInfo | null {
 		breadth_verdict: str(rec.breadth_verdict),
 		weight: num(rec.weight, 1 / coins.length),
 		trading: rec.trading !== false,
+		tested_coins: coinsOf(rec.tested_coins),
+		hand_edited: Boolean(rec.hand_edited),
+		edited_at: str(rec.edited_at),
 		by_coin: parseCoinBreakdown(rec.by_coin),
 	};
+}
+
+function coinsOf(value: unknown): string[] {
+	return asArray(value).map((coin) => String(coin ?? '').trim().toUpperCase()).filter(Boolean);
+}
+
+/** Any strategy's editable coin list: the home coin first, then any extra coins. */
+export interface CoinList {
+	home: string;
+	coins: string[];
+	tested_coins: string[];
+	edited_at: string | null;
+	max_coins: number;
+}
+
+export function parseCoinList(value: unknown): CoinList | null {
+	const rec = asRecord(value);
+	const home = str(rec?.home)?.toUpperCase();
+	if (!rec || !home) return null;
+	const coins = coinsOf(rec.coins);
+	return {
+		home,
+		coins: coins[0] === home ? coins : [home],
+		tested_coins: coinsOf(rec.tested_coins),
+		edited_at: str(rec.edited_at),
+		max_coins: num(rec.max_coins, 15),
+	};
+}
+
+/** Set the coins a strategy paper-trades. The home coin always stays; extras record from now. */
+export async function setStrategyCoins(strategyId: string, coins: string[]): Promise<CoinList | null> {
+	const data = asRecord(
+		await fetchApi<unknown>(`/strategies/${encodeURIComponent(strategyId)}/coins`, {
+			method: 'PUT',
+			body: JSON.stringify({ coins }),
+		}),
+	);
+	return parseCoinList(data?.coin_list);
 }

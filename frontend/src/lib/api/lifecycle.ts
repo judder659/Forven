@@ -7,7 +7,7 @@ import {
 } from './core';
 import { getForvenStrategiesQuery, promoteForvenStrategy } from './forven';
 import { normalizeStrategyPayload } from './strategies';
-import { parseMultiCoin, type MultiCoinInfo } from './multiCoin';
+import { parseCoinList, parseMultiCoin, type CoinList, type MultiCoinInfo } from './multiCoin';
 
 export async function getPromotedStrategies(): Promise<{ strategies: Strategy[] }> {
 	try {
@@ -278,6 +278,8 @@ export interface StrategyContainerPayload {
 	events: LifecycleEvent[];
 	/** Multi-coin paper container (coin list and each coin's record), else null. */
 	multi_coin?: MultiCoinInfo | null;
+	/** Every strategy's editable coin list (home coin alone when single-coin). */
+	coin_list?: CoinList | null;
 }
 
 function parseContainerHistoryItem(raw: unknown): StrategyContainerHistoryItem {
@@ -328,6 +330,7 @@ export async function getStrategyContainer(
 		},
 		events: asArray(root.events).map(parseLifecycleEvent),
 		multi_coin: parseMultiCoin(root.multi_coin),
+		coin_list: parseCoinList(root.coin_list),
 	};
 }
 

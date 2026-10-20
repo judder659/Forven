@@ -225,6 +225,11 @@ def container_view(
         "breadth_finished_at": record.get("breadth_finished_at"),
         "weight": round(1.0 / len(coins), 6),
         "trading": bool(settings(config)["multi_coin_enabled"]),
+        "tested_coins": [coin_key(c) for c in record.get("tested_coins") or [] if coin_key(c)]
+        if "tested_coins" in record
+        else (list(coins) if str(record.get("source") or "") == "breadth" else []),
+        "hand_edited": bool(record.get("edited_at")),
+        "edited_at": str(record.get("edited_at") or "") or None,
     }
 
 
@@ -298,3 +303,83 @@ def coin_breakdown(
 
     rank = {coin: index for index, coin in enumerate(order)}
     return sorted(rows.values(), key=lambda e: (rank.get(e["coin"], len(rank)), e["coin"]))
+
+
+# --- Editing the list by hand ------------------------------------------------------
+# The operator may change a strategy's coins at any time. The breadth test's own
+# choice is kept as ``tested_coins`` and every coin it did not pick is marked as
+# added by hand: a hand-picked coin carries no breadth evidence, and the live gate
+# holds containers regardless (``multi_coin_live_review``).
+
+MAX_EDITED_COINS = 15
+_COIN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+
+def edited_record(
+    previous: Mapping[str, Any] | None,
+    home: str,
+    coins: Iterable[object],
+    now: str,
+    *,
+    actor: str = "ui",
+) -> dict[str, Any]:
+    """The record after the operator sets the coin list, home coin first.
+
+    ``coins`` may omit the home coin (it always trades) and may name pairs
+    (``UNI/USDT``). A list of only the home coin is kept as a record so the
+    breadth test does not choose again. Raises ValueError for a bad list.
+    """
+    home_coin = coin_key(home)
+    if not home_coin:
+        raise ValueError("the strategy has no home coin")
+    out: list[str] = [home_coin]
+    for raw in coins:
+        coin = coin_key(raw)
+        if not coin:
+            continue
+        if not set(coin) <= _COIN_CHARS or len(coin) > 15:
+            raise ValueError(f"{str(raw).strip()!r} is not a coin symbol")
+        if coin not in out:
+            out.append(coin)
+    if len(out) > MAX_EDITED_COINS:
+        raise ValueError(f"at most {MAX_EDITED_COINS} coins, home coin included")
+
+    prev = previous if isinstance(previous, Mapping) else {}
+    prev_coins = [coin_key(c) for c in prev.get("coins") or [] if coin_key(c)]
+    if prev_coins and prev_coins[0] != home_coin:
+        prev, prev_coins = {}, []  # the strategy moved to another coin: start over
+    if "tested_coins" in prev:
+        tested = [coin_key(c) for c in prev.get("tested_coins") or [] if coin_key(c)]
+    elif str(prev.get("source") or "") == "breadth":
+        tested = list(prev_coins)
+    else:
+        tested = []
+    prev_added = prev.get("added_at") if isinstance(prev.get("added_at"), Mapping) else {}
+    frozen_at = str(prev.get("frozen_at") or "") or now
+    added_at: dict[str, str] = {}
+    for coin in out[1:]:
+        if coin in prev_coins:
+            if prev_added.get(coin):
+                added_at[coin] = str(prev_added[coin])
+        else:
+            added_at[coin] = now  # records forward from now, never replays its history
+    return {
+        "coins": out,
+        "home": home_coin,
+        "frozen_at": frozen_at,
+        "source": "breadth" if tested and out == tested else "manual",
+        "tested_coins": tested,
+        "added_at": added_at,
+        "edited_at": now,
+        "edited_by": actor,
+        "breadth_verdict": prev.get("breadth_verdict"),
+        "breadth_finished_at": prev.get("breadth_finished_at"),
+    }
+
+
+def coin_since(record: Mapping[str, Any] | None, coin: str) -> str | None:
+    """When ``coin`` started recording in its container: its own add time, else the freeze."""
+    if not isinstance(record, Mapping):
+        return None
+    added = record.get("added_at") if isinstance(record.get("added_at"), Mapping) else {}
+    return str(added.get(coin) or record.get("frozen_at") or "") or None

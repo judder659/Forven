@@ -29,6 +29,7 @@
 			}));
 	$: traded = coinRows.filter((row) => row.closed_count > 0 || row.open_count > 0).length;
 	$: sharePct = Math.round(info.weight * 1000) / 10;
+	$: tested = new Set(info.tested_coins);
 
 	function nowLabel(row: CoinForward): string {
 		if (row.open_count === 0) return '—';
@@ -40,7 +41,7 @@
 <div class="grid gap-2" data-testid="coin-breakdown">
 	<p class="m-0 text-[11px] leading-relaxed text-sc-ink3">
 		Paper-trades the same rule on {info.coins.length} coins under one strategy, each on {sharePct}% of the paper book.
-		{#if info.frozen_at}The list was frozen {fmtDateUtc(info.frozen_at)} by the breadth test and does not change.{/if}
+		{#if info.hand_edited && info.edited_at}Coins last edited by hand {fmtDateUtc(info.edited_at)}.{:else if info.frozen_at}The breadth test chose this list {fmtDateUtc(info.frozen_at)}.{/if}
 		{#if !compact}{traded} of {info.coins.length} have traded so far.{/if}
 	</p>
 	{#if !info.trading}
@@ -65,6 +66,7 @@
 						<td class="py-1 pr-2 font-plex-mono text-sc-ink">
 							{row.coin}
 							{#if row.home}<span class="ml-1 font-plex-cond text-[10px] uppercase tracking-[0.06em] text-sc-ink4" title="The strategy's own coin">home</span>{/if}
+							{#if row.in_container && !row.home && tested.size && !tested.has(row.coin)}<span class="ml-1 font-plex-cond text-[10px] uppercase tracking-[0.06em] text-[#e7b24a]" title="Added by hand, not picked by the breadth test">by hand</span>{/if}
 							{#if !row.in_container}<span class="ml-1 font-plex-cond text-[10px] uppercase tracking-[0.06em] text-sc-ink4" title="Traded, but not on the frozen list">off list</span>{/if}
 						</td>
 						<td class={`py-1 pr-2 ${row.open_count ? 'text-sc-ink' : 'text-sc-ink4'}`}>{nowLabel(row)}</td>

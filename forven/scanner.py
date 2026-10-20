@@ -6099,8 +6099,8 @@ def _kernel_occupied_margin(strat_id: str, execution_type: str, *, asset: str | 
 # strategy's id. Each leg sizes on 1/len(coins) of the strategy's paper equity.
 
 
-def _paper_container(strat_id: str, strat: dict) -> tuple[list[str], str | None] | None:
-    """(frozen coin list, when it was frozen) when this paper strategy trades as a container."""
+def _paper_container(strat_id: str, strat: dict) -> tuple[list[str], dict[str, str | None]] | None:
+    """(coin list, when each coin started recording) when this paper strategy trades as a container."""
     from forven import multi_coin
 
     try:
@@ -6110,7 +6110,7 @@ def _paper_container(strat_id: str, strat: dict) -> tuple[list[str], str | None]
     except Exception:
         return None
     coins = multi_coin.coins_from_record(record, str(strat.get("asset") or ""))
-    return (coins, str(record.get("frozen_at") or "") or None) if coins else None
+    return (coins, {coin: multi_coin.coin_since(record, coin) for coin in coins}) if coins else None
 
 
 def _paper_container_coins(strat_id: str, strat: dict) -> list[str] | None:
@@ -6170,7 +6170,8 @@ def _container_leg(strat: dict, coin: str, coins: list[str], since: str | None =
 
 
 def manage_container_via_kernel(
-    strat_id: str, strat: dict, coins: list[str], *, since: str | None = None, account_equity=None, diagnostics=None,
+    strat_id: str, strat: dict, coins: list[str], *, since: str | dict[str, str | None] | None = None,
+    account_equity=None, diagnostics=None,
 ) -> list[str] | object | None:
     """Paper-trade a multi-coin container: one kernel pass per coin, home coin first.
 
@@ -6184,7 +6185,8 @@ def manage_container_via_kernel(
     for index, coin in enumerate(coins):
         leg_diag: dict | None = {} if diagnostics is not None else None
         result = manage_positions_via_kernel(
-            strat_id, _container_leg(strat, coin, coins, since), account_equity=account_equity,
+            strat_id, _container_leg(strat, coin, coins, since.get(coin) if isinstance(since, dict) else since),
+            account_equity=account_equity,
             execution_type="paper", diagnostics=leg_diag,
         )
         if result is KERNEL_IMPURE_REFUSED or (result is None and index == 0):

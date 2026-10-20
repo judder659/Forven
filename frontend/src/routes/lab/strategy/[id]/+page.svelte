@@ -99,6 +99,7 @@
 	import VerdictCard from '$lib/components/strategy/container/VerdictCard.svelte';
 	import StandingCard from '$lib/components/strategy/container/StandingCard.svelte';
 	import CoinBreakdown from '$lib/components/strategy/container/CoinBreakdown.svelte';
+	import CoinListEditor from '$lib/components/strategy/container/CoinListEditor.svelte';
 	import EvidenceLadder from '$lib/components/strategy/container/EvidenceLadder.svelte';
 	import EvidenceTimeline from '$lib/components/strategy/container/EvidenceTimeline.svelte';
 	import RobustnessScorecard from '$lib/components/strategy/container/RobustnessScorecard.svelte';
@@ -1281,6 +1282,15 @@
 	$: executionOpenTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'OPEN');
 	// Multi-coin paper container (backend forven.multi_coin): one rule on several coins.
 	$: multiCoin = container?.multi_coin ?? null;
+	$: coinList = container?.coin_list ?? null;
+	let editingCoins = false;
+	$: openCoins = [...new Set(executionOpenTrades.filter((row) => tradeBook(row) !== 'live').map((row) => tradeCoin(row)))];
+	async function onCoinsSaved(): Promise<void> {
+		editingCoins = false;
+		tradeCoinFilter = 'all';
+		addToast('Coins saved', 'success');
+		await loadContainer();
+	}
 	let tradeCoinFilter = 'all';
 	$: if (!multiCoin) tradeCoinFilter = 'all';
 	function tradeCoin(row: Record<string, unknown>): string {
@@ -5042,7 +5052,10 @@
 							<article class="rounded-md grid content-start gap-3 border border-sc-line bg-sc-panel p-4" data-testid="summary-coins">
 								<div class="flex flex-wrap items-baseline justify-between gap-2">
 									<h2 class="m-0 text-[13px] font-semibold text-sc-ink">Coins</h2>
-									<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" on:click={() => (activeTab = 'execution')}>Trades by coin →</button>
+									<div class="flex items-center gap-2">
+										<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" data-testid="summary-edit-coins" on:click={() => { editingCoins = true; activeTab = 'execution'; }}>Edit coins</button>
+										<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" on:click={() => (activeTab = 'execution')}>Trades by coin →</button>
+									</div>
 								</div>
 								<CoinBreakdown info={multiCoin} />
 							</article>
@@ -6209,21 +6222,33 @@
 
 				{#if activeTab === 'execution'}
 					<div class="space-y-4">
-						{#if multiCoin}
+						{#if multiCoin || coinList}
 							<div class="rounded-md grid gap-3 border border-sc-line bg-sc-panel p-3" data-testid="execution-coins">
-								<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Coins</div>
-								<CoinBreakdown info={multiCoin} />
-								<div class="flex flex-wrap items-center gap-1.5 text-[11px]" role="group" aria-label="Show trades for">
-									<span class="text-sc-ink3">Trades below:</span>
-									{#each ['all', ...multiCoin.coins] as coin (coin)}
-										<button
-											type="button"
-											aria-pressed={tradeCoinFilter === coin}
-											class={`rounded-full border px-2 py-0.5 font-plex-mono ${tradeCoinFilter === coin ? 'border-sc-ink text-sc-ink' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink2'}`}
-											on:click={() => (tradeCoinFilter = coin)}
-										>{coin === 'all' ? 'All coins' : coin}</button>
-									{/each}
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Coins</div>
+									{#if coinList && !editingCoins}
+										<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" data-testid="edit-coins" on:click={() => (editingCoins = true)}>{multiCoin ? 'Edit coins' : 'Trade on more coins'}</button>
+									{/if}
 								</div>
+								{#if editingCoins && coinList}
+									<CoinListEditor {strategyId} list={coinList} {openCoins} on:saved={() => void onCoinsSaved()} on:cancel={() => (editingCoins = false)} />
+								{:else if !multiCoin && coinList}
+									<p class="m-0 text-[11px] text-sc-ink3">Trades {coinList.home} only. Add coins to paper-trade the same rule on each of them, sharing the paper book equally.</p>
+								{/if}
+								{#if multiCoin}
+									<CoinBreakdown info={multiCoin} />
+									<div class="flex flex-wrap items-center gap-1.5 text-[11px]" role="group" aria-label="Show trades for">
+										<span class="text-sc-ink3">Trades below:</span>
+										{#each ['all', ...multiCoin.coins] as coin (coin)}
+											<button
+												type="button"
+												aria-pressed={tradeCoinFilter === coin}
+												class={`rounded-full border px-2 py-0.5 font-plex-mono ${tradeCoinFilter === coin ? 'border-sc-ink text-sc-ink' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink2'}`}
+												on:click={() => (tradeCoinFilter = coin)}
+											>{coin === 'all' ? 'All coins' : coin}</button>
+										{/each}
+									</div>
+								{/if}
 							</div>
 						{/if}
 						<div class="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">

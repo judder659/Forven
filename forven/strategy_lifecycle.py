@@ -21,6 +21,7 @@ from forven.db import (
     get_strategies,
     get_strategy_events,
     kv_get,
+    kv_set,
     log_activity,
 )
 from forven import multi_coin as multi_coin_mod
@@ -963,6 +964,80 @@ def read_strategies(status: str | None = None, limit: int | None = None, offset:
     return [_scrub_nonfinite(_compact_strategy_list_row(row)) for row in enriched_rows]
 
 
+def set_strategy_coins(strategy_id: str, coins: list[str], actor: str = "ui") -> dict:
+    """Set the coins a strategy paper-trades (forven.multi_coin), home coin first.
+
+    The operator's list replaces the breadth test's choice; the record keeps what
+    the test picked (``tested_coins``) so hand-added coins are never read as breadth
+    evidence. A coin with an open paper position cannot be removed: its leg would
+    stop running with the position still open.
+    """
+    target = str(strategy_id or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="strategy_id is required")
+    with get_db() as conn:
+        row = conn.execute("SELECT id, symbol, stage FROM strategies WHERE id = ?", (target,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"strategy not found: {target}")
+        open_rows = conn.execute(
+            "SELECT DISTINCT asset FROM trades WHERE (strategy_id = ? OR strategy = ?) AND status = 'OPEN' "
+            "AND LOWER(COALESCE(execution_type, 'paper')) = 'paper'",
+            (target, target),
+        ).fetchall()
+    key = multi_coin_mod.kv_key(target)
+    previous = kv_get(key, None)
+    now = _now()
+    try:
+        record = multi_coin_mod.edited_record(previous, str(row["symbol"] or ""), coins, now, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    before = multi_coin_mod.coins_from_record(previous, record["home"]) or [record["home"]]
+    open_coins = {multi_coin_mod.coin_key(r["asset"]) for r in open_rows}
+    stranded = sorted(c for c in open_coins if c in before and c not in record["coins"])
+    if stranded:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{', '.join(stranded)} still has an open paper position. Close it first, then remove the coin.",
+        )
+    if before == record["coins"] and isinstance(previous, dict):
+        record = dict(previous)  # nothing changed: keep the record as it was
+    else:
+        kv_set(key, record)
+        log_activity(
+            "info",
+            "pipeline",
+            f"{target} coins set by hand: {', '.join(record['coins'])} (was {', '.join(before)})",
+            {"strategy_id": target, "actor": actor, "from": before, "to": record["coins"]},
+        )
+        with get_db() as conn:
+            append_audit_summary(
+                conn,
+                target,
+                {"event": "coins_changed", "from": before, "to": record["coins"], "actor": actor, "timestamp": now},
+            )
+    return {
+        "ok": True,
+        "strategy_id": target,
+        "coin_list": _coin_list_payload(record, str(row["symbol"] or "")),
+    }
+
+
+def _coin_list_payload(record: dict | None, symbol: str) -> dict:
+    """The editable coin list of any strategy: its home coin, plus extras when it has a record."""
+    home = multi_coin_mod.coin_key(symbol)
+    coins = [multi_coin_mod.coin_key(c) for c in (record or {}).get("coins") or [] if multi_coin_mod.coin_key(c)]
+    if not coins or coins[0] != home:
+        coins = [home] if home else []
+    view = multi_coin_mod.container_view(record, symbol, {}) if record else None
+    return {
+        "home": home,
+        "coins": coins,
+        "tested_coins": (view or {}).get("tested_coins") or [],
+        "edited_at": str((record or {}).get("edited_at") or "") or None,
+        "max_coins": multi_coin_mod.MAX_EDITED_COINS,
+    }
+
+
 def set_strategy_display_name(strategy_id: str, display_name: str | None, actor: str = "ui") -> dict:
     """Set or clear the operator-facing display-name override for a strategy.
 
@@ -1357,8 +1432,9 @@ def get_strategy_container(
             """,
             (resolved_strategy_id, resolved_strategy_id),
         ).fetchall()
+        coin_record = kv_get(multi_coin_mod.kv_key(resolved_strategy_id), None)
         multi_coin = multi_coin_mod.container_view(
-            kv_get(multi_coin_mod.kv_key(resolved_strategy_id), None),
+            coin_record,
             strategy_row["symbol"],
             kv_get("forven:pipeline_thresholds", {}) or {},
         )
@@ -1502,6 +1578,7 @@ def get_strategy_container(
         },
         "events": events,
         "multi_coin": multi_coin,
+        "coin_list": _coin_list_payload(coin_record, str(strategy_row["symbol"] or "")),
     })
 
 

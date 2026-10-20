@@ -159,3 +159,87 @@ def test_manual_close_of_a_leg_is_priced_on_its_own_coin(forven_db):
     assert trade["asset"] == "UNI"
     assert session["symbol"] == "UNI/USDT"
     assert paper_control._paper_mid(session, trade) == 6.0
+
+
+# --- editing the list by hand ---------------------------------------------------------
+
+
+def test_edited_record_keeps_the_tested_list_and_stamps_new_coins():
+    frozen = _record(["ETH", "UNI", "NEAR"]) | {"breadth_finished_at": "2026-10-18T00:00:00+00:00"}
+    out = multi_coin.edited_record(frozen, "ETH/USDT", ["uni/usdt", "SOL", "ETH", "SOL"], "2026-10-20T16:00:00+00:00")
+    assert out["coins"] == ["ETH", "UNI", "SOL"]
+    assert out["tested_coins"] == ["ETH", "UNI", "NEAR"]
+    assert out["source"] == "manual" and out["edited_at"] == "2026-10-20T16:00:00+00:00"
+    assert out["frozen_at"] == FROZEN_AT
+    assert out["added_at"] == {"SOL": "2026-10-20T16:00:00+00:00"}  # UNI keeps recording from the freeze
+    assert multi_coin.coin_since(out, "UNI") == FROZEN_AT
+    assert multi_coin.coin_since(out, "SOL") == "2026-10-20T16:00:00+00:00"
+
+    again = multi_coin.edited_record(out, "ETH/USDT", ["UNI", "NEAR"], "2026-10-21T00:00:00+00:00")
+    assert again["tested_coins"] == ["ETH", "UNI", "NEAR"] and again["source"] == "breadth"
+
+    alone = multi_coin.edited_record(None, "BTC/USDT", [], "2026-10-20T16:00:00+00:00")
+    assert alone["coins"] == ["BTC"] and alone["tested_coins"] == [] and alone["frozen_at"]
+    assert multi_coin.coins_from_record(alone, "BTC") is None  # one coin is single-coin
+
+    with pytest.raises(ValueError):
+        multi_coin.edited_record(None, "BTC/USDT", ["DROP TABLE"], "x")
+    with pytest.raises(ValueError):
+        multi_coin.edited_record(None, "BTC/USDT", [f"C{i}" for i in range(20)], "x")
+
+
+def test_container_view_marks_hand_edits():
+    edited = multi_coin.edited_record(_record(["ETH", "UNI"]), "ETH", ["UNI", "SOL"], "2026-10-20T16:00:00+00:00")
+    view = multi_coin.container_view(edited, "ETH/USDT", {})
+    assert view["tested_coins"] == ["ETH", "UNI"] and view["hand_edited"] is True
+    assert multi_coin.container_view(_record(["ETH", "UNI"]), "ETH/USDT", {})["tested_coins"] == ["ETH", "UNI"]
+
+
+def test_set_strategy_coins_writes_the_record_and_refuses_to_strand_a_position(forven_db):
+    from fastapi import HTTPException
+
+    from forven.strategy_lifecycle import set_strategy_coins
+
+    with get_db() as conn:
+        _insert_paper_strategy(conn, "S-ED")
+        _insert_trade(conn, "S-ED", 1, "UNI", status="OPEN")
+    _freeze("S-ED", ["ETH", "UNI", "NEAR"])
+
+    with pytest.raises(HTTPException) as refused:
+        set_strategy_coins("S-ED", ["NEAR"])
+    assert refused.value.status_code == 409 and "UNI" in refused.value.detail
+
+    out = set_strategy_coins("S-ED", ["UNI", "LINK"])
+    assert out["coin_list"]["coins"] == ["ETH", "UNI", "LINK"]
+    assert out["coin_list"]["tested_coins"] == ["ETH", "UNI", "NEAR"]
+    payload = get_strategy_container("S-ED")
+    assert payload["multi_coin"]["coins"] == ["ETH", "UNI", "LINK"]
+    assert payload["coin_list"]["edited_at"]
+
+    with pytest.raises(HTTPException):
+        set_strategy_coins("S-ED", ["bad coin!"])
+    with pytest.raises(HTTPException):
+        set_strategy_coins("S-NOPE", ["UNI"])
+
+
+def test_single_coin_strategy_gets_an_editable_list(forven_db):
+    from forven.strategy_lifecycle import set_strategy_coins
+
+    with get_db() as conn:
+        _insert_paper_strategy(conn, "S-NEW", symbol="BTC/USDT")
+    assert get_strategy_container("S-NEW")["coin_list"]["coins"] == ["BTC"]
+    set_strategy_coins("S-NEW", ["SOL"])
+    assert get_strategy_container("S-NEW")["multi_coin"]["coins"] == ["BTC", "SOL"]
+    set_strategy_coins("S-NEW", [])
+    payload = get_strategy_container("S-NEW")
+    assert payload["multi_coin"] is None and payload["coin_list"]["coins"] == ["BTC"]
+
+
+def test_scanner_records_each_added_coin_from_when_it_was_added(forven_db):
+    import forven.scanner as scanner
+
+    edited = multi_coin.edited_record(_record(["BTC", "SOL"]), "BTC", ["SOL", "ADA"], "2026-10-20T16:00:00+00:00")
+    kv_set(multi_coin.kv_key("S-SC"), edited)
+    coins, since = scanner._paper_container("S-SC", {"asset": "BTC"})
+    assert coins == ["BTC", "SOL", "ADA"]
+    assert since == {"BTC": FROZEN_AT, "SOL": FROZEN_AT, "ADA": "2026-10-20T16:00:00+00:00"}
