@@ -63,7 +63,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 			out.push({
 				key: 'oos-loss', tone: 'fail', title: 'Loses money out of sample.',
 				body: `The out-of-sample slice returned ${fmtFraction(oos.totalReturn)} (Sharpe ${fmtNum(oos.sharpe)}).`,
-				short: 'it loses money out of sample', rule: 'out-of-sample return > 0', target: { tab: 'performance' },
+				short: 'it loses money out of sample', rule: 'out-of-sample return > 0', target: { tab: 'runs', anchor: 'run-report' },
 			});
 		} else if (held?.verdict === 'FAIL') {
 			out.push({
@@ -136,7 +136,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 			key: 'concentration', tone: 'caution', title: 'Profit rides on a few trades.',
 			body: `The ${c.top} best of ${input.tradeCount} out-of-sample trades made ${fmtPct(c.share, 0, false)} of net profit (${fmtUsd(c.topSum, 0, false)} of ${fmtUsd(c.net, 0, false)}).${stops && stops.pnl < 0 ? ` ${stops.count} stop-outs cost ${fmtUsd(Math.abs(stops.pnl), 0, false)}.` : ''} Expect long flat stretches between winners.`,
 			short: `${Math.round(c.share)}% of the profit came from ${c.top} trades`,
-			rule: `top ${c.top} trades > ${CONCENTRATION_SHARE}% of net profit`, target: { tab: 'summary', anchor: 'attribution' },
+			rule: `top ${c.top} trades > ${CONCENTRATION_SHARE}% of net profit`, target: { tab: 'runs', anchor: 'attribution' },
 		});
 	}
 
