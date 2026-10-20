@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # Minimum seconds between LLM calls (rate limit)
 MIN_LLM_INTERVAL_SECONDS = 10
 
+# Bots already told they're sizing above equity this process (logged once).
+_ABOVE_EQUITY_NOTED: set[str] = set()
+
 # Trade action vocabulary. BUY/SHORT open a long/short; SELL/COVER close the
 # matching long/short. A bot holds at most one long and one short per ticker.
 _OPEN_ACTIONS = {"BUY", "SHORT"}
@@ -301,10 +304,15 @@ def enforce_risk_limits(
     deployed = sum(
         (p.get("qty") or 0) * (p.get("entry_price") or 0) for p in positions
     )
-    if equity > 0 and (deployed + position_value) > equity:
-        logger.warning(
-            "Bot %s deploying above equity: $%.2f open + $%.2f new > $%.2f equity (leverage by config)",
-            bot_config.get("id", "?"), deployed, position_value, equity,
+    # Logged once per bot per process: with max position x max concurrent
+    # above 100% this is every open, and it is configuration, not an error.
+    bot_key = str(bot_config.get("id", "?"))
+    if equity > 0 and (deployed + position_value) > equity and bot_key not in _ABOVE_EQUITY_NOTED:
+        _ABOVE_EQUITY_NOTED.add(bot_key)
+        logger.info(
+            "Bot %s sizes above equity by configuration ($%.2f open + $%.2f new > $%.2f equity); "
+            "noted once per run",
+            bot_key, deployed, position_value, equity,
         )
 
     return trade
@@ -378,7 +386,10 @@ async def run_decision_cycle(
             temperature=0.7,
             fallback=False,
         )
-        record_llm_call(bot_id)
+        from forven.bot_factory.ai_budget import estimate_call_cost
+
+        usage = estimate_call_cost(provider, resolved_model, messages, response_text)
+        record_llm_call(bot_id, usage.get("cost_usd"))
 
         # Parse response
         parsed = _parse_llm_response(response_text)
@@ -457,6 +468,10 @@ async def run_decision_cycle(
             action_type=result.action_type,
             action_data=result.trade_data,
             verbosity=verbosity,
+            run_id=bot_config.get("run_id"),
+            cost_usd=usage.get("cost_usd"),
+            tokens_in=usage.get("tokens_in"),
+            tokens_out=usage.get("tokens_out"),
         )
 
         record_success(bot_id)
@@ -475,6 +490,7 @@ async def run_decision_cycle(
                 action_type="error",
                 action_data={"error": str(e), "transient": True},
                 verbosity="standard",
+                run_id=bot_config.get("run_id"),
             )
         except Exception:
             pass  # DB may still be locked — don't let logging kill us
@@ -495,6 +511,7 @@ async def run_decision_cycle(
             action_type="error",
             action_data={"error": str(e)},
             verbosity="standard",
+            run_id=bot_config.get("run_id"),
         )
 
         return DecisionResult(

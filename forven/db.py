@@ -1521,6 +1521,8 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     data_sources TEXT,
     max_llm_calls_per_day INTEGER DEFAULT 200,
     max_consecutive_errors INTEGER DEFAULT 5,
+    max_llm_cost_per_day REAL,
+    decision_cadence TEXT DEFAULT 'interval',
     template_id TEXT,
     status TEXT DEFAULT 'stopped',
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
@@ -1548,7 +1550,9 @@ CREATE TABLE IF NOT EXISTS bot_status (
     realized_pnl REAL DEFAULT 0,
     funding_accrued REAL DEFAULT 0,
     peak_equity REAL,
-    equity_state_started_at TEXT
+    equity_state_started_at TEXT,
+    run_id TEXT,
+    llm_cost_today REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS bot_decisions (
@@ -1559,7 +1563,11 @@ CREATE TABLE IF NOT EXISTS bot_decisions (
     reasoning TEXT,
     action_type TEXT,
     action_data TEXT,
-    verbosity_level TEXT
+    verbosity_level TEXT,
+    run_id TEXT,
+    cost_usd REAL,
+    tokens_in INTEGER,
+    tokens_out INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bot_templates (
@@ -3467,6 +3475,17 @@ def _run_post_index_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "bot_status", "funding_accrued", "REAL DEFAULT 0")
     _ensure_column(conn, "bot_status", "peak_equity", "REAL")
     _ensure_column(conn, "bot_status", "equity_state_started_at", "TEXT")
+    # Bot Factory Phase 1: run identity, AI spend, decision cadence. Existing
+    # bots keep the 'interval' cadence they ran with; new bots are created with
+    # 'candle_close' (see create_bot).
+    _ensure_column(conn, "bot_status", "run_id", "TEXT")
+    _ensure_column(conn, "bot_status", "llm_cost_today", "REAL DEFAULT 0")
+    _ensure_column(conn, "bot_configs", "max_llm_cost_per_day", "REAL")
+    _ensure_column(conn, "bot_configs", "decision_cadence", "TEXT DEFAULT 'interval'")
+    _ensure_column(conn, "bot_decisions", "run_id", "TEXT")
+    _ensure_column(conn, "bot_decisions", "cost_usd", "REAL")
+    _ensure_column(conn, "bot_decisions", "tokens_in", "INTEGER")
+    _ensure_column(conn, "bot_decisions", "tokens_out", "INTEGER")
 
     # Bot Factory indexes. idx_trades_source speeds the source='bot:%' reads at
     # bot startup / UI refresh / reconcile. The unique version index is guarded
@@ -7499,6 +7518,17 @@ def _default_bot_model() -> str:
     return "gpt-4.1-mini"
 
 
+BOT_DECISION_CADENCES = ("candle_close", "interval")
+
+
+def normalize_bot_cadence(value: object) -> str:
+    """'candle_close' (decide once per new 1h candle) or 'interval' (decide
+    every cooldown_seconds). Anything else falls back to 'interval', the
+    cadence every pre-existing bot ran with."""
+    cadence = str(value or "").strip().lower()
+    return cadence if cadence in BOT_DECISION_CADENCES else "interval"
+
+
 def create_bot(config: dict) -> str:
     """Create a new bot and return its ID.
 
@@ -7519,8 +7549,9 @@ def create_bot(config: dict) -> str:
                 reasoning_verbosity, asset_mode, locked_pairs,
                 tools, web_allowlist, web_rate_limit, data_sources,
                 max_llm_calls_per_day, max_consecutive_errors, template_id,
+                max_llm_cost_per_day, decision_cadence,
                 execution_mode, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
             (
                 bot_id,
                 config.get("name", "Untitled Bot"),
@@ -7550,6 +7581,8 @@ def create_bot(config: dict) -> str:
                 config.get("max_llm_calls_per_day", 200),
                 config.get("max_consecutive_errors", 5),
                 config.get("template_id"),
+                config.get("max_llm_cost_per_day"),
+                normalize_bot_cadence(config.get("decision_cadence") or "candle_close"),
                 now,
                 now,
             ),
@@ -7567,7 +7600,8 @@ def get_bot(bot_id: str) -> dict | None:
         row = conn.execute(
             """SELECT c.*, s.pid, s.status AS runtime_status, s.last_heartbeat,
                       s.started_at, s.error_message, s.llm_calls_today,
-                      s.consecutive_errors
+                      s.consecutive_errors, s.run_id, s.llm_calls_reset_date,
+                      s.llm_cost_today
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                WHERE c.id = ?""",
@@ -7576,6 +7610,7 @@ def get_bot(bot_id: str) -> dict | None:
         if not row:
             return None
         d = dict(row)
+        _zero_stale_daily_usage(d)
         for key in ("session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources"):
             if d.get(key) and isinstance(d[key], str):
                 try:
@@ -7583,6 +7618,14 @@ def get_bot(bot_id: str) -> dict | None:
                 except (json.JSONDecodeError, TypeError):
                     pass
         return d
+
+
+def _zero_stale_daily_usage(d: dict) -> None:
+    """The daily AI counters reset lazily on the next call, so a row whose reset
+    date isn't today is showing yesterday's usage: report today's as zero."""
+    if d.get("llm_calls_reset_date") and d.get("llm_calls_reset_date") != _today_utc():
+        d["llm_calls_today"] = 0
+        d["llm_cost_today"] = 0.0
 
 
 def list_bots() -> list[dict]:
@@ -7597,7 +7640,10 @@ def list_bots() -> list[dict]:
                       c.created_at, c.updated_at,
                       s.pid, s.status AS runtime_status, s.last_heartbeat,
                       s.started_at, s.error_message, s.llm_calls_today,
-                      s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day
+                      s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day,
+                      c.max_llm_cost_per_day, c.decision_cadence, c.max_position_pct,
+                      c.max_concurrent_positions, s.run_id, s.llm_calls_reset_date,
+                      s.llm_cost_today
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                ORDER BY c.created_at DESC"""
@@ -7623,6 +7669,7 @@ def list_bots() -> list[dict]:
             d["open_positions"] = int(digest.get("open_positions") or 0)
             d["closed_trades"] = int(digest.get("closed_trades") or 0)
             d["realized_pnl"] = float(d.get("realized_pnl") or 0.0)
+            _zero_stale_daily_usage(d)
             results.append(d)
         return results
 
@@ -7714,7 +7761,8 @@ def clone_bot(bot_id: str, new_name: str) -> str:
     config = {k: v for k, v in bot.items() if k not in (
         "id", "created_at", "updated_at", "status", "runtime_status",
         "pid", "last_heartbeat", "started_at", "error_message",
-        "llm_calls_today", "consecutive_errors",
+        "llm_calls_today", "consecutive_errors", "run_id",
+        "llm_calls_reset_date", "llm_cost_today",
     )}
     config["name"] = new_name
     return create_bot(config)
@@ -7748,6 +7796,9 @@ def set_bot_status(
             values.append(_now_utc())
         if status == "stopped":
             parts.append("pid = NULL")
+            # A stopped bot has no current run: any process still alive for it
+            # sees it no longer owns the bot and exits (see set_bot_run_id).
+            parts.append("run_id = NULL")
         values.append(bot_id)
         conn.execute(
             f"UPDATE bot_status SET {', '.join(parts)} WHERE bot_id = ?",
@@ -7757,6 +7808,27 @@ def set_bot_status(
             "UPDATE bot_configs SET status = ? WHERE id = ?",
             (status, bot_id),
         )
+
+
+def set_bot_run_id(bot_id: str, run_id: str | None) -> None:
+    """Record the run that owns this bot. Written by the manager BEFORE it
+    spawns the process, so exactly one process ever owns a bot: a runner whose
+    run_id no longer matches (a stray copy after a retried Start, a wedged
+    process the monitor could not kill) stops on its own."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE bot_status SET run_id = ? WHERE bot_id = ?",
+            (run_id, bot_id),
+        )
+
+
+def get_bot_run_id(bot_id: str) -> str | None:
+    """The run id that currently owns this bot, or None when none does."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT run_id FROM bot_status WHERE bot_id = ?", (bot_id,)
+        ).fetchone()
+        return (row["run_id"] if row else None) or None
 
 
 def set_bot_live_wallet(bot_id: str, wallet: str | None) -> None:
@@ -7835,7 +7907,8 @@ def increment_bot_llm_calls(bot_id: str) -> int:
             return 0
         if row["llm_calls_reset_date"] != today:
             conn.execute(
-                "UPDATE bot_status SET llm_calls_today = 1, llm_calls_reset_date = ? WHERE bot_id = ?",
+                "UPDATE bot_status SET llm_calls_today = 1, llm_cost_today = 0, "
+                "llm_calls_reset_date = ? WHERE bot_id = ?",
                 (today, bot_id),
             )
             return 1
@@ -7845,6 +7918,27 @@ def increment_bot_llm_calls(bot_id: str) -> int:
             (new_count, bot_id),
         )
         return new_count
+
+
+def add_bot_llm_cost(bot_id: str, cost_usd: float) -> float:
+    """Add an AI call's estimated cost to today's total and return it. Shares
+    the call counter's reset date, which increment_bot_llm_calls has already
+    moved to today for the call being recorded."""
+    today = _today_utc()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT llm_cost_today, llm_calls_reset_date FROM bot_status WHERE bot_id = ?",
+            (bot_id,),
+        ).fetchone()
+        if not row:
+            return 0.0
+        current = float(row["llm_cost_today"] or 0.0) if row["llm_calls_reset_date"] == today else 0.0
+        new_total = current + max(float(cost_usd or 0.0), 0.0)
+        conn.execute(
+            "UPDATE bot_status SET llm_cost_today = ?, llm_calls_reset_date = ? WHERE bot_id = ?",
+            (new_total, today, bot_id),
+        )
+        return new_total
 
 
 def increment_bot_errors(bot_id: str) -> int:
@@ -7881,13 +7975,19 @@ def log_bot_decision(
     action_type: str,
     action_data: dict | None,
     verbosity: str = "standard",
+    *,
+    run_id: str | None = None,
+    cost_usd: float | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
 ) -> None:
-    """Log a bot decision."""
+    """Log a bot decision, tagged with the run that made it and its AI cost."""
     with get_db() as conn:
         conn.execute(
             """INSERT INTO bot_decisions
-               (bot_id, event_trigger, reasoning, action_type, action_data, verbosity_level)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (bot_id, event_trigger, reasoning, action_type, action_data, verbosity_level,
+                run_id, cost_usd, tokens_in, tokens_out)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 bot_id,
                 json.dumps(event_trigger) if event_trigger else None,
@@ -7895,8 +7995,37 @@ def log_bot_decision(
                 action_type,
                 json.dumps(action_data) if action_data else None,
                 verbosity,
+                run_id,
+                cost_usd,
+                tokens_in,
+                tokens_out,
             ),
         )
+
+
+def get_bot_ai_usage(bot_id: str, recent: int = 50) -> dict:
+    """AI spend over all of a bot's decisions, plus its average tokens per call
+    over the most recent `recent` priced decisions (for spend projections)."""
+    with get_db() as conn:
+        total = conn.execute(
+            """SELECT COUNT(cost_usd) AS priced_calls, COALESCE(SUM(cost_usd), 0) AS total_cost
+                 FROM bot_decisions WHERE bot_id = ?""",
+            (bot_id,),
+        ).fetchone()
+        avg = conn.execute(
+            """SELECT AVG(tokens_in) AS avg_in, AVG(tokens_out) AS avg_out, COUNT(*) AS n
+                 FROM (SELECT tokens_in, tokens_out FROM bot_decisions
+                        WHERE bot_id = ? AND tokens_in IS NOT NULL
+                        ORDER BY id DESC LIMIT ?)""",
+            (bot_id, int(recent)),
+        ).fetchone()
+    return {
+        "priced_calls": int(total["priced_calls"] or 0),
+        "total_cost_usd": float(total["total_cost"] or 0.0),
+        "avg_tokens_in": float(avg["avg_in"]) if avg["avg_in"] is not None else None,
+        "avg_tokens_out": float(avg["avg_out"]) if avg["avg_out"] is not None else None,
+        "sampled_calls": int(avg["n"] or 0),
+    }
 
 
 def get_bot_decisions(bot_id: str, limit: int = 50) -> list[dict]:

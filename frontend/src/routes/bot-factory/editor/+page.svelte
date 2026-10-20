@@ -16,7 +16,10 @@
 		createBotFromStrategy,
 		createTemplate,
 		deleteTemplate,
+		getBotCostEstimate,
 		type BotConfig,
+		type BotCostEstimate,
+		type BotDecisionCadence,
 		type BotTemplate,
 		type BotSessionHours,
 	} from '$lib/api';
@@ -61,6 +64,11 @@
 	let lockedPairsText = '';
 	let maxLlmCallsPerDay = 200;
 	let maxConsecutiveErrors = 5;
+	// Daily AI spend cap in USD; null = only the call cap.
+	let maxLlmCostPerDay: number | null = null;
+	// New bots decide once per closed 1h candle (the data they read changes
+	// hourly); 'interval' decides every cooldownSeconds.
+	let decisionCadence: BotDecisionCadence = 'candle_close';
 
 	// Session hours — leaving unset (sessionHoursEnabled = false) = always active
 	let sessionHoursEnabled = false;
@@ -137,11 +145,52 @@
 
 	// Live summary rail derivations
 	$: maxPositionUsd = (capitalAllocation || 0) * (maxPositionPct || 0) / 100;
-	$: cadenceLabel = cooldownSeconds >= 3600
-		? `${(cooldownSeconds / 3600).toFixed(1)}h`
-		: cooldownSeconds >= 60
-			? `${Math.round(cooldownSeconds / 60)}m`
-			: `${cooldownSeconds}s`;
+	// Every position at full size: above 100% the bot can deploy more than its
+	// equity (paper leverage — allowed, but worth knowing before saving).
+	$: maxExposurePct = (maxPositionPct || 0) * (maxConcurrentPositions || 0);
+
+	// Projected AI calls and spend per day, refreshed as the inputs change.
+	let costEstimate: BotCostEstimate | null = null;
+	let costEstimateTimer: ReturnType<typeof setTimeout> | null = null;
+	let costEstimateSeq = 0;
+	$: scheduleCostEstimate(
+		model, decisionCadence, cooldownSeconds, assetMode, lockedPairsText,
+		reasoningVerbosity, maxLlmCallsPerDay, maxLlmCostPerDay,
+	);
+	function scheduleCostEstimate(..._deps: unknown[]) {
+		if (costEstimateTimer) clearTimeout(costEstimateTimer);
+		costEstimateTimer = setTimeout(async () => {
+			const seq = ++costEstimateSeq;
+			try {
+				const estimate = await getBotCostEstimate({
+					model: model.trim(),
+					decision_cadence: decisionCadence,
+					cooldown_seconds: Math.max(Number(cooldownSeconds) || 60, 1),
+					asset_mode: assetMode,
+					locked_pairs: lockedPairsText.split(',').map((s) => s.trim()).filter(Boolean),
+					reasoning_verbosity: reasoningVerbosity,
+					max_llm_calls_per_day: Math.max(Number(maxLlmCallsPerDay) || 1, 1),
+					max_llm_cost_per_day: maxLlmCostPerDay && maxLlmCostPerDay > 0 ? maxLlmCostPerDay : null,
+					bot_id: editId,
+				});
+				if (seq === costEstimateSeq) costEstimate = estimate;
+			} catch {
+				if (seq === costEstimateSeq) costEstimate = null;
+			}
+		}, 400);
+	}
+	function fmtUsdSmall(value: number | null | undefined): string {
+		if (value == null) return '—';
+		if (value < 0.01) return `$${value.toFixed(4)}`;
+		return `$${value.toFixed(2)}`;
+	}
+	$: cadenceLabel = decisionCadence === 'candle_close'
+		? 'each new 1h candle'
+		: cooldownSeconds >= 3600
+			? `every ${(cooldownSeconds / 3600).toFixed(1)}h`
+			: cooldownSeconds >= 60
+				? `every ${Math.round(cooldownSeconds / 60)}m`
+				: `every ${cooldownSeconds}s`;
 	$: universeLabel = assetMode === 'locked'
 		? (lockedPairsText.split(',').map((s) => s.trim()).filter(Boolean).join(', ') || '— pick pairs —')
 		: 'Top perps by volume (auto)';
@@ -169,6 +218,12 @@
 		lockedPairsText = Array.isArray(lp) ? lp.join(', ') : '';
 		maxLlmCallsPerDay = (config.max_llm_calls_per_day as number) ?? 200;
 		maxConsecutiveErrors = (config.max_consecutive_errors as number) ?? 5;
+		maxLlmCostPerDay = (config.max_llm_cost_per_day as number | null) ?? null;
+		// A saved bot without the field predates cadences and ran on an interval;
+		// templates and strategy bridges without it get the new default.
+		const cadence = config.decision_cadence as string | undefined;
+		if (cadence === 'candle_close' || cadence === 'interval') decisionCadence = cadence;
+		else if ('id' in config && config.id) decisionCadence = 'interval';
 		if (config.execution_mode === 'live' || config.execution_mode === 'paper') {
 			editExecutionMode = config.execution_mode;
 			execMode = config.execution_mode;
@@ -234,6 +289,9 @@
 					: null,
 			max_llm_calls_per_day: maxLlmCallsPerDay,
 			max_consecutive_errors: maxConsecutiveErrors,
+			// 0 clears a saved dollar cap (null would mean "unchanged" on update).
+			max_llm_cost_per_day: maxLlmCostPerDay && maxLlmCostPerDay > 0 ? maxLlmCostPerDay : editId ? 0 : null,
+			decision_cadence: decisionCadence,
 		};
 	}
 
@@ -542,6 +600,13 @@
 							<input id="takeProfit" type="number" bind:value={takeProfitPct} min="0.01" step="0.5" placeholder="none" class="terminal-input" />
 						</div>
 					</div>
+					{#if maxExposurePct > 100}
+						<div class="border-t border-yellow-900/50 bg-yellow-500/5 px-4 py-2.5 text-[11px] text-yellow-500">
+							With every position at full size this bot can deploy {maxExposurePct.toFixed(0)}% of its equity
+							({maxPositionPct}% × {maxConcurrentPositions} positions). That is leverage: allowed on paper,
+							but a bad streak hits the drawdown limit much faster. 10% × 5 keeps it at 50%.
+						</div>
+					{/if}
 				</section>
 
 				<!-- Execution -->
@@ -557,9 +622,23 @@
 							<input id="slippage" type="number" bind:value={slippageBps} min="0" step="0.1" class="terminal-input" />
 						</div>
 						<div>
-							<label for="cooldown" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Decision Cadence (seconds)</label>
-							<input id="cooldown" type="number" bind:value={cooldownSeconds} min="1" step="1" class="terminal-input" />
+							<label for="cadence" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Decide</label>
+							<select id="cadence" bind:value={decisionCadence} class="terminal-select">
+								<option value="candle_close">On each new 1h candle (recommended)</option>
+								<option value="interval">On a fixed interval</option>
+							</select>
+							<p class="mt-1 text-[11px] text-sc-ink3">
+								{decisionCadence === 'candle_close'
+									? 'The bot reads 1h candles, so it asks the model once per new candle. Stops, targets and drawdown are still checked every minute.'
+									: 'Asks the model every interval, even when no new candle has closed.'}
+							</p>
 						</div>
+						{#if decisionCadence === 'interval'}
+							<div>
+								<label for="cooldown" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Interval (seconds)</label>
+								<input id="cooldown" type="number" bind:value={cooldownSeconds} min="1" step="1" class="terminal-input" />
+							</div>
+						{/if}
 						<div>
 							<label for="verbosity" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Reasoning Verbosity</label>
 							<select id="verbosity" bind:value={reasoningVerbosity} class="terminal-select">
@@ -725,6 +804,10 @@
 							<input id="llmCap" type="number" bind:value={maxLlmCallsPerDay} min="1" step="1" class="terminal-input" />
 						</div>
 						<div>
+							<label for="llmCostCap" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Daily AI Spend Cap ($) <span class="normal-case text-sc-ink3">— estimated, optional</span></label>
+							<input id="llmCostCap" type="number" bind:value={maxLlmCostPerDay} min="0" step="0.5" placeholder="none" class="terminal-input" />
+						</div>
+						<div>
 							<label for="maxErrors" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Circuit Breaker (max consecutive errors)</label>
 							<input id="maxErrors" type="number" bind:value={maxConsecutiveErrors} min="1" step="1" class="terminal-input" />
 						</div>
@@ -778,8 +861,8 @@
 							</span>
 						</div>
 						<div class="flex items-center justify-between border-b border-sc-line px-4 py-2.5">
-							<span class="text-sc-ink3">Cadence</span>
-							<span class="text-sc-ink">every {cadenceLabel}</span>
+							<span class="text-sc-ink3">Decides</span>
+							<span class="text-sc-ink">{cadenceLabel}</span>
 						</div>
 						<div class="flex items-start justify-between gap-3 border-b border-sc-line px-4 py-2.5">
 							<span class="shrink-0 text-sc-ink3">Universe</span>
@@ -793,11 +876,44 @@
 							<span class="text-sc-ink3">Session</span>
 							<span class="text-sc-ink">{sessionHoursEnabled ? `${sessionStart}–${sessionEnd}` : 'always on'}</span>
 						</div>
+						<div class="flex items-center justify-between border-b border-sc-line px-4 py-2.5">
+							<span class="text-sc-ink3">AI budget</span>
+							<span class="text-sc-ink">{maxLlmCallsPerDay} calls{maxLlmCostPerDay ? ` / $${maxLlmCostPerDay}` : ''} a day</span>
+						</div>
 						<div class="flex items-center justify-between px-4 py-2.5">
-							<span class="text-sc-ink3">LLM budget</span>
-							<span class="text-sc-ink">{maxLlmCallsPerDay}/day</span>
+							<span class="text-sc-ink3">Projected AI use</span>
+							<span class="text-right text-sc-ink">
+								{#if costEstimate}
+									{Math.round(costEstimate.calls_per_day)} calls · {fmtUsdSmall(costEstimate.usd_per_day)}/day
+								{:else}
+									—
+								{/if}
+							</span>
 						</div>
 					</div>
+					{#if costEstimate && !costEstimate.model_check.ok}
+						<div class="border-t border-red-900/50 bg-red-500/5 px-4 py-2.5 text-[11px] text-red-400">
+							{costEstimate.model_check.reason} Start will refuse this model{costEstimate.model_check.default_model
+								? `; your default is ${costEstimate.model_check.default_model}.`
+								: '.'}
+						</div>
+					{/if}
+					{#if costEstimate?.hours_until_call_cap != null}
+						<div class="border-t border-yellow-900/50 bg-yellow-500/5 px-4 py-2.5 text-[11px] text-yellow-500">
+							At this cadence the bot uses its {maxLlmCallsPerDay} daily calls in about
+							{costEstimate.hours_until_call_cap} hours, then pauses until UTC midnight.
+							{decisionCadence === 'interval' ? 'Deciding on each new candle needs 24 calls a day.' : ''}
+						</div>
+					{:else if costEstimate?.hours_until_spend_cap != null}
+						<div class="border-t border-yellow-900/50 bg-yellow-500/5 px-4 py-2.5 text-[11px] text-yellow-500">
+							The spend cap pauses this bot after about {costEstimate.hours_until_spend_cap} hours a day.
+						</div>
+					{/if}
+					{#if costEstimate && !costEstimate.priced && costEstimate.usd_per_day != null}
+						<div class="border-t border-sc-line px-4 py-2 text-[11px] text-sc-ink3">
+							This model has no price entry; the cost uses {costEstimate.provider}'s highest known rate.
+						</div>
+					{/if}
 					{#if stopLossPct == null}
 						<div class="border-t border-yellow-900/50 bg-yellow-500/5 px-4 py-2.5 text-[11px] text-yellow-500">
 							No stop-loss set — fine for paper, but GO LIVE will require one.

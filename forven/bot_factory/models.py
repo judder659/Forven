@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +34,11 @@ class BotConfigCreate(BaseModel):
     locked_pairs: list[str] | None = None
     max_llm_calls_per_day: int = Field(default=200, ge=1)
     max_consecutive_errors: int = Field(default=5, ge=1)
+    # Daily AI spend cap in USD (estimated); None = no dollar cap, only the call cap.
+    max_llm_cost_per_day: float | None = Field(default=None, gt=0)
+    # "candle_close": decide once per new 1h candle (risk checks still run
+    # every minute). "interval": decide every cooldown_seconds.
+    decision_cadence: Literal["candle_close", "interval"] = "candle_close"
     template_id: str | None = None
 
 
@@ -60,6 +67,9 @@ class BotConfigUpdate(BaseModel):
     locked_pairs: list[str] | None = None
     max_llm_calls_per_day: int | None = Field(default=None, ge=1)
     max_consecutive_errors: int | None = Field(default=None, ge=1)
+    # 0 clears the dollar cap (None means "leave unchanged" on an update).
+    max_llm_cost_per_day: float | None = Field(default=None, ge=0)
+    decision_cadence: Literal["candle_close", "interval"] | None = None
 
 
 class BotCloneRequest(BaseModel):

@@ -13,6 +13,7 @@
 		diffBotVersions,
 		startBot,
 		stopBot,
+		useDefaultModel,
 		goLiveBot,
 		goPaperBot,
 		closeBotPosition,
@@ -159,15 +160,41 @@
 		}
 	}
 
+	// Start refusals (a retired model, missing live arming) stay on the page
+	// with their fix, instead of vanishing in a toast.
+	let startError: string | null = null;
+	let fixingModel = false;
+
 	async function handleStart() {
 		if (!botId) return;
+		startError = null;
 		try {
 			await startBot(botId);
 			addToast('Bot started', 'success');
 			await load();
 		} catch (e: any) {
-			addToast(`Start failed: ${e.message}`, 'error');
+			startError = e.message || 'Start failed';
 		}
+	}
+
+	async function handleUseDefaultModel() {
+		if (!botId) return;
+		fixingModel = true;
+		try {
+			bot = await useDefaultModel(botId);
+			startError = null;
+			addToast(`Model switched to ${bot.model}`, 'success');
+		} catch (e: any) {
+			addToast(`Couldn't switch model: ${e.message}`, 'error');
+		} finally {
+			fixingModel = false;
+		}
+	}
+
+	function fmtCost(value: number | null | undefined): string {
+		if (value == null) return '—';
+		if (value < 0.01) return `$${value.toFixed(4)}`;
+		return `$${value.toFixed(2)}`;
 	}
 
 	async function handleStop() {
@@ -299,6 +326,8 @@
 		if (type === 'pass') return '➖';
 		if (type === 'error') return '⚠️';
 		if (type === 'paused') return '⏸';
+		if (type === 'skipped') return '⏭';
+		if (type === 'blocked') return '⛔';
 		return '•';
 	}
 
@@ -308,6 +337,8 @@
 		if (type === 'pass') return 'text-sc-ink2';
 		if (type === 'error') return 'text-red-400';
 		if (type === 'paused') return 'text-yellow-400';
+		if (type === 'skipped') return 'text-yellow-400';
+		if (type === 'blocked') return 'text-yellow-400';
 		return 'text-sc-ink';
 	}
 
@@ -472,7 +503,15 @@
 						{/if}
 					</div>
 					<div class="mt-1.5 flex items-center gap-3 text-xs text-sc-ink3">
-						<span>{bot.model}</span>
+						<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>
+							{bot.model}{#if bot.model_check && !bot.model_check.ok} (unavailable){/if}
+						</span>
+						<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
+						<span>{bot.decision_cadence === 'candle_close' ? 'decides each new 1h candle' : `decides every ${bot.cooldown_seconds}s`}</span>
+						{#if bot.run_id && isRunning}
+							<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
+							<span class="font-mono" title="This run's id; every Activity entry it writes carries it">run {bot.run_id}</span>
+						{/if}
 						<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
 						<span class="{statusColor(statusLabel)} font-bold uppercase tracking-wider">{statusLabel}</span>
 						{#if bot.started_at && isRunning}
@@ -508,6 +547,17 @@
 				</div>
 			</div>
 		</div>
+
+		{#if startError || (bot.model_check && !bot.model_check.ok && !isRunning)}
+			<div class="mb-6 flex flex-wrap items-center justify-between gap-3 border border-red-900 bg-red-500/5 px-4 py-3 text-xs text-red-400">
+				<span>{startError ?? `${bot.model_check?.reason} Start will refuse it until you pick another model.`}</span>
+				{#if bot.model_check && !bot.model_check.ok && bot.model_check.default_model}
+					<button on:click={handleUseDefaultModel} disabled={fixingModel} class="terminal-button text-[12px]">
+						{fixingModel ? 'Switching…' : `Use ${bot.model_check.default_model}`}
+					</button>
+				{/if}
+			</div>
+		{/if}
 
 		{#if confirmStop && isLiveMode && liveOpenCount > 0}
 			<div class="mb-6 border border-red-900 bg-red-500/5 px-4 py-3 text-xs text-red-400">
@@ -624,8 +674,11 @@
 				<div class="mt-1 text-base font-bold {drawdownColor}">{drawdownPct.toFixed(2)}% <span class="text-sc-ink3">/ {bot.max_drawdown_pct}%</span></div>
 			</div>
 			<div class="bg-sc-panel px-4 py-3">
-				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">LLM Today</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">AI Today</div>
 				<div class="mt-1 text-base font-bold text-sc-ink">{bot.llm_calls_today ?? 0} <span class="text-sc-ink3">/ {bot.max_llm_calls_per_day}</span></div>
+				<div class="text-[11px] text-sc-ink3" title="Estimated from prompt and reply length">
+					{fmtCost(bot.llm_cost_today ?? 0)}{bot.max_llm_cost_per_day ? ` / $${bot.max_llm_cost_per_day}` : ''} est.
+				</div>
 			</div>
 			<div class="bg-sc-panel px-4 py-3">
 				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Errors</div>
@@ -657,6 +710,14 @@
 						{stats.total_pnl_usd >= 0 ? '+' : ''}${stats.total_pnl_usd.toFixed(2)}
 					</span>
 				</div>
+				{#if stats.ai_priced_calls}
+					<span class="h-4 w-px bg-sc-raise"></span>
+					<div class="flex items-center gap-1.5" title="Estimated AI spend over {stats.ai_priced_calls} recorded calls">
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">AI cost</span>
+						<span class="font-bold text-sc-ink">{fmtCost(stats.ai_cost_usd)}</span>
+						<span class="text-[11px] text-sc-ink3">est.</span>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
@@ -697,7 +758,15 @@
 											<span class="px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {direction === 'long' ? 'border border-emerald-900 bg-emerald-500/10 text-emerald-400' : 'border border-red-900 bg-red-500/10 text-red-400'}">{direction}</span>
 										{/if}
 									</div>
-									<span class="text-xs text-sc-ink3">{formatTime(decision.timestamp)}</span>
+									<span class="flex items-center gap-2 text-xs text-sc-ink3">
+										{#if decision.cost_usd != null}
+											<span title="Estimated: {decision.tokens_in ?? 0} tokens in, {decision.tokens_out ?? 0} out">{fmtCost(decision.cost_usd)}</span>
+										{/if}
+										{#if decision.run_id}
+											<span class="font-mono {bot.run_id && decision.run_id !== bot.run_id ? 'text-yellow-500' : ''}" title={bot.run_id && decision.run_id !== bot.run_id ? 'Written by an earlier run' : 'Run that made this decision'}>run {decision.run_id}</span>
+										{/if}
+										<span>{formatTime(decision.timestamp)}</span>
+									</span>
 								</div>
 								{#if decision.reasoning}
 									<p class="mt-2 text-sm leading-relaxed {decision.action_type === 'error' ? 'text-red-300' : 'text-sc-ink2'}">{decision.reasoning}</p>

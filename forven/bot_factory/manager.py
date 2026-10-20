@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from uuid import uuid4
 
 import psutil
 
@@ -29,6 +30,7 @@ from forven.db import (
     get_running_bots,
     log_activity,
     reconcile_orphaned_bot_trades,
+    set_bot_run_id,
     set_bot_status,
 )
 
@@ -462,6 +464,19 @@ class BotManager:
                         "registered — re-arm via go-live (or restore the wallet)."
                     )
 
+        # A model that can't be called here (provider disconnected, model
+        # retired or not enabled) would fail on the first decision; refuse the
+        # start with the fix instead.
+        from forven.bot_factory.ai_budget import check_bot_model
+
+        model_check = check_bot_model(bot.get("model"))
+        if not model_check["ok"]:
+            fix = (
+                f" Pick another model in the editor, or use your default ({model_check['default_model']})."
+                if model_check.get("default_model") else " Pick another model in the editor."
+            )
+            raise ValueError(f"Can't start: {model_check['reason']}{fix}")
+
         status = bot.get("runtime_status") or bot.get("status", "stopped")
         if status == "running":
             # LIFE-7: a hard crash can leave a stale 'running' label. If the
@@ -479,10 +494,16 @@ class BotManager:
         env = _build_isolated_env(bot, issue_bot_token(bot_id, resolve_bot_provider(bot)))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
+        # Claim the bot for this run BEFORE spawning: any older process still
+        # alive for it (a wedged copy the monitor couldn't kill, a stray from
+        # a retried Start) sees it no longer owns the bot and stops itself.
+        run_id = uuid4().hex[:8]
+        set_bot_run_id(bot_id, run_id)
         argv = [
             sys.executable, "-m", "forven.bot_factory.runner",
             "--bot-id", bot_id,
             "--parent-pid", str(os.getpid()),
+            "--run-id", run_id,
         ]
 
         # Windows: run the bot at low integrity so it can't read the master key
@@ -506,11 +527,12 @@ class BotManager:
         set_bot_status(bot_id, "running", pid=process.pid)
         log_activity(
             "info", "bot_factory",
-            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid})" + (" in the sandbox" if sandboxed else ""),
-            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed},
+            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid}, run {run_id})"
+            + (" in the sandbox" if sandboxed else ""),
+            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed, "run_id": run_id},
         )
 
-        return {"status": "started", "pid": process.pid, "log_path": str(log_path)}
+        return {"status": "started", "pid": process.pid, "run_id": run_id, "log_path": str(log_path)}
 
     @staticmethod
     def _spawn_unsandboxed(argv: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen:
