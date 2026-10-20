@@ -161,3 +161,140 @@ def pool_by_day(rows: Iterable[tuple[object, object, object]]) -> list[float]:
         day = str(closed_at or "")[:10]
         days[day] = days.get(day, 0.0) + value
     return [days[day] for day in sorted(days)]
+
+
+# --- What the UI shows (read side) ---------------------------------------------------
+# The strategy row keeps its home symbol, so the UI reads the frozen list and each
+# coin's share of the record from these helpers. Callers read the KV record.
+
+
+def coin_key(value: object) -> str:
+    """``UNI``, ``UNI/USDT``, ``UNI-USDT``, ``UNIUSDT`` and ``UNI/USDT:USDT`` all read as ``UNI``."""
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ""
+    for sep in ("/", "-", "_", ":"):
+        if sep in raw:
+            raw = raw.split(sep, 1)[0]
+            break
+    for suffix in ("PERP", "USDT", "USDC", "USD"):
+        if raw.endswith(suffix) and len(raw) > len(suffix):
+            raw = raw[: -len(suffix)]
+            break
+    return raw.strip()
+
+
+def leg_symbol(coin: str, home_symbol: str) -> str:
+    """The pair a leg trades: the coin against the home symbol's quote (``UNI/USDT``)."""
+    home = str(home_symbol or "").strip().upper()
+    quote = "USDT"
+    for sep in ("/", "-"):
+        if sep in home:
+            quote = home.split(sep, 1)[1].split(":")[0] or quote
+            break
+    return f"{coin}/{quote}"
+
+
+def trade_coin(trade: Mapping[str, Any], home_symbol: str) -> str:
+    """The coin a trade row traded: its ``asset``, else the strategy's home coin."""
+    return coin_key(trade.get("asset")) or coin_key(trade.get("symbol")) or coin_key(home_symbol)
+
+
+def container_view(
+    record: Mapping[str, Any] | None,
+    symbol: str | None,
+    config: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """What the UI shows of a strategy's frozen record (``kv_key``), or None for single-coin.
+
+    ``trading`` is False when the record exists but multi-coin paper is switched
+    off (Settings, or the Strict paper preset): the list is kept, only the home
+    coin trades.
+    """
+    coins = coins_from_record(record, coin_key(symbol) or None)
+    if not coins or not isinstance(record, Mapping):
+        return None
+    home_symbol = str(symbol or "").strip().upper()
+    return {
+        "coins": coins,
+        "symbols": [leg_symbol(coin, home_symbol) for coin in coins],
+        "home": coins[0],
+        "frozen_at": str(record.get("frozen_at") or "") or None,
+        "source": str(record.get("source") or "") or None,
+        "breadth_verdict": record.get("breadth_verdict"),
+        "breadth_finished_at": record.get("breadth_finished_at"),
+        "weight": round(1.0 / len(coins), 6),
+        "trading": bool(settings(config)["multi_coin_enabled"]),
+    }
+
+
+def _finite(value: object) -> float | None:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def coin_breakdown(
+    closed: Iterable[Mapping[str, Any]],
+    open_positions: Iterable[Mapping[str, Any]],
+    coins: list[str] | None,
+    home: str,
+) -> list[dict[str, Any]]:
+    """Each coin's forward record: container coins first (in list order), then any other coin traded.
+
+    ``closed`` rows carry ``coin``, ``pnl`` (USD, may be None) and ``closed_at``;
+    ``open_positions`` rows carry ``coin``, ``side`` and ``unrealized_pnl``.
+    """
+    order = [c for c in (coins or [home]) if c]
+    rows: dict[str, dict[str, Any]] = {}
+
+    def row(coin: str) -> dict[str, Any]:
+        if coin not in rows:
+            rows[coin] = {
+                "coin": coin,
+                "home": coin == home,
+                "in_container": coin in order,
+                "closed_count": 0,
+                "wins": 0,
+                "win_rate_pct": None,
+                "realized_pnl_usd": 0.0,
+                "open_count": 0,
+                "open_sides": [],
+                "unrealized_pnl_usd": 0.0,
+                "last_closed_at": None,
+            }
+        return rows[coin]
+
+    for coin in order:
+        row(coin)
+    for trade in closed:
+        coin = str(trade.get("coin") or home)
+        entry = row(coin)
+        entry["closed_count"] += 1
+        pnl = _finite(trade.get("pnl"))
+        if pnl is not None:
+            entry["realized_pnl_usd"] += pnl
+            if pnl > 0:
+                entry["wins"] += 1
+        closed_at = str(trade.get("closed_at") or "") or None
+        if closed_at and (entry["last_closed_at"] is None or closed_at > entry["last_closed_at"]):
+            entry["last_closed_at"] = closed_at
+    for position in open_positions:
+        coin = str(position.get("coin") or home)
+        entry = row(coin)
+        entry["open_count"] += 1
+        side = str(position.get("side") or "").strip().lower()
+        if side and side not in entry["open_sides"]:
+            entry["open_sides"].append(side)
+        entry["unrealized_pnl_usd"] += _finite(position.get("unrealized_pnl")) or 0.0
+
+    for entry in rows.values():
+        if entry["closed_count"]:
+            entry["win_rate_pct"] = round(entry["wins"] / entry["closed_count"] * 100.0, 4)
+        entry["realized_pnl_usd"] = round(entry["realized_pnl_usd"], 4)
+        entry["unrealized_pnl_usd"] = round(entry["unrealized_pnl_usd"], 4)
+
+    rank = {coin: index for index, coin in enumerate(order)}
+    return sorted(rows.values(), key=lambda e: (rank.get(e["coin"], len(rank)), e["coin"]))

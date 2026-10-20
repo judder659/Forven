@@ -5,6 +5,7 @@
 // are shown side by side and never added together.
 
 import type { LiveFleet, LiveFleetStrategy, PaperSummary } from '$lib/api/dashboard';
+import type { CoinForward, MultiCoinInfo } from '$lib/api/multiCoin';
 import type { Tone } from './status';
 
 export interface ForwardRecord {
@@ -20,6 +21,9 @@ export interface ForwardRecord {
 	/** Live only: matched entries the live path refused in its window. */
 	blockedEntries: number;
 	blockedReason: string | null;
+	/** Paper multi-coin container: frozen coin list and each coin's record. */
+	multiCoin: MultiCoinInfo | null;
+	byCoin: CoinForward[] | null;
 }
 
 const LIVE_STATE: Record<string, { label: string; tone: Tone }> = {
@@ -49,6 +53,8 @@ function liveRecord(strategy: LiveFleetStrategy): ForwardRecord {
 		lastTradeAt: strategy.trades?.last_trade_at ?? null,
 		blockedEntries: strategy.blocked_entries?.count ?? 0,
 		blockedReason: strategy.blocked_entries?.top_reason ?? strategy.blocked_entries?.last_reason ?? null,
+		multiCoin: null,
+		byCoin: null,
 	};
 }
 
@@ -69,6 +75,8 @@ export function forwardIndex(paper: PaperSummary | null, fleet: LiveFleet | null
 			lastTradeAt: null,
 			blockedEntries: 0,
 			blockedReason: null,
+			multiCoin: session.multi_coin ?? null,
+			byCoin: session.coin_breakdown ?? null,
 		});
 	}
 	for (const strategy of fleet?.strategies ?? []) {

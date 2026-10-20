@@ -20,8 +20,10 @@ from forven.db import (
     get_recent_strategy_events,
     get_strategies,
     get_strategy_events,
+    kv_get,
     log_activity,
 )
+from forven import multi_coin as multi_coin_mod
 from forven import phantom_recovery
 from forven.strategies.certification import (
     certification_status_reason,
@@ -1355,6 +1357,35 @@ def get_strategy_container(
             """,
             (resolved_strategy_id, resolved_strategy_id),
         ).fetchall()
+        multi_coin = multi_coin_mod.container_view(
+            kv_get(multi_coin_mod.kv_key(resolved_strategy_id), None),
+            strategy_row["symbol"],
+            kv_get("forven:pipeline_thresholds", {}) or {},
+        )
+        if multi_coin:
+            # Every paper trade, not the capped slice above: each coin's record is a total.
+            paper_rows = conn.execute(
+                """
+                SELECT asset, symbol, status, direction, pnl_usd, closed_at
+                FROM trades
+                WHERE (strategy_id = ? OR strategy = ?)
+                  AND LOWER(COALESCE(execution_type, 'paper')) = 'paper'
+                """,
+                (resolved_strategy_id, resolved_strategy_id),
+            ).fetchall()
+            home_symbol = str(strategy_row["symbol"] or "")
+            closed_legs: list[dict] = []
+            open_legs: list[dict] = []
+            for trade in paper_rows:
+                status = str(trade["status"] or "").strip().upper()
+                coin = multi_coin_mod.trade_coin(dict(trade), home_symbol)
+                if status == "CLOSED":
+                    closed_legs.append({"coin": coin, "pnl": trade["pnl_usd"], "closed_at": trade["closed_at"]})
+                elif status == "OPEN":
+                    open_legs.append({"coin": coin, "side": trade["direction"]})
+            multi_coin["by_coin"] = multi_coin_mod.coin_breakdown(
+                closed_legs, open_legs, multi_coin["coins"], multi_coin["home"]
+            )
 
     strategy_row_data = dict(strategy_row)
     strategy_row_data["has_backtest_results"] = has_completed_backtest
@@ -1470,6 +1501,7 @@ def get_strategy_container(
             "positions": [dict(row) for row in positions_rows],
         },
         "events": events,
+        "multi_coin": multi_coin,
     })
 
 
