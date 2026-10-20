@@ -10,9 +10,11 @@ Nothing produced by Forven — strategies, backtests, signals, metrics, or auton
 
 Trading cryptocurrencies and derivatives carries a substantial risk of loss, including the **total loss** of funds, and losses can exceed your initial deposit when leverage is involved. Only ever risk capital you can afford to lose entirely.
 
-## Paper + testnet only
+## Paper trading by default
 
-Forven ships configured for **paper trading** with **Hyperliquid testnet** as the supported default. Live / mainnet (real-money) trading is **not a supported feature**: a live execution engine exists in the code but is **disabled by default** and reachable only through deliberate, multi-step opt-in (`FORVEN_EXECUTION_MODE=live` *and* `FORVEN_ALLOW_MAINNET=1` *and* mainnet credentials). If you enable it, you do so entirely **at your own risk** — the authors do not support, endorse, or take responsibility for that use.
+Forven ships configured for **paper trading**: strategies trade with simulated fills against live market data, and no real money is at risk. **Hyperliquid testnet** is the supported default exchange connection. Live / mainnet (real-money) trading is **not a supported feature**: a live execution engine exists in the code but is **disabled by default** and reachable only through deliberate, multi-step opt-in (`FORVEN_EXECUTION_MODE=live` *and* `FORVEN_ALLOW_MAINNET=1` *and* mainnet credentials). The same applies to any feature that can send orders to a real account, such as live Bot Factory bots or mirroring strategies to a connected trading account. If you enable any of these, you do so entirely **at your own risk** — the authors do not support, endorse, or take responsibility for that use.
+
+No strategy produced by Forven has been proven profitable in live trading. A strategy passing Forven's tests, or being offered for live trading, is not a recommendation to trade it.
 
 ## Backtest / paper performance is not predictive
 

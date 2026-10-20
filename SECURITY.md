@@ -19,8 +19,8 @@ reasonable time for a fix before any public disclosure (coordinated disclosure).
 
 ## Supported versions
 
-Security fixes target the latest release and the `main` branch. Older versions
-are not maintained — please update before reporting.
+Forven has no versioned releases yet. Security fixes land on the `main` branch;
+please update to the latest `main` before reporting.
 
 ## Scope & hardening notes
 
@@ -44,5 +44,12 @@ The most security-relevant configuration choices are documented in
   imports, `eval`/`exec`/`compile`, file reads, and aliased builtins), but a
   static denylist is **not a sandbox** and not a complete trust boundary. Only
   register strategy code you trust, and keep the API on localhost.
+- **Bot Factory bots never receive exchange keys or the master encryption
+  key.** Forven places their orders itself. On Windows, bots also run in a
+  low-integrity sandbox; see [`docs/bot-isolation.md`](docs/bot-isolation.md)
+  for what that does and does not cover.
+- **The MCP server** ([`docs/mcp-server.md`](docs/mcp-server.md)) acts with the
+  same rights as the API it connects to, so treat MCP client access like API
+  access.
 
 Thank you for helping keep Forven and its users safe.
