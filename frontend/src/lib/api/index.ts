@@ -853,6 +853,11 @@ export {
 	startBotReplay,
 	listBotReplays,
 	getBotReplay,
+	startBotArena,
+	listBotArenas,
+	getBotArena,
+	getTemplateReplays,
+	startTemplateReplay,
 	getBotVersions,
 	diffBotVersions,
 	getBotMemory,
@@ -900,6 +905,10 @@ export {
 	type BotReplayTrade,
 	type BotReplayStarted,
 	type BotReplayRequest,
+	type BotArena,
+	type BotArenaRow,
+	type BotArenaListItem,
+	type BotArenaStarted,
 } from './bot_factory';
 
 export {

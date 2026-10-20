@@ -150,6 +150,41 @@ BUILTIN_TEMPLATES = [
             "reasoning_verbosity": "standard",
         },
     },
+    # Rule templates decide in code: no AI cost, and the gallery replays them for free.
+    {
+        "name": "DCA: BTC dip buyer",
+        "description": "Buys BTC once a week, adds up to 3 larger buys if the price keeps falling 3% at a time, "
+        "and sells the whole position 3% above the average entry. No AI, no per-decision cost.",
+        "config": {
+            "bot_type": "dca",
+            "rule_params": {
+                "pair": "BTC/USDT", "order_usd": 250, "safety_orders": 3, "safety_step_pct": 3,
+                "safety_scale": 1.5, "take_profit_pct": 3, "interval_hours": 168,
+            },
+            "capital_allocation": 10000,
+            "max_position_pct": 10.0,
+            "max_concurrent_positions": 4,
+            "max_drawdown_pct": 15.0,
+            "timeframe": "1h",
+        },
+    },
+    {
+        "name": "DCA: ETH daily stack",
+        "description": "Buys ETH every day and takes profit 2% above the average entry, with 2 safety buys "
+        "4% apart. No AI, no per-decision cost.",
+        "config": {
+            "bot_type": "dca",
+            "rule_params": {
+                "pair": "ETH/USDT", "order_usd": 100, "safety_orders": 2, "safety_step_pct": 4,
+                "safety_scale": 1.0, "take_profit_pct": 2, "interval_hours": 24,
+            },
+            "capital_allocation": 5000,
+            "max_position_pct": 10.0,
+            "max_concurrent_positions": 3,
+            "max_drawdown_pct": 15.0,
+            "timeframe": "1h",
+        },
+    },
 ]
 
 

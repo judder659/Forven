@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -18,6 +18,8 @@
 		deleteTemplate,
 		getBotCostEstimate,
 		testBotDecision,
+		getTemplateReplays,
+		type BotReplay,
 		listFollowableStrategies,
 		type BotConfig,
 		type BotTestDecision,
@@ -478,8 +480,39 @@
 	let deletingTemplateId: string | null = null;
 	let confirmDeleteTemplateId: string | null = null;
 
+	// Latest replay per template: rule templates replay for free on load, so
+	// the gallery shows how each would have done before you pick it.
+	let templateReplays: Record<string, BotReplay | null> = {};
+	let templateReplayPoll: ReturnType<typeof setTimeout> | null = null;
+
+	async function loadTemplateReplays(refreshFree: boolean) {
+		try {
+			templateReplays = await getTemplateReplays(refreshFree);
+		} catch {
+			return;
+		}
+		if (templateReplayPoll) clearTimeout(templateReplayPoll);
+		if (Object.values(templateReplays).some((r) => r?.status === 'running')) {
+			templateReplayPoll = setTimeout(() => loadTemplateReplays(false), 3000);
+		}
+	}
+
+	function templateReplayLine(r: BotReplay | null | undefined): { text: string; tone: string } | null {
+		if (!r) return null;
+		if (r.status === 'running') return { text: 'Replaying on past candles…', tone: 'text-sc-ink3' };
+		if (r.status === 'failed' || !r.summary) return null;
+		const s = r.summary;
+		const pct = (v: number | null | undefined) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`);
+		const coin = s.benchmark_symbol.split('/')[0];
+		return {
+			text: `Replay ${r.window_start.slice(0, 10)} to ${r.window_end.slice(0, 10)}: ${pct(s.return_pct)} (${coin} ${pct(s.benchmark_return_pct)}), ${s.closed_trades} trades, max drawdown ${s.max_drawdown_pct.toFixed(1)}%`,
+			tone: (s.return_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
+		};
+	}
+
 	async function loadTemplates() {
 		templates = await listTemplates();
+		loadTemplateReplays(true);
 	}
 
 	async function handleSaveAsTemplate() {
@@ -516,6 +549,10 @@
 			deletingTemplateId = null;
 		}
 	}
+
+	onDestroy(() => {
+		if (templateReplayPoll) clearTimeout(templateReplayPoll);
+	});
 
 	onMount(async () => {
 		void loadWalletOptions();
@@ -620,6 +657,10 @@
 							>
 								<div class="pr-8 text-sm font-bold text-sc-ink">{template.name}</div>
 								<div class="mt-0.5 text-xs text-sc-ink3">{template.description}</div>
+								{#if templateReplayLine(templateReplays[template.id])}
+									{@const line = templateReplayLine(templateReplays[template.id])}
+									<div class="mt-1.5 text-[11px] {line?.tone}">{line?.text}</div>
+								{/if}
 							</button>
 							{#if !template.is_builtin}
 								{#if confirmDeleteTemplateId === template.id}

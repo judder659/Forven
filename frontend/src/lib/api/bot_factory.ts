@@ -574,6 +574,77 @@ export async function getBotReplay(replayId: string): Promise<BotReplay> {
 	return fetchApi(`/bot-factory/replays/${replayId}`);
 }
 
+export interface BotArenaRow {
+	rank: number | null;
+	replay_id: string;
+	bot_id: string | null;
+	name: string | null;
+	status: 'running' | 'done' | 'failed';
+	error: string | null;
+	return_after_ai_pct: number | null;
+	return_pct: number | null;
+	benchmark_return_pct: number | null;
+	max_drawdown_pct: number | null;
+	closed_trades: number | null;
+	win_rate: number | null;
+	ai_cost_usd: number | null;
+	ended_early: string | null;
+	pairs: string[] | null;
+}
+
+export interface BotArena {
+	id: string;
+	window_start: string;
+	window_end: string;
+	created_at: string;
+	running: number;
+	rows: BotArenaRow[];
+}
+
+export interface BotArenaListItem {
+	id: string;
+	created_at: string;
+	window_start: string;
+	window_end: string;
+	bots: number;
+}
+
+export interface BotArenaStarted {
+	id: string;
+	window_start: string;
+	window_end: string;
+	shifted_for_holdout: boolean;
+	replays: string[];
+}
+
+export async function startBotArena(body: {
+	bot_ids: string[];
+	days?: number;
+	max_ai_usd_per_bot?: number | null;
+}): Promise<BotArenaStarted> {
+	return fetchApi('/bot-factory/arena', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function listBotArenas(limit = 10): Promise<BotArenaListItem[]> {
+	return fetchApi(`/bot-factory/arena?limit=${limit}`);
+}
+
+export async function getBotArena(id: string): Promise<BotArena> {
+	return fetchApi(`/bot-factory/arena/${id}`);
+}
+
+/** Latest replay per template id; refreshFree starts free replays for rule templates. */
+export async function getTemplateReplays(refreshFree = false): Promise<Record<string, BotReplay | null>> {
+	return fetchApi(`/bot-factory/template-replays${refreshFree ? '?refresh_free=true' : ''}`);
+}
+
+export async function startTemplateReplay(
+	templateId: string,
+	body: { days?: number; max_ai_usd?: number | null }
+): Promise<BotReplayStarted> {
+	return fetchApi(`/bot-factory/templates/${templateId}/replays`, { method: 'POST', body: JSON.stringify(body) });
+}
+
 /** Move an existing bot onto the recommended settings (decide on each new candle). */
 export async function applyRecommendedBotSettings(id: string): Promise<BotConfig> {
 	return fetchApi(`/bot-factory/bots/${id}/apply-recommended`, { method: 'POST' });

@@ -324,6 +324,9 @@
 					<button on:click={() => (confirmKillAll = true)} disabled={killAllBusy} class="terminal-button-danger text-[12px]">Kill All</button>
 				{/if}
 			{/if}
+			{#if bots.length >= 2}
+				<a href="/bot-factory/arena" class="terminal-button text-[12px]" title="Replay several bots over the same dates and rank them">Arena</a>
+			{/if}
 			<button on:click={() => goto('/bot-factory/editor')} class="terminal-button-primary text-[12px]">+ New Bot</button>
 		</div>
 	</div>

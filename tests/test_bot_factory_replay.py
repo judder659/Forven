@@ -230,3 +230,76 @@ class TestService:
         detail = client.get(f"/api/bot-factory/replays/{replay_id}").json()
         assert detail["status"] in {"running", "done"}
         assert client.get("/api/bot-factory/replays/nope").status_code == 404
+
+
+class TestArena:
+    def test_ranking_puts_the_best_return_after_ai_first(self):
+        replays = [
+            {"id": "a", "bot_id": "A", "status": "done",
+             "summary": {"starting_capital": 1000, "pnl_after_ai_usd": 20, "return_pct": 3}},
+            {"id": "b", "bot_id": "B", "status": "done",
+             "summary": {"starting_capital": 100, "pnl_after_ai_usd": 5, "return_pct": 5}},
+            {"id": "c", "bot_id": "C", "status": "failed", "error": "no candles", "summary": None},
+            {"id": "d", "bot_id": "D", "status": "running", "summary": None},
+        ]
+        rows = rs.rank_arena(replays, {"A": "Alpha"})
+        assert [r["bot_id"] for r in rows[:2]] == ["B", "A"]
+        assert rows[0]["return_after_ai_pct"] == 5.0 and rows[0]["rank"] == 1
+        assert rows[1]["name"] == "Alpha"
+        assert rows[2]["rank"] is None and rows[3]["rank"] is None
+
+    def test_arena_runs_every_bot_on_the_same_window(self, forven_db):
+        from forven.db import create_bot, list_bot_replays
+
+        grid = create_bot({"name": "G", "model": "gpt-4.1-mini", "bot_type": "grid",
+                           "rule_params": {"pair": "BTC", "lower": 90, "upper": 100, "levels": 5}})
+        dca = create_bot({"name": "D", "model": "gpt-4.1-mini", "bot_type": "dca",
+                          "rule_params": {"pair": "BTC", "take_profit_pct": 2}})
+        ai = create_bot({"name": "AI", "model": "gpt-4.1-mini"})
+
+        async def go(ids, budget=None):
+            with patch.object(rs, "_research_cutoff", return_value=None), \
+                 patch.object(rs, "execute_replay", new_callable=AsyncMock, return_value={"summary": {}}):
+                out = rs.api_start_arena(ids, days=10, max_ai_usd_per_bot=budget)
+                await asyncio.sleep(0)
+                return out
+
+        with pytest.raises(ValueError, match="AI budget"):
+            asyncio.run(go([grid, ai]))
+        with pytest.raises(ValueError, match="two bots"):
+            asyncio.run(go([grid]))
+        out = asyncio.run(go([grid, dca, ai], budget=1.0))
+        rows = list_bot_replays(arena_id=out["id"])
+        assert len(rows) == 3
+        assert len({(r["window_start"], r["window_end"]) for r in rows}) == 1
+        arena = rs.api_get_arena(out["id"])
+        assert {r["name"] for r in arena["rows"]} == {"G", "D", "AI"}
+        assert rs.api_list_arenas()[0]["id"] == out["id"]
+
+
+class TestTemplateReplays:
+    def test_rule_templates_get_a_free_replay(self, forven_db):
+        from forven.bot_factory.templates import seed_builtin_templates
+        from forven.db import list_bot_templates
+
+        seed_builtin_templates()
+        templates = {t["name"]: t["id"] for t in list_bot_templates()}
+        assert "DCA: BTC dip buyer" in templates
+
+        async def go():
+            with patch.object(rs, "_research_cutoff", return_value=None), \
+                 patch.object(rs, "execute_replay", new_callable=AsyncMock, return_value={"summary": {}}):
+                first = rs.api_template_replays(refresh_free=True)
+                await asyncio.sleep(0)
+                second = rs.api_template_replays(refresh_free=True)
+                await asyncio.sleep(0)
+                return first, second
+
+        first, second = asyncio.run(go())
+        dca_id = templates["DCA: BTC dip buyer"]
+        ai_id = templates["Momentum Scalper"]
+        assert first[dca_id]["status"] == "running"
+        assert first[ai_id] is None  # AI templates only replay on request, with a budget
+        assert second[dca_id]["id"] == first[dca_id]["id"]  # not started twice
+        with pytest.raises(ValueError, match="budget"):
+            rs.api_start_template_replay(ai_id)

@@ -304,9 +304,11 @@ def start_replay(
     max_ai_usd: float | None = None,
     template_id: str | None = None,
     arena_id: str | None = None,
+    window: tuple[pd.Timestamp, pd.Timestamp, bool] | None = None,
 ) -> dict:
     """Record a replay and run it in the background. AI bots need an approved
-    dollar cap; rule bots replay for free."""
+    dollar cap; rule bots replay for free. ``window`` fixes the dates (an
+    arena gives every bot the same ones)."""
     from forven.db import create_bot_replay
 
     error = rules.validate_rule_params(config.get("bot_type"), config.get("rule_params"))
@@ -320,7 +322,7 @@ def start_replay(
     else:
         cap = 0.0
     days = int(days or (DEFAULT_DAYS_AI if uses_ai else DEFAULT_DAYS_RULES))
-    start, stop, shifted = replay_window(days, end, cutoff=_research_cutoff())
+    start, stop, shifted = window or replay_window(days, end, cutoff=_research_cutoff())
     replay_id = create_bot_replay(
         bot_id=bot_id, config=config, window_start=start.isoformat(), window_end=stop.isoformat(),
         max_ai_usd=cap if uses_ai else None, template_id=template_id, arena_id=arena_id,
@@ -378,3 +380,175 @@ def api_get_replay(replay_id: str) -> dict:
     if not replay:
         raise LookupError(f"Replay {replay_id} not found")
     return replay
+
+
+# ── Arena: several bots on the same window ────────────────────────────
+
+MAX_ARENA_BOTS = 12
+
+
+def _return_after_ai_pct(summary: dict | None) -> float | None:
+    summary = summary or {}
+    capital = float(summary.get("starting_capital") or 0)
+    if capital <= 0 or summary.get("pnl_after_ai_usd") is None:
+        return None
+    return round(float(summary["pnl_after_ai_usd"]) / capital * 100, 4)
+
+
+def rank_arena(replays: list[dict], names: dict[str, str] | None = None) -> list[dict]:
+    """Finished replays first, best return after AI cost on top."""
+    rows = []
+    for r in replays:
+        summary = r.get("summary") or {}
+        rows.append({
+            "replay_id": r["id"], "bot_id": r.get("bot_id"),
+            "name": (names or {}).get(r.get("bot_id") or "", r.get("bot_id")),
+            "status": r.get("status"), "error": r.get("error"),
+            "return_after_ai_pct": _return_after_ai_pct(summary),
+            "return_pct": summary.get("return_pct"),
+            "benchmark_return_pct": summary.get("benchmark_return_pct"),
+            "max_drawdown_pct": summary.get("max_drawdown_pct"),
+            "closed_trades": summary.get("closed_trades"),
+            "win_rate": summary.get("win_rate"),
+            "ai_cost_usd": summary.get("ai_cost_usd"),
+            "ended_early": summary.get("ended_early"),
+            "pairs": summary.get("pairs"),
+        })
+    rows.sort(key=lambda row: (
+        row["status"] != "done", row["return_after_ai_pct"] is None, -(row["return_after_ai_pct"] or 0),
+    ))
+    for i, row in enumerate(rows, 1):
+        row["rank"] = i if row["status"] == "done" and row["return_after_ai_pct"] is not None else None
+    return rows
+
+
+def api_start_arena(bot_ids: list[str], *, days: int | None = None, max_ai_usd_per_bot: float | None = None) -> dict:
+    """Replay several bots over the same dates and rank them."""
+    import uuid
+
+    ids = list(dict.fromkeys(b for b in bot_ids or [] if b))
+    if len(ids) < 2:
+        raise ValueError("Pick at least two bots for the arena.")
+    if len(ids) > MAX_ARENA_BOTS:
+        raise ValueError(f"The arena takes at most {MAX_ARENA_BOTS} bots at once.")
+    configs = []
+    for bot_id in ids:
+        config = _replay_config(bot_id, None)
+        problem = rules.validate_rule_params(config.get("bot_type"), config.get("rule_params"))
+        if problem:
+            raise ValueError(f"{config.get('name') or bot_id}: {problem}")
+        uses_ai = not rules.is_rule_bot(config)
+        if uses_ai and not (max_ai_usd_per_bot and 0 < float(max_ai_usd_per_bot) <= MAX_AI_USD):
+            raise ValueError(
+                f"{config.get('name') or bot_id} asks a model, so the arena needs an approved AI budget per bot."
+            )
+        configs.append((bot_id, config))
+    window = replay_window(int(days or 30), cutoff=_research_cutoff())
+    arena_id = f"AR{uuid.uuid4().hex[:10]}"
+    started = [
+        start_replay(config, bot_id=bot_id, max_ai_usd=max_ai_usd_per_bot, arena_id=arena_id, window=window)
+        for bot_id, config in configs
+    ]
+    return {
+        "id": arena_id, "window_start": window[0].isoformat(), "window_end": window[1].isoformat(),
+        "shifted_for_holdout": window[2], "replays": [r["id"] for r in started],
+    }
+
+
+def _bot_names(bot_ids: list[str]) -> dict[str, str]:
+    from forven.db import get_bot
+
+    out = {}
+    for bot_id in bot_ids:
+        bot = get_bot(bot_id) if bot_id else None
+        if bot:
+            out[bot_id] = bot.get("name") or bot_id
+    return out
+
+
+def api_get_arena(arena_id: str) -> dict:
+    from forven.db import list_bot_replays
+
+    replays = list_bot_replays(arena_id=arena_id, limit=MAX_ARENA_BOTS)
+    if not replays:
+        raise LookupError(f"Arena {arena_id} not found")
+    names = _bot_names([r.get("bot_id") for r in replays])
+    return {
+        "id": arena_id,
+        "window_start": replays[0]["window_start"], "window_end": replays[0]["window_end"],
+        "created_at": min(r["created_at"] for r in replays),
+        "running": sum(1 for r in replays if r["status"] == "running"),
+        "rows": rank_arena(replays, names),
+    }
+
+
+def api_list_arenas(limit: int = 10) -> list[dict]:
+    from forven.db import get_db
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT arena_id, MIN(created_at) AS created_at, MIN(window_start) AS window_start,
+                      MIN(window_end) AS window_end, COUNT(*) AS bots
+                 FROM bot_replays WHERE arena_id IS NOT NULL
+             GROUP BY arena_id ORDER BY created_at DESC LIMIT ?""",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) | {"id": r["arena_id"]} for r in rows]
+
+
+# ── Template replays ──────────────────────────────────────────────────
+
+# A rule template's free replay is refreshed when it is older than this.
+TEMPLATE_REPLAY_MAX_AGE = timedelta(days=7)
+
+
+def _template_config(template_id: str) -> tuple[dict, dict]:
+    from forven.bot_factory.models import BotConfigCreate
+    from forven.db import get_bot_template
+
+    template = get_bot_template(template_id)
+    if not template:
+        raise LookupError(f"Template {template_id} not found")
+    snapshot = template.get("config_snapshot") or {}
+    if isinstance(snapshot, str):
+        snapshot = json.loads(snapshot or "{}")
+    config = {**BotConfigCreate().model_dump(), **snapshot, "id": f"template:{template_id}"}
+    return template, config
+
+
+def api_start_template_replay(template_id: str, *, days: int | None = None, max_ai_usd: float | None = None) -> dict:
+    _template, config = _template_config(template_id)
+    return start_replay(config, bot_id=None, template_id=template_id, days=days, max_ai_usd=max_ai_usd)
+
+
+def api_template_replays(*, refresh_free: bool = False) -> dict[str, dict | None]:
+    """The latest replay of each template. With ``refresh_free``, rule
+    templates without a recent finished replay get a new one (they're free)."""
+    from forven.db import list_bot_replays, list_bot_templates
+
+    out: dict[str, dict | None] = {}
+    now = datetime.now(timezone.utc)
+    for template in list_bot_templates():
+        latest = (list_bot_replays(template_id=template["id"], limit=1) or [None])[0]
+        out[template["id"]] = latest
+        if not refresh_free:
+            continue
+        try:
+            _t, config = _template_config(template["id"])
+        except (LookupError, ValueError):
+            continue
+        if not rules.is_rule_bot(config):
+            continue
+        fresh = latest and (
+            latest["status"] == "running"
+            or (latest["status"] == "done" and performance_time(latest["created_at"])
+                and now - performance_time(latest["created_at"]) < TEMPLATE_REPLAY_MAX_AGE)
+        )
+        if fresh:
+            continue
+        try:
+            started = start_replay(config, bot_id=None, template_id=template["id"])
+            out[template["id"]] = {**started, "template_id": template["id"], "summary": None}
+        except ValueError as e:
+            logger.debug("Template %s replay not started: %s", template["id"], e)
+    return out

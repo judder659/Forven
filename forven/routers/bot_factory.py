@@ -302,6 +302,58 @@ def get_bot_replay(replay_id: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+class BotArenaRequest(BaseModel):
+    bot_ids: list[str]
+    days: int | None = None
+    # The dollar cap approved for each AI bot's replay.
+    max_ai_usd_per_bot: float | None = None
+
+
+@router.post("/api/bot-factory/arena")
+async def start_bot_arena(body: BotArenaRequest):
+    try:
+        return replay_service.api_start_arena(
+            body.bot_ids, days=body.days, max_ai_usd_per_bot=body.max_ai_usd_per_bot,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/bot-factory/arena")
+def list_bot_arenas(limit: int = 10):
+    return replay_service.api_list_arenas(limit=max(1, min(limit, 50)))
+
+
+@router.get("/api/bot-factory/arena/{arena_id}")
+def get_bot_arena(arena_id: str):
+    try:
+        return replay_service.api_get_arena(arena_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class TemplateReplayRequest(BaseModel):
+    days: int | None = None
+    max_ai_usd: float | None = None
+
+
+@router.get("/api/bot-factory/template-replays")
+async def get_template_replays(refresh_free: bool = False):
+    return replay_service.api_template_replays(refresh_free=refresh_free)
+
+
+@router.post("/api/bot-factory/templates/{template_id}/replays")
+async def start_template_replay(template_id: str, body: TemplateReplayRequest):
+    try:
+        return replay_service.api_start_template_replay(template_id, days=body.days, max_ai_usd=body.max_ai_usd)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/api/bot-factory/followable-strategies")
 def followable_strategies():
     return bf_domain.api_followable_strategies()
