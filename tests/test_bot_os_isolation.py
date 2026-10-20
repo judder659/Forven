@@ -369,15 +369,26 @@ class TestDatabaseLock:
         assert mgr.sync_database_lock() is False
         assert lock == [False]
 
-    def test_stays_open_while_a_live_bot_runs(self, lock):
+    def _arm_live(self, bot_id):
         from forven.db import get_db
 
-        bot_id = self._running()
-        mgr.issue_bot_token(bot_id, "openai")
         with get_db() as conn:
             conn.execute("UPDATE bot_configs SET execution_mode = 'live' WHERE id = ?", (bot_id,))
-        assert mgr.sync_database_lock() is False
+
+    def test_closes_while_a_live_bot_whose_orders_forven_places_runs(self, lock):
+        bot_id = self._running()
+        mgr.issue_bot_token(bot_id, "openai")
+        self._arm_live(bot_id)
+        assert mgr.sync_database_lock() is True
         assert mgr.sync_database_lock(live_starting=True) is False
+
+    def test_stays_open_while_a_live_bot_places_its_own_orders(self, lock):
+        from forven.db import kv_set
+
+        bot_id = self._running()
+        kv_set(mgr._kv_key(bot_id), {"hash": "h", "provider": "openai", "db_free": True})
+        self._arm_live(bot_id)
+        assert mgr.sync_database_lock() is False
 
     def test_does_nothing_without_a_checked_sandbox(self, lock, monkeypatch):
         monkeypatch.setattr(mgr, "bot_sandbox_status", lambda: iso.SandboxStatus(True, []))

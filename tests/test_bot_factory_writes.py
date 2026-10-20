@@ -388,3 +388,128 @@ def test_a_read_gives_up_when_the_api_never_returns(in_bot_process):
     with patch.object(bw, "_post", side_effect=ConnectionError("down")):
         with pytest.raises(ConnectionError):
             bw.routed_read(Closed(), "get_bot")("B1")
+
+
+# ── Live orders: Forven places them, so a live bot holds no exchange keys ──
+
+
+def test_inside_a_bot_process_forven_places_live_orders(in_bot_process):
+    direct = []
+    with patch.object(bw, "_post", return_value=[{"trade_id": "T1"}, "LIVE-OPEN BTC long x0.01"]) as post:
+        pos, message = bw.live("open_live", lambda **a: direct.append(a), ticker="BTC/USDT", qty=0.01)
+    assert pos == {"trade_id": "T1"} and message.startswith("LIVE-OPEN")
+    assert post.call_args.args[:2] == ("open_live", {"ticker": "BTC/USDT", "qty": 0.01})
+    assert post.call_args.kwargs["kind"] == "live" and not direct
+
+
+def test_a_live_order_is_sent_once_and_never_placed_by_the_bot(in_bot_process):
+    direct = []
+    with patch.object(bw, "_post", side_effect=ConnectionError("down")) as post:
+        pos, message = bw.live("open_live", lambda **a: direct.append(a), ticker="BTC/USDT")
+        close = bw.live("close_live", lambda **a: direct.append(a), trade_id="T1")
+        flatten = bw.live("flatten_live_positions", lambda **a: direct.append(a), reason="dd")
+    assert pos is None and message.startswith("blocked:")
+    assert close["state"] == "failed" and flatten[0]["state"] == "failed"
+    assert post.call_count == 3 and not direct
+
+
+def test_a_refused_live_order_is_not_placed(in_bot_process):
+    with patch.object(bw, "_post", side_effect=bw.BotWriteRefused("open_live refused (HTTP 403)")):
+        pos, message = bw.live("open_live", lambda **a: pytest.fail("placed by the bot"))
+    assert pos is None and "403" in message
+
+
+def test_outside_a_bot_process_live_orders_are_placed_here(monkeypatch):
+    monkeypatch.delenv("FORVEN_BOT_CRED_TOKEN", raising=False)
+    assert bw.live("close_live", lambda **a: {"state": "closed", **a}, trade_id="T1") == {
+        "state": "closed", "trade_id": "T1",
+    }
+    with pytest.raises(ValueError):
+        bw.live("market_order", lambda **a: None)
+
+
+class TestLiveRoute:
+    def _bot(self, mode="live"):
+        from forven.bot_factory.manager import issue_bot_token
+        from forven.db import create_bot, get_db
+
+        bot_id = create_bot({"name": "L", "model": "gpt-4.1-mini", "stop_loss_pct": 2.0})
+        with get_db() as conn:
+            conn.execute("UPDATE bot_configs SET execution_mode = ? WHERE id = ?", (mode, bot_id))
+        return bot_id, issue_bot_token(bot_id, "openai")
+
+    def _live(self, bot_id, token, op, args):
+        from forven.api_domains.bot_factory import api_bot_live
+
+        with patch("forven.bot_factory.manager.bot_process_is_live", return_value=True):
+            return api_bot_live(bot_id, token, op, args)
+
+    def test_forven_opens_with_the_bots_stored_settings(self, forven_db):
+        bot_id, token = self._bot()
+        with patch("forven.bot_factory.live_exec.open_live", return_value=({"trade_id": "T1"}, "ok")) as open_:
+            out = self._live(bot_id, token, "open_live", {
+                "ticker": "BTC/USDT", "direction": "long", "qty": "0.01", "ref_price": 60000,
+                "stop_loss_pct": 50,
+            })
+        assert out == {"result": [{"trade_id": "T1"}, "ok"]}
+        config = open_.call_args.args[0]
+        assert config["id"] == bot_id and config["stop_loss_pct"] == 2.0
+        assert open_.call_args.kwargs["qty"] == 0.01 and "stop_loss_pct" not in open_.call_args.kwargs
+
+    def test_a_close_reaches_only_the_bots_own_live_positions(self, forven_db):
+        bot_id, token = self._bot()
+        positions = [
+            {"trade_id": "T1", "execution_type": "live", "qty": 1},
+            {"trade_id": "P1", "execution_type": "paper", "qty": 1},
+        ]
+        with (
+            patch("forven.api_domains.bot_factory.get_open_bot_positions", return_value=positions),
+            patch("forven.bot_factory.live_exec.close_live", return_value={"state": "closed"}) as close,
+        ):
+            ok = self._live(bot_id, token, "close_live", {"trade_id": "T1", "current_price": 61000, "reason": "tp"})
+            other = self._live(bot_id, token, "close_live", {"trade_id": "X9"})
+            paper = self._live(bot_id, token, "close_live", {"trade_id": "P1"})
+        assert ok["result"] == {"state": "closed"}
+        assert close.call_count == 1
+        assert close.call_args.kwargs["position"]["current_price"] == 61000.0
+        assert other["result"]["state"] == "noop" and paper["result"]["state"] == "noop"
+
+    def test_refusals(self, forven_db):
+        bot_id, token = self._bot()
+        with pytest.raises(PermissionError):
+            self._live(bot_id, "wrong", "flatten_live_positions", {})
+        with pytest.raises(ValueError):
+            self._live(bot_id, token, "market_order", {})
+        with pytest.raises(ValueError):
+            self._live(bot_id, token, "open_live", {"direction": "sideways", "qty": 1, "ref_price": 1})
+        paper_id, paper_token = self._bot(mode="paper")
+        with (
+            patch("forven.bot_factory.live_exec.flatten_live_positions") as flatten,
+            pytest.raises(PermissionError, match="not armed"),
+        ):
+            self._live(paper_id, paper_token, "flatten_live_positions", {})
+        flatten.assert_not_called()
+
+    def test_route_answers_over_http(self, forven_db):
+        from fastapi.testclient import TestClient
+
+        from forven.api import app
+
+        bot_id, token = self._bot()
+        client = TestClient(app, client=("127.0.0.1", 50000))
+        remote = TestClient(app, client=("203.0.113.5", 50000))
+        body = {"op": "flatten_live_positions", "args": {"reason": "bot_max_drawdown"}}
+        with (
+            patch("forven.bot_factory.manager.bot_process_is_live", return_value=True),
+            patch("forven.bot_factory.live_exec.flatten_live_positions", return_value=[]) as flatten,
+        ):
+            ok = client.post(f"/api/bot-factory/internal/bots/{bot_id}/live", json=body,
+                             headers={"x-forven-bot-token": token})
+            far = remote.post(f"/api/bot-factory/internal/bots/{bot_id}/live", json=body,
+                              headers={"x-forven-bot-token": token})
+            bad = client.post(f"/api/bot-factory/internal/bots/{bot_id}/live", json=body,
+                              headers={"x-forven-bot-token": "wrong"})
+        assert ok.status_code == 200, ok.text
+        assert ok.json() == {"result": []}
+        assert flatten.call_args.kwargs["reason"] == "bot_max_drawdown"
+        assert far.status_code == 403 and bad.status_code == 403

@@ -173,7 +173,7 @@ def test_bot_process_refetches_expired_login(monkeypatch):
     assert calls == [False, True]
 
 
-def test_live_bot_gets_exchange_creds_resolved_by_parent(monkeypatch):
+def _settings_hold_exchange_creds(monkeypatch):
     from forven.exchange import hyperliquid
 
     for var in ("FORVEN_HL_API_SECRET", "HL_API_SECRET", "FORVEN_HL_WALLET_ADDRESS", "HL_WALLET_ADDRESS"):
@@ -182,6 +182,20 @@ def test_live_bot_gets_exchange_creds_resolved_by_parent(monkeypatch):
         hyperliquid, "_load_creds_from_forven_settings",
         lambda: {"HL_API_SECRET": "0xsecret", "HL_WALLET_ADDRESS": "0xwallet", "USE_TESTNET": "true"},
     )
+
+
+def test_live_bot_gets_no_exchange_creds_by_default(monkeypatch):
+    _settings_hold_exchange_creds(monkeypatch)
+    monkeypatch.setenv("HL_API_SECRET", "0xenvsecret")
+    monkeypatch.delenv("FORVEN_BOT_WRITES_VIA_API", raising=False)
+
+    live = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini", "execution_mode": "live"}, "t")
+    assert not any("HL_" in var or "TESTNET" in var for var in live)
+
+
+def test_live_bot_gets_exchange_creds_resolved_by_parent_when_routing_is_off(monkeypatch):
+    _settings_hold_exchange_creds(monkeypatch)
+    monkeypatch.setenv("FORVEN_BOT_WRITES_VIA_API", "0")
 
     live = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini", "execution_mode": "live"}, "t")
     assert live["FORVEN_HL_API_SECRET"] == "0xsecret"

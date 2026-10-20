@@ -11,7 +11,8 @@ sandboxes. There's nothing to set up and no extra account. It is on by default.
 | | Sandboxed bot |
 |---|---|
 | Read and write Forven's data folder (`~\.forven`): market data, its memory | Yes |
-| Open Forven's database (`forven.db`) | **No**, while only paper bots started by this version run; it reaches Forven through the API instead |
+| Open Forven's database (`forven.db`) | **No**, while only bots started by this version run; it reaches Forven through the API instead |
+| Hold exchange keys | **No**: Forven places a live bot's orders for it, with its own keys |
 | Reach the API (credential broker, health) and the internet | Yes |
 | Change Forven's code, Python, or anything else in your profile | **No** |
 | Read the master key (in `%LOCALAPPDATA%\Forven` or `~\.forven`) or `.env` files | **No** |
@@ -33,9 +34,18 @@ The first time a bot starts after an API start, Forven:
    way a closed database is.
 
 Then, whenever a bot starts or stops, Forven closes the database file to the
-sandbox if every running bot is a paper bot that reaches Forven only through
-the API (its reads, writes and AI calls), and opens it again while a live bot
-runs or a bot started by an older version is still running.
+sandbox if every running bot reaches Forven only through the API (its reads,
+writes, AI calls and, for a live bot, its orders), and opens it again while a
+bot started by an older version is still running.
+
+## Live bots
+
+A live bot never receives exchange keys. When it decides to open or close a
+position, it asks Forven, which reads the bot's settings from its own
+database, runs the same live gate stack as the strategy scanner (kill switch,
+budgets, the bot's GO LIVE ceiling, a mandatory stop) and places the order
+with its own keys. A bot can only close its own live positions. An order is
+sent once; if the answer is lost, the bot sees the position on its next tick.
 
 If the probe shows a bot could not work in the sandbox, or the sandbox cannot be
 created, bots start the way they always have, and the activity log says why. The
@@ -55,10 +65,8 @@ Set `FORVEN_BOT_SANDBOX=0` in Forven's environment to turn it off, or
 - Bots can still *read* most of your profile, though not the key or `.env`
   files. A separate Windows account would close that, at the cost of a setup
   step.
-- Live bots still record their orders in the database directly, so the
-  database stays open to bots while one runs.
 - The API trusts any program on this PC that connects over localhost unless
   `FORVEN_API_KEY` and `FORVEN_OPERATOR_KEY` are set.
-- Live bots still receive their Hyperliquid credentials as environment
-  variables from the API.
+- With `FORVEN_BOT_WRITES_VIA_API=0`, live bots place their own orders as
+  before and receive their Hyperliquid credentials from the API.
 - Windows only. On macOS and Linux bots start as before.
