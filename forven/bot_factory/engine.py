@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -16,6 +17,7 @@ from forven.bot_factory.circuit_breaker import (
     record_success,
 )
 import forven.db as _db
+from forven.bot_factory import bot_writes
 from forven.bot_factory.bot_writes import routed
 
 logger = logging.getLogger(__name__)
@@ -459,6 +461,35 @@ def _resolve_model(bot_config: dict) -> str:
 _MAX_TOKENS_BY_VERBOSITY = {"minimal": 512, "standard": 1024, "verbose": 2048}
 
 
+async def call_model_here(model: str, messages: list[dict], *, max_tokens: int, temperature: float) -> dict:
+    """Ask ``model`` in this process: provider, resolved model, answer and
+    estimated usage."""
+    from forven.ai import call_ai, normalize_provider_and_model
+    from forven.bot_factory.ai_costs import estimate_call_cost
+
+    provider, resolved_model = normalize_provider_and_model("auto", model)
+    response = await call_ai(
+        provider=provider, model=resolved_model, messages=messages,
+        max_tokens=max_tokens, temperature=temperature, fallback=False,
+    )
+    return {
+        "provider": provider, "model": resolved_model, "response": response,
+        "usage": estimate_call_cost(provider, resolved_model, messages, response),
+    }
+
+
+async def ask_model(model: str, messages: list[dict], *, max_tokens: int, temperature: float) -> dict:
+    """Ask the bot's model. Inside a bot subprocess Forven makes the call, so
+    the bot needs no AI login; while the API is away it calls here."""
+    if bot_writes.via_api():
+        answer = await asyncio.to_thread(
+            bot_writes.ask_model, model, messages, max_tokens=max_tokens, temperature=temperature,
+        )
+        if answer is not None:
+            return answer
+    return await call_model_here(model, messages, max_tokens=max_tokens, temperature=temperature)
+
+
 async def preview_decision(
     bot_config: dict,
     market_event: dict | None,
@@ -473,19 +504,11 @@ async def preview_decision(
     model = _resolve_model(bot_config)
     verbosity = bot_config.get("reasoning_verbosity", "standard")
 
-    from forven.ai import call_ai, normalize_provider_and_model
-    from forven.bot_factory.ai_costs import estimate_call_cost
-
-    provider, resolved_model = normalize_provider_and_model("auto", model)
-    response_text = await call_ai(
-        provider=provider,
-        model=resolved_model,
-        messages=messages,
-        max_tokens=_MAX_TOKENS_BY_VERBOSITY.get(verbosity, 1024),
-        temperature=0.7,
-        fallback=False,
+    answer = await call_model_here(
+        model, messages, max_tokens=_MAX_TOKENS_BY_VERBOSITY.get(verbosity, 1024), temperature=0.7,
     )
-    usage = estimate_call_cost(provider, resolved_model, messages, response_text)
+    provider, resolved_model = answer["provider"], answer["model"]
+    response_text, usage = answer["response"], answer["usage"]
     parsed = _parse_llm_response(response_text)
     if not isinstance(parsed, dict):
         parsed = {"action": "HOLD", "reasoning": str(response_text)[:200]}
@@ -554,24 +577,12 @@ async def run_decision_cycle(
     max_tokens = _MAX_TOKENS_BY_VERBOSITY.get(verbosity, 1024)
 
     try:
-        from forven.ai import call_ai, normalize_provider_and_model
-
-        provider, resolved_model = normalize_provider_and_model("auto", model)
-
         # Call LLM — no fallback, strict model control. Record the call only AFTER
         # a successful return so a provider outage doesn't also burn the daily LLM
         # budget (failures are already counted toward the circuit breaker below).
-        response_text = await call_ai(
-            provider=provider,
-            model=resolved_model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.7,
-            fallback=False,
-        )
-        from forven.bot_factory.ai_costs import estimate_call_cost
-
-        usage = estimate_call_cost(provider, resolved_model, messages, response_text)
+        answer = await ask_model(model, messages, max_tokens=max_tokens, temperature=0.7)
+        provider, resolved_model = answer["provider"], answer["model"]
+        response_text, usage = answer["response"], answer["usage"]
         record_llm_call(bot_id, usage.get("cost_usd"))
 
         # Parse response
@@ -726,15 +737,9 @@ async def _ai_approves(
     messages = [{"role": "system", "content": "\n\n".join(system)}, {"role": "user", "content": "\n\n".join(user)}]
     model = _resolve_model(bot_config)
     try:
-        from forven.ai import call_ai, normalize_provider_and_model
-        from forven.bot_factory.ai_costs import estimate_call_cost
-
-        provider, resolved_model = normalize_provider_and_model("auto", model)
-        response = await call_ai(
-            provider=provider, model=resolved_model, messages=messages,
-            max_tokens=400, temperature=0.2, fallback=False,
-        )
-        usage = estimate_call_cost(provider, resolved_model, messages, response)
+        answer = await ask_model(model, messages, max_tokens=400, temperature=0.2)
+        provider, resolved_model = answer["provider"], answer["model"]
+        response, usage = answer["response"], answer["usage"]
         record_llm_call(bot_id, usage.get("cost_usd"))
         record_success(bot_id)
     except Exception as e:

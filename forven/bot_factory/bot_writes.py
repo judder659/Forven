@@ -17,8 +17,11 @@ data its inputs use) go to ``POST /api/bot-factory/internal/bots/{id}/read``
 the same way. When the API can't be reached a read falls back to the
 database, so a bot keeps working while Forven restarts.
 
+A bot's AI calls go to ``POST /api/bot-factory/internal/bots/{id}/ai``:
+Forven asks the model with its own login, so the bot needs none.
+
 Set ``FORVEN_BOT_WRITES_VIA_API=0`` in Forven's environment to send bot
-writes and reads straight to the database as before.
+writes, reads and AI calls straight to the database and the model as before.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import json
 import logging
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections import deque
@@ -72,6 +76,12 @@ _NOT_QUEUED = frozenset({"heartbeat_bot"})
 _QUEUED_RESULT = {"increment_bot_errors": 0, "increment_bot_llm_calls": 0, "add_bot_llm_cost": 0.0}
 _QUEUE_MAX = 500
 _TIMEOUT_SECONDS = 10
+# A model can take a while to answer.
+_AI_TIMEOUT_SECONDS = 300
+
+# How long a read or model call waits for the API to come back (a restart)
+# when the database is closed to the bot or the model can't be asked here.
+_API_WAIT_SECONDS = 90
 
 _queue: deque[tuple[str, dict]] = deque(maxlen=_QUEUE_MAX)
 _lock = threading.Lock()
@@ -93,7 +103,7 @@ def _url(bot_id: str, kind: str = "write") -> str:
     return f"http://{host}:{port}/api/bot-factory/internal/bots/{bot_id}/{kind}"
 
 
-def _post(op: str, args: dict, kind: str = "write") -> Any:
+def _post(op: str, args: dict, kind: str = "write", timeout: float = _TIMEOUT_SECONDS) -> Any:
     bot_id = os.environ.get(BOT_ID_ENV, "")
     body = json.dumps({"op": op, "args": args}, default=str).encode("utf-8")
     request = urllib.request.Request(
@@ -101,7 +111,7 @@ def _post(op: str, args: dict, kind: str = "write") -> Any:
         headers={BOT_TOKEN_HEADER: os.environ.get(BOT_TOKEN_ENV, ""), "content-type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8")).get("result")
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 403, 404, 409):
@@ -168,7 +178,45 @@ def read(op: str, _direct: Any, **args: Any) -> Any:
         return _post(op, args, kind="read")
     except ConnectionError as exc:
         logger.warning("API unreachable for bot read %s, reading the database: %s", op, exc)
+    try:
         return _direct(**args)
+    except Exception as exc:
+        # The database is closed to this bot: wait for the API instead.
+        logger.warning("Bot read %s can't use the database (%s); waiting for the API", op, exc)
+        return _wait_for_api(op, args, kind="read")
+
+
+def _wait_for_api(op: str, args: dict, *, kind: str, timeout: float = _TIMEOUT_SECONDS) -> Any:
+    deadline = time.monotonic() + _API_WAIT_SECONDS
+    delay = 1.0
+    while True:
+        try:
+            return _post(op, args, kind=kind, timeout=timeout)
+        except ConnectionError:
+            if time.monotonic() + delay > deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 15.0)
+
+
+def ask_model(model: str, messages: list[dict], *, max_tokens: int, temperature: float) -> dict | None:
+    """Have Forven ask the bot's model, waiting out an API restart. None when
+    the API stays unreachable (the caller then asks the model itself);
+    RuntimeError when the model call failed."""
+    try:
+        answer = _wait_for_api(
+            "ask_model",
+            {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
+            kind="ai", timeout=_AI_TIMEOUT_SECONDS,
+        )
+    except ConnectionError as exc:
+        logger.warning("API unreachable for the bot's model call, calling it here: %s", exc)
+        return None
+    except BotWriteRefused as exc:
+        raise RuntimeError(str(exc)) from exc
+    if not isinstance(answer, dict) or answer.get("error"):
+        raise RuntimeError((answer or {}).get("error") or "the model call failed")
+    return answer
 
 
 def queued() -> int:

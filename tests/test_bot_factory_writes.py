@@ -14,6 +14,7 @@ def in_bot_process(monkeypatch):
     monkeypatch.setenv("BOT_ID", "B1")
     monkeypatch.setenv("FORVEN_BOT_CRED_TOKEN", "tok")
     monkeypatch.delenv(bw.VIA_API_ENV, raising=False)
+    monkeypatch.setattr(bw, "_API_WAIT_SECONDS", 0)
     bw._reset_for_tests()
     yield
     bw._reset_for_tests()
@@ -251,3 +252,139 @@ class TestReadRoute:
                               headers={"x-forven-bot-token": token})
         assert ok.status_code == 200, ok.text
         assert far.status_code == 403
+
+
+ANSWER = {"provider": "openai", "model": "gpt-4.1-mini", "response": '{"action":"HOLD"}', "usage": {"cost_usd": 0.0}}
+MESSAGES = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+
+
+def test_inside_a_bot_process_forven_asks_the_model(in_bot_process):
+    import asyncio
+
+    from forven.bot_factory import engine
+
+    with (
+        patch.object(bw, "_post", return_value=ANSWER) as post,
+        patch.object(engine, "call_model_here") as here,
+    ):
+        out = asyncio.run(engine.ask_model("gpt-4.1-mini", MESSAGES, max_tokens=400, temperature=0.2))
+    assert out == ANSWER
+    assert post.call_args.args[0] == "ask_model" and post.call_args.kwargs["kind"] == "ai"
+    here.assert_not_called()
+
+
+def test_the_bot_asks_the_model_itself_while_the_api_is_away(in_bot_process):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from forven.bot_factory import engine
+
+    with (
+        patch.object(bw, "_post", side_effect=ConnectionError("down")),
+        patch.object(engine, "call_model_here", new=AsyncMock(return_value=ANSWER)) as here,
+    ):
+        assert asyncio.run(engine.ask_model("gpt-4.1-mini", MESSAGES, max_tokens=400, temperature=0.2)) == ANSWER
+    here.assert_awaited_once()
+
+
+def test_a_failed_model_call_is_an_error_for_the_bot(in_bot_process):
+    with patch.object(bw, "_post", return_value={"error": "model not found"}):
+        with pytest.raises(RuntimeError, match="model not found"):
+            bw.ask_model("gpt-4.1-mini", MESSAGES, max_tokens=400, temperature=0.2)
+
+
+class TestAiRoute:
+    def _bot(self):
+        from forven.bot_factory.manager import issue_bot_token
+        from forven.db import create_bot
+
+        bot_id = create_bot({"name": "A", "model": "gpt-4.1-mini"})
+        return bot_id, issue_bot_token(bot_id, "openai")
+
+    def _ask(self, bot_id, token, **args):
+        import asyncio
+
+        from forven.api_domains.bot_factory import api_bot_ai
+
+        with patch("forven.bot_factory.manager.bot_process_is_live", return_value=True):
+            return asyncio.run(api_bot_ai(bot_id, token, {"args": args}))
+
+    def test_forven_asks_the_bots_model(self, forven_db):
+        from unittest.mock import AsyncMock
+
+        bot_id, token = self._bot()
+        with patch("forven.ai.call_ai", new=AsyncMock(return_value='{"action":"HOLD"}')) as call:
+            out = self._ask(bot_id, token, model="gpt-4.1-mini", messages=MESSAGES, max_tokens=99999, temperature=0.2)
+        assert out["result"]["response"] == '{"action":"HOLD"}'
+        assert call.call_args.kwargs["max_tokens"] == 4096 and call.call_args.kwargs["fallback"] is False
+
+    def test_a_failed_call_comes_back_as_an_error(self, forven_db):
+        from unittest.mock import AsyncMock
+
+        bot_id, token = self._bot()
+        with patch("forven.ai.call_ai", new=AsyncMock(side_effect=RuntimeError("rate limited"))):
+            out = self._ask(bot_id, token, model="gpt-4.1-mini", messages=MESSAGES)
+        assert out["result"] == {"error": "rate limited"}
+
+    def test_refusals(self, forven_db):
+        bot_id, token = self._bot()
+        with pytest.raises(PermissionError):
+            self._ask(bot_id, "wrong", model="gpt-4.1-mini", messages=MESSAGES)
+        with pytest.raises(PermissionError, match="provider"):
+            self._ask(bot_id, token, model="glm-4.6", messages=MESSAGES)
+        with pytest.raises(ValueError):
+            self._ask(bot_id, token, model="gpt-4.1-mini", messages=[{"role": "tool", "content": "x"}])
+        with pytest.raises(ValueError):
+            self._ask(bot_id, token, model="gpt-4.1-mini", messages=[])
+
+    def test_route_answers_over_http(self, forven_db):
+        from unittest.mock import AsyncMock
+
+        from fastapi.testclient import TestClient
+
+        from forven.api import app
+
+        bot_id, token = self._bot()
+        client = TestClient(app, client=("127.0.0.1", 50000))
+        remote = TestClient(app, client=("203.0.113.5", 50000))
+        body = {"op": "ask_model", "args": {"model": "gpt-4.1-mini", "messages": MESSAGES}}
+        with (
+            patch("forven.bot_factory.manager.bot_process_is_live", return_value=True),
+            patch("forven.ai.call_ai", new=AsyncMock(return_value="ok")),
+        ):
+            ok = client.post(f"/api/bot-factory/internal/bots/{bot_id}/ai", json=body,
+                             headers={"x-forven-bot-token": token})
+            far = remote.post(f"/api/bot-factory/internal/bots/{bot_id}/ai", json=body,
+                              headers={"x-forven-bot-token": token})
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["result"]["response"] == "ok"
+        assert far.status_code == 403
+
+
+def test_a_read_waits_for_the_api_when_the_database_is_closed(in_bot_process, monkeypatch):
+    monkeypatch.setattr(bw, "_API_WAIT_SECONDS", 30)
+    monkeypatch.setattr(bw.time, "sleep", lambda s: None)
+    answers = iter([ConnectionError("down"), ConnectionError("restarting"), {"id": "B1", "name": "api"}])
+
+    def post(op, args, kind="write", timeout=None):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    class Closed:
+        def get_bot(self, bot_id):
+            raise PermissionError("access denied")
+
+    with patch.object(bw, "_post", side_effect=post):
+        assert bw.routed_read(Closed(), "get_bot")("B1")["name"] == "api"
+
+
+def test_a_read_gives_up_when_the_api_never_returns(in_bot_process):
+    class Closed:
+        def get_bot(self, bot_id):
+            raise PermissionError("access denied")
+
+    with patch.object(bw, "_post", side_effect=ConnectionError("down")):
+        with pytest.raises(ConnectionError):
+            bw.routed_read(Closed(), "get_bot")("B1")

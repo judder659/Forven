@@ -455,3 +455,15 @@ def create_bot_from_strategy(strategy_id: str):
         return bf_domain.api_create_bot_from_strategy(strategy_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@internal_router.post("/api/bot-factory/internal/bots/{bot_id}/ai")
+async def bot_ai(bot_id: str, body: BotWriteRequest, request: Request):
+    """A bot subprocess's model call, made with Forven's own login."""
+    _require_local_bot_process(request)
+    try:
+        return await bf_domain.api_bot_ai(bot_id, request.headers.get(BOT_TOKEN_HEADER), body.model_dump())
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
