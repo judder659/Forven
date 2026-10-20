@@ -776,6 +776,52 @@ def api_bot_read(bot_id: str, token: str | None, op: str, args: dict | None) -> 
     return {"result": result}
 
 
+_MAX_PROMPT_CHARS = 400_000
+
+
+async def api_bot_ai(bot_id: str, token: str | None, body: dict | None) -> dict:
+    """A bot subprocess's model call, made here with Forven's own login.
+
+    The model must belong to the provider the bot was started with. Raises
+    PermissionError for a bad token or another provider, ValueError for a
+    bad request. A failed model call answers ``{"error": ...}``.
+    """
+    from forven.ai import normalize_provider_and_model
+    from forven.bot_factory.engine import call_model_here
+    from forven.bot_factory.manager import bot_process_is_live, verify_bot_token
+
+    provider = verify_bot_token(bot_id, token)
+    if not provider or not bot_process_is_live(bot_id):
+        raise PermissionError("invalid bot token")
+    args = dict((body or {}).get("args") or {})
+    model = str(args.get("model") or "").strip()
+    messages = args.get("messages")
+    if not model or not isinstance(messages, list) or not messages:
+        raise ValueError("model and messages are required")
+    if any(
+        not isinstance(m, dict) or m.get("role") not in ("system", "user", "assistant")
+        or not isinstance(m.get("content"), str)
+        for m in messages
+    ):
+        raise ValueError("messages must have a role and text content")
+    if sum(len(m["content"]) for m in messages) > _MAX_PROMPT_CHARS:
+        raise ValueError("prompt too long")
+    if normalize_provider_and_model("auto", model)[0] != provider:
+        raise PermissionError("a bot may only use the provider it was started with")
+    try:
+        max_tokens = min(max(int(args.get("max_tokens") or 1024), 1), 4096)
+        temperature = min(max(float(args.get("temperature") or 0.0), 0.0), 2.0)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"bad arguments: {e}") from e
+    try:
+        return {"result": await call_model_here(
+            model, [{"role": m["role"], "content": m["content"]} for m in messages],
+            max_tokens=max_tokens, temperature=temperature,
+        )}
+    except Exception as e:  # the model's failure, reported to the bot as its own
+        return {"result": {"error": str(e) or e.__class__.__name__}}
+
+
 # ── Cockpit: performance, chart, fleet, decision inspector ───────────
 
 BENCHMARK_SYMBOL = "BTC/USDT"
