@@ -1062,6 +1062,9 @@ def _bot_health(bot: dict, digest: dict | None, now) -> dict:
         # Rule bots log only when they act, so silence is not overdue.
         if not is_rule_bot(bot) and (reference is None or (now - reference).total_seconds() > allowed_gap):
             warn.append("No decision when one was due")
+        # A decision from before this run started says nothing about this run.
+        if started is not None and last_at is not None and last_at < started:
+            last_type = None
         if last_type == "skipped":
             warn.append("Candles are stale, so the bot is skipping decisions")
         elif last_type == "error":

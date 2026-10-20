@@ -214,6 +214,14 @@ class TestFleetHealth:
         assert any("stale" in r for r in health["reasons"])
         assert any("due" in r for r in health["reasons"])
 
+    def test_a_skip_from_before_a_restart_is_not_reported(self):
+        from forven.api_domains.bot_factory import _bot_health
+
+        now = datetime.now(timezone.utc)
+        digest = {"last_decision_at": (now - timedelta(hours=3)).isoformat(), "last_action_type": "skipped"}
+        bot = self._bot(started_at=(now - timedelta(minutes=6)).isoformat())
+        assert _bot_health(bot, digest, now)["level"] == "ok"
+
     def test_dead_process_and_bad_model_are_bad(self):
         from forven.api_domains.bot_factory import _bot_health
 
