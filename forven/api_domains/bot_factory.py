@@ -53,25 +53,113 @@ def _live_wallet_equity(bot: dict) -> float | None:
         return None
 
 
+def _with_model_check(bot: dict | None) -> dict | None:
+    """Attach whether the bot's model is callable here, so the UI can flag a
+    retired or disconnected model before Start does."""
+    if bot is None:
+        return None
+    from forven.bot_factory.manager import check_bot_model
+
+    bot["model_check"] = check_bot_model(bot.get("model"))
+    return bot
+
+
 def api_list_bots() -> list[dict]:
     bots = list_bots()
     for bot in bots:
         bot["live_wallet_equity"] = _live_wallet_equity(bot)
+        _with_model_check(bot)
     return bots
 
 
 def api_get_bot(bot_id: str) -> dict | None:
-    return get_bot(bot_id)
+    return _with_model_check(get_bot(bot_id))
 
 
 def api_create_bot(config: dict) -> dict:
     bot_id = create_bot(config)
-    return get_bot(bot_id)
+    return _with_model_check(get_bot(bot_id))
 
 
 def api_update_bot(bot_id: str, updates: dict) -> dict | None:
+    # 0 clears the daily dollar cap (an update can't send None to mean "clear").
+    if updates.get("max_llm_cost_per_day") == 0:
+        updates["max_llm_cost_per_day"] = None
     update_bot(bot_id, updates)
-    return get_bot(bot_id)
+    return _with_model_check(get_bot(bot_id))
+
+
+def api_use_default_model(bot_id: str) -> dict:
+    """Switch a bot to the operator's primary model (the Start-refusal fix)."""
+    from forven.bot_factory.manager import default_model_key
+
+    if not get_bot(bot_id):
+        raise LookupError(f"Bot {bot_id} not found")
+    key = default_model_key()
+    if not key:
+        raise ValueError("No default model is configured. Set one under Agents → Routing.")
+    update_bot(bot_id, {"model": key})
+    return _with_model_check(get_bot(bot_id))
+
+
+def _watched_pair_count(asset_mode: str | None, locked_pairs: object) -> int:
+    from forven.bot_factory.ai_costs import FREE_ROAM_PAIRS
+
+    if asset_mode == "locked" and isinstance(locked_pairs, list) and locked_pairs:
+        return len(locked_pairs)
+    return FREE_ROAM_PAIRS
+
+
+def api_cost_estimate(
+    *,
+    model: str | None,
+    decision_cadence: str,
+    cooldown_seconds: int,
+    timeframe: str = "1h",
+    asset_mode: str | None,
+    locked_pairs: list[str] | None,
+    reasoning_verbosity: str,
+    max_llm_calls_per_day: int | None,
+    max_llm_cost_per_day: float | None,
+    bot_id: str | None = None,
+) -> dict:
+    """Projected AI calls and spend per day for an editor configuration. With
+    a bot id, uses that bot's recorded tokens per call when it has any."""
+    from forven.bot_factory.ai_costs import project_daily_spend
+    from forven.bot_factory.manager import check_bot_model, resolve_bot_route
+    from forven.db import (
+        BOT_TIMEFRAME_MINUTES,
+        get_bot_ai_usage,
+        normalize_bot_cadence,
+        normalize_bot_timeframe,
+    )
+
+    avg_in = avg_out = None
+    if bot_id:
+        usage = get_bot_ai_usage(bot_id)
+        if usage["sampled_calls"] >= 5:
+            avg_in, avg_out = usage["avg_tokens_in"], usage["avg_tokens_out"]
+    try:
+        provider, model_id = resolve_bot_route(model)
+    except Exception:
+        provider, model_id = None, str(model or "")
+    tf = normalize_bot_timeframe(timeframe)
+    projection = project_daily_spend(
+        provider=provider,
+        model_id=model_id,
+        cadence=normalize_bot_cadence(decision_cadence),
+        cooldown_seconds=cooldown_seconds,
+        timeframe=tf,
+        bar_minutes=BOT_TIMEFRAME_MINUTES[tf],
+        pairs=_watched_pair_count(asset_mode, locked_pairs),
+        verbosity=reasoning_verbosity,
+        max_llm_calls_per_day=max_llm_calls_per_day,
+        max_llm_cost_per_day=max_llm_cost_per_day,
+        avg_tokens_in=avg_in,
+        avg_tokens_out=avg_out,
+    )
+    projection["model_check"] = check_bot_model(model)
+    return projection
 
 
 def api_delete_bot(bot_id: str) -> dict:
@@ -141,10 +229,15 @@ def api_get_trades(bot_id: str, limit: int = 50) -> list[dict]:
 
 
 def api_get_stats(bot_id: str) -> dict:
-    """Aggregate trade stats over ALL of a bot's trades (server-side, uncapped)."""
-    from forven.db import get_bot_trade_stats
+    """Aggregate trade stats over ALL of a bot's trades (server-side, uncapped),
+    plus its estimated AI spend to date."""
+    from forven.db import get_bot_ai_usage, get_bot_trade_stats
 
-    return get_bot_trade_stats(bot_id)
+    stats = get_bot_trade_stats(bot_id)
+    usage = get_bot_ai_usage(bot_id)
+    stats["ai_cost_usd"] = usage["total_cost_usd"]
+    stats["ai_priced_calls"] = usage["priced_calls"]
+    return stats
 
 
 def api_get_positions(bot_id: str) -> dict:
@@ -496,7 +589,17 @@ def api_create_bot_from_strategy(strategy_id: str) -> dict:
     if raw_symbol:
         pair = raw_symbol if "/" in raw_symbol else f"{raw_symbol}/USDT"
 
-    orig_tf = strategy.get("timeframe", "1h")
+    from forven.db import BOT_TIMEFRAME_MINUTES
+
+    orig_tf = str(strategy.get("timeframe") or "1h").strip().lower()
+    # The bot reads the strategy's own candles when it's a bot timeframe;
+    # otherwise the nearest it can (1h) and says so.
+    bot_tf = orig_tf if orig_tf in BOT_TIMEFRAME_MINUTES else "1h"
+    tf_note = (
+        f"Strategy timeframe: {orig_tf}; this bot reads the same {bot_tf} candles."
+        if bot_tf == orig_tf
+        else f"Original strategy timeframe: {orig_tf} — NOTE: this bot observes {bot_tf} candles."
+    )
     config = {
         "name": f"Bot from {strategy.get('name', strategy_id)}",
         # No hardcoded model — inherits the operator's configured default at create.
@@ -504,14 +607,15 @@ def api_create_bot_from_strategy(strategy_id: str) -> dict:
             f"This bot is seeded from strategy {strategy_id} ({strategy.get('name', '')}).\n"
             f"Type: {strategy.get('type', 'unknown')}\n"
             f"Symbol: {pair or 'unknown'}\n"
-            f"Original strategy timeframe: {orig_tf} — NOTE: this bot observes 1-hour candles.\n"
+            f"{tf_note}\n"
             f"Parameters: {params}"
         ),
         "strategy": (
             f"Trade a {strategy.get('type', 'unknown')} strategy on {pair or 'the locked pair'} "
-            f"using the 1-hour candles you are given. Use the parameters and rules above as guidance, "
-            f"adapting them to the 1-hour timeframe."
+            f"using the {bot_tf} candles you are given. Use the parameters and rules above as guidance"
+            + ("." if bot_tf == orig_tf else f", adapting them to the {bot_tf} timeframe.")
         ),
+        "timeframe": bot_tf,
         "asset_mode": "locked",
         "locked_pairs": [pair] if pair else None,
     }

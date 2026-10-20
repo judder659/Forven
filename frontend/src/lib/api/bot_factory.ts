@@ -2,6 +2,18 @@ import { fetchApi } from './core';
 
 // ── Types ──────────────────────────────────────────────────────────
 
+export type BotDecisionCadence = 'candle_close' | 'interval';
+export type BotTimeframe = '15m' | '1h' | '4h' | '1d';
+
+export interface BotModelCheck {
+	ok: boolean;
+	provider: string | null;
+	model_id: string | null;
+	reason: string | null;
+	/** The operator's primary model as "provider:model", offered as the fix. */
+	default_model: string | null;
+}
+
 export interface BotSessionHours {
 	timezone: string;
 	days: string[];
@@ -32,6 +44,12 @@ export interface BotConfig {
 	locked_pairs: string[] | null;
 	max_llm_calls_per_day: number;
 	max_consecutive_errors: number;
+	/** Daily AI spend cap in USD (estimated); null = only the call cap. Send 0 to clear. */
+	max_llm_cost_per_day: number | null;
+	/** candle_close = decide once per new 1h candle; interval = every cooldown_seconds. */
+	decision_cadence: BotDecisionCadence;
+	/** Candle timeframe the bot reads and, on candle_close, decides on. */
+	timeframe: BotTimeframe;
 	template_id: string | null;
 	execution_mode: 'paper' | 'live';
 	live_wallet: string | null;
@@ -46,6 +64,12 @@ export interface BotConfig {
 	error_message: string | null;
 	llm_calls_today: number | null;
 	consecutive_errors: number | null;
+	/** Run that owns the bot right now (null when stopped). */
+	run_id: string | null;
+	/** Estimated AI spend today, USD. */
+	llm_cost_today: number | null;
+	/** Whether the bot's model can be called on this install. */
+	model_check?: BotModelCheck;
 	// List-endpoint trade digest (absent on getBot)
 	realized_pnl?: number;
 	open_positions?: number;
@@ -63,6 +87,12 @@ export interface BotDecision {
 	action_type: string;
 	action_data: Record<string, unknown> | null;
 	verbosity_level: string;
+	/** Run that made the decision (two copies can never interleave unseen). */
+	run_id: string | null;
+	/** Estimated AI cost of this decision, USD (null when not an AI call). */
+	cost_usd: number | null;
+	tokens_in: number | null;
+	tokens_out: number | null;
 }
 
 export interface BotConfigVersion {
@@ -118,8 +148,64 @@ export async function deleteBot(id: string): Promise<{ status: string }> {
 
 // ── Bot Lifecycle ──────────────────────────────────────────────────
 
-export async function startBot(id: string): Promise<{ status: string; pid: number }> {
+export async function startBot(id: string): Promise<{ status: string; pid: number; run_id?: string }> {
 	return fetchApi(`/bot-factory/bots/${id}/start`, { method: 'POST' });
+}
+
+/** Switch a bot to the operator's default model (the fix when Start refuses a retired model). */
+export async function useDefaultModel(id: string): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/use-default-model`, { method: 'POST' });
+}
+
+export interface BotCostEstimate {
+	provider: string | null;
+	model_id: string | null;
+	cadence: BotDecisionCadence;
+	timeframe: BotTimeframe;
+	decisions_wanted_per_day: number;
+	calls_per_day: number;
+	/** Hours of trading before the daily call cap pauses the bot (null = never hits it). */
+	hours_until_call_cap: number | null;
+	hours_until_spend_cap: number | null;
+	tokens_in_per_call: number;
+	tokens_out_per_call: number;
+	usd_per_call: number | null;
+	usd_per_day: number | null;
+	/** False when the model has no price row and a provider ceiling rate was used. */
+	priced: boolean;
+	/** True when tokens per call come from the bot's own recent decisions. */
+	from_history: boolean;
+	model_check: BotModelCheck;
+}
+
+export interface BotCostEstimateParams {
+	model: string;
+	decision_cadence: BotDecisionCadence;
+	timeframe: BotTimeframe;
+	cooldown_seconds: number;
+	asset_mode: string;
+	locked_pairs: string[];
+	reasoning_verbosity: string;
+	max_llm_calls_per_day: number;
+	max_llm_cost_per_day: number | null;
+	bot_id?: string | null;
+}
+
+/** Projected AI calls and spend per day for an editor configuration (estimates). */
+export async function getBotCostEstimate(params: BotCostEstimateParams): Promise<BotCostEstimate> {
+	const q = new URLSearchParams({
+		decision_cadence: params.decision_cadence,
+		timeframe: params.timeframe,
+		cooldown_seconds: String(params.cooldown_seconds),
+		asset_mode: params.asset_mode,
+		reasoning_verbosity: params.reasoning_verbosity,
+		max_llm_calls_per_day: String(params.max_llm_calls_per_day),
+	});
+	if (params.model) q.set('model', params.model);
+	if (params.locked_pairs.length) q.set('locked_pairs', params.locked_pairs.join(','));
+	if (params.max_llm_cost_per_day) q.set('max_llm_cost_per_day', String(params.max_llm_cost_per_day));
+	if (params.bot_id) q.set('bot_id', params.bot_id);
+	return fetchApi(`/bot-factory/cost-estimate?${q.toString()}`);
 }
 
 export interface BotFlattenResult {
@@ -219,6 +305,9 @@ export interface BotStats {
 	total_pnl_usd: number;
 	best_pnl_usd: number;
 	worst_pnl_usd: number;
+	/** Estimated AI spend over all decisions, USD. */
+	ai_cost_usd?: number;
+	ai_priced_calls?: number;
 }
 
 export async function getBotStats(id: string): Promise<BotStats> {

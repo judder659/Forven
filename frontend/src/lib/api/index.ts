@@ -848,6 +848,8 @@ export {
 	getBotMemory,
 	getBotPositions,
 	createBotFromStrategy,
+	useDefaultModel,
+	getBotCostEstimate,
 	listTemplates,
 	getTemplate,
 	createTemplate,
@@ -864,6 +866,11 @@ export {
 	type BotPositionsSnapshot,
 	type BotStrategyBridge,
 	type BotSessionHours,
+	type BotDecisionCadence,
+	type BotTimeframe,
+	type BotModelCheck,
+	type BotCostEstimate,
+	type BotCostEstimateParams,
 } from './bot_factory';
 
 export {

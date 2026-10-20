@@ -294,7 +294,7 @@
 								{/if}
 							</div>
 							<div class="mt-1 flex items-center gap-2 text-[11px] text-sc-ink3">
-								<span class="truncate">{bot.model}</span>
+								<span class="truncate {bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''}" title={bot.model_check?.reason ?? ''}>{bot.model}</span>
 								<span class="h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
 								<span class="truncate">{bot.asset_mode === 'locked' ? (bot.locked_pairs || []).join(', ') : 'Free roam'}</span>
 								{#if bot.live_wallet}
@@ -335,9 +335,18 @@
 
 					<!-- Meta row -->
 					<div class="flex items-center justify-between border-t border-sc-line px-4 py-2 text-[10px] text-sc-ink3">
-						<span>{bot.closed_trades ?? 0} closed trades</span>
-						<span>LLM {bot.llm_calls_today ?? 0}/{bot.max_llm_calls_per_day}</span>
+						<span>{bot.closed_trades ?? 0} closed trades · {bot.timeframe ?? '1h'} · {bot.decision_cadence === 'candle_close' ? 'per candle' : 'interval'}</span>
+						<span title="AI calls and estimated spend today">
+							AI {bot.llm_calls_today ?? 0}/{bot.max_llm_calls_per_day} · ${(bot.llm_cost_today ?? 0).toFixed(2)}
+						</span>
 					</div>
+
+					{#if bot.model_check && !bot.model_check.ok && status !== 'running'}
+						<div class="border-t border-red-900/40 bg-red-500/5 px-4 py-2 text-[11px] text-red-400">
+							Model unavailable: {bot.model_check.reason}
+							<a href="/bot-factory/{bot.id}" class="underline">Fix it</a>
+						</div>
+					{/if}
 
 					{#if bot.error_message && status !== 'running'}
 						<div class="border-t border-red-900/40 bg-red-500/5 px-4 py-2 text-[11px] text-red-400">

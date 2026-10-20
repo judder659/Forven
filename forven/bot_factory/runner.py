@@ -22,6 +22,7 @@ from forven.db import (
     close_bot_trade,
     get_bot,
     get_bot_equity_state,
+    get_bot_run_id,
     get_open_bot_positions,
     heartbeat_bot,
     log_bot_decision,
@@ -36,6 +37,29 @@ logger = logging.getLogger(__name__)
 _HEARTBEAT_INTERVAL = 15
 # How often to check if parent is alive (seconds)
 _PARENT_CHECK_INTERVAL = 30
+# Candle-close bots still run risk checks (stops, targets, drawdown) this often.
+_RISK_TICK_SECONDS = 60
+# A pair whose newest closed candle is older than this many bars is stale:
+# it's left out of the snapshot rather than shown to the model as current.
+_STALE_AFTER_BARS = 2
+# Minimum seconds between candle refresh attempts for one pair.
+_CANDLE_REFRESH_RETRY_SECONDS = 300
+
+
+def _closed_candle_open_expected(now: datetime, bar_minutes: int = 60) -> datetime:
+    """Open time of the newest candle of `bar_minutes` that has closed by `now`.
+    Exchange bars are aligned to the UTC epoch (4h bars open at 00/04/08 UTC)."""
+    bar_seconds = int(bar_minutes) * 60
+    current_open = (int(now.timestamp()) // bar_seconds) * bar_seconds
+    return datetime.fromtimestamp(current_open - bar_seconds, tz=timezone.utc)
+
+
+def _parse_candle_time(value: object) -> datetime | None:
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
 def _compute_unrealized_pnl(open_positions: list[dict] | None) -> float:
@@ -222,11 +246,45 @@ def _build_memory_query(
 class BotRunner:
     """Runs a single bot as an isolated subprocess."""
 
-    def __init__(self, bot_id: str, parent_pid: int):
+    def __init__(self, bot_id: str, parent_pid: int, run_id: str | None = None):
         self.bot_id = bot_id
         self.parent_pid = parent_pid
+        self.run_id = run_id
         self._shutdown = False
+        # True once another run owns this bot: this process stops without
+        # touching the bot's status, which belongs to the newer run.
+        self._superseded = False
         self._config: dict | None = None
+        self._candle_refresh_attempts: dict[str, float] = {}
+        self._last_decided_candle: str | None = None
+        self._stale_noted = False
+
+    def _owns_bot(self) -> bool:
+        """Whether this process is still the bot's current run. A runner
+        started without a run id (older manager) skips the check; a DB error
+        never stops a bot."""
+        if not self.run_id:
+            return True
+        if self._superseded:
+            return False
+        try:
+            current = get_bot_run_id(self.bot_id)
+        except Exception:
+            return True
+        if current == self.run_id:
+            return True
+        self._superseded = True
+        self._shutdown = True
+        logger.warning(
+            "Bot %s run %s no longer owns the bot (current run: %s) — stopping this copy",
+            self.bot_id, self.run_id, current or "none",
+        )
+        return False
+
+    def _set_status(self, status: str, **kwargs) -> None:
+        """set_bot_status, unless a newer run owns the bot."""
+        if self._owns_bot():
+            set_bot_status(self.bot_id, status, **kwargs)
 
     def _setup_signal_handlers(self):
         """Handle SIGTERM gracefully."""
@@ -252,6 +310,8 @@ class BotRunner:
     async def _heartbeat_loop(self):
         """Periodically update heartbeat in database."""
         while not self._shutdown:
+            if not self._owns_bot():
+                return
             try:
                 heartbeat_bot(self.bot_id)
             except Exception as e:
@@ -434,46 +494,74 @@ class BotRunner:
         if not pairs:
             return None
 
+        from datetime import timedelta
+
+        from forven.db import BOT_TIMEFRAME_MINUTES, normalize_bot_timeframe
+
+        timeframe = normalize_bot_timeframe((self._config or {}).get("timeframe"))
+        bar_minutes = BOT_TIMEFRAME_MINUTES[timeframe]
+        # Enough bars to cover 24 hours (and never fewer than 20).
+        bars_per_day = max(1, 1440 // bar_minutes)
+        window = max(20, bars_per_day)
         snapshot = {"pairs": {}, "fetched_at": None}
+        now = datetime.now(timezone.utc)
+        expected_open = _closed_candle_open_expected(now, bar_minutes)
+        stale_before = expected_open - timedelta(minutes=bar_minutes * (_STALE_AFTER_BARS - 1))
 
         for pair in pairs:
             try:
-                # Try loading cached parquet first (fast, no API call)
-                from forven.data import load_parquet
-                df = load_parquet(pair, "1h")
+                # Stored candles are closed bars only (the downloader drops the
+                # forming one). Read the cache, and top it up from the exchange
+                # when its newest closed candle is missing — the cache has no
+                # other guarantee of being current for this pair.
+                from forven.data import fetch_ohlcv_chunked, load_parquet
+                from forven.market_data import dataframe_to_ohlcv_rows
 
-                if df is None or df.empty:
-                    # Fetch fresh data via CCXT (Binance default)
-                    from forven.data import fetch_ohlcv_chunked
-                    result = fetch_ohlcv_chunked(pair, "1h", limit=50)
-                    df = load_parquet(pair, "1h")
+                df = load_parquet(pair, timeframe)
+                last_at = None
+                if df is not None and not df.empty:
+                    tail = dataframe_to_ohlcv_rows(df.tail(1), max_rows=1)
+                    last_at = _parse_candle_time(tail[-1]["t"]) if tail else None
+                if last_at is None or last_at < expected_open:
+                    last_try = self._candle_refresh_attempts.get(pair, 0.0)
+                    if time.time() - last_try >= _CANDLE_REFRESH_RETRY_SECONDS:
+                        self._candle_refresh_attempts[pair] = time.time()
+                        try:
+                            fetch_ohlcv_chunked(pair, timeframe, limit=max(50, window + 10))
+                            df = load_parquet(pair, timeframe)
+                        except Exception as fe:
+                            logger.info("Bot %s candle refresh failed for %s: %s", self.bot_id, pair, fe)
 
                 if df is not None and not df.empty:
-                    # Take last 20 candles
-                    recent = df.tail(20)
-                    from forven.market_data import dataframe_to_ohlcv_rows
-                    rows = dataframe_to_ohlcv_rows(recent, max_rows=20)
+                    recent = df.tail(window)
+                    rows = dataframe_to_ohlcv_rows(recent, max_rows=window)
+                    last_at = _parse_candle_time(rows[-1]["t"]) if rows else None
+                    if last_at is None or last_at < stale_before:
+                        snapshot.setdefault("stale_pairs", {})[pair] = (
+                            last_at.isoformat() if last_at else None
+                        )
+                        continue
 
                     # Get live price, fall back to last candle close
                     live_price = self._fetch_live_price(pair)
                     last_row = rows[-1] if rows else {}
                     snapshot["pairs"][pair] = {
                         "current_price": live_price or last_row.get("close"),
-                        "high_24h": max((r.get("high", 0) for r in rows[-24:]), default=0),
-                        "low_24h": min((r.get("low", float("inf")) for r in rows[-24:]), default=0),
-                        "volume_24h": sum(r.get("volume", 0) for r in rows[-24:]),
-                        "recent_candles": rows[-10:],  # Last 10 hourly candles
-                        "timeframe": "1h",
+                        "high_24h": max((r.get("high", 0) for r in rows[-bars_per_day:]), default=0),
+                        "low_24h": min((r.get("low", float("inf")) for r in rows[-bars_per_day:]), default=0),
+                        "volume_24h": sum(r.get("volume", 0) for r in rows[-bars_per_day:]),
+                        "recent_candles": rows[-10:],  # Last 10 candles of the bot's timeframe
+                        "timeframe": timeframe,
+                        "last_candle_at": last_at.isoformat(),
                     }
             except Exception as e:
                 logger.debug("Failed to fetch data for %s: %s", pair, e)
                 continue
 
+        snapshot["fetched_at"] = now.isoformat()
         if not snapshot["pairs"]:
-            return None
-
-        from datetime import datetime, timezone
-        snapshot["fetched_at"] = datetime.now(timezone.utc).isoformat()
+            # Keep the stale report so the loop can say why it skipped.
+            return snapshot if snapshot.get("stale_pairs") else None
         return snapshot
 
     def _refresh_position_prices(self, open_positions: list[dict], market_event: dict | None) -> None:
@@ -700,10 +788,19 @@ class BotRunner:
 
         memory = BotMemory(self.bot_id)
         rolling_history: list[dict] = []
-        cooldown = max(
-            self._config.get("cooldown_seconds", 60) or 60,
-            MIN_LLM_INTERVAL_SECONDS,
-        )
+        from forven.db import normalize_bot_cadence
+
+        def _tick_seconds() -> float:
+            # interval: decide every cooldown_seconds. candle_close: wake every
+            # minute for risk checks; the model is only asked on a new candle.
+            if normalize_bot_cadence(self._config.get("decision_cadence")) == "candle_close":
+                return _RISK_TICK_SECONDS
+            return max(
+                self._config.get("cooldown_seconds", 60) or 60,
+                MIN_LLM_INTERVAL_SECONDS,
+            )
+
+        cooldown = _tick_seconds()
         is_live = self._is_live_mode()
         if is_live:
             logger.warning(
@@ -755,25 +852,27 @@ class BotRunner:
                 pass
 
         while not self._shutdown:
+            if not self._owns_bot():
+                break
             # Check circuit breaker before doing any work
             if not check_circuit_breaker(self.bot_id):
                 logger.warning("Bot %s circuit breaker tripped, pausing", self.bot_id)
-                set_bot_status(self.bot_id, "paused", error_message="Circuit breaker tripped")
+                self._set_status("paused", error_message="Circuit breaker tripped")
                 break
 
             if not check_llm_daily_cap(self.bot_id):
                 # LIFE-2: daily cap is a RECOVERABLE pause. Sleep until the next
                 # UTC day (the counter resets read-side) and resume, instead of
                 # exiting the subprocess permanently and never coming back.
-                logger.info("Bot %s daily LLM cap reached — sleeping until UTC reset", self.bot_id)
-                set_bot_status(
-                    self.bot_id, "paused",
-                    error_message="Daily LLM cap reached (auto-resumes at UTC midnight)",
+                logger.info("Bot %s daily AI cap reached — sleeping until UTC reset", self.bot_id)
+                self._set_status(
+                    "paused",
+                    error_message="Daily AI cap reached (auto-resumes at UTC midnight)",
                 )
                 await self._sleep_until_utc_day_change()
-                if self._shutdown:
+                if self._shutdown or not self._owns_bot():
                     break
-                set_bot_status(self.bot_id, "running")
+                self._set_status("running")
                 continue
 
             # Session hours check
@@ -789,9 +888,11 @@ class BotRunner:
                                 "max_drawdown_pct", "stop_loss_pct", "take_profit_pct",
                                 "taker_fee_bps", "slippage_bps", "funding_rate_bps_per_day",
                                 "cooldown_seconds", "max_llm_calls_per_day",
-                                "max_consecutive_errors"):
+                                "max_consecutive_errors", "max_llm_cost_per_day",
+                                "decision_cadence", "timeframe"):
                         if key in fresh:
                             self._config[key] = fresh[key]
+                    cooldown = _tick_seconds()
                     funding_rate_bps_per_day = float(
                         self._config.get("funding_rate_bps_per_day", 0) or 0
                     )
@@ -845,10 +946,32 @@ class BotRunner:
             # stale prices, evaluate drawdown on entry-priced positions, or pay
             # for an LLM decision on missing data. Funding is elapsed-based, so
             # the next good tick covers the skipped interval.
+            stale_pairs = (market_event or {}).get("stale_pairs") or {}
             if not market_event or not market_event.get("pairs"):
                 logger.warning("Bot %s has no market data this tick — skipping", self.bot_id)
+                if stale_pairs and not self._stale_noted:
+                    # Once per stale spell, so the Activity feed says why the
+                    # bot went quiet instead of logging every tick.
+                    self._stale_noted = True
+                    try:
+                        log_bot_decision(
+                            bot_id=self.bot_id,
+                            event_trigger=None,
+                            reasoning=(
+                                "Skipped deciding: candles are stale for "
+                                + ", ".join(sorted(stale_pairs))
+                                + f" (newest closed candle more than {_STALE_AFTER_BARS} bars old"
+                                + " and the refresh failed)."
+                            ),
+                            action_type="skipped",
+                            action_data={"stale_pairs": stale_pairs},
+                            run_id=self.run_id,
+                        )
+                    except Exception:
+                        pass
                 await asyncio.sleep(cooldown)
                 continue
+            self._stale_noted = False
 
             # Funding cost accrual (perp-style configs only). Deducted from
             # realized_pnl so it flows through the drawdown gate. Ticks where
@@ -965,7 +1088,23 @@ class BotRunner:
                             "Bot %s drawdown flatten FAILED: %s", self.bot_id, fe,
                             exc_info=True,
                         )
-                set_bot_status(self.bot_id, "paused", error_message=msg)
+                self._set_status("paused", error_message=msg)
+                break
+
+            # Candle-close cadence: the risk checks above ran; only ask the model
+            # once per newly closed candle.
+            newest_candle = max(
+                (str(p.get("last_candle_at") or "") for p in market_event["pairs"].values()),
+                default="",
+            )
+            if (
+                normalize_bot_cadence(self._config.get("decision_cadence")) == "candle_close"
+                and newest_candle
+                and newest_candle == self._last_decided_candle
+            ):
+                await asyncio.sleep(cooldown)
+                continue
+            if not self._owns_bot():
                 break
 
             # Recall memories using a query derived from the current situation,
@@ -987,6 +1126,7 @@ class BotRunner:
                     rolling_history=rolling_history[-10:],
                     realized_pnl=realized_pnl,
                 )
+                self._last_decided_candle = newest_candle or None
 
                 # Store observations to memory
                 if result.action_type == "observation" and result.observation:
@@ -1016,6 +1156,9 @@ class BotRunner:
                     )
                     is_open = action in ("BUY", "SHORT")
                     is_close = action in ("SELL", "COVER")
+                    # Never trade from a copy that lost ownership mid-decision.
+                    if not self._owns_bot():
+                        break
                     if ticker and (qty or is_close):
                         # Fetch live spot price for accurate entry/exit
                         price = self._fetch_live_price(ticker) or 0.0
@@ -1074,6 +1217,7 @@ class BotRunner:
                                                 "ticker": ticker,
                                                 "reason": blocked_reason,
                                             },
+                                            run_id=self.run_id,
                                         )
                                     except Exception:
                                         pass
@@ -1178,8 +1322,13 @@ class BotRunner:
         self._config = self._load_config()
         if not self._config:
             logger.error("Bot %s not found in database, exiting", self.bot_id)
-            set_bot_status(self.bot_id, "error", error_message="Config not found")
+            self._set_status("error", error_message="Config not found")
             return
+        if not self._owns_bot():
+            # Started, but another run already owns the bot (or it was stopped
+            # before this process got going): leave its status alone.
+            return
+        self._config["run_id"] = self.run_id
 
         logger.info(
             "Bot %s (%s) starting with model %s",
@@ -1197,24 +1346,28 @@ class BotRunner:
             logger.info("Bot %s tasks cancelled", self.bot_id)
         except Exception as e:
             logger.error("Bot %s crashed: %s", self.bot_id, e)
-            set_bot_status(self.bot_id, "error", error_message=str(e))
+            self._set_status("error", error_message=str(e))
         finally:
             logger.info("Bot %s shutting down", self.bot_id)
-            set_bot_status(self.bot_id, "stopped")
+            if not self._superseded:
+                self._set_status("stopped")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Bot Factory runner")
     parser.add_argument("--bot-id", required=True, help="Bot config ID")
     parser.add_argument("--parent-pid", type=int, required=True, help="Parent process PID")
+    parser.add_argument("--run-id", default=None, help="Run id that owns the bot (set by the manager)")
     args = parser.parse_args()
 
+    # The run id is in every line, so two copies writing one log file can't
+    # interleave unnoticed.
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format=f"%(asctime)s [%(levelname)s] [run {args.run_id or '-'}] %(name)s: %(message)s",
     )
 
-    runner = BotRunner(bot_id=args.bot_id, parent_pid=args.parent_pid)
+    runner = BotRunner(bot_id=args.bot_id, parent_pid=args.parent_pid, run_id=args.run_id)
     asyncio.run(runner.run())
 
 

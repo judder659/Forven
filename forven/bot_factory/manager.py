@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from uuid import uuid4
 
 import psutil
 
@@ -29,6 +30,7 @@ from forven.db import (
     get_running_bots,
     log_activity,
     reconcile_orphaned_bot_trades,
+    set_bot_run_id,
     set_bot_status,
 )
 
@@ -153,6 +155,85 @@ def brokered_credential_for_bot(bot_id: str, provider: str) -> dict:
     if isinstance(expires, (int, float)) and expires > 0:
         payload["expires"] = int(expires)
     return payload
+
+
+# ── Model availability ──────────────────────────────────────────────
+# A bot calls its model on every decision, so Start checks the model is
+# callable here first. These live in the manager (not the leaf ai_costs
+# module) because they need forven.ai / model_selection.
+
+
+def resolve_bot_route(model: str | None) -> tuple[str, str]:
+    """(provider, model_id) a bot's model string routes to, falling back to
+    the operator's primary model when the bot has none."""
+    from forven.ai import normalize_provider_and_model
+
+    if not str(model or "").strip():
+        from forven.model_routing import get_primary_provider_model
+
+        provider, model_id = get_primary_provider_model()
+        return normalize_provider_and_model(provider, model_id)
+    return normalize_provider_and_model("auto", model)
+
+
+def default_model_key() -> str | None:
+    """The operator's primary model as a "provider:model" key, or None."""
+    try:
+        from forven.model_routing import get_primary_provider_model
+
+        provider, model_id = get_primary_provider_model()
+    except Exception:
+        return None
+    provider = str(provider or "").strip().lower()
+    model_id = str(model_id or "").strip()
+    if not provider or not model_id:
+        return None
+    return f"{provider}:{model_id}"
+
+
+def check_bot_model(model: str | None) -> dict:
+    """Whether a bot's model can be called on this install.
+
+    Mirrors the gate every provider call passes (model_selection.assert_callable):
+    the provider must be connected and the model enabled or selected somewhere.
+    Returns {ok, provider, model_id, reason, default_model}.
+    """
+    default_key = default_model_key()
+    try:
+        provider, model_id = resolve_bot_route(model)
+    except Exception as exc:
+        return {
+            "ok": False, "provider": None, "model_id": str(model or ""),
+            "reason": f"Model '{model}' can't be resolved to a provider ({exc}).",
+            "default_model": default_key,
+        }
+    try:
+        from forven.model_selection import enforcement_enabled, is_callable, provider_is_connected
+
+        # Before enforcement is armed (tests, scripts) calls aren't gated, so
+        # neither is Start.
+        if not enforcement_enabled() or is_callable(provider, model_id):
+            return {
+                "ok": True, "provider": provider, "model_id": model_id,
+                "reason": None, "default_model": default_key,
+            }
+        if not provider_is_connected(provider):
+            reason = f"Provider '{provider}' isn't connected, so model '{model_id}' can't be called."
+        else:
+            reason = (
+                f"Model '{model_id}' isn't enabled for {provider} (it may have been "
+                "retired or removed from your model list)."
+            )
+    except Exception as exc:
+        logger.debug("Bot model check failed for %s: %s", model, exc)
+        return {
+            "ok": True, "provider": provider, "model_id": model_id,
+            "reason": None, "default_model": default_key,
+        }
+    return {
+        "ok": False, "provider": provider, "model_id": model_id,
+        "reason": reason, "default_model": default_key,
+    }
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -462,6 +543,17 @@ class BotManager:
                         "registered — re-arm via go-live (or restore the wallet)."
                     )
 
+        # A model that can't be called here (provider disconnected, model
+        # retired or not enabled) would fail on the first decision; refuse the
+        # start with the fix instead.
+        model_check = check_bot_model(bot.get("model"))
+        if not model_check["ok"]:
+            fix = (
+                f" Pick another model in the editor, or use your default ({model_check['default_model']})."
+                if model_check.get("default_model") else " Pick another model in the editor."
+            )
+            raise ValueError(f"Can't start: {model_check['reason']}{fix}")
+
         status = bot.get("runtime_status") or bot.get("status", "stopped")
         if status == "running":
             # LIFE-7: a hard crash can leave a stale 'running' label. If the
@@ -479,10 +571,16 @@ class BotManager:
         env = _build_isolated_env(bot, issue_bot_token(bot_id, resolve_bot_provider(bot)))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
+        # Claim the bot for this run BEFORE spawning: any older process still
+        # alive for it (a wedged copy the monitor couldn't kill, a stray from
+        # a retried Start) sees it no longer owns the bot and stops itself.
+        run_id = uuid4().hex[:8]
+        set_bot_run_id(bot_id, run_id)
         argv = [
             sys.executable, "-m", "forven.bot_factory.runner",
             "--bot-id", bot_id,
             "--parent-pid", str(os.getpid()),
+            "--run-id", run_id,
         ]
 
         # Windows: run the bot at low integrity so it can't read the master key
@@ -506,11 +604,12 @@ class BotManager:
         set_bot_status(bot_id, "running", pid=process.pid)
         log_activity(
             "info", "bot_factory",
-            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid})" + (" in the sandbox" if sandboxed else ""),
-            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed},
+            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid}, run {run_id})"
+            + (" in the sandbox" if sandboxed else ""),
+            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed, "run_id": run_id},
         )
 
-        return {"status": "started", "pid": process.pid, "log_path": str(log_path)}
+        return {"status": "started", "pid": process.pid, "run_id": run_id, "log_path": str(log_path)}
 
     @staticmethod
     def _spawn_unsandboxed(argv: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen:

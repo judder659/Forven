@@ -98,6 +98,44 @@ def stop_bot(bot_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/api/bot-factory/bots/{bot_id}/use-default-model")
+def use_default_model(bot_id: str):
+    try:
+        return bf_domain.api_use_default_model(bot_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/bot-factory/cost-estimate")
+def cost_estimate(
+    model: str | None = None,
+    decision_cadence: str = "candle_close",
+    cooldown_seconds: int = 60,
+    timeframe: str = "1h",
+    asset_mode: str = "free_roam",
+    locked_pairs: str | None = None,
+    reasoning_verbosity: str = "standard",
+    max_llm_calls_per_day: int | None = 200,
+    max_llm_cost_per_day: float | None = None,
+    bot_id: str | None = None,
+):
+    pairs = [p.strip() for p in (locked_pairs or "").split(",") if p.strip()] or None
+    return bf_domain.api_cost_estimate(
+        model=model,
+        decision_cadence=decision_cadence,
+        cooldown_seconds=cooldown_seconds,
+        timeframe=timeframe,
+        asset_mode=asset_mode,
+        locked_pairs=pairs,
+        reasoning_verbosity=reasoning_verbosity,
+        max_llm_calls_per_day=max_llm_calls_per_day,
+        max_llm_cost_per_day=max_llm_cost_per_day,
+        bot_id=bot_id,
+    )
+
+
 @router.post("/api/bot-factory/bots/{bot_id}/clone")
 def clone_bot(bot_id: str, body: BotCloneRequest):
     try:
