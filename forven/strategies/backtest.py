@@ -4872,7 +4872,18 @@ def _index_to_position(value, index: pd.Index) -> int:
         return -1
 
 
-def _coerce_bool_series(values, index: pd.Index, label: str) -> pd.Series:
+def _is_default_range_index(candidate: pd.Index, length: int) -> bool:
+    """True when ``candidate`` is a default ``RangeIndex(0..length-1)`` (start 0, step 1)."""
+
+    return (
+        isinstance(candidate, pd.RangeIndex)
+        and candidate.start == 0
+        and candidate.step == 1
+        and len(candidate) == length
+    )
+
+
+def _coerce_bool_series(values: object, index: pd.Index, label: str) -> pd.Series:
     """Normalize arbitrary signal payloads into bool Series aligned to index."""
 
     if isinstance(values, pd.Series):
@@ -4888,6 +4899,14 @@ def _coerce_bool_series(values, index: pd.Index, label: str) -> pd.Series:
         raise ValueError(
             f"{label} length mismatch: expected {len(index)} rows, got {len(series)}"
         )
+
+    if not series.index.equals(index) and _is_default_range_index(series.index, len(index)):
+
+        # Strategies often build signals from df["close"].reset_index(drop=True),
+        # yielding an equal-length default RangeIndex. Adopt the price index by
+        # position -- exactly what a bare ndarray payload already gets above, so
+        # this introduces no new lookahead. Any other index shape still reindexes.
+        series = pd.Series(series.to_numpy(), index=index)
 
     if not series.index.equals(index):
 
