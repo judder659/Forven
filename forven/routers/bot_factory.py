@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from forven.api_domains import bot_factory as bf_domain
+from forven.bot_factory import replay_service
 from forven.api_security import is_loopback_host, require_operator_access
 from forven.bot_factory.broker_client import BOT_TOKEN_HEADER
 from forven.bot_factory.models import (
@@ -266,6 +267,84 @@ async def test_decision(body: BotTestDecisionRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Test decision failed: {e}")
+
+
+class BotReplayRequest(BaseModel):
+    config: dict | None = None
+    days: int | None = None
+    end: str | None = None
+
+
+@router.post("/api/bot-factory/bots/{bot_id}/replays")
+async def start_bot_replay(bot_id: str, body: BotReplayRequest):
+    try:
+        return replay_service.api_start_replay(
+            bot_id, config=body.config, days=body.days, end=body.end,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/bot-factory/bots/{bot_id}/replays")
+def list_bot_replays(bot_id: str, limit: int = 20):
+    return replay_service.api_list_replays(bot_id, limit=max(1, min(limit, 100)))
+
+
+@router.get("/api/bot-factory/replays/{replay_id}")
+def get_bot_replay(replay_id: str):
+    try:
+        return replay_service.api_get_replay(replay_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class BotArenaRequest(BaseModel):
+    bot_ids: list[str]
+    days: int | None = None
+
+
+@router.post("/api/bot-factory/arena")
+async def start_bot_arena(body: BotArenaRequest):
+    try:
+        return replay_service.api_start_arena(body.bot_ids, days=body.days)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/bot-factory/arena")
+def list_bot_arenas(limit: int = 10):
+    return replay_service.api_list_arenas(limit=max(1, min(limit, 50)))
+
+
+@router.get("/api/bot-factory/arena/{arena_id}")
+def get_bot_arena(arena_id: str):
+    try:
+        return replay_service.api_get_arena(arena_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class TemplateReplayRequest(BaseModel):
+    days: int | None = None
+
+
+@router.get("/api/bot-factory/template-replays")
+async def get_template_replays(refresh_free: bool = False):
+    return replay_service.api_template_replays(refresh_free=refresh_free)
+
+
+@router.post("/api/bot-factory/templates/{template_id}/replays")
+async def start_template_replay(template_id: str, body: TemplateReplayRequest):
+    try:
+        return replay_service.api_start_template_replay(template_id, days=body.days)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/api/bot-factory/followable-strategies")

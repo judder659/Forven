@@ -245,13 +245,14 @@ class TestTemplates:
         from forven.db import list_bot_templates
 
         count = seed_builtin_templates()
-        assert count == 4
+        assert count == 6
 
         templates = list_bot_templates()
-        assert len(templates) == 4
+        assert len(templates) == 6
         names = {t["name"] for t in templates}
         assert "Momentum Scalper" in names
         assert "Conservative Swing Trader" in names
+        assert "DCA: BTC dip buyer" in names
 
         # Idempotent
         count2 = seed_builtin_templates()
