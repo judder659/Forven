@@ -131,6 +131,9 @@ if verdict["enqueued"]:
   rejection). Paper strategies are retired automatically when clearly losing
   (15+ trades, negative mean, t < −1), at a 15% forward drawdown, after 60 idle
   days, or when forward trades contradict the backtest.
+- **Auto-ports**: once a paper strategy's breadth test reads `general` or `mixed`,
+  the same frozen rule is registered on up to 5 coins where it traded and made
+  money in that test (`paper_pool.auto_port_max`), each starting at quick_screen.
 - The **research holdout** is on by default: research reads (backtests,
   optimizer, walk-forward) stop at a cutoff 3–6 months back, and each strategy
   gets ONE test on the held-back period when it applies for live. Don't tune
