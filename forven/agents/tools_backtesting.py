@@ -193,7 +193,7 @@ def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_rea
             )
         fix = (
             "move it to a market whose data is current (forven_list_datasets lists them)"
-            if untestable_reason.startswith("untestable:dead_market")
+            if untestable_reason.startswith(("untestable:dead_market", "untestable:not_a_market"))
             else "fix the code"
         )
         return (
@@ -651,9 +651,13 @@ def _agent_registration_error() -> str | None:
 
 
 def _dead_market_error(symbol: object, timeframe: object) -> str | None:
-    """Agent-facing error when a new strategy targets a market whose data stopped for good."""
+    """Agent-facing error when a new strategy targets no market, or one whose data stopped for good."""
+    from forven.creation_markets import non_market_reason
     from forven.dataeng.dead_markets import dead_market_error, dead_market_reason
 
+    not_market = non_market_reason(symbol)
+    if not_market:
+        return f"Error: {not_market}."
     reason = dead_market_reason(symbol, timeframe)
     return f"Error: {dead_market_error(reason)}" if reason else None
 
