@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections import deque
@@ -77,6 +78,10 @@ _QUEUE_MAX = 500
 _TIMEOUT_SECONDS = 10
 # A model can take a while to answer.
 _AI_TIMEOUT_SECONDS = 300
+
+# How long a read or model call waits for the API to come back (a restart)
+# when the database is closed to the bot or the model can't be asked here.
+_API_WAIT_SECONDS = 90
 
 _queue: deque[tuple[str, dict]] = deque(maxlen=_QUEUE_MAX)
 _lock = threading.Lock()
@@ -173,15 +178,33 @@ def read(op: str, _direct: Any, **args: Any) -> Any:
         return _post(op, args, kind="read")
     except ConnectionError as exc:
         logger.warning("API unreachable for bot read %s, reading the database: %s", op, exc)
+    try:
         return _direct(**args)
+    except Exception as exc:
+        # The database is closed to this bot: wait for the API instead.
+        logger.warning("Bot read %s can't use the database (%s); waiting for the API", op, exc)
+        return _wait_for_api(op, args, kind="read")
+
+
+def _wait_for_api(op: str, args: dict, *, kind: str, timeout: float = _TIMEOUT_SECONDS) -> Any:
+    deadline = time.monotonic() + _API_WAIT_SECONDS
+    delay = 1.0
+    while True:
+        try:
+            return _post(op, args, kind=kind, timeout=timeout)
+        except ConnectionError:
+            if time.monotonic() + delay > deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 15.0)
 
 
 def ask_model(model: str, messages: list[dict], *, max_tokens: int, temperature: float) -> dict | None:
-    """Have Forven ask the bot's model. None when the API can't be reached
-    (the caller then asks the model itself); RuntimeError when the model
-    call failed."""
+    """Have Forven ask the bot's model, waiting out an API restart. None when
+    the API stays unreachable (the caller then asks the model itself);
+    RuntimeError when the model call failed."""
     try:
-        answer = _post(
+        answer = _wait_for_api(
             "ask_model",
             {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
             kind="ai", timeout=_AI_TIMEOUT_SECONDS,

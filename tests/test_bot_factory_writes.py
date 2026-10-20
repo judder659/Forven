@@ -14,6 +14,7 @@ def in_bot_process(monkeypatch):
     monkeypatch.setenv("BOT_ID", "B1")
     monkeypatch.setenv("FORVEN_BOT_CRED_TOKEN", "tok")
     monkeypatch.delenv(bw.VIA_API_ENV, raising=False)
+    monkeypatch.setattr(bw, "_API_WAIT_SECONDS", 0)
     bw._reset_for_tests()
     yield
     bw._reset_for_tests()
@@ -358,3 +359,32 @@ class TestAiRoute:
         assert ok.status_code == 200, ok.text
         assert ok.json()["result"]["response"] == "ok"
         assert far.status_code == 403
+
+
+def test_a_read_waits_for_the_api_when_the_database_is_closed(in_bot_process, monkeypatch):
+    monkeypatch.setattr(bw, "_API_WAIT_SECONDS", 30)
+    monkeypatch.setattr(bw.time, "sleep", lambda s: None)
+    answers = iter([ConnectionError("down"), ConnectionError("restarting"), {"id": "B1", "name": "api"}])
+
+    def post(op, args, kind="write", timeout=None):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    class Closed:
+        def get_bot(self, bot_id):
+            raise PermissionError("access denied")
+
+    with patch.object(bw, "_post", side_effect=post):
+        assert bw.routed_read(Closed(), "get_bot")("B1")["name"] == "api"
+
+
+def test_a_read_gives_up_when_the_api_never_returns(in_bot_process):
+    class Closed:
+        def get_bot(self, bot_id):
+            raise PermissionError("access denied")
+
+    with patch.object(bw, "_post", side_effect=ConnectionError("down")):
+        with pytest.raises(ConnectionError):
+            bw.routed_read(Closed(), "get_bot")("B1")

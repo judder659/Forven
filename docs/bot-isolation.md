@@ -10,7 +10,8 @@ sandboxes. There's nothing to set up and no extra account. It is on by default.
 
 | | Sandboxed bot |
 |---|---|
-| Read and write Forven's data folder (`~\.forven`): database, market data, its memory | Yes |
+| Read and write Forven's data folder (`~\.forven`): market data, its memory | Yes |
+| Open Forven's database (`forven.db`) | **No**, while only paper bots started by this version run; it reaches Forven through the API instead |
 | Reach the API (credential broker, health) and the internet | Yes |
 | Change Forven's code, Python, or anything else in your profile | **No** |
 | Read the master key (in `%LOCALAPPDATA%\Forven` or `~\.forven`) or `.env` files | **No** |
@@ -28,7 +29,13 @@ The first time a bot starts after an API start, Forven:
    from low integrity.
 3. Starts a short probe in the sandbox. It confirms the probe ran at low
    integrity, can load Forven and write the database, can't write the code
-   folder, and can't read any protected file.
+   folder, can't read any protected file, and can't read a file labelled the
+   way a closed database is.
+
+Then, whenever a bot starts or stops, Forven closes the database file to the
+sandbox if every running bot is a paper bot that reaches Forven only through
+the API (its reads, writes and AI calls), and opens it again while a live bot
+runs or a bot started by an older version is still running.
 
 If the probe shows a bot could not work in the sandbox, or the sandbox cannot be
 created, bots start the way they always have, and the activity log says why. The
@@ -40,19 +47,16 @@ sandbox never stops a bot from starting.
 python -m forven bot-sandbox   # prepare and run the check now
 ```
 
-Set `FORVEN_BOT_SANDBOX=0` in Forven's environment to turn it off.
+Set `FORVEN_BOT_SANDBOX=0` in Forven's environment to turn it off, or
+`FORVEN_BOT_DB_LOCK=0` to keep the sandbox but leave the database open to bots.
 
 ## What it does not cover yet
 
 - Bots can still *read* most of your profile, though not the key or `.env`
   files. A separate Windows account would close that, at the cost of a setup
   step.
-- A paper bot's own writes and reads (its trades, status, decisions,
-  positions, and the market data its inputs use) go through the API, which
-  only lets it touch its own rows. A bot can still open the database file
-  itself, and its AI calls still read and write shared settings there, so a
-  compromised bot could change them. Live order records still go straight to
-  the database.
+- Live bots still record their orders in the database directly, so the
+  database stays open to bots while one runs.
 - The API trusts any program on this PC that connects over localhost unless
   `FORVEN_API_KEY` and `FORVEN_OPERATOR_KEY` are set.
 - Live bots still receive their Hyperliquid credentials as environment

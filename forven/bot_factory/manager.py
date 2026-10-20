@@ -17,11 +17,14 @@ from uuid import uuid4
 import psutil
 
 from forven.bot_factory.broker_client import BOT_TOKEN_ENV, BROKER_HOST_ENV, NO_MASTER_KEY_ENV
+from forven.bot_factory.bot_writes import VIA_API_ENV
 from forven.bot_factory.os_isolation import (
     SandboxStatus,
+    database_lock_enabled,
     ensure_sandbox_ready,
     sandbox_enabled,
     sandbox_env,
+    set_database_closed,
     spawn_sandboxed,
 )
 from forven.config import FORVEN_DB, FORVEN_HOME
@@ -75,8 +78,14 @@ def issue_bot_token(bot_id: str, provider: str) -> str:
     from forven.db import kv_set
 
     token = secrets.token_urlsafe(32)
-    kv_set(_kv_key(bot_id), {"hash": _digest(token), "provider": provider})
+    # db_free: this spawn's code reaches Forven only through the API, so the
+    # database can be closed to it.
+    kv_set(_kv_key(bot_id), {"hash": _digest(token), "provider": provider, "db_free": _bots_use_api()})
     return token
+
+
+def _bots_use_api() -> bool:
+    return str(os.environ.get(VIA_API_ENV, "1")).strip() != "0"
 
 
 def verify_bot_token(bot_id: str, token: str | None) -> str | None:
@@ -292,6 +301,8 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
     # refuses to load one. Its own provider login is served by the parent's
     # credential broker (below) using this per-spawn token.
     env[NO_MASTER_KEY_ENV] = "1"
+    if not _bots_use_api():
+        env[VIA_API_ENV] = "0"
     if bot_token:
         env[BOT_TOKEN_ENV] = bot_token
     env["FORVEN_PORT"] = os.environ.get("FORVEN_PORT", "8003")
@@ -427,6 +438,48 @@ def bot_sandbox_status() -> SandboxStatus | None:
     return status
 
 
+def _database_can_close() -> bool:
+    """True when every running bot is a paper bot whose code reaches Forven
+    only through the API."""
+    from forven.db import kv_get
+
+    if not _bots_use_api():
+        return False
+    for row in get_running_bots():
+        bot_id = row.get("bot_id")
+        pid = row.get("pid")
+        if not pid or not _is_pid_alive(int(pid)):
+            continue
+        bot = get_bot(bot_id) or {}
+        if str(bot.get("execution_mode") or "paper").strip().lower() == "live":
+            return False
+        record = kv_get(_kv_key(bot_id))
+        if not isinstance(record, dict) or not record.get("db_free"):
+            return False
+    return True
+
+
+def sync_database_lock(*, live_starting: bool = False) -> bool | None:
+    """Close the database to sandboxed bots when nothing running needs it,
+    or open it again. Returns whether it is now closed (None when the sandbox
+    or the lock is off). Never raises."""
+    try:
+        if not database_lock_enabled():
+            return None
+        status = bot_sandbox_status()
+        if status is None or not status.usable or not status.can_close_database:
+            return None
+        closed = not live_starting and _database_can_close()
+        if not set_database_closed(FORVEN_DB, closed):
+            if closed:
+                set_database_closed(FORVEN_DB, False)
+            return False
+        return closed
+    except Exception:
+        logger.warning("Could not update the bot database lock", exc_info=True)
+        return None
+
+
 def warm_bot_sandbox() -> None:
     """Prepare and self-check the sandbox in the background at API startup, so
     the first bot start doesn't pay for it (a slow Start can time out in the
@@ -435,6 +488,7 @@ def warm_bot_sandbox() -> None:
     def _run() -> None:
         try:
             bot_sandbox_status()
+            sync_database_lock()
         except Exception:
             logger.warning("Bot sandbox warm-up failed", exc_info=True)
 
@@ -593,6 +647,10 @@ class BotManager:
         # unusable here, the bot starts as before (and the activity log says why).
         process = None
         sandboxed = False
+        live_start = str(bot.get("execution_mode") or "paper").strip().lower() == "live"
+        if live_start:
+            # Live orders are still recorded directly, so open the database first.
+            sync_database_lock(live_starting=True)
         sandbox = bot_sandbox_status()
         if sandbox is not None and sandbox.usable:
             try:
@@ -613,6 +671,7 @@ class BotManager:
             + (" in the sandbox" if sandboxed else ""),
             {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed, "run_id": run_id},
         )
+        sync_database_lock()
 
         return {"status": "started", "pid": process.pid, "run_id": run_id, "log_path": str(log_path)}
 
@@ -732,6 +791,7 @@ class BotManager:
             "info", "bot_factory", summary,
             {"bot_id": bot_id, "flattened": flattened},
         )
+        sync_database_lock()
         return {"status": "stopped", "flattened": flattened}
 
     def _flatten_live_positions_on_stop(self, bot: dict | None, *, reason: str) -> list[dict]:

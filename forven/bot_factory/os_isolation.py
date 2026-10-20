@@ -15,6 +15,12 @@ browsers use for their sandboxes:
 * Bots get a private, writable profile and temp folder under
   ``FORVEN_HOME/bot-runtime``.
 
+Once every running bot reaches Forven only through the API (reads, writes and
+AI calls), the database file itself is labelled *no-read-up* too, so a
+sandboxed paper bot cannot open it at all. It is opened again while a live
+bot runs (live orders are still recorded directly) or a bot started by older
+code is running. ``FORVEN_BOT_DB_LOCK=0`` keeps it open.
+
 The sandbox checks itself once per API process by starting a short probe in
 it. If the probe cannot do what a bot needs (load Forven, write the database),
 or the sandbox cannot be created at all, bots start as before and the activity
@@ -38,6 +44,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SANDBOX_ENV = "FORVEN_BOT_SANDBOX"
+DB_LOCK_ENV = "FORVEN_BOT_DB_LOCK"
+# Closed: low-integrity processes can't read, write or run it. Open: the
+# data folder's own low label, which lets bots write it.
+_DB_CLOSED_LABEL = "S:(ML;;NRNWNX;;;ME)"
+_DB_OPEN_LABEL = "S:(ML;;NW;;;LW)"
+_LOCK_CHECK_NAME = "lock-check.db"
 RUNTIME_DIR_NAME = "bot-runtime"
 _LABEL_MARKER = ".low-integrity-v1"
 _PROBE_MARKER = "FORVEN_PROBE "
@@ -51,6 +63,8 @@ class SandboxUnavailable(RuntimeError):
 class SandboxStatus:
     usable: bool
     problems: list[str] = field(default_factory=list)
+    # The self-check confirmed a closed file stays closed to a sandboxed bot.
+    can_close_database: bool = False
 
 
 def _is_windows() -> bool:
@@ -62,6 +76,30 @@ def sandbox_enabled() -> bool:
     if not _is_windows():
         return False
     return str(os.environ.get(SANDBOX_ENV, "1")).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def database_lock_enabled() -> bool:
+    """On wherever the sandbox is; ``FORVEN_BOT_DB_LOCK=0`` turns it off."""
+    return sandbox_enabled() and (
+        str(os.environ.get(DB_LOCK_ENV, "1")).strip().lower() not in {"0", "false", "off", "no"}
+    )
+
+
+def set_database_closed(db_path: Path, closed: bool) -> bool:
+    """Close the database (and its WAL files) to sandboxed bots, or open it
+    again. Never raises; False when a label could not be set."""
+    label = _DB_CLOSED_LABEL if closed else _DB_OPEN_LABEL
+    ok = True
+    db_path = Path(db_path)
+    for path in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+        if not path.exists():
+            continue
+        try:
+            _set_mandatory_label(path, label)
+        except Exception as exc:
+            ok = False
+            logger.warning("Could not %s %s to bots: %s", "close" if closed else "open", path, exc)
+    return ok
 
 
 def bot_runtime_dir(forven_home: Path) -> Path:
@@ -121,9 +159,13 @@ def ensure_sandbox_ready(
             return _ready
         try:
             _label_data_folder(Path(forven_home))
+            # A closed database from an earlier run would fail the check;
+            # the caller closes it again once it knows what is running.
+            set_database_closed(Path(db_path), False)
             for path in protected:
                 _protect_from_low_readers(Path(path))
-            _ready = _judge_probe(_run_probe(forven_home, protected, db_path, repo_root))
+            lock_check = _prepare_lock_check(Path(forven_home))
+            _ready = _judge_probe(_run_probe(forven_home, protected, db_path, repo_root, lock_check))
         except Exception as exc:
             logger.warning("Bot sandbox unavailable", exc_info=True)
             _ready = SandboxStatus(False, [f"The sandbox could not be set up: {exc}"])
@@ -134,6 +176,19 @@ def _reset_for_tests() -> None:
     global _ready
     with _ready_lock:
         _ready = None
+
+
+def _prepare_lock_check(forven_home: Path) -> Path | None:
+    """A throwaway file labelled the way a closed database is, for the probe
+    to try to read. None when it could not be labelled."""
+    path = bot_runtime_dir(forven_home) / _LOCK_CHECK_NAME
+    try:
+        path.write_bytes(b"x")
+        _set_mandatory_label(path, _DB_CLOSED_LABEL)
+    except Exception as exc:
+        logger.warning("Bot sandbox: database lock check unavailable: %s", exc)
+        return None
+    return path
 
 
 def _label_data_folder(forven_home: Path) -> None:
@@ -202,6 +257,14 @@ try:
     out["code_writable"] = True
 except OSError:
     out["code_writable"] = False
+lock_check = os.environ.get("FORVEN_PROBE_LOCK_CHECK")
+if lock_check:
+    try:
+        with open(lock_check, "rb") as fh:
+            fh.read(1)
+        out["closed_file_readable"] = True
+    except OSError:
+        out["closed_file_readable"] = False
 readable = []
 for path in secrets:
     try:
@@ -215,7 +278,9 @@ print("FORVEN_PROBE " + json.dumps(out), flush=True)
 """
 
 
-def _run_probe(forven_home: Path, protected: list[Path], db_path: Path, repo_root: Path) -> str:
+def _run_probe(
+    forven_home: Path, protected: list[Path], db_path: Path, repo_root: Path, lock_check: Path | None = None,
+) -> str:
     secret_files: list[str] = []
     for path in protected:
         path = Path(path)
@@ -229,6 +294,8 @@ def _run_probe(forven_home: Path, protected: list[Path], db_path: Path, repo_roo
     env = sandbox_env({k: v for k, v in os.environ.items() if k.upper() in passthrough}, forven_home)
     env["FORVEN_HOME"] = str(forven_home)
     env["FORVEN_NO_MASTER_KEY"] = "1"
+    if lock_check is not None:
+        env["FORVEN_PROBE_LOCK_CHECK"] = str(lock_check)
     process = spawn_sandboxed(
         [sys.executable, "-c", PROBE_SCRIPT, str(db_path), str(repo_root), *secret_files],
         env=env, cwd=repo_root, log_path=log_path,
@@ -260,7 +327,10 @@ def _judge_probe(output: str) -> SandboxStatus:
         warnings.append("A sandboxed bot can still write Forven's code folder")
     for path in result.get("readable_secrets") or []:
         warnings.append(f"A sandboxed bot can still read {path}")
-    return SandboxStatus(not blocking, blocking + warnings)
+    can_close = result.get("closed_file_readable") is False
+    if result.get("closed_file_readable") is True:
+        warnings.append("The database can't be closed to bots: a sandboxed bot could still read a closed file")
+    return SandboxStatus(not blocking, blocking + warnings, can_close_database=can_close and not blocking)
 
 
 # ── Windows implementation ──────────────────────────────────────────
