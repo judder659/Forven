@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_DAYS_RULES = 90
 DEFAULT_DAYS_AI = 14
 MAX_DAYS = 365
-DEFAULT_MAX_AI_USD = 2.0
-MAX_AI_USD = 50.0
+# An AI replay asks the model once per candle; this bounds one replay's calls
+# (about 6 weeks of 1h candles) so it can't run for hours or hit rate limits.
+MAX_AI_CALLS = 1000
 # Bars of history before the window, for indicators and recent candles.
 WARMUP_BARS = 250
 FREE_ROAM_REPLAY_PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
@@ -149,15 +150,14 @@ def performance_time(value: object) -> datetime | None:
 def ai_decider(
     config: dict,
     *,
-    max_ai_usd: float,
+    max_calls: int = MAX_AI_CALLS,
     frames: dict[str, pd.DataFrame] | None = None,
     higher: dict[str, pd.DataFrame] | None = None,
 ) -> rp.Decide:
     """One model call per closed bar, answered from the replay cache when the
-    same prompt was asked before. Stops before a call would pass the cap."""
+    same prompt was asked before. Stops after ``max_calls`` fresh calls."""
     from forven.ai import call_ai, normalize_provider_and_model
     from forven.bot_factory import engine
-    from forven.bot_factory.ai_costs import estimate_call_cost
     from forven.db import get_replay_cached_answer, store_replay_answer
     from forven.regime import _classify
 
@@ -165,7 +165,7 @@ def ai_decider(
     max_tokens = engine._MAX_TOKENS_BY_VERBOSITY.get(config.get("reasoning_verbosity", "standard"), 1024)
     inputs = [i for i in normalize_inputs(config.get("data_sources")) if i in _REPLAYABLE_INPUTS]
     timeframe = str(config.get("timeframe") or "1h")
-    budget = {"spent": 0.0, "last": 0.0}
+    fresh_calls = {"n": 0}
 
     async def decide(at: datetime, snapshot: dict, positions: list[dict], realized: float, state: dict):
         if inputs:
@@ -184,21 +184,17 @@ def ai_decider(
         messages = engine.assemble_prompt(config, market_event=snapshot, positions=positions, realized_pnl=realized)
         key = hashlib.sha256(json.dumps([provider, model, messages], sort_keys=True, default=str).encode()).hexdigest()
         cached = await asyncio.to_thread(get_replay_cached_answer, key)
-        cost = 0.0
         if cached:
             text = cached["response"]
         else:
-            guess = budget["last"] or float(estimate_call_cost(provider, model, messages, "x" * 400).get("cost_usd") or 0)
-            if budget["spent"] + guess > max_ai_usd:
-                return rp.ReplayStep(stop=f"Stopped at the ${max_ai_usd:,.2f} AI budget for this replay.")
+            if fresh_calls["n"] >= max_calls:
+                return rp.ReplayStep(stop=f"Stopped after {max_calls} AI calls, the limit for one replay.")
             text = await call_ai(
                 provider=provider, model=model, messages=messages, max_tokens=max_tokens,
                 temperature=0.7, fallback=False,
             )
-            cost = float(estimate_call_cost(provider, model, messages, text).get("cost_usd") or 0.0)
-            budget["spent"] += cost
-            budget["last"] = cost
-            await asyncio.to_thread(store_replay_answer, key, f"{provider}:{model}", text or "", cost)
+            fresh_calls["n"] += 1
+            await asyncio.to_thread(store_replay_answer, key, f"{provider}:{model}", text or "")
         parsed = engine._parse_llm_response(text)
         if not isinstance(parsed, dict):
             parsed = {"action": "HOLD"}
@@ -209,7 +205,7 @@ def ai_decider(
             if trade is not None:
                 trades.append({**trade, "action": action, "reasoning": parsed.get("reasoning") or ""})
         return rp.ReplayStep(trades=trades, reasoning=str(parsed.get("reasoning") or ""),
-                             cost_usd=cost, cached=bool(cached))
+                             called=True, cached=bool(cached))
 
     return decide
 
@@ -227,7 +223,7 @@ def _risk_check(config: dict) -> rp.Check:
 
 
 async def execute_replay(
-    config: dict, start: pd.Timestamp, end: pd.Timestamp, *, max_ai_usd: float,
+    config: dict, start: pd.Timestamp, end: pd.Timestamp, *, max_ai_calls: int = MAX_AI_CALLS,
 ) -> dict:
     """Load the candles and run the replay; returns the result dict."""
     timeframe = str(config.get("timeframe") or "1h")
@@ -265,7 +261,7 @@ async def execute_replay(
     if rules.is_rule_bot(config):
         decide = rule_decider(config, followed)
     else:
-        decide = ai_decider(config, max_ai_usd=max_ai_usd, frames=frames, higher=higher)
+        decide = ai_decider(config, max_calls=max_ai_calls, frames=frames, higher=higher)
 
     result = await rp.run_replay(
         config, frames, decide, start=start, check=_risk_check(config),
@@ -283,11 +279,11 @@ async def execute_replay(
     return result
 
 
-async def _run_and_store(replay_id: str, config: dict, start, end, max_ai_usd: float) -> None:
+async def _run_and_store(replay_id: str, config: dict, start, end) -> None:
     from forven.db import finish_bot_replay
 
     try:
-        result = await execute_replay(config, start, end, max_ai_usd=max_ai_usd)
+        result = await execute_replay(config, start, end)
     except Exception as e:  # noqa: BLE001 - a failed replay is shown, not raised
         logger.warning("Replay %s failed: %s", replay_id, e)
         await asyncio.to_thread(finish_bot_replay, replay_id, error=str(e) or type(e).__name__)
@@ -301,38 +297,30 @@ def start_replay(
     bot_id: str | None,
     days: int | None = None,
     end: object = None,
-    max_ai_usd: float | None = None,
     template_id: str | None = None,
     arena_id: str | None = None,
     window: tuple[pd.Timestamp, pd.Timestamp, bool] | None = None,
 ) -> dict:
-    """Record a replay and run it in the background. AI bots need an approved
-    dollar cap; rule bots replay for free. ``window`` fixes the dates (an
-    arena gives every bot the same ones)."""
+    """Record a replay and run it in the background. ``window`` fixes the
+    dates (an arena gives every bot the same ones)."""
     from forven.db import create_bot_replay
 
     error = rules.validate_rule_params(config.get("bot_type"), config.get("rule_params"))
     if error:
         raise ValueError(error)
     uses_ai = not rules.is_rule_bot(config)
-    if uses_ai:
-        if max_ai_usd is None or not (0 < float(max_ai_usd) <= MAX_AI_USD):
-            raise ValueError(f"An AI replay needs an approved budget between $0 and ${MAX_AI_USD:g}.")
-        cap = float(max_ai_usd)
-    else:
-        cap = 0.0
     days = int(days or (DEFAULT_DAYS_AI if uses_ai else DEFAULT_DAYS_RULES))
     start, stop, shifted = window or replay_window(days, end, cutoff=_research_cutoff())
     replay_id = create_bot_replay(
         bot_id=bot_id, config=config, window_start=start.isoformat(), window_end=stop.isoformat(),
-        max_ai_usd=cap if uses_ai else None, template_id=template_id, arena_id=arena_id,
+        template_id=template_id, arena_id=arena_id,
     )
-    task = asyncio.get_running_loop().create_task(_run_and_store(replay_id, config, start, stop, cap))
+    task = asyncio.get_running_loop().create_task(_run_and_store(replay_id, config, start, stop))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return {
         "id": replay_id, "status": "running", "window_start": start.isoformat(), "window_end": stop.isoformat(),
-        "shifted_for_holdout": shifted, "max_ai_usd": cap if uses_ai else None,
+        "shifted_for_holdout": shifted,
     }
 
 
@@ -359,12 +347,9 @@ def api_start_replay(
     config: dict | None = None,
     days: int | None = None,
     end: str | None = None,
-    max_ai_usd: float | None = None,
 ) -> dict:
     """Replay a saved bot (with any editor changes) over past candles."""
-    return start_replay(
-        _replay_config(bot_id, config), bot_id=bot_id, days=days, end=end, max_ai_usd=max_ai_usd,
-    )
+    return start_replay(_replay_config(bot_id, config), bot_id=bot_id, days=days, end=end)
 
 
 def api_list_replays(bot_id: str, limit: int = 20) -> list[dict]:
@@ -387,16 +372,8 @@ def api_get_replay(replay_id: str) -> dict:
 MAX_ARENA_BOTS = 12
 
 
-def _return_after_ai_pct(summary: dict | None) -> float | None:
-    summary = summary or {}
-    capital = float(summary.get("starting_capital") or 0)
-    if capital <= 0 or summary.get("pnl_after_ai_usd") is None:
-        return None
-    return round(float(summary["pnl_after_ai_usd"]) / capital * 100, 4)
-
-
 def rank_arena(replays: list[dict], names: dict[str, str] | None = None) -> list[dict]:
-    """Finished replays first, best return after AI cost on top."""
+    """Finished replays first, best return on top."""
     rows = []
     for r in replays:
         summary = r.get("summary") or {}
@@ -404,25 +381,25 @@ def rank_arena(replays: list[dict], names: dict[str, str] | None = None) -> list
             "replay_id": r["id"], "bot_id": r.get("bot_id"),
             "name": (names or {}).get(r.get("bot_id") or "", r.get("bot_id")),
             "status": r.get("status"), "error": r.get("error"),
-            "return_after_ai_pct": _return_after_ai_pct(summary),
             "return_pct": summary.get("return_pct"),
+            "excess_return_pct": summary.get("excess_return_pct"),
             "benchmark_return_pct": summary.get("benchmark_return_pct"),
             "max_drawdown_pct": summary.get("max_drawdown_pct"),
             "closed_trades": summary.get("closed_trades"),
             "win_rate": summary.get("win_rate"),
-            "ai_cost_usd": summary.get("ai_cost_usd"),
+            "ai_calls": summary.get("ai_calls"),
             "ended_early": summary.get("ended_early"),
             "pairs": summary.get("pairs"),
         })
     rows.sort(key=lambda row: (
-        row["status"] != "done", row["return_after_ai_pct"] is None, -(row["return_after_ai_pct"] or 0),
+        row["status"] != "done", row["return_pct"] is None, -(row["return_pct"] or 0),
     ))
     for i, row in enumerate(rows, 1):
-        row["rank"] = i if row["status"] == "done" and row["return_after_ai_pct"] is not None else None
+        row["rank"] = i if row["status"] == "done" and row["return_pct"] is not None else None
     return rows
 
 
-def api_start_arena(bot_ids: list[str], *, days: int | None = None, max_ai_usd_per_bot: float | None = None) -> dict:
+def api_start_arena(bot_ids: list[str], *, days: int | None = None) -> dict:
     """Replay several bots over the same dates and rank them."""
     import uuid
 
@@ -437,16 +414,11 @@ def api_start_arena(bot_ids: list[str], *, days: int | None = None, max_ai_usd_p
         problem = rules.validate_rule_params(config.get("bot_type"), config.get("rule_params"))
         if problem:
             raise ValueError(f"{config.get('name') or bot_id}: {problem}")
-        uses_ai = not rules.is_rule_bot(config)
-        if uses_ai and not (max_ai_usd_per_bot and 0 < float(max_ai_usd_per_bot) <= MAX_AI_USD):
-            raise ValueError(
-                f"{config.get('name') or bot_id} asks a model, so the arena needs an approved AI budget per bot."
-            )
         configs.append((bot_id, config))
     window = replay_window(int(days or 30), cutoff=_research_cutoff())
     arena_id = f"AR{uuid.uuid4().hex[:10]}"
     started = [
-        start_replay(config, bot_id=bot_id, max_ai_usd=max_ai_usd_per_bot, arena_id=arena_id, window=window)
+        start_replay(config, bot_id=bot_id, arena_id=arena_id, window=window)
         for bot_id, config in configs
     ]
     return {
@@ -516,9 +488,9 @@ def _template_config(template_id: str) -> tuple[dict, dict]:
     return template, config
 
 
-def api_start_template_replay(template_id: str, *, days: int | None = None, max_ai_usd: float | None = None) -> dict:
+def api_start_template_replay(template_id: str, *, days: int | None = None) -> dict:
     _template, config = _template_config(template_id)
-    return start_replay(config, bot_id=None, template_id=template_id, days=days, max_ai_usd=max_ai_usd)
+    return start_replay(config, bot_id=None, template_id=template_id, days=days)
 
 
 def api_template_replays(*, refresh_free: bool = False) -> dict[str, dict | None]:

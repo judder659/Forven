@@ -1609,7 +1609,6 @@ CREATE TABLE IF NOT EXISTS bot_replays (
     config TEXT,
     window_start TEXT,
     window_end TEXT,
-    max_ai_usd REAL,
     summary TEXT,
     curve TEXT,
     benchmark TEXT,
@@ -1626,7 +1625,6 @@ CREATE TABLE IF NOT EXISTS bot_replay_cache (
     prompt_hash TEXT PRIMARY KEY,
     model TEXT,
     response TEXT,
-    cost_usd REAL,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_bot_id ON bot_decisions (bot_id);
@@ -8963,7 +8961,6 @@ def create_bot_replay(
     config: dict,
     window_start: str,
     window_end: str,
-    max_ai_usd: float | None,
     template_id: str | None = None,
     arena_id: str | None = None,
 ) -> str:
@@ -8971,10 +8968,10 @@ def create_bot_replay(
     with get_db() as conn:
         conn.execute(
             """INSERT INTO bot_replays (id, bot_id, template_id, arena_id, status, config,
-                   window_start, window_end, max_ai_usd)
-               VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)""",
+                   window_start, window_end)
+               VALUES (?, ?, ?, ?, 'running', ?, ?, ?)""",
             (replay_id, bot_id, template_id, arena_id, json.dumps(config, default=str),
-             window_start, window_end, max_ai_usd),
+             window_start, window_end),
         )
     return replay_id
 
@@ -9028,7 +9025,7 @@ def list_bot_replays(
     with get_db() as conn:
         rows = conn.execute(
             f"""SELECT id, bot_id, template_id, arena_id, status, error, window_start, window_end,
-                       max_ai_usd, summary, created_at, finished_at
+                       summary, created_at, finished_at
                   FROM bot_replays {where} ORDER BY created_at DESC, rowid DESC LIMIT ?""",
             (*args, int(limit)),
         ).fetchall()
@@ -9038,15 +9035,15 @@ def list_bot_replays(
 def get_replay_cached_answer(prompt_hash: str) -> dict | None:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT response, cost_usd FROM bot_replay_cache WHERE prompt_hash = ?", (prompt_hash,)
+            "SELECT response FROM bot_replay_cache WHERE prompt_hash = ?", (prompt_hash,)
         ).fetchone()
     return dict(row) if row else None
 
 
-def store_replay_answer(prompt_hash: str, model: str, response: str, cost_usd: float | None) -> None:
+def store_replay_answer(prompt_hash: str, model: str, response: str) -> None:
     with get_db() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO bot_replay_cache (prompt_hash, model, response, cost_usd)
-               VALUES (?, ?, ?, ?)""",
-            (prompt_hash, model, response, cost_usd),
+            """INSERT OR REPLACE INTO bot_replay_cache (prompt_hash, model, response)
+               VALUES (?, ?, ?)""",
+            (prompt_hash, model, response),
         )

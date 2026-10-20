@@ -512,7 +512,12 @@ export interface BotReplayTrade {
 	reasoning: string;
 }
 
-export interface BotReplaySummary extends Omit<BotPerformanceSummary, 'start_at' | 'end_at' | 'open_positions' | 'funding_usd'> {
+/** AI cost is left out of replays: most installs use a subscription login. */
+export interface BotReplaySummary
+	extends Omit<
+		BotPerformanceSummary,
+		'start_at' | 'end_at' | 'open_positions' | 'funding_usd' | 'ai_cost_usd' | 'pnl_after_ai_usd' | 'ai_cost_pct_of_pnl'
+	> {
 	decisions: number;
 	ai_calls: number;
 	ai_cached: number;
@@ -536,7 +541,6 @@ export interface BotReplay {
 	error: string | null;
 	window_start: string;
 	window_end: string;
-	max_ai_usd: number | null;
 	summary: BotReplaySummary | null;
 	curve?: BotEquityPoint[] | null;
 	benchmark?: BotEquityPoint[] | null;
@@ -551,14 +555,11 @@ export interface BotReplayStarted {
 	window_start: string;
 	window_end: string;
 	shifted_for_holdout: boolean;
-	max_ai_usd: number | null;
 }
 
 export interface BotReplayRequest {
 	days?: number;
 	end?: string | null;
-	/** Dollar cap the operator approved for an AI replay. */
-	max_ai_usd?: number | null;
 	config?: Partial<BotConfig>;
 }
 
@@ -581,13 +582,13 @@ export interface BotArenaRow {
 	name: string | null;
 	status: 'running' | 'done' | 'failed';
 	error: string | null;
-	return_after_ai_pct: number | null;
 	return_pct: number | null;
+	excess_return_pct: number | null;
 	benchmark_return_pct: number | null;
 	max_drawdown_pct: number | null;
 	closed_trades: number | null;
 	win_rate: number | null;
-	ai_cost_usd: number | null;
+	ai_calls: number | null;
 	ended_early: string | null;
 	pairs: string[] | null;
 }
@@ -620,7 +621,6 @@ export interface BotArenaStarted {
 export async function startBotArena(body: {
 	bot_ids: string[];
 	days?: number;
-	max_ai_usd_per_bot?: number | null;
 }): Promise<BotArenaStarted> {
 	return fetchApi('/bot-factory/arena', { method: 'POST', body: JSON.stringify(body) });
 }
@@ -640,7 +640,7 @@ export async function getTemplateReplays(refreshFree = false): Promise<Record<st
 
 export async function startTemplateReplay(
 	templateId: string,
-	body: { days?: number; max_ai_usd?: number | null }
+	body: { days?: number }
 ): Promise<BotReplayStarted> {
 	return fetchApi(`/bot-factory/templates/${templateId}/replays`, { method: 'POST', body: JSON.stringify(body) });
 }

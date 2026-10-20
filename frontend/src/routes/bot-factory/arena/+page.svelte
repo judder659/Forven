@@ -16,8 +16,6 @@
 	let bots: BotConfig[] = [];
 	let picked: Record<string, boolean> = {};
 	let days = 30;
-	let budget = 1;
-	let budgetApproved = false;
 	let starting = false;
 	let error: string | null = null;
 	let shiftedNote: string | null = null;
@@ -26,8 +24,6 @@
 	let poll: ReturnType<typeof setTimeout> | null = null;
 
 	$: chosen = bots.filter((b) => picked[b.id]);
-	$: aiChosen = chosen.filter((b) => !b.bot_type || b.bot_type === 'ai').length;
-	$: maxSpend = aiChosen * (Number(budget) || 0);
 
 	function fmtPct(v: number | null | undefined): string {
 		if (v == null) return '—';
@@ -60,21 +56,12 @@
 			error = 'Pick at least two bots.';
 			return;
 		}
-		if (aiChosen && !budgetApproved) {
-			error = 'Tick the box to approve the AI budget.';
-			return;
-		}
 		starting = true;
 		try {
-			const started = await startBotArena({
-				bot_ids: chosen.map((b) => b.id),
-				days,
-				max_ai_usd_per_bot: aiChosen ? Number(budget) : null
-			});
+			const started = await startBotArena({ bot_ids: chosen.map((b) => b.id), days });
 			if (started.shifted_for_holdout) {
 				shiftedNote = `Your research holdout keeps recent candles back, so every bot runs ${day(started.window_start)} to ${day(started.window_end)}.`;
 			}
-			budgetApproved = false;
 			await open(started.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -105,8 +92,7 @@
 		<a href="/bot-factory" class="text-[12px] text-sc-ink3 hover:text-sc-ink">&larr; Bot Factory</a>
 		<h1 class="mt-1 text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Arena</h1>
 		<p class="mt-1 text-xs text-sc-ink3">
-			Replays the bots you pick over the same dates, each on its own coins, and ranks them by return after AI
-			cost. Nothing is traded. Replays stop where your research holdout begins.
+			Replays the bots you pick over the same dates, each on its own coins, and ranks them by return. Nothing is traded. Replays stop where your research holdout begins.
 		</p>
 	</div>
 
@@ -132,20 +118,10 @@
 					{#each DAY_CHOICES as d}<option value={d}>Last {d} days</option>{/each}
 				</select>
 			</label>
-			{#if aiChosen}
-				<label class="text-[12px] text-sc-ink2">
-					<span class="mb-1 block font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">AI budget per bot ($)</span>
-					<input type="number" min="0.1" max="50" step="0.5" bind:value={budget} class="terminal-input w-24 text-[12px]" />
-				</label>
-				<label class="flex items-center gap-2 pb-1 text-[12px] text-sc-ink2">
-					<input type="checkbox" bind:checked={budgetApproved} />
-					I approve up to ${maxSpend.toFixed(2)} in total ({aiChosen} AI bot{aiChosen === 1 ? '' : 's'})
-				</label>
-			{/if}
 			<button
 				class="rounded bg-sc-ink px-3 py-1.5 text-[12px] font-semibold text-sc-panel disabled:opacity-50"
 				on:click={run}
-				disabled={starting || chosen.length < 2 || (aiChosen > 0 && (!budgetApproved || !(budget > 0)))}
+				disabled={starting || chosen.length < 2}
 			>
 				{starting ? 'Starting…' : `Run arena (${chosen.length} bot${chosen.length === 1 ? "" : "s"})`}
 			</button>
@@ -164,8 +140,8 @@
 				<table class="w-full min-w-[760px] text-left text-[12px]">
 					<thead class="font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">
 						<tr>
-							<th class="px-4 py-2">#</th><th>Bot</th><th>Return after AI</th><th>Return</th><th>BTC hold</th>
-							<th>Max drawdown</th><th>Trades</th><th>AI cost</th><th>Coins</th>
+							<th class="px-4 py-2">#</th><th>Bot</th><th>Return</th><th>vs BTC hold</th><th>BTC hold</th>
+							<th>Max drawdown</th><th>Trades</th><th>Coins</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -178,14 +154,13 @@
 									{#if r.ended_early}<div class="text-[11px] text-amber-400">{r.ended_early}</div>{/if}
 								</td>
 								{#if r.status === 'running'}
-									<td colspan="7" class="text-sc-ink3">Replaying…</td>
+									<td colspan="6" class="text-sc-ink3">Replaying…</td>
 								{:else}
-									<td class="font-bold {tone(r.return_after_ai_pct)}">{fmtPct(r.return_after_ai_pct)}</td>
-									<td class={tone(r.return_pct)}>{fmtPct(r.return_pct)}</td>
+									<td class="font-bold {tone(r.return_pct)}">{fmtPct(r.return_pct)}</td>
+									<td class={tone(r.excess_return_pct)}>{fmtPct(r.excess_return_pct)}</td>
 									<td class="text-sc-ink3">{fmtPct(r.benchmark_return_pct)}</td>
 									<td>{r.max_drawdown_pct != null ? `${r.max_drawdown_pct.toFixed(2)}%` : '—'}</td>
 									<td>{r.closed_trades ?? '—'}{r.win_rate != null ? ` · ${(r.win_rate * 100).toFixed(0)}% won` : ''}</td>
-									<td>{r.ai_cost_usd != null ? `$${r.ai_cost_usd.toFixed(2)}` : '—'}</td>
 									<td class="text-sc-ink3">{(r.pairs ?? []).map((p) => p.split('/')[0]).join(', ')}</td>
 								{/if}
 							</tr>

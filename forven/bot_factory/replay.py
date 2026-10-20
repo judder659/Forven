@@ -2,7 +2,7 @@
 
 The loop is pure and imports nothing from Forven. Callers pass the candles,
 a ``decide`` coroutine (rules in code, or a model call with a cache and a
-dollar cap) and a ``check`` for the risk limits. Each bar:
+call limit) and a ``check`` for the risk limits. Each bar:
 
 1. orders decided at the previous close fill at this bar's open, with fees
    and slippage;
@@ -11,7 +11,7 @@ dollar cap) and a ``check`` for the risk limits. Each bar:
 3. equity is marked at the close, and the drawdown limit is checked;
 4. the bot decides on candles up to and including this bar.
 
-Funding is not modelled. Fees and slippage never go below a realistic floor,
+Funding and AI cost are not modelled. Fees and slippage never go below a realistic floor,
 so a bot set to trade for free in paper still pays something here.
 """
 
@@ -40,9 +40,10 @@ class ReplayStep:
 
     trades: list[dict] = field(default_factory=list)
     reasoning: str = ""
-    cost_usd: float = 0.0
+    # A model was asked for this decision (answered fresh or from the cache).
+    called: bool = False
     cached: bool = False
-    # Set to end the replay early, e.g. "AI budget reached".
+    # Set to end the replay early, e.g. "AI call limit reached".
     stop: str | None = None
 
 
@@ -210,7 +211,6 @@ async def run_replay(
     curve: list[dict] = []
     peak = capital
     decisions = calls = cached = refused = 0
-    ai_cost = 0.0
     ended: str | None = None
     timeline = [ts for ts in _timeline(frames) if ts >= start]
     last_at: datetime | None = None
@@ -254,9 +254,7 @@ async def run_replay(
         open_view = [dict(p) for p in book.positions]
         step = await decide(at, snapshot, open_view, book.realized, state)
         decisions += 1
-        ai_cost += step.cost_usd
-        if step.cost_usd or step.cached:
-            calls += 1
+        calls += int(step.called)
         cached += int(step.cached)
         for trade in step.trades:
             action = str(trade.get("action") or "").upper()
@@ -283,8 +281,12 @@ async def run_replay(
     bench = performance.benchmark_curve(benchmark or [], curve, capital) if benchmark else None
     summary = performance.summarize(
         starting_capital=capital, ledger=book.closed, curve=curve, benchmark=bench,
-        ai_cost_usd=ai_cost, benchmark_symbol=benchmark_symbol,
+        ai_cost_usd=0.0, benchmark_symbol=benchmark_symbol,
     )
+    # AI cost is left out: most installs reach models through a subscription
+    # login, where a call costs nothing extra.
+    for key in ("ai_cost_usd", "pnl_after_ai_usd", "ai_cost_pct_of_pnl"):
+        summary.pop(key, None)
     summary.update({
         "decisions": decisions, "ai_calls": calls, "ai_cached": cached, "refused": refused,
         "fee_bps": round(book.fee_rate * 10_000, 4), "slippage_bps": round(book.slip_rate * 10_000, 4),

@@ -273,15 +273,13 @@ class BotReplayRequest(BaseModel):
     config: dict | None = None
     days: int | None = None
     end: str | None = None
-    # The dollar cap the operator approved for this AI replay.
-    max_ai_usd: float | None = None
 
 
 @router.post("/api/bot-factory/bots/{bot_id}/replays")
 async def start_bot_replay(bot_id: str, body: BotReplayRequest):
     try:
         return replay_service.api_start_replay(
-            bot_id, config=body.config, days=body.days, end=body.end, max_ai_usd=body.max_ai_usd,
+            bot_id, config=body.config, days=body.days, end=body.end,
         )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -305,16 +303,12 @@ def get_bot_replay(replay_id: str):
 class BotArenaRequest(BaseModel):
     bot_ids: list[str]
     days: int | None = None
-    # The dollar cap approved for each AI bot's replay.
-    max_ai_usd_per_bot: float | None = None
 
 
 @router.post("/api/bot-factory/arena")
 async def start_bot_arena(body: BotArenaRequest):
     try:
-        return replay_service.api_start_arena(
-            body.bot_ids, days=body.days, max_ai_usd_per_bot=body.max_ai_usd_per_bot,
-        )
+        return replay_service.api_start_arena(body.bot_ids, days=body.days)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -336,7 +330,6 @@ def get_bot_arena(arena_id: str):
 
 class TemplateReplayRequest(BaseModel):
     days: int | None = None
-    max_ai_usd: float | None = None
 
 
 @router.get("/api/bot-factory/template-replays")
@@ -347,7 +340,7 @@ async def get_template_replays(refresh_free: bool = False):
 @router.post("/api/bot-factory/templates/{template_id}/replays")
 async def start_template_replay(template_id: str, body: TemplateReplayRequest):
     try:
-        return replay_service.api_start_template_replay(template_id, days=body.days, max_ai_usd=body.max_ai_usd)
+        return replay_service.api_start_template_replay(template_id, days=body.days)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:

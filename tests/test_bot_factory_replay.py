@@ -97,12 +97,13 @@ class TestReplayLoop:
         frame = _frame([100] * 5)
 
         async def decide(at, snapshot, positions, realized, state):
-            return rp.ReplayStep(cost_usd=0.5, stop="Stopped at the $1.00 AI budget for this replay.")
+            return rp.ReplayStep(called=True, stop="Stopped after 1 AI calls, the limit for one replay.")
 
         out = _run(_config(), {"BTC/USDT": frame}, decide)
         assert out["summary"]["decisions"] == 1
-        assert out["summary"]["ai_cost_usd"] == 0.5
-        assert "budget" in out["summary"]["ended_early"]
+        assert out["summary"]["ai_calls"] == 1
+        assert "ai_cost_usd" not in out["summary"]
+        assert "limit" in out["summary"]["ended_early"]
 
     def test_bars_before_start_are_history_only(self):
         frame = _frame(list(range(100, 110)))
@@ -167,11 +168,11 @@ class TestService:
                          rule_params={"pair": "BTC", "lower": 90, "upper": 100, "levels": 5})
         with _patched_frames({"BTC/USDT": frame}):
             out = asyncio.run(rs.execute_replay(
-                config, frame.index[0], frame.index[-1] + pd.Timedelta(hours=1), max_ai_usd=0,
+                config, frame.index[0], frame.index[-1] + pd.Timedelta(hours=1), 
             ))
         assert out["summary"]["closed_trades"] >= 2
         assert any(t["exit_reason"] == "target" for t in out["trades"])
-        assert out["summary"]["ai_cost_usd"] == 0
+        assert out["summary"]["ai_calls"] == 0
 
     def test_signal_replay_follows_the_strategy_history(self):
         frame = _frame([100, 100, 105, 110, 110, 108], start="2026-02-01")
@@ -181,33 +182,28 @@ class TestService:
         with _patched_frames({"ETH/USDT": frame}), \
              patch.object(rs, "_followed_history", return_value=history):
             out = asyncio.run(rs.execute_replay(
-                config, frame.index[0], frame.index[-1] + pd.Timedelta(hours=1), max_ai_usd=0,
+                config, frame.index[0], frame.index[-1] + pd.Timedelta(hours=1), 
             ))
         trade = out["trades"][0]
         assert trade["ticker"] == "ETH/USDT" and trade["exit_reason"] == "bot"
         assert trade["opened_at"].startswith("2026-02-01T02:00")
         assert trade["closed_at"].startswith("2026-02-01T05:00")
 
-    def test_ai_replay_caches_answers_and_respects_the_budget(self, forven_db):
+    def test_ai_replay_caches_answers_and_stops_at_the_call_limit(self, forven_db):
         frame = _frame([100.0 + i for i in range(6)], start="2026-02-01")
         config = _config(model="gpt-4.1-mini", asset_mode="locked", locked_pairs=["BTC/USDT"], id="B1")
         reply = '{"action":"HOLD","reasoning":"wait"}'
         start, end = frame.index[0], frame.index[-1] + pd.Timedelta(hours=1)
-        cost = {"cost_usd": 0.4, "tokens_in": 1, "tokens_out": 1, "priced": True}
         with _patched_frames({"BTC/USDT": frame}), \
              patch("forven.ai.normalize_provider_and_model", return_value=("openai", "gpt-4.1-mini")), \
-             patch("forven.bot_factory.ai_costs.estimate_call_cost", return_value=cost), \
              patch("forven.ai.call_ai", new_callable=AsyncMock, return_value=reply) as call:
-            first = asyncio.run(rs.execute_replay(config, start, end, max_ai_usd=1.0))
-            assert call.await_count == 2  # the third call would pass $1
-            assert "budget" in first["summary"]["ended_early"]
-            second = asyncio.run(rs.execute_replay(config, start, end, max_ai_usd=1.0))
+            first = asyncio.run(rs.execute_replay(config, start, end, max_ai_calls=2))
+            assert call.await_count == 2
+            assert "2 AI calls" in first["summary"]["ended_early"]
+            second = asyncio.run(rs.execute_replay(config, start, end, max_ai_calls=2))
         assert second["summary"]["ai_cached"] == 2
-        assert call.await_count == 4  # two cached, then two more paid calls
-
-    def test_start_replay_needs_a_budget_for_ai_bots(self, forven_db):
-        with pytest.raises(ValueError, match="budget"):
-            rs.start_replay(_config(model="gpt-4.1-mini"), bot_id=None)
+        assert call.await_count == 4  # two answered from the cache, then two new calls
+        assert "ai_cost_usd" not in second["summary"]
 
     def test_replay_routes_store_a_result(self, forven_db):
         from fastapi.testclient import TestClient
@@ -233,18 +229,16 @@ class TestService:
 
 
 class TestArena:
-    def test_ranking_puts_the_best_return_after_ai_first(self):
+    def test_ranking_puts_the_best_return_first(self):
         replays = [
-            {"id": "a", "bot_id": "A", "status": "done",
-             "summary": {"starting_capital": 1000, "pnl_after_ai_usd": 20, "return_pct": 3}},
-            {"id": "b", "bot_id": "B", "status": "done",
-             "summary": {"starting_capital": 100, "pnl_after_ai_usd": 5, "return_pct": 5}},
+            {"id": "a", "bot_id": "A", "status": "done", "summary": {"return_pct": 3}},
+            {"id": "b", "bot_id": "B", "status": "done", "summary": {"return_pct": 5}},
             {"id": "c", "bot_id": "C", "status": "failed", "error": "no candles", "summary": None},
             {"id": "d", "bot_id": "D", "status": "running", "summary": None},
         ]
         rows = rs.rank_arena(replays, {"A": "Alpha"})
         assert [r["bot_id"] for r in rows[:2]] == ["B", "A"]
-        assert rows[0]["return_after_ai_pct"] == 5.0 and rows[0]["rank"] == 1
+        assert rows[0]["return_pct"] == 5 and rows[0]["rank"] == 1
         assert rows[1]["name"] == "Alpha"
         assert rows[2]["rank"] is None and rows[3]["rank"] is None
 
@@ -257,18 +251,16 @@ class TestArena:
                           "rule_params": {"pair": "BTC", "take_profit_pct": 2}})
         ai = create_bot({"name": "AI", "model": "gpt-4.1-mini"})
 
-        async def go(ids, budget=None):
+        async def go(ids):
             with patch.object(rs, "_research_cutoff", return_value=None), \
                  patch.object(rs, "execute_replay", new_callable=AsyncMock, return_value={"summary": {}}):
-                out = rs.api_start_arena(ids, days=10, max_ai_usd_per_bot=budget)
+                out = rs.api_start_arena(ids, days=10)
                 await asyncio.sleep(0)
                 return out
 
-        with pytest.raises(ValueError, match="AI budget"):
-            asyncio.run(go([grid, ai]))
         with pytest.raises(ValueError, match="two bots"):
             asyncio.run(go([grid]))
-        out = asyncio.run(go([grid, dca, ai], budget=1.0))
+        out = asyncio.run(go([grid, dca, ai]))
         rows = list_bot_replays(arena_id=out["id"])
         assert len(rows) == 3
         assert len({(r["window_start"], r["window_end"]) for r in rows}) == 1
@@ -299,7 +291,5 @@ class TestTemplateReplays:
         dca_id = templates["DCA: BTC dip buyer"]
         ai_id = templates["Momentum Scalper"]
         assert first[dca_id]["status"] == "running"
-        assert first[ai_id] is None  # AI templates only replay on request, with a budget
+        assert first[ai_id] is None  # AI templates only replay on request
         assert second[dca_id]["id"] == first[dca_id]["id"]  # not started twice
-        with pytest.raises(ValueError, match="budget"):
-            rs.api_start_template_replay(ai_id)

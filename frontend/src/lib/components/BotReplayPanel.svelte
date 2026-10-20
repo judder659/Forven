@@ -21,8 +21,6 @@
 	$: usesAi = !bot.bot_type || bot.bot_type === 'ai';
 	// AI replays cost a call per candle, so they start shorter.
 	let days = !bot.bot_type || bot.bot_type === 'ai' ? 14 : 90;
-	let budget = 2;
-	let budgetApproved = false;
 	let starting = false;
 	let startError: string | null = null;
 	let shiftedNote: string | null = null;
@@ -73,20 +71,12 @@
 	async function run() {
 		startError = null;
 		shiftedNote = null;
-		if (usesAi && !budgetApproved) {
-			startError = 'Tick the box to approve the AI budget for this replay.';
-			return;
-		}
 		starting = true;
 		try {
-			const started = await startBotReplay(bot.id, {
-				days,
-				max_ai_usd: usesAi ? budget : null
-			});
+			const started = await startBotReplay(bot.id, { days });
 			if (started.shifted_for_holdout) {
 				shiftedNote = `Your research holdout keeps recent candles back, so this replay runs ${day(started.window_start)} to ${day(started.window_end)}.`;
 			}
-			budgetApproved = false;
 			await open(started.id);
 		} catch (e) {
 			startError = e instanceof Error ? e.message : String(e);
@@ -107,8 +97,8 @@
 		<p class="mb-3 text-[12px] text-sc-ink3">
 			The bot decides at each candle close and fills at the next open, with fees and slippage. Nothing is
 			traded. Replays stop where your research holdout begins, so they never see held-back data.
-			{#if usesAi}Each candle is one AI call, so a replay costs money; answers are reused when you replay
-				the same settings again.{:else}This bot decides in code, so a replay is free.{/if}
+			{#if usesAi}Each candle is one AI call (up to 1,000 per replay); answers are reused when you replay the
+				same settings again.{:else}This bot decides in code, so a replay runs in seconds.{/if}
 		</p>
 		<div class="flex flex-wrap items-end gap-3">
 			<label class="text-[12px] text-sc-ink2">
@@ -119,20 +109,10 @@
 					{/each}
 				</select>
 			</label>
-			{#if usesAi}
-				<label class="text-[12px] text-sc-ink2">
-					<span class="mb-1 block font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">AI budget ($)</span>
-					<input type="number" min="0.1" max="50" step="0.5" bind:value={budget} class="terminal-input w-24 text-[12px]" />
-				</label>
-				<label class="flex items-center gap-2 pb-1 text-[12px] text-sc-ink2">
-					<input type="checkbox" bind:checked={budgetApproved} />
-					I approve spending up to ${Number(budget || 0).toFixed(2)} on this replay
-				</label>
-			{/if}
 			<button
 				class="rounded bg-sc-ink px-3 py-1.5 text-[12px] font-semibold text-sc-panel disabled:opacity-50"
 				on:click={run}
-				disabled={starting || current?.status === 'running' || (usesAi && (!budgetApproved || !(budget > 0)))}
+				disabled={starting || current?.status === 'running'}
 			>
 				{starting ? 'Starting…' : current?.status === 'running' ? 'Replaying…' : 'Run replay'}
 			</button>
@@ -193,14 +173,17 @@
 					<div class="text-base font-bold text-sc-ink">{s.profit_factor != null ? s.profit_factor.toFixed(2) : '—'}</div>
 				</div>
 				<div class="bg-sc-panel px-3 py-2">
-					<div class="font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">AI cost</div>
-					<div class="text-base font-bold text-sc-ink">{fmtUsd(s.ai_cost_usd)}</div>
-					<div class="text-[11px] text-sc-ink3">{s.ai_calls} calls{s.ai_cached ? `, ${s.ai_cached} reused` : ''}</div>
+					<div class="font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">P&L</div>
+					<div class="text-base font-bold {tone(s.pnl_usd)}">{fmtUsd(s.pnl_usd)}</div>
+					<div class="text-[11px] text-sc-ink3">fees {fmtUsd(s.fees_usd)}</div>
 				</div>
-				<div class="bg-sc-panel px-3 py-2">
-					<div class="font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">P&L after AI</div>
-					<div class="text-base font-bold {tone(s.pnl_after_ai_usd)}">{fmtUsd(s.pnl_after_ai_usd)}</div>
-				</div>
+				{#if usesAi}
+					<div class="bg-sc-panel px-3 py-2">
+						<div class="font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">AI calls</div>
+						<div class="text-base font-bold text-sc-ink">{s.ai_calls}</div>
+						<div class="text-[11px] text-sc-ink3">{s.ai_cached ? `${s.ai_cached} reused` : 'all new'}</div>
+					</div>
+				{/if}
 			</div>
 			{#if (current.curve?.length ?? 0) >= 2}
 				<EquityChart data={current.curve ?? []} benchmarkData={current.benchmark ?? null} benchmarkTitle="{coin} hold" height={240} />
