@@ -335,7 +335,7 @@
 
 					<!-- Meta row -->
 					<div class="flex items-center justify-between border-t border-sc-line px-4 py-2 text-[10px] text-sc-ink3">
-						<span>{bot.closed_trades ?? 0} closed trades · {bot.decision_cadence === 'candle_close' ? 'hourly' : 'interval'}</span>
+						<span>{bot.closed_trades ?? 0} closed trades · {bot.timeframe ?? '1h'} · {bot.decision_cadence === 'candle_close' ? 'per candle' : 'interval'}</span>
 						<span title="AI calls and estimated spend today">
 							AI {bot.llm_calls_today ?? 0}/{bot.max_llm_calls_per_day} · ${(bot.llm_cost_today ?? 0).toFixed(2)}
 						</span>

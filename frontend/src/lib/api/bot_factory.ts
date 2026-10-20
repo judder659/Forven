@@ -3,6 +3,7 @@ import { fetchApi } from './core';
 // ── Types ──────────────────────────────────────────────────────────
 
 export type BotDecisionCadence = 'candle_close' | 'interval';
+export type BotTimeframe = '15m' | '1h' | '4h' | '1d';
 
 export interface BotModelCheck {
 	ok: boolean;
@@ -47,6 +48,8 @@ export interface BotConfig {
 	max_llm_cost_per_day: number | null;
 	/** candle_close = decide once per new 1h candle; interval = every cooldown_seconds. */
 	decision_cadence: BotDecisionCadence;
+	/** Candle timeframe the bot reads and, on candle_close, decides on. */
+	timeframe: BotTimeframe;
 	template_id: string | null;
 	execution_mode: 'paper' | 'live';
 	live_wallet: string | null;
@@ -158,6 +161,7 @@ export interface BotCostEstimate {
 	provider: string | null;
 	model_id: string | null;
 	cadence: BotDecisionCadence;
+	timeframe: BotTimeframe;
 	decisions_wanted_per_day: number;
 	calls_per_day: number;
 	/** Hours of trading before the daily call cap pauses the bot (null = never hits it). */
@@ -177,6 +181,7 @@ export interface BotCostEstimate {
 export interface BotCostEstimateParams {
 	model: string;
 	decision_cadence: BotDecisionCadence;
+	timeframe: BotTimeframe;
 	cooldown_seconds: number;
 	asset_mode: string;
 	locked_pairs: string[];
@@ -190,6 +195,7 @@ export interface BotCostEstimateParams {
 export async function getBotCostEstimate(params: BotCostEstimateParams): Promise<BotCostEstimate> {
 	const q = new URLSearchParams({
 		decision_cadence: params.decision_cadence,
+		timeframe: params.timeframe,
 		cooldown_seconds: String(params.cooldown_seconds),
 		asset_mode: params.asset_mode,
 		reasoning_verbosity: params.reasoning_verbosity,

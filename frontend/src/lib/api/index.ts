@@ -867,6 +867,7 @@ export {
 	type BotStrategyBridge,
 	type BotSessionHours,
 	type BotDecisionCadence,
+	type BotTimeframe,
 	type BotModelCheck,
 	type BotCostEstimate,
 	type BotCostEstimateParams,

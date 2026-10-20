@@ -1523,6 +1523,7 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     max_consecutive_errors INTEGER DEFAULT 5,
     max_llm_cost_per_day REAL,
     decision_cadence TEXT DEFAULT 'interval',
+    timeframe TEXT DEFAULT '1h',
     template_id TEXT,
     status TEXT DEFAULT 'stopped',
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
@@ -3482,6 +3483,7 @@ def _run_post_index_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "bot_status", "llm_cost_today", "REAL DEFAULT 0")
     _ensure_column(conn, "bot_configs", "max_llm_cost_per_day", "REAL")
     _ensure_column(conn, "bot_configs", "decision_cadence", "TEXT DEFAULT 'interval'")
+    _ensure_column(conn, "bot_configs", "timeframe", "TEXT DEFAULT '1h'")
     _ensure_column(conn, "bot_decisions", "run_id", "TEXT")
     _ensure_column(conn, "bot_decisions", "cost_usd", "REAL")
     _ensure_column(conn, "bot_decisions", "tokens_in", "INTEGER")
@@ -7519,6 +7521,14 @@ def _default_bot_model() -> str:
 
 
 BOT_DECISION_CADENCES = ("candle_close", "interval")
+# Candle timeframes a bot can read, in minutes per bar.
+BOT_TIMEFRAME_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+
+
+def normalize_bot_timeframe(value: object) -> str:
+    """A supported bot timeframe; anything else is the 1h every bot used before."""
+    tf = str(value or "").strip().lower()
+    return tf if tf in BOT_TIMEFRAME_MINUTES else "1h"
 
 
 def normalize_bot_cadence(value: object) -> str:
@@ -7549,9 +7559,9 @@ def create_bot(config: dict) -> str:
                 reasoning_verbosity, asset_mode, locked_pairs,
                 tools, web_allowlist, web_rate_limit, data_sources,
                 max_llm_calls_per_day, max_consecutive_errors, template_id,
-                max_llm_cost_per_day, decision_cadence,
+                max_llm_cost_per_day, decision_cadence, timeframe,
                 execution_mode, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
             (
                 bot_id,
                 config.get("name", "Untitled Bot"),
@@ -7583,6 +7593,7 @@ def create_bot(config: dict) -> str:
                 config.get("template_id"),
                 config.get("max_llm_cost_per_day"),
                 normalize_bot_cadence(config.get("decision_cadence") or "candle_close"),
+                normalize_bot_timeframe(config.get("timeframe")),
                 now,
                 now,
             ),
@@ -7641,7 +7652,7 @@ def list_bots() -> list[dict]:
                       s.pid, s.status AS runtime_status, s.last_heartbeat,
                       s.started_at, s.error_message, s.llm_calls_today,
                       s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day,
-                      c.max_llm_cost_per_day, c.decision_cadence, c.max_position_pct,
+                      c.max_llm_cost_per_day, c.decision_cadence, c.timeframe, c.max_position_pct,
                       c.max_concurrent_positions, s.run_id, s.llm_calls_reset_date,
                       s.llm_cost_today
                FROM bot_configs c

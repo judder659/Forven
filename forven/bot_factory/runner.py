@@ -39,18 +39,19 @@ _HEARTBEAT_INTERVAL = 15
 _PARENT_CHECK_INTERVAL = 30
 # Candle-close bots still run risk checks (stops, targets, drawdown) this often.
 _RISK_TICK_SECONDS = 60
-# A pair whose newest closed 1h candle is older than this many bars is stale:
+# A pair whose newest closed candle is older than this many bars is stale:
 # it's left out of the snapshot rather than shown to the model as current.
 _STALE_AFTER_BARS = 2
 # Minimum seconds between candle refresh attempts for one pair.
 _CANDLE_REFRESH_RETRY_SECONDS = 300
 
 
-def _closed_candle_open_expected(now: datetime) -> datetime:
-    """Open time of the newest 1h candle that has closed by `now`."""
-    from datetime import timedelta
-
-    return now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+def _closed_candle_open_expected(now: datetime, bar_minutes: int = 60) -> datetime:
+    """Open time of the newest candle of `bar_minutes` that has closed by `now`.
+    Exchange bars are aligned to the UTC epoch (4h bars open at 00/04/08 UTC)."""
+    bar_seconds = int(bar_minutes) * 60
+    current_open = (int(now.timestamp()) // bar_seconds) * bar_seconds
+    return datetime.fromtimestamp(current_open - bar_seconds, tz=timezone.utc)
 
 
 def _parse_candle_time(value: object) -> datetime | None:
@@ -493,12 +494,19 @@ class BotRunner:
         if not pairs:
             return None
 
-        snapshot = {"pairs": {}, "fetched_at": None}
-        now = datetime.now(timezone.utc)
-        expected_open = _closed_candle_open_expected(now)
         from datetime import timedelta
 
-        stale_before = expected_open - timedelta(hours=_STALE_AFTER_BARS - 1)
+        from forven.db import BOT_TIMEFRAME_MINUTES, normalize_bot_timeframe
+
+        timeframe = normalize_bot_timeframe((self._config or {}).get("timeframe"))
+        bar_minutes = BOT_TIMEFRAME_MINUTES[timeframe]
+        # Enough bars to cover 24 hours (and never fewer than 20).
+        bars_per_day = max(1, 1440 // bar_minutes)
+        window = max(20, bars_per_day)
+        snapshot = {"pairs": {}, "fetched_at": None}
+        now = datetime.now(timezone.utc)
+        expected_open = _closed_candle_open_expected(now, bar_minutes)
+        stale_before = expected_open - timedelta(minutes=bar_minutes * (_STALE_AFTER_BARS - 1))
 
         for pair in pairs:
             try:
@@ -509,7 +517,7 @@ class BotRunner:
                 from forven.data import fetch_ohlcv_chunked, load_parquet
                 from forven.market_data import dataframe_to_ohlcv_rows
 
-                df = load_parquet(pair, "1h")
+                df = load_parquet(pair, timeframe)
                 last_at = None
                 if df is not None and not df.empty:
                     tail = dataframe_to_ohlcv_rows(df.tail(1), max_rows=1)
@@ -519,15 +527,14 @@ class BotRunner:
                     if time.time() - last_try >= _CANDLE_REFRESH_RETRY_SECONDS:
                         self._candle_refresh_attempts[pair] = time.time()
                         try:
-                            fetch_ohlcv_chunked(pair, "1h", limit=50)
-                            df = load_parquet(pair, "1h")
+                            fetch_ohlcv_chunked(pair, timeframe, limit=max(50, window + 10))
+                            df = load_parquet(pair, timeframe)
                         except Exception as fe:
                             logger.info("Bot %s candle refresh failed for %s: %s", self.bot_id, pair, fe)
 
                 if df is not None and not df.empty:
-                    # Take last 20 candles
-                    recent = df.tail(20)
-                    rows = dataframe_to_ohlcv_rows(recent, max_rows=20)
+                    recent = df.tail(window)
+                    rows = dataframe_to_ohlcv_rows(recent, max_rows=window)
                     last_at = _parse_candle_time(rows[-1]["t"]) if rows else None
                     if last_at is None or last_at < stale_before:
                         snapshot.setdefault("stale_pairs", {})[pair] = (
@@ -540,11 +547,11 @@ class BotRunner:
                     last_row = rows[-1] if rows else {}
                     snapshot["pairs"][pair] = {
                         "current_price": live_price or last_row.get("close"),
-                        "high_24h": max((r.get("high", 0) for r in rows[-24:]), default=0),
-                        "low_24h": min((r.get("low", float("inf")) for r in rows[-24:]), default=0),
-                        "volume_24h": sum(r.get("volume", 0) for r in rows[-24:]),
-                        "recent_candles": rows[-10:],  # Last 10 hourly candles
-                        "timeframe": "1h",
+                        "high_24h": max((r.get("high", 0) for r in rows[-bars_per_day:]), default=0),
+                        "low_24h": min((r.get("low", float("inf")) for r in rows[-bars_per_day:]), default=0),
+                        "volume_24h": sum(r.get("volume", 0) for r in rows[-bars_per_day:]),
+                        "recent_candles": rows[-10:],  # Last 10 candles of the bot's timeframe
+                        "timeframe": timeframe,
                         "last_candle_at": last_at.isoformat(),
                     }
             except Exception as e:
@@ -882,7 +889,7 @@ class BotRunner:
                                 "taker_fee_bps", "slippage_bps", "funding_rate_bps_per_day",
                                 "cooldown_seconds", "max_llm_calls_per_day",
                                 "max_consecutive_errors", "max_llm_cost_per_day",
-                                "decision_cadence"):
+                                "decision_cadence", "timeframe"):
                         if key in fresh:
                             self._config[key] = fresh[key]
                     cooldown = _tick_seconds()
@@ -953,8 +960,8 @@ class BotRunner:
                             reasoning=(
                                 "Skipped deciding: candles are stale for "
                                 + ", ".join(sorted(stale_pairs))
-                                + " (newest closed candle more than "
-                                + f"{_STALE_AFTER_BARS} hours old and the refresh failed)."
+                                + f" (newest closed candle more than {_STALE_AFTER_BARS} bars old"
+                                + " and the refresh failed)."
                             ),
                             action_type="skipped",
                             action_data={"stale_pairs": stale_pairs},

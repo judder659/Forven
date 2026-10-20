@@ -135,10 +135,15 @@ def estimate_call_cost(
     return {"tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost, "priced": priced}
 
 
-def decisions_per_day(cadence: str, cooldown_seconds: int | float | None) -> float:
+def decisions_per_day(
+    cadence: str, cooldown_seconds: int | float | None, timeframe: str = "1h",
+) -> float:
     """Decisions a bot makes in a full day before any call cap."""
     if cadence == "candle_close":
-        return 24.0  # one per closed 1h candle
+        from forven.db import BOT_TIMEFRAME_MINUTES, normalize_bot_timeframe
+
+        # One per closed candle: 96 on 15m, 24 on 1h, 6 on 4h, 1 on 1d.
+        return 1440.0 / BOT_TIMEFRAME_MINUTES[normalize_bot_timeframe(timeframe)]
     interval = max(float(cooldown_seconds or 60), float(_MIN_INTERVAL_SECONDS))
     return 86400.0 / interval
 
@@ -149,6 +154,7 @@ def project_daily_spend(
     cadence: str,
     cooldown_seconds: int | float | None,
     pairs: int,
+    timeframe: str = "1h",
     verbosity: str = "standard",
     max_llm_calls_per_day: int | None = 200,
     max_llm_cost_per_day: float | None = None,
@@ -171,7 +177,7 @@ def project_daily_spend(
     if rate is not None:
         cost_per_call = (tokens_in * rate[0] + tokens_out * rate[1]) / 1_000_000
 
-    wanted = decisions_per_day(cadence, cooldown_seconds)
+    wanted = decisions_per_day(cadence, cooldown_seconds, timeframe)
     cap = int(max_llm_calls_per_day) if max_llm_calls_per_day else None
     calls = min(wanted, cap) if cap else wanted
     hours_until_cap = None
@@ -188,6 +194,7 @@ def project_daily_spend(
         "provider": provider,
         "model_id": model_id,
         "cadence": cadence,
+        "timeframe": timeframe,
         "decisions_wanted_per_day": round(wanted, 1),
         "calls_per_day": round(calls, 1),
         "hours_until_call_cap": round(hours_until_cap, 1) if hours_until_cap is not None else None,

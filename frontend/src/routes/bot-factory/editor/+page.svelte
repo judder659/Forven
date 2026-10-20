@@ -20,6 +20,7 @@
 		type BotConfig,
 		type BotCostEstimate,
 		type BotDecisionCadence,
+		type BotTimeframe,
 		type BotTemplate,
 		type BotSessionHours,
 	} from '$lib/api';
@@ -69,6 +70,13 @@
 	// New bots decide once per closed 1h candle (the data they read changes
 	// hourly); 'interval' decides every cooldownSeconds.
 	let decisionCadence: BotDecisionCadence = 'candle_close';
+	let timeframe: BotTimeframe = '1h';
+	const TIMEFRAMES: { value: BotTimeframe; label: string }[] = [
+		{ value: '15m', label: '15 minutes' },
+		{ value: '1h', label: '1 hour' },
+		{ value: '4h', label: '4 hours' },
+		{ value: '1d', label: '1 day' },
+	];
 
 	// Session hours — leaving unset (sessionHoursEnabled = false) = always active
 	let sessionHoursEnabled = false;
@@ -154,7 +162,7 @@
 	let costEstimateTimer: ReturnType<typeof setTimeout> | null = null;
 	let costEstimateSeq = 0;
 	$: scheduleCostEstimate(
-		model, decisionCadence, cooldownSeconds, assetMode, lockedPairsText,
+		model, decisionCadence, timeframe, cooldownSeconds, assetMode, lockedPairsText,
 		reasoningVerbosity, maxLlmCallsPerDay, maxLlmCostPerDay,
 	);
 	function scheduleCostEstimate(..._deps: unknown[]) {
@@ -165,6 +173,7 @@
 				const estimate = await getBotCostEstimate({
 					model: model.trim(),
 					decision_cadence: decisionCadence,
+					timeframe,
 					cooldown_seconds: Math.max(Number(cooldownSeconds) || 60, 1),
 					asset_mode: assetMode,
 					locked_pairs: lockedPairsText.split(',').map((s) => s.trim()).filter(Boolean),
@@ -185,7 +194,7 @@
 		return `$${value.toFixed(2)}`;
 	}
 	$: cadenceLabel = decisionCadence === 'candle_close'
-		? 'each new 1h candle'
+		? `each new ${timeframe} candle`
 		: cooldownSeconds >= 3600
 			? `every ${(cooldownSeconds / 3600).toFixed(1)}h`
 			: cooldownSeconds >= 60
@@ -223,6 +232,8 @@
 		// templates and strategy bridges without it get the new default.
 		const cadence = config.decision_cadence as string | undefined;
 		if (cadence === 'candle_close' || cadence === 'interval') decisionCadence = cadence;
+		const tf = config.timeframe as string | undefined;
+		if (tf === '15m' || tf === '1h' || tf === '4h' || tf === '1d') timeframe = tf;
 		else if ('id' in config && config.id) decisionCadence = 'interval';
 		if (config.execution_mode === 'live' || config.execution_mode === 'paper') {
 			editExecutionMode = config.execution_mode;
@@ -292,6 +303,7 @@
 			// 0 clears a saved dollar cap (null would mean "unchanged" on update).
 			max_llm_cost_per_day: maxLlmCostPerDay && maxLlmCostPerDay > 0 ? maxLlmCostPerDay : editId ? 0 : null,
 			decision_cadence: decisionCadence,
+			timeframe,
 		};
 	}
 
@@ -622,14 +634,23 @@
 							<input id="slippage" type="number" bind:value={slippageBps} min="0" step="0.1" class="terminal-input" />
 						</div>
 						<div>
+							<label for="timeframe" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Candles</label>
+							<select id="timeframe" bind:value={timeframe} class="terminal-select">
+								{#each TIMEFRAMES as tf}
+									<option value={tf.value}>{tf.label}</option>
+								{/each}
+							</select>
+							<p class="mt-1 text-[11px] text-sc-ink3">The bot is shown the last 10 candles of this size for each coin.</p>
+						</div>
+						<div>
 							<label for="cadence" class="mb-1 block font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Decide</label>
 							<select id="cadence" bind:value={decisionCadence} class="terminal-select">
-								<option value="candle_close">On each new 1h candle (recommended)</option>
+								<option value="candle_close">On each new {timeframe} candle (recommended)</option>
 								<option value="interval">On a fixed interval</option>
 							</select>
 							<p class="mt-1 text-[11px] text-sc-ink3">
 								{decisionCadence === 'candle_close'
-									? 'The bot reads 1h candles, so it asks the model once per new candle. Stops, targets and drawdown are still checked every minute.'
+									? `Asks the model once per new ${timeframe} candle. Stops, targets and drawdown are still checked every minute.`
 									: 'Asks the model every interval, even when no new candle has closed.'}
 							</p>
 						</div>

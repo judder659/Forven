@@ -284,3 +284,57 @@ class TestCandleCloseLoop:
     def test_interval_decides_every_tick(self, forven_db, monkeypatch):
         candles = ["2026-10-20T10:00:00+00:00"] * 3
         assert self._run_ticks(forven_db, "interval", candles, monkeypatch) == 3
+
+
+class TestTimeframes:
+    def test_closed_candle_boundaries(self):
+        from forven.bot_factory.runner import _closed_candle_open_expected
+
+        now = datetime(2026, 10, 20, 15, 58, 30, tzinfo=timezone.utc)
+        assert _closed_candle_open_expected(now, 15) == datetime(2026, 10, 20, 15, 30, tzinfo=timezone.utc)
+        assert _closed_candle_open_expected(now, 60) == datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc)
+        assert _closed_candle_open_expected(now, 240) == datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+        assert _closed_candle_open_expected(now, 1440) == datetime(2026, 10, 19, 0, 0, tzinfo=timezone.utc)
+
+    def test_candle_close_calls_follow_timeframe(self):
+        from forven.bot_factory.ai_budget import decisions_per_day
+
+        assert decisions_per_day("candle_close", 60, "15m") == 96
+        assert decisions_per_day("candle_close", 60, "1h") == 24
+        assert decisions_per_day("candle_close", 60, "4h") == 6
+        assert decisions_per_day("candle_close", 60, "1d") == 1
+
+    def test_bot_timeframe_saved_and_defaults_to_1h(self, forven_db):
+        from forven.db import create_bot, get_bot
+
+        assert get_bot(create_bot({"name": "Hourly", "model": "gpt-4.1-mini"}))["timeframe"] == "1h"
+        quick = create_bot({"name": "Quick", "model": "gpt-4.1-mini", "timeframe": "15m"})
+        assert get_bot(quick)["timeframe"] == "15m"
+
+    def test_15m_bot_reads_15m_candles(self, forven_db):
+        from forven.bot_factory.runner import BotRunner
+        from forven.db import create_bot, get_bot
+
+        bot_id = create_bot({
+            "name": "Quick", "model": "gpt-4.1-mini", "timeframe": "15m",
+            "asset_mode": "locked", "locked_pairs": ["BTC/USDT"],
+        })
+        runner = BotRunner(bot_id, parent_pid=1)
+        runner._config = get_bot(bot_id)
+        runner._fetch_live_price = lambda symbol: None
+        now = datetime.now(timezone.utc)
+        bar = 15 * 60
+        last_closed = datetime.fromtimestamp((int(now.timestamp()) // bar) * bar - bar, tz=timezone.utc)
+        frame = pd.DataFrame(
+            {"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 1.0},
+            index=pd.date_range(end=last_closed, periods=120, freq="15min", tz="UTC"),
+        )
+        with patch("forven.data.load_parquet", return_value=frame) as load, \
+             patch("forven.data.fetch_ohlcv_chunked") as fetch:
+            snapshot = runner._fetch_market_snapshot()
+        load.assert_called_with("BTC/USDT", "15m")
+        fetch.assert_not_called()
+        pair = snapshot["pairs"]["BTC/USDT"]
+        assert pair["timeframe"] == "15m"
+        # 24h of 15m bars: 96 candles of volume 1.0.
+        assert pair["volume_24h"] == pytest.approx(96.0)

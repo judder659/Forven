@@ -115,6 +115,7 @@ def api_cost_estimate(
     model: str | None,
     decision_cadence: str,
     cooldown_seconds: int,
+    timeframe: str = "1h",
     asset_mode: str | None,
     locked_pairs: list[str] | None,
     reasoning_verbosity: str,
@@ -125,7 +126,7 @@ def api_cost_estimate(
     """Projected AI calls and spend per day for an editor configuration. With
     a bot id, uses that bot's recorded tokens per call when it has any."""
     from forven.bot_factory.ai_budget import check_bot_model, project_daily_spend
-    from forven.db import get_bot_ai_usage, normalize_bot_cadence
+    from forven.db import get_bot_ai_usage, normalize_bot_cadence, normalize_bot_timeframe
 
     avg_in = avg_out = None
     if bot_id:
@@ -136,6 +137,7 @@ def api_cost_estimate(
         model=model,
         cadence=normalize_bot_cadence(decision_cadence),
         cooldown_seconds=cooldown_seconds,
+        timeframe=normalize_bot_timeframe(timeframe),
         pairs=_watched_pair_count(asset_mode, locked_pairs),
         verbosity=reasoning_verbosity,
         max_llm_calls_per_day=max_llm_calls_per_day,
@@ -574,7 +576,17 @@ def api_create_bot_from_strategy(strategy_id: str) -> dict:
     if raw_symbol:
         pair = raw_symbol if "/" in raw_symbol else f"{raw_symbol}/USDT"
 
-    orig_tf = strategy.get("timeframe", "1h")
+    from forven.db import BOT_TIMEFRAME_MINUTES
+
+    orig_tf = str(strategy.get("timeframe") or "1h").strip().lower()
+    # The bot reads the strategy's own candles when it's a bot timeframe;
+    # otherwise the nearest it can (1h) and says so.
+    bot_tf = orig_tf if orig_tf in BOT_TIMEFRAME_MINUTES else "1h"
+    tf_note = (
+        f"Strategy timeframe: {orig_tf}; this bot reads the same {bot_tf} candles."
+        if bot_tf == orig_tf
+        else f"Original strategy timeframe: {orig_tf} — NOTE: this bot observes {bot_tf} candles."
+    )
     config = {
         "name": f"Bot from {strategy.get('name', strategy_id)}",
         # No hardcoded model — inherits the operator's configured default at create.
@@ -582,14 +594,15 @@ def api_create_bot_from_strategy(strategy_id: str) -> dict:
             f"This bot is seeded from strategy {strategy_id} ({strategy.get('name', '')}).\n"
             f"Type: {strategy.get('type', 'unknown')}\n"
             f"Symbol: {pair or 'unknown'}\n"
-            f"Original strategy timeframe: {orig_tf} — NOTE: this bot observes 1-hour candles.\n"
+            f"{tf_note}\n"
             f"Parameters: {params}"
         ),
         "strategy": (
             f"Trade a {strategy.get('type', 'unknown')} strategy on {pair or 'the locked pair'} "
-            f"using the 1-hour candles you are given. Use the parameters and rules above as guidance, "
-            f"adapting them to the 1-hour timeframe."
+            f"using the {bot_tf} candles you are given. Use the parameters and rules above as guidance"
+            + ("." if bot_tf == orig_tf else f", adapting them to the {bot_tf} timeframe.")
         ),
+        "timeframe": bot_tf,
         "asset_mode": "locked",
         "locked_pairs": [pair] if pair else None,
     }

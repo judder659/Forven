@@ -507,7 +507,7 @@
 							{bot.model}{#if bot.model_check && !bot.model_check.ok} (unavailable){/if}
 						</span>
 						<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
-						<span>{bot.decision_cadence === 'candle_close' ? 'decides each new 1h candle' : `decides every ${bot.cooldown_seconds}s`}</span>
+						<span>{bot.timeframe ?? '1h'} candles · {bot.decision_cadence === 'candle_close' ? 'decides on each new candle' : `decides every ${bot.cooldown_seconds}s`}</span>
 						{#if bot.run_id && isRunning}
 							<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
 							<span class="font-mono" title="This run's id; every Activity entry it writes carries it">run {bot.run_id}</span>

@@ -39,6 +39,8 @@ class BotConfigCreate(BaseModel):
     # "candle_close": decide once per new 1h candle (risk checks still run
     # every minute). "interval": decide every cooldown_seconds.
     decision_cadence: Literal["candle_close", "interval"] = "candle_close"
+    # Candle timeframe the bot reads (and, on candle_close, decides on).
+    timeframe: Literal["15m", "1h", "4h", "1d"] = "1h"
     template_id: str | None = None
 
 
@@ -70,6 +72,7 @@ class BotConfigUpdate(BaseModel):
     # 0 clears the dollar cap (None means "leave unchanged" on an update).
     max_llm_cost_per_day: float | None = Field(default=None, ge=0)
     decision_cadence: Literal["candle_close", "interval"] | None = None
+    timeframe: Literal["15m", "1h", "4h", "1d"] | None = None
 
 
 class BotCloneRequest(BaseModel):
