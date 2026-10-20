@@ -201,12 +201,11 @@ class TestCandleFreshness:
     def test_real_stored_candles_read_with_their_times(self, forven_db):
         # load_parquet returns a RangeIndex with a `timestamp` column, not the
         # DatetimeIndex the other tests mock: candles must not read as 1970.
-        from forven.data import save_parquet
-
         runner = self._runner(forven_db, ["BTC/USDT"])
         last_closed = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-        save_parquet(_hourly_frame(last_closed).rename_axis("timestamp").reset_index(), "BTC/USDT", "1h")
-        with patch("forven.data.fetch_ohlcv_chunked") as fetch:
+        stored = _hourly_frame(last_closed).rename_axis("timestamp").reset_index()
+        with patch("forven.data.load_parquet", return_value=stored), \
+             patch("forven.data.fetch_ohlcv_chunked") as fetch:
             snapshot = runner._fetch_market_snapshot()
         fetch.assert_not_called()
         pair = snapshot["pairs"]["BTC/USDT"]
