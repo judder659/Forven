@@ -161,6 +161,64 @@ def test_research_door_still_stops_a_strategy_that_loses_under_double_costs(forv
     assert "loses money under 2x fees" in msg
 
 
+def _require_artifact_rows(monkeypatch) -> None:
+    monkeypatch.setattr(
+        policy,
+        "_load_pipeline_settings",
+        lambda: {"gate_multi_tf_sweep_enabled": False, "gate_require_artifact_rows_enabled": True},
+    )
+
+
+def _record_cost_stress_fail(monkeypatch) -> None:
+    payloads, _ = policy._extract_gauntlet_verdict_payloads("x", None, {})
+    payloads["cost_stress"] = {"status": "fail", "passed": False, "verdict": "FAIL", "stressed_sharpe": 0.3}
+
+
+def test_research_door_admits_a_recorded_cost_stress_fail_with_artifact_rows_required(forven_db, monkeypatch):
+    _stub_gauntlet(monkeypatch, {"status": "pass", "passed": True, "folds": 4, "pass_rate": 1.0})
+    _record_cost_stress_fail(monkeypatch)
+    _require_artifact_rows(monkeypatch)
+    cfg = _config(gauntlet={"required_tests": []})
+    with get_db() as conn:
+        _insert_gauntlet_strategy(conn, "GP-ROWS", metrics=_gauntlet_metrics())
+
+    passed, msg = _evaluate_gauntlet_gate("GP-ROWS", cfg)
+    assert passed, msg
+    assert "cost_stress" in msg
+
+
+def test_strict_door_still_needs_a_passing_cost_stress_row(forven_db, monkeypatch):
+    _stub_gauntlet(monkeypatch, {"status": "pass", "passed": True, "folds": 4, "pass_rate": 1.0})
+    _record_cost_stress_fail(monkeypatch)
+    _require_artifact_rows(monkeypatch)
+    cfg = _config(gauntlet={"required_tests": []}, paper_door={"mode": "strict"})
+    with get_db() as conn:
+        _insert_gauntlet_strategy(conn, "GP-ROWS-S", metrics=_gauntlet_metrics())
+
+    passed, msg = _evaluate_gauntlet_gate("GP-ROWS-S", cfg)
+    assert not passed
+    assert "cost_stress" in str(msg)
+
+
+def test_artifact_rows_check_counts_a_recorded_fail_but_not_a_missing_row(monkeypatch):
+    payloads = {
+        "cost_stress": {"status": "fail", "passed": False, "verdict": "FAIL", "stressed_sharpe": 0.3},
+        "walk_forward": {"status": "pass", "passed": True},
+    }
+    monkeypatch.setattr(policy, "_extract_gauntlet_verdict_payloads", lambda sid, row, metrics: (payloads, "fail"))
+
+    ok, detail = policy._check_artifact_rows_exist("x", ["cost_stress", "walk_forward"], {"cost_stress"})
+    assert ok, detail
+    assert "cost_stress verdict FAIL recorded" in detail
+
+    ok, _ = policy._check_artifact_rows_exist("x", ["cost_stress", "walk_forward"])
+    assert not ok  # not recorded: the FAIL blocks
+
+    ok, detail = policy._check_artifact_rows_exist("x", ["cost_stress", "regime_split"], {"cost_stress", "regime_split"})
+    assert not ok  # recorded tests still have to have run
+    assert "regime_split" in str(detail)
+
+
 def test_research_door_requires_a_positive_oos_sharpe(forven_db, monkeypatch):
     _stub_gauntlet(monkeypatch, {"status": "pass", "passed": True, "folds": 4, "pass_rate": 1.0})
     metrics = _gauntlet_metrics()
