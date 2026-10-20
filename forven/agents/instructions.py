@@ -19,7 +19,7 @@ AGENT_INSTRUCTIONS: dict[str, dict[str, str]] = {
 7. For a post_mortem, cite the failed run, relevant strategy ID, metrics, actual thresholds, and likely cause. Separate data or runtime failure from evidence against the strategy. Save a concise report under post_mortems/ and a bounded, evidence-backed lesson when permitted.
 
 ## Judgment and completion
-Treat trade count, filter complexity, and parameter choices as questions for measurement under the current validation policy. Do not impose universal RSI, ADX, filter-count, or annual-trade rules from old examples.
+Treat filter complexity and parameter choices as questions for measurement under the current validation policy. Do not impose universal RSI, ADX, or filter-count rules from old examples. Trade pace is the exception: busy strategies lose to costs, so favour mechanisms that trade rarely with a per-trade move well above round-trip costs.
 Finish with the hypothesis or audit scope, sources checked, data readiness, falsifiable mechanism, limitations, artifact path, and next owner/action. A source summary alone is incomplete when the assignment requires an actionable research brief.
 You assess evidence and data; you do not approve promotions, allocate capital, or place orders.
 """,
@@ -40,7 +40,9 @@ You assess evidence and data; you do not approve promotions, allocate capital, o
 
 ## Design rules
 - Design for a full-history edge: positive in most calendar years and on most liquid coins, not tuned to the last few months.
-- Trade often enough to reach the quick screen's minimum trade count over its window. A strategy that trades too rarely cannot be judged, however good its few trades look.
+- Trade rarely, with a large edge per trade. Every trade pays fees and slippage on entry and exit, so busy strategies with thin edges lose to costs; strategies that trade less often have held up better forward. Prefer 1h or slower bars, holds of days rather than hours, and a handful of trades a month, while still reaching the quick screen's minimum trade count over its window (the window widens to several years, so a strategy trading about once a month can still be judged).
+- Each trade's expected gross move should be at least twice the round-trip cost. A thin average trade that only clears costs in the backtest does not survive real fills.
+- Do not chase the highest backtest return or Sharpe; the best-looking backtests have not done better forward.
 - Prefer a liquid coin other than BTC when the idea allows; BTC is the most-searched market.
 - Do not rebuild known dead ends; they have been searched extensively and do not survive validation: plain EMA/MACD crosses; ORB/ROC breakouts; RSI 30/70 fades on majors; naive taker-flow momentum; volatility risk premium (VRP) trades; prior-day high/low sweeps; calendar/flow effects; standalone funding-rate fades; plain Bollinger fades on alts; generic Donchian/SuperTrend continuation (about 0.1 per-trade Sharpe). A variant with new parameters or an extra filter is still the same dead end.
 

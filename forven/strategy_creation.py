@@ -68,8 +68,11 @@ AUTONOMOUS_TASK_DESCRIPTION = "Write one new trading idea and build a strategy f
         "breakouts, RSI 30/70 fades on majors, naive taker-flow momentum, volatility risk premium "
         "trades, prior-day high/low sweeps, calendar/flow effects, standalone funding-rate fades, "
         "plain Bollinger fades on alts, generic Donchian/SuperTrend continuation). Design for an "
-        "edge across the full history and most liquid coins, with enough trades for the quick "
-        "screen's minimum trade count, and declare parameter_space() as a real search grid.",
+        "edge across the full history and most liquid coins that trades rarely (1h or slower "
+        "bars, a handful of trades a month) with an expected move per trade of at least twice "
+        "the round-trip cost, while still reaching the quick screen's minimum trade count. "
+        "Busy, thin-edge strategies are eaten by costs. Declare parameter_space() as a real "
+        "search grid.",
         "Write the idea with create_hypothesis, including disproof: the backtest or forward "
         "result that would show the idea is wrong. An idea that needs a second asset's series, "
         "a second timeframe, or an input with no local feed cannot be built yet; pick another.",
