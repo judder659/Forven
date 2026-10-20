@@ -20,6 +20,7 @@ import psutil
 from forven.bot_factory.inputs import InputSources, enrich_snapshot, normalize_inputs
 from forven.bot_factory import rules
 import forven.db as _db
+from forven.bot_factory import bot_writes
 from forven.bot_factory.bot_writes import routed, routed_read
 
 # The bot's own reads and writes: through the API inside a bot subprocess,
@@ -731,9 +732,10 @@ class BotRunner:
         from forven.bot_factory.live_exec import open_live
 
         direction = "long" if action == "BUY" else "short"
-        pos, message = open_live(
-            self._config, ticker=ticker, direction=direction, qty=qty,
-            ref_price=market_price, reasoning=reasoning,
+        # Inside a bot process Forven places the order with its own keys.
+        pos, message = bot_writes.live(
+            "open_live", lambda **order: open_live(self._config, **order),
+            ticker=ticker, direction=direction, qty=qty, ref_price=market_price, reasoning=reasoning,
         )
         if pos is None:
             logger.warning("Bot %s live open %s %s refused: %s", self.bot_id, action, ticker, message)
@@ -762,7 +764,10 @@ class BotRunner:
 
         position = dict(position)
         position.setdefault("current_price", market_price)
-        out = close_live(self._config, position=position, reason=reason)
+        out = bot_writes.live(
+            "close_live", lambda **_: close_live(self._config, position=position, reason=reason),
+            trade_id=position.get("trade_id"), current_price=position.get("current_price"), reason=reason,
+        )
         state = out.get("state")
         if state != "closed":
             logger.warning(
@@ -1171,8 +1176,10 @@ class BotRunner:
                     try:
                         from forven.bot_factory.live_exec import flatten_live_positions
 
-                        flatten_results = flatten_live_positions(
-                            self._config, reason="bot_max_drawdown"
+                        flatten_results = bot_writes.live(
+                            "flatten_live_positions",
+                            lambda **_: flatten_live_positions(self._config, reason="bot_max_drawdown"),
+                            reason="bot_max_drawdown",
                         )
                         logger.warning(
                             "Bot %s drawdown flatten of live positions: %s",

@@ -80,7 +80,13 @@ def issue_bot_token(bot_id: str, provider: str) -> str:
     token = secrets.token_urlsafe(32)
     # db_free: this spawn's code reaches Forven only through the API, so the
     # database can be closed to it.
-    kv_set(_kv_key(bot_id), {"hash": _digest(token), "provider": provider, "db_free": _bots_use_api()})
+    # live_via_api: Forven places this spawn's live orders, so it holds no
+    # exchange keys and needs no database either.
+    via_api = _bots_use_api()
+    kv_set(
+        _kv_key(bot_id),
+        {"hash": _digest(token), "provider": provider, "db_free": via_api, "live_via_api": via_api},
+    )
     return token
 
 
@@ -347,13 +353,12 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
         if openai_key:
             env["OPENAI_API_KEY"] = openai_key
 
-    # A LIVE-armed bot places real exchange orders from its subprocess through
-    # the sanctioned live stack (bot_factory.live_exec). Hyperliquid credentials
-    # normally come from the encrypted KV settings store (reachable via
-    # FORVEN_HOME, already forwarded); when the operator supplies them via
-    # environment instead, forward exactly those vars — and ONLY for live bots,
-    # keeping paper bots exchange-credential-free.
-    if str(bot_config.get("execution_mode") or "paper").strip().lower() == "live":
+    # Forven places a live bot's orders for it (bot_writes.live), so by
+    # default no bot gets exchange keys. Only with FORVEN_BOT_WRITES_VIA_API=0
+    # does a LIVE-armed bot place orders from its own process through the
+    # sanctioned live stack (bot_factory.live_exec); then it gets exactly the
+    # Hyperliquid credentials, from the environment or the Settings store.
+    if str(bot_config.get("execution_mode") or "paper").strip().lower() == "live" and not _bots_use_api():
         for var in (
             "FORVEN_HL_API_SECRET", "HL_API_SECRET",
             "FORVEN_HL_API_KEY", "HL_API_KEY",
@@ -442,8 +447,8 @@ def bot_sandbox_status() -> SandboxStatus | None:
 
 
 def _database_can_close() -> bool:
-    """True when every running bot is a paper bot whose code reaches Forven
-    only through the API."""
+    """True when every running bot's code reaches Forven only through the API
+    (for a live bot, its orders too)."""
     from forven.db import kv_get
 
     if not _bots_use_api():
@@ -453,11 +458,11 @@ def _database_can_close() -> bool:
         pid = row.get("pid")
         if not pid or not _is_pid_alive(int(pid)):
             continue
-        bot = get_bot(bot_id) or {}
-        if str(bot.get("execution_mode") or "paper").strip().lower() == "live":
-            return False
         record = kv_get(_kv_key(bot_id))
         if not isinstance(record, dict) or not record.get("db_free"):
+            return False
+        bot = get_bot(bot_id) or {}
+        if str(bot.get("execution_mode") or "paper").strip().lower() == "live" and not record.get("live_via_api"):
             return False
     return True
 
@@ -651,8 +656,9 @@ class BotManager:
         process = None
         sandboxed = False
         live_start = str(bot.get("execution_mode") or "paper").strip().lower() == "live"
-        if live_start:
-            # Live orders are still recorded directly, so open the database first.
+        if live_start and not _bots_use_api():
+            # This bot places and records its own live orders, so open the
+            # database first.
             sync_database_lock(live_starting=True)
         sandbox = bot_sandbox_status()
         if sandbox is not None and sandbox.usable:

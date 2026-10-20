@@ -77,6 +77,18 @@ def bot_read(bot_id: str, body: BotWriteRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@internal_router.post("/api/bot-factory/internal/bots/{bot_id}/live")
+def bot_live(bot_id: str, body: BotWriteRequest, request: Request):
+    """A live bot's order, placed by Forven with its own exchange keys."""
+    _require_local_bot_process(request)
+    try:
+        return bf_domain.api_bot_live(bot_id, request.headers.get(BOT_TOKEN_HEADER), body.op, body.args)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ── Bot CRUD ─────────────────────────────────────────────────────────
 
 

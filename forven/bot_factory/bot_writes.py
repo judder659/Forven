@@ -9,8 +9,8 @@ token, and the API checks the bot only touches its own rows. Anywhere else
 When the API can't be reached (it is restarting), bookkeeping writes wait in
 an in-memory queue and are sent in order once it is back; trade writes
 return None instead, so the runner skips the entry or retries the close on
-its next tick. Live order writes are not routed here: they belong to the
-exchange path.
+its next tick. A live order's trade rows are written by the live path that
+places it (below), not through ``write``.
 
 Reads (the bot's own config, status, positions and equity, and the market
 data its inputs use) go to ``POST /api/bot-factory/internal/bots/{id}/read``
@@ -19,6 +19,12 @@ database, so a bot keeps working while Forven restarts.
 
 A bot's AI calls go to ``POST /api/bot-factory/internal/bots/{id}/ai``:
 Forven asks the model with its own login, so the bot needs none.
+
+A live bot's orders go to ``POST /api/bot-factory/internal/bots/{id}/live``:
+Forven places them through its own live gate stack with its own exchange
+keys, so the bot holds none. An order is sent once and never retried here;
+the runner re-reads its positions every tick, so an answer lost to a
+timeout is picked up from the database.
 
 Set ``FORVEN_BOT_WRITES_VIA_API=0`` in Forven's environment to send bot
 writes, reads and AI calls straight to the database and the model as before.
@@ -69,6 +75,8 @@ READ_OPS = {
     "get_funding_rate_series": "forven.market_data_collector",
     "get_open_interest_series": "forven.market_data_collector",
 }
+# Live orders a bot may ask Forven to place for it.
+LIVE_OPS = frozenset({"open_live", "close_live", "flatten_live_positions"})
 # Heartbeats are dropped rather than queued; only the next one matters.
 _NOT_QUEUED = frozenset({"heartbeat_bot"})
 # What a queued write answers while the API is away: the counters read as
@@ -78,6 +86,9 @@ _QUEUE_MAX = 500
 _TIMEOUT_SECONDS = 10
 # A model can take a while to answer.
 _AI_TIMEOUT_SECONDS = 300
+
+# Placing an order includes the exchange round trips and the gate checks.
+_LIVE_TIMEOUT_SECONDS = 120
 
 # How long a read or model call waits for the API to come back (a restart)
 # when the database is closed to the bot or the model can't be asked here.
@@ -217,6 +228,35 @@ def ask_model(model: str, messages: list[dict], *, max_tokens: int, temperature:
     if not isinstance(answer, dict) or answer.get("error"):
         raise RuntimeError((answer or {}).get("error") or "the model call failed")
     return answer
+
+
+def live(op: str, _direct: Any, **args: Any) -> Any:
+    """Have Forven place a live order for this bot, or call ``_direct(**args)``
+    outside a bot process. Sent once: an unreachable API or a refusal comes
+    back as the op's own "not done" answer, never as an exception."""
+    if op not in LIVE_OPS:
+        raise ValueError(f"unknown bot live op {op!r}")
+    if not via_api():
+        return _direct(**args)
+    _flush()
+    try:
+        result = _post(op, args, kind="live", timeout=_LIVE_TIMEOUT_SECONDS)
+    except (ConnectionError, BotWriteRefused) as exc:
+        logger.warning("Live %s not placed through the API: %s", op, exc)
+        return _live_not_done(op, f"Forven could not place it: {exc}")
+    if op == "open_live":
+        if isinstance(result, list) and len(result) == 2:
+            return result[0], str(result[1])
+        return None, "blocked: no answer from Forven"
+    return result
+
+
+def _live_not_done(op: str, message: str) -> Any:
+    if op == "open_live":
+        return None, f"blocked: {message}"
+    if op == "close_live":
+        return {"state": "failed", "message": message}
+    return [{"state": "failed", "message": message}]
 
 
 def queued() -> int:

@@ -776,6 +776,66 @@ def api_bot_read(bot_id: str, token: str | None, op: str, args: dict | None) -> 
     return {"result": result}
 
 
+def api_bot_live(bot_id: str, token: str | None, op: str, args: dict | None) -> dict:
+    """A live bot's order, placed here through the live gate stack with
+    Forven's own exchange keys.
+
+    The bot's settings are read from the database, not taken from the bot,
+    and a close or flatten only reaches the bot's own open live positions.
+    Raises PermissionError for a bad token or a bot not armed for live,
+    ValueError for an unknown op or bad arguments.
+    """
+    from forven.bot_factory import live_exec
+    from forven.bot_factory.bot_writes import LIVE_OPS
+    from forven.bot_factory.manager import bot_process_is_live, verify_bot_token
+
+    if not verify_bot_token(bot_id, token) or not bot_process_is_live(bot_id):
+        raise PermissionError("invalid bot token")
+    if op not in LIVE_OPS:
+        raise ValueError(f"unknown bot live op {op!r}")
+    bot = get_bot(bot_id)
+    if not bot or str(bot.get("execution_mode") or "paper").strip().lower() != "live":
+        raise PermissionError("this bot is not armed for live trading")
+    args = dict(args or {})
+    reason = str(args.get("reason") or "bot_close")[:80]
+
+    if op == "open_live":
+        direction = str(args.get("direction") or "").strip().lower()
+        if direction not in {"long", "short"}:
+            raise ValueError("direction must be long or short")
+        try:
+            qty, ref_price = float(args.get("qty")), float(args.get("ref_price"))
+        except (TypeError, ValueError) as e:
+            raise ValueError("qty and ref_price must be numbers") from e
+        position, message = live_exec.open_live(
+            bot, ticker=str(args.get("ticker") or ""), direction=direction, qty=qty,
+            ref_price=ref_price, reasoning=(str(args["reasoning"])[:4000] if args.get("reasoning") else None),
+        )
+        return {"result": [position, message]}
+
+    if op == "close_live":
+        trade_id = str(args.get("trade_id") or "")
+        position = next(
+            (
+                dict(p) for p in get_open_bot_positions(bot_id)
+                if str(p.get("trade_id")) == trade_id
+                and str(p.get("execution_type") or "paper").lower() == "live"
+            ),
+            None,
+        )
+        if position is None:
+            return {"result": {"state": "noop", "message": f"no open live position {trade_id} for this bot"}}
+        try:
+            mark = float(args.get("current_price") or 0)
+        except (TypeError, ValueError):
+            mark = 0.0
+        if mark > 0:
+            position["current_price"] = mark
+        return {"result": live_exec.close_live(bot, position=position, reason=reason)}
+
+    return {"result": live_exec.flatten_live_positions(bot, reason=reason)}
+
+
 _MAX_PROMPT_CHARS = 400_000
 
 
