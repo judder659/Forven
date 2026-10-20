@@ -1580,6 +1580,20 @@ CREATE TABLE IF NOT EXISTS bot_templates (
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
 );
 
+-- What a decision was shown and answered (prompt, raw reply, risk check), for
+-- the decision inspector. Pruned to the newest BOT_DECISION_DETAILS_KEEP per bot.
+CREATE TABLE IF NOT EXISTS bot_decision_details (
+    decision_id INTEGER PRIMARY KEY REFERENCES bot_decisions(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL,
+    model TEXT,
+    prompt TEXT,
+    response TEXT,
+    parsed TEXT,
+    risk_check TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_decision_details_bot ON bot_decision_details (bot_id, decision_id);
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_bot_id ON bot_decisions (bot_id);
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_timestamp ON bot_decisions (timestamp);
 CREATE INDEX IF NOT EXISTS idx_bot_config_versions_bot_id ON bot_config_versions (bot_id);
@@ -7654,7 +7668,8 @@ def list_bots() -> list[dict]:
                       s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day,
                       c.max_llm_cost_per_day, c.decision_cadence, c.timeframe, c.max_position_pct,
                       c.max_concurrent_positions, s.run_id, s.llm_calls_reset_date,
-                      s.llm_cost_today
+                      s.llm_cost_today, c.cooldown_seconds, s.funding_accrued,
+                      s.equity_state_started_at
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                ORDER BY c.created_at DESC"""
@@ -7758,6 +7773,7 @@ def delete_bot(bot_id: str) -> None:
         ).fetchone()
         if status_row and status_row["status"] in ("running",):
             raise ValueError("Cannot delete a running bot. Stop it first.")
+        conn.execute("DELETE FROM bot_decision_details WHERE bot_id = ?", (bot_id,))
         conn.execute("DELETE FROM bot_decisions WHERE bot_id = ?", (bot_id,))
         conn.execute("DELETE FROM bot_config_versions WHERE bot_id = ?", (bot_id,))
         conn.execute("DELETE FROM bot_status WHERE bot_id = ?", (bot_id,))
@@ -7979,6 +7995,9 @@ def reset_bot_errors(bot_id: str) -> None:
 # ── Bot Decisions ───────────────────────────────────────────────────
 
 
+BOT_DECISION_DETAILS_KEEP = 300
+
+
 def log_bot_decision(
     bot_id: str,
     event_trigger: dict | None,
@@ -7991,10 +8010,15 @@ def log_bot_decision(
     cost_usd: float | None = None,
     tokens_in: int | None = None,
     tokens_out: int | None = None,
-) -> None:
-    """Log a bot decision, tagged with the run that made it and its AI cost."""
+    details: dict | None = None,
+) -> int | None:
+    """Log a bot decision, tagged with the run that made it and its AI cost.
+
+    `details` ({model, prompt, response, parsed, risk_check}) is what the
+    decision was shown and answered; it's kept for the newest
+    BOT_DECISION_DETAILS_KEEP decisions per bot. Returns the decision id."""
     with get_db() as conn:
-        conn.execute(
+        cur = conn.execute(
             """INSERT INTO bot_decisions
                (bot_id, event_trigger, reasoning, action_type, action_data, verbosity_level,
                 run_id, cost_usd, tokens_in, tokens_out)
@@ -8012,6 +8036,87 @@ def log_bot_decision(
                 tokens_out,
             ),
         )
+        decision_id = cur.lastrowid
+        if details and decision_id:
+            def _enc(value: object) -> str | None:
+                if value is None:
+                    return None
+                return value if isinstance(value, str) else json.dumps(value, default=str)
+
+            conn.execute(
+                """INSERT OR REPLACE INTO bot_decision_details
+                   (decision_id, bot_id, model, prompt, response, parsed, risk_check)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    decision_id,
+                    bot_id,
+                    details.get("model"),
+                    _enc(details.get("prompt")),
+                    details.get("response"),
+                    _enc(details.get("parsed")),
+                    _enc(details.get("risk_check")),
+                ),
+            )
+            conn.execute(
+                """DELETE FROM bot_decision_details
+                    WHERE bot_id = ? AND decision_id < (
+                        SELECT decision_id FROM bot_decision_details
+                         WHERE bot_id = ? ORDER BY decision_id DESC
+                         LIMIT 1 OFFSET ?)""",
+                (bot_id, bot_id, BOT_DECISION_DETAILS_KEEP - 1),
+            )
+        return decision_id
+
+
+def get_bot_decision(bot_id: str, decision_id: int) -> dict | None:
+    """One decision with what it was shown and answered (`details` is None
+    when it was logged before details were kept, or pruned since)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM bot_decisions WHERE bot_id = ? AND id = ?",
+            (bot_id, int(decision_id)),
+        ).fetchone()
+        if not row:
+            return None
+        detail = conn.execute(
+            """SELECT model, prompt, response, parsed, risk_check, created_at
+                 FROM bot_decision_details WHERE decision_id = ?""",
+            (int(decision_id),),
+        ).fetchone()
+    d = dict(row)
+    for key in ("event_trigger", "action_data"):
+        if d.get(key) and isinstance(d[key], str):
+            try:
+                d[key] = json.loads(d[key])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    if detail:
+        det = dict(detail)
+        for key in ("prompt", "parsed", "risk_check"):
+            if det.get(key) and isinstance(det[key], str):
+                try:
+                    det[key] = json.loads(det[key])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        d["details"] = det
+    else:
+        d["details"] = None
+    return d
+
+
+def get_fleet_decision_digest() -> dict[str, dict]:
+    """Per bot: its latest decision's time and type, and its first decision's
+    time (for health dots and performance windows), in one query."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT d.bot_id, d.timestamp AS last_decision_at, d.action_type AS last_action_type,
+                      f.first_decision_at
+                 FROM bot_decisions d
+                 JOIN (SELECT bot_id, MAX(id) AS max_id, MIN(timestamp) AS first_decision_at
+                         FROM bot_decisions GROUP BY bot_id) f
+                   ON d.id = f.max_id"""
+        ).fetchall()
+    return {str(r["bot_id"]): dict(r) for r in rows}
 
 
 def get_bot_ai_usage(bot_id: str, recent: int = 50) -> dict:
@@ -8043,14 +8148,18 @@ def get_bot_decisions(bot_id: str, limit: int = 50) -> list[dict]:
     """Get recent decisions for a bot."""
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT * FROM bot_decisions
-               WHERE bot_id = ?
-               ORDER BY id DESC LIMIT ?""",
+            """SELECT d.*,
+                      EXISTS(SELECT 1 FROM bot_decision_details x WHERE x.decision_id = d.id)
+                          AS has_details
+                 FROM bot_decisions d
+                WHERE d.bot_id = ?
+                ORDER BY d.id DESC LIMIT ?""",
             (bot_id, limit),
         ).fetchall()
         results = []
         for row in rows:
             d = dict(row)
+            d["has_details"] = bool(d.get("has_details"))
             for key in ("event_trigger", "action_data"):
                 if d.get(key) and isinstance(d[key], str):
                     try:
@@ -8487,10 +8596,10 @@ def get_open_bot_positions(bot_id: str) -> list[dict]:
 
 
 def get_bot_equity_state(bot_id: str) -> dict | None:
-    """Return {realized_pnl, peak_equity, equity_state_started_at} or None."""
+    """Return {realized_pnl, peak_equity, equity_state_started_at, funding_accrued} or None."""
     with get_db() as conn:
         row = conn.execute(
-            """SELECT realized_pnl, peak_equity, equity_state_started_at
+            """SELECT realized_pnl, peak_equity, equity_state_started_at, funding_accrued
                  FROM bot_status WHERE bot_id = ?""",
             (bot_id,),
         ).fetchone()
@@ -8680,6 +8789,89 @@ def get_bot_trade_stats(bot_id: str) -> dict:
         "best_pnl_usd": float(d.get("best_pnl_usd") or 0.0),
         "worst_pnl_usd": float(d.get("worst_pnl_usd") or 0.0),
     }
+
+
+def get_bot_trade_ledger(bot_id: str) -> list[dict]:
+    """Every trade a bot made, oldest first, in the shape performance and
+    chart views need: pair, side, size, prices, net P&L and fees."""
+    source = f"bot:{bot_id}"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, asset, symbol, direction, size, entry_price, fill_entry_price,
+                      exit_price, fill_exit_price, status, pnl_usd, opened_at, closed_at,
+                      signal_data
+                 FROM trades
+                WHERE source = ?
+             ORDER BY opened_at ASC""",
+            (source,),
+        ).fetchall()
+    ledger: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        sig = d.get("signal_data")
+        if sig and isinstance(sig, str):
+            try:
+                sig = json.loads(sig)
+            except (json.JSONDecodeError, TypeError):
+                sig = {}
+        sig = sig if isinstance(sig, dict) else {}
+        ledger.append({
+            "id": d["id"],
+            "pair": sig.get("pair") or d.get("symbol") or d.get("asset"),
+            "direction": d.get("direction") or "long",
+            "size": float(d.get("size") or 0),
+            "entry_price": d.get("fill_entry_price") or d.get("entry_price"),
+            "exit_price": d.get("fill_exit_price") or d.get("exit_price"),
+            "status": d.get("status"),
+            "pnl_usd": float(d["pnl_usd"]) if d.get("pnl_usd") is not None else None,
+            "opened_at": d.get("opened_at"),
+            "closed_at": d.get("closed_at"),
+            "fees_usd": float(sig.get("entry_fee_usd") or 0) + float(sig.get("exit_fee_usd") or 0),
+        })
+    return ledger
+
+
+def get_bot_trade_events_since(since: str, until: str | None = None) -> list[dict]:
+    """Bot trades opened or closed in (since, until], oldest first, one row per
+    event ({bot_id, id, event: opened|closed, pair, direction, prices, pnl})."""
+    until = until or "9999"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, source, direction, entry_price, fill_entry_price, exit_price,
+                      fill_exit_price, pnl_usd, opened_at, closed_at, status, asset, symbol,
+                      signal_data
+                 FROM trades
+                WHERE source LIKE 'bot:%'
+                  AND ((opened_at > ? AND opened_at <= ?) OR (closed_at > ? AND closed_at <= ?))""",
+            (since, until, since, until),
+        ).fetchall()
+    events: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        sig = d.get("signal_data")
+        if sig and isinstance(sig, str):
+            try:
+                sig = json.loads(sig)
+            except (json.JSONDecodeError, TypeError):
+                sig = {}
+        sig = sig if isinstance(sig, dict) else {}
+        base = {
+            "bot_id": str(d["source"]).split(":", 1)[1],
+            "id": d["id"],
+            "pair": sig.get("pair") or d.get("symbol") or d.get("asset"),
+            "direction": d.get("direction") or "long",
+            "entry_price": d.get("fill_entry_price") or d.get("entry_price"),
+        }
+        if d.get("opened_at") and since < d["opened_at"] <= until:
+            events.append({**base, "event": "opened", "at": d["opened_at"]})
+        if d.get("closed_at") and since < d["closed_at"] <= until:
+            events.append({
+                **base, "event": "closed", "at": d["closed_at"],
+                "exit_price": d.get("fill_exit_price") or d.get("exit_price"),
+                "pnl_usd": d.get("pnl_usd"),
+            })
+    events.sort(key=lambda e: e["at"])
+    return events
 
 
 def get_bot_trades(bot_id: str, limit: int = 50) -> list[dict]:

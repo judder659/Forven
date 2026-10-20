@@ -22,6 +22,8 @@
 		timestamp: string;
 		price: number;
 		type: 'entry' | 'exit';
+		/** Marker text; defaults to BUY / SELL. */
+		label?: string;
 	}
 	export let signals: { entries: SignalMarker[]; exits: SignalMarker[] } | null = null;
 
@@ -269,7 +271,7 @@
 					position: 'belowBar' as const,
 					color: '#22c55e',
 					shape: 'arrowUp' as const,
-					text: 'BUY',
+					text: m.label ?? 'BUY',
 				};
 			}),
 			...exits.map((m) => {
@@ -282,7 +284,7 @@
 					position: 'aboveBar' as const,
 					color: '#ef4444',
 					shape: 'arrowDown' as const,
-					text: 'SELL',
+					text: m.label ?? 'SELL',
 				};
 			}),
 		]

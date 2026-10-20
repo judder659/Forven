@@ -17,7 +17,9 @@
 		createTemplate,
 		deleteTemplate,
 		getBotCostEstimate,
+		testBotDecision,
 		type BotConfig,
+		type BotTestDecision,
 		type BotCostEstimate,
 		type BotDecisionCadence,
 		type BotTimeframe,
@@ -341,6 +343,31 @@
 			saving = false;
 		}
 	}
+
+	// ── Test one decision: a real AI call on live candles, nothing traded ──
+	let testing = false;
+	let testResult: BotTestDecision | null = null;
+	let testError: string | null = null;
+	let showTestPrompt = false;
+
+	async function handleTestDecision() {
+		testing = true;
+		testError = null;
+		testResult = null;
+		showTestPrompt = false;
+		try {
+			testResult = await testBotDecision(buildConfig() as Partial<BotConfig>, editId);
+		} catch (e: any) {
+			testError = e.message || 'Test failed';
+		} finally {
+			testing = false;
+		}
+	}
+
+	$: perCallUsd =
+		costEstimate && costEstimate.usd_per_day != null && costEstimate.calls_per_day > 0
+			? costEstimate.usd_per_day / costEstimate.calls_per_day
+			: null;
 
 	// ── Save-as-template (inline form — no window.prompt) ─────────────
 	let templateFormOpen = false;
@@ -941,6 +968,55 @@
 						</div>
 					{/if}
 					<div class="border-t border-sc-line p-3">
+						<button
+							on:click={handleTestDecision}
+							disabled={testing || saving}
+							class="terminal-button mb-2 w-full text-[12px]"
+							title="Runs one real AI call on the latest candles. Nothing is traded or logged."
+						>
+							{testing ? 'Asking the model…' : `Test one decision${perCallUsd != null ? ` (~${fmtUsdSmall(perCallUsd)})` : ''}`}
+						</button>
+						{#if testError}
+							<div class="mb-2 rounded-md border border-red-900/50 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">{testError}</div>
+						{/if}
+						{#if testResult}
+							<div class="mb-2 rounded-md border border-sc-line2 bg-sc-bg px-3 py-2.5 text-[11px]">
+								{#if !testResult.ran}
+									<div class="text-yellow-500">{testResult.reason}</div>
+								{:else}
+									<div class="flex items-center justify-between">
+										<span class="font-semibold text-sc-ink">{testResult.action}</span>
+										<span class="text-sc-ink3">
+											{testResult.model}{testResult.cost_usd != null ? ` · ${fmtUsdSmall(testResult.cost_usd)}` : ''}
+										</span>
+									</div>
+									{#if testResult.parsed?.reasoning}
+										<p class="mt-1.5 text-sc-ink2">{testResult.parsed.reasoning}</p>
+									{/if}
+									{#if testResult.risk_check}
+										<p class="mt-1.5 {testResult.risk_check.allowed ? 'text-emerald-400' : 'text-red-400'}">
+											{testResult.risk_check.reason}
+										</p>
+									{/if}
+									<p class="mt-1.5 text-sc-ink3">
+										Read {testResult.pairs?.join(', ')}{Object.keys(testResult.stale_pairs || {}).length
+											? `; skipped stale ${Object.keys(testResult.stale_pairs).join(', ')}`
+											: ''}. Nothing was traded or logged.
+									</p>
+									<button class="mt-1.5 text-sc-ink3 underline hover:text-sc-ink" on:click={() => (showTestPrompt = !showTestPrompt)}>
+										{showTestPrompt ? 'Hide' : 'Show'} what the model saw
+									</button>
+									{#if showTestPrompt}
+										{#each testResult.prompt || [] as message}
+											<div class="mt-2 text-[10px] uppercase tracking-wide text-sc-ink3">{message.role}</div>
+											<pre class="mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[10.5px] text-sc-ink2">{message.content}</pre>
+										{/each}
+										<div class="mt-2 text-[10px] uppercase tracking-wide text-sc-ink3">answer</div>
+										<pre class="mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[10.5px] text-sc-ink2">{testResult.response}</pre>
+									{/if}
+								{/if}
+							</div>
+						{/if}
 						<button
 							on:click={handleSave}
 							disabled={saving || savingTemplate || !name.trim() || !armReady}
