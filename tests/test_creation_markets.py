@@ -28,7 +28,9 @@ def _row(symbol: str, timeframe: str = "4h", days: int = 800, stale_days: float 
     }
 
 
-@pytest.mark.parametrize("symbol", ["CRYPTO", "PERP", "crypto/usdt", "USDT", "", "ALTS"])
+@pytest.mark.parametrize(
+    "symbol", ["CRYPTO", "PERP", "crypto/usdt", "USDT", "", "ALTS", "BINANCEUSDM/USDT", "BINANCE:AVAXUSDT/USDT"]
+)
 def test_symbols_that_name_no_market_are_refused(symbol):
     assert creation_markets.non_market_reason(symbol)
 
