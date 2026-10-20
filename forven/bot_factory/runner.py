@@ -54,6 +54,24 @@ def _closed_candle_open_expected(now: datetime, bar_minutes: int = 60) -> dateti
     return datetime.fromtimestamp(current_open - bar_seconds, tz=timezone.utc)
 
 
+def _indexed_by_time(df):
+    """Index stored candles by their open time.
+
+    load_parquet returns candles with a `timestamp` column on a plain
+    RangeIndex; dataframe_to_ohlcv_rows reads times from the index, so without
+    this every candle reads as 1970 and looks stale."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if "timestamp" in df.columns:
+        import pandas as pd
+
+        if not isinstance(df.index, pd.DatetimeIndex):
+            out = df.set_index("timestamp")
+            out.index = pd.to_datetime(out.index, utc=True)
+            return out
+    return df
+
+
 def _parse_candle_time(value: object) -> datetime | None:
     try:
         ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -517,7 +535,7 @@ class BotRunner:
                 from forven.data import fetch_ohlcv_chunked, load_parquet
                 from forven.market_data import dataframe_to_ohlcv_rows
 
-                df = load_parquet(pair, timeframe)
+                df = _indexed_by_time(load_parquet(pair, timeframe))
                 last_at = None
                 if df is not None and not df.empty:
                     tail = dataframe_to_ohlcv_rows(df.tail(1), max_rows=1)
@@ -528,7 +546,7 @@ class BotRunner:
                         self._candle_refresh_attempts[pair] = time.time()
                         try:
                             fetch_ohlcv_chunked(pair, timeframe, limit=max(50, window + 10))
-                            df = load_parquet(pair, timeframe)
+                            df = _indexed_by_time(load_parquet(pair, timeframe))
                         except Exception as fe:
                             logger.info("Bot %s candle refresh failed for %s: %s", self.bot_id, pair, fe)
 
