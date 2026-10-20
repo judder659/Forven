@@ -1924,9 +1924,13 @@ def tick_active_gauntlet_workflows(
         log.exception("Gauntlet tick: engine re-baseline sweep failed")
         engine_rebaseline = {"reset": 0, "revived": 0, "converged": 0}
     backfilled = backfill_missing_quick_screen_workflows(limit=max_workflows)
-    from forven.gauntlet.recovery import resolve_evidence_blocks
+    from forven.gauntlet.recovery import resolve_dead_market_blocks, resolve_evidence_blocks
 
     evidence_recovery = resolve_evidence_blocks(limit=max_workflows)
+    try:
+        evidence_recovery.update(resolve_dead_market_blocks(limit=max_workflows))
+    except Exception:
+        log.exception("Gauntlet tick: dead-market sweep failed")
     # Re-queue retryable blocked steps BEFORE demoting failed_gate strategies, so a
     # transiently-blocked (not failed) step is re-driven rather than mistaken for a
     # stuck workflow. demote_failed_gate only archives workflows whose status is

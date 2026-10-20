@@ -191,9 +191,14 @@ def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_rea
                 "UPDATE agent_tasks SET strategy_id = NULL WHERE display_id = ? AND strategy_id = ?",
                 (task_display_id, strategy_id),
             )
+        fix = (
+            "move it to a market whose data is current (forven_list_datasets lists them)"
+            if untestable_reason.startswith("untestable:dead_market")
+            else "fix the code"
+        )
         return (
             f"Error: candidate {strategy_id} registered but was archived at intake as "
-            f"{untestable_reason}. It does not count as this task's candidate; fix the code and "
+            f"{untestable_reason}. It does not count as this task's candidate; {fix} and "
             "register a corrected version under a new type_name."
         )
     remaining = _TOOL_CALL_SECONDS - _TOOL_CALL_MARGIN_SECONDS - (time.monotonic() - started_at)
@@ -645,6 +650,14 @@ def _agent_registration_error() -> str | None:
     return f"Error: {reason}" if reason else None
 
 
+def _dead_market_error(symbol: object, timeframe: object) -> str | None:
+    """Agent-facing error when a new strategy targets a market whose data stopped for good."""
+    from forven.dataeng.dead_markets import dead_market_error, dead_market_reason
+
+    reason = dead_market_reason(symbol, timeframe)
+    return f"Error: {dead_market_error(reason)}" if reason else None
+
+
 def _resolve_idea_for_registration(raw_hypothesis_id: object) -> tuple[str | None, str | None]:
     """(canonical hypothesis id or None, agent-facing error or None)."""
     from forven.hypotheses import require_hypothesis
@@ -956,6 +969,10 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                 symbol_filter=params.get("symbol_filter", ""),
                 timeframe_filter=params.get("timeframe_filter", ""),
             )
+            if isinstance(result, dict) and isinstance(result.get("datasets"), list):
+                from forven.dataeng.dead_markets import drop_dead_datasets
+
+                result["datasets"] = drop_dead_datasets(result["datasets"])
         elif tool_name == "forven_create_strategy":
             started_at = time.monotonic()
             strategy_type = params.get("strategy_type") or params.get("type", "backtest")
@@ -966,6 +983,9 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
             hypothesis_id, idea_error = _resolve_idea_for_registration(params.get("hypothesis_id"))
             if idea_error:
                 return json.dumps({"error": idea_error})
+            dead_error = _dead_market_error(params.get("symbol"), params.get("timeframe") or "1h")
+            if dead_error:
+                return json.dumps({"error": dead_error})
             provenance = _current_candidate_provenance()
             parent_strategy_id = str(params.get("parent_strategy_id") or "").strip() or None
 

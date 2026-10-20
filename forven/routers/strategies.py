@@ -239,7 +239,10 @@ def get_ai_dropzone_context():
     # Get available datasets
     datasets_stub = []
     try:
-        datasets_stub = data_domain.get_datasets_stub(remote_skip=True)
+        from forven.dataeng.dead_markets import drop_dead_datasets
+
+        # Dead markets (delisted or renamed coins) are left out of the agents' choices.
+        datasets_stub = drop_dead_datasets(data_domain.get_datasets_stub(remote_skip=True))
     except Exception:
         pass
 
