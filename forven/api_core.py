@@ -8892,19 +8892,17 @@ def post_backtesting_run(body: dict):
             # stored timeframe > "1h" (the row is applied below, once it is loaded)
             explicit_timeframe = str(body.get("timeframe") or "").strip()
 
-            if " " in dataset_id.strip():
-                # Legacy space-separated format: "BTC/USDT 1h"
-                symbol = dataset_id.split()[0]
-                timeframe = dataset_id.split()[-1]
-            else:
-                # The shared parser strips any "dataset-26-" / "DATASET-" prefix
-                # and "-ccxt" source suffix, and splits off the timeframe. A plain
-                # symbol ("BTC/USDT") names no timeframe: None lets the strategy
-                # row's stored one apply (a 1h default here silently ran a 4h
-                # strategy at 1h).
-                from forven.symbols import parse_dataset_id
+            # A numbered id ("1", "dataset-299") resolves through the dataset
+            # catalog; anything else must name a market. A refusal returns here,
+            # before the task row below is created. A plain symbol ("BTC/USDT")
+            # names no timeframe: None lets the strategy row's stored one apply
+            # (a 1h default here silently ran a 4h strategy at 1h).
+            from forven.backtest_dataset_ids import resolve_backtest_dataset
 
-                symbol, timeframe = parse_dataset_id(dataset_id)
+            resolved_dataset = resolve_backtest_dataset(dataset_id)
+            if resolved_dataset.error:
+                return {"ok": False, "error": resolved_dataset.error}
+            symbol, timeframe = resolved_dataset.symbol, resolved_dataset.timeframe
 
             # Override timeframe if explicitly provided
             if explicit_timeframe:

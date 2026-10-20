@@ -43,6 +43,12 @@ _GENERIC_WORDS = frozenset({
     "NONE", "PERP", "PERPS", "PERPETUAL", "PERPETUALS", "SPOT", "SWAP", "SYMBOL", "TOKEN",
     "TOKENS", "UNIVERSE", "USD", "USDC", "USDT",
 })
+# Exchange / ccxt venue ids agents have passed as the base ("BINANCEUSDM/USDT",
+# "BINANCE:AVAXUSDT/USDT"): a venue, not a coin.
+_VENUE_WORDS = frozenset({
+    "BINANCE", "BINANCEUS", "BINANCEUSDM", "BINANCECOINM", "BYBIT", "OKX", "HYPERLIQUID",
+    "COINBASE", "KRAKEN", "KUCOIN", "BITGET", "MEXC", "BITMEX", "DERIBIT", "HUOBI", "CCXT",
+})
 
 
 def _base(symbol: object) -> str:
@@ -55,6 +61,8 @@ def non_market_reason(symbol: object) -> str | None:
     raw = str(symbol or "").strip()
     if _base(raw) in _GENERIC_WORDS:
         return f'"{raw}" is not a market symbol; use a coin such as ETH/USDT'
+    if _base(raw) in _VENUE_WORDS:
+        return f'"{raw}" names an exchange, not a market; use a coin such as ETH/USDT'
     return None
 
 
