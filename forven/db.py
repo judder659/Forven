@@ -1596,6 +1596,39 @@ CREATE TABLE IF NOT EXISTS bot_decision_details (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bot_decision_details_bot ON bot_decision_details (bot_id, decision_id);
+
+-- Replays: a bot run over past candles (Bot Factory phase 4). bot_id is NULL
+-- for a template replay; template_id names it instead.
+CREATE TABLE IF NOT EXISTS bot_replays (
+    id TEXT PRIMARY KEY,
+    bot_id TEXT,
+    template_id TEXT,
+    arena_id TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    error TEXT,
+    config TEXT,
+    window_start TEXT,
+    window_end TEXT,
+    max_ai_usd REAL,
+    summary TEXT,
+    curve TEXT,
+    benchmark TEXT,
+    trades TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bot_replays_bot ON bot_replays (bot_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_bot_replays_arena ON bot_replays (arena_id);
+
+-- A model's answer to one replay prompt, so a re-run of the same bot on the
+-- same bars costs nothing.
+CREATE TABLE IF NOT EXISTS bot_replay_cache (
+    prompt_hash TEXT PRIMARY KEY,
+    model TEXT,
+    response TEXT,
+    cost_usd REAL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+);
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_bot_id ON bot_decisions (bot_id);
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_timestamp ON bot_decisions (timestamp);
 CREATE INDEX IF NOT EXISTS idx_bot_config_versions_bot_id ON bot_config_versions (bot_id);
@@ -8918,3 +8951,102 @@ def delete_bot_template(template_id: str) -> None:
             raise ValueError("Cannot delete built-in templates")
         conn.execute("DELETE FROM bot_templates WHERE id = ?", (template_id,))
 
+
+# ── Bot replays (Bot Factory phase 4) ─────────────────────────────────
+
+_REPLAY_JSON_FIELDS = ("config", "summary", "curve", "benchmark", "trades")
+
+
+def create_bot_replay(
+    *,
+    bot_id: str | None,
+    config: dict,
+    window_start: str,
+    window_end: str,
+    max_ai_usd: float | None,
+    template_id: str | None = None,
+    arena_id: str | None = None,
+) -> str:
+    replay_id = f"RP{uuid4().hex[:10]}"
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO bot_replays (id, bot_id, template_id, arena_id, status, config,
+                   window_start, window_end, max_ai_usd)
+               VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)""",
+            (replay_id, bot_id, template_id, arena_id, json.dumps(config, default=str),
+             window_start, window_end, max_ai_usd),
+        )
+    return replay_id
+
+
+def finish_bot_replay(replay_id: str, *, result: dict | None = None, error: str | None = None) -> None:
+    result = result or {}
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE bot_replays SET status = ?, error = ?, summary = ?, curve = ?, benchmark = ?,
+                   trades = ?, finished_at = ? WHERE id = ?""",
+            (
+                "failed" if error else "done", error,
+                json.dumps(result.get("summary")) if result.get("summary") is not None else None,
+                json.dumps(result.get("curve")) if result.get("curve") is not None else None,
+                json.dumps(result.get("benchmark")) if result.get("benchmark") is not None else None,
+                json.dumps(result.get("trades")) if result.get("trades") is not None else None,
+                _now_utc(), replay_id,
+            ),
+        )
+
+
+def _replay_row(row: sqlite3.Row, *, full: bool) -> dict:
+    out = dict(row)
+    for key in _REPLAY_JSON_FIELDS:
+        if key in out and isinstance(out[key], str):
+            try:
+                out[key] = json.loads(out[key])
+            except (TypeError, ValueError):
+                out[key] = None
+    if not full:
+        for key in ("curve", "benchmark", "trades", "config"):
+            out.pop(key, None)
+    return out
+
+
+def get_bot_replay(replay_id: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM bot_replays WHERE id = ?", (replay_id,)).fetchone()
+    return _replay_row(row, full=True) if row else None
+
+
+def list_bot_replays(
+    *, bot_id: str | None = None, template_id: str | None = None, arena_id: str | None = None, limit: int = 20,
+) -> list[dict]:
+    clauses, args = [], []
+    for column, value in (("bot_id", bot_id), ("template_id", template_id), ("arena_id", arena_id)):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            args.append(value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT id, bot_id, template_id, arena_id, status, error, window_start, window_end,
+                       max_ai_usd, summary, created_at, finished_at
+                  FROM bot_replays {where} ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+            (*args, int(limit)),
+        ).fetchall()
+    return [_replay_row(r, full=False) for r in rows]
+
+
+def get_replay_cached_answer(prompt_hash: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT response, cost_usd FROM bot_replay_cache WHERE prompt_hash = ?", (prompt_hash,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def store_replay_answer(prompt_hash: str, model: str, response: str, cost_usd: float | None) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO bot_replay_cache (prompt_hash, model, response, cost_usd)
+               VALUES (?, ?, ?, ?)""",
+            (prompt_hash, model, response, cost_usd),
+        )

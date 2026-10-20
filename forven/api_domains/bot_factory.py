@@ -1072,3 +1072,4 @@ def api_followable_strategies() -> list[dict]:
         }
         for r in rows
     ]
+
