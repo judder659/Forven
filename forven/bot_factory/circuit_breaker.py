@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import logging
 
-from forven.db import (
-    add_bot_llm_cost,
-    get_bot,
-    get_bot_status,
-    increment_bot_errors,
-    increment_bot_llm_calls,
-    reset_bot_errors,
-    set_bot_status,
-    log_activity,
-)
+import forven.db as _db
+from forven.bot_factory.bot_writes import routed
+from forven.db import get_bot, get_bot_status
+
+# Through the API inside a bot subprocess, straight to the database elsewhere.
+add_bot_llm_cost = routed(_db, "add_bot_llm_cost")
+increment_bot_errors = routed(_db, "increment_bot_errors")
+increment_bot_llm_calls = routed(_db, "increment_bot_llm_calls")
+log_activity = routed(_db, "log_activity")
+reset_bot_errors = routed(_db, "reset_bot_errors")
+set_bot_status = routed(_db, "set_bot_status")
 
 logger = logging.getLogger(__name__)
 

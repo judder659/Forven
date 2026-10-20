@@ -670,6 +670,51 @@ def api_bot_credential(bot_id: str, token: str | None) -> dict:
     return brokered_credential_for_bot(bot_id, provider)
 
 
+def _bot_owns_trade(bot_id: str, trade_id: object) -> bool:
+    from forven.db import get_db
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT source, execution_type FROM trades WHERE id = ?", (str(trade_id or ""),)
+        ).fetchone()
+    return bool(row) and row["source"] == f"bot:{bot_id}" and (
+        str(row["execution_type"] or "paper").lower() == "paper"
+    )
+
+
+def api_bot_write(bot_id: str, token: str | None, op: str, args: dict | None) -> dict:
+    """One database write from a bot subprocess, on its own rows only.
+
+    Raises PermissionError for a bad token or a row that isn't this bot's,
+    ValueError for an unknown write or bad arguments.
+    """
+    import forven.db as db
+    from forven.bot_factory.bot_writes import OPS
+    from forven.bot_factory.manager import bot_process_is_live, verify_bot_token
+
+    if not verify_bot_token(bot_id, token) or not bot_process_is_live(bot_id):
+        raise PermissionError("invalid bot token")
+    if op not in OPS:
+        raise ValueError(f"unknown bot write {op!r}")
+    args = dict(args or {})
+    if "bot_id" in args and args["bot_id"] != bot_id:
+        raise PermissionError("a bot may only write its own rows")
+    if op == "close_bot_trade" and not _bot_owns_trade(bot_id, args.get("trade_id")):
+        raise PermissionError("not this bot's paper trade")
+    if op == "execute_bot_trade":
+        if str(args.get("execution_type") or "paper").lower() != "paper" or args.get("book"):
+            raise PermissionError("live orders are not recorded through this route")
+    if op == "log_activity":
+        data = args.get("data")
+        if args.get("source") != "bot_factory" or not isinstance(data, dict) or data.get("bot_id") != bot_id:
+            raise PermissionError("bots may only log their own bot_factory activity")
+    try:
+        result = getattr(db, op)(**args)
+    except TypeError as e:
+        raise ValueError(f"bad arguments for {op}: {e}") from e
+    return {"result": result}
+
+
 # ── Cockpit: performance, chart, fleet, decision inspector ───────────
 
 BENCHMARK_SYMBOL = "BTC/USDT"

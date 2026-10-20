@@ -40,6 +40,27 @@ def bot_credential(bot_id: str, request: Request):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+class BotWriteRequest(BaseModel):
+    op: str
+    args: dict = {}
+
+
+@internal_router.post("/api/bot-factory/internal/bots/{bot_id}/write")
+def bot_write(bot_id: str, body: BotWriteRequest, request: Request):
+    """A bot subprocess's own database write (forven.bot_factory.bot_writes)."""
+    client_host = request.client.host if request.client else ""
+    server = request.scope.get("server") or ("", 0)
+    is_local = bool(client_host) and (is_loopback_host(client_host) or client_host == server[0])
+    if not is_local:
+        raise HTTPException(status_code=403, detail="Bot writes are only accepted from local bot processes")
+    try:
+        return bf_domain.api_bot_write(bot_id, request.headers.get(BOT_TOKEN_HEADER), body.op, body.args)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ── Bot CRUD ─────────────────────────────────────────────────────────
 
 
