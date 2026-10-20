@@ -47,6 +47,7 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import EquityChart from '$lib/components/EquityChart.svelte';
 	import CandlestickChart from '$lib/components/CandlestickChart.svelte';
+	import BotReplayPanel from '$lib/components/BotReplayPanel.svelte';
 	import { forvenLivePrices } from '$lib/stores/forvenWebSocket';
 	import {
 		createRealtimeRefresh,
@@ -63,7 +64,7 @@
 	let loading = true;
 	let error: string | null = null;
 	let confirmStop = false;
-	let activeView: 'performance' | 'activity' | 'positions' | 'trades' | 'versions' | 'memory' = 'performance';
+	let activeView: 'performance' | 'replay' | 'activity' | 'positions' | 'trades' | 'versions' | 'memory' = 'performance';
 	let botPerf: BotPerformance | null = null;
 	let chart: BotChart | null = null;
 	let chartPair: string | null = null;
@@ -844,7 +845,7 @@
 
 		<!-- View tabs -->
 		<div class="mb-0 flex gap-0 border-b border-sc-line">
-			{#each [['performance', 'Performance'], ['activity', 'Activity'], ['positions', 'Positions'], ['trades', 'Trades'], ['memory', 'Memory'], ['versions', 'Versions']] as [key, label]}
+			{#each [['performance', 'Performance'], ['replay', 'Replay'], ['activity', 'Activity'], ['positions', 'Positions'], ['trades', 'Trades'], ['memory', 'Memory'], ['versions', 'Versions']] as [key, label]}
 				<button
 					on:click={() => (activeView = key as typeof activeView)}
 					aria-pressed={activeView === key}
@@ -933,6 +934,8 @@
 						{/if}
 					</div>
 				{/if}
+			{:else if activeView === 'replay'}
+				<BotReplayPanel {bot} />
 			{:else if activeView === 'activity'}
 				{#if decisions.length === 0}
 					<div class="p-8 text-center text-sm text-sc-ink3">

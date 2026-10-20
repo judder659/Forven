@@ -850,6 +850,9 @@ export {
 	applyRecommendedBotSettings,
 	testBotDecision,
 	listFollowableStrategies,
+	startBotReplay,
+	listBotReplays,
+	getBotReplay,
 	getBotVersions,
 	diffBotVersions,
 	getBotMemory,
@@ -892,6 +895,11 @@ export {
 	type BotInput,
 	type BotType,
 	type BotFollowableStrategy,
+	type BotReplay,
+	type BotReplaySummary,
+	type BotReplayTrade,
+	type BotReplayStarted,
+	type BotReplayRequest,
 } from './bot_factory';
 
 export {
