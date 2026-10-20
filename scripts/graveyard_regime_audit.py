@@ -28,7 +28,7 @@ Method
    BTC/ETH/SOL at 1h and 4h to quantify the "past year was a downtrend" prior.
 
 Read-only: DB opened with mode=ro; lake and artifacts only read. Outputs to
-notes/graveyard-regime-audit/.
+docs/audits/graveyard-regime-audit/.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ if str(REPO) not in sys.path:
 DEFAULT_DB = Path.home() / ".forven" / "forven.db"
 DEFAULT_RESULTS_DIR = REPO / "data" / "results"
 DEFAULT_LAKE = Path.home() / ".forven" / "data" / "ohlcv"
-DEFAULT_OUT = REPO / "notes" / "graveyard-regime-audit"
+DEFAULT_OUT = REPO / "docs" / "audits" / "graveyard-regime-audit"
 
 MIN_TRADES_TOTAL = 10
 MIN_HISTORY_BARS = 210  # mirrors production regime_split unresolved rule
