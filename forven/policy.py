@@ -1546,17 +1546,31 @@ def _check_validation_in_flight(strategy_id: str, config: dict | None = None) ->
     return True, "No validation tests in flight"
 
 
-def _check_artifact_rows_exist(strategy_id: str, required_types: list[str]) -> tuple[bool, str]:
-    """Verify each required validation has a persisted, passing verdict payload."""
+def _check_artifact_rows_exist(
+    strategy_id: str, required_types: list[str], recorded: set[str] | frozenset[str] = frozenset()
+) -> tuple[bool, str]:
+    """Verify each required validation has a persisted, passing verdict payload.
+
+    ``recorded`` names tests the paper door records rather than enforces (2026-10
+    gate plan): for those a persisted verdict of either kind is enough here, since
+    the paper->live gate is where their FAIL counts.
+    """
     required = {_canonicalize_gauntlet_verdict_test(rt) for rt in required_types if str(rt or "").strip()}
+    recorded = {_canonicalize_gauntlet_verdict_test(rt) for rt in recorded}
     payloads, _overall = _extract_gauntlet_verdict_payloads(strategy_id, None, {})
     passing = {
         test_name
         for test_name, payload in payloads.items()
         if test_name in required and isinstance(payload, dict) and not _verdict_payload_failed(payload)
     }
+    recorded_failing = {
+        test_name
+        for test_name, payload in payloads.items()
+        if test_name in required and test_name in recorded and isinstance(payload, dict)
+        and _verdict_payload_failed(payload)
+    }
 
-    missing = sorted(required - passing)
+    missing = sorted(required - passing - recorded_failing)
     if missing:
         return (
             False,
@@ -1586,7 +1600,11 @@ def _check_artifact_rows_exist(strategy_id: str, required_types: list[str]) -> t
                 f"{test_name} passed paper-tier criteria; its strict artifact verdict is "
                 "FAIL (enforced at the paper->live gate)"
             )
+    for test_name in sorted(recorded_failing):
+        notes.append(f"{test_name} verdict FAIL recorded (enforced at the paper->live gate)")
     detail = f"All required artifact rows passed: {', '.join(sorted(passing))}"
+    if recorded_failing:
+        detail = f"All required artifact rows present: {', '.join(sorted(passing | recorded_failing))}"
     if notes:
         detail += ". " + "; ".join(notes)
     return True, detail
@@ -1673,7 +1691,8 @@ def check_promotion_readiness(strategy_id: str, *, include_gate: bool = True) ->
     _run_check("validation_artifacts", "gate_require_artifact_rows_enabled",
                "gate_require_artifact_rows_required",
                _check_artifact_rows_exist, strategy_id,
-               list(required_tests) or list(_GAUNTLET_VALIDATION_TYPES))
+               list(required_tests) or list(_GAUNTLET_VALIDATION_TYPES),
+               paper_door.recorded_tests(config))
 
     # 3. The real gate as a dry run: every check a promotion runs, the held-back
     # test last. Unlike the two steps above, no settings toggle skips it.
@@ -5533,7 +5552,7 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
 
     # Real artifact rows for all required tests
     result = _gate_check("gate_require_artifact_rows_enabled", "gate_require_artifact_rows_required",
-                         _check_artifact_rows_exist, strategy_id, sorted(required_tests))
+                         _check_artifact_rows_exist, strategy_id, sorted(required_tests), recorded_tests)
     if result:
         return result
 
