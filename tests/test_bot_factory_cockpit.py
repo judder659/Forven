@@ -324,8 +324,7 @@ class TestTestDecision:
 
         from forven.api import app
 
-        with TestClient(app) as client:
-            resp = client.post("/api/bot-factory/test-decision", json={"bot_id": "B-missing", "config": {}})
+        resp = TestClient(app).post("/api/bot-factory/test-decision", json={"bot_id": "B-missing", "config": {}})
         assert resp.status_code == 404
 
 
