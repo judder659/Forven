@@ -302,8 +302,12 @@ def _tool_create_strategy(params: dict) -> str:
     registration_error = validate_agent_registration(agent_id, task_display_id)
     if registration_error:
         return f"Error creating strategy: {registration_error}"
+    from forven.creation_markets import non_market_reason
     from forven.dataeng.dead_markets import dead_market_error, dead_market_reason
 
+    not_market = non_market_reason(params.get("symbol"))
+    if not_market:
+        return f"Error creating strategy: {not_market}."
     dead_reason = dead_market_reason(params.get("symbol"), params.get("timeframe") or "1h")
     if dead_reason:
         return f"Error creating strategy: {dead_market_error(dead_reason)}"

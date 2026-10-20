@@ -95,12 +95,12 @@ def test_agent_create_tools_reject_a_dead_market(matic_dead):
 
 
 def test_intake_archives_a_dead_market_as_untestable(matic_dead):
-    from forven.strategies.intake import _dead_market_reason
+    from forven.strategies.intake import _unusable_market
 
     meta = {"canonical_params": {"_timeframe": "4h"}}
-    assert _dead_market_reason("MATIC", meta, None) == "MATIC/USDT 4h data stopped on 2024-09-04"
-    assert _dead_market_reason("MATIC", {"canonical_params": {}}, None) is None  # stored at 1h
-    assert _dead_market_reason("BTC", meta, None) is None
+    assert _unusable_market("MATIC", meta, None) == ("dead_market", "MATIC/USDT 4h data stopped on 2024-09-04")
+    assert _unusable_market("MATIC", {"canonical_params": {}}, None) is None  # stored at 1h
+    assert _unusable_market("BTC", meta, None) is None
 
 
 def _blocked_on_stale_data(symbol: str, timeframe: str) -> dict:
