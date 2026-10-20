@@ -32,6 +32,8 @@
 		getBotPerformance,
 		getBotChart,
 		applyRecommendedBotSettings,
+		getBotLiveGate,
+		type BotLiveGate,
 		type BotDecisionDetail,
 		type BotPerformance,
 		type BotChart,
@@ -337,10 +339,13 @@
 	let walletOptionsError: string | null = null;
 	let confirmGoPaper = false;
 	let modeBusy = false;
+	let liveGate: BotLiveGate | null = null;
 
 	async function openGoLiveDrawer() {
 		goLiveOpen = !goLiveOpen;
 		if (!goLiveOpen) return;
+		liveGate = null;
+		if (botId) getBotLiveGate(botId).then((g) => (liveGate = g)).catch(() => (liveGate = null));
 		walletOptionsLoading = true;
 		walletOptionsError = null;
 		try {
@@ -697,6 +702,22 @@
 					gate, liquidity guard, kill switch) on every open. Every live order carries a protective stop from the bot's
 					stop-loss setting{bot.stop_loss_pct == null ? ' — set stop_loss_pct in the editor first' : ` (${bot.stop_loss_pct}%)`}.
 				</p>
+				<div class="mt-3 rounded border border-sc-line bg-sc-panel p-3">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						Live gate {liveGate ? (liveGate.passed ? '· passed' : '· not passed yet') : '· checking…'}
+					</div>
+					{#if liveGate}
+						<ul class="mt-1.5 space-y-1 text-[12px]">
+							{#each liveGate.checks as c}
+								<li class="flex gap-2">
+									<span class={c.ok ? 'text-emerald-400' : 'text-red-400'}>{c.ok ? '✓' : '✗'}</span>
+									<span class="text-sc-ink">{c.label}</span>
+									<span class="text-sc-ink3">{c.detail}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
 				<div class="mt-4 flex flex-wrap items-end gap-3">
 					<div class="flex flex-col gap-1">
 						<label for="go-live-wallet" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
@@ -735,7 +756,7 @@
 					</div>
 					<button
 						on:click={handleGoLive}
-						disabled={modeBusy || goLiveConfirm.trim().toUpperCase() !== 'GO LIVE' || !goLiveCeiling || goLiveCeiling <= 0 || bot.stop_loss_pct == null}
+						disabled={modeBusy || !liveGate?.passed || goLiveConfirm.trim().toUpperCase() !== 'GO LIVE' || !goLiveCeiling || goLiveCeiling <= 0 || bot.stop_loss_pct == null}
 						class="terminal-button-danger text-[12px]"
 					>
 						{modeBusy ? 'Arming…' : 'Arm Live'}

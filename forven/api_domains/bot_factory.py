@@ -491,10 +491,36 @@ def _open_live_trade_count(bot_id: str) -> int:
         return int(row["n"] or 0) if row else 0
 
 
+def api_live_gate(bot_id: str) -> dict:
+    """What the bot has shown against the live gate, check by check."""
+    from forven.bot_factory import live_gate
+    from forven.db import get_bot_trade_ledger, list_bot_replays
+
+    bot = get_bot(bot_id)
+    if not bot:
+        raise LookupError(f"Bot {bot_id} not found")
+    versions = get_bot_config_versions(bot_id)
+    result = live_gate.evaluate(
+        ledger=get_bot_trade_ledger(bot_id),
+        replays=list_bot_replays(bot_id=bot_id, limit=20),
+        settings_changed_at=versions[0]["created_at"] if versions else None,
+        now=_now_utc(),
+    )
+    result["bot_id"] = bot_id
+    return result
+
+
+def live_gate_refusal(bot_id: str) -> str | None:
+    from forven.bot_factory.live_gate import refusal
+
+    return refusal(api_live_gate(bot_id))
+
+
 def api_go_live(bot_id: str, confirm: str | None, ceiling_usd, wallet: str | None = None) -> dict:
     """Arm a bot for LIVE execution — the Bot Factory mirror of GO-LIVE-1.
 
-    Requires the same typed "GO LIVE" confirmation + per-bot notional ceiling
+    Requires a passed live gate (``forven.bot_factory.live_gate``), the
+    same typed "GO LIVE" confirmation + per-bot notional ceiling
     the strategy pipeline demands, a configured stop_loss_pct (every live
     order must carry a protective stop), and a stopped bot (the runner reads
     its mode at spawn — no mid-flight flips).
@@ -522,6 +548,9 @@ def api_go_live(bot_id: str, confirm: str | None, ceiling_usd, wallet: str | Non
         # Grid and DCA exits are per-lot targets the live order path doesn't
         # place yet; rule bots stay on paper until they have a live gate.
         raise ValueError("Grid, DCA and Signal-follower bots run on paper only for now.")
+    gate_problem = live_gate_refusal(bot_id)
+    if gate_problem:
+        raise ValueError(gate_problem)
     if bot.get("stop_loss_pct") is None:
         raise ValueError(
             "Live mode requires stop_loss_pct — every live order carries a "

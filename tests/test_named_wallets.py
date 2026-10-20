@@ -420,6 +420,11 @@ class TestReconcileTimeoutScaling:
 
 
 class TestBotWalletArming:
+    @pytest.fixture(autouse=True)
+    def _gate_passed(self, monkeypatch):
+        # Wallet arming checks run after the live gate, which has its own tests.
+        monkeypatch.setattr("forven.api_domains.bot_factory.live_gate_refusal", lambda bot_id: None)
+
     def test_go_live_persists_registered_wallet(self, forven_db):
         from forven.api_domains.bot_factory import api_go_live
         from forven.exchange import subaccounts
