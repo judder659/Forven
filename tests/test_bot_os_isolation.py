@@ -199,3 +199,54 @@ def test_sandbox_status_is_none_when_off(monkeypatch):
     monkeypatch.setattr(mgr, "sandbox_enabled", lambda: False)
     monkeypatch.setattr(mgr, "ensure_sandbox_ready", lambda *a: pytest.fail("prepared while off"))
     assert mgr.bot_sandbox_status() is None
+
+
+def test_concurrent_starts_spawn_one_copy(forven_db, monkeypatch):
+    """A Start retried while the first is still spawning must not run the bot twice."""
+    import threading
+    import time
+
+    bot_id = _make_bot()
+    monkeypatch.setattr(mgr, "bot_sandbox_status", lambda: iso.SandboxStatus(True, []))
+    monkeypatch.setattr(mgr, "_is_pid_alive", lambda pid: True)
+    spawned = []
+
+    def slow_spawn(argv, *, env, cwd, log_path):
+        time.sleep(0.3)
+        spawned.append(argv)
+        return _FakeSandboxedProcess()
+
+    monkeypatch.setattr(mgr, "spawn_sandboxed", slow_spawn)
+    manager = mgr.BotManager()
+    outcomes = []
+
+    def start():
+        try:
+            outcomes.append(manager.start_bot(bot_id)["status"])
+        except ValueError as exc:
+            outcomes.append(str(exc))
+
+    threads = [threading.Thread(target=start) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(spawned) == 1
+    assert sorted(outcomes) == sorted(["started", f"Bot {bot_id} is already running"])
+
+
+def test_warm_up_runs_only_when_the_sandbox_is_on(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mgr, "bot_sandbox_status", lambda: calls.append(1))
+    monkeypatch.setattr(mgr, "sandbox_enabled", lambda: False)
+    mgr.warm_bot_sandbox()
+    monkeypatch.setattr(mgr, "sandbox_enabled", lambda: True)
+    mgr.warm_bot_sandbox()
+    import time
+
+    for _ in range(50):
+        if calls:
+            break
+        time.sleep(0.02)
+    assert calls == [1]

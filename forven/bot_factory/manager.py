@@ -10,6 +10,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import psutil
@@ -345,6 +346,21 @@ def bot_sandbox_status() -> SandboxStatus | None:
     return status
 
 
+def warm_bot_sandbox() -> None:
+    """Prepare and self-check the sandbox in the background at API startup, so
+    the first bot start doesn't pay for it (a slow Start can time out in the
+    UI and be clicked again)."""
+
+    def _run() -> None:
+        try:
+            bot_sandbox_status()
+        except Exception:
+            logger.warning("Bot sandbox warm-up failed", exc_info=True)
+
+    if sandbox_enabled():
+        threading.Thread(target=_run, name="bot-sandbox-warmup", daemon=True).start()
+
+
 def _bot_log_path(bot_id: str) -> Path:
     """Get the log file path for a bot subprocess."""
     log_dir = FORVEN_HOME / "logs" / "bots"
@@ -381,6 +397,8 @@ class BotManager:
     def __init__(self):
         self._processes = {}
         self._monitor_task: asyncio.Task | None = None
+        self._start_locks: dict[str, threading.Lock] = {}
+        self._start_locks_guard = threading.Lock()
 
     @classmethod
     def get_instance(cls) -> BotManager:
@@ -389,7 +407,20 @@ class BotManager:
         return cls._instance
 
     def start_bot(self, bot_id: str) -> dict:
-        """Spawn a bot subprocess with isolated credentials."""
+        """Spawn a bot subprocess with isolated credentials.
+
+        Serialised per bot: two Start requests arriving together (a retried
+        click after a slow first start, say) must not both pass the
+        "already running" check and spawn two copies.
+        """
+        with self._start_lock(bot_id):
+            return self._start_bot(bot_id)
+
+    def _start_lock(self, bot_id: str) -> threading.Lock:
+        with self._start_locks_guard:
+            return self._start_locks.setdefault(bot_id, threading.Lock())
+
+    def _start_bot(self, bot_id: str) -> dict:
         bot = get_bot(bot_id)
         if not bot:
             raise ValueError(f"Bot {bot_id} not found")

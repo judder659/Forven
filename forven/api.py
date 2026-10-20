@@ -450,6 +450,11 @@ async def lifespan(_app: FastAPI):
             log.info("Recovered %d bot(s) after restart.", result["recovered"])
     except Exception:
         log.exception("Failed to recover bots on startup.")
+    try:
+        from forven.bot_factory.manager import warm_bot_sandbox
+        warm_bot_sandbox()
+    except Exception:
+        log.exception("Failed to warm the bot sandbox.")
 
     # Phase 4: register MCP server tools (each server's tools become
     # available to granted agents via tool_registry). Per-server failures
