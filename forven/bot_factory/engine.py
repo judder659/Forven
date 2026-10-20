@@ -15,9 +15,13 @@ from forven.bot_factory.circuit_breaker import (
     record_llm_call,
     record_success,
 )
-from forven.db import log_bot_decision
+import forven.db as _db
+from forven.bot_factory.bot_writes import routed
 
 logger = logging.getLogger(__name__)
+
+# Through the API inside a bot subprocess, straight to the database elsewhere.
+log_bot_decision = routed(_db, "log_bot_decision")
 
 # Minimum seconds between LLM calls (rate limit)
 MIN_LLM_INTERVAL_SECONDS = 10

@@ -19,19 +19,25 @@ import psutil
 
 from forven.bot_factory.inputs import InputSources, enrich_snapshot, normalize_inputs
 from forven.bot_factory import rules
+import forven.db as _db
+from forven.bot_factory.bot_writes import routed
 from forven.db import (
-    accrue_bot_funding,
-    close_bot_trade,
     get_bot,
     get_bot_equity_state,
     get_bot_run_id,
     get_open_bot_positions,
-    heartbeat_bot,
-    log_bot_decision,
-    reconcile_bot_realized_pnl,
-    set_bot_status,
-    update_bot_equity_state,
 )
+
+# The bot's own writes: through the API inside a bot subprocess, straight to
+# the database elsewhere.
+accrue_bot_funding = routed(_db, "accrue_bot_funding")
+close_bot_trade = routed(_db, "close_bot_trade")
+execute_bot_trade = routed(_db, "execute_bot_trade")
+heartbeat_bot = routed(_db, "heartbeat_bot")
+log_bot_decision = routed(_db, "log_bot_decision")
+reconcile_bot_realized_pnl = routed(_db, "reconcile_bot_realized_pnl")
+set_bot_status = routed(_db, "set_bot_status")
+update_bot_equity_state = routed(_db, "update_bot_equity_state")
 
 logger = logging.getLogger(__name__)
 
@@ -663,8 +669,6 @@ class BotRunner:
         an in-memory position dict with trade_id wired up. ``levels`` carries
         the decision's own stop and target (already clamped by the engine);
         without them the bot's configured levels apply."""
-        from forven.db import execute_bot_trade
-
         direction = "long" if action == "BUY" else "short"
         is_buy = action == "BUY"
         slippage_bps = float(self._config.get("slippage_bps", 0) or 0)
