@@ -1,4 +1,4 @@
-"""A bot's own database writes, routed through the API.
+"""A bot's own database writes and reads, routed through the API.
 
 Inside a bot subprocess (it holds a spawn token), every write a paper bot
 makes goes to ``POST /api/bot-factory/internal/bots/{id}/write`` with that
@@ -12,8 +12,13 @@ return None instead, so the runner skips the entry or retries the close on
 its next tick. Live order writes are not routed here: they belong to the
 exchange path.
 
+Reads (the bot's own config, status, positions and equity, and the market
+data its inputs use) go to ``POST /api/bot-factory/internal/bots/{id}/read``
+the same way. When the API can't be reached a read falls back to the
+database, so a bot keeps working while Forven restarts.
+
 Set ``FORVEN_BOT_WRITES_VIA_API=0`` in Forven's environment to send bot
-writes straight to the database as before.
+writes and reads straight to the database as before.
 """
 
 from __future__ import annotations
@@ -48,6 +53,18 @@ BOOKKEEPING_OPS = frozenset({
     "increment_bot_llm_calls", "add_bot_llm_cost", "log_activity",
 })
 OPS = TRADE_OPS | BOOKKEEPING_OPS
+# Reads a bot may make, and the module each one lives in.
+READ_OPS = {
+    "get_bot": "forven.db",
+    "get_bot_status": "forven.db",
+    "get_bot_run_id": "forven.db",
+    "get_open_bot_positions": "forven.db",
+    "get_bot_equity_state": "forven.db",
+    "get_open_followed_trades": "forven.db",
+    "get_recent_strategy_signals": "forven.db",
+    "get_funding_rate_series": "forven.market_data_collector",
+    "get_open_interest_series": "forven.market_data_collector",
+}
 # Heartbeats are dropped rather than queued; only the next one matters.
 _NOT_QUEUED = frozenset({"heartbeat_bot"})
 # What a queued write answers while the API is away: the counters read as
@@ -68,19 +85,19 @@ def via_api() -> bool:
     return is_brokered_process() and os.environ.get(VIA_API_ENV, "1").strip() != "0"
 
 
-def _url(bot_id: str) -> str:
+def _url(bot_id: str, kind: str = "write") -> str:
     port = os.environ.get("FORVEN_PORT", "8003")
     host = os.environ.get(BROKER_HOST_ENV, "").strip().strip("[]") or "127.0.0.1"
     if ":" in host:
         host = f"[{host}]"
-    return f"http://{host}:{port}/api/bot-factory/internal/bots/{bot_id}/write"
+    return f"http://{host}:{port}/api/bot-factory/internal/bots/{bot_id}/{kind}"
 
 
-def _post(op: str, args: dict) -> Any:
+def _post(op: str, args: dict, kind: str = "write") -> Any:
     bot_id = os.environ.get(BOT_ID_ENV, "")
     body = json.dumps({"op": op, "args": args}, default=str).encode("utf-8")
     request = urllib.request.Request(
-        _url(bot_id), data=body, method="POST",
+        _url(bot_id, kind), data=body, method="POST",
         headers={BOT_TOKEN_HEADER: os.environ.get(BOT_TOKEN_ENV, ""), "content-type": "application/json"},
     )
     try:
@@ -138,6 +155,22 @@ def _unavailable(op: str, args: dict) -> Any:
     return _QUEUED_RESULT.get(op)
 
 
+def read(op: str, _direct: Any, **args: Any) -> Any:
+    """Read through the API, or call ``_direct(**args)`` outside a bot
+    process or while the API is away."""
+    if op not in READ_OPS:
+        raise ValueError(f"unknown bot read {op!r}")
+    if not via_api():
+        return _direct(**args)
+    # Send queued writes first, so the bot reads what it wrote.
+    _flush()
+    try:
+        return _post(op, args, kind="read")
+    except ConnectionError as exc:
+        logger.warning("API unreachable for bot read %s, reading the database: %s", op, exc)
+        return _direct(**args)
+
+
 def queued() -> int:
     with _lock:
         return len(_queue)
@@ -146,6 +179,10 @@ def queued() -> int:
 def _reset_for_tests() -> None:
     with _lock:
         _queue.clear()
+
+
+def _bound(fn: Any, args: tuple, kwargs: dict) -> dict:
+    return dict(inspect.signature(fn).bind(*args, **kwargs).arguments)
 
 
 def routed(db_module: Any, name: str):
@@ -160,9 +197,22 @@ def routed(db_module: Any, name: str):
 
     def call(*args: Any, **kwargs: Any) -> Any:
         fn = getattr(db_module, name)
-        bound = inspect.signature(fn).bind(*args, **kwargs)
-        return write(name, _direct=fn, **bound.arguments)
+        return write(name, _direct=fn, **_bound(fn, args, kwargs))
 
     call.__name__ = name
     call.__doc__ = f"forven.db.{name}, routed through the API inside a bot process."
+    return call
+
+
+def routed_read(module: Any, name: str):
+    """Like ``routed``, for one of ``READ_OPS``."""
+    if name not in READ_OPS:
+        raise ValueError(f"unknown bot read {name!r}")
+
+    def call(*args: Any, **kwargs: Any) -> Any:
+        fn = getattr(module, name)
+        return read(name, _direct=fn, **_bound(fn, args, kwargs))
+
+    call.__name__ = name
+    call.__doc__ = f"{READ_OPS[name]}.{name}, read through the API inside a bot process."
     return call

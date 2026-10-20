@@ -715,6 +715,38 @@ def api_bot_write(bot_id: str, token: str | None, op: str, args: dict | None) ->
     return {"result": result}
 
 
+def api_bot_read(bot_id: str, token: str | None, op: str, args: dict | None) -> dict:
+    """One read from a bot subprocess: its own rows, or market data.
+
+    Raises PermissionError for a bad token or another bot's rows, ValueError
+    for an unknown read or bad arguments.
+    """
+    import importlib
+
+    from forven.bot_factory.bot_writes import READ_OPS
+    from forven.bot_factory.manager import bot_process_is_live, verify_bot_token
+
+    if not verify_bot_token(bot_id, token) or not bot_process_is_live(bot_id):
+        raise PermissionError("invalid bot token")
+    if op not in READ_OPS:
+        raise ValueError(f"unknown bot read {op!r}")
+    args = dict(args or {})
+    if "bot_id" in args and args["bot_id"] != bot_id:
+        raise PermissionError("a bot may only read its own rows")
+    if op == "get_open_followed_trades":
+        from forven.db import get_bot
+
+        followed = (((get_bot(bot_id) or {}).get("rule_params")) or {}).get("strategy_id")
+        if not followed or args.get("strategy_id") != followed:
+            raise PermissionError("a bot may only read the strategy it follows")
+    fn = getattr(importlib.import_module(READ_OPS[op]), op)
+    try:
+        result = fn(**args)
+    except TypeError as e:
+        raise ValueError(f"bad arguments for {op}: {e}") from e
+    return {"result": result}
+
+
 # ── Cockpit: performance, chart, fleet, decision inspector ───────────
 
 BENCHMARK_SYMBOL = "BTC/USDT"
