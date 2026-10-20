@@ -165,7 +165,7 @@ def validate_agent_registration(agent_id: str | None, task_display_id: str | Non
         )
     if str(task.get("agent_id") or "").strip() != normalized_agent_id:
         return "Agent-created strategies must be registered from a task assigned to the current agent."
-    return registration_cap_error()
+    return no_signal_attempts_error(task_display_id) or registration_cap_error()
 
 
 @dataclass(frozen=True)
@@ -420,4 +420,121 @@ def reject_unfit_candidate(strategy_id: str, check: CandidateTradeCheck, task_di
         f"Error: candidate {strategy_id} registered, but the quick screen could not judge it: "
         f"{detail}. It was archived as untestable:{code} and does not count as this task's "
         f"candidate. {advice} Then register a corrected version under a new type_name."
+    )
+
+
+# A creation task gets this many no-signal withdrawals (too few trades to judge)
+# before it must stop and write up what it found instead of registering more.
+MAX_NO_SIGNAL_ATTEMPTS = 3
+_NO_SIGNAL_ATTEMPTS_KEY = "no_signal_attempts"
+
+
+def no_signal_attempts(task_display_id: str | None) -> int:
+    """No-signal candidates this task has already had withdrawn."""
+    payload = get_agent_task_payload(task_display_id)
+    try:
+        return max(0, int(payload.get(_NO_SIGNAL_ATTEMPTS_KEY) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def no_signal_attempts_error(task_display_id: str | None) -> str | None:
+    """Agent-facing error once a creation task has used all its no-signal attempts."""
+    if not current_task_is_creation_task(task_display_id):
+        return None
+    used = no_signal_attempts(task_display_id)
+    if used < MAX_NO_SIGNAL_ATTEMPTS:
+        return None
+    return (
+        f"This task's {used} candidates all traded too rarely for the quick screen to judge, "
+        f"which is the limit of {MAX_NO_SIGNAL_ATTEMPTS}. Do not register more in this task: "
+        "finish it by writing up what you tried and why it rarely fires."
+    )
+
+
+def _record_no_signal_attempt(task_display_id: str) -> int:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT input_data FROM agent_tasks WHERE display_id = ?", (task_display_id,)
+        ).fetchone()
+        payload = _parse_json_object(row["input_data"]) if row else {}
+        try:
+            used = max(0, int(payload.get(_NO_SIGNAL_ATTEMPTS_KEY) or 0)) + 1
+        except (TypeError, ValueError):
+            used = 1
+        payload[_NO_SIGNAL_ATTEMPTS_KEY] = used
+        conn.execute(
+            "UPDATE agent_tasks SET input_data = ? WHERE display_id = ?",
+            (json.dumps(payload), task_display_id),
+        )
+    return used
+
+
+def _remove_imported_module(runtime_type: object) -> None:
+    """Delete a withdrawn candidate's sandbox module (forven/strategies/imported/<module>.py)."""
+    from pathlib import Path
+
+    from forven.strategies.registry import IMPORTED_TYPE_PREFIX
+
+    name = str(runtime_type or "").strip()
+    module = name[len(IMPORTED_TYPE_PREFIX):] if name.startswith(IMPORTED_TYPE_PREFIX) else ""
+    # Generated slugs only; refuse anything path-shaped.
+    if not module or not all(ch.isalnum() or ch == "_" for ch in module):
+        return
+    import forven.strategies.imported as imported_pkg
+
+    path = Path(imported_pkg.__file__).resolve().parent / f"{module}.py"
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("could not remove withdrawn module %s: %s", path, exc)
+
+
+def withdraw_no_signal_candidate(strategy_id: str, check: CandidateTradeCheck, task_display_id: str | None) -> str:
+    """Undo the registration of a candidate that trades too rarely to be judged.
+
+    The agent gets the trade count and the floor back and must loosen or
+    redesign the entry and re-test before registering again, up to
+    ``MAX_NO_SIGNAL_ATTEMPTS`` per task. A withdrawn candidate leaves no
+    strategy row, so it never reaches the pipeline or the daily cap. A
+    candidate the pipeline has already started on is archived as untestable
+    instead (``reject_unfit_candidate``).
+    """
+    display_id = str(task_display_id or "").strip()
+    with get_db() as conn:
+        busy = conn.execute(
+            "SELECT 1 FROM gauntlet_steps st JOIN gauntlet_workflows w ON w.id = st.workflow_id "
+            "WHERE w.strategy_id = ? AND st.status = 'running' LIMIT 1",
+            (strategy_id,),
+        ).fetchone()
+        row = conn.execute(
+            "SELECT runtime_type, stage FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()
+        if busy or not row or str(row["stage"] or "").strip().lower() != "quick_screen":
+            withdraw = False
+        else:
+            withdraw = True
+            conn.execute(
+                "UPDATE agent_tasks SET strategy_id = NULL WHERE strategy_id = ?", (strategy_id,)
+            )
+            conn.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+    if not withdraw:
+        return reject_unfit_candidate(strategy_id, check, task_display_id)
+    _remove_imported_module(row["runtime_type"])
+    used = _record_no_signal_attempt(display_id) if display_id else 0
+    left = max(0, MAX_NO_SIGNAL_ATTEMPTS - used)
+    log.info("withdrew no-signal candidate %s (%d trades, needs %d)", strategy_id, check.trades, check.min_trades)
+    next_step = (
+        f"You have {left} more attempt{'s' if left != 1 else ''} in this task: loosen or "
+        "redesign the entry (conditions that rarely fire together, thresholds too extreme, an "
+        "input column with gaps), backtest until it reaches the minimum, then register it under "
+        "a new type_name."
+        if left
+        else "That was the last attempt in this task: do not register more; finish by writing "
+        "up what you tried and why it rarely fires."
+    )
+    return (
+        f"Error: candidate {strategy_id} was NOT registered: it made {check.trades} trades on "
+        f"{check.symbol} {check.timeframe} over the quick-screen window, and the quick screen "
+        f"needs at least {check.min_trades} to judge it. {next_step}"
     )

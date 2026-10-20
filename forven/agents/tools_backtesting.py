@@ -180,6 +180,7 @@ def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_rea
         check_candidate_trades,
         current_task_is_creation_task,
         reject_unfit_candidate,
+        withdraw_no_signal_candidate,
     )
 
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
@@ -203,6 +204,8 @@ def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_rea
         )
     remaining = _TOOL_CALL_SECONDS - _TOOL_CALL_MARGIN_SECONDS - (time.monotonic() - started_at)
     check = check_candidate_trades(strategy_id, budget_seconds=min(CANDIDATE_TRADE_CHECK_MAX_SECONDS, remaining))
+    if check.status == "too_few_trades":
+        return withdraw_no_signal_candidate(strategy_id, check, task_display_id)
     if check.status in REJECTED_CANDIDATE_STATUSES:
         return reject_unfit_candidate(strategy_id, check, task_display_id)
     if check.status == "ok":
