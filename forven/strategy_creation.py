@@ -64,7 +64,12 @@ AUTONOMOUS_TASK_DESCRIPTION = "Write one new trading idea and build a strategy f
         "with enough history (see the data schema in your context; list_local_datasets shows "
         "what is stored).",
         "Avoid what has already failed: read the failure patterns and strategy-family outcomes "
-        "in your context.",
+        "in your context, and do not rebuild known dead ends (plain EMA/MACD crosses, ORB/ROC "
+        "breakouts, RSI 30/70 fades on majors, naive taker-flow momentum, volatility risk premium "
+        "trades, prior-day high/low sweeps, calendar/flow effects, standalone funding-rate fades, "
+        "plain Bollinger fades on alts, generic Donchian/SuperTrend continuation). Design for an "
+        "edge across the full history and most liquid coins, with enough trades for the quick "
+        "screen's minimum trade count, and declare parameter_space() as a real search grid.",
         "Write the idea with create_hypothesis, including disproof: the backtest or forward "
         "result that would show the idea is wrong. An idea that needs a second asset's series, "
         "a second timeframe, or an input with no local feed cannot be built yet; pick another.",
