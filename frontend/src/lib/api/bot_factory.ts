@@ -93,6 +93,107 @@ export interface BotDecision {
 	cost_usd: number | null;
 	tokens_in: number | null;
 	tokens_out: number | null;
+	/** True when the prompt, reply and risk check were kept for the inspector. */
+	has_details?: boolean;
+}
+
+export interface BotPromptMessage {
+	role: string;
+	content: string;
+}
+
+/** One decision with what the bot was shown and answered (the inspector). */
+export interface BotDecisionDetail extends BotDecision {
+	details: {
+		model: string | null;
+		prompt: BotPromptMessage[] | null;
+		response: string | null;
+		parsed: Record<string, unknown> | null;
+		risk_check: { allowed: boolean; reason: string } | null;
+		created_at: string | null;
+	} | null;
+}
+
+export interface BotEquityPoint {
+	timestamp: string;
+	equity: number;
+}
+
+export interface BotPerformanceSummary {
+	starting_capital: number;
+	equity: number;
+	pnl_usd: number;
+	return_pct: number | null;
+	benchmark_symbol: string;
+	benchmark_return_pct: number | null;
+	excess_return_pct: number | null;
+	sharpe: number | null;
+	max_drawdown_pct: number;
+	closed_trades: number;
+	win_rate: number | null;
+	profit_factor: number | null;
+	fees_usd: number;
+	fees_per_trade_usd: number | null;
+	ai_cost_usd: number;
+	pnl_after_ai_usd: number;
+	ai_cost_pct_of_pnl: number | null;
+	start_at: string;
+	end_at: string;
+	open_positions: number;
+	funding_usd: number;
+}
+
+export interface BotPerformance {
+	bot_id: string;
+	summary: BotPerformanceSummary;
+	curve: BotEquityPoint[];
+	benchmark_curve: BotEquityPoint[] | null;
+}
+
+export interface BotChartMarker {
+	timestamp: string;
+	price: number;
+	type: 'entry' | 'exit';
+	direction: string | null;
+	pnl_usd?: number | null;
+}
+
+export interface BotChart {
+	bot_id: string;
+	pair: string;
+	pairs: string[];
+	timeframe: BotTimeframe;
+	candles: Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }>;
+	entries: BotChartMarker[];
+	exits: BotChartMarker[];
+}
+
+export type BotHealthLevel = 'ok' | 'warn' | 'bad' | 'idle';
+
+export interface BotFleetRow {
+	bot_id: string;
+	sparkline: number[];
+	equity: number;
+	return_pct: number | null;
+	benchmark_return_pct: number | null;
+	excess_return_pct: number | null;
+	win_rate: number | null;
+	closed_trades: number;
+	open_positions: number;
+	ai_cost_today_usd: number;
+	ai_cost_usd: number;
+	start_at: string;
+	health: {
+		level: BotHealthLevel;
+		reasons: string[];
+		last_decision_at: string | null;
+		last_action_type: string | null;
+	};
+}
+
+export interface BotFleet {
+	benchmark_symbol: string;
+	bots: BotFleetRow[];
 }
 
 export interface BotConfigVersion {
@@ -316,6 +417,57 @@ export async function getBotStats(id: string): Promise<BotStats> {
 
 export async function getBotDecisions(id: string, limit = 50): Promise<BotDecision[]> {
 	return fetchApi(`/bot-factory/bots/${id}/decisions?limit=${limit}`);
+}
+
+export async function getBotDecision(id: string, decisionId: number): Promise<BotDecisionDetail> {
+	return fetchApi(`/bot-factory/bots/${id}/decisions/${decisionId}`);
+}
+
+export async function getBotPerformance(id: string): Promise<BotPerformance> {
+	return fetchApi(`/bot-factory/bots/${id}/performance`);
+}
+
+export async function getBotChart(id: string, pair?: string | null): Promise<BotChart> {
+	const qs = pair ? `?pair=${encodeURIComponent(pair)}` : '';
+	return fetchApi(`/bot-factory/bots/${id}/chart${qs}`);
+}
+
+export async function getBotFleet(): Promise<BotFleet> {
+	return fetchApi('/bot-factory/fleet');
+}
+
+/** One decision on live data with the editor's settings; nothing is traded or logged. */
+export interface BotTestDecision {
+	ran: boolean;
+	reason?: string;
+	pairs?: string[];
+	stale_pairs: Record<string, string>;
+	open_positions?: number;
+	model?: string;
+	prompt?: BotPromptMessage[];
+	response?: string;
+	parsed?: Record<string, unknown>;
+	action?: string;
+	risk_check?: { allowed: boolean; reason: string };
+	cost_usd?: number | null;
+	tokens_in?: number | null;
+	tokens_out?: number | null;
+	priced?: boolean;
+}
+
+export async function testBotDecision(
+	config: Partial<BotConfig>,
+	botId?: string | null
+): Promise<BotTestDecision> {
+	return fetchApi('/bot-factory/test-decision', {
+		method: 'POST',
+		body: JSON.stringify({ bot_id: botId || null, config })
+	});
+}
+
+/** Move an existing bot onto the recommended settings (decide on each new candle). */
+export async function applyRecommendedBotSettings(id: string): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/apply-recommended`, { method: 'POST' });
 }
 
 export async function getBotVersions(id: string): Promise<BotConfigVersion[]> {

@@ -772,6 +772,15 @@ class BotManager:
         """Background loop that checks heartbeats and marks stale bots as error."""
         from datetime import datetime, timezone
 
+        from forven.bot_factory.alerts import BotAlertWatcher
+        from forven.db import get_bot_trade_events_since, list_bots
+        from forven.notifications import emit_notification
+
+        alerts = BotAlertWatcher(
+            list_bots=list_bots,
+            trade_events=get_bot_trade_events_since,
+            emit=emit_notification,
+        )
         cycle = 0
         while True:
             try:
@@ -836,6 +845,13 @@ class BotManager:
 
             except Exception as e:
                 logger.error("Bot monitor error: %s", e)
+
+            # After the status checks above, so a bot just marked dead is
+            # announced this cycle.
+            try:
+                alerts.poll()
+            except Exception as e:
+                logger.warning("Bot alerts failed: %s", e)
 
             await asyncio.sleep(_MONITOR_INTERVAL)
 

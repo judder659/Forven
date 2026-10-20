@@ -135,6 +135,15 @@ NOTIFICATION_CATEGORIES: tuple[NotificationCategory, ...] = (
         "Bot Factory trades",
         "A Bot Factory bot opened or closed a position.",
         popup=True,
+        discord_keys=("bot_trades_to_discord",),
+    ),
+    NotificationCategory(
+        "bot_alerts",
+        "trading",
+        "Bot Factory alerts",
+        "A bot paused (spend or call cap, drawdown limit, repeated errors) or stopped on an error.",
+        popup=True,
+        discord_keys=("bot_alerts_to_discord",),
     ),
     # -- Approvals & risk ----------------------------------------------------
     NotificationCategory(
@@ -349,6 +358,8 @@ _EVENT_CATEGORIES: dict[str, str] = {
     "digest_weekly": "digests",
     "overnight_summary": "digests",
     "notification_test": TEST_CATEGORY,
+    "bot_trade": "bot_trades",
+    "bot_alert": "bot_alerts",
 }
 
 _TRADE_EVENT_CATEGORIES: dict[str, tuple[str, str]] = {

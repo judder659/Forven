@@ -639,3 +639,378 @@ def api_bot_credential(bot_id: str, token: str | None) -> dict:
     if not provider or not bot_process_is_live(bot_id):
         raise PermissionError("invalid bot credential token")
     return brokered_credential_for_bot(bot_id, provider)
+
+
+# ── Cockpit: performance, chart, fleet, decision inspector ───────────
+
+BENCHMARK_SYMBOL = "BTC/USDT"
+_CHART_BARS = 300
+
+
+def _now_utc():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def _coin_of(pair: object) -> str:
+    raw = str(pair or "").strip().upper()
+    return raw.split("/", 1)[0] if "/" in raw else raw
+
+
+def _price_marks() -> dict[str, float]:
+    """Latest marks by coin from the daemon's price snapshot ({} when down)."""
+    try:
+        from forven.market_cache import load_price_snapshot
+
+        prices, _age = load_price_snapshot()
+        return {str(k).upper(): float(v) for k, v in (prices or {}).items() if v}
+    except Exception:
+        return {}
+
+
+def _ledger_unrealized(ledger: list[dict], marks: dict[str, float]) -> float:
+    """Unrealized P&L of a ledger's open trades at the given marks, net of the
+    entry fee already paid. Trades with no mark count as flat."""
+    total = 0.0
+    for trade in ledger:
+        if trade.get("status") != "OPEN":
+            continue
+        mark = marks.get(_coin_of(trade.get("pair")))
+        entry = float(trade.get("entry_price") or 0)
+        size = float(trade.get("size") or 0)
+        if not mark or not entry or not size:
+            continue
+        sign = -1.0 if str(trade.get("direction") or "long") == "short" else 1.0
+        total += (mark - entry) * size * sign - float(trade.get("fees_usd") or 0)
+    return total
+
+
+def _candle_rows(pair: str, timeframe: str, *, start=None, max_rows: int = _CHART_BARS) -> list[dict]:
+    """Stored closed candles as {timestamp, open, high, low, close, volume}."""
+    from forven.data import load_parquet
+    from forven.market_data import dataframe_to_ohlcv_rows
+
+    try:
+        df = load_parquet(pair, timeframe, start=start) if start is not None else load_parquet(pair, timeframe)
+    except Exception:
+        df = None
+    if df is None or df.empty:
+        return []
+    from forven.bot_factory.runner import _indexed_by_time
+
+    rows = dataframe_to_ohlcv_rows(_indexed_by_time(df), max_rows=max_rows)
+    return [
+        {"timestamp": r["t"], "open": r["open"], "high": r["high"], "low": r["low"],
+         "close": r["close"], "volume": r["volume"]}
+        for r in rows
+    ]
+
+
+def _benchmark_prices(start) -> list[tuple]:
+    """Hourly benchmark closes from a little before `start`, as (time, close)."""
+    from datetime import timedelta
+
+    from forven.bot_factory.performance import parse_time
+
+    if start is None:
+        return []
+    naive_start = (start - timedelta(hours=2)).replace(tzinfo=None)
+    rows = _candle_rows(BENCHMARK_SYMBOL, "1h", start=naive_start, max_rows=200_000)
+    return [(parse_time(r["timestamp"]), r["close"]) for r in rows]
+
+
+def _bot_performance(
+    bot: dict,
+    *,
+    ledger: list[dict],
+    digest: dict | None,
+    marks: dict[str, float],
+    benchmark_prices: list[tuple] | None,
+    ai_cost_usd: float,
+    funding_accrued: float,
+) -> dict:
+    from forven.bot_factory.performance import (
+        benchmark_curve,
+        equity_curve,
+        performance_start,
+        summarize,
+    )
+
+    now = _now_utc()
+    capital = float(bot.get("capital_allocation") or 0)
+    start = performance_start(
+        ledger,
+        first_decision_at=(digest or {}).get("first_decision_at"),
+        created_at=bot.get("created_at"),
+    ) or now
+    realized = sum(
+        float(t["pnl_usd"]) for t in ledger if t.get("status") == "CLOSED" and t.get("pnl_usd") is not None
+    ) - float(funding_accrued or 0)
+    current_equity = capital + realized + _ledger_unrealized(ledger, marks)
+    curve = equity_curve(capital, ledger, start_at=min(start, now), now=now, current_equity=current_equity)
+    bench = benchmark_curve(benchmark_prices or [], curve, capital) if benchmark_prices else None
+    summary = summarize(
+        starting_capital=capital,
+        ledger=ledger,
+        curve=curve,
+        benchmark=bench,
+        ai_cost_usd=ai_cost_usd,
+        benchmark_symbol=BENCHMARK_SYMBOL,
+    )
+    summary["start_at"] = curve[0]["timestamp"]
+    summary["end_at"] = curve[-1]["timestamp"]
+    summary["open_positions"] = sum(1 for t in ledger if t.get("status") == "OPEN")
+    summary["funding_usd"] = round(float(funding_accrued or 0), 4)
+    return {"summary": summary, "curve": curve, "benchmark_curve": bench}
+
+
+def api_bot_performance(bot_id: str) -> dict:
+    """Equity curve, buy-and-hold benchmark and stat tiles for one bot."""
+    from forven.db import get_bot_ai_usage, get_bot_trade_ledger, get_fleet_decision_digest
+
+    bot = get_bot(bot_id)
+    if not bot:
+        raise LookupError(f"Bot {bot_id} not found")
+    ledger = get_bot_trade_ledger(bot_id)
+    digest = get_fleet_decision_digest().get(bot_id)
+    equity_state = get_bot_equity_state(bot_id) or {}
+    from forven.bot_factory.performance import performance_start
+
+    start = performance_start(
+        ledger,
+        first_decision_at=(digest or {}).get("first_decision_at"),
+        created_at=bot.get("created_at"),
+    )
+    perf = _bot_performance(
+        bot,
+        ledger=ledger,
+        digest=digest,
+        marks=_price_marks(),
+        benchmark_prices=_benchmark_prices(start),
+        ai_cost_usd=get_bot_ai_usage(bot_id)["total_cost_usd"],
+        funding_accrued=float(equity_state.get("funding_accrued") or 0),
+    )
+    perf["bot_id"] = bot_id
+    return perf
+
+
+def api_bot_chart(bot_id: str, pair: str | None = None, bars: int = _CHART_BARS) -> dict:
+    """Candles of the bot's timeframe for one pair, with its entries and exits."""
+    from forven.bot_factory.performance import parse_time
+    from forven.db import get_bot_trade_ledger, normalize_bot_timeframe
+
+    bot = get_bot(bot_id)
+    if not bot:
+        raise LookupError(f"Bot {bot_id} not found")
+    timeframe = normalize_bot_timeframe(bot.get("timeframe"))
+    ledger = get_bot_trade_ledger(bot_id)
+
+    pairs: list[str] = []
+    for trade in reversed(ledger):  # most recently traded first
+        if trade.get("pair") and trade["pair"] not in pairs:
+            pairs.append(trade["pair"])
+    locked = bot.get("locked_pairs")
+    if bot.get("asset_mode") == "locked" and isinstance(locked, list):
+        pairs += [p for p in locked if p and p not in pairs]
+    if not pairs:
+        pairs = [BENCHMARK_SYMBOL]
+    chosen = pair if pair else pairs[0]
+
+    candles = _candle_rows(chosen, timeframe, max_rows=max(20, min(int(bars), 1000)))
+    first = parse_time(candles[0]["timestamp"]) if candles else None
+    entries: list[dict] = []
+    exits: list[dict] = []
+    for trade in ledger:
+        if trade.get("pair") != chosen:
+            continue
+        opened = parse_time(trade.get("opened_at"))
+        if opened and trade.get("entry_price") and (first is None or opened >= first):
+            entries.append({
+                "timestamp": opened.isoformat(), "price": float(trade["entry_price"]),
+                "type": "entry", "direction": trade.get("direction"),
+            })
+        closed = parse_time(trade.get("closed_at"))
+        if closed and trade.get("exit_price") and (first is None or closed >= first):
+            exits.append({
+                "timestamp": closed.isoformat(), "price": float(trade["exit_price"]),
+                "type": "exit", "direction": trade.get("direction"), "pnl_usd": trade.get("pnl_usd"),
+            })
+    return {
+        "bot_id": bot_id,
+        "pair": chosen,
+        "pairs": pairs if chosen in pairs else [chosen, *pairs],
+        "timeframe": timeframe,
+        "candles": candles,
+        "entries": entries,
+        "exits": exits,
+    }
+
+
+def _bot_health(bot: dict, digest: dict | None, now) -> dict:
+    """A health dot: model callable, process alive, deciding on schedule, and
+    candles fresh. Levels: ok, warn, bad, or idle for a healthy stopped bot."""
+    from forven.bot_factory.performance import parse_time
+    from forven.db import BOT_TIMEFRAME_MINUTES, normalize_bot_cadence, normalize_bot_timeframe
+
+    bad: list[str] = []
+    warn: list[str] = []
+    status = str(bot.get("runtime_status") or bot.get("status") or "stopped")
+    check = bot.get("model_check") or {}
+    if check and not check.get("ok"):
+        bad.append(f"Model unavailable: {check.get('reason') or 'cannot be called'}")
+    if status == "error":
+        bad.append(bot.get("error_message") or "Stopped on an error")
+    elif status == "paused":
+        warn.append(bot.get("error_message") or "Paused")
+
+    last_at = parse_time((digest or {}).get("last_decision_at"))
+    last_type = (digest or {}).get("last_action_type")
+    if status == "running":
+        beat = parse_time(bot.get("last_heartbeat"))
+        if beat is None or (now - beat).total_seconds() > 90:
+            bad.append("No heartbeat from the bot process in the last 90 seconds")
+        bar_seconds = BOT_TIMEFRAME_MINUTES[normalize_bot_timeframe(bot.get("timeframe"))] * 60
+        if normalize_bot_cadence(bot.get("decision_cadence")) == "candle_close":
+            allowed_gap = 2 * bar_seconds + 300
+        else:
+            allowed_gap = max(3 * int(bot.get("cooldown_seconds") or 60), 180) + 120
+        started = parse_time(bot.get("started_at"))
+        reference = max([t for t in (last_at, started) if t is not None], default=None)
+        if reference is None or (now - reference).total_seconds() > allowed_gap:
+            warn.append("No decision when one was due")
+        if last_type == "skipped":
+            warn.append("Candles are stale, so the bot is skipping decisions")
+        elif last_type == "error":
+            warn.append("The last decision failed")
+
+    if bad:
+        level = "bad"
+    elif warn:
+        level = "warn"
+    else:
+        level = "ok" if status == "running" else "idle"
+    return {
+        "level": level,
+        "reasons": bad + warn,
+        "last_decision_at": last_at.isoformat() if last_at else None,
+        "last_action_type": last_type,
+    }
+
+
+def api_fleet() -> dict:
+    """One row of cockpit metrics per bot: sparkline, return against
+    buy-and-hold, win rate, today's AI cost and a health dot."""
+    from forven.bot_factory.performance import performance_start, sparkline
+    from forven.db import get_bot_ai_usage, get_bot_trade_ledger, get_fleet_decision_digest
+
+    bots = api_list_bots()
+    digests = get_fleet_decision_digest()
+    marks = _price_marks()
+    now = _now_utc()
+    ledgers = {b["id"]: get_bot_trade_ledger(b["id"]) for b in bots}
+    starts = [
+        performance_start(
+            ledgers[b["id"]],
+            first_decision_at=(digests.get(b["id"]) or {}).get("first_decision_at"),
+            created_at=b.get("created_at"),
+        )
+        for b in bots
+    ]
+    earliest = min([s for s in starts if s is not None], default=None)
+    prices = _benchmark_prices(earliest)
+
+    rows = []
+    for bot in bots:
+        perf = _bot_performance(
+            bot,
+            ledger=ledgers[bot["id"]],
+            digest=digests.get(bot["id"]),
+            marks=marks,
+            benchmark_prices=prices,
+            ai_cost_usd=get_bot_ai_usage(bot["id"])["total_cost_usd"],
+            funding_accrued=float(bot.get("funding_accrued") or 0),
+        )
+        summary = perf["summary"]
+        rows.append({
+            "bot_id": bot["id"],
+            "sparkline": sparkline(perf["curve"]),
+            "equity": summary["equity"],
+            "return_pct": summary["return_pct"],
+            "benchmark_return_pct": summary["benchmark_return_pct"],
+            "excess_return_pct": summary["excess_return_pct"],
+            "win_rate": summary["win_rate"],
+            "closed_trades": summary["closed_trades"],
+            "open_positions": summary["open_positions"],
+            "ai_cost_today_usd": round(float(bot.get("llm_cost_today") or 0), 4),
+            "ai_cost_usd": summary["ai_cost_usd"],
+            "start_at": summary["start_at"],
+            "health": _bot_health(bot, digests.get(bot["id"]), now),
+        })
+    return {"benchmark_symbol": BENCHMARK_SYMBOL, "bots": rows}
+
+
+def api_get_decision(bot_id: str, decision_id: int) -> dict:
+    """One decision with its prompt, reply and risk check (the inspector)."""
+    from forven.db import get_bot_decision
+
+    decision = get_bot_decision(bot_id, decision_id)
+    if decision is None:
+        raise LookupError(f"Decision {decision_id} not found for bot {bot_id}")
+    return decision
+
+
+RECOMMENDED_BOT_SETTINGS = {"decision_cadence": "candle_close"}
+
+
+def api_apply_recommended(bot_id: str) -> dict:
+    """Move an existing bot onto the recommended settings (decide on each new
+    candle). A running bot picks the change up on its next tick."""
+    if not get_bot(bot_id):
+        raise LookupError(f"Bot {bot_id} not found")
+    update_bot(bot_id, dict(RECOMMENDED_BOT_SETTINGS))
+    return _with_model_check(get_bot(bot_id))
+
+
+async def api_test_decision(config: dict, bot_id: str | None = None) -> dict:
+    """Run one decision on live data with the editor's settings: the full
+    prompt, the model's answer and the risk check, with nothing traded,
+    logged or counted against the bot's daily caps. An existing bot's saved
+    settings, open positions and P&L fill in what the editor leaves out."""
+    import asyncio
+    import os
+
+    from forven.bot_factory.engine import preview_decision
+    from forven.bot_factory.models import BotConfigCreate
+    from forven.bot_factory.runner import BotRunner
+
+    base = get_bot(bot_id) if bot_id else None
+    if bot_id and not base:
+        raise LookupError(f"Bot {bot_id} not found")
+    merged = {**BotConfigCreate().model_dump(), **(base or {})}
+    merged.update({k: v for k, v in (config or {}).items() if v is not None})
+
+    positions: list[dict] = []
+    realized_pnl = 0.0
+    if base:
+        positions = get_open_bot_positions(bot_id)
+        realized_pnl = float((get_bot_equity_state(bot_id) or {}).get("realized_pnl") or 0)
+
+    runner = BotRunner(bot_id or "test-decision", parent_pid=os.getpid())
+    runner._config = merged
+    snapshot = await asyncio.get_running_loop().run_in_executor(None, runner._fetch_market_snapshot)
+    stale = (snapshot or {}).get("stale_pairs") or {}
+    if not snapshot or not snapshot.get("pairs"):
+        return {
+            "ran": False,
+            "reason": "No fresh candles for the bot's pairs, so a running bot would skip this cycle too.",
+            "stale_pairs": stale,
+        }
+    result = await preview_decision(merged, snapshot, positions=positions, realized_pnl=realized_pnl)
+    return {
+        "ran": True,
+        "pairs": sorted(snapshot["pairs"]),
+        "stale_pairs": stale,
+        "open_positions": len(positions),
+        **result,
+    }

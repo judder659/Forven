@@ -245,21 +245,39 @@ def enforce_risk_limits(
 ) -> dict | None:
     """Validate a proposed trade against risk limits.
 
-    Returns the trade dict if allowed, or None if blocked. Hard blocks:
-    unpriceable opens, max concurrent positions, non-positive size, and a
-    per-position size above max_position_pct of equity. The AGGREGATE exposure
-    check is a SOFT warning only — paper leverage (max_position_pct ×
+    Returns the trade dict if allowed, or None if blocked; see
+    check_risk_limits for the rules and the reason."""
+    allowed, _reason = check_risk_limits(
+        trade, bot_config, current_positions, market_event, realized_pnl=realized_pnl
+    )
+    return allowed
+
+
+def check_risk_limits(
+    trade: dict,
+    bot_config: dict,
+    current_positions: list[dict] | None = None,
+    market_event: dict | None = None,
+    *,
+    realized_pnl: float = 0.0,
+) -> tuple[dict | None, str]:
+    """Validate a proposed trade against risk limits and say why.
+
+    Returns (trade, reason) if allowed, or (None, reason) if blocked. Hard
+    blocks: unpriceable opens, max concurrent positions, non-positive size, and
+    a per-position size above max_position_pct of equity. The AGGREGATE
+    exposure check is a SOFT warning only — paper leverage (max_position_pct ×
     max_concurrent > 100%) is allowed by design.
     """
     if not trade or trade.get("action") in ("HOLD", "OBSERVE", None):
-        return trade
+        return trade, "No trade proposed."
 
     action = (trade.get("action") or "").upper()
     positions = current_positions or []
 
     if action not in _OPEN_ACTIONS:
         # Closes (SELL/COVER) are not size-gated.
-        return trade
+        return trade, "Closing a position is always allowed."
 
     ticker = trade.get("ticker")
     # Only open positions we can actually price from the live snapshot. This
@@ -272,7 +290,7 @@ def enforce_risk_limits(
             "Trade blocked: %s %s is not priceable from the market snapshot",
             action, ticker,
         )
-        return None
+        return None, f"Blocked: {ticker or 'no ticker'} is not in the market data the bot was shown."
 
     # Max concurrent positions (applies to every open, long or short).
     max_concurrent = bot_config.get("max_concurrent_positions", 5)
@@ -280,12 +298,12 @@ def enforce_risk_limits(
         logger.warning(
             "Trade blocked: max concurrent positions (%d) reached", max_concurrent
         )
-        return None
+        return None, f"Blocked: already holding the maximum of {max_concurrent} positions."
 
     qty = trade.get("qty", 0) or 0
     if qty <= 0:
         logger.info("Trade blocked: non-positive size for %s %s", action, ticker)
-        return None
+        return None, "Blocked: the position size came out at zero."
 
     equity = float(bot_config.get("capital_allocation", 100000) or 0) + float(realized_pnl or 0)
     max_pct = float(bot_config.get("max_position_pct", 10)) / 100.0
@@ -297,7 +315,10 @@ def enforce_risk_limits(
             "Trade blocked: position value $%.2f exceeds max $%.2f (%.1f%% of equity $%.2f)",
             position_value, max_value, max_pct * 100, equity,
         )
-        return None
+        return None, (
+            f"Blocked: ${position_value:,.2f} is above the ${max_value:,.2f} limit "
+            f"({max_pct * 100:g}% of ${equity:,.2f} equity)."
+        )
 
     # Soft cash gate: warn (but allow) when total deployed notional would exceed
     # equity. Leverage is a deliberate paper feature, not an error.
@@ -315,7 +336,120 @@ def enforce_risk_limits(
             bot_key, deployed, position_value, equity,
         )
 
-    return trade
+    reason = (
+        f"Allowed: {action} {ticker} ${position_value:,.2f} "
+        f"({position_value / equity * 100 if equity > 0 else 0:.1f}% of ${equity:,.2f} equity, "
+        f"limit {max_pct * 100:g}%), {len(positions) + 1} of {max_concurrent} positions."
+    )
+    return trade, reason
+
+
+def _size_and_check(
+    action: str,
+    parsed: dict,
+    bot_config: dict,
+    positions: list[dict] | None,
+    market_event: dict | None,
+    realized_pnl: float,
+) -> tuple[dict | None, str]:
+    """Size an open from equity, or pin the lot a close refers to, then run
+    the risk check. Mutates `parsed` with qty (and the lot for closes)."""
+    ticker = parsed.get("ticker")
+    # BUY/SELL operate on the LONG book, SHORT/COVER on the SHORT book.
+    target_direction = "long" if action in ("BUY", "SELL") else "short"
+    if action in _OPEN_ACTIONS:
+        # Auto-size qty from current equity (capital + realized P&L) and
+        # price — fractional, matching the "% of equity" the prompt shows.
+        qty = parsed.get("qty") or 0
+        if (not qty or qty <= 0) and ticker and market_event:
+            price = _get_current_price(ticker, market_event)
+            if price and price > 0:
+                equity = float(bot_config.get("capital_allocation", 100000) or 0) + float(realized_pnl or 0)
+                max_pct = float(bot_config.get("max_position_pct", 10)) / 100.0
+                qty = _quantize_qty((equity * max_pct) / price)
+        parsed["qty"] = qty
+    elif ticker and positions:
+        # Pin the exact open lot to close — the position whose direction
+        # matches the action (SELL→long, COVER→short) on this ticker.
+        for p in positions:
+            if p.get("ticker") == ticker and (p.get("direction") or "long") == target_direction:
+                parsed["qty"] = p.get("qty", 0)
+                parsed["trade_id"] = p.get("trade_id")
+                parsed["entry_price"] = p.get("entry_price")
+                parsed["direction"] = target_direction
+                break
+    return check_risk_limits(
+        parsed, bot_config, positions, market_event, realized_pnl=realized_pnl
+    )
+
+
+def _resolve_model(bot_config: dict) -> str:
+    # Fall back to the operator's configured primary so a bot whose model was
+    # cleared still routes to a working provider.
+    model = bot_config.get("model")
+    if not model:
+        try:
+            from forven.model_routing import get_primary_provider_model
+
+            _, model = get_primary_provider_model()
+        except Exception:
+            model = "gpt-4.1-mini"
+    return model
+
+
+_MAX_TOKENS_BY_VERBOSITY = {"minimal": 512, "standard": 1024, "verbose": 2048}
+
+
+async def preview_decision(
+    bot_config: dict,
+    market_event: dict | None,
+    positions: list[dict] | None = None,
+    realized_pnl: float = 0.0,
+) -> dict:
+    """One decision on current data with no side effects: nothing is traded,
+    logged or counted against the bot's caps. Used by "Test one decision"."""
+    messages = assemble_prompt(
+        bot_config, market_event=market_event, positions=positions, realized_pnl=realized_pnl,
+    )
+    model = _resolve_model(bot_config)
+    verbosity = bot_config.get("reasoning_verbosity", "standard")
+
+    from forven.ai import call_ai, normalize_provider_and_model
+    from forven.bot_factory.ai_costs import estimate_call_cost
+
+    provider, resolved_model = normalize_provider_and_model("auto", model)
+    response_text = await call_ai(
+        provider=provider,
+        model=resolved_model,
+        messages=messages,
+        max_tokens=_MAX_TOKENS_BY_VERBOSITY.get(verbosity, 1024),
+        temperature=0.7,
+        fallback=False,
+    )
+    usage = estimate_call_cost(provider, resolved_model, messages, response_text)
+    parsed = _parse_llm_response(response_text)
+    if not isinstance(parsed, dict):
+        parsed = {"action": "HOLD", "reasoning": str(response_text)[:200]}
+    action = (parsed.get("action") or "HOLD").upper()
+    if action in _OPEN_ACTIONS or action in _CLOSE_ACTIONS:
+        trade, reason = _size_and_check(action, dict(parsed), bot_config, positions, market_event, realized_pnl)
+        risk_check = {"allowed": trade is not None, "reason": reason}
+        if trade is not None:
+            parsed = trade
+    else:
+        risk_check = {"allowed": True, "reason": "No trade proposed."}
+    return {
+        "model": f"{provider}:{resolved_model}",
+        "prompt": messages,
+        "response": response_text,
+        "parsed": parsed,
+        "action": action,
+        "risk_check": risk_check,
+        "cost_usd": usage.get("cost_usd"),
+        "tokens_in": usage.get("tokens_in"),
+        "tokens_out": usage.get("tokens_out"),
+        "priced": usage.get("priced"),
+    }
 
 
 async def run_decision_cycle(
@@ -356,19 +490,9 @@ async def run_decision_cycle(
         realized_pnl=realized_pnl,
     )
 
-    # Determine provider from model; fall back to the operator's configured
-    # primary so a bot whose model was cleared still routes to a working provider.
-    model = bot_config.get("model")
-    if not model:
-        try:
-            from forven.model_routing import get_primary_provider_model
-
-            _, model = get_primary_provider_model()
-        except Exception:
-            model = "gpt-4.1-mini"
-
+    model = _resolve_model(bot_config)
     verbosity = bot_config.get("reasoning_verbosity", "standard")
-    max_tokens = {"minimal": 512, "standard": 1024, "verbose": 2048}.get(verbosity, 1024)
+    max_tokens = _MAX_TOKENS_BY_VERBOSITY.get(verbosity, 1024)
 
     try:
         from forven.ai import call_ai, normalize_provider_and_model
@@ -393,6 +517,7 @@ async def run_decision_cycle(
 
         # Parse response
         parsed = _parse_llm_response(response_text)
+        risk_check = {"allowed": True, "reason": "No trade proposed."}
         action = (parsed.get("action") or "HOLD").upper()
         reasoning = parsed.get("reasoning", "")
 
@@ -402,31 +527,10 @@ async def run_decision_cycle(
             # BUY/SELL operate on the LONG book, SHORT/COVER on the SHORT book.
             target_direction = "long" if action in ("BUY", "SELL") else "short"
 
-            if action in _OPEN_ACTIONS:
-                # Auto-size qty from current equity (capital + realized P&L) and
-                # price — fractional, matching the "% of equity" the prompt shows.
-                qty = parsed.get("qty") or 0
-                if (not qty or qty <= 0) and ticker and market_event:
-                    price = _get_current_price(ticker, market_event)
-                    if price and price > 0:
-                        equity = float(bot_config.get("capital_allocation", 100000) or 0) + float(realized_pnl or 0)
-                        max_pct = float(bot_config.get("max_position_pct", 10)) / 100.0
-                        qty = _quantize_qty((equity * max_pct) / price)
-                parsed["qty"] = qty
-            elif ticker and positions:
-                # Pin the exact open lot to close — the position whose direction
-                # matches the action (SELL→long, COVER→short) on this ticker.
-                for p in positions:
-                    if p.get("ticker") == ticker and (p.get("direction") or "long") == target_direction:
-                        parsed["qty"] = p.get("qty", 0)
-                        parsed["trade_id"] = p.get("trade_id")
-                        parsed["entry_price"] = p.get("entry_price")
-                        parsed["direction"] = target_direction
-                        break
-
-            trade = enforce_risk_limits(
-                parsed, bot_config, positions, market_event, realized_pnl=realized_pnl
+            trade, risk_reason = _size_and_check(
+                action, parsed, bot_config, positions, market_event, realized_pnl
             )
+            risk_check = {"allowed": trade is not None, "reason": risk_reason}
             if trade is None:
                 result = DecisionResult(
                     action_type="pass",
@@ -472,6 +576,13 @@ async def run_decision_cycle(
             cost_usd=usage.get("cost_usd"),
             tokens_in=usage.get("tokens_in"),
             tokens_out=usage.get("tokens_out"),
+            details={
+                "model": f"{provider}:{resolved_model}",
+                "prompt": messages,
+                "response": response_text,
+                "parsed": dict(parsed),
+                "risk_check": risk_check,
+            },
         )
 
         record_success(bot_id)
@@ -512,6 +623,7 @@ async def run_decision_cycle(
             action_data={"error": str(e)},
             verbosity="standard",
             run_id=bot_config.get("run_id"),
+            details={"model": model, "prompt": messages, "response": None},
         )
 
         return DecisionResult(

@@ -216,6 +216,58 @@ def get_bot_decisions(bot_id: str, limit: int = 50):
     return bf_domain.api_get_decisions(bot_id, limit=limit)
 
 
+@router.get("/api/bot-factory/bots/{bot_id}/decisions/{decision_id}")
+def get_bot_decision(bot_id: str, decision_id: int):
+    try:
+        return bf_domain.api_get_decision(bot_id, decision_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/api/bot-factory/bots/{bot_id}/performance")
+def get_bot_performance(bot_id: str):
+    try:
+        return bf_domain.api_bot_performance(bot_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/api/bot-factory/bots/{bot_id}/chart")
+def get_bot_chart(bot_id: str, pair: str | None = None, bars: int = 300):
+    try:
+        return bf_domain.api_bot_chart(bot_id, pair=pair, bars=bars)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/api/bot-factory/bots/{bot_id}/apply-recommended")
+def apply_recommended(bot_id: str):
+    try:
+        return bf_domain.api_apply_recommended(bot_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class BotTestDecisionRequest(BaseModel):
+    bot_id: str | None = None  # existing bot: its positions and P&L join the prompt
+    config: dict = {}  # the editor's settings, saved or not
+
+
+@router.post("/api/bot-factory/test-decision")
+async def test_decision(body: BotTestDecisionRequest):
+    try:
+        return await bf_domain.api_test_decision(body.config, bot_id=body.bot_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Test decision failed: {e}")
+
+
+@router.get("/api/bot-factory/fleet")
+def get_fleet():
+    return bf_domain.api_fleet()
+
+
 @router.get("/api/bot-factory/bots/{bot_id}/versions")
 def get_bot_versions(bot_id: str):
     return bf_domain.api_get_versions(bot_id)

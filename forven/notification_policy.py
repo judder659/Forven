@@ -39,6 +39,10 @@ DEFAULT_NOTIFICATION_PREFERENCES: dict[str, Any] = {
     "bug_report_to_discord": True,
     "brain_response_to_discord": True,
     "digests_to_discord": True,
+    # Bot Factory: pauses and errors reach Discord; fills stay in the app
+    # unless switched on (a busy bot trades many times a day).
+    "bot_alerts_to_discord": True,
+    "bot_trades_to_discord": False,
     # In-app channels (popup_<category>, badge_<page>), one per catalog entry.
     **popup_preference_defaults(),
     **badge_preference_defaults(),
@@ -145,6 +149,22 @@ def resolve_notification_policy(
             channel_name=channel_name or trade_channel,
             send_to_discord=bool(prefs.get(pref_key, True)),
             cooldown_seconds=300,
+        )
+    elif event_type == "bot_trade":
+        send_to_discord = bool(prefs.get("bot_trades_to_discord", False))
+        policy.update(
+            delivery_mode="discord_immediate" if send_to_discord else "app_only",
+            channel_name=channel_name or trade_channel,
+            send_to_discord=send_to_discord,
+            cooldown_seconds=0,
+        )
+    elif event_type == "bot_alert":
+        send_to_discord = bool(prefs.get("bot_alerts_to_discord", True))
+        policy.update(
+            delivery_mode="discord_immediate" if send_to_discord else "app_only",
+            channel_name=channel_name or "alerts",
+            send_to_discord=send_to_discord,
+            cooldown_seconds=900,
         )
     elif event_type == "trade_failed":
         policy.update(
