@@ -4,6 +4,8 @@ import { num, parseTs, timeframeMs } from './format';
 
 export interface Leg {
 	id: string;
+	/** The leg's own market; differs from the session's for another coin of a multi-coin container. */
+	symbol?: string | null;
 	side: 'long' | 'short';
 	size: number;
 	entry: number;
@@ -29,6 +31,7 @@ function toLeg(position: PaperPosition, primary: boolean): Leg | null {
 	if ((side !== 'long' && side !== 'short') || size === null || size <= 0 || entry === null) return null;
 	return {
 		id: String(position.id ?? ''),
+		symbol: String(position.symbol ?? '').trim() || null,
 		side,
 		size,
 		entry,

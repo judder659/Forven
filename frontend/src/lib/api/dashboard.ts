@@ -5,6 +5,7 @@ import {
 	isNotFoundError,
 } from './core';
 import { getForvenStrategiesQuery } from './forven';
+import { parseCoinBreakdown, parseMultiCoin, type CoinForward, type MultiCoinInfo } from './multiCoin';
 import type { ManualScannerRunResponse } from './forven';
 
 // ============================================================================
@@ -733,6 +734,10 @@ export interface PaperSessionSummaryRow {
 	realized_pnl_usd: number;
 	win_rate_pct: number | null;
 	close_reasons: Record<string, number>;
+	/** Multi-coin container: the frozen coin list, else null. */
+	multi_coin: MultiCoinInfo | null;
+	/** Each coin's record (containers only), else null. */
+	coin_breakdown: CoinForward[] | null;
 }
 
 export interface PaperSummaryTotals {
@@ -789,6 +794,8 @@ export async function getPaperSummary(includeDeployed = false): Promise<PaperSum
 				realized_pnl_usd: toNumberOr(rec.realized_pnl_usd, 0),
 				win_rate_pct: normalizeWinRate(rec.win_rate_pct),
 				close_reasons: normalizeCloseReasons(rec.close_reasons),
+				multi_coin: parseMultiCoin(rec.multi_coin),
+				coin_breakdown: rec.coin_breakdown == null ? null : parseCoinBreakdown(rec.coin_breakdown),
 			};
 		})
 		.filter((row): row is PaperSessionSummaryRow => Boolean(row));

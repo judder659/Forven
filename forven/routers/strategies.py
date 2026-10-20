@@ -1037,3 +1037,14 @@ def lab_now_working():
             }
         )
     return out
+
+
+class StrategyCoinsBody(BaseModel):
+    # Home coin first or omitted (it always trades); pairs like "UNI/USDT" are accepted.
+    coins: list[str] = Field(default_factory=list, max_length=30)
+
+
+@router.put("/api/strategies/{strategy_id}/coins")
+def update_strategy_coins(strategy_id: str, body: StrategyCoinsBody):
+    """Set the coins a strategy paper-trades (multi-coin container)."""
+    return lifecycle.set_strategy_coins(strategy_id, body.coins, actor="ui")

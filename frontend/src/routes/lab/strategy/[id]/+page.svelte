@@ -98,6 +98,8 @@
 	import LifecycleRail from '$lib/components/strategy/container/LifecycleRail.svelte';
 	import VerdictCard from '$lib/components/strategy/container/VerdictCard.svelte';
 	import StandingCard from '$lib/components/strategy/container/StandingCard.svelte';
+	import CoinBreakdown from '$lib/components/strategy/container/CoinBreakdown.svelte';
+	import CoinListEditor from '$lib/components/strategy/container/CoinListEditor.svelte';
 	import EvidenceLadder from '$lib/components/strategy/container/EvidenceLadder.svelte';
 	import EvidenceTimeline from '$lib/components/strategy/container/EvidenceTimeline.svelte';
 	import RobustnessScorecard from '$lib/components/strategy/container/RobustnessScorecard.svelte';
@@ -750,6 +752,9 @@
 	$: headerFacts = container
 		? [
 				{ value: String(container.configuration.symbol ?? container.strategy.symbol ?? '—'), label: '', title: 'Configured market' },
+				...(multiCoin
+					? [{ value: `+${multiCoin.coins.length - 1} coins`, label: '', title: `Multi-coin paper: also trades ${multiCoin.coins.slice(1).join(', ')}` }]
+					: []),
 				{ value: String(container.configuration.timeframe ?? container.strategy.timeframe ?? '—'), label: 'timeframe', title: 'Configured timeframe' },
 				...(headerTradeMode ? [{ value: headerTradeMode, label: '', title: 'Trade mode' }] : []),
 				{ value: String(container.configuration.owner ?? container.strategy.owner ?? '—'), label: 'owner', title: 'Owner' },
@@ -1275,6 +1280,26 @@
 	// ── Execution tab: rich trade/position views ─────────────────────────────────
 	$: executionClosedTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'CLOSED');
 	$: executionOpenTrades = executionTrades.filter((row) => String(row.status ?? '').trim().toUpperCase() === 'OPEN');
+	// Multi-coin paper container (backend forven.multi_coin): one rule on several coins.
+	$: multiCoin = container?.multi_coin ?? null;
+	$: coinList = container?.coin_list ?? null;
+	let editingCoins = false;
+	$: openCoins = [...new Set(executionOpenTrades.filter((row) => tradeBook(row) !== 'live').map((row) => tradeCoin(row)))];
+	async function onCoinsSaved(): Promise<void> {
+		editingCoins = false;
+		tradeCoinFilter = 'all';
+		addToast('Coins saved', 'success');
+		await loadContainer();
+	}
+	let tradeCoinFilter = 'all';
+	$: if (!multiCoin) tradeCoinFilter = 'all';
+	function tradeCoin(row: Record<string, unknown>): string {
+		return String(row.asset ?? '').trim().toUpperCase().split(/[/:-]/)[0];
+	}
+	$: shownOpenTrades = tradeCoinFilter === 'all' ? executionOpenTrades : executionOpenTrades.filter((row) => tradeCoin(row) === tradeCoinFilter);
+	$: shownClosedTrades = tradeCoinFilter === 'all' ? executionClosedTrades : executionClosedTrades.filter((row) => tradeCoin(row) === tradeCoinFilter);
+	// The close button closes the session's newest open position; name its coin when there are several.
+	$: closeTargetCoin = multiCoin && executionOpenTrades.length > 0 ? tradeCoin(executionOpenTrades[0]) : '';
 	// One summary per book — paper dollars (a simulated $10k book) and live dollars
 	// (the real wallet) are never added together.
 	$: executionRealizedByBook = (['live', 'paper'] as const)
@@ -5023,6 +5048,18 @@
 							/>
 						</div>
 						<EvidenceLadder columns={ladderColumns} runLabel={referenceRunId ? `run ${referenceRunId}` : ''} />
+						{#if multiCoin}
+							<article class="rounded-md grid content-start gap-3 border border-sc-line bg-sc-panel p-4" data-testid="summary-coins">
+								<div class="flex flex-wrap items-baseline justify-between gap-2">
+									<h2 class="m-0 text-[13px] font-semibold text-sc-ink">Coins</h2>
+									<div class="flex items-center gap-2">
+										<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" data-testid="summary-edit-coins" on:click={() => { editingCoins = true; activeTab = 'execution'; }}>Edit coins</button>
+										<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" on:click={() => (activeTab = 'execution')}>Trades by coin →</button>
+									</div>
+								</div>
+								<CoinBreakdown info={multiCoin} />
+							</article>
+						{/if}
 						<div class="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
 							<article class="rounded-md grid content-start gap-3 border border-sc-line bg-sc-panel p-4" data-testid="summary-growth">
 								<div class="flex flex-wrap items-baseline justify-between gap-2">
@@ -6185,6 +6222,35 @@
 
 				{#if activeTab === 'execution'}
 					<div class="space-y-4">
+						{#if multiCoin || coinList}
+							<div class="rounded-md grid gap-3 border border-sc-line bg-sc-panel p-3" data-testid="execution-coins">
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Coins</div>
+									{#if coinList && !editingCoins}
+										<button type="button" class="rounded-full border border-sc-line2 px-2.5 py-0.5 text-[11px] text-sc-ink2 hover:text-sc-ink" data-testid="edit-coins" on:click={() => (editingCoins = true)}>{multiCoin ? 'Edit coins' : 'Trade on more coins'}</button>
+									{/if}
+								</div>
+								{#if editingCoins && coinList}
+									<CoinListEditor {strategyId} list={coinList} {openCoins} on:saved={() => void onCoinsSaved()} on:cancel={() => (editingCoins = false)} />
+								{:else if !multiCoin && coinList}
+									<p class="m-0 text-[11px] text-sc-ink3">Trades {coinList.home} only. Add coins to paper-trade the same rule on each of them, sharing the paper book equally.</p>
+								{/if}
+								{#if multiCoin}
+									<CoinBreakdown info={multiCoin} />
+									<div class="flex flex-wrap items-center gap-1.5 text-[11px]" role="group" aria-label="Show trades for">
+										<span class="text-sc-ink3">Trades below:</span>
+										{#each ['all', ...multiCoin.coins] as coin (coin)}
+											<button
+												type="button"
+												aria-pressed={tradeCoinFilter === coin}
+												class={`rounded-full border px-2 py-0.5 font-plex-mono ${tradeCoinFilter === coin ? 'border-sc-ink text-sc-ink' : 'border-sc-line2 text-sc-ink3 hover:text-sc-ink2'}`}
+												on:click={() => (tradeCoinFilter = coin)}
+											>{coin === 'all' ? 'All coins' : coin}</button>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/if}
 						<div class="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
 							<div class="rounded-md border border-sc-line bg-sc-panel p-3" data-testid="overview-growth-card">
 								<div class="flex flex-wrap items-center justify-between gap-2">
@@ -6281,7 +6347,7 @@
 
 						<div class="rounded-md border border-sc-line bg-sc-panel" data-testid="execution-open-trades">
 							<div class="flex items-center justify-between gap-2 border-b border-sc-line px-3 py-2">
-								<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Open Positions ({executionOpenTrades.length})</span>
+								<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Open Positions ({shownOpenTrades.length}{#if tradeCoinFilter !== 'all'} of {executionOpenTrades.length}{/if})</span>
 								{#if executionOpenTrades.length > 0 && closeSessionId}
 									<button
 										type="button"
@@ -6291,12 +6357,14 @@
 										on:click={() => void closeOpenPosition()}
 										title={openTradeIsLive
 											? 'Close the LIVE position at market — sends a reduce-only market order to the exchange.'
-											: 'Close the paper position at market — the paper book closes it at a fresh mid.'}
-									>{closingPosition ? 'Closing…' : openTradeIsLive ? 'Close Live Position' : 'Close Position'}</button>
+											: closeTargetCoin
+												? `Close the newest open paper position (${closeTargetCoin}) at market — the paper book closes it at a fresh mid.`
+												: 'Close the paper position at market — the paper book closes it at a fresh mid.'}
+									>{closingPosition ? 'Closing…' : openTradeIsLive ? 'Close Live Position' : closeTargetCoin ? `Close ${closeTargetCoin} Position` : 'Close Position'}</button>
 								{/if}
 							</div>
-							{#if executionOpenTrades.length === 0}
-								<div class="px-3 py-4 text-xs text-sc-ink3">No open positions.</div>
+							{#if shownOpenTrades.length === 0}
+								<div class="px-3 py-4 text-xs text-sc-ink3">No open positions{tradeCoinFilter !== 'all' ? ` on ${tradeCoinFilter}` : ''}.</div>
 							{:else}
 								<div class="max-h-[320px] overflow-auto">
 									<table class="min-w-full text-xs">
@@ -6316,7 +6384,7 @@
 											</tr>
 										</thead>
 										<tbody>
-											{#each executionOpenTrades as row, index}
+											{#each shownOpenTrades as row, index}
 												{@const stop = tradeRowSignalPrice(row, 'stop_loss')}
 												{@const target = tradeRowSignalPrice(row, 'take_profit')}
 												<tr class="border-t border-sc-line font-mono">
@@ -6340,9 +6408,9 @@
 						</div>
 
 						<div class="rounded-md border border-sc-line bg-sc-panel" data-testid="execution-closed-trades">
-							<div class="border-b border-sc-line px-3 py-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Closed Trades ({executionClosedTrades.length})</div>
-							{#if executionClosedTrades.length === 0}
-								<div class="px-3 py-4 text-xs text-sc-ink3">No closed trades recorded.</div>
+							<div class="border-b border-sc-line px-3 py-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Closed Trades ({shownClosedTrades.length}{#if tradeCoinFilter !== 'all'} of {executionClosedTrades.length}{/if})</div>
+							{#if shownClosedTrades.length === 0}
+								<div class="px-3 py-4 text-xs text-sc-ink3">No closed trades recorded{tradeCoinFilter !== 'all' ? ` on ${tradeCoinFilter}` : ''}.</div>
 							{:else}
 								<div class="max-h-[520px] overflow-auto">
 									<table class="min-w-full text-xs">
@@ -6365,7 +6433,7 @@
 											</tr>
 										</thead>
 										<tbody>
-											{#each executionClosedTrades as row, index}
+											{#each shownClosedTrades as row, index}
 												{@const pnlUsd = tradeRowPnlUsd(row)}
 												{@const netPct = tradeRowNetPct(row)}
 												{@const feesPct = tradeRowFeesPct(row)}

@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from forven import api_core as core
 from forven.api_domains import trading as trading_domain
+from forven import multi_coin
 from forven.db import _now, get_db, kv_get, kv_set, live_equity_baseline_kv_key
 from forven.execution_observations import NOT_BLOCKS
 from forven.market_data import fetch_market_candles
@@ -688,6 +689,10 @@ def _collect_compat_paper_sessions(
     # Real Hyperliquid balance for DEPLOYED/live sessions, read once from the cached
     # daemon snapshot (no per-session exchange round-trip — WS-starvation safe).
     real_account = _resolve_real_account_snapshot(daemon_state)
+    try:
+        pipeline_config = kv_get("forven:pipeline_thresholds", {}) or {}
+    except Exception:
+        pipeline_config = {}
 
     # GO-LIVE-1 ceilings, read once — live opens above the ceiling are refused,
     # so the session card must show (and let the operator edit) the bound.
@@ -747,8 +752,23 @@ def _collect_compat_paper_sessions(
             reverse=True,
         )
 
+        # Multi-coin containers (forven.multi_coin) record every coin's trades
+        # under this strategy: each trade and position names its own coin.
+        try:
+            container_record = kv_get(multi_coin.kv_key(strategy_id), None)
+        except Exception:
+            container_record = None
+        container = multi_coin.container_view(container_record, symbol, pipeline_config)
+        home_coin = multi_coin.coin_key(symbol)
+
+        def _trade_symbol(trade: dict) -> str:
+            if not container:
+                return symbol
+            coin = multi_coin.trade_coin(trade, symbol)
+            return symbol if coin == home_coin else multi_coin.leg_symbol(coin, symbol)
+
         all_closed_trade_views = [
-            _build_compat_paper_trade(trade, strategy_name=strategy_name, symbol=symbol)
+            _build_compat_paper_trade(trade, strategy_name=strategy_name, symbol=_trade_symbol(trade))
             for trade in closed_trades
         ]
         session_trades = all_closed_trade_views[:trades_cap]
@@ -775,19 +795,50 @@ def _collect_compat_paper_sessions(
         unrealized_pnl = 0.0
         fallback_time = str((active_trade or {}).get("opened_at") or strategy_row.get("updated_at") or _now())
         for open_trade in open_trades:
+            trade_symbol = _trade_symbol(open_trade)
+            trade_price = float(current_price)
+            if trade_symbol != symbol:
+                # Another coin of a container: value it at its own price, never the home coin's.
+                trade_price = (
+                    _resolve_session_current_price(price_map, trade_symbol)
+                    or trading_domain._coerce_optional_float(open_trade.get("entry_price"))
+                    or 0.0
+                )
             position_view, trade_unrealized = _build_session_position_view(
                 open_trade,
-                current_price=float(current_price),
+                current_price=float(trade_price),
                 fallback_time=fallback_time,
                 exchange_positions=exchange_positions,
             )
             if position_view is None:
                 continue
+            position_view["symbol"] = trade_symbol
+            position_view["coin"] = multi_coin.coin_key(trade_symbol)
             positions.append(position_view)
             unrealized_pnl += float(trade_unrealized or 0.0)
 
         position = positions[0] if len(positions) == 1 else None
-        net_position = _build_net_position_view(positions, current_price=float(current_price))
+        # Sizes of different coins don't net against each other.
+        net_position = _build_net_position_view(
+            [pos for pos in positions if pos.get("symbol") == symbol], current_price=float(current_price)
+        )
+        coin_breakdown = (
+            multi_coin.coin_breakdown(
+                (
+                    {
+                        "coin": multi_coin.coin_key(trade.get("symbol")),
+                        "pnl": trade.get("pnl"),
+                        "closed_at": trade.get("exit_time"),
+                    }
+                    for trade in all_closed_trade_views
+                ),
+                positions,
+                container["coins"] if container else None,
+                home_coin,
+            )
+            if container
+            else None
+        )
         position_sides = {str(pos.get("side") or "").lower() for pos in positions}
 
         signal_snapshot = _session_signal_snapshot(strategy_row, scanner_signals)
@@ -973,6 +1024,8 @@ def _collect_compat_paper_sessions(
                 "gated_by_regime": gated_by_regime,
                 "gated_reason": gated_reason,
                 "blocked_reason": diagnostic_blocked_reason or None,
+                "multi_coin": container,
+                "coin_breakdown": coin_breakdown,
             }
         )
 
@@ -1501,6 +1554,8 @@ def _summarize_paper_sessions(sessions: list[dict]) -> dict:
                 "realized_pnl_usd": _round_metric(realized, 4) if closed_count > 0 else 0.0,
                 "win_rate_pct": _round_metric(win_rate_pct, 4),
                 "close_reasons": dict(sorted(close_reasons.items(), key=lambda item: (-item[1], item[0]))),
+                "multi_coin": session.get("multi_coin"),
+                "coin_breakdown": session.get("coin_breakdown"),
             }
         )
 

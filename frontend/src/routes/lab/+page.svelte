@@ -47,7 +47,7 @@
 	import { PIPELINE_STAGES, graveyardTotal, stageTotals, summarizeFlows, type PipelineStage } from '$lib/utils/forge/flow';
 	import { STATUS_META, TONE_DOT, TONE_PILL, stageLabel, statusMeta, type ForgeStatusKey } from '$lib/utils/forge/status';
 	import { CAUSES, CAUSE_ORDER, archivedFromStage, classifyArchive, tallyCauses, type Cause, type CauseKey } from '$lib/utils/forge/causes';
-	import { forwardIndex, liveTotals, paperTotals } from '$lib/utils/forge/forward';
+	import { forwardIndex, liveTotals, paperTotals, type ForwardRecord } from '$lib/utils/forge/forward';
 	import { buildAttention } from '$lib/utils/forge/attention';
 	import { buildActivity, hourlyMoves } from '$lib/utils/forge/activity';
 	import { forgeHeadline } from '$lib/utils/forge/headline';
@@ -928,13 +928,19 @@
 		return true;
 	}
 
+	/** The row's symbol plus, for a multi-coin paper container, every coin it trades. */
+	function rowSymbols(row: ManagerRow, index: Map<string, ForwardRecord> = forwardById): string[] {
+		const container = index.get(row.id)?.multiCoin;
+		return container ? [row.symbol, ...container.symbols.filter((symbol) => symbol !== row.symbol)] : [row.symbol];
+	}
+
 	function matchesSearch(row: ManagerRow, query: string): boolean {
 		if (!query) return true;
 		return (
 			row.name.toLowerCase().includes(query)
 			|| (row.display_name ?? '').toLowerCase().includes(query)
 			|| titleOf(row).toLowerCase().includes(query)
-			|| row.symbol.toLowerCase().includes(query)
+			|| rowSymbols(row).some((symbol) => symbol.toLowerCase().includes(query))
 			|| row.timeframe.toLowerCase().includes(query)
 			|| row.id.toLowerCase().includes(query)
 		);
@@ -952,7 +958,7 @@
 		void forwardById;
 		void attentionIds;
 		const filtered = activeResults.filter((row) => {
-			if (symbolFilter !== 'all' && row.symbol !== symbolFilter) return false;
+			if (symbolFilter !== 'all' && !rowSymbols(row).includes(symbolFilter)) return false;
 			if (stageFilter !== 'all' && normalizeStage(row.stage) !== stageFilter) return false;
 			if (!matchesStatus(row, statusFilter)) return false;
 			return matchesSearch(row, query);
@@ -1031,7 +1037,7 @@
 	$: selectAllIndeterminate = selectedInView > 0 && selectedInView < rowsInView.length;
 	$: graveyardCapped = !graveyardLoadAllOverride && graveyardStrategyLimitMode === 'capped' && trashResults.length >= graveyardStrategyLimit;
 
-	$: symbolOptions = ['all', ...new Set(activeResults.map((row) => row.symbol).sort())];
+	$: symbolOptions = ['all', ...new Set(activeResults.flatMap((row) => rowSymbols(row, forwardById)).sort())];
 	$: stageOptions = ['all', ...PIPELINE_STAGES];
 	$: selectedRail = bucket === 'trash' ? 'graveyard' : stageFilter;
 
@@ -1517,6 +1523,7 @@
 								{@const entry = explainById.get(row.id) ?? null}
 								{@const perMonth = tradesPerMonth(row)}
 								{@const fwd = forwardById.get(row.id) ?? null}
+								{@const multiCoin = fwd?.multiCoin ?? null}
 								{@const stage = normalizeStage(row.stage)}
 								<tr
 									data-strategy-id={row.id}
@@ -1536,9 +1543,16 @@
 												class="block truncate text-[13px] font-medium text-sc-ink hover:underline"
 												title={`${row.name} — open the strategy page`}
 											>{titleOf(row)}</a>
-											<div class="mt-0.5 truncate font-plex-mono text-[10.5px] text-sc-ink3">{row.id} · {row.symbol} · {row.timeframe}</div>
-											{#if row.hypothesis_id || row.source === 'ai_dropzone' || !row.has_backtest_results || row.recovery_status}
+											<div class="mt-0.5 truncate font-plex-mono text-[10.5px] text-sc-ink3">{row.id} · {row.symbol}{#if multiCoin}<span class="text-sc-ink2" title={`Also paper-trades ${multiCoin.coins.slice(1).join(', ')}`}>{` +${multiCoin.coins.length - 1}`}</span>{/if} · {row.timeframe}</div>
+											{#if multiCoin || row.hypothesis_id || row.source === 'ai_dropzone' || !row.has_backtest_results || row.recovery_status}
 												<div class="mt-1 flex flex-wrap gap-1">
+													{#if multiCoin}
+														<span
+															class="inline-flex items-center gap-1 rounded border border-[#5ccac4]/40 px-1.5 font-plex-cond text-[10.5px] uppercase tracking-[0.06em] text-[#5ccac4]"
+															title={`Multi-coin paper: the same rule on ${multiCoin.coins.join(', ')}, each on 1/${multiCoin.coins.length} of the paper book${multiCoin.trading ? '' : ' (switched off in Settings: only the home coin trades now)'}`}
+															data-testid="multi-coin-badge"
+														>{multiCoin.coins.length} coins<span class="font-plex-mono normal-case tracking-normal text-sc-ink3">{multiCoin.coins.join(' · ')}</span></span>
+													{/if}
 													{#if row.hypothesis_id}
 														<span class="rounded border border-sc-line2 px-1.5 font-plex-cond text-[10.5px] uppercase tracking-[0.06em] text-sc-ink2" title="The idea this strategy tests">Idea {row.hypothesis_display_id || row.hypothesis_id}</span>
 													{/if}
