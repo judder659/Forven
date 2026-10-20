@@ -1,4 +1,5 @@
 <script lang="ts">
+	const RULE_LABELS: Record<string, string> = { grid: 'Grid bot', dca: 'DCA bot', signal: 'Signal follower' };
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import {
@@ -310,7 +311,7 @@
 	<div class="mb-4 flex items-end justify-between border-b border-sc-line pb-4">
 		<div>
 			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Bot Factory</h1>
-			<p class="mt-1 text-xs text-sc-ink3">Autonomous LLM trading bots — paper by default, live behind GO LIVE</p>
+			<p class="mt-1 text-xs text-sc-ink3">AI and rule-based trading bots — paper by default, live behind GO LIVE</p>
 		</div>
 		<div class="flex gap-2">
 			{#if hasRunningBots}
@@ -458,11 +459,15 @@
 									{/if}
 								</div>
 								<div class="mt-0.5 text-[11px] text-sc-ink3">
-									<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>{bot.model}</span>
-									· {bot.asset_mode === 'locked' ? (bot.locked_pairs || []).join(', ') : 'Free roam'}
-									· {bot.timeframe ?? '1h'} · {bot.decision_cadence === 'candle_close' ? 'per candle' : `every ${bot.cooldown_seconds ?? 60}s`}
+									{#if bot.bot_type && bot.bot_type !== 'ai'}
+										{RULE_LABELS[bot.bot_type] ?? bot.bot_type} · decides in code
+									{:else}
+										<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>{bot.model}</span>
+										· {bot.asset_mode === 'locked' ? (bot.locked_pairs || []).join(', ') : 'Free roam'}
+										· {bot.timeframe ?? '1h'} · {bot.decision_cadence === 'candle_close' ? 'per candle' : `every ${bot.cooldown_seconds ?? 60}s`}
+									{/if}
 								</div>
-								{#if bot.decision_cadence !== 'candle_close'}
+								{#if (bot.bot_type ?? 'ai') === 'ai' && bot.decision_cadence !== 'candle_close'}
 									<button
 										on:click={() => handleApplyRecommended(bot.id)}
 										disabled={isBusy}

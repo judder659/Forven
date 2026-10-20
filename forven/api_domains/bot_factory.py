@@ -59,8 +59,12 @@ def _with_model_check(bot: dict | None) -> dict | None:
     if bot is None:
         return None
     from forven.bot_factory.manager import check_bot_model
+    from forven.bot_factory.rules import needs_ai
 
-    bot["model_check"] = check_bot_model(bot.get("model"))
+    bot["model_check"] = (
+        check_bot_model(bot.get("model")) if needs_ai(bot)
+        else {"ok": True, "reason": None, "not_needed": True}
+    )
     return bot
 
 
@@ -76,7 +80,17 @@ def api_get_bot(bot_id: str) -> dict | None:
     return _with_model_check(get_bot(bot_id))
 
 
+def _check_rule_settings(config: dict) -> None:
+    from forven.bot_factory.rules import validate_rule_params
+
+    if "bot_type" in config or "rule_params" in config:
+        problem = validate_rule_params(config.get("bot_type"), config.get("rule_params"))
+        if problem:
+            raise ValueError(problem)
+
+
 def api_create_bot(config: dict) -> dict:
+    _check_rule_settings(config)
     bot_id = create_bot(config)
     return _with_model_check(get_bot(bot_id))
 
@@ -85,6 +99,12 @@ def api_update_bot(bot_id: str, updates: dict) -> dict | None:
     # 0 clears the daily dollar cap (an update can't send None to mean "clear").
     if updates.get("max_llm_cost_per_day") == 0:
         updates["max_llm_cost_per_day"] = None
+    if "bot_type" in updates or "rule_params" in updates:
+        current = get_bot(bot_id) or {}
+        _check_rule_settings({
+            "bot_type": updates.get("bot_type", current.get("bot_type")),
+            "rule_params": updates.get("rule_params", current.get("rule_params")),
+        })
     update_bot(bot_id, updates)
     return _with_model_check(get_bot(bot_id))
 
@@ -122,10 +142,12 @@ def api_cost_estimate(
     max_llm_calls_per_day: int | None,
     max_llm_cost_per_day: float | None,
     bot_id: str | None = None,
+    data_sources: list[str] | None = None,
 ) -> dict:
     """Projected AI calls and spend per day for an editor configuration. With
     a bot id, uses that bot's recorded tokens per call when it has any."""
     from forven.bot_factory.ai_costs import project_daily_spend
+    from forven.bot_factory.inputs import normalize_inputs
     from forven.bot_factory.manager import check_bot_model, resolve_bot_route
     from forven.db import (
         BOT_TIMEFRAME_MINUTES,
@@ -157,6 +179,7 @@ def api_cost_estimate(
         max_llm_cost_per_day=max_llm_cost_per_day,
         avg_tokens_in=avg_in,
         avg_tokens_out=avg_out,
+        inputs=normalize_inputs(data_sources),
     )
     projection["model_check"] = check_bot_model(model)
     return projection
@@ -493,6 +516,12 @@ def api_go_live(bot_id: str, confirm: str | None, ceiling_usd, wallet: str | Non
     status = bot.get("runtime_status") or bot.get("status") or "stopped"
     if status == "running":
         raise ValueError("Stop the bot before changing its execution mode.")
+    from forven.bot_factory.rules import is_rule_bot
+
+    if is_rule_bot(bot):
+        # Grid and DCA exits are per-lot targets the live order path doesn't
+        # place yet; rule bots stay on paper until they have a live gate.
+        raise ValueError("Grid, DCA and Signal-follower bots run on paper only for now.")
     if bot.get("stop_loss_pct") is None:
         raise ValueError(
             "Live mode requires stop_loss_pct — every live order carries a "
@@ -851,6 +880,7 @@ def _bot_health(bot: dict, digest: dict | None, now) -> dict:
     """A health dot: model callable, process alive, deciding on schedule, and
     candles fresh. Levels: ok, warn, bad, or idle for a healthy stopped bot."""
     from forven.bot_factory.performance import parse_time
+    from forven.bot_factory.rules import is_rule_bot
     from forven.db import BOT_TIMEFRAME_MINUTES, normalize_bot_cadence, normalize_bot_timeframe
 
     bad: list[str] = []
@@ -877,7 +907,8 @@ def _bot_health(bot: dict, digest: dict | None, now) -> dict:
             allowed_gap = max(3 * int(bot.get("cooldown_seconds") or 60), 180) + 120
         started = parse_time(bot.get("started_at"))
         reference = max([t for t in (last_at, started) if t is not None], default=None)
-        if reference is None or (now - reference).total_seconds() > allowed_gap:
+        # Rule bots log only when they act, so silence is not overdue.
+        if not is_rule_bot(bot) and (reference is None or (now - reference).total_seconds() > allowed_gap):
             warn.append("No decision when one was due")
         if last_type == "skipped":
             warn.append("Candles are stale, so the bot is skipping decisions")
@@ -1014,3 +1045,30 @@ async def api_test_decision(config: dict, bot_id: str | None = None) -> dict:
         "open_positions": len(positions),
         **result,
     }
+
+
+def api_followable_strategies() -> list[dict]:
+    """Paper and live strategies a Signal-follower bot can follow."""
+    from forven.db import get_db
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT s.id, s.name, s.display_name, s.symbol, s.timeframe, s.status,
+                      (SELECT COUNT(*) FROM trades t
+                        WHERE t.strategy_id = s.id AND t.status = 'OPEN'
+                          AND COALESCE(t.source, '') NOT LIKE 'bot:%') AS open_trades
+                 FROM strategies s
+                WHERE s.status IN ('paper', 'live_graduated')
+             ORDER BY s.status DESC, s.id"""
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["display_name"] or r["name"] or r["id"],
+            "symbol": r["symbol"],
+            "timeframe": r["timeframe"],
+            "stage": "live" if r["status"] == "live_graduated" else "paper",
+            "open_trades": int(r["open_trades"] or 0),
+        }
+        for r in rows
+    ]

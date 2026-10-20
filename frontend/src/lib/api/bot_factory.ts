@@ -21,6 +21,29 @@ export interface BotSessionHours {
 	end: string;
 }
 
+export type BotInput =
+	| 'indicators'
+	| 'higher_timeframe'
+	| 'funding'
+	| 'open_interest'
+	| 'regime'
+	| 'strategy_signals';
+
+export type BotType = 'ai' | 'grid' | 'dca' | 'signal';
+
+export interface BotFollowableStrategy {
+	id: string;
+	name: string;
+	symbol: string | null;
+	timeframe: string | null;
+	stage: 'paper' | 'live';
+	open_trades: number;
+}
+
+export async function listFollowableStrategies(): Promise<BotFollowableStrategy[]> {
+	return fetchApi('/bot-factory/followable-strategies');
+}
+
 export interface BotConfig {
 	id: string;
 	name: string;
@@ -50,6 +73,11 @@ export interface BotConfig {
 	decision_cadence: BotDecisionCadence;
 	/** Candle timeframe the bot reads and, on candle_close, decides on. */
 	timeframe: BotTimeframe;
+	/** Extra inputs joined to the candles in the prompt; null/empty = candles only. */
+	data_sources: BotInput[] | null;
+	/** ai asks a model; grid, dca and signal decide in code from rule_params. */
+	bot_type: BotType;
+	rule_params: Record<string, unknown> | null;
 	template_id: string | null;
 	execution_mode: 'paper' | 'live';
 	live_wallet: string | null;
@@ -290,6 +318,7 @@ export interface BotCostEstimateParams {
 	max_llm_calls_per_day: number;
 	max_llm_cost_per_day: number | null;
 	bot_id?: string | null;
+	data_sources?: BotInput[];
 }
 
 /** Projected AI calls and spend per day for an editor configuration (estimates). */
@@ -306,6 +335,7 @@ export async function getBotCostEstimate(params: BotCostEstimateParams): Promise
 	if (params.locked_pairs.length) q.set('locked_pairs', params.locked_pairs.join(','));
 	if (params.max_llm_cost_per_day) q.set('max_llm_cost_per_day', String(params.max_llm_cost_per_day));
 	if (params.bot_id) q.set('bot_id', params.bot_id);
+	if (params.data_sources?.length) q.set('data_sources', params.data_sources.join(','));
 	return fetchApi(`/bot-factory/cost-estimate?${q.toString()}`);
 }
 

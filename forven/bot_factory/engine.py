@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 from dataclasses import dataclass
 
@@ -48,6 +49,14 @@ class DecisionResult:
     trade_data: dict | None = None
     observation: str | None = None
     error: str | None = None
+    # Rule bots can act on several lots in one cycle (a DCA take-profit
+    # closes every lot); these run after trade_data, in order.
+    extra_trades: list[dict] | None = None
+
+    def trades(self) -> list[dict]:
+        if self.action_type != "trade" or not self.trade_data:
+            return []
+        return [self.trade_data, *(self.extra_trades or [])]
 
 
 def assemble_prompt(
@@ -84,8 +93,12 @@ def assemble_prompt(
         '{"action": "BUY"|"SELL"|"SHORT"|"COVER"|"HOLD"|"OBSERVE", '
         '"ticker": "SYMBOL" or null, '
         '"confidence": 0.0-1.0, '
+        '"size_pct": 1-100 (optional), "stop_loss_pct": number (optional), "take_profit_pct": number (optional), '
         f'"reasoning": "{reasoning_hint}"}}\n'
-        "The system auto-sizes positions from your equity and risk limits — you do NOT specify qty.\n"
+        "The system sizes positions from your equity and risk limits; you do NOT specify qty. "
+        "For BUY/SHORT, size_pct is the share of your maximum position to use (100 = the full maximum; "
+        "leave it out for the full maximum), and stop_loss_pct / take_profit_pct are distances from entry "
+        "in percent. Your stop can be tighter than the system's stop-loss limit, never wider.\n"
         "BUY opens (or holds) a LONG; SELL closes your LONG in that ticker.\n"
         "SHORT opens a SHORT (profits when price falls); COVER closes your SHORT in that ticker.\n"
         "You hold at most one long and one short per ticker, and SELL/COVER close the whole position.\n"
@@ -344,6 +357,47 @@ def check_risk_limits(
     return trade, reason
 
 
+# The widest stop and furthest target a model may set when the bot has no
+# limit of its own: a model typo can't turn into a 500% stop.
+_MAX_AI_STOP_PCT = 50.0
+_MAX_AI_TARGET_PCT = 200.0
+_MIN_AI_LEVEL_PCT = 0.1
+
+
+def _positive(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def size_fraction(parsed: dict) -> float:
+    """The share of the maximum position the model asked for, 1% to 100%.
+    No answer means the full maximum, as before."""
+    pct = _positive(parsed.get("size_pct"))
+    if pct is None:
+        return 1.0
+    return min(max(pct, 1.0), 100.0) / 100.0
+
+
+def clamp_exit_levels(parsed: dict, bot_config: dict) -> tuple[float | None, float | None]:
+    """The stop and target (percent from entry) an open uses: the model's own
+    when it gave them, clamped so a stop is never wider than the bot's
+    stop-loss limit; otherwise the bot's configured levels."""
+    cfg_stop = _positive(bot_config.get("stop_loss_pct"))
+    cfg_target = _positive(bot_config.get("take_profit_pct"))
+    ai_stop = _positive(parsed.get("stop_loss_pct"))
+    ai_target = _positive(parsed.get("take_profit_pct"))
+    stop = cfg_stop
+    if ai_stop is not None:
+        stop = max(_MIN_AI_LEVEL_PCT, min(ai_stop, cfg_stop if cfg_stop is not None else _MAX_AI_STOP_PCT))
+    target = cfg_target
+    if ai_target is not None:
+        target = max(_MIN_AI_LEVEL_PCT, min(ai_target, _MAX_AI_TARGET_PCT))
+    return (round(stop, 4) if stop is not None else None, round(target, 4) if target is not None else None)
+
+
 def _size_and_check(
     action: str,
     parsed: dict,
@@ -366,8 +420,9 @@ def _size_and_check(
             if price and price > 0:
                 equity = float(bot_config.get("capital_allocation", 100000) or 0) + float(realized_pnl or 0)
                 max_pct = float(bot_config.get("max_position_pct", 10)) / 100.0
-                qty = _quantize_qty((equity * max_pct) / price)
+                qty = _quantize_qty((equity * max_pct * size_fraction(parsed)) / price)
         parsed["qty"] = qty
+        parsed["stop_loss_pct"], parsed["take_profit_pct"] = clamp_exit_levels(parsed, bot_config)
     elif ticker and positions:
         # Pin the exact open lot to close — the position whose direction
         # matches the action (SELL→long, COVER→short) on this ticker.
@@ -543,6 +598,10 @@ async def run_decision_cycle(
                     "qty": parsed.get("qty", 0),
                     "confidence": parsed.get("confidence"),
                 }
+                if action in _OPEN_ACTIONS:
+                    trade_data["size_pct"] = round(size_fraction(parsed) * 100, 2)
+                    trade_data["stop_loss_pct"] = parsed.get("stop_loss_pct")
+                    trade_data["take_profit_pct"] = parsed.get("take_profit_pct")
                 if action in _CLOSE_ACTIONS:
                     trade_data["trade_id"] = parsed.get("trade_id")
                     trade_data["entry_price"] = parsed.get("entry_price")
@@ -630,3 +689,151 @@ async def run_decision_cycle(
             action_type="error",
             error=str(e),
         )
+
+
+async def _ai_approves(
+    bot_config: dict,
+    trade: dict,
+    market_event: dict | None,
+    positions: list[dict] | None,
+    realized_pnl: float,
+) -> tuple[bool, str, dict]:
+    """Hybrid mode: ask the model to approve or veto one proposed open. A
+    model that can't answer (cap reached, error, unreadable reply) vetoes."""
+    bot_id = bot_config["id"]
+    if not check_circuit_breaker(bot_id) or not check_llm_daily_cap(bot_id):
+        return False, "Vetoed: the bot's AI budget or error limit is used up for today.", {}
+    direction = "long" if trade.get("action") == "BUY" else "short"
+    system = [p for p in (bot_config.get("soul"), bot_config.get("guardrails")) if p]
+    system.append(
+        "You review trades a strategy proposes. Approve only if the market data supports it.\n"
+        'Respond with a JSON object: {"approve": true|false, "reasoning": "one or two sentences"}'
+    )
+    user = []
+    if bot_config.get("strategy"):
+        user.append(f"## What you look for\n{bot_config['strategy']}")
+    user.append(
+        f"## Proposed trade\nOpen a {direction} position in {trade.get('ticker')}. "
+        f"Reason: {trade.get('reasoning') or 'rule signal'}."
+    )
+    user.append(f"## Open positions\n{json.dumps(positions or [], default=str)[:2000]}")
+    if market_event:
+        user.append(f"## Market data\n```json\n{json.dumps(market_event, indent=2, default=str)}\n```")
+    messages = [{"role": "system", "content": "\n\n".join(system)}, {"role": "user", "content": "\n\n".join(user)}]
+    model = _resolve_model(bot_config)
+    try:
+        from forven.ai import call_ai, normalize_provider_and_model
+        from forven.bot_factory.ai_costs import estimate_call_cost
+
+        provider, resolved_model = normalize_provider_and_model("auto", model)
+        response = await call_ai(
+            provider=provider, model=resolved_model, messages=messages,
+            max_tokens=400, temperature=0.2, fallback=False,
+        )
+        usage = estimate_call_cost(provider, resolved_model, messages, response)
+        record_llm_call(bot_id, usage.get("cost_usd"))
+        record_success(bot_id)
+    except Exception as e:
+        record_failure(bot_id)
+        return False, f"Vetoed: the model could not be asked ({e}).", {"model": model, "prompt": messages}
+    parsed = _parse_llm_response(response)
+    approve = parsed.get("approve")
+    if isinstance(approve, str):
+        approve = approve.strip().lower() in ("true", "yes", "approve")
+    reason = str(parsed.get("reasoning") or "").strip()
+    details = {
+        "model": f"{provider}:{resolved_model}", "prompt": messages, "response": response,
+        "parsed": parsed, "cost_usd": usage.get("cost_usd"),
+        "tokens_in": usage.get("tokens_in"), "tokens_out": usage.get("tokens_out"),
+    }
+    return bool(approve), (("Approved: " if approve else "Vetoed: ") + (reason or "no reason given")), details
+
+
+async def run_rule_cycle(
+    bot_config: dict,
+    decision,
+    market_event: dict | None,
+    positions: list[dict] | None,
+    realized_pnl: float,
+    state: dict,
+) -> DecisionResult:
+    """Turn a rule bot's decision into trades: hybrid approval for followed
+    entries, the same risk check AI bots get, and one Activity entry per
+    decision that acts. An open the AI vetoed or the risk check refused is
+    noted once, not every tick."""
+    from forven.bot_factory.rules import needs_ai, normalize_bot_type
+
+    bot_id = bot_config["id"]
+    kind = normalize_bot_type(bot_config.get("bot_type"))
+    hybrid = needs_ai(bot_config)
+    noted: dict = state.setdefault("noted", {})
+    accepted: list[dict] = []
+    outcomes: list[str] = []
+    checks: list[dict] = []
+    ai_details: dict = {}
+    ai_cost = 0.0
+    for trade in decision.trades:
+        action = str(trade.get("action") or "").upper()
+        if action not in _OPEN_ACTIONS:
+            accepted.append(trade)
+            continue
+        key = f"{action}:{trade.get('ticker')}"
+        if key in noted:
+            continue
+        if hybrid and trade.get("follow"):
+            approved, why, details = await _ai_approves(bot_config, trade, market_event, positions, realized_pnl)
+            ai_details = details or ai_details
+            ai_cost += float((details or {}).get("cost_usd") or 0)
+            checks.append({"trade": key, "ai": why})
+            if not approved:
+                noted[key] = why
+                outcomes.append(f"{action} {trade.get('ticker')}: {why}")
+                continue
+        allowed, reason = check_risk_limits(
+            dict(trade), bot_config, positions, market_event, realized_pnl=realized_pnl,
+        )
+        checks.append({"trade": key, "allowed": allowed is not None, "reason": reason})
+        if allowed is None:
+            noted[key] = reason
+            outcomes.append(f"{action} {trade.get('ticker')}: {reason}")
+            continue
+        accepted.append(trade)
+    # A key is re-tried once the rule stops proposing it (the strategy closed,
+    # the grid level filled), so the note never outlives its cause.
+    proposed = {f"{str(t.get('action') or '').upper()}:{t.get('ticker')}" for t in decision.trades}
+    for key in list(noted):
+        if key not in proposed:
+            noted.pop(key, None)
+
+    if not accepted and not outcomes:
+        return DecisionResult(action_type="pass", reasoning=decision.reasoning)
+    reasoning = decision.reasoning + ("" if not outcomes else " " + " ".join(outcomes))
+    result = DecisionResult(
+        action_type="trade" if accepted else "pass",
+        reasoning=reasoning,
+        trade_data=accepted[0] if accepted else None,
+        extra_trades=accepted[1:] or None,
+    )
+    log_bot_decision(
+        bot_id=bot_id,
+        event_trigger=None,
+        reasoning=reasoning,
+        action_type=result.action_type,
+        action_data={"trades": accepted} if accepted else {"blocked": outcomes},
+        verbosity="standard",
+        run_id=bot_config.get("run_id"),
+        cost_usd=ai_cost or None,
+        tokens_in=ai_details.get("tokens_in"),
+        tokens_out=ai_details.get("tokens_out"),
+        details={
+            "model": ai_details.get("model") or f"rules:{kind}",
+            "prompt": ai_details.get("prompt"),
+            "response": ai_details.get("response"),
+            "parsed": {"trades": decision.trades},
+            "risk_check": {
+                "allowed": bool(accepted),
+                "reason": "; ".join(c.get("reason") or c.get("ai") or "" for c in checks) or "Closing is always allowed.",
+            },
+        },
+    )
+    return result

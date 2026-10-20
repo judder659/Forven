@@ -546,7 +546,12 @@ class BotManager:
         # A model that can't be called here (provider disconnected, model
         # retired or not enabled) would fail on the first decision; refuse the
         # start with the fix instead.
-        model_check = check_bot_model(bot.get("model"))
+        from forven.bot_factory.rules import needs_ai, validate_rule_params
+
+        problem = validate_rule_params(bot.get("bot_type"), bot.get("rule_params"))
+        if problem:
+            raise ValueError(f"Can't start: {problem}")
+        model_check = check_bot_model(bot.get("model")) if needs_ai(bot) else {"ok": True}
         if not model_check["ok"]:
             fix = (
                 f" Pick another model in the editor, or use your default ({model_check['default_model']})."

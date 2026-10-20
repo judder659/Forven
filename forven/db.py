@@ -1524,6 +1524,8 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     max_llm_cost_per_day REAL,
     decision_cadence TEXT DEFAULT 'interval',
     timeframe TEXT DEFAULT '1h',
+    bot_type TEXT DEFAULT 'ai',
+    rule_params TEXT,
     template_id TEXT,
     status TEXT DEFAULT 'stopped',
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
@@ -3498,6 +3500,9 @@ def _run_post_index_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "bot_configs", "max_llm_cost_per_day", "REAL")
     _ensure_column(conn, "bot_configs", "decision_cadence", "TEXT DEFAULT 'interval'")
     _ensure_column(conn, "bot_configs", "timeframe", "TEXT DEFAULT '1h'")
+    # Bot Factory Phase 3: rule bots (grid, dca, signal) decide in code.
+    _ensure_column(conn, "bot_configs", "bot_type", "TEXT DEFAULT 'ai'")
+    _ensure_column(conn, "bot_configs", "rule_params", "TEXT")
     _ensure_column(conn, "bot_decisions", "run_id", "TEXT")
     _ensure_column(conn, "bot_decisions", "cost_usd", "REAL")
     _ensure_column(conn, "bot_decisions", "tokens_in", "INTEGER")
@@ -7573,9 +7578,9 @@ def create_bot(config: dict) -> str:
                 reasoning_verbosity, asset_mode, locked_pairs,
                 tools, web_allowlist, web_rate_limit, data_sources,
                 max_llm_calls_per_day, max_consecutive_errors, template_id,
-                max_llm_cost_per_day, decision_cadence, timeframe,
+                max_llm_cost_per_day, decision_cadence, timeframe, bot_type, rule_params,
                 execution_mode, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
             (
                 bot_id,
                 config.get("name", "Untitled Bot"),
@@ -7608,6 +7613,8 @@ def create_bot(config: dict) -> str:
                 config.get("max_llm_cost_per_day"),
                 normalize_bot_cadence(config.get("decision_cadence") or "candle_close"),
                 normalize_bot_timeframe(config.get("timeframe")),
+                str(config.get("bot_type") or "ai"),
+                json.dumps(config["rule_params"]) if config.get("rule_params") else None,
                 now,
                 now,
             ),
@@ -7636,7 +7643,7 @@ def get_bot(bot_id: str) -> dict | None:
             return None
         d = dict(row)
         _zero_stale_daily_usage(d)
-        for key in ("session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources"):
+        for key in ("session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources", "rule_params"):
             if d.get(key) and isinstance(d[key], str):
                 try:
                     d[key] = json.loads(d[key])
@@ -7669,7 +7676,7 @@ def list_bots() -> list[dict]:
                       c.max_llm_cost_per_day, c.decision_cadence, c.timeframe, c.max_position_pct,
                       c.max_concurrent_positions, s.run_id, s.llm_calls_reset_date,
                       s.llm_cost_today, c.cooldown_seconds, s.funding_accrued,
-                      s.equity_state_started_at
+                      s.equity_state_started_at, c.bot_type
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                ORDER BY c.created_at DESC"""
@@ -7726,7 +7733,7 @@ def update_bot(bot_id: str, updates: dict) -> None:
         )
 
         # Build SET clause from updates
-        json_fields = {"session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources"}
+        json_fields = {"session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources", "rule_params"}
         set_parts = []
         values = []
         for key, val in updates.items():

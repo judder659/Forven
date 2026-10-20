@@ -1,4 +1,14 @@
 <script lang="ts">
+	function ruleSummary(b: { bot_type?: string | null; rule_params?: Record<string, any> | null }): string {
+		const p = b.rule_params || {};
+		if (b.bot_type === 'grid')
+			return `Grid bot · ${p.pair ?? '?'} · ${p.levels ?? '?'} levels from $${p.lower ?? '?'} to $${p.upper ?? '?'}`;
+		if (b.bot_type === 'dca')
+			return `DCA bot · ${p.pair ?? '?'} · ${p.safety_orders ?? 0} safety orders · take profit ${p.take_profit_pct ?? 2}%`;
+		if (b.bot_type === 'signal')
+			return `Signal follower · copies ${p.strategy_id ?? '?'}${p.ai_approval ? ' · AI approves entries' : ''}`;
+		return '';
+	}
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -597,11 +607,15 @@
 						{/if}
 					</div>
 					<div class="mt-1.5 flex items-center gap-3 text-xs text-sc-ink3">
-						<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>
-							{bot.model}{#if bot.model_check && !bot.model_check.ok} (unavailable){/if}
-						</span>
-						<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
-						<span>{bot.timeframe ?? '1h'} candles · {bot.decision_cadence === 'candle_close' ? 'decides on each new candle' : `decides every ${bot.cooldown_seconds}s`}</span>
+						{#if bot.bot_type && bot.bot_type !== 'ai'}
+							<span>{ruleSummary(bot)}</span>
+						{:else}
+							<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>
+								{bot.model}{#if bot.model_check && !bot.model_check.ok} (unavailable){/if}
+							</span>
+							<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
+							<span>{bot.timeframe ?? '1h'} candles · {bot.decision_cadence === 'candle_close' ? 'decides on each new candle' : `decides every ${bot.cooldown_seconds}s`}</span>
+						{/if}
 						{#if bot.run_id && isRunning}
 							<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
 							<span class="font-mono" title="This run's id; every Activity entry it writes carries it">run {bot.run_id}</span>
@@ -653,7 +667,7 @@
 			</div>
 		{/if}
 
-		{#if bot.decision_cadence !== 'candle_close'}
+		{#if (bot.bot_type ?? 'ai') === 'ai' && bot.decision_cadence !== 'candle_close'}
 			<div class="mb-6 flex flex-wrap items-center justify-between gap-3 border border-sc-line bg-sc-panel px-4 py-3 text-xs text-sc-ink2">
 				<span>
 					This bot asks its model every {bot.cooldown_seconds}s, but its {bot.timeframe ?? '1h'} candles only change once per candle.
