@@ -108,14 +108,21 @@ def agent_registration_daily_cap() -> int:
 
 
 def agent_registrations_today() -> int:
-    """Strategies registered from agent tasks since the start of the UTC day."""
+    """Strategies registered from agent tasks since the start of the UTC day.
+
+    Candidates archived as untestable (rejected at intake or by the trade
+    pre-check, e.g. ``untestable:no_signal``) never reach a merit test, so they
+    do not use up the cap.
+    """
     from datetime import datetime, timezone
 
     day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     with get_db() as conn:
         row = conn.execute(
             "SELECT COUNT(*) FROM strategies WHERE origin_task_id IS NOT NULL "
-            "AND TRIM(origin_task_id) <> '' AND created_at >= ?",
+            "AND TRIM(origin_task_id) <> '' AND created_at >= ? "
+            "AND NOT (LOWER(COALESCE(stage, '')) = 'archived' "
+            "AND LOWER(COALESCE(status_reason, '')) LIKE 'untestable:%')",
             (day_start.isoformat(),),
         ).fetchone()
     return int(row[0] or 0) if row else 0

@@ -56,6 +56,22 @@ def test_registration_cap_counts_only_todays_agent_registrations(forven_db, monk
     assert candidate_checks.registration_cap_error() is None  # 0 = no cap
 
 
+def test_untestable_registrations_do_not_use_up_the_cap(forven_db, monkeypatch):
+    from forven.strategies import candidate_checks
+
+    monkeypatch.setattr(candidate_checks, "agent_registration_daily_cap", lambda: 2)
+    with get_db() as conn:
+        _insert_strategy(conn, "S-NS1", created_at=_now(), origin_task_id="T1", stage="archived",
+                         status_reason="untestable:no_signal: 3 trades on BTC/USDT 1h (minimum 20)")
+        _insert_strategy(conn, "S-NS2", created_at=_now(), origin_task_id="T2", stage="archived",
+                         status_reason="untestable:insufficient_history: feed too short")
+        _insert_strategy(conn, "S-OK", created_at=_now(), origin_task_id="T3")
+        # A merit failure still counts: it used a full screen.
+        _insert_strategy(conn, "S-LOST", created_at=_now(), origin_task_id="T4", stage="archived",
+                         status_reason="quick screen: Sharpe below floor")
+    assert candidate_checks.agent_registrations_today() == 2
+
+
 def test_validate_agent_registration_applies_the_cap_to_agents_only(forven_db, monkeypatch):
     from forven.strategies import candidate_checks
 
