@@ -102,7 +102,6 @@ _DEFAULT_JOB_IDS = {
 _PORTFOLIO_JOB_IDS = {
     "forven-portfolio-allocation",
     "forven-basket-funding-carry",
-    "forven-universe-books",
 }
 
 # PROPR-1: same dark-feature treatment as the portfolio jobs — the mirror job
@@ -1575,14 +1574,10 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 return "ok", "basket disabled or tick skipped"
             return "ok", None
 
-        # Universe paper books (forven.universe.book). No-op unless
-        # universe_books_enabled; returns early until a new daily close exists.
+        # Universe paper books were retired (2026-10-21). reconcile_forven_jobs
+        # reaps the job row; one that runs before that is a no-op.
         if kind == "universe_books_tick":
-            from forven.universe.book import run_universe_tick
-            report = await _run_sync_job(run_universe_tick)
-            if not report.get("enabled"):
-                return "ok", "universe books disabled"
-            return "ok", None
+            return "ok", "universe books retired"
 
         # Strategy decay tracker — auto-demote degraded paper/deployed strategies
         if kind == "decay_tracker":
@@ -3258,15 +3253,6 @@ def seed_forven_jobs():
             command="basket-funding-carry",
             timezone_str="UTC",
             payload={"kind": "basket_funding_carry_tick"},
-        )
-        add_job(
-            job_id="forven-universe-books",
-            name="Universe Paper Books Tick",
-            schedule_type="interval",
-            schedule_expr="3600000",
-            command="universe-books",
-            timezone_str="UTC",
-            payload={"kind": "universe_books_tick"},
         )
 
     # PROPR-1: the strategy-mirror observer exists only while the hidden Propr
