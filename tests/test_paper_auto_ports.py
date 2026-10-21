@@ -14,13 +14,14 @@ import json
 import pytest
 
 from forven import paper_pool
-from forven.db import get_db, kv_get
+from forven.db import get_db, kv_get, kv_set
 from forven.policy import DEFAULT_PIPELINE_CONFIG
 
 
-def _config(**pool) -> dict:
+def _config(multi_coin=False, **pool) -> dict:
     cfg = copy.deepcopy(DEFAULT_PIPELINE_CONFIG)
     cfg["paper_door"]["mode"] = "research"
+    cfg["paper_trading"]["multi_coin_enabled"] = multi_coin
     cfg["paper_pool"].update({"auto_port_max": 5, "max_per_family": 10, **pool})
     return cfg
 
@@ -144,3 +145,21 @@ def test_ports_stay_within_the_family_cap(forven_db, breadth):
     # Two of the family's four paper slots are taken: two ports in all, the rest wait.
     assert [len(m["ports"]) for m in made] == [2]
     assert kv_get("forven:paper_ports:P2") is None
+
+
+def test_multi_coin_containers_are_not_ported(forven_db, breadth):
+    from forven.evolution import paper_port_tick
+
+    _paper_strategy("P1")  # general: multi-coin gives it a container
+    _paper_strategy("P2", symbol="ETH/USDT")  # mixed, but already holds a container
+    _paper_strategy("P3", symbol="SOL/USDT")  # mixed: no container, so it is ported
+    breadth["P1"] = _state()
+    breadth["P2"] = _state(verdict="mixed")
+    breadth["P3"] = _state(verdict="mixed")
+    kv_set("forven:multi_coin:P2", {"coins": ["ETH", "BTC"]})
+
+    made = paper_port_tick(_config(multi_coin=True))
+    assert [m["strategy_id"] for m in made] == ["P3"]
+    assert kv_get("forven:paper_ports:P1") is None  # ported if multi-coin is turned off
+
+    assert [m["strategy_id"] for m in paper_port_tick(_config())] == ["P1", "P2"]

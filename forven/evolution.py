@@ -3100,14 +3100,18 @@ def paper_port_tick(config: dict | None = None) -> list[dict]:
     pipeline; nothing is admitted to paper directly. Ports per strategy are
     also held within its family's free paper slots (``max_per_family``). A
     strategy is ported once (KV ``forven:paper_ports:<id>``), and ports are
-    never ported again. Off in the Strict paper preset. Returns the ports made.
+    never ported again. A strategy with a multi-coin container (or a
+    ``general`` result, which earns one) is skipped while multi-coin paper is
+    on: the container already trades those coins under its own id. Off in the
+    Strict paper preset. Returns the ports made.
     """
-    from forven import paper_pool
+    from forven import multi_coin, paper_pool
     from forven.db import create_strategy_container
     from forven.policy import _paper_pool_family, load_pipeline_config, strategy_breadth
 
     config = config if config is not None else load_pipeline_config()
     knobs = paper_pool.settings(config)
+    multi_coin_on = multi_coin.settings(config)["multi_coin_enabled"]
     door = config.get("paper_door") if isinstance(config, dict) else None
     if not knobs["auto_port_max"] or (
         isinstance(door, dict) and str(door.get("mode") or "").strip().lower() == "strict"
@@ -3131,6 +3135,11 @@ def paper_port_tick(config: dict | None = None) -> list[dict]:
         state = strategy_breadth(strategy_id)
         if state.get("status") != "done" or state.get("stale"):
             continue  # not judged yet: try again on a later tick
+        if multi_coin_on and (
+            kv_get(multi_coin.kv_key(strategy_id))
+            or str((state.get("summary") or {}).get("verdict") or "") in multi_coin.ELIGIBLE_VERDICTS
+        ):
+            continue  # a multi-coin container already trades its other coins
         limit = knobs["auto_port_max"]
         family = _paper_pool_family(row)
         if knobs["max_per_family"] and family:
