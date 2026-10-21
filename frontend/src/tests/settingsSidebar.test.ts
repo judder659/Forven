@@ -33,7 +33,7 @@ describe('SettingsSidebar', () => {
 
 		const buttons = target.querySelectorAll('button');
 		expect(buttons.length).toBe(SETTINGS_AREAS.length);
-		expect(buttons[0].textContent).toContain('Home');
+		expect(buttons[0].textContent).toContain('Overview');
 		expect(buttons[buttons.length - 1].textContent).toContain('Danger');
 	});
 
@@ -53,7 +53,7 @@ describe('SettingsSidebar', () => {
 		const buttons = target.querySelectorAll('button');
 		let tradingBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
-			if (btn.textContent && btn.textContent.includes('Trading')) {
+			if (btn.textContent && btn.textContent.includes('Live trading')) {
 				tradingBtn = btn as HTMLButtonElement;
 			}
 		});
@@ -82,10 +82,10 @@ describe('SettingsSidebar', () => {
 		let tradingBtn: HTMLButtonElement | null = null;
 		let homeBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
-			if (btn.textContent && btn.textContent.includes('Trading')) {
+			if (btn.textContent && btn.textContent.includes('Live trading')) {
 				tradingBtn = btn as HTMLButtonElement;
 			}
-			if (btn.textContent && btn.textContent.includes('Home')) {
+			if (btn.textContent && btn.textContent.includes('Overview')) {
 				homeBtn = btn as HTMLButtonElement;
 			}
 		});
@@ -133,7 +133,7 @@ describe('SettingsSidebar', () => {
 		const buttons = target.querySelectorAll('button');
 		let tradingBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
-			if (btn.textContent && btn.textContent.includes('Trading')) {
+			if (btn.textContent && btn.textContent.includes('Live trading')) {
 				tradingBtn = btn as HTMLButtonElement;
 			}
 		});

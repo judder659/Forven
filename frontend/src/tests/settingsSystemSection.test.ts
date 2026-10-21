@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mount, unmount } from 'svelte';
 import { get } from 'svelte/store';
-import SettingsSystem from '../lib/components/settings/sections/SettingsSystem.svelte';
+import SettingsAreaView from '../lib/components/settings/SettingsAreaView.svelte';
 import { originalValues, pendingValues, markField, clearDirty } from '../lib/settings/dirty';
 
 let target: HTMLElement;
@@ -28,9 +28,10 @@ describe('SettingsSystem section', () => {
 	it('renders the expected system subsections from the manifest', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsSystem, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'system',
 				settings: {
 					self_healing_enabled: true,
 					auto_restart_on_crash: true,
@@ -41,15 +42,17 @@ describe('SettingsSystem section', () => {
 
 		const text = target.textContent || '';
 		expect(text).toContain('Remote engine');
-		expect(text).toContain('Health & telemetry');
+		expect(text).toContain('Performance tuning');
+		expect(text).not.toContain('Health & telemetry');
 	});
 
 	it('seeds originalValues on mount from the flat settings blob', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsSystem, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'system',
 				settings: {
 					remote_engine_enabled: true,
 				},
@@ -126,9 +129,10 @@ describe('SettingsSystem throughput preset dial', () => {
 	it('derives the active preset from current values (no stored name)', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsSystem, {
+		instance = mount(SettingsAreaView, {
 			target,
-			props: { settings: settingsForBundle(THROUGHPUT_BUNDLES.conserve) },
+			props: {
+				area: 'ai', settings: settingsForBundle(THROUGHPUT_BUNDLES.conserve) },
 		});
 		await flush();
 
@@ -140,7 +144,10 @@ describe('SettingsSystem throughput preset dial', () => {
 		settings.ideation_interval_minutes = 200;
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsSystem, { target, props: { settings } });
+		instance = mount(SettingsAreaView, {
+			target,
+			props: {
+				area: 'ai', settings } });
 		await flush();
 
 		expect(dialSelect().value).toBe('custom');
@@ -149,9 +156,10 @@ describe('SettingsSystem throughput preset dial', () => {
 	it('picking a preset fills every bundle knob as pending edits', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsSystem, {
+		instance = mount(SettingsAreaView, {
 			target,
-			props: { settings: settingsForBundle(THROUGHPUT_BUNDLES.balanced) },
+			props: {
+				area: 'ai', settings: settingsForBundle(THROUGHPUT_BUNDLES.balanced) },
 		});
 		await flush();
 
@@ -184,9 +192,10 @@ describe('SettingsSystem throughput preset dial', () => {
 	it('editing one knob away flips the derived value to custom', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsSystem, {
+		instance = mount(SettingsAreaView, {
 			target,
-			props: { settings: settingsForBundle(THROUGHPUT_BUNDLES.conserve) },
+			props: {
+				area: 'ai', settings: settingsForBundle(THROUGHPUT_BUNDLES.conserve) },
 		});
 		await flush();
 		expect(dialSelect().value).toBe('conserve');

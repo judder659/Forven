@@ -166,7 +166,6 @@ const SPECS: Record<string, Spec> = {
   'pipeline.safety_floors.live_max_drawdown_pct': [0, 1, 'any'],
 
   // ---- lab: capacity, live graduated, graduation ----
-  'pipeline.paper_wip_cap': [0, null, 1],
   'pipeline.graveyard_strategy_limit': [0, null, 1],
   'pipeline.live_graduated.decay_kill_switch_pct': [0, 100, 'any'],
 

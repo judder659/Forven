@@ -27,7 +27,6 @@ describe('SettingsSubsection', () => {
 				label: 'Risk Management',
 				description: 'Controls when new trades are blocked.',
 				deepLinkTo: '/risk-monitor',
-				usedBy: ['forven.risk_sentinel'],
 			},
 		});
 		await flush();
@@ -40,25 +39,18 @@ describe('SettingsSubsection', () => {
 		expect(anchor!.textContent).toContain('/risk-monitor');
 	});
 
-	it('toggles the Used by block closed-by-default', async () => {
+	it('folds a collapsed group until its toggle is clicked', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
 		instance = mount(SettingsSubsection, {
 			target,
-			props: {
-				label: 'X',
-				description: '.',
-				usedBy: ['forven.risk_sentinel'],
-			},
+			props: { label: 'X', description: 'Folded body.', collapsed: true },
 		});
 		await flush();
 
-		// Closed by default — reader name should not yet appear.
-		expect(target.textContent).not.toContain('forven.risk_sentinel');
-
-		const toggle = target.querySelector('button[aria-expanded]') as
-			| HTMLButtonElement
-			| null;
+		const body = target.querySelector('section > div') as HTMLElement;
+		expect(body.hidden).toBe(true);
+		const toggle = target.querySelector('button[aria-expanded]') as HTMLButtonElement | null;
 		expect(toggle).toBeTruthy();
 		expect(toggle!.getAttribute('aria-expanded')).toBe('false');
 
@@ -66,7 +58,28 @@ describe('SettingsSubsection', () => {
 		await flush();
 
 		expect(toggle!.getAttribute('aria-expanded')).toBe('true');
-		expect(target.textContent).toContain('forven.risk_sentinel');
+		expect(body.hidden).toBe(false);
+	});
+
+	it('shows the changed count and resets only after a second click', async () => {
+		let resets = 0;
+		target = document.createElement('div');
+		document.body.appendChild(target);
+		instance = mount(SettingsSubsection, {
+			target,
+			props: { label: 'X', description: '.', changedCount: 2, onReset: () => resets++ },
+		});
+		await flush();
+
+		expect(target.querySelector('[data-testid="changed-count"]')!.textContent).toContain('2 changed');
+		const reset = target.querySelector('[data-testid="reset-group"]') as HTMLButtonElement;
+		reset.click();
+		await flush();
+		expect(resets).toBe(0);
+		expect(reset.textContent).toContain('Click again');
+		reset.click();
+		await flush();
+		expect(resets).toBe(1);
 	});
 
 	it('omits the deep-link anchor when deepLinkTo is undefined', async () => {
