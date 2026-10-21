@@ -47,7 +47,6 @@ const TRADING_COMMANDS = new Set([
 	'paper-pool-tick',
 	'regime-gate-mtm',
 	'basket-funding-carry',
-	'universe-books',
 ]);
 
 export interface ProviderHealthInput {

@@ -33,7 +33,6 @@ const COMMAND_GROUPS: Record<string, JobGroup> = {
 	'paper-pool-tick': 'pipeline',
 	'regime-gate-mtm': 'trading',
 	'basket-funding-carry': 'trading',
-	'universe-books': 'trading',
 	'testnet-harness': 'trading',
 	'strategy-creation': 'pipeline',
 	'testing-cycle': 'pipeline',

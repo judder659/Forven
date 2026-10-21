@@ -88,7 +88,8 @@ _EXCLUDED_PREFIXES = (
 # down (scheduler -> book -> db/data); the loop closes only through db.py's
 # existing upward import of forven.scheduler. The rest of forven.universe was
 # split so that it stays out of the cluster.
-MAX_IMPORT_CYCLE_SIZE = 182
+# 182 -> 180 (2026-10-21): forven.universe was retired, taking both edges with it.
+MAX_IMPORT_CYCLE_SIZE = 180
 
 
 def _module_name(path: Path) -> str:
