@@ -236,6 +236,8 @@ const SPECS: Record<string, Spec> = {
   'data-universe.metrics_days': [0, null, 1],
   'pipeline.retention_backtest_trash_days': [0, null, 1],
   'pipeline.retention_activity_log_days': [0, null, 1],
+  'pipeline.db_backup_keep_daily': [1, 60, 1],
+  'pipeline.db_backup_max_total_gb': [0, null, 1],
   'pipeline.retention_scanner_results_days': [0, null, 1],
   'pipeline.retention_gate_rejections_days': [0, null, 1],
 };

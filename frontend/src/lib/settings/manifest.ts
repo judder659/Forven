@@ -146,7 +146,7 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'lab-pipeline-probation', area: 'lab', label: 'Probation', description: 'The stage between paper and full live size: small real-money size first, growing as live trades match the backtest.' },
   { id: 'lab-pipeline-paper-live-gates', area: 'lab', label: 'Live gate', description: 'What a paper strategy must show before it can go live. Going live still waits for your typed GO LIVE.' },
   { id: 'lab-pipeline-live-graduated', area: 'lab', label: 'Live strategies', description: 'Retiring live strategies that decay, and how long new paper strategies are protected from agent demotions.' },
-  { id: 'lab-graduation-recommender', area: 'lab', label: 'Live-graduation recommender', description: 'Off by default and being replaced by probation. Scans paper strategies daily and proposes a starting live size.', advanced: true },
+  { id: 'lab-graduation-recommender', area: 'lab', label: 'Live-graduation recommender', description: 'Replaced by probation. Shown only on installs that still have it switched on; turn it off here and the group disappears.', advanced: true },
   { id: 'lab-pipeline-safety-floors', area: 'lab', label: 'Safety floors', description: 'Hard limits no preset or field above can loosen. The live ones guard real money.', advanced: true },
   { id: 'lab-pipeline-capacity', area: 'lab', label: 'Archive', description: 'How many archived strategies the Lab loads.', advanced: true },
 
@@ -160,12 +160,14 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'data-freshness', area: 'data', label: 'Freshness', description: 'How current each stored series must be, by who uses it. Allowed lag is the larger of (missed bars + 1) x the timeframe and the floor. The pipeline tier is the gauntlet data gate itself.', deepLinkTo: '/data' },
   { id: 'data-collection', area: 'data', label: 'Collection', description: 'The automatic collection queue that keeps series fresh: most overdue first, within a per-venue request budget.', deepLinkTo: '/data' },
   { id: 'data-universe', area: 'data', label: 'Research universe', description: 'The liquidity-ranked set of perps that gets deep history for strategy discovery. Downloads never start on their own; the Data page has a button.', deepLinkTo: '/data' },
+  { id: 'data-backups', area: 'data', label: 'Backups', description: 'The daily database copy: how many to keep and how much disk they may use. A backup is skipped, with an alert, when it would leave too little free disk.' },
   { id: 'data-storage', area: 'data', label: 'Storage & cleanup', description: 'How long deleted data and old records are kept, the free-disk floor, and database compaction.', deepLinkTo: '/data' },
 
   // AI & agents. Providers, models, personas and schedules are tabs on /agents.
   { id: 'ai-agents-link', area: 'ai', label: 'Providers & models', description: 'AI providers, which model each agent uses, and agent schedules are set on the Agents page.', deepLinkTo: '/agents' },
   { id: 'system-throughput', area: 'ai', label: 'Throughput', description: 'One preset dial (Trickle / Conserve / Balanced / Max) over agent cadences and the daily idea budget. Turn it down to cut AI calls on rate-limited providers.' },
   { id: 'system-assistant', area: 'ai', label: 'Assistant', description: 'Limits for the in-app chat assistant.' },
+  { id: 'ai-assistant-profile', area: 'ai', label: 'What the assistant knows about you', description: 'Your name, timezone, how you trade, and rules the assistant must follow. It reads this at every chat. Saves with its own button.' },
 
   // Notifications. The per-event pop-up / Discord switches and the sidebar
   // badges are notification preferences (NotificationChannelsCard, a custom
@@ -2964,6 +2966,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'toggle',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'live_graduation_recommender_enabled',
     description:
@@ -2980,6 +2983,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_min_soak_days',
     description:
@@ -2995,6 +2999,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_min_paper_trades',
     description: 'Minimum CLOSED paper trades before graduation is considered.',
@@ -3009,6 +3014,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_min_measured_trades',
     description:
@@ -3024,6 +3030,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_base_arm_usd',
     description:
@@ -3039,6 +3046,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_max_arm_usd',
     description: 'Hard cap on the proposed arm size regardless of the risk multiplier.',
@@ -3053,6 +3061,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_daily_limit',
     description:
@@ -3068,6 +3077,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_deny_cooldown_days',
     description:
@@ -3083,6 +3093,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     type: 'number',
     area: 'lab',
     subsection: 'lab-graduation-recommender',
+    showWhen: { id: 'risk.live_graduation_recommender_enabled', equals: [true] },
     backendSection: 'risk',
     backendPath: 'graduation_skew_lookback_days',
     description: 'Window of closed paper trades used by the measured-cost gate.',
@@ -4472,6 +4483,36 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description: 'Run VACUUM during the daily DB maintenance job to reclaim disk space. Heavy operation — off by default.',
     usedBy: ['forven.maintenance', 'forven.api_core'],
     order: 8,
+  },
+  {
+    id: 'pipeline.db_backup_keep_daily',
+    label: 'Daily backups to keep',
+    unit: 'backups',
+    default: 7,
+    type: 'number',
+    area: 'data',
+    subsection: 'data-backups',
+    backendSection: 'pipeline',
+    backendPath: 'db_backup_keep_daily',
+    description:
+      'Forven copies the database once a day and keeps this many copies. Each copy is about the size of the database. The FORVEN_DB_BACKUP_RETENTION environment variable overrides this when set.',
+    usedBy: ['forven.backups'],
+    order: 1,
+  },
+  {
+    id: 'pipeline.db_backup_max_total_gb',
+    label: 'Disk space for all backups',
+    unit: 'GB',
+    default: 0,
+    type: 'number',
+    area: 'data',
+    subsection: 'data-backups',
+    backendSection: 'pipeline',
+    backendPath: 'db_backup_max_total_gb',
+    description:
+      'The oldest backups are deleted once all of them together pass this size; the newest is always kept. 0 (the default) means automatic: six times the database, at least 2 GB. The FORVEN_DB_BACKUP_MAX_TOTAL_BYTES environment variable overrides this when set.',
+    usedBy: ['forven.backups'],
+    order: 2,
   },
 
   // -------------------- DANGER --------------------

@@ -31,7 +31,7 @@ describe('SettingsSidebar', () => {
 		});
 		await flush();
 
-		const buttons = target.querySelectorAll('button');
+		const buttons = target.querySelectorAll('button[data-area]');
 		expect(buttons.length).toBe(SETTINGS_AREAS.length);
 		expect(buttons[0].textContent).toContain('Overview');
 		expect(buttons[buttons.length - 1].textContent).toContain('Danger');
@@ -50,7 +50,7 @@ describe('SettingsSidebar', () => {
 		});
 		await flush();
 
-		const buttons = target.querySelectorAll('button');
+		const buttons = target.querySelectorAll('button[data-area]');
 		let tradingBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
 			if (btn.textContent && btn.textContent.includes('Live trading')) {
@@ -78,7 +78,7 @@ describe('SettingsSidebar', () => {
 		});
 		await flush();
 
-		const buttons = target.querySelectorAll('button');
+		const buttons = target.querySelectorAll('button[data-area]');
 		let tradingBtn: HTMLButtonElement | null = null;
 		let homeBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
@@ -108,7 +108,7 @@ describe('SettingsSidebar', () => {
 		});
 		await flush();
 
-		const buttons = target.querySelectorAll('button');
+		const buttons = target.querySelectorAll('button[data-area]');
 		let dangerBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
 			if (btn.textContent && btn.textContent.includes('Danger')) {
@@ -130,7 +130,7 @@ describe('SettingsSidebar', () => {
 		});
 		await flush();
 
-		const buttons = target.querySelectorAll('button');
+		const buttons = target.querySelectorAll('button[data-area]');
 		let tradingBtn: HTMLButtonElement | null = null;
 		buttons.forEach((btn) => {
 			if (btn.textContent && btn.textContent.includes('Live trading')) {

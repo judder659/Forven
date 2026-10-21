@@ -242,20 +242,6 @@ PAGES: list[dict] = [
         ],
     },
     {
-        "route": "/settings/approvals",
-        "name": "Approval Modes",
-        "kind": "settings",
-        "summary": "Per-approval-type policy: smart / off / manual.",
-        "actions": ["Set how much human gating each action type needs"],
-    },
-    {
-        "route": "/settings/profile",
-        "name": "Operator profile",
-        "kind": "settings",
-        "summary": "Operator identity and profile settings.",
-        "actions": ["Edit the operator profile"],
-    },
-    {
         "route": "/tasks",
         "name": "Task queue",
         "kind": "tasks",
@@ -419,13 +405,14 @@ HOWTOS: dict[str, dict] = {
     "configure-settings": {
         "title": "Find your way around Settings",
         "steps": [
-            "Settings (/settings) is sectioned: home, data, lab, trading, hyperliquid, notifications, system, danger zone.",
-            "Lab: the backtest window and every pipeline gate threshold (presets relaxed/default/strict are just premades — everything is editable).",
-            "Trading: execution mode and risk knobs. Hyperliquid: credentials and wallets.",
+            "Settings (/settings) has areas: Overview, Automation, Live trading & risk, Portfolio, Exchange, Strategy pipeline, Backtesting, Data, AI & agents, Notifications, System, Danger zone.",
+            "Automation: what runs on its own and what waits for you (system mode, promotions, probation). Strategy pipeline: every gate threshold, in pipeline order.",
+            "Live trading & risk: risk limits, each showing the value the engine enforces. Exchange: Hyperliquid credentials and wallets.",
+            "AI & agents > What the assistant knows about you: name, timezone, how you trade, and rules the assistant must follow.",
             "Notifications: for every kind of event, whether it pops up in the app and whether it goes to Discord; which sidebar badges show; Discord credentials; and a test button.",
-            "Danger zone: factory reset. Approval policies live at /settings/approvals.",
+            "'Show only what I changed' lists every setting that differs from its default. Danger zone: factory reset.",
         ],
-        "routes": ["/settings", "/settings/approvals", "/settings/profile"],
+        "routes": ["/settings"],
     },
     "ideas": {
         "title": "Turn an idea into strategies",

@@ -26,6 +26,15 @@
 	// Changes what live orders do with real money.
 	export let realMoney = false;
 
+	// The description, default and range sit behind the (?) beside the name:
+	// shown on hover or focus, and pinned open by a click.
+	let helpOpen = false;
+	let helpEl: HTMLElement | null = null;
+
+	function closeHelpOutside(e: MouseEvent): void {
+		if (helpOpen && helpEl && !helpEl.contains(e.target as Node)) helpOpen = false;
+	}
+
 	$: dirty = $dirtyFields.has(id);
 	$: bounds = type === 'number' ? numberBounds(id) : undefined;
 	$: rangeText = describeRange(bounds);
@@ -142,8 +151,11 @@
 	}
 </script>
 
+<svelte:window on:click={closeHelpOutside} on:keydown={(e) => { if (e.key === 'Escape') helpOpen = false; }} />
+
 <div class="flex flex-col gap-1 py-3 border-b border-sc-line">
 	<div class="flex items-center justify-between gap-3">
+		<span class="group/help relative flex min-w-0 items-center gap-1.5" bind:this={helpEl}>
 		<label for={id} title="Setting ID: {id}" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 flex flex-wrap items-center gap-2">
 			{label}
 			{#if realMoney}
@@ -160,6 +172,28 @@
 				></span>
 			{/if}
 		</label>
+		<button
+			type="button"
+			class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-sc-line2 text-[10px] leading-none text-sc-ink3 hover:border-sc-ink3 hover:text-sc-ink focus:border-sc-ink3 focus:text-sc-ink focus:outline-none"
+			aria-label="What is {label}?"
+			aria-expanded={helpOpen}
+			aria-controls="{id}-help"
+			data-testid="help-{id}"
+			on:click={() => (helpOpen = !helpOpen)}
+		>?</button>
+		<div
+			id="{id}-help"
+			role="tooltip"
+			class="absolute left-0 top-full z-30 mt-1 w-80 max-w-[80vw] flex-col gap-1.5 rounded-md border border-sc-line2 bg-sc-panel p-3 shadow-lg group-hover/help:flex group-focus-within/help:flex {helpOpen ? 'flex' : 'hidden'}"
+			data-testid="help-text-{id}"
+		>
+			<p class="m-0 text-xs normal-case tracking-normal text-sc-ink2">{description}</p>
+			<p class="m-0 flex flex-wrap items-center gap-x-2 text-[10px] text-sc-ink3">
+				<span>Default: {defaultText}</span>
+				{#if rangeText}<span>· Range: <span data-testid="range-{id}">{rangeText}{unit ? ` ${unit}` : ''}</span></span>{/if}
+			</p>
+		</div>
+		</span>
 		<div class="flex items-center gap-2">
 			{#if inForce}
 				<span class="text-[10px] uppercase tracking-[0.08em] text-sc-ink3">Saved</span>
@@ -260,18 +294,15 @@
 			Must be {rangeText}{unit ? ` ${unit}` : ''}.{bounds?.enforced ? ' The save will not keep this value.' : ''}
 		</p>
 	{/if}
-	<p class="text-xs text-sc-ink2">{description}</p>
-	<p class="flex flex-wrap items-center gap-x-2 text-[10px] text-sc-ink3">
-		<span>Default: {defaultText}</span>
-		{#if rangeText}<span>· Range: <span data-testid="range-{id}">{rangeText}{unit ? ` ${unit}` : ''}</span></span>{/if}
-		{#if changed}
-			<span class="text-sc-ink2" data-testid="changed-{id}">· Changed</span>
+	{#if changed}
+		<p class="m-0 flex flex-wrap items-center gap-x-2 text-[10px] text-sc-ink3">
+			<span class="text-sc-ink2" data-testid="changed-{id}">Changed from {defaultText}</span>
 			<button
 				type="button"
 				class="underline hover:text-sc-ink"
 				on:click={resetToDefault}
 				data-testid="reset-{id}"
 			>Use default</button>
-		{/if}
-	</p>
+		</p>
+	{/if}
 </div>

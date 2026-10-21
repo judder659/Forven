@@ -8,9 +8,22 @@
 </script>
 
 <nav class="flex flex-col gap-px p-2 border-r border-sc-line min-w-[14rem] sticky top-6 self-start max-h-[calc(100vh-3rem)] overflow-y-auto">
+  <button
+    type="button"
+    aria-current={active === 'changed' ? 'page' : undefined}
+    data-testid="settings-show-changed"
+    on:click={() => onChange('changed')}
+    class="text-left text-[12px] px-3 py-2 border-l-2 transition-colors {
+      active === 'changed' ? 'border-sc-ink bg-sc-panel2 text-sc-ink' : 'border-transparent text-sc-ink2 hover:text-sc-ink hover:bg-sc-panel2'
+    }"
+  >
+    Only what I changed
+  </button>
+  <div class="my-1 border-t border-sc-line"></div>
   {#each visibleAreas as area (area.id)}
     <button
       type="button"
+      data-area={area.id}
       aria-current={active === area.id ? 'page' : undefined}
       on:click={() => onChange(area.id)}
       class="text-left text-[12px] px-3 py-2 border-l-2 transition-colors {

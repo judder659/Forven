@@ -22,6 +22,8 @@
 	export let variant: 'default' | 'wizard' = 'default';
 	/** Wizard: only these subsections, and no custom blocks. */
 	export let visibleSubsections: string[] | null = null;
+	/** "Show only what I changed": fields that differ from their default, no custom blocks. */
+	export let onlyChanged = false;
 
 	// Secrets never round-trip, so each maps to the sibling flag that says one is saved.
 	const CONFIGURED_FLAGS: Record<string, string> = {
@@ -71,17 +73,25 @@
 
 	$: groups = subs
 		.map((sub): Group => {
-			const block = variant === 'wizard' ? null : (CUSTOM_BLOCKS[sub.id] ?? null);
+			const block = variant === 'wizard' || onlyChanged ? null : (CUSTOM_BLOCKS[sub.id] ?? null);
 			// Array.sort is stable, so entries without an order keep manifest order.
 			const entries = SETTINGS_MANIFEST.filter(
 				(e) => e.area === area && e.subsection === sub.id && !e.hidden && isEntryVisible(e, settings, values),
 			).sort(byOrder);
+			const changed = entries.filter((e) => differsFromDefault(e, current(e, values)));
+			if (onlyChanged) {
+				// A field reset to its default stays listed until saved, so the reset can be undone.
+				const listed = entries.filter(
+					(e) => changed.includes(e) || differsFromDefault(e, e.id in $originalValues ? $originalValues[e.id] : entryValue(settings, e)),
+				);
+				return { sub, block, main: listed, advanced: [], changed };
+			}
 			return {
 				sub,
 				block,
 				main: entries.filter((e) => !e.advanced),
 				advanced: entries.filter((e) => e.advanced),
-				changed: entries.filter((e) => differsFromDefault(e, current(e, values))),
+				changed,
 			};
 		})
 		.filter((g) => g.block || g.main.length > 0 || g.advanced.length > 0);
@@ -98,7 +108,7 @@
 			label={group.sub.label}
 			description={group.sub.description ?? ''}
 			deepLinkTo={group.sub.deepLinkTo}
-			collapsed={Boolean(group.sub.advanced)}
+			collapsed={Boolean(group.sub.advanced) && !onlyChanged}
 			changedCount={group.changed.length}
 			onReset={group.changed.length > 0 ? () => resetGroup(group) : undefined}
 		>
