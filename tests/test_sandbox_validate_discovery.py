@@ -117,3 +117,33 @@ def test_worker_resolves_a_custom_type_on_first_request(library, tmp_path, monke
 
     assert strategy_worker._compute_signals(workdir) is True
     assert (workdir / "out.parquet").is_file()
+
+
+def test_validation_certifies_an_imported_module_like_intake_did(library, tmp_path, monkeypatch):
+    """A graveyard re-entry check validates an agent strategy from imported/, where
+    discovery registers no TYPE_NAME; it must certify it as intake did from custom/
+    (every re-queue of an untestable agent strategy read "no runtime class
+    registered", 2026-10-21)."""
+    from forven.sandbox.strategy_worker import _validate_custom_module
+    from forven.strategies import imported as imported_pkg
+
+    monkeypatch.delenv("FORVEN_IN_STRATEGY_WORKER", raising=False)
+    folder = tmp_path / "imported"
+    folder.mkdir()
+    monkeypatch.setattr(imported_pkg, "__path__", [str(folder)])
+    monkeypatch.setattr(imported_pkg, "__file__", str(folder / "__init__.py"))
+    source = FIXTURE.read_text(encoding="utf-8").replace("parity_fixture_type", "imported_candidate_type")
+    (folder / "dropzone_imported_candidate_abc123.py").write_text(source, encoding="utf-8")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / "request.json").write_text(
+        json.dumps({"module_name": "dropzone_imported_candidate_abc123", "package": "imported"}), encoding="utf-8",
+    )
+
+    try:
+        result = _validate_custom_module(workdir)
+    finally:
+        sys.modules.pop("forven.strategies.imported.dropzone_imported_candidate_abc123", None)
+
+    assert result["ok"] and result["certified"], result
+    assert result["type_name"] == "imported_candidate_type"
