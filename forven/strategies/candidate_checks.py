@@ -250,7 +250,19 @@ def min_feed_coverage_pct() -> float:
 
 
 def _effective_trades(metrics: dict) -> int:
-    """Trades as the quick screen counts them: the top level is the OOS slice."""
+    """Trades as the quick screen counts them.
+
+    Under the fair-sample rule the quick screen counts the whole window (in-sample
+    plus out-of-sample), so the check does too: counting only the larger slice
+    archived candidates with ~20-28 trades as untestable (2026-10 review). Under
+    the strict rule it judges one slice; the top level is the OOS slice.
+    """
+    if fair_sample_window_days() is not None:
+        from forven import quick_screen_rule
+
+        whole = quick_screen_rule.whole_window_trades(metrics)
+        if whole is not None:
+            return int(whole)
     counts = []
     for block in (metrics, metrics.get("in_sample"), metrics.get("out_of_sample")):
         if isinstance(block, dict):
