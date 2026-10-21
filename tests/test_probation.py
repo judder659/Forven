@@ -365,6 +365,47 @@ def test_ready_list_and_automatic_entry(env):
     assert probation.get_record("S1")["entered_by"] == "probation"
 
 
+def test_a_ready_list_from_older_code_is_recomputed_on_read(env, monkeypatch):
+    """After an upgrade the hourly list can still hold the old code's verdicts
+    (pre-#246 it sized every strategy at full size: "no room live")."""
+    from forven.db import kv_set
+
+    _strategy("S1")
+    for _ in range(3):
+        _trade("S1")
+    kv_set(probation.READY_KV_KEY, {"checked_at": probation._iso(), "strategies": [{
+        "strategy_id": "S1", "eligible": False,
+        "failing": [{"key": "live_admission", "label": "Room on the live account", "detail": "full size"}],
+    }]})
+    started = []
+    monkeypatch.setattr(probation, "start", lambda *a, **k: started.append(a))
+    _automation(auto_entry=True)
+
+    fresh = probation.ready_cache()
+    assert fresh["format"] == probation.READY_FORMAT
+    assert [(r["strategy_id"], r["eligible"]) for r in fresh["strategies"]] == [("S1", True)]
+    assert started == []  # reading never starts probation; the watchdog does
+    assert probation.ready_cache()["checked_at"] == fresh["checked_at"]  # current: served as stored
+
+    # Other knobs, or a list older than two hours, are recomputed too.
+    stale = dict(fresh, checked_at=(datetime.now(timezone.utc) - timedelta(hours=3)).isoformat())
+    kv_set(probation.READY_KV_KEY, stale)
+    assert probation.ready_cache()["checked_at"] != stale["checked_at"]
+
+
+def test_a_recompute_on_read_does_not_swallow_the_ready_notification(env, monkeypatch):
+    told = []
+    monkeypatch.setattr(probation, "_notify", lambda sid, *a, **k: told.append(sid))
+    _strategy("S1")
+    for _ in range(3):
+        _trade("S1")
+    probation.ready_cache()  # the explain view reads first
+    assert told == []
+    probation.tick()
+    probation.tick()
+    assert told == ["S1"]  # told once, by the watchdog
+
+
 def test_capacity_limits_probation(env, monkeypatch):
     _in_probation(env, "S1")
     probation.config  # noqa: B018

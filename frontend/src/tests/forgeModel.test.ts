@@ -303,6 +303,25 @@ describe('forge attention', () => {
 		expect(items).toEqual([expect.objectContaining({ key: 'recovery:S7', detail: 'Recovery gave up — Funding history incomplete' })]);
 	});
 
+	it('lists a paper strategy ready for probation, right after approvals', () => {
+		const items = buildAttention({
+			activeIds: new Set(['S5', 'S6', 'S8']),
+			explain: [
+				explainEntry({ id: 'S6', status: 'blocked_merit', gate_reason: 'Edge covers costs: 1.3x (need 2x)' }),
+				explainEntry({ id: 'S5', status: 'ready' }),
+				// Ready to promote out of the gauntlet happens on its own: not a decision.
+				explainEntry({ id: 'S8', stage: 'gauntlet', status: 'ready' }),
+			],
+			fleet: null,
+			nowWorking: [],
+			rows: [],
+			health: null,
+			nameOf: (id) => id,
+		});
+		expect(items.map((item) => item.key)).toEqual(['probation:S5', 'blocked:S6']);
+		expect(items[0]).toMatchObject({ actionLabel: 'Start probation', tone: 'ok' });
+	});
+
 	it('humanizes task types', () => {
 		expect(taskLabel('forven-testing-cycle')).toBe('Testing cycle');
 		expect(taskLabel('forven-data-refresh')).toBe('Data refresh');
