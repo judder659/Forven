@@ -192,3 +192,29 @@ def test_opposite_sides_on_one_coin_do_not_conflict(forven_db):
         for sid in (live_btc, candidate):
             _traded_fraction(conn, sid, 0.5)
         assert go_live_refusal(conn, candidate) is None
+
+
+def test_probation_entry_replaces_the_live_gate_but_keeps_admission(forven_db, monkeypatch):
+    """forven.probation: its own entry check stands in for the full live gate and the
+    GO LIVE approval; the live admission check (coin/side, wallet room) still runs."""
+    import forven.brain as brain
+
+    def _no_gate(*args, **kwargs):
+        raise AssertionError("probation entry must not run the full live gate")
+
+    monkeypatch.setattr(brain, "evaluate_promotion", _no_gate)
+    monkeypatch.setattr(brain, "verify_backtest_exists_for_stage_transition", lambda sid, stage: (True, "ok"))
+    monkeypatch.setattr("forven.strategies.registry.runtime_unloadable_reason", lambda *a: None)
+    _wallets(long_usd=5_000.0, short_usd=5_000.0)
+    with get_db() as conn:
+        live_btc = _strategy(conn, "BTC/USDT", "long_only", period=20)
+        candidate = _strategy(conn, "ETH/USDT", "long_only", stage="paper", period=30)
+        blocked = _strategy(conn, "BTC/USDT", "long_only", stage="paper", period=40)
+        for sid in (live_btc, candidate, blocked):
+            _traded_fraction(conn, sid, 0.2)
+
+    result = brain.transition_stage(candidate, "live_graduated", reason="probation", actor="probation", probation_entry=True)
+    assert result.get("to") == "live_graduated", result
+
+    result = brain.transition_stage(blocked, "live_graduated", reason="probation", actor="probation", probation_entry=True)
+    assert result.get("reason_code") == "live_admission"

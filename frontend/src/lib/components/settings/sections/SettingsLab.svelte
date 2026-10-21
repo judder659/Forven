@@ -9,6 +9,7 @@
 	import SettingsFieldRow from '$lib/components/settings/primitives/SettingsFieldRow.svelte';
 	import SettingsAdvancedHeader from '$lib/components/settings/primitives/SettingsAdvancedHeader.svelte';
 	import ResearchSettingsPanel from '$lib/components/settings/ResearchSettingsPanel.svelte';
+	import ProbationAutomation from '$lib/components/settings/ProbationAutomation.svelte';
 	import {
 		getSystemMode,
 		setSystemMode,
@@ -426,6 +427,7 @@
 				</div>
 				<p class="text-xs text-sc-ink3 pb-3">{presetEntry.description}</p>
 			{:else}
+				{#if sub.id === 'lab-pipeline-probation'}<ProbationAutomation />{/if}
 				{#each entries as entry (entry.id)}
 					<SettingsFieldRow
 						id={entry.id}

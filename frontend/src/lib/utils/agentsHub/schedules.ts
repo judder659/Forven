@@ -39,6 +39,7 @@ const COMMAND_GROUPS: Record<string, JobGroup> = {
 	'gauntlet-step-loop': 'pipeline',
 	'paper-eval': 'pipeline',
 	'live-graduation-scan': 'pipeline',
+	'probation-watchdog': 'trading',
 	'stale-triage': 'pipeline',
 	'auto-intake': 'pipeline',
 	'param-optimization': 'pipeline',
