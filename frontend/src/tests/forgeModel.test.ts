@@ -263,7 +263,7 @@ describe('forge attention', () => {
 			nameOf: (id) => `name-${id}`,
 		});
 		expect(items.map((i) => i.key)).toEqual(['approval:484', 'live:S4', 'blocked:S2']);
-		expect(items[0]).toMatchObject({ title: 'name-S1', meta: 'S1 · Paper', actionLabel: 'Review #484', href: '/approval?approval_id=484' });
+		expect(items[0]).toMatchObject({ title: 'name-S1', meta: 'S1 · Paper', actionLabel: 'Decide', href: '/agents?decision=484#decisions' });
 		expect(items[0].detail).toBe('Dethrone recommendation → archived');
 		expect(items[1].detail).toBe('84 live entries refused in 30d — Validated leverage 1.3 cannot be applied');
 		expect(items[2].detail).toBe('Walk-forward OOS trades 17 below 20 minimum');

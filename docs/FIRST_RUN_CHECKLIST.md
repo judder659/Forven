@@ -103,7 +103,7 @@ python -m forven auth status
 - [ ] Open `/data` and confirm datasets or ingestion status load
 - [ ] Open `/lab` and `/ai-dropzone`
 - [ ] Open `/runs` and confirm the page renders
-- [ ] Open `/risk`, `/approval`, `/tasks`, `/ops`, and `/memory`
+- [ ] Open `/risk`, `/tasks`, `/ops`, and `/memory`
 - [ ] Run one small backtest or lightweight research action in the UI
 
 ## 7. Run local quality checks

@@ -68,7 +68,7 @@ describe('SettingsNotifications section', () => {
 		// The coarse Discord-only toggles were replaced by the per-event matrix.
 		expect(text).not.toContain('Event subscriptions');
 		expect(target.querySelector('tr[data-category="paper_trade_opened"]')).not.toBeNull();
-		expect(target.querySelector('li[data-badge="/approval"]')).not.toBeNull();
+		expect(target.querySelector('li[data-badge="/agents"]')).not.toBeNull();
 	});
 
 	it('shows paper trades off and live trades on by default', async () => {

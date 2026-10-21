@@ -80,7 +80,7 @@ def test_snapshot_payload_shape():
     assert by_id["agent_completion"]["discord"]["default"] is False
     badges = {entry["href"]: entry for entry in payload["badges"]}
     assert badges["/diagnostics"]["mode"] == "unread"
-    assert badges["/approval"]["mode"] == "total"
+    assert badges["/agents"]["mode"] == "total"
 
 
 def test_severity_aliases_fold_to_the_canonical_four():

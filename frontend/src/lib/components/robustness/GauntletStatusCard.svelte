@@ -390,7 +390,7 @@
 			>
 				<span>Operator approval pending (#{pendingApprovalId}) — promotion is queued for review.</span>
 				<a
-					href={`/approval?approval_id=${pendingApprovalId}`}
+					href={`/agents?decision=${pendingApprovalId}#decisions`}
 					class="rounded-md border border-sc-line2 bg-sc-panel2 text-sc-ink transition hover:border-sc-ink4 px-2 py-0.5 text-[10px]"
 				>
 					Review

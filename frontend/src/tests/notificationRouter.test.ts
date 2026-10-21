@@ -111,7 +111,7 @@ describe('notificationRouter', () => {
 		});
 
 		const [toast] = get(toasts);
-		expect(toast).toMatchObject({ category: 'approval_required', type: 'warning', href: '/approval', detail: 'Promote S0123 to paper' });
+		expect(toast).toMatchObject({ category: 'approval_required', type: 'warning', href: '/agents#decisions', detail: 'Promote S0123 to paper' });
 	});
 
 	it('pops up kill-switch flips only from state-diff payloads, even when snoozed', () => {

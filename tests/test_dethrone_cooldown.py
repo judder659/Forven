@@ -134,12 +134,12 @@ def test_clear_resets_count(forven_db):
 def test_transition_stage_respects_deny_cooldown(forven_db):
     from forven.brain import transition_stage
 
-    sid = _seed_strategy("S-CD-GATE")
+    sid = _seed_strategy("S-CD-GATE", stage="live_graduated")
     record_dethrone_deny(sid)
 
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker")
+    result = transition_stage(sid, "paper", reason="decay", actor="decay_tracker")
 
-    assert result["to"] == "paper"  # stage unchanged
+    assert result["to"] == "live_graduated"  # stage unchanged
     assert result.get("reason_code") == "dethrone_cooldown_active"
     assert "cooldown" in str(result.get("blocked_reason") or "").lower()
     assert _pending_dethrone_count(sid) == 0  # the whole point: no new approval
@@ -148,16 +148,37 @@ def test_transition_stage_respects_deny_cooldown(forven_db):
 def test_expired_cooldown_requeues_approval(forven_db):
     from forven.brain import transition_stage
 
-    sid = _seed_strategy("S-CD-EXP")
+    sid = _seed_strategy("S-CD-EXP", stage="live_graduated")
     kv_set(
         f"forven:dethrone:cooldown:{sid}",
         {"until": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(), "deny_count": 1},
     )
 
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker")
+    result = transition_stage(sid, "paper", reason="decay", actor="decay_tracker")
 
     assert result.get("reason_code") == "operator_approval_required"
     assert _pending_dethrone_count(sid) == 1
+
+
+def test_automated_paper_dethrone_is_recorded_not_queued(forven_db):
+    """Paper retirement belongs to the paper pool: an automated request to
+    demote or archive a paper strategy leaves it in paper, files no approval,
+    and lands on the strategy's history."""
+    from forven.brain import transition_stage
+
+    sid = _seed_strategy("S-CD-PAPER")
+
+    result = transition_stage(sid, "archived", reason="agent thinks it is weak", actor="brain")
+
+    assert result["to"] == "paper"
+    assert result.get("reason_code") == "paper_retirement_rules_decide"
+    assert _pending_dethrone_count(sid) == 0
+    with get_db() as conn:
+        event = conn.execute(
+            "SELECT reason FROM strategy_events WHERE strategy_id = ? ORDER BY id DESC LIMIT 1", (sid,)
+        ).fetchone()
+    assert "agent thinks it is weak" in event["reason"]
+    assert "paper pool" in event["reason"]
 
 
 def test_force_bypasses_cooldown(forven_db):
@@ -211,7 +232,7 @@ def test_approve_dethrone_clears_cooldown_and_count(forven_db):
 def test_dethrone_payload_has_evidence_and_snapshot(forven_db):
     from forven.brain import transition_stage
 
-    sid = _seed_strategy("S-CD-EVID")
+    sid = _seed_strategy("S-CD-EVID", stage="live_graduated")
     _seed_closed_trade("T-CD-1", sid, 1.2)
     _seed_closed_trade("T-CD-2", sid, -0.5)
 
@@ -223,7 +244,7 @@ def test_dethrone_payload_has_evidence_and_snapshot(forven_db):
         "trade_count_72h": 9,
         "window_hours": 72,
     }
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker", evidence=evidence)
+    result = transition_stage(sid, "paper", reason="decay", actor="decay_tracker", evidence=evidence)
     assert result.get("reason_code") == "operator_approval_required"
 
     with get_db() as conn:
@@ -245,9 +266,9 @@ def test_dethrone_payload_has_evidence_and_snapshot(forven_db):
 def test_snapshot_fail_soft_on_bad_metrics(forven_db):
     from forven.brain import transition_stage
 
-    sid = _seed_strategy("S-CD-BADMETRICS", metrics="{not json")
+    sid = _seed_strategy("S-CD-BADMETRICS", stage="live_graduated", metrics="{not json")
 
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker")
+    result = transition_stage(sid, "paper", reason="decay", actor="decay_tracker")
 
     assert result.get("reason_code") == "operator_approval_required"
     assert _pending_dethrone_count(sid) == 1  # approval creation was never blocked
@@ -289,56 +310,6 @@ def test_decay_tracker_passes_structured_evidence(forven_db, monkeypatch):
 
 # --- paper soak guard ----------------------------------------------------------
 
-def test_young_paper_strategy_is_soak_protected(forven_db):
-    from forven.brain import transition_stage
-
-    sid = _seed_strategy("S-SOAK-YOUNG", stage_age_days=2.0)
-
-    result = transition_stage(sid, "archived", reason="brain sweep", actor="brain")
-
-    assert result["to"] == "paper"
-    assert result.get("reason_code") == "dethrone_soak_active"
-    assert "soak" in str(result.get("blocked_reason") or "").lower()
-    assert _pending_dethrone_count(sid) == 0
-
-
-def test_low_activity_paper_strategy_protected_past_floor(forven_db):
-    from forven.brain import transition_stage
-
-    sid = _seed_strategy("S-SOAK-LOWACT", stage_age_days=10.0)
-    _seed_closed_trade("T-SOAK-1", sid, 0.4)
-    _seed_closed_trade("T-SOAK-2", sid, -0.2)
-
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker")
-
-    assert result.get("reason_code") == "dethrone_soak_active"
-    assert _pending_dethrone_count(sid) == 0
-
-
-def test_active_paper_strategy_recommendable_after_floor(forven_db):
-    from forven.brain import transition_stage
-
-    sid = _seed_strategy("S-SOAK-ACTIVE", stage_age_days=10.0)
-    for i in range(5):
-        _seed_closed_trade(f"T-SOAK-A{i}", sid, -0.5)
-
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker")
-
-    assert result.get("reason_code") == "operator_approval_required"
-    assert _pending_dethrone_count(sid) == 1
-
-
-def test_soak_expires_at_max_even_with_no_trades(forven_db):
-    from forven.brain import transition_stage
-
-    sid = _seed_strategy("S-SOAK-MAXED", stage_age_days=15.0)
-
-    result = transition_stage(sid, "archived", reason="decay", actor="decay_tracker")
-
-    assert result.get("reason_code") == "operator_approval_required"
-    assert _pending_dethrone_count(sid) == 1
-
-
 def test_force_bypasses_soak(forven_db):
     from forven.brain import transition_stage
 
@@ -359,47 +330,6 @@ def test_live_strategy_not_soak_protected(forven_db):
 
     assert result.get("reason_code") == "operator_approval_required"
     assert _pending_dethrone_count(sid) == 1
-
-
-def test_challenger_dethrone_respects_soak(forven_db):
-    from forven.policy import _queue_challenger_dethrone
-
-    sid = _seed_strategy("S-SOAK-CHAL", stage_age_days=2.0)
-
-    with get_db() as conn:
-        approval_id = _queue_challenger_dethrone(
-            conn=conn,
-            incumbent_id=sid,
-            incumbent_stage="paper",
-            challenger_id="S-CHALLENGER-2",
-            challenger_sharpe=3.5,
-            incumbent_sharpe=2.0,
-        )
-
-    assert approval_id is None
-    assert _pending_dethrone_count(sid) == 0
-
-
-# --- challenger path ----------------------------------------------------------
-
-def test_queue_challenger_dethrone_respects_cooldown(forven_db):
-    from forven.policy import _queue_challenger_dethrone
-
-    sid = _seed_strategy("S-CD-CHAL")
-    record_dethrone_deny(sid)
-
-    with get_db() as conn:
-        approval_id = _queue_challenger_dethrone(
-            conn=conn,
-            incumbent_id=sid,
-            incumbent_stage="paper",
-            challenger_id="S-CHALLENGER",
-            challenger_sharpe=3.2,
-            incumbent_sharpe=2.1,
-        )
-
-    assert approval_id is None
-    assert _pending_dethrone_count(sid) == 0
 
 
 # --- context endpoint ----------------------------------------------------------

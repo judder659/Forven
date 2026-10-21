@@ -402,9 +402,9 @@
   "badges": [
     {
       "id": "approvals",
-      "href": "/approval",
-      "label": "Approvals",
-      "description": "Approvals waiting for your decision.",
+      "href": "/agents",
+      "label": "Agents",
+      "description": "Agent requests waiting for your decision.",
       "key": "badge_approvals",
       "default": true,
       "mode": "total"

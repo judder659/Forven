@@ -265,8 +265,8 @@ describe('/lab — the Forge', () => {
 
 		const needsYou = target.querySelector('[data-testid="forge-needs-you"]');
 		await vi.waitFor(() => expect(needsYou?.textContent).toContain('SOL Thrust Swingmid'));
-		const review = Array.from(needsYou?.querySelectorAll('a') ?? []).find((a) => a.textContent?.includes('Review #484'));
-		expect(review?.getAttribute('href')).toBe('/approval?approval_id=484');
+		const review = Array.from(needsYou?.querySelectorAll('a') ?? []).find((a) => a.textContent?.includes('Decide'));
+		expect(review?.getAttribute('href')).toBe('/agents?decision=484#decisions');
 
 		const row = target.querySelector('tr[data-strategy-id="S07681"]');
 		expect(row?.textContent).toContain('SOL Pullback Thrust');

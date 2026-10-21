@@ -159,7 +159,7 @@
 					<p class="m-0 text-[12px] leading-relaxed text-sc-ink2">{meta.help}</p>
 					{#if entry.pending_approval}
 						<a
-							href={`/approval?approval_id=${encodeURIComponent(String(entry.pending_approval.id))}`}
+							href={`/agents?decision=${encodeURIComponent(String(entry.pending_approval.id))}#decisions`}
 							class="flex items-center justify-between gap-3 rounded-md border border-[#e7b24a]/40 bg-[#e7b24a]/10 px-3 py-2 text-[12px] text-[#e7b24a] hover:bg-[#e7b24a]/15"
 						>
 							<span>Approval #{entry.pending_approval.id} — {approvalTypeLabel(entry.pending_approval.approval_type)}{#if entry.pending_approval.requested_status} (→ {stageLabel(entry.pending_approval.requested_status).toLowerCase()}){/if}</span>

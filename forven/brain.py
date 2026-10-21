@@ -1730,6 +1730,26 @@ def _transition_stage_impl(
         if normalized_target not in VALID_TRANSITIONS.get(current_stage, set()):
             raise ValueError(f"Invalid transition: {current_stage} -> {normalized_target}")
 
+        if (
+            current_stage == "paper"
+            and _requires_operator_dethrone_approval(current_stage, normalized_target)
+            and not force
+            and actor.lower() not in _USER_ACTORS
+        ):
+            # Paper risks no capital, so an automated demote/archive request (an
+            # agent's, say) is not queued for approval: it is recorded on the
+            # strategy's history and the paper pool's retirement rules
+            # (forven.paper_pool) make the call. Operator moves are forced.
+            requested = str(reason or "").strip()
+            return _record_blocked_transition(
+                (
+                    f"{actor} asked to move {strategy_id} from paper to {normalized_target}"
+                    f"{f' ({requested})' if requested else ''}. Not applied: paper strategies "
+                    "retire by the paper pool's rules."
+                ),
+                "paper_retirement_rules_decide",
+            )
+
         if _requires_operator_dethrone_approval(current_stage, normalized_target) and not force:
             # Deny cooldown: the operator recently rejected a dethrone rec for
             # this strategy, so background demotion attempts stay blocked
@@ -1885,14 +1905,9 @@ def _transition_stage_impl(
 
         # WIP cap enforcement: refuse to admit another strategy into a capped stage
         # when the configured capacity is already full. Skipped for terminal/archival
-        # transitions and for operator-forced moves. The paper cap is also lifted when
-        # slot-competition is disabled (the default) — that mode intentionally promotes
-        # every gauntlet-passing strategy with no cap on how many may paper-trade.
-        _wip_skip_stages = {"archived", "rejected", "backtest_failed", "quick_screen"}
-        if normalized_target == "paper":
-            from forven.policy import _paper_slot_competition_enabled
-            if not _paper_slot_competition_enabled():
-                _wip_skip_stages = _wip_skip_stages | {"paper"}
+        # transitions and for operator-forced moves. Paper has no WIP cap: the paper
+        # pool (paper_pool.max_strategies) admits and queues paper strategies.
+        _wip_skip_stages = {"archived", "rejected", "backtest_failed", "quick_screen", "paper"}
         if (not force) and normalized_target not in _wip_skip_stages:
             try:
                 from forven.lab_features import check_stage_wip_capacity

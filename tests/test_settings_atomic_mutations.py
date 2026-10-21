@@ -123,7 +123,7 @@ def test_concurrent_pipeline_and_section_saves_serialize(forven_db):
             try:
                 barrier.wait(timeout=5)
                 put_pipeline_settings(
-                    PipelineSettingsUpdateBody(updates={"paper_wip_cap": wip_value})
+                    PipelineSettingsUpdateBody(updates={"min_backtest_trades": wip_value})
                 )
             except BaseException as exc:  # pragma: no cover
                 errors.append(exc)
@@ -136,7 +136,7 @@ def test_concurrent_pipeline_and_section_saves_serialize(forven_db):
 
         assert errors == [], f"worker error on iteration {n}: {errors}"
         assert _load_settings_payload()["initial_capital"] == capital_value
-        assert get_pipeline_settings()["paper_wip_cap"] == wip_value
+        assert get_pipeline_settings()["min_backtest_trades"] == wip_value
 
 
 # ---------------------------------------------------------------------------
@@ -188,14 +188,8 @@ def test_section_save_persistence_failure_is_all_or_nothing(forven_db, monkeypat
 
 
 def test_pipeline_save_persistence_failure_is_all_or_nothing(forven_db, monkeypatch):
-    """A mid-write failure on the pipeline path leaves the payload + WIP-cap
-    mirror untouched (no torn payload-vs-cap state).
-    """
-    baseline_cap = get_pipeline_settings()["paper_wip_cap"]
-
-    from forven.db import kv_get
-
-    baseline_wip_kv = kv_get("pipeline:wip_cap:paper")
+    """A mid-write failure on the pipeline path leaves the payload untouched."""
+    baseline = get_pipeline_settings()["min_backtest_trades"]
 
     def boom(_items):
         raise RuntimeError("simulated pipeline kv failure")
@@ -204,14 +198,12 @@ def test_pipeline_save_persistence_failure_is_all_or_nothing(forven_db, monkeypa
 
     with pytest.raises(RuntimeError, match="simulated pipeline kv failure"):
         put_pipeline_settings(
-            PipelineSettingsUpdateBody(updates={"paper_wip_cap": baseline_cap + 7})
+            PipelineSettingsUpdateBody(updates={"min_backtest_trades": baseline + 7})
         )
 
     monkeypatch.undo()
 
-    # Neither the display payload nor the enforced WIP-cap mirror moved.
-    assert get_pipeline_settings()["paper_wip_cap"] == baseline_cap
-    assert kv_get("pipeline:wip_cap:paper") == baseline_wip_kv
+    assert get_pipeline_settings()["min_backtest_trades"] == baseline
 
 
 # ---------------------------------------------------------------------------
