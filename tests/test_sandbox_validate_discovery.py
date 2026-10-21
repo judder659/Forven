@@ -82,6 +82,27 @@ def test_validation_certifies_without_scanning_the_library(library, tmp_path, mo
     assert "unrelated_type" not in registry._TYPE_MAP
 
 
+def test_validation_certifies_a_module_named_like_the_template(library, tmp_path, monkeypatch):
+    """STRATEGY_TEMPLATE.md names drop-zone files ``{asset}_{family}_s{XXXXX}.py``,
+    which custom_catalog reads as archived, so discovery skipped the module and every
+    such registration was archived "uncertified: no runtime class registered"
+    (2026-10-21)."""
+    from forven.sandbox.strategy_worker import _validate_custom_module
+
+    monkeypatch.delenv("FORVEN_IN_STRATEGY_WORKER", raising=False)
+    library("sol_squeeze_breakout_s21001", "templated_candidate_type")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / "request.json").write_text(
+        json.dumps({"module_name": "sol_squeeze_breakout_s21001", "package": "custom"}), encoding="utf-8",
+    )
+
+    result = _validate_custom_module(workdir)
+
+    assert result["ok"] and result["certified"], result
+    assert result["type_name"] == "templated_candidate_type"
+
+
 def test_worker_startup_registers_builtins_without_scanning_the_library(library, monkeypatch):
     """The persistent worker's startup must not import the whole library: on a large
     one that outran the 90s ready timeout, so every spawn was killed (2026-10-02)."""
